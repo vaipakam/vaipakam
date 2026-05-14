@@ -63,6 +63,19 @@
   },
   {
     "type": "event",
+    "name": "LiquidationFallbackOracleUnavailable",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "LiquidationFallbackSplit",
     "inputs": [
       {
@@ -420,6 +433,22 @@
     "type": "error",
     "name": "IlliquidLoanNoRiskMath",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InitLtvAboveTier",
+    "inputs": [
+      {
+        "name": "ltv",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tierCapBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

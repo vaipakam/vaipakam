@@ -352,4 +352,107 @@ contract OracleAdminFacet {
     function getPythConfidenceMaxBps() external view returns (uint16) {
         return LibVaipakam.effectivePythConfidenceMaxBps();
     }
+
+    /**
+     * @notice Configure the per-chain peer-lending-protocol addresses
+     *         the autonomous tier-LTV cache reads. Phase 3 of
+     *         AutonomousLtvAndOracleFallback.md.
+     * @dev    Owner-only (TimelockController post-handover, so 48h-gated).
+     *         Setting any to `address(0)` skips that peer in the
+     *         aggregation — fine for chains where the peer isn't
+     *         deployed. Addresses must be verified against each
+     *         protocol's official docs before this call; the on-chain
+     *         layer doesn't validate provenance.
+     *
+     *         Verification examples per peer:
+     *           - Aave V3 PoolDataProvider — per-chain address from
+     *             https://aave.com/docs/resources/addresses (chain-
+     *             specific deployment).
+     *           - Compound V3 Comet — one Comet per base asset; pick
+     *             the largest by liquidity on the target chain. From
+     *             https://docs.compound.finance/#networks.
+     *           - Morpho-Blue — single deployment per chain. From
+     *             https://docs.morpho.org. (For v1, this slot is
+     *             read but the Morpho aggregator is a Phase-3.5
+     *             follow-up — the address can be set early so the
+     *             registry is ready when the reader lands.)
+     *
+     * @param aaveV3PoolDataProvider Aave V3 data-provider, or zero.
+     * @param compoundV3Comet        Compound V3 Comet (one), or zero.
+     * @param morphoBlue             Morpho-Blue contract, or zero.
+     */
+    function setPeerProtocolAddresses(
+        address aaveV3PoolDataProvider,
+        address compoundV3Comet,
+        address morphoBlue
+    ) external {
+        LibVaipakam.setPeerProtocolAddresses(
+            aaveV3PoolDataProvider,
+            compoundV3Comet,
+            morphoBlue
+        );
+    }
+
+    /// @notice Read the configured peer-protocol addresses for this
+    ///         chain. Single-call view that returns the full triple,
+    ///         shaped to feed the protocol-console + the audit-package
+    ///         per-chain verification step.
+    function getPeerProtocolAddresses()
+        external
+        view
+        returns (
+            address aaveV3PoolDataProvider,
+            address compoundV3Comet,
+            address morphoBlue
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (s.aaveV3PoolDataProvider, s.compoundV3Comet, s.morphoBlue);
+    }
+
+    /**
+     * @notice Set a tier's reference asset list. Phase 4 of
+     *         AutonomousLtvAndOracleFallback.md. Constitution-level
+     *         setting: changes are rare, governance-gated, and require
+     *         re-audit of the new asset list for collateral suitability.
+     * @dev    Owner-only (TimelockController post-handover, 48h-gated).
+     *         An empty array clears the tier — refreshes for that tier
+     *         then emit `no-reference-assets` and the cache stays at
+     *         its previous value (or library default if hard-stale).
+     *
+     *         Recommended reference lists per tier (per-chain — the
+     *         operator picks each chain's canonical token addresses):
+     *           Tier 3 (deepest, blue-chip): WBTC, WETH, USDC, USDT, DAI
+     *           Tier 2 (mid-cap):            LINK, AAVE, UNI, COMP, MKR
+     *           Tier 1 (entry):              a small list of well-attested mid/long-tail
+     *
+     *         The aggregator (`OracleFacet.refreshTierLtvCache`) reads
+     *         these assets' LTVs from each configured peer, applies
+     *         per-asset + per-tier consensus, applies the tier's
+     *         haircut, bound-checks, and persists. The list itself is
+     *         constitution-level: changing it doesn't auto-trigger a
+     *         refresh; operators call `refreshTierLtvCache()` after
+     *         updating the list to pick up the new asset universe.
+     * @param  tier   1, 2, or 3.
+     * @param  assets New reference asset list for this tier. Pass an
+     *                empty array to clear.
+     */
+    function setTierReferenceAssets(uint8 tier, address[] calldata assets) external {
+        // Convert calldata to memory once (LibVaipakam takes memory[]).
+        address[] memory mem = new address[](assets.length);
+        for (uint256 i = 0; i < assets.length; ++i) mem[i] = assets[i];
+        LibVaipakam.setTierReferenceAssets(tier, mem);
+    }
+
+    /// @notice Read a tier's reference asset list. Single-call view
+    ///         that returns the full array, shaped to feed the
+    ///         protocol-console + the audit-package per-chain
+    ///         verification step.
+    function getTierReferenceAssets(uint8 tier)
+        external
+        view
+        returns (address[] memory)
+    {
+        return LibVaipakam.getTierReferenceAssets(tier);
+    }
 }

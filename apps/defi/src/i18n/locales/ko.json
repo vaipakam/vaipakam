@@ -260,7 +260,10 @@
       "disabledShort": "interval ≥ duration",
       "hintShort": "Pick a cadence to require interest settlement at fixed intervals during the loan. Larger principals (above the configured threshold) unlock finer cadences. If a borrower misses a period after the grace window, anyone can call a settler that sells just enough collateral to cover the shortfall.",
       "hintMultiYear": "Multi-year loans require at least Annual settlement. The borrower must pay each year's accrued interest by the year-end checkpoint, or after the grace window anyone can sell collateral to cover the shortfall — possibly triggering broader liquidation."
-    }
+    },
+    "marketWidgetBanner": "이 페어의 현재 시장 금리(≈ {{rate}}% APR)로 게시합니다. 확정하기 전에 아래 조건을 검토하고 조정하세요.",
+    "firstOfferBanner": "이 페어에는 아직 시장 금리가 없습니다 — 첫 오퍼를 게시하게 됩니다. 아래에서 이자율을 설정하세요.",
+    "marketWidgetIlliquidBanner": "⚠ 이 페어에는 유동성 시장이 없는 자산이 포함됩니다(오라클 가격 없음). 프로토콜은 여기서 최소 담보를 자동 계산하거나 표준 헬스 팩터 / LTV 검사를 실행할 수 없습니다 — 귀하와 거래 상대방이 직접 가격을 책정하며 양쪽 모두 동의해야 합니다. 아래에서 모든 조건을 설정하세요."
   },
   "loanDetails": {
     "connectTitle": "지갑을 연결하세요",
@@ -1791,5 +1794,21 @@
     "message": "Vaipakam의 새 버전이 있습니다.",
     "reload": "새로고침",
     "reloading": "새로고침 중…"
+  },
+  "marketRateWidget": {
+    "title": "시장 금리로 대출 / 차입",
+    "lendingAmountLabel": "대출 금액",
+    "marketRateHint": "현재 시장 금리 ≈ {{rate}}% APR",
+    "noMarketRateHint": "이 페어에는 아직 시장 금리가 없습니다 — 첫 오퍼를 게시하게 됩니다",
+    "minCollateralHint": "최소 담보 ≈ {{amount}}",
+    "minCollateralPrompt": "최소 담보를 보려면 대출 금액을 입력하세요",
+    "computingMinCollateral": "최소 담보를 계산 중…",
+    "illiquidCollateralHint": "이 자산은 유동성 시장에 없습니다 — 오퍼 페이지에서 담보 조건을 설정하세요",
+    "lendButton": "시장 금리로 대출",
+    "borrowButton": "시장 금리로 차입",
+    "footnote": "금리, 금액, 최소 담보가 미리 채워진 상태로 오퍼 생성 페이지를 엽니다 — 거기서 확정합니다. 최소 담보는 대출의 헬스 팩터를 프로토콜 하한값(1.5)에 유지하는 최소 금액입니다. 늘릴 수는 있지만 줄일 수는 없습니다."
+  },
+  "liquidityNotice": {
+    "thinCollateralOnChain": "⚠ 이 담보 자산은 이 체인에서 유동성이 얕습니다. 여기서 청산될 경우 스왑이 비용이 많이 들거나 실패할 수 있으며 — 이 자산은 다른 체인에서 훨씬 깊은 유동성을 가질 수 있습니다. 유동성이 더 많은 체인을 사용하는 것을 고려하세요."
   }
 }

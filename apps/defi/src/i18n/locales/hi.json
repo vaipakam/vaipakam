@@ -260,7 +260,10 @@
       "disabledShort": "interval ≥ duration",
       "hintShort": "Pick a cadence to require interest settlement at fixed intervals during the loan. Larger principals (above the configured threshold) unlock finer cadences. If a borrower misses a period after the grace window, anyone can call a settler that sells just enough collateral to cover the shortfall.",
       "hintMultiYear": "Multi-year loans require at least Annual settlement. The borrower must pay each year's accrued interest by the year-end checkpoint, or after the grace window anyone can sell collateral to cover the shortfall — possibly triggering broader liquidation."
-    }
+    },
+    "marketWidgetBanner": "इस जोड़ी के वर्तमान मार्केट रेट (≈ {{rate}}% APR) पर पोस्ट किया जा रहा है। पुष्टि से पहले नीचे की शर्तों की समीक्षा और समायोजन करें।",
+    "firstOfferBanner": "इस जोड़ी के लिए अभी कोई मार्केट रेट नहीं है — आप पहला ऑफ़र पोस्ट करेंगे। नीचे ब्याज दर सेट करें।",
+    "marketWidgetIlliquidBanner": "⚠ इस जोड़ी में बिना तरल बाज़ार वाली संपत्ति है (कोई ऑरेकल मूल्य नहीं)। प्रोटोकॉल यहाँ न्यूनतम संपार्श्विक की स्वचालित गणना नहीं कर सकता और न ही मानक हेल्थ फ़ैक्टर / LTV जाँच चला सकता है — आप और आपके प्रतिपक्ष सीधे मूल्य तय करते हैं और दोनों की सहमति आवश्यक है। नीचे सभी शर्तें सेट करें।"
   },
   "loanDetails": {
     "connectTitle": "अपना वॉलेट कनेक्ट करें",
@@ -1772,5 +1775,21 @@
     "message": "Vaipakam का नया संस्करण उपलब्ध है।",
     "reload": "रीलोड करें",
     "reloading": "रीलोड हो रहा है…"
+  },
+  "marketRateWidget": {
+    "title": "मार्केट रेट पर उधार दें / उधार लें",
+    "lendingAmountLabel": "उधार राशि",
+    "marketRateHint": "वर्तमान मार्केट रेट ≈ {{rate}}% APR",
+    "noMarketRateHint": "इस जोड़ी के लिए अभी कोई मार्केट रेट नहीं — आप पहला ऑफ़र पोस्ट करेंगे",
+    "minCollateralHint": "न्यूनतम संपार्श्विक ≈ {{amount}}",
+    "minCollateralPrompt": "न्यूनतम संपार्श्विक देखने के लिए उधार राशि दर्ज करें",
+    "computingMinCollateral": "न्यूनतम संपार्श्विक की गणना हो रही है…",
+    "illiquidCollateralHint": "यह संपत्ति किसी तरल बाज़ार में नहीं है — ऑफ़र पेज पर संपार्श्विक शर्तें सेट करें",
+    "lendButton": "मार्केट रेट पर उधार दें",
+    "borrowButton": "मार्केट रेट पर उधार लें",
+    "footnote": "रेट, राशि और न्यूनतम संपार्श्विक पहले से भरकर ऑफ़र बनाएँ पेज खोलता है — वहाँ पुष्टि करें। न्यूनतम संपार्श्विक वह सबसे छोटा है जो ऋण के हेल्थ फ़ैक्टर को प्रोटोकॉल की न्यूनतम सीमा (1.5) पर रखता है; आप इसे बढ़ा सकते हैं, घटा नहीं सकते।"
+  },
+  "liquidityNotice": {
+    "thinCollateralOnChain": "⚠ इस संपार्श्विक संपत्ति की इस चेन पर तरलता पतली है। यदि इसे यहाँ लिक्विडेट किया गया तो स्वैप महंगा हो सकता है या विफल हो सकता है — और यह संपत्ति किसी अन्य चेन पर बहुत अधिक गहरी हो सकती है। अधिक तरलता वाली चेन का उपयोग करने पर विचार करें।"
   }
 }

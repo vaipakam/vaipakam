@@ -48,7 +48,8 @@ library LibOfferMatch {
         CollateralBelowRequired,  // borrower's posted collateral < lender's required at the matched amount
         OfferAccepted,            // either offer already terminal
         WrongOfferType,           // L isn't Lender or B isn't Borrower
-        HFTooLow                  // synthetic HF at matched amount + collateral < 1.5e18
+        HFTooLow,                 // (depthTieredLtvEnabled off) synthetic HF at matched amount + collateral < 1.5e18
+        LtvAboveTier              // (depthTieredLtvEnabled on) synthetic init-LTV at matched amount + collateral > the effective tier cap (or collateral is Tier 0 / no-borrow)
     }
 
     /// @notice Structured return from `previewMatch`. Bots check
@@ -148,9 +149,12 @@ library LibOfferMatch {
     /// @notice Validate a candidate match between two offers and
     ///         compute the concrete (amount, rateBps, reqCollateral)
     ///         the resulting loan would carry. Pure of side effects;
-    ///         no state writes. Synthetic HF check uses `LibRiskMath`
-    ///         so bots can filter HF-failing pairs without paying for
-    ///         a reverting tx.
+    ///         no state writes. The synthetic init-gate check mirrors
+    ///         `LoanFacet._checkInitialLtvAndHf` — `HF >= 1.5e18` while
+    ///         `depthTieredLtvEnabled` is off (`MatchError.HFTooLow` on
+    ///         fail), the per-tier LTV cap when it's on (`MatchError.LtvAboveTier`)
+    ///         — so a bot can filter pairs the binding gate would revert
+    ///         without paying for the reverting tx.
     /// @dev    Borrower-offer is single-fill in Phase 1; this preview
     ///         enforces that the borrower's `amountFilled == 0`. For
     ///         lender-offer (which can be partial-filled), uses
@@ -240,17 +244,55 @@ library LibOfferMatch {
             return r;
         }
 
-        // Synthetic HF check: at the matched (amount, reqCollateral),
-        // does HF >= 1.5e18 hold? Reuse the LibRiskMath floor logic —
-        // if matched collateral >= floor(matchAmount), HF is satisfied.
-        uint256 floor = LibRiskMath.minCollateralForLending(
-            r.matchAmount,
-            L.lendingAsset,
-            L.collateralAsset
-        );
-        if (floor > 0 && r.reqCollateral < floor) {
-            r.errorCode = MatchError.HFTooLow;
-            return r;
+        // Synthetic init-gate check at the matched (amount, reqCollateral)
+        // — must mirror `LoanFacet._checkInitialLtvAndHf` so a bot's
+        // preview never admits a pair the binding gate would revert. Two
+        // regimes, switched by `depthTieredLtvEnabled`:
+        if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
+            // ON: the effective init-LTV cap = min(per-asset maxLtvBps,
+            // tierMaxInitLtvBps[effectiveTier(collateral)]). A Tier-0 /
+            // no-maxLtv collateral ⇒ cap 0 ⇒ no positive amount works.
+            uint8 effTier =
+                OracleFacet(address(this)).getEffectiveLiquidityTier(L.collateralAsset);
+            uint256 maxLtv = s.assetRiskParams[L.collateralAsset].maxLtvBps;
+            // Phase 5 of AutonomousLtvAndOracleFallback.md — read the
+            // autonomous tier-LTV cache (peer-derived + bound-checked,
+            // refreshable permissionlessly) instead of the governance
+            // setter. Hard-stale cache falls back to per-tier library
+            // defaults. Keeps `matchOffers`' synthetic-HF check in sync
+            // with `LoanFacet._checkInitialLtvAndHf` — both consult
+            // the same effective cap.
+            uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(effTier));
+            uint256 cap = maxLtv < tierCap ? maxLtv : tierCap;
+            uint256 capFloor = LibRiskMath.minCollateralForLtvCap(
+                r.matchAmount,
+                L.lendingAsset,
+                L.collateralAsset,
+                cap
+            );
+            // `capFloor == type(uint256).max` ⇒ cap is 0 (no borrow) ⇒
+            // reject. `capFloor == 0` ⇒ no create-time bound (missing
+            // oracle) ⇒ leave it to the runtime gate. Otherwise the
+            // matched collateral must meet the floor.
+            if (
+                capFloor == type(uint256).max
+                || (capFloor != 0 && r.reqCollateral < capFloor)
+            ) {
+                r.errorCode = MatchError.LtvAboveTier;
+                return r;
+            }
+        } else {
+            // OFF (the default): HF >= 1.5e18 — reuse the LibRiskMath
+            // floor; matched collateral >= floor(matchAmount) ⇒ satisfied.
+            uint256 floor = LibRiskMath.minCollateralForLending(
+                r.matchAmount,
+                L.lendingAsset,
+                L.collateralAsset
+            );
+            if (floor > 0 && r.reqCollateral < floor) {
+                r.errorCode = MatchError.HFTooLow;
+                return r;
+            }
         }
 
         r.lenderRemainingPostMatch = lenderRemaining - r.matchAmount;

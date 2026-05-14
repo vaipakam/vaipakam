@@ -1,12 +1,140 @@
 # "Lend / Borrow at market rate" widget + depth-tiered LTV
 
-Status: **design locked 2026-05-13 (§5) — implementation not started.**
-Two related but separable pieces. Piece A (the widget) is a
-frontend-only change on top of the already-shipped Range Orders Phase 1
-and the existing `HF ≥ 1.5e18` init gate — cleared to build. Piece B
-(depth-tiered LTV) is a contract risk-parameter change that **requires
-an audit + risk sign-off** and is queued behind the Range-Orders +
-matcher-bot testnet bake (§4.4).
+Status: **design locked 2026-05-13 (§5). Piece A SHIPPED; Piece B
+contracts LANDED behind the `depthTieredLtvEnabled` kill-switch (default
+`false` ⇒ no behaviour change); audit + the §4.4 follow-ups pending
+before the switch flips on any chain.**
+
+Implementation snapshot (branch `feat/market-rate-widget-and-tiered-ltv`):
+- **§4.4 step 1 — Piece A — SHIPPED & deployed** (base-sepolia
+  `a1eb9fcb`): the widget on OfferBook, auto min-collateral, deep-link to
+  Create Offer, cross-chain "thin here" warnings on Create Offer +
+  Accept Offer. (Polish left: i18n for the 9 non-en locales; optional
+  full 0x/1inch slippage preflight inside the widget.)
+- **§4.4 step 2 — matcher ported into `apps/keeper`** — `matcher.ts`
+  wired into the cron. Not deployed (the signing-Worker push / testnet
+  bake is the deliberate step).
+- **§4.4 step 3 (partial) — base `_v3DepthLiquid` made a real PAD
+  figure** (`2 × WETH-leg-virtual-reserve × ethPrice`; `MIN_LIQUIDITY_USD`
+  → `MIN_LIQUIDITY_PAD`, value unchanged). The *full* step 3 (replace
+  the depth-at-tick gate with a slippage-at-`floorSizePad` simulation —
+  §4.2) is still a follow-up; until then `MIN_LIQUIDITY_PAD` is the
+  binary `Liquid` threshold and `floorSizePad` is just a tier-test size.
+- **§4.4 step 4 — rest of Piece B — LANDED behind `depthTieredLtvEnabled`:**
+  `LibSlippage` (fee-aware CPMM price-impact, decimal-independent; V3
+  virtual-reserve in-tick approximation, *not* the gas-heavy Quoter) +
+  `OracleFacet.getLiquidityTier` / `getEffectiveLiquidityTier` (the
+  on-chain tier authority; best route over `paaAssets × {Uni/Pancake/Sushi
+  V3} × fee ≤ 0.3%`; value-balance + best-effort TWAP-tick guards;
+  `effectiveTier = min(onChain, keeperTier ∈ {1,2,3}, default 1)`) +
+  `ProtocolConfig` knobs (`liquiditySlippageBps` / `twapWindowSec` /
+  `twapConsistencyBps` / `floorSizePad` / `tier{1,2,3}SizePad` in PAD ×
+  1e6 — "PAD" = the T-048 Predominantly Available Denominator, USD on
+  the retail deploy; `tier{1,2,3}MaxInitLtvBps`) + `Storage.paaAssets[]`
+  (PAA — the per-chain quote tokens the depth probe looks at; empty ⇒
+  `[wethContract]`) + `keeperTier` mapping + `KEEPER_ROLE` + `ConfigFacet`
+  setters (`set{DepthTieredLtvEnabled, LiquiditySlippageBps, TwapGuard,
+  LiquidityTierSizes, TierMaxInitLtvBps, PaaAssets}` under `ADMIN_ROLE`;
+  `setKeeperTier` under `KEEPER_ROLE`) + `LoanFacet._checkInitialLtvAndHf`
+  cap (`min(maxLtvBps, tierMaxInitLtvBps[effectiveTier(collateral)])`,
+  HF floor relaxed to `≥ 1e18`) + `IVaipakamErrors.InitLtvAboveTier`. All
+  6 commits, full forge suite green throughout (1718 passing).
+- **§4.4 step 5 — `apps/keeper` liquidity-confidence relay — LANDED**
+  (`liquidityConfidence.ts`, 799 lines): periodic 0x/1inch
+  slippage-at-tier-sizes per active ERC-20 collateral asset (best
+  route over the on-chain PAA list) ⇒ aggregator-confirmed tier ⇒
+  D1-backed promote/demote state machine (`LIQ_CONFIDENCE_MIN_CHECKS`
+  / `LIQ_CONFIDENCE_MIN_WINDOW_DAYS` env knobs; demote immediately on
+  degradation) ⇒ `setKeeperTier` on-chain (gated on `isKeeperEnabled`
+  AND `depthTieredLtvEnabled` for the chain; the D1 counter is tracked
+  regardless so the catch-up after a switch-flip is fast). Tier-3
+  promotion additionally requires a **2-of-3 "battle-tested elsewhere"
+  ensemble**: ① DeFiLlama listing on Aave V3 / Compound V3 / Morpho
+  on this chain with TVL ≥ `LIQ_TIER3_MIN_TVL_USD` (default $10M);
+  ② CoinGecko market cap ≥ `LIQ_TIER3_MIN_MCAP_USD` (default $1B);
+  ③ CoinGecko 24h volume ≥ `LIQ_TIER3_MIN_VOL_USD` (default $50M).
+  Operators can disable signal ① via `LIQ_TIER3_DISABLE_DEFI_LISTING`
+  (the ensemble then collapses to 2-of-2 CoinGecko-only — stricter,
+  safe). Cron-wired (`runLiquidityConfidence` in `apps/keeper/src/index.ts`),
+  tsc clean; not deployed.
+- **Piece B follow-up (c) — `LibOfferMatch.previewMatch` AND
+  `RefinanceFacet` tier-cap alignment — LANDED**: both sites now
+  mirror `LoanFacet._checkInitialLtvAndHf` (the binding init-gate)
+  under `depthTieredLtvEnabled`. `previewMatch` got the
+  `LibRiskMath.minCollateralForLtvCap` + `MatchError.LtvAboveTier`
+  surface in the Phase-5 autonomous-LTV work; `RefinanceFacet`'s
+  post-refinance gate caught up 2026-05-14 (commit `d9de20a`):
+  switch-OFF keeps legacy `LTV ≤ maxLtvBps` + `HF ≥ 1.5`, switch-ON
+  uses `LTV ≤ min(maxLtvBps, tierCap)` + `HF ≥ 1.0`. Closes the "bot
+  submits reverting matchOffers" gap AND the analogous "borrower
+  refinances into a position the init gate would have rejected" gap.
+  (`PrecloseFacet.transferObligationViaOffer` has no HF revert gate
+  to align — only an event-payload best-effort read; borrower
+  substitution preserves the original loan's economics by
+  construction.) +4 new RefinanceFacet tests on top of the 5
+  pre-existing LoanFacet init-gate tests.
+- **Piece B follow-up (a) — init-gate integration tests — LANDED**
+  (8 cases on `LoanFacetTest` after the 2026-05-14 boundary
+  additions: above/below Tier-1 cap, HF≥1e18 floor relaxed, HF<1
+  still reverts, Tier-0 collateral rejected, Tier-2 boundary at
+  62%, Tier-3 boundary at 73%, and switch-OFF ignores the
+  tier entirely). The `if (depthTieredLtvEnabled)` branch of
+  `_checkInitialLtvAndHf` is fully unit-tested across all three tier
+  values + the kill-switch state.
+- **Piece B follow-up (b) — Uni-V2-fork family in the route search —
+  LANDED**: per-chain `uniswapV2Factory` / `sushiswapV2Factory` /
+  `pancakeswapV2Factory` storage + `AdminFacet` setters/getters + a V2
+  probe (`factory.getPair(a, b)` + `pool.getReserves()` ⇒ real reserves
+  ⇒ exact CPMM math, same value-balance guard as V3, no on-chain TWAP
+  guard — value-balance is the only manipulation check on V2) +
+  selector plumbing + 3 new `DepthTieredLtv.t.sol` cases (V2 pulls an
+  asset up to Tier 3 above its V3-only Tier 1; V2 value-balance guard
+  excludes a mismatched pool; V2 alone can't make an asset `Liquid` —
+  `_checkLiquidity` deliberately stays V3-only). A zero V2 factory
+  skips that leg; a fresh deploy has all three zero ⇒ V3-only route
+  search, no behaviour change vs the pre-(b) state. **Per-chain
+  rollout** (2026-05-14, commit `c80eb7e`):
+  `contracts/script/ConfigureV2Factories.s.sol` ships canonical V2
+  factory addresses for Ethereum / Base / Arbitrum / Optimism / BNB
+  Chain / Polygon PoS (verified against each protocol's official
+  registry); operator runs once per chain to flip the V2 leg on.
+- **Piece B follow-up (e) — frontend `useProtocolConfig` wiring —
+  LANDED** (2026-05-14, commit `f73646b`): the `useMarketRateMinCollateral`
+  auto-fill hook + `OfferRiskPreview` HF-warning component are now
+  tier-aware. Under `depthTieredLtvEnabled = false` they stay at
+  today's legacy `HF ≥ 1.5` math; flipped on, they switch to
+  `cap = min(maxLtvBps, tierMaxInitLtvBps[effectiveTier])` + `HF ≥
+  1.0` and surface the resolved cap (`effectiveLtvCapBps`) so callers
+  can render tier-aware hints. The on-chain `getEffectiveLiquidityTier`
+  read comes via the pre-existing `useAssetTier` hook (was defined
+  but unconsumed; this commit makes it the first real caller).
+- **Liquidator keeper bot hardening — LANDED** (2026-05-14, commits
+  `a63d5ef`, `ee8a773`, `43e5b8f`): partial-liquidation + split-route
+  + the new flash-loan / liquidator-buys-at-discount path
+  (`RiskFacet.triggerLiquidationDiscounted` + the standalone
+  `FlashLoanLiquidator` receiver supporting Aave V3 `flashLoanSimple`
+  + Balancer V2 `flashLoan`, behind the `discountPathEnabled`
+  master kill-switch). The Tier-3 LTV ramp past its conservative
+  opening figure is no longer gated on liquidator capacity — the
+  contract surface is end-to-end and external MEV-style liquidators
+  can plug in via the public ABI. See
+  `docs/DesignsAndPlans/FlashLoanLiquidationPath.md`.
+- **Code side — COMPLETE.** Everything that was on the "must precede
+  flipping `depthTieredLtvEnabled` on any chain" list is now landed
+  end-to-end. The remaining work is **operational** (the §4.4-step-6
+  audit gate + per-chain rollout):
+  - Run `ConfigureV2Factories.s.sol` per chain to wire V2 forks
+    (zero by default ⇒ V3-only until configured).
+  - Run the pre-deploy census per chain
+    (`docs/AuditPackage/pre-deploy-census-2026-05-14/` was today's
+    first pass; re-run after Aave's WETH-restoration AIP executes
+    to capture post-exploit steady state).
+  - Auditor engagement (covers depth-tiered-LTV gate + autonomous
+    tier-LTV layer + the new discount path together).
+  - Risk-committee sign-off.
+  - Per-chain `setDepthTieredLtvEnabled(true)` +
+    (independently) `setDiscountPathEnabled(true)` — see
+    [`docs/ops/FlashLoanLiquidatorRollout.md`](../ops/FlashLoanLiquidatorRollout.md).
 
 Author note: this doc records a real-pool depth census (§3) that
 changed the recommendation for Piece B — read §3 and §4 before
@@ -396,7 +524,13 @@ need either (a) integrating those DEX families on-chain (Uni-V2 +
 Curve closes most of the gap — decision 8), or (b) an *override*
 relay that can promote *above* the on-chain ceiling — which is the
 dangerous unbounded-up variant and would require a quorum + time-lock.
-v1: Uni-V3-clone family only, accept the conservative under-count.
+v1: Uni-V3-clone trio (Uni/Pancake/Sushi V3) **plus** the Uni-V2-clone
+trio (Uni V2 / Sushi V2 @ 30bps, Pancake V2 @ 25bps — landed as Piece B
+follow-up b: `factory.getPair(a, b)` + `pool.getReserves()` ⇒ real
+reserves, exact CPMM math, same value-balance guard as V3); a zero
+factory on any leg skips it. Curve StableSwap is the next-most-valuable
+on-chain expansion; the broader "every chain-native DEX" gap is fixed
+off-chain by the keeper relay (0x/1inch route over everything).
 
 **The tier = which size the asset clears at ≤ the slippage bound** (all
 governance globals):
@@ -480,6 +614,29 @@ allowlist, both permissionless-compatible:
      checks over D days — globals), the keeper raises `keeperTier` one
      step. So Tier 2 / Tier 3 require **both** the on-chain check *and*
      the aggregator-confirmed history.
+   - **Plus, for the *top* tier, a "battle-tested elsewhere" advisory**
+     (user 2026-05-13). Before promoting an asset to Tier 3 the keeper
+     additionally checks whether it's **listed as collateral on ≥ 1
+     major, long-lived lending protocol on this chain** — Aave v3,
+     Compound v3, Morpho-curated vaults — with a non-trivial collateral
+     factor *and* non-trivial TVL there (each readable on-chain:
+     Aave `PoolDataProvider.getReserveConfigurationData` + `getReserveData`,
+     Compound `Comet.getAssetInfoByAddress`, Morpho market params; or
+     off-chain via their APIs / DeFiLlama). The signal it gives: "a
+     battle-tested risk team has vetted this asset and it has survived
+     real liquidations in production" — a *track-record* signal that
+     complements the *direct* "can a liquidator dump it now" signal from
+     0x/1inch. **Important:** we use their *listing + TVL* as a
+     **classification input** ("Aave has WBTC supported with $500 M
+     supplied → that's Tier-3 material for us"), **not** their *LTV
+     numbers* as a parameter source — Aave's 73% WBTC LTV is tuned to
+     Aave's per-second-bot liquidation machinery, not ours; our tier
+     LTVs (50 / 60 / 65) stay our own conservative numbers. An asset not
+     listed on any of them can still reach Tier 2 on the slippage check
+     alone (Tier 2's 60% LTV isn't as demanding) but Tier 3 wants the
+     extra corroboration. This is purely an off-chain heuristic in the
+     keeper's promotion logic — no contract impact; a compromised keeper
+     ignoring it still can't promote past the on-chain ceiling.
    - **The keeper *demotes* immediately** the moment a check shows
      degradation (drops `keeperTier` toward 1) — fail-safe direction,
      no window.
@@ -603,6 +760,28 @@ risk-committee call — it can ramp up from a lower opening figure once
 liquidation behaviour is observed.
 
 ### 4.4 Sequencing & gates
+
+**Status as of 2026-05-13 (branch `feat/market-rate-widget-and-tiered-ltv`):**
+
+- Step 1 — Piece A: **DONE & deployed** base-sepolia (`a1eb9fcb`). Widget + cross-chain "thin here" warning + 0x/1inch slippage preflight + i18n for all 10 locales all shipped.
+- Step 2 — matcher port: **DONE.** `apps/keeper/src/matcher.ts` + `runMatcher` wired into the cron. Not deployed yet — that's the deliberate ~2-week testnet-bake gate.
+- Step 3 — base `checkLiquidity` floor: **DONE.** Two-stage rollout: first the depth-at-tick metric was upgraded to a real PAD figure (`2 × WETH-leg-virtual-reserve × ethPrice`, was just `pool.liquidity()`); then the FULL upgrade in `050e1ea` retired `_v3DepthLiquid` entirely and replaced it with `_passesFloorSlippage` — a slippage-at-`floorSizePad` route search reusing the same machinery `_liquidityTier` uses. Adds value-balance + TWAP-consistency guards, includes V2 routes in the base check, drops the 1% fee tier. 1795 / 0 / 5 regression green.
+- Step 4 — rest of Piece B behind `depthTieredLtvEnabled`: **DONE.** 7 contract commits, `getLiquidityTier` view + `effectiveTier` + tier-size/tier-LTV/TWAP-guard/confidence-window globals + `LoanFacet._checkInitialLtvAndHf` cap + `keeperTier` mapping + `KEEPER_ROLE` + the Uni-V2-fork-family route search (`055af76`), the `LibOfferMatch.previewMatch` tier-cap alignment (`96d6697`), the init-gate integration tests (`cc6419a`), the frontend `useProtocolConfig` + `useAssetTier` wiring (`7118200`). Kill-switch default `false` ⇒ today's HF≥1.5 still binding.
+- Step 5 — liquidity-confidence relay: **DONE.** `apps/keeper/src/liquidityConfidence.ts` (`89920f4`) + the Tier-3 2-of-3 ensemble advisory (DeFiLlama listing + CoinGecko market cap + CoinGecko 24h volume — `2af421e`).
+- Step 6 — per-chain slippage census + audit + risk sign-off: **PARTIAL.** The census tool (`contracts/script/SlippageCensus.s.sol` + `docs/SlippageCensusGuide.md`) landed in `9a8ce69` — operators can now produce the per-chain CSV the audit consumes. The audit + risk-committee sign-off remains human / governance work and is still OPEN.
+
+**Deferred / parallel — liquidator keeper bot hardening: SUBSTANTIALLY DONE.**
+
+- Multicall HF + priority sort (faster monitoring): `43f7b6c`.
+- Best/split-route swaps (`LibSwap.swapWithSplit` + `RiskFacet.triggerLiquidationSplit` + keeper decision logic): `4246a46` + `7d43034`.
+- Partial liquidations (`RiskFacet.triggerPartialLiquidation` + governance close-factor cap + full test sweep + keeper optimal-fraction math): `1ca7cba` + `8da2c8d` + `a3c53dd` + `c487239` + `3a0f81a` + `738c7c7` + `5bc4cd6`.
+- Flash-loan-funded execution: **DONE 2026-05-14** (commits `a63d5ef`, `ee8a773`, `43e5b8f`). The risk-committee question got resolved with a hybrid model: keep the existing atomic-swap path (`triggerLiquidation` / `Split` / `Partial`) AND add a parallel `RiskFacet.triggerLiquidationDiscounted` Aave-V3 / Compound-V3 / Morpho-Blue-style "liquidator buys collateral at a per-tier discount" path — gated by a separate `discountPathEnabled` master kill-switch. Standalone `contracts/src/keeper/FlashLoanLiquidator.sol` receiver supports Aave V3 `flashLoanSimple` + Balancer V2 `flashLoan` so the keeper EOA needs zero working capital. Per-chain rollout: see `docs/ops/FlashLoanLiquidatorRollout.md`. Design doc: `docs/DesignsAndPlans/FlashLoanLiquidationPath.md`.
+
+The Tier-3 LTV ramp past its conservative opening (currently 73%, per the Phase-5 autonomous tier-LTV cache library default) is gated on the Step-6 audit alone. The Tier-3 advisory "battle-tested elsewhere" 2-of-3 ensemble (DeFiLlama listing + CoinGecko market cap + CoinGecko 24h volume) is fully implemented in `apps/keeper/src/liquidityConfidence.ts`. Tiers 1 and 2 don't depend on the audit (the kill-switch keeps the legacy `HF ≥ 1.5` gate until governance flips per chain).
+
+---
+
+**Original plan (preserved for reference):**
 
 1. **Ship Piece A** — the widget + the §2.b cross-chain "thin here"
    warning + the §4.1.b 0x/1inch widget pre-check. Frontend-only, no

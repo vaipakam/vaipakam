@@ -260,7 +260,10 @@
       "disabledShort": "interval ≥ duration",
       "hintShort": "Pick a cadence to require interest settlement at fixed intervals during the loan. Larger principals (above the configured threshold) unlock finer cadences. If a borrower misses a period after the grace window, anyone can call a settler that sells just enough collateral to cover the shortfall.",
       "hintMultiYear": "Multi-year loans require at least Annual settlement. The borrower must pay each year's accrued interest by the year-end checkpoint, or after the grace window anyone can sell collateral to cover the shortfall — possibly triggering broader liquidation."
-    }
+    },
+    "marketWidgetBanner": "Publication au taux du marché actuel (≈ {{rate}}% APR) pour cette paire. Vérifiez et ajustez les conditions ci-dessous avant de confirmer.",
+    "firstOfferBanner": "Aucun taux du marché n'existe encore pour cette paire — vous publieriez la première offre. Définissez le taux d'intérêt ci-dessous.",
+    "marketWidgetIlliquidBanner": "⚠ Cette paire inclut un actif sans marché liquide (pas de prix d'oracle). Le protocole ne peut pas calculer automatiquement une garantie minimale ni exécuter les vérifications standard de facteur de santé / LTV ici — vous et votre contrepartie fixez le prix directement et les deux doivent consentir. Définissez toutes les conditions ci-dessous."
   },
   "loanDetails": {
     "connectTitle": "Connectez votre portefeuille",
@@ -1791,5 +1794,21 @@
     "message": "Une nouvelle version de Vaipakam est disponible.",
     "reload": "Recharger",
     "reloading": "Rechargement…"
+  },
+  "marketRateWidget": {
+    "title": "Prêter / Emprunter au taux du marché",
+    "lendingAmountLabel": "Montant à prêter",
+    "marketRateHint": "Taux du marché actuel ≈ {{rate}}% APR",
+    "noMarketRateHint": "Pas encore de taux du marché pour cette paire — vous publieriez la première offre",
+    "minCollateralHint": "Garantie minimale ≈ {{amount}}",
+    "minCollateralPrompt": "Saisissez un montant à prêter pour voir la garantie minimale",
+    "computingMinCollateral": "Calcul de la garantie minimale…",
+    "illiquidCollateralHint": "Cet actif n'est pas sur un marché liquide — définissez les conditions de la garantie sur la page de création d'offre",
+    "lendButton": "Prêter au taux du marché",
+    "borrowButton": "Emprunter au taux du marché",
+    "footnote": "Ouvre Créer une offre avec le taux, le montant et la garantie minimale pré-remplis — vous confirmez là. La garantie minimale est la plus petite qui maintient le facteur de santé du prêt au seuil du protocole (1.5) ; vous pouvez l'augmenter, pas la réduire."
+  },
+  "liquidityNotice": {
+    "thinCollateralOnChain": "⚠ Cet actif de garantie a peu de liquidité sur cette chaîne. S'il est liquidé ici, le swap peut être coûteux ou échouer — et cet actif peut être beaucoup plus profond sur une autre chaîne. Envisagez d'utiliser la chaîne où il a plus de liquidité."
   }
 }

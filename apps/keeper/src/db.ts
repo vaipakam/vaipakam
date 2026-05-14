@@ -227,3 +227,70 @@ export async function sweepExpiredLinks(db: D1Database): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
   await db.prepare(`DELETE FROM telegram_links WHERE expires_at < ?`).bind(now).run();
 }
+
+// ─── Depth-tiered LTV — liquidity-confidence relay state ──────────────
+// One row per (chain, collateral asset). Tracks the off-chain
+// aggregator-confirmed tier and the consecutive-eligible-tick streak the
+// promotion rule consumes. See `liquidityConfidence.ts` for the state
+// machine; migration `apps/indexer/migrations/0011_liquidity_confidence.sql`.
+
+export interface LiquidityConfidenceRow {
+  chain_id: number;
+  /** lowercased 0x address of the collateral asset */
+  asset: string;
+  /** the aggregator-confirmed tier at the last check (0-3) */
+  agg_tier: number;
+  /** the on-chain `keeperTier` at the last check (1-3) */
+  on_chain_tier: number;
+  /** consecutive ticks where `agg_tier > on_chain_tier` (eligible-to-promote) */
+  healthy_streak: number;
+  /** ts of the first tick in the current eligible streak, or null */
+  first_eligible_ts: number | null;
+  last_check_ts: number;
+}
+
+/** Read the confidence row for (chain, asset). `null` if unseen. */
+export async function getLiquidityConfidence(
+  db: D1Database,
+  chainId: number,
+  asset: string,
+): Promise<LiquidityConfidenceRow | null> {
+  const row = await db
+    .prepare(
+      `SELECT chain_id, asset, agg_tier, on_chain_tier, healthy_streak, first_eligible_ts, last_check_ts
+       FROM liquidity_confidence
+       WHERE chain_id = ? AND asset = ?`,
+    )
+    .bind(chainId, asset.toLowerCase())
+    .first<LiquidityConfidenceRow>();
+  return row ?? null;
+}
+
+/** Upsert the confidence row. */
+export async function upsertLiquidityConfidence(
+  db: D1Database,
+  row: LiquidityConfidenceRow,
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO liquidity_confidence
+         (chain_id, asset, agg_tier, on_chain_tier, healthy_streak, first_eligible_ts, last_check_ts)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(chain_id, asset) DO UPDATE SET
+         agg_tier = excluded.agg_tier,
+         on_chain_tier = excluded.on_chain_tier,
+         healthy_streak = excluded.healthy_streak,
+         first_eligible_ts = excluded.first_eligible_ts,
+         last_check_ts = excluded.last_check_ts`,
+    )
+    .bind(
+      row.chain_id,
+      row.asset.toLowerCase(),
+      row.agg_tier,
+      row.on_chain_tier,
+      row.healthy_streak,
+      row.first_eligible_ts,
+      row.last_check_ts,
+    )
+    .run();
+}

@@ -51,6 +51,29 @@
   },
   {
     "type": "function",
+    "name": "getPeerProtocolAddresses",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "aaveV3PoolDataProvider",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "compoundV3Comet",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "morphoBlue",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getPythConfidenceMaxBps",
     "inputs": [],
     "outputs": [
@@ -155,6 +178,25 @@
   },
   {
     "type": "function",
+    "name": "getTierReferenceAssets",
+    "inputs": [
+      {
+        "name": "tier",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address[]",
+        "internalType": "address[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "setApi3ServerV1",
     "inputs": [
       {
@@ -236,6 +278,29 @@
         "name": "minValidAnswer",
         "type": "int256",
         "internalType": "int256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setPeerProtocolAddresses",
+    "inputs": [
+      {
+        "name": "aaveV3PoolDataProvider",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "compoundV3Comet",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "morphoBlue",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -378,6 +443,24 @@
   },
   {
     "type": "function",
+    "name": "setTierReferenceAssets",
+    "inputs": [
+      {
+        "name": "tier",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "assets",
+        "type": "address[]",
+        "internalType": "address[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setUniswapV3Factory",
     "inputs": [
       {
@@ -474,6 +557,31 @@
         "type": "int256",
         "indexed": false,
         "internalType": "int256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PeerProtocolAddressesSet",
+    "inputs": [
+      {
+        "name": "aaveV3PoolDataProvider",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "compoundV3Comet",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "morphoBlue",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -626,6 +734,25 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TierReferenceAssetsSet",
+    "inputs": [
+      {
+        "name": "tier",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "assets",
+        "type": "address[]",
+        "indexed": false,
+        "internalType": "address[]"
       }
     ],
     "anonymous": false

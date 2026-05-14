@@ -27,6 +27,82 @@
   },
   {
     "type": "function",
+    "name": "getDepthTierConfigBundle",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "depthTieredLtvEnabled",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "liquiditySlippageBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "twapWindowSec",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "twapConsistencyBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "floorSizePad",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tier1SizePad",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tier2SizePad",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tier3SizePad",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tier1MaxInitLtvBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tier2MaxInitLtvBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tier3MaxInitLtvBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getDepthTieredLtvEnabled",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getEffectiveGraceSeconds",
     "inputs": [
       {
@@ -161,6 +237,25 @@
   },
   {
     "type": "function",
+    "name": "getKeeperTier",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getLifMatcherFeeBps",
     "inputs": [],
     "outputs": [
@@ -284,6 +379,19 @@
         "name": "",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getPaaAssets",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address[]",
+        "internalType": "address[]"
       }
     ],
     "stateMutability": "view"
@@ -574,6 +682,82 @@
   },
   {
     "type": "function",
+    "name": "getTierLiqDiscountBps",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "tier1Bps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2Bps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3Bps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getTierLtvParams",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "tier1FloorBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier1CeilBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier1HaircutBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2FloorBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2CeilBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2HaircutBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3FloorBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3CeilBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3HaircutBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getTreasuryFeeBps",
     "inputs": [],
     "outputs": [
@@ -674,6 +858,32 @@
   },
   {
     "type": "function",
+    "name": "setDepthTieredLtvEnabled",
+    "inputs": [
+      {
+        "name": "enabled",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setDiscountPathEnabled",
+    "inputs": [
+      {
+        "name": "enabled",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setFallbackSplit",
     "inputs": [
       {
@@ -735,6 +945,24 @@
   },
   {
     "type": "function",
+    "name": "setKeeperTier",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tier",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setLifMatcherFeeBps",
     "inputs": [
       {
@@ -771,10 +999,64 @@
   },
   {
     "type": "function",
+    "name": "setLiquiditySlippageBps",
+    "inputs": [
+      {
+        "name": "newBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setLiquidityTierSizes",
+    "inputs": [
+      {
+        "name": "floorPad",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "tier1Pad",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "tier2Pad",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "tier3Pad",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setMaxOfferDurationDays",
     "inputs": [
       {
         "name": "newDays",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setMaxPartialLiquidationCloseFactorBps",
+    "inputs": [
+      {
+        "name": "newBps",
         "type": "uint16",
         "internalType": "uint16"
       }
@@ -864,6 +1146,19 @@
         "name": "enabled",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setPaaAssets",
+    "inputs": [
+      {
+        "name": "assets",
+        "type": "address[]",
+        "internalType": "address[]"
       }
     ],
     "outputs": [],
@@ -995,6 +1290,123 @@
   },
   {
     "type": "function",
+    "name": "setTierLiqDiscountBps",
+    "inputs": [
+      {
+        "name": "tier1Bps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2Bps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3Bps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setTierLtvParams",
+    "inputs": [
+      {
+        "name": "tier1FloorBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier1CeilBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier1HaircutBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2FloorBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2CeilBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2HaircutBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3FloorBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3CeilBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3HaircutBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setTierMaxInitLtvBps",
+    "inputs": [
+      {
+        "name": "tier1",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setTwapGuard",
+    "inputs": [
+      {
+        "name": "windowSec",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "consistencyBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setVpfiTierDiscountBps",
     "inputs": [
       {
@@ -1089,6 +1501,32 @@
   },
   {
     "type": "event",
+    "name": "DepthTieredLtvEnabledSet",
+    "inputs": [
+      {
+        "name": "enabled",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "DiscountPathEnabledSet",
+    "inputs": [
+      {
+        "name": "enabled",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "FallbackSplitSet",
     "inputs": [
       {
@@ -1140,6 +1578,25 @@
   },
   {
     "type": "event",
+    "name": "KeeperTierSet",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "tier",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "LifMatcherFeeBpsSet",
     "inputs": [
       {
@@ -1178,10 +1635,67 @@
   },
   {
     "type": "event",
+    "name": "LiquiditySlippageBpsSet",
+    "inputs": [
+      {
+        "name": "newBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "LiquidityTierSizesSet",
+    "inputs": [
+      {
+        "name": "floorPad",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "tier1Pad",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "tier2Pad",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "tier3Pad",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "MaxOfferDurationDaysSet",
     "inputs": [
       {
         "name": "newDays",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MaxPartialLiquidationCloseFactorBpsSet",
+    "inputs": [
+      {
+        "name": "newBps",
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"
@@ -1249,6 +1763,19 @@
         "type": "bytes32",
         "indexed": false,
         "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PaaAssetsSet",
+    "inputs": [
+      {
+        "name": "count",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -1380,6 +1907,136 @@
     "inputs": [
       {
         "name": "aprBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TierLiqDiscountBpsSet",
+    "inputs": [
+      {
+        "name": "tier1Bps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2Bps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3Bps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TierLtvParamsSet",
+    "inputs": [
+      {
+        "name": "tier1FloorBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier1CeilBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier1HaircutBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2FloorBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2CeilBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2HaircutBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3FloorBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3CeilBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3HaircutBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TierMaxInitLtvBpsSet",
+    "inputs": [
+      {
+        "name": "tier1",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TwapGuardSet",
+    "inputs": [
+      {
+        "name": "windowSec",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "consistencyBps",
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"
@@ -1594,6 +2251,17 @@
   },
   {
     "type": "error",
+    "name": "InvalidLiquidityTier",
+    "inputs": [
+      {
+        "name": "provided",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidMaxOfferDurationDays",
     "inputs": [
       {
@@ -1629,6 +2297,17 @@
       },
       {
         "name": "ceil",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidPartialLiqCloseFactorBps",
+    "inputs": [
+      {
+        "name": "bps",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -1711,6 +2390,53 @@
   },
   {
     "type": "error",
+    "name": "NonMonotoneTierLtvBps",
+    "inputs": [
+      {
+        "name": "t1",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "t2",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "t3",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NonMonotoneTierSizes",
+    "inputs": [
+      {
+        "name": "floorPad",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "t1Pad",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "t2Pad",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "t3Pad",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "NonMonotoneTierThresholds",
     "inputs": [
       {
@@ -1742,6 +2468,17 @@
   },
   {
     "type": "error",
+    "name": "PaaListInvalid",
+    "inputs": [
+      {
+        "name": "reason",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ParameterOutOfRange",
     "inputs": [
       {
@@ -1761,6 +2498,164 @@
       },
       {
         "name": "max",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TierLiqDiscountNonMonotonic",
+    "inputs": [
+      {
+        "name": "tier1Bps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2Bps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3Bps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TierLiqDiscountOutOfRange",
+    "inputs": [
+      {
+        "name": "tier",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "valueBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "floorBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "ceilBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TierLtvBoundsNonMonotonic",
+    "inputs": [
+      {
+        "name": "tier1CeilBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2FloorBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2CeilBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3FloorBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TierLtvBpsTooHigh",
+    "inputs": [
+      {
+        "name": "provided",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxAllowed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TierLtvCeilTooHigh",
+    "inputs": [
+      {
+        "name": "tier",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "ceilBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TierLtvFloorAboveCeil",
+    "inputs": [
+      {
+        "name": "tier",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "floorBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "ceilBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TierLtvHaircutTooHigh",
+    "inputs": [
+      {
+        "name": "tier",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "haircutBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TierSizeTooSmall",
+    "inputs": [
+      {
+        "name": "provided",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "minPad",
         "type": "uint256",
         "internalType": "uint256"
       }

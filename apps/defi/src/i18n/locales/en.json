@@ -660,8 +660,27 @@
     "claim": "Claim",
     "claimReadyTooltip": "This loan has unclaimed funds for you — open it to see the breakdown and claim."
   },
+  "marketRateWidget": {
+    "title": "Lend / Borrow at market rate",
+    "lendingAmountLabel": "Lending amount",
+    "marketRateHint": "Current market rate ≈ {{rate}}% APR",
+    "noMarketRateHint": "No market rate yet for this pair — you'd be posting the first offer",
+    "minCollateralHint": "Min collateral ≈ {{amount}}",
+    "minCollateralPrompt": "Enter a lending amount to see the minimum collateral",
+    "computingMinCollateral": "Computing minimum collateral…",
+    "illiquidCollateralHint": "This asset isn't on a liquid market — set collateral terms on the offer page",
+    "lendButton": "Lend at market rate",
+    "borrowButton": "Borrow at market rate",
+    "footnote": "Opens Create Offer with the rate, amount and minimum collateral pre-filled — you confirm there. The minimum collateral is the smallest that keeps the loan's health factor at the protocol floor (1.5); you can raise it, not lower it."
+  },
+  "liquidityNotice": {
+    "thinCollateralOnChain": "⚠ This collateral asset has thin liquidity on this chain. If it gets liquidated here the swap may be costly or fail — and this asset may be much deeper on another chain. Consider using the chain where it has more liquidity."
+  },
   "createOffer": {
     "connectTitle": "Connect Your Wallet",
+    "marketWidgetBanner": "Posting at the current market rate (≈ {{rate}}% APR) for this pair. Review and adjust the terms below before confirming.",
+    "firstOfferBanner": "No market rate exists for this pair yet — you'd be posting the first offer. Set the interest rate below.",
+    "marketWidgetIlliquidBanner": "⚠ This pair includes an asset without a liquid market (no oracle price). The protocol can't auto-compute a minimum collateral or run the standard health-factor / LTV checks here — you and your counterparty price this directly and both must consent. Set all terms below.",
     "connectBody": "Connect your wallet to create offers on Vaipakam.",
     "successTitle": "Offer Created Successfully!",
     "successBody": "Your offer has been submitted on-chain and a Vaipakam position NFT has been minted.",

@@ -7,8 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Currently developing a project called 'Vaipakam' (a Tamil name for 'Bank') which is a 'Decentralised P2P Lending, Borrowing and NFT Rental Platform'.
 - Follow the coding standards, style conventions and develop code by following best practices approach and with proper nat comments
 - Expects the code maintainability easier
-- Expects decisions based on architecturally strong layered approach
+- Expects decisions based on architecturally strong Layered & Modular Approach
 - GitHub repo for this project is: https://github.com/vaipakam/vaipakam.
+- Always look for a better approach and let the user know about it to decide
 
 ## Build & Test Commands
 
@@ -200,6 +201,7 @@ export step any more; the historical
 `ops/hf-watcher` itself.
 
 When you add a new facet that any of the Workers needs to read:
+
 1. Add the facet to the `FACETS=(...)` array in
    `contracts/script/exportFrontendAbis.sh`.
 2. Wire it into the re-export barrel
@@ -281,8 +283,8 @@ artifacts and stay in their respective env / config:
 - Frontend `.env.local`: per-chain RPC URLs (with API key),
   WalletConnect project ID, default chain ID, log-chunk tuning,
   feature flags, push channel address, plus `VITE_INDEXER_ORIGIN`
-  + `VITE_AGENT_ORIGIN` (the two Worker URLs the connected app
-  reads).
+  - `VITE_AGENT_ORIGIN` (the two Worker URLs the connected app
+    reads).
 - apps/agent `wrangler.jsonc:vars`: `FRONTEND_ORIGIN`,
   `TG_BOT_USERNAME`, `DIAG_*` knobs.
 - apps/agent Cloudflare secrets (set via `wrangler secret put`):

@@ -92,6 +92,54 @@ library LibRiskMath {
         }
     }
 
+    /// @notice Smallest collateral amount (collateral-asset native units)
+    ///         that keeps init-LTV at or below `capBps` against the given
+    ///         lending amount — the depth-tiered-LTV analog of
+    ///         {minCollateralForLending}, used by `LibOfferMatch.previewMatch`
+    ///         when `depthTieredLtvEnabled` so a bot's preview matches the
+    ///         binding `LoanFacet._checkInitialLtvAndHf` gate. `capBps` is
+    ///         the effective cap = `min(assetRiskParams.maxLtvBps,
+    ///         cfgTierMaxInitLtvBps(effectiveTier(collateral)))`.
+    /// @dev    `LTV = debtUSD × BASIS_POINTS / collateralUSD` (mirrors
+    ///         `OracleFacet.calculateLTV`), so `LTV ≤ capBps` ⟺
+    ///         `collateralUSD ≥ debtUSD × BASIS_POINTS / capBps`. Doesn't
+    ///         involve `liqThresholdBps` (the LTV cap is on the *borrow*
+    ///         ratio, not the liquidation trigger; and since the invariant
+    ///         `capBps ≤ maxLtvBps ≤ liqThresholdBps` holds, this floor
+    ///         dominates the `HF ≥ 1e18` floor `_checkInitialLtvAndHf`
+    ///         also keeps). Returns `type(uint256).max` when `capBps == 0`
+    ///         (a Tier-0 / no-borrow collateral — no positive amount
+    ///         satisfies it, caller must reject); returns `0` when oracle
+    ///         price is missing on either leg (no create-time bound, fall
+    ///         through to the runtime gate). Same un-divided-by-1e18 USD
+    ///         convention + round-up-on-remainder as {minCollateralForLending}.
+    /// @param amountMax        The lender's `amountMax` (worst-case lending size).
+    /// @param principalAsset   ERC-20 the lender is offering.
+    /// @param collateralAsset  ERC-20 the borrower will post.
+    /// @param capBps           Effective init-LTV cap (basis points).
+    /// @return floor           Minimum collateral wei to satisfy `LTV ≤ capBps`.
+    function minCollateralForLtvCap(
+        uint256 amountMax,
+        address principalAsset,
+        address collateralAsset,
+        uint256 capBps
+    ) internal view returns (uint256 floor) {
+        if (amountMax == 0) return 0;
+        if (capBps == 0) return type(uint256).max; // no-borrow collateral
+
+        (uint256 principalUSD, uint256 priceCollateral, uint256 collateralScale) =
+            _gatherUsd(amountMax, principalAsset, collateralAsset);
+        if (principalUSD == 0 || priceCollateral == 0) return 0;
+
+        uint256 num = principalUSD * LibVaipakam.BASIS_POINTS;
+        uint256 collateralUSD = num / capBps;
+        if (num % capBps != 0) collateralUSD += 1; // round up
+
+        uint256 collNum = collateralUSD * collateralScale;
+        floor = collNum / priceCollateral;
+        if (collNum % priceCollateral != 0) floor += 1; // round up — satisfy `>=` strictly
+    }
+
     /// @notice Largest lending amount (principal-asset wei) the borrower
     ///         can accept on the offer such that HF >= 1.5 with the
     ///         already-posted collateral. Borrower-side gate at offer

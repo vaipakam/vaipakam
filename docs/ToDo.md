@@ -395,3 +395,30 @@ Tip: queue all 3 in the Safe at once, then sign once per signer (each signer's s
 Ping me when you've executed all 3 and I'll verify on-chain (Ownable.owner() == Safe) and then run DeployerZeroRolesTest against a Base Sepolia fork as the hard exit gate. PositiveFlows on arb-sepolia is still chugging in the background — independent.
 
 ---
+
+Need to check what are all the data that we fetch off chain and need to see that would we be able to fetch them from on chain itself
+
+---
+
+What if timelocker keys are compromised opr admin keys are compromised? is all configs are range bounded?
+
+---
+
+In polygon and BNB smart chain we need to chech how we have deignd to use WETH instead of native tokens, in case we used native tokens in other chains, have we factored it already, other wise, we need to make it admin configurable and WETH address need to be made settable.
+
+---
+
+This is just to provide an alternative for liquidation path, currently the liquidation is happening only on 0x or 1 inch.
+Proposal: lets build a ledger with all loans that is having LTV less than 5% to liquidate, and match the assets that can be exchanged between vaults internally to compensate each other, if available internally itself, if not then the external path (the bots will be allowed to do this permissionlessly, both our bot and other bots can be used with 1% incentive as there is no risk for the bot at all, only gas fee right?), is that possible? the external path opens up only after this check, will this be beneficial? is there a better approach? is this ledger really needed, or something else can be built so that bot can easily refer and exchange the assets between the required vaults. what do you say? for example: if vault1 need to liquidate tokenA to get tokenB and like wise vault2 need to liquidate tokenB to get TokenA then we can exchange them directly, only remaing amount we can liquidate externally, what do you say? say if loanA nears 85% LTV then its info will be entered into this ledger (or anything that we build), when the LTV gone beyond 90% then internal liquidated will be allowed and when the LTV went beyond 92% then external liquidation path will be allowed, what do you say?
+
+---
+
+Protocol console documents need to be available in `www` (https://vaipakam.com/protocol-console/docs) and not in `defi` (https://defi.vaipakam.com/protocol-console/docs)
+
+Also the info icon mapping inside protocol console should go only to `www` (https://vaipakam.com/protocol-console/docs)
+
+---
+
+Guide me to provide sitemap to google search engine
+
+---

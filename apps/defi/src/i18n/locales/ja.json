@@ -260,7 +260,10 @@
       "disabledShort": "interval ≥ duration",
       "hintShort": "Pick a cadence to require interest settlement at fixed intervals during the loan. Larger principals (above the configured threshold) unlock finer cadences. If a borrower misses a period after the grace window, anyone can call a settler that sells just enough collateral to cover the shortfall.",
       "hintMultiYear": "Multi-year loans require at least Annual settlement. The borrower must pay each year's accrued interest by the year-end checkpoint, or after the grace window anyone can sell collateral to cover the shortfall — possibly triggering broader liquidation."
-    }
+    },
+    "marketWidgetBanner": "このペアの現在の市場レート(≈ {{rate}}% APR)で掲載中。確定する前に下記の条件を確認・調整してください。",
+    "firstOfferBanner": "このペアにはまだ市場レートが存在しません — 最初のオファーを掲載することになります。下記で金利を設定してください。",
+    "marketWidgetIlliquidBanner": "⚠ このペアにはオラクル価格のない非流動性資産が含まれます。プロトコルは最低担保の自動計算や標準的なヘルスファクター / LTV チェックを実行できません — あなたと相手方が直接価格を決定し、双方の同意が必要です。下記ですべての条件を設定してください。"
   },
   "loanDetails": {
     "connectTitle": "ウォレットを接続",
@@ -1791,5 +1794,21 @@
     "message": "Vaipakam の新しいバージョンが利用可能です。",
     "reload": "再読み込み",
     "reloading": "再読み込み中…"
+  },
+  "marketRateWidget": {
+    "title": "市場レートで貸付 / 借入",
+    "lendingAmountLabel": "貸付額",
+    "marketRateHint": "現在の市場レート ≈ {{rate}}% APR",
+    "noMarketRateHint": "このペアの市場レートはまだありません — 最初のオファーを掲載することになります",
+    "minCollateralHint": "最低担保 ≈ {{amount}}",
+    "minCollateralPrompt": "最低担保を表示するには貸付額を入力してください",
+    "computingMinCollateral": "最低担保を計算中…",
+    "illiquidCollateralHint": "この資産は流動的な市場にありません — オファーページで担保条件を設定してください",
+    "lendButton": "市場レートで貸付",
+    "borrowButton": "市場レートで借入",
+    "footnote": "レート、金額、最低担保が事前入力されたオファー作成画面を開きます — そこで確定します。最低担保は、ローンのヘルスファクターをプロトコルの下限値(1.5)に保つ最小値です。引き上げることはできますが、下げることはできません。"
+  },
+  "liquidityNotice": {
+    "thinCollateralOnChain": "⚠ この担保資産はこのチェーン上では流動性が薄いです。ここで清算される場合、スワップに高コストがかかるか失敗する可能性があり — この資産は別のチェーンではるかに流動性が高い可能性があります。流動性のあるチェーンの使用を検討してください。"
   }
 }

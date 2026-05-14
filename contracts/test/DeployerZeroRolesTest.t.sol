@@ -41,6 +41,7 @@ contract DeployerZeroRolesTest is Test {
     // time via grantRole/renounceRole.
     address internal watcherBot;
     address internal notifBillerBot;
+    address internal keeperBot;
 
     bytes32[] internal ALL_ROLES;
 
@@ -51,6 +52,7 @@ contract DeployerZeroRolesTest is Test {
         pauserMultisig = makeAddr("pauser-multisig");
         watcherBot = makeAddr("watcher-bot");
         notifBillerBot = makeAddr("notif-biller-bot");
+        keeperBot = makeAddr("keeper-bot");
 
         cutFacet = new DiamondCutFacet();
         diamond = new VaipakamDiamond(deployer, address(cutFacet));
@@ -85,6 +87,7 @@ contract DeployerZeroRolesTest is Test {
         ALL_ROLES.push(LibAccessControl.ESCROW_ADMIN_ROLE);
         ALL_ROLES.push(LibAccessControl.WATCHER_ROLE);
         ALL_ROLES.push(LibAccessControl.NOTIF_BILLER_ROLE);
+        ALL_ROLES.push(LibAccessControl.KEEPER_ROLE);
     }
 
     // ─── 1. Initial state (pre-rotation) ──────────────────────────────────
@@ -130,7 +133,9 @@ contract DeployerZeroRolesTest is Test {
         ac.grantRole(LibAccessControl.ESCROW_ADMIN_ROLE, adminTimelock);
         ac.grantRole(LibAccessControl.WATCHER_ROLE, watcherBot);
         ac.grantRole(LibAccessControl.NOTIF_BILLER_ROLE, notifBillerBot);
+        ac.grantRole(LibAccessControl.KEEPER_ROLE, keeperBot);
 
+        ac.renounceRole(LibAccessControl.KEEPER_ROLE, deployer);
         ac.renounceRole(LibAccessControl.NOTIF_BILLER_ROLE, deployer);
         ac.renounceRole(LibAccessControl.WATCHER_ROLE, deployer);
         ac.renounceRole(LibAccessControl.ESCROW_ADMIN_ROLE, deployer);
@@ -268,6 +273,14 @@ contract DeployerZeroRolesTest is Test {
         vm.assume(rando != pauserMultisig);
         vm.assume(rando != watcherBot);
         vm.assume(rando != notifBillerBot);
+        // KEEPER_ROLE holder added by the Piece B / depth-tiered-LTV
+        // work — the off-chain liquidity-confidence relay calls
+        // `setKeeperTier` to lower an asset's effective tier on
+        // observed slippage degradation. Excluding the keeper bot
+        // here keeps the fuzz test focused on the "no STRAY grants"
+        // invariant rather than the rotation runbook's intended
+        // grant set.
+        vm.assume(rando != keeperBot);
 
         _rotateRolesToProduction();
 

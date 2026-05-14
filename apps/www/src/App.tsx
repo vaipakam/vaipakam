@@ -38,6 +38,11 @@ const Overview = lazy(() => import('./pages/Overview'));
 const UserGuide = lazy(() => import('./pages/UserGuide'));
 const Whitepaper = lazy(() => import('./pages/Whitepaper'));
 const HelpSearch = lazy(() => import('./pages/HelpSearch'));
+// `/protocol-console/docs` — canonical home for the Admin
+// Configurable Knobs & Switches reference. The interactive
+// `/protocol-console` dashboard itself lives on the connected-app
+// surface (apps/defi); only the public-read prose docs live here.
+const AdminKnobsDocs = lazy(() => import('./pages/AdminKnobsDocs'));
 
 /**
  * Public Buy-VPFI shell — wraps the marketing page in the standard
@@ -112,6 +117,10 @@ function pageRoutes(): ReactElement {
       <Route path="help/advanced" element={<UserGuide variant="advanced" />} />
       <Route path="help/technical" element={<Whitepaper />} />
       <Route path="help/search" element={<HelpSearch />} />
+      {/* Admin Configurable Knobs & Switches reference. The
+       *  defi-side `/protocol-console` dashboard's info-icons
+       *  deep-link to anchors here via `marketingUrl()`. */}
+      <Route path="protocol-console/docs" element={<AdminKnobsDocs />} />
     </>
   );
 }

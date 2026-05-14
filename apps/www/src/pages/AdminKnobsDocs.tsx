@@ -1,7 +1,7 @@
 /**
- * /admin/docs — Admin Configurable Knobs & Switches reference.
- *
- * Renders `frontend/src/content/admin/AdminConfigurableKnobsAndSwitches.en.md`
+ * /protocol-console/docs — Admin Configurable Knobs & Switches
+ * reference. Renders
+ * `apps/www/src/content/admin/AdminConfigurableKnobsAndSwitches.en.md`
  * (mirrored from `docs/ops/AdminConfigurableKnobsAndSwitches.md` via
  * `contracts/script/sync-admin-knobs-doc.sh`). English-only on
  * purpose — same translation policy as the Whitepaper, since the
@@ -9,23 +9,39 @@
  * would harm more than it would help.
  *
  * Each knob's heading uses an H3 with a slug-derived `id` so the
- * dashboard's info-icon can deep-link directly (`/admin/docs#staking-apr`).
- * The slug helper lives in `lib/markdownToc.tsx` and is the same one
+ * defi-side dashboard's info-icons can deep-link directly
+ * (`https://vaipakam.com/protocol-console/docs#staking-apr`). The
+ * slug helper lives in `lib/markdownToc.tsx` and is the same one
  * used by the Whitepaper / Overview / User Guide pages.
+ *
+ * Lives on the marketing site (this app) rather than the
+ * connected-app surface because:
+ *   - The docs are pure public-read content; no wallet, no API.
+ *     The marketing site is the natural home for public-read
+ *     explainer pages (Whitepaper / Overview / User Guide all
+ *     live here).
+ *   - The canonical public URL `https://vaipakam.com/protocol-
+ *     console/docs` lines up with SEO best practice (marketing
+ *     apex hosts the indexable content; the `defi.` subdomain
+ *     is for interactive flows).
+ *   - The connected-app `/protocol-console` dashboard's info-icons
+ *     deep-link here via the `marketingUrl()` helper in apps/defi,
+ *     so the two surfaces stay loosely coupled.
  */
 
 import { useMemo, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, Navigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
-import { isProtocolConsolePublic } from '../lib/protocolConsoleVisibility';
 import remarkGfm from 'remark-gfm';
+
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
-import { EnglishOnlyNotice } from '../components/app/EnglishOnlyNotice';
+import { EnglishOnlyNotice } from '../components/EnglishOnlyNotice';
 import { HelpToc } from '../components/HelpToc';
 import { HelpTabs } from '../components/HelpTabs';
 import { extractMarkdownToc, markdownComponents } from '../lib/markdownToc';
+import { isProtocolConsolePublic } from '../lib/protocolConsoleVisibility';
 import './UserGuide.css';
 
 const ADMIN_DOC_FILES = import.meta.glob('../content/admin/*.md', {
@@ -43,8 +59,10 @@ function resolveAdminDoc(): string {
 export default function AdminKnobsDocs() {
   const { i18n } = useTranslation();
   const location = useLocation();
-  // Same visibility gate as the dashboard route. Hide the prose
-  // reference when the parameter values themselves are hidden.
+  // Same visibility gate as the defi-side dashboard route. Hide
+  // the prose reference when the parameter values themselves are
+  // hidden — the env flag VITE_ADMIN_DASHBOARD_PUBLIC must be set
+  // identically on both Workers for the gates to stay in sync.
   if (!isProtocolConsolePublic()) {
     return <Navigate to="/" replace />;
   }

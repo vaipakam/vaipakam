@@ -18,6 +18,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
+import {OracleFacet} from "./OracleFacet.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
 
 /**
@@ -292,18 +293,18 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             );
         }
 
-        // Check post-refinance HF >= min on the new loan
-        bytes memory hfResult = LibFacet.crossFacetStaticCall(
-            abi.encodeWithSelector(
-                RiskFacet.calculateHealthFactor.selector,
-                newLoanId
-            ),
-            HealthFactorCalculationFailed.selector
-        );
-        uint256 newHF = abi.decode(hfResult, (uint256));
-        if (newHF < LibVaipakam.MIN_HEALTH_FACTOR) revert HealthFactorTooLow();
-
-        // Check post-refinance LTV <= maxLtvBps
+        // Post-refinance LTV + HF gates. Mirrors
+        // `LoanFacet._checkInitialLtvAndHf` exactly so refinance can't
+        // admit a position that would have been rejected at init —
+        // both regimes (depth-tiered ON / OFF) must agree.
+        //
+        // Regime OFF (default / pre-flip): today's gate — `LTV ≤
+        // assetRiskParams.maxLtvBps` and `HF ≥ 1.5e18`.
+        //
+        // Regime ON (post-flip per chain): cap LTV at
+        // `min(maxLtvBps, effectiveTierMaxInitLtvBps[effectiveTier(
+        // collateral)])` and relax HF floor to `≥ 1e18` (tier cap is
+        // the binding buffer; see LoanFacet for full rationale).
         bytes memory ltvResult = LibFacet.crossFacetStaticCall(
             abi.encodeWithSelector(RiskFacet.calculateLTV.selector, newLoanId),
             LTVCalculationFailed.selector
@@ -312,7 +313,35 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         uint256 maxLtvBps = s
             .assetRiskParams[oldLoan.collateralAsset]
             .maxLtvBps;
-        if (newLTV > maxLtvBps) revert LTVExceeded();
+        bool tieredOn = LibVaipakam.cfgDepthTieredLtvEnabled();
+        if (tieredOn) {
+            uint8 effTier = OracleFacet(address(this))
+                .getEffectiveLiquidityTier(oldLoan.collateralAsset);
+            uint256 tierCap = uint256(
+                LibVaipakam.effectiveTierMaxInitLtvBps(effTier)
+            );
+            uint256 cap = maxLtvBps < tierCap ? maxLtvBps : tierCap;
+            if (newLTV > cap) {
+                revert IVaipakamErrors.InitLtvAboveTier(newLTV, cap);
+            }
+        } else if (newLTV > maxLtvBps) {
+            revert LTVExceeded();
+        }
+
+        bytes memory hfResult = LibFacet.crossFacetStaticCall(
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                newLoanId
+            ),
+            HealthFactorCalculationFailed.selector
+        );
+        uint256 newHF = abi.decode(hfResult, (uint256));
+        // Tier-ON ⇒ HF ≥ 1.0 (not born already-liquidatable; the tier
+        // cap is the binding buffer). Tier-OFF ⇒ legacy HF ≥ 1.5.
+        uint256 hfFloor = tieredOn
+            ? LibVaipakam.HF_LIQUIDATION_THRESHOLD
+            : LibVaipakam.MIN_HEALTH_FACTOR;
+        if (newHF < hfFloor) revert HealthFactorTooLow();
 
         // Update old loan NFTs: mark lender NFT as Loan Repaid
         LibFacet.crossFacetCall(

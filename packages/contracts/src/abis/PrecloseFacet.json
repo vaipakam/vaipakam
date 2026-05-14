@@ -140,6 +140,12 @@
         "internalType": "uint256"
       },
       {
+        "name": "newCollateralAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
         "name": "newInterestRateBps",
         "type": "uint256",
         "indexed": false,
@@ -255,6 +261,12 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      },
+      {
+        "name": "newStatus",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
       }
     ],
     "anonymous": false
@@ -464,6 +476,22 @@
     "type": "error",
     "name": "IlliquidLoanNoRiskMath",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InitLtvAboveTier",
+    "inputs": [
+      {
+        "name": "ltv",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tierCapBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

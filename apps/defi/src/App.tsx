@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { ErrorBoundary } from './components/app/ErrorBoundary';
 import PublicDashboard from './pages/PublicDashboard';
@@ -21,7 +22,7 @@ import DataRights from './pages/DataRights';
 import BuyVPFI from './pages/BuyVPFI';
 import Activity from './pages/Activity';
 import AdminDashboard from './pages/AdminDashboard';
-import AdminKnobsDocs from './pages/AdminKnobsDocs';
+import { marketingUrl } from './lib/marketingUrl';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 import ConsentBanner from './components/ConsentBanner';
@@ -57,6 +58,34 @@ function PublicNftVerifier() {
 }
 
 /**
+ * Cross-domain back-compat redirect — same behaviour as react-router's
+ * `<Navigate to=... replace />` but works across origins (e.g. when
+ * the canonical home of a path has moved from the connected-app
+ * subdomain to the marketing apex). Uses `window.location.replace`
+ * so the redirect doesn't pollute the user's back-button history.
+ *
+ * Used here for the Protocol Console docs, which moved from
+ * `defi.vaipakam.com/protocol-console/docs` to the marketing apex
+ * `vaipakam.com/protocol-console/docs` — the connected app no longer
+ * hosts the prose reference, only the interactive
+ * `/protocol-console` dashboard.
+ */
+function ExternalRedirect({ url }: { url: string }) {
+  useEffect(() => {
+    window.location.replace(url);
+  }, [url]);
+  // Render a minimal placeholder while the browser navigates — the
+  // replace fires synchronously on mount, so users almost never see
+  // it, but a blank `null` here would leave a visible flash of
+  // empty page on slow networks.
+  return (
+    <main style={{ padding: 32 }}>
+      <p>Redirecting…</p>
+    </main>
+  );
+}
+
+/**
  * Renders the route subtree using v6 *relative* nested-route paths
  * so the same JSX block can mount under either the unprefixed root
  * (English default) or the `:locale` prefix without duplication.
@@ -86,12 +115,26 @@ function pageRoutes(): ReactElement {
       <Route path="analytics" element={<PublicDashboard />} />
       <Route path="nft-verifier" element={<PublicNftVerifier />} />
       <Route path="protocol-console" element={<AdminDashboard />} />
-      <Route path="protocol-console/docs" element={<AdminKnobsDocs />} />
+      {/* `/protocol-console/docs` moved to the marketing apex
+       *  `vaipakam.com/protocol-console/docs` so the public-read
+       *  prose reference lives alongside the rest of the indexable
+       *  explainer pages (Whitepaper / Overview / User Guide).
+       *  The connected app keeps only the interactive
+       *  `/protocol-console` dashboard above. */}
+      <Route
+        path="protocol-console/docs"
+        element={<ExternalRedirect url={marketingUrl('/protocol-console/docs')} />}
+      />
       {/* Backward-compat redirects from the pre-rename /admin paths.
           Kept so existing external bookmarks / footer links on
-          stale-cached deploys keep working. */}
+          stale-cached deploys keep working. `/admin` still resolves
+          locally to the dashboard route; `/admin/docs` now bounces
+          to the marketing-apex copy. */}
       <Route path="admin" element={<Navigate to="/protocol-console" replace />} />
-      <Route path="admin/docs" element={<Navigate to="/protocol-console/docs" replace />} />
+      <Route
+        path="admin/docs"
+        element={<ExternalRedirect url={marketingUrl('/protocol-console/docs')} />}
+      />
 
       {/* Connected-app shell mounted at root — `/` is Dashboard,
           `/offers` is OfferBook, etc. AppLayout provides the

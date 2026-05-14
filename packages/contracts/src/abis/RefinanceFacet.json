@@ -56,6 +56,12 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      },
+      {
+        "name": "oldLoanNewStatus",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
       }
     ],
     "anonymous": false
@@ -234,6 +240,22 @@
     "type": "error",
     "name": "IlliquidLoanNoRiskMath",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InitLtvAboveTier",
+    "inputs": [
+      {
+        "name": "ltv",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tierCapBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

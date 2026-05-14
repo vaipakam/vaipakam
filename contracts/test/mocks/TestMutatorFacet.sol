@@ -103,6 +103,22 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().kycEnforcementEnabled = enforced;
     }
 
+    /// @notice Flip `ProtocolConfig.discountPathEnabled` directly for
+    ///         tests that don't cut `ConfigFacet` into the diamond.
+    ///         FlashLoanLiquidationPath.md kill-switch.
+    function setDiscountPathEnabledRaw(bool enabled) external {
+        LibVaipakam.storageSlot().protocolCfg.discountPathEnabled = enabled;
+    }
+
+    /// @notice Flip `ProtocolConfig.depthTieredLtvEnabled` directly
+    ///         for tests that don't cut `ConfigFacet` into the diamond.
+    ///         MarketRateWidgetAndDepthTieredLTV.md §4.2 kill-switch
+    ///         — gates the LoanFacet / LibOfferMatch / RefinanceFacet
+    ///         tier-LTV cap + relaxed-HF-floor regime.
+    function setDepthTieredLtvEnabledRaw(bool enabled) external {
+        LibVaipakam.storageSlot().protocolCfg.depthTieredLtvEnabled = enabled;
+    }
+
     // ─── Reward-pool mutators (for staking + interaction coverage tests) ─────
 
     /// @notice Set the cumulative paid-out counter for the staking pool.

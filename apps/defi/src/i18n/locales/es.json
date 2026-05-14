@@ -260,7 +260,10 @@
       "disabledShort": "interval ≥ duration",
       "hintShort": "Pick a cadence to require interest settlement at fixed intervals during the loan. Larger principals (above the configured threshold) unlock finer cadences. If a borrower misses a period after the grace window, anyone can call a settler that sells just enough collateral to cover the shortfall.",
       "hintMultiYear": "Multi-year loans require at least Annual settlement. The borrower must pay each year's accrued interest by the year-end checkpoint, or after the grace window anyone can sell collateral to cover the shortfall — possibly triggering broader liquidation."
-    }
+    },
+    "marketWidgetBanner": "Publicando a la tasa de mercado actual (≈ {{rate}}% APR) para este par. Revisa y ajusta los términos abajo antes de confirmar.",
+    "firstOfferBanner": "Aún no existe una tasa de mercado para este par — publicarías la primera oferta. Define la tasa de interés abajo.",
+    "marketWidgetIlliquidBanner": "⚠ Este par incluye un activo sin mercado líquido (sin precio de oráculo). El protocolo no puede calcular automáticamente una garantía mínima ni ejecutar las verificaciones estándar de factor de salud / LTV aquí — tú y tu contraparte fijan el precio directamente y ambos deben consentir. Define todos los términos abajo."
   },
   "loanDetails": {
     "connectTitle": "Conecta tu billetera",
@@ -1772,5 +1775,21 @@
     "message": "Hay una nueva versión de Vaipakam disponible.",
     "reload": "Recargar",
     "reloading": "Recargando…"
+  },
+  "marketRateWidget": {
+    "title": "Prestar / Pedir prestado a la tasa de mercado",
+    "lendingAmountLabel": "Cantidad a prestar",
+    "marketRateHint": "Tasa de mercado actual ≈ {{rate}}% APR",
+    "noMarketRateHint": "Aún no hay tasa de mercado para este par — publicarías la primera oferta",
+    "minCollateralHint": "Garantía mínima ≈ {{amount}}",
+    "minCollateralPrompt": "Introduce una cantidad a prestar para ver la garantía mínima",
+    "computingMinCollateral": "Calculando la garantía mínima…",
+    "illiquidCollateralHint": "Este activo no está en un mercado líquido — define los términos de la garantía en la página de oferta",
+    "lendButton": "Prestar a la tasa de mercado",
+    "borrowButton": "Pedir prestado a la tasa de mercado",
+    "footnote": "Abre Crear Oferta con la tasa, la cantidad y la garantía mínima precargadas — confirmas allí. La garantía mínima es la mínima que mantiene el factor de salud del préstamo en el umbral del protocolo (1.5); puedes aumentarla, no reducirla."
+  },
+  "liquidityNotice": {
+    "thinCollateralOnChain": "⚠ Este activo de garantía tiene poca liquidez en esta cadena. Si se liquida aquí, el intercambio puede ser costoso o fallar — y este activo puede tener mucha más profundidad en otra cadena. Considera usar la cadena donde tiene más liquidez."
   }
 }

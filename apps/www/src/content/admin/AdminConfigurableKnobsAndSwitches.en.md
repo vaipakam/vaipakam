@@ -169,18 +169,28 @@ are unrealistic and a higher cap is a governance-error vector rather
 than a feature. Zero permitted (disables rewards while preserving
 staked principal accounting).
 
-### Notification fee in USD
+### Notification fee (per loan-side)
 
-(paid in VPFI at first PaidPush
-notification). Range: floor and ceiling stored in the library
-(currently $0.50 to $50). Zero means "use library default"; non-zero
-must fall within the bounded window. Governance-tunable so a market
-shift in Push Protocol fees can be passed through without redeploy.
+Per-loan-side notification fee charged in VPFI at the first paid-tier
+notification. Stored in **numeraire-units** (1e18-scaled — interpreted
+as USD when `numeraireSymbol == bytes32(0)`, the post-deploy default).
+Range: `[MIN_NOTIFICATION_FEE_FLOOR, MAX_NOTIFICATION_FEE_CEIL]` —
+0.1 to 50.0 numeraire-units (= $0.10 to $50 under USD-as-numeraire).
+Zero means "use library default" (2.0 numeraire-units = $2). Setter:
+`setNotificationFee(uint256)`. Governance-tunable so a market shift
+in Push Protocol fees can be passed through without redeploy.
 
-### Notification-fee USD oracle
-
-Address-only; no range. Zero
-disables the oracle and forces the library default at read time.
+> **Numeraire generalization (2026-05-03).** The retired per-knob
+> `notificationFeeUsdOracle` slot was removed from
+> `ProtocolConfig`. The notification fee's denomination now flows
+> through `OracleFacet.getAssetPrice(WETH)` which returns the
+> numeraire-quoted ETH price natively after generalizing the
+> numeraire to the oracle layer (B1) — single
+> source of truth across the protocol. To change the notification
+> fee's reference currency, governance rotates the numeraire via
+> the atomic `setNumeraire` setter (under "Periodic Interest Payment"
+> below); the per-knob setter only re-tunes within the same
+> numeraire.
 
 ## Order matching and durations
 
@@ -219,17 +229,27 @@ Default is 1 hour.
 
 ### Pyth oracle address
 
-(T-033 numeraire-redundancy oracle, single
-feed per chain — ETH/USD on ETH-native chains; bridged-WETH/USD on
-non-ETH-native chains like BNB / Polygon mainnet). Address-only; no
-numeric range. Zero disables the numeraire-redundancy gate globally
-— the protocol falls back to Chainlink-only on the WETH/USD leg.
+(T-033 cross-check oracle, single feed per
+chain — ETH/<numeraire> on the active deploy; rotates with the
+numeraire when governance switches). Address-only; no numeric range.
+Zero disables the cross-check gate globally — the protocol falls
+back to Chainlink-only on the WETH/numeraire leg.
 
-### Pyth numeraire feed id
+> **Naming note (Generalizing Numeraire — B1)**: This Pyth oracle implements the
+> cross-oracle DIVERGENCE check between Chainlink and Pyth on the
+> protocol's ETH-base reference. Distinct from T-034's "numeraire"
+> concept (the protocol's reference currency). The slot was renamed
+> from `pythNumeraireFeedId` → `pythCrossCheckFeedId` to remove the
+> overload.
 
-Single 32-byte Pyth price feed
-identifier. Zero disables at the feed-id layer (same soft-skip
-semantics as a zero `pythOracle`).
+### Pyth cross-check feed id (pythCrossCheckFeedId)
+
+Single 32-byte Pyth price feed identifier — Pyth's ETH/<numeraire>
+peg ID for cross-validating the Chainlink ETH/<numeraire> reading.
+Zero disables at the feed-id layer (same soft-skip semantics as a
+zero `pythOracle`). Governance updates this together with
+`ethNumeraireFeed` whenever the numeraire rotates (atomic
+`setNumeraire` setter takes both as args).
 
 ### Pyth max staleness seconds
 
@@ -238,12 +258,12 @@ transient mempool jam soft-skips Pyth too often; looser and a
 stale-but-manipulated reading could drive the divergence outcome.
 Default is 5 minutes.
 
-### Pyth numeraire max deviation BPS
+### Pyth cross-check max deviation BPS (pythCrossCheckMaxDeviationBps)
 
-Range **[1%, 20%]**. Tolerated
-divergence between Chainlink ETH/USD and Pyth ETH/USD before the
-price view fails-closed with `OracleNumeraireDivergence`. Same
-1%-20% window as the secondary-oracle deviation. Default is 5%.
+Range **[1%, 20%]**. Tolerated divergence between Chainlink
+ETH/<numeraire> and Pyth ETH/<numeraire> before the price view
+fails-closed with `OracleCrossCheckDivergence`. Same 1%-20% window as
+the secondary-oracle deviation. Default is 5%.
 
 ### Pyth confidence max BPS
 
@@ -318,16 +338,32 @@ an emergency lever.
 
 ## KYC (industrial-fork only — OFF on retail)
 
-### KYC tier 0 / tier 1 thresholds (USD)
+### KYC tier 0 / tier 1 thresholds (numeraire)
 
-Range each: **[$100,
-$1,000,000]** in 1e18-denominated USD. Tier 0 must be < tier 1.
+Range each: **[100, 1,000,000]** in 1e18-scaled numeraire-units —
+which, under the post-deploy default (`numeraireSymbol` empty,
+`ethNumeraireFeed` pointing at Chainlink ETH/USD), is read as USD
+($100 to $1M). Tier 0 must be < tier 1.
 
 > KYC is **OFF on the retail deploy** per CLAUDE.md — the
 > `kycEnforcementEnabled` flag stays `false` post-deploy; the
 > threshold values aren't read. These bounds are
 > belt-and-suspenders for the retail deploy and load-bearing for
 > the industrial fork.
+
+> **Generalizing Numeraire — B1 (2026-05-03).** The thresholds are stored in
+> numeraire-units (storage fields `kycTier0ThresholdNumeraire` /
+> `kycTier1ThresholdNumeraire`). After B1, both the threshold AND
+> the asset value are in numeraire-units (`getAssetPrice` returns
+> numeraire-quoted natively from the rotated Chainlink feeds), so
+> the comparison sites (`OfferFacet`, `RiskFacet`,
+> `DefaultedFacet`) compare numeraire-vs-numeraire — no boundary
+> conversion. To rotate the reference currency, governance uses the
+> atomic multi-arg `setNumeraire` (under "Periodic Interest Payment"
+> below) which re-anchors every feed-side slot AND every
+> numeraire-denominated value in the same tx; the per-knob
+> `updateKYCThresholds` setter only re-tunes within the same
+> numeraire.
 
 ## Range Orders Phase 1 (master kill switches — bool flags)
 
@@ -337,6 +373,276 @@ All three default `false` post-deploy. Governance flips each on once
 the corresponding mechanic is ready to ship. No range bound (bool).
 Each flip emits a config event so off-chain monitoring can correlate
 behavior changes to the governance action.
+
+## Liquidator-buys-at-discount path (FlashLoanLiquidationPath.md)
+
+The optional Aave-V3 / Compound-V3 / Morpho-Blue-style liquidation
+path: liquidator pays the full outstanding debt in the principal
+asset, protocol seizes the borrower's collateral at a per-tier
+discount and delivers it to a liquidator-supplied recipient (typically
+funded via a same-tx flash-loan from Aave V3 `flashLoanSimple` or
+Balancer V2 `flashLoan`). See
+[`FlashLoanLiquidatorRollout.md`](FlashLoanLiquidatorRollout.md) for
+the per-chain operational rollout.
+
+### Master kill-switch — `discountPathEnabled`
+
+`ProtocolConfig.discountPathEnabled` (bool, default `false`).
+`RiskFacet.triggerLiquidationDiscounted` reverts
+`DiscountPathDisabled` immediately while the flag is off, so a fresh
+deploy never exposes the path before the per-chain audit + risk-
+committee sign-off. Independent of `depthTieredLtvEnabled` —
+governance can flip each one per chain (e.g. enable the discount
+path on Base while autonomous-LTV still bakes on Polygon).
+ADMIN_ROLE pre-handover; TimelockController-gated (48h) post-handover.
+Setter: `ConfigFacet.setDiscountPathEnabled(bool)`.
+
+### Per-tier liquidator discount (BPS)
+
+Three values, set atomically via
+`ConfigFacet.setTierLiqDiscountBps(tier1Bps, tier2Bps, tier3Bps)`.
+Each tier slot in storage is `0 ⇒ TIER{N}_LIQ_DISCOUNT_DEFAULT_BPS`
+(library constant). Defaults: T1 770 (7.7%) / T2 600 (6.0%) /
+T3 500 (5.0%) — thinner tier carries wider discount because
+liquidator slippage risk is higher on thin order books, so the
+incentive to attract competing liquidators must be larger.
+
+Per-tier bounds enforced at the setter:
+
+| Tier | Floor (BPS) | Ceiling (BPS) | Library default |
+|---|---|---|---|
+| Tier 1 (thinnest) | 300 (3.0%) | 1500 (15.0%) | 770 (7.7%) |
+| Tier 2 | 300 (3.0%) | 1000 (10.0%) | 600 (6.0%) |
+| Tier 3 (deepest) | 200 (2.0%) | 800 (8.0%) | 500 (5.0%) |
+
+Cross-tier monotonic invariant `T1 ≥ T2 ≥ T3` enforced atomically
+across all three slots, including the subtle zero-fallback path
+(passing `0` for a tier falls through to its library default, which
+participates in the monotonic check against the other two tiers'
+effective values). A hostile-governance attack cannot push the
+discount to a degenerate value (0% would starve the liquidator
+market; 50% would gut borrower surplus) — the per-tier ceilings
+bound the worst case at 15% / 10% / 8%.
+
+The 1% kickback / matcher-fee story (Range Orders LIF) is
+unrelated to this discount; the discount is paid to the liquidator
+in collateral at settle time, not from any treasury or LIF pool.
+
+## Periodic Interest Payment (T-034)
+
+The Periodic Interest Payment mechanic lets a lender opt their loans
+into mandatory mid-loan interest checkpoints. The borrower must pay
+each period's accrued interest by the period close; if they miss the
+period beyond the grace window, anyone can call a permissionless
+settler that sells just enough collateral to cover the shortfall (or
+just-stamps the period when the borrower paid in time). Multi-year
+loans (`durationDays > 365`) carry a mandatory annual floor — even
+small-principal multi-year loans must settle interest yearly.
+
+The feature ships dormant on every fresh deploy. Five governance
+levers control its visibility and behavior; each is bounded the same
+way every other knob in this document is.
+
+### Periodic interest enabled flag (periodicInterestEnabled)
+
+Master kill-switch for the entire mechanic. Default `false`
+post-deploy. While off:
+
+- `OfferFacet.createOffer` rejects any cadence other than `None`
+  with `PeriodicInterestDisabled`.
+- `RepayFacet.settlePeriodicInterest` reverts wholesale.
+- `RepayFacet.repayPartial` skips the interest-first checkpoint
+  accounting fold — today's allocation behavior is preserved.
+- The frontend hides every cadence-related UI surface
+  (CreateOffer dropdown, AcceptOffer acknowledgement callout,
+  LoanDetails countdown card).
+
+Governance flips this on once the rest of the protocol is ready to
+honor cadence-bearing loans on-chain. Boolean — no range.
+
+### Numeraire swap enabled flag (numeraireSwapEnabled)
+
+Independent kill-switch gating the atomic `setNumeraire` rotation
+setter. Default `false`. While off, governance cannot rotate the
+numeraire away from the USD-as-default behavior — the protocol ships
+USD-denominated until this flag flips AND governance has all the
+numeraire-side feed addresses on hand. Threshold-only updates within
+the same numeraire (`setMinPrincipalForFinerCadence`,
+`setNotificationFee`, `updateKYCThresholds`) are NOT gated by this
+flag — governance can re-tune individual values freely. Boolean — no
+range.
+
+### Numeraire-rotation surface — Generalizing Numeraire (B1)
+
+After Generalizing Numeraire to the oracle layer (B1, 2026-05-03), the
+protocol's reference currency
+is captured by **four feed-side slots** + **four numeraire-denominated
+value knobs**. The per-knob `INumeraireOracle` boundary-conversion
+oracle was retired — `OracleFacet.getAssetPrice` now returns
+numeraire-quoted prices natively, sourced from the renamed feed
+slots. Comparison sites compare numeraire-vs-numeraire with no
+intermediate USD detour.
+
+**Feed-side slots** (drive `OracleFacet.getAssetPrice` paths 1/2/3
+
+- Tellor / API3 / DIA query construction + Pyth cross-check):
+  - `s.ethNumeraireFeed` — Chainlink AggregatorV3 returning ETH/<numeraire>
+    price. ETH/USD on USD-as-numeraire deploys; rotates to ETH/EUR /
+    ETH/XAU / etc. when the numeraire changes.
+  - `s.numeraireChainlinkDenominator` — Chainlink Feed Registry
+    constant for the active numeraire. `Denominations.USD` by default;
+    `Denominations.EUR` / etc. on rotation. Drives Path 2 of
+    `_primaryPrice` (direct asset/<numeraire> registry lookup).
+  - `s.numeraireSymbol` — `bytes32` lowercase ASCII symbol of the
+    active numeraire (e.g. `bytes32("eur")`). Empty default is
+    interpreted as `"usd"` so the post-deploy behaviour is unchanged
+    out of the box. Drives Tellor / API3 / DIA query construction
+    (`<symbol>/<numeraireSymbol>`).
+  - `s.pythCrossCheckFeedId` — Pyth ETH/<numeraire> feed id for the
+    T-033 cross-check gate (see "Pyth cross-check feed id" above).
+
+**Value-side knobs** (each per-knob bounded; settable individually
+within the same numeraire OR atomically as part of `setNumeraire`):
+
+- `minPrincipalForFinerCadence` (numeraire-units, 1e18-scaled)
+- `notificationFee` (numeraire-units)
+- `kycTier0ThresholdNumeraire` + `kycTier1ThresholdNumeraire`
+
+**Atomic rotation setter** —
+`setNumeraire(ethNumeraireFeed, numeraireChainlinkDenominator,
+numeraireSymbol, pythCrossCheckFeedId, threshold, notificationFee,
+kycTier0, kycTier1)`. Eight args, single Safe transaction. By
+construction governance cannot rotate the numeraire without
+simultaneously re-anchoring every value denominated in it AND every
+oracle-side input that produces numeraire-quoted prices.
+
+Inconsistent intermediate state ("numeraire = EUR but notification
+fee still in USD-units" or "Tellor still queries `<symbol>/usd`") is
+unreachable.
+
+Each numeraire-denominated value carries its per-knob bounded
+validator. KYC tier monotonicity is enforced when both tier values
+come in non-zero. The three feed-side inputs (`ethNumeraireFeed`,
+`numeraireChainlinkDenominator`, `numeraireSymbol`) reject zero —
+they're load-bearing and missing them would brick `_primaryPrice` /
+secondary queries. `pythCrossCheckFeedId` accepts zero (disables the
+Pyth gate).
+
+Per-knob within-the-same-numeraire updates remain available:
+`setMinPrincipalForFinerCadence(uint256)`, `setNotificationFee(uint256)`,
+`updateKYCThresholds(uint256, uint256)`. Use these when governance
+just wants to tune a value within the active currency, not rotate.
+
+> **PredominantlyAvailableDenominator (T-047, planned)**: secondary
+> oracle coverage in non-USD numeraires (Tellor / API3 / DIA) is
+> sparse — the cross-validation property weakens after a non-USD
+> rotation. The T-048 follow-up below ships the
+> `predominantDenominator` (PAD = USD by default) so primary
+> pricing routes through Chainlink's universally-🟢-rated USD feed
+> set when the active numeraire is non-USD; the secondary-oracle
+> quorum follow-up still tracks separately under T-047 for the
+> divergence-detection layer.
+
+### Predominantly Available Denominator (PAD)
+
+Anchor for **primary pricing** when the active numeraire is non-USD.
+PAD is a Chainlink Feed Registry denomination constant
+(`Denominations.USD` by post-deploy default — the universally-
+covered, near-100%-🟢-verified-rated denomination across every
+chain Vaipakam supports). `OracleFacet._primaryPrice` queries
+`asset/PAD` first and converts to the active numeraire only when
+PAD ≠ numeraire.
+
+**Why PAD-first instead of asset/<numeraire>-first**: Chainlink's
+feed-rating metadata (🟢 verified / 🟡 monitored / 🔴 specialized)
+is **off-chain**. A direct asset/<numeraire> Chainlink feed for
+non-USD pairs is rare AND frequently 🟡-rated when it exists,
+with looser deviation thresholds and slower heartbeats than the
+🟢 USD equivalents. Routing all pricing through PAD biases toward
+verified-rated feeds **structurally**, without requiring operators
+to manually curate per-asset feed quality. The FX-multiply cost
+(one extra Chainlink read for PAD/<numeraire>) is bounded; the
+trust gain from never accidentally pricing through a 🟡 feed is
+real.
+
+**Per-asset opt-in override**: when an operator explicitly verifies
+a specific asset/<numeraire> feed is 🟢-rated on their chain, they
+can call `setAssetNumeraireDirectFeedOverride(asset, feed)` and
+that asset's pricing skips the PAD pivot entirely. Operator vouches
+for the feed quality; the protocol does not cross-check overrides
+against Pyth.
+
+**Four feed-side slots, atomic rotation via `setPredominantDenominator(denom, symbol, ethPadFeed, padNumeraireRateFeed)`**:
+
+- **`predominantDenominator`** (address) — Chainlink Feed Registry
+  denomination constant. `Denominations.USD` (`0x0000…0000348`)
+  post-deploy default. Reverts `ParameterOutOfRange` on zero.
+- **`predominantDenominatorSymbol`** (bytes32) — lowercase ASCII
+  symbol used by Tellor / API3 / DIA when querying asset/PAD pairs.
+  Empty bytes32 reads as `"usd"` per the existing fallback
+  convention.
+- **`ethPadFeed`** (address) — Chainlink ETH/<PAD> AggregatorV3.
+  REQUIRED on every chain post-T-048 — load-bearing for (a) WETH
+  pricing and (b) the derived PAD/<numeraire> rate when no direct
+  feed is set. Reverts `ParameterOutOfRange` on zero.
+- **`padNumeraireRateFeed`** (address, optional) — Chainlink direct
+  PAD/<numeraire> AggregatorV3 (e.g. USD/EUR on Ethereum mainnet).
+  Zero is valid; the protocol derives the rate from
+  `ETH/<numeraire> ÷ ETH/PAD` using existing infrastructure.
+
+**Activation gate**:
+
+- **Retail (PAD == numeraire == USD)** — PAD reads collapse to the
+  single Feed Registry asset/USD query. Zero added gas, zero new
+  failure modes, math identical to pre-T-048.
+- **Pre-T-048 deploy (predominantDenominator == 0)** — legacy
+  numeraire-direct path stays active. Existing deploys keep working
+  unchanged until the operator opts in.
+- **Industrial-fork (PAD ≠ numeraire, e.g. PAD=USD numeraire=EUR)**
+  — PAD pivot activates. Per-asset override takes priority when set;
+  otherwise asset/USD × USD/EUR multiplication composes the
+  numeraire-quoted price.
+
+**New error types**: `PadNumeraireRateUnavailable` (no FX rate path
+reachable), `PadPivotFeedUnavailable(asset)` (asset has no
+PAD-quoted feed AND no asset/ETH-pivot feed), `PadNumeraireRateFeedStale`
+(direct rate feed is stale beyond budget).
+
+**Operator deploy checklist (post-T-048)**: every chain's deploy
+script MUST call `setPredominantDenominator(Denominations.USD,
+bytes32("usd"), <chain's Chainlink ETH/USD feed>, address(0))`
+before opening offers. Pre-mainnet pre-flight should assert
+`getEthPadFeed() != address(0)` after deploy.
+
+### Min principal for finer cadence (minPrincipalForFinerCadence)
+
+Principal threshold above which the lender can opt into finer-than-
+mandatory cadences (Monthly / Quarterly / SemiAnnual on any duration;
+finer-than-Annual on multi-year). Stored in numeraire-units
+(1e18-scaled). Default $100,000 (USD-as-numeraire).
+
+> **Range bounds.** Values outside `[1_000e18,
+10_000_000e18]` revert `ParameterOutOfRange`. Floor stops a
+> "everyone qualifies" misconfig that would burden small borrowers
+> with monthly settlements; ceiling caps the worst-case "nobody
+> qualifies" misfire that would silently disable finer cadences for
+> the entire deploy.
+
+### Pre-notify lead time in days (preNotifyDays)
+
+Single shared knob: how many days before each periodic-interest
+checkpoint AND each loan-maturity deadline the off-chain hf-watcher
+fires push notifications to subscribers. Default 3 days.
+
+> **Range bounds.** Values outside `[1, 14]` revert
+> `ParameterOutOfRange`. Floor (1) ensures at least a day's notice;
+> ceiling (14) prevents desensitizing alert spam.
+
+When governance changes this value, the next watcher tick picks it
+up automatically (no Worker redeploy needed) — both the maturity
+pre-notify lane (HF watcher's existing surface) and the periodic-
+interest pre-notify lane (T-034) read from the same `getPreNotifyDays()`
+view.
 
 ## Cross-chain VPFI buy (T-031 Layer 4a)
 

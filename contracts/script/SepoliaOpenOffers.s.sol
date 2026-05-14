@@ -109,7 +109,7 @@ contract SepoliaOpenOffers is Script {
 
         MockUniswapV3Factory univ3Factory = new MockUniswapV3Factory();
         // sqrtPriceX96 = 2^96 (price = 1). Pool liquidity 1e24 clears the
-        // MIN_LIQUIDITY_USD floor by several orders of magnitude — mUSDC +
+        // MIN_LIQUIDITY_PAD floor by several orders of magnitude — mUSDC +
         // mWETH both classify Liquid.
         univ3Factory.createPool(address(usdc), address(weth), 3000, 79228162514264337593543950336, 1e24);
         vm.stopBroadcast();

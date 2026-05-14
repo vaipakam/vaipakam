@@ -174,6 +174,63 @@ Before `AdminFacet.unpause()`:
 
 ---
 
+## 3.5 Targeted snap-off — flash-loan / discount-path
+
+When a problem is scoped to the liquidator-buys-at-discount path
+(`RiskFacet.triggerLiquidationDiscounted` +
+`FlashLoanLiquidator`), use a targeted snap-off instead of a full
+protocol pause. The atomic-swap path (`triggerLiquidation`,
+`triggerLiquidationSplit`, `triggerPartialLiquidation`) keeps
+running.
+
+Three escalation tiers, least to most disruptive:
+
+**Tier 1 — keeper-side snap-off (30-second op, our bot only)**
+
+Delete the per-chain env flag in the Cloudflare keeper Worker:
+
+```bash
+pnpm --filter @vaipakam/keeper exec wrangler secret delete \
+  DISCOUNT_PATH_ENABLED_<chainId>
+```
+
+The Worker reads `undefined` on next tick → flash-loan branch
+skips → legacy partial/split/atomic still runs. Affects ONLY our
+bot; external liquidators are unaffected (use Tier 3 for that).
+
+**Tier 2 — pull our receiver from the per-chain config**
+
+Edit [`apps/keeper/src/flashLoanProviders.ts`](../../apps/keeper/src/flashLoanProviders.ts),
+delete the `liquidator:` line for the affected chain, commit +
+redeploy the Worker. Slower than Tier 1 (needs a deploy) but
+doesn't depend on the Cloudflare API. Same blast radius as
+Tier 1.
+
+**Tier 3 — flip the on-chain kill-switch (affects EVERYONE)**
+
+```solidity
+ConfigFacet.setDiscountPathEnabled(false)
+```
+
+Reverts every `triggerLiquidationDiscounted` call regardless of
+caller — our bot AND external liquidators AND any keeper that
+wrote their own receiver. Use this when the issue is in the
+diamond's discount-path code itself (settlement math, sanctions
+gate, oracle-fallback) and external liquidators must be stopped
+too.
+
+Post-handover this needs a Timelock-scheduled tx with the
+48h delay — **not an emergency lever once handover lands**.
+Tier 1 (keeper-side snap-off) and the asset-level
+`AdminFacet.pauseAsset` are the immediate-effect levers
+post-handover; Tier 3 is the "we have time to schedule a
+permanent fix" path.
+
+Full per-chain rollout sequence + troubleshooting in
+[`FlashLoanLiquidatorRollout.md`](FlashLoanLiquidatorRollout.md).
+
+---
+
 ## 4. Off-chain alert-rail key compromise
 
 The watcher holds two long-lived secrets — `TG_BOT_TOKEN` (Telegram

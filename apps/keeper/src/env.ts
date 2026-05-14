@@ -91,6 +91,70 @@ export interface Env {
   // reverts the second tx so no double-spend.
   KEEPER_ENABLED?: string;
   KEEPER_PRIVATE_KEY?: string;
+
+  // Depth-tiered-LTV liquidity-confidence relay (`liquidityConfidence.ts`,
+  // §4.4 step 5). The off-chain process knobs — how much aggregator-
+  // confirmed evidence must accumulate before the relay promotes an
+  // asset's on-chain `keeperTier` one step. Both default conservatively
+  // when unset; demotion is always immediate (no window) regardless.
+  // The relay only *submits* `setKeeperTier` when the keeper is enabled
+  // AND `depthTieredLtvEnabled` is on for the chain — it tracks the
+  // confidence counter in D1 either way so it catches up fast once
+  // governance flips the switch. (Wiring the Tier-3 "battle-tested on
+  // Aave/Compound/Morpho" advisory is a follow-up — until then the relay
+  // caps at Tier 2.)
+  /** consecutive eligible-to-promote ticks required before a step up (default 5) */
+  LIQ_CONFIDENCE_MIN_CHECKS?: string;
+  /** wall-clock days that eligible streak must also span (default 3) */
+  LIQ_CONFIDENCE_MIN_WINDOW_DAYS?: string;
+  // Tier-3 "battle-tested elsewhere" advisory — 2-of-3 ensemble in
+  // `liquidityConfidence.ts::battleTestedElsewhere`. The relay promotes
+  // an asset to Tier 3 only when ≥ 2 of the 3 signals below pass; the
+  // ensemble means no single source can single-handedly gate (or be
+  // dependent for) the promotion. All thresholds in plain USD (not the
+  // PAD × 1e6 scale the on-chain sizes use). All optional with sensible
+  // defaults; setting any to a custom value tunes that threshold.
+  /** Signal ① — Minimum USD TVL on at least one of {Aave v3, Compound v3,
+   *  Morpho-blue} (per DeFiLlama's `/pools`). Default $10M. */
+  LIQ_TIER3_MIN_TVL_USD?: string;
+  /** Disable signal ① entirely (`1` / `true`) — for operators who want
+   *  zero competitor-lending-platform-data dependence. When disabled
+   *  the ensemble becomes 2-of-2 (both CoinGecko signals required) —
+   *  stricter, safe. Default off (signal ① active). */
+  LIQ_TIER3_DISABLE_DEFI_LISTING?: string;
+  /** Signal ② — Minimum USD circulating market cap from CoinGecko's
+   *  free `/coins/{platform}/contract/{address}` endpoint. Default $1B. */
+  LIQ_TIER3_MIN_MCAP_USD?: string;
+  /** Signal ③ — Minimum USD 24-hour trading volume (CoinGecko, same
+   *  response as ②). Default $50M/day. */
+  LIQ_TIER3_MIN_VOL_USD?: string;
+
+  // Liquidator-hardening — split-route swap decision.
+  /** Minimum bps improvement (split-sum vs failover-top-1) required
+   *  before the keeper submits `triggerLiquidationSplit` over the
+   *  default failover path. Below this the gas + atomic-revert risk
+   *  of a split-route isn't worth the marginal fill improvement.
+   *  Default 100 (1%). */
+  SPLIT_MIN_IMPROVEMENT_BPS?: string;
+
+  // Liquidator-hardening — partial-liquidation decision.
+  /** Minimum HF (in BPS, where 10_000 = HF_SCALE) at which the keeper
+   *  prefers `triggerPartialLiquidation` (50% sweep) over a full
+   *  liquidation. Default 9500 = 0.95. Rationale: at HF in [0.95, 1.0)
+   *  with a typical 85% `liqThreshold` and ~5% effective swap-fee, a
+   *  50% partial restores HF >= 1.0 with a small buffer — verified by
+   *  the algebra `f >= (T - 1.05r) / (T - 0.998)` where r = T/hfBefore.
+   *  Below this floor (HF < 0.95) a 50% partial isn't enough and the
+   *  on-chain {PartialMustRestoreHF} gate would revert, so the keeper
+   *  falls back to the full path (split-route or failover). Past
+   *  maturity, the partial path is locked out by the on-chain
+   *  {PartialAfterMaturity} guard regardless of this knob.
+   *
+   *  Tighten this (e.g. 9700 = 0.97) for jurisdictions / chains where
+   *  the operator wants a more conservative partial regime. Set to
+   *  10_000 to effectively disable the partial path (HF can't be both
+   *  >= 1.0 AND < 1.0 — the partial branch never fires). */
+  PARTIAL_LIQ_MIN_HF_BPS?: string;
 }
 
 export interface ChainConfig {

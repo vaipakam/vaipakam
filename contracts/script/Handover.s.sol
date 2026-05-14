@@ -15,9 +15,10 @@ import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
  *        - DEFAULT_ADMIN_ROLE (root admin gating every other role)
  *        - ADMIN_ROLE / PAUSER_ROLE / KYC_ADMIN_ROLE /
  *          ORACLE_ADMIN_ROLE / RISK_ADMIN_ROLE / ESCROW_ADMIN_ROLE
- *        - WATCHER_ROLE + NOTIF_BILLER_ROLE (kept on ADMIN; rotated
- *          to per-bot EOAs separately via the keeper-authorization
- *          flow, NOT in this script)
+ *        - WATCHER_ROLE + NOTIF_BILLER_ROLE + KEEPER_ROLE (kept on
+ *          ADMIN; the off-chain-bot roles get rotated to per-bot EOAs
+ *          separately via the keeper-authorization flow, NOT in this
+ *          script)
  *        - ERC-173 ownership of the Diamond (gates `diamondCut`)
  *        - Ownable2Step ownership of every LZ OApp deployed on this
  *          chain (VPFIOFTAdapter or VPFIMirror, VPFIBuyAdapter or
@@ -48,9 +49,9 @@ import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
  *        5. ADMIN renounces every role it still holds, in the
  *           reverse order of grant (DEFAULT_ADMIN_ROLE last, so
  *           up until the very last call, ADMIN can correct any
- *           mid-flight error). WATCHER_ROLE + NOTIF_BILLER_ROLE
- *           are NOT renounced here — those stay on ADMIN until
- *           the per-bot EOA setup (Phase 6 keeper authorization),
+ *           mid-flight error). WATCHER_ROLE + NOTIF_BILLER_ROLE +
+ *           KEEPER_ROLE are NOT renounced here — those stay on ADMIN
+ *           until the per-bot EOA setup (Phase 6 keeper authorization),
  *           after which a separate one-shot script renounces
  *           them. They have no DEFAULT_ADMIN-level authority, so
  *           a delayed renounce is safe.
@@ -193,10 +194,11 @@ contract Handover is Script {
         console.log("Transferred ERC-173 Diamond ownership to Timelock");
 
         // 3e. ADMIN renounces every multisig-bound role it holds, in
-        //     reverse-grant order. WATCHER_ROLE + NOTIF_BILLER_ROLE
-        //     are intentionally LEFT on ADMIN — they get rotated to
-        //     per-bot EOAs in a separate script after Phase-6
-        //     keeper-authorization wiring lands.
+        //     reverse-grant order. WATCHER_ROLE + NOTIF_BILLER_ROLE +
+        //     KEEPER_ROLE are intentionally LEFT on ADMIN — these
+        //     off-chain-bot roles get rotated to per-bot EOAs in a
+        //     separate script after Phase-6 keeper-authorization
+        //     wiring lands.
         //     Order: PAUSER, then the five Timelock roles, then
         //     DEFAULT_ADMIN_ROLE LAST.
         IAccessControl(diamond).renounceRole(LibAccessControl.PAUSER_ROLE, admin);

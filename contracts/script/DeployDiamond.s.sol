@@ -498,7 +498,7 @@ contract DeployDiamond is Script {
     }
 
     function _getAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](22);
+        s = new bytes4[](28);
         s[0] = AdminFacet.setTreasury.selector;
         s[1] = AdminFacet.getTreasury.selector;
         s[2] = AdminFacet.setZeroExProxy.selector;
@@ -525,6 +525,15 @@ contract DeployDiamond is Script {
         // a `pausedUntil` view for the frontend countdown.
         s[20] = AdminFacet.autoPause.selector;
         s[21] = AdminFacet.pausedUntil.selector;
+        // Depth-tiered LTV (Piece B follow-up b) — Uni-V2-fork family
+        // setters/getters consulted by `OracleFacet.getLiquidityTier`'s
+        // route search alongside the V3 trio. Zero ⇒ that leg skipped.
+        s[22] = AdminFacet.setUniswapV2Factory.selector;
+        s[23] = AdminFacet.getUniswapV2Factory.selector;
+        s[24] = AdminFacet.setSushiswapV2Factory.selector;
+        s[25] = AdminFacet.getSushiswapV2Factory.selector;
+        s[26] = AdminFacet.setPancakeswapV2Factory.selector;
+        s[27] = AdminFacet.getPancakeswapV2Factory.selector;
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {
@@ -562,7 +571,7 @@ contract DeployDiamond is Script {
     }
 
     function _getOracleSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](11);
+        s = new bytes4[](17);
         s[0] = OracleFacet.checkLiquidity.selector;
         s[1] = OracleFacet.getAssetPrice.selector;
         s[2] = OracleFacet.calculateLTV.selector;
@@ -576,10 +585,26 @@ contract DeployDiamond is Script {
         // buffer for historical TVL reconstruction.
         s[9] = OracleFacet.captureDailyPriceSnapshot.selector;
         s[10] = OracleFacet.getHistoricalAssetPrice.selector;
+        // Depth-tiered LTV (Piece B) — the on-chain liquidity-tier
+        // authority + the keeper-min effective tier the loan-init LTV
+        // cap consults. See
+        // docs/DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md §4.2.
+        s[11] = OracleFacet.getLiquidityTier.selector;
+        s[12] = OracleFacet.getEffectiveLiquidityTier.selector;
+        // Phase 2 of AutonomousLtvAndOracleFallback.md — try-wrapped
+        // `getAssetPrice` for callers (LibFallback) that need to detect
+        // oracle-quorum unavailability without reverting.
+        s[13] = OracleFacet.tryGetAssetPrice.selector;
+        // Phase 4 of AutonomousLtvAndOracleFallback.md — autonomous
+        // tier-LTV cache. Permissionless refresh + the two views the
+        // loan-init gate / protocol-console consume.
+        s[14] = OracleFacet.refreshTierLtvCache.selector;
+        s[15] = OracleFacet.getTierLtvCacheEntry.selector;
+        s[16] = OracleFacet.getEffectiveTierMaxInitLtvBps.selector;
     }
 
     function _getOracleAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](30);
+        s = new bytes4[](34);
         s[0] = OracleAdminFacet.setChainlinkRegistry.selector;
         s[1] = OracleAdminFacet.setUsdChainlinkDenominator.selector;
         s[2] = OracleAdminFacet.setEthChainlinkDenominator.selector;
@@ -621,6 +646,17 @@ contract DeployDiamond is Script {
         s[27] = OracleAdminFacet.getPythNumeraireMaxDeviationBps.selector;
         s[28] = OracleAdminFacet.setPythConfidenceMaxBps.selector;
         s[29] = OracleAdminFacet.getPythConfidenceMaxBps.selector;
+        // Phase 3 of AutonomousLtvAndOracleFallback.md — per-chain
+        // peer-lending-protocol addresses the autonomous tier-LTV cache
+        // reads (Aave V3 PoolDataProvider, Compound V3 Comet, Morpho-Blue).
+        // Set via owner-only setter; Phase 4 builds the refresh function
+        // on top of these addresses.
+        s[30] = OracleAdminFacet.setPeerProtocolAddresses.selector;
+        s[31] = OracleAdminFacet.getPeerProtocolAddresses.selector;
+        // Phase 4 of AutonomousLtvAndOracleFallback.md — per-tier
+        // reference asset list (constitution-level governance set).
+        s[32] = OracleAdminFacet.setTierReferenceAssets.selector;
+        s[33] = OracleAdminFacet.getTierReferenceAssets.selector;
     }
 
     function _getNFTSelectors() internal pure returns (bytes4[] memory s) {
@@ -786,12 +822,28 @@ contract DeployDiamond is Script {
     }
 
     function _getRiskSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        s = new bytes4[](8);
         s[0] = RiskFacet.updateRiskParams.selector;
         s[1] = RiskFacet.calculateLTV.selector;
         s[2] = RiskFacet.calculateHealthFactor.selector;
         s[3] = RiskFacet.isCollateralValueCollapsed.selector;
         s[4] = RiskFacet.triggerLiquidation.selector;
+        // Higher-LTV-aware liquidator (Piece B follow-up — split-route).
+        // Sum-to-input multi-route swap via `LibSwap.swapWithSplit`;
+        // atomic-revert-on-leg-failure (no soft-failure fallback path).
+        s[5] = RiskFacet.triggerLiquidationSplit.selector;
+        // Partial HF-restore liquidator (Piece B follow-up — partials).
+        // Sweeps only `fractionBps` of remaining collateral, leaves loan
+        // Active with reduced size and unchanged maturity. Strict
+        // HF-improves + HF>=1 post-mutation gates.
+        s[6] = RiskFacet.triggerPartialLiquidation.selector;
+        // FlashLoanLiquidationPath.md — liquidator-buys-at-discount.
+        // Caller pays `totalDebt` in principal-asset; protocol seizes
+        // collateral at per-tier discount and delivers to `recipient`.
+        // Master kill-switch `discountPathEnabled` off by default — the
+        // selector is wired but the entry-point reverts
+        // `DiscountPathDisabled` until governance flips it on per chain.
+        s[7] = RiskFacet.triggerLiquidationDiscounted.selector;
     }
 
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {
@@ -950,7 +1002,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](55);
+        s = new bytes4[](72);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -1037,6 +1089,42 @@ contract DeployDiamond is Script {
         s[52] = ConfigFacet.getEthPadFeed.selector;
         s[53] = ConfigFacet.getPadNumeraireRateFeed.selector;
         s[54] = ConfigFacet.getAssetNumeraireDirectFeedOverride.selector;
+        // Depth-tiered LTV (Piece B) — governance globals (all default
+        // to library constants until set; the master kill-switch
+        // `depthTieredLtvEnabled` defaults false) + the off-chain
+        // liquidity-confidence relay write (`setKeeperTier`, KEEPER_ROLE)
+        // + the frontend bundle / single-field getters. See
+        // docs/DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md §4.2.
+        s[55] = ConfigFacet.setDepthTieredLtvEnabled.selector;
+        s[56] = ConfigFacet.setLiquiditySlippageBps.selector;
+        s[57] = ConfigFacet.setTwapGuard.selector;
+        s[58] = ConfigFacet.setLiquidityTierSizes.selector;
+        s[59] = ConfigFacet.setTierMaxInitLtvBps.selector;
+        s[60] = ConfigFacet.setPaaAssets.selector;
+        s[61] = ConfigFacet.setKeeperTier.selector;
+        s[62] = ConfigFacet.getDepthTieredLtvEnabled.selector;
+        s[63] = ConfigFacet.getPaaAssets.selector;
+        s[64] = ConfigFacet.getKeeperTier.selector;
+        s[65] = ConfigFacet.getDepthTierConfigBundle.selector;
+        // Liquidator hardening (item 2) — close-factor ceiling setter
+        // for `RiskFacet.triggerPartialLiquidation`. Default 10_000 = no
+        // cap (the keeper picks the smallest fraction that restores
+        // HF>=1); governance may tighten to Aave-style 5_000 (50%) etc.
+        s[66] = ConfigFacet.setMaxPartialLiquidationCloseFactorBps.selector;
+        // Phase 7 of AutonomousLtvAndOracleFallback.md — per-tier
+        // LTV safety-box parameters: atomic setter (all three tiers
+        // updated in one call so the cross-tier monotonic invariant
+        // is never temporarily broken) + bundle getter.
+        s[67] = ConfigFacet.setTierLtvParams.selector;
+        s[68] = ConfigFacet.getTierLtvParams.selector;
+        // FlashLoanLiquidationPath.md — per-tier liquidator-discount
+        // governance: master kill-switch + atomic per-tier setter +
+        // effective-value bundle view. The kill-switch defaults
+        // `false` so a fresh deploy ships with the discount path
+        // inert; governance flips on per chain after audit sign-off.
+        s[69] = ConfigFacet.setDiscountPathEnabled.selector;
+        s[70] = ConfigFacet.setTierLiqDiscountBps.selector;
+        s[71] = ConfigFacet.getTierLiqDiscountBps.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {

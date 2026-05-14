@@ -57,11 +57,14 @@ contract OracleLiquidityORTest is Test {
     // means "no pool"; non-zero means "pool exists at this slot".
     address constant POOL_NONE = address(0);
 
-    // Min liquidity threshold the contract expects (1_000_000 * 1e6).
-    // Mocks need to clear this to be classified Liquid.
-    // Value chosen large enough that 1e30 * 2000e8 / 1e8 = 2e33 ≫ 1e12.
+    // Mocks set the pool's `sqrtPriceX96 = 2^96` (price 1.0), so
+    // `_v3DepthLiquid`'s WETH-leg virtual reserve == `liquidity`, and the
+    // USD depth it compares to `MIN_LIQUIDITY_PAD (1_000_000 * 1e6 = 1e12)`
+    // works out to `liquidity / 2.5e8` (with the mocked $2000 ETH price).
+    // `type(uint128).max/4 ≈ 8.5e37` ⇒ depth ≈ 3.4e29 ≫ 1e12 (Liquid by
+    // orders of magnitude); `1` integer-divides to 0 (far below the floor).
     uint128 constant LIQUIDITY_PASSING = type(uint128).max / 4;
-    uint128 constant LIQUIDITY_FAILING = 1; // way below MIN_LIQUIDITY_USD
+    uint128 constant LIQUIDITY_FAILING = 1; // way below MIN_LIQUIDITY_PAD
 
     function setUp() public {
         owner = address(this);
@@ -134,8 +137,19 @@ contract OracleLiquidityORTest is Test {
         // Default ETH/USD: $2000, 8 decimals, fresh.
         _mockFeedFull(mockEthUsdFeed, int256(2000e8), 8);
         // Default asset/USD feed wired so price-fresh check passes.
+        // Price set to $2000 (matching WETH) so the §4.4-step-3 slippage
+        // check's value-balance guard passes — the mock pool's
+        // `sqrtPriceX96 = 2^96` says asset:WETH = 1:1 in token units,
+        // which is consistent only when the asset's USD price equals
+        // WETH's. The legacy depth-at-tick metric had no value-balance
+        // guard so any asset price worked; the slippage check correctly
+        // catches the mismatch and skips the pool unless prices align.
+        // Tests asserting the OR-logic across venues (which venue
+        // commits, fee-tier iteration, etc.) don't care about the
+        // specific dollar value — they only care that "the pool passes"
+        // is achievable, which requires matching prices.
         _mockRegistryFeed(mockAsset, mockFeed);
-        _mockFeedFull(mockFeed, int256(1e8), 8);
+        _mockFeedFull(mockFeed, int256(2000e8), 8);
 
         // Default state: every factory returns "no pool" at every fee
         // tier. Tests opt-in to `_mockPool` for whichever (factory,
@@ -184,7 +198,7 @@ contract OracleLiquidityORTest is Test {
     ///      pseudo-pool whose `slot0()` and `liquidity()` are mocked
     ///      to satisfy the depth probe. `liquidity == LIQUIDITY_FAILING`
     ///      simulates "pool exists but too thin"; `LIQUIDITY_PASSING`
-    ///      crosses the MIN_LIQUIDITY_USD floor.
+    ///      crosses the MIN_LIQUIDITY_PAD floor.
     function _mockPool(
         address factory,
         address asset,
@@ -205,7 +219,11 @@ contract OracleLiquidityORTest is Test {
         vm.mockCall(
             pool,
             abi.encodeWithSignature("slot0()"),
-            abi.encode(uint160(1e18), int24(0), uint16(0), uint16(0), uint16(0), uint8(0), false)
+            // sqrtPriceX96 = 2^96 ⇒ price 1.0 ⇒ `_v3DepthLiquid`'s WETH-leg
+            // virtual reserve equals `liquidity` exactly (regardless of the
+            // asset-vs-WETH address ordering). See the LIQUIDITY_PASSING
+            // / LIQUIDITY_FALLING constants for the resulting USD depths.
+            abi.encode(uint160(uint256(1) << 96), int24(0), uint16(0), uint16(0), uint16(0), uint8(0), false)
         );
         vm.mockCall(pool, abi.encodeWithSignature("liquidity()"), abi.encode(liquidity));
     }
@@ -310,10 +328,15 @@ contract OracleLiquidityORTest is Test {
         assertEq(uint256(_checkLiquidity()), uint256(LibVaipakam.LiquidityStatus.Liquid));
     }
 
-    function testLiquidityFeeTier10000Found() public {
-        // Pool exists only at the 1% tier on UniV3.
+    function testLiquidityFeeTier10000Excluded() public {
+        // Pool exists ONLY at the 1% tier on UniV3 — the §4.4 step 3 full
+        // upgrade deliberately excludes the 1% bucket from the route
+        // search via `_le03FeeTiers()` (per the design's §3 census, dust
+        // pairs live there). An asset that has depth ONLY in a 1% pool
+        // is now classified Illiquid — a tightening of the gate vs the
+        // legacy depth-at-tick metric that included 1% via `_lookupPool`.
         _mockPool(mockUniFactory, mockAsset, 10000, LIQUIDITY_PASSING);
-        assertEq(uint256(_checkLiquidity()), uint256(LibVaipakam.LiquidityStatus.Liquid));
+        assertEq(uint256(_checkLiquidity()), uint256(LibVaipakam.LiquidityStatus.Illiquid));
     }
 
     function testLiquidityFeeTier100Found() public {

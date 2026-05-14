@@ -64,6 +64,23 @@ library LibAccessControl {
     ///      the other lets the operator respond proportionally to a
     ///      compromise on either side.
     bytes32 internal constant NOTIF_BILLER_ROLE = keccak256("NOTIF_BILLER_ROLE");
+    /// @dev Depth-tiered-LTV liquidity-confidence relay role (Piece B —
+    ///      docs/DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md
+    ///      §4.1.b item 2). Granted to the `apps/keeper` Worker EOA that
+    ///      periodically queries 0x / 1inch for the realized swap slippage
+    ///      at the configured tier sizes and calls
+    ///      `ConfigFacet.setKeeperTier(asset, tier)` — promoting an asset
+    ///      one step once aggregator-confirmed confidence has accumulated
+    ///      and demoting it immediately on observed degradation. Strictly
+    ///      bounded: `effectiveTier = min(getLiquidityTier(asset),
+    ///      keeperTier(asset))`, so a compromised keeper can only ever
+    ///      *lower* an asset's tier down to the no-keeper baseline (which
+    ///      defaults to Tier 1, i.e. today's `HF ≥ 1.5`) — never raise an
+    ///      asset above the on-chain slippage ceiling and never below the
+    ///      `Liquid`/`Illiquid` gate. Same lifecycle as `WATCHER_ROLE` /
+    ///      `NOTIF_BILLER_ROLE`: granted to the deployer at init, handed
+    ///      to the operator's keeper EOA during the post-deploy handover.
+    bytes32 internal constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
 
     struct RoleData {
         mapping(address => bool) hasRole;
@@ -176,6 +193,13 @@ library LibAccessControl {
         // over to the operator's notification-bill bot during the
         // post-deploy handover loop.
         grantRole(NOTIF_BILLER_ROLE, owner);
+        // Piece B (depth-tiered LTV) — same shape: granted at init,
+        // handed to the operator's keeper EOA during the post-deploy
+        // handover loop. The keeper *process* (the periodic 0x/1inch
+        // slippage check that drives `setKeeperTier`) is Phase 2.5
+        // (§4.4 step 5); this just lands the role so the handover
+        // wiring and the `setKeeperTier` access gate exist up front.
+        grantRole(KEEPER_ROLE, owner);
 
         // Set DEFAULT_ADMIN_ROLE as admin for all roles
         setRoleAdmin(ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
@@ -187,6 +211,7 @@ library LibAccessControl {
         setRoleAdmin(ESCROW_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
         setRoleAdmin(WATCHER_ROLE, DEFAULT_ADMIN_ROLE);
         setRoleAdmin(NOTIF_BILLER_ROLE, DEFAULT_ADMIN_ROLE);
+        setRoleAdmin(KEEPER_ROLE, DEFAULT_ADMIN_ROLE);
     }
 
     /**
@@ -205,7 +230,7 @@ library LibAccessControl {
      *      earlier-step revert leaves the deployer recoverable.
      */
     function grantableRoles() internal pure returns (bytes32[] memory) {
-        bytes32[] memory roles = new bytes32[](10);
+        bytes32[] memory roles = new bytes32[](11);
         roles[0] = DEFAULT_ADMIN_ROLE;
         roles[1] = ADMIN_ROLE;
         roles[2] = PAUSER_ROLE;
@@ -216,6 +241,7 @@ library LibAccessControl {
         roles[7] = ESCROW_ADMIN_ROLE;
         roles[8] = WATCHER_ROLE;
         roles[9] = NOTIF_BILLER_ROLE;
+        roles[10] = KEEPER_ROLE;
         return roles;
     }
 }

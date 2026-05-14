@@ -70,20 +70,172 @@ library LibVaipakam {
     uint256 constant SECONDS_PER_YEAR = 365 days;
     uint256 constant DAYS_PER_YEAR = 365;
     uint256 constant ONE_DAY = 1 days;
-    // $1M pool-depth floor for classifying an asset as Liquid. Expressed
-    // in the units produced by the WETH-referenced heuristic in
-    // {OracleFacet._checkLiquidityWithConfig}: `poolLiquidity * ethPrice /
-    // 10**ethFeedDecimals`, where `ethPrice` is the 8-decimal Chainlink
-    // ETH/USD answer. The constant is an empirical floor, not a strict
-    // dollar unit — it is calibrated against asset/WETH 0.3% v3-style AMM
-    // pools on target deployments and tuned via ops if coverage shifts.
-    uint256 constant MIN_LIQUIDITY_USD = 1_000_000 * 1e6;
+    // Pool-depth floor for classifying an asset as `Liquid` — 1,000,000
+    // PAD units (the Predominantly Available Denominator: USD on the
+    // retail deploy, whatever governance has rotated it to via T-048
+    // otherwise — see {effectivePadSymbol}). Expressed in PAD × 1e6
+    // units, i.e. `1_000_000 * 1e6` literally means "1,000,000 PAD".
+    // {OracleFacet._v3DepthLiquid} computes a *real* depth-at-tick from
+    // the asset/WETH v3-style pool (the WETH-leg virtual reserve
+    // `L·√P/2⁹⁶` — or `L·2⁹⁶/√P` when WETH is token0 — valued at the
+    // spot ETH/PAD feed, doubled, then × 1e6) and compares it to this.
+    // (Pre-2026-05: the metric was `poolLiquidity × ethPrice` whose
+    // magnitude was dominated by the paired token's decimals + unit
+    // price, so this threshold was effectively "the pool isn't empty";
+    // the metric was rewritten to a true PAD-denominated figure — see
+    // that function's natspec.) Stays the binary `Liquid`/`Illiquid`
+    // gate until the Piece-B slippage-at-`floorSizePad` rework (§4.4
+    // step 3 in the design doc) replaces it with `cfgFloorSizePad()`;
+    // the graded LTV tiers on top of this floor carry their own knobs
+    // (`tier{1,2,3}SizePad` / `tier{1,2,3}MaxInitLtvBps`).
+    uint256 constant MIN_LIQUIDITY_PAD = 1_000_000 * 1e6;
+    // ─── Depth-tiered LTV (Piece B) — defaults + governance bounds ────
+    // All sizes below are PAD × 1e6 units (USD on the retail deploy);
+    // all `*_BPS` are basis points; the kill-switch
+    // `depthTieredLtvEnabled` defaults `false` so a fresh deploy keeps
+    // today's `HF ≥ 1.5` init gate. See
+    // docs/DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md §4.2-§4.3.
+    // Slippage bound a simulated test trade must clear to count toward a
+    // tier (and the binary `Liquid` floor once §4.4-step-3-proper lands).
+    uint256 constant LIQUIDITY_SLIPPAGE_BPS_DEFAULT = 200; // 2%
+    uint256 constant MIN_LIQUIDITY_SLIPPAGE_BPS = 25; // 0.25% — floor so a setter can't make the test absurdly strict
+    uint256 constant MAX_LIQUIDITY_SLIPPAGE_BPS = 1000; // 10% — ceiling so it can't be loosened into meaninglessness
+    // Pool spot must agree with its own `twapWindowSec` TWAP within this
+    // band, else the pool is treated as recently-manipulated → `Illiquid`.
+    uint256 constant TWAP_CONSISTENCY_BPS_DEFAULT = 300; // 3%
+    uint256 constant MIN_TWAP_CONSISTENCY_BPS = 50; // 0.5%
+    uint256 constant MAX_TWAP_CONSISTENCY_BPS = 1000; // 10%
+    uint256 constant TWAP_WINDOW_SEC_DEFAULT = 30 minutes;
+    uint256 constant MIN_TWAP_WINDOW_SEC = 5 minutes; // too short ⇒ trivially flash-manipulable
+    uint256 constant MAX_TWAP_WINDOW_SEC = 1 days; // too long ⇒ stale, blocks legit fast moves
+    // Simulated-swap test sizes for the floor + the three graded tiers.
+    uint256 constant FLOOR_SIZE_PAD_DEFAULT = 5_000 * 1e6; // clear ⇒ `Liquid`; fail ⇒ `Illiquid`
+    uint256 constant TIER1_SIZE_PAD_DEFAULT = 50_000 * 1e6; // → Tier 1 (50% init-LTV)
+    uint256 constant TIER2_SIZE_PAD_DEFAULT = 500_000 * 1e6; // → Tier 2 (60% init-LTV)
+    uint256 constant TIER3_SIZE_PAD_DEFAULT = 5_000_000 * 1e6; // → Tier 3 (65% init-LTV)
+    uint256 constant MIN_TIER_SIZE_PAD = 1_000 * 1e6; // floor for any size knob (1,000 PAD)
+    // Per-tier init-LTV caps, applied as `min(assetRiskParams.maxLtvBps,
+    // tierNMaxInitLtvBps)` only while `depthTieredLtvEnabled`.
+    uint256 constant TIER1_MAX_INIT_LTV_BPS_DEFAULT = 5000; // 50%
+    uint256 constant TIER2_MAX_INIT_LTV_BPS_DEFAULT = 6000; // 60%
+    uint256 constant TIER3_MAX_INIT_LTV_BPS_DEFAULT = 6500; // 65%
+    uint256 constant MAX_TIER_INIT_LTV_BPS_CEIL = 8000; // 80% — hard ceiling on any tier-LTV setter
+    // Default keeper-confidence tier for an asset the relay hasn't
+    // touched yet — Tier 1, i.e. `effectiveTier` collapses to today's
+    // `HF ≥ 1.5` until the off-chain 0x/1inch confidence accumulates.
+    uint8 constant KEEPER_TIER_DEFAULT = 1;
+    uint8 constant MAX_LIQUIDITY_TIER = 3;
     uint256 constant LTV_SCALE = 10000; // Basis points (e.g., 7500 = 75%)
     uint256 constant RENTAL_BUFFER_BPS = 500; // 5% buffer for NFT rentals
     uint256 constant VOLATILITY_LTV_THRESHOLD_BPS = 11000; // 110% LTV for fallback (1.1x loan value)
     uint256 constant MAX_LIQUIDATION_SLIPPAGE_BPS = 600; // 6% max slippage on DEX liquidation swaps (README §7)
     uint256 constant MAX_LIQUIDATOR_INCENTIVE_BPS = 300; // 3% cap on dynamic liquidator incentive (README §3)
     uint256 constant LIQUIDATION_HANDLING_FEE_BPS = 200; // 2% of proceeds to treasury on successful DEX liquidation (README §3)
+    // ── Phase 4 of AutonomousLtvAndOracleFallback.md — tier-LTV cache constants ──
+    //
+    // Per-tier safety bounds for the autonomous tier-LTV cache. A
+    // peer-consensus reading that lands outside its tier's box is
+    // REJECTED (not silently clipped) — out-of-band data is signal
+    // something's wrong with peer state, not a value to use. Bounds
+    // are constitution-level: changing them requires an emergency
+    // multisig + source-code change + audit, not a refresh call.
+    uint16 constant TIER1_LTV_FLOOR_BPS = 3700;    // 37%
+    uint16 constant TIER1_LTV_CEIL_BPS  = 5500;    // 55%
+    uint16 constant TIER2_LTV_FLOOR_BPS = 5500;    // 55%
+    uint16 constant TIER2_LTV_CEIL_BPS  = 6900;    // 69%
+    uint16 constant TIER3_LTV_FLOOR_BPS = 6900;    // 69%
+    uint16 constant TIER3_LTV_CEIL_BPS  = 8200;    // 82%
+
+    // Library defaults — used when the cache is hard-stale (>14 days
+    // since last refresh) or never-refreshed. Sit at the midpoint of
+    // each tier's box so the cache-stale fallback is neutral.
+    uint16 constant TIER1_LTV_DEFAULT_BPS = 5000;  // 50%
+    uint16 constant TIER2_LTV_DEFAULT_BPS = 6200;  // 62%
+    uint16 constant TIER3_LTV_DEFAULT_BPS = 7300;  // 73%
+
+    // Per-tier haircut applied to the peer-consensus median before
+    // bound-check. Tier-3 (deepest, highest absolute-dollar exposure)
+    // takes a 5pp conservative haircut; Tier-1 / Tier-2 match peer
+    // median (the bound check still applies).
+    uint16 constant TIER1_LTV_HAIRCUT_BPS = 0;
+    uint16 constant TIER2_LTV_HAIRCUT_BPS = 0;
+    uint16 constant TIER3_LTV_HAIRCUT_BPS = 500;   // 5pp
+
+    // Cache TTLs.
+    uint256 constant TIER_LTV_CACHE_SOFT_TTL = 7 days;
+    uint256 constant TIER_LTV_CACHE_HARD_TTL = 14 days;
+
+    // ─── FlashLoanLiquidationPath.md §4 — per-tier liquidation-discount bounds ─
+    //
+    // The flash-loan / liquidator-buys-at-discount path
+    // (`RiskFacet.triggerLiquidationDiscounted`) settles at
+    // `debt-plus-discount-VALUE` priced from oracles: the liquidator
+    // delivers `totalDebt` of the principal asset and receives the
+    // borrower's collateral at a per-tier discount, profiting on the
+    // spread between oracle-priced seizure and external DEX execution
+    // (typically via a same-tx flash-loan).
+    //
+    // Per-tier shape: Tier 1 is the THINNEST qualifying tier and
+    // therefore carries the widest discount band (liquidator slippage
+    // on a thin order-book is higher → bigger incentive needed to
+    // attract competing liquidators). Tier 3 is the deepest tier and
+    // carries the tightest band — execution risk is small so the
+    // liquidator doesn't need much haircut to be profitable.
+    // Cross-tier monotonic invariant enforced at the setter:
+    //   T1 default ≥ T2 default ≥ T3 default
+    // (and the same for governance-configured values).
+    //
+    // Bounds are constitution-level — changing them requires a
+    // source-code change + audit, not a configuration call. The
+    // `ConfigFacet.setTierLiqDiscountBps` setter clamps governance
+    // writes inside `[FLOOR, CEIL]` so a hostile-governance attack
+    // cannot push the discount to a degenerate value (0% would
+    // starve the liquidator market; 50% would gut borrower surplus).
+    uint16 constant TIER1_LIQ_DISCOUNT_FLOOR_BPS = 300;   // 3.0%
+    uint16 constant TIER1_LIQ_DISCOUNT_CEIL_BPS  = 1500;  // 15.0%
+    uint16 constant TIER2_LIQ_DISCOUNT_FLOOR_BPS = 300;   // 3.0%
+    uint16 constant TIER2_LIQ_DISCOUNT_CEIL_BPS  = 1000;  // 10.0%
+    uint16 constant TIER3_LIQ_DISCOUNT_FLOOR_BPS = 200;   // 2.0%
+    uint16 constant TIER3_LIQ_DISCOUNT_CEIL_BPS  = 800;   // 8.0%
+
+    // Library defaults — match the user-ratified figures in
+    // `docs/DesignsAndPlans/FlashLoanLiquidationPath.md` §3. Tier 1's
+    // 770 BPS (7.7%) matches Aave V3's WBTC `liquidationBonus`
+    // encoding 10770 (= 10000 + 770) — chosen so external liquidator
+    // tooling already calibrated to Aave's discount math sees a
+    // familiar magnitude on Vaipakam.
+    uint16 constant TIER1_LIQ_DISCOUNT_DEFAULT_BPS = 770;  // 7.7%
+    uint16 constant TIER2_LIQ_DISCOUNT_DEFAULT_BPS = 600;  // 6.0%
+    uint16 constant TIER3_LIQ_DISCOUNT_DEFAULT_BPS = 500;  // 5.0%
+
+    // Multi-peer / multi-asset consensus rules.
+    // Peer divergence tolerance — how far apart two peers' LTV readings
+    // can be on the same asset before we treat them as "contested" and
+    // drop the asset from the tier aggregation. Set wide enough to
+    // tolerate the structural Aave-vs-Compound disagreement: Aave's
+    // per-asset LTVs (governance-set after risk-team modeling) are
+    // systematically more conservative than Compound's borrow
+    // collateral factors — empirically the spread for mid-cap assets
+    // (LINK, UNI) sits at 20–30pp without anyone being "wrong",
+    // because the two protocols have different liquidation models +
+    // different risk-bonus structures. Set to 30pp so honest peer
+    // disagreement doesn't reject the asset; manipulation (or peer
+    // governance attack) would have to push values >30pp apart to
+    // dodge this gate.
+    uint16 constant PEER_DIVERGENCE_TOLERANCE_BPS = 3000;
+    uint8 constant TIER_MIN_PEER_READINGS = 2;             // ≥ 2 peers agree per asset
+    uint8 constant TIER_MIN_ASSET_READINGS = 2;            // ≥ 2 reference assets reporting per tier
+
+    // Partial-liquidation close-factor cap (item 2 of liquidator hardening).
+    // 10_000 BPS = 100% i.e. no cap by default — the keeper picks the
+    // smallest fraction that restores HF >= 1. Governance can tighten
+    // (e.g. to Aave-style 5_000 = 50%) via
+    // `ConfigFacet.setMaxPartialLiquidationCloseFactorBps` if it ever
+    // wants a per-call ceiling — useful for very long-tail collateral
+    // where any single partial above N% slippage is risky. The 10_000
+    // ceiling is also the hard upper bound at the setter: a partial
+    // can never swap more than 100% of remaining collateral, by definition.
+    uint256 constant MAX_PARTIAL_LIQUIDATION_CLOSE_FACTOR_BPS_DEFAULT = 10_000;
     uint256 constant LOAN_INITIATION_FEE_BPS = 10; // 0.1% fee deducted from ERC-20 principal at loan initiation (README §6 lines 280, 332)
     // Fallback-path split (README §7): lender gets principal + accrued
     // interest + {FALLBACK_LENDER_BONUS_BPS} of principal; treasury gets
@@ -497,6 +649,14 @@ library LibVaipakam {
         // "Match-fee economics revisit" Phase 2 item). Capped at
         // MAX_FEE_BPS (50%) by the setter.
         uint16 lifMatcherFeeBps; // 0 ⇒ LIF_MATCHER_FEE_BPS (100)
+        // Partial-liquidation close-factor cap (Phase 2 liquidator
+        // hardening, item 2). Governance ceiling on the swap fraction
+        // an off-chain keeper can pass to `RiskFacet.triggerPartialLiquidation`.
+        // 0 ⇒ MAX_PARTIAL_LIQUIDATION_CLOSE_FACTOR_BPS_DEFAULT (10_000 =
+        // no cap, keeper picks the smallest fraction that restores HF≥1).
+        // Setter clamps the configured value to ≤ 10_000 — by definition
+        // a partial can't swap more than 100% of remaining collateral.
+        uint16 maxPartialLiquidationCloseFactorBps; // 0 ⇒ MAX_PARTIAL_LIQUIDATION_CLOSE_FACTOR_BPS_DEFAULT (10_000)
         // Auto-pause window (Phase 1 follow-up). Duration in seconds
         // for an off-chain anomaly-watcher's `autoPause()` to freeze
         // the protocol while humans investigate. 0 ⇒
@@ -595,6 +755,80 @@ library LibVaipakam {
         // setters are NOT gated by this flag — governance can tune
         // individual values within the same numeraire freely.
         bool numeraireSwapEnabled;
+        // ── Depth-tiered LTV (Piece B) — governance globals ───────────
+        // See docs/DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md
+        // §4.2-§4.3. Every field is `0 ⇒ LibVaipakam constant default`;
+        // setters live in {ConfigFacet} under `ADMIN_ROLE` (later
+        // governance) and enforce the bounds + monotonicity noted below.
+        //
+        // Master kill-switch. Default `false` — the feature ships
+        // dormant: `OracleFacet.getLiquidityTier` still computes a tier
+        // (so the keeper / UI can read it) but the init gate in
+        // `LoanFacet._runInitGates` and the synthetic-HF check in
+        // `LibOfferMatch` ignore the per-tier LTV cap entirely → exactly
+        // today's behaviour (only `assetRiskParams.maxLtvBps` + the
+        // `HF ≥ 1.5` floor). Flipped on per chain by `ADMIN_ROLE` via
+        // `ConfigFacet.setDepthTieredLtvEnabled(bool)` only after that
+        // chain's slippage census + audit (§4.4 step 6).
+        bool depthTieredLtvEnabled;
+        // Slippage budget (bps) a simulated fixed-size swap must clear
+        // for the asset's pool to count toward a tier. 0 ⇒
+        // LIQUIDITY_SLIPPAGE_BPS_DEFAULT (200 = 2%). Bounded
+        // [MIN_LIQUIDITY_SLIPPAGE_BPS, MAX_LIQUIDITY_SLIPPAGE_BPS].
+        uint16 liquiditySlippageBps; // 0 ⇒ 200
+        // Pool spot-vs-own-TWAP agreement band (bps) — anti-manipulation
+        // guard in `getLiquidityTier`. 0 ⇒ TWAP_CONSISTENCY_BPS_DEFAULT
+        // (300 = 3%). Bounded [MIN_TWAP_CONSISTENCY_BPS, MAX_…].
+        uint16 twapConsistencyBps; // 0 ⇒ 300
+        // Per-tier max init-LTV caps (bps), applied as
+        // `min(assetRiskParams.maxLtvBps, tierNMaxInitLtvBps[
+        // effectiveTier])` while `depthTieredLtvEnabled`. 0 ⇒
+        // TIER{1,2,3}_MAX_INIT_LTV_BPS_DEFAULT (5000 / 6000 / 6500).
+        // Setter enforces `tier1 ≤ tier2 ≤ tier3 ≤ MAX_TIER_INIT_LTV_BPS_CEIL`.
+        uint16 tier1MaxInitLtvBps; // 0 ⇒ 5000
+        uint16 tier2MaxInitLtvBps; // 0 ⇒ 6000
+        uint16 tier3MaxInitLtvBps; // 0 ⇒ 6500
+        // TWAP observation window (seconds) for the consistency guard.
+        // 0 ⇒ TWAP_WINDOW_SEC_DEFAULT (1800 = 30 min). Bounded
+        // [MIN_TWAP_WINDOW_SEC, MAX_TWAP_WINDOW_SEC].
+        uint32 twapWindowSec; // 0 ⇒ 1800
+        // Simulated-swap test sizes for the binary `Liquid` floor and
+        // the three graded tiers, each in PAD × 1e6 units (so `5_000e6`
+        // literally means "5,000 PAD" — USD on the retail deploy,
+        // whatever governance has rotated PAD to via T-048 otherwise;
+        // see {effectivePadSymbol}). 0 ⇒ FLOOR_SIZE_PAD_DEFAULT /
+        // TIER{1,2,3}_SIZE_PAD_DEFAULT (5k / 50k / 500k / 5M). Setter
+        // enforces `floor ≤ tier1 ≤ tier2 ≤ tier3` and each ≥
+        // MIN_TIER_SIZE_PAD. (`floorSizePad` becomes the `Liquid`/`Illiquid`
+        // threshold once the §4.4-step-3-proper slippage rework lands;
+        // until then `MIN_LIQUIDITY_PAD` is that threshold.)
+        uint64 floorSizePad; // 0 ⇒ 5_000e6
+        uint64 tier1SizePad; // 0 ⇒ 50_000e6
+        uint64 tier2SizePad; // 0 ⇒ 500_000e6
+        uint64 tier3SizePad; // 0 ⇒ 5_000_000e6
+        // ── Flash-loan / liquidator-buys-at-discount path ─────────────
+        // See docs/DesignsAndPlans/FlashLoanLiquidationPath.md §6.
+        // Master kill-switch — default `false` ⇒
+        // `RiskFacet.triggerLiquidationDiscounted` reverts immediately
+        // with `DiscountPathDisabled`. Independent of
+        // `depthTieredLtvEnabled` so governance can flip each one
+        // separately per chain (e.g. enable discount path while
+        // autonomous-LTV still bakes, or vice versa). Flipped on via
+        // `ConfigFacet.setDiscountPathEnabled(bool)` — ADMIN_ROLE
+        // pre-handover, TimelockController-gated post-handover.
+        bool discountPathEnabled;
+        // Per-tier liquidator-discount (BPS) — applied to the seized
+        // collateral value at settle time. Each `0 ⇒ TIER{N}_LIQ_
+        // DISCOUNT_DEFAULT_BPS` library constant (770 / 600 / 500).
+        // Setter (`setTierLiqDiscountBps`) bounds each tier inside
+        // `[TIER{N}_LIQ_DISCOUNT_FLOOR_BPS, TIER{N}_LIQ_DISCOUNT_CEIL_BPS]`
+        // and enforces the cross-tier monotonic invariant
+        // `T1 ≥ T2 ≥ T3` (thinner tier = wider discount). A fresh
+        // deploy never touches these slots ⇒ the library defaults
+        // apply until governance overrides.
+        uint16 tier1LiqDiscountBps; // 0 ⇒ 770
+        uint16 tier2LiqDiscountBps; // 0 ⇒ 600
+        uint16 tier3LiqDiscountBps; // 0 ⇒ 500
     }
 
     /// @dev Struct to store parameters of createOffer function, avoiding stack-too-deep.
@@ -2113,6 +2347,148 @@ library LibVaipakam {
         // and we want it to revert loudly rather than silently rolling
         // negative.
         mapping(address => mapping(address => uint256)) protocolTrackedEscrowBalance;
+        // ── Depth-tiered LTV (Piece B) — Predominantly Available Assets ─
+        // Per-chain list of the "predominantly available" quote tokens
+        // the liquidity check probes an asset's pools against — the
+        // on-chain ERC-20 incarnations of the chain's deep stablecoin /
+        // ETH liquidity (e.g. `[WETH, USDC, USDT, DAI]` by their
+        // addresses on this chain). Distinct from PAD (the *unit of
+        // account* the size thresholds are denominated in — USD/EUR/…,
+        // typically not an ERC-20): PAA is *what pools we look at*, PAD
+        // is *what we measure depth in*. Maintained by `ADMIN_ROLE`
+        // (later governance) via `ConfigFacet.set/add/removePaaAsset`;
+        // empty ⇒ {effectivePaaAssets} falls back to `[wethContract]`,
+        // so an un-configured deploy behaves exactly like today's
+        // WETH-only probe in `OracleFacet._v3DepthLiquid`. Keep it short
+        // (2-4 entries) — every entry adds a `getPool` probe × the
+        // ≤0.3% fee tiers to the liquidity check's hot path. Order is
+        // irrelevant (the check takes the best route over all of them).
+        // Pure-address config — no per-asset *tiering* allowlist; the
+        // only per-asset *remove* lever stays `AdminFacet.pauseAsset` /
+        // the blacklist.
+        address[] paaAssets;
+        // Keeper liquidity-confidence tier per asset (§4.1.b item 2).
+        // Default `0` is read as `KEEPER_TIER_DEFAULT` (= Tier 1) via
+        // {effectiveKeeperTier} — so a brand-new asset opens at Tier 1
+        // (`HF ≥ 1.5`) until the off-chain 0x/1inch confidence relay
+        // (`KEEPER_ROLE`, §4.4 step 5) promotes it. `effectiveTier(asset)
+        // = min(getLiquidityTier(asset), effectiveKeeperTier(asset))` —
+        // a compromised keeper can only lower an asset's tier toward the
+        // no-keeper baseline, never raise it above the on-chain ceiling.
+        // Written only by `ConfigFacet.setKeeperTier` under `KEEPER_ROLE`.
+        mapping(address => uint8) keeperTier;
+        // ── Depth-tiered LTV (Piece B) — Uni-V2-fork families ───────────
+        // Per-chain Uniswap-V2-style factory addresses, each consulted
+        // as an additional leg of `OracleFacet.getLiquidityTier`'s route
+        // search alongside the V3-clone trio. V2 pools use a different
+        // ABI (`factory.getPair(t0, t1)` — bidirectional, no fee tier
+        // arg; `pool.getReserves()` returns *real* reserves, not the
+        // tick-virtual approximation — so the in-pool depth measurement
+        // is exact, no `_v3VirtualReserves` step), and each clone's
+        // canonical fee tier differs (UniV2 / SushiV2 = 30bps = 3000
+        // pips; PancakeV2 = 25bps = 2500 pips) — fed straight into
+        // {LibSlippage.priceImpactBps}'s `feePips` arg. Zero ⇒ skip
+        // that leg (same as the V3 trio); a fresh deploy has all three
+        // unset, so the route search behaves exactly like the V3-only
+        // configuration until governance configures them. Governance
+        // setters live on {AdminFacet} (`setUniswapV2Factory` etc.) —
+        // same shape as the V3-clone setters above.
+        address uniswapV2Factory;
+        address sushiswapV2Factory;
+        address pancakeswapV2Factory;
+        // ── Phase 3 of AutonomousLtvAndOracleFallback.md — peer-protocol addresses ──
+        // Per-chain peer-lending-protocol addresses that the autonomous
+        // tier-LTV cache reads (Phase 4 builds the refresh function on
+        // top of these). All read-only — Vaipakam never writes to peer
+        // contracts; the addresses just say "where to read LTV data
+        // from for each protocol on this chain".
+        //
+        // Zero ⇒ skip that peer in the aggregation (peer not deployed
+        // on this chain). A fresh deploy has all three unset; the
+        // refresh function then falls back to library defaults.
+        //
+        // Governance setter: `OracleAdminFacet.setPeerProtocolAddresses`
+        // under `ORACLE_ADMIN_ROLE`. Addresses verified against each
+        // peer's official docs at the deploy step + audit.
+        //
+        // `aaveV3PoolDataProvider` — Aave V3's public data-provider
+        // contract. Calls `getReserveConfigurationData(asset)` to read
+        // an asset's LTV + liquidation threshold in BPS.
+        //
+        // `compoundV3Comet` — A single Compound V3 Comet (one base
+        // asset per Comet — typically the chain's largest by liquidity;
+        // operator picks at deploy). Multi-Comet aggregation is a
+        // documented Phase-3-follow-up; for v1, the single Comet is
+        // enough to add Compound to the consensus.
+        //
+        // `morphoBlue` — Morpho-Blue contract for per-market parameter
+        // reads. Documented as Phase-3-follow-up; v1 reads only Aave
+        // + Compound, so this slot can sit at zero until the
+        // market-id enumeration story is built (deferred to Phase 3.5).
+        address aaveV3PoolDataProvider;
+        address compoundV3Comet;
+        address morphoBlue;
+        // ── Phase 4 of AutonomousLtvAndOracleFallback.md — tier-LTV cache ──
+        // Per-tier cached LTV in BPS + last-refreshed timestamp.
+        // Refreshed permissionlessly via `OracleFacet.refreshTierLtvCache()`
+        // by anyone; the on-chain aggregation reads Aave V3 + Compound
+        // V3 via `LibPeerLTV`, computes per-tier median across a
+        // reference asset list, applies the per-tier haircut + bound
+        // check, and writes here. Loan init reads this when computing
+        // the per-asset init-LTV cap.
+        //
+        // Cache TTLs: 7d soft (informational stale event), 14d hard
+        // (fall back to library defaults). Anyone may refresh at any
+        // time — no permission, no rate-limit (per-refresh gas cost
+        // is the natural rate-limit).
+        mapping(uint8 => TierLtvCacheEntry) tierLtvCache;
+        // Per-tier reference asset list — the assets that get queried
+        // across each peer protocol during a refresh. Constitution-level:
+        // set at deploy via `OracleAdminFacet.setTierReferenceAssets`,
+        // changes require an owner-level governance call. Asset
+        // selection is per-chain (e.g. Tier-3 on Base = WBTC, USDC,
+        // USDT, cbETH, cbBTC; Tier-3 on Arb = WBTC, USDC, USDT, WETH,
+        // LINK).
+        //
+        // Empty array for a tier ⇒ refreshes for that tier emit
+        // `TierLtvCacheRefreshRejected(_, _, "no-reference-assets")`
+        // and leave the cache value untouched.
+        mapping(uint8 => address[]) tierReferenceAssets;
+        // Phase 7 of AutonomousLtvAndOracleFallback.md — per-tier
+        // safety-box parameters (floor / ceiling / haircut), governance-
+        // configurable via `ConfigFacet.setTierLtvParams` (ADMIN_ROLE,
+        // atomic for all three tiers, monotonic-boundary enforced).
+        // Zero entries fall through to the library constants
+        // (`TIER1/2/3_LTV_FLOOR_BPS` / `_CEIL_BPS` / `_HAIRCUT_BPS`).
+        // A fresh deploy never touches this mapping ⇒ library defaults
+        // apply everywhere until governance overrides.
+        mapping(uint8 => TierLtvParams) tierLtvParams;
+    }
+
+    /// @dev Cached tier-LTV reading. Updated permissionlessly via
+    ///      `OracleFacet.refreshTierLtvCache()`. Stale-detection (soft +
+    ///      hard TTL) drives the fallback semantics at loan init.
+    struct TierLtvCacheEntry {
+        uint16 ltvBps;            // 0 ⇒ never-refreshed
+        uint64 lastRefreshedAt;   // unix seconds; 0 ⇒ never-refreshed
+    }
+
+    /// @dev Phase 7 of AutonomousLtvAndOracleFallback.md — per-tier
+    ///      safety-box parameters, governance-configurable so the
+    ///      protocol can adjust risk tolerance over time (Aave-style)
+    ///      without redeploying. Three uint16 fields = 48 bits per
+    ///      tier × 3 tiers = 144 bits → all three entries pack into
+    ///      a single storage slot via the mapping value layout.
+    ///
+    ///      Zero-valued entries are the indicator "never configured"
+    ///      and the read accessors fall through to the library
+    ///      constants (`TIER1/2/3_LTV_FLOOR_BPS` / `_CEIL_BPS` /
+    ///      `_HAIRCUT_BPS`). Governance can override all three at once
+    ///      via `ConfigFacet.setTierLtvParams` (atomic, ADMIN_ROLE).
+    struct TierLtvParams {
+        uint16 floorBps;
+        uint16 ceilBps;
+        uint16 haircutBps;
     }
 
     /// @dev Range Orders Phase 1 — set by matchOffers, read by
@@ -2432,6 +2808,20 @@ library LibVaipakam {
         return v == 0 ? LIF_MATCHER_FEE_BPS : uint256(v);
     }
 
+    /// @dev Phase 2 liquidator hardening (item 2) — close-factor ceiling
+    ///      for `RiskFacet.triggerPartialLiquidation`. Governance-tunable
+    ///      via `ConfigFacet.setMaxPartialLiquidationCloseFactorBps`;
+    ///      falls back to MAX_PARTIAL_LIQUIDATION_CLOSE_FACTOR_BPS_DEFAULT
+    ///      (10_000 = 100%, no cap) when unset. Setter caps the configured
+    ///      value at 10_000 — a partial fraction above 100% has no
+    ///      semantic meaning (would swap more than the loan's remaining
+    ///      collateral). Read once at the partial-liquidation entry point
+    ///      to enforce `fractionBps ≤ cap`.
+    function cfgMaxPartialLiquidationCloseFactorBps() internal view returns (uint256) {
+        uint16 v = storageSlot().protocolCfg.maxPartialLiquidationCloseFactorBps;
+        return v == 0 ? MAX_PARTIAL_LIQUIDATION_CLOSE_FACTOR_BPS_DEFAULT : uint256(v);
+    }
+
     /// @dev Phase 1 follow-up — auto-pause duration (seconds) used by
     ///      `LibPausable.autoPause`. Governance-tunable via
     ///      `ConfigFacet.setAutoPauseDurationSeconds` within
@@ -2465,6 +2855,151 @@ library LibVaipakam {
     function cfgNotificationFee() internal view returns (uint256) {
         uint256 v = storageSlot().protocolCfg.notificationFee;
         return v == 0 ? NOTIFICATION_FEE_DEFAULT : v;
+    }
+
+    // ─── Depth-tiered LTV (Piece B) — config accessors ────────────────
+    // See docs/DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md §4.2.
+    // Every "size" is PAD × 1e6 units; every `*Bps` is basis points.
+
+    /// @dev Master kill-switch for the depth-tiered init-LTV cap. While
+    ///      `false` (the fresh-deploy default), `OracleFacet.getLiquidityTier`
+    ///      still resolves a tier (read-only — for the keeper / UI) but
+    ///      the loan-init gate and the `matchOffers` synthetic-HF check
+    ///      ignore the per-tier LTV cap → exactly today's `HF ≥ 1.5`
+    ///      behaviour. Flipped on per chain by `ConfigFacet.setDepthTieredLtvEnabled`
+    ///      after that chain's slippage census + audit.
+    function cfgDepthTieredLtvEnabled() internal view returns (bool) {
+        return storageSlot().protocolCfg.depthTieredLtvEnabled;
+    }
+
+    /// @dev Slippage bound (bps) a simulated fixed-size swap must clear
+    ///      for the asset's pool to count toward a tier. `0 ⇒
+    ///      LIQUIDITY_SLIPPAGE_BPS_DEFAULT` (200). Setter-bounded
+    ///      `[MIN_LIQUIDITY_SLIPPAGE_BPS, MAX_LIQUIDITY_SLIPPAGE_BPS]`.
+    function cfgLiquiditySlippageBps() internal view returns (uint256) {
+        uint16 v = storageSlot().protocolCfg.liquiditySlippageBps;
+        return v == 0 ? LIQUIDITY_SLIPPAGE_BPS_DEFAULT : uint256(v);
+    }
+
+    /// @dev Pool spot-vs-own-TWAP agreement band (bps) — manipulation
+    ///      guard in `getLiquidityTier`. `0 ⇒ TWAP_CONSISTENCY_BPS_DEFAULT`
+    ///      (300). Setter-bounded `[MIN_TWAP_CONSISTENCY_BPS, MAX_…]`.
+    function cfgTwapConsistencyBps() internal view returns (uint256) {
+        uint16 v = storageSlot().protocolCfg.twapConsistencyBps;
+        return v == 0 ? TWAP_CONSISTENCY_BPS_DEFAULT : uint256(v);
+    }
+
+    /// @dev TWAP observation window (seconds) for the consistency guard.
+    ///      `0 ⇒ TWAP_WINDOW_SEC_DEFAULT` (1800). Setter-bounded
+    ///      `[MIN_TWAP_WINDOW_SEC, MAX_TWAP_WINDOW_SEC]`.
+    function cfgTwapWindowSec() internal view returns (uint256) {
+        uint32 v = storageSlot().protocolCfg.twapWindowSec;
+        return v == 0 ? TWAP_WINDOW_SEC_DEFAULT : uint256(v);
+    }
+
+    /// @dev Binary `Liquid`/`Illiquid` floor — the simulated-swap test
+    ///      size below which an asset is `Illiquid`. `0 ⇒
+    ///      FLOOR_SIZE_PAD_DEFAULT` (5,000 PAD). (Becomes the active
+    ///      `_v3DepthLiquid` threshold once §4.4-step-3-proper lands;
+    ///      until then `MIN_LIQUIDITY_PAD` is.)
+    function cfgFloorSizePad() internal view returns (uint256) {
+        uint64 v = storageSlot().protocolCfg.floorSizePad;
+        return v == 0 ? FLOOR_SIZE_PAD_DEFAULT : uint256(v);
+    }
+
+    /// @dev Tier-1 simulated-swap test size. `0 ⇒ TIER1_SIZE_PAD_DEFAULT` (50k PAD).
+    function cfgTier1SizePad() internal view returns (uint256) {
+        uint64 v = storageSlot().protocolCfg.tier1SizePad;
+        return v == 0 ? TIER1_SIZE_PAD_DEFAULT : uint256(v);
+    }
+
+    /// @dev Tier-2 simulated-swap test size. `0 ⇒ TIER2_SIZE_PAD_DEFAULT` (500k PAD).
+    function cfgTier2SizePad() internal view returns (uint256) {
+        uint64 v = storageSlot().protocolCfg.tier2SizePad;
+        return v == 0 ? TIER2_SIZE_PAD_DEFAULT : uint256(v);
+    }
+
+    /// @dev Tier-3 simulated-swap test size. `0 ⇒ TIER3_SIZE_PAD_DEFAULT` (5M PAD).
+    function cfgTier3SizePad() internal view returns (uint256) {
+        uint64 v = storageSlot().protocolCfg.tier3SizePad;
+        return v == 0 ? TIER3_SIZE_PAD_DEFAULT : uint256(v);
+    }
+
+    /// @dev Convenience: the simulated-swap test size for tier `n`
+    ///      (1, 2, or 3). Tier 0 returns the binary `Liquid` floor
+    ///      (`cfgFloorSizePad`). Reverts for `n > MAX_LIQUIDITY_TIER`
+    ///      — callers iterate over the known tier range.
+    function cfgTierSizePad(uint8 tier) internal view returns (uint256) {
+        if (tier == 0) return cfgFloorSizePad();
+        if (tier == 1) return cfgTier1SizePad();
+        if (tier == 2) return cfgTier2SizePad();
+        if (tier == 3) return cfgTier3SizePad();
+        revert IVaipakamErrors.ParameterOutOfRange(
+            "liquidityTier", uint256(tier), 0, uint256(MAX_LIQUIDITY_TIER)
+        );
+    }
+
+    /// @dev Tier-1 init-LTV cap (bps). `0 ⇒ TIER1_MAX_INIT_LTV_BPS_DEFAULT` (5000).
+    function cfgTier1MaxInitLtvBps() internal view returns (uint256) {
+        uint16 v = storageSlot().protocolCfg.tier1MaxInitLtvBps;
+        return v == 0 ? TIER1_MAX_INIT_LTV_BPS_DEFAULT : uint256(v);
+    }
+
+    /// @dev Tier-2 init-LTV cap (bps). `0 ⇒ TIER2_MAX_INIT_LTV_BPS_DEFAULT` (6000).
+    function cfgTier2MaxInitLtvBps() internal view returns (uint256) {
+        uint16 v = storageSlot().protocolCfg.tier2MaxInitLtvBps;
+        return v == 0 ? TIER2_MAX_INIT_LTV_BPS_DEFAULT : uint256(v);
+    }
+
+    /// @dev Tier-3 init-LTV cap (bps). `0 ⇒ TIER3_MAX_INIT_LTV_BPS_DEFAULT` (6500).
+    function cfgTier3MaxInitLtvBps() internal view returns (uint256) {
+        uint16 v = storageSlot().protocolCfg.tier3MaxInitLtvBps;
+        return v == 0 ? TIER3_MAX_INIT_LTV_BPS_DEFAULT : uint256(v);
+    }
+
+    /// @dev The init-LTV cap (bps) at tier `n`. Tier 0 (below the
+    ///      `Liquid` floor) ⇒ `0` — no borrow against it. Reverts for
+    ///      `n > MAX_LIQUIDITY_TIER`. Only consulted while
+    ///      `depthTieredLtvEnabled`; the effective init cap is
+    ///      `min(assetRiskParams.maxLtvBps, cfgTierMaxInitLtvBps(tier))`.
+    function cfgTierMaxInitLtvBps(uint8 tier) internal view returns (uint256) {
+        if (tier == 0) return 0;
+        if (tier == 1) return cfgTier1MaxInitLtvBps();
+        if (tier == 2) return cfgTier2MaxInitLtvBps();
+        if (tier == 3) return cfgTier3MaxInitLtvBps();
+        revert IVaipakamErrors.ParameterOutOfRange(
+            "liquidityTier", uint256(tier), 0, uint256(MAX_LIQUIDITY_TIER)
+        );
+    }
+
+    /// @dev Keeper liquidity-confidence tier for `asset` — stored `0`
+    ///      reads as `KEEPER_TIER_DEFAULT` (= Tier 1) so an asset the
+    ///      relay hasn't touched opens at today's `HF ≥ 1.5` baseline.
+    ///      Pair with `OracleFacet.getLiquidityTier` for the effective
+    ///      tier: `min(onChainTier, effectiveKeeperTier)`.
+    function effectiveKeeperTier(address asset) internal view returns (uint8) {
+        uint8 v = storageSlot().keeperTier[asset];
+        return v == 0 ? KEEPER_TIER_DEFAULT : v;
+    }
+
+    /// @dev The "predominantly available assets" the liquidity check
+    ///      probes pools against (see `Storage.paaAssets`). Empty
+    ///      config ⇒ `[wethContract]` — so an un-configured deploy
+    ///      behaves like today's WETH-only probe. Returns a fresh
+    ///      memory array; callers must tolerate a single-element fallback
+    ///      (and a zero element if `wethContract` itself is unset, which
+    ///      `OracleFacet` already skips).
+    function effectivePaaAssets() internal view returns (address[] memory) {
+        Storage storage s = storageSlot();
+        uint256 n = s.paaAssets.length;
+        if (n == 0) {
+            address[] memory one = new address[](1);
+            one[0] = s.wethContract;
+            return one;
+        }
+        address[] memory out = new address[](n);
+        for (uint256 i; i < n; ++i) out[i] = s.paaAssets[i];
+        return out;
     }
 
     /// @dev Returns the four tier thresholds (T1 min, T2 min, T3 min, T4 min-exclusive).
@@ -2903,6 +3438,210 @@ library LibVaipakam {
         uint40 maxStaleness,
         int256 minValidAnswer
     );
+
+    /// @notice Emitted on every change to the autonomous tier-LTV
+    ///         peer-protocol read addresses (Phase 3 of
+    ///         AutonomousLtvAndOracleFallback.md). Off-chain monitoring
+    ///         watches this so a governance change is publicly
+    ///         observable.
+    /// @custom:event-category informational/config
+    event PeerProtocolAddressesSet(
+        address aaveV3PoolDataProvider,
+        address compoundV3Comet,
+        address morphoBlue
+    );
+
+    /// @notice Emitted on every change to a tier's reference asset
+    ///         list (Phase 4 of AutonomousLtvAndOracleFallback.md).
+    ///         Constitution-level setting; off-chain monitoring
+    ///         watches for governance changes.
+    /// @custom:event-category informational/config
+    event TierReferenceAssetsSet(uint8 indexed tier, address[] assets);
+
+    /// @dev Per-tier safety-box bounds. Tier indices 1, 2, 3 (Tier 0
+    ///      is "untierable" — no LTV cap applies because the asset
+    ///      isn't accepted at all).
+    ///
+    ///      Phase 7 of AutonomousLtvAndOracleFallback.md — reads
+    ///      governance overrides from `s.tierLtvParams[tier]` if set
+    ///      (non-zero ceil = "configured" indicator); otherwise falls
+    ///      through to the library constants. The constants stay
+    ///      authoritative on a fresh deploy and after a hypothetical
+    ///      governance "clear" (no clear API exists; governance
+    ///      effectively-clears by setting back to the constants).
+    function tierLtvBoundsBps(uint8 tier)
+        internal
+        view
+        returns (uint16 floorBps, uint16 ceilBps)
+    {
+        if (tier == 0 || tier > MAX_LIQUIDITY_TIER) return (0, 0);
+        TierLtvParams storage p = storageSlot().tierLtvParams[tier];
+        if (p.ceilBps != 0) {
+            return (p.floorBps, p.ceilBps);
+        }
+        if (tier == 1) return (TIER1_LTV_FLOOR_BPS, TIER1_LTV_CEIL_BPS);
+        if (tier == 2) return (TIER2_LTV_FLOOR_BPS, TIER2_LTV_CEIL_BPS);
+        return (TIER3_LTV_FLOOR_BPS, TIER3_LTV_CEIL_BPS);
+    }
+
+    /// @dev Per-tier haircut (BPS) applied to the peer-consensus
+    ///      median before the bound check. Reads governance override
+    ///      from `s.tierLtvParams[tier].haircutBps`; zero falls
+    ///      through to the library constant (Phase 7).
+    ///
+    ///      Note: a configured-haircut value of zero can't be
+    ///      distinguished from "never configured" at the storage
+    ///      level — the convention is that callers configure the WHOLE
+    ///      `TierLtvParams` triple (floor + ceil + haircut) atomically,
+    ///      and a non-zero ceil acts as the "configured" indicator for
+    ///      the full triple. A governance-set 0pp haircut is therefore
+    ///      indistinguishable from the library 0pp default for Tier 1 /
+    ///      Tier 2 (which already default to 0pp), and for Tier 3 the
+    ///      library default of 500 (5pp) is what governance would
+    ///      typically inherit anyway.
+    function tierLtvHaircutBps(uint8 tier) internal view returns (uint16) {
+        if (tier == 0 || tier > MAX_LIQUIDITY_TIER) return 0;
+        TierLtvParams storage p = storageSlot().tierLtvParams[tier];
+        if (p.ceilBps != 0) {
+            return p.haircutBps;
+        }
+        if (tier == 1) return TIER1_LTV_HAIRCUT_BPS;
+        if (tier == 2) return TIER2_LTV_HAIRCUT_BPS;
+        return TIER3_LTV_HAIRCUT_BPS;
+    }
+
+    /// @dev Library default LTV per tier — used when the cache is
+    ///      hard-stale (> 14 days) or never-refreshed. Sit at the
+    ///      midpoint of each tier's safety box.
+    function tierLtvLibraryDefaultBps(uint8 tier) internal pure returns (uint16) {
+        if (tier == 1) return TIER1_LTV_DEFAULT_BPS;
+        if (tier == 2) return TIER2_LTV_DEFAULT_BPS;
+        if (tier == 3) return TIER3_LTV_DEFAULT_BPS;
+        return 0;
+    }
+
+    /// @dev Effective tier-LTV the loan-init gate consults. Reads the
+    ///      cache if fresh (≤ 14d since last refresh), else returns
+    ///      the library default for that tier. Tier 0 always returns
+    ///      0 (asset not classified — caller must reject before
+    ///      reaching this).
+    function effectiveTierMaxInitLtvBps(uint8 tier) internal view returns (uint16) {
+        if (tier == 0 || tier > MAX_LIQUIDITY_TIER) return 0;
+        Storage storage s = storageSlot();
+        TierLtvCacheEntry storage entry = s.tierLtvCache[tier];
+        if (
+            entry.lastRefreshedAt > 0 &&
+            block.timestamp - uint256(entry.lastRefreshedAt) <= TIER_LTV_CACHE_HARD_TTL
+        ) {
+            return entry.ltvBps;
+        }
+        return tierLtvLibraryDefaultBps(tier);
+    }
+
+    // ─── FlashLoanLiquidationPath.md — per-tier discount accessors ─────
+
+    /// @dev Per-tier liquidator-discount bounds (BPS). Constitution-
+    ///      level: changing these requires a source change + audit,
+    ///      not a config call. The setter clamps governance writes
+    ///      inside this box; loan-side reads never consult bounds
+    ///      directly — they go through `effectiveTierLiqDiscountBps`.
+    function tierLiqDiscountBoundsBps(uint8 tier)
+        internal
+        pure
+        returns (uint16 floorBps, uint16 ceilBps)
+    {
+        if (tier == 1) return (TIER1_LIQ_DISCOUNT_FLOOR_BPS, TIER1_LIQ_DISCOUNT_CEIL_BPS);
+        if (tier == 2) return (TIER2_LIQ_DISCOUNT_FLOOR_BPS, TIER2_LIQ_DISCOUNT_CEIL_BPS);
+        if (tier == 3) return (TIER3_LIQ_DISCOUNT_FLOOR_BPS, TIER3_LIQ_DISCOUNT_CEIL_BPS);
+        return (0, 0);
+    }
+
+    /// @dev Library default discount per tier — used when the
+    ///      `protocolCfg.tier{N}LiqDiscountBps` slot is zero (i.e.
+    ///      governance has never overridden). Sit at the user-ratified
+    ///      figures inside their respective safety boxes.
+    function tierLiqDiscountLibraryDefaultBps(uint8 tier)
+        internal
+        pure
+        returns (uint16)
+    {
+        if (tier == 1) return TIER1_LIQ_DISCOUNT_DEFAULT_BPS;
+        if (tier == 2) return TIER2_LIQ_DISCOUNT_DEFAULT_BPS;
+        if (tier == 3) return TIER3_LIQ_DISCOUNT_DEFAULT_BPS;
+        return 0;
+    }
+
+    /// @dev Effective liquidator-discount the
+    ///      `triggerLiquidationDiscounted` settlement consults. Reads
+    ///      the governance override if set (non-zero), else falls
+    ///      through to the library default. Tier 0 (unclassified)
+    ///      always returns 0 — caller must reject before reaching the
+    ///      settlement math. Pre-handover the override slot is
+    ///      ADMIN_ROLE-tunable; post-handover it's TimelockController-
+    ///      gated (48h).
+    function effectiveTierLiqDiscountBps(uint8 tier) internal view returns (uint16) {
+        if (tier == 0 || tier > MAX_LIQUIDITY_TIER) return 0;
+        ProtocolConfig storage cfg = storageSlot().protocolCfg;
+        uint16 override_;
+        if (tier == 1) override_ = cfg.tier1LiqDiscountBps;
+        else if (tier == 2) override_ = cfg.tier2LiqDiscountBps;
+        else override_ = cfg.tier3LiqDiscountBps;
+        if (override_ != 0) return override_;
+        return tierLiqDiscountLibraryDefaultBps(tier);
+    }
+
+    /// @dev Master kill-switch view for the discount path. Mirrors
+    ///      the `cfgDepthTieredLtvEnabled` pattern. Default `false`
+    ///      on a fresh deploy ⇒ `triggerLiquidationDiscounted` reverts.
+    function cfgDiscountPathEnabled() internal view returns (bool) {
+        return storageSlot().protocolCfg.discountPathEnabled;
+    }
+
+    /// @dev Owner-only setter for a tier's reference asset list. Used
+    ///      by `OracleAdminFacet.setTierReferenceAssets`. Passing an
+    ///      empty array clears the tier (refreshes for that tier will
+    ///      then no-op with `no-reference-assets`).
+    function setTierReferenceAssets(uint8 tier, address[] memory assets) internal {
+        LibDiamond.enforceIsContractOwner();
+        require(
+            tier >= 1 && tier <= MAX_LIQUIDITY_TIER,
+            "tier out of range"
+        );
+        Storage storage s = storageSlot();
+        delete s.tierReferenceAssets[tier];
+        for (uint256 i = 0; i < assets.length; ++i) {
+            require(assets[i] != address(0), "zero asset in reference list");
+            s.tierReferenceAssets[tier].push(assets[i]);
+        }
+        emit TierReferenceAssetsSet(tier, assets);
+    }
+
+    /// @dev Read a tier's reference asset list. Used by the
+    ///      refreshTierLtvCache aggregator + the
+    ///      `OracleAdminFacet.getTierReferenceAssets` view.
+    function getTierReferenceAssets(uint8 tier) internal view returns (address[] memory) {
+        if (tier == 0 || tier > MAX_LIQUIDITY_TIER) return new address[](0);
+        return storageSlot().tierReferenceAssets[tier];
+    }
+
+    /// @dev Set the per-chain peer-lending-protocol addresses the
+    ///      autonomous tier-LTV cache reads. Owner-only — after the
+    ///      governance handover the owner is the TimelockController,
+    ///      so every change is 48h-gated. Setting any to `address(0)`
+    ///      skips that peer in the aggregation (treat as "peer not
+    ///      deployed on this chain").
+    function setPeerProtocolAddresses(
+        address aaveV3PoolDataProvider,
+        address compoundV3Comet,
+        address morphoBlue
+    ) internal {
+        LibDiamond.enforceIsContractOwner();
+        Storage storage s = storageSlot();
+        s.aaveV3PoolDataProvider = aaveV3PoolDataProvider;
+        s.compoundV3Comet = compoundV3Comet;
+        s.morphoBlue = morphoBlue;
+        emit PeerProtocolAddressesSet(aaveV3PoolDataProvider, compoundV3Comet, morphoBlue);
+    }
 
     /// @notice Installs or clears a per-feed staleness + min-answer
     ///         override for a specific Chainlink aggregator.

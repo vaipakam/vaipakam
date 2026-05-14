@@ -16,6 +16,11 @@ threads = 8
 # `deployments/` subtree only — never the rest of the workspace.
 fs_permissions = [
   { access = "read-write", path = "./deployments/" },
+  # Phase 6 + Q2 audit-package — SlippageCensus + SlippageCensusPreDeploy
+  # read per-chain config JSONs (`SlippageCensus.chains.json` +
+  # `SlippageCensus.assets.json`) from this directory. Read-only — the
+  # scripts never write to script/.
+  { access = "read", path = "./script/" },
 ]
 
 [profile.coverage]

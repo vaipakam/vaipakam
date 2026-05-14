@@ -451,6 +451,16 @@
             "name": "healthFactorAtInit",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "lenderTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "borrowerTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }
@@ -668,6 +678,22 @@
     "type": "error",
     "name": "IlliquidLoanNoRiskMath",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InitLtvAboveTier",
+    "inputs": [
+      {
+        "name": "ltv",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tierCapBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

@@ -22,7 +22,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link, Navigate, useLocation } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import {
@@ -31,6 +31,7 @@ import {
   knobsByCategory,
 } from '../lib/protocolConsoleKnobs';
 import { isProtocolConsolePublic } from '../lib/protocolConsoleVisibility';
+import { marketingUrl } from '../lib/marketingUrl';
 import {
   type ProtocolConsoleThemeMode,
   persistConsoleTheme,
@@ -69,7 +70,16 @@ export default function AdminDashboard({ inApp = false }: Props = {}) {
   }
   const grouped = knobsByCategory();
   const lang = i18n.resolvedLanguage ?? 'en';
-  const docsPath = lang === 'en' ? '/protocol-console/docs' : `/${lang}/protocol-console/docs`;
+  // The Knobs & Switches reference lives on the marketing apex
+  // (`vaipakam.com`) — see `apps/www/src/pages/AdminKnobsDocs.tsx`.
+  // The connected-app surface keeps only this interactive dashboard;
+  // the prose docs are public-read content that belongs alongside
+  // the rest of the indexable explainer pages. Each info-icon
+  // anchor inside the dashboard deep-links to the same cross-domain
+  // URL with a hash fragment.
+  const docsPath = marketingUrl(
+    lang === 'en' ? '/protocol-console/docs' : `/${lang}/protocol-console/docs`,
+  );
   const values = useAdminKnobValues();
   const isAdminWallet = useIsProtocolAdmin();
   const location = useLocation();
@@ -186,11 +196,14 @@ export default function AdminDashboard({ inApp = false }: Props = {}) {
               )}
             </p>
             <p style={{ marginTop: 12, fontSize: '0.9rem', opacity: 0.75 }}>
+              {/* Docs live on the marketing apex now — always render
+               *  an `<a>` (not a react-router `<Link>`) because the
+               *  URL is cross-domain. In-app surface opens in a new
+               *  tab to preserve the admin's sidebar context;
+               *  out-of-app surface uses a same-tab navigation,
+               *  matching how the rest of the marketing-site links
+               *  on this page behave. */}
               {inApp ? (
-                /* From inside the app shell, open the docs in a new
-                 *  tab so the admin doesn't lose the in-app sidebar
-                 *  context. The docs route mounts the public Navbar
-                 *  + Footer wrapper. */
                 <a
                   href={docsPath}
                   target="_blank"
@@ -200,9 +213,9 @@ export default function AdminDashboard({ inApp = false }: Props = {}) {
                   {t('protocolConsole.docsLink', 'Read the Knobs & Switches reference →')}
                 </a>
               ) : (
-                <Link to={docsPath} style={{ color: 'var(--brand)' }}>
+                <a href={docsPath} style={{ color: 'var(--brand)' }}>
                   {t('protocolConsole.docsLink', 'Read the Knobs & Switches reference →')}
-                </Link>
+                </a>
               )}
             </p>
           </div>

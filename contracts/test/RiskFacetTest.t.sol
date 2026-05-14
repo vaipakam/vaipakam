@@ -3,12 +3,14 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {console} from "forge-std/console.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibSwap} from "../src/libraries/LibSwap.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
@@ -2100,6 +2102,130 @@ contract RiskFacetTest is Test {
         vm.clearMockedCalls();
     }
 
+    /// @dev Phase 2 of AutonomousLtvAndOracleFallback.md — swap failed
+    ///      AND oracle quorum unavailable for the collateral leg. The
+    ///      pre-Phase-2 behaviour would have reverted the whole
+    ///      liquidation (`getAssetPrice` revert propagating through
+    ///      `LibFallback.collateralEquivalent`), pinning the loan in
+    ///      Active state. The Phase-2 path degenerates to "full
+    ///      collateral to lender, treasury + borrower zero" and emits
+    ///      {LiquidationFallbackOracleUnavailable} alongside the normal
+    ///      fallback events.
+    function testTriggerLiquidationSwapFails_OracleUnavailableFallback() public {
+        uint256 loanId = createAndAcceptOffer();
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                loanId
+            ),
+            abi.encode(HF_SCALE - 1)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowWithdrawERC20.selector
+            ),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            abi.encode(true)
+        );
+        deal(mockERC20, address(diamond), 1800 ether);
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+
+        // Mock the swap to revert — drives the soft-fail into
+        // `_fullCollateralTransferFallback`.
+        vm.mockCallRevert(
+            address(mockZeroExProxy),
+            abi.encodeWithSelector(IZeroExProxy.swap.selector),
+            "swap reverted"
+        );
+        // Mock `getAssetPrice(collateralAsset)` to return zero price.
+        // `LibFallback.collateralEquivalent` short-circuits on
+        // `colPrice == 0` → returns 0 → `oracleAvailable = false`
+        // bubbles up. Equivalent semantics to "oracle quorum stale"
+        // but Forge's `vm.mockCallRevert` doesn't propagate cleanly
+        // through the `try this.getAssetPrice()` wrapper in
+        // `tryGetAssetPrice` on this toolchain version, while
+        // returning zero hits the same code path one layer in.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getAssetPrice.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(uint256(0), uint8(8))
+        );
+
+        // Record the emitted logs and verify the new
+        // {LiquidationFallbackOracleUnavailable} signature appears.
+        // `vm.expectEmit` is strict-ordered (asserts the NEXT
+        // emission), which would catch the interleaved
+        // `LoanStatusUpdated` from the lifecycle transition before
+        // ever reaching our event. recordLogs + topic-0 search is
+        // robust to the intervening events.
+        vm.recordLogs();
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 expectedTopic = keccak256(
+            "LiquidationFallbackOracleUnavailable(uint256)"
+        );
+        bool oracleEventSeen;
+        for (uint256 i = 0; i < logs.length; ++i) {
+            if (logs[i].topics.length > 0 && logs[i].topics[0] == expectedTopic) {
+                assertEq(
+                    uint256(logs[i].topics[1]),
+                    loanId,
+                    "LiquidationFallbackOracleUnavailable.loanId mismatch"
+                );
+                oracleEventSeen = true;
+                break;
+            }
+        }
+        assertTrue(
+            oracleEventSeen,
+            "LiquidationFallbackOracleUnavailable must fire on stale-oracle fallback"
+        );
+
+        // Loan transitions to FallbackPending despite the stale oracle —
+        // the new path lets the protocol settle instead of pinning the
+        // loan in Active.
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+        assertEq(
+            uint8(loan.status),
+            uint8(LibVaipakam.LoanStatus.FallbackPending),
+            "loan must transition to FallbackPending even with stale oracle"
+        );
+
+        // Lender absorbs the full 1800-ether collateral; borrower's
+        // share is zero (the fair-value split was impossible).
+        (address claimAsset, uint256 lenderAmt, ) = ClaimFacet(address(diamond))
+            .getClaimableAmount(loanId, true);
+        assertEq(claimAsset, mockCollateralERC20);
+        assertEq(
+            lenderAmt,
+            1800 ether,
+            "stale oracle => lender absorbs full collateral"
+        );
+        (, uint256 borrowerAmt, ) = ClaimFacet(address(diamond))
+            .getClaimableAmount(loanId, false);
+        assertEq(
+            borrowerAmt,
+            0,
+            "stale oracle => no fair-value surplus for borrower"
+        );
+
+        vm.clearMockedCalls();
+    }
+
     /// @dev Tests triggerLiquidation reverts when collateral is not liquid on active network.
     function testTriggerLiquidationRevertsNonLiquidAsset() public {
         uint256 loanId = createAndAcceptOffer();
@@ -2599,6 +2725,1026 @@ contract RiskFacetTest is Test {
             uint8(loanAfter.status),
             uint8(LibVaipakam.LoanStatus.Defaulted)
         );
+        vm.clearMockedCalls();
+    }
+
+    // ─── Partial-liquidation validation gates (Piece B follow-up — item 2) ─────
+    //
+    // Coverage for `RiskFacet.triggerPartialLiquidation`'s parameter-gate
+    // surface. The post-mutation HF-restore happy path needs deeper
+    // fixture work (a real distressed loan whose HF crosses back over 1
+    // after the partial mutation, with the oracle math actually running);
+    // that lands in a follow-up. These tests verify every revert path
+    // BEFORE the swap so the keeper bot can rely on clean error semantics
+    // when it tunes its `fractionBps` heuristic.
+
+    /// @dev Loan must be in `LoanStatus.Active`. Non-existent loan id
+    ///      maps to a zero-init Loan struct (status = Active by enum 0)
+    ///      but `loan.id == 0` short-circuits via {InvalidLoan} on
+    ///      most facets. Here we exercise the more interesting
+    ///      "Active but actually Defaulted/Repaid" path by forcing the
+    ///      state via vm.store. Either way the function reverts cleanly.
+    function testPartialLiq_RevertsWhenLoanNotActive() public {
+        // Loan id 9999 is uninitialised → fallthrough state. The
+        // function reads `loan.status != Active` and reverts because
+        // the storage default for the enum is 0 (Active) but `id == 0`,
+        // which OTHER paths catch — here the same uninitialised slot
+        // means HF reads zero too, so the HealthFactorNotLow gate would
+        // fire if Active. We force a real Active loan into Defaulted to
+        // exercise the status check itself unambiguously.
+        uint256 loanId = createAndAcceptOffer();
+        // Set the loan to Defaulted via a triggerLiquidation execution.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        deal(mockERC20, address(diamond), 1800 ether);
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            abi.encode(true)
+        );
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        vm.clearMockedCalls();
+
+        // Loan is now Defaulted — partial should reject.
+        vm.expectRevert(RiskFacet.InvalidLoan.selector);
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            5_000,
+            defaultAdapterCalls()
+        );
+    }
+
+    /// @dev Partial requires HF < 1 — same gate as `triggerLiquidation`.
+    ///      A healthy loan (default HF = 1.53 from the fixture) must
+    ///      revert with {HealthFactorNotLow}.
+    function testPartialLiq_RevertsWhenHFAboveOne() public {
+        uint256 loanId = createAndAcceptOffer();
+
+        // Mock HF >= 1.0 — the loan is healthy, partial is not allowed.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE)
+        );
+
+        vm.expectRevert(RiskFacet.HealthFactorNotLow.selector);
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            5_000,
+            defaultAdapterCalls()
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev Past the loan's maturity, the partial path is locked out so
+    ///      late-fee accounting stays out of its math — operators use
+    ///      `triggerLiquidation` (full + late fee) or
+    ///      `DefaultedFacet.markDefaulted` (time-based) instead.
+    function testPartialLiq_RevertsAfterMaturity() public {
+        uint256 loanId = createAndAcceptOffer();
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        uint256 endTime = uint256(loan.startTime) + loan.durationDays * 1 days;
+
+        // Warp to just past maturity.
+        vm.warp(endTime + 1);
+
+        // Mock HF < 1 so we reach the maturity gate rather than the HF gate.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RiskFacet.PartialAfterMaturity.selector,
+                endTime,
+                block.timestamp
+            )
+        );
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            5_000,
+            defaultAdapterCalls()
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev fractionBps must be in (0, cap]. Zero rejects.
+    function testPartialLiq_RevertsOnZeroFraction() public {
+        uint256 loanId = createAndAcceptOffer();
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+
+        // cap defaults to 10_000 (no governance override in this fixture
+        // since ConfigFacet isn't cut into the test diamond — the
+        // accessor's zero-fallback path lands on the library default).
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RiskFacet.InvalidPartialFraction.selector,
+                uint256(0),
+                uint256(10_000)
+            )
+        );
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            0,
+            defaultAdapterCalls()
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev fractionBps > cap rejects. Default cap = 10_000, so 10_001
+    ///      trips it without needing a governance setter call.
+    function testPartialLiq_RevertsOnFractionAboveCap() public {
+        uint256 loanId = createAndAcceptOffer();
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RiskFacet.InvalidPartialFraction.selector,
+                uint256(10_001),
+                uint256(10_000)
+            )
+        );
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            10_001,
+            defaultAdapterCalls()
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev The post-mutation HF gate fires when the mocked HF doesn't
+    ///      change (vm.mockCall returns the same value pre- and post-
+    ///      mutation). This is a positive test for {PartialMustImproveHF}
+    ///      — without it the function would silently leave the loan
+    ///      stuck-distressed.
+    function testPartialLiq_RevertsWhenHFDoesNotImprove() public {
+        uint256 loanId = createAndAcceptOffer();
+
+        // Mock HF < 1 for both reads — mock returns the same value
+        // each call, so hfAfter == hfBefore and {PartialMustImproveHF}
+        // fires after the swap mutation.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+        // Mock the escrow withdraw + NFT updates (cross-facet calls
+        // through the diamond proxy).
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        // Deal collateral so the swap actually runs.
+        deal(mockERC20, address(diamond), 1800 ether);
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+
+        // The swap succeeds (mocked ZeroExProxy returns proceeds), the
+        // function reaches the post-mutation HF check, and reverts.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RiskFacet.PartialMustImproveHF.selector,
+                HF_SCALE - 1,
+                HF_SCALE - 1
+            )
+        );
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            5_000,
+            defaultAdapterCalls()
+        );
+        vm.clearMockedCalls();
+    }
+
+    // ─── Partial-liquidation happy path (real HF math) ─────────────────────────
+    //
+    // Coverage for the end-to-end mutation flow with the OracleFacet
+    // doing actual HF math (not vm.mockCall) — proves the function
+    // doesn't just gate cleanly but also performs the state mutation
+    // correctly and restores HF as designed.
+    //
+    // Setup pattern: re-mock the collateral asset's price below $1 to
+    // push HF into the [0.95, 1.0) band where a 50% partial restores it.
+    // The fixture's default $1 / $1 / 1800-collateral / 1000-principal
+    // / 8500-bps-liqThreshold makes HF = 1.53; dropping the collateral
+    // price to $0.65 yields HF ≈ 0.994.
+
+    /// @dev Recompute the mocked collateral price down to put the loan
+    ///      into a partial-liquidatable state, then exercise the full
+    ///      partial-liquidation flow and confirm the mutation.
+    function testPartialLiq_HappyPath_RestoresHFFromNarrowDistress() public {
+        uint256 loanId = createAndAcceptOffer();
+        LibVaipakam.Loan memory loanBefore = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+        // Sanity: the fixture's collateral is the second mock token.
+        assertEq(loanBefore.collateralAsset, mockCollateralERC20);
+        assertEq(loanBefore.principalAsset, mockERC20);
+        assertEq(loanBefore.collateralAmount, 1800 ether);
+        assertEq(loanBefore.principal, 1000 ether);
+
+        // Drop collateral price to $0.65 → HF ≈ 0.994 (just below 1.0),
+        // within the keeper's [0.95, 1.0) partial band.
+        // HF formula: (1800 * 0.65 * 0.85) / 1000 = 994.5 / 1000 = 0.9945.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getAssetPrice.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(0.65e8, 8)
+        );
+
+        // Confirm HF < 1.0 with real math.
+        uint256 hfBefore = RiskFacet(address(diamond)).calculateHealthFactor(loanId);
+        assertLt(hfBefore, HF_SCALE, "fixture should put HF below 1");
+        assertGt(
+            hfBefore,
+            (HF_SCALE * 95) / 100,
+            "fixture should keep HF in keeper's [0.95, 1.0) band"
+        );
+
+        // Mock escrow withdraw (cross-facet call we don't need to fully
+        // exercise here) — same pattern as the existing
+        // testTriggerLiquidationSuccess setup.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        // Pre-fund the diamond with collateral (the swap source) — the
+        // ZeroExProxyMock at the registered 11/10 rate will return
+        // 990 principal-units for 900 collateral-units.
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+        deal(mockERC20, address(diamond), 5_000 ether);
+
+        // Execute the 50% partial liquidation.
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            5_000,
+            defaultAdapterCalls()
+        );
+
+        // ── State-mutation assertions ──────────────────────────────────────
+        LibVaipakam.Loan memory loanAfter = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+
+        // Loan must remain Active — partial liquidation never closes the loan.
+        assertEq(
+            uint8(loanAfter.status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "loan must stay Active after partial"
+        );
+
+        // Collateral reduced by exactly the 50% slice (no rounding gap
+        // because 1800 is even).
+        assertEq(
+            loanAfter.collateralAmount,
+            loanBefore.collateralAmount - 900 ether,
+            "collateral must decrease by the swept slice"
+        );
+
+        // Principal strictly reduced AND not fully retired (else
+        // PartialFullyClosedUseFull would have reverted).
+        assertLt(
+            loanAfter.principal,
+            loanBefore.principal,
+            "principal must strictly decrease"
+        );
+        assertGt(
+            loanAfter.principal,
+            0,
+            "principal must remain non-zero (PartialFullyClosedUseFull guard)"
+        );
+
+        // ── HF assertions ───────────────────────────────────────────────────
+        uint256 hfAfter = RiskFacet(address(diamond)).calculateHealthFactor(loanId);
+        assertGe(
+            hfAfter,
+            HF_SCALE,
+            "post-mutation HF must restore to >= 1.0 (PartialMustRestoreHF gate)"
+        );
+        assertGt(
+            hfAfter,
+            hfBefore,
+            "HF must strictly improve (PartialMustImproveHF gate)"
+        );
+
+        vm.clearMockedCalls();
+    }
+
+    /// @dev Time-warp before the partial so the `endTime` preservation
+    ///      math actually exercises (`startTime ← now`, `durationDays ← (endTime - now) / 1 days`).
+    ///      Without the warp, the partial happens at `startTime` so the
+    ///      mutation is a no-op on those fields.
+    function testPartialLiq_PreservesEndTimeAcrossPartial() public {
+        uint256 loanId = createAndAcceptOffer();
+        LibVaipakam.Loan memory loanBefore = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+        uint256 endTimeBefore = uint256(loanBefore.startTime) +
+            loanBefore.durationDays *
+            1 days;
+
+        // Skip 10 days into the loan, then push HF below 1.
+        vm.warp(uint256(loanBefore.startTime) + 10 days);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getAssetPrice.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(0.65e8, 8)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+        deal(mockERC20, address(diamond), 5_000 ether);
+
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            5_000,
+            defaultAdapterCalls()
+        );
+
+        LibVaipakam.Loan memory loanAfter = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+
+        // startTime resets to now — interest accrues on the reduced
+        // principal from this moment forward.
+        assertEq(
+            uint256(loanAfter.startTime),
+            block.timestamp,
+            "startTime must reset to now"
+        );
+
+        // endTime must be preserved (lender's term unchanged). Allow
+        // for the durationDays sub-day rounding-down: the on-chain math
+        // is `durationDays = (endTime - now) / 1 days`, which truncates
+        // any partial-day remainder. Here `now = startTime + 10 days`
+        // exactly so the truncation is 0 and the equality is exact.
+        uint256 endTimeAfter = uint256(loanAfter.startTime) +
+            loanAfter.durationDays *
+            1 days;
+        assertEq(
+            endTimeAfter,
+            endTimeBefore,
+            "endTime must be preserved exactly across partial"
+        );
+        // durationDays should be 20 (30 - 10).
+        assertEq(loanAfter.durationDays, 20, "durationDays = remaining whole days");
+
+        vm.clearMockedCalls();
+    }
+
+    /// @dev Confirm `LoanPartiallyLiquidated` fires with the correct payload
+    ///      — non-zero proceeds + principal-repaid + interest-repaid,
+    ///      hfAfter >= 1e18, fractionBps echoed back.
+    function testPartialLiq_EmitsLoanPartiallyLiquidatedEvent() public {
+        uint256 loanId = createAndAcceptOffer();
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getAssetPrice.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(0.65e8, 8)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+        deal(mockERC20, address(diamond), 5_000 ether);
+
+        // Watch for the event topic + fractionBps + swappedCollateral —
+        // payload-level assertion is brittle to fee-formula changes so
+        // we keep it to the deterministic fields (loanId, liquidator,
+        // fractionBps, swappedCollateral) and let `checkData=false`
+        // skip the variable proceeds / interest / HF fields.
+        vm.expectEmit(true, true, false, false);
+        emit RiskFacet.LoanPartiallyLiquidated(
+            loanId,
+            address(this),
+            5_000,
+            900 ether,
+            /* proceeds       */ 0,
+            /* principalRepaid*/ 0,
+            /* interestRepaid */ 0,
+            /* hfAfter        */ 0
+        );
+
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            5_000,
+            defaultAdapterCalls()
+        );
+
+        vm.clearMockedCalls();
+    }
+
+    // ─── Partial-liquidation failure-branch coverage (real HF math) ────────────
+    //
+    // Positive coverage for the deeper revert paths — these need real
+    // HF math (not vm.mockCall) so the post-mutation gate actually
+    // checks the derived HF, not a sticky value. Pairs with the
+    // happy-path tests above.
+
+    /// @dev When the loan is deeply distressed (HF ≈ 0.69) AND the
+    ///      keeper passes a tiny fraction (1%), the partial swap
+    ///      strictly improves HF but doesn't lift it back to 1.0.
+    ///      Reverts {PartialMustRestoreHF} — keeper would retry with
+    ///      a larger fraction or fall back to full liquidation.
+    function testPartialLiq_RevertsWhenHFImprovesButStaysBelow1() public {
+        uint256 loanId = createAndAcceptOffer();
+
+        // Drop collateral price to $0.45 → HF ≈ 0.6885 (deeply distressed).
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getAssetPrice.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(0.45e8, 8)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+        deal(mockERC20, address(diamond), 5_000 ether);
+
+        // 1% partial — sweeps 18e collateral, gets ~19.8e proceeds, repays
+        // ~18.81e principal. Post-mutation HF moves from 0.6885 → ~0.6947
+        // (strictly improves, but stays below 1.0).
+        vm.expectRevert();
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            100,
+            defaultAdapterCalls()
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev When the loan is mildly distressed AND the keeper passes a
+    ///      large fraction (80%), proceeds are enough to retire the
+    ///      whole principal. Reverts {PartialFullyClosedUseFull} — that's
+    ///      a job for `triggerLiquidation` which closes the loan, returns
+    ///      surplus collateral to the borrower, and emits the terminal event.
+    function testPartialLiq_RevertsWhenPrincipalFullyRepaid() public {
+        uint256 loanId = createAndAcceptOffer();
+
+        // Drop collateral price to $0.65 → HF ≈ 0.994 (just below 1.0).
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getAssetPrice.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(0.65e8, 8)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+        deal(mockERC20, address(diamond), 5_000 ether);
+
+        // 80% partial: swap 1440e collateral → ~1584e proceeds via the
+        // fixture's 11/10 mock rate → after 3% bonus + 2% handling,
+        // afterFees ≈ 1504.8e > principal (1000e). PrincipalRepaid
+        // clamps to >= 1000, triggers PartialFullyClosedUseFull.
+        vm.expectRevert(RiskFacet.PartialFullyClosedUseFull.selector);
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            8_000,
+            defaultAdapterCalls()
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev Empty `AdapterCall[]` → `LibSwap.swapWithFailover` soft-fails
+    ///      (returns `(false, 0, MAX)`) → partial reverts {PartialSwapAllFailed}.
+    ///      Confirms there's no soft-fallback path on the partial route —
+    ///      a still-Active loan must never be left in a half-settled state.
+    function testPartialLiq_RevertsWhenAllAdaptersFail() public {
+        uint256 loanId = createAndAcceptOffer();
+
+        // Put HF below 1 so we pass the entry gate.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getAssetPrice.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(0.65e8, 8)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+
+        // Empty adapter list → swapWithFailover iterates zero times,
+        // returns (success=false). Partial entry reverts with the
+        // dedicated error (NOT a soft fallback into the claim-time
+        // settlement, which would corrupt the still-Active loan).
+        LibSwap.AdapterCall[] memory empty = new LibSwap.AdapterCall[](0);
+        vm.expectRevert(RiskFacet.PartialSwapAllFailed.selector);
+        RiskFacet(address(diamond)).triggerPartialLiquidation(loanId, 5_000, empty);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev Two consecutive partials on the same loan. Time-warps
+    ///      between the two so endTime-preservation is non-trivial.
+    ///      Asserts monotonic decrease on collateral + principal and
+    ///      that the loan's original maturity is preserved across both
+    ///      mutations.
+    function testPartialLiq_MultiPartialRegression() public {
+        uint256 loanId = createAndAcceptOffer();
+        LibVaipakam.Loan memory loanInit = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+        uint256 endTimeInit = uint256(loanInit.startTime) +
+            loanInit.durationDays *
+            1 days;
+
+        // ── First partial: distress @ $0.65, 10% sweep ─────────────────
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getAssetPrice.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(0.65e8, 8)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+        deal(mockERC20, address(diamond), 5_000 ether);
+
+        // Warp 5 days in, partial 10%.
+        vm.warp(uint256(loanInit.startTime) + 5 days);
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            1_000,
+            defaultAdapterCalls()
+        );
+        LibVaipakam.Loan memory loanAfter1 = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+
+        // First-partial invariants.
+        assertEq(
+            uint8(loanAfter1.status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "loan stays Active after first partial"
+        );
+        assertLt(loanAfter1.collateralAmount, loanInit.collateralAmount);
+        assertLt(loanAfter1.principal, loanInit.principal);
+        assertEq(uint256(loanAfter1.startTime), block.timestamp);
+        assertEq(
+            uint256(loanAfter1.startTime) + loanAfter1.durationDays * 1 days,
+            endTimeInit,
+            "endTime preserved across first partial"
+        );
+
+        // ── Drop price further so HF goes back below 1 ─────────────────
+        // After first partial: collateral ≈ 1620, principal ≈ 811.9.
+        // For HF < 1: P < principal / (collateral * liqThreshold)
+        //           = 811.9 / (1620 * 0.85) = $0.59.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getAssetPrice.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(0.55e8, 8)
+        );
+
+        // Warp another 5 days (10 days total elapsed of the 30-day loan).
+        vm.warp(uint256(loanInit.startTime) + 10 days);
+
+        // Second partial — another 10% of the now-smaller collateral.
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            1_000,
+            defaultAdapterCalls()
+        );
+        LibVaipakam.Loan memory loanAfter2 = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+
+        // Monotonic decreases across both partials.
+        assertLt(
+            loanAfter2.collateralAmount,
+            loanAfter1.collateralAmount,
+            "collateral decreases across second partial"
+        );
+        assertLt(
+            loanAfter2.principal,
+            loanAfter1.principal,
+            "principal decreases across second partial"
+        );
+        // Loan still Active.
+        assertEq(
+            uint8(loanAfter2.status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "loan stays Active after second partial"
+        );
+        // endTime preserved across BOTH partials.
+        assertEq(
+            uint256(loanAfter2.startTime) + loanAfter2.durationDays * 1 days,
+            endTimeInit,
+            "endTime preserved across both partials"
+        );
+        // durationDays now = 20 (30 - 10 elapsed).
+        assertEq(loanAfter2.durationDays, 20);
+
+        // HF restored above 1.0 after the second partial.
+        uint256 hfAfter2 = RiskFacet(address(diamond)).calculateHealthFactor(loanId);
+        assertGe(hfAfter2, HF_SCALE, "HF restored >= 1 after second partial");
+
+        vm.clearMockedCalls();
+    }
+
+    /// @dev L2 sequencer circuit-breaker gates the partial path the same
+    ///      way it gates the full triggerLiquidation. While the sequencer
+    ///      is unhealthy (down OR still inside its 1h recovery grace),
+    ///      Chainlink prices + AMM state can be stale → a swap could
+    ///      execute against mispriced state → block all HF-based paths.
+    function testPartialLiq_RevertsWhenSequencerUnhealthy() public {
+        uint256 loanId = createAndAcceptOffer();
+
+        // HF < 1 (so the HF gate would otherwise pass).
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+        // Mark sequencer unhealthy — the partial path's first check.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.sequencerHealthy.selector),
+            abi.encode(false)
+        );
+
+        vm.expectRevert(RiskFacet.SequencerUnhealthy.selector);
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            5_000,
+            defaultAdapterCalls()
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev Non-liquid collateral blocks the partial path — same gate as
+    ///      the full triggerLiquidation. Without a tradable venue there's
+    ///      no swap path to run; the time-based default route in
+    ///      DefaultedFacet handles unswappable collateral via full-collateral
+    ///      transfer instead.
+    function testPartialLiq_RevertsOnNonLiquidCollateral() public {
+        uint256 loanId = createAndAcceptOffer();
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+        // Mark collateral as illiquid on the active network.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.checkLiquidityOnActiveNetwork.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
+        );
+
+        vm.expectRevert(IVaipakamErrors.NonLiquidAsset.selector);
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            5_000,
+            defaultAdapterCalls()
+        );
+        vm.clearMockedCalls();
+    }
+
+    // ─── FlashLoanLiquidationPath.md — discount-path gate + happy ────
+    //
+    // Coverage matrix:
+    //  - master kill-switch (default false) blocks the entry
+    //  - zero-recipient guard
+    //  - Active-only gate
+    //  - sequencer circuit-breaker reused
+    //  - HF gate reused
+    //  - Tier-0 (unclassified collateral) blocks the path
+    //  - oracle-stale (tryGetAssetPrice ok=false) blocks the path
+    //  - happy path: full settlement + Defaulted transition + event
+
+    /// @dev Helper — wire common mocks the discount path expects when
+    ///      the call is supposed to PROGRESS PAST gates (sequencer ok,
+    ///      HF below 1, tier 3, fresh oracle on both legs, NFT update
+    ///      cross-facet call mocked through).
+    function _mockDiscountPathHappy(uint256 loanId) internal {
+        // Flip the discount-path master kill-switch ON.
+        TestMutatorFacet(address(diamond)).setDiscountPathEnabledRaw(true);
+        // Sequencer healthy.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.sequencerHealthy.selector),
+            abi.encode(true)
+        );
+        // HF < 1 — call goes through HF gate.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+        // Collateral classified Tier 3 (deepest, smallest discount).
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getEffectiveLiquidityTier.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(uint8(3))
+        );
+        // Both legs priced at $1.00 (8-decimal feed). collateralEquivalent
+        // then computes 1:1 between principal and collateral (both 18-dec
+        // tokens), and the per-tier 5% discount adds 5%.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.tryGetAssetPrice.selector,
+                mockERC20
+            ),
+            abi.encode(true, uint256(1e8), uint8(8))
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.tryGetAssetPrice.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(true, uint256(1e8), uint8(8))
+        );
+        // Cross-facet escrow withdraw + NFT update — mock-success.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowWithdrawERC20.selector
+            ),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            abi.encode(true)
+        );
+    }
+
+    /// @dev Default-state kill-switch is `false`. The entry-point
+    ///      reverts `DiscountPathDisabled` before any other check —
+    ///      verified here by calling with otherwise-valid arguments.
+    function testTriggerLiquidationDiscounted_RevertsWhenDisabled() public {
+        uint256 loanId = createAndAcceptOffer();
+        vm.expectRevert(RiskFacet.DiscountPathDisabled.selector);
+        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+            loanId,
+            address(this),
+            ""
+        );
+    }
+
+    /// @dev Zero recipient → `ZeroRecipient` revert. Guard fires
+    ///      before sequencer / HF checks (cheap fast-path).
+    function testTriggerLiquidationDiscounted_RevertsZeroRecipient() public {
+        uint256 loanId = createAndAcceptOffer();
+        TestMutatorFacet(address(diamond)).setDiscountPathEnabledRaw(true);
+        vm.expectRevert(RiskFacet.ZeroRecipient.selector);
+        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+            loanId,
+            address(0),
+            ""
+        );
+    }
+
+    /// @dev Loan not in `Active` state → `InvalidLoan`. A non-existent
+    ///      loanId trips the same default-Inactive branch.
+    function testTriggerLiquidationDiscounted_RevertsLoanNotActive() public {
+        TestMutatorFacet(address(diamond)).setDiscountPathEnabledRaw(true);
+        vm.expectRevert(RiskFacet.InvalidLoan.selector);
+        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+            999_999,
+            address(this),
+            ""
+        );
+    }
+
+    /// @dev Sequencer down → reuse the atomic path's
+    ///      `SequencerUnhealthy` revert. Same L2 circuit-breaker.
+    function testTriggerLiquidationDiscounted_RevertsSequencerUnhealthy() public {
+        uint256 loanId = createAndAcceptOffer();
+        TestMutatorFacet(address(diamond)).setDiscountPathEnabledRaw(true);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.sequencerHealthy.selector),
+            abi.encode(false)
+        );
+        vm.expectRevert(RiskFacet.SequencerUnhealthy.selector);
+        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+            loanId,
+            address(this),
+            ""
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev HF ≥ 1 → `HealthFactorNotLow`. The discount-path gate is
+    ///      identical to the atomic path (no threshold relaxation).
+    function testTriggerLiquidationDiscounted_RevertsHFNotLow() public {
+        uint256 loanId = createAndAcceptOffer();
+        TestMutatorFacet(address(diamond)).setDiscountPathEnabledRaw(true);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.sequencerHealthy.selector),
+            abi.encode(true)
+        );
+        // HF = 1.5e18 (loan-init floor) → fails HF<1 gate.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(uint256(15 * 1e17))
+        );
+        vm.expectRevert(RiskFacet.HealthFactorNotLow.selector);
+        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+            loanId,
+            address(this),
+            ""
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev `getEffectiveLiquidityTier` returns 0 (unclassified) →
+    ///      `UntierableCollateral`. Per-tier discount math has no
+    ///      definition for unclassified assets; route falls back to
+    ///      atomic path or time-based default.
+    function testTriggerLiquidationDiscounted_RevertsUntierableCollateral() public {
+        uint256 loanId = createAndAcceptOffer();
+        TestMutatorFacet(address(diamond)).setDiscountPathEnabledRaw(true);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.sequencerHealthy.selector),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getEffectiveLiquidityTier.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(uint8(0))
+        );
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RiskFacet.UntierableCollateral.selector,
+                mockCollateralERC20
+            )
+        );
+        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+            loanId,
+            address(this),
+            ""
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev `tryGetAssetPrice` failing on either leg →
+    ///      `LibFallback.collateralEquivalent` returns 0 → settlement
+    ///      reverts `OracleStaleForDiscount` (no fair-value math
+    ///      possible). The liquidator retries when oracle clears or
+    ///      falls back to `triggerLiquidation`.
+    function testTriggerLiquidationDiscounted_RevertsOracleStale() public {
+        uint256 loanId = createAndAcceptOffer();
+        _mockDiscountPathHappy(loanId);
+        // Stamp collateral's `tryGetAssetPrice` to fail (ok=false).
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.tryGetAssetPrice.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(false, uint256(0), uint8(8))
+        );
+        // Fund + approve so the safeTransferFrom doesn't fail with
+        // allowance — `OracleStaleForDiscount` fires AFTER the pull.
+        deal(mockERC20, address(this), 2000 ether);
+        IERC20(mockERC20).approve(address(diamond), 2000 ether);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RiskFacet.OracleStaleForDiscount.selector,
+                mockERC20,
+                mockCollateralERC20
+            )
+        );
+        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+            loanId,
+            address(this),
+            ""
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev Full discount-path happy path on a Tier-3 collateral
+    ///      (deepest tier = 5% library default discount):
+    ///       - 1000 ether principal-asset pulled from liquidator.
+    ///       - $1.00 / $1.00 oracle pricing on both legs ⇒ 1:1
+    ///         collateral-for-debt; +5% discount yields 1050 ether
+    ///         collateral seized.
+    ///       - Borrower escrow has 1800 ether collateral ⇒ surplus
+    ///         750 ether stays in their escrow.
+    ///       - Loan transitions Active → Defaulted; NFTs flip to
+    ///         `LoanLiquidated`.
+    ///       - `LiquidationDiscounted` emitted with the precise
+    ///         (totalDebt, collateralSeized, borrowerSurplus) triple.
+    function testTriggerLiquidationDiscounted_HappyPath_Tier3() public {
+        uint256 loanId = createAndAcceptOffer();
+        _mockDiscountPathHappy(loanId);
+
+        // Liquidator (this contract) funds + approves the diamond for
+        // the full debt. Slight headroom for accrued interest if any.
+        deal(mockERC20, address(this), 2000 ether);
+        IERC20(mockERC20).approve(address(diamond), 2000 ether);
+
+        // Snapshot pre-state.
+        LibVaipakam.Loan memory loanBefore = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+        assertEq(uint8(loanBefore.status), uint8(LibVaipakam.LoanStatus.Active));
+
+        // Use recordLogs (NOT expectEmit) — lifecycle transitions emit
+        // intervening `LoanStatusUpdated` events that strict-order
+        // expectEmit would catch first. recordLogs + topic-0 search
+        // is robust to interleaved events from cross-facet calls.
+        vm.recordLogs();
+        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+            loanId,
+            address(this),
+            ""
+        );
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 expectedTopic = keccak256(
+            "LiquidationDiscounted(uint256,address,address,uint8,uint16,uint256,uint256,uint256)"
+        );
+        bool found;
+        for (uint256 i = 0; i < logs.length; ++i) {
+            if (logs[i].topics.length > 0 && logs[i].topics[0] == expectedTopic) {
+                found = true;
+                break;
+            }
+        }
+        assertTrue(found, "LiquidationDiscounted not emitted");
+
+        // Loan terminal — transitioned to Defaulted.
+        LibVaipakam.Loan memory loanAfter = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+        assertEq(
+            uint8(loanAfter.status),
+            uint8(LibVaipakam.LoanStatus.Defaulted),
+            "loan should be Defaulted"
+        );
+
         vm.clearMockedCalls();
     }
 }

@@ -41,7 +41,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](57);
+        selectors = new bytes4[](59);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -131,6 +131,16 @@ contract HelperTest {
         // tests that need a user's escrow address bypassing the
         // mandatory-version check on the production getter.
         selectors[56] = TestMutatorFacet.getUserVaipakamEscrowRaw.selector;
+        // FlashLoanLiquidationPath.md — flip the discount-path master
+        // kill-switch in fixtures that don't cut ConfigFacet.
+        selectors[57] = TestMutatorFacet.setDiscountPathEnabledRaw.selector;
+        // MarketRateWidgetAndDepthTieredLTV.md — same pattern for the
+        // depth-tiered-LTV master kill-switch. Refinance / Preclose /
+        // OfferMatch test fixtures use this to assert both regimes
+        // (switch ON tier-aware caps + relaxed HF floor; switch OFF
+        // legacy `LTV ≤ maxLtvBps` + `HF ≥ 1.5`) without cutting
+        // ConfigFacet into their minimal diamonds.
+        selectors[58] = TestMutatorFacet.setDepthTieredLtvEnabledRaw.selector;
         return selectors;
     }
 
@@ -201,7 +211,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](22);
+        selectors = new bytes4[](28);
         selectors[0] = AdminFacet.setTreasury.selector;
         selectors[1] = AdminFacet.getTreasury.selector;
         selectors[2] = AdminFacet.setZeroExProxy.selector;
@@ -225,6 +235,15 @@ contract HelperTest {
         // Auto-pause primitive (Phase 1 follow-up).
         selectors[20] = AdminFacet.autoPause.selector;
         selectors[21] = AdminFacet.pausedUntil.selector;
+        // Depth-tiered LTV (Piece B follow-up b) — Uni-V2-fork family
+        // setters/getters. Configured per chain by ADMIN_ROLE; zero
+        // factory ⇒ that leg of the route search is skipped.
+        selectors[22] = AdminFacet.setUniswapV2Factory.selector;
+        selectors[23] = AdminFacet.getUniswapV2Factory.selector;
+        selectors[24] = AdminFacet.setSushiswapV2Factory.selector;
+        selectors[25] = AdminFacet.getSushiswapV2Factory.selector;
+        selectors[26] = AdminFacet.setPancakeswapV2Factory.selector;
+        selectors[27] = AdminFacet.getPancakeswapV2Factory.selector;
         return selectors;
     }
 
@@ -268,7 +287,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](11);
+        selectors = new bytes4[](17);
         selectors[0] = OracleFacet.checkLiquidity.selector;
         selectors[1] = OracleFacet.getAssetPrice.selector;
         selectors[2] = OracleFacet.calculateLTV.selector;
@@ -282,6 +301,20 @@ contract HelperTest {
         // buffer for historical TVL reconstruction.
         selectors[9] = OracleFacet.captureDailyPriceSnapshot.selector;
         selectors[10] = OracleFacet.getHistoricalAssetPrice.selector;
+        // Depth-tiered LTV (Piece B) — liquidity-tier classification views.
+        selectors[11] = OracleFacet.getLiquidityTier.selector;
+        selectors[12] = OracleFacet.getEffectiveLiquidityTier.selector;
+        // Phase 2 of AutonomousLtvAndOracleFallback.md — try-wrapped
+        // `getAssetPrice` for callers (LibFallback) that need to detect
+        // oracle-quorum unavailability without reverting.
+        selectors[13] = OracleFacet.tryGetAssetPrice.selector;
+        // Phase 4 of AutonomousLtvAndOracleFallback.md — autonomous
+        // tier-LTV cache. `refreshTierLtvCache` is the permissionless
+        // refresh; the two views read the cache + the effective value
+        // (with library-default fallback when cache is hard-stale).
+        selectors[14] = OracleFacet.refreshTierLtvCache.selector;
+        selectors[15] = OracleFacet.getTierLtvCacheEntry.selector;
+        selectors[16] = OracleFacet.getEffectiveTierMaxInitLtvBps.selector;
         return selectors;
     }
 
@@ -401,12 +434,29 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](5); // Adjust count
+        selectors = new bytes4[](8);
         selectors[0] = RiskFacet.updateRiskParams.selector;
         selectors[1] = RiskFacet.calculateLTV.selector;
         selectors[2] = RiskFacet.calculateHealthFactor.selector;
         selectors[3] = RiskFacet.isCollateralValueCollapsed.selector;
         selectors[4] = RiskFacet.triggerLiquidation.selector;
+        // Higher-LTV-aware liquidator (Piece B follow-up — split-route).
+        // Sum-to-input multi-route swap via `LibSwap.swapWithSplit`;
+        // atomic-revert-on-leg-failure (no soft-failure fallback).
+        selectors[5] = RiskFacet.triggerLiquidationSplit.selector;
+        // Partial HF-restore liquidator (Piece B follow-up — partials).
+        // Sweeps only `fractionBps` of remaining collateral, leaves loan
+        // Active with reduced size and unchanged maturity. Strict
+        // HF-improves + HF>=1 post-mutation gates.
+        selectors[6] = RiskFacet.triggerPartialLiquidation.selector;
+        // Flash-loan / liquidator-buys-at-discount path
+        // (`docs/DesignsAndPlans/FlashLoanLiquidationPath.md`). Caller
+        // pays `totalDebt` in principal-asset; protocol seizes
+        // collateral at a per-tier discount and delivers it to
+        // `recipient`. Master kill-switch `discountPathEnabled` is off
+        // by default — the selector is wired but the entry-point
+        // reverts `DiscountPathDisabled` until governance flips it.
+        selectors[7] = RiskFacet.triggerLiquidationDiscounted.selector;
     }
 
     function getClaimFacetSelectors()
@@ -692,7 +742,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](55);
+        selectors = new bytes4[](72);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -773,6 +823,37 @@ contract HelperTest {
         selectors[52] = ConfigFacet.getRangeAmountEnabled.selector;
         selectors[53] = ConfigFacet.getRangeRateEnabled.selector;
         selectors[54] = ConfigFacet.getPartialFillEnabled.selector;
+        // Depth-tiered LTV (Piece B) — governance setters + the
+        // liquidity-confidence relay write + getters / bundle.
+        selectors[55] = ConfigFacet.setDepthTieredLtvEnabled.selector;
+        selectors[56] = ConfigFacet.setLiquiditySlippageBps.selector;
+        selectors[57] = ConfigFacet.setTwapGuard.selector;
+        selectors[58] = ConfigFacet.setLiquidityTierSizes.selector;
+        selectors[59] = ConfigFacet.setTierMaxInitLtvBps.selector;
+        selectors[60] = ConfigFacet.setPaaAssets.selector;
+        selectors[61] = ConfigFacet.setKeeperTier.selector;
+        selectors[62] = ConfigFacet.getDepthTieredLtvEnabled.selector;
+        selectors[63] = ConfigFacet.getPaaAssets.selector;
+        selectors[64] = ConfigFacet.getKeeperTier.selector;
+        selectors[65] = ConfigFacet.getDepthTierConfigBundle.selector;
+        // Liquidator hardening (item 2) — close-factor ceiling setter
+        // for `RiskFacet.triggerPartialLiquidation`. Default 10_000 = no
+        // cap; governance may tighten per docs/RangeOffersDesign.md.
+        selectors[66] = ConfigFacet.setMaxPartialLiquidationCloseFactorBps.selector;
+        // Phase 7 of AutonomousLtvAndOracleFallback.md — per-tier
+        // LTV safety-box parameters (atomic governance setter +
+        // bundle getter).
+        selectors[67] = ConfigFacet.setTierLtvParams.selector;
+        selectors[68] = ConfigFacet.getTierLtvParams.selector;
+        // FlashLoanLiquidationPath.md — per-tier liquidator-discount
+        // governance setters (master kill-switch +
+        // atomic per-tier values + bundle view). All ADMIN_ROLE-
+        // gated (TimelockController post-handover); the kill-switch
+        // defaults `false` so a fresh deploy ships with the discount
+        // path inert.
+        selectors[69] = ConfigFacet.setDiscountPathEnabled.selector;
+        selectors[70] = ConfigFacet.setTierLiqDiscountBps.selector;
+        selectors[71] = ConfigFacet.getTierLiqDiscountBps.selector;
         return selectors;
     }
 
