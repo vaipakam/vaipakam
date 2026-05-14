@@ -374,6 +374,60 @@ the corresponding mechanic is ready to ship. No range bound (bool).
 Each flip emits a config event so off-chain monitoring can correlate
 behavior changes to the governance action.
 
+## Liquidator-buys-at-discount path (FlashLoanLiquidationPath.md)
+
+The optional Aave-V3 / Compound-V3 / Morpho-Blue-style liquidation
+path: liquidator pays the full outstanding debt in the principal
+asset, protocol seizes the borrower's collateral at a per-tier
+discount and delivers it to a liquidator-supplied recipient (typically
+funded via a same-tx flash-loan from Aave V3 `flashLoanSimple` or
+Balancer V2 `flashLoan`). See
+[`FlashLoanLiquidatorRollout.md`](FlashLoanLiquidatorRollout.md) for
+the per-chain operational rollout.
+
+### Master kill-switch — `discountPathEnabled`
+
+`ProtocolConfig.discountPathEnabled` (bool, default `false`).
+`RiskFacet.triggerLiquidationDiscounted` reverts
+`DiscountPathDisabled` immediately while the flag is off, so a fresh
+deploy never exposes the path before the per-chain audit + risk-
+committee sign-off. Independent of `depthTieredLtvEnabled` —
+governance can flip each one per chain (e.g. enable the discount
+path on Base while autonomous-LTV still bakes on Polygon).
+ADMIN_ROLE pre-handover; TimelockController-gated (48h) post-handover.
+Setter: `ConfigFacet.setDiscountPathEnabled(bool)`.
+
+### Per-tier liquidator discount (BPS)
+
+Three values, set atomically via
+`ConfigFacet.setTierLiqDiscountBps(tier1Bps, tier2Bps, tier3Bps)`.
+Each tier slot in storage is `0 ⇒ TIER{N}_LIQ_DISCOUNT_DEFAULT_BPS`
+(library constant). Defaults: T1 770 (7.7%) / T2 600 (6.0%) /
+T3 500 (5.0%) — thinner tier carries wider discount because
+liquidator slippage risk is higher on thin order books, so the
+incentive to attract competing liquidators must be larger.
+
+Per-tier bounds enforced at the setter:
+
+| Tier | Floor (BPS) | Ceiling (BPS) | Library default |
+|---|---|---|---|
+| Tier 1 (thinnest) | 300 (3.0%) | 1500 (15.0%) | 770 (7.7%) |
+| Tier 2 | 300 (3.0%) | 1000 (10.0%) | 600 (6.0%) |
+| Tier 3 (deepest) | 200 (2.0%) | 800 (8.0%) | 500 (5.0%) |
+
+Cross-tier monotonic invariant `T1 ≥ T2 ≥ T3` enforced atomically
+across all three slots, including the subtle zero-fallback path
+(passing `0` for a tier falls through to its library default, which
+participates in the monotonic check against the other two tiers'
+effective values). A hostile-governance attack cannot push the
+discount to a degenerate value (0% would starve the liquidator
+market; 50% would gut borrower surplus) — the per-tier ceilings
+bound the worst case at 15% / 10% / 8%.
+
+The 1% kickback / matcher-fee story (Range Orders LIF) is
+unrelated to this discount; the discount is paid to the liquidator
+in collateral at settle time, not from any treasury or LIF pool.
+
 ## Periodic Interest Payment (T-034)
 
 The Periodic Interest Payment mechanic lets a lender opt their loans
