@@ -1056,4 +1056,117 @@ contract RefinanceFacetTest is Test {
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
         vm.clearMockedCalls();
     }
+
+    // ─── Depth-tiered LTV — post-refinance HF / LTV gate ───────────
+    //
+    // MarketRateWidgetAndDepthTieredLTV.md §4.2 + commit `<this PR>`:
+    // when `depthTieredLtvEnabled` is true, the post-refinance HF
+    // floor relaxes from `≥ 1.5e18` to `≥ 1e18` and the LTV cap
+    // becomes `min(maxLtvBps, effectiveTierMaxInitLtvBps[
+    // getEffectiveLiquidityTier(collateral)])` — exactly mirroring
+    // `LoanFacet._checkInitialLtvAndHf`. These tests pin both regimes
+    // by flipping the kill-switch via TestMutatorFacet (the test
+    // fixture doesn't cut ConfigFacet), mocking the LTV / HF /
+    // effective-tier reads through the diamond, and asserting the
+    // expected revert / accept on a full `refinanceLoan` call.
+
+    /// @dev Switch OFF (default): HF = 1.4e18 < legacy 1.5e18 floor
+    ///      → reverts `HealthFactorTooLow`. Same gate as before this
+    ///      commit; ensures backward compatibility.
+    function testRefinanceLoan_TieredOff_RevertsHFBelowLegacyFloor() public {
+        _acceptBorrowerOffer(borrowerOfferId);
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL + 10 ether));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(uint256(14 * 1e17)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5000)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+
+        vm.prank(borrower);
+        vm.expectRevert(IVaipakamErrors.HealthFactorTooLow.selector);
+        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev Switch ON, Tier 1 (cap 50% per library defaults), post-
+    ///      refinance LTV 52% > cap → reverts `InitLtvAboveTier(52%,
+    ///      50%)`. Same shape as the equivalent init-gate test in
+    ///      LoanFacetTest.
+    function testRefinanceLoan_TieredOn_RevertsLtvAboveTier1Cap() public {
+        _acceptBorrowerOffer(borrowerOfferId);
+        TestMutatorFacet(address(diamond)).setDepthTieredLtvEnabledRaw(true);
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL + 10 ether));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
+        // HF healthy at 2e18 — would pass either regime's HF floor.
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5200)));
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getEffectiveLiquidityTier.selector, mockCollateralERC20),
+            abi.encode(uint8(1))
+        );
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+
+        vm.prank(borrower);
+        vm.expectRevert(abi.encodeWithSelector(
+            IVaipakamErrors.InitLtvAboveTier.selector,
+            uint256(5200),
+            uint256(5000)
+        ));
+        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev Switch ON, Tier 3 (cap 73% per library defaults), HF
+    ///      = 1.2e18 — below the legacy 1.5e18 floor but above the
+    ///      relaxed 1e18 floor → refinance succeeds. Confirms the
+    ///      relaxed HF floor is wired through the post-refinance
+    ///      gate (mirrors LoanFacet's
+    ///      `testDepthTier_initGate_hfFloorRelaxedToOne`).
+    function testRefinanceLoan_TieredOn_HFFloorRelaxedToOne() public {
+        _acceptBorrowerOffer(borrowerOfferId);
+        TestMutatorFacet(address(diamond)).setDepthTieredLtvEnabledRaw(true);
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL + 10 ether));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(uint256(12 * 1e17)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(7000)));
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getEffectiveLiquidityTier.selector, mockCollateralERC20),
+            abi.encode(uint8(3))
+        );
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+
+        vm.prank(borrower);
+        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
+        vm.clearMockedCalls();
+    }
+
+    /// @dev Switch ON, HF = 0.9e18 — below the relaxed 1e18 floor →
+    ///      still reverts `HealthFactorTooLow`. The relaxed floor is
+    ///      "not born already-liquidatable", not "no floor at all".
+    function testRefinanceLoan_TieredOn_RevertsHfBelowOne() public {
+        _acceptBorrowerOffer(borrowerOfferId);
+        TestMutatorFacet(address(diamond)).setDepthTieredLtvEnabledRaw(true);
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL + 10 ether));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(uint256(9 * 1e17)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5000)));
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getEffectiveLiquidityTier.selector, mockCollateralERC20),
+            abi.encode(uint8(3))
+        );
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+
+        vm.prank(borrower);
+        vm.expectRevert(IVaipakamErrors.HealthFactorTooLow.selector);
+        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
+        vm.clearMockedCalls();
+    }
 }

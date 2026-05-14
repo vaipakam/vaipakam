@@ -41,7 +41,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](58);
+        selectors = new bytes4[](59);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -134,6 +134,13 @@ contract HelperTest {
         // FlashLoanLiquidationPath.md — flip the discount-path master
         // kill-switch in fixtures that don't cut ConfigFacet.
         selectors[57] = TestMutatorFacet.setDiscountPathEnabledRaw.selector;
+        // MarketRateWidgetAndDepthTieredLTV.md — same pattern for the
+        // depth-tiered-LTV master kill-switch. Refinance / Preclose /
+        // OfferMatch test fixtures use this to assert both regimes
+        // (switch ON tier-aware caps + relaxed HF floor; switch OFF
+        // legacy `LTV ≤ maxLtvBps` + `HF ≥ 1.5`) without cutting
+        // ConfigFacet into their minimal diamonds.
+        selectors[58] = TestMutatorFacet.setDepthTieredLtvEnabledRaw.selector;
         return selectors;
     }
 

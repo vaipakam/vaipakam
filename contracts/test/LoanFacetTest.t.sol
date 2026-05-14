@@ -1344,4 +1344,136 @@ contract LoanFacetTest is Test {
         );
         OfferFacet(address(diamond)).acceptOffer(offerId, true);
     }
+
+    /// @dev Switch on, Tier 2 (cap 62% per library defaults), LTV at
+    ///      6300 = 63% just above the cap → reverts `InitLtvAboveTier
+    ///      (63%, 62%)`. Pins the Tier-2 boundary explicitly so a
+    ///      future cap change shows up as a failed assertion.
+    function testDepthTier_initGate_revertsAboveTier2Cap() public {
+        ConfigFacet(address(diamond)).setDepthTieredLtvEnabled(true);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getEffectiveLiquidityTier.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(uint8(2))
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateLTV.selector),
+            abi.encode(uint256(6300))
+        );
+
+        uint256 offerId = createOffer(
+            mockERC20,
+            mockCollateralERC20,
+            LibVaipakam.AssetType.ERC20,
+            1000 ether,
+            1500 ether,
+            30,
+            0,
+            0
+        );
+        vm.prank(borrower);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.InitLtvAboveTier.selector,
+                uint256(6300),
+                uint256(6200)
+            )
+        );
+        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+    }
+
+    /// @dev Switch on, Tier 3 (cap 73% per library defaults), LTV
+    ///      7400 = 74% just above the cap → reverts `InitLtvAboveTier
+    ///      (74%, 73%)`. Pins the Tier-3 boundary explicitly so a
+    ///      future cap change shows up as a failed assertion. (The
+    ///      library default for Tier-3 is 73% from the autonomous
+    ///      tier-LTV cache fallback — `effectiveTierMaxInitLtvBps(3)`
+    ///      reads the cache if fresh, else the library default.)
+    function testDepthTier_initGate_revertsAboveTier3Cap() public {
+        ConfigFacet(address(diamond)).setDepthTieredLtvEnabled(true);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getEffectiveLiquidityTier.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(uint8(3))
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateLTV.selector),
+            abi.encode(uint256(7400))
+        );
+
+        uint256 offerId = createOffer(
+            mockERC20,
+            mockCollateralERC20,
+            LibVaipakam.AssetType.ERC20,
+            1000 ether,
+            1500 ether,
+            30,
+            0,
+            0
+        );
+        vm.prank(borrower);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.InitLtvAboveTier.selector,
+                uint256(7400),
+                uint256(7300)
+            )
+        );
+        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+    }
+
+    /// @dev Switch OFF: even with Tier-3 mocked at the keeper level,
+    ///      the init gate ignores the tier entirely — only the legacy
+    ///      `LTV ≤ maxLtvBps` + `HF ≥ 1.5` checks run. LTV 7500% < the
+    ///      8000% `maxLtvBps`, HF 2e18 ≥ 1.5e18 → loan goes Active.
+    ///      Mirror test for `testDepthTier_initGate_acceptsBelowTier1Cap`
+    ///      with the kill-switch in its default state.
+    function testDepthTier_initGate_switchOffIgnoresTier() public {
+        // No setDepthTieredLtvEnabled — default false.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getEffectiveLiquidityTier.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(uint8(3))
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateLTV.selector),
+            abi.encode(uint256(7500))
+        );
+        // HF must clear the legacy 1.5e18 floor.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
+            abi.encode(2e18)
+        );
+
+        uint256 offerId = createOffer(
+            mockERC20,
+            mockCollateralERC20,
+            LibVaipakam.AssetType.ERC20,
+            1000 ether,
+            1500 ether,
+            30,
+            0,
+            0
+        );
+        vm.prank(borrower);
+        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "switch off -> tier ignored, legacy gates pass"
+        );
+    }
 }
