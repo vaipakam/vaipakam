@@ -409,7 +409,7 @@ In polygon and BNB smart chain we need to chech how we have deignd to use WETH i
 ---
 
 This is just to provide an alternative for liquidation path, currently the liquidation is happening only on 0x or 1 inch.
-Proposal: lets build a ledger with all loans that is having LTV less than 5% to liquidate, and match the assets that can be exchanged between vaults internally to compensate each other, if available internally itself, if not then the external path (the bots will be allowed to do this permissionlessly, both our bot and other bots can be used with 1% incentive as there is no risk for the bot at all, only gas fee right?), is that possible? the external path opens up only after this check, will this be beneficial? is there a better approach? is this ledger really needed, or something else can be built so that bot can easily refer and exchange the assets between the required vaults. what do you say? for example: if vault1 need to liquidate tokenA to get tokenB and like wise vault2 need to liquidate tokenB to get TokenA then we can exchange them directly, only remaing amount we can liquidate externally, what do you say? say if loanA nears 85% LTV then its info will be entered into this ledger (or anything that we build), when the LTV gone beyond 90% then internal liquidated will be allowed and when the LTV went beyond 92% then external liquidation path will be allowed, what do you say?
+Proposal: lets build a ledger with all loans that is having LTV less than 5% to liquidate, and match the assets that can be exchanged between vaults internally to compensate each other, if available internally itself, if not then the external path (the bots will be allowed to do this permissionlessly, both our bot and other bots can be used with 1% incentive as there is no risk for the bot at all, only gas fee right?), is that possible? the external path opens up only after this check, will this be beneficial? is there a better approach? is this ledger really needed, or something else can be built so that bot can easily refer and exchange the assets between the required vaults. what do you say? for example: if vault1 need to liquidate tokenA to get tokenB and like wise vault2 need to liquidate tokenB to get TokenA then we can exchange them directly, only remaing amount we can liquidate externally, what do you say? say if loanA nears 86% LTV then its info will be entered into this ledger (or anything that we build), when the LTV gone beyond 90% then internal liquidation will be allowed and when the LTV went beyond 92% then external liquidation path will be allowed, what do you say? also when the loan LTV becomes less than 84% then the ledger entry need to be removed (or else modify with soft deletion with a flag, so that it may be required or may be left as it is because before liquidation anyway the LTV is checked again), what do you say?, is there a better approach?
 
 ---
 
@@ -420,5 +420,14 @@ Also the info icon mapping inside protocol console should go only to `www` (http
 ---
 
 Guide me to provide sitemap to google search engine
+
+---
+
+Have 3 modes in website `Basic/Advanced/Technical`, Basic: for Dummy users (with polished wordings), Advanced: for users with no technical knoweldge but can understand all financial jargons, Technical: for users with technical knoweldge but not much with all financial jargons
+what do you say? whats your take?
+
+---
+
+update protocol console and include each and every configs in admin viewable/proposable page, what do you say?
 
 ---
