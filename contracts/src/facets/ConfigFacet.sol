@@ -1150,6 +1150,113 @@ contract ConfigFacet is DiamondAccessControl {
         tier3 = LibVaipakam.cfgTier3LiquidationLtvBps();
     }
 
+    // ─── Internal-liquidation match path (B.2) — config surface ────────
+
+    /// @notice Emitted when the internal-match master kill-switch is
+    ///         flipped. While `enabled == false`, the matching entry
+    ///         point reverts `InternalMatchDisabled` (PR4+), the
+    ///         match-eligible view returns empty, and the external-
+    ///         path priority-window gate short-circuits (external
+    ///         liquidation stays callable across the full LTV range).
+    /// @custom:event-category informational/config
+    event InternalMatchEnabledSet(bool enabled);
+
+    /// @notice Emitted when either of the two internal-match tunables
+    ///         (`externalLiquidationPriorityWindowBps`,
+    ///         `internalMatchIncentivePerLegBps`) is updated.
+    /// @custom:event-category informational/config
+    event InternalMatchConfigSet(
+        uint16 externalLiquidationPriorityWindowBps,
+        uint16 internalMatchIncentivePerLegBps
+    );
+
+    /// @notice Setter-range errors for the internal-match config.
+    error InternalMatchWindowAboveCap(uint256 provided, uint256 maxAllowed);
+    error InternalMatchIncentiveAboveCap(uint256 provided, uint256 maxAllowed);
+
+    /// @notice Flip the internal-liquidation match path's master
+    ///         kill-switch. Default `false` on a fresh deploy.
+    /// @dev    ADMIN_ROLE-only (TimelockController post-handover).
+    ///         Per chain — enable on chains where matcher-bot infra
+    ///         is live + active-loan volume justifies the priority
+    ///         window. See InternalLiquidationLedger.md §9.2.
+    function setInternalMatchEnabled(bool enabled)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.storageSlot().protocolCfg.internalMatchEnabled = enabled;
+        emit InternalMatchEnabledSet(enabled);
+    }
+
+    /// @notice Set the two internal-match tunables atomically.
+    /// @dev    ADMIN_ROLE-only (TimelockController post-handover).
+    ///         Each `0` ⇒ library default. Range bounds:
+    ///         - `externalLiquidationPriorityWindowBps` ∈
+    ///           `[MIN_EXTERNAL_LIQUIDATION_PRIORITY_WINDOW_BPS,
+    ///             MAX_EXTERNAL_LIQUIDATION_PRIORITY_WINDOW_BPS]`
+    ///           (0 – 500 BPS, i.e. 0% – 5% LTV). Floor 0 lets
+    ///           governance collapse the priority window without
+    ///           toggling the kill-switch; ceiling 5% preserves the
+    ///           bad-debt buffer above each tier's liquidation
+    ///           threshold (worst-case absolute external floor =
+    ///           tier-3 max 95% + 5% window = 100%, still bounded).
+    ///         - `internalMatchIncentivePerLegBps` ∈
+    ///           `[MIN_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG,
+    ///             MAX_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG]`
+    ///           (0 – 300 BPS per leg). Floor 0 zeros the bot
+    ///           incentive without disabling the path; cap 3% per
+    ///           leg keeps total bot take ≤ 6% on a 2-way match,
+    ///           still under the 5-7.7% external-liquidation
+    ///           discount borrowers would otherwise pay — borrowers
+    ///           always net out ahead of external.
+    function setInternalMatchConfig(
+        uint16 externalLiquidationPriorityWindowBps_,
+        uint16 internalMatchIncentivePerLegBps_
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        uint256 window = externalLiquidationPriorityWindowBps_ == 0
+            ? uint256(LibVaipakam.DEFAULT_EXTERNAL_LIQUIDATION_PRIORITY_WINDOW_BPS)
+            : uint256(externalLiquidationPriorityWindowBps_);
+        uint256 incentive = internalMatchIncentivePerLegBps_ == 0
+            ? uint256(LibVaipakam.DEFAULT_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG)
+            : uint256(internalMatchIncentivePerLegBps_);
+        if (window > uint256(LibVaipakam.MAX_EXTERNAL_LIQUIDATION_PRIORITY_WINDOW_BPS)) {
+            revert InternalMatchWindowAboveCap(
+                window,
+                uint256(LibVaipakam.MAX_EXTERNAL_LIQUIDATION_PRIORITY_WINDOW_BPS)
+            );
+        }
+        if (incentive > uint256(LibVaipakam.MAX_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG)) {
+            revert InternalMatchIncentiveAboveCap(
+                incentive,
+                uint256(LibVaipakam.MAX_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG)
+            );
+        }
+        LibVaipakam.ProtocolConfig storage c = LibVaipakam.storageSlot().protocolCfg;
+        c.externalLiquidationPriorityWindowBps = externalLiquidationPriorityWindowBps_;
+        c.internalMatchIncentivePerLegBps = internalMatchIncentivePerLegBps_;
+        emit InternalMatchConfigSet(
+            externalLiquidationPriorityWindowBps_,
+            internalMatchIncentivePerLegBps_
+        );
+    }
+
+    /// @notice One-call effective-values bundle for the internal-match
+    ///         path. Frontend renders the priority-window disclosure
+    ///         + bot dashboard against this.
+    function getInternalMatchConfigBundle()
+        external
+        view
+        returns (
+            bool enabled,
+            uint256 externalLiquidationPriorityWindowBps,
+            uint256 internalMatchIncentivePerLegBps
+        )
+    {
+        enabled = LibVaipakam.cfgInternalMatchEnabled();
+        externalLiquidationPriorityWindowBps = LibVaipakam.cfgExternalLiquidationPriorityWindowBps();
+        internalMatchIncentivePerLegBps = LibVaipakam.cfgInternalMatchIncentivePerLegBps();
+    }
+
     /// @notice Replace the PAA list — the per-chain "predominantly
     ///         available" quote tokens the depth-tier route search probes
     ///         an asset's pools against (e.g. `[WETH, USDC, USDT, DAI]`

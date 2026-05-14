@@ -144,6 +144,36 @@ library LibVaipakam {
     // at the most permissive admin setting.
     uint16 constant MIN_TIER_LIQUIDATION_LTV_BPS = 5_000;      // 50%
     uint16 constant MAX_TIER_LIQUIDATION_LTV_BPS = 9_500;      // 95%
+
+    // ── Internal-liquidation match path (B.2) defaults + hard bounds ───
+    // See docs/DesignsAndPlans/InternalLiquidationLedger.md §0.
+    //
+    // The view-only matching path runs ahead of external liquidation.
+    // Per-loan trigger is `loan.liquidationLtvBpsAtInit` (snapshotted
+    // per-tier at init); two GLOBAL knobs configure how the priority
+    // window above that trigger behaves:
+    //
+    // - `externalLiquidationPriorityWindowBps` — the LTV band ABOVE
+    //   each loan's per-tier liquidation threshold where ONLY internal
+    //   match liquidation is permitted (external `triggerLiquidation`
+    //   reverts). When LTV crosses
+    //   `loan.liquidationLtvBpsAtInit + externalLiquidationPriorityWindowBps`,
+    //   external opens up. Default 200 BPS = 2% LTV window.
+    //
+    // - `internalMatchIncentivePerLegBps` — % withheld from each
+    //   matched leg's transferred collateral, paid to `msg.sender`
+    //   (the bot). Default 100 BPS = 1%. Cap 300 BPS = 3% per leg.
+    //   At the cap, a 2-way match nets the bot 6% of single-side
+    //   notional total, still well under the 5–7.7% external-
+    //   liquidation discount the borrowers would have paid.
+    //
+    // Plus a kill-switch (`internalMatchEnabled`, default false).
+    uint16 constant DEFAULT_EXTERNAL_LIQUIDATION_PRIORITY_WINDOW_BPS = 200; // 2%
+    uint16 constant MIN_EXTERNAL_LIQUIDATION_PRIORITY_WINDOW_BPS = 0;       // governance can collapse the window
+    uint16 constant MAX_EXTERNAL_LIQUIDATION_PRIORITY_WINDOW_BPS = 500;     // 5% cap — keep bad-debt buffer above 100% LTV
+    uint16 constant DEFAULT_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG = 100;     // 1%
+    uint16 constant MIN_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG = 0;           // governance can zero the bot incentive
+    uint16 constant MAX_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG = 300;         // 3% per leg ceiling
     // Default keeper-confidence tier for an asset the relay hasn't
     // touched yet — Tier 1, i.e. `effectiveTier` collapses to today's
     // `HF ≥ 1.5` until the off-chain 0x/1inch confidence accumulates.
@@ -593,7 +623,17 @@ library LibVaipakam {
         Repaid,
         Defaulted,
         Settled,
-        FallbackPending
+        FallbackPending,
+        // Internal-liquidation match path (B.2) terminal state. Set by
+        // the matching entry point (PR4+) on a fully-matched loan
+        // (both legs cleared). Loans where the match only cleared
+        // part of the balance stay `Active` with reduced
+        // principal/collateral (partial-match α from §7 of
+        // InternalLiquidationLedger.md). Append-only at the end so
+        // existing `uint8` ABI reads of `LoanStatus` stay stable.
+        // PR3 reserves the enum slot; no facet sets this status
+        // until the PR4 execution body lands.
+        InternalMatched
     }
 
     /**
@@ -867,6 +907,33 @@ library LibVaipakam {
         uint16 tier1LiquidationLtvBps; // 0 ⇒ 9000
         uint16 tier2LiquidationLtvBps; // 0 ⇒ 8500
         uint16 tier3LiquidationLtvBps; // 0 ⇒ 8000
+        // ── Internal-liquidation match path (B.2) governance globals ──
+        // See docs/DesignsAndPlans/InternalLiquidationLedger.md §0.
+        //
+        // Master kill-switch. Default `false` ⇒ the view-only
+        // `MetricsFacet.getMatchEligibleLoans` returns empty AND
+        // the priority-window gate inside `triggerLiquidation`
+        // short-circuits (external stays callable everywhere). The
+        // matching entry point (PR4+) ALSO checks this flag and
+        // reverts `InternalMatchDisabled` while it's off. Flipped on
+        // per chain by `ADMIN_ROLE` via
+        // `ConfigFacet.setInternalMatchEnabled(bool)` once that
+        // chain's matcher-bot infra is live.
+        bool internalMatchEnabled;
+        // GLOBAL — LTV window above each loan's per-tier liquidation
+        // threshold where external `triggerLiquidation` reverts so
+        // internal matchers get a clean priority slot. `0` ⇒
+        // DEFAULT_EXTERNAL_LIQUIDATION_PRIORITY_WINDOW_BPS (200 = 2%
+        // LTV window). Setter range
+        // `[MIN_EXTERNAL_LIQUIDATION_PRIORITY_WINDOW_BPS,
+        //   MAX_EXTERNAL_LIQUIDATION_PRIORITY_WINDOW_BPS]` (0 – 5%).
+        uint16 externalLiquidationPriorityWindowBps;
+        // GLOBAL — % withheld from each matched leg's transferred
+        // collateral and paid to the calling bot (`msg.sender`). 1%
+        // default; 3% cap keeps even worst-case bot take below the
+        // 5–7.7% external-liquidation discount borrowers would
+        // otherwise pay. `0` ⇒ DEFAULT_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG.
+        uint16 internalMatchIncentivePerLegBps;
     }
 
     /// @dev Struct to store parameters of createOffer function, avoiding stack-too-deep.
@@ -3058,6 +3125,33 @@ library LibVaipakam {
         revert IVaipakamErrors.ParameterOutOfRange(
             "liquidityTier", uint256(tier), 0, uint256(MAX_LIQUIDITY_TIER)
         );
+    }
+
+    /// @dev Internal-liquidation match path (B.2) — kill-switch flag.
+    function cfgInternalMatchEnabled() internal view returns (bool) {
+        return storageSlot().protocolCfg.internalMatchEnabled;
+    }
+
+    /// @dev Internal-liquidation match path (B.2) — global LTV
+    ///      window above each loan's per-tier liquidation threshold
+    ///      where external `triggerLiquidation` is gated to give
+    ///      internal matchers a clean priority slot. `0` ⇒ default
+    ///      200 BPS (2% LTV).
+    function cfgExternalLiquidationPriorityWindowBps() internal view returns (uint256) {
+        uint16 v = storageSlot().protocolCfg.externalLiquidationPriorityWindowBps;
+        return v == 0
+            ? uint256(DEFAULT_EXTERNAL_LIQUIDATION_PRIORITY_WINDOW_BPS)
+            : uint256(v);
+    }
+
+    /// @dev Internal-liquidation match path (B.2) — bot incentive,
+    ///      in BPS, withheld from each matched leg's transferred
+    ///      collateral. `0` ⇒ default 100 BPS (1% per leg).
+    function cfgInternalMatchIncentivePerLegBps() internal view returns (uint256) {
+        uint16 v = storageSlot().protocolCfg.internalMatchIncentivePerLegBps;
+        return v == 0
+            ? uint256(DEFAULT_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG)
+            : uint256(v);
     }
 
     /// @dev Keeper liquidity-confidence tier for `asset` — stored `0`

@@ -1002,7 +1002,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](74);
+        s = new bytes4[](77);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -1131,6 +1131,13 @@ contract DeployDiamond is Script {
         // InternalLiquidationLedger.md §0.
         s[72] = ConfigFacet.setTierLiquidationLtvBps.selector;
         s[73] = ConfigFacet.getTierLiquidationLtvBps.selector;
+        // PR3 of internal-match work (2026-05-15) — kill-switch +
+        // priority-window + bot-incentive setters + bundle view for
+        // the internal-liquidation match path. See
+        // InternalLiquidationLedger.md §0.
+        s[74] = ConfigFacet.setInternalMatchEnabled.selector;
+        s[75] = ConfigFacet.setInternalMatchConfig.selector;
+        s[76] = ConfigFacet.getInternalMatchConfigBundle.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
@@ -1150,7 +1157,7 @@ contract DeployDiamond is Script {
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](40);
+        s = new bytes4[](41);
         s[0] = MetricsFacet.getProtocolTVL.selector;
         s[1] = MetricsFacet.getProtocolStats.selector;
         s[2] = MetricsFacet.getUserCount.selector;
@@ -1220,6 +1227,11 @@ contract DeployDiamond is Script {
         // are included. See MetricsFacet:734-ish "§8b" block.
         s[38] = MetricsFacet.getUserPositionLoans.selector;
         s[39] = MetricsFacet.getUserPositionOffers.selector;
+        // PR3 of internal-match work (2026-05-15) — paginated
+        // active-loan view filtered by current LTV. Internal-match
+        // bots use this per block to discover candidates; returns
+        // empty while `internalMatchEnabled == false`.
+        s[40] = MetricsFacet.getMatchEligibleLoans.selector;
     }
 
     /// AnalyticalGettersDesign §3.1 — per-user dashboard surface. One

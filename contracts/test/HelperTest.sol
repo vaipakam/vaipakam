@@ -605,7 +605,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](38);
+        selectors = new bytes4[](39);
         selectors[0] = MetricsFacet.getProtocolTVL.selector;
         selectors[1] = MetricsFacet.getProtocolStats.selector;
         selectors[2] = MetricsFacet.getUserCount.selector;
@@ -656,6 +656,11 @@ contract HelperTest {
         selectors[35] = MetricsFacet.getActiveOffersByAssetPair.selector;
         selectors[36] = MetricsFacet.getUserAllOffersWithDetails.selector;
         selectors[37] = MetricsFacet.getActiveOffersByAssetPairRanked.selector;
+        // PR3 of internal-match work — paginated active-loan view
+        // filtered by current LTV. Internal-match bots discover
+        // candidates per block via this. Returns empty while
+        // `internalMatchEnabled == false`.
+        selectors[38] = MetricsFacet.getMatchEligibleLoans.selector;
         return selectors;
     }
 
@@ -749,7 +754,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](74);
+        selectors = new bytes4[](77);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -866,6 +871,11 @@ contract HelperTest {
         // per-asset `RiskParams.liqThresholdBps`.
         selectors[72] = ConfigFacet.setTierLiquidationLtvBps.selector;
         selectors[73] = ConfigFacet.getTierLiquidationLtvBps.selector;
+        // PR3 of internal-match work — kill-switch + tunables setter
+        // + bundle view for the internal-liquidation match path.
+        selectors[74] = ConfigFacet.setInternalMatchEnabled.selector;
+        selectors[75] = ConfigFacet.setInternalMatchConfig.selector;
+        selectors[76] = ConfigFacet.getInternalMatchConfigBundle.selector;
         return selectors;
     }
 
