@@ -256,5 +256,78 @@ is automated.
 - **Don't run against an unforked mainnet before the contracts are
   deployed.** The script calls `OracleFacet` views on the supplied
   Diamond; if the Diamond isn't there yet, every row returns `?`.
-  For pre-deploy capacity planning, run against an Anvil fork that
-  has the new contracts diamond-cut in.
+  For pre-deploy capacity planning, run the **mainnet-fork variant**
+  documented below.
+
+## Pre-deploy variant (mainnet-fork census)
+
+For pre-deploy capacity planning — "what would the autonomous tier-LTV
+cache settle to on this chain RIGHT NOW, given current Aave / Compound
+configs at this block?" — use
+[`contracts/script/SlippageCensusPreDeploy.s.sol`](../contracts/script/SlippageCensusPreDeploy.s.sol)
+instead. It forks the chain via `--fork-url`, deploys a minimal
+Diamond into the fork (no real funds, no real deployment — fork state
+is discarded when the script exits), wires the peer-protocol addresses
++ per-tier reference assets from
+[`contracts/script/SlippageCensus.chains.json`](../contracts/script/SlippageCensus.chains.json),
+calls `refreshTierLtvCache()` to populate the cache from the LIVE
+peer state at the fork block, and reports per-tier cache values.
+
+Env vars:
+
+| Env var               | Required? | Description                                                                       |
+| --------------------- | --------- | --------------------------------------------------------------------------------- |
+| `CHAINS_JSON_PATH`    | no        | Override path to the chains JSON. Defaults to `script/SlippageCensus.chains.json`. |
+| `CENSUS_LABEL`        | no        | Free-form tag written to each output row.                                         |
+
+```bash
+# Example: Ethereum mainnet pre-deploy census against the latest
+# block. No DIAMOND_ADDRESS needed — the script deploys its own.
+CENSUS_LABEL=2026-05-14-eth-pre-deploy \
+  forge script \
+    contracts/script/SlippageCensusPreDeploy.s.sol:SlippageCensusPreDeploy \
+    --rpc-url $RPC_ETH \
+    -vvv
+
+# Pipe to CSV:
+... | grep ^CENSUS_PRE, > census-pre-eth-2026-05-14.csv
+... | grep ^CENSUS_PRE_PEERS, > census-pre-eth-2026-05-14-peers.csv
+```
+
+Output rows (`CENSUS_PRE,` prefix):
+
+```
+CENSUS_PRE,<label>,<chainId>,<tier>,<refAssetCount>,<cachedLtvBps>,<effectiveLtvBps>,<libraryDefaultBps>
+```
+
+A separate `CENSUS_PRE_PEERS,` row echoes the per-chain peer addresses
+the script used, for the audit-package per-chain verification step.
+
+What to look for in the output:
+
+- **`cachedLtvBps > 0`** — the refresh accepted the per-tier
+  consensus reading. `effectiveLtvBps` will equal `cachedLtvBps`.
+- **`cachedLtvBps = 0` but `effectiveLtvBps > 0`** — the refresh
+  rejected the candidate (out-of-band, insufficient readings, or no
+  reference assets); the loan-init gate would fall back to the
+  library default. Investigate via the `TierLtvCacheRefreshRejected`
+  event the refresh emitted to determine which rejection reason
+  applied.
+- **`effectiveLtvBps == libraryDefaultBps`** for every tier — the
+  cache is either rejected or empty; on a fresh deploy, this is
+  the expected pre-refresh state.
+
+Pitfalls (in addition to the post-deploy variant's):
+
+- **The peer addresses in `SlippageCensus.chains.json` must be
+  verified against each peer's official docs before the audit
+  consumes the output.** Out-of-date peer addresses produce
+  "no readings" (the per-asset consensus check fails when no peer
+  reports) — not garbage data, but a wasted refresh.
+- **The mainnet-fork variant produces a SNAPSHOT** at the fork's
+  block. If you need a multi-block / time-averaged view, re-run
+  against several recent blocks via `--fork-block-number`.
+- **The script does not `--broadcast`**. It's pure-simulation
+  against a fork; broadcasting these txs to a real chain would
+  leak a half-configured Diamond with no governance owner-recovery
+  path.

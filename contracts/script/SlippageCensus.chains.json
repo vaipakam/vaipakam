@@ -1,0 +1,73 @@
+{
+  "_README": "Per-chain peer-protocol + reference-asset config consumed by contracts/script/SlippageCensusPreDeploy.s.sol. Address provenance MUST be verified against each peer protocol's official docs before any production use — see docs/SlippageCensusGuide.md.",
+  "_README_peer_protocols": "All peer-protocol addresses sourced from each protocol's official deployment registry: Aave V3 PoolDataProvider from aave.com/docs/resources/addresses; Compound V3 Comet from docs.compound.finance/#networks (one Comet per base asset — pick the chain's largest by liquidity for v1); Morpho-Blue from docs.morpho.org. Set to '0x0000000000000000000000000000000000000000' to skip a peer on a chain where it isn't deployed.",
+  "_README_reference_assets": "Per-tier reference asset lists are CONSTITUTION-LEVEL — set at deploy via OracleAdminFacet.setTierReferenceAssets. The autonomous tier-LTV cache reads these assets' LTVs from each configured peer and aggregates per-tier median + bound-check. List membership must be audited.",
+
+  "_README_chain_1": "Ethereum mainnet",
+  "chain_1_peers": {
+    "aave_v3_pool_data_provider": "0x7B4EB56E7CD4b454BA8ff71E4518426369a138a3",
+    "compound_v3_comet_usdc": "0xc3d688B66703497DAA19211EEdff47f25384cdc3",
+    "morpho_blue": "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb"
+  },
+  "chain_1_tier1_refs": [],
+  "chain_1_tier2_refs": [
+    "0x514910771AF9Ca656af840dff83E8264EcF986CA",
+    "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9",
+    "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+  ],
+  "chain_1_tier3_refs": [
+    "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+    "0x6B175474E89094C44Da98b954EedeAC495271d0F"
+  ],
+
+  "_README_chain_8453": "Base mainnet",
+  "chain_8453_peers": {
+    "aave_v3_pool_data_provider": "0x2A0979257105834789bC6b9E1B00446DFbA8dFBa",
+    "compound_v3_comet_usdc": "0xb125E6687d4313864e53df431d5425969c15Eb2F",
+    "morpho_blue": "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb"
+  },
+  "chain_8453_tier1_refs": [],
+  "chain_8453_tier2_refs": [],
+  "chain_8453_tier3_refs": [
+    "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
+    "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf"
+  ],
+
+  "_README_chain_42161": "Arbitrum One",
+  "chain_42161_peers": {
+    "aave_v3_pool_data_provider": "0x69FA688f1Dc47d4B5d8029D5a35FB7a548310654",
+    "compound_v3_comet_usdc": "0x9c4ec768c28520B50860ea7a15bd7213a9fF58bf",
+    "morpho_blue": "0x0000000000000000000000000000000000000000"
+  },
+  "chain_42161_tier1_refs": [],
+  "chain_42161_tier2_refs": [
+    "0xf97f4df75117a78c1A5a0DBb814Af92458539FB4",
+    "0x912CE59144191C1204E64559FE8253a0e49E6548"
+  ],
+  "chain_42161_tier3_refs": [
+    "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+    "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9",
+    "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f"
+  ],
+
+  "_README_chain_10": "Optimism",
+  "chain_10_peers": {
+    "aave_v3_pool_data_provider": "0x69FA688f1Dc47d4B5d8029D5a35FB7a548310654",
+    "compound_v3_comet_usdc": "0x2e44e174f7D53F0212823acC11C01A11d58c5bCB",
+    "morpho_blue": "0x0000000000000000000000000000000000000000"
+  },
+  "chain_10_tier1_refs": [],
+  "chain_10_tier2_refs": [
+    "0x4200000000000000000000000000000000000042"
+  ],
+  "chain_10_tier3_refs": [
+    "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
+    "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58",
+    "0x68f180fcCe6836688e9084f035309E29Bf0A2095"
+  ],
+
+  "_README_caveat": "Addresses above are sourced from training-data knowledge and are likely-but-not-guaranteed correct. Verify each against the peer protocol's official docs before submitting any production-cycle refresh. Out-of-date peer addresses just produce 'no readings' (the per-asset consensus check fails when no peer reports), so a stale config doesn't write garbage — but it does waste a refresh call."
+}

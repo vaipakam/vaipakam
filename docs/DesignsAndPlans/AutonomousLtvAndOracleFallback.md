@@ -308,12 +308,12 @@ on swap failure (all adapters reverted OR slippage > 6% ceiling):
 
 | # | Phase | Surface | Est. effort | Status |
 |---|---|---|---|---|
-| 1 | **This design doc** | `docs/DesignsAndPlans/AutonomousLtvAndOracleFallback.md` | 30 min | IN PROGRESS |
-| 2 | **Oracle-quorum failed-swap fallback** | `RiskFacet`, `LibFallback`, new tests | half-day | next |
-| 3 | **`LibPeerLTV` + per-chain peer addresses** | New library; `IPoolDataProvider` + `IComet` + `IMorpho` minimal interfaces; per-chain peer-address storage; setter on `OracleAdminFacet` | day | |
-| 4 | **`refreshTierLtvCache` + storage + per-tier bounds** | `OracleFacet.refreshTierLtvCache()` (permissionless); `tierLtvCache` storage; bound-enforcement; events | day | |
-| 5 | **`LoanFacet._checkInitialLtvAndHf` integration** | Read from cache; cache-stale fallback to library defaults; remove the `cfgTierMaxInitLtvBps` getters or repurpose them as the library-default constants | half-day | |
-| 6 | **Mainnet-fork census variant** | `SlippageCensusPreDeploy.s.sol`; fork mainnet via `--fork-url`, diamond-cut minimal Diamond, configure peers, run census + cache-refresh against real pool + peer state | day | |
+| 1 | **This design doc** | `docs/DesignsAndPlans/AutonomousLtvAndOracleFallback.md` | 30 min | DONE (`a1b7de8`) |
+| 2 | **Oracle-quorum failed-swap fallback** | `RiskFacet`, `LibFallback`, new tests | half-day | DONE (`d0dded2`) |
+| 3 | **`LibPeerLTV` + per-chain peer addresses** | New library; `IPoolDataProvider` + `IComet` + `IMorpho` minimal interfaces; per-chain peer-address storage; setter on `OracleAdminFacet` | day | DONE (`58c2b6b`) |
+| 4 | **`refreshTierLtvCache` + storage + per-tier bounds** | `OracleFacet.refreshTierLtvCache()` (permissionless); `tierLtvCache` storage; bound-enforcement; events | day | DONE (`455385e`) |
+| 5 | **`LoanFacet._checkInitialLtvAndHf` integration** | Read from cache; cache-stale fallback to library defaults; legacy `cfgTierMaxInitLtvBps` setters retained as dead-code (soft-deprecated; removal is a follow-up sweep) | half-day | DONE (`3677dda`) |
+| 6 | **Mainnet-fork census variant** | `SlippageCensusPreDeploy.s.sol` + `SlippageCensus.chains.json`; fork mainnet via `--fork-url`, diamond-cut minimal Diamond (DiamondCut + OracleFacet + OracleAdminFacet selectors only), configure peers + tier reference assets, run refresh against real peer state, report per-tier cache values for the audit-package CSV | day | DONE (this commit) |
 
 Total: ~4 working days. Single regression after each phase to avoid
 the post-step-3 5-failure surprise.
