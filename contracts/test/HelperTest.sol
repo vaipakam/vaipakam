@@ -41,7 +41,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](57);
+        selectors = new bytes4[](58);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -131,6 +131,9 @@ contract HelperTest {
         // tests that need a user's escrow address bypassing the
         // mandatory-version check on the production getter.
         selectors[56] = TestMutatorFacet.getUserVaipakamEscrowRaw.selector;
+        // FlashLoanLiquidationPath.md — flip the discount-path master
+        // kill-switch in fixtures that don't cut ConfigFacet.
+        selectors[57] = TestMutatorFacet.setDiscountPathEnabledRaw.selector;
         return selectors;
     }
 
@@ -424,7 +427,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](7);
+        selectors = new bytes4[](8);
         selectors[0] = RiskFacet.updateRiskParams.selector;
         selectors[1] = RiskFacet.calculateLTV.selector;
         selectors[2] = RiskFacet.calculateHealthFactor.selector;
@@ -439,6 +442,14 @@ contract HelperTest {
         // Active with reduced size and unchanged maturity. Strict
         // HF-improves + HF>=1 post-mutation gates.
         selectors[6] = RiskFacet.triggerPartialLiquidation.selector;
+        // Flash-loan / liquidator-buys-at-discount path
+        // (`docs/DesignsAndPlans/FlashLoanLiquidationPath.md`). Caller
+        // pays `totalDebt` in principal-asset; protocol seizes
+        // collateral at a per-tier discount and delivers it to
+        // `recipient`. Master kill-switch `discountPathEnabled` is off
+        // by default — the selector is wired but the entry-point
+        // reverts `DiscountPathDisabled` until governance flips it.
+        selectors[7] = RiskFacet.triggerLiquidationDiscounted.selector;
     }
 
     function getClaimFacetSelectors()
@@ -724,7 +735,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](69);
+        selectors = new bytes4[](72);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -827,6 +838,15 @@ contract HelperTest {
         // bundle getter).
         selectors[67] = ConfigFacet.setTierLtvParams.selector;
         selectors[68] = ConfigFacet.getTierLtvParams.selector;
+        // FlashLoanLiquidationPath.md — per-tier liquidator-discount
+        // governance setters (master kill-switch +
+        // atomic per-tier values + bundle view). All ADMIN_ROLE-
+        // gated (TimelockController post-handover); the kill-switch
+        // defaults `false` so a fresh deploy ships with the discount
+        // path inert.
+        selectors[69] = ConfigFacet.setDiscountPathEnabled.selector;
+        selectors[70] = ConfigFacet.setTierLiqDiscountBps.selector;
+        selectors[71] = ConfigFacet.getTierLiqDiscountBps.selector;
         return selectors;
     }
 

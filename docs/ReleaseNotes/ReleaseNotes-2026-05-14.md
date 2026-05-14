@@ -291,25 +291,119 @@ rollout now expands to cover:
 - All four downstream consumer type-checks (defi frontend, keeper
   worker, indexer worker, agent worker) green throughout.
 
+## Liquidator-buys-at-discount path — design + contracts
+
+Later in the same day the risk-committee question on flash-loan
+liquidation got unblocked: keep the existing atomic-swap path AND
+add a parallel, optional, **liquidator-buys-at-discount** path
+following Aave V3 / Compound V3 / Morpho-Blue's industry-standard
+model. Both paths stay live; the keeper bot picks per-loan based
+on expected profitability, with `triggerLiquidationDiscounted`
+reserved for the cases where atomic-swap struggles (deeper
+liquidations bumping against the 6% slippage ceiling, illiquid
+order books, MEV-style competition by external liquidators that
+bring their own buyers).
+
+What shipped today on the contracts side:
+
+1. **Design doc** —
+   [`docs/DesignsAndPlans/FlashLoanLiquidationPath.md`](../DesignsAndPlans/FlashLoanLiquidationPath.md)
+   captures the full 12-section spec: goal, comparison vs the
+   existing atomic-swap path, industry benchmark (Aave / Compound /
+   Morpho), per-tier discount safety bounds, the entry-point
+   signature + pre-checks + settlement math, the master kill-switch
+   shape, the keeper-bot extension strategy, the open-market story,
+   failure modes, the 3-phase implementation plan, out-of-scope
+   items, and the audit-package additions.
+
+2. **Per-tier discount config** — three new library constants per
+   tier (`TIER{1,2,3}_LIQ_DISCOUNT_FLOOR_BPS`, `_CEIL_BPS`,
+   `_DEFAULT_BPS`) wired into `ProtocolConfig` and exposed through
+   the `effectiveTierLiqDiscountBps(tier)` accessor. Library
+   defaults are 7.7% / 6.0% / 5.0% — higher discount for thinner
+   tiers (wider liquidator slippage risk → more incentive needed
+   to attract competing liquidators). Each tier is admin-
+   configurable within its per-tier safety box (Tier 1 ∈ [3%, 15%],
+   Tier 2 ∈ [3%, 10%], Tier 3 ∈ [2%, 8%]) via
+   `ConfigFacet.setTierLiqDiscountBps(t1, t2, t3)` — atomic for
+   all three tiers, cross-tier monotonic invariant enforced
+   (`T1 ≥ T2 ≥ T3`).
+
+3. **Master kill-switch** — `ProtocolConfig.discountPathEnabled`,
+   default `false`. While off, the new entry-point reverts
+   `DiscountPathDisabled` immediately. Independent of
+   `depthTieredLtvEnabled` so governance can flip each one per
+   chain as audits land. Setter is
+   `ConfigFacet.setDiscountPathEnabled(bool)` — ADMIN_ROLE
+   pre-handover, TimelockController-gated 48h post-handover.
+
+4. **`RiskFacet.triggerLiquidationDiscounted(loanId, recipient, extraData)`**
+   — the new entry-point. The liquidator pays `totalDebt` in the
+   principal asset (typically funded via a same-tx flash-loan
+   from Aave V3 `flashLoanSimple` or Balancer V2 `flashLoan`); the
+   protocol seizes the borrower's collateral at oracle-priced
+   debt-plus-discount value and delivers it to `recipient`. The
+   borrower's residual collateral stays in their escrow as a
+   regular balance — no claim ceremony, just standard escrow
+   withdrawal. Loan transitions Active → Defaulted. Same NFT-flip
+   to `LoanLiquidated` and VPFI-LIF forfeit-to-treasury as the
+   atomic path.
+
+5. **Gates** — identical to the atomic-swap path on the borrower-
+   protection axis (Tier-1 sanctions on `msg.sender`, sequencer
+   circuit-breaker, HF < 1.0, oracle quorum required on both
+   legs). Plus three discount-specific gates: master kill-switch,
+   non-zero recipient, tier-classified collateral. Tier 0
+   (unclassified) reverts `UntierableCollateral` — the discount
+   math is per-tier and undefined for unclassified assets; route
+   falls back to the atomic-swap path (Liquid but unclassified)
+   or to the time-based default path (Illiquid).
+
+6. **Tests** — 8 RiskFacet discount-path tests covering every gate
+   (kill-switch off, zero recipient, loan inactive, sequencer
+   unhealthy, HF ≥ 1, untierable collateral, oracle quorum stale)
+   plus the happy-path Tier-3 settlement (loan transitions to
+   Defaulted, `LiquidationDiscounted` emitted with the precise
+   `(totalDebt, collateralSeized, borrowerSurplus)` triple). And
+   15 ConfigFacet tests exercising the atomic per-tier setter's
+   bound checks (per-tier floors / ceilings, tier-specific revert
+   selectors), the cross-tier monotonic invariant including the
+   subtle zero-fallback path where a tier-2 zero falls through to
+   the library default and is checked against the OTHER two tiers'
+   effective values, the kill-switch toggle, role gating, and
+   event emission. All 23 new tests pass.
+
+7. **ABIs re-exported** — `ConfigFacet.json` (+144 lines) and
+   `RiskFacet.json` (+115 lines) regenerated for the four
+   downstream monorepo consumers (`apps/{defi, keeper, indexer,
+   agent}`) and the sibling public reference keeper bot
+   (`vaipakam-keeper-bot`). All five typechecks pass cleanly.
+
 ## What stays open
 
 Two items remain on this branch:
 
-- **Flash-loan-funded execution** for the liquidator keeper bot, the
-  third item from yesterday's liquidator-hardening list, stays
-  BLOCKED on a risk-committee decision about the keeper-incentive
-  model. Under the current model the keeper EOA needs zero working
-  capital (the diamond does the atomic swap from collateral
-  custody), so flash-loans have no clear motivating use case. No
-  code path until that decision lands.
-- **Per-chain operator workflow**: the pre-deploy census script
-  needs to be run against each target chain (Base, Arbitrum,
-  Optimism, Ethereum, BNB, Polygon zkEVM in turn) with peer
-  addresses verified against current docs; outputs go into the
-  audit-package per chain; auditor engagement; risk-committee
-  sign-off; per-chain `setDepthTieredLtvEnabled(true)` rollout.
-  None of that is code — it's the human workflow the autonomy
-  layer feeds into.
+- **Keeper-bot flash-loan branch (design-doc Phase 3)**: wiring
+  Aave V3 `flashLoanSimple` + Balancer V2 `flashLoan` into a
+  custom receiver contract whose `executeOperation` callback
+  calls `triggerLiquidationDiscounted` on the diamond, so the
+  keeper EOA needs zero working capital. The contract surface is
+  ready and permissionless; the bot integration is a separate
+  work item — external MEV-style liquidators can already plug in
+  via the public ABI without us shipping the bot first.
 
-The protocol's autonomy story is now end-to-end on the code side.
-The audit package is the next gate.
+- **Per-chain operator workflow**: the pre-deploy census script
+  (already run today for all 6 target chains — see
+  `docs/AuditPackage/pre-deploy-census-2026-05-14/`) feeds into
+  the audit-package per chain; auditor engagement now covers
+  BOTH the autonomous tier-LTV layer AND the new discount path;
+  risk-committee sign-off; per-chain
+  `setDepthTieredLtvEnabled(true)` + `setDiscountPathEnabled(true)`
+  rollout (each independent — governance can stage them
+  separately). None of that is code; it's the human workflow the
+  autonomy + discount-path layers feed into.
+
+The protocol's autonomy story plus the higher-LTV liquidator
+hardening are now both end-to-end on the code side. The audit
+package + the keeper-bot flash-loan branch are the next two
+gates.

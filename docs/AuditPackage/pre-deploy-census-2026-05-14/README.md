@@ -37,19 +37,61 @@ The per-tier autonomous cache requires per-asset consensus across
 peers must report a positive LTV for each reference asset, and
 across the tier at least two reference assets must contribute.
 
-The empirical state (2026-05-14) is that Aave V3 has been
-systematically reducing borrowable LTV to 0 on many mid-cap and
-some blue-chip assets across multiple chains, as part of its
-risk-team's response to volatility. Compound V3 cUSDCv3 collateral
-lists those same assets at higher CFs because their per-market
-model handles risk differently. Result: per-asset consensus
-frequently rejects because Aave reads LTV=0 (treated as "asset
-unlisted" by the plausibility-bound check in `LibPeerLTV`).
+The empirical state (2026-05-14) is two-fold:
 
-This is **not a bug** — it's the consensus algorithm correctly
-detecting that one peer has effectively deprecated the asset for new
-borrows. The conservative fallback to library defaults is exactly
-the autonomy story working as designed.
+1. **Long-running risk-steward LTV reductions** — Aave V3 has been
+   systematically setting borrowable LTV to 0 on many mid-cap and
+   some long-tail assets across multiple chains (ARB on Arbitrum,
+   OP on Optimism, LINK on Arbitrum, CAKE on BNB, etc.) as part of
+   its risk-team's response to general volatility and to deprecate
+   tokens for new borrows. Compound V3 cUSDCv3 collateral lists
+   those same assets at higher CFs because its per-market model
+   handles risk differently.
+
+2. **April 18, 2026 Kelp/LayerZero OFT bridge exploit aftermath** —
+   Aave Risk Stewards froze WETH on Arbitrum, Base, Mantle, and
+   Linea (and dropped WETH LTV on those chains plus Ethereum Core
+   and Ethereum Prime) as a precautionary measure. The
+   [restoration AIP](https://governance.aave.com/t/direct-to-aip-weth-unfreeze-and-ltv-restoration-across-aave-v3-instances/24878)
+   is executing as of this census date, restoring WETH LTV to
+   pre-exploit values (80% Arbitrum + Base, 80.5% Ethereum Core +
+   Mantle, 84% Ethereum Prime, 80% Linea). Optimism + BNB +
+   Polygon were NOT in the exploit-response set. **The
+   Arbitrum / Base / Mantle Tier-3 fall-back-to-library-default
+   results above reflect this transient state.** Re-running the
+   census in 1–2 weeks (post-AIP-execution) should land real
+   peer-consensus Tier-3 values for these chains in the 71–74%
+   range (mirroring Ethereum's 73.37%).
+
+Result: per-asset consensus frequently rejects because Aave reads
+LTV=0 (treated as "asset deprecated by this peer" by the
+plausibility-bound check in `LibPeerLTV`). This is **not a bug** —
+it's the consensus algorithm correctly detecting that one peer has
+effectively deprecated the asset for new borrows OR has frozen it
+for incident response. The conservative fallback to library defaults
+is exactly the autonomy story working as designed. **Critically,
+this census captures the system's behaviour DURING a peer-protocol
+stress event (the OFT exploit response), not in steady state — our
+aggregator passed its first live stress test by refusing to
+import Aave's exploit-response zeros into Vaipakam's tier-LTV
+cache.**
+
+## Aave V4 — known future maintenance item
+
+Aave V4 launched on Ethereum mainnet on 2026-03-30 with a
+hub-and-spoke architecture (one Liquidity Hub per chain,
+multiple per-market Spokes). As of this census date V4 is on
+Ethereum mainnet **only**; it has NOT rolled out to any L2 we
+target. The 6-chain peer-aggregation set (`SlippageCensus.chains.json`)
+reads V3's `IPoolDataProvider` exclusively because V3 remains the
+active product on every L2.
+
+When V4 rolls out to a chain we read on, `LibPeerLTV` will need an
+additional `IAaveV4HubReader` (read API is fundamentally different
+from V3's monolithic `getReserveConfigurationData(asset)`). Approach:
+optional third Aave-side reader; the aggregator continues to
+median-merge per-asset across V3 + V4 + Compound V3. Not urgent —
+gated on actual V4 L2 deployments.
 
 ## Tier 3 results in detail
 

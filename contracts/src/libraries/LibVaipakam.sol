@@ -165,6 +165,49 @@ library LibVaipakam {
     uint256 constant TIER_LTV_CACHE_SOFT_TTL = 7 days;
     uint256 constant TIER_LTV_CACHE_HARD_TTL = 14 days;
 
+    // ─── FlashLoanLiquidationPath.md §4 — per-tier liquidation-discount bounds ─
+    //
+    // The flash-loan / liquidator-buys-at-discount path
+    // (`RiskFacet.triggerLiquidationDiscounted`) settles at
+    // `debt-plus-discount-VALUE` priced from oracles: the liquidator
+    // delivers `totalDebt` of the principal asset and receives the
+    // borrower's collateral at a per-tier discount, profiting on the
+    // spread between oracle-priced seizure and external DEX execution
+    // (typically via a same-tx flash-loan).
+    //
+    // Per-tier shape: Tier 1 is the THINNEST qualifying tier and
+    // therefore carries the widest discount band (liquidator slippage
+    // on a thin order-book is higher → bigger incentive needed to
+    // attract competing liquidators). Tier 3 is the deepest tier and
+    // carries the tightest band — execution risk is small so the
+    // liquidator doesn't need much haircut to be profitable.
+    // Cross-tier monotonic invariant enforced at the setter:
+    //   T1 default ≥ T2 default ≥ T3 default
+    // (and the same for governance-configured values).
+    //
+    // Bounds are constitution-level — changing them requires a
+    // source-code change + audit, not a configuration call. The
+    // `ConfigFacet.setTierLiqDiscountBps` setter clamps governance
+    // writes inside `[FLOOR, CEIL]` so a hostile-governance attack
+    // cannot push the discount to a degenerate value (0% would
+    // starve the liquidator market; 50% would gut borrower surplus).
+    uint16 constant TIER1_LIQ_DISCOUNT_FLOOR_BPS = 300;   // 3.0%
+    uint16 constant TIER1_LIQ_DISCOUNT_CEIL_BPS  = 1500;  // 15.0%
+    uint16 constant TIER2_LIQ_DISCOUNT_FLOOR_BPS = 300;   // 3.0%
+    uint16 constant TIER2_LIQ_DISCOUNT_CEIL_BPS  = 1000;  // 10.0%
+    uint16 constant TIER3_LIQ_DISCOUNT_FLOOR_BPS = 200;   // 2.0%
+    uint16 constant TIER3_LIQ_DISCOUNT_CEIL_BPS  = 800;   // 8.0%
+
+    // Library defaults — match the user-ratified figures in
+    // `docs/DesignsAndPlans/FlashLoanLiquidationPath.md` §3. Tier 1's
+    // 770 BPS (7.7%) matches Aave V3's WBTC `liquidationBonus`
+    // encoding 10770 (= 10000 + 770) — chosen so external liquidator
+    // tooling already calibrated to Aave's discount math sees a
+    // familiar magnitude on Vaipakam.
+    uint16 constant TIER1_LIQ_DISCOUNT_DEFAULT_BPS = 770;  // 7.7%
+    uint16 constant TIER2_LIQ_DISCOUNT_DEFAULT_BPS = 600;  // 6.0%
+    uint16 constant TIER3_LIQ_DISCOUNT_DEFAULT_BPS = 500;  // 5.0%
+
     // Multi-peer / multi-asset consensus rules.
     // Peer divergence tolerance — how far apart two peers' LTV readings
     // can be on the same asset before we treat them as "contested" and
@@ -763,6 +806,29 @@ library LibVaipakam {
         uint64 tier1SizePad; // 0 ⇒ 50_000e6
         uint64 tier2SizePad; // 0 ⇒ 500_000e6
         uint64 tier3SizePad; // 0 ⇒ 5_000_000e6
+        // ── Flash-loan / liquidator-buys-at-discount path ─────────────
+        // See docs/DesignsAndPlans/FlashLoanLiquidationPath.md §6.
+        // Master kill-switch — default `false` ⇒
+        // `RiskFacet.triggerLiquidationDiscounted` reverts immediately
+        // with `DiscountPathDisabled`. Independent of
+        // `depthTieredLtvEnabled` so governance can flip each one
+        // separately per chain (e.g. enable discount path while
+        // autonomous-LTV still bakes, or vice versa). Flipped on via
+        // `ConfigFacet.setDiscountPathEnabled(bool)` — ADMIN_ROLE
+        // pre-handover, TimelockController-gated post-handover.
+        bool discountPathEnabled;
+        // Per-tier liquidator-discount (BPS) — applied to the seized
+        // collateral value at settle time. Each `0 ⇒ TIER{N}_LIQ_
+        // DISCOUNT_DEFAULT_BPS` library constant (770 / 600 / 500).
+        // Setter (`setTierLiqDiscountBps`) bounds each tier inside
+        // `[TIER{N}_LIQ_DISCOUNT_FLOOR_BPS, TIER{N}_LIQ_DISCOUNT_CEIL_BPS]`
+        // and enforces the cross-tier monotonic invariant
+        // `T1 ≥ T2 ≥ T3` (thinner tier = wider discount). A fresh
+        // deploy never touches these slots ⇒ the library defaults
+        // apply until governance overrides.
+        uint16 tier1LiqDiscountBps; // 0 ⇒ 770
+        uint16 tier2LiqDiscountBps; // 0 ⇒ 600
+        uint16 tier3LiqDiscountBps; // 0 ⇒ 500
     }
 
     /// @dev Struct to store parameters of createOffer function, avoiding stack-too-deep.
@@ -3470,6 +3536,65 @@ library LibVaipakam {
             return entry.ltvBps;
         }
         return tierLtvLibraryDefaultBps(tier);
+    }
+
+    // ─── FlashLoanLiquidationPath.md — per-tier discount accessors ─────
+
+    /// @dev Per-tier liquidator-discount bounds (BPS). Constitution-
+    ///      level: changing these requires a source change + audit,
+    ///      not a config call. The setter clamps governance writes
+    ///      inside this box; loan-side reads never consult bounds
+    ///      directly — they go through `effectiveTierLiqDiscountBps`.
+    function tierLiqDiscountBoundsBps(uint8 tier)
+        internal
+        pure
+        returns (uint16 floorBps, uint16 ceilBps)
+    {
+        if (tier == 1) return (TIER1_LIQ_DISCOUNT_FLOOR_BPS, TIER1_LIQ_DISCOUNT_CEIL_BPS);
+        if (tier == 2) return (TIER2_LIQ_DISCOUNT_FLOOR_BPS, TIER2_LIQ_DISCOUNT_CEIL_BPS);
+        if (tier == 3) return (TIER3_LIQ_DISCOUNT_FLOOR_BPS, TIER3_LIQ_DISCOUNT_CEIL_BPS);
+        return (0, 0);
+    }
+
+    /// @dev Library default discount per tier — used when the
+    ///      `protocolCfg.tier{N}LiqDiscountBps` slot is zero (i.e.
+    ///      governance has never overridden). Sit at the user-ratified
+    ///      figures inside their respective safety boxes.
+    function tierLiqDiscountLibraryDefaultBps(uint8 tier)
+        internal
+        pure
+        returns (uint16)
+    {
+        if (tier == 1) return TIER1_LIQ_DISCOUNT_DEFAULT_BPS;
+        if (tier == 2) return TIER2_LIQ_DISCOUNT_DEFAULT_BPS;
+        if (tier == 3) return TIER3_LIQ_DISCOUNT_DEFAULT_BPS;
+        return 0;
+    }
+
+    /// @dev Effective liquidator-discount the
+    ///      `triggerLiquidationDiscounted` settlement consults. Reads
+    ///      the governance override if set (non-zero), else falls
+    ///      through to the library default. Tier 0 (unclassified)
+    ///      always returns 0 — caller must reject before reaching the
+    ///      settlement math. Pre-handover the override slot is
+    ///      ADMIN_ROLE-tunable; post-handover it's TimelockController-
+    ///      gated (48h).
+    function effectiveTierLiqDiscountBps(uint8 tier) internal view returns (uint16) {
+        if (tier == 0 || tier > MAX_LIQUIDITY_TIER) return 0;
+        ProtocolConfig storage cfg = storageSlot().protocolCfg;
+        uint16 override_;
+        if (tier == 1) override_ = cfg.tier1LiqDiscountBps;
+        else if (tier == 2) override_ = cfg.tier2LiqDiscountBps;
+        else override_ = cfg.tier3LiqDiscountBps;
+        if (override_ != 0) return override_;
+        return tierLiqDiscountLibraryDefaultBps(tier);
+    }
+
+    /// @dev Master kill-switch view for the discount path. Mirrors
+    ///      the `cfgDepthTieredLtvEnabled` pattern. Default `false`
+    ///      on a fresh deploy ⇒ `triggerLiquidationDiscounted` reverts.
+    function cfgDiscountPathEnabled() internal view returns (bool) {
+        return storageSlot().protocolCfg.discountPathEnabled;
     }
 
     /// @dev Owner-only setter for a tier's reference asset list. Used

@@ -103,6 +103,13 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().kycEnforcementEnabled = enforced;
     }
 
+    /// @notice Flip `ProtocolConfig.discountPathEnabled` directly for
+    ///         tests that don't cut `ConfigFacet` into the diamond.
+    ///         FlashLoanLiquidationPath.md kill-switch.
+    function setDiscountPathEnabledRaw(bool enabled) external {
+        LibVaipakam.storageSlot().protocolCfg.discountPathEnabled = enabled;
+    }
+
     // ─── Reward-pool mutators (for staking + interaction coverage tests) ─────
 
     /// @notice Set the cumulative paid-out counter for the staking pool.

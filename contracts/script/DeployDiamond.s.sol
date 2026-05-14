@@ -822,7 +822,7 @@ contract DeployDiamond is Script {
     }
 
     function _getRiskSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](8);
         s[0] = RiskFacet.updateRiskParams.selector;
         s[1] = RiskFacet.calculateLTV.selector;
         s[2] = RiskFacet.calculateHealthFactor.selector;
@@ -837,6 +837,13 @@ contract DeployDiamond is Script {
         // Active with reduced size and unchanged maturity. Strict
         // HF-improves + HF>=1 post-mutation gates.
         s[6] = RiskFacet.triggerPartialLiquidation.selector;
+        // FlashLoanLiquidationPath.md — liquidator-buys-at-discount.
+        // Caller pays `totalDebt` in principal-asset; protocol seizes
+        // collateral at per-tier discount and delivers to `recipient`.
+        // Master kill-switch `discountPathEnabled` off by default — the
+        // selector is wired but the entry-point reverts
+        // `DiscountPathDisabled` until governance flips it on per chain.
+        s[7] = RiskFacet.triggerLiquidationDiscounted.selector;
     }
 
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {
@@ -995,7 +1002,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](69);
+        s = new bytes4[](72);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -1110,6 +1117,14 @@ contract DeployDiamond is Script {
         // is never temporarily broken) + bundle getter.
         s[67] = ConfigFacet.setTierLtvParams.selector;
         s[68] = ConfigFacet.getTierLtvParams.selector;
+        // FlashLoanLiquidationPath.md — per-tier liquidator-discount
+        // governance: master kill-switch + atomic per-tier setter +
+        // effective-value bundle view. The kill-switch defaults
+        // `false` so a fresh deploy ships with the discount path
+        // inert; governance flips on per chain after audit sign-off.
+        s[69] = ConfigFacet.setDiscountPathEnabled.selector;
+        s[70] = ConfigFacet.setTierLiqDiscountBps.selector;
+        s[71] = ConfigFacet.getTierLiqDiscountBps.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {

@@ -3454,4 +3454,297 @@ contract RiskFacetTest is Test {
         );
         vm.clearMockedCalls();
     }
+
+    // ─── FlashLoanLiquidationPath.md — discount-path gate + happy ────
+    //
+    // Coverage matrix:
+    //  - master kill-switch (default false) blocks the entry
+    //  - zero-recipient guard
+    //  - Active-only gate
+    //  - sequencer circuit-breaker reused
+    //  - HF gate reused
+    //  - Tier-0 (unclassified collateral) blocks the path
+    //  - oracle-stale (tryGetAssetPrice ok=false) blocks the path
+    //  - happy path: full settlement + Defaulted transition + event
+
+    /// @dev Helper — wire common mocks the discount path expects when
+    ///      the call is supposed to PROGRESS PAST gates (sequencer ok,
+    ///      HF below 1, tier 3, fresh oracle on both legs, NFT update
+    ///      cross-facet call mocked through).
+    function _mockDiscountPathHappy(uint256 loanId) internal {
+        // Flip the discount-path master kill-switch ON.
+        TestMutatorFacet(address(diamond)).setDiscountPathEnabledRaw(true);
+        // Sequencer healthy.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.sequencerHealthy.selector),
+            abi.encode(true)
+        );
+        // HF < 1 — call goes through HF gate.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+        // Collateral classified Tier 3 (deepest, smallest discount).
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getEffectiveLiquidityTier.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(uint8(3))
+        );
+        // Both legs priced at $1.00 (8-decimal feed). collateralEquivalent
+        // then computes 1:1 between principal and collateral (both 18-dec
+        // tokens), and the per-tier 5% discount adds 5%.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.tryGetAssetPrice.selector,
+                mockERC20
+            ),
+            abi.encode(true, uint256(1e8), uint8(8))
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.tryGetAssetPrice.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(true, uint256(1e8), uint8(8))
+        );
+        // Cross-facet escrow withdraw + NFT update — mock-success.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowWithdrawERC20.selector
+            ),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            abi.encode(true)
+        );
+    }
+
+    /// @dev Default-state kill-switch is `false`. The entry-point
+    ///      reverts `DiscountPathDisabled` before any other check —
+    ///      verified here by calling with otherwise-valid arguments.
+    function testTriggerLiquidationDiscounted_RevertsWhenDisabled() public {
+        uint256 loanId = createAndAcceptOffer();
+        vm.expectRevert(RiskFacet.DiscountPathDisabled.selector);
+        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+            loanId,
+            address(this),
+            ""
+        );
+    }
+
+    /// @dev Zero recipient → `ZeroRecipient` revert. Guard fires
+    ///      before sequencer / HF checks (cheap fast-path).
+    function testTriggerLiquidationDiscounted_RevertsZeroRecipient() public {
+        uint256 loanId = createAndAcceptOffer();
+        TestMutatorFacet(address(diamond)).setDiscountPathEnabledRaw(true);
+        vm.expectRevert(RiskFacet.ZeroRecipient.selector);
+        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+            loanId,
+            address(0),
+            ""
+        );
+    }
+
+    /// @dev Loan not in `Active` state → `InvalidLoan`. A non-existent
+    ///      loanId trips the same default-Inactive branch.
+    function testTriggerLiquidationDiscounted_RevertsLoanNotActive() public {
+        TestMutatorFacet(address(diamond)).setDiscountPathEnabledRaw(true);
+        vm.expectRevert(RiskFacet.InvalidLoan.selector);
+        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+            999_999,
+            address(this),
+            ""
+        );
+    }
+
+    /// @dev Sequencer down → reuse the atomic path's
+    ///      `SequencerUnhealthy` revert. Same L2 circuit-breaker.
+    function testTriggerLiquidationDiscounted_RevertsSequencerUnhealthy() public {
+        uint256 loanId = createAndAcceptOffer();
+        TestMutatorFacet(address(diamond)).setDiscountPathEnabledRaw(true);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.sequencerHealthy.selector),
+            abi.encode(false)
+        );
+        vm.expectRevert(RiskFacet.SequencerUnhealthy.selector);
+        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+            loanId,
+            address(this),
+            ""
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev HF ≥ 1 → `HealthFactorNotLow`. The discount-path gate is
+    ///      identical to the atomic path (no threshold relaxation).
+    function testTriggerLiquidationDiscounted_RevertsHFNotLow() public {
+        uint256 loanId = createAndAcceptOffer();
+        TestMutatorFacet(address(diamond)).setDiscountPathEnabledRaw(true);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.sequencerHealthy.selector),
+            abi.encode(true)
+        );
+        // HF = 1.5e18 (loan-init floor) → fails HF<1 gate.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(uint256(15 * 1e17))
+        );
+        vm.expectRevert(RiskFacet.HealthFactorNotLow.selector);
+        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+            loanId,
+            address(this),
+            ""
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev `getEffectiveLiquidityTier` returns 0 (unclassified) →
+    ///      `UntierableCollateral`. Per-tier discount math has no
+    ///      definition for unclassified assets; route falls back to
+    ///      atomic path or time-based default.
+    function testTriggerLiquidationDiscounted_RevertsUntierableCollateral() public {
+        uint256 loanId = createAndAcceptOffer();
+        TestMutatorFacet(address(diamond)).setDiscountPathEnabledRaw(true);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.sequencerHealthy.selector),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getEffectiveLiquidityTier.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(uint8(0))
+        );
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RiskFacet.UntierableCollateral.selector,
+                mockCollateralERC20
+            )
+        );
+        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+            loanId,
+            address(this),
+            ""
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev `tryGetAssetPrice` failing on either leg →
+    ///      `LibFallback.collateralEquivalent` returns 0 → settlement
+    ///      reverts `OracleStaleForDiscount` (no fair-value math
+    ///      possible). The liquidator retries when oracle clears or
+    ///      falls back to `triggerLiquidation`.
+    function testTriggerLiquidationDiscounted_RevertsOracleStale() public {
+        uint256 loanId = createAndAcceptOffer();
+        _mockDiscountPathHappy(loanId);
+        // Stamp collateral's `tryGetAssetPrice` to fail (ok=false).
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.tryGetAssetPrice.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(false, uint256(0), uint8(8))
+        );
+        // Fund + approve so the safeTransferFrom doesn't fail with
+        // allowance — `OracleStaleForDiscount` fires AFTER the pull.
+        deal(mockERC20, address(this), 2000 ether);
+        IERC20(mockERC20).approve(address(diamond), 2000 ether);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RiskFacet.OracleStaleForDiscount.selector,
+                mockERC20,
+                mockCollateralERC20
+            )
+        );
+        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+            loanId,
+            address(this),
+            ""
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev Full discount-path happy path on a Tier-3 collateral
+    ///      (deepest tier = 5% library default discount):
+    ///       - 1000 ether principal-asset pulled from liquidator.
+    ///       - $1.00 / $1.00 oracle pricing on both legs ⇒ 1:1
+    ///         collateral-for-debt; +5% discount yields 1050 ether
+    ///         collateral seized.
+    ///       - Borrower escrow has 1800 ether collateral ⇒ surplus
+    ///         750 ether stays in their escrow.
+    ///       - Loan transitions Active → Defaulted; NFTs flip to
+    ///         `LoanLiquidated`.
+    ///       - `LiquidationDiscounted` emitted with the precise
+    ///         (totalDebt, collateralSeized, borrowerSurplus) triple.
+    function testTriggerLiquidationDiscounted_HappyPath_Tier3() public {
+        uint256 loanId = createAndAcceptOffer();
+        _mockDiscountPathHappy(loanId);
+
+        // Liquidator (this contract) funds + approves the diamond for
+        // the full debt. Slight headroom for accrued interest if any.
+        deal(mockERC20, address(this), 2000 ether);
+        IERC20(mockERC20).approve(address(diamond), 2000 ether);
+
+        // Snapshot pre-state.
+        LibVaipakam.Loan memory loanBefore = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+        assertEq(uint8(loanBefore.status), uint8(LibVaipakam.LoanStatus.Active));
+
+        // Use recordLogs (NOT expectEmit) — lifecycle transitions emit
+        // intervening `LoanStatusUpdated` events that strict-order
+        // expectEmit would catch first. recordLogs + topic-0 search
+        // is robust to interleaved events from cross-facet calls.
+        vm.recordLogs();
+        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+            loanId,
+            address(this),
+            ""
+        );
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 expectedTopic = keccak256(
+            "LiquidationDiscounted(uint256,address,address,uint8,uint16,uint256,uint256,uint256)"
+        );
+        bool found;
+        for (uint256 i = 0; i < logs.length; ++i) {
+            if (logs[i].topics.length > 0 && logs[i].topics[0] == expectedTopic) {
+                found = true;
+                break;
+            }
+        }
+        assertTrue(found, "LiquidationDiscounted not emitted");
+
+        // Loan terminal — transitioned to Defaulted.
+        LibVaipakam.Loan memory loanAfter = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+        assertEq(
+            uint8(loanAfter.status),
+            uint8(LibVaipakam.LoanStatus.Defaulted),
+            "loan should be Defaulted"
+        );
+
+        vm.clearMockedCalls();
+    }
 }

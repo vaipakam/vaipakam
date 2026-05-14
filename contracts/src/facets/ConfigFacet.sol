@@ -789,6 +789,154 @@ contract ConfigFacet is DiamondAccessControl {
         emit DepthTieredLtvEnabledSet(enabled);
     }
 
+    /// ─── FlashLoanLiquidationPath.md — discount-path governance ──────
+
+    /// @notice Emitted on every flip of the discount-path master flag.
+    /// @custom:event-category informational/config
+    event DiscountPathEnabledSet(bool enabled);
+
+    /// @notice Emitted on every update of the per-tier liquidator
+    ///         discount values. Off-chain monitoring watches this so a
+    ///         governance change is publicly observable; the keeper
+    ///         bot also re-reads the values from this event so its
+    ///         simulation math tracks the on-chain config without an
+    ///         extra view call per loan.
+    /// @custom:event-category informational/config
+    event TierLiqDiscountBpsSet(
+        uint16 tier1Bps,
+        uint16 tier2Bps,
+        uint16 tier3Bps
+    );
+
+    /// @notice Per-tier discount out of its per-tier safety box.
+    error TierLiqDiscountOutOfRange(
+        uint8 tier,
+        uint16 valueBps,
+        uint16 floorBps,
+        uint16 ceilBps
+    );
+
+    /// @notice Cross-tier monotonic invariant violated. Tier 1 (thinnest)
+    ///         must carry a discount ≥ Tier 2 ≥ Tier 3 (deepest) — same
+    ///         "thinner tier = wider discount" ordering as the bounds.
+    error TierLiqDiscountNonMonotonic(
+        uint16 tier1Bps,
+        uint16 tier2Bps,
+        uint16 tier3Bps
+    );
+
+    /**
+     * @notice Master kill-switch for the flash-loan /
+     *         liquidator-buys-at-discount liquidation path
+     *         (`RiskFacet.triggerLiquidationDiscounted`). Default
+     *         `false` ⇒ the entry point reverts immediately so a
+     *         fresh deploy never exposes the path before its per-chain
+     *         audit + risk-committee sign-off.
+     *
+     * @dev    Independent of `depthTieredLtvEnabled` — the two flags
+     *         gate different mechanics and may be flipped on
+     *         independently per chain (e.g. discount-path active while
+     *         autonomous-LTV is still in census-only mode). ADMIN_ROLE
+     *         pre-handover; TimelockController-gated 48h post-handover.
+     */
+    function setDiscountPathEnabled(bool enabled)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.storageSlot().protocolCfg.discountPathEnabled = enabled;
+        emit DiscountPathEnabledSet(enabled);
+    }
+
+    /**
+     * @notice Set the per-tier liquidator-discount values (BPS) for
+     *         all three tiers atomically. Phase 8 of
+     *         `FlashLoanLiquidationPath.md`.
+     *
+     * @dev    ADMIN_ROLE-only — TimelockController post-handover.
+     *         Atomic over all three tiers so governance can never
+     *         leave the protocol with a half-updated config that
+     *         temporarily breaks the cross-tier monotonic invariant
+     *         (`T1 ≥ T2 ≥ T3`).
+     *
+     *         Validation:
+     *           - Per tier `value ∈ [floor, ceil]` from the
+     *             `tierLiqDiscountBoundsBps` library accessor.
+     *           - Cross-tier monotonic `T1 ≥ T2 ≥ T3` (thinner tier
+     *             = wider discount). The library defaults (770 / 600
+     *             / 500) satisfy this trivially.
+     *
+     *         Each tier slot in `ProtocolConfig` is interpreted as:
+     *           value == 0  ⇒ use library default
+     *           value != 0  ⇒ governance override
+     *         A governance write of zero would effectively "clear back
+     *         to default" — allowed by passing 0 for that tier (the
+     *         per-tier floor check is skipped when value == 0). Doing
+     *         so for all three tiers reverts via the monotonic check
+     *         when the resulting library defaults are skewed; in
+     *         practice governance either writes all three non-zero
+     *         (atomic override) or never calls this setter.
+     *
+     * @param  tier1Bps Discount for Tier 1 (thinnest qualifying tier).
+     * @param  tier2Bps Discount for Tier 2.
+     * @param  tier3Bps Discount for Tier 3 (deepest).
+     */
+    function setTierLiqDiscountBps(
+        uint16 tier1Bps,
+        uint16 tier2Bps,
+        uint16 tier3Bps
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        // Per-tier safety-box check. Zero is a valid sentinel meaning
+        // "clear back to library default" — skip the floor check for
+        // it; the `effectiveTierLiqDiscountBps` read fills in the
+        // default at consumer-side.
+        (uint16 t1Floor, uint16 t1Ceil) = LibVaipakam.tierLiqDiscountBoundsBps(1);
+        if (tier1Bps != 0 && (tier1Bps < t1Floor || tier1Bps > t1Ceil)) {
+            revert TierLiqDiscountOutOfRange(1, tier1Bps, t1Floor, t1Ceil);
+        }
+        (uint16 t2Floor, uint16 t2Ceil) = LibVaipakam.tierLiqDiscountBoundsBps(2);
+        if (tier2Bps != 0 && (tier2Bps < t2Floor || tier2Bps > t2Ceil)) {
+            revert TierLiqDiscountOutOfRange(2, tier2Bps, t2Floor, t2Ceil);
+        }
+        (uint16 t3Floor, uint16 t3Ceil) = LibVaipakam.tierLiqDiscountBoundsBps(3);
+        if (tier3Bps != 0 && (tier3Bps < t3Floor || tier3Bps > t3Ceil)) {
+            revert TierLiqDiscountOutOfRange(3, tier3Bps, t3Floor, t3Ceil);
+        }
+
+        // Cross-tier monotonic invariant — applied to the EFFECTIVE
+        // values (zero falls through to the library default) so a
+        // partial-override write can't accidentally invert the
+        // ordering. E.g. writing (0, 0, 700) with library defaults
+        // (770, 600, 500) yields effective (770, 600, 700) which
+        // violates T2 ≥ T3 and reverts here.
+        uint16 t1Eff = tier1Bps != 0 ? tier1Bps : LibVaipakam.TIER1_LIQ_DISCOUNT_DEFAULT_BPS;
+        uint16 t2Eff = tier2Bps != 0 ? tier2Bps : LibVaipakam.TIER2_LIQ_DISCOUNT_DEFAULT_BPS;
+        uint16 t3Eff = tier3Bps != 0 ? tier3Bps : LibVaipakam.TIER3_LIQ_DISCOUNT_DEFAULT_BPS;
+        if (t1Eff < t2Eff || t2Eff < t3Eff) {
+            revert TierLiqDiscountNonMonotonic(t1Eff, t2Eff, t3Eff);
+        }
+
+        LibVaipakam.ProtocolConfig storage cfg = LibVaipakam.storageSlot().protocolCfg;
+        cfg.tier1LiqDiscountBps = tier1Bps;
+        cfg.tier2LiqDiscountBps = tier2Bps;
+        cfg.tier3LiqDiscountBps = tier3Bps;
+
+        emit TierLiqDiscountBpsSet(tier1Bps, tier2Bps, tier3Bps);
+    }
+
+    /// @notice Read the effective per-tier discount values (governance
+    ///         override if set, library default otherwise). Single-
+    ///         call view for the protocol-console + audit-package
+    ///         per-chain verification step.
+    function getTierLiqDiscountBps()
+        external
+        view
+        returns (uint16 tier1Bps, uint16 tier2Bps, uint16 tier3Bps)
+    {
+        tier1Bps = LibVaipakam.effectiveTierLiqDiscountBps(1);
+        tier2Bps = LibVaipakam.effectiveTierLiqDiscountBps(2);
+        tier3Bps = LibVaipakam.effectiveTierLiqDiscountBps(3);
+    }
+
     /// @notice Set the slippage bound (bps) a simulated fixed-size swap
     ///         must clear to count toward a tier. Pass `0` to reset to
     ///         the library default (`LIQUIDITY_SLIPPAGE_BPS_DEFAULT` =
