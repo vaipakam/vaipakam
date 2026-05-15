@@ -96,6 +96,13 @@ export interface LoanDetails {
    *  init. Gates `RepayFacet.repayPartial` — when false, partial-repay
    *  attempts revert with `PartialRepayNotAllowed`. */
   allowsPartialRepay: boolean;
+  /** Per-tier liquidation threshold snapshotted onto the loan at
+   *  `initiateLoan`. PR2 of internal-match work
+   *  (`docs/DesignsAndPlans/InternalLiquidationLedger.md`). Read
+   *  by `RiskFacet.calculateHealthFactor` for HF math + by the
+   *  Dashboard's near-internal-match banner. Zero on illiquid
+   *  loans that never enter the HF path. */
+  liquidationLtvBpsAtInit: bigint;
 }
 
 export type LoanRole = 'lender' | 'borrower';
@@ -136,6 +143,14 @@ export interface LoanSummary {
    *  projection slider on `<LiquidationProjection>` and the
    *  partial-repay action button (when re-enabled). Default false. */
   allowsPartialRepay: boolean;
+  /** Per-tier liquidation threshold snapshotted onto the loan at
+   *  `initiateLoan` time. PR2 of the internal-match work
+   *  (`docs/DesignsAndPlans/InternalLiquidationLedger.md`). Used by
+   *  the Dashboard to surface a "near-liquidation, awaiting
+   *  internal match" warning when the loan's current LTV is
+   *  within 5% of (but still below) this floor. Zero on illiquid
+   *  loans that never enter the HF path. */
+  liquidationLtvBpsAtInit: number;
 }
 
 /**

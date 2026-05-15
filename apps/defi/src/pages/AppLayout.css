@@ -791,6 +791,20 @@
   background: rgba(129, 140, 248, 0.12);
   color: var(--brand-light);
 }
+.status-badge.near-match {
+  /* B.2.2 — warning chip for the "near-internal-match" band
+     (current LTV within 5% of the loan's liquidation threshold,
+     but still below it). Amber pulls the borrower's attention
+     to top up before a keeper bot matches them out. */
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--accent-orange);
+}
+.status-badge.internally\ matched {
+  /* PR3+ internal-match terminal — same neutral palette as
+     `settled` since both are post-terminal claim-ready states. */
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--text-tertiary);
+}
 
 /* Data grid */
 .data-row {
