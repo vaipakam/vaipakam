@@ -58,6 +58,30 @@ scope for this branch":
 PendingTasks-2026-05-14.md §B.2 marked all five closed in
 `377d997`.
 
+## 0.2 EC-003 — full-funnel internal-first (2026-05-16)
+
+The B.2 internal-match path above admitted only `Active` loans and
+required the caller to know which entry-point to use. The EC-003
+follow-up (tracked as
+[`@vaipakam-labs` Issue #12](https://github.com/vaipakam/vaipakam/issues/12),
+plan `breezy-jumping-fountain.md`) closes both gaps across four
+phases:
+
+| Phase | PR | Scope |
+| --- | --- | --- |
+| 1 | #18 | `triggerInternalMatchLiquidation` accepts `FallbackPending` legs (oracle-priceable gate replaces the LTV-floor check for them); rehydration + partial-match snapshot scaling; new `FallbackPending → InternalMatched` lifecycle edge; `_isLegal → _isValid` / `IllegalTransition → InvalidTransition` rename. |
+| 2 | #19 | Asset-pair index `assetPairActiveLoanIds` + `MetricsFacet.hasInternalMatchCandidate(loanId)` view — O(K) opposing-pair lookup. |
+| 3 | #21 | Auto-dispatch in `triggerLiquidation` / `triggerDefault` / `claimAsLenderWithRetry` — internal-match settles first, external-aggregator path is the fall-through. 1% matcher bonus to the dispatching caller. |
+| 4 | (this) | Keeper bot accepts `FallbackPending` candidates; AUG + FAQ "pre-claim internal-match rescue" docs; audit-package addendum `InternalMatchFallbackRescueAudit-2026-05-16.md`. |
+
+**Net effect**: a loan that fails liquidation transiently
+(`FallbackPending`) is rescuable by any opposing-direction
+counterparty in a later block — and every liquidation trigger
+(HF-based, time-based, claim-time) routes through internal-match
+first, automatically, with no caller-side dispatch knowledge
+required. Full audit detail:
+[`docs/internal/InternalMatchFallbackRescueAudit-2026-05-16.md`](../internal/InternalMatchFallbackRescueAudit-2026-05-16.md).
+
 ## 0. Architectural pivot (2026-05-14 — post-§9.1 review)
 
 The user pointed out that the global "match-liquidate floor"

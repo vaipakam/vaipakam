@@ -857,6 +857,46 @@ transitions the loan terminally to Defaulted — at which point the
 lender takes the in-kind collateral and is free to sell it through
 any external venue.
 
+<a id="liquidation-mechanics.internal-match-rescue"></a>
+
+### Pre-claim internal-match rescue
+
+Before any external swap runs — at HF-liquidation, at time-based
+default, AND at claim time — the protocol first checks whether an
+**opposing-direction loan** exists that can settle this one with no
+DEX involvement at all.
+
+If loan A needs to sell WETH for USDC and loan B needs to sell USDC
+for WETH, the two can be matched directly: A's collateral covers B's
+debt and vice-versa, priced at the protocol's oracle. No aggregator,
+no slippage, no swap fee. The borrower keeps far more of their
+collateral; the lender is made whole at oracle price.
+
+This internal-match path runs automatically:
+
+- **At HF-liquidation** — when a keeper calls liquidate and an
+  opposing counterparty exists, the protocol settles internally
+  instead of swapping. The keeper still earns a matcher incentive.
+- **At time-based default** — same check before the default swap.
+- **At claim time** — when a lender claims a loan stuck in
+  `FallbackPending`, the protocol re-checks for an opposing
+  counterparty. This is a genuine second chance: the pool of
+  matchable loans grows continuously, so a counterparty that
+  didn't exist when liquidation first failed may exist by the time
+  you claim.
+
+A loan that landed in `FallbackPending` because its at-liquidation
+swap failed *transiently* (a momentary slippage spike, a DEX revert,
+a stale oracle tick) is a prime rescue candidate — the underlying
+collateral is usually still perfectly liquid, and an opposing loan
+can clear it cleanly. The protocol only requires that the oracle can
+still price the asset; it does not require the DEX to have depth,
+because an internal match never touches a DEX.
+
+If no opposing counterparty exists, the protocol falls through to the
+external-aggregator path described above. Internal-match is a
+strictly-better-when-available optimization, never a blocker.
+
 ---
 
 ## Allowances
