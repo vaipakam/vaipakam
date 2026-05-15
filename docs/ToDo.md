@@ -11,27 +11,27 @@
 
 ---
 
-- [ ] **T-600**: Handling Treasury in a contract, See how it needs to be done and the funds that need to be distributed.
+- [ ] **T-600** `promotedToProjectCard`: Handling Treasury in a contract, See how it needs to be done and the funds that need to be distributed.
 
 ---
 
-- [ ] **T-069**: see how to setup for notifications from ops/subgraph and ops/tenderly
+- [ ] **T-069** `promotedToProjectCard`: see how to setup for notifications from ops/subgraph and ops/tenderly
 
 ---
 
-- [ ] **T-068**: Change LayerZero to Chainlink CCIP
+- [ ] **T-068** `promotedToProjectCard`: Change LayerZero to Chainlink CCIP
 
 ---
 
-- [ ] **T-067**: provide create offer in offer book where the market ancor is displayed, with `I wan to Lend` / `I want to Borrow` button,
+- [ ] **T-067** `promotedToProjectCard`: provide create offer in offer book where the market ancor is displayed, with `I wan to Lend` / `I want to Borrow` button,
 
 ---
 
-- [ ] **T-066**: Dont allow sorting in offer book with both the lender and borrower open offer view, but allow sorting on lender only and borrower only views of open offers. the sort should be on the entire list of offers not just only on paginated offers. closed or filled offer should also not allow custom sorting, it should show the most recently closed / filled offers with paginated views
+- [ ] **T-066** `promotedToProjectCard`: Dont allow sorting in offer book with both the lender and borrower open offer view, but allow sorting on lender only and borrower only views of open offers. the sort should be on the entire list of offers not just only on paginated offers. closed or filled offer should also not allow custom sorting, it should show the most recently closed / filled offers with paginated views
 
 ---
 
-- [ ] **T-065**: In offer book remove max min durations and provide buketed duration to resemble the one in offr creation page.
+- [ ] **T-065** `promotedToProjectCard`: In offer book remove max min durations and provide buketed duration to resemble the one in offr creation page.
 
 ---
 
@@ -39,11 +39,11 @@
 
 ---
 
-- [ ] **T-063**: we were discussing on adding a point in terms of services while developing the recovery page right?, do we have done that?
+- [ ] **T-063** `promotedToProjectCard`: we were discussing on adding a point in terms of services while developing the recovery page right?, do we have done that?
 
 ---
 
-- [ ] **T-062**:
+- [ ] **T-062** `promotedToProjectCard`:
       During Buy VPFI from other chain, before canonical chain send VPFI to mirror chain adaptor (we know it sending only to adaptor but cross check the adaptor address in mirror chain by diamond in canonical chain before sending VPFI after minting VPFI on recieving buy_request from the mirror chain), it need to check if the address is ligitimate adapter address in mirror chain, that can be done by setting the adaptor addresses in canaonical chain diamond after the deployemnt in the mirror chain, so that we can have mirror chain adaptor address which need to be updated in the canonical chain diamond by admin configurable setting, what do you say? what's your take? This can prevent any rerouting of VPFI from cananical chain to mirror chain's different address if the message recived by canonical chain from layerZero is malaciously tampered. what do you say? This is only during Buy VPFI scenario.
 
       ~~When it comes to transffering VPFI to other chain then we need to analyse whether we can use dual sign from different chains in single ttransaction to send token accorrs chains through OFT, need to discuss, to see if we can create a new protocol to do it.~~
@@ -52,31 +52,31 @@
 
 ---
 
-- [ ] **T-061**: the link to recovery page from advanced user guide need to open in new tab. Provode a link to `Advanced User Guide section` (to the corresponding section in new tab) in the wording that has been provided on top of the page.
+- [ ] **T-061** `promotedToProjectCard`: the link to recovery page from advanced user guide need to open in new tab. Provode a link to `Advanced User Guide section` (to the corresponding section in new tab) in the wording that has been provided on top of the page.
 
 ---
 
-- [ ] **T-060**: in Issue Details (Diagonistics Drawer)
+- [ ] **T-060** `promotedToProjectCard`: in Issue Details (Diagonistics Drawer)
       Instead of `Delete` button mention it as `Clear` button
 
 ---
 
-- [ ] **T-059**: the error `The contract function "getApprovedKeepers" returned no data ("0x"). ` shown in Keepers page is persistant, it should have `dismiss` button and `Report on Github` button. wherever the error is displayed directly on the page, it should have `dismiss` button and `Report on Github` button
+- [ ] **T-059** `promotedToProjectCard`: the error `The contract function "getApprovedKeepers" returned no data ("0x"). ` shown in Keepers page is persistant, it should have `dismiss` button and `Report on Github` button. wherever the error is displayed directly on the page, it should have `dismiss` button and `Report on Github` button
 
 ---
 
-- [ ] **T-058**: In keepers whitelist page, only the operations like `Complete early withdrawal` and `Complete offset` need to be selected by default, what do you say?
+- [ ] **T-058** `promotedToProjectCard`: In keepers whitelist page, only the operations like `Complete early withdrawal` and `Complete offset` need to be selected by default, what do you say?
 
 ---
 
-- [ ] **T-057**: In Your Vaipakam Vault page, the message
+- [ ] **T-057** `promotedToProjectCard`: In Your Vaipakam Vault page, the message
       `Only tokens managed by the Vaipakam protocol are shown here. Do not send any tokens directly to your vault address — they may not be recoverable.`
       should appear immediatly after
       `Tokens held by the protocol on your behalf. Each user has their own isolated vault proxy — deposits and withdrawals always flow through the Vaipakam Diamond.`
 
 ---
 
-- [ ] **T-056**: Treasury asset-mix conversion + founder distribution. **Original sketch** (per-tx auto-route of a founder's cut to a `.env`-configured address, on every fee accrual or every conversion) was reviewed against the industry pattern and rejected — see the Treasury / Founder Distribution section of [`docs/ops/GovernanceRunbook.md`](ops/GovernanceRunbook.md) for the full rationale. **Revised shape**:
+- [ ] **T-056** `promotedToProjectCard`: Treasury asset-mix conversion + founder distribution. **Original sketch** (per-tx auto-route of a founder's cut to a `.env`-configured address, on every fee accrual or every conversion) was reviewed against the industry pattern and rejected — see the Treasury / Founder Distribution section of [`docs/ops/GovernanceRunbook.md`](ops/GovernanceRunbook.md) for the full rationale. **Revised shape**:
   1.  **Treasury accumulation**: Diamond stays the treasury (`s.treasury == address(this)`). Fees accrue per-token in `treasuryBalances[asset]` via the existing `LibFacet.recordTreasuryAccrual` path. T-051's chokepoint counter separates protocol-tracked accruals from unsolicited dust at the Diamond level (so the conversion math reads `treasuryBalances`, not raw `balanceOf`).
   2.  **Aggregated conversion** (NOT per-tx): admin-callable `convertTreasuryToTargetMix(tokensIn[], minOutEth[], minOutWbtc[], minOutVpfi[])` routes through 1inch / 0x aggregators (reuse the liquidation router). Conversion fires under EITHER condition (whichever first):
       - Accumulated USD-equivalent for any single input token > `s.treasuryConvertUsdThreshold` (admin knob), OR
@@ -99,15 +99,15 @@
 
 ---
 
-- [ ] **T-054**: Implement Escrow Stuck-Token Recovery (PR-1 through PR-5 per [`DesignsAndPlans/EscrowStuckRecoveryDesign.md`](DesignsAndPlans/EscrowStuckRecoveryDesign.md)). Locked design: counter-bounded recovery cap (`protocolTrackedEscrowBalance[user][token]`); single-sig with EIP-712 acknowledgment + "type CONFIRM" modal; recipient locked to escrow owner's EOA; three terminal outcomes (Recover-clean / Recover-sanctioned-→-banned / Disown-or-ignore-→-locked-but-active); `disown(token)` event-only function for compliance audit trail; recovery page hidden from main UI, only accessible via Advanced User Guide deep-link with `noindex,nofollow`; Asset Viewer shows only protocol-managed tokens with one-line direct-send warning; `depositVPFIToEscrow` rerouted through `escrowDepositERC20`; staking checkpoint reads `min(balanceOf, tracked)` to exclude unsolicited dust from yield. PR sequence: PR-1 storage + counter increments (regression-only), PR-2 VPFI routing + min-clamp checkpoint, PR-3 `recoverStuckERC20` + `disown` + EIP-712 verifier, PR-4 frontend `/recover` page + Advanced User Guide section + escrow-address redaction, PR-5 post-deploy analytics labeling per T-053.
+- [ ] **T-054** `promotedToProjectCard`: Implement Escrow Stuck-Token Recovery (PR-1 through PR-5 per [`DesignsAndPlans/EscrowStuckRecoveryDesign.md`](DesignsAndPlans/EscrowStuckRecoveryDesign.md)). Locked design: counter-bounded recovery cap (`protocolTrackedEscrowBalance[user][token]`); single-sig with EIP-712 acknowledgment + "type CONFIRM" modal; recipient locked to escrow owner's EOA; three terminal outcomes (Recover-clean / Recover-sanctioned-→-banned / Disown-or-ignore-→-locked-but-active); `disown(token)` event-only function for compliance audit trail; recovery page hidden from main UI, only accessible via Advanced User Guide deep-link with `noindex,nofollow`; Asset Viewer shows only protocol-managed tokens with one-line direct-send warning; `depositVPFIToEscrow` rerouted through `escrowDepositERC20`; staking checkpoint reads `min(balanceOf, tracked)` to exclude unsolicited dust from yield. PR sequence: PR-1 storage + counter increments (regression-only), PR-2 VPFI routing + min-clamp checkpoint, PR-3 `recoverStuckERC20` + `disown` + EIP-712 verifier, PR-4 frontend `/recover` page + Advanced User Guide section + escrow-address redaction, PR-5 post-deploy analytics labeling per T-053.
 
 ---
 
-- [ ] **T-053**: After mainnet launch, submit Vaipakam escrow-proxy + Diamond pattern to Chainalysis, TRM Labs, Elliptic, Etherscan, Arkham per [`ops/AnalyticsLabelRegistration.md`](ops/AnalyticsLabelRegistration.md). Once registered: their tooling applies protocol-aware accounting to per-user escrow proxies — tainted dust sitting in escrow without an outflow is recognized as "stuck" not "laundered". Etherscan public name tags work for Diamond + Implementation only (no API for per-instance proxy tagging — the ERC1967 implementation slot mechanism makes the proxy→impl link automatic on every spawned proxy, which is the practical mechanism). Per-firm email templates + per-chain checklist + expected timelines documented in the runbook. Track each chain's progress in `internal/AnalyticsLabelStatus.md` (create on first use).
+- [ ] **T-053** `promotedToProjectCard`: After mainnet launch, submit Vaipakam escrow-proxy + Diamond pattern to Chainalysis, TRM Labs, Elliptic, Etherscan, Arkham per [`ops/AnalyticsLabelRegistration.md`](ops/AnalyticsLabelRegistration.md). Once registered: their tooling applies protocol-aware accounting to per-user escrow proxies — tainted dust sitting in escrow without an outflow is recognized as "stuck" not "laundered". Etherscan public name tags work for Diamond + Implementation only (no API for per-instance proxy tagging — the ERC1967 implementation slot mechanism makes the proxy→impl link automatic on every spawned proxy, which is the practical mechanism). Per-firm email templates + per-chain checklist + expected timelines documented in the runbook. Track each chain's progress in `internal/AnalyticsLabelStatus.md` (create on first use).
 
 ---
 
-- [ ] **T-052**: include VPFI token in coinmarketcap, coingeckco, https://github.com/trustwallet/assets, https://github.com/ethereum-lists/tokens, etc.,
+- [ ] **T-052** `promotedToProjectCard`: include VPFI token in coinmarketcap, coingeckco, https://github.com/trustwallet/assets, https://github.com/ethereum-lists/tokens, etc.,
 
 ---
 
@@ -115,7 +115,7 @@
 
 ---
 
-- [ ] **T-050**: How about having a 3 required + 2 optional indexer so that if a tampering happens at one worker, that may not compromise the data displayed on our webpage. like having a hash string for all data upto that block (running / rolled up hash string from contract / diamond deployed block until that block) and keeping that hash string for last 100 blocks in each worker and when it arrives in our webpage from each worker, if atleast top 10 blocks hash string matches then the consensus can be arrived if atleat 3 out of 5 workers hash string matches for those last 10 blocks (blocks are with numbers) , hash string must match block by block for the same block number for atleast latest 10 blocks. then we use indexed data, else we use data directly from blockchain through RPC. 1 worker in Google cloud, another in azure, another in AWS, another in cloudflare and another in Oracle (OCI) what do you say? or is it a over kill?
+- [ ] **T-050** `promotedToProjectCard`: How about having a 3 required + 2 optional indexer so that if a tampering happens at one worker, that may not compromise the data displayed on our webpage. like having a hash string for all data upto that block (running / rolled up hash string from contract / diamond deployed block until that block) and keeping that hash string for last 100 blocks in each worker and when it arrives in our webpage from each worker, if atleast top 10 blocks hash string matches then the consensus can be arrived if atleat 3 out of 5 workers hash string matches for those last 10 blocks (blocks are with numbers) , hash string must match block by block for the same block number for atleast latest 10 blocks. then we use indexed data, else we use data directly from blockchain through RPC. 1 worker in Google cloud, another in azure, another in AWS, another in cloudflare and another in Oracle (OCI) what do you say? or is it a over kill?
 
 ---
 
@@ -175,7 +175,7 @@
 
 ---
 
-- [ ] **T-035**: Defer: Group languages based on the locality of that continent and display only those group belonging to that continent. Note: exception is for japanese can be displayed together with western countries too
+- [ ] **T-035** `promotedToProjectCard`: Defer: Group languages based on the locality of that continent and display only those group belonging to that continent. Note: exception is for japanese can be displayed together with western countries too
 
 ---
 
@@ -369,11 +369,11 @@ vaipakam-protocol
 
 ---
 
-- [ ] **EC-002**: How do we ensure that the flash loan bots will pay back the lending asset after they took the collateral asset, is it happening in single transaction or how it is? can we allow it to take the collateral asset only after they provide the required lending asset first, is there a better approach? whats your take?
+- [ ] **EC-002** `promotedToProjectCard`: How do we ensure that the flash loan bots will pay back the lending asset after they took the collateral asset, is it happening in single transaction or how it is? can we allow it to take the collateral asset only after they provide the required lending asset first, is there a better approach? whats your take?
 
 ---
 
-- [ ] **EC-001**: exportTenderlyAlerts.sh NEW envsubst's ${DIAMOND_ADDRESS} + ${TIMELOCK_ADDRESS} into per-chain ops/tenderly/alerts.<chain>.yaml from deployments.json
+- [ ] **EC-001** `promotedToProjectCard`: exportTenderlyAlerts.sh NEW envsubst's ${DIAMOND_ADDRESS} + ${TIMELOCK_ADDRESS} into per-chain ops/tenderly/alerts.<chain>.yaml from deployments.json
 
 Tenderly is usig TIMELOCK_ADDRESS, need to see why and if TIMELOCK_ADDRESS changes how it need to be reflected in Tenderly
 
