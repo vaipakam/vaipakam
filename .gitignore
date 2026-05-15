@@ -38,6 +38,7 @@ docs/internal/RoughNotes.md
 
 
 graphify-out/
+.graphify_*
 
 # Rehearsal artifacts under contracts/deployments/<slug>/.
 #

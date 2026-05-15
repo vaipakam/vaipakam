@@ -555,3 +555,71 @@ Rules:
 
 - When ever running forge build, forge script or forge test, run them in high priority
 - [Run forge build / forge test in high priority](feedback_forge_high_priority.md) — prefix every forge build/test/script with `nice -n -10 ionice -c 2 -n 0`; viaIR runs are 5–15 min and 8 GB RSS, low priority causes 2–3× slowdowns under parallel desktop load
+
+## Task tracking — @vaipakam-labs GitHub Project is the live tracker
+
+The single live tracker for in-flight and queued work is the GitHub
+Project [`@vaipakam-labs`](https://github.com/users/vaipakam/projects/1).
+Always treat it as the source of truth. The dated
+`docs/internal/PendingTasks-yyyy-mm-dd.md` pattern is **retired**;
+[`docs/internal/PendingTasks-2026-05-14.md`](docs/internal/PendingTasks-2026-05-14.md)
+is frozen as the last one in that series and exists only as a
+historical breadcrumb.
+
+**Where each kind of artifact lives:**
+
+| Artifact | Home | Why |
+| --- | --- | --- |
+| Active / queued work, prioritization, sprint assignment | `@vaipakam-labs` Project (Issues + Drafts) | One curated board; status / priority / size / module / iteration fields drive the cadence. |
+| User's free-form thoughts and scratch notes | [`docs/internal/RoughNotes.md`](docs/internal/RoughNotes.md) | Owned by the user, not by me. I do not edit it. |
+| User-facing follow-up list of ideas the user has tossed in | [`docs/ToDo.md`](docs/ToDo.md) | Open ET-### items are promoted to Project Issues; closed ones stay ticked for audit history. |
+| Shipped work + functional narrative | `docs/ReleaseNotes/ReleaseNotes-yyyy-mm-dd.md` | Append per release per [`feedback_doc_convention.md`](/home/pranav/.claude/projects/-home-pranav-Codes-Vaipakam-vaipakam/memory/feedback_doc_convention.md). |
+| Spec / design exploration | `docs/DesignsAndPlans/*.md` | Lives alongside the code; referenced from the Project card. |
+
+**Project conventions (UI fields + labels both reinforce intent):**
+
+- Labels are standardized in [`.github/LABELS.md`](.github/LABELS.md) —
+  read it before applying any label. The doc names: default GitHub
+  labels (`bug`, `enhancement`, `documentation`, `good first issue`,
+  `help wanted`, `question`, `duplicate`, `invalid`, `wontfix`) and
+  Vaipakam-specific labels (`security`, `audit`, `chore`, `refactor`,
+  `infra`, `perf`, `testnet-rehearsal`, `mainnet-rollout`).
+- Pick one primary type label per Issue: `bug` / `enhancement` /
+  `documentation` / `chore` / `refactor` / `infra` / `perf`. Add
+  `security` / `audit` / `testnet-rehearsal` / `mainnet-rollout` as
+  cross-cutting overlays.
+- Mirror label intent into the Project's custom fields (`Module`,
+  `Priority`, `Size`, `Estimate`, `Iteration`) — labels are the
+  cheap signal, fields drive the views.
+- Issue Templates ([`.github/ISSUE_TEMPLATE/bug.yml`](.github/ISSUE_TEMPLATE/bug.yml)
+  + [`.github/ISSUE_TEMPLATE/feature_request.yml`](.github/ISSUE_TEMPLATE/feature_request.yml))
+  auto-apply the primary label and auto-assign `Raja4Shekar`. Blank
+  issues are disabled via [`.github/ISSUE_TEMPLATE/config.yml`](.github/ISSUE_TEMPLATE/config.yml);
+  security disclosures route to the IncidentRunbook, not public
+  Issues.
+- New Issues land on the Project automatically via the
+  [`actions/add-to-project@v1.0.2`](.github/workflows/add-to-project.yml)
+  workflow in each repo, using the `ADD_TO_PROJECT_PAT` secret. This
+  is the multi-repo workaround for GitHub Projects' one-repo-per-UI-rule
+  Auto-add limitation (per https://github.com/orgs/community/discussions/47803);
+  the in-app Auto-add workflow stays disabled.
+
+**Rules of engagement for me (the agent):**
+
+1. When picking up new work, scan `@vaipakam-labs` first via
+   `gh project item-list 1 --owner vaipakam --format json` (or the
+   linked URL) before reading the legacy `PendingTasks-2026-05-14.md`
+   /  `ToDo.md` files. Treat those files as read-only history except
+   for ticking closed ET-### checkboxes when sweeping.
+2. When the user surfaces a new idea, promote it to a Project Issue
+   within the same session (or, at most, on the next pickup) using
+   the appropriate Issue Template. Do not bury new ideas inside
+   `RoughNotes.md` — that file is the user's, not mine.
+3. When closing work, link the closing commit / PR to the Project
+   Issue and let the Action close + move the card. Mirror the
+   closure into `docs/ReleaseNotes/ReleaseNotes-yyyy-mm-dd.md` for
+   the functional narrative — per the doc convention, no code in
+   release notes.
+4. When applying labels, pick from `.github/LABELS.md` exclusively.
+   If a needed label is missing from that doc, add it there first
+   (with a one-line "use for" entry), then apply.
