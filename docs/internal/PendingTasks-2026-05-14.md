@@ -180,33 +180,36 @@ non-invariant suite. Frontend + worker typechecks green.
 **Audit**: bundles with A.4 next engagement per D7 of the
 plan-mode Q&A.
 
-**B.2 follow-ups** (intentionally out of scope for this branch
-— track here so they don't get lost):
+**B.2 follow-ups** — all closed 2026-05-15 alongside the main
+B.2 branch:
 
-- **B.2.1 Per-page badge wiring** for `LoanStatus.InternalMatched`.
-  Label exists in `apps/defi/src/types/loan.ts`; pages that
-  render loan status (Dashboard, LoanTimeline,
-  LenderEarlyWithdrawal, BorrowerPreclose, Refinance,
-  NftVerifier) treat unknown-variant as Active for now.
-- **B.2.2 MyLoans "near-liquidation" filter bucket** — surface
-  borrowers' loans currently in
-  `[liquidationLtvBpsAtInit − 5%, liquidationLtvBpsAtInit)`
-  with a CTA to top-up collateral / repay before the match
-  window opens.
-- **B.2.3 Indexer schema row for `InternalMatchExecuted`** —
-  currently allowlisted in `apps/indexer/scripts/check-event-coverage.mjs`
-  (event surfaces via live `getLoanDetails` for now). Wire a
-  proper handler in `chainIndexer.ts` + activity-event row.
-- **B.2.4 3-way chain in the keeper-bot** —
-  `vaipakam-keeper-bot/src/detectors/internalMatcher.ts`
-  finds 2-way pairs today. The contract supports 3-way via
-  `triggerInternalMatchLiquidation(idA, idB, idC)`; bot needs
-  a second pass over loans that didn't pair up 2-way to detect
-  3-cycles.
-- **B.2.5 Companion bot pair-search algorithm doc** in
+- ~~**B.2.1 Per-page badge wiring**~~ — `ClaimActionBar` now
+  treats `InternalMatched` as a claim-eligible terminal alongside
+  Repaid/Defaulted/FallbackPending (commit `175c1fc`). Other
+  status-branching sites correctly exclude InternalMatched by
+  gating on `Active || FallbackPending`.
+- ~~**B.2.2 MyLoans near-internal-match warning chip**~~ — amber
+  "near match" chip on borrower-side Dashboard rows when current
+  LTV is within 5% of the snapshotted threshold; `liquidationLtvBpsAtInit`
+  threaded through `LoanDetails` / `LoanSummary` + the two
+  user-loan adapters; `lib/internalMatchSignals.ts` exposes the
+  `isNearInternalMatchWindow` helper (commit `a927b0a`).
+- ~~**B.2.3 Indexer `InternalMatchExecuted` handler**~~ —
+  real handler in `chainIndexer.ts` (decrement principal +
+  collateral per leg; flip `status = 'internal_matched'`
+  when principal clears) + activity-event row keyed on
+  leg-A loanId with matcher as actor. Allowlist entry retired
+  (commit `637c627`).
+- ~~**B.2.4 3-way chain detection in keeper-bot**~~ — second
+  pass over loans that didn't pair up 2-way detects A→B→C→A
+  cycles via principal-asset bucketing (keeper-bot commit
+  `1dc638b`).
+- ~~**B.2.5 Companion bot pair-search algorithm doc**~~ —
   `vaipakam-keeper-bot/docs/InternalMatchSearchAlgorithm.md`
-  (per D8 of plan-mode Q&A). Spec: candidate enumeration, pair
-  scoring, 3-way chain detection, gas-vs-profit threshold logic.
+  spelling out eligibility surface + match-shape constraints +
+  enumeration flow + submit policy + gas/economics + kill-
+  switch behaviour + planned extensions (keeper-bot commits
+  `46f4e7b` and follow-up doc update in `1dc638b`).
 
 ---
 
