@@ -1,0 +1,37 @@
+name: Add new issues to @vaipakam-labs project
+
+# Workaround for the GitHub Projects v2 Auto-add UI workflow's
+# single-repo-per-rule limitation (see
+# https://github.com/orgs/community/discussions/47803). This Action
+# runs in every repo that should feed the central project; the
+# combined effect is "auto-add issues from any of the linked repos
+# into @vaipakam-labs as Backlog".
+#
+# Cross-account write (issues live in `vaipakam/vaipakam`, project
+# lives under the `vaipakam` user account — same login, but the
+# default GITHUB_TOKEN can't cross the repo→user-project boundary)
+# requires a PAT with `project` scope, stored as the
+# `ADD_TO_PROJECT_PAT` repository secret.
+
+on:
+  issues:
+    types:
+      - opened
+      - reopened
+      - transferred
+
+# Least-privilege at the workflow level — the Action overrides
+# with the PAT for the actual write, but the workflow's own token
+# stays read-only to limit blast radius.
+permissions:
+  contents: read
+
+jobs:
+  add-to-project:
+    name: Add issue to @vaipakam-labs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/add-to-project@v1.0.2
+        with:
+          project-url: https://github.com/users/vaipakam/projects/1
+          github-token: ${{ secrets.ADD_TO_PROJECT_PAT }}
