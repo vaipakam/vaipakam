@@ -18,7 +18,7 @@ import { BookOpen, PlusCircle, AlertTriangle, ShieldCheck, Droplet, ListOrdered,
 import { Picker } from '@vaipakam/ui/Picker';
 import { ErrorAlert } from '../components/app/ErrorAlert';
 import { SanctionsBanner } from '../components/app/SanctionsBanner';
-import { RiskDisclosures } from '../components/app/RiskDisclosures';
+import { RiskDisclosures, RiskConsentLabel } from '../components/app/RiskDisclosures';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { beginStep, emit } from '../lib/journeyLog';
 import { decodeContractError, extractRevertSelector } from '@vaipakam/lib/decodeContractError';
@@ -1804,7 +1804,7 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
             checked={consent}
             onChange={(e) => onConsentChange(e.target.checked)}
           />
-          <span>{t('riskDisclosures.checkboxLabel')}</span>
+          <span><RiskConsentLabel /></span>
         </label>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
@@ -1817,7 +1817,7 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
             disabled={submitting || !consent}
             data-tooltip={
               !submitting && !consent
-                ? t('riskDisclosures.checkboxLabel')
+                ? t('riskDisclosures.consentRequiredHint')
                 : undefined
             }
           >

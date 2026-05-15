@@ -35,3 +35,13 @@
 .risk-disclosures-paragraph:last-of-type {
   margin-bottom: 0;
 }
+
+.risk-consent-terms-link {
+  color: var(--brand, #5eead4);
+  text-decoration: underline;
+}
+
+.risk-consent-terms-link:hover,
+.risk-consent-terms-link:focus-visible {
+  text-decoration-thickness: 2px;
+}

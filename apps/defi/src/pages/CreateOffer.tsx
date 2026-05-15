@@ -27,7 +27,7 @@ import { DEFAULT_CHAIN } from "../contracts/config";
 import { AlertTriangle, Info, CheckCircle, Wallet, Coins } from "lucide-react";
 import { ErrorAlert } from "../components/app/ErrorAlert";
 import { SanctionsBanner } from "../components/app/SanctionsBanner";
-import { RiskDisclosures } from "../components/app/RiskDisclosures";
+import { RiskDisclosures, RiskConsentLabel } from "../components/app/RiskDisclosures";
 import { SimulationPreview } from "../components/app/SimulationPreview";
 import { LiquidityPreflightBanner } from "../components/app/LiquidityPreflightBanner";
 import { OfferRiskPreview } from "../components/app/OfferRiskPreview";
@@ -1395,7 +1395,7 @@ export default function CreateOffer() {
               checked={form.fallbackConsent}
               onChange={(e) => setField("fallbackConsent", e.target.checked)}
             />
-            <span>{t('riskDisclosures.checkboxLabel')}</span>
+            <span><RiskConsentLabel /></span>
           </label>
         </div>
 

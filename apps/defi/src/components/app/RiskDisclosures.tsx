@@ -1,12 +1,43 @@
 import { useState } from 'react';
 import { AlertTriangle, BookOpen, X } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
+import { Trans, useTranslation } from 'react-i18next';
+import { marketingUrl } from '../../lib/marketingUrl';
 import './RiskDisclosures.css';
 
 const PARAGRAPH_KEYS: string[] = [
   'riskDisclosures.paragraph1',
   'riskDisclosures.paragraph2',
 ];
+
+/**
+ * Renders the consent checkbox label with "Vaipakam Terms" as an inline
+ * hyperlink to the marketing-site Terms of Service page. Uses i18next
+ * `<Trans>` so translators preserve the placement of the linked phrase
+ * without hand-splicing strings on the JSX side. `stopPropagation` on
+ * the link prevents a label-click from toggling the checkbox via the
+ * wrapping `<label>` element.
+ *
+ * Consumers wrap the parent `<label>` + `<input>` themselves; this
+ * component is only the inline text + link slot.
+ */
+export function RiskConsentLabel() {
+  return (
+    <Trans
+      i18nKey="riskDisclosures.checkboxLabel"
+      components={{
+        terms: (
+          <a
+            href={marketingUrl('/terms')}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="risk-consent-terms-link"
+            onClick={(e) => e.stopPropagation()}
+          />
+        ),
+      }}
+    />
+  );
+}
 
 /**
  * Pure presentation component that renders the Risk-Disclosure copy
