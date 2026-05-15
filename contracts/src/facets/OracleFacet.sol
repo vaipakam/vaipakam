@@ -1236,7 +1236,10 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
                 emit TierLtvCacheRefreshRejected(tier, 0, "no-reference-assets");
                 continue;
             }
-            (bool ok, uint16 tierMedian, ) = LibPeerLTV.aggregateTierLtv(
+            // Single aggregation per tier — `assetsContrib` is kept for
+            // the event emission below so we don't pay 300-500k gas to
+            // re-run the same view-only aggregation a second time.
+            (bool ok, uint16 tierMedian, uint8 assetsContrib) = LibPeerLTV.aggregateTierLtv(
                 aave,
                 comet,
                 refAssets,
@@ -1266,24 +1269,6 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
 
             // Persist + emit.
             uint16 oldVal = s.tierLtvCache[tier].ltvBps;
-            uint8 assetsContrib;
-            // Re-compute the contributing-asset count via a separate
-            // aggregateTierLtv call would double-cost; instead read it
-            // back from the same `aggregateTierLtv` return... we lost
-            // it above when we destructured to `(ok, tierMedian, )`.
-            // Re-aggregate to get the count for the event (gas is
-            // already in the millions; a second view-only call is the
-            // smallest part). The duplicate would be cleaner with a
-            // single `(ok, median, n)` return — left as-is for clarity
-            // in this commit; aggregator re-shape is a follow-up.
-            (, , assetsContrib) = LibPeerLTV.aggregateTierLtv(
-                aave,
-                comet,
-                refAssets,
-                LibVaipakam.PEER_DIVERGENCE_TOLERANCE_BPS,
-                LibVaipakam.TIER_MIN_PEER_READINGS,
-                LibVaipakam.TIER_MIN_ASSET_READINGS
-            );
             s.tierLtvCache[tier] = LibVaipakam.TierLtvCacheEntry({
                 ltvBps: candidate,
                 lastRefreshedAt: uint64(block.timestamp)

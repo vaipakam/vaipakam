@@ -288,7 +288,7 @@ peer-address verification, and the relay-bake snapshot. The script
 deliberately does not `--broadcast` — pure fork-simulation only.
 
 The operator guide at
-[`docs/SlippageCensusGuide.md`](../SlippageCensusGuide.md) now
+[`docs/ops/SlippageCensusGuide.md`](../ops/SlippageCensusGuide.md) now
 documents both variants, with the three-checkpoint audit flow
 (post-deploy, post-bake, pre-flip rehearsal) intact.
 

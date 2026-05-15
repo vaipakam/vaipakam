@@ -1,10 +1,10 @@
 # Slippage Census — Operator Guide
 
 This guide explains how to run the per-chain slippage census required
-by [`MarketRateWidgetAndDepthTieredLTV.md`](DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md)
+by [`MarketRateWidgetAndDepthTieredLTV.md`](../DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md)
 §4.4 step 6 — the gate before flipping `depthTieredLtvEnabled` on any
 chain. The census tool is
-[`contracts/script/SlippageCensus.s.sol`](../contracts/script/SlippageCensus.s.sol);
+[`contracts/script/SlippageCensus.s.sol`](../../contracts/script/SlippageCensus.s.sol);
 this doc covers what to run, when to run it, how to interpret the
 output, and what the audit + risk committee will expect.
 
@@ -111,7 +111,7 @@ opens cleanly in a spreadsheet.
 ## Per-chain default asset lists
 
 These are the starter lists, mirrored from
-[`contracts/script/SlippageCensus.assets.json`](../contracts/script/SlippageCensus.assets.json)
+[`contracts/script/SlippageCensus.assets.json`](../../contracts/script/SlippageCensus.assets.json)
 — the JSON is the canonical source the census script reads when
 `CENSUS_ASSETS` is unset. Keep this doc and the JSON in sync; the
 script does not consult this doc. Add to both per chain as new assets
@@ -264,12 +264,12 @@ is automated.
 For pre-deploy capacity planning — "what would the autonomous tier-LTV
 cache settle to on this chain RIGHT NOW, given current Aave / Compound
 configs at this block?" — use
-[`contracts/script/SlippageCensusPreDeploy.s.sol`](../contracts/script/SlippageCensusPreDeploy.s.sol)
+[`contracts/script/SlippageCensusPreDeploy.s.sol`](../../contracts/script/SlippageCensusPreDeploy.s.sol)
 instead. It forks the chain via `--fork-url`, deploys a minimal
 Diamond into the fork (no real funds, no real deployment — fork state
 is discarded when the script exits), wires the peer-protocol addresses
 + per-tier reference assets from
-[`contracts/script/SlippageCensus.chains.json`](../contracts/script/SlippageCensus.chains.json),
+[`contracts/script/SlippageCensus.chains.json`](../../contracts/script/SlippageCensus.chains.json),
 calls `refreshTierLtvCache()` to populate the cache from the LIVE
 peer state at the fork block, and reports per-tier cache values.
 

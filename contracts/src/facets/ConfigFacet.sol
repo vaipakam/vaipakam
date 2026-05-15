@@ -779,9 +779,16 @@ contract ConfigFacet is DiamondAccessControl {
     /// @custom:event-category informational/config
     event PaaAssetsSet(uint256 count);
     /// @notice Emitted when the off-chain liquidity-confidence relay
-    ///         (`KEEPER_ROLE`) re-rates an asset. `tier` is 1..3.
+    ///         (`KEEPER_ROLE`) re-rates an asset. `oldTier` is the
+    ///         pre-write value (0 ⇒ never set; the consumer's
+    ///         `effectiveTier = min(getLiquidityTier, keeperTier)`
+    ///         then reads the on-chain ceiling alone). `newTier` is
+    ///         1..3 (the setter rejects `0` and `> MAX_LIQUIDITY_TIER`).
+    ///         Carrying the prior value lets an auditor / indexer
+    ///         reconstruct the demote / promote sequence from events
+    ///         alone, without replaying storage reads per emit.
     /// @custom:event-category informational/config
-    event KeeperTierSet(address indexed asset, uint8 tier);
+    event KeeperTierSet(address indexed asset, uint8 oldTier, uint8 newTier);
 
     /// @notice Master kill-switch for the depth-tiered init-LTV cap.
     ///         Default `false` — the loan-init gate stays exactly
@@ -1309,8 +1316,11 @@ contract ConfigFacet is DiamondAccessControl {
     {
         if (asset == address(0)) revert IVaipakamErrors.InvalidAsset();
         if (tier == 0 || tier > LibVaipakam.MAX_LIQUIDITY_TIER) revert InvalidLiquidityTier(tier);
+        // Capture pre-write value so the emitted event carries the full
+        // transition (oldTier → newTier) — see F-3 in the C.1 audit doc.
+        uint8 oldTier = LibVaipakam.storageSlot().keeperTier[asset];
         LibVaipakam.storageSlot().keeperTier[asset] = tier;
-        emit KeeperTierSet(asset, tier);
+        emit KeeperTierSet(asset, oldTier, tier);
     }
 
     /// ─── Getters (effective values: override OR default) ────────────
