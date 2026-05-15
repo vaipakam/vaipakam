@@ -9,12 +9,15 @@ DEX slippage or aggregator fees. Bots earn 1% per matched leg
 synchronously; the legacy external swap path remains the
 fallback once a 2% LTV priority window expires.
 
-The work spans 11 commits in the vaipakam repo + 1 in the
+The work spans 21 commits in the vaipakam repo + 3 in the
 sibling `vaipakam-keeper-bot` repo, on branch
-`feat/internal-liquidation-ledger`. Kill-switch defaults `false`
-on every fresh deploy so production stays in today's
-external-only liquidation behaviour until per-chain governance
-flips it on.
+`feat/internal-liquidation-ledger`. The contract / scaffold
+side (PR1–PR6 + PR5.5 + ABI syncs + design-doc iteration)
+landed first; the 5 tracked follow-ups (B.2.1 – B.2.5) all
+landed in the same release without splitting into a separate
+branch. Kill-switch defaults `false` on every fresh deploy so
+production stays in today's external-only liquidation
+behaviour until per-chain governance flips it on.
 
 ## Headline tally
 
@@ -31,11 +34,20 @@ flips it on.
 | PR5.5 — 3-way A→B→C→A chain match | `826e98d` | +1 chain-cycle test |
 | Keeper-bot export-list update | `be723a9` | — |
 | Design-doc implementation status | `693f02f` | — |
-| **Sibling repo**: keeper-bot detector | `df847d9` | (npm typecheck) |
+| Doc updates (PendingTasks + ReleaseNotes + runbooks) | `3deeb1c` | — |
+| **B.2.1** — InternalMatched is claim-eligible | `175c1fc` | (frontend only) |
+| **B.2.2** — Dashboard near-match warning chip + signals helper | `a927b0a` | (frontend only) |
+| **B.2.3** — indexer InternalMatchExecuted handler + activity event | `637c627` | event-coverage 21/15 (was 20/16) |
+| Follow-ups close-out | `377d997` | — |
+| **Sibling repo**: keeper-bot detector + 2-way matcher | `df847d9` | (npm typecheck) |
+| **Sibling repo / B.2.5**: pair-search algorithm doc | `46f4e7b` | — |
+| **Sibling repo / B.2.4**: 3-way chain pass | `1dc638b` | (npm typecheck) |
 
 **Forge regression**: 1936 passed / 0 failed / 5 skipped on the
 full non-invariant suite (94 suites). tsc-clean across
 `apps/{defi,keeper,indexer,agent}` and `vaipakam-keeper-bot`.
+Indexer event-coverage check passes (21 handled / 15
+allowlisted, up from 20 / 16).
 
 ## Thread — Internal-liquidation matching (B.2)
 
@@ -170,13 +182,22 @@ Worst case (3-way, max governance settings): tier-3 95% +
 well under the 5–7.7% per-leg external discount borrowers
 would otherwise pay.
 
-### Tracked follow-ups (B.2.1 – B.2.5)
+### Follow-ups B.2.1 – B.2.5 — all shipped same release
 
-See `docs/internal/PendingTasks-2026-05-14.md` §B.2 for the
-full list. Summary: per-page badge wiring (label exists, badges
-don't); MyLoans "near-liquidation" filter bucket; indexer
-schema row; 3-way chain detection in the bot; companion bot
-pair-search algorithm doc.
+The five B.2 follow-ups originally tracked as "out of scope
+for the design branch" all landed in this release alongside
+the main work:
+
+| ID | Scope | Commit |
+|---|---|---|
+| B.2.1 | `LoanStatus.InternalMatched` treated as claim-eligible terminal in `ClaimActionBar` so borrowers can claim residual collateral after a partial match. | `175c1fc` |
+| B.2.2 | Dashboard "near match" amber chip on borrower-side rows when current LTV is within 5% of (but still below) the snapshotted liquidation threshold. Threads `liquidationLtvBpsAtInit` through `LoanDetails` / `LoanSummary` + the two user-loan adapters; `lib/internalMatchSignals.ts` exposes the `isNearInternalMatchWindow` helper. | `a927b0a` |
+| B.2.3 | Indexer `InternalMatchExecuted` handler: decrements principal + collateral per leg via the partial-match α rule from §7 of the design doc; flips `status = 'internal_matched'` when principal clears. Activity-event row keyed on leg-A with matcher as actor. Allowlist entry retired. | `637c627` |
+| B.2.4 | 3-way A→B→C→A chain detection in `vaipakam-keeper-bot/src/detectors/internalMatcher.ts` — second pass over loans that didn't pair up 2-way, principal-asset bucketing for O(1) hop walks. | `1dc638b` (keeper-bot) |
+| B.2.5 | `vaipakam-keeper-bot/docs/InternalMatchSearchAlgorithm.md` — eligibility surface, match-shape constraints, candidate enumeration, submit policy, gas + economics, kill-switch behaviour, planned extensions. | `46f4e7b` (keeper-bot, with §4 update in `1dc638b`) |
+
+PendingTasks-2026-05-14.md §B.2 marked all five closed in
+`377d997`.
 
 ## Operational
 

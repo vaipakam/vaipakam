@@ -375,17 +375,34 @@ prioritization layer makes them easy to lose track of.
 
 ## Recommended next session
 
-Order by impact + dependency:
+Order by impact + dependency. Updated 2026-05-15 after Block 1
+(C.2 + D), Block 4 (B.1 + B.2 + B.2.1–B.2.5) all closed.
 
 | Priority | Item | Effort | Why |
 |---|---|---|---|
-| 🔥 **Block 1** | C.2 — config range-bounding audit | Half a day | Cheap; protects against admin-key compromise; lightweight to do before auditor engagement (which itself is in Block 3). |
-| 🔥 **Block 1** | D — deploy-script modernization (resume with the 3 ratification points) | ~1 day | Blocks ALL of Group A. Until the scripts handle the new source tree, every per-chain rollout step needs manual workarounds. |
-| ⚡ **Block 2** | A.1 — `ConfigureV2Factories.s.sol` on Base Sepolia | ~1 hour | Smallest immediate operational step; validates the rollout pipeline. |
-| ⚡ **Block 2** | A.2 — `DeployFlashLoanLiquidator.s.sol` on Base Sepolia | ~1 hour | Exercises the keeper-bot flash-loan path end-to-end before audit. |
-| 📋 **Block 3** | A.4 / A.5 — auditor + risk-committee engagement | Async | The gating step for mainnet rollout. Start the conversation now; the deliverables are already in place. |
-| ✏ **Block 4** | B.2 — internal-liquidation ledger design doc | ~1 day | Architecturally interesting; deserves alternatives discussion. Could land independently of Block 3. |
-| ✏ **Block 4** | B.1 — WETH-on-Polygon/BNB audit | ~1 day | Mechanical; isolate any latent regressions before mainnet rollout. |
+| ~~🔥 **Block 1**~~ | ~~C.2 — config range-bounding audit~~ | ~~Half a day~~ | **CLOSED 2026-05-14** — see `ConfigKnobBoundsAudit-2026-05-14.md`. |
+| ~~🔥 **Block 1**~~ | ~~D — deploy-script modernization~~ | ~~~1 day~~ | **CLOSED 2026-05-14** — commits `01087f1` + `a74bc7c`. |
+| ~~✏ **Block 4**~~ | ~~B.1 — WETH-on-Polygon/BNB audit~~ | ~~~1 day~~ | **CLOSED 2026-05-14** — commits `465e93e` + `1ba8939` + `7c308b2` (second-pass sweep). |
+| ~~✏ **Block 4**~~ | ~~B.2 + B.2.1–B.2.5 — internal-match~~ | ~~feature-sized~~ | **CLOSED 2026-05-15** — see InternalLiquidationLedger.md §0.0 + ReleaseNotes-2026-05-15.md. End-to-end shipped across contracts + indexer + frontend + keeper-bot. |
+| ⚡ **Block 2** | A.1 — `ConfigureV2Factories.s.sol` on Base Sepolia | ~1 hour | Smallest immediate operational step; validates the rollout pipeline. Currently deferred to mainnet rollout (testnets lack the Aave V3 / V2 forks). |
+| ⚡ **Block 2** | A.2 — `DeployFlashLoanLiquidator.s.sol` on Base Sepolia | ~1 hour | Same deferral as A.1 — needs mainnet Aave V3 + Balancer V2 to exercise. |
+| 📋 **Block 3** | A.4 / A.5 — auditor + risk-committee engagement | Async | The gating step for mainnet rollout. Audit-package addenda from B.1 + C.2 + B.2 (InternalLiquidationLedger.md §0.0) all in place. Start the conversation now. |
+| 🔍 **Block 5** | C.1 — off-chain data-fetch audit | ~2 days | The remaining security-adjacent item. Catalogue every off-chain → on-chain data flow (Chainlink feeds, peer-protocol reads, keeper relay) + verify each has bounds + freshness gates. Standalone effort; no dependencies on the other blocks. |
 
 Background items (Group E) tick over as triggers fire — no
 proactive scheduling needed.
+
+### Status snapshot — what's left in PendingTasks
+
+- **Group A operational (A.1–A.6)** — all deferred to per-chain
+  mainnet rollout. No code work; coordinated by the operator on
+  audit + risk-committee sign-off cadence.
+- **Group C security-adjacent**: C.2 ✓ closed. **C.1 off-chain
+  data-fetch audit remains** as the single outstanding security
+  item; recommend tackling next.
+- **Group D deploy-script modernization** ✓ closed.
+- **Group E background follow-ups** — fire-and-forget; revisit
+  individually when their respective triggers (E.1 V4 launch on
+  new chains, E.2 Balancer V2 SOR latency, etc.) hit.
+- **Group F `docs/ToDo.md` backlog** — needs its own triage
+  session (~80 items, mostly UX/feature work).

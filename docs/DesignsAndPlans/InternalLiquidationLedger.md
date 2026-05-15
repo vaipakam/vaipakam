@@ -43,19 +43,20 @@ until governance flips
 `ConfigFacet.setInternalMatchEnabled(true)` per chain — see §9.2
 for the per-chain rollout discipline.
 
-**Tracked follow-ups** (out of scope for this branch):
-- Per-page badge wiring for the `InternalMatched` status across
-  Dashboard / LoanTimeline / LenderEarlyWithdrawal / Refinance /
-  NftVerifier — the label exists, the badges don't.
-- `MyLoans` filter bucket "near liquidation, awaiting internal
-  match" for borrowers with current LTV in
-  `[liquidationLtvBpsAtInit − 5%, liquidationLtvBpsAtInit)`.
-- Indexer schema row + activity event for `InternalMatchExecuted`
-  (currently allowlisted — read live via `getLoanDetails`).
-- 3-way chain detection in the keeper-bot (the contracts support
-  it; the detector only finds 2-way pairs today).
-- Companion doc in the keeper-bot repo with the off-chain pair-
-  search algorithm spec.
+**Follow-ups B.2.1 – B.2.5 — all closed in the same release
+(2026-05-15)**, after originally being scoped as "out of
+scope for this branch":
+
+| ID | Commit | Scope |
+|---|---|---|
+| B.2.1 | `175c1fc` | `LoanStatus.InternalMatched` treated as claim-eligible terminal in `ClaimActionBar`. Other status-branching sites correctly exclude via existing `Active \|\| FallbackPending` gates. |
+| B.2.2 | `a927b0a` | Dashboard "near match" amber chip on borrower-side rows when current LTV is within 5% of (but still below) the snapshotted liquidation threshold. New `lib/internalMatchSignals.ts` helper. |
+| B.2.3 | `637c627` | Indexer `InternalMatchExecuted` handler with per-leg principal+collateral decrements + status flip to `internal_matched` when principal clears. Activity-event row keyed on leg-A. |
+| B.2.4 | `1dc638b` (keeper-bot) | 3-way A→B→C→A chain detection in `vaipakam-keeper-bot/src/detectors/internalMatcher.ts`. |
+| B.2.5 | `46f4e7b` (keeper-bot, with §4 update in `1dc638b`) | `vaipakam-keeper-bot/docs/InternalMatchSearchAlgorithm.md` — companion pair-search algorithm spec. |
+
+PendingTasks-2026-05-14.md §B.2 marked all five closed in
+`377d997`.
 
 ## 0. Architectural pivot (2026-05-14 — post-§9.1 review)
 
