@@ -130,12 +130,7 @@
         "internalType": "enum LibVaipakam.LiquidityStatus"
       },
       {
-        "name": "maxLtvBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "liqThresholdBps",
+        "name": "loanInitMaxLtvBps",
         "type": "uint256",
         "internalType": "uint256"
       },

@@ -79,7 +79,13 @@ library LibLifecycle {
             return
                 to == LibVaipakam.LoanStatus.Repaid ||
                 to == LibVaipakam.LoanStatus.Defaulted ||
-                to == LibVaipakam.LoanStatus.FallbackPending;
+                to == LibVaipakam.LoanStatus.FallbackPending ||
+                // PR5 of internal-match work (2026-05-15) — match-
+                // liquidation terminal edge. Reached from Active when
+                // `triggerInternalMatchLiquidation` fully clears the
+                // loan's principal. Partial matches stay Active and
+                // don't transition.
+                to == LibVaipakam.LoanStatus.InternalMatched;
         }
         if (from == LibVaipakam.LoanStatus.FallbackPending) {
             return
@@ -91,6 +97,11 @@ library LibLifecycle {
             return to == LibVaipakam.LoanStatus.Settled;
         }
         if (from == LibVaipakam.LoanStatus.Defaulted) {
+            return to == LibVaipakam.LoanStatus.Settled;
+        }
+        if (from == LibVaipakam.LoanStatus.InternalMatched) {
+            // Match-liquidation feeds into the same Settled terminal
+            // as Repaid/Defaulted via the existing claim flow.
             return to == LibVaipakam.LoanStatus.Settled;
         }
         return false; // Settled is terminal

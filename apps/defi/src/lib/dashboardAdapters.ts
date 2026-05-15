@@ -33,6 +33,7 @@ interface ContractLoanShape {
   lenderTokenId: bigint;
   borrowerTokenId: bigint;
   allowsPartialRepay: boolean;
+  liquidationLtvBpsAtInit?: number | bigint;
 }
 
 /**
@@ -65,6 +66,11 @@ export function loanWithRiskAndSideToSummary(
     lenderTokenId: loan.lenderTokenId,
     borrowerTokenId: loan.borrowerTokenId,
     allowsPartialRepay: Boolean(loan.allowsPartialRepay),
+    // Defaults to 0 on legacy diamonds that don't yet carry the
+    // per-loan snapshot (the field landed in PR2 of the internal-
+    // match work). Consumers treat 0 as "no near-liquidation
+    // banner" — exactly the same render as today for those loans.
+    liquidationLtvBpsAtInit: Number(loan.liquidationLtvBpsAtInit ?? 0),
   };
 }
 

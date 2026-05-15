@@ -156,9 +156,10 @@ contract RefinanceFacetTest is Test {
         ProfileFacet(address(diamond)).updateKYCTier(borrower, LibVaipakam.KYCTier.Tier2);
 
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 8500, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 300, 1000);
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 8500, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 300, 1000);
+        TestMutatorFacet(address(diamond)).setTierLiquidationLtvBpsAllRaw(8500, 8500, 8500);
 
         mockLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
         mockPrice(mockERC20, 1e8, 8);
@@ -499,14 +500,14 @@ contract RefinanceFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev Covers LTVExceeded in refinanceLoan (LTV > maxLtvBps)
+    /// @dev Covers LTVExceeded in refinanceLoan (LTV > loanInitMaxLtvBps)
     function testRefinanceLoanRevertsLTVExceeded() public {
         _acceptBorrowerOffer(borrowerOfferId);
 
         vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL + 10 ether));
         vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(uint256(2e18)));
-        // Return LTV above maxLtvBps (8000 bps); pass 9000 > 8000
+        // Return LTV above loanInitMaxLtvBps (8000 bps); pass 9000 > 8000
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(9000)));
 
         vm.expectRevert(IVaipakamErrors.LTVExceeded.selector);
@@ -724,7 +725,7 @@ contract RefinanceFacetTest is Test {
         mockLiquidity(otherERC20, LibVaipakam.LiquidityStatus.Liquid);
         mockPrice(otherERC20, 1e8, 8);
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(otherERC20, 8000, 8500, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(otherERC20, 8000, 300, 1000);
         address borrowerEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(borrower);
         address nlEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(newLender);
         vm.prank(borrower); ERC20(otherERC20).approve(borrowerEscrow, type(uint256).max);
@@ -782,7 +783,7 @@ contract RefinanceFacetTest is Test {
         mockLiquidity(otherERC20, LibVaipakam.LiquidityStatus.Liquid);
         mockPrice(otherERC20, 1e8, 8);
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(otherERC20, 8000, 8500, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(otherERC20, 8000, 300, 1000);
         address borrowerEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(borrower);
         address nlEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(newLender);
         vm.prank(borrower); ERC20(otherERC20).approve(borrowerEscrow, type(uint256).max);
@@ -1062,7 +1063,7 @@ contract RefinanceFacetTest is Test {
     // MarketRateWidgetAndDepthTieredLTV.md §4.2 + commit `<this PR>`:
     // when `depthTieredLtvEnabled` is true, the post-refinance HF
     // floor relaxes from `≥ 1.5e18` to `≥ 1e18` and the LTV cap
-    // becomes `min(maxLtvBps, effectiveTierMaxInitLtvBps[
+    // becomes `min(loanInitMaxLtvBps, effectiveTierMaxInitLtvBps[
     // getEffectiveLiquidityTier(collateral)])` — exactly mirroring
     // `LoanFacet._checkInitialLtvAndHf`. These tests pin both regimes
     // by flipping the kill-switch via TestMutatorFacet (the test

@@ -58,6 +58,29 @@
   },
   {
     "type": "function",
+    "name": "triggerInternalMatchLiquidation",
+    "inputs": [
+      {
+        "name": "loanIdA",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "loanIdB",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "loanIdC",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "triggerLiquidation",
     "inputs": [
       {
@@ -189,12 +212,7 @@
         "internalType": "address"
       },
       {
-        "name": "maxLtvBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "liqThresholdBps",
+        "name": "loanInitMaxLtvBps",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -230,6 +248,73 @@
       },
       {
         "name": "proceeds",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "InternalMatchExecuted",
+    "inputs": [
+      {
+        "name": "loanIdA",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "loanIdB",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "loanIdC",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "matcher",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "notionalA",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "notionalB",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "notionalC",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "incentivePaidA",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "incentivePaidB",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "incentivePaidC",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -397,13 +482,7 @@
         "internalType": "address"
       },
       {
-        "name": "maxLtvBps",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "liqThresholdBps",
+        "name": "loanInitMaxLtvBps",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -761,6 +840,107 @@
     "type": "error",
     "name": "InteractionPoolExhausted",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InternalMatchAssetMismatch",
+    "inputs": [
+      {
+        "name": "loanIdA",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "loanIdB",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InternalMatchChainBroken",
+    "inputs": [
+      {
+        "name": "loanIdA",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "loanIdB",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "loanIdC",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InternalMatchDisabled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InternalMatchLoanNotActive",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InternalMatchLtvBelowFloor",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "currentLtvBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "floorBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InternalMatchOnlyBand",
+    "inputs": [
+      {
+        "name": "currentLtvBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "windowCeilingBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InternalMatchSelfPair",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

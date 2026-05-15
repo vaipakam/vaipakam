@@ -261,12 +261,11 @@ contract DeployTestnetLiquidityMocks is Script {
         // for offers without a second `updateRiskParams` step.
         // (collateralFactor, ltvBps, liquidationThresholdBps,
         //  stalenessBps, riskScore — see RiskFacet.updateRiskParams)
-        RiskFacet(diamond).updateRiskParams(address(mUSDC), 8000, 8500, 300, 1000);
-        RiskFacet(diamond).updateRiskParams(address(mWBTC), 8000, 8500, 300, 1000);
-        // WETH itself is the quote asset; no LTV-collateral role,
-        // but registering risk params makes its rows render
+        RiskFacet(diamond).updateRiskParams(address(mUSDC), 8000, 300, 1000);
+        RiskFacet(diamond).updateRiskParams(address(mWBTC), 8000, 300, 1000);
+        // WETH itself is the quote asset; no LTV-collateral role, // but registering risk params makes its rows render
         // consistently in the Risk dashboard view.
-        RiskFacet(diamond).updateRiskParams(weth, 8000, 8500, 300, 1000);
+        RiskFacet(diamond).updateRiskParams(weth, 8000, 300, 1000);
         vm.stopBroadcast();
 
         // ── Step 3: persist artifacts ─────────────────────────────────

@@ -641,6 +641,8 @@
     "browseOffers": "Browse Offers",
     "claim": "Claim",
     "claimReadyTooltip": "This loan has unclaimed funds for you — open it to see the breakdown and claim.",
+    "nearInternalMatch": "near match",
+    "nearInternalMatchTooltip": "This loan's LTV is within 5% of its liquidation threshold — a keeper bot may match it against another borrower's loan and clear it. Top up collateral or repay to avoid the match window opening.",
     "refresh": "Refresh",
     "refreshing": "Refreshing… ",
     "synced": "Synced — ",

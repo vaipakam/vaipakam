@@ -112,6 +112,14 @@ contract ConfigFacet is DiamondAccessControl {
     uint16 private constant MAX_SLIPPAGE_BPS = 2_500;       // 25%
     uint16 private constant MAX_INCENTIVE_BPS = 2_000;      // 20%
     uint16 private constant MAX_DISCOUNT_BPS = 9_000;       // 90%
+    // Gap #4 from the 2026-05-14 bounds audit
+    // (`docs/internal/ConfigKnobBoundsAudit-2026-05-14.md`):
+    // tightened from the shared `MAX_FEE_BPS` (50%) ceiling to a
+    // dedicated 20% ceiling for the NFT-rental prepay buffer.
+    // Default is 500 bps (5%); 20% gives realistic upward governance
+    // flex (4× the default) without permitting a 10× spike that
+    // would economically punish renters.
+    uint16 private constant MAX_RENTAL_BUFFER_BPS = 2_000;  // 20%
     // Fallback-split bounds: each party capped at 10% of principal, combined
     // (lender bonus + treasury) at 15%. These keep the borrower's remainder
     // meaningful even under the most adverse governance setting — a
@@ -558,7 +566,7 @@ contract ConfigFacet is DiamondAccessControl {
         if (volatilityLtvThresholdBps != 0 && volatilityLtvThresholdBps <= uint16(LibVaipakam.BASIS_POINTS)) {
             revert InvalidVolatilityLtvBps(volatilityLtvThresholdBps);
         }
-        if (rentalBufferBps > MAX_FEE_BPS) revert InvalidRentalBufferBps(rentalBufferBps);
+        if (rentalBufferBps > MAX_RENTAL_BUFFER_BPS) revert InvalidRentalBufferBps(rentalBufferBps);
         LibVaipakam.ProtocolConfig storage c = LibVaipakam.storageSlot().protocolCfg;
         c.volatilityLtvThresholdBps = volatilityLtvThresholdBps;
         c.rentalBufferBps = rentalBufferBps;
@@ -1046,7 +1054,7 @@ contract ConfigFacet is DiamondAccessControl {
     ///         *effective* values: `tier1 ≤ tier2 ≤ tier3` and each ≤
     ///         `MAX_TIER_INIT_LTV_BPS_CEIL` (8000 ≡ 80%). When
     ///         `depthTieredLtvEnabled`, loan-init caps the LTV at
-    ///         `min(assetRiskParams.maxLtvBps, tierMaxInitLtvBps[
+    ///         `min(assetRiskParams.loanInitMaxLtvBps, tierMaxInitLtvBps[
     ///         effectiveTier])`.
     function setTierMaxInitLtvBps(uint16 tier1, uint16 tier2, uint16 tier3)
         external
@@ -1065,6 +1073,188 @@ contract ConfigFacet is DiamondAccessControl {
         c.tier2MaxInitLtvBps = tier2;
         c.tier3MaxInitLtvBps = tier3;
         emit TierMaxInitLtvBpsSet(tier1, tier2, tier3);
+    }
+
+    /// @notice Emitted on every change to the per-tier LIQUIDATION
+    ///         threshold (the LTV at which a loan with that tier's
+    ///         collateral becomes liquidatable). PR2 of the
+    ///         internal-match work — see `InternalLiquidationLedger.md`
+    ///         §0. Off-chain monitoring watches this so a governance
+    ///         change to liquidation gates is publicly observable.
+    /// @custom:event-category informational/config
+    event TierLiquidationLtvBpsSet(uint16 tier1, uint16 tier2, uint16 tier3);
+
+    /// @notice Bound + monotonic-ordering errors for the per-tier
+    ///         liquidation-threshold setter.
+    error TierLiquidationLtvBpsTooHigh(uint256 provided, uint256 maxAllowed);
+    error TierLiquidationLtvBpsTooLow(uint256 provided, uint256 minAllowed);
+    error NonMonotoneTierLiquidationLtvBps(uint256 t1, uint256 t2, uint256 t3);
+
+    /// @notice Set the per-tier LIQUIDATION threshold (bps) atomically
+    ///         for all three liquidity tiers. PR2 of the internal-match
+    ///         work — replaces the retired per-asset
+    ///         `RiskParams.liqThresholdBps`. Each `0` ⇒ library default
+    ///         (9000 / 8500 / 8000 = 90% / 85% / 80%).
+    /// @dev    ADMIN_ROLE-only (TimelockController post-handover).
+    ///         Validation:
+    ///           - Each tier value (after default-resolution) lies in
+    ///             `[MIN_TIER_LIQUIDATION_LTV_BPS, MAX_TIER_LIQUIDATION_LTV_BPS]`
+    ///             (i.e. 50% ≤ value ≤ 95%). Floor 50% prevents an
+    ///             accidental "always liquidatable" misconfig; ceiling
+    ///             95% preserves the ≥5% LTV bad-debt buffer below
+    ///             100% at the most permissive setting.
+    ///           - Cross-tier monotonic: `T1 ≥ T2 ≥ T3` (deeper-
+    ///             liquidity tier tolerates higher pre-liquidation LTV).
+    ///         New loans snapshot the effective value at `initiateLoan`
+    ///         onto `Loan.liquidationLtvBpsAtInit`; existing loans
+    ///         keep their original snapshot — admin tunes apply
+    ///         prospectively only.
+    function setTierLiquidationLtvBps(uint16 tier1, uint16 tier2, uint16 tier3)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        uint256 t1 = tier1 == 0 ? uint256(LibVaipakam.DEFAULT_TIER1_LIQUIDATION_LTV_BPS) : uint256(tier1);
+        uint256 t2 = tier2 == 0 ? uint256(LibVaipakam.DEFAULT_TIER2_LIQUIDATION_LTV_BPS) : uint256(tier2);
+        uint256 t3 = tier3 == 0 ? uint256(LibVaipakam.DEFAULT_TIER3_LIQUIDATION_LTV_BPS) : uint256(tier3);
+        uint256 floor = uint256(LibVaipakam.MIN_TIER_LIQUIDATION_LTV_BPS);
+        uint256 ceil = uint256(LibVaipakam.MAX_TIER_LIQUIDATION_LTV_BPS);
+        if (t1 < floor) revert TierLiquidationLtvBpsTooLow(t1, floor);
+        if (t2 < floor) revert TierLiquidationLtvBpsTooLow(t2, floor);
+        if (t3 < floor) revert TierLiquidationLtvBpsTooLow(t3, floor);
+        if (t1 > ceil) revert TierLiquidationLtvBpsTooHigh(t1, ceil);
+        if (t2 > ceil) revert TierLiquidationLtvBpsTooHigh(t2, ceil);
+        if (t3 > ceil) revert TierLiquidationLtvBpsTooHigh(t3, ceil);
+        // Cross-tier monotonic: deeper-liquidity tier tolerates higher
+        // pre-liquidation LTV, i.e. T1 ≥ T2 ≥ T3.
+        if (!(t1 >= t2 && t2 >= t3)) revert NonMonotoneTierLiquidationLtvBps(t1, t2, t3);
+        LibVaipakam.ProtocolConfig storage c = LibVaipakam.storageSlot().protocolCfg;
+        c.tier1LiquidationLtvBps = tier1;
+        c.tier2LiquidationLtvBps = tier2;
+        c.tier3LiquidationLtvBps = tier3;
+        emit TierLiquidationLtvBpsSet(tier1, tier2, tier3);
+    }
+
+    /// @notice Get the effective per-tier LIQUIDATION threshold (bps)
+    ///         — override OR library default — for each of the three
+    ///         liquidity tiers. Frontend reads this to render the
+    ///         "liquidation at LTV X%" disclosure per loan after
+    ///         resolving the asset's tier via
+    ///         `OracleFacet.getEffectiveLiquidityTier`.
+    function getTierLiquidationLtvBps()
+        external
+        view
+        returns (uint256 tier1, uint256 tier2, uint256 tier3)
+    {
+        tier1 = LibVaipakam.cfgTier1LiquidationLtvBps();
+        tier2 = LibVaipakam.cfgTier2LiquidationLtvBps();
+        tier3 = LibVaipakam.cfgTier3LiquidationLtvBps();
+    }
+
+    // ─── Internal-liquidation match path (B.2) — config surface ────────
+
+    /// @notice Emitted when the internal-match master kill-switch is
+    ///         flipped. While `enabled == false`, the matching entry
+    ///         point reverts `InternalMatchDisabled` (PR4+), the
+    ///         match-eligible view returns empty, and the external-
+    ///         path priority-window gate short-circuits (external
+    ///         liquidation stays callable across the full LTV range).
+    /// @custom:event-category informational/config
+    event InternalMatchEnabledSet(bool enabled);
+
+    /// @notice Emitted when either of the two internal-match tunables
+    ///         (`externalLiquidationPriorityWindowBps`,
+    ///         `internalMatchIncentivePerLegBps`) is updated.
+    /// @custom:event-category informational/config
+    event InternalMatchConfigSet(
+        uint16 externalLiquidationPriorityWindowBps,
+        uint16 internalMatchIncentivePerLegBps
+    );
+
+    /// @notice Setter-range errors for the internal-match config.
+    error InternalMatchWindowAboveCap(uint256 provided, uint256 maxAllowed);
+    error InternalMatchIncentiveAboveCap(uint256 provided, uint256 maxAllowed);
+
+    /// @notice Flip the internal-liquidation match path's master
+    ///         kill-switch. Default `false` on a fresh deploy.
+    /// @dev    ADMIN_ROLE-only (TimelockController post-handover).
+    ///         Per chain — enable on chains where matcher-bot infra
+    ///         is live + active-loan volume justifies the priority
+    ///         window. See InternalLiquidationLedger.md §9.2.
+    function setInternalMatchEnabled(bool enabled)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.storageSlot().protocolCfg.internalMatchEnabled = enabled;
+        emit InternalMatchEnabledSet(enabled);
+    }
+
+    /// @notice Set the two internal-match tunables atomically.
+    /// @dev    ADMIN_ROLE-only (TimelockController post-handover).
+    ///         Each `0` ⇒ library default. Range bounds:
+    ///         - `externalLiquidationPriorityWindowBps` ∈
+    ///           `[MIN_EXTERNAL_LIQUIDATION_PRIORITY_WINDOW_BPS,
+    ///             MAX_EXTERNAL_LIQUIDATION_PRIORITY_WINDOW_BPS]`
+    ///           (0 – 500 BPS, i.e. 0% – 5% LTV). Floor 0 lets
+    ///           governance collapse the priority window without
+    ///           toggling the kill-switch; ceiling 5% preserves the
+    ///           bad-debt buffer above each tier's liquidation
+    ///           threshold (worst-case absolute external floor =
+    ///           tier-3 max 95% + 5% window = 100%, still bounded).
+    ///         - `internalMatchIncentivePerLegBps` ∈
+    ///           `[MIN_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG,
+    ///             MAX_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG]`
+    ///           (0 – 300 BPS per leg). Floor 0 zeros the bot
+    ///           incentive without disabling the path; cap 3% per
+    ///           leg keeps total bot take ≤ 6% on a 2-way match,
+    ///           still under the 5-7.7% external-liquidation
+    ///           discount borrowers would otherwise pay — borrowers
+    ///           always net out ahead of external.
+    function setInternalMatchConfig(
+        uint16 externalLiquidationPriorityWindowBps_,
+        uint16 internalMatchIncentivePerLegBps_
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        uint256 window = externalLiquidationPriorityWindowBps_ == 0
+            ? uint256(LibVaipakam.DEFAULT_EXTERNAL_LIQUIDATION_PRIORITY_WINDOW_BPS)
+            : uint256(externalLiquidationPriorityWindowBps_);
+        uint256 incentive = internalMatchIncentivePerLegBps_ == 0
+            ? uint256(LibVaipakam.DEFAULT_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG)
+            : uint256(internalMatchIncentivePerLegBps_);
+        if (window > uint256(LibVaipakam.MAX_EXTERNAL_LIQUIDATION_PRIORITY_WINDOW_BPS)) {
+            revert InternalMatchWindowAboveCap(
+                window,
+                uint256(LibVaipakam.MAX_EXTERNAL_LIQUIDATION_PRIORITY_WINDOW_BPS)
+            );
+        }
+        if (incentive > uint256(LibVaipakam.MAX_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG)) {
+            revert InternalMatchIncentiveAboveCap(
+                incentive,
+                uint256(LibVaipakam.MAX_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG)
+            );
+        }
+        LibVaipakam.ProtocolConfig storage c = LibVaipakam.storageSlot().protocolCfg;
+        c.externalLiquidationPriorityWindowBps = externalLiquidationPriorityWindowBps_;
+        c.internalMatchIncentivePerLegBps = internalMatchIncentivePerLegBps_;
+        emit InternalMatchConfigSet(
+            externalLiquidationPriorityWindowBps_,
+            internalMatchIncentivePerLegBps_
+        );
+    }
+
+    /// @notice One-call effective-values bundle for the internal-match
+    ///         path. Frontend renders the priority-window disclosure
+    ///         + bot dashboard against this.
+    function getInternalMatchConfigBundle()
+        external
+        view
+        returns (
+            bool enabled,
+            uint256 externalLiquidationPriorityWindowBps,
+            uint256 internalMatchIncentivePerLegBps
+        )
+    {
+        enabled = LibVaipakam.cfgInternalMatchEnabled();
+        externalLiquidationPriorityWindowBps = LibVaipakam.cfgExternalLiquidationPriorityWindowBps();
+        internalMatchIncentivePerLegBps = LibVaipakam.cfgInternalMatchIncentivePerLegBps();
     }
 
     /// @notice Replace the PAA list — the per-chain "predominantly

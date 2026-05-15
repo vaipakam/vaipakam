@@ -125,8 +125,8 @@ contract SepoliaOpenOffers is Script {
         OracleAdminFacet(diamond).setEthUsdFeed(address(wethFeed));
         OracleAdminFacet(diamond).setUniswapV3Factory(address(univ3Factory));
 
-        RiskFacet(diamond).updateRiskParams(address(weth), 8000, 8500, 300, 1000);
-        RiskFacet(diamond).updateRiskParams(address(usdc), 8000, 8500, 300, 1000);
+        RiskFacet(diamond).updateRiskParams(address(weth), 8000, 300, 1000);
+        RiskFacet(diamond).updateRiskParams(address(usdc), 8000, 300, 1000);
 
         ProfileFacet(diamond).updateKYCTier(lender, LibVaipakam.KYCTier.Tier2);
         ProfileFacet(diamond).updateKYCTier(borrower, LibVaipakam.KYCTier.Tier2);

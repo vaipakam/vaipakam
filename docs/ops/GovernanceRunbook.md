@@ -287,6 +287,32 @@ not a per-adapter mutation.
 |---|---|---|---|
 | Owner (Governance Safe) | via Timelock | 48h | `ZeroExAggregatorAdapter.addSwapTarget(...)`, `ZeroExAggregatorAdapter.removeSwapTarget(...)`, equivalent on `OneInchAggregatorAdapter` |
 
+### 6.3 Internal-liquidation match path bring-up (added 2026-05-15)
+
+The internal-match path (B.2 from
+`docs/internal/PendingTasks-2026-05-14.md`) ships dormant on
+every fresh deploy. To enable per chain after audit sign-off:
+
+| Step | Action | Why |
+|---|---|---|
+| 1 | Confirm `getInternalMatchConfigBundle()` returns `(false, 200, 100)` post-deploy — defaults landed. | Sanity check that the new selectors are cut into the diamond and the storage slots zero-resolve to library defaults. |
+| 2 | Confirm `getTierLiquidationLtvBps()` returns `(9000, 8500, 8000)` post-deploy. | Per-tier liquidation thresholds replaced the retired per-asset `liqThresholdBps` in PR2; verify the defaults stuck. |
+| 3 | Ensure keeper-bot deploy (`vaipakam-keeper-bot`) is live on this chain with the `internalMatcher` detector running. | The kill-switch alone enables the path; without a bot, no matches fire. |
+| 4 | Governance Safe schedules `timelock.schedule(diamond, 0, setInternalMatchEnabled(true), 0, salt, 48h)`. | Same 48h-gated flow as every other tunable post-handover. |
+| 5 | 48h later: Safe executes. `InternalMatchEnabledSet(true)` event emits. | Bots' next tick picks it up and starts matching eligible pairs. |
+| 6 | Monitor `InternalMatchExecuted` event volume + matcher wallet balances for one week. | Validate the match rate is non-zero and the priority window is producing the expected 1% saving per leg. |
+| 7 | Optional follow-up: tune the priority window or incentive via `timelock.schedule(setInternalMatchConfig(window, incentive))`. | Only after a week of baseline data. Stay inside the `[0,500]` window cap + `[0,300]` incentive cap. |
+
+**What stays the same after enablement**: external `triggerLiquidation` still callable at LTV ≥ `loan.liquidationLtvBpsAtInit + window`. The internal path is additive, not a replacement — when no match candidate exists, the loan deteriorates through the priority window and external takes over as before.
+
+**Tunable knobs added in PR2 + PR3** (all ADMIN_ROLE, timelock-gated post-handover):
+
+| Setter | Range | Default |
+|---|---|---|
+| `setTierLiquidationLtvBps(t1, t2, t3)` | each `[5000, 9500]`; `t1 ≥ t2 ≥ t3` enforced | 9000 / 8500 / 8000 |
+| `setInternalMatchEnabled(bool)` | — | `false` |
+| `setInternalMatchConfig(windowBps, incentiveBps)` | window `[0, 500]`, incentive `[0, 300]` | 200, 100 |
+
 ## Day-to-day operations after handover
 
 ### Routine admin action (e.g. tweak a risk param)

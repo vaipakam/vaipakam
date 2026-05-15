@@ -41,7 +41,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](59);
+        selectors = new bytes4[](61);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -95,12 +95,13 @@ contract HelperTest {
         // into the minimal test diamond, so the production
         // owner-gated setter isn't reachable from test setUp).
         selectors[41] = TestMutatorFacet.setWethContractRaw.selector;
-        // Layout-resilient `liqThresholdBps` writer that bypasses the
-        // bounded-range guard on the production setter. Used by
-        // `RiskFacetTest.testCalculateHealthFactorZeroLiqThreshold` to
-        // exercise the HF == 0 branch without depending on hardcoded
-        // storage slot offsets.
-        selectors[42] = TestMutatorFacet.setLiqThresholdBpsRaw.selector;
+        // Layout-resilient `loan.liquidationLtvBpsAtInit` writer.
+        // PR2 of internal-match work replaced the old
+        // `setLiqThresholdBpsRaw` (which wrote the retired per-asset
+        // `RiskParams.liqThresholdBps`) with this per-loan snapshot
+        // writer. Used by HF tests to stress the
+        // `liquidationLtvBpsAtInit == 0` branch.
+        selectors[42] = TestMutatorFacet.setLiquidationLtvBpsAtInitRaw.selector;
         // Layout-resilient mapping writers used by EarlyWithdrawal
         // tests to scaffold loan-sale state without slot math.
         selectors[43] = TestMutatorFacet.setOfferIdToLoanIdRaw.selector;
@@ -138,9 +139,19 @@ contract HelperTest {
         // depth-tiered-LTV master kill-switch. Refinance / Preclose /
         // OfferMatch test fixtures use this to assert both regimes
         // (switch ON tier-aware caps + relaxed HF floor; switch OFF
-        // legacy `LTV ≤ maxLtvBps` + `HF ≥ 1.5`) without cutting
+        // legacy `LTV ≤ loanInitMaxLtvBps` + `HF ≥ 1.5`) without cutting
         // ConfigFacet into their minimal diamonds.
         selectors[58] = TestMutatorFacet.setDepthTieredLtvEnabledRaw.selector;
+        // PR2 of internal-match work — per-tier liquidation-LTV
+        // direct-write helper for fixtures that don't cut
+        // ConfigFacet. Used in test setUps to pin all three tiers
+        // to a single value (e.g. 8500) and preserve legacy HF math
+        // that assumed an 85% per-asset threshold.
+        selectors[59] = TestMutatorFacet.setTierLiquidationLtvBpsAllRaw.selector;
+        // PR5 — direct write to `protocolTrackedEscrowBalance` so
+        // execution-body tests can scaffold loans without running
+        // the `initiateLoan` flow.
+        selectors[60] = TestMutatorFacet.setProtocolTrackedEscrowBalanceRaw.selector;
         return selectors;
     }
 
@@ -434,7 +445,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](9);
         selectors[0] = RiskFacet.updateRiskParams.selector;
         selectors[1] = RiskFacet.calculateLTV.selector;
         selectors[2] = RiskFacet.calculateHealthFactor.selector;
@@ -457,6 +468,11 @@ contract HelperTest {
         // by default — the selector is wired but the entry-point
         // reverts `DiscountPathDisabled` until governance flips it.
         selectors[7] = RiskFacet.triggerLiquidationDiscounted.selector;
+        // PR4 of internal-match work — match-liquidation entry point.
+        // Body-less in PR4 (validates and emits placeholder event);
+        // PR5 fills in the cross-vault transfer + incentive payout.
+        // Kill-switch defaults `false` so the selector is dormant.
+        selectors[8] = RiskFacet.triggerInternalMatchLiquidation.selector;
     }
 
     function getClaimFacetSelectors()
@@ -598,7 +614,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](38);
+        selectors = new bytes4[](39);
         selectors[0] = MetricsFacet.getProtocolTVL.selector;
         selectors[1] = MetricsFacet.getProtocolStats.selector;
         selectors[2] = MetricsFacet.getUserCount.selector;
@@ -649,6 +665,11 @@ contract HelperTest {
         selectors[35] = MetricsFacet.getActiveOffersByAssetPair.selector;
         selectors[36] = MetricsFacet.getUserAllOffersWithDetails.selector;
         selectors[37] = MetricsFacet.getActiveOffersByAssetPairRanked.selector;
+        // PR3 of internal-match work — paginated active-loan view
+        // filtered by current LTV. Internal-match bots discover
+        // candidates per block via this. Returns empty while
+        // `internalMatchEnabled == false`.
+        selectors[38] = MetricsFacet.getMatchEligibleLoans.selector;
         return selectors;
     }
 
@@ -742,7 +763,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](72);
+        selectors = new bytes4[](77);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -854,6 +875,16 @@ contract HelperTest {
         selectors[69] = ConfigFacet.setDiscountPathEnabled.selector;
         selectors[70] = ConfigFacet.setTierLiqDiscountBps.selector;
         selectors[71] = ConfigFacet.getTierLiqDiscountBps.selector;
+        // PR2 of internal-match work (2026-05-14) — per-tier
+        // LIQUIDATION threshold setter + view. Replaces the retired
+        // per-asset `RiskParams.liqThresholdBps`.
+        selectors[72] = ConfigFacet.setTierLiquidationLtvBps.selector;
+        selectors[73] = ConfigFacet.getTierLiquidationLtvBps.selector;
+        // PR3 of internal-match work — kill-switch + tunables setter
+        // + bundle view for the internal-liquidation match path.
+        selectors[74] = ConfigFacet.setInternalMatchEnabled.selector;
+        selectors[75] = ConfigFacet.setInternalMatchConfig.selector;
+        selectors[76] = ConfigFacet.getInternalMatchConfigBundle.selector;
         return selectors;
     }
 

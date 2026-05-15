@@ -201,8 +201,8 @@ contract SepoliaPositiveFlows is Script {
 
         // Configure risk parameters for mock tokens
         // maxLtvBps=8000 (80%), liqThreshold=8500 (85%), liqBonus=500 (5%), reserveFactor=1000 (10%)
-        RiskFacet(diamond).updateRiskParams(address(weth), 8000, 8500, 300, 1000);
-        RiskFacet(diamond).updateRiskParams(address(usdc), 8000, 8500, 300, 1000);
+        RiskFacet(diamond).updateRiskParams(address(weth), 8000, 300, 1000);
+        RiskFacet(diamond).updateRiskParams(address(usdc), 8000, 300, 1000);
         console.log("Risk params configured for mock tokens");
 
         // KYC & trade allowances

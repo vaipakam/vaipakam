@@ -327,23 +327,13 @@ contract LoanFacetTest is Test {
             abi.encode(6666)
         );
 
-        // Set maxLtvBps in risk params (assume owner sets)
-        // For mockERC20 collateral: maxLtvBps 8000 (80%)
+        // Set loanInitMaxLtvBps in risk params (assume owner sets)
+        // For mockERC20 collateral: loanInitMaxLtvBps 8000 (80%)
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(
-            mockERC20,
-            8000,
-            8500,
-            300,
-            1000
+        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 300, 1000
         );
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(
-            mockCollateralERC20,
-            8000,
-            8500,
-            300,
-            1000
+        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 300, 1000
         );
 
         // Approve escrows
@@ -519,7 +509,7 @@ contract LoanFacetTest is Test {
     }
 
     function testInitiateLoanRevertsHighLTV() public {
-        // Mock high LTV > maxLtvBps (8000)
+        // Mock high LTV > loanInitMaxLtvBps (8000)
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(RiskFacet.calculateLTV.selector),
@@ -1134,18 +1124,18 @@ contract LoanFacetTest is Test {
     // Piece B (docs/DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md
     // §4.2): when `ConfigFacet.setDepthTieredLtvEnabled(true)`,
     // `LoanFacet._checkInitialLtvAndHf` caps init-LTV at
-    // `min(assetRiskParams.maxLtvBps, cfgTierMaxInitLtvBps(
+    // `min(assetRiskParams.loanInitMaxLtvBps, cfgTierMaxInitLtvBps(
     // getEffectiveLiquidityTier(collateral)))` (50% / 60% / 65% by
     // default) and relaxes the HF floor from `≥ 1.5e18` to `≥ 1e18` —
     // the tier cap is the binding safety buffer, and the protocol
-    // invariant `maxLtvBps ≤ liqThresholdBps` keeps init HF ≥ 1.
+    // invariant `loanInitMaxLtvBps ≤ liqThresholdBps` keeps init HF ≥ 1.
     // Switch-off path is unchanged. These tests cover the `if(tieredOn)`
     // branch the lighter `DepthTieredLtv.t.sol` suite can't reach —
     // mock `getEffectiveLiquidityTier` to control the tier, exercise a
     // full `createOffer` + `acceptOffer` flow against the binding gate.
 
     /// @dev Borrowing above the Tier-1 50% cap (but inside the
-    ///      per-asset `maxLtvBps = 8000`) reverts `InitLtvAboveTier`
+    ///      per-asset `loanInitMaxLtvBps = 8000`) reverts `InitLtvAboveTier`
     ///      with the precise `(ltv, cap)` payload.
     function testDepthTier_initGate_revertsAboveTier1Cap() public {
         ConfigFacet(address(diamond)).setDepthTieredLtvEnabled(true);
@@ -1305,9 +1295,9 @@ contract LoanFacetTest is Test {
         OfferFacet(address(diamond)).acceptOffer(offerId, true);
     }
 
-    /// @dev Switch on, Tier 0 (untierable) ⇒ cap is `min(maxLtvBps, 0) = 0`
+    /// @dev Switch on, Tier 0 (untierable) ⇒ cap is `min(loanInitMaxLtvBps, 0) = 0`
     ///      ⇒ any positive LTV reverts `InitLtvAboveTier(ltv, 0)` — no
-    ///      borrow against a Tier-0 collateral, regardless of `maxLtvBps`.
+    ///      borrow against a Tier-0 collateral, regardless of `loanInitMaxLtvBps`.
     function testDepthTier_initGate_tier0CollateralRejected() public {
         ConfigFacet(address(diamond)).setDepthTieredLtvEnabled(true);
         vm.mockCall(
@@ -1432,8 +1422,8 @@ contract LoanFacetTest is Test {
 
     /// @dev Switch OFF: even with Tier-3 mocked at the keeper level,
     ///      the init gate ignores the tier entirely — only the legacy
-    ///      `LTV ≤ maxLtvBps` + `HF ≥ 1.5` checks run. LTV 7500% < the
-    ///      8000% `maxLtvBps`, HF 2e18 ≥ 1.5e18 → loan goes Active.
+    ///      `LTV ≤ loanInitMaxLtvBps` + `HF ≥ 1.5` checks run. LTV 7500% < the
+    ///      8000% `loanInitMaxLtvBps`, HF 2e18 ≥ 1.5e18 → loan goes Active.
     ///      Mirror test for `testDepthTier_initGate_acceptsBelowTier1Cap`
     ///      with the kill-switch in its default state.
     function testDepthTier_initGate_switchOffIgnoresTier() public {

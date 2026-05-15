@@ -15,6 +15,11 @@ export const LoanStatus = {
   Defaulted: 2,
   Settled: 3,
   FallbackPending: 4,
+  // PR3+ of internal-match work (B.2). Terminal state for a loan
+  // whose principal hits zero via `triggerInternalMatchLiquidation`.
+  // Partial matches stay `Active` with reduced principal/collateral;
+  // only fully-cleared loans transition here.
+  InternalMatched: 5,
 } as const;
 export type LoanStatus = (typeof LoanStatus)[keyof typeof LoanStatus];
 
@@ -37,6 +42,7 @@ export const LOAN_STATUS_LABELS: Record<LoanStatus, string> = {
   [LoanStatus.Defaulted]: 'Defaulted',
   [LoanStatus.Settled]: 'Settled',
   [LoanStatus.FallbackPending]: 'Fallback Pending',
+  [LoanStatus.InternalMatched]: 'Internally Matched',
 };
 
 export const ASSET_TYPE_LABELS: Record<AssetType, string> = {
@@ -90,6 +96,13 @@ export interface LoanDetails {
    *  init. Gates `RepayFacet.repayPartial` — when false, partial-repay
    *  attempts revert with `PartialRepayNotAllowed`. */
   allowsPartialRepay: boolean;
+  /** Per-tier liquidation threshold snapshotted onto the loan at
+   *  `initiateLoan`. PR2 of internal-match work
+   *  (`docs/DesignsAndPlans/InternalLiquidationLedger.md`). Read
+   *  by `RiskFacet.calculateHealthFactor` for HF math + by the
+   *  Dashboard's near-internal-match banner. Zero on illiquid
+   *  loans that never enter the HF path. */
+  liquidationLtvBpsAtInit: bigint;
 }
 
 export type LoanRole = 'lender' | 'borrower';
@@ -130,6 +143,14 @@ export interface LoanSummary {
    *  projection slider on `<LiquidationProjection>` and the
    *  partial-repay action button (when re-enabled). Default false. */
   allowsPartialRepay: boolean;
+  /** Per-tier liquidation threshold snapshotted onto the loan at
+   *  `initiateLoan` time. PR2 of the internal-match work
+   *  (`docs/DesignsAndPlans/InternalLiquidationLedger.md`). Used by
+   *  the Dashboard to surface a "near-liquidation, awaiting
+   *  internal match" warning when the loan's current LTV is
+   *  within 5% of (but still below) this floor. Zero on illiquid
+   *  loans that never enter the HF path. */
+  liquidationLtvBpsAtInit: number;
 }
 
 /**

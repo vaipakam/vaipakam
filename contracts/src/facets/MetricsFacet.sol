@@ -313,6 +313,70 @@ contract MetricsFacet {
         loanIds = _slice(src, offset, limit);
     }
 
+    /// @notice Paginated active-loan IDs filtered by current LTV in
+    ///         `[minLtvBps, maxLtvBps]`. Internal-liquidation match
+    ///         (B.2) bot uses this to discover match-eligible
+    ///         candidates per block — see
+    ///         `docs/DesignsAndPlans/InternalLiquidationLedger.md`.
+    /// @dev    Iterates `s.activeLoanIdsList` from `startIdx`, calls
+    ///         `RiskFacet.calculateLTV(loanId)` per row, returns up
+    ///         to `pageSize` hits where the live LTV lies in the
+    ///         requested band. Illiquid loans (LTV math reverts)
+    ///         are skipped silently — bots scan only HF-eligible
+    ///         positions anyway. The view is gas-bounded only by
+    ///         `pageSize` × oracle-read cost; callers that need
+    ///         to walk the whole active-loan set must paginate via
+    ///         the returned `nextIdx`. Returns `nextIdx == src.length`
+    ///         when the scan reached the end.
+    ///
+    ///         While `internalMatchEnabled == false` returns an empty
+    ///         array — keeps the protocol's match-advertise surface
+    ///         off until governance flips the kill-switch (PR3 of
+    ///         the internal-match scaffold work).
+    /// @param  minLtvBps  Inclusive lower bound on current LTV (BPS).
+    /// @param  maxLtvBps  Inclusive upper bound on current LTV (BPS).
+    /// @param  startIdx   Index into `activeLoanIdsList` to begin from.
+    /// @param  pageSize   Max number of match-eligible IDs returned.
+    /// @return loanIds    The match-eligible loan IDs in order.
+    /// @return nextIdx    Resume index for the next page; equals
+    ///                    `activeLoanIdsList.length` when exhausted.
+    function getMatchEligibleLoans(
+        uint16 minLtvBps,
+        uint16 maxLtvBps,
+        uint256 startIdx,
+        uint256 pageSize
+    ) external view returns (uint256[] memory loanIds, uint256 nextIdx) {
+        if (!LibVaipakam.cfgInternalMatchEnabled()) {
+            // Kill-switch off — surface stays inert.
+            return (new uint256[](0), 0);
+        }
+        if (minLtvBps > maxLtvBps || pageSize == 0) {
+            return (new uint256[](0), startIdx);
+        }
+        uint256[] storage src = LibVaipakam.storageSlot().activeLoanIdsList;
+        uint256 len = src.length;
+        if (startIdx >= len) {
+            return (new uint256[](0), len);
+        }
+        uint256[] memory buf = new uint256[](pageSize);
+        uint256 filled;
+        uint256 i = startIdx;
+        for (; i < len && filled < pageSize; ++i) {
+            uint256 id = src[i];
+            try RiskFacet(address(this)).calculateLTV(id) returns (uint256 ltv) {
+                if (ltv >= uint256(minLtvBps) && ltv <= uint256(maxLtvBps)) {
+                    buf[filled++] = id;
+                }
+            } catch {
+                // Illiquid loan or other LTV-calc revert. Bot
+                // doesn't match against these — skip silently.
+            }
+        }
+        loanIds = new uint256[](filled);
+        for (uint256 k = 0; k < filled; ++k) loanIds[k] = buf[k];
+        nextIdx = i;
+    }
+
     /// @notice Paginated slice of the active-offer list. O(limit) — the
     ///         underlying list is maintained swap-and-pop by LibMetricsHooks.
     /// @dev Symmetric with `getActiveLoansPaginated` so off-chain consumers

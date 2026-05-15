@@ -822,7 +822,7 @@ contract DeployDiamond is Script {
     }
 
     function _getRiskSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](8);
+        s = new bytes4[](9);
         s[0] = RiskFacet.updateRiskParams.selector;
         s[1] = RiskFacet.calculateLTV.selector;
         s[2] = RiskFacet.calculateHealthFactor.selector;
@@ -844,6 +844,12 @@ contract DeployDiamond is Script {
         // selector is wired but the entry-point reverts
         // `DiscountPathDisabled` until governance flips it on per chain.
         s[7] = RiskFacet.triggerLiquidationDiscounted.selector;
+        // PR4 of internal-match work (2026-05-15) — match-liquidation
+        // entry point. Body-less in PR4 (validates and emits placeholder
+        // event); PR5 adds the cross-vault transfer + incentive payout.
+        // Kill-switch `internalMatchEnabled` defaults `false` so the
+        // selector is dormant on every fresh deploy.
+        s[8] = RiskFacet.triggerInternalMatchLiquidation.selector;
     }
 
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {
@@ -1002,7 +1008,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](72);
+        s = new bytes4[](77);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -1125,6 +1131,19 @@ contract DeployDiamond is Script {
         s[69] = ConfigFacet.setDiscountPathEnabled.selector;
         s[70] = ConfigFacet.setTierLiqDiscountBps.selector;
         s[71] = ConfigFacet.getTierLiqDiscountBps.selector;
+        // PR2 of internal-match work (2026-05-14) — per-tier
+        // LIQUIDATION threshold setter + view. Replaces the retired
+        // per-asset `RiskParams.liqThresholdBps`. See
+        // InternalLiquidationLedger.md §0.
+        s[72] = ConfigFacet.setTierLiquidationLtvBps.selector;
+        s[73] = ConfigFacet.getTierLiquidationLtvBps.selector;
+        // PR3 of internal-match work (2026-05-15) — kill-switch +
+        // priority-window + bot-incentive setters + bundle view for
+        // the internal-liquidation match path. See
+        // InternalLiquidationLedger.md §0.
+        s[74] = ConfigFacet.setInternalMatchEnabled.selector;
+        s[75] = ConfigFacet.setInternalMatchConfig.selector;
+        s[76] = ConfigFacet.getInternalMatchConfigBundle.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
@@ -1144,7 +1163,7 @@ contract DeployDiamond is Script {
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](40);
+        s = new bytes4[](41);
         s[0] = MetricsFacet.getProtocolTVL.selector;
         s[1] = MetricsFacet.getProtocolStats.selector;
         s[2] = MetricsFacet.getUserCount.selector;
@@ -1214,6 +1233,11 @@ contract DeployDiamond is Script {
         // are included. See MetricsFacet:734-ish "§8b" block.
         s[38] = MetricsFacet.getUserPositionLoans.selector;
         s[39] = MetricsFacet.getUserPositionOffers.selector;
+        // PR3 of internal-match work (2026-05-15) — paginated
+        // active-loan view filtered by current LTV. Internal-match
+        // bots use this per block to discover candidates; returns
+        // empty while `internalMatchEnabled == false`.
+        s[40] = MetricsFacet.getMatchEligibleLoans.selector;
     }
 
     /// AnalyticalGettersDesign §3.1 — per-user dashboard surface. One

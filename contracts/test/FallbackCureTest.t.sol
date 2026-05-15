@@ -130,7 +130,7 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
         assertEq(uint8(_loanStatus()), uint8(LibVaipakam.LoanStatus.FallbackPending));
     }
 
-    /// @dev With SetupTest mocks (HF=2e18, LTV=6666) and maxLtvBps=8000 for
+    /// @dev With SetupTest mocks (HF=2e18, LTV=6666) and loanInitMaxLtvBps=8000 for
     ///      mockERC20, a collateral top-up immediately satisfies both cure
     ///      caps. Expect status → Active, snapshot cleared, and
     ///      LoanCuredFromFallback emitted with the new collateral total.
@@ -206,8 +206,8 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
         );
     }
 
-    /// @dev When the cure predicate fails on LTV (> maxLtvBps), same
-    ///      no-transition outcome. maxLtvBps for mockERC20 is 8000 per the
+    /// @dev When the cure predicate fails on LTV (> loanInitMaxLtvBps), same
+    ///      no-transition outcome. loanInitMaxLtvBps for mockERC20 is 8000 per the
     ///      SetupTest risk params; we push the mock to 8001.
     function testNoCureWhenLtvStillAboveCap() public {
         vm.mockCall(

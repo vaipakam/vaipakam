@@ -411,24 +411,30 @@ contract SetupTest is Test {
             abi.encode(6666)
         );
 
-        // Set maxLtvBps in risk params (assume owner sets)
-        // For mockERC20 collateral: maxLtvBps 8000 (80%)
+        // Set loanInitMaxLtvBps in risk params (assume owner sets)
+        // For mockERC20 collateral: loanInitMaxLtvBps 8000 (80%)
         vm.prank(owner);
         RiskFacet(address(diamond)).updateRiskParams(
             mockERC20,
             8000,
-            8500,
             300,
             1000
         );
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(
-            mockCollateralERC20,
-            8000,
-            8500,
-            300,
-            1000
+        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 300, 1000
         );
+
+        // PR2 of internal-match work (2026-05-14) — per-tier
+        // LIQUIDATION threshold replaces the retired per-asset
+        // `liqThresholdBps`. Tests historically tuned HF math against
+        // an 85% (8500 BPS) threshold; pin every tier to 8500 here so
+        // every loan's snapshot lands on the legacy value. Production
+        // defaults (9000 / 8500 / 8000) and the cross-tier monotonic
+        // invariant are exercised by the dedicated tier-liquidation
+        // setter tests. Uses the TestMutatorFacet direct-write
+        // helper because some downstream test diamonds don't cut
+        // `ConfigFacet`.
+        TestMutatorFacet(address(diamond)).setTierLiquidationLtvBpsAllRaw(8500, 8500, 8500);
 
         // Mock oracle: Set liquid for mockERC20, illiquid for others.
         // Mock both the classification (checkLiquidity) and execution-routing

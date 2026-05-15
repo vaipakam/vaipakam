@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability disclosure
+    url: https://github.com/vaipakam/vaipakam/blob/main/docs/ops/IncidentRunbook.md
+    about: Do NOT file a public Issue for asset-loss / oracle drift / sanctions bypass / cross-chain message forgery. Read the IncidentRunbook for the private disclosure channel first.
+  - name: Audit-related coordination
+    url: https://github.com/vaipakam/vaipakam/labels/audit
+    about: Existing audit-tagged Issues. Add `audit` label to anything that requires or relates to an external audit pass.
+  - name: Documentation question
+    url: https://vaipakam.com/userguide
+    about: User-guide answers most operational questions. File an Issue only if the docs are wrong or missing.

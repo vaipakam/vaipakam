@@ -103,8 +103,8 @@ contract PositiveFlowsGapFillers is Test {
         AdminFacet(address(diamond)).setallowanceTarget(makeAddr("zeroExAllowance"));
 
         ProfileFacet(address(diamond)).setTradeAllowance("US", "US", true);
-        RiskFacet(address(diamond)).updateRiskParams(mockUSDC, 8000, 8500, 300, 1000);
-        RiskFacet(address(diamond)).updateRiskParams(mockWETH, 8000, 8500, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockUSDC, 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockWETH, 8000, 300, 1000);
 
         _mockOracle();
         _onboardActor(lender);
@@ -116,8 +116,7 @@ contract PositiveFlowsGapFillers is Test {
     // ─────────────────────────────────────────────────────────────────────
 
     /// @notice README §16 allows a country-pair (e.g. US↔US) to transact.
-    ///         Confirms the allow list actually drives a full lifecycle,
-    ///         not just that a rejected pair reverts.
+    ///         Confirms the allow list actually drives a full lifecycle, ///         not just that a rejected pair reverts.
     function test_Positive_CountryPairAllow_FullLifecycle() public {
         // Both actors on the allow-listed "US" pair — setUp pinned this.
         // (No public read-back for allowances exists; positive execution

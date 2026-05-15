@@ -417,7 +417,7 @@ the whole open market and should only fire on a real incident.
 
 ---
 
-## Related runbooks
+## Related runbooks + sibling rollout
 
 - [`AdminConfigurableKnobsAndSwitches.md`](AdminConfigurableKnobsAndSwitches.md)
   — broader index of every governance lever.
@@ -425,3 +425,25 @@ the whole open market and should only fire on a real incident.
   response playbook, including pause / unpause sequences.
 - [`DeploymentRunbook.md`](DeploymentRunbook.md) — the canonical
   per-chain deploy order this runbook slots into.
+- **Depth-tiered-LTV per-chain rollout** (sibling — same shape,
+  different kill-switch). The same 6-step pattern this runbook
+  documents for `discountPathEnabled` applies in parallel for
+  `depthTieredLtvEnabled`; the audit covers both layers together.
+  Differences:
+  - The depth-tier flip additionally requires running
+    [`contracts/script/ConfigureV2Factories.s.sol`](../../contracts/script/ConfigureV2Factories.s.sol)
+    per chain to wire the Uni-V2-fork pools into the route search
+    (canonical addresses are built into the script; per-chain
+    overrides via env). Without this, long-tail / mid-cap assets
+    under-tier.
+  - No off-chain receiver contract to deploy — the depth-tier
+    init gate is internal to the diamond.
+  - Decision flow / governance gating documented in
+    [`docs/DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md`](../DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md)
+    §4.4.
+  - Master kill-switch is independent — governance can flip
+    `depthTieredLtvEnabled` and `discountPathEnabled` on different
+    chains / different timelines.
+- [`../internal/PendingTasks-2026-05-14.md`](../internal/PendingTasks-2026-05-14.md)
+  — full inventory of operational follow-ups across both rollouts
+  + the older `docs/ToDo.md` backlog.

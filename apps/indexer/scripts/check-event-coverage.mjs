@@ -63,6 +63,10 @@ const DELIBERATELY_NOT_HANDLED = {
   AutoDailyDeducted: 'NFT-rental daily-fee deduction — surfaced via activity_events, no loans row field for it',
   HFLiquidationTriggered:
     'liquidation-attempt marker — the actual status change to Defaulted arrives via LoanLiquidated / LoanDefaulted, which ARE handled',
+  LoanPartiallyLiquidated:
+    'partial-liquidation companion event — surfaced via activity_events but the loans row keeps its Active status with reduced principal/collateral (read via live RPC getLoanDetails). Schema-side indexing is a follow-up.',
+  LiquidationDiscounted:
+    'discount-path companion event (flash-loan path, FlashLoanLiquidationPath.md) — surfaced via activity_events; the loan-status flip to Defaulted arrives via LoanDefaulted which IS handled.',
 };
 
 /** Recursively collect every `.sol` file under a directory. */

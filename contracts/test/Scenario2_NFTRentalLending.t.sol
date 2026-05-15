@@ -222,7 +222,7 @@ contract Scenario2_NFTRentalLending is Test {
 
         // Risk params for USDC collateral
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockUSDC, 8000, 8500, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockUSDC, 8000, 300, 1000);
 
         // Create escrows for both parties (must happen before escrow approvals)
         lenderEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender);

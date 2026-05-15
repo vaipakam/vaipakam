@@ -36,7 +36,7 @@ import {OracleFacet} from "./OracleFacet.sol";
  *           leg is illiquid and the combined consent is missing, revert
  *           NonLiquidAsset. Lender-sale vehicle offers bypass this and the
  *           LTV/HF gates below (they carry no real collateral).
- *        3. Enforce LTV ≤ assetRiskParams.maxLtvBps and HF ≥ 1.5e18 for
+ *        3. Enforce LTV ≤ assetRiskParams.loanInitMaxLtvBps and HF ≥ 1.5e18 for
  *           fully-liquid loans; skipped when the combined fallback consent is
  *           latched, since illiquid collateral is valued at $0 per README.
  *        4. For NFT-asset loans, compute prepaid rental amount and
@@ -144,7 +144,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
      *        - NonLiquidAsset — either leg illiquid without the combined
      *          abnormal-market + illiquid-assets fallback consent from
      *          both counterparties.
-     *        - LTVExceeded — LTV above assetRiskParams.maxLtvBps.
+     *        - LTVExceeded — LTV above assetRiskParams.loanInitMaxLtvBps.
      *        - HealthFactorTooLow — HF < 1.5e18.
      *        - LTVCalculationFailed / HealthFactorCalculationFailed — risk
      *          staticcall reverted.
@@ -454,18 +454,18 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
      *      docs/DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md §4.2):
      *
      *        • OFF (the default — and the state during the testnet bake):
-     *          today's gate, unchanged — `LTV ≤ assetRiskParams.maxLtvBps`
+     *          today's gate, unchanged — `LTV ≤ assetRiskParams.loanInitMaxLtvBps`
      *          and `HF ≥ 1.5e18`. Effectively ~53% LTV on an ~82%
      *          liq-threshold.
      *
-     *        • ON: cap the init-LTV at `min(assetRiskParams.maxLtvBps,
+     *        • ON: cap the init-LTV at `min(assetRiskParams.loanInitMaxLtvBps,
      *          tierMaxInitLtvBps[effectiveTier(collateral)])` — the
      *          depth-graded ceiling (50% / 60% / 65% for Tier 1/2/3;
      *          `0` for a Tier-0 / untierable collateral, which makes any
      *          positive LTV revert). The `HF ≥ 1.5e18` floor is relaxed
      *          to `HF ≥ 1e18` (not-born-already-liquidatable) because the
      *          tier cap is the binding safety constraint and — given the
-     *          protocol invariant `maxLtvBps ≤ liqThresholdBps` — it
+     *          protocol invariant `loanInitMaxLtvBps ≤ liqThresholdBps` — it
      *          already implies a positive init buffer (`HF_init =
      *          liqThreshold / cap ≥ 1`). Per-asset `liqThresholdBps` (the
      *          liquidation trigger) is untouched in either regime.
@@ -486,10 +486,10 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         );
         if (!ltvSuccess) revert LTVCalculationFailed();
         uint256 ltv = abi.decode(ltvResult, (uint256));
-        uint256 maxLtvBps = LibVaipakam
+        uint256 loanInitMaxLtvBps = LibVaipakam
             .storageSlot()
             .assetRiskParams[collateralAsset]
-            .maxLtvBps;
+            .loanInitMaxLtvBps;
         bool tieredOn = LibVaipakam.cfgDepthTieredLtvEnabled();
 
         if (tieredOn) {
@@ -525,9 +525,9 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             uint256 tierCap = uint256(
                 LibVaipakam.effectiveTierMaxInitLtvBps(effTier)
             );
-            uint256 cap = maxLtvBps < tierCap ? maxLtvBps : tierCap;
+            uint256 cap = loanInitMaxLtvBps < tierCap ? loanInitMaxLtvBps : tierCap;
             if (ltv > cap) revert InitLtvAboveTier(ltv, cap);
-        } else if (ltv > maxLtvBps) {
+        } else if (ltv > loanInitMaxLtvBps) {
             revert LTVExceeded();
         }
 
@@ -738,6 +738,37 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // parties agreed to these specific splits.
         loan.fallbackLenderBonusBpsAtInit = uint16(LibVaipakam.cfgFallbackLenderBonusBps());
         loan.fallbackTreasuryBpsAtInit = uint16(LibVaipakam.cfgFallbackTreasuryBps());
+        // Snapshot the effective per-tier LIQUIDATION threshold (PR2 of
+        // internal-match work, 2026-05-14). Replaces the retired
+        // per-asset `RiskParams.liqThresholdBps`. Read by
+        // `RiskFacet.calculateHealthFactor` /
+        // `isCollateralValueCollapsed` / `PartialWithdrawalFacet` for
+        // the loan's entire lifetime. Snapshot semantics mirror the
+        // fallback split above — any subsequent admin tune via
+        // `ConfigFacet.setTierLiquidationLtvBps` applies prospectively
+        // only. Illiquid collateral leaves the field at 0 (the HF
+        // consumers revert `IlliquidLoanNoRiskMath` upstream so the
+        // zero never reaches math). When the asset IS liquid but the
+        // depth-tier classifier returns 0 (e.g. test envs where pool
+        // depth isn't simulated), `cfgTierLiquidationLtvBps(0)`
+        // already returns the conservative Tier-3 default — no
+        // further fallback needed here.
+        if (collateralLiquidity == LibVaipakam.LiquidityStatus.Liquid) {
+            // Low-level staticcall + fallback so the snapshot stays
+            // operational on test diamonds that don't cut
+            // `getEffectiveLiquidityTier` into their oracle surface.
+            // Failure ⇒ treat as tier 0 (unclassified); the
+            // `cfgTierLiquidationLtvBps(0)` helper returns the
+            // conservative Tier-3 default anyway.
+            (bool ok, bytes memory ret) = address(this).staticcall(
+                abi.encodeWithSelector(
+                    OracleFacet.getEffectiveLiquidityTier.selector,
+                    loan.collateralAsset
+                )
+            );
+            uint8 effTier = ok ? abi.decode(ret, (uint8)) : 0;
+            loan.liquidationLtvBpsAtInit = uint16(LibVaipakam.cfgTierLiquidationLtvBps(effTier));
+        }
     }
 
     function _copyCollateralAssetFields(

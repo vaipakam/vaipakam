@@ -41,6 +41,7 @@ import { SanctionsBanner } from '../components/app/SanctionsBanner';
 import { Pager } from '../components/app/Pager';
 import { CardInfo } from '../components/CardInfo';
 import { HoverTip } from '../components/HoverTip';
+import { isNearInternalMatchWindow } from '../lib/internalMatchSignals';
 import { Picker } from '@vaipakam/ui/Picker';
 import { Users, Activity as ActivityIcon, ListOrdered } from 'lucide-react';
 import './Dashboard.css';
@@ -605,6 +606,23 @@ export default function Dashboard() {
                       <span className={`status-badge ${LOAN_STATUS_LABELS[loan.status].toLowerCase()}`}>
                         {LOAN_STATUS_LABELS[loan.status]}
                       </span>
+                      {/* B.2.2 — near-internal-match CTA. Surfaces
+                          when the loan's current LTV is within 5%
+                          (but still below) its snapshotted
+                          liquidation threshold. Borrower-side
+                          rows only — lenders don't need this
+                          warning, the match path is to their
+                          advantage. */}
+                      {loan.role === 'borrower' && isNearInternalMatchWindow(
+                        loan,
+                        risks.get(loan.id.toString())?.ltv ?? null,
+                      ) && (
+                        <HoverTip text={t('dashboard.nearInternalMatchTooltip')}>
+                          <span className="status-badge near-match" style={{ marginLeft: 4 }}>
+                            {t('dashboard.nearInternalMatch')}
+                          </span>
+                        </HoverTip>
+                      )}
                     </td>
                     <td>
                       {/* The View button used to live here; it was

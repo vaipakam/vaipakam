@@ -1514,29 +1514,9 @@ General design requirements:
 
 Highest priority public metrics should include:
 
-```solidity
-function getProtocolTVL() external view returns (
-    uint256 tvlInNumeraire,
-    uint256 erc20CollateralTVL,
-    uint256 nftCollateralTVL
-);
-
-function getProtocolStats() external view returns (
-    uint256 totalUniqueUsers,
-    uint256 activeLoansCount,
-    uint256 activeOffersCount,
-    uint256 totalLoansEverCreated,
-    uint256 totalVolumeLentNumeraire,
-    uint256 totalInterestEarnedNumeraire,
-    uint256 defaultRateBps,           // e.g. 250 = 2.5%
-    uint256 averageAPR
-);
-
-function getUserCount() external view returns (uint256);
-function getActiveLoansCount() external view returns (uint256);
-function getActiveOffersCount() external view returns (uint256);
-function getTotalInterestEarnedNumeraire() external view returns (uint256);
-```
+- total protocol value locked in the active numeraire, with separate ERC-20 collateral and NFT collateral breakdowns
+- total unique users, active loan count, active offer count, lifetime loan count, lifetime lending volume in the active numeraire, total interest earned, default rate, and average APR
+- lightweight headline counters for user count, active loans, active offers, and total interest earned
 
 These functions are intended to support the Vaipakam public analytics dashboard and external TVL / protocol-tracker integrations.
 
@@ -1544,15 +1524,8 @@ These functions are intended to support the Vaipakam public analytics dashboard 
 
 Config and constant views should include:
 
-```solidity
-function getProtocolConfigBundle() external view returns (...);
-function getProtocolConstants() external pure returns (
-    uint256 minHealthFactor,
-    uint256 vpfiStakingPoolCap,
-    uint256 vpfiInteractionPoolCap,
-    uint256 maxInteractionClaimDays
-);
-```
+- one bundled read for governance-mutable protocol configuration values used by the frontend, keepers, dashboards, and operator tools
+- one stable read for compile-time protocol constants, including minimum Health Factor, VPFI staking pool cap, VPFI interaction-reward pool cap, and the maximum interaction-reward claim window
 
 `getProtocolConfigBundle()` is the source for governance-mutable values such as fees, slippage settings, rental buffer, staking APR, VPFI discount tiers, Range Orders master flags, matcher-fee BPS, and the live maximum offer duration. `getProtocolConstants()` is the source for compile-time constants such as `MIN_HEALTH_FACTOR`, VPFI pool caps, and the maximum interaction-reward claim window.
 The config bundle should also expose the depth-tiered-LTV switch and frontend-needed risk knobs when present, including baseline liquidity floor size, tier test sizes, current tier max-init-LTV values, tier safety boxes, tier haircuts, slippage budget, keeper confidence tier metadata, tier-LTV cache timestamps, stale-cache warning threshold, peer protocol address presence, partial-liquidation fraction bounds, partial Health Factor target buffer, split-route improvement threshold, discount-path enabled state, and effective per-tier liquidation discounts.
@@ -1561,16 +1534,10 @@ The config bundle should also expose the depth-tiered-LTV switch and frontend-ne
 
 Treasury, fee, and revenue views should include:
 
-```solidity
-function getTreasuryMetrics() external view returns (
-    uint256 treasuryBalanceNumeraire,
-    uint256 totalFeesCollectedNumeraire,    // 1% interest + 1% late fees
-    uint256 feesLast24hNumeraire,
-    uint256 feesLast7dNumeraire
-);
-
-function getRevenueStats(uint256 days) external view returns (uint256 totalRevenueNumeraire);
-```
+- treasury balance in the active numeraire
+- total fees collected in the active numeraire, including ordinary interest and late-fee revenue
+- rolling fee totals for recent windows such as the last 24 hours and last 7 days
+- configurable revenue-window totals for public reporting and tokenomics dashboards
 
 These functions are especially useful for treasury transparency, tokenomics reporting, listings, and public revenue dashboards.
 
@@ -1578,23 +1545,12 @@ These functions are especially useful for treasury transparency, tokenomics repo
 
 Loan and offer analytics helpers should include:
 
-```solidity
-function getLoanDetails(uint256 loanId) external view returns (/* full Loan struct */);
-function getOfferDetails(uint256 offerId) external view returns (/* full Offer struct */);
-
-function getActiveLoansPaginated(uint256 offset, uint256 limit) external view returns (uint256[] memory loanIds);
-function getActiveOffersPaginated(uint256 offset, uint256 limit) external view returns (uint256[] memory offerIds);
-function getActiveOffersByAsset(address asset, uint256 offset, uint256 limit) external view returns (uint256[] memory offerIds);
-function getActiveOffersByAssetPair(address lendingAsset, address collateralAsset, uint256 offset, uint256 limit) external view returns (uint256[] memory offerIds);
-function getUserOffersDetailed(address user, uint256 offset, uint256 limit) external view returns (/* Offer[] rows, total */);
-function getUserLoanRows(address user, uint256 offset, uint256 limit) external view returns (/* dashboard loan rows tagged with side, total */);
-
-function getLoanSummary() external view returns (
-    uint256 totalActiveLoanValueNumeraire,
-    uint256 averageLoanDuration,
-    uint256 averageLTV
-);
-```
+- full loan and full offer detail reads by identifier
+- paginated active-loan and active-offer discovery for scalable public lists
+- active-offer filtering by individual asset and by lending/collateral asset pair
+- detailed per-user offer rows with pagination so user tables do not need one read per offer
+- bundled per-user loan rows tagged with the connected user's lender or borrower side for dashboard use
+- aggregate loan-summary values, including active-loan value in the active numeraire, average loan duration, and average LTV
 
 These functions help public dashboards, market pages, listing views, and research tools inspect protocol activity without forcing expensive full-history scans for every page load.
 
@@ -1602,25 +1558,11 @@ These functions help public dashboards, market pages, listing views, and researc
 
 For ERC-4907-style rentals and escrow analytics, the protocol should expose:
 
-```solidity
-function getEscrowStats() external view returns (
-    uint256 totalNFTsInEscrow,
-    uint256 activeRentalsCount,
-    uint256 totalRentalVolumeNumeraire
-);
-
-function getNFTRentalDetails(uint256 tokenId) external view returns (/* rental struct */);
-
-function getTotalNFTsInEscrowByCollection(address collection) external view returns (uint256);
-
-function getProtocolTrackedEscrowBalance(address user, address token) external view returns (uint256);
-
-function recoveryNonce(address user) external view returns (uint256);
-
-function recoveryAckTextHash() external view returns (bytes32);
-
-function recoveryDomainSeparator() external view returns (bytes32);
-```
+- escrow-wide NFT counts, active rental counts, and total rental volume in the active numeraire
+- NFT rental detail reads by token identifier
+- collection-level escrow counts for public collection transparency
+- protocol-tracked ERC-20 vault balances for a user and token, so user-facing balances can ignore unsolicited dust
+- stuck-token recovery metadata required to verify the user's recovery acknowledgement and replay protection
 
 These functions support rental analytics, vault transparency, collection-level monitoring, tracked-balance display, and stuck-token recovery UX.
 
@@ -1628,56 +1570,23 @@ These functions support rental analytics, vault transparency, collection-level m
 
 Risk and asset-support helpers should include:
 
-```solidity
-function getAssetRiskProfile(address token) external view returns (
-    bool isSupported,
-    uint8 status,                     // LibVaipakam.LiquidityStatus enum
-    uint256 maxLtvBps,
-    uint256 liqThresholdBps,
-    uint256 liqBonusBps
-);
-
-function getAssetLiquidityTier(address token) external view returns (uint8 tier);
-function getAssetEffectiveLiquidityTier(address token) external view returns (uint8 effectiveTier);
-function effectiveTierMaxInitLtvBps(uint8 effectiveTier) external view returns (uint256 maxInitLtvBps);
-function effectiveTierLiqDiscountBps(uint8 effectiveTier) external view returns (uint256 discountBps);
-function getTierLtvCache(uint8 tier) external view returns (uint256 maxInitLtvBps, uint64 lastRefreshed);
-function refreshTierLtvCache() external returns (bool anyUpdated);
-function tryGetAssetPrice(address token) external view returns (bool ok, uint256 priceNumeraire);
-function getIlliquidAssets() external view returns (address[] memory);
-function isAssetSupported(address token) external view returns (bool);
-```
+- asset support status, liquidity classification, maximum LTV, liquidation threshold, and liquidation bonus
+- raw liquidity tier and effective liquidity tier after keeper confidence limits are applied
+- tier-specific maximum initiation LTV and tier-specific liquidation discount values
+- tier-LTV cache values and freshness timestamps, plus a permissionless refresh path for the cache
+- safe price-read status and active-numeraire price where available
+- illiquid-asset enumeration and a simple asset-support check for integrations
 
 These functions help external dashboards and integrations understand current support, liquidity classification, tiered collateral capacity, and collateral risk configuration on the active network. The risk profile helper does not return a live numeraire price; consumers that need pricing should use the dedicated oracle / price read surface instead of inferring it from this tuple.
 The tier-LTV cache helpers let frontend, keepers, and operator tools distinguish fresh peer-derived tier caps from library fallback defaults.
 
 Additional oracle-hardening views should expose active per-feed overrides and configured secondary-oracle settings where practical, including:
 
-```solidity
-function getFeedOverride(address feed) external view returns (
-    uint256 maxStaleness,
-    int256 minValidAnswer
-);
-
-function getSecondaryOracleConfig() external view returns (
-    address tellorOracle,
-    address api3ServerV1,
-    address diaOracleV2,
-    uint16 maxDeviationBps,
-    uint40 maxStaleness
-);
-
-function getPredominantDenominator() external view returns (address);
-function getPredominantDenominatorSymbol() external view returns (bytes32);
-function getEthPadFeed() external view returns (address);
-function getPadNumeraireRateFeed() external view returns (address);
-function getAssetNumeraireDirectFeedOverride(address asset) external view returns (address);
-function getPeerProtocolAddresses() external view returns (
-    address aaveV3DataProvider,
-    address compoundV3Comet,
-    address morphoBlue
-);
-```
+- per-feed override freshness and minimum-answer rules
+- configured secondary oracle providers and their deviation / freshness limits
+- active predominantly available denominator address, symbol, ETH/PAD feed, and PAD/numeraire feed
+- per-asset direct numeraire feed overrides
+- configured peer-protocol addresses used for tier-LTV comparison and cache refresh
 
 These readbacks let operators, auditors, and frontend safety surfaces verify that high-value assets are using the intended freshness floors and secondary-oracle deviation bounds.
 
@@ -1685,21 +1594,10 @@ These readbacks let operators, auditors, and frontend safety surfaces verify tha
 
 For portfolio tracking and wallet integrations, the protocol should expose:
 
-```solidity
-function getUserSummary(address user) external view returns (
-    uint256 totalCollateralNumeraire,
-    uint256 totalBorrowedNumeraire,
-    uint256 availableToClaimNumeraire,
-    uint256 healthFactor,             // >1 = safe
-    uint256 activeLoanCount
-);
-
-function getUserActiveLoans(address user) external view returns (uint256[] memory loanIds);
-function getUserActiveOffers(address user) external view returns (uint256[] memory offerIds);
-function getUserPositionLoans(address user) external view returns (uint256[] memory loanIds, uint256[] memory tokenIds);
-function getUserPositionOffers(address user) external view returns (uint256[] memory offerIds, uint256[] memory tokenIds);
-function getUserNFTsInEscrow(address user) external view returns (uint256[] memory tokenIds);
-```
+- user-level collateral, borrowed amount, claimable amount, Health Factor, and active-loan count
+- active-loan and active-offer identifiers for a user
+- loan and offer positions currently controlled by the user's Vaipakam position NFTs, including the relevant token identifiers
+- NFT identifiers currently held in escrow for the user
 
 `getUserPositionLoans` and `getUserPositionOffers` should enumerate the connected user's current Vaipakam position NFTs and resolve them through loan / offer reverse maps. They are the preferred on-chain fallback for secondary-market recipients because they scale with the user's NFT count rather than with global protocol loan or offer counts.
 
@@ -1709,16 +1607,8 @@ These remain public view functions, but frontend and integration usage should st
 
 For auditors, regulators, researchers, and public transparency tooling, the protocol should also expose:
 
-```solidity
-function getProtocolHealth() external view returns (
-    uint256 utilizationRateBps,
-    uint256 totalCollateralNumeraire,
-    uint256 totalDebtNumeraire,
-    bool isPaused
-);
-
-function getBlockTimestamp() external view returns (uint256); // for freshness checks
-```
+- protocol utilization, total collateral, total debt, and pause status
+- a freshness timestamp that callers can compare against their own data snapshots
 
 These helpers support data-freshness checks, exportable transparency views, and verifiable protocol-health reporting.
 

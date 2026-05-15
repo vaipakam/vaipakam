@@ -238,6 +238,8 @@ CONFIRM_DVN=0
 CONFIRM_ORPHANS=0
 FRESH=0
 CONFIRM_PURGE_MAINNET=0
+CONFIRM_HW_SIGNER=0
+CONFIRM_DEADLINE_RESET=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -254,6 +256,18 @@ while [ $# -gt 0 ]; do
     # genuinely intends to abandon the prior on-chain deploy.
     --confirm-purging-prior-mainnet-deploy) CONFIRM_PURGE_MAINNET=1 ;;
     --confirm-orphans-prior-onchain-state)  CONFIRM_ORPHANS=1 ;;
+    # Ratified 2026-05-14 — operator's signed statement that the
+    # Admin EOA's signing path is a hardware wallet, not a .env
+    # hot key. The script can't verify the signing path directly,
+    # but the flag's presence is recorded in .markers/ for the
+    # audit trail.
+    --confirm-mainnet-hardware-signer) CONFIRM_HW_SIGNER=1 ;;
+    # Operator's intentional override of the 48h handover deadline
+    # (e.g. config truly took longer than 48h for legitimate
+    # reasons — a chain bridge outage, an LZ DVN re-config).
+    # Resetting the timestamp restarts the 48h window. Logged in
+    # .markers/ for the audit trail.
+    --reset-handover-deadline) CONFIRM_DEADLINE_RESET=1 ;;
     *)
       echo "Unknown flag: $1" >&2
       exit 1
@@ -388,6 +402,49 @@ phase_preflight() {
   DEPLOYER_ADDR=$(cast wallet address --private-key "$DEPLOYER_PRIVATE_KEY" 2>/dev/null || echo "?")
   BAL=$(cast balance "$DEPLOYER_ADDR" --rpc-url "$RPC" 2>/dev/null || echo "?")
   echo "  ✓ Deployer:  $DEPLOYER_ADDR    balance: $BAL wei"
+
+  # 3b. Mainnet hardware-wallet enforcement (ratified 2026-05-14).
+  # The Admin EOA holds ADMIN_ROLE / ORACLE_ADMIN_ROLE / etc.
+  # during the entire config window between `--phase contracts`
+  # and `--phase handover`. On mainnet that's hours-to-days of
+  # window during which compromising the .env private key gives
+  # an attacker full protocol control (rotate oracles, set fee
+  # parameters to absurd values, pause indefinitely, grant new
+  # roles, transferOwnership somewhere else — bricking the
+  # planned multisig handover). Refuse to broadcast on mainnet
+  # unless the operator has explicitly asserted they're using a
+  # hardware signer (Ledger / Trezor / Frame / similar) rather
+  # than a hot key from .env.
+  #
+  # Testnets are exempt (--confirm flag bypass not needed there;
+  # this whole script refuses non-mainnet chains, and
+  # `deploy-chain.sh` keeps the .env flow for rehearsal
+  # convenience).
+  if [ "$CONFIRM_HW_SIGNER" != "1" ]; then
+    echo
+    echo "FAIL: mainnet deploy requires hardware-wallet for Admin EOA."
+    echo
+    echo "Refusing to broadcast with ADMIN_PRIVATE_KEY sourced from .env"
+    echo "on MAINNET. The Admin EOA holds ADMIN_ROLE / ORACLE_ADMIN_ROLE"
+    echo "during the entire config window between --phase contracts and"
+    echo "--phase handover (typically hours-to-days). Hot-key compromise"
+    echo "during that window = full protocol control to the attacker."
+    echo
+    echo "Required:"
+    echo "  1. Configure your signing path to a hardware wallet"
+    echo "     (Ledger / Trezor / Frame / etc.) for the Admin EOA."
+    echo "  2. Re-run with --confirm-mainnet-hardware-signer to attest"
+    echo "     you've done so. (The flag is the operator's signed"
+    echo "     statement; the script can't verify the signing path"
+    echo "     directly — but the audit trail in .markers/ records"
+    echo "     that the flag was passed.)"
+    echo
+    echo "Testnet rehearsal in apps/keeper / deploy-chain.sh keeps the"
+    echo ".env hot-key flow for convenience. Mainnet does not."
+    echo
+    exit 1
+  fi
+  echo "  ✓ Mainnet hardware-signer attestation passed"
 
   # 4. WETH-pull check (if applicable)
   if [ -n "$WETH_PULL_VAR" ]; then
@@ -695,6 +752,30 @@ EOF
 }
 EOF
   mark_phase_done "contracts"
+
+  # Ratified 2026-05-14 — 48h Admin EOA → Multisig handover deadline.
+  # Write the timestamp at which the Admin EOA TOOK OWNERSHIP of the
+  # newly-deployed Diamond. From here forward, the entire config
+  # window (LZ wiring, oracle config, peer protocols, NFT URIs, VPFI
+  # buy, swap adapters) runs against this hot Admin EOA; the
+  # planned `--phase handover` step rotates ownership off it onto
+  # the Timelock + Pauser Safe.
+  #
+  # The deadline is enforced at the top of `phase_handover` — if
+  # more than 48 hours have elapsed without `--phase handover`
+  # landing, the script refuses to proceed. Either the operator
+  # finishes within the window (industry-standard practice) OR
+  # they pass `--reset-handover-deadline` after reviewing why
+  # the window slipped (e.g. an LZ DVN config failure that needed
+  # a rebroadcast, a bridge outage). The marker write itself
+  # is the audit-trail anchor — the timestamp is human-readable
+  # ISO-8601 to make the audit obvious.
+  date +"%s" > "$MARKERS_DIR/handover-deadline-start.ts"
+  date +"%Y-%m-%dT%H:%M:%S%z" > "$MARKERS_DIR/handover-deadline-start.iso"
+  echo "  ✓ Handover deadline clock started:"
+  echo "    Admin EOA owns the Diamond as of $(cat "$MARKERS_DIR/handover-deadline-start.iso")"
+  echo "    --phase handover MUST land within 48 hours."
+
   echo
   echo "Next:"
   echo "  1. --phase abi-sync   (sync the freshly-written addresses.json)"
@@ -869,6 +950,60 @@ need to be reachable.
 Re-run with --confirm-i-have-multisig-ready once they are.
 EOF
     exit 1
+  fi
+
+  # ── 48h Admin EOA → Multisig handover deadline (ratified 2026-05-14) ──
+  # The hot Admin EOA holds ADMIN_ROLE during the entire config
+  # window between `--phase contracts` (when the timestamp was
+  # written) and now. On mainnet that window is real-value exposure
+  # — hard-cap at 48h to bound key-compromise blast radius.
+  # Operator overrides via --reset-handover-deadline only after
+  # documenting WHY the window slipped (DVN reconfig, bridge
+  # outage, etc.) in their incident log.
+  if [ -f "$MARKERS_DIR/handover-deadline-start.ts" ]; then
+    DEADLINE_START=$(cat "$MARKERS_DIR/handover-deadline-start.ts")
+    NOW_TS=$(date +"%s")
+    ELAPSED=$((NOW_TS - DEADLINE_START))
+    DEADLINE_SECS=$((48 * 3600))
+    if [ "$ELAPSED" -gt "$DEADLINE_SECS" ]; then
+      ELAPSED_HOURS=$((ELAPSED / 3600))
+      if [ "$CONFIRM_DEADLINE_RESET" != "1" ]; then
+        cat >&2 <<EOF
+
+FAIL: Admin EOA → Multisig handover deadline EXCEEDED (mainnet).
+
+Elapsed: ${ELAPSED_HOURS}h since the deadline clock started at:
+  $(cat "$MARKERS_DIR/handover-deadline-start.iso")
+
+The 48h cap exists to bound the hot Admin EOA's key-compromise
+blast radius. Refusing to proceed.
+
+If the slippage is legitimate (LZ DVN reconfig forced a
+rebroadcast, a bridge outage, a multisig signer scheduling
+issue), document the reason in your incident log and re-run with
+--reset-handover-deadline to acknowledge the override. The
+override is logged in .markers/handover-deadline.log for the
+audit trail.
+
+If the slippage is NOT legitimate (key may be exposed; deploy
+was paused for unrelated reasons; etc.), you should ABORT this
+mainnet deploy and start fresh:
+  1. Have governance pause the still-pending Diamond.
+  2. transferOwnership to a fresh Admin EOA (or directly to
+     Multisig if the config is unsalvageable).
+  3. Re-deploy from scratch on the next mainnet window.
+
+EOF
+        exit 1
+      fi
+      echo "  ⚠ Handover deadline EXCEEDED (${ELAPSED_HOURS}h)"
+      echo "  ✓ --reset-handover-deadline acknowledged — proceeding"
+      date +"%Y-%m-%dT%H:%M:%S%z elapsed=${ELAPSED_HOURS}h reset=ack" \
+        >> "$MARKERS_DIR/handover-deadline.log"
+    else
+      ELAPSED_HOURS=$((ELAPSED / 3600))
+      echo "  ✓ Handover deadline OK: ${ELAPSED_HOURS}h elapsed of 48h budget"
+    fi
   fi
 
   # ── Multisig-bytecode preflight ─────────────────────────────────

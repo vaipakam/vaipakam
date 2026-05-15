@@ -201,7 +201,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
         );
 
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockUSDC, 8000, 8500, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockUSDC, 8000, 300, 1000);
 
         lenderEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender);
         borrowerEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(borrower);

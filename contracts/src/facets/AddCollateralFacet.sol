@@ -162,13 +162,13 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
 
         // Cure path: a FallbackPending loan reactivates only when both HF and
         // LTV are back within the same caps enforced at initiation
-        // (MIN_HEALTH_FACTOR and assetRiskParams[collateral].maxLtvBps).
+        // (MIN_HEALTH_FACTOR and assetRiskParams[collateral].loanInitMaxLtvBps).
         // Anything looser leaves the loan in FallbackPending and the lender
         // can still claim at any time.
         if (
             loan.status == LibVaipakam.LoanStatus.FallbackPending &&
             newHF >= LibVaipakam.MIN_HEALTH_FACTOR &&
-            newLTV <= s.assetRiskParams[loan.collateralAsset].maxLtvBps
+            newLTV <= s.assetRiskParams[loan.collateralAsset].loanInitMaxLtvBps
         ) {
             _cureFallback(loanId, loan, borrowerEscrow);
             emit LoanCuredFromFallback(loanId, msg.sender, loan.collateralAmount, newHF);

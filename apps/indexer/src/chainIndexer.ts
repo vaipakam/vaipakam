@@ -1346,6 +1346,91 @@ async function processLoanLogs(
       // PeriodicInterestSettled / AutoLiquidated do NOT flip terminal
       // status — the loan stays active across periodic checkpoints.
       // No statusUpdates increment.
+    } else if (log.eventName === 'InternalMatchExecuted') {
+      // PR3-PR5 of internal-match work (B.2). Two or three loans
+      // partial-match across each other; each loan's principal is
+      // cleared by ITS leg's notional, each loan's collateral is
+      // consumed by the NEXT loan's leg notional.
+      //
+      // 2-way (loanIdC == 0):
+      //   A.principal     -= notionalA  (movedX)
+      //   A.collateral    -= notionalB  (movedY)
+      //   B.principal     -= notionalB  (movedY)
+      //   B.collateral    -= notionalA  (movedX)
+      //
+      // 3-way A→B→C→A (loanIdC != 0):
+      //   A.principal     -= notionalA
+      //   A.collateral    -= notionalC
+      //   B.principal     -= notionalB
+      //   B.collateral    -= notionalA
+      //   C.principal     -= notionalC
+      //   C.collateral    -= notionalB
+      //
+      // When a loan's principal hits zero the indexer flips its
+      // status to 'internal_matched'. Partial matches leave the
+      // loan in 'active' with reduced principal/collateral —
+      // a subsequent block's match attempt may close it, or it
+      // falls through to external liquidation once LTV crosses
+      // the priority-window ceiling.
+      const loanIdA = Number(a.loanIdA as bigint);
+      const loanIdB = Number(a.loanIdB as bigint);
+      const loanIdC = Number(a.loanIdC as bigint);
+      const nA = BigInt(a.notionalA as bigint);
+      const nB = BigInt(a.notionalB as bigint);
+      const nC = BigInt(a.notionalC as bigint);
+      const isThreeWay = loanIdC !== 0;
+
+      // Apply per-loan principal+collateral decrements then flip
+      // status when fully cleared. Loop helper inlined to avoid a
+      // separate function — each loan's two notionals are the only
+      // input.
+      async function applyMatch(loanId: number, principalDelta: bigint, collateralDelta: bigint) {
+        if (loanId === 0) return;
+        // Read current values, decrement in JS (bigint), write back.
+        const cur = await env.DB.prepare(
+          `SELECT principal, collateral_amount FROM loans WHERE chain_id = ? AND loan_id = ?`
+        ).bind(chainId, loanId).first<{ principal: string; collateral_amount: string }>();
+        if (!cur) return;
+        const newPrincipal = BigInt(cur.principal) - principalDelta;
+        const newCollateral = BigInt(cur.collateral_amount) - collateralDelta;
+        if (newPrincipal === 0n) {
+          await env.DB.prepare(
+            `UPDATE loans SET principal = ?, collateral_amount = ?, status = 'internal_matched', terminal_block = ?, terminal_at = ?, updated_at = ? WHERE chain_id = ? AND loan_id = ? AND status = 'active'`,
+          )
+            .bind(
+              newPrincipal.toString(),
+              newCollateral.toString(),
+              Number(log.blockNumber),
+              now,
+              now,
+              chainId,
+              loanId,
+            )
+            .run();
+          statusUpdates++;
+        } else {
+          await env.DB.prepare(
+            `UPDATE loans SET principal = ?, collateral_amount = ?, updated_at = ? WHERE chain_id = ? AND loan_id = ?`,
+          )
+            .bind(
+              newPrincipal.toString(),
+              newCollateral.toString(),
+              now,
+              chainId,
+              loanId,
+            )
+            .run();
+        }
+      }
+
+      if (isThreeWay) {
+        await applyMatch(loanIdA, nA, nC);
+        await applyMatch(loanIdB, nB, nA);
+        await applyMatch(loanIdC, nC, nB);
+      } else {
+        await applyMatch(loanIdA, nA, nB);
+        await applyMatch(loanIdB, nB, nA);
+      }
     }
     // Notes on events deliberately not state-mutating here:
     //  - LoanSettlementBreakdown / PeriodicSlippageOverBuffer /
@@ -1518,6 +1603,18 @@ function pluckActivityRefs(
       return {
         actor: null,
         loanId: Number(args.loanId as bigint),
+        offerId: null,
+      };
+    case 'InternalMatchExecuted':
+      // Indexed leg A as the canonical loanId for the activity
+      // event row (the dashboard's loan-timeline query keys on
+      // this column). The full multi-leg payload is in
+      // `args_json` for clients that need both leg B and the
+      // optional leg C. Actor is the matcher (msg.sender of the
+      // entry-point call).
+      return {
+        actor: (args.matcher as string)?.toLowerCase() ?? null,
+        loanId: Number(args.loanIdA as bigint),
         offerId: null,
       };
     case 'LenderFundsClaimed':

@@ -383,6 +383,45 @@
   },
   {
     "type": "function",
+    "name": "getMatchEligibleLoans",
+    "inputs": [
+      {
+        "name": "minLtvBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "maxLtvBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "startIdx",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "pageSize",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "loanIds",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "nextIdx",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getNFTPositionSummary",
     "inputs": [
       {
@@ -600,6 +639,11 @@
           },
           {
             "name": "fallbackTreasuryBpsAtInit",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "liquidationLtvBpsAtInit",
             "type": "uint16",
             "internalType": "uint16"
           },

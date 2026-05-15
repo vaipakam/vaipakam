@@ -253,6 +253,15 @@ CONFIRM_MULTISIG=0
 CONFIRM_DVN=0
 CONFIRM_ORPHANS=0
 FRESH=0
+# Ratified 2026-05-14 — the rehearsal SHAPE must mirror mainnet's
+# friction so operator muscle memory carries over. Both flags are
+# WARN-mode here (not hard-fail like mainnet) because (a) testnet
+# rehearsals don't need a real hardware wallet and (b) rehearsals
+# legitimately drag past 48h when iterating. The script logs the
+# flag presence to .markers/ regardless so the audit trail records
+# what the operator practised.
+CONFIRM_HW_SIGNER=0
+CONFIRM_DEADLINE_RESET=0
 # --mode is only consulted by --phase pause-rehearsal. Defaults to
 # "calldata" (print pause() calldata for the operator to sign through
 # the Pauser Safe UI). "check" reads paused() on every contract and
@@ -270,6 +279,9 @@ while [ $# -gt 0 ]; do
     --confirm-dvn-policy-reviewed)   CONFIRM_DVN=1 ;;
     --confirm-orphans-prior-onchain-state) CONFIRM_ORPHANS=1 ;;
     --fresh)                         FRESH=1 ;;
+    # Same flag shape as mainnet, WARN-only on testnet.
+    --confirm-mainnet-hardware-signer) CONFIRM_HW_SIGNER=1 ;;
+    --reset-handover-deadline) CONFIRM_DEADLINE_RESET=1 ;;
     --mode)
       shift
       PAUSE_MODE="$1"
@@ -447,6 +459,17 @@ phase_preflight() {
     echo "  ✓ $WETH_PULL_VAR = $WETH_ADDR  symbol=$SYMBOL decimals=$DECIMALS"
     echo "    ⚠ Eyeball-confirm against the chain's official bridged-WETH9 registry"
     echo "      before --phase contracts. CLAUDE.md lists the canonical addresses."
+  fi
+
+  # Mainnet-parity rehearsal signal: WARN-only, log presence to .markers/.
+  # The mainnet equivalent HARD-FAILS on missing flag; testnet WARNS so
+  # rehearsals stay fast while still surfacing the muscle-memory cue.
+  if [ "$CONFIRM_HW_SIGNER" = "1" ]; then
+    echo "  ✓ Mainnet hardware-signer attestation acknowledged (testnet rehearsal)"
+    date +"%Y-%m-%dT%H:%M:%S%z" > "$MARKERS_DIR/hw-signer-attestation.iso"
+  else
+    echo "  ⚠ --confirm-mainnet-hardware-signer NOT set (testnet OK; mainnet HARD-FAILS)"
+    echo "    Rehearsal tip: pass the flag here too to build muscle memory."
   fi
 
   echo
@@ -896,6 +919,19 @@ EOF
 }
 EOF
   mark_phase_done "contracts"
+
+  # Mainnet-parity rehearsal — same Admin-EOA-took-ownership
+  # timestamp write as mainnet. The 48h handover-deadline check
+  # at `phase_handover` is WARN-only on testnet (mainnet HARD-FAILS).
+  # Rehearsals legitimately drag past 48h when iterating; the warn
+  # still trains the operator's awareness of the deadline without
+  # blocking testnet progress.
+  date +"%s" > "$MARKERS_DIR/handover-deadline-start.ts"
+  date +"%Y-%m-%dT%H:%M:%S%z" > "$MARKERS_DIR/handover-deadline-start.iso"
+  echo "  ✓ Handover deadline clock started (testnet rehearsal):"
+  echo "    Admin EOA owns the Diamond as of $(cat "$MARKERS_DIR/handover-deadline-start.iso")"
+  echo "    Mainnet WOULD enforce a 48h deadline; testnet WARNS only."
+
   echo
   echo "Next:"
   echo "  1. --phase abi-sync   (sync the freshly-written addresses.json)"
@@ -1078,6 +1114,35 @@ need to be reachable.
 Re-run with --confirm-i-have-multisig-ready once they are.
 EOF
     exit 1
+  fi
+
+  # 48h handover-deadline check — WARN-only on testnet (mainnet
+  # HARD-FAILS). Logs to .markers/ regardless so the rehearsal
+  # records what would have happened on mainnet.
+  if [ -f "$MARKERS_DIR/handover-deadline-start.ts" ]; then
+    DEADLINE_START=$(cat "$MARKERS_DIR/handover-deadline-start.ts")
+    NOW_TS=$(date +"%s")
+    ELAPSED=$((NOW_TS - DEADLINE_START))
+    DEADLINE_SECS=$((48 * 3600))
+    if [ "$ELAPSED" -gt "$DEADLINE_SECS" ]; then
+      ELAPSED_HOURS=$((ELAPSED / 3600))
+      echo "  ⚠ Admin EOA → Multisig handover deadline EXCEEDED on testnet"
+      echo "    Elapsed: ${ELAPSED_HOURS}h since the deadline clock started."
+      echo "    Mainnet would HARD-FAIL here — testnet WARNS only."
+      if [ "$CONFIRM_DEADLINE_RESET" = "1" ]; then
+        echo "  ✓ --reset-handover-deadline acknowledged — proceeding."
+        date +"%Y-%m-%dT%H:%M:%S%z elapsed=${ELAPSED_HOURS}h reset=ack" \
+          >> "$MARKERS_DIR/handover-deadline.log"
+      else
+        echo "    Rehearsal tip: pass --reset-handover-deadline here too"
+        echo "    so the mainnet day muscle memory is built."
+        date +"%Y-%m-%dT%H:%M:%S%z elapsed=${ELAPSED_HOURS}h reset=missing" \
+          >> "$MARKERS_DIR/handover-deadline.log"
+      fi
+    else
+      ELAPSED_HOURS=$((ELAPSED / 3600))
+      echo "  ✓ Handover deadline OK (testnet): ${ELAPSED_HOURS}h elapsed of 48h budget"
+    fi
   fi
 
   # ── Multisig-bytecode preflight ─────────────────────────────────

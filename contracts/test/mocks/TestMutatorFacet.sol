@@ -221,17 +221,56 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().interactionCapVpfiPerEth = value;
     }
 
-    /// @notice Write `assetRiskParams[asset].liqThresholdBps` directly,
-    ///         bypassing the bounded-range guard on
-    ///         `RiskFacet.updateRiskParams`. Lets tests stress the
-    ///         liqThresholdBps == 0 edge case in
-    ///         `RiskFacet.calculateHealthFactor` (which the production
-    ///         setter rejects below `RISK_PARAMS_LIQ_THRESHOLD_BPS_MIN`).
+    /// @notice Write `protocolTrackedEscrowBalance[user][token]`
+    ///         directly. PR5 of internal-match work — execution-body
+    ///         tests `scaffoldActiveLoan` + `ERC20Mock.mint(escrow,
+    ///         …)` to set up loans without going through the
+    ///         `initiateLoan` HF gate, but that bypasses the
+    ///         counter that `escrowDepositERC20` would otherwise
+    ///         tick up. Without a matching counter write, the
+    ///         later `escrowWithdrawERC20` underflows when it
+    ///         decrements an untracked balance. This helper closes
+    ///         that gap purely for tests.
+    function setProtocolTrackedEscrowBalanceRaw(
+        address user,
+        address token,
+        uint256 amount
+    ) external {
+        LibVaipakam.storageSlot().protocolTrackedEscrowBalance[user][token] = amount;
+    }
+
+    /// @notice Write all three per-tier liquidation-LTV slots in
+    ///         `protocolCfg` directly. PR2 of internal-match work —
+    ///         lets tests that don't cut `ConfigFacet` (most legacy
+    ///         test diamonds) seed the same per-tier defaults the
+    ///         production setter (`setTierLiquidationLtvBps`) would
+    ///         configure. Useful in test setUp to pin the legacy
+    ///         "every asset = 85%" behaviour by passing
+    ///         `(8500, 8500, 8500)`. Bypasses the bounded + monotonic
+    ///         checks in the production setter — callers in tests can
+    ///         supply nonsense values to stress edge cases. Layout-
+    ///         resilient via the named-field storage path.
+    function setTierLiquidationLtvBpsAllRaw(uint16 t1, uint16 t2, uint16 t3) external {
+        LibVaipakam.ProtocolConfig storage c = LibVaipakam.storageSlot().protocolCfg;
+        c.tier1LiquidationLtvBps = t1;
+        c.tier2LiquidationLtvBps = t2;
+        c.tier3LiquidationLtvBps = t3;
+    }
+
+    /// @notice Write `loans[loanId].liquidationLtvBpsAtInit` directly,
+    ///         bypassing the snapshot-at-init logic in `LoanFacet`.
+    ///         Lets tests stress edge cases in HF math —
+    ///         e.g. `liquidationLtvBpsAtInit == 0` (which the
+    ///         production snapshot path skips for liquid collateral).
+    ///         PR2 replacement for the retired `setLiqThresholdBpsRaw`;
+    ///         the per-asset `RiskParams.liqThresholdBps` it wrote no
+    ///         longer exists (liquidation threshold is now per-tier,
+    ///         snapshotted onto each loan).
     /// @dev    Compiler resolves the storage slot via the named field
     ///         path — no hardcoded magic numbers, so this stays correct
-    ///         when the `Storage` struct layout shifts under it.
-    function setLiqThresholdBpsRaw(address asset, uint16 bps) external {
-        LibVaipakam.storageSlot().assetRiskParams[asset].liqThresholdBps = bps;
+    ///         when the `Storage` / `Loan` struct layouts shift.
+    function setLiquidationLtvBpsAtInitRaw(uint256 loanId, uint16 bps) external {
+        LibVaipakam.storageSlot().loans[loanId].liquidationLtvBpsAtInit = bps;
     }
 
     /// @notice Write `s.offerIdToLoanId[offerId] = loanId` directly.

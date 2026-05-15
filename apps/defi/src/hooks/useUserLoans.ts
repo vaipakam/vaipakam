@@ -195,6 +195,15 @@ export function useUserLoans(address: string | null) {
           borrowerTokenId: loan.borrowerTokenId,
           allowsPartialRepay:
             (loan.allowsPartialRepay as boolean | undefined) ?? false,
+          // PR2 / B.2.2 — per-loan liquidation threshold snapshot.
+          // Defaults to 0 on legacy diamonds that don't yet carry
+          // the field, in which case the Dashboard's near-
+          // liquidation banner stays inert for these loans (the
+          // `isNearInternalMatchWindow` helper short-circuits on
+          // zero — see `lib/internalMatchSignals.ts`).
+          liquidationLtvBpsAtInit: Number(
+            (loan.liquidationLtvBpsAtInit as bigint | number | undefined) ?? 0n,
+          ),
         });
       }
       setLoans(found);

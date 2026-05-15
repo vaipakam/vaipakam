@@ -103,8 +103,8 @@ contract KYCTierEnforcementIntegration is Test {
         // but the trade-allowance storage still accepts writes; setting US-US
         // keeps the existing negative tests honest without touching behaviour.
         ProfileFacet(address(diamond)).setTradeAllowance("US", "US", true);
-        RiskFacet(address(diamond)).updateRiskParams(mockUSDC, 8000, 8500, 300, 1000);
-        RiskFacet(address(diamond)).updateRiskParams(mockWETH, 8000, 8500, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockUSDC, 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockWETH, 8000, 300, 1000);
 
         _mockOracle();
 

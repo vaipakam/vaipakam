@@ -19,7 +19,7 @@ import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
  * @author Vaipakam Developer Team
  * @notice This facet allows borrowers to withdraw partial collateral from active loans if post-withdrawal Health Factor remains above threshold and LTV below max.
  * @dev Part of Diamond Standard (EIP-2535). Uses shared LibVaipakam storage.
- *      Calculates max withdrawable to maintain min HF (e.g., 150%) and max LTV (e.g., per asset maxLtvBps).
+ *      Calculates max withdrawable to maintain min HF (e.g., 150%) and max LTV (e.g., per asset loanInitMaxLtvBps).
  *      Enhanced: Integrated HF validation post-withdrawal (>= min HF) alongside LTV check.
  *      Disallows for illiquid assets ($0 value per specs).
  *      Custom errors, events, ReentrancyGuard. Cross-facet calls for oracle/risk/escrow.
@@ -96,8 +96,8 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
             revert HealthFactorTooLow();
 
         uint256 simulatedLTV = _ltvFromContext(ctx, collateralUSD);
-        uint256 maxLtvBps = s.assetRiskParams[loan.collateralAsset].maxLtvBps;
-        if (simulatedLTV > maxLtvBps) revert LTVExceeded();
+        uint256 loanInitMaxLtvBps = s.assetRiskParams[loan.collateralAsset].loanInitMaxLtvBps;
+        if (simulatedLTV > loanInitMaxLtvBps) revert LTVExceeded();
 
         // Withdraw from escrow to borrower
         LibFacet.crossFacetCall(
@@ -126,7 +126,7 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
 
     /**
      * @notice View function to calculate the maximum withdrawable collateral amount.
-     * @dev Simulates withdrawals to find max amount where HF >= min and LTV <= maxLtvBps.
+     * @dev Simulates withdrawals to find max amount where HF >= min and LTV <= loanInitMaxLtvBps.
      *      Binary search for efficiency (gas-optimized).
      *      Returns 0 for illiquid assets.
      * @param loanId The loan ID.
@@ -162,7 +162,7 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         // which each re-ran 2 × getAssetPrice + 2 × decimals() — ~60 loop
         // iterations × 8 staticcalls = 480 duplicated cross-facet calls.
         ValuationContext memory ctx = _loadValuationContext(loan);
-        uint256 maxLtvBps = s.assetRiskParams[loan.collateralAsset].maxLtvBps;
+        uint256 loanInitMaxLtvBps = s.assetRiskParams[loan.collateralAsset].loanInitMaxLtvBps;
 
         uint256 low = 0;
         uint256 high = loan.collateralAmount;
@@ -175,7 +175,7 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
             uint256 simHF = _hfFromContext(ctx, collateralUSD);
             uint256 simLTV = _ltvFromContext(ctx, collateralUSD);
 
-            if (simHF >= LibVaipakam.MIN_HEALTH_FACTOR && simLTV <= maxLtvBps) {
+            if (simHF >= LibVaipakam.MIN_HEALTH_FACTOR && simLTV <= loanInitMaxLtvBps) {
                 low = mid;
             } else {
                 high = mid - 1;
@@ -216,7 +216,13 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         ctx.collateralPriceDivisor =
             (10 ** collateralFeedDecimals) * (10 ** collateralTokenDecimals);
 
-        ctx.liqThresholdBps = s.assetRiskParams[loan.collateralAsset].liqThresholdBps;
+        // PR2 of internal-match work (2026-05-14): per-asset
+        // `liqThresholdBps` was retired in favour of per-tier values
+        // snapshotted onto the loan at `initiateLoan`. Read the
+        // snapshot so partial-withdrawal HF/LTV simulation matches
+        // what `RiskFacet.calculateHealthFactor` would compute for
+        // this loan today.
+        ctx.liqThresholdBps = uint256(loan.liquidationLtvBpsAtInit);
     }
 
     function _hfFromContext(

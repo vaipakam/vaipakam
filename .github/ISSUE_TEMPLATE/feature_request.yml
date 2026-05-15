@@ -1,0 +1,85 @@
+name: Feature request
+description: Propose a new capability or an enhancement to an existing one.
+title: "[Feature] "
+labels: ["enhancement"]
+assignees:
+  - Raja4Shekar
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for **net-new capabilities** or **enhancements**. For
+        bug reports use the Bug template; for security disclosures see
+        `docs/ops/IncidentRunbook.md` and contact the security team
+        privately first.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: "What's the underlying user / operator / protocol need? What's painful or impossible today?"
+      placeholder: "As a borrower I can't ... ; as an operator I have no way to ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: "What you'd build, at a level a reviewer can evaluate. Code paths if you know them."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: "Other approaches you weighed + why this one is preferred. Architecture changes deserve a real alternatives discussion."
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Primary surface
+      options:
+        - "contracts"
+        - "apps/defi (frontend)"
+        - "apps/keeper"
+        - "apps/indexer"
+        - "apps/agent"
+        - "apps/www (marketing + docs)"
+        - "vaipakam-keeper-bot (public reference)"
+        - "docs"
+        - "ops / runbooks"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: size
+    attributes:
+      label: Estimated size
+      description: "Rough effort estimate. The project's Size field on @vaipakam-labs uses the same scale."
+      options:
+        - "XS — under half a day"
+        - "S — half day to a day"
+        - "M — 1-3 days"
+        - "L — 3-10 days (a week of focused work)"
+        - "XL — multi-week, deserves its own design doc"
+    validations:
+      required: true
+
+  - type: textarea
+    id: risk
+    attributes:
+      label: Risk / blast radius
+      description: "What could go wrong if this ships incorrectly? Does it require an audit pass? Does it gate mainnet rollout?"
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: "Bullet list of conditions that signal this is done."
+      placeholder: |
+        - [ ] Design doc landed in docs/DesignsAndPlans
+        - [ ] Contract changes implemented + tests added
+        - [ ] Frontend wiring + i18n keys
+        - [ ] Runbook updated for any new admin actions
