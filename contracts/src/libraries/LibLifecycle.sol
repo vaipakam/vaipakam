@@ -10,7 +10,7 @@ import {LibMetricsHooks} from "./LibMetricsHooks.sol";
  *         that mutates `loan.status` must route through `transition(...)`
  *         so there is exactly one place to audit when reasoning about the
  *         lifecycle. Any transition not in the table reverts with
- *         `IllegalTransition` — callers never silently downgrade/upgrade
+ *         `InvalidTransition` — callers never silently downgrade/upgrade
  *         status.
  *
  *         Legal edges (README §§6-7):
@@ -28,7 +28,7 @@ import {LibMetricsHooks} from "./LibMetricsHooks.sol";
  *         it to `Active`. All subsequent writes must use `transition`.
  */
 library LibLifecycle {
-    error IllegalTransition(LibVaipakam.LoanStatus from, LibVaipakam.LoanStatus to);
+    error InvalidTransition(LibVaipakam.LoanStatus from, LibVaipakam.LoanStatus to);
 
     /// @notice Stamp a fresh loan as Active. The default enum value is
     ///         already `Active` (index 0), so this is semantically a
@@ -47,8 +47,8 @@ library LibLifecycle {
         LibVaipakam.LoanStatus to
     ) internal {
         LibVaipakam.LoanStatus current = loan.status;
-        if (current != expectedFrom) revert IllegalTransition(current, to);
-        if (!_isLegal(current, to)) revert IllegalTransition(current, to);
+        if (current != expectedFrom) revert InvalidTransition(current, to);
+        if (!_isValid(current, to)) revert InvalidTransition(current, to);
         loan.status = to;
         LibMetricsHooks.onLoanStatusChanged(loan, current, to);
     }
@@ -63,7 +63,7 @@ library LibLifecycle {
         LibVaipakam.LoanStatus to
     ) internal {
         LibVaipakam.LoanStatus current = loan.status;
-        if (!_isLegal(current, to)) revert IllegalTransition(current, to);
+        if (!_isValid(current, to)) revert InvalidTransition(current, to);
         loan.status = to;
         LibMetricsHooks.onLoanStatusChanged(loan, current, to);
     }
@@ -71,7 +71,7 @@ library LibLifecycle {
     /// @dev Pure allow-list check. Keep this as an if-ladder — it compiles
     ///      to a straight sequence of comparisons and is trivially
     ///      auditable. Do not introduce data structures here.
-    function _isLegal(
+    function _isValid(
         LibVaipakam.LoanStatus from,
         LibVaipakam.LoanStatus to
     ) private pure returns (bool) {
@@ -91,7 +91,13 @@ library LibLifecycle {
             return
                 to == LibVaipakam.LoanStatus.Active ||
                 to == LibVaipakam.LoanStatus.Repaid ||
-                to == LibVaipakam.LoanStatus.Defaulted;
+                to == LibVaipakam.LoanStatus.Defaulted ||
+                // EC-003 Phase 1 — FallbackPending loans become matchable.
+                // When `triggerInternalMatchLiquidation` fully clears the
+                // principal of a FallbackPending leg, the loan transitions
+                // here. Partial matches keep the loan in FallbackPending
+                // with a proportionally-reduced `fallbackSnapshot`.
+                to == LibVaipakam.LoanStatus.InternalMatched;
         }
         if (from == LibVaipakam.LoanStatus.Repaid) {
             return to == LibVaipakam.LoanStatus.Settled;

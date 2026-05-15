@@ -123,7 +123,7 @@ contract InternalMatchLiquidationGatesTest is SetupTest {
         TestMutatorFacet(address(diamond)).setLoan(LOAN_A, l);
 
         vm.expectRevert(
-            abi.encodeWithSelector(RiskFacet.InternalMatchLoanNotActive.selector, LOAN_A)
+            abi.encodeWithSelector(RiskFacet.InternalMatchLoanNotMatchable.selector, LOAN_A)
         );
         RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
     }
@@ -144,7 +144,7 @@ contract InternalMatchLiquidationGatesTest is SetupTest {
         TestMutatorFacet(address(diamond)).setLoan(LOAN_B, l);
 
         vm.expectRevert(
-            abi.encodeWithSelector(RiskFacet.InternalMatchLoanNotActive.selector, LOAN_B)
+            abi.encodeWithSelector(RiskFacet.InternalMatchLoanNotMatchable.selector, LOAN_B)
         );
         RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
     }
@@ -165,7 +165,7 @@ contract InternalMatchLiquidationGatesTest is SetupTest {
         TestMutatorFacet(address(diamond)).setLoan(LOAN_C, l);
 
         vm.expectRevert(
-            abi.encodeWithSelector(RiskFacet.InternalMatchLoanNotActive.selector, LOAN_C)
+            abi.encodeWithSelector(RiskFacet.InternalMatchLoanNotMatchable.selector, LOAN_C)
         );
         RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, LOAN_C);
     }
