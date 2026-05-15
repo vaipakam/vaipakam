@@ -232,24 +232,16 @@ For each: define stale-data policy (TTL, retry, fail-soft vs
 fail-closed), document defenses against API-side outages /
 returning malformed payloads. ~1-2 days.
 
-### C.2 Timelock / admin-key compromise — config range-bounding audit
+### ~~C.2 Timelock / admin-key compromise — config range-bounding audit~~ — CLOSED 2026-05-14
 
-> "What if timelocker keys are compromised or admin keys are
-> compromised? are all configs are range-bounded?"
-
-Walk every `ConfigFacet.set*` setter and verify each parameter has
-a meaningful `[floor, ceil]` so a compromised key can't push to a
-degenerate value. Many already do (tier-LTV bounds, secondary-
-oracle deviation, auto-pause window, Pyth confidence ceiling, etc.)
-but a systematic sweep + written audit are missing.
-
-- **Output**: a table of every governance knob with current bound +
-  rationale + worst-case-attack-bounded-by.
-- **Authority**:
-  [`docs/ops/AdminConfigurableKnobsAndSwitches.md`](../ops/AdminConfigurableKnobsAndSwitches.md)
-  is the existing partial index. Audit should expand it into the
-  full inventory.
-- ~Half a day to a full day.
+Walked every `ConfigFacet.set*` setter; output landed in
+[`ConfigKnobBoundsAudit-2026-05-14.md`](ConfigKnobBoundsAudit-2026-05-14.md)
+(full 63-setter inventory across ConfigFacet + AdminFacet +
+OracleAdminFacet). Three real gaps found + fixed in commits
+`249846e` (rental-buffer cap tightened to 20%) + `a74bc7c`
+(MAX_STABLE_SYMBOL_LEN + MAX_TIER_REFERENCE_ASSETS array caps).
+One false-positive (zero IS a meaningful sentinel for
+`usdChainlinkDenominator`) documented + dismissed.
 
 ---
 
@@ -393,9 +385,10 @@ proactive scheduling needed.
 - **Group A operational (A.1–A.6)** — all deferred to per-chain
   mainnet rollout. No code work; coordinated by the operator on
   audit + risk-committee sign-off cadence.
-- **Group C security-adjacent**: C.2 ✓ closed. **C.1 off-chain
+- **Group C security-adjacent**: C.2 ✓ closed 2026-05-14
+  (ConfigKnobBoundsAudit-2026-05-14.md). **C.1 off-chain
   data-fetch audit remains** as the single outstanding security
-  item; recommend tackling next.
+  item; surfaces as the only `Ready` row on @vaipakam-labs.
 - **Group D deploy-script modernization** ✓ closed.
 - **Group E background follow-ups** — E.3 / E.4 / E.5 closed
   on 2026-05-15 (already shipped, just hadn't been crossed off
