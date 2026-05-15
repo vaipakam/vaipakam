@@ -382,6 +382,14 @@ vaipakam-protocol
 
 ---
 
+- [ ] **EC-004** `promotedToProjectCard`: Translate `riskDisclosures.section1Point1`-`section1Point4` (the polished oracle-availability dichotomy) into the 7 non-en locales: `zh`, `ko`, `hi`, `ta`, `fr`, `de`, `ja` (and any others under `apps/defi/src/i18n/locales/`). Until then, `fallbackLng: 'en'` shows the English bullet to all locales — functional but not localized. Pattern: each translator reviews the four-bullet structure (intro + 2 oracle-available cases + oracle-unavailable case) so the legal nuance carries across.
+
+---
+
+- [ ] **EC-003** `promotedToProjectCard`: At lender-claim time (loan in `FallbackPending`), before iterating the external aggregator retry try-list, scan `activeLoanIdsList` for an opposing-direction `Active` counterparty whose `principalAsset == seizedCollateralAsset` and whose `collateralAsset == loan.principalAsset` — if a match exists, settle the in-kind collateral against that counterparty internally (oracle-priced, zero aggregator slippage) and skip the external retry; if no match, fall through to the existing external-aggregator retry path. Mirrors the internal-match-first-then-external priority window the protocol already uses pre-liquidation (`triggerLiquidation`'s 90%-92% LTV band), extended to the post-fallback claim path. Touches: `ClaimFacet.claimAsLenderWithRetry` (new internal-first branch), possibly a new `RiskFacet`-side helper (relaxed cross-status match invariant — one Active leg + one FallbackPending leg). Audit-package implication: invariants doc + at least one new flow test. Hit-rate is expected low (the exact opposing-pair must exist at the exact time of claim) but when it fires, the lender skips aggregator slippage entirely — net win.
+
+---
+
 - [x] **EC-002** — DONE 2026-05-15 (verified, no code change needed). Three-layer atomicity already enforces the "principal-first then collateral" semantic the original ask raised: (i) `RiskFacet.triggerLiquidationDiscounted` at [contracts/src/facets/RiskFacet.sol:1681-1838](../contracts/src/facets/RiskFacet.sol#L1681-L1838) is `nonReentrant` and `safeTransferFrom`s the principal at line 1761 BEFORE the collateral withdraw at line 1827 — if the liquidator doesn't have approved principal, the txn reverts before any collateral moves; (ii) `FlashLoanLiquidator.executeOperation` wraps `triggerLiquidationDiscounted` inside Aave V3's `flashLoanSimple` callback — Aave reverts the whole txn if the receiver can't repay loanAmount+premium at callback end; (iii) `apps/keeper` bot just submits the tx, holds no custody. Audit-package note: `docs/internal/OffchainDataFetchAudit-2026-05-15.md` Part 7 already covers the bot's untrusted-quote model + on-chain `minOutputAmount` gate. Original ask preserved: "How do we ensure that the flash loan bots will pay back the lending asset after they took the collateral asset…"
 
 ---

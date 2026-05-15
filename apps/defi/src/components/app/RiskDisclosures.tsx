@@ -10,6 +10,7 @@ const KEYS: Array<{ heading: string; points: string[] }> = [
       'riskDisclosures.section1Point1',
       'riskDisclosures.section1Point2',
       'riskDisclosures.section1Point3',
+      'riskDisclosures.section1Point4',
     ],
   },
   {
