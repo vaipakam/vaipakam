@@ -614,7 +614,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](39);
+        selectors = new bytes4[](40);
         selectors[0] = MetricsFacet.getProtocolTVL.selector;
         selectors[1] = MetricsFacet.getProtocolStats.selector;
         selectors[2] = MetricsFacet.getUserCount.selector;
@@ -670,6 +670,10 @@ contract HelperTest {
         // candidates per block via this. Returns empty while
         // `internalMatchEnabled == false`.
         selectors[38] = MetricsFacet.getMatchEligibleLoans.selector;
+        // EC-003 Phase 2 — opposing-pair candidate lookup via the
+        // `assetPairActiveLoanIds` index. O(K) where K is loans in the
+        // exact opposing asset pair. Backs the Phase 3 auto-dispatch.
+        selectors[39] = MetricsFacet.hasInternalMatchCandidate.selector;
         return selectors;
     }
 

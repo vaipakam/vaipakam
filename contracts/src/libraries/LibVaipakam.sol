@@ -2585,6 +2585,33 @@ library LibVaipakam {
         // A fresh deploy never touches this mapping ⇒ library defaults
         // apply everywhere until governance overrides.
         mapping(uint8 => TierLtvParams) tierLtvParams;
+        // ─── EC-003 Phase 2 — asset-pair index of matchable loans ──────
+        //
+        // Mirrors the offer-side `assetPairActiveOfferIds` /
+        // `assetPairActiveOfferIdsPos` pattern: a per-(principalAsset,
+        // collateralAsset) array of loan IDs in the matchable set,
+        // with a 1-based position map for O(1) swap-and-pop removal.
+        //
+        // Invariant: an entry exists iff the loan's status is in the
+        // matchable set `{Active, FallbackPending}`. Loans push on
+        // `initiateLoan`; terminal transitions (Active/FallbackPending
+        // → Repaid/Defaulted/Settled/InternalMatched) remove via
+        // swap-and-pop. Active ↔ FallbackPending edges keep the loan
+        // in the index — both are matchable.
+        //
+        // Lookup for "does loan L have an opposing counterparty?" is
+        // a read of `assetPairActiveLoanIds[L.collateralAsset][L.principalAsset]`
+        // — the OPPOSING-direction key. The list size is the loose
+        // upper bound on the on-chain auto-dispatch scan cost; the
+        // per-iteration cost is the candidate's oracle-priceable
+        // check. Total complexity: O(K) where K = candidates in
+        // that exact asset pair — not O(N) over `activeLoanIdsList`.
+        //
+        // Foundation for the Phase 3 auto-dispatch in
+        // `triggerLiquidation` / `triggerDefault` /
+        // `claimAsLenderWithRetry`.
+        mapping(address => mapping(address => uint256[])) assetPairActiveLoanIds;
+        mapping(address => mapping(address => mapping(uint256 => uint256))) assetPairActiveLoanIdsPos;
     }
 
     /// @dev Cached tier-LTV reading. Updated permissionlessly via

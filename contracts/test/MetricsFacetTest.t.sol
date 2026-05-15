@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 
 /**
@@ -694,5 +695,149 @@ contract MetricsFacetTest is SetupTest {
         assertEq(rows[0].amountMax, 5000 ether);
         assertEq(rows[0].interestRateBps, 400);
         assertEq(rows[0].interestRateBpsMax, 600);
+    }
+
+    // ─── EC-003 Phase 2 — hasInternalMatchCandidate + asset-pair index ─
+
+    /// @dev Seed an opposing-asset-pair loan (B's principal is A's
+    ///      collateral and vice-versa).
+    function _seedOpposingLoan(
+        uint256 id,
+        address lender_,
+        address borrower_,
+        address principal,
+        address collateral
+    ) internal {
+        LibVaipakam.Loan memory l;
+        l.id = id;
+        l.lender = lender_;
+        l.borrower = borrower_;
+        l.principal = 1000 ether;
+        l.principalAsset = principal;
+        l.collateralAsset = collateral;
+        l.collateralAmount = 1500 ether;
+        l.interestRateBps = 500;
+        l.durationDays = 30;
+        l.status = LibVaipakam.LoanStatus.Active;
+        l.assetType = LibVaipakam.AssetType.ERC20;
+        l.collateralAssetType = LibVaipakam.AssetType.ERC20;
+        l.startTime = uint64(block.timestamp);
+        l.liquidationLtvBpsAtInit = 8_500;
+        TestMutatorFacet(address(diamond)).scaffoldActiveLoan(id, l);
+    }
+
+    function _enableInternalMatch() internal {
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setInternalMatchEnabled(true);
+    }
+
+    function test_hasMatchCandidate_killSwitchOff_returnsFalse() public {
+        // Kill-switch OFF → view stays inert regardless of index state.
+        _seedOpposingLoan(1, lender, borrower, mockERC20, mockCollateralERC20);
+        _seedOpposingLoan(2, lender2, borrower2, mockCollateralERC20, mockERC20);
+
+        (bool found, uint256 cid) = MetricsFacet(address(diamond))
+            .hasInternalMatchCandidate(1);
+        assertFalse(found);
+        assertEq(cid, 0);
+    }
+
+    function test_hasMatchCandidate_emptyOpposingPair_returnsFalse() public {
+        _enableInternalMatch();
+        _seedOpposingLoan(1, lender, borrower, mockERC20, mockCollateralERC20);
+        // No opposing-direction loan exists.
+
+        (bool found, uint256 cid) = MetricsFacet(address(diamond))
+            .hasInternalMatchCandidate(1);
+        assertFalse(found);
+        assertEq(cid, 0);
+    }
+
+    function test_hasMatchCandidate_opposingPairExists_returnsFirstCandidate() public {
+        _enableInternalMatch();
+        _seedOpposingLoan(1, lender, borrower, mockERC20, mockCollateralERC20);
+        _seedOpposingLoan(2, lender2, borrower2, mockCollateralERC20, mockERC20);
+
+        (bool found, uint256 cid) = MetricsFacet(address(diamond))
+            .hasInternalMatchCandidate(1);
+        assertTrue(found);
+        assertEq(cid, 2);
+
+        // Symmetric — loan 2's lookup also finds loan 1.
+        (found, cid) = MetricsFacet(address(diamond))
+            .hasInternalMatchCandidate(2);
+        assertTrue(found);
+        assertEq(cid, 1);
+    }
+
+    function test_hasMatchCandidate_skipsSelf() public {
+        _enableInternalMatch();
+        _seedOpposingLoan(1, lender, borrower, mockERC20, mockCollateralERC20);
+
+        // Only loan 1 in the (mockERC20, mockCollateralERC20) pair; the
+        // OPPOSING (mockCollateralERC20, mockERC20) pair has zero
+        // entries. View returns false.
+        (bool found,) = MetricsFacet(address(diamond))
+            .hasInternalMatchCandidate(1);
+        assertFalse(found);
+    }
+
+    function test_hasMatchCandidate_indexRemovesOnTerminal() public {
+        _enableInternalMatch();
+        _seedOpposingLoan(1, lender, borrower, mockERC20, mockCollateralERC20);
+        _seedOpposingLoan(2, lender2, borrower2, mockCollateralERC20, mockERC20);
+
+        // Both in index — loan 1 finds loan 2.
+        (bool found, uint256 cid) = MetricsFacet(address(diamond))
+            .hasInternalMatchCandidate(1);
+        assertTrue(found);
+        assertEq(cid, 2);
+
+        // Transition loan 2 to Repaid (terminal-bound) — drops from index.
+        TestMutatorFacet(address(diamond)).scaffoldLoanStatusChange(
+            2,
+            LibVaipakam.LoanStatus.Active,
+            LibVaipakam.LoanStatus.Repaid
+        );
+
+        (found, cid) = MetricsFacet(address(diamond))
+            .hasInternalMatchCandidate(1);
+        assertFalse(found, "loan 2 should be out of the index after terminal");
+        assertEq(cid, 0);
+    }
+
+    function test_hasMatchCandidate_fallbackPending_staysInIndex() public {
+        // Active ↔ FallbackPending preserves index membership.
+        _enableInternalMatch();
+        _seedOpposingLoan(1, lender, borrower, mockERC20, mockCollateralERC20);
+        _seedOpposingLoan(2, lender2, borrower2, mockCollateralERC20, mockERC20);
+
+        TestMutatorFacet(address(diamond)).scaffoldLoanStatusChange(
+            2,
+            LibVaipakam.LoanStatus.Active,
+            LibVaipakam.LoanStatus.FallbackPending
+        );
+
+        (bool found, uint256 cid) = MetricsFacet(address(diamond))
+            .hasInternalMatchCandidate(1);
+        assertTrue(found, "FallbackPending must stay matchable");
+        assertEq(cid, 2);
+    }
+
+    function test_hasMatchCandidate_callerTerminal_returnsFalse() public {
+        // Caller's own loan is in a non-matchable status → view rejects.
+        _enableInternalMatch();
+        _seedOpposingLoan(1, lender, borrower, mockERC20, mockCollateralERC20);
+        _seedOpposingLoan(2, lender2, borrower2, mockCollateralERC20, mockERC20);
+
+        TestMutatorFacet(address(diamond)).scaffoldLoanStatusChange(
+            1,
+            LibVaipakam.LoanStatus.Active,
+            LibVaipakam.LoanStatus.Repaid
+        );
+
+        (bool found,) = MetricsFacet(address(diamond))
+            .hasInternalMatchCandidate(1);
+        assertFalse(found, "terminal caller can't request a match");
     }
 }

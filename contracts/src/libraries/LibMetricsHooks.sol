@@ -48,6 +48,18 @@ library LibMetricsHooks {
         s.activeLoanIdsList.push(id);
         s.activeLoanIdsListPos[id] = s.activeLoanIdsList.length; // 1-based
 
+        // EC-003 Phase 2 — per-(principal, collateral) asset-pair index
+        // of matchable loans. Mirrors `assetPairActiveOfferIds` for the
+        // offer side. Powers `MetricsFacet.hasInternalMatchCandidate(...)`
+        // and the Phase 3 auto-dispatch in
+        // `triggerLiquidation` / `triggerDefault` /
+        // `claimAsLenderWithRetry`. Loans stay in the index across
+        // Active ↔ FallbackPending edges (both are matchable); terminal
+        // transitions remove via swap-and-pop in `onLoanStatusChanged`.
+        s.assetPairActiveLoanIds[loan.principalAsset][loan.collateralAsset].push(id);
+        s.assetPairActiveLoanIdsPos[loan.principalAsset][loan.collateralAsset][id] =
+            s.assetPairActiveLoanIds[loan.principalAsset][loan.collateralAsset].length;
+
         // Unique-user tracking — both sides counted exactly once across
         // all their lifetime activity (offers + loans).
         _markUserSeen(s, loan.lender);
@@ -102,6 +114,11 @@ library LibMetricsHooks {
             // release per-collection NFT counts for any NFT legs.
             if (s.activeLoansCount > 0) s.activeLoansCount -= 1;
             _removeFromActiveLoanList(s, id);
+            // EC-003 Phase 2 — also drop the loan from the per-asset-pair
+            // index. The Active ↔ FallbackPending case is already
+            // excluded by the `wasActive && !isActive` guard (both
+            // statuses are "active" per `_isActive`).
+            _removeFromAssetPairLoanList(s, loan);
 
             if (
                 loan.assetType != LibVaipakam.AssetType.ERC20 &&
@@ -246,5 +263,35 @@ library LibMetricsHooks {
         }
         list.pop();
         delete s.assetPairActiveOfferIdsPos[la][ca][id];
+    }
+
+    /// @dev EC-003 Phase 2 — swap-pop removal from
+    ///      `assetPairActiveLoanIds`. Mirrors
+    ///      `_removeFromAssetPairOfferList` exactly. Takes the loan
+    ///      struct (not the id) because the caller is
+    ///      `onLoanStatusChanged`, which already has a storage pointer
+    ///      to the loan AND needs to read `loan.principalAsset` /
+    ///      `loan.collateralAsset` (which may not match the loan that
+    ///      `s.loans[id]` resolves to in some edge re-entry shapes).
+    ///      Idempotent — no-op if `pos == 0`.
+    function _removeFromAssetPairLoanList(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.Loan storage loan
+    ) private {
+        uint256 id = loan.id;
+        address pa = loan.principalAsset;
+        address ca = loan.collateralAsset;
+        uint256 pos = s.assetPairActiveLoanIdsPos[pa][ca][id];
+        if (pos == 0) return;
+        uint256[] storage list = s.assetPairActiveLoanIds[pa][ca];
+        uint256 lastIdx = list.length - 1;
+        uint256 idx = pos - 1;
+        if (idx != lastIdx) {
+            uint256 tail = list[lastIdx];
+            list[idx] = tail;
+            s.assetPairActiveLoanIdsPos[pa][ca][tail] = pos;
+        }
+        list.pop();
+        delete s.assetPairActiveLoanIdsPos[pa][ca][id];
     }
 }

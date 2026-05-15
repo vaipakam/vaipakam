@@ -1163,7 +1163,7 @@ contract DeployDiamond is Script {
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](41);
+        s = new bytes4[](42);
         s[0] = MetricsFacet.getProtocolTVL.selector;
         s[1] = MetricsFacet.getProtocolStats.selector;
         s[2] = MetricsFacet.getUserCount.selector;
@@ -1238,6 +1238,11 @@ contract DeployDiamond is Script {
         // bots use this per block to discover candidates; returns
         // empty while `internalMatchEnabled == false`.
         s[40] = MetricsFacet.getMatchEligibleLoans.selector;
+        // EC-003 Phase 2 — O(K) opposing-pair lookup. Off-chain callers
+        // pre-flight before submitting `triggerInternalMatchLiquidation`;
+        // Phase 3 auto-dispatch in triggerLiquidation / triggerDefault /
+        // claimAsLenderWithRetry consults this view internally.
+        s[41] = MetricsFacet.hasInternalMatchCandidate.selector;
     }
 
     /// AnalyticalGettersDesign §3.1 — per-user dashboard surface. One
