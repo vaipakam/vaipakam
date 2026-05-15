@@ -406,7 +406,7 @@ relay logs make up the audit package the risk committee signs off
 on, chain by chain.
 
 The operator guide
-([`docs/SlippageCensusGuide.md`](../SlippageCensusGuide.md)) covers
+([`docs/ops/SlippageCensusGuide.md`](../ops/SlippageCensusGuide.md)) covers
 the column semantics, the per-chain default asset lists with
 canonical token addresses (Ethereum / Base / Arbitrum / Optimism /
 Polygon zkEVM / BNB Chain), the anomaly patterns that warrant

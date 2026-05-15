@@ -1,5 +1,5 @@
 {
-  "_README": "Per-chain default asset lists consumed by contracts/script/SlippageCensus.s.sol when the CENSUS_ASSETS env var is unset. Keys: chain_<chainId>_assets. Addresses sourced from each chain's canonical / bridged token registry — see docs/SlippageCensusGuide.md for provenance + verification steps. Add (but do NOT remove) assets per chain as new tokens land on the protocol; an Illiquid classification in the census output is itself signal the audit needs, not a reason to drop the asset from the list.",
+  "_README": "Per-chain default asset lists consumed by contracts/script/SlippageCensus.s.sol when the CENSUS_ASSETS env var is unset. Keys: chain_<chainId>_assets. Addresses sourced from each chain's canonical / bridged token registry — see docs/ops/SlippageCensusGuide.md for provenance + verification steps. Add (but do NOT remove) assets per chain as new tokens land on the protocol; an Illiquid classification in the census output is itself signal the audit needs, not a reason to drop the asset from the list.",
 
   "_README_chain_1": "Ethereum mainnet",
   "chain_1_assets": [

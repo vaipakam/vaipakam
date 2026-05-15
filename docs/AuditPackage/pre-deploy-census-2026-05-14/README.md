@@ -3,7 +3,7 @@
 Per-chain output of `contracts/script/SlippageCensusPreDeploy.s.sol`
 run against current mainnet state on each target chain. This is
 checkpoint **1 of 3** from
-[`docs/SlippageCensusGuide.md`](../../SlippageCensusGuide.md) —
+[`docs/ops/SlippageCensusGuide.md`](../../ops/SlippageCensusGuide.md) —
 "post-deploy snapshot" and "pre-flip rehearsal" follow.
 
 ## Summary

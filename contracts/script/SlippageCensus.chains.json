@@ -1,5 +1,5 @@
 {
-  "_README": "Per-chain peer-protocol + reference-asset config consumed by contracts/script/SlippageCensusPreDeploy.s.sol. Address provenance MUST be verified against each peer protocol's official docs before any production use — see docs/SlippageCensusGuide.md.",
+  "_README": "Per-chain peer-protocol + reference-asset config consumed by contracts/script/SlippageCensusPreDeploy.s.sol. Address provenance MUST be verified against each peer protocol's official docs before any production use — see docs/ops/SlippageCensusGuide.md.",
   "_README_peer_protocols": "All peer-protocol addresses sourced from each protocol's official deployment registry: Aave V3 PoolDataProvider from aave.com/docs/resources/addresses; Compound V3 Comet from docs.compound.finance/#networks (one Comet per base asset — pick the chain's largest by liquidity for v1); Morpho-Blue from docs.morpho.org. Set to '0x0000000000000000000000000000000000000000' to skip a peer on a chain where it isn't deployed.",
   "_README_reference_assets": "Per-tier reference asset lists are CONSTITUTION-LEVEL — set at deploy via OracleAdminFacet.setTierReferenceAssets. The autonomous tier-LTV cache reads these assets' LTVs from each configured peer and aggregates per-tier median + bound-check. List membership must be audited.",
 
