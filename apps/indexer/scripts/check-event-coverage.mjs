@@ -63,8 +63,6 @@ const DELIBERATELY_NOT_HANDLED = {
   AutoDailyDeducted: 'NFT-rental daily-fee deduction — surfaced via activity_events, no loans row field for it',
   HFLiquidationTriggered:
     'liquidation-attempt marker — the actual status change to Defaulted arrives via LoanLiquidated / LoanDefaulted, which ARE handled',
-  InternalMatchExecuted:
-    'PR3-PR5 of internal-match work — added to the indexer schema as a follow-up. For now the loan-status flip to InternalMatched is read by the dashboard via the live RPC getLoanDetails; the activity-event row + loan-mutation update branch land alongside the keeper-bot detector deployment.',
   LoanPartiallyLiquidated:
     'partial-liquidation companion event — surfaced via activity_events but the loans row keeps its Active status with reduced principal/collateral (read via live RPC getLoanDetails). Schema-side indexing is a follow-up.',
   LiquidationDiscounted:
