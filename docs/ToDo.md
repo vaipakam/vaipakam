@@ -350,7 +350,7 @@ vaipakam-indexer
 vaipakam-agent
 agent.vaipakam.com
 vaipakam-archive
-vaipakam-record --> not used as of now
+vaipakam-record
 vaipakam-labs
 `Launch Vaipakam`
 vaipakam-alpha
@@ -361,10 +361,17 @@ vaipakam-deprecated
 deprecated.vaipakam.com
 dev.vaipakam.com
 admin.vaipakam.com
+vaipakam-protocol
 
 ---
 
 ## Extra Checks
+
+---
+
+- [ ] **EC-002**: How do we ensure that the flash loan bots will pay back the lending asset after they took the collateral asset, is it happening in single transaction or how it is? can we allow it to take the collateral asset only after they provide the required lending asset first, is there a better approach? whats your take?
+
+---
 
 - [ ] **EC-001**: exportTenderlyAlerts.sh NEW envsubst's ${DIAMOND_ADDRESS} + ${TIMELOCK_ADDRESS} into per-chain ops/tenderly/alerts.<chain>.yaml from deployments.json
 
@@ -392,42 +399,53 @@ Per tx: New transaction → Contract interaction → paste target → ABI: pick 
 
 Tip: queue all 3 in the Safe at once, then sign once per signer (each signer's signing screen lists all pending — one signature pass covers all 3 if the signer hits "approve all").
 
-Ping me when you've executed all 3 and I'll verify on-chain (Ownable.owner() == Safe) and then run DeployerZeroRolesTest against a Base Sepolia fork as the hard exit gate. PositiveFlows on arb-sepolia is still chugging in the background — independent.
+---
+
+## Extra ToDo
 
 ---
 
-Need to check what are all the data that we fetch off chain and need to see that would we be able to fetch them from on chain itself
+- [ ] **ET-010**: Is it possible for us to allow borrower to auction the NFT or illiquid assets before liquidating (means here full collateral transfer), so that it would be fair enough for both borrower and lender, what do you say?, if so, how do we go about it? is there a better approach? whats your take?
 
 ---
 
-What if timelocker keys are compromised opr admin keys are compromised? is all configs are range bounded?
+- [ ] **ET-009** — IN PROGRESS, tracked as [Issue #1](https://github.com/vaipakam/vaipakam/issues/1) (C.1 — Off-chain data-fetch audit) on @vaipakam-labs project. Same question as PendingTasks-2026-05-14.md §C.1; promoted to a real Issue 2026-05-15 because the audit needs a permanent discussion thread. Need to check what are all the data that we fetch off chain and need to see that would we be able to fetch them from on chain itself
 
 ---
 
-In polygon and BNB smart chain we need to chech how we have deignd to use WETH instead of native tokens, in case we used native tokens in other chains, have we factored it already, other wise, we need to make it admin configurable and WETH address need to be made settable.
+- [x] **ET-008** — DONE 2026-05-14 (commit `249846e`; audit doc `docs/internal/ConfigKnobBoundsAudit-2026-05-14.md`). Same question as PendingTasks §C.2 — full 63-setter audit landed across ConfigFacet + AdminFacet + OracleAdminFacet, 3 real gaps fixed, 1 false-positive documented. Every governance knob is range-bounded by a compile-time `MIN_` / `MAX_` constant the setter enforces. Original ask preserved: "What if timelocker keys are compromised or admin keys are compromised? is all configs are range bounded?"
 
 ---
 
-This is just to provide an alternative for liquidation path, currently the liquidation is happening only on 0x or 1 inch.
+- [x] **ET-007** — DONE 2026-05-14 (commits `465e93e` + `1ba8939` + `7c308b2` second-pass sweep; audit doc `docs/internal/WethChainSafetyAudit-2026-05-14.md`). Same question as PendingTasks §B.1. Verdict: per-asset bridged-WETH ERC20 address already admin-configurable via `OracleAdminFacet.setWethContract` per chain; three real gaps surfaced + fixed (OfferBook default collateral, setEthUsdFeed natspec, setWethContract natspec); second-pass sweep over 9 surfaces confirmed no further gaps. Original ask preserved: "In polygon and BNB smart chain we need to check how we have designed to use WETH instead of native tokens..."
+
+---
+
+- [x] **ET-006** — DONE 2026-05-15 (24 commits across vaipakam + 4 in vaipakam-keeper-bot; design doc `docs/DesignsAndPlans/InternalLiquidationLedger.md` §0.0; full functional narrative `docs/ReleaseNotes/ReleaseNotes-2026-05-15.md` Thread 1). Same proposal as PendingTasks §B.2 — internal-liquidation match path landed end-to-end. Kill-switch defaults `false`; per-chain enablement per `docs/ops/GovernanceRunbook.md` §6.3. Original ask preserved: "This is just to provide an alternative for liquidation path, currently the liquidation is happening only on 0x or 1 inch."
+
 Proposal: lets build a ledger with all loans that is having LTV less than 5% to liquidate, and match the assets that can be exchanged between vaults internally to compensate each other, if available internally itself, if not then the external path (the bots will be allowed to do this permissionlessly, both our bot and other bots can be used with 1% incentive as there is no risk for the bot at all, only gas fee right?), is that possible? the external path opens up only after this check, will this be beneficial? is there a better approach? is this ledger really needed, or something else can be built so that bot can easily refer and exchange the assets between the required vaults. what do you say? for example: if vault1 need to liquidate tokenA to get tokenB and like wise vault2 need to liquidate tokenB to get TokenA then we can exchange them directly, only remaing amount we can liquidate externally, what do you say? say if loanA nears 86% LTV then its info will be entered into this ledger (or anything that we build), when the LTV gone beyond 90% then internal liquidation will be allowed and when the LTV went beyond 92% then external liquidation path will be allowed, what do you say? also when the loan LTV becomes less than 84% then the ledger entry need to be removed (or else modify with soft deletion with a flag, so that it may be required or may be left as it is because before liquidation anyway the LTV is checked again), what do you say?, is there a better approach?
 
 ---
 
-Protocol console documents need to be available in `www` (https://vaipakam.com/protocol-console/docs) and not in `defi` (https://defi.vaipakam.com/protocol-console/docs)
+- [x] **ET-005** — DONE 2026-05-14 (commit `835cd2a` — apps: move /protocol-console/docs from defi to www). Route now lives at `apps/www/src/App.tsx:123` (`<Route path="protocol-console/docs" element={<AdminKnobsDocs />} />`); info-icons on the defi-side `/protocol-console` dashboard deep-link to `https://vaipakam.com/protocol-console/docs#<knob-id>`. Protocol console documents need to be available in `www` (https://vaipakam.com/protocol-console/docs) and not in `defi` (https://defi.vaipakam.com/protocol-console/docs)
 
 Also the info icon mapping inside protocol console should go only to `www` (https://vaipakam.com/protocol-console/docs)
 
 ---
 
-Guide me to provide sitemap to google search engine
+- [ ] **ET-004**: Guide me to provide sitemap to google search engine
 
 ---
 
-Have 3 modes in website `Basic/Advanced/Technical`, Basic: for Dummy users (with polished wordings), Advanced: for users with no technical knoweldge but can understand all financial jargons, Technical: for users with technical knoweldge but not much with all financial jargons
-what do you say? whats your take?
+- [ ] **ET-003**: Have 3 modes in website `Basic/Advanced/Technical`, Basic: for Dummy users (with polished wordings); Advanced: for users with no technical knoweldge but can understand all financial jargons; Technical: for users with technical knoweldge but not much with all financial jargons
+      what do you say? whats your take? Is there a better approach?
 
 ---
 
-update protocol console and include each and every configs in admin viewable/proposable page, what do you say?
+- [ ] **ET-002**: update protocol console and include each and every configs in admin viewable/proposable page, what do you say?
+
+---
+
+- [ ] **ET-001**: Lets use Blowfish instead of Blockaid
 
 ---

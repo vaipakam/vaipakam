@@ -1,8 +1,20 @@
 # Release notes — 2026-05-15
 
-One feature-sized thread landed today, end-to-end:
-**internal-liquidation matching** (B.2 from
-`docs/internal/PendingTasks-2026-05-14.md`) — a new pre-external-
+Two threads landed today:
+
+1. **Internal-liquidation matching** (B.2 from
+   `docs/internal/PendingTasks-2026-05-14.md`) — the feature
+   piece. A new pre-aggregator liquidation path that runs
+   ahead of the external swap. See Thread 1 below.
+2. **Task-tracking migration to @vaipakam-labs** — the
+   housekeeping piece. Dated `PendingTasks-yyyy-mm-dd.md`
+   files retired in favor of the GitHub Project board; label
+   vocabulary + Issue Templates + multi-repo auto-add Action
+   landed in both repos. See Thread 2 below.
+
+## Thread 1 — Internal-liquidation matching (B.2)
+
+A new pre-aggregator liquidation path — a new pre-external-
 aggregator liquidation path where opposing-direction loans clear
 each other through the protocol's own collateral without paying
 DEX slippage or aggregator fees. Bots earn 1% per matched leg
@@ -48,8 +60,6 @@ full non-invariant suite (94 suites). tsc-clean across
 `apps/{defi,keeper,indexer,agent}` and `vaipakam-keeper-bot`.
 Indexer event-coverage check passes (21 handled / 15
 allowlisted, up from 20 / 16).
-
-## Thread — Internal-liquidation matching (B.2)
 
 ### What changed
 
@@ -198,6 +208,114 @@ the main work:
 
 PendingTasks-2026-05-14.md §B.2 marked all five closed in
 `377d997`.
+
+## Thread 2 — Migration of task tracking to @vaipakam-labs
+
+A separate, smaller piece of work landed today alongside B.2:
+the move from dated `PendingTasks-yyyy-mm-dd.md` files to the
+GitHub Project [@vaipakam-labs](https://github.com/users/vaipakam/projects/1)
+as the live tracker for outstanding work. Markdown docs were
+becoming hard to maintain — the same items leaked across
+`docs/ToDo.md`, `docs/internal/PendingTasks-yyyy-mm-dd.md`, and
+`docs/ReleaseNotes/*` in slightly different framings, and
+closure state drifted between them.
+
+### What moved where
+
+| Surface | New role |
+|---|---|
+| **`@vaipakam-labs` project board** | Live task tracker. Status / Priority / Size / Module / Sprint fields. Both `vaipakam/vaipakam` and `vaipakam/vaipakam-keeper-bot` linked. |
+| `docs/internal/RoughNotes.md` | Brain-dump (already in active use). Promote to a card within 24-48h or strike. |
+| `docs/ToDo.md` | Long-running brain-dump backlog. Items promote to cards as they become actionable. |
+| `docs/ReleaseNotes/yyyy-mm-dd.md` | Historical record of what shipped. Unchanged role; new releases continue here. |
+| `docs/DesignsAndPlans/*.md` | Architectural rationale. Unchanged role. |
+| `docs/ops/*Runbook.md` | On-call procedures. Unchanged role. |
+| `docs/internal/PendingTasks-2026-05-14.md` | **Frozen** — last of the dated pattern. Banner at top points readers to the project. No new `PendingTasks-yyyy-mm-dd.md` files going forward. |
+
+### What was set up on @vaipakam-labs
+
+**18 curated draft cards** matching the actionable items from
+`PendingTasks-2026-05-14.md` + cherry-picks from `docs/ToDo.md`.
+Closed items (B.1 / B.2 / C.2 / D / B.2.1–B.2.5 / E.3 / E.4 /
+E.5 / T-064) stayed off the board — they're in ReleaseNotes /
+PendingTasks history. ~80 stale items in `docs/ToDo.md` stayed
+in ToDo.md until they become actionable.
+
+**Five custom Project fields:**
+- `Status` — Backlog / Ready / In progress / In review / Done (already on the project)
+- `Priority` — P0 / P1 / P2 (already)
+- `Size` — XS / S / M / L / XL (already)
+- `Module` — contracts / apps/defi / apps/keeper / apps/indexer / apps/agent / apps/www / vaipakam-keeper-bot / docs / ops (**new**)
+- `Sprint` — 2-week Iteration field (**new**; iteration list still needs UI configuration)
+
+**Promoted four feature-request drafts to real Issues** so they
+carry permanent discussion threads:
+- [#1](https://github.com/vaipakam/vaipakam/issues/1) C.1 — Off-chain data-fetch audit (`security` + `audit` labels)
+- [#2](https://github.com/vaipakam/vaipakam/issues/2) E.1 — Aave V4 peer-reader (`enhancement`)
+- [#3](https://github.com/vaipakam/vaipakam/issues/3) E.2 — Balancer V2 SOR direct-quote (`enhancement`)
+- [#4](https://github.com/vaipakam/vaipakam/issues/4) T-600 — Treasury architecture (`enhancement`)
+- [#5](https://github.com/vaipakam/vaipakam/issues/5) T-068 — LayerZero → CCIP (`enhancement`)
+
+Other 13 cards remain as drafts; they'll get promoted to Issues
+when discussion threads become useful (e.g., when audit fixes
+start landing for C.1 or when a per-chain mainnet rollout
+sequence kicks off A.1 / A.2 / A.3 / A.6).
+
+### Label vocabulary — synced across both repos
+
+Both `vaipakam/vaipakam` and `vaipakam/vaipakam-keeper-bot` now
+carry an identical 17-label set:
+
+| Type labels | Flag labels |
+|---|---|
+| `bug` | `security` |
+| `enhancement` | `audit` |
+| `chore` | `testnet-rehearsal` |
+| `refactor` | `mainnet-rollout` |
+| `infra` | `good first issue` |
+| `perf` | `help wanted` |
+| `documentation` | `duplicate` / `invalid` / `wontfix` |
+| `question` | |
+
+New issues must carry exactly one **type** label plus zero-or-more
+**flag** labels. Issue templates enforce this automatically.
+
+### Issue Templates in both repos
+
+- `.github/ISSUE_TEMPLATE/bug.yml` — auto-applies `bug`, prompts for chain / surface / repro / expected / actual / severity / env
+- `.github/ISSUE_TEMPLATE/feature_request.yml` — auto-applies `enhancement`, prompts for problem / proposal / alternatives / surface / size (XS-XL, matches the project's Size field) / risk / acceptance
+- `.github/ISSUE_TEMPLATE/config.yml` — disables blank issues; routes security disclosures to `IncidentRunbook.md` privately rather than a public Issue
+
+### Multi-repo auto-add — the workaround
+
+GitHub Projects v2's in-UI Auto-add workflow is one-repo-per-rule
+([community discussion](https://github.com/orgs/community/discussions/47803)).
+The community-standard workaround: deploy
+`actions/add-to-project@v1.0.2` as a GitHub Action in each
+contributing repo. The Action runs on issue `opened` / `reopened`
+/ `transferred` and pushes the issue into `@vaipakam-labs` using
+the `ADD_TO_PROJECT_PAT` repo secret (a personal access token
+with `project` scope — required because the default
+`GITHUB_TOKEN` can't cross the repo→user-project boundary even
+when the user account is the same login).
+
+Workflow files: `.github/workflows/add-to-project.yml` in both
+repos, identical except for the comment header. The in-UI
+Auto-add workflow has been disabled by hand.
+
+### Commits
+
+This thread shows up in the commit log as:
+
+| Commit | What |
+|---|---|
+| `87aa1e5` | docs: close E.3 / E.4 / E.5 / T-064 (already-shipped sweep) |
+| `9d3eb5f` | docs: strike PendingTasks §C.2 |
+| `ea4abbd` | docs: freeze PendingTasks-2026-05-14.md as last of dated pattern |
+| `417b5ea` | chore: GitHub Issue Templates (bug + feature_request) |
+| `54dc347` | chore(ci): GitHub Action to auto-add issues to @vaipakam-labs |
+| `8f3d0cc` (keeper-bot) | chore: GitHub Issue Templates mirror |
+| `38d420a` (keeper-bot) | chore(ci): GitHub Action mirror |
 
 ## Operational
 
