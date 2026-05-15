@@ -317,6 +317,219 @@ This thread shows up in the commit log as:
 | `8f3d0cc` (keeper-bot) | chore: GitHub Issue Templates mirror |
 | `38d420a` (keeper-bot) | chore(ci): GitHub Action mirror |
 
+## Thread 3 — Pre-audit consent + disclosure polish
+
+A focused afternoon thread completing the audit-package picture
+before the eventual mainnet sign-off. Three coordinated efforts:
+the C.1 off-chain-data audit (the last security-adjacent task on
+the pre-audit list), the A.5 risk-committee sign-off questionnaire
+(the document the committee will engage with), and a top-to-bottom
+polish of the Risk Disclosures surface so the words shown to the
+user match the on-chain consent variable name 1:1.
+
+### C.1 — off-chain data-fetch audit (PR #7 + #10)
+
+A nine-surface catalogue of every off-chain → on-chain data flow,
+each row carrying the signer, TTL, fail-mode, plausibility bound,
+and worst-case blast radius if poisoned. The audit walks Chainlink
+primary feeds, the Tellor + API3 + DIA Soft 2-of-N secondary
+quorum, the L2 sequencer feed, the Aave V3 + Compound V3 peer-LTV
+reads, the 3-clone V3 depth probe, the `setKeeperTier` relay (the
+single off-chain → on-chain WRITE), the 0x / 1inch / Balancer V2
+quote APIs, the DeFiLlama + CoinGecko Tier-3 advisory inputs, and
+every frontend / indexer / agent external read.
+
+**Verdict: 0 critical, 0 high. 3 small findings (F-1 / F-2 / F-3).**
+
+The defence-in-depth pattern (primary source + secondary
+cross-validation + plausibility bound + stale-fallback to library
+default) holds at every external-read site. The audit doc itself
+is `docs/internal/OffchainDataFetchAudit-2026-05-15.md`, joining
+`ConfigKnobBoundsAudit-2026-05-14.md` and
+`WethChainSafetyAudit-2026-05-14.md` to form the auditor's
+cold-read three-doc pack.
+
+The three small follow-ups landed alongside the audit doc:
+
+- **F-1 (PR #7)**: stale natspec on `OracleFacet.refreshTierLtvCache`
+  said "15 BPS divergence tolerance" but the constant
+  (`PEER_DIVERGENCE_TOLERANCE_BPS = 3000`) is 30% — a 200× drift
+  in the comment, fixed inline.
+- **F-2 (PR #10)**: `refreshTierLtvCache` invoked
+  `LibPeerLTV.aggregateTierLtv` twice per tier just to recover
+  `assetsContrib` for the emitted event. Library already returned
+  the count in the tuple; refactor keeps it from the first call
+  and drops ~300-500k gas per tier × 3 tiers from the permissionless
+  refresh hot path.
+- **F-3 (PR #10)**: `KeeperTierSet` event widened from
+  `(asset, tier)` to `(asset, oldTier, newTier)` so auditors and
+  indexers can reconstruct the demote / promote sequence from
+  events alone — no storage replay needed.
+
+### EC-002 — flash-loan bot atomicity (Issue #11, no code change)
+
+The "how do we ensure the flash-loan bot can't walk away with
+collateral without repaying" question got a three-layer
+verification:
+
+1. **Diamond enforcement** — `RiskFacet.triggerLiquidationDiscounted`
+   is `nonReentrant` and `safeTransferFrom`s the principal asset
+   from `msg.sender` at line 1761 BEFORE the collateral withdraw
+   at line 1827. If the bot doesn't have approved principal, the
+   txn reverts before any collateral moves.
+2. **Aave V3 flash-loan callback** — wraps the whole sequence inside
+   `executeOperation`; Aave reverts the entire txn if
+   `FlashLoanLiquidator`'s balance is below `loanAmount + premium`
+   at callback end.
+3. **Off-chain bot** — submits the tx; holds no custody.
+
+EC-002 closed as verified-already-implemented. Issue #11 carries
+the closing note for the audit-package addendum.
+
+### A.5 — risk-committee sign-off questionnaire (PR #14)
+
+A first-cut, user-approved 8-section briefing-plus-ballot document
+that the eventual committee signers will engage with. Each section
+ends with a single "Committee question to confirm" line so the
+document doubles as the input AND the response template:
+
+1. **Audit posture** — internal pre-audit complete; external A.4
+   pending.
+2. **Parameter sanity** — tier-LTV caps (50% / 60% / ~73%) sourced
+   from `LibPeerLTV` peer-consensus + library defaults; aligns
+   with the pre-deploy slippage census.
+3. **Kill-switch readiness** — `depthTieredLtvEnabled`,
+   `discountPathEnabled`, `internalMatchEnabled`, `Pausable.pause`,
+   `setSanctionsOracle` rotation — all independently 48h-gated
+   post-handover (operator EOA on testnets, no delay there).
+4. **Bot dependencies** — `effectiveTier = min(getLiquidityTier,
+   keeperTier)` asymmetry means a stuck or compromised keeper
+   relay can only raise risk-aversion, never lower it. No
+   fund-loss vector exists from the relay surface.
+5. **Cross-chain** — LZ-V2 + hardened DVN policy (3 required +
+   2 optional, threshold 1-of-2) enforced at deploy gate;
+   CCIP migration roadmap as Issue #5.
+6. **Liquidation economics** — 3% slippage + 0.3% fee + 8% LTV
+   buffer between init gate and external-liquidation trigger
+   gives nominal headroom; black-swan envelope handled via
+   in-kind fallback + claim-time retry + consent-gated disclosure.
+7. **Sequencer / oracle outage** — layered fail-closed (sequencer
+   feed + hybrid Chainlink staleness + Soft 2-of-N secondary
+   quorum).
+8. **Sign-off scope** — protocol-wide single sign-off + per-chain
+   readback artifact archive.
+
+Section 9 is the sign-off form template (Accept / Defer / Reject
+per section + overall decision).
+
+The document lives at
+`docs/internal/RiskCommitteeSignOffQuestionnaire.md`.
+
+### Risk-disclosure copy — three rewrites, one final shape (PR #14)
+
+Three iterations landed in the same PR as the consent flow was
+tightened toward its final shape:
+
+1. **First-pass split (commit `454fc30`)** — the old two-bullet
+   liquid-fallback was split into three bullets reflecting the
+   three actual contract branches: oracle-available
+   equivalent-value, oracle-available underwater, oracle-UNAVAILABLE.
+   The third case wasn't disclosed before; the contract has
+   handled it correctly all along.
+2. **Long-form paragraph rewrite (commit `8319a4a`)** — section /
+   bullet structure replaced with flowing paragraphs because the
+   user-facing disclosure shouldn't read like a checkbox grid.
+   `shortSummary` key added as a reserved compact-surface
+   variant.
+3. **Final 2-paragraph polish (commit `f69e064` + `f7e194b`)** —
+   user-approved shrink to a tight 2-paragraph form with a
+   broadened checkbox label ("I understand and agree to the
+   Risk Disclosures and Vaipakam Terms.") + an inline link to
+   the marketing-site Terms of Service page (`marketingUrl(
+   '/terms')`). i18next `<Trans>` renders the
+   `<terms>Vaipakam Terms</terms>` placeholder as a real `<a>`
+   at render time so translators preserve placement.
+   OfferBook's disabled-submit tooltip gained a dedicated
+   `consentRequiredHint` key — "Please check the agreement
+   above to continue."
+
+The four call sites (`CreateOffer`, `OfferBook` Accept-Review modal,
+`BorrowerPreclose`, `LenderEarlyWithdrawal`) pick up the new shape
+automatically — `RiskConsentLabel` is the new exported sub-
+component and each consumer now uses it inside its own `<label>`.
+
+Non-en locales were stripped to `title` + `checkboxLabel` only;
+`fallbackLng: 'en'` renders the new English copy for every locale
+until **EC-004** lands the translations.
+
+### Variable rename to match the checkbox (PR #15)
+
+The on-chain consent variable was historically called
+`fallbackConsentFromBoth` — accurate for the pre-rename era when
+it captured "abnormal-market fallback liquidation consent." After
+the disclosure polish, that name was misleading. A user who
+bypasses the frontend and reads the storage slot / ABI directly
+should see at a glance what the flag represents.
+
+Mechanical rename across **105 files** (~415 replacements):
+
+| Old | New |
+| --- | --- |
+| `acceptorFallbackConsent` | `acceptorRiskAndTermsConsent` |
+| `creatorFallbackConsent` | `creatorRiskAndTermsConsent` |
+| `fallbackConsentFromBoth` | `riskAndTermsConsentFromBoth` |
+| `fallbackConsentRequired` | `riskAndTermsConsentRequired` |
+| `FallbackConsentRequired` | `RiskAndTermsConsentRequired` |
+| `setFallbackConsent` | `setRiskAndTermsConsent` |
+| `fallbackConsent` | `riskAndTermsConsent` |
+
+Scope: contracts (`LibVaipakam.sol`, `IVaipakamErrors.sol`, 6 facets,
+40 test files, 8 demo/seed scripts), frontend (`offerSchema.ts`,
+5 pages, 1 component, 2 lib helpers, 10 locale files), `apps/indexer`
+(2 files), `apps/www` (10 locale files), auto-regenerated
+`packages/contracts/src/abis/*`. Keeper-bot sibling repo synced via
+the standard `KEEPER_BOT_DIR=… bash contracts/script/exportAbis.sh`
+flow.
+
+**No storage migration** — Solidity struct field rename does not
+move the slot. **No semantic change** — the consent flow
+(`creatorConsent && acceptorConsent` captured at loan init, gates
+fallback-liquidation accounting downstream) is identical.
+
+Verification: `forge build` clean; `forge test
+--no-match-path "test/invariants/*"` → **1936 passed / 0 failed /
+5 skipped** (94 suites); `pnpm --filter @vaipakam/defi exec tsc -b
+--noEmit` clean; keeper-bot `npm run typecheck` clean.
+
+### New cards queued for after the audit window
+
+| Issue | Title | Sizing | Why |
+| --- | --- | --- | --- |
+| [#12](https://github.com/vaipakam/vaipakam/issues/12) | **EC-003** — Internal-match-first retry at lender claim time | M | Mirrors the pre-liquidation internal-match priority window, extended to the post-fallback claim path. Hit rate expected low (exact opposing-pair Active counterparty must exist at claim time) but every match saves the lender aggregator slippage entirely. |
+| [#13](https://github.com/vaipakam/vaipakam/issues/13) | **EC-004** — Translate the new `riskDisclosures` keys into non-en locales | S × 9 | `fallbackLng: 'en'` is the buffer until done. |
+
+### Commits
+
+| Hash | Title |
+| --- | --- |
+| `6fa8ec0` | docs(audit): C.1 — off-chain data-fetch audit + F-1 natspec fix |
+| `ebd4d7c` | docs(todo): tick ET-009 — C.1 off-chain data-fetch audit complete |
+| `ff7e1a7` | docs(todo): tag promoted items with promotedToProjectCard marker |
+| `c22a6fd` | refactor(oracle): drop duplicate aggregateTierLtv call in refreshTierLtvCache (F-2) |
+| `ba83c9b` | feat(config): include oldTier in KeeperTierSet event (F-3) + ABI sync |
+| `9cdaaa1` | docs: relocate SlippageCensusGuide.md → docs/ops/ for uniformity |
+| `3b21860`→`78103f2` | docs(todo): add T-070 — hide status badge when wallet not connected |
+| `a04d05c` | docs(audit): A.5 risk-committee sign-off questionnaire (first-cut) + EC-002 tick |
+| `454fc30` | feat(disclosures): split section1Point bullets by oracle-quorum availability + queue EC-003/EC-004 |
+| `8319a4a` | feat(disclosures): switch Risk Disclosures to long-form paragraphs + crisp summary key + updated consent line |
+| `f69e064` | feat(disclosures): shrink Risk Disclosures to 2 user-readable paragraphs |
+| `f7e194b` | feat(disclosures): link "Vaipakam Terms" inline in the consent checkbox |
+| `2558047` | refactor: rename fallbackConsent → riskAndTermsConsent across the stack |
+| `b92c881` | chore(abis): refresh _source.json provenance to vaipakam@2558047 |
+| `b6ad316` (keeper-bot) | chore: sync ABIs with vaipakam@49506a8 |
+| `01445d4` (keeper-bot) | chore: sync ABIs with vaipakam@2558047 |
+| `6746780` (keeper-bot) | chore(abis): refresh _source.json provenance to vaipakam@1048173 (post-merge) |
+
 ## Operational
 
 - **No production behaviour change today.** Kill-switch
