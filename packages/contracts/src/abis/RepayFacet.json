@@ -677,11 +677,6 @@
   },
   {
     "type": "error",
-    "name": "FallbackConsentRequired",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "HealthFactorCalculationFailed",
     "inputs": []
   },
@@ -1164,6 +1159,11 @@
   {
     "type": "error",
     "name": "RewardOAppNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RiskAndTermsConsentRequired",
     "inputs": []
   },
   {

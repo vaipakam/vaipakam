@@ -623,7 +623,7 @@
             "internalType": "bool"
           },
           {
-            "name": "fallbackConsentFromBoth",
+            "name": "riskAndTermsConsentFromBoth",
             "type": "bool",
             "internalType": "bool"
           },
@@ -1133,7 +1133,7 @@
             "internalType": "bool"
           },
           {
-            "name": "creatorFallbackConsent",
+            "name": "creatorRiskAndTermsConsent",
             "type": "bool",
             "internalType": "bool"
           },

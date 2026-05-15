@@ -60,7 +60,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     ///         (EventSourcingAudit §1.5 rule 1).
     /// @param loanId The fallback-pending loan ID.
     /// @param lender Lender address (indexed for filterable subscriptions).
-    /// @param fallbackConsentFromBoth Mirrors {Loan.fallbackConsentFromBoth}
+    /// @param riskAndTermsConsentFromBoth Mirrors {Loan.riskAndTermsConsentFromBoth}
     ///        — informational, not a routing signal.
     /// @param newStatus Post-transition `LoanStatus` (always
     ///        `FallbackPending` for this event); included so cache-merge
@@ -69,7 +69,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     event LoanFallbackPending(
         uint256 indexed loanId,
         address indexed lender,
-        bool fallbackConsentFromBoth,
+        bool riskAndTermsConsentFromBoth,
         LibVaipakam.LoanStatus newStatus
     );
 
@@ -79,7 +79,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     ///         intermediate `FallbackPending` transition; this event is
     ///         strictly the terminal `→ Defaulted` flip.
     /// @param loanId The ID of the defaulted loan.
-    /// @param fallbackConsentFromBoth Mirrors {Loan.fallbackConsentFromBoth}
+    /// @param riskAndTermsConsentFromBoth Mirrors {Loan.riskAndTermsConsentFromBoth}
     ///        latched at initiation — the combined abnormal-market +
     ///        illiquid-assets fallback consent from both counterparties
     ///        (docs/WebsiteReadme.md §"Offer and acceptance risk warnings",
@@ -95,7 +95,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     /// @custom:event-category state-change/loan-mutation
     event LoanDefaulted(
         uint256 indexed loanId,
-        bool fallbackConsentFromBoth,
+        bool riskAndTermsConsentFromBoth,
         LibVaipakam.LoanStatus newStatus
     );
 
@@ -307,7 +307,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                     emit LoanFallbackPending(
                         loanId,
                         loan.lender,
-                        loan.fallbackConsentFromBoth,
+                        loan.riskAndTermsConsentFromBoth,
                         loan.status
                     );
                     return;
@@ -396,7 +396,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 ((liquidity == LibVaipakam.LiquidityStatus.Liquid &&
                     isCollateralValueCollapsed) ||
                     (liquidity == LibVaipakam.LiquidityStatus.Illiquid &&
-                        loan.fallbackConsentFromBoth))
+                        loan.riskAndTermsConsentFromBoth))
             ) {
                 // Illiquid or value collapsed: Move collateral from borrower's escrow to lender's escrow
                 // so ClaimFacet.claimAsLender can withdraw from lender's escrow consistently.
@@ -567,7 +567,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             // Default → borrower loses interaction rewards, lender keeps hers.
             LibInteractionRewards.closeLoan(loanId, /* borrowerClean */ false, /* lenderForfeit */ false);
         }
-        emit LoanDefaulted(loanId, loan.fallbackConsentFromBoth, loan.status);
+        emit LoanDefaulted(loanId, loan.riskAndTermsConsentFromBoth, loan.status);
     }
 
     /**

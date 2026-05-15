@@ -951,7 +951,7 @@ library LibVaipakam {
         // Creator's agreement to the liquidation-fallback terms (abnormal-market
         // fallback + illiquid full-collateral transfer). Mandatory on every
         // offer — `createOffer` reverts when false.
-        bool creatorFallbackConsent;
+        bool creatorRiskAndTermsConsent;
         address prepayAsset;
         AssetType collateralAssetType;
         uint256 collateralTokenId;
@@ -1012,7 +1012,7 @@ library LibVaipakam {
         bool accepted;
         AssetType assetType;
         bool useFullTermInterest;
-        bool creatorFallbackConsent;
+        bool creatorRiskAndTermsConsent;
         AssetType collateralAssetType;
         // Carried into `Loan.allowsPartialRepay` at offer acceptance.
         // See {CreateOfferParams.allowsPartialRepay} for full semantics.
@@ -1087,7 +1087,7 @@ library LibVaipakam {
         LoanStatus status;
         AssetType assetType;
         bool useFullTermInterest;
-        bool fallbackConsentFromBoth;
+        bool riskAndTermsConsentFromBoth;
         AssetType collateralAssetType;
         // Phase 6: keeper access is now per-keeper-per-loan via
         // `loanKeeperEnabled[loanId][keeper]` (see Storage below). Per-side

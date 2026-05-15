@@ -191,7 +191,7 @@ contract Scenario4_IlliquidCollateral is Test {
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
-                creatorFallbackConsent: true,
+                creatorRiskAndTermsConsent: true,
                 prepayAsset: mockUSDC,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
@@ -207,10 +207,10 @@ contract Scenario4_IlliquidCollateral is Test {
         vm.prank(borrower);
         uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
 
-        // Verify loan is Active with fallbackConsentFromBoth
+        // Verify loan is Active with riskAndTermsConsentFromBoth
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Active));
-        assertTrue(loan.fallbackConsentFromBoth, "Both parties should have consented to illiquid");
+        assertTrue(loan.riskAndTermsConsentFromBoth, "Both parties should have consented to illiquid");
         assertEq(loan.principal, PRINCIPAL);
         assertEq(loan.collateralAmount, COLLATERAL);
         assertEq(loan.collateralAsset, mockILLIQUID);
@@ -230,7 +230,7 @@ contract Scenario4_IlliquidCollateral is Test {
 
         // Step 4: Trigger default (permissionless — anyone can call)
         vm.expectEmit(true, false, false, true);
-        emit DefaultedFacet.LoanDefaulted(loanId, true, LibVaipakam.LoanStatus.Defaulted); // fallbackConsentFromBoth = true
+        emit DefaultedFacet.LoanDefaulted(loanId, true, LibVaipakam.LoanStatus.Defaulted); // riskAndTermsConsentFromBoth = true
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
 
         // Step 5: Verify loan is Defaulted

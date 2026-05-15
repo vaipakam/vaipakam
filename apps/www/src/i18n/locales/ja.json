@@ -208,7 +208,7 @@
       "nftTokenIdRequired": "NFTトークンIDが必要です。",
       "collateralAssetInvalid": "担保資産のアドレスが無効です。",
       "prepayAssetInvalid": "前払い資産のアドレスが無効です。",
-      "fallbackConsentRequired": "オファーを作成する前に、異常市場の清算フォールバック条件に同意する必要があります。",
+      "riskAndTermsConsentRequired": "オファーを作成する前に、異常市場の清算フォールバック条件に同意する必要があります。",
       "amountMaxBelowMin": "最大数量は最小数量を下回ることはできません。",
       "rateMaxBelowMin": "最大金利は最小金利を下回ることはできません。"
     },
@@ -811,7 +811,7 @@
     "titleLine1": "ピアツーピア・レンディング",
     "titleLine2": "安全なオンチェーン",
     "subtitlePrefix": "Vaipakam",
-    "subtitleBody": "は幅広いトークンの貸し借り、NFT のレンタル、独自の条件設定を可能にします。すべてのポジションはユニークな NFT によって追跡されます — 提供から決済まで、透明で追跡可能、信頼不要です。",
+    "subtitleBody": "はトークンの貸し借り、NFT のレンタル、独自の条件設定を可能にします。すべてのポジションはユニークな NFT によって追跡されます — 提供から決済まで、透明で追跡可能、信頼不要です。",
     "launchApp": "Vaipakamを開く",
     "buyVpfi": "VPFIを購入",
     "howItWorks": "仕組み",

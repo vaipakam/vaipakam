@@ -231,7 +231,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
                 assetType: LibVaipakam.AssetType.ERC1155,
                 tokenId: TOKEN_ID,
                 quantity: QUANTITY,
-                creatorFallbackConsent: true,
+                creatorRiskAndTermsConsent: true,
                 prepayAsset: mockUSDC,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,

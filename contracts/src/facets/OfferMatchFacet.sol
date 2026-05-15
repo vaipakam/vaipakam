@@ -197,7 +197,7 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             abi.encodeWithSelector(
                 OfferFacet.acceptOfferInternal.selector,
                 borrowerOfferId,
-                /* acceptorFallbackConsent */ true,
+                /* acceptorRiskAndTermsConsent */ true,
                 /* usePermit */ false
             ),
             // Surface a clear typed revert on cross-facet failure;

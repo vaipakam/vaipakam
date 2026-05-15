@@ -51,7 +51,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *           NEG-RA1  amountMax < amount        → InvalidAmountRange
  *           NEG-RA2  interestRateBpsMax < bps  → InvalidRateRange
  *           NEG-RA3  rateMax > MAX_INTEREST    → InterestRateAboveCeiling
- *           NEG-2    creatorFallbackConsent=0  → FallbackConsentRequired
+ *           NEG-2    creatorRiskAndTermsConsent=0  → RiskAndTermsConsentRequired
  *           NEG-3    lending == collateral     → SelfCollateralizedOffer
  *           NEG-4    durationDays == 0         → InvalidOfferType
  *           NEG-9    lender collateral < floor → MinCollateralBelowFloor
@@ -92,7 +92,7 @@ contract AnvilNegativeFlows is Script {
         _negRA1_amountMaxLessThanAmount();
         _negRA2_rateMaxLessThanRate();
         _negRA3_rateAboveCeiling();
-        _neg2_fallbackConsentRequired();
+        _neg2_riskAndTermsConsentRequired();
         _neg3_selfCollateralizedOffer();
         _neg4_zeroDuration();
         _neg9_collateralBelowFloor();
@@ -224,13 +224,13 @@ contract AnvilNegativeFlows is Script {
         console.log(">>> NEG-RA3 PASSED <<<");
     }
 
-    // ─── NEG-2: creatorFallbackConsent = false reverts ──────────────────
+    // ─── NEG-2: creatorRiskAndTermsConsent = false reverts ──────────────────
 
-    function _neg2_fallbackConsentRequired() internal {
+    function _neg2_riskAndTermsConsentRequired() internal {
         console.log("");
-        console.log("=== NEG-2: creatorFallbackConsent=false reverts ===");
+        console.log("=== NEG-2: creatorRiskAndTermsConsent=false reverts ===");
         LibVaipakam.CreateOfferParams memory p = _lenderOfferStandard();
-        p.creatorFallbackConsent = false;
+        p.creatorRiskAndTermsConsent = false;
         bool ok = _simulateCreateOffer(lender, p);
         require(!ok, "NEG-2: should revert");
         console.log(">>> NEG-2 PASSED <<<");
@@ -361,7 +361,7 @@ contract AnvilNegativeFlows is Script {
             assetType: LibVaipakam.AssetType.ERC20,
             tokenId: 0,
             quantity: 0,
-            creatorFallbackConsent: true,
+            creatorRiskAndTermsConsent: true,
             prepayAsset: address(usdc),
             collateralAssetType: LibVaipakam.AssetType.ERC20,
             collateralTokenId: 0,

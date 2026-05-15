@@ -87,7 +87,7 @@ export interface IndexedOffer {
   positionTokenId: string;
   prepayAsset: string;
   useFullTermInterest: boolean;
-  creatorFallbackConsent: boolean;
+  creatorRiskAndTermsConsent: boolean;
   allowsPartialRepay: boolean;
   firstSeenBlock: number;
   firstSeenAt: number;

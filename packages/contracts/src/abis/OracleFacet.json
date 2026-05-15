@@ -576,11 +576,6 @@
   },
   {
     "type": "error",
-    "name": "FallbackConsentRequired",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "FeeTooHigh",
     "inputs": []
   },
@@ -1063,6 +1058,11 @@
   {
     "type": "error",
     "name": "RewardOAppNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RiskAndTermsConsentRequired",
     "inputs": []
   },
   {

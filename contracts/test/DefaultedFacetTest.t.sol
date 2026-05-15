@@ -558,7 +558,7 @@ contract DefaultedFacetTest is Test {
                 assetType: assetType,
                 tokenId: tokenId,
                 quantity: quantity,
-                creatorFallbackConsent: true,
+                creatorRiskAndTermsConsent: true,
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
@@ -693,7 +693,7 @@ contract DefaultedFacetTest is Test {
 
         vm.prank(lender);
         vm.expectEmit(true, false, false, true);
-        emit DefaultedFacet.LoanDefaulted(loanId, true, LibVaipakam.LoanStatus.Defaulted); // fallbackConsentFromBoth = true
+        emit DefaultedFacet.LoanDefaulted(loanId, true, LibVaipakam.LoanStatus.Defaulted); // riskAndTermsConsentFromBoth = true
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(
@@ -726,7 +726,7 @@ contract DefaultedFacetTest is Test {
 
         vm.prank(lender);
         vm.expectEmit(true, false, false, true);
-        emit DefaultedFacet.LoanDefaulted(loanId, true, LibVaipakam.LoanStatus.Defaulted); // fallbackConsentFromBoth = true
+        emit DefaultedFacet.LoanDefaulted(loanId, true, LibVaipakam.LoanStatus.Defaulted); // riskAndTermsConsentFromBoth = true
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
 
         // Claim model: collateral stays in borrower's escrow; lender claim is recorded
@@ -762,7 +762,7 @@ contract DefaultedFacetTest is Test {
 
         vm.prank(lender);
         vm.expectEmit(true, false, false, true);
-        emit DefaultedFacet.LoanDefaulted(loanId, true, LibVaipakam.LoanStatus.Defaulted); // fallbackConsentFromBoth = true
+        emit DefaultedFacet.LoanDefaulted(loanId, true, LibVaipakam.LoanStatus.Defaulted); // riskAndTermsConsentFromBoth = true
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
 
         // Check NFT user reset
@@ -903,7 +903,7 @@ contract DefaultedFacetTest is Test {
     }
 
     /// @dev Tests triggerDefault with liquid collateral where isCollateralValueCollapsed returns true
-    ///      and fallbackConsentFromBoth is true — takes the illiquid/collapsed else-if branch.
+    ///      and riskAndTermsConsentFromBoth is true — takes the illiquid/collapsed else-if branch.
     function testTriggerDefaultLiquidCollateralCollapsed() public {
         uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
             1000 ether, 1500 ether, 30, 0, 0
@@ -929,7 +929,7 @@ contract DefaultedFacetTest is Test {
     }
 
     /// @dev Tests triggerDefault with illiquid collateral and no consent — takes LiquidationFailed revert branch.
-    ///      LiquidationFailed requires: collateral is Illiquid AND fallbackConsentFromBoth = false.
+    ///      LiquidationFailed requires: collateral is Illiquid AND riskAndTermsConsentFromBoth = false.
     function testTriggerDefaultLiquidationFailedNoConsent() public {
         // Mock principal as illiquid so both assets match (avoids MixedCollateralNotAllowed)
         mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Illiquid);
@@ -944,13 +944,13 @@ contract DefaultedFacetTest is Test {
 
         vm.warp(block.timestamp + 33 days + 3);
 
-        // Clear fallbackConsentFromBoth (and prepayAsset) via mutator.
+        // Clear riskAndTermsConsentFromBoth (and prepayAsset) via mutator.
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
-        loan.fallbackConsentFromBoth = false;
+        loan.riskAndTermsConsentFromBoth = false;
         loan.prepayAsset = address(0);
         TestMutatorFacet(address(diamond)).setLoan(loanId, loan);
 
-        // Now: Illiquid collateral AND fallbackConsentFromBoth=false → LiquidationFailed
+        // Now: Illiquid collateral AND riskAndTermsConsentFromBoth=false → LiquidationFailed
         // (Neither the liquid swap branch nor the illiquid+consent branch is taken)
         vm.expectRevert(IVaipakamErrors.LiquidationFailed.selector);
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
@@ -1825,9 +1825,9 @@ contract DefaultedFacetTest is Test {
             5000 ether, 7500 ether, 30, 0, 0
         );
 
-        // Flip fallbackConsentFromBoth to false via TestMutatorFacet
+        // Flip riskAndTermsConsentFromBoth to false via TestMutatorFacet
         LibVaipakam.Loan memory loanNoConsent = LoanFacet(address(diamond)).getLoanDetails(loanId);
-        loanNoConsent.fallbackConsentFromBoth = false;
+        loanNoConsent.riskAndTermsConsentFromBoth = false;
         loanNoConsent.prepayAsset = address(0);
         loanNoConsent.collateralAssetType = LibVaipakam.AssetType.ERC20;
         TestMutatorFacet(address(diamond)).setLoan(loanId, loanNoConsent);

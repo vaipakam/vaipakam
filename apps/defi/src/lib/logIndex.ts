@@ -970,10 +970,10 @@ async function runScan(
       } else if (topic0 === LOAN_DEFAULTED_TOPIC0) {
         if (topics.length < 2) continue;
         const loanId = BigInt(topics[1]).toString();
-        let fallbackConsentFromBoth = false;
+        let riskAndTermsConsentFromBoth = false;
         try {
           const [b] = decodeAbiParameters(parseAbiParameters('bool'), event.data);
-          fallbackConsentFromBoth = Boolean(b);
+          riskAndTermsConsentFromBoth = Boolean(b);
         } catch {
           // malformed — keep default
         }
@@ -981,7 +981,7 @@ async function runScan(
         // UI from the known lender/borrower of `loanId`. Store without
         // participants so the Activity filter still catches it via the loan
         // lookup path.
-        addEvent('LoanDefaulted', [], { loanId, fallbackConsentFromBoth });
+        addEvent('LoanDefaulted', [], { loanId, riskAndTermsConsentFromBoth });
       } else if (topic0 === LENDER_CLAIMED_TOPIC0) {
         if (topics.length < 3) continue;
         const loanId = BigInt(topics[1]).toString();

@@ -198,7 +198,7 @@ const ARG_LABELS: Record<string, string> = {
   interestPaid: 'Interest',
   lateFeePaid: 'Late fee',
   offerType: 'Type',
-  fallbackConsentFromBoth: 'Dual consent',
+  riskAndTermsConsentFromBoth: 'Dual consent',
   buyer: 'Buyer',
   user: 'User',
   vpfiAmount: 'VPFI',
