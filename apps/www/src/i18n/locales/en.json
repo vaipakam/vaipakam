@@ -1494,6 +1494,15 @@
         "li2": "<s>Time-based trigger:</s> once the grace period expires, liquid collateral is swapped to repay the lender; illiquid collateral (NFTs, or tokens without a qualifying oracle + v3-style concentrated-liquidity AMM pool) is transferred directly to the lender via the NFT-claim model.",
         "a2": "If a DEX swap cannot meet the 6% slippage bound, the fallback route delivers collateral-equivalent value to the lender and splits a premium (3% to the lender, 2% to treasury) as a distress bonus."
       },
+      "fallback-mechanics": {
+        "q": "When liquidation goes to in-kind, how does the protocol decide who gets what?",
+        "a1": "The contract evaluates four cases in order; the first match decides the split:",
+        "li1": "<s>Oracle available, collateral ≥ amount due:</s> the lender receives collateral asset worth (principal + accrued interest + 3% fallback bonus) at oracle price, the treasury receives 2% of principal in collateral, and the borrower receives the remainder as a real refund.",
+        "li2": "<s>Oracle available, collateral &lt; amount due:</s> the lender receives ALL seized collateral; treasury and borrower receive nothing. The lender absorbs the shortfall.",
+        "li3": "<s>Oracle quorum UNAVAILABLE:</s> the lender receives ALL collateral regardless of computed value (because no value is trustworthy). Same payout as the underwater case but a distinct event is emitted so post-mortem analysis can tell the two paths apart.",
+        "li4": "<s>Illiquid asset on either side:</s> full collateral transfers to the lender in-kind, regardless of market value. Both parties consented to this at offer creation via the Risk Disclosures.",
+        "a2": "If the loan lands in FallbackPending with in-kind collateral and the at-liquidation swap couldn't execute, the lender (or a keeper acting on their NFT) gets a second-chance retry at claim time over the same 4-DEX failover (0x → 1inch → Uniswap V3 → Balancer V2). The Advanced User Guide section \"How Liquidation Actually Works\" covers worked examples for each case."
+      },
       "early-exit": {
         "q": "Can I exit my position early?",
         "a1": "Yes — both sides have exits that protect the counterparty's economics:",

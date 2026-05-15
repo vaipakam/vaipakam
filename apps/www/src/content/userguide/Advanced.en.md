@@ -702,6 +702,163 @@ Permissionless actions available to anyone regardless of role:
 
 ---
 
+## How Liquidation Actually Works
+
+The Risk Disclosures you agreed to at offer time capture the
+worst-case outcome in two sentences. This section explains the
+underlying mechanics — useful if you want to understand WHY the
+in-kind fallback exists, or which of the four branches your
+loan would actually take.
+
+The contract function that decides the split is
+`LibFallback.computeFallbackEntitlements`. It walks four cases
+in order; the FIRST one that matches is the one that fires.
+
+<a id="liquidation-mechanics.case-1"></a>
+
+### Case 1 — Oracle available, collateral worth ≥ amount due
+
+The healthy path. Chainlink price feeds are responsive, the
+Soft 2-of-N secondary quorum (Tellor + API3 + DIA) hasn't
+disagreed, and the seized collateral covers the amount owed
+when priced against the oracle.
+
+What happens:
+
+- The lender receives **collateral asset** worth (principal +
+  accrued interest + a 3% fallback bonus), priced at the oracle.
+  In effect: the lender is made whole at fair value, paid in the
+  collateral asset rather than the lending asset.
+- The treasury receives a 2% premium of principal, also priced
+  in collateral.
+- The borrower receives the **remainder** of the collateral
+  back. This is a real refund — it's the over-collateralisation
+  that wasn't needed to cover the lender's claim.
+
+Worked example: a loan of 1000 USDC against 0.6 WETH ($3000
+collateral, $1000 debt). Oracle prices ETH at $5000 / WETH; debt
++ interest + bonus = $1050. Lender receives 0.21 WETH ($1050
+worth), treasury receives 0.004 WETH ($20 worth of the 2%
+premium), borrower receives the remaining ~0.386 WETH.
+
+<a id="liquidation-mechanics.case-2"></a>
+
+### Case 2 — Oracle available, collateral worth < amount due
+
+The underwater path. The oracle works, but the seized collateral
+is worth less than the amount due even at oracle price. Common
+in volatile-asset crashes where collateral value drops faster
+than HF can react.
+
+What happens:
+
+- The lender receives **ALL** of the seized collateral, in the
+  collateral asset.
+- The treasury receives nothing.
+- The borrower receives nothing — there is no remainder to refund.
+
+The lender absorbs the shortfall. No further claim exists
+against the borrower, the protocol, or any third party. This is
+the case the Risk Disclosures' "recovery may be less than the
+asset lent" line specifically warns about.
+
+Worked example: same 1000 USDC / 0.6 WETH loan, but ETH crashes
+to $1500 / WETH. Collateral now $900; debt is $1050. Lender
+receives all 0.6 WETH ($900 worth), treasury 0, borrower 0.
+
+<a id="liquidation-mechanics.case-3"></a>
+
+### Case 3 — Oracle quorum UNAVAILABLE
+
+The dark-quorum path. Chainlink staleness is past the volatile
+ceiling AND the 2-of-N secondary quorum can't agree (every
+secondary either is offline or disagrees with primary). The
+protocol has no trustworthy price for either side of the loan,
+so it can't compute a fair split.
+
+What happens:
+
+- The lender receives **ALL** of the seized collateral, in the
+  collateral asset, **regardless of computed value** (because no
+  computation is trustworthy).
+- The treasury receives nothing.
+- The borrower receives nothing.
+
+Same payout as Case 2, but reached for a fundamentally different
+reason: the protocol isn't deciding "collateral is worth less
+than debt" — it's deciding "I cannot trust any number here, so
+the lender gets the entire seized basket and absorbs whatever
+that turns out to be worth on the open market."
+
+A different on-chain event (`LiquidationFallbackOracleUnavailable`)
+is emitted so that auditors can distinguish the two paths in
+post-mortem analysis.
+
+<a id="liquidation-mechanics.case-4"></a>
+
+### Case 4 — Illiquid asset on either side
+
+The illiquid-asset path. The lending asset, the collateral asset,
+or both don't qualify as Liquid in the protocol's classifier
+(no Chainlink feed, or no Uniswap-V3-style concentrated-liquidity
+pool above the volume threshold). Common for NFT collateral
+and long-tail tokens.
+
+What happens at default time:
+
+- The lender receives the **full collateral** in-kind, regardless
+  of market value.
+- No partition between "amount owed" and "remainder" —
+  oracle pricing can't be applied.
+- The asset may be worth materially more or less than the amount
+  owed. No warranty on resaleability.
+
+Both sides consented to this when the offer was created — the
+Risk Disclosures' illiquid-asset clause covers exactly this case.
+You can't reach this branch unless both parties knowingly chose
+to do a loan involving an illiquid asset.
+
+<a id="liquidation-mechanics.why-in-kind"></a>
+
+### Why in-kind, why not always cash?
+
+Three reasons the protocol pays out in collateral asset units
+rather than always swapping to the lending asset:
+
+- **Sequencer / DEX outage**: when the protocol can't safely
+  execute a swap (slippage > 6%, thin liquidity, DEX revert,
+  sequencer down), the safest action is to deliver what it
+  already has — the seized collateral — directly. Forcing a
+  swap at any cost would lock losses in.
+- **Black-swan envelope**: in volatile cascades, an oracle-
+  available path can disappear within minutes. Pre-staging the
+  in-kind fallback keeps the protocol functional even when
+  every price source is degraded.
+- **Counterparty-pair recovery**: at claim time the lender (or
+  their keeper bot) gets a second-chance retry over the
+  full 4-DEX failover. If conditions have normalised by then,
+  they can sell the in-kind collateral for the lending asset
+  through the same routing infrastructure the at-liquidation
+  path tried.
+
+<a id="liquidation-mechanics.claim-time-retry"></a>
+
+### Claim-time retry
+
+`ClaimFacet.claimAsLenderWithRetry` lets the lender (or a
+keeper acting on the lender's NFT) supply a ranked retry try-
+list of swap adapter calls (0x → 1inch → Uniswap V3 → Balancer
+V2) when the loan is in `FallbackPending`. The library iterates
+the list, commits on first success, and rewrites the lender +
+borrower claims to principal-asset proceeds.
+
+Total failure leaves the recorded collateral split intact and
+transitions the loan terminally to Defaulted — at which point the
+lender takes the in-kind collateral and is free to sell it through
+any external venue.
+
+---
+
 ## Allowances
 
 <a id="allowances.list"></a>

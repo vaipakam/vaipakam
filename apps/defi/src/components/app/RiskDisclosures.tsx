@@ -103,6 +103,17 @@ export function RiskDisclosures() {
             {t(key)}
           </p>
         ))}
+
+        <p className="risk-disclosures-learn-more">
+          <a
+            href={marketingUrl('/help/advanced#liquidation-mechanics.case-1')}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="risk-consent-terms-link"
+          >
+            {t('riskDisclosures.learnMoreLabel')}
+          </a>
+        </p>
       </div>
 
       {showOriginal && <EnglishOriginalModal onClose={() => setShowOriginal(false)} />}
