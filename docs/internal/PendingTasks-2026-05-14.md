@@ -1,5 +1,19 @@
 # Pending tasks snapshot — 2026-05-14 (end of merge)
 
+> **⚠ FROZEN — this is the LAST `PendingTasks-yyyy-mm-dd.md`.**
+> Going forward, live task tracking moves to the GitHub Project
+> [**@vaipakam-labs**](https://github.com/users/vaipakam/projects/1).
+> This file is preserved as a historical snapshot (the 2026-05-15
+> sweep marked closures inline with their commit refs) and is no
+> longer the authoritative source. Do not edit further.
+>
+> **Where to look now:**
+> - **Live tasks** → [`@vaipakam-labs`](https://github.com/users/vaipakam/projects/1) board (Status / Priority / Size / Module / Iteration fields)
+> - **Brain-dump / half-formed thoughts** → [`docs/internal/RoughNotes.md`](RoughNotes.md)
+> - **What just shipped** → `docs/ReleaseNotes/ReleaseNotes-yyyy-mm-dd.md`
+> - **Why a thing was designed the way it was** → `docs/DesignsAndPlans/*.md`
+> - **How to do an on-call procedure** → `docs/ops/*Runbook.md`
+
 Comprehensive inventory of work remaining after the
 `feat/market-rate-widget-and-tiered-ltv` branch merged into main
 (`cd1b4de`). All 13 code-side commits of today's session shipped:
