@@ -539,19 +539,13 @@
   },
   "riskDisclosures": {
     "title": "Risk Disclosures",
-    "checkboxLabel": "I have read and agree to the Risk Disclosures above.",
-    "section1Heading": "If liquidation of liquid collateral fails (like in Abnormal Market conditions, when slippage > 6%, thin liquidity, DEX revert, or any other runtime failure)",
-    "section1Point1": "Lender receives the collateral in-kind — NOT the lending asset. The exact split depends on whether the oracle price-feed quorum is available at fallback time:",
-    "section1Point2": "Oracle quorum available, collateral value ≥ amount due: the lender receives collateral-equivalent value (collateral asset priced at the oracle, equal to amount owed + fallback bonus); the remainder returns to the borrower after charges.",
-    "section1Point3": "Oracle quorum available, collateral value < amount due: the lender receives ALL collateral (the collateral asset, all of it); the borrower receives nothing; no shortfall top-up.",
-    "section1Point4": "Oracle quorum UNAVAILABLE (price-feed disagreement or every secondary offline): the lender receives ALL collateral regardless of its computed value — fairness math cannot be applied without a working oracle, so the protocol falls back to full-collateral-to-lender by design.",
-    "section2Heading": "If the borrower defaults on a loan with illiquid assets (illiquid lending asset, illiquid collateral, or both)",
-    "section2Point1": "Full collateral transfers to the lender in-kind, regardless of its market value.",
-    "section2Point2": "No partition between \"amount owed\" and \"remainder\" — the lender takes ALL collateral.",
-    "section2Point3": "The asset received may be worth materially more or less than the amount owed. No warranty on value, liquidity, or resaleability.",
-    "section3Heading": "Acknowledgement",
-    "section3Point1": "Recovery may be materially less than the asset lent. The lender may receive assets other than the one lent. No further claim on the borrower, the protocol, its contributors, or any third party.",
-    "section3Point2": "Proceeding records a binding agreement on-chain against the wallet for the full life of this position."
+    "checkboxLabel": "I understand and agree to the Risk Disclosures and Vaipakam Terms.",
+    "paragraph1": "If liquidation of liquid collateral cannot execute safely, the lender may receive collateral in-kind instead of the lending asset. This can happen in abnormal market conditions, on excessive slippage, in thin liquidity, on DEX or aggregator failure, or any other runtime failure.",
+    "paragraph2": "When reliable oracle pricing is available, the protocol splits collateral by oracle value: the lender receives the amount owed plus fallback charges, and any remainder returns to the borrower. If the collateral is worth less than the amount owed, the lender receives all remaining collateral and the borrower receives nothing.",
+    "paragraph3": "When reliable oracle pricing is unavailable, the protocol cannot calculate a fair split. The lender receives all collateral in-kind, regardless of market value.",
+    "paragraph4": "For loans involving illiquid assets, borrower default results in the lender receiving all collateral in-kind, regardless of market value. The asset received may be worth more or less than the amount owed and may be difficult or impossible to sell.",
+    "paragraph5": "By proceeding, you acknowledge that recovery may be less than the asset lent, that the lender may receive a different asset than the one lent, and that no further claim exists against the borrower, Vaipakam, its contributors, or any third party. This acknowledgement is recorded on-chain for this position.",
+    "shortSummary": "If liquidation can't execute safely — abnormal market, oracle quorum loss, or illiquid asset — the lender may receive collateral in-kind instead of the lending asset, regardless of market value. Recovery may be less than the asset lent. No further claim exists against the borrower, Vaipakam, its contributors, or any third party."
   },
   "nav": {
     "brandHome": "Vaipakam home",

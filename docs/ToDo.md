@@ -382,7 +382,7 @@ vaipakam-protocol
 
 ---
 
-- [ ] **EC-004** `promotedToProjectCard`: Translate `riskDisclosures.section1Point1`-`section1Point4` (the polished oracle-availability dichotomy) into the 7 non-en locales: `zh`, `ko`, `hi`, `ta`, `fr`, `de`, `ja` (and any others under `apps/defi/src/i18n/locales/`). Until then, `fallbackLng: 'en'` shows the English bullet to all locales — functional but not localized. Pattern: each translator reviews the four-bullet structure (intro + 2 oracle-available cases + oracle-unavailable case) so the legal nuance carries across.
+- [ ] **EC-004** `promotedToProjectCard`: Translate the new `riskDisclosures` keys into the 9 non-en locales (`zh`, `ko`, `hi`, `ta`, `fr`, `de`, `ja`, `ar`, `es`) under `apps/defi/src/i18n/locales/`. The keys are now `paragraph1` through `paragraph5` (the long-form Risk Disclosures), `shortSummary` (the crisp one-paragraph variant), plus `checkboxLabel` (now "I understand and agree to the Risk Disclosures and Vaipakam Terms."). The old `section1*` / `section2*` / `section3*` keys were retired in the same PR — the non-en locales were stripped down to `title` + `checkboxLabel` only. Until each locale catches up, `fallbackLng: 'en'` renders the new English copy for that locale. Per-locale translator review should preserve the legal nuance of the three fallback branches (oracle-available-equivalent, oracle-available-underwater, oracle-unavailable) plus the illiquid-asset case + acknowledgement.
 
 ---
 
@@ -426,7 +426,7 @@ Tip: queue all 3 in the Safe at once, then sign once per signer (each signer's s
 
 ---
 
-- [ ] **ET-010**: Is it possible for us to allow borrower to auction the NFT or illiquid assets before liquidating (means here full collateral transfer), so that it would be fair enough for both borrower and lender, what do you say?, if so, how do we go about it? is there a better approach? whats your take?
+- [ ] **ET-010** `yetToPromote`: Is it possible for us to allow borrower to auction the NFT or illiquid assets before liquidating (means here full collateral transfer), so that it would be fair enough for both borrower and lender, what do you say?, if so, how do we go about it? is there a better approach? whats your take?
 
 ---
 
@@ -458,15 +458,15 @@ Also the info icon mapping inside protocol console should go only to `www` (http
 
 ---
 
-- [ ] **ET-003**: Have 3 modes in website `Basic/Advanced/Technical`, Basic: for Dummy users (with polished wordings); Advanced: for users with no technical knoweldge but can understand all financial jargons; Technical: for users with technical knoweldge but not much with all financial jargons
+- [ ] **ET-003** `yetToPromote`: Have 3 modes in website `Basic/Advanced/Technical`, Basic: for Dummy users (with polished wordings); Advanced: for users with no technical knoweldge but can understand all financial jargons; Technical: for users with technical knoweldge but not much with all financial jargons
       what do you say? whats your take? Is there a better approach?
 
 ---
 
-- [ ] **ET-002**: update protocol console and include each and every configs in admin viewable/proposable page, what do you say?
+- [ ] **ET-002** `yetToPromote`: update protocol console and include each and every configs in admin viewable/proposable page, what do you say?
 
 ---
 
-- [ ] **ET-001**: Lets use Blowfish instead of Blockaid
+- [ ] **ET-001** `yetToPromote`: Lets use Blowfish instead of Blockaid
 
 ---

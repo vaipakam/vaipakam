@@ -1523,18 +1523,7 @@
   },
   "riskDisclosures": {
     "title": "Avisos de riesgo",
-    "checkboxLabel": "He leído y acepto los avisos de riesgo anteriores.",
-    "section1Heading": "Si falla la liquidación de una garantía líquida (por condiciones anómalas de mercado, slippage > 6%, poca liquidez, reversión del DEX u otro fallo de ejecución)",
-    "section1Point1": "El prestamista recibe la garantía en especie, no el activo prestado.",
-    "section1Point2": "Si el valor de la garantía < monto adeudado: el prestamista recibe toda la garantía; el prestatario no recibe nada; no hay compensación por el déficit.",
-    "section1Point3": "Si el valor de la garantía ≥ monto adeudado: el prestamista recibe garantía equivalente al monto adeudado al precio del oráculo; el resto vuelve al prestatario tras los cargos.",
-    "section2Heading": "Si el prestatario incumple un préstamo con activos ilíquidos (activo prestado ilíquido, garantía ilíquida o ambos)",
-    "section2Point1": "La garantía completa se transfiere al prestamista en especie, independientemente de su valor de mercado.",
-    "section2Point2": "No hay separación entre \"monto adeudado\" y \"remanente\" — el prestamista recibe toda la garantía.",
-    "section2Point3": "El activo recibido puede valer sustancialmente más o menos que el monto adeudado. No hay garantía sobre su valor, liquidez o capacidad de reventa.",
-    "section3Heading": "Confirmación",
-    "section3Point1": "La recuperación puede ser sustancialmente menor que el activo prestado. El prestamista puede recibir activos distintos del activo prestado. No existe reclamación adicional contra el prestatario, el protocolo, sus contribuyentes ni terceros.",
-    "section3Point2": "Al continuar, se registra un acuerdo vinculante on-chain asociado a la wallet durante toda la vida de esta posición."
+    "checkboxLabel": "He leído y acepto los avisos de riesgo anteriores."
   },
   "cardHelp": {
     "dashboardYourLoans": "Cada préstamo del que la wallet conectada forma parte en esta cadena — como prestamista, prestatario o ambos. Cada fila enlaza con la página completa de la posición, con HF, LTV, colateral y los controles de pago y reclamación.",

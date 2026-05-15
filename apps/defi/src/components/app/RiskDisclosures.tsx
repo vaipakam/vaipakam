@@ -3,28 +3,12 @@ import { AlertTriangle, BookOpen, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import './RiskDisclosures.css';
 
-const KEYS: Array<{ heading: string; points: string[] }> = [
-  {
-    heading: 'riskDisclosures.section1Heading',
-    points: [
-      'riskDisclosures.section1Point1',
-      'riskDisclosures.section1Point2',
-      'riskDisclosures.section1Point3',
-      'riskDisclosures.section1Point4',
-    ],
-  },
-  {
-    heading: 'riskDisclosures.section2Heading',
-    points: [
-      'riskDisclosures.section2Point1',
-      'riskDisclosures.section2Point2',
-      'riskDisclosures.section2Point3',
-    ],
-  },
-  {
-    heading: 'riskDisclosures.section3Heading',
-    points: ['riskDisclosures.section3Point1', 'riskDisclosures.section3Point2'],
-  },
+const PARAGRAPH_KEYS: string[] = [
+  'riskDisclosures.paragraph1',
+  'riskDisclosures.paragraph2',
+  'riskDisclosures.paragraph3',
+  'riskDisclosures.paragraph4',
+  'riskDisclosures.paragraph5',
 ];
 
 /**
@@ -86,15 +70,10 @@ export function RiskDisclosures() {
           </div>
         )}
 
-        {KEYS.map((section, i) => (
-          <section key={i} className="risk-disclosures-section">
-            <h4 className="risk-disclosures-heading">{t(section.heading)}</h4>
-            <ol className="risk-disclosures-points">
-              {section.points.map((p, j) => (
-                <li key={j}>{t(p)}</li>
-              ))}
-            </ol>
-          </section>
+        {PARAGRAPH_KEYS.map((key, i) => (
+          <p key={i} className="risk-disclosures-paragraph">
+            {t(key)}
+          </p>
         ))}
       </div>
 
@@ -178,15 +157,10 @@ function EnglishOriginalModal({ onClose }: { onClose: () => void }) {
             <AlertTriangle size={16} aria-hidden />
             <span>{en('riskDisclosures.title')}</span>
           </div>
-          {KEYS.map((section, i) => (
-            <section key={i} className="risk-disclosures-section">
-              <h4 className="risk-disclosures-heading">{en(section.heading)}</h4>
-              <ol className="risk-disclosures-points">
-                {section.points.map((p, j) => (
-                  <li key={j}>{en(p)}</li>
-                ))}
-              </ol>
-            </section>
+          {PARAGRAPH_KEYS.map((key, i) => (
+            <p key={i} className="risk-disclosures-paragraph">
+              {en(key)}
+            </p>
           ))}
         </div>
         <div style={{ marginTop: 16, textAlign: 'right' }}>
