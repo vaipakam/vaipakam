@@ -205,7 +205,13 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // leaves them as the collateral split recorded by the fallback. Once
         // resolved, the loan is terminally Defaulted (no further cure).
         if (loan.status == LibVaipakam.LoanStatus.FallbackPending) {
-            _resolveFallbackIfActive(loanId, loan, retryCalls);
+            bool fullyResolved = _resolveFallbackIfActive(loanId, loan, retryCalls);
+            // EC-007 — a full claim-time internal match settled the lender
+            // in the principal asset and deleted the claim records. There
+            // is nothing left to pay out here; returning avoids the
+            // `NothingToClaim()` revert below, which would otherwise roll
+            // back the successful match (the auto-dispatch ran in this tx).
+            if (fullyResolved) return;
             // EC-003 Phase 3 — the auto-dispatch inside
             // `_resolveFallbackIfActive` may have transitioned the
             // loan to `InternalMatched` (on a full match). Only force
@@ -531,14 +537,21 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     ///      (empty try-list, all adapters reverted, or borrower claim
     ///      path): the pre-recorded collateral split is pushed from
     ///      the Diamond to lender/treasury/borrower escrows.
+    /// @dev Returns `true` when a claim-time internal match FULLY resolved
+    ///      the loan (transitioned it to `InternalMatched` and cleared the
+    ///      lender claim records). The caller MUST then return without
+    ///      touching the claim records — see the `NothingToClaim()` note in
+    ///      `_claimAsLenderImpl`. Returns `false` for the partial-match,
+    ///      no-match, and retry-swap paths, where the (scaled) residual is
+    ///      still pending a normal claim-record payout.
     function _resolveFallbackIfActive(
         uint256 loanId,
         LibVaipakam.Loan storage loan,
         LibSwap.AdapterCall[] memory retryCalls
-    ) internal {
+    ) internal returns (bool fullyResolved) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.FallbackSnapshot storage snap = s.fallbackSnapshot[loanId];
-        if (!snap.active) return;
+        if (!snap.active) return false;
 
         // EC-003 Phase 3 / EC-007 — internal-match-first at claim time.
         // The candidate pool grows between keeper-tick and lender-claim
@@ -548,9 +561,11 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         //
         // The auto-dispatch may:
         //   - FULLY match the loan → it transitions FallbackPending →
-        //     InternalMatched, `snap.active` is cleared, the residual
-        //     collateral is pushed to the borrower's escrow. We detect
-        //     this below by re-reading `snap.active` and return early.
+        //     InternalMatched, `snap.active` is cleared, the lender is
+        //     paid in the principal asset by the match settlement and
+        //     the lender claim records are deleted. We detect this below
+        //     by re-reading `snap.active` and signal `fullyResolved` so
+        //     the caller skips the claim-record payout entirely.
         //   - PARTIALLY match the loan → it stays FallbackPending, the
         //     snapshot is scaled to the residual, `snap.active` STAYS
         //     true. We must NOT return — we fall through to the
@@ -558,8 +573,12 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         //   - not match at all → `snap.active` unchanged; same
         //     fall-through.
         RiskFacet(address(this)).attemptInternalMatchAutoDispatch(loanId);
-        // A full match consumed the snapshot — nothing left to resolve.
-        if (!snap.active) return;
+        // EC-007 — a full match consumed the snapshot and cleared the
+        // lender claim records. Signal the caller to return early: if it
+        // fell through to the claim-record payout it would read a zeroed
+        // claim, revert `NothingToClaim()`, and — because the auto-dispatch
+        // ran in THIS transaction — roll back the successful match.
+        if (!snap.active) return true;
 
         bool retrySucceeded;
         uint256 proceeds;
@@ -575,6 +594,10 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             _distributeFallbackCollateral(loanId, loan, snap);
         }
         snap.active = false;
+        // Partial-match / no-match / retry-swap: the (scaled) residual is
+        // now recorded in the lender claim records — the caller must run
+        // the normal claim-record payout.
+        return false;
     }
 
     /// @dev Phase 7a — runs the retry swap through {LibSwap.swapWithFailover}.
