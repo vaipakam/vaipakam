@@ -450,7 +450,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](9);
+        selectors = new bytes4[](10);
         selectors[0] = RiskFacet.updateRiskParams.selector;
         selectors[1] = RiskFacet.calculateLTV.selector;
         selectors[2] = RiskFacet.calculateHealthFactor.selector;
@@ -478,6 +478,11 @@ contract HelperTest {
         // PR5 fills in the cross-vault transfer + incentive payout.
         // Kill-switch defaults `false` so the selector is dormant.
         selectors[8] = RiskFacet.triggerInternalMatchLiquidation.selector;
+        // EC-003 Phase 3 — auto-dispatch helper. External-facing for
+        // cross-facet calls from DefaultedFacet + ClaimFacet but
+        // gated by `onlyDiamondInternal` so EOAs can't invoke it
+        // directly through the Diamond's fallback.
+        selectors[9] = RiskFacet.attemptInternalMatchAutoDispatch.selector;
     }
 
     function getClaimFacetSelectors()

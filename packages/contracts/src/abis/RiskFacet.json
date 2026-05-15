@@ -1,6 +1,25 @@
 [
   {
     "type": "function",
+    "name": "attemptInternalMatchAutoDispatch",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "dispatched",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "calculateHealthFactor",
     "inputs": [
       {
@@ -770,22 +789,6 @@
   },
   {
     "type": "error",
-    "name": "IllegalTransition",
-    "inputs": [
-      {
-        "name": "from",
-        "type": "uint8",
-        "internalType": "enum LibVaipakam.LoanStatus"
-      },
-      {
-        "name": "to",
-        "type": "uint8",
-        "internalType": "enum LibVaipakam.LoanStatus"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "IlliquidAsset",
     "inputs": []
   },
@@ -854,6 +857,17 @@
   },
   {
     "type": "error",
+    "name": "InternalMatchAssetUnpriceable",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InternalMatchChainBroken",
     "inputs": [
       {
@@ -880,7 +894,7 @@
   },
   {
     "type": "error",
-    "name": "InternalMatchLoanNotActive",
+    "name": "InternalMatchLoanNotMatchable",
     "inputs": [
       {
         "name": "loanId",
@@ -980,6 +994,22 @@
         "name": "capBps",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidTransition",
+    "inputs": [
+      {
+        "name": "from",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.LoanStatus"
+      },
+      {
+        "name": "to",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.LoanStatus"
       }
     ]
   },
@@ -1146,6 +1176,11 @@
   {
     "type": "error",
     "name": "OfferCreationFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OnlyDiamondInternal",
     "inputs": []
   },
   {

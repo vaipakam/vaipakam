@@ -229,6 +229,18 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             revert SequencerUnhealthy();
         }
 
+        // EC-003 Phase 3 — internal-match auto-dispatch. Before falling
+        // through to the external-aggregator swap path below, check
+        // whether an opposing-direction internal-match candidate exists.
+        // If yes, settle at oracle price (no DEX slippage), pay the 1%
+        // matcher bonus to `msg.sender`, and return. Time-based defaults
+        // are the same as HF-based: any caller who triggers default
+        // when an internal match exists is the de-facto matcher and
+        // earns the same incentive.
+        if (RiskFacet(address(this)).attemptInternalMatchAutoDispatch(loanId)) {
+            return;
+        }
+
         // Execution routing (README §1): liquidation depends on whether the
         // live network exposes a swap path for the collateral. When the
         // active-network check returns Illiquid we drop into the full-

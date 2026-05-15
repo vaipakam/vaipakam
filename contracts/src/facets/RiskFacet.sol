@@ -20,6 +20,7 @@ import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessCont
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
  // For NFT updates/burns
 import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
+import {MetricsFacet} from "./MetricsFacet.sol";
  // For transfers
 import {ProfileFacet} from "./ProfileFacet.sol";
  // For KYC if high-value
@@ -58,6 +59,18 @@ import {LibSwap} from "../libraries/LibSwap.sol";
  */
 contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     using SafeERC20 for IERC20;
+
+    /// @dev EC-003 Phase 3 — restricts a call to cross-facet only
+    ///      (`msg.sender == address(this)`, i.e., another facet inside
+    ///      the Diamond reached us via `address(this).call(...)`).
+    ///      External callers via the Diamond's fallback have
+    ///      `msg.sender == EOA`. Same pattern `EscrowFactoryFacet` uses
+    ///      for its cross-facet-only entry-points.
+    error OnlyDiamondInternal();
+    modifier onlyDiamondInternal() {
+        if (msg.sender != address(this)) revert OnlyDiamondInternal();
+        _;
+    }
 
     /// @notice Emitted when an asset's risk parameters are updated.
     /// @dev PR2 of internal-match work (2026-05-14) dropped
@@ -520,9 +533,30 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 hf = RiskFacet(address(this)).calculateHealthFactor(loanId);
         if (hf >= LibVaipakam.HF_SCALE) revert HealthFactorNotLow();
 
+        // ── EC-003 Phase 3 — internal-match auto-dispatch ──────────────
+        // Before falling through to the external-aggregator swap, check
+        // whether an opposing-direction internal-match candidate exists.
+        // If yes, settle at oracle price (no DEX slippage), pay the 1%
+        // matcher bonus to `msg.sender`, and return. The caller is the
+        // de-facto matcher — same incentive shape that
+        // `triggerInternalMatchLiquidation` always had, just without
+        // requiring the caller to know which entry-point to pick.
+        //
+        // The priority-window revert below becomes a defensive no-op
+        // — if a candidate existed AND it passed the view's gates,
+        // auto-dispatch already fired. If we reach the revert it means
+        // either the candidate failed mid-flight or there was no
+        // candidate to begin with; the revert preserves the original
+        // B.2 semantic ("don't dump into the external book mid-window")
+        // for that defensive edge.
+        if (RiskFacet(address(this)).attemptInternalMatchAutoDispatch(loanId)) {
+            return;
+        }
+
         // ── Internal-match priority window (B.2 / PR4) ─────────────────
-        // When the kill-switch is on, the external swap-liquidation path
-        // is blocked for a configurable LTV band immediately above the
+        // When the kill-switch is on AND auto-dispatch above didn't fire
+        // (no candidate found), the external swap-liquidation path is
+        // blocked for a configurable LTV band immediately above the
         // loan's snapshotted liquidation threshold — giving internal
         // matchers a clean priority slot. Above that band, external
         // opens up (worst case: ~2% LTV deterioration vs today, well
@@ -1257,6 +1291,62 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             borrowerClaim.amount = snap.borrowerCollateral;
             borrowerClaim.claimed = snap.borrowerCollateral == 0;
         }
+    }
+
+    /// @dev EC-003 Phase 3 — auto-dispatch helper. Called from every
+    ///      external-liquidation entry-point (`triggerLiquidation`,
+    ///      `triggerDefault`, `claimAsLenderWithRetry`) BEFORE the
+    ///      external-aggregator path so that any opposing-direction
+    ///      internal-match candidate gets settled at oracle price
+    ///      (zero aggregator slippage) first.
+    ///
+    ///      Returns `true` iff the auto-dispatch fired and the
+    ///      caller should NOT fall through to the external path.
+    ///      Returns `false` when:
+    ///        - the kill-switch is off,
+    ///        - no opposing candidate exists in the asset-pair index,
+    ///        - the candidate fails the per-leg gates (oracle
+    ///          priceability + Active-leg LTV-floor) — all already
+    ///          filtered by `hasInternalMatchCandidate`.
+    ///
+    ///      The 1% matcher bonus is paid to `msg.sender` of the
+    ///      dispatching call (via `_settleLeg`'s `msg.sender`
+    ///      reference), preserving the keeper-incentive shape.
+    function attemptInternalMatchAutoDispatch(uint256 loanId)
+        external
+        onlyDiamondInternal
+        returns (bool dispatched)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!s.protocolCfg.internalMatchEnabled) return false;
+
+        (bool found, uint256 candidateId) = MetricsFacet(address(this))
+            .hasInternalMatchCandidate(loanId);
+        if (!found) return false;
+
+        // Settlement. `hasInternalMatchCandidate` has already filtered
+        // candidates by status (Active or FallbackPending), oracle
+        // priceability (both assets), and — for Active candidates —
+        // LTV-floor eligibility. The caller-loan side has been
+        // gated by the outer entry-point (HF<1 for triggerLiquidation,
+        // time-default conditions for triggerDefault, FallbackPending
+        // status for claim-time retry). `_executeTwoWayMatch` runs
+        // the partial-match α math + per-leg settlement + post-match
+        // snapshot scaling + lifecycle transition.
+        (
+            uint256 movedX,
+            uint256 movedY,
+            uint256 incentiveX,
+            uint256 incentiveY
+        ) = _executeTwoWayMatch(loanId, candidateId);
+
+        emit InternalMatchExecuted(
+            loanId, candidateId, 0,
+            msg.sender,
+            movedX, movedY, 0,
+            incentiveX, incentiveY, 0
+        );
+        return true;
     }
 
     /**

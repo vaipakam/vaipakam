@@ -822,7 +822,7 @@ contract DeployDiamond is Script {
     }
 
     function _getRiskSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](9);
+        s = new bytes4[](10);
         s[0] = RiskFacet.updateRiskParams.selector;
         s[1] = RiskFacet.calculateLTV.selector;
         s[2] = RiskFacet.calculateHealthFactor.selector;
@@ -850,6 +850,12 @@ contract DeployDiamond is Script {
         // Kill-switch `internalMatchEnabled` defaults `false` so the
         // selector is dormant on every fresh deploy.
         s[8] = RiskFacet.triggerInternalMatchLiquidation.selector;
+        // EC-003 Phase 3 — auto-dispatch helper invoked from
+        // RiskFacet.triggerLiquidation, DefaultedFacet.triggerDefault,
+        // and ClaimFacet._resolveFallbackIfActive. Guarded by
+        // `onlyDiamondInternal` so the selector exists for cross-facet
+        // routing but isn't callable by EOAs.
+        s[9] = RiskFacet.attemptInternalMatchAutoDispatch.selector;
     }
 
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {

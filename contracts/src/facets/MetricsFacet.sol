@@ -441,17 +441,32 @@ contract MetricsFacet {
                 cst != LibVaipakam.LoanStatus.FallbackPending
             ) continue;
 
-            // Oracle gate — both legs of the eventual settlement need a
-            // priceable oracle. We only check the candidate's
-            // collateral here because the caller's side is already
-            // implicitly priceable (it's the loan being internally
-            // matched).
+            // Oracle gate — internal match settles at oracle price, so
+            // both of the candidate's assets need a fresh reading.
             (bool ok, uint256 price, ) = OracleFacet(address(this))
                 .tryGetAssetPrice(cand.collateralAsset);
             if (!ok || price == 0) continue;
             (ok, price, ) = OracleFacet(address(this))
                 .tryGetAssetPrice(cand.principalAsset);
             if (!ok || price == 0) continue;
+
+            // Liquidation-eligibility gate. The same B.2 semantic that
+            // `triggerInternalMatchLiquidation` enforces via
+            // `_requireLtvAboveFloor` — internal match must only settle
+            // pairs where BOTH legs are liquidatable. FallbackPending
+            // is past the threshold by definition; Active candidates
+            // need a fresh LTV >= floor check. `calculateLTV` reverts
+            // on illiquid collateral, so a `try/catch` keeps the view
+            // safe in pathological pool states.
+            if (cst == LibVaipakam.LoanStatus.Active) {
+                uint256 floor = uint256(cand.liquidationLtvBpsAtInit);
+                if (floor == 0) continue; // unsnapshotted — skip
+                try RiskFacet(address(this)).calculateLTV(cid) returns (uint256 ltv) {
+                    if (ltv < floor) continue;
+                } catch {
+                    continue;
+                }
+            }
 
             return (true, cid);
         }
