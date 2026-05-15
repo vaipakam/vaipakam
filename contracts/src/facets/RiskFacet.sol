@@ -100,8 +100,20 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     // ── Internal-liquidation match path (B.2) — PR4 validation errors ──
     /// @notice The master kill-switch (`internalMatchEnabled`) is off.
     error InternalMatchDisabled();
-    /// @notice One of the loans referenced isn't in `LoanStatus.Active`.
-    error InternalMatchLoanNotActive(uint256 loanId);
+    /// @notice One of the loans referenced isn't in a matchable status
+    ///         (`Active` or `FallbackPending`). EC-003 Phase 1 widened the
+    ///         allowed set from `{Active}` to `{Active, FallbackPending}`
+    ///         so loans whose at-fallback swap failed transiently can
+    ///         still be rescued via internal match when conditions
+    ///         normalize.
+    error InternalMatchLoanNotMatchable(uint256 loanId);
+    /// @notice One of the leg assets has no trustworthy oracle price right
+    ///         now. Reached when the primary feed is stale past the
+    ///         volatile/stable ceiling OR the Soft 2-of-N secondary quorum
+    ///         disagrees. Internal match settles at oracle price (no DEX
+    ///         swap), so the only blocking condition is "we can't trust
+    ///         any number for this asset." EC-003 Phase 1.
+    error InternalMatchAssetUnpriceable(address asset);
     /// @notice Caller passed the same loan ID for two legs of a match.
     error InternalMatchSelfPair(uint256 loanId);
     /// @notice The two loans don't form an opposing pair —
@@ -834,10 +846,21 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             if (loanIdC == loanIdB) revert InternalMatchSelfPair(loanIdB);
         }
 
-        if (s.loans[loanIdA].id == 0 || s.loans[loanIdA].status != LibVaipakam.LoanStatus.Active)
-            revert InternalMatchLoanNotActive(loanIdA);
-        if (s.loans[loanIdB].id == 0 || s.loans[loanIdB].status != LibVaipakam.LoanStatus.Active)
-            revert InternalMatchLoanNotActive(loanIdB);
+        // EC-003 Phase 1 — matchable status set widened from {Active} to
+        // {Active, FallbackPending}. FallbackPending loans that failed at-
+        // fallback swap transiently (slippage > 6%, DEX revert, oracle stale
+        // at that moment) can still be rescued via internal match in a
+        // later block when conditions normalize. The oracle gate below
+        // filters out FallbackPending legs whose asset *truly* lost its
+        // price feed.
+        if (
+            s.loans[loanIdA].id == 0 ||
+            !_isMatchableStatus(s.loans[loanIdA].status)
+        ) revert InternalMatchLoanNotMatchable(loanIdA);
+        if (
+            s.loans[loanIdB].id == 0 ||
+            !_isMatchableStatus(s.loans[loanIdB].status)
+        ) revert InternalMatchLoanNotMatchable(loanIdB);
 
         // Asset opposition — 2-loan symmetric form.
         if (loanIdC == 0) {
@@ -849,8 +872,10 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             }
         } else {
             // 3-loan cycle A→B→C→A.
-            if (s.loans[loanIdC].id == 0 || s.loans[loanIdC].status != LibVaipakam.LoanStatus.Active)
-                revert InternalMatchLoanNotActive(loanIdC);
+            if (
+                s.loans[loanIdC].id == 0 ||
+                !_isMatchableStatus(s.loans[loanIdC].status)
+            ) revert InternalMatchLoanNotMatchable(loanIdC);
             if (
                 s.loans[loanIdA].principalAsset != s.loans[loanIdB].collateralAsset ||
                 s.loans[loanIdB].principalAsset != s.loans[loanIdC].collateralAsset ||
@@ -860,10 +885,16 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             }
         }
 
-        // LTV-floor gates — each leg must be liquidatable.
-        _requireLtvAboveFloor(loanIdA);
-        _requireLtvAboveFloor(loanIdB);
-        if (loanIdC != 0) _requireLtvAboveFloor(loanIdC);
+        // Per-leg gates. Active legs go through the LTV-floor check
+        // (which requires a fresh oracle reading and reverts if the
+        // collateral is illiquid or the loan is below the trigger).
+        // FallbackPending legs are by definition past the LTV threshold
+        // (they already attempted liquidation) — they only need the
+        // oracle to be PRICEABLE so the cross-vault transfer settles
+        // at a trustworthy number. EC-003 Phase 1.
+        _gateMatchableLeg(loanIdA);
+        _gateMatchableLeg(loanIdB);
+        if (loanIdC != 0) _gateMatchableLeg(loanIdC);
 
         // PR5 / PR5.5 execution body. Implements partial-match α from
         // §7 of InternalLiquidationLedger.md: each leg moves
@@ -928,6 +959,12 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         LibVaipakam.Loan storage lb = s.loans[loanIdB];
         LibVaipakam.Loan storage lc = s.loans[loanIdC];
 
+        // EC-003 Phase 1 — rehydrate borrower escrows for any FallbackPending
+        // legs in the cycle so the existing _settleLeg withdraws work.
+        _rehydrateFallbackEscrowIfNeeded(la);
+        _rehydrateFallbackEscrowIfNeeded(lb);
+        _rehydrateFallbackEscrowIfNeeded(lc);
+
         movedX = la.principal < lb.collateralAmount ? la.principal : lb.collateralAmount;
         movedY = lb.principal < lc.collateralAmount ? lb.principal : lc.collateralAmount;
         movedZ = lc.principal < la.collateralAmount ? lc.principal : la.collateralAmount;
@@ -953,21 +990,13 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         lc.principal -= movedZ;
         la.collateralAmount -= movedZ;
 
-        if (la.principal == 0) {
-            LibLifecycle.transition(
-                la, LibVaipakam.LoanStatus.Active, LibVaipakam.LoanStatus.InternalMatched
-            );
-        }
-        if (lb.principal == 0) {
-            LibLifecycle.transition(
-                lb, LibVaipakam.LoanStatus.Active, LibVaipakam.LoanStatus.InternalMatched
-            );
-        }
-        if (lc.principal == 0) {
-            LibLifecycle.transition(
-                lc, LibVaipakam.LoanStatus.Active, LibVaipakam.LoanStatus.InternalMatched
-            );
-        }
+        // EC-003 Phase 1 — collateral consumed per leg:
+        //   la consumed movedZ (paid out to C's lender)
+        //   lb consumed movedX (paid out to A's lender)
+        //   lc consumed movedY (paid out to B's lender)
+        _settleFallbackOrTransitionPostMatch(la, movedZ);
+        _settleFallbackOrTransitionPostMatch(lb, movedX);
+        _settleFallbackOrTransitionPostMatch(lc, movedY);
     }
 
     /// @dev Settle one leg of an internal match — the receiving
@@ -1016,6 +1045,16 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         LibVaipakam.Loan storage la = s.loans[loanIdA];
         LibVaipakam.Loan storage lb = s.loans[loanIdB];
 
+        // EC-003 Phase 1 — for FallbackPending legs, the collateral is
+        // physically held by the Diamond (was withdrawn from the borrower's
+        // escrow during the failed at-fallback swap). Push it back into
+        // the borrower's escrow so the existing `_settleLeg` flow can
+        // withdraw via the standard path. Idempotent — only fires when
+        // `snap.active` is true (i.e., the snapshot hasn't been consumed
+        // by a prior match or claim retry).
+        _rehydrateFallbackEscrowIfNeeded(la);
+        _rehydrateFallbackEscrowIfNeeded(lb);
+
         // Independent mins on each leg (design §7.1 α): each leg
         // moves the smaller of the receiving lender's owed amount
         // and the paying borrower's available collateral.
@@ -1039,25 +1078,14 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         lb.principal -= movedY;
         la.collateralAmount -= movedY;
 
-        // Status transitions — when a loan's principal hits zero
-        // it transitions to `InternalMatched` and exits the active
-        // list. Any residual collateral stays on the loan struct
-        // for the borrower to claim through the existing claim
-        // flow (the analogous Repaid → Settled path).
-        if (la.principal == 0) {
-            LibLifecycle.transition(
-                la,
-                LibVaipakam.LoanStatus.Active,
-                LibVaipakam.LoanStatus.InternalMatched
-            );
-        }
-        if (lb.principal == 0) {
-            LibLifecycle.transition(
-                lb,
-                LibVaipakam.LoanStatus.Active,
-                LibVaipakam.LoanStatus.InternalMatched
-            );
-        }
+        // Status transitions + snapshot scaling. Full match → loan
+        // transitions to `InternalMatched`; partial match keeps the
+        // loan in its current status (Active or FallbackPending). The
+        // helper folds FallbackPending snapshot reduction into the
+        // same exit point as the Active-case transition, so both leg
+        // statuses converge on a consistent terminal-or-residual shape.
+        _settleFallbackOrTransitionPostMatch(la, movedY);
+        _settleFallbackOrTransitionPostMatch(lb, movedX);
     }
 
     /// @dev Internal helper for `triggerInternalMatchLiquidation` —
@@ -1071,6 +1099,163 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 currentLtv = RiskFacet(address(this)).calculateLTV(loanId);
         if (currentLtv < floor) {
             revert InternalMatchLtvBelowFloor(loanId, currentLtv, floor);
+        }
+    }
+
+    /// @dev EC-003 Phase 1 — status-aware leg gate. Active legs go through
+    ///      the LTV-floor check (which implicitly requires a fresh oracle
+    ///      via `calculateLTV`). FallbackPending legs skip the LTV check
+    ///      (they're past the threshold by definition — they reached
+    ///      FallbackPending only because at-fallback liquidation already
+    ///      tried and failed) and instead only need the oracle to be
+    ///      priceable for BOTH the principal and collateral assets, since
+    ///      internal match settles at oracle price.
+    function _gateMatchableLeg(uint256 loanId) private view {
+        LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
+        if (loan.status == LibVaipakam.LoanStatus.FallbackPending) {
+            _assertOraclePriceable(loan.principalAsset);
+            _assertOraclePriceable(loan.collateralAsset);
+        } else {
+            _requireLtvAboveFloor(loanId);
+        }
+    }
+
+    /// @dev EC-003 Phase 1 — reverts `InternalMatchAssetUnpriceable` when
+    ///      the oracle stack can't return a fresh price for `asset`.
+    ///      Mirrors the gate `LibFallback.collateralEquivalent` uses for
+    ///      the at-fallback equivalent-value path: `tryGetAssetPrice` must
+    ///      return `ok=true` and the price must be non-zero. The
+    ///      `getAssetPrice` view this delegates to runs the full Soft
+    ///      2-of-N secondary quorum on its way back, so quorum disagreement
+    ///      surfaces as `ok=false` here.
+    function _assertOraclePriceable(address asset) private view {
+        (bool ok, uint256 price, ) = OracleFacet(address(this)).tryGetAssetPrice(asset);
+        if (!ok || price == 0) revert InternalMatchAssetUnpriceable(asset);
+    }
+
+    /// @dev EC-003 Phase 1 — small predicate keeping the status-set
+    ///      widening logic in one place so the gate body in
+    ///      `triggerInternalMatchLiquidation` stays scannable.
+    function _isMatchableStatus(LibVaipakam.LoanStatus status) private pure returns (bool) {
+        return status == LibVaipakam.LoanStatus.Active ||
+               status == LibVaipakam.LoanStatus.FallbackPending;
+    }
+
+    /// @dev EC-003 Phase 1 — push a FallbackPending loan's collateral
+    ///      from the Diamond's own balance back into the borrower's escrow
+    ///      so the standard `_settleLeg` `escrowWithdrawERC20` path works
+    ///      for the upcoming match.
+    ///
+    ///      Idempotent: only fires when the loan is FallbackPending AND
+    ///      its snapshot is still active (i.e., a prior match retry or
+    ///      claim-time retry hasn't already consumed the collateral). Sets
+    ///      `snap.active = false` so subsequent partial-match attempts on
+    ///      the same loan skip this rehydration — by that point the
+    ///      residual collateral already lives in the borrower's escrow.
+    function _rehydrateFallbackEscrowIfNeeded(LibVaipakam.Loan storage loan) private {
+        if (loan.status != LibVaipakam.LoanStatus.FallbackPending) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.FallbackSnapshot storage snap = s.fallbackSnapshot[loan.id];
+        if (!snap.active) return;
+
+        address borrowerEscrow = EscrowFactoryFacet(address(this))
+            .getOrCreateUserEscrow(loan.borrower);
+        uint256 amount = loan.collateralAmount;
+        if (amount > 0) {
+            IERC20(loan.collateralAsset).safeTransfer(borrowerEscrow, amount);
+            // T-051 — Diamond-side transfer to escrow ticks the
+            // protocolTrackedEscrowBalance counter so subsequent
+            // `escrowWithdrawERC20` calls don't underflow.
+            LibVaipakam.recordEscrowDeposit(loan.borrower, loan.collateralAsset, amount);
+        }
+        snap.active = false;
+    }
+
+    /// @dev EC-003 Phase 1 — post-settlement housekeeping for a loan whose
+    ///      principal was reduced by an internal match. Handles three
+    ///      cases:
+    ///        1. Loan was Active and is now fully matched (`principal == 0`)
+    ///           → transition Active → InternalMatched (existing B.2 path).
+    ///        2. Loan was FallbackPending and is now fully matched →
+    ///           transition FallbackPending → InternalMatched. Snapshot
+    ///           was already neutralised by `_rehydrateFallbackEscrowIfNeeded`
+    ///           (snap.active = false); clear the collateral-unit claim
+    ///           records so the standard Settled-path claim flow takes over.
+    ///        3. Loan was FallbackPending and is still partially open
+    ///           (`principal > 0`) → stays FallbackPending. The matched
+    ///           portion was paid out to the opposing lender via
+    ///           `_settleLeg` and the residual collateral lives in the
+    ///           borrower's escrow. Scale the (already-zeroed) snapshot's
+    ///           reference fields proportionally so any later read sees
+    ///           the right shape, and rewrite the claim records to the
+    ///           proportional residual.
+    ///
+    ///      Active partial matches (case 1's residual, where the loan
+    ///      stays Active with reduced principal) are a no-op here —
+    ///      consistent with the pre-EC-003 B.2 behaviour.
+    function _settleFallbackOrTransitionPostMatch(
+        LibVaipakam.Loan storage loan,
+        uint256 collateralConsumed
+    ) private {
+        LibVaipakam.LoanStatus status = loan.status;
+
+        // Active branch — same shape as the original B.2 code.
+        if (status == LibVaipakam.LoanStatus.Active) {
+            if (loan.principal == 0) {
+                LibLifecycle.transition(
+                    loan,
+                    LibVaipakam.LoanStatus.Active,
+                    LibVaipakam.LoanStatus.InternalMatched
+                );
+            }
+            return;
+        }
+
+        // FallbackPending branch — proportional snapshot scaling +
+        // status transition on full match.
+        if (status == LibVaipakam.LoanStatus.FallbackPending) {
+            LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+
+            if (loan.principal == 0) {
+                // Full rescue. Lender was made whole in principal asset
+                // via _settleLeg; treasury's at-fallback entitlement is
+                // forfeited (same as the Active→InternalMatched path —
+                // no treasury cut on internal-match rescue); borrower's
+                // residual collateral sits in their escrow and gets
+                // withdrawn via the standard Settled-path claim flow.
+                // Clear the collateral-unit claim records so the
+                // InternalMatched terminal doesn't double-distribute.
+                delete s.lenderClaims[loan.id];
+                delete s.borrowerClaims[loan.id];
+                LibLifecycle.transitionFromAny(
+                    loan,
+                    LibVaipakam.LoanStatus.InternalMatched
+                );
+                return;
+            }
+
+            // Partial rescue. Loan stays FallbackPending with reduced
+            // principal + collateralAmount. Scale the snapshot's
+            // reference fields proportionally to the surviving
+            // collateral so any audit-trail read or future settlement
+            // sees a self-consistent shape. Claim records — set in
+            // collateral units at fallback time — are likewise scaled.
+            uint256 oldCollat = loan.collateralAmount + collateralConsumed;
+            uint256 newCollat = loan.collateralAmount;
+            if (oldCollat == 0 || newCollat >= oldCollat) return;
+
+            LibVaipakam.FallbackSnapshot storage snap = s.fallbackSnapshot[loan.id];
+            snap.lenderCollateral = (snap.lenderCollateral * newCollat) / oldCollat;
+            snap.treasuryCollateral = (snap.treasuryCollateral * newCollat) / oldCollat;
+            snap.borrowerCollateral = (snap.borrowerCollateral * newCollat) / oldCollat;
+            snap.lenderPrincipalDue = (snap.lenderPrincipalDue * newCollat) / oldCollat;
+            snap.treasuryPrincipalDue = (snap.treasuryPrincipalDue * newCollat) / oldCollat;
+
+            LibVaipakam.ClaimInfo storage lenderClaim = s.lenderClaims[loan.id];
+            lenderClaim.amount = snap.lenderCollateral;
+            LibVaipakam.ClaimInfo storage borrowerClaim = s.borrowerClaims[loan.id];
+            borrowerClaim.amount = snap.borrowerCollateral;
+            borrowerClaim.claimed = snap.borrowerCollateral == 0;
         }
     }
 
