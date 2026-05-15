@@ -4,7 +4,7 @@ import { L as Link } from '../components/L';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, ArrowLeft, CheckCircle } from 'lucide-react';
 import { ErrorAlert } from '../components/app/ErrorAlert';
-import { RiskDisclosures } from '../components/app/RiskDisclosures';
+import { RiskDisclosures, RiskConsentLabel } from '../components/app/RiskDisclosures';
 import { useWallet } from '../context/WalletContext';
 import { useDiamondContract } from '../contracts/useDiamond';
 import { useLoan } from '../hooks/useLoan';
@@ -305,7 +305,7 @@ export default function LenderEarlyWithdrawal() {
                   checked={fallbackConsent}
                   onChange={(e) => setFallbackConsent(e.target.checked)}
                 />
-                <span>{t('riskDisclosures.checkboxLabel')}</span>
+                <span><RiskConsentLabel /></span>
               </label>
               <div className="action-row" style={{ marginTop: 12 }}>
                 <button

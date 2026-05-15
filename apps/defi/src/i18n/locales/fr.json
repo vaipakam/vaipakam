@@ -1523,18 +1523,7 @@
   },
   "riskDisclosures": {
     "title": "Avertissements sur les risques",
-    "checkboxLabel": "J'ai lu et j'accepte les avertissements sur les risques ci-dessus.",
-    "section1Heading": "Si la liquidation d'une garantie liquide échoue (conditions de marché anormales, slippage > 6 %, liquidité insuffisante, revert du DEX ou autre erreur d'exécution)",
-    "section1Point1": "Le prêteur reçoit la garantie en nature, et non l'actif prêté.",
-    "section1Point2": "Si la valeur de la garantie < montant dû : le prêteur reçoit toute la garantie ; l'emprunteur ne reçoit rien ; aucun complément n'est versé en cas de déficit.",
-    "section1Point3": "Si la valeur de la garantie ≥ montant dû : le prêteur reçoit une garantie équivalente au montant dû au prix de l'oracle ; le reste retourne à l'emprunteur après les frais.",
-    "section2Heading": "Si l'emprunteur fait défaut sur un prêt avec actifs illiquides (actif prêté illiquide, garantie illiquide, ou les deux)",
-    "section2Point1": "L'intégralité de la garantie est transférée au prêteur en nature, indépendamment de sa valeur de marché.",
-    "section2Point2": "Pas de séparation entre « montant dû » et « reliquat » — le prêteur reçoit toute la garantie.",
-    "section2Point3": "L'actif reçu peut valoir sensiblement plus ou moins que le montant dû. Aucune garantie n'est donnée quant à sa valeur, sa liquidité ou sa capacité de revente.",
-    "section3Heading": "Accusé de prise de risque",
-    "section3Point1": "Le recouvrement peut être sensiblement inférieur à l'actif prêté. Le prêteur peut recevoir des actifs différents de celui prêté. Aucun recours supplémentaire n'existe contre l'emprunteur, le protocole, ses contributeurs ou des tiers.",
-    "section3Point2": "En poursuivant, vous inscrivez on-chain un accord contraignant rattaché au portefeuille pour toute la durée de cette position."
+    "checkboxLabel": "J'ai lu et j'accepte les avertissements sur les risques ci-dessus."
   },
   "cardHelp": {
     "dashboardYourLoans": "Chaque prêt auquel le portefeuille connecté participe sur cette chaîne — en tant que prêteur, emprunteur ou les deux. Chaque ligne renvoie à la page complète de la position, avec HF, LTV, collatéral et contrôles de remboursement et de retrait.",

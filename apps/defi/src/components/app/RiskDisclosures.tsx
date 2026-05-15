@@ -1,30 +1,43 @@
 import { useState } from 'react';
 import { AlertTriangle, BookOpen, X } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
+import { Trans, useTranslation } from 'react-i18next';
+import { marketingUrl } from '../../lib/marketingUrl';
 import './RiskDisclosures.css';
 
-const KEYS: Array<{ heading: string; points: string[] }> = [
-  {
-    heading: 'riskDisclosures.section1Heading',
-    points: [
-      'riskDisclosures.section1Point1',
-      'riskDisclosures.section1Point2',
-      'riskDisclosures.section1Point3',
-    ],
-  },
-  {
-    heading: 'riskDisclosures.section2Heading',
-    points: [
-      'riskDisclosures.section2Point1',
-      'riskDisclosures.section2Point2',
-      'riskDisclosures.section2Point3',
-    ],
-  },
-  {
-    heading: 'riskDisclosures.section3Heading',
-    points: ['riskDisclosures.section3Point1', 'riskDisclosures.section3Point2'],
-  },
+const PARAGRAPH_KEYS: string[] = [
+  'riskDisclosures.paragraph1',
+  'riskDisclosures.paragraph2',
 ];
+
+/**
+ * Renders the consent checkbox label with "Vaipakam Terms" as an inline
+ * hyperlink to the marketing-site Terms of Service page. Uses i18next
+ * `<Trans>` so translators preserve the placement of the linked phrase
+ * without hand-splicing strings on the JSX side. `stopPropagation` on
+ * the link prevents a label-click from toggling the checkbox via the
+ * wrapping `<label>` element.
+ *
+ * Consumers wrap the parent `<label>` + `<input>` themselves; this
+ * component is only the inline text + link slot.
+ */
+export function RiskConsentLabel() {
+  return (
+    <Trans
+      i18nKey="riskDisclosures.checkboxLabel"
+      components={{
+        terms: (
+          <a
+            href={marketingUrl('/terms')}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="risk-consent-terms-link"
+            onClick={(e) => e.stopPropagation()}
+          />
+        ),
+      }}
+    />
+  );
+}
 
 /**
  * Pure presentation component that renders the Risk-Disclosure copy
@@ -85,15 +98,10 @@ export function RiskDisclosures() {
           </div>
         )}
 
-        {KEYS.map((section, i) => (
-          <section key={i} className="risk-disclosures-section">
-            <h4 className="risk-disclosures-heading">{t(section.heading)}</h4>
-            <ol className="risk-disclosures-points">
-              {section.points.map((p, j) => (
-                <li key={j}>{t(p)}</li>
-              ))}
-            </ol>
-          </section>
+        {PARAGRAPH_KEYS.map((key, i) => (
+          <p key={i} className="risk-disclosures-paragraph">
+            {t(key)}
+          </p>
         ))}
       </div>
 
@@ -177,15 +185,10 @@ function EnglishOriginalModal({ onClose }: { onClose: () => void }) {
             <AlertTriangle size={16} aria-hidden />
             <span>{en('riskDisclosures.title')}</span>
           </div>
-          {KEYS.map((section, i) => (
-            <section key={i} className="risk-disclosures-section">
-              <h4 className="risk-disclosures-heading">{en(section.heading)}</h4>
-              <ol className="risk-disclosures-points">
-                {section.points.map((p, j) => (
-                  <li key={j}>{en(p)}</li>
-                ))}
-              </ol>
-            </section>
+          {PARAGRAPH_KEYS.map((key, i) => (
+            <p key={i} className="risk-disclosures-paragraph">
+              {en(key)}
+            </p>
           ))}
         </div>
         <div style={{ marginTop: 16, textAlign: 'right' }}>

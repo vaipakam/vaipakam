@@ -15,7 +15,16 @@
 
 ---
 
-- [ ] **T-070**: Hide the status badge when wallet is not connected
+- [ ] **T-072** `yetToPromote`: Have 3 modes in website `Basic/Advanced/Technical`, Basic: for Dummy users (with polished wordings), Advanced: for users with no technical knoweldge but can understand all financial jargons, Technical: for users with technical knoweldge but not much with all financial jargons
+      what do you say? whats your take?
+
+---
+
+- [ ] **T-071** `yetToPromote`: update protocol console and include each and every configs in admin viewable/proposable page, what do you say?
+
+---
+
+- [ ] **T-070** `yetToPromote`: Hide the status badge when wallet is not connected
 
 ---
 
@@ -373,7 +382,15 @@ vaipakam-protocol
 
 ---
 
-- [ ] **EC-002** `promotedToProjectCard`: How do we ensure that the flash loan bots will pay back the lending asset after they took the collateral asset, is it happening in single transaction or how it is? can we allow it to take the collateral asset only after they provide the required lending asset first, is there a better approach? whats your take?
+- [ ] **EC-004** `promotedToProjectCard`: Translate the new `riskDisclosures` keys into the 9 non-en locales (`zh`, `ko`, `hi`, `ta`, `fr`, `de`, `ja`, `ar`, `es`) under `apps/defi/src/i18n/locales/`. The keys are now `paragraph1` through `paragraph5` (the long-form Risk Disclosures), `shortSummary` (the crisp one-paragraph variant), plus `checkboxLabel` (now "I understand and agree to the Risk Disclosures and Vaipakam Terms."). The old `section1*` / `section2*` / `section3*` keys were retired in the same PR — the non-en locales were stripped down to `title` + `checkboxLabel` only. Until each locale catches up, `fallbackLng: 'en'` renders the new English copy for that locale. Per-locale translator review should preserve the legal nuance of the three fallback branches (oracle-available-equivalent, oracle-available-underwater, oracle-unavailable) plus the illiquid-asset case + acknowledgement.
+
+---
+
+- [ ] **EC-003** `promotedToProjectCard`: At lender-claim time (loan in `FallbackPending`), before iterating the external aggregator retry try-list, scan `activeLoanIdsList` for an opposing-direction `Active` counterparty whose `principalAsset == seizedCollateralAsset` and whose `collateralAsset == loan.principalAsset` — if a match exists, settle the in-kind collateral against that counterparty internally (oracle-priced, zero aggregator slippage) and skip the external retry; if no match, fall through to the existing external-aggregator retry path. Mirrors the internal-match-first-then-external priority window the protocol already uses pre-liquidation (`triggerLiquidation`'s 90%-92% LTV band), extended to the post-fallback claim path. Touches: `ClaimFacet.claimAsLenderWithRetry` (new internal-first branch), possibly a new `RiskFacet`-side helper (relaxed cross-status match invariant — one Active leg + one FallbackPending leg). Audit-package implication: invariants doc + at least one new flow test. Hit-rate is expected low (the exact opposing-pair must exist at the exact time of claim) but when it fires, the lender skips aggregator slippage entirely — net win.
+
+---
+
+- [x] **EC-002** — DONE 2026-05-15 (verified, no code change needed). Three-layer atomicity already enforces the "principal-first then collateral" semantic the original ask raised: (i) `RiskFacet.triggerLiquidationDiscounted` at [contracts/src/facets/RiskFacet.sol:1681-1838](../contracts/src/facets/RiskFacet.sol#L1681-L1838) is `nonReentrant` and `safeTransferFrom`s the principal at line 1761 BEFORE the collateral withdraw at line 1827 — if the liquidator doesn't have approved principal, the txn reverts before any collateral moves; (ii) `FlashLoanLiquidator.executeOperation` wraps `triggerLiquidationDiscounted` inside Aave V3's `flashLoanSimple` callback — Aave reverts the whole txn if the receiver can't repay loanAmount+premium at callback end; (iii) `apps/keeper` bot just submits the tx, holds no custody. Audit-package note: `docs/internal/OffchainDataFetchAudit-2026-05-15.md` Part 7 already covers the bot's untrusted-quote model + on-chain `minOutputAmount` gate. Original ask preserved: "How do we ensure that the flash loan bots will pay back the lending asset after they took the collateral asset…"
 
 ---
 
@@ -409,7 +426,7 @@ Tip: queue all 3 in the Safe at once, then sign once per signer (each signer's s
 
 ---
 
-- [ ] **ET-010**: Is it possible for us to allow borrower to auction the NFT or illiquid assets before liquidating (means here full collateral transfer), so that it would be fair enough for both borrower and lender, what do you say?, if so, how do we go about it? is there a better approach? whats your take?
+- [ ] **ET-010** `yetToPromote`: Is it possible for us to allow borrower to auction the NFT or illiquid assets before liquidating (means here full collateral transfer), so that it would be fair enough for both borrower and lender, what do you say?, if so, how do we go about it? is there a better approach? whats your take?
 
 ---
 
@@ -441,24 +458,15 @@ Also the info icon mapping inside protocol console should go only to `www` (http
 
 ---
 
-- [ ] **ET-003**: Have 3 modes in website `Basic/Advanced/Technical`, Basic: for Dummy users (with polished wordings); Advanced: for users with no technical knoweldge but can understand all financial jargons; Technical: for users with technical knoweldge but not much with all financial jargons
+- [ ] **ET-003** `yetToPromote`: Have 3 modes in website `Basic/Advanced/Technical`, Basic: for Dummy users (with polished wordings); Advanced: for users with no technical knoweldge but can understand all financial jargons; Technical: for users with technical knoweldge but not much with all financial jargons
       what do you say? whats your take? Is there a better approach?
 
 ---
 
-- [ ] **ET-002**: update protocol console and include each and every configs in admin viewable/proposable page, what do you say?
+- [ ] **ET-002** `yetToPromote`: update protocol console and include each and every configs in admin viewable/proposable page, what do you say?
 
 ---
 
-- [ ] **ET-001**: Lets use Blowfish instead of Blockaid
-
----
-
-Have 3 modes in website `Basic/Advanced/Technical`, Basic: for Dummy users (with polished wordings), Advanced: for users with no technical knoweldge but can understand all financial jargons, Technical: for users with technical knoweldge but not much with all financial jargons
-what do you say? whats your take?
-
----
-
-update protocol console and include each and every configs in admin viewable/proposable page, what do you say?
+- [ ] **ET-001** `yetToPromote`: Lets use Blowfish instead of Blockaid
 
 ---

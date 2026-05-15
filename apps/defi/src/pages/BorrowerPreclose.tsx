@@ -16,7 +16,7 @@ import { beginStep } from "../lib/journeyLog";
 import { DEFAULT_CHAIN } from "../contracts/config";
 import { TransferLockWarning } from "../components/app/TransferLockWarning";
 import { InterestImplicationWarning } from "../components/app/InterestImplicationWarning";
-import { RiskDisclosures } from "../components/app/RiskDisclosures";
+import { RiskDisclosures, RiskConsentLabel } from "../components/app/RiskDisclosures";
 import { AssetSymbol } from "../components/app/AssetSymbol";
 import { TokenAmount } from "../components/app/TokenAmount";
 import { bpsToPercent } from "../lib/format";
@@ -686,7 +686,7 @@ export default function BorrowerPreclose() {
                       checked={fallbackConsent}
                       onChange={(e) => setFallbackConsent(e.target.checked)}
                     />
-                    <span>{t('riskDisclosures.checkboxLabel')}</span>
+                    <span><RiskConsentLabel /></span>
                   </label>
                   <div className="action-row" style={{ marginTop: 12 }}>
                     <button

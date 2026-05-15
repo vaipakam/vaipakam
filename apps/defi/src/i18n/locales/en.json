@@ -539,18 +539,10 @@
   },
   "riskDisclosures": {
     "title": "Risk Disclosures",
-    "checkboxLabel": "I have read and agree to the Risk Disclosures above.",
-    "section1Heading": "If liquidation of liquid collateral fails (like in Abnormal Market conditions, when slippage > 6%, thin liquidity, DEX revert, or any other runtime failure)",
-    "section1Point1": "Lender receives the collateral in-kind — NOT the lending asset.",
-    "section1Point2": "If collateral value < amount due: the lender receives ALL collateral; the borrower receives nothing; no shortfall top-up.",
-    "section1Point3": "If collateral value ≥ amount due: the lender receives collateral equal to the amount owed at oracle price; remainder returns to the borrower after charges.",
-    "section2Heading": "If the borrower defaults on a loan with illiquid assets (illiquid lending asset, illiquid collateral, or both)",
-    "section2Point1": "Full collateral transfers to the lender in-kind, regardless of its market value.",
-    "section2Point2": "No partition between \"amount owed\" and \"remainder\" — the lender takes ALL collateral.",
-    "section2Point3": "The asset received may be worth materially more or less than the amount owed. No warranty on value, liquidity, or resaleability.",
-    "section3Heading": "Acknowledgement",
-    "section3Point1": "Recovery may be materially less than the asset lent. The lender may receive assets other than the one lent. No further claim on the borrower, the protocol, its contributors, or any third party.",
-    "section3Point2": "Proceeding records a binding agreement on-chain against the wallet for the full life of this position."
+    "checkboxLabel": "I understand and agree to the Risk Disclosures and <terms>Vaipakam Terms</terms>.",
+    "consentRequiredHint": "Please check the agreement above to continue.",
+    "paragraph1": "I understand that in case of market abnormalities or for any other reason liquidation cannot execute safely, the lender may receive collateral in-kind — that is, the collateral asset itself — instead of the lending asset. If oracle pricing is unavailable, or if the loan uses illiquid assets, the lender may receive all collateral regardless of market value and the borrower receives nothing.",
+    "paragraph2": "By proceeding, you acknowledge that recovery may be less than the asset lent, that the lender may receive a different asset than the one lent, and that no further claim exists against the borrower, Vaipakam, its contributors, or any third party. This acknowledgement is recorded on-chain for this position."
   },
   "nav": {
     "brandHome": "Vaipakam home",
