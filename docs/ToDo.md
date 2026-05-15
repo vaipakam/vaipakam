@@ -409,7 +409,7 @@ Tip: queue all 3 in the Safe at once, then sign once per signer (each signer's s
 
 ---
 
-- [ ] **ET-009** — IN PROGRESS, tracked as [Issue #1](https://github.com/vaipakam/vaipakam/issues/1) (C.1 — Off-chain data-fetch audit) on @vaipakam-labs project. Same question as PendingTasks-2026-05-14.md §C.1; promoted to a real Issue 2026-05-15 because the audit needs a permanent discussion thread. Need to check what are all the data that we fetch off chain and need to see that would we be able to fetch them from on chain itself
+- [x] **ET-009** — DONE 2026-05-15 (commit `6fa8ec0` on `feat/c1-offchain-data-audit`; audit doc `docs/internal/OffchainDataFetchAudit-2026-05-15.md`; live tracker [Issue #1](https://github.com/vaipakam/vaipakam/issues/1)). Catalogued 9 external-data surfaces (Chainlink primary + Tellor/API3/DIA quorum + L2 sequencer + Aave/Compound peer-LTV + 3-V3-clone depth + setKeeperTier + 0x/1inch/Balancer quote APIs + DeFiLlama/CoinGecko Tier-3 advisory + frontend/indexer/agent reads). Verdict: 0 critical, 0 high. 3 small findings (F-1 doc fixed inline; F-2 + F-3 queued as separate cards). Audit completes the three-doc package alongside `ConfigKnobBoundsAudit-2026-05-14.md` + `WethChainSafetyAudit-2026-05-14.md`. Original ask preserved: "Need to check what are all the data that we fetch off chain and need to see that would we be able to fetch them from on chain itself."
 
 ---
 
