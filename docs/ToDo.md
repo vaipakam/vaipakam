@@ -15,6 +15,10 @@
 
 ---
 
+- [ ] **T-070**: Hide the status badge when wallet is not connected
+
+---
+
 - [ ] **T-069** `promotedToProjectCard`: see how to setup for notifications from ops/subgraph and ops/tenderly
 
 ---
