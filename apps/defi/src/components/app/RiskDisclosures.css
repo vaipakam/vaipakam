@@ -45,3 +45,9 @@
 .risk-consent-terms-link:focus-visible {
   text-decoration-thickness: 2px;
 }
+
+.risk-disclosures-learn-more {
+  margin: 12px 0 0;
+  font-size: 0.82rem;
+  text-align: right;
+}

@@ -274,6 +274,48 @@ const FAQS: FaqEntry[] = [
     ),
   },
   {
+    id: "fallback-mechanics",
+    category: "users",
+    searchText:
+      "liquidation fallback in-kind collateral asset oracle quorum unavailable abnormal market slippage equivalent value underwater illiquid claim retry",
+    renderA: () => (
+      <>
+        <p>
+          <Trans i18nKey="faq.entries.fallback-mechanics.a1" />
+        </p>
+        <ul>
+          <li>
+            <Trans
+              i18nKey="faq.entries.fallback-mechanics.li1"
+              components={{ s: <strong /> }}
+            />
+          </li>
+          <li>
+            <Trans
+              i18nKey="faq.entries.fallback-mechanics.li2"
+              components={{ s: <strong /> }}
+            />
+          </li>
+          <li>
+            <Trans
+              i18nKey="faq.entries.fallback-mechanics.li3"
+              components={{ s: <strong /> }}
+            />
+          </li>
+          <li>
+            <Trans
+              i18nKey="faq.entries.fallback-mechanics.li4"
+              components={{ s: <strong /> }}
+            />
+          </li>
+        </ul>
+        <p>
+          <Trans i18nKey="faq.entries.fallback-mechanics.a2" />
+        </p>
+      </>
+    ),
+  },
+  {
     id: "early-exit",
     category: "users",
     searchText:
