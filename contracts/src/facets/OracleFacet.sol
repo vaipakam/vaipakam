@@ -1198,13 +1198,18 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
      *         safety bounds. Permissionless — anyone can call.
      *
      * @dev    Reads Aave V3 + Compound V3 via {LibPeerLTV}. Per-asset
-     *         consensus requires ≥ 2 peers agree within 15 BPS for
-     *         each reference asset (the divergence-tolerance guard).
-     *         Per-tier consensus requires ≥ 2 reference assets
-     *         contribute (the multi-asset-stability guard). After
-     *         aggregation, the per-tier haircut is subtracted and
-     *         the result is bound-checked against the tier's safety
-     *         box (`[floor, ceil]` per `LibVaipakam.tierLtvBoundsBps`).
+     *         consensus requires ≥ 2 peers agree within
+     *         `LibVaipakam.PEER_DIVERGENCE_TOLERANCE_BPS` (= 3000 BPS,
+     *         i.e. 30%) for each reference asset (the
+     *         divergence-tolerance guard — a wide tolerance is
+     *         intentional, peers legitimately differ by 10-25% across
+     *         protocols for the same asset; the safety floor is the
+     *         per-tier `[floor, ceil]` bound applied below). Per-tier
+     *         consensus requires ≥ 2 reference assets contribute
+     *         (the multi-asset-stability guard). After aggregation,
+     *         the per-tier haircut is subtracted and the result is
+     *         bound-checked against the tier's safety box
+     *         (`[floor, ceil]` per `LibVaipakam.tierLtvBoundsBps`).
      *
      *         Rejected candidates leave the previous cached value
      *         untouched (and the previous `lastRefreshedAt` unchanged).
