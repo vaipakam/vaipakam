@@ -540,12 +540,8 @@
   "riskDisclosures": {
     "title": "Risk Disclosures",
     "checkboxLabel": "I understand and agree to the Risk Disclosures and Vaipakam Terms.",
-    "paragraph1": "If liquidation of liquid collateral cannot execute safely, the lender may receive collateral in-kind instead of the lending asset. This can happen in abnormal market conditions, on excessive slippage, in thin liquidity, on DEX or aggregator failure, or any other runtime failure.",
-    "paragraph2": "When reliable oracle pricing is available, the protocol splits collateral by oracle value: the lender receives the amount owed plus fallback charges, and any remainder returns to the borrower. If the collateral is worth less than the amount owed, the lender receives all remaining collateral and the borrower receives nothing.",
-    "paragraph3": "When reliable oracle pricing is unavailable, the protocol cannot calculate a fair split. The lender receives all collateral in-kind, regardless of market value.",
-    "paragraph4": "For loans involving illiquid assets, borrower default results in the lender receiving all collateral in-kind, regardless of market value. The asset received may be worth more or less than the amount owed and may be difficult or impossible to sell.",
-    "paragraph5": "By proceeding, you acknowledge that recovery may be less than the asset lent, that the lender may receive a different asset than the one lent, and that no further claim exists against the borrower, Vaipakam, its contributors, or any third party. This acknowledgement is recorded on-chain for this position.",
-    "shortSummary": "If liquidation can't execute safely — abnormal market, oracle quorum loss, or illiquid asset — the lender may receive collateral in-kind instead of the lending asset, regardless of market value. Recovery may be less than the asset lent. No further claim exists against the borrower, Vaipakam, its contributors, or any third party."
+    "paragraph1": "I understand that in case of market abnormalities or for any other reason liquidation cannot execute safely, the lender may receive collateral in-kind — that is, the collateral asset itself — instead of the lending asset. If oracle pricing is unavailable, or if the loan uses illiquid assets, the lender may receive all collateral regardless of market value and the borrower receives nothing.",
+    "paragraph2": "By proceeding, you acknowledge that recovery may be less than the asset lent, that the lender may receive a different asset than the one lent, and that no further claim exists against the borrower, Vaipakam, its contributors, or any third party. This acknowledgement is recorded on-chain for this position."
   },
   "nav": {
     "brandHome": "Vaipakam home",

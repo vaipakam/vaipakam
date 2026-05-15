@@ -6,9 +6,6 @@ import './RiskDisclosures.css';
 const PARAGRAPH_KEYS: string[] = [
   'riskDisclosures.paragraph1',
   'riskDisclosures.paragraph2',
-  'riskDisclosures.paragraph3',
-  'riskDisclosures.paragraph4',
-  'riskDisclosures.paragraph5',
 ];
 
 /**
