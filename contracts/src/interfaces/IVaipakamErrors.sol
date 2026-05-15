@@ -127,7 +127,7 @@ interface IVaipakamErrors {
     ///         abnormal-market liquidation-fallback consent was not granted
     ///         by both parties. Mandatory on every offer regardless of
     ///         liquidity classification.
-    error FallbackConsentRequired();
+    error RiskAndTermsConsentRequired();
     /// @notice Offer creation rejected because the lending and collateral
     ///         legs reference the same asset contract. Prevents
     ///         self-collateralized positions on a single fungible asset,

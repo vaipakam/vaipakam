@@ -423,7 +423,7 @@ contract LoanFacetTest is Test {
                 assetType: assetType,
                 tokenId: tokenId,
                 quantity: quantity,
-                creatorFallbackConsent: true,
+                creatorRiskAndTermsConsent: true,
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
@@ -545,7 +545,7 @@ contract LoanFacetTest is Test {
         );
 
         vm.prank(borrower);
-        vm.expectRevert(IVaipakamErrors.FallbackConsentRequired.selector);
+        vm.expectRevert(IVaipakamErrors.RiskAndTermsConsentRequired.selector);
         OfferFacet(address(diamond)).acceptOffer(offerId, false);
     }
 
@@ -652,7 +652,7 @@ contract LoanFacetTest is Test {
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
-                creatorFallbackConsent: true,
+                creatorRiskAndTermsConsent: true,
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
@@ -664,9 +664,9 @@ contract LoanFacetTest is Test {
             })
         );
 
-        // Call initiateLoan via prank with acceptorFallbackConsent = false → FallbackConsentRequired
+        // Call initiateLoan via prank with acceptorRiskAndTermsConsent = false → RiskAndTermsConsentRequired
         vm.prank(address(diamond));
-        vm.expectRevert(IVaipakamErrors.FallbackConsentRequired.selector);
+        vm.expectRevert(IVaipakamErrors.RiskAndTermsConsentRequired.selector);
         LoanFacet(address(diamond)).initiateLoan(offerId, borrower, false);
     }
 
@@ -788,7 +788,7 @@ contract LoanFacetTest is Test {
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
-                creatorFallbackConsent: true,
+                creatorRiskAndTermsConsent: true,
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
@@ -824,7 +824,7 @@ contract LoanFacetTest is Test {
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
-                creatorFallbackConsent: true,
+                creatorRiskAndTermsConsent: true,
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
@@ -839,7 +839,7 @@ contract LoanFacetTest is Test {
         OfferFacet(address(diamond)).acceptOffer(offerId, true);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(1);
-        assertTrue(loan.fallbackConsentFromBoth);
+        assertTrue(loan.riskAndTermsConsentFromBoth);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Active));
     }
 
@@ -870,7 +870,7 @@ contract LoanFacetTest is Test {
                 assetType: LibVaipakam.AssetType.ERC721,
                 tokenId: 1,
                 quantity: 1,
-                creatorFallbackConsent: true,
+                creatorRiskAndTermsConsent: true,
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
@@ -993,7 +993,7 @@ contract LoanFacetTest is Test {
     ///      The condition at line 91-96: (illiquid) && !(creatorConsent && acceptorConsent)
     ///      evaluates to true (since acceptor didn't consent), so NonLiquidAsset is reverted.
     function testInitiateLoanIlliquidCreatorConsentsAcceptorDoesNot() public {
-        // Create offer with creatorFallbackConsent = true, illiquid collateral
+        // Create offer with creatorRiskAndTermsConsent = true, illiquid collateral
         vm.prank(lender);
         uint256 offerId = OfferFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
@@ -1007,7 +1007,7 @@ contract LoanFacetTest is Test {
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
-                creatorFallbackConsent: true, // creator consents
+                creatorRiskAndTermsConsent: true, // creator consents
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
@@ -1021,7 +1021,7 @@ contract LoanFacetTest is Test {
 
         // acceptor does NOT consent → NonLiquidAsset revert
         vm.prank(borrower);
-        vm.expectRevert(IVaipakamErrors.FallbackConsentRequired.selector);
+        vm.expectRevert(IVaipakamErrors.RiskAndTermsConsentRequired.selector);
         OfferFacet(address(diamond)).acceptOffer(offerId, false);
     }
 
@@ -1043,7 +1043,7 @@ contract LoanFacetTest is Test {
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
-                creatorFallbackConsent: true,
+                creatorRiskAndTermsConsent: true,
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
@@ -1058,7 +1058,7 @@ contract LoanFacetTest is Test {
         OfferFacet(address(diamond)).acceptOffer(offerId, true);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(1);
-        assertTrue(loan.fallbackConsentFromBoth);
+        assertTrue(loan.riskAndTermsConsentFromBoth);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Active));
         vm.clearMockedCalls();
     }
@@ -1091,7 +1091,7 @@ contract LoanFacetTest is Test {
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
-                creatorFallbackConsent: true,
+                creatorRiskAndTermsConsent: true,
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,

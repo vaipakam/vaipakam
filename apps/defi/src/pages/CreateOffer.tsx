@@ -1392,8 +1392,8 @@ export default function CreateOffer() {
           <label className="checkbox-row" style={{ marginTop: 12 }}>
             <input
               type="checkbox"
-              checked={form.fallbackConsent}
-              onChange={(e) => setField("fallbackConsent", e.target.checked)}
+              checked={form.riskAndTermsConsent}
+              onChange={(e) => setField("riskAndTermsConsent", e.target.checked)}
             />
             <span><RiskConsentLabel /></span>
           </label>

@@ -148,7 +148,7 @@ contract SepoliaActiveLoan is Script {
             assetType: LibVaipakam.AssetType.ERC20,
             tokenId: 0,
             quantity: 0,
-            creatorFallbackConsent: true,
+            creatorRiskAndTermsConsent: true,
             prepayAsset: address(usdc),
             collateralAssetType: LibVaipakam.AssetType.ERC20,
             collateralTokenId: 0,

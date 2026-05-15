@@ -215,7 +215,7 @@
       "nftTokenIdRequired": "NFT 토큰 ID가 필요합니다.",
       "collateralAssetInvalid": "담보 자산 주소가 유효하지 않습니다.",
       "prepayAssetInvalid": "선납 자산 주소가 유효하지 않습니다.",
-      "fallbackConsentRequired": "오퍼를 생성하기 전에 비정상 시장 청산 폴백 조건에 동의해야 합니다.",
+      "riskAndTermsConsentRequired": "오퍼를 생성하기 전에 비정상 시장 청산 폴백 조건에 동의해야 합니다.",
       "amountMaxBelowMin": "최대 금액은 최소 금액보다 작을 수 없습니다.",
       "rateMaxBelowMin": "최대 이자율은 최소 이자율보다 작을 수 없습니다."
     },
@@ -821,7 +821,7 @@
     "titleLine1": "P2P 대출",
     "titleLine2": "안전한 온체인",
     "subtitlePrefix": "Vaipakam",
-    "subtitleBody": "광범위한 토큰을 대출하고 차용하고, NFT를 임대하고, 자체 조건을 설정할 수 있도록 합니다. 모든 포지션은 고유한 NFT로 추적됩니다 — 제안에서 정산까지 투명하고 추적 가능하며 신뢰가 필요 없습니다.",
+    "subtitleBody": "토큰을 대출하고 차용하고, NFT를 임대하고, 자체 조건을 설정할 수 있도록 합니다. 모든 포지션은 고유한 NFT로 추적됩니다 — 제안에서 정산까지 투명하고 추적 가능하며 신뢰가 필요 없습니다.",
     "launchApp": "Vaipakam 실행",
     "buyVpfi": "VPFI 구매",
     "howItWorks": "작동 방식",

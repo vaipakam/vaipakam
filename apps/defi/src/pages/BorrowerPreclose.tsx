@@ -67,7 +67,7 @@ export default function BorrowerPreclose() {
   const [rate, setRate] = useState("");
   const [duration, setDuration] = useState("");
   const [collateralAmt, setCollateralAmt] = useState("");
-  const [fallbackConsent, setFallbackConsent] = useState(false);
+  const [riskAndTermsConsent, setRiskAndTermsConsent] = useState(false);
 
   // Option 2 form
   const [transferOfferId, setTransferOfferId] = useState("");
@@ -216,7 +216,7 @@ export default function BorrowerPreclose() {
         BigInt(durationDays),
         loan.collateralAsset,
         collateralAmount,
-        fallbackConsent,
+        riskAndTermsConsent,
         ZERO_ADDRESS,
       );
       setTxHash(tx.hash);
@@ -683,8 +683,8 @@ export default function BorrowerPreclose() {
                   >
                     <input
                       type="checkbox"
-                      checked={fallbackConsent}
-                      onChange={(e) => setFallbackConsent(e.target.checked)}
+                      checked={riskAndTermsConsent}
+                      onChange={(e) => setRiskAndTermsConsent(e.target.checked)}
                     />
                     <span><RiskConsentLabel /></span>
                   </label>
@@ -692,7 +692,7 @@ export default function BorrowerPreclose() {
                     <button
                       className="btn btn-primary btn-sm"
                       onClick={() => setStep("review")}
-                      disabled={!rate || !duration || !collateralAmt || !fallbackConsent}
+                      disabled={!rate || !duration || !collateralAmt || !riskAndTermsConsent}
                     >
                       {t('preclose.reviewOffsetOffer')}
                     </button>

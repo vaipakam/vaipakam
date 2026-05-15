@@ -703,7 +703,7 @@
       "nftTokenIdRequired": "NFT Token ID is required.",
       "collateralAssetInvalid": "Collateral asset address is invalid.",
       "prepayAssetInvalid": "Prepayment asset address is invalid.",
-      "fallbackConsentRequired": "You must agree to the abnormal-market liquidation fallback terms before creating an offer.",
+      "riskAndTermsConsentRequired": "You must agree to the abnormal-market liquidation fallback terms before creating an offer.",
       "amountMaxBelowMin": "Maximum amount cannot be smaller than the minimum.",
       "rateMaxBelowMin": "Maximum interest rate cannot be smaller than the minimum."
     },
@@ -1321,7 +1321,7 @@
     "titleLine1": "Vault-to-Vault",
     "titleLine2": "Secure On-Chain",
     "subtitlePrefix": "Vaipakam",
-    "subtitleBody": "lets you lend and borrow a wide range of tokens, rent NFTs, and set your own terms. Every position is tracked by a unique NFT — transparent, traceable and trustless from offer to settlement.",
+    "subtitleBody": "lets you lend and borrow tokens, rent NFTs, and set your own terms. Every position is tracked by a unique NFT — transparent, traceable and trustless from offer to settlement.",
     "launchApp": "Launch Vaipakam",
     "buyVpfi": "Buy VPFI",
     "howItWorks": "How It Works",

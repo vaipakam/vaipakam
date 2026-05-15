@@ -61,7 +61,7 @@ export interface OfferFormState {
   tokenId: string;
   quantity: string;
   prepayAsset: string;
-  fallbackConsent: boolean;
+  riskAndTermsConsent: boolean;
   keeperAccess: boolean;
   collateralAssetType: OfferAssetKind;
   collateralTokenId: string;
@@ -103,7 +103,7 @@ export const initialOfferForm: OfferFormState = {
   tokenId: '',
   quantity: '1',
   prepayAsset: '',
-  fallbackConsent: false,
+  riskAndTermsConsent: false,
   keeperAccess: false,
   collateralAssetType: 'erc20',
   collateralTokenId: '',
@@ -126,7 +126,7 @@ export interface CreateOfferPayload {
   assetType: 0 | 1 | 2;
   tokenId: bigint;
   quantity: bigint;
-  creatorFallbackConsent: boolean;
+  creatorRiskAndTermsConsent: boolean;
   prepayAsset: string;
   collateralAssetType: 0 | 1 | 2;
   collateralTokenId: bigint;
@@ -159,7 +159,7 @@ export type OfferFormError =
   | { code: 'nftTokenIdRequired' }
   | { code: 'collateralAssetInvalid' }
   | { code: 'prepayAssetInvalid' }
-  | { code: 'fallbackConsentRequired' }
+  | { code: 'riskAndTermsConsentRequired' }
   | { code: 'amountMaxBelowMin' }
   | { code: 'rateMaxBelowMin' };
 
@@ -187,8 +187,8 @@ export function validateOfferForm(s: OfferFormState): OfferFormError | null {
   if (s.prepayAsset && !ADDRESS_RE.test(s.prepayAsset)) {
     return { code: 'prepayAssetInvalid' };
   }
-  if (!s.fallbackConsent) {
-    return { code: 'fallbackConsentRequired' };
+  if (!s.riskAndTermsConsent) {
+    return { code: 'riskAndTermsConsentRequired' };
   }
   // Range Orders Phase 1 — when an upper bound is populated it must
   // be ≥ the corresponding minimum. Empty bounds auto-collapse and
@@ -270,7 +270,7 @@ export function toCreateOfferPayload(
     assetType: kindToEnum(s.assetType),
     tokenId: BigInt(s.tokenId || '0'),
     quantity: BigInt(s.quantity || '1'),
-    creatorFallbackConsent: s.fallbackConsent,
+    creatorRiskAndTermsConsent: s.riskAndTermsConsent,
     prepayAsset: s.prepayAsset || ZERO_ADDRESS,
     collateralAssetType: kindToEnum(s.collateralAssetType),
     collateralTokenId: BigInt(s.collateralTokenId || '0'),

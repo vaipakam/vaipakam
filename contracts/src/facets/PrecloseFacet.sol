@@ -661,7 +661,7 @@ contract PrecloseFacet is
      * @param durationDays The duration for the new offer (<= remaining).
      * @param collateralAsset The collateral asset for the new offer (can match original).
      * @param collateralAmount The collateral amount required from the new borrower.
-     * @param creatorFallbackConsent Consent for illiquid assets in new offer.
+     * @param creatorRiskAndTermsConsent Consent for illiquid assets in new offer.
      * @param prepayAsset Prepay asset for NFT loans (address(0) for ERC20).
      * @return newOfferId The ID of the newly created offset lender offer.
      */
@@ -671,7 +671,7 @@ contract PrecloseFacet is
         uint256 durationDays,
         address collateralAsset,
         uint256 collateralAmount,
-        bool creatorFallbackConsent,
+        bool creatorRiskAndTermsConsent,
         address prepayAsset
     ) external nonReentrant whenNotPaused returns (uint256 newOfferId) {
         LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
@@ -702,7 +702,7 @@ contract PrecloseFacet is
             durationDays,
             collateralAsset,
             collateralAmount,
-            creatorFallbackConsent,
+            creatorRiskAndTermsConsent,
             prepayAsset
         );
 
@@ -861,7 +861,7 @@ contract PrecloseFacet is
         uint256 durationDays,
         address collateralAsset,
         uint256 collateralAmount,
-        bool creatorFallbackConsent,
+        bool creatorRiskAndTermsConsent,
         address prepayAsset
     ) private returns (uint256 newOfferId) {
         LibVaipakam.CreateOfferParams memory params = _buildOffsetParams(
@@ -870,7 +870,7 @@ contract PrecloseFacet is
             durationDays,
             collateralAsset,
             collateralAmount,
-            creatorFallbackConsent,
+            creatorRiskAndTermsConsent,
             prepayAsset
         );
         // Use `createOfferInternal` not `createOffer`: the outer
@@ -904,7 +904,7 @@ contract PrecloseFacet is
         uint256 durationDays,
         address collateralAsset,
         uint256 collateralAmount,
-        bool creatorFallbackConsent,
+        bool creatorRiskAndTermsConsent,
         address prepayAsset
     ) private view returns (LibVaipakam.CreateOfferParams memory params) {
         params.offerType = LibVaipakam.OfferType.Lender;
@@ -917,7 +917,7 @@ contract PrecloseFacet is
         params.assetType = loan.assetType;
         params.tokenId = loan.tokenId;
         params.quantity = loan.quantity;
-        params.creatorFallbackConsent = creatorFallbackConsent;
+        params.creatorRiskAndTermsConsent = creatorRiskAndTermsConsent;
         params.prepayAsset = prepayAsset;
         params.collateralAssetType = loan.collateralAssetType;
         params.collateralTokenId = loan.collateralTokenId;

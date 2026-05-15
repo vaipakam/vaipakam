@@ -215,7 +215,7 @@
       "nftTokenIdRequired": "需要 NFT Token ID。",
       "collateralAssetInvalid": "Collateral asset 地址无效。",
       "prepayAssetInvalid": "Prepayment asset 地址无效。",
-      "fallbackConsentRequired": "创建报价前,您必须同意异常市场清算回退条款。",
+      "riskAndTermsConsentRequired": "创建报价前,您必须同意异常市场清算回退条款。",
       "amountMaxBelowMin": "最大金额不能小于最小金额。",
       "rateMaxBelowMin": "最高利率不能小于最低利率。"
     },
@@ -821,7 +821,7 @@
     "titleLine1": "vault-to-vault借贷",
     "titleLine2": "安全链上",
     "subtitlePrefix": "Vaipakam",
-    "subtitleBody": "让您可以借出和借入广泛的代币、租赁 NFT 并设置自己的条款。每个仓位都通过独特的 NFT 进行跟踪 — 从报价到结算都是透明、可追溯和无需信任的。",
+    "subtitleBody": "让您可以借出和借入代币、租赁 NFT 并设置自己的条款。每个仓位都通过独特的 NFT 进行跟踪 — 从报价到结算都是透明、可追溯和无需信任的。",
     "launchApp": "启动 Vaipakam",
     "buyVpfi": "购买 VPFI",
     "howItWorks": "运作机制",

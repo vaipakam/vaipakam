@@ -257,7 +257,7 @@ contract PauseHandler is Test {
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
-                creatorFallbackConsent: true,
+                creatorRiskAndTermsConsent: true,
                 prepayAsset: address(0),
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,

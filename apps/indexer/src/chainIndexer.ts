@@ -501,7 +501,7 @@ async function processOfferLogs(
         assetType: number;
         collateralAssetType: number;
         useFullTermInterest: boolean;
-        creatorFallbackConsent: boolean;
+        creatorRiskAndTermsConsent: boolean;
         allowsPartialRepay: boolean;
         lendingAsset: Address;
         amount: bigint;
@@ -564,7 +564,7 @@ async function processOfferLogs(
           od.positionTokenId.toString(),
           od.prepayAsset.toLowerCase(),
           od.useFullTermInterest ? 1 : 0,
-          od.creatorFallbackConsent ? 1 : 0,
+          od.creatorRiskAndTermsConsent ? 1 : 0,
           od.allowsPartialRepay ? 1 : 0,
           // Seed current-owner to the creator (any later Transfer
           // for this position-token overwrites via the loan-block
@@ -791,7 +791,7 @@ async function refreshOfferDetails(
     assetType: number;
     collateralAssetType: number;
     useFullTermInterest: boolean;
-    creatorFallbackConsent: boolean;
+    creatorRiskAndTermsConsent: boolean;
     allowsPartialRepay: boolean;
     lendingAsset: Address;
     amount: bigint;
@@ -847,7 +847,7 @@ async function refreshOfferDetails(
       o.positionTokenId.toString(),
       o.prepayAsset.toLowerCase(),
       o.useFullTermInterest ? 1 : 0,
-      o.creatorFallbackConsent ? 1 : 0,
+      o.creatorRiskAndTermsConsent ? 1 : 0,
       o.allowsPartialRepay ? 1 : 0,
       now,
       chainId,

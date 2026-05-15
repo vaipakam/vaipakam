@@ -393,7 +393,7 @@ function Breakdown({ ev, principalAsset, collateralAsset }: BreakdownProps) {
       return (
         <dl className="loan-timeline-grid">
           <Row label={t('loanTimeline.lblDualConsent')}>
-            {args.fallbackConsentFromBoth ? t('shared.yes') : t('shared.no')}
+            {args.riskAndTermsConsentFromBoth ? t('shared.yes') : t('shared.no')}
           </Row>
         </dl>
       );

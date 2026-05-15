@@ -256,7 +256,7 @@ contract Scenario2_NFTRentalLending is Test {
                 assetType: LibVaipakam.AssetType.ERC721,
                 tokenId: 1,
                 quantity: 1,
-                creatorFallbackConsent: true,
+                creatorRiskAndTermsConsent: true,
                 prepayAsset: mockUSDC,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,

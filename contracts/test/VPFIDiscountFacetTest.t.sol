@@ -1013,7 +1013,7 @@ contract VPFIDiscountFacetTest is SetupTest {
                     assetType: LibVaipakam.AssetType.ERC20,
                     tokenId: 0,
                     quantity: 0,
-                    creatorFallbackConsent: true,
+                    creatorRiskAndTermsConsent: true,
                     prepayAsset: mockERC20,
                     collateralAssetType: LibVaipakam.AssetType.ERC20,
                     collateralTokenId: 0,

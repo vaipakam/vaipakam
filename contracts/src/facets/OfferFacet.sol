@@ -52,8 +52,8 @@ import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
  *          from the liquid leg(s) and checked against
  *          {ProfileFacet.meetsKYCRequirement} for both counterparties.
  *        - Mandatory mutual consent on every create + accept —
- *          `creatorFallbackConsent` on the offer and
- *          `acceptorFallbackConsent` at accept time. The consent covers the
+ *          `creatorRiskAndTermsConsent` on the offer and
+ *          `acceptorRiskAndTermsConsent` at accept time. The consent covers the
  *          combined abnormal-market + illiquid-assets fallback terms
  *          (docs/WebsiteReadme.md §"Offer and acceptance risk warnings",
  *          README.md §"Liquidity & Asset Classification"). Required on
@@ -98,7 +98,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         uint256 durationDays;
         uint256 amountMax;
         uint256 interestRateBpsMax;
-        bool creatorFallbackConsent;
+        bool creatorRiskAndTermsConsent;
         bool allowsPartialRepay;
         LibVaipakam.PeriodicInterestCadence periodicInterestCadence;
     }
@@ -250,10 +250,10 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
      *        - Borrower/ERC-20 loan: collateral in its declared asset type.
      *        - Borrower/NFT rental: prepay + 5% buffer in `prepayAsset`.
      *      Re-checks liquidity on both legs via OracleFacet and latches
-     *      the verdict into the offer. `creatorFallbackConsent` is mandatory
+     *      the verdict into the offer. `creatorRiskAndTermsConsent` is mandatory
      *      on every create (docs/WebsiteReadme.md §"Offer and acceptance
      *      risk warnings" + README.md §"Liquidity & Asset Classification");
-     *      missing consent reverts FallbackConsentRequired before any
+     *      missing consent reverts RiskAndTermsConsentRequired before any
      *      escrow movement. Mints a position NFT representing the offer.
      *      Reverts InvalidOfferType on zero duration, InvalidAmount on zero
      *      amount, InvalidAssetType on unknown asset enums.
@@ -454,7 +454,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         offer.principalLiquidity = principalLiq;
         offer.collateralLiquidity = collateralLiq;
 
-        if (!params.creatorFallbackConsent) revert FallbackConsentRequired();
+        if (!params.creatorRiskAndTermsConsent) revert RiskAndTermsConsentRequired();
 
         // ── Range Orders Phase 1 — system-derived bound enforcement ────
         // Active ONLY when the master `rangeAmountEnabled` flag is on
@@ -886,7 +886,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         f.durationDays = offer.durationDays;
         f.amountMax = offer.amountMax;
         f.interestRateBpsMax = offer.interestRateBpsMax;
-        f.creatorFallbackConsent = offer.creatorFallbackConsent;
+        f.creatorRiskAndTermsConsent = offer.creatorRiskAndTermsConsent;
         f.allowsPartialRepay = offer.allowsPartialRepay;
         f.periodicInterestCadence = offer.periodicInterestCadence;
 
@@ -979,7 +979,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     ) private {
         offer.collateralAsset = params.collateralAsset;
         offer.collateralAmount = params.collateralAmount;
-        offer.creatorFallbackConsent = params.creatorFallbackConsent;
+        offer.creatorRiskAndTermsConsent = params.creatorRiskAndTermsConsent;
         offer.collateralAssetType = params.collateralAssetType;
         offer.collateralTokenId = params.collateralTokenId;
         offer.collateralQuantity = params.collateralQuantity;
@@ -1013,27 +1013,27 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
      *      saleOfferToLoanId / offsetOfferToLoanId flow.
      *
      *      Reverts: InvalidOffer, OfferAlreadyAccepted, CountriesNotCompatible,
-     *      FallbackConsentRequired, KYCRequired,
+     *      RiskAndTermsConsentRequired, KYCRequired,
      *      EscrowWithdrawFailed, NFTRenterUpdateFailed, LoanInitiationFailed,
      *      OfferAcceptFailed. Emits OfferAccepted.
      * @param offerId The offer ID to accept.
-     * @param acceptorFallbackConsent Acceptor's mandatory consent to the
+     * @param acceptorRiskAndTermsConsent Acceptor's mandatory consent to the
      *        combined abnormal-market + illiquid-assets fallback terms
      *        (docs/WebsiteReadme.md §"Offer and acceptance risk warnings",
      *        README.md §"Liquidity & Asset Classification"). Required on
      *        every accept regardless of leg liquidity; combined with
-     *        offer.creatorFallbackConsent and latched into the resulting
-     *        loan via {Loan.fallbackConsentFromBoth}.
+     *        offer.creatorRiskAndTermsConsent and latched into the resulting
+     *        loan via {Loan.riskAndTermsConsentFromBoth}.
      * @return loanId The ID of the initiated loan.
      */
     function acceptOffer(
         uint256 offerId,
-        bool acceptorFallbackConsent
+        bool acceptorRiskAndTermsConsent
     ) external nonReentrant whenNotPaused returns (uint256 loanId) {
         return
             _acceptOffer(
                 offerId,
-                acceptorFallbackConsent,
+                acceptorRiskAndTermsConsent,
                 /*usePermit=*/ false,
                 _emptyPermit(),
                 ""
@@ -1063,14 +1063,14 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     ///                                core processes (see the docstring
     ///                                on `OfferMatchFacet.matchOffers`
     ///                                for why borrower-side, not lender).
-    /// @param acceptorFallbackConsent Always passed as `true` from
+    /// @param acceptorRiskAndTermsConsent Always passed as `true` from
     ///                                matchOffers — the lender (the
     ///                                injected counterparty) consented
     ///                                at lender-offer create time.
     /// @return loanId                 Newly initiated loan id.
     function acceptOfferInternal(
         uint256 offerId,
-        bool acceptorFallbackConsent
+        bool acceptorRiskAndTermsConsent
     ) external returns (uint256 loanId) {
         if (msg.sender != address(this)) {
             revert UnauthorizedCrossFacetCall();
@@ -1078,7 +1078,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         return
             _acceptOffer(
                 offerId,
-                acceptorFallbackConsent,
+                acceptorRiskAndTermsConsent,
                 /*usePermit=*/ false,
                 _emptyPermit(),
                 ""
@@ -1101,14 +1101,14 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
      *      no acceptor ERC-20 pull applies.
      *
      * @param offerId                 The offer to accept.
-     * @param acceptorFallbackConsent Mandatory fallback-terms consent.
+     * @param acceptorRiskAndTermsConsent Mandatory fallback-terms consent.
      * @param permit                  Signed Permit2 `PermitTransferFrom`.
      * @param signature               65-byte ECDSA signature.
      * @return loanId                 The initiated loan's id.
      */
     function acceptOfferWithPermit(
         uint256 offerId,
-        bool acceptorFallbackConsent,
+        bool acceptorRiskAndTermsConsent,
         ISignatureTransfer.PermitTransferFrom calldata permit,
         bytes calldata signature
     ) external nonReentrant whenNotPaused returns (uint256 loanId) {
@@ -1132,7 +1132,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         return
             _acceptOffer(
                 offerId,
-                acceptorFallbackConsent,
+                acceptorRiskAndTermsConsent,
                 /*usePermit=*/ true,
                 permit,
                 signature
@@ -1213,7 +1213,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
 
     function _acceptOffer(
         uint256 offerId,
-        bool acceptorFallbackConsent,
+        bool acceptorRiskAndTermsConsent,
         bool usePermit,
         ISignatureTransfer.PermitTransferFrom memory permit,
         bytes memory signature
@@ -1284,8 +1284,8 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // true by createOffer; we still check both defensively so a future
         // code path that bypasses createOffer enforcement can't land a loan
         // without mutual agreement on record.
-        if (!(offer.creatorFallbackConsent && acceptorFallbackConsent)) {
-            revert FallbackConsentRequired();
+        if (!(offer.creatorRiskAndTermsConsent && acceptorRiskAndTermsConsent)) {
+            revert RiskAndTermsConsentRequired();
         }
 
         // Tiered KYC check based on transaction value (per README Section 16)
@@ -1578,7 +1578,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 LoanFacet.initiateLoan.selector,
                 offerId,
                 acceptor,
-                acceptorFallbackConsent
+                acceptorRiskAndTermsConsent
             ),
             LoanInitiationFailed.selector
         );

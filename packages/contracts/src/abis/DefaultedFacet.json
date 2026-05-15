@@ -98,7 +98,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "fallbackConsentFromBoth",
+        "name": "riskAndTermsConsentFromBoth",
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
@@ -129,7 +129,7 @@
         "internalType": "address"
       },
       {
-        "name": "fallbackConsentFromBoth",
+        "name": "riskAndTermsConsentFromBoth",
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
@@ -391,11 +391,6 @@
   {
     "type": "error",
     "name": "EscrowWithdrawFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "FallbackConsentRequired",
     "inputs": []
   },
   {
@@ -857,6 +852,11 @@
   {
     "type": "error",
     "name": "RewardOAppNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RiskAndTermsConsentRequired",
     "inputs": []
   },
   {

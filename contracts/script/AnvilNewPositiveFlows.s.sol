@@ -977,7 +977,7 @@ contract AnvilNewPositiveFlows is Script {
             assetType: LibVaipakam.AssetType.ERC20,
             tokenId: 0,
             quantity: 0,
-            creatorFallbackConsent: true,
+            creatorRiskAndTermsConsent: true,
             prepayAsset: address(usdc),
             collateralAssetType: LibVaipakam.AssetType.ERC20,
             collateralTokenId: 0,
@@ -1014,7 +1014,7 @@ contract AnvilNewPositiveFlows is Script {
             assetType: LibVaipakam.AssetType.ERC20,
             tokenId: 0,
             quantity: 0,
-            creatorFallbackConsent: true,
+            creatorRiskAndTermsConsent: true,
             prepayAsset: address(usdc),
             collateralAssetType: LibVaipakam.AssetType.ERC20,
             collateralTokenId: 0,
@@ -1118,7 +1118,7 @@ contract AnvilNewPositiveFlows is Script {
             assetType: LibVaipakam.AssetType.ERC20,
             tokenId: 0,
             quantity: 0,
-            creatorFallbackConsent: true,
+            creatorRiskAndTermsConsent: true,
             prepayAsset: address(usdc),
             collateralAssetType: LibVaipakam.AssetType.ERC20,
             collateralTokenId: 0,
@@ -1190,7 +1190,7 @@ contract AnvilNewPositiveFlows is Script {
             DURATION_DAYS,          // same duration — within remaining
             address(weth),
             COLLATERAL_AMOUNT,
-            true,                   // creatorFallbackConsent
+            true,                   // creatorRiskAndTermsConsent
             address(usdc)           // prepayAsset (unused on ERC20 path)
         );
         vm.stopBroadcast();
@@ -1788,7 +1788,7 @@ contract AnvilNewPositiveFlows is Script {
             assetType: LibVaipakam.AssetType.ERC20,
             tokenId: 0,
             quantity: 0,
-            creatorFallbackConsent: true,
+            creatorRiskAndTermsConsent: true,
             prepayAsset: address(usdc),
             collateralAssetType: LibVaipakam.AssetType.ERC20,
             collateralTokenId: 0,
@@ -1820,7 +1820,7 @@ contract AnvilNewPositiveFlows is Script {
             assetType: LibVaipakam.AssetType.ERC20,
             tokenId: 0,
             quantity: 0,
-            creatorFallbackConsent: true,
+            creatorRiskAndTermsConsent: true,
             prepayAsset: address(usdc),
             collateralAssetType: LibVaipakam.AssetType.ERC20,
             collateralTokenId: 0,

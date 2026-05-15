@@ -41,7 +41,7 @@ export default function LenderEarlyWithdrawal() {
   const { lock, reload: reloadLock } = usePositionLock(loan?.lenderTokenId ?? null);
 
   const [rate, setRate] = useState('');
-  const [fallbackConsent, setFallbackConsent] = useState(false);
+  const [riskAndTermsConsent, setRiskAndTermsConsent] = useState(false);
   const [step, setStep] = useState<Step>('idle');
   const [txError, setTxError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -74,7 +74,7 @@ export default function LenderEarlyWithdrawal() {
     setStep('submitting');
     const s = beginStep({ ...ctxBase, flow: 'createLoanSaleOffer', step: 'submit-tx' });
     try {
-      const tx = await diamond.createLoanSaleOffer(loan.id, BigInt(bps), fallbackConsent);
+      const tx = await diamond.createLoanSaleOffer(loan.id, BigInt(bps), riskAndTermsConsent);
       setTxHash(tx.hash);
       await tx.wait();
       await reload();
@@ -302,8 +302,8 @@ export default function LenderEarlyWithdrawal() {
               <label style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
                 <input
                   type="checkbox"
-                  checked={fallbackConsent}
-                  onChange={(e) => setFallbackConsent(e.target.checked)}
+                  checked={riskAndTermsConsent}
+                  onChange={(e) => setRiskAndTermsConsent(e.target.checked)}
                 />
                 <span><RiskConsentLabel /></span>
               </label>
@@ -311,7 +311,7 @@ export default function LenderEarlyWithdrawal() {
                 <button
                   className="btn btn-primary btn-sm"
                   onClick={() => setStep('review')}
-                  disabled={!rate || !fallbackConsent}
+                  disabled={!rate || !riskAndTermsConsent}
                 >
                   {t('earlyWithdrawal.reviewSaleOffer')}
                 </button>

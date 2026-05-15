@@ -208,7 +208,7 @@
       "nftTokenIdRequired": "Se requiere el ID del token NFT.",
       "collateralAssetInvalid": "La dirección del activo colateral no es válida.",
       "prepayAssetInvalid": "La dirección del activo de prepago no es válida.",
-      "fallbackConsentRequired": "Debes aceptar los términos de liquidación de respaldo en mercados anómalos antes de crear una oferta.",
+      "riskAndTermsConsentRequired": "Debes aceptar los términos de liquidación de respaldo en mercados anómalos antes de crear una oferta.",
       "amountMaxBelowMin": "El monto máximo no puede ser menor que el mínimo.",
       "rateMaxBelowMin": "La tasa de interés máxima no puede ser menor que la mínima."
     },
@@ -811,7 +811,7 @@
     "titleLine1": "Préstamos entre pares",
     "titleLine2": "Seguro on-chain",
     "subtitlePrefix": "Vaipakam",
-    "subtitleBody": "te permite prestar y pedir prestado una amplia variedad de tokens, alquilar NFTs y establecer tus propios términos. Cada posición se rastrea mediante un NFT único — transparente, rastreable y sin confianza desde la oferta hasta la liquidación.",
+    "subtitleBody": "te permite prestar y pedir prestado tokens, alquilar NFTs y establecer tus propios términos. Cada posición se rastrea mediante un NFT único — transparente, rastreable y sin confianza desde la oferta hasta la liquidación.",
     "launchApp": "Abrir Vaipakam",
     "buyVpfi": "Comprar VPFI",
     "howItWorks": "Cómo funciona",

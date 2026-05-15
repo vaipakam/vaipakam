@@ -103,7 +103,7 @@
             "internalType": "bool"
           },
           {
-            "name": "creatorFallbackConsent",
+            "name": "creatorRiskAndTermsConsent",
             "type": "bool",
             "internalType": "bool"
           },
@@ -264,7 +264,7 @@
             "internalType": "bool"
           },
           {
-            "name": "creatorFallbackConsent",
+            "name": "creatorRiskAndTermsConsent",
             "type": "bool",
             "internalType": "bool"
           },
@@ -634,11 +634,6 @@
   {
     "type": "error",
     "name": "EscrowWithdrawFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "FallbackConsentRequired",
     "inputs": []
   },
   {
@@ -1079,6 +1074,11 @@
   {
     "type": "error",
     "name": "RewardOAppNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RiskAndTermsConsentRequired",
     "inputs": []
   },
   {

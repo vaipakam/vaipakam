@@ -215,7 +215,7 @@
       "nftTokenIdRequired": "NFT Token ID आवश्यक है।",
       "collateralAssetInvalid": "गिरवी asset का पता अमान्य है।",
       "prepayAssetInvalid": "Prepayment asset का पता अमान्य है।",
-      "fallbackConsentRequired": "Offer बनाने से पहले आपको असामान्य बाज़ार fallback liquidation शर्तों से सहमत होना होगा।",
+      "riskAndTermsConsentRequired": "Offer बनाने से पहले आपको असामान्य बाज़ार fallback liquidation शर्तों से सहमत होना होगा।",
       "amountMaxBelowMin": "अधिकतम राशि न्यूनतम से कम नहीं हो सकती।",
       "rateMaxBelowMin": "अधिकतम ब्याज दर न्यूनतम से कम नहीं हो सकती।"
     },
@@ -821,7 +821,7 @@
     "titleLine1": "Vault-to-Vault ऋण",
     "titleLine2": "सुरक्षित ऑन-चेन",
     "subtitlePrefix": "Vaipakam",
-    "subtitleBody": "आपको टोकनों की एक विस्तृत श्रृंखला उधार देने और उधार लेने, NFTs किराए पर देने और अपनी शर्तें निर्धारित करने देता है। हर पोजीशन एक अनूठे NFT द्वारा ट्रैक की जाती है — पारदर्शी, ट्रेस करने योग्य और ऑफ़र से सेटलमेंट तक भरोसेमंद।",
+    "subtitleBody": "आपको टोकन उधार देने और उधार लेने, NFTs किराए पर देने और अपनी शर्तें निर्धारित करने देता है। हर पोजीशन एक अनूठे NFT द्वारा ट्रैक की जाती है — पारदर्शी, ट्रेस करने योग्य और ऑफ़र से सेटलमेंट तक भरोसेमंद।",
     "launchApp": "Vaipakam खोलें",
     "buyVpfi": "VPFI खरीदें",
     "howItWorks": "यह कैसे काम करता है",

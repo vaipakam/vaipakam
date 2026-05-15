@@ -326,12 +326,12 @@ contract EarlyWithdrawalFacet is
      *      Callable only by original lender. No event here (emitted on acceptance in OfferFacet).
      * @param loanId The loan ID to sell.
      * @param interestRateBps The sale interest rate (may differ from original).
-     * @param creatorFallbackConsent Consent for illiquid assets (if applicable).
+     * @param creatorRiskAndTermsConsent Consent for illiquid assets (if applicable).
      */
     function createLoanSaleOffer(
         uint256 loanId,
         uint256 interestRateBps,
-        bool creatorFallbackConsent
+        bool creatorRiskAndTermsConsent
     ) external nonReentrant whenNotPaused {
         // Tier-1 sanctions gate — creating a sale offer is a state-
         // creating action by msg.sender; sanctioned wallet blocked.
@@ -367,7 +367,7 @@ contract EarlyWithdrawalFacet is
             loan,
             remainingDays,
             interestRateBps,
-            creatorFallbackConsent
+            creatorRiskAndTermsConsent
         );
         s.loanToSaleOfferId[loanId] = saleOfferId;
         s.saleOfferToLoanId[saleOfferId] = loanId;
@@ -394,13 +394,13 @@ contract EarlyWithdrawalFacet is
         LibVaipakam.Loan storage loan,
         uint256 remainingDays,
         uint256 interestRateBps,
-        bool creatorFallbackConsent
+        bool creatorRiskAndTermsConsent
     ) private returns (uint256 saleOfferId) {
         LibVaipakam.CreateOfferParams memory params = _buildSaleParams(
             loan,
             remainingDays,
             interestRateBps,
-            creatorFallbackConsent
+            creatorRiskAndTermsConsent
         );
         bytes memory result = LibFacet.crossFacetCallReturn(
             abi.encodeWithSelector(OfferFacet.createOffer.selector, params),
@@ -413,7 +413,7 @@ contract EarlyWithdrawalFacet is
         LibVaipakam.Loan storage loan,
         uint256 remainingDays,
         uint256 interestRateBps,
-        bool creatorFallbackConsent
+        bool creatorRiskAndTermsConsent
     ) private view returns (LibVaipakam.CreateOfferParams memory params) {
         params.offerType = LibVaipakam.OfferType.Borrower;
         params.lendingAsset = loan.principalAsset;
@@ -425,7 +425,7 @@ contract EarlyWithdrawalFacet is
         params.assetType = loan.assetType;
         params.tokenId = loan.tokenId;
         params.quantity = loan.quantity;
-        params.creatorFallbackConsent = creatorFallbackConsent;
+        params.creatorRiskAndTermsConsent = creatorRiskAndTermsConsent;
         params.prepayAsset = loan.prepayAsset;
         params.collateralAssetType = loan.collateralAssetType;
         params.collateralTokenId = loan.collateralTokenId;

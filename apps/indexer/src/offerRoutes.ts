@@ -116,7 +116,7 @@ function toJson(row: OfferRow): Record<string, unknown> {
     positionTokenId: row.position_token_id,
     prepayAsset: row.prepay_asset,
     useFullTermInterest: row.use_full_term_interest === 1,
-    creatorFallbackConsent: row.creator_fallback_consent === 1,
+    creatorRiskAndTermsConsent: row.creator_fallback_consent === 1,
     allowsPartialRepay: row.allows_partial_repay === 1,
     firstSeenBlock: row.first_seen_block,
     firstSeenAt: row.first_seen_at,

@@ -289,7 +289,7 @@ export default function OfferBook() {
   }, [maxPerSide, perSide]);
   const [acceptingId, setAcceptingId] = useState<bigint | null>(null);
   const [pendingOffer, setPendingOffer] = useState<OfferData | null>(null);
-  const [fallbackConsent, setFallbackConsent] = useState(false);
+  const [riskAndTermsConsent, setRiskAndTermsConsent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [discountPreview, setDiscountPreview] = useState<DiscountPreview | null>(null);
@@ -825,7 +825,7 @@ export default function OfferBook() {
   const handleAcceptOffer = (offerId: bigint) => {
     const offer = offers.find((o) => o.id === offerId);
     if (!offer) return;
-    setFallbackConsent(false);
+    setRiskAndTermsConsent(false);
     setDiscountPreview(null);
     setPendingOffer(offer);
   };
@@ -902,12 +902,12 @@ export default function OfferBook() {
 
   const confirmAccept = () => {
     if (!pendingOffer) return;
-    if (!fallbackConsent) return;
+    if (!riskAndTermsConsent) return;
     const id = pendingOffer.id;
     setPendingOffer(null);
-    setFallbackConsent(false);
+    setRiskAndTermsConsent(false);
     setDiscountPreview(null);
-    // acceptOffer(id, acceptorFallbackConsent) — fallback consent is
+    // acceptOffer(id, acceptorRiskAndTermsConsent) — fallback consent is
     // mandatory on every offer (liquid or illiquid). When the caller has
     // platform VPFI-discount consent enabled AND holds sufficient VPFI in
     // escrow (see DiscountPreview), the contract swaps the 0.1%
@@ -918,7 +918,7 @@ export default function OfferBook() {
 
   const cancelAccept = () => {
     setPendingOffer(null);
-    setFallbackConsent(false);
+    setRiskAndTermsConsent(false);
     setDiscountPreview(null);
   };
 
@@ -1448,8 +1448,8 @@ export default function OfferBook() {
         <AcceptReviewModal
           offer={pendingOffer}
           illiquid={isIlliquidOffer(pendingOffer)}
-          consent={fallbackConsent}
-          onConsentChange={setFallbackConsent}
+          consent={riskAndTermsConsent}
+          onConsentChange={setRiskAndTermsConsent}
           submitting={acceptingId === pendingOffer.id}
           onConfirm={confirmAccept}
           onCancel={cancelAccept}

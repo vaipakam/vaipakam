@@ -92,7 +92,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         address prepayAsset;
         uint256 prepayAmount;
         uint256 bufferAmount;
-        bool fallbackConsentFromBoth;
+        bool riskAndTermsConsentFromBoth;
         bool allowsPartialRepay;
         LibVaipakam.PeriodicInterestCadence periodicInterestCadence;
         address matcher;
@@ -152,20 +152,20 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
      *          failed.
      * @param offerId The accepted offer ID.
      * @param acceptor The acceptor address (borrower or lender depending on offerType).
-     * @param acceptorFallbackConsent Acceptor's mandatory consent to the
+     * @param acceptorRiskAndTermsConsent Acceptor's mandatory consent to the
      *        combined abnormal-market + illiquid-assets fallback terms
      *        (docs/WebsiteReadme.md §"Offer and acceptance risk warnings",
      *        README.md §"Liquidity & Asset Classification"). Required on
      *        every accept regardless of leg liquidity; AND-combined with
-     *        offer.creatorFallbackConsent and latched into the resulting
-     *        loan as {Loan.fallbackConsentFromBoth}, which gates the
+     *        offer.creatorRiskAndTermsConsent and latched into the resulting
+     *        loan as {Loan.riskAndTermsConsentFromBoth}, which gates the
      *        illiquid-path and the default fallback behavior.
      * @return loanId The new loan ID.
      */
     function initiateLoan(
         uint256 offerId,
         address acceptor,
-        bool acceptorFallbackConsent
+        bool acceptorRiskAndTermsConsent
     ) external whenNotPaused returns (uint256 loanId) {
         if (msg.sender != address(this))
             revert UnauthorizedCrossFacetCall(); // Only via Diamond
@@ -204,8 +204,8 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             // (liquid and illiquid). Required from both parties; OfferFacet
             // also enforces this at create + accept time, re-checked here as
             // a defensive latch before the loan struct is written.
-            if (!(offer.creatorFallbackConsent && acceptorFallbackConsent)) {
-                revert FallbackConsentRequired();
+            if (!(offer.creatorRiskAndTermsConsent && acceptorRiskAndTermsConsent)) {
+                revert RiskAndTermsConsentRequired();
             }
         }
 
@@ -221,7 +221,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             loanId: loanId,
             offerId: offerId,
             acceptor: acceptor,
-            acceptorFallbackConsent: acceptorFallbackConsent,
+            acceptorRiskAndTermsConsent: acceptorRiskAndTermsConsent,
             lendingAssetLiquidity: lendingAssetLiquidity,
             collateralLiquidity: collateralLiquidity,
             isLenderSaleVehicle: isLenderSaleVehicle
@@ -288,7 +288,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         d.prepayAsset = loan.prepayAsset;
         d.prepayAmount = loan.prepayAmount;
         d.bufferAmount = loan.bufferAmount;
-        d.fallbackConsentFromBoth = loan.fallbackConsentFromBoth;
+        d.riskAndTermsConsentFromBoth = loan.riskAndTermsConsentFromBoth;
         d.allowsPartialRepay = loan.allowsPartialRepay;
         d.periodicInterestCadence = loan.periodicInterestCadence;
         d.matcher = loan.matcher;
@@ -314,7 +314,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         uint256 loanId;
         uint256 offerId;
         address acceptor;
-        bool acceptorFallbackConsent;
+        bool acceptorRiskAndTermsConsent;
         LibVaipakam.LiquidityStatus lendingAssetLiquidity;
         LibVaipakam.LiquidityStatus collateralLiquidity;
         bool isLenderSaleVehicle;
@@ -334,7 +334,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             ctx.loanId,
             ctx.offerId,
             ctx.acceptor,
-            ctx.acceptorFallbackConsent,
+            ctx.acceptorRiskAndTermsConsent,
             ctx.lendingAssetLiquidity,
             ctx.collateralLiquidity
         );
@@ -388,8 +388,8 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         LibVaipakam.Offer storage offer = LibVaipakam.storageSlot().offers[ctx.offerId];
         bool bothLiquid = ctx.lendingAssetLiquidity == LibVaipakam.LiquidityStatus.Liquid &&
             ctx.collateralLiquidity == LibVaipakam.LiquidityStatus.Liquid;
-        bool mutualIlliquidConsent = ctx.acceptorFallbackConsent &&
-            offer.creatorFallbackConsent;
+        bool mutualIlliquidConsent = ctx.acceptorRiskAndTermsConsent &&
+            offer.creatorRiskAndTermsConsent;
         if (!bothLiquid && mutualIlliquidConsent) return;
         address collateralAsset = LibVaipakam
             .storageSlot()
@@ -558,7 +558,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         uint256 loanId,
         uint256 offerId,
         address acceptor,
-        bool acceptorFallbackConsent,
+        bool acceptorRiskAndTermsConsent,
         LibVaipakam.LiquidityStatus lendingAssetLiquidity,
         LibVaipakam.LiquidityStatus collateralLiquidity
     ) private {
@@ -568,7 +568,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         _copyAssetFields(
             loan,
             offer,
-            acceptorFallbackConsent,
+            acceptorRiskAndTermsConsent,
             lendingAssetLiquidity,
             collateralLiquidity
         );
@@ -678,7 +678,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     function _copyAssetFields(
         LibVaipakam.Loan storage loan,
         LibVaipakam.Offer storage offer,
-        bool acceptorFallbackConsent,
+        bool acceptorRiskAndTermsConsent,
         LibVaipakam.LiquidityStatus lendingAssetLiquidity,
         LibVaipakam.LiquidityStatus collateralLiquidity
     ) private {
@@ -689,7 +689,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             lendingAssetLiquidity,
             collateralLiquidity
         );
-        _copyCollateralAssetFields(loan, offer, acceptorFallbackConsent);
+        _copyCollateralAssetFields(loan, offer, acceptorRiskAndTermsConsent);
     }
 
     function _copyPrincipalAssetFields(
@@ -774,10 +774,10 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     function _copyCollateralAssetFields(
         LibVaipakam.Loan storage loan,
         LibVaipakam.Offer storage offer,
-        bool acceptorFallbackConsent
+        bool acceptorRiskAndTermsConsent
     ) private {
-        loan.fallbackConsentFromBoth =
-            acceptorFallbackConsent && offer.creatorFallbackConsent;
+        loan.riskAndTermsConsentFromBoth =
+            acceptorRiskAndTermsConsent && offer.creatorRiskAndTermsConsent;
         loan.collateralAssetType = offer.collateralAssetType;
         loan.collateralTokenId = offer.collateralTokenId;
         loan.collateralQuantity = offer.collateralQuantity;
@@ -875,7 +875,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
      *         gate at initiation is acceptance of illiquid legs (and the
      *         paired LTV/HF skip for those legs).
      * @dev Latched at initiation time from
-     *      `offer.creatorFallbackConsent && acceptorFallbackConsent`; see
+     *      `offer.creatorRiskAndTermsConsent && acceptorRiskAndTermsConsent`; see
      *      docs/WebsiteReadme.md §"Offer and acceptance risk warnings"
      *      and README.md §"Liquidity & Asset Classification".
      * @param loanId The loan ID.
@@ -886,6 +886,6 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         uint256 loanId
     ) external view returns (bool bothPartyConsent) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        return s.loans[loanId].fallbackConsentFromBoth;
+        return s.loans[loanId].riskAndTermsConsentFromBoth;
     }
 }
