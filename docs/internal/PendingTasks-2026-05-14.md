@@ -319,37 +319,33 @@ interface.
   Balancer V2 weighted pools (rare; weEth and similar LSTs would
   qualify if they were the principal asset).
 
-### E.3 Range Orders matcher deployment
+### ~~E.3 Range Orders matcher deployment~~ — CLOSED
 
-`apps/keeper/src/matcher.ts` is wired into the cron handler but
-not deployed (Cloudflare Worker not pushed). The 2-week testnet
-bake is the deliberate gate before deploy.
+`apps/keeper/src/matcher.ts` was wired into the keeper Worker's
+per-chain cron in commit `c32667f` (apps/keeper:
+`runOfferMatcherTickForChain`) and into the public-reference
+`vaipakam-keeper-bot` runner in its own
+[index.ts](https://github.com/vaipakam/vaipakam-keeper-bot)
+(`runOfferMatcherTick`). Active on both surfaces.
 
-### E.4 Widget i18n for non-en locales
+### ~~E.4 Widget i18n for non-en locales~~ — CLOSED
 
-Piece A's
-[market-rate widget](../../apps/defi/src/components/app/MarketRateWidget.tsx)
-currently ships English text + i18next fallback for the 9 other
-locales (es / fr / de / hi / zh / ko / ja / ar / ta). Translation
-strings need to land in
-[`apps/defi/src/i18n/locales/*.json`](../../apps/defi/src/i18n/locales/).
+The 9 non-en locales (es / fr / de / hi / zh / ko / ja / ar /
+ta) all carry the `marketRateWidget` translation block —
+commit `69ccf2c` (apps/defi: i18n — translate the market-rate
+widget + cross-chain warning + Create-Offer banners into the 9
+non-en locales).
 
-### E.5 Liquidity-confidence relay — Tier-3 advisory `LIQ_TIER3_DISABLE_DEFI_LISTING`
+### ~~E.5 Liquidity-confidence relay — Tier-3 advisory `LIQ_TIER3_DISABLE_DEFI_LISTING`~~ — CLOSED
 
-The Tier-3 "battle-tested elsewhere" advisory in
+The 2-of-3 ensemble (DeFiLlama listing on Aave V3 / Compound
+V3 / Morpho + CoinGecko market cap + CoinGecko 24h volume)
+shipped in commit `2af421e` (apps/keeper: Tier-3 advisory),
+and the `LIQ_TIER3_DISABLE_DEFI_LISTING` operator knob lives
+on
 [`apps/keeper/src/liquidityConfidence.ts`](../../apps/keeper/src/liquidityConfidence.ts)
-is a 2-of-3 ensemble:
-- Signal ①: DeFiLlama listing on Aave V3 / Compound V3 / Morpho
-  with TVL ≥ `LIQ_TIER3_MIN_TVL_USD` (default $10M)
-- Signal ②: CoinGecko market cap ≥ `LIQ_TIER3_MIN_MCAP_USD`
-  (default $1B)
-- Signal ③: CoinGecko 24h volume ≥ `LIQ_TIER3_MIN_VOL_USD`
-  (default $50M)
-
-Operators can disable signal ① via
-`LIQ_TIER3_DISABLE_DEFI_LISTING=true` if DeFiLlama becomes
-unreliable — the ensemble collapses to 2-of-2 CoinGecko-only
-(stricter, safe). Decision is operational; no code change needed.
+line 479 + is declared in `env.ts`. Decision is operational;
+no further code change needed.
 
 ---
 
@@ -401,8 +397,12 @@ proactive scheduling needed.
   data-fetch audit remains** as the single outstanding security
   item; recommend tackling next.
 - **Group D deploy-script modernization** ✓ closed.
-- **Group E background follow-ups** — fire-and-forget; revisit
-  individually when their respective triggers (E.1 V4 launch on
-  new chains, E.2 Balancer V2 SOR latency, etc.) hit.
+- **Group E background follow-ups** — E.3 / E.4 / E.5 closed
+  on 2026-05-15 (already shipped, just hadn't been crossed off
+  yet — verified via code + commit lookup). E.1 (Aave V4 peer
+  reader) and E.2 (Balancer V2 SOR direct quote) remain as
+  trigger-driven; revisit when V4 launches on a new chain we
+  read on, or when Balancer V2 weighted-pool liquidity becomes
+  the dominant venue for a target asset.
 - **Group F `docs/ToDo.md` backlog** — needs its own triage
   session (~80 items, mostly UX/feature work).

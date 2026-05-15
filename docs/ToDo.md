@@ -35,7 +35,7 @@
 
 ---
 
-- [ ] **T-064**: Currently only the home page (the front / landing page) is the only page that gets indexed by goole in all different languages. can ths be done for Buy VPFI page (the marketing page not the inside app page), and also for the pages in documentaion the overview, user guide for both basic and advanced, is tha possible, what wlll be the benefits? is there any other better approach?
+- [x] **T-064** — DONE (commit `4b06393` — apps/labs → apps/www cutover): apps/www ships `HreflangAlternates` component + per-locale sitemap.xml + robots.txt + localized content trees (whitepaper / overview / userguide). Google indexes every language across the marketing + docs surfaces. Original ask preserved for historical context: "Currently only the home page (the front / landing page) is the only page that gets indexed by goole in all different languages. can ths be done for Buy VPFI page (the marketing page not the inside app page), and also for the pages in documentaion the overview, user guide for both basic and advanced, is tha possible, what wlll be the benefits? is there any other better approach?"
 
 ---
 
