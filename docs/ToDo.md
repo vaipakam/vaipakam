@@ -15,7 +15,16 @@
 
 ---
 
-- [ ] **T-070**: Hide the status badge when wallet is not connected
+- [ ] **T-072** `yetToPromote`: Have 3 modes in website `Basic/Advanced/Technical`, Basic: for Dummy users (with polished wordings), Advanced: for users with no technical knoweldge but can understand all financial jargons, Technical: for users with technical knoweldge but not much with all financial jargons
+      what do you say? whats your take?
+
+---
+
+- [ ] **T-071** `yetToPromote`: update protocol console and include each and every configs in admin viewable/proposable page, what do you say?
+
+---
+
+- [ ] **T-070** `yetToPromote`: Hide the status badge when wallet is not connected
 
 ---
 
@@ -373,7 +382,7 @@ vaipakam-protocol
 
 ---
 
-- [ ] **EC-002** `promotedToProjectCard`: How do we ensure that the flash loan bots will pay back the lending asset after they took the collateral asset, is it happening in single transaction or how it is? can we allow it to take the collateral asset only after they provide the required lending asset first, is there a better approach? whats your take?
+- [x] **EC-002** — DONE 2026-05-15 (verified, no code change needed). Three-layer atomicity already enforces the "principal-first then collateral" semantic the original ask raised: (i) `RiskFacet.triggerLiquidationDiscounted` at [contracts/src/facets/RiskFacet.sol:1681-1838](../contracts/src/facets/RiskFacet.sol#L1681-L1838) is `nonReentrant` and `safeTransferFrom`s the principal at line 1761 BEFORE the collateral withdraw at line 1827 — if the liquidator doesn't have approved principal, the txn reverts before any collateral moves; (ii) `FlashLoanLiquidator.executeOperation` wraps `triggerLiquidationDiscounted` inside Aave V3's `flashLoanSimple` callback — Aave reverts the whole txn if the receiver can't repay loanAmount+premium at callback end; (iii) `apps/keeper` bot just submits the tx, holds no custody. Audit-package note: `docs/internal/OffchainDataFetchAudit-2026-05-15.md` Part 7 already covers the bot's untrusted-quote model + on-chain `minOutputAmount` gate. Original ask preserved: "How do we ensure that the flash loan bots will pay back the lending asset after they took the collateral asset…"
 
 ---
 
@@ -451,14 +460,5 @@ Also the info icon mapping inside protocol console should go only to `www` (http
 ---
 
 - [ ] **ET-001**: Lets use Blowfish instead of Blockaid
-
----
-
-Have 3 modes in website `Basic/Advanced/Technical`, Basic: for Dummy users (with polished wordings), Advanced: for users with no technical knoweldge but can understand all financial jargons, Technical: for users with technical knoweldge but not much with all financial jargons
-what do you say? whats your take?
-
----
-
-update protocol console and include each and every configs in admin viewable/proposable page, what do you say?
 
 ---
