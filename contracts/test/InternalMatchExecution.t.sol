@@ -412,6 +412,71 @@ contract InternalMatchExecutionTest is SetupTest {
         assertEq(bAfter.principal, 0);
     }
 
+    // ─── EC-007 — partial-match residual stays in Diamond custody ───
+
+    function test_fallbackPending_partialRescue_residualInDiamond() public {
+        // EC-007 core fix: after a partial match of a FallbackPending
+        // leg, the residual collateral must stay in the DIAMOND's
+        // custody (not be rehydrated into the borrower's escrow). The
+        // snapshot stays `active` and continues to describe it, so a
+        // later claim distributes it correctly.
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 10_000, mockCollateralERC20, 10_000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 3_000, mockERC20, 3_000);
+        _moveToFallbackPending(LOAN_A, borrower, mockCollateralERC20, 10_000, 8_500, 200, true);
+        _mockLtv(LOAN_B, 9_000);
+
+        uint256 diamondCollatBefore =
+            IERC20(mockCollateralERC20).balanceOf(address(diamond));
+        address aBorrowerEscrow = EscrowFactoryFacet(address(diamond))
+            .getOrCreateUserEscrow(borrower);
+
+        vm.prank(matcher);
+        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+
+        LibVaipakam.Loan memory aAfter = _getLoan(LOAN_A);
+        // 3_000 of A's collateral was paid to B's lender; 7_000 residual.
+        assertEq(aAfter.collateralAmount, 7_000, "A residual collateral");
+        // The residual lives in the DIAMOND, not the borrower's escrow.
+        assertEq(
+            IERC20(mockCollateralERC20).balanceOf(address(diamond)),
+            diamondCollatBefore - 3_000,
+            "residual stays in Diamond custody"
+        );
+        assertEq(
+            IERC20(mockCollateralERC20).balanceOf(aBorrowerEscrow),
+            0,
+            "residual NOT rehydrated into borrower escrow"
+        );
+        assertEq(uint8(aAfter.status), uint8(LibVaipakam.LoanStatus.FallbackPending));
+    }
+
+    function test_fallbackPending_partialRescue_thenSecondMatch() public {
+        // A partially-matched FallbackPending loan must stay matchable —
+        // a second counterparty in a later block can clear the residual.
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 10_000, mockCollateralERC20, 10_000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 3_000, mockERC20, 3_000);
+        _moveToFallbackPending(LOAN_A, borrower, mockCollateralERC20, 10_000, 8_500, 200, true);
+        _mockLtv(LOAN_B, 9_000);
+
+        // First (partial) match — A: 10_000 → 7_000 principal, FallbackPending.
+        vm.prank(matcher);
+        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+        assertEq(_getLoan(LOAN_A).principal, 7_000);
+        assertEq(uint8(_getLoan(LOAN_A).status), uint8(LibVaipakam.LoanStatus.FallbackPending));
+
+        // Fresh opposing counterparty big enough to clear the 7_000 residual.
+        _seedLoan(LOAN_C, lender, borrowerB, mockCollateralERC20, 7_000, mockERC20, 7_000);
+        _mockLtv(LOAN_C, 9_000);
+
+        // Second match against the residual — settles from Diamond custody.
+        vm.prank(matcher);
+        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_C, 0);
+
+        LibVaipakam.Loan memory aFinal = _getLoan(LOAN_A);
+        assertEq(aFinal.principal, 0, "A residual fully cleared by second match");
+        assertEq(uint8(aFinal.status), uint8(LibVaipakam.LoanStatus.InternalMatched));
+    }
+
     function test_fallbackPending_oracleUnpriceable_reverts() public {
         // FallbackPending leg whose collateral asset has lost oracle
         // pricing → match reverts InternalMatchAssetUnpriceable.

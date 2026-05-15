@@ -993,11 +993,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         LibVaipakam.Loan storage lb = s.loans[loanIdB];
         LibVaipakam.Loan storage lc = s.loans[loanIdC];
 
-        // EC-003 Phase 1 — rehydrate borrower escrows for any FallbackPending
-        // legs in the cycle so the existing _settleLeg withdraws work.
-        _rehydrateFallbackEscrowIfNeeded(la);
-        _rehydrateFallbackEscrowIfNeeded(lb);
-        _rehydrateFallbackEscrowIfNeeded(lc);
+        // EC-007 — per-leg collateral-custody routing (see _settleLeg).
+        // Statuses read here are pre-match.
+        bool aFromDiamond = la.status == LibVaipakam.LoanStatus.FallbackPending;
+        bool bFromDiamond = lb.status == LibVaipakam.LoanStatus.FallbackPending;
+        bool cFromDiamond = lc.status == LibVaipakam.LoanStatus.FallbackPending;
 
         movedX = la.principal < lb.collateralAmount ? la.principal : lb.collateralAmount;
         movedY = lb.principal < lc.collateralAmount ? lb.principal : lc.collateralAmount;
@@ -1009,11 +1009,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         incentiveZ = (movedZ * incentiveBps) / LibVaipakam.BASIS_POINTS;
 
         // Leg X: B's collateral (= A's principal asset) → A.lender + matcher.
-        _settleLeg(lb.borrower, la.principalAsset, la.lender, movedX, incentiveX);
+        _settleLeg(lb.borrower, la.principalAsset, la.lender, movedX, incentiveX, bFromDiamond);
         // Leg Y: C's collateral (= B's principal asset) → B.lender + matcher.
-        _settleLeg(lc.borrower, lb.principalAsset, lb.lender, movedY, incentiveY);
+        _settleLeg(lc.borrower, lb.principalAsset, lb.lender, movedY, incentiveY, cFromDiamond);
         // Leg Z: A's collateral (= C's principal asset) → C.lender + matcher.
-        _settleLeg(la.borrower, lc.principalAsset, lc.lender, movedZ, incentiveZ);
+        _settleLeg(la.borrower, lc.principalAsset, lc.lender, movedZ, incentiveZ, aFromDiamond);
 
         // State updates — each loan's principal cleared by its leg,
         // each borrower's collateral debited by the NEXT loan's leg.
@@ -1038,29 +1038,55 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     ///      `incentive`. Extracted helper so the 2-way and 3-way
     ///      bodies share the cross-vault transfer logic without
     ///      duplication.
+    ///
+    ///      EC-007 — the paying-leg's collateral lives in one of two
+    ///      places depending on the loan's status:
+    ///        - `Active` leg → collateral is in the borrower's escrow;
+    ///          withdraw via `escrowWithdrawERC20`.
+    ///        - `FallbackPending` leg → collateral was already pulled
+    ///          into the Diamond's own balance during the failed
+    ///          at-fallback swap; transfer directly with
+    ///          `IERC20.safeTransfer` from `address(this)`.
+    ///      `fromDiamondCustody` selects the path. This replaced the
+    ///      EC-003 Phase 1 "rehydrate the borrower's escrow first"
+    ///      approach, which scattered a partial-match residual into
+    ///      the borrower's escrow and broke the lender's later claim
+    ///      (the claim path withdraws from the LENDER's escrow).
+    ///      Settling FallbackPending legs straight from Diamond
+    ///      custody keeps the residual in the Diamond, where the
+    ///      snapshot-driven claim distribution expects it.
     function _settleLeg(
         address payingBorrower,
         address asset,
         address receivingLender,
         uint256 moved,
-        uint256 incentive
+        uint256 incentive,
+        bool fromDiamondCustody
     ) private {
         if (moved == 0) return;
         uint256 lenderShare = moved - incentive;
         address lenderEscrow = EscrowFactoryFacet(address(this))
             .getOrCreateUserEscrow(receivingLender);
         if (lenderShare > 0) {
-            EscrowFactoryFacet(address(this)).escrowWithdrawERC20(
-                payingBorrower, asset, lenderEscrow, lenderShare
-            );
+            if (fromDiamondCustody) {
+                IERC20(asset).safeTransfer(lenderEscrow, lenderShare);
+            } else {
+                EscrowFactoryFacet(address(this)).escrowWithdrawERC20(
+                    payingBorrower, asset, lenderEscrow, lenderShare
+                );
+            }
             EscrowFactoryFacet(address(this)).recordEscrowDepositERC20(
                 receivingLender, asset, lenderShare
             );
         }
         if (incentive > 0) {
-            EscrowFactoryFacet(address(this)).escrowWithdrawERC20(
-                payingBorrower, asset, msg.sender, incentive
-            );
+            if (fromDiamondCustody) {
+                IERC20(asset).safeTransfer(msg.sender, incentive);
+            } else {
+                EscrowFactoryFacet(address(this)).escrowWithdrawERC20(
+                    payingBorrower, asset, msg.sender, incentive
+                );
+            }
         }
     }
 
@@ -1079,15 +1105,13 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         LibVaipakam.Loan storage la = s.loans[loanIdA];
         LibVaipakam.Loan storage lb = s.loans[loanIdB];
 
-        // EC-003 Phase 1 — for FallbackPending legs, the collateral is
-        // physically held by the Diamond (was withdrawn from the borrower's
-        // escrow during the failed at-fallback swap). Push it back into
-        // the borrower's escrow so the existing `_settleLeg` flow can
-        // withdraw via the standard path. Idempotent — only fires when
-        // `snap.active` is true (i.e., the snapshot hasn't been consumed
-        // by a prior match or claim retry).
-        _rehydrateFallbackEscrowIfNeeded(la);
-        _rehydrateFallbackEscrowIfNeeded(lb);
+        // EC-007 — the paying leg's collateral is in the Diamond's
+        // custody when that leg is FallbackPending (pulled there during
+        // the failed at-fallback swap), or in the borrower's escrow when
+        // it's Active. `_settleLeg` routes accordingly. Statuses read
+        // here are pre-match — they're only mutated below.
+        bool aFromDiamond = la.status == LibVaipakam.LoanStatus.FallbackPending;
+        bool bFromDiamond = lb.status == LibVaipakam.LoanStatus.FallbackPending;
 
         // Independent mins on each leg (design §7.1 α): each leg
         // moves the smaller of the receiving lender's owed amount
@@ -1100,9 +1124,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         incentiveY = (movedY * incentiveBps) / LibVaipakam.BASIS_POINTS;
 
         // Leg X — B's collateral (= A's principal asset) → A.lender + matcher.
-        _settleLeg(lb.borrower, la.principalAsset, la.lender, movedX, incentiveX);
+        _settleLeg(lb.borrower, la.principalAsset, la.lender, movedX, incentiveX, bFromDiamond);
         // Leg Y — A's collateral (= B's principal asset) → B.lender + matcher.
-        _settleLeg(la.borrower, lb.principalAsset, lb.lender, movedY, incentiveY);
+        _settleLeg(la.borrower, lb.principalAsset, lb.lender, movedY, incentiveY, aFromDiamond);
 
         // State updates — debt cleared by the gross moved amount
         // (borrower forfeits the full amount; the incentive % they
@@ -1175,58 +1199,31 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
                status == LibVaipakam.LoanStatus.FallbackPending;
     }
 
-    /// @dev EC-003 Phase 1 — push a FallbackPending loan's collateral
-    ///      from the Diamond's own balance back into the borrower's escrow
-    ///      so the standard `_settleLeg` `escrowWithdrawERC20` path works
-    ///      for the upcoming match.
-    ///
-    ///      Idempotent: only fires when the loan is FallbackPending AND
-    ///      its snapshot is still active (i.e., a prior match retry or
-    ///      claim-time retry hasn't already consumed the collateral). Sets
-    ///      `snap.active = false` so subsequent partial-match attempts on
-    ///      the same loan skip this rehydration — by that point the
-    ///      residual collateral already lives in the borrower's escrow.
-    function _rehydrateFallbackEscrowIfNeeded(LibVaipakam.Loan storage loan) private {
-        if (loan.status != LibVaipakam.LoanStatus.FallbackPending) return;
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.FallbackSnapshot storage snap = s.fallbackSnapshot[loan.id];
-        if (!snap.active) return;
-
-        address borrowerEscrow = EscrowFactoryFacet(address(this))
-            .getOrCreateUserEscrow(loan.borrower);
-        uint256 amount = loan.collateralAmount;
-        if (amount > 0) {
-            IERC20(loan.collateralAsset).safeTransfer(borrowerEscrow, amount);
-            // T-051 — Diamond-side transfer to escrow ticks the
-            // protocolTrackedEscrowBalance counter so subsequent
-            // `escrowWithdrawERC20` calls don't underflow.
-            LibVaipakam.recordEscrowDeposit(loan.borrower, loan.collateralAsset, amount);
-        }
-        snap.active = false;
-    }
-
-    /// @dev EC-003 Phase 1 — post-settlement housekeeping for a loan whose
-    ///      principal was reduced by an internal match. Handles three
-    ///      cases:
+    /// @dev EC-003 Phase 1 / EC-007 — post-settlement housekeeping for a
+    ///      loan whose principal was reduced by an internal match.
+    ///      Handles three cases:
     ///        1. Loan was Active and is now fully matched (`principal == 0`)
     ///           → transition Active → InternalMatched (existing B.2 path).
+    ///           Active partial matches stay Active — a no-op here.
     ///        2. Loan was FallbackPending and is now fully matched →
-    ///           transition FallbackPending → InternalMatched. Snapshot
-    ///           was already neutralised by `_rehydrateFallbackEscrowIfNeeded`
-    ///           (snap.active = false); clear the collateral-unit claim
-    ///           records so the standard Settled-path claim flow takes over.
+    ///           transition FallbackPending → InternalMatched. The lender
+    ///           was made whole in principal asset via `_settleLeg`; the
+    ///           residual collateral still sits in the Diamond's custody
+    ///           (EC-007 — no rehydration), so push it to the borrower's
+    ///           escrow. Treasury's at-fallback entitlement is forfeited
+    ///           (same as Active → InternalMatched — no treasury cut on an
+    ///           internal-match rescue). Clear claim records + neutralise
+    ///           the snapshot.
     ///        3. Loan was FallbackPending and is still partially open
-    ///           (`principal > 0`) → stays FallbackPending. The matched
-    ///           portion was paid out to the opposing lender via
-    ///           `_settleLeg` and the residual collateral lives in the
-    ///           borrower's escrow. Scale the (already-zeroed) snapshot's
-    ///           reference fields proportionally so any later read sees
-    ///           the right shape, and rewrite the claim records to the
-    ///           proportional residual.
-    ///
-    ///      Active partial matches (case 1's residual, where the loan
-    ///      stays Active with reduced principal) are a no-op here —
-    ///      consistent with the pre-EC-003 B.2 behaviour.
+    ///           (`principal > 0`) → stays FallbackPending. The residual
+    ///           collateral REMAINS in the Diamond's custody (EC-007). The
+    ///           snapshot stays `active` and describes that residual;
+    ///           scale its reference fields + the claim records
+    ///           proportionally to the surviving collateral. A later
+    ///           match OR claim resolves the residual via the standard
+    ///           snapshot-driven path (`_distributeFallbackCollateral`,
+    ///           Diamond → escrows) — exactly as a fresh, smaller
+    ///           FallbackPending loan would.
     function _settleFallbackOrTransitionPostMatch(
         LibVaipakam.Loan storage loan,
         uint256 collateralConsumed
@@ -1245,22 +1242,30 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             return;
         }
 
-        // FallbackPending branch — proportional snapshot scaling +
-        // status transition on full match.
+        // FallbackPending branch.
         if (status == LibVaipakam.LoanStatus.FallbackPending) {
             LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
             if (loan.principal == 0) {
                 // Full rescue. Lender was made whole in principal asset
-                // via _settleLeg; treasury's at-fallback entitlement is
-                // forfeited (same as the Active→InternalMatched path —
-                // no treasury cut on internal-match rescue); borrower's
-                // residual collateral sits in their escrow and gets
-                // withdrawn via the standard Settled-path claim flow.
-                // Clear the collateral-unit claim records so the
-                // InternalMatched terminal doesn't double-distribute.
+                // via `_settleLeg`. The residual collateral
+                // (`loan.collateralAmount`) is still in the Diamond's
+                // custody — push it to the borrower's escrow so they can
+                // withdraw it via the standard Settled-path claim flow.
+                // Treasury's at-fallback cut is forfeited.
+                if (loan.collateralAmount > 0) {
+                    address borrowerEscrow = EscrowFactoryFacet(address(this))
+                        .getOrCreateUserEscrow(loan.borrower);
+                    IERC20(loan.collateralAsset).safeTransfer(
+                        borrowerEscrow, loan.collateralAmount
+                    );
+                    LibVaipakam.recordEscrowDeposit(
+                        loan.borrower, loan.collateralAsset, loan.collateralAmount
+                    );
+                }
                 delete s.lenderClaims[loan.id];
                 delete s.borrowerClaims[loan.id];
+                s.fallbackSnapshot[loan.id].active = false;
                 LibLifecycle.transitionFromAny(
                     loan,
                     LibVaipakam.LoanStatus.InternalMatched
@@ -1269,11 +1274,13 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             }
 
             // Partial rescue. Loan stays FallbackPending with reduced
-            // principal + collateralAmount. Scale the snapshot's
-            // reference fields proportionally to the surviving
-            // collateral so any audit-trail read or future settlement
-            // sees a self-consistent shape. Claim records — set in
-            // collateral units at fallback time — are likewise scaled.
+            // principal + collateralAmount. The residual collateral
+            // remains in the Diamond's custody (EC-007 — no rehydration),
+            // so the snapshot stays `active` and continues to describe
+            // it. Scale the snapshot's reference fields + the claim
+            // records proportionally to the surviving collateral so a
+            // later match or claim sees a self-consistent, smaller
+            // FallbackPending loan.
             uint256 oldCollat = loan.collateralAmount + collateralConsumed;
             uint256 newCollat = loan.collateralAmount;
             if (oldCollat == 0 || newCollat >= oldCollat) return;

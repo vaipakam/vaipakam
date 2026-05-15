@@ -540,29 +540,26 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         LibVaipakam.FallbackSnapshot storage snap = s.fallbackSnapshot[loanId];
         if (!snap.active) return;
 
-        // EC-003 Phase 3 — internal-match-first at claim time. The
-        // candidate pool grows between keeper-tick and lender-claim
+        // EC-003 Phase 3 / EC-007 — internal-match-first at claim time.
+        // The candidate pool grows between keeper-tick and lender-claim
         // (fresh Active counterparties, freshly-failed FallbackPending
-        // loans). Auto-dispatch here is the safety net for keeper
-        // outages + the race between keeper scan and lender claim.
+        // loans), so this is the safety net for keeper outages + the
+        // race between keeper scan and lender claim.
         //
-        // If auto-dispatch fires, `_rehydrateFallbackEscrowIfNeeded`
-        // inside the settlement marks `snap.active = false`, so the
-        // external-retry path below short-circuits cleanly. On full
-        // match the loan transitions FallbackPending → InternalMatched
-        // (handled by the caller — `_claimAsLenderImpl` guards the
-        // subsequent FallbackPending → Defaulted transition with a
-        // status re-check). On partial match the loan stays
-        // FallbackPending with a proportionally-reduced snapshot;
-        // the standard claim-time terminal still fires below via
-        // `_distributeFallbackCollateral` ... wait no, that path only
-        // runs while snap.active is true. After the auto-dispatch
-        // consumes the snapshot, the partial-match residual is
-        // claimable through the standard scaled `lenderClaims`
-        // record set by `_settleFallbackOrTransitionPostMatch`.
-        if (RiskFacet(address(this)).attemptInternalMatchAutoDispatch(loanId)) {
-            return;
-        }
+        // The auto-dispatch may:
+        //   - FULLY match the loan → it transitions FallbackPending →
+        //     InternalMatched, `snap.active` is cleared, the residual
+        //     collateral is pushed to the borrower's escrow. We detect
+        //     this below by re-reading `snap.active` and return early.
+        //   - PARTIALLY match the loan → it stays FallbackPending, the
+        //     snapshot is scaled to the residual, `snap.active` STAYS
+        //     true. We must NOT return — we fall through to the
+        //     distribution path so the (scaled) residual is paid out.
+        //   - not match at all → `snap.active` unchanged; same
+        //     fall-through.
+        RiskFacet(address(this)).attemptInternalMatchAutoDispatch(loanId);
+        // A full match consumed the snapshot — nothing left to resolve.
+        if (!snap.active) return;
 
         bool retrySucceeded;
         uint256 proceeds;

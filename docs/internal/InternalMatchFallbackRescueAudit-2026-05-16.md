@@ -70,32 +70,45 @@ without `_assertOraclePriceable` passing for both its assets.
 
 ---
 
-## 3. Collateral custody — the rehydration step
+## 3. Collateral custody — status-aware settlement (EC-007)
 
 **The wrinkle**: at FallbackPending time the loan's collateral has
 already been withdrawn from the borrower's escrow into the Diamond's
-own balance (it was pulled for the failed at-fallback swap). The
-existing `_settleLeg` machinery withdraws *from the borrower's
-escrow*.
+own balance (it was pulled for the failed at-fallback swap). An
+`Active` loan's collateral, by contrast, is still in the borrower's
+escrow.
 
-**The fix**: `_rehydrateFallbackEscrowIfNeeded` pushes the
-collateral from the Diamond back into the borrower's escrow (and
-ticks `protocolTrackedEscrowBalance`) before `_settleLeg` runs.
+**The original EC-003 Phase 1 approach** rehydrated — pushed the
+FallbackPending collateral back into the borrower's escrow so the
+existing `_settleLeg` `escrowWithdrawERC20` path worked. That
+approach had a latent bug: after a *partial* match the residual was
+scattered into the borrower's escrow, but the lender's later claim
+(`claimAsLender` → `escrowWithdrawERC20(loan.lender, ...)`)
+withdraws from the *lender's* escrow — which is empty. The lender
+could not claim a partial-match residual.
 
-**Idempotency invariant**: rehydration fires only when the loan is
-`FallbackPending` AND its `fallbackSnapshot.active == true`. It sets
-`snap.active = false` on completion. So:
-- A FallbackPending loan is rehydrated at most once.
-- A subsequent partial-match attempt on the same loan sees
-  `snap.active == false` and skips rehydration — by then the
-  residual collateral already lives in the borrower's escrow.
-- The claim-time `_resolveFallbackIfActive` also checks
-  `snap.active` and short-circuits cleanly when a prior match
-  consumed the snapshot.
+**The EC-007 fix**: `_settleLeg` is status-aware (`fromDiamondCustody`
+parameter). A FallbackPending paying-leg settles directly from the
+Diamond's custody with `IERC20.safeTransfer`; an Active paying-leg
+withdraws from the borrower's escrow as before. **No rehydration** —
+`_rehydrateFallbackEscrowIfNeeded` was removed entirely.
 
-**Audit check**: confirm `snap.active` is the single source of
-truth for "collateral still in Diamond custody" and that no path
-double-rehydrates.
+**Custody invariant**: a FallbackPending loan's collateral lives in
+the Diamond's custody for the entire FallbackPending span — through
+any number of partial matches. Each partial match transfers only
+the matched portion out of the Diamond; the residual stays. The
+`fallbackSnapshot` stays `active` and continues to describe the
+residual. A later match settles the residual the same way; a later
+claim distributes it via `_distributeFallbackCollateral` (Diamond →
+escrows) — exactly the path a fresh, smaller FallbackPending loan
+would take. On a FULL match the residual collateral is pushed to
+the borrower's escrow and `snap.active` is cleared as the loan
+transitions to `InternalMatched`.
+
+**Audit check**: confirm no path leaves a FallbackPending loan's
+collateral anywhere other than the Diamond while `snap.active` is
+true, and that `_settleLeg`'s `fromDiamondCustody` flag always
+matches the paying leg's pre-match status.
 
 ---
 
@@ -119,6 +132,11 @@ snap.treasuryPrincipalDue *= factor
 The `lenderClaims` / `borrowerClaims` records — set in collateral
 units at fallback time — are likewise rewritten to the scaled
 values.
+
+The residual collateral remains in the Diamond's custody (EC-007 —
+no rehydration), so the snapshot stays `active` and a later match
+or claim resolves it via `_distributeFallbackCollateral`
+(Diamond → escrows).
 
 **Invariant**: after a partial match, the three collateral fields
 still sum to `loan.collateralAmount`. Integer division truncates
@@ -228,32 +246,43 @@ for the no-candidate path.
 
 | Suite | Cases | Covers |
 | --- | --- | --- |
-| `InternalMatchExecution.t.sol` | 5 new | FallbackPending leg full / partial / both-FP / oracle-unpriceable / snapshot-cleared |
+| `InternalMatchExecution.t.sol` | 7 new | FallbackPending leg full / partial / both-FP / oracle-unpriceable / snapshot-cleared / **EC-007 residual-in-Diamond / EC-007 partial-then-second-match** |
 | `InternalMatchLiquidationGates.t.sol` | 3 updated | error rename `InternalMatchLoanNotActive → InternalMatchLoanNotMatchable` |
 | `MetricsFacetTest.t.sol` | 7 new | asset-pair index push/pop + `hasInternalMatchCandidate` status / LTV / oracle gates |
 | `InternalMatchAutoDispatch.t.sol` | 6 new | auto-dispatch helper: EOA-revert, kill-switch, no-candidate, valid settle, below-floor skip, terminal caller |
 
 Full regression: `forge test --no-match-path "test/invariants/*"`
-→ **1954 passed / 0 failed / 5 skipped** (95 suites).
+→ all green (95 suites; see the EC-007 PR for the exact count).
 
 ---
 
-## 9. Residual items for the auditor's attention
+## 9. EC-007 — partial-match residual claimability (FIXED)
 
-1. **Partial-match residual claimability** — after a partial
-   FallbackPending match, the lender's residual collateral lives in
-   the borrower's escrow (post-rehydration), while the standard
-   `claimAsLender` path withdraws from the *lender's* escrow. The
-   current tests exercise full-match and the no-match fall-through;
-   a dedicated partial-match-then-claim end-to-end test should be
-   added before mainnet (tracked as a Phase 3.5 follow-up if the
-   auditor flags it). The full-match path — the common case — is
-   covered.
-2. **`getMatchEligibleLoans` gas at scale** — unchanged from B.2;
+The original EC-003 Phase 1 rehydration approach had a latent bug:
+after a *partial* FallbackPending match, the residual collateral was
+scattered into the borrower's escrow, but `claimAsLender` withdraws
+from the *lender's* escrow — so the lender could not claim the
+residual. EC-007 fixed this by making `_settleLeg` status-aware
+(settle FallbackPending legs directly from Diamond custody) and
+removing the rehydration step entirely (§3). The residual now stays
+in the Diamond where the snapshot-driven claim distribution expects
+it.
+
+Verified by `test_fallbackPending_partialRescue_residualInDiamond`
+(residual stays in Diamond, not the borrower's escrow) and
+`test_fallbackPending_partialRescue_thenSecondMatch` (a
+partially-matched FallbackPending loan stays matchable). The
+claim-time `_resolveFallbackIfActive` now only short-circuits on a
+*full* auto-dispatch match; a partial match falls through to the
+distribution path so the scaled residual is paid out.
+
+## 10. Residual items for the auditor's attention
+
+1. **`getMatchEligibleLoans` gas at scale** — unchanged from B.2;
    pagination is in the signature. The Phase 2 `hasInternalMatchCandidate`
    view is O(K) over the opposing asset-pair, not O(N) — the
    intended bound for the on-chain auto-dispatch.
-3. **Audit bundles with A.4** — this addendum joins the C.1 / C.2 /
+2. **Audit bundles with A.4** — this addendum joins the C.1 / C.2 /
    B.1 docs for the next external engagement.
 
 ---
