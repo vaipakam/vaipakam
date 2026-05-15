@@ -1719,7 +1719,13 @@
         "internalType": "address"
       },
       {
-        "name": "tier",
+        "name": "oldTier",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "newTier",
         "type": "uint8",
         "indexed": false,
         "internalType": "uint8"
