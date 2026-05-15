@@ -246,13 +246,13 @@ for the no-candidate path.
 
 | Suite | Cases | Covers |
 | --- | --- | --- |
-| `InternalMatchExecution.t.sol` | 7 new | FallbackPending leg full / partial / both-FP / oracle-unpriceable / snapshot-cleared / **EC-007 residual-in-Diamond / EC-007 partial-then-second-match** |
+| `InternalMatchExecution.t.sol` | 9 new | FallbackPending leg full / partial / both-FP / oracle-unpriceable / snapshot-cleared / **EC-007 residual-in-Diamond / partial-then-second-match / partial-then-claim-lender-gets-residual / claim-time-full-auto-dispatch-no-revert** |
 | `InternalMatchLiquidationGates.t.sol` | 3 updated | error rename `InternalMatchLoanNotActive → InternalMatchLoanNotMatchable` |
 | `MetricsFacetTest.t.sol` | 7 new | asset-pair index push/pop + `hasInternalMatchCandidate` status / LTV / oracle gates |
 | `InternalMatchAutoDispatch.t.sol` | 6 new | auto-dispatch helper: EOA-revert, kill-switch, no-candidate, valid settle, below-floor skip, terminal caller |
 
 Full regression: `forge test --no-match-path "test/invariants/*"`
-→ all green (95 suites; see the EC-007 PR for the exact count).
+→ all green — 95 suites, 1958 passed / 0 failed / 5 skipped.
 
 ---
 
@@ -268,13 +268,30 @@ removing the rehydration step entirely (§3). The residual now stays
 in the Diamond where the snapshot-driven claim distribution expects
 it.
 
-Verified by `test_fallbackPending_partialRescue_residualInDiamond`
-(residual stays in Diamond, not the borrower's escrow) and
+A second, related defect surfaced during the PR #22 changes-requested
+review: the claim-time auto-dispatch. When `_resolveFallbackIfActive`
+ran a *full* internal match, it transitioned the loan to
+`InternalMatched`, paid the lender in the principal asset, and
+**deleted the lender claim records** — but `_claimAsLenderImpl` then
+fell through, read the now-zeroed claim, and reverted
+`NothingToClaim()`. Because the auto-dispatch runs in the *same*
+transaction, that revert rolled back the otherwise-successful match.
+The fix: `_resolveFallbackIfActive` returns `bool fullyResolved`, and
+`_claimAsLenderImpl` returns early on it. Partial-match / no-match /
+retry-swap paths return `false` and run the normal claim-record
+payout, unchanged.
+
+Verified by four tests in `InternalMatchExecution.t.sol`:
+`test_fallbackPending_partialRescue_residualInDiamond` (residual
+stays in Diamond, not the borrower's escrow),
 `test_fallbackPending_partialRescue_thenSecondMatch` (a
-partially-matched FallbackPending loan stays matchable). The
-claim-time `_resolveFallbackIfActive` now only short-circuits on a
-*full* auto-dispatch match; a partial match falls through to the
-distribution path so the scaled residual is paid out.
+partially-matched FallbackPending loan stays matchable),
+`test_fallbackPending_partialRescue_thenClaim_lenderGetsResidual`
+(the exact bug path — partial match → `claimAsLender` → lender
+receives the scaled residual, 8 500 × 7/10 = 5 950), and
+`test_fallbackPending_claimTime_fullAutoDispatch_noRevert` (a
+claim-time full match no longer reverts; both loans land
+`InternalMatched`).
 
 ## 10. Residual items for the auditor's attention
 
