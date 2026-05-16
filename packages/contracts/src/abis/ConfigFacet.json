@@ -804,6 +804,49 @@
   },
   {
     "type": "function",
+    "name": "getTreasuryConvertConfig",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "ethBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "wbtcBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "vpfiBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "usdThreshold",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxIntervalDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lastConversionAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "wbtcAsset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getTreasuryFeeBps",
     "inputs": [],
     "outputs": [
@@ -1482,6 +1525,55 @@
         "name": "tier3",
         "type": "uint16",
         "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setTreasuryConvertTargetMix",
+    "inputs": [
+      {
+        "name": "ethBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "wbtcBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setTreasuryConvertThresholds",
+    "inputs": [
+      {
+        "name": "usdThreshold",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxIntervalDays",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setTreasuryWbtcAsset",
+    "inputs": [
+      {
+        "name": "wbtcAsset",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -2190,6 +2282,57 @@
   },
   {
     "type": "event",
+    "name": "TreasuryConvertTargetMixSet",
+    "inputs": [
+      {
+        "name": "ethBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "wbtcBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TreasuryConvertThresholdsSet",
+    "inputs": [
+      {
+        "name": "usdThreshold",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxIntervalDays",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TreasuryWbtcAssetSet",
+    "inputs": [
+      {
+        "name": "wbtcAsset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "TwapGuardSet",
     "inputs": [
       {
@@ -2541,6 +2684,22 @@
     "inputs": [
       {
         "name": "bps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidTreasuryConvertMix",
+    "inputs": [
+      {
+        "name": "ethBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "wbtcBps",
         "type": "uint256",
         "internalType": "uint256"
       }

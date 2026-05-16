@@ -26,6 +26,7 @@ import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
+import {PayrollFacet} from "../src/facets/PayrollFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
@@ -89,6 +90,7 @@ contract DeployDiamond is Script {
         ClaimFacet claimFacet = new ClaimFacet();
         AddCollateralFacet addCollateralFacet = new AddCollateralFacet();
         TreasuryFacet treasuryFacet = new TreasuryFacet();
+        PayrollFacet payrollFacet = new PayrollFacet();
         EarlyWithdrawalFacet earlyWithdrawalFacet = new EarlyWithdrawalFacet();
         PartialWithdrawalFacet partialWithdrawalFacet = new PartialWithdrawalFacet();
         PrecloseFacet precloseFacet = new PrecloseFacet();
@@ -109,7 +111,7 @@ contract DeployDiamond is Script {
         // Diamond instead of leaving it as dead code.
         LegalFacet legalFacet = new LegalFacet();
 
-        console.log("All 33 facets deployed.");
+        console.log("All 34 facets deployed.");
 
         // ── Step 2: Deploy Diamond ──────────────────────────────────────
         // Deployer is the initial ERC-173 owner so it can execute the
@@ -126,8 +128,8 @@ contract DeployDiamond is Script {
         console.log("Diamond deployed at:", diamond);
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
-        // 33 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](33);
+        // 34 facets (DiamondCutFacet already added by constructor)
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](34);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -162,6 +164,7 @@ contract DeployDiamond is Script {
         cuts[30] = _buildCut(address(offerMatchFacet), _getOfferMatchSelectors());
         cuts[31] = _buildCut(address(offerCancelFacet), _getOfferCancelSelectors());
         cuts[32] = _buildCut(address(metricsDashboardFacet), _getMetricsDashboardSelectors());
+        cuts[33] = _buildCut(address(payrollFacet), _getPayrollSelectors());
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
         // Split into two halves to stay under Base Sepolia's per-tx
@@ -372,6 +375,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("claimFacet",              address(claimFacet));
         Deployments.writeFacet("addCollateralFacet",      address(addCollateralFacet));
         Deployments.writeFacet("treasuryFacet",           address(treasuryFacet));
+        Deployments.writeFacet("payrollFacet",            address(payrollFacet));
         Deployments.writeFacet("earlyWithdrawalFacet",    address(earlyWithdrawalFacet));
         Deployments.writeFacet("partialWithdrawalFacet",  address(partialWithdrawalFacet));
         Deployments.writeFacet("precloseFacet",           address(precloseFacet));
@@ -417,6 +421,7 @@ contract DeployDiamond is Script {
         console.log("ClaimFacet:           ", address(claimFacet));
         console.log("AddCollateralFacet:   ", address(addCollateralFacet));
         console.log("TreasuryFacet:        ", address(treasuryFacet));
+        console.log("PayrollFacet:         ", address(payrollFacet));
         console.log("EarlyWithdrawalFacet: ", address(earlyWithdrawalFacet));
         console.log("PartialWithdrawalFacet:", address(partialWithdrawalFacet));
         console.log("PrecloseFacet:        ", address(precloseFacet));
@@ -875,10 +880,23 @@ contract DeployDiamond is Script {
     }
 
     function _getTreasurySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = TreasuryFacet.claimTreasuryFees.selector;
         s[1] = TreasuryFacet.getTreasuryBalance.selector;
         s[2] = TreasuryFacet.mintVPFI.selector;
+        s[3] = TreasuryFacet.convertTreasuryToTargetMix.selector;
+    }
+
+    function _getPayrollSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](8);
+        s[0] = PayrollFacet.createPayrollStream.selector;
+        s[1] = PayrollFacet.fundPayrollStream.selector;
+        s[2] = PayrollFacet.setPayrollRate.selector;
+        s[3] = PayrollFacet.setPayrollStreamPaused.selector;
+        s[4] = PayrollFacet.withdrawSalary.selector;
+        s[5] = PayrollFacet.getPayrollStream.selector;
+        s[6] = PayrollFacet.getWithdrawableSalary.selector;
+        s[7] = PayrollFacet.getPayrollStreamCount.selector;
     }
 
     function _getEarlyWithdrawalSelectors() internal pure returns (bytes4[] memory s) {
@@ -1014,7 +1032,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](77);
+        s = new bytes4[](81);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -1150,6 +1168,11 @@ contract DeployDiamond is Script {
         s[74] = ConfigFacet.setInternalMatchEnabled.selector;
         s[75] = ConfigFacet.setInternalMatchConfig.selector;
         s[76] = ConfigFacet.getInternalMatchConfigBundle.selector;
+        // T-600 — treasury-conversion knobs.
+        s[77] = ConfigFacet.setTreasuryConvertTargetMix.selector;
+        s[78] = ConfigFacet.setTreasuryConvertThresholds.selector;
+        s[79] = ConfigFacet.setTreasuryWbtcAsset.selector;
+        s[80] = ConfigFacet.getTreasuryConvertConfig.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {

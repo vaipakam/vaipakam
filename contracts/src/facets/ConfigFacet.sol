@@ -47,6 +47,10 @@ contract ConfigFacet is DiamondAccessControl {
     error TierLtvBpsTooHigh(uint256 provided, uint256 maxAllowed);
     error InvalidLiquidityTier(uint8 provided);
     error PaaListInvalid(string reason);
+    // ── Treasury conversion (T-600) ─────────────────────────────────────
+    /// @notice ETH + wBTC target-mix BPS exceed 10000 (the VPFI leg is the
+    ///         non-negative remainder, so the two stored legs must sum ≤ 100%).
+    error InvalidTreasuryConvertMix(uint256 ethBps, uint256 wbtcBps);
 
     /// ─── Events ─────────────────────────────────────────────────────
     /// @custom:event-category informational/config
@@ -183,6 +187,111 @@ contract ConfigFacet is DiamondAccessControl {
         if (newBps > MAX_FEE_BPS) revert InvalidFeeBps(newBps, MAX_FEE_BPS);
         LibVaipakam.storageSlot().protocolCfg.lifMatcherFeeBps = newBps;
         emit LifMatcherFeeBpsSet(newBps);
+    }
+
+    // ── Treasury conversion (T-600) knobs ───────────────────────────────
+
+    /// @notice Emitted when the treasury-conversion target mix is rotated.
+    /// @custom:event-category informational/config
+    event TreasuryConvertTargetMixSet(uint16 ethBps, uint16 wbtcBps);
+    /// @notice Emitted when the treasury-conversion eligibility thresholds change.
+    /// @custom:event-category informational/config
+    event TreasuryConvertThresholdsSet(uint256 usdThreshold, uint32 maxIntervalDays);
+    /// @notice Emitted when the treasury-conversion wrapped-BTC target changes.
+    /// @custom:event-category informational/config
+    event TreasuryWbtcAssetSet(address wbtcAsset);
+
+    /**
+     * @notice Set the treasury-conversion target asset mix.
+     * @dev ADMIN_ROLE-only (Timelock post-handover). The VPFI leg is the
+     *      implicit remainder `10000 - ethBps - wbtcBps`, so the two
+     *      stored legs must sum to ≤ 10000. Pass `0` for either leg to
+     *      reset it to its library default (`TREASURY_CONVERT_*_BPS_DEFAULT`).
+     * @param ethBps Target WETH share, BPS. 0 ⇒ default 4000.
+     * @param wbtcBps Target wrapped-BTC share, BPS. 0 ⇒ default 3000.
+     */
+    function setTreasuryConvertTargetMix(uint16 ethBps, uint16 wbtcBps)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (uint256(ethBps) + uint256(wbtcBps) > LibVaipakam.BASIS_POINTS) {
+            revert InvalidTreasuryConvertMix(ethBps, wbtcBps);
+        }
+        LibVaipakam.ProtocolConfig storage c = LibVaipakam.storageSlot().protocolCfg;
+        c.treasuryConvertEthBps = ethBps;
+        c.treasuryConvertWbtcBps = wbtcBps;
+        emit TreasuryConvertTargetMixSet(ethBps, wbtcBps);
+    }
+
+    /**
+     * @notice Set the treasury-conversion eligibility thresholds.
+     * @dev ADMIN_ROLE-only. A conversion becomes eligible when EITHER the
+     *      input balance's numeraire value clears `usdThreshold` OR the
+     *      time since the last conversion exceeds `maxIntervalDays` —
+     *      whichever fires first. Pass `0` for either to reset it to the
+     *      library default.
+     * @param usdThreshold Per-token numeraire-value (1e18) threshold. 0 ⇒ $10k.
+     * @param maxIntervalDays Max days between conversions. 0 ⇒ 30.
+     */
+    function setTreasuryConvertThresholds(uint256 usdThreshold, uint32 maxIntervalDays)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.ProtocolConfig storage c = LibVaipakam.storageSlot().protocolCfg;
+        c.treasuryConvertUsdThreshold = usdThreshold;
+        c.treasuryConvertMaxIntervalDays = maxIntervalDays;
+        emit TreasuryConvertThresholdsSet(usdThreshold, maxIntervalDays);
+    }
+
+    /**
+     * @notice Pin the wrapped-BTC target of the treasury-conversion mix.
+     * @dev ADMIN_ROLE-only. May be a chain's canonical WBTC, cbBTC, or
+     *      another wrapped-BTC. `address(0)` is permitted and meaningful:
+     *      it disables the wBTC leg (its share folds into the VPFI
+     *      remainder) until governance configures a real address.
+     * @param wbtcAsset The wrapped-BTC ERC-20 address, or 0 to disable.
+     */
+    function setTreasuryWbtcAsset(address wbtcAsset)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.storageSlot().treasuryWbtcAsset = wbtcAsset;
+        emit TreasuryWbtcAssetSet(wbtcAsset);
+    }
+
+    /**
+     * @notice Effective treasury-conversion config (resolves zero-stored
+     *         values to their library defaults). Dedicated view rather
+     *         than an extension of `getProtocolConfigBundle` — keeps the
+     *         large bundle's return shape stable for existing consumers.
+     * @return ethBps Effective WETH-leg BPS.
+     * @return wbtcBps Effective wrapped-BTC-leg BPS.
+     * @return vpfiBps Effective VPFI-leg BPS (the `10000 - eth - wbtc` remainder).
+     * @return usdThreshold Effective numeraire-value eligibility threshold.
+     * @return maxIntervalDays Effective max days between conversions.
+     * @return lastConversionAt Unix timestamp of the last conversion (0 ⇒ never).
+     * @return wbtcAsset The pinned wrapped-BTC target (0 ⇒ wBTC leg disabled).
+     */
+    function getTreasuryConvertConfig()
+        external
+        view
+        returns (
+            uint256 ethBps,
+            uint256 wbtcBps,
+            uint256 vpfiBps,
+            uint256 usdThreshold,
+            uint256 maxIntervalDays,
+            uint256 lastConversionAt,
+            address wbtcAsset
+        )
+    {
+        ethBps = LibVaipakam.cfgTreasuryConvertEthBps();
+        wbtcBps = LibVaipakam.cfgTreasuryConvertWbtcBps();
+        vpfiBps = LibVaipakam.BASIS_POINTS - ethBps - wbtcBps;
+        usdThreshold = LibVaipakam.cfgTreasuryConvertUsdThreshold();
+        maxIntervalDays = LibVaipakam.cfgTreasuryConvertMaxIntervalDays();
+        lastConversionAt = LibVaipakam.storageSlot().treasuryLastConversionAt;
+        wbtcAsset = LibVaipakam.storageSlot().treasuryWbtcAsset;
     }
 
     /// @notice Emitted on every change to the partial-liquidation close-factor cap.

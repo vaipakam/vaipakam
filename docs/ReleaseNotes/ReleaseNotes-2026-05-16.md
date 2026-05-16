@@ -70,3 +70,49 @@ Plan file: `~/.claude/plans/breezy-jumping-fountain.md`.
 - **Cross-references**:
   - [`docs/internal/OffchainDataFetchAudit-2026-05-15.md`](../internal/OffchainDataFetchAudit-2026-05-15.md) — the C.1 audit doc whose closure narrative led to EC-003.
   - `~/.claude/plans/breezy-jumping-fountain.md` — the user-approved EC-003 implementation plan (all 4 phases).
+
+---
+
+## T-600 — Treasury conversion + founder compensation
+
+Branch `feat/t600-treasury-founder-comp`. Builds the contract layer for
+`docs/DesignsAndPlans/TreasuryAndFounderDistribution.md` — turning the
+treasury from a passive fee-accumulator into a managed treasury, and
+giving the (solo, so-far-unpaid) founder a reliable, securities-sound
+income path.
+
+**What it adds, functionally:**
+
+- **Treasury conversion** — an admin (later timelock / governance) can
+  convert one accumulated fee asset into the protocol's target mix of
+  ETH / wrapped-BTC / VPFI in a single call. The swap routes through the
+  existing liquidation aggregator infrastructure; output stays inside
+  the protocol's own custody. An eligibility gate (a value threshold OR
+  a max interval) stops both dust-sized conversions and treasury
+  stagnation. Target mix and thresholds are governance knobs.
+- **Founder salary stream** — a new payroll facet pays a founder (or any
+  contributor) a continuous, per-second salary from the treasury. The
+  rate is set by a governance budget decision and is revisable; the
+  stream must be deliberately topped up each budget period and a
+  withdrawal can never exceed what was funded. This makes it a *salary*
+  — compensation for work — and structurally NOT an automatic cut of
+  user fees (the pattern that carries securities risk and that the
+  design doc explicitly rejected). A regression test asserts no code
+  path links fee accrual to salary funding.
+- **Vesting wallet** — a cliff + linear vesting wallet contract for
+  genesis grants (founder, team hires, early contributors, the new
+  ecosystem/marketing pool), one instance per grantee.
+
+**Tokenomics doc reconciliation** — the allocation table gains a 2%
+Ecosystem / Community / Marketing line (funded by trimming Exchange
+Listings & Market Making 14% → 12%) as a pre-revenue launch-marketing
+bridge; a new semantics section clarifies that the non-founder people
+pools are reserved mint headroom that never reverts to the founder.
+
+**Legal gating** — the contract code is built and test-covered now, but
+the genesis funding actions (minting grants, starting a real salary
+stream) remain gated on a securities-lawyer sign-off before TGE; the
+founder-vesting deploy script bakes that gate in.
+
+Full suite green: 1979 passed / 0 failed / 5 skipped (19 new T-600
+test cases).

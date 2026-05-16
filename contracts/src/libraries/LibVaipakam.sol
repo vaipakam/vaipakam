@@ -174,6 +174,19 @@ library LibVaipakam {
     uint16 constant DEFAULT_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG = 100;     // 1%
     uint16 constant MIN_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG = 0;           // governance can zero the bot incentive
     uint16 constant MAX_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG = 300;         // 3% per leg ceiling
+    // ── Treasury-conversion (T-600) governance defaults ────────────────
+    // Target asset-mix for `TreasuryFacet.convertTreasuryToTargetMix`.
+    // ETH + WBTC BPS are stored; the VPFI BPS is the unstored remainder
+    // `10000 - eth - wbtc`. 0 ⇒ these defaults (40% ETH / 30% WBTC /
+    // 30% VPFI). See docs/DesignsAndPlans/TreasuryAndFounderDistribution.md.
+    uint16 constant TREASURY_CONVERT_ETH_BPS_DEFAULT = 4000;   // 40%
+    uint16 constant TREASURY_CONVERT_WBTC_BPS_DEFAULT = 3000;  // 30%
+    // Eligibility gate: a conversion may run once the accumulated
+    // numeraire-value (1e18-scaled — USD by post-deploy default) of an
+    // input token clears this threshold, OR the max interval lapses —
+    // whichever comes first.
+    uint256 constant TREASURY_CONVERT_USD_THRESHOLD_DEFAULT = 10_000e18; // $10k
+    uint32 constant TREASURY_CONVERT_MAX_INTERVAL_DAYS_DEFAULT = 30;     // 30 days
     // Default keeper-confidence tier for an asset the relay hasn't
     // touched yet — Tier 1, i.e. `effectiveTier` collapses to today's
     // `HF ≥ 1.5` until the off-chain 0x/1inch confidence accumulates.
@@ -934,6 +947,22 @@ library LibVaipakam {
         // 5–7.7% external-liquidation discount borrowers would
         // otherwise pay. `0` ⇒ DEFAULT_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG.
         uint16 internalMatchIncentivePerLegBps;
+        // ── Treasury-conversion (T-600) — convert-to-target-mix knobs ──
+        // Target asset-mix BPS for `TreasuryFacet.convertTreasuryToTargetMix`.
+        // The VPFI BPS is the unstored remainder `10000 - eth - wbtc`.
+        // Each `0 ⇒ TREASURY_CONVERT_{ETH,WBTC}_BPS_DEFAULT` (4000 /
+        // 3000 ⇒ 40/30/30). Setter (`ConfigFacet.setTreasuryConvertTargetMix`)
+        // enforces `eth + wbtc <= 10000`.
+        uint16 treasuryConvertEthBps;  // 0 ⇒ 4000
+        uint16 treasuryConvertWbtcBps; // 0 ⇒ 3000
+        // Per-token numeraire-value (1e18) accumulation threshold that
+        // makes a treasury conversion eligible. 0 ⇒
+        // TREASURY_CONVERT_USD_THRESHOLD_DEFAULT ($10k).
+        uint256 treasuryConvertUsdThreshold; // 0 ⇒ default
+        // Max days between conversions — the time-based leg of the
+        // eligibility gate (fires whichever comes first). 0 ⇒
+        // TREASURY_CONVERT_MAX_INTERVAL_DAYS_DEFAULT (30).
+        uint32 treasuryConvertMaxIntervalDays; // 0 ⇒ default
     }
 
     /// @dev Struct to store parameters of createOffer function, avoiding stack-too-deep.
@@ -2612,6 +2641,50 @@ library LibVaipakam {
         // `claimAsLenderWithRetry`.
         mapping(address => mapping(address => uint256[])) assetPairActiveLoanIds;
         mapping(address => mapping(address => mapping(uint256 => uint256))) assetPairActiveLoanIdsPos;
+        // ── Treasury conversion (T-600) — config + runtime state ───────
+        // The "WBTC" leg target of `convertTreasuryToTargetMix`. The
+        // WETH leg uses `wethContract` and the VPFI leg uses `vpfiToken`;
+        // wrapped-BTC has no other home, so it is pinned here by
+        // governance (`ConfigFacet.setTreasuryWbtcAsset`). May point at
+        // cbBTC / another canonical wrapped-BTC on chains without WBTC.
+        // Zero ⇒ the convert function's WBTC leg is skipped (its share
+        // folds into the VPFI remainder) until governance configures it.
+        address treasuryWbtcAsset;
+        // Unix timestamp of the last successful
+        // `TreasuryFacet.convertTreasuryToTargetMix`. Drives the
+        // time-based leg of the eligibility gate. 0 ⇒ never converted.
+        uint64 treasuryLastConversionAt;
+        // ── Founder / contributor salary streams (T-600 PayrollFacet) ──
+        // Per-stream payroll state. `payrollStreamCount` is the monotone
+        // next-id source — stream ids are 1-based, so id 0 is an
+        // unambiguous "no stream" sentinel. A stream is funded ONLY by
+        // an explicit `fundPayrollStream` governance top-up — never by a
+        // fee accrual or a treasury conversion. That separation is the
+        // structural guarantee that the founder salary is compensation
+        // for services, not a securities-style revenue share.
+        mapping(uint256 => PayrollStream) payrollStreams;
+        uint256 payrollStreamCount;
+    }
+
+    /// @dev Founder / contributor salary stream (T-600 `PayrollFacet`).
+    ///      A continuous per-second accrual paid out of treasury funds:
+    ///        accrued = accruedAtAnchor
+    ///                  + (paused ? 0 : (now - lastRateChangeAt) * ratePerSecond)
+    ///        withdrawable = min(accrued, funded) - withdrawn
+    ///      Clamping the payout to `funded` is what makes the stream a
+    ///      SALARY — it dries up unless governance tops it up via
+    ///      `fundPayrollStream` — rather than a perpetual claim on
+    ///      protocol revenue.
+    struct PayrollStream {
+        address beneficiary;      // the only address that may withdraw
+        address asset;            // ERC-20 paid out (WETH / a stablecoin)
+        uint256 ratePerSecond;    // accrual rate, asset-wei per second
+        uint256 funded;           // cumulative governance top-ups
+        uint256 withdrawn;        // cumulative amount withdrawn
+        uint256 accruedAtAnchor;  // accrual already settled up to the anchor
+        uint64 lastRateChangeAt;  // anchor timestamp for the live accrual
+        bool paused;              // accrual frozen while true
+        bool exists;              // true once created — distinguishes a zeroed slot
     }
 
     /// @dev Cached tier-LTV reading. Updated permissionlessly via
@@ -3178,6 +3251,37 @@ library LibVaipakam {
         uint16 v = storageSlot().protocolCfg.internalMatchIncentivePerLegBps;
         return v == 0
             ? uint256(DEFAULT_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG)
+            : uint256(v);
+    }
+
+    /// @dev T-600 — treasury-conversion target-mix ETH leg, in BPS.
+    ///      `0 ⇒ TREASURY_CONVERT_ETH_BPS_DEFAULT` (40%).
+    function cfgTreasuryConvertEthBps() internal view returns (uint256) {
+        uint16 v = storageSlot().protocolCfg.treasuryConvertEthBps;
+        return v == 0 ? uint256(TREASURY_CONVERT_ETH_BPS_DEFAULT) : uint256(v);
+    }
+
+    /// @dev T-600 — treasury-conversion target-mix WBTC leg, in BPS.
+    ///      `0 ⇒ TREASURY_CONVERT_WBTC_BPS_DEFAULT` (30%). The VPFI leg
+    ///      is the unstored remainder `10000 - eth - wbtc`.
+    function cfgTreasuryConvertWbtcBps() internal view returns (uint256) {
+        uint16 v = storageSlot().protocolCfg.treasuryConvertWbtcBps;
+        return v == 0 ? uint256(TREASURY_CONVERT_WBTC_BPS_DEFAULT) : uint256(v);
+    }
+
+    /// @dev T-600 — per-token numeraire-value (1e18) accumulation
+    ///      threshold that makes a treasury conversion eligible.
+    function cfgTreasuryConvertUsdThreshold() internal view returns (uint256) {
+        uint256 v = storageSlot().protocolCfg.treasuryConvertUsdThreshold;
+        return v == 0 ? TREASURY_CONVERT_USD_THRESHOLD_DEFAULT : v;
+    }
+
+    /// @dev T-600 — max days between treasury conversions (time leg of
+    ///      the eligibility gate).
+    function cfgTreasuryConvertMaxIntervalDays() internal view returns (uint256) {
+        uint32 v = storageSlot().protocolCfg.treasuryConvertMaxIntervalDays;
+        return v == 0
+            ? uint256(TREASURY_CONVERT_MAX_INTERVAL_DAYS_DEFAULT)
             : uint256(v);
     }
 

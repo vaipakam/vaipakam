@@ -1,128 +1,41 @@
 [
   {
     "type": "function",
-    "name": "claimTreasuryFees",
+    "name": "createPayrollStream",
     "inputs": [
+      {
+        "name": "beneficiary",
+        "type": "address",
+        "internalType": "address"
+      },
       {
         "name": "asset",
         "type": "address",
         "internalType": "address"
       },
       {
-        "name": "claimant",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "convertTreasuryToTargetMix",
-    "inputs": [
-      {
-        "name": "tokenIn",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "ethCalls",
-        "type": "tuple[]",
-        "internalType": "struct LibSwap.AdapterCall[]",
-        "components": [
-          {
-            "name": "adapterIdx",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "data",
-            "type": "bytes",
-            "internalType": "bytes"
-          }
-        ]
-      },
-      {
-        "name": "wbtcCalls",
-        "type": "tuple[]",
-        "internalType": "struct LibSwap.AdapterCall[]",
-        "components": [
-          {
-            "name": "adapterIdx",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "data",
-            "type": "bytes",
-            "internalType": "bytes"
-          }
-        ]
-      },
-      {
-        "name": "vpfiCalls",
-        "type": "tuple[]",
-        "internalType": "struct LibSwap.AdapterCall[]",
-        "components": [
-          {
-            "name": "adapterIdx",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "data",
-            "type": "bytes",
-            "internalType": "bytes"
-          }
-        ]
-      },
-      {
-        "name": "minOutEth",
+        "name": "ratePerSecond",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "minOutWbtc",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "minOutVpfi",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "getTreasuryBalance",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
       }
     ],
     "outputs": [
       {
-        "name": "balance",
+        "name": "streamId",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
-    "stateMutability": "view"
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
-    "name": "mintVPFI",
+    "name": "fundPayrollStream",
     "inputs": [
       {
-        "name": "to",
-        "type": "address",
-        "internalType": "address"
+        "name": "streamId",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
         "name": "amount",
@@ -134,29 +47,245 @@
     "stateMutability": "nonpayable"
   },
   {
-    "type": "event",
-    "name": "SwapAdapterAttempted",
+    "type": "function",
+    "name": "getPayrollStream",
     "inputs": [
       {
-        "name": "loanId",
+        "name": "streamId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "stream",
+        "type": "tuple",
+        "internalType": "struct LibVaipakam.PayrollStream",
+        "components": [
+          {
+            "name": "beneficiary",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "asset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "ratePerSecond",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "funded",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "withdrawn",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "accruedAtAnchor",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "lastRateChangeAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "paused",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "exists",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getPayrollStreamCount",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getWithdrawableSalary",
+    "inputs": [
+      {
+        "name": "streamId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "setPayrollRate",
+    "inputs": [
+      {
+        "name": "streamId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "newRatePerSecond",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setPayrollStreamPaused",
+    "inputs": [
+      {
+        "name": "streamId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "paused",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "withdrawSalary",
+    "inputs": [
+      {
+        "name": "streamId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "PayrollRateSet",
+    "inputs": [
+      {
+        "name": "streamId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
       },
       {
-        "name": "adapterIdx",
+        "name": "oldRatePerSecond",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newRatePerSecond",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PayrollStreamCreated",
+    "inputs": [
+      {
+        "name": "streamId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
       },
       {
-        "name": "adapter",
+        "name": "beneficiary",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "asset",
         "type": "address",
         "indexed": false,
         "internalType": "address"
       },
       {
-        "name": "success",
+        "name": "ratePerSecond",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PayrollStreamFunded",
+    "inputs": [
+      {
+        "name": "streamId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newFunded",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PayrollStreamPauseSet",
+    "inputs": [
+      {
+        "name": "streamId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "paused",
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
@@ -166,116 +295,16 @@
   },
   {
     "type": "event",
-    "name": "SwapAdapterSucceeded",
+    "name": "SalaryWithdrawn",
     "inputs": [
       {
-        "name": "loanId",
+        "name": "streamId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
       },
       {
-        "name": "adapterIdx",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "adapter",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "outputAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "SwapAllAdaptersFailed",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "TreasuryConverted",
-    "inputs": [
-      {
-        "name": "tokenIn",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amountIn",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "toEth",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "toWbtc",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "toVpfi",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "TreasuryFeesClaimed",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "claimant",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "VPFIMinted",
-    "inputs": [
-      {
-        "name": "to",
+        "name": "beneficiary",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -302,22 +331,6 @@
         "name": "neededRole",
         "type": "bytes32",
         "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "AdapterIndexOutOfRange",
-    "inputs": [
-      {
-        "name": "adapterIdx",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "registeredCount",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ]
   },
@@ -392,11 +405,6 @@
   {
     "type": "error",
     "name": "ChainDayAlreadyReported",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ConversionNotEligible",
     "inputs": []
   },
   {
@@ -649,11 +657,6 @@
   },
   {
     "type": "error",
-    "name": "NoSwapAdaptersConfigured",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "NonLiquidAsset",
     "inputs": []
   },
@@ -695,6 +698,16 @@
   {
     "type": "error",
     "name": "NotOfferCreator",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotPayrollBeneficiary",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NothingToWithdraw",
     "inputs": []
   },
   {
@@ -758,6 +771,43 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "PayrollStreamNotFound",
+    "inputs": [
+      {
+        "name": "streamId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PayrollTreasuryInsufficient",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PayrollTreasuryNotDiamond",
+    "inputs": []
   },
   {
     "type": "error",
@@ -918,6 +968,17 @@
   },
   {
     "type": "error",
+    "name": "SanctionedAddress",
+    "inputs": [
+      {
+        "name": "who",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SanctionsOracleUnavailable",
     "inputs": []
   },
@@ -934,27 +995,6 @@
   {
     "type": "error",
     "name": "StakingPoolExhausted",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TreasuryConvertSwapFailed",
-    "inputs": [
-      {
-        "name": "tokenOut",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "TreasuryConvertTargetUnset",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TreasuryNotDiamond",
     "inputs": []
   },
   {
@@ -1014,17 +1054,12 @@
   },
   {
     "type": "error",
-    "name": "VPFITokenNotRegistered",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "VPFITokenNotSet",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "ZeroAmount",
+    "name": "ZeroFundAmount",
     "inputs": []
   }
 ]

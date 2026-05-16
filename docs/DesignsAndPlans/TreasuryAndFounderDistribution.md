@@ -602,3 +602,110 @@ they're made.
   conversion + genesis vesting + governance budget design
   recommended. Document drafted; pending review by founders
   and legal counsel.
+- **2026-05-16** (T-600): founder-compensation decisions locked
+  with the (solo) founder and the contract layer implemented. The
+  three-layer income model + the founder **salary stream**
+  (`PayrollFacet`) + the `convertTreasuryToTargetMix` function
+  shipped on branch `feat/t600-treasury-founder-comp`. See §12 for
+  the as-built record. Securities-lawyer sign-off (§6) is still
+  required before the Track-2 deploy/wiring steps.
+
+---
+
+## 12. Implementation update — T-600 (2026-05-16)
+
+The contract layer for this design landed on
+`feat/t600-treasury-founder-comp`. This section is the as-built
+record; where it differs from the proposal above, §12 governs.
+
+### 12.1 Founder income — the three-layer model
+
+Founder value capture is **three decoupled layers**, NOT a per-fee
+route:
+
+1. **Genesis VPFI allocation, vested** — the founder's ownership
+   stake. Per `TokenomicsTechSpec` §3 + §3a: a **6% Founders** hard
+   share, plus the founder (being the sole developer) draws a
+   *defined* developer grant from the **12% Developers & Team** pool
+   — Model A: not the whole pool, the remainder stays hiring
+   headroom. 1-year cliff + 4-year linear via a per-grantee
+   `VaipakamVestingWallet`.
+2. **Founder salary** — a continuous stream from the treasury
+   (`PayrollFacet`, §12.3). This is the *reliable monthly income*.
+   It is a **salary** — fixed rate, for work, revisable — NOT a
+   securities-style revenue share.
+3. **Pro-rata holder returns** — buyback-burn / staking lift the
+   value of Layer 1, the same as for any VPFI holder.
+
+This supersedes §4.3's "12–15%" placeholder. The founder's hard
+share is **6%**; the non-founder pools (Dev & Team 12%, Testers 6%,
+Ecosystem/Marketing 2%) are reserved mint headroom that never
+reverts to the founder.
+
+### 12.2 Treasury conversion — as built
+
+`TreasuryFacet.convertTreasuryToTargetMix(tokenIn, ethCalls,
+wbtcCalls, vpfiCalls, minOutEth, minOutWbtc, minOutVpfi)` —
+ADMIN_ROLE (Timelock post-handover). One `tokenIn` per call (a
+keeper loops off-chain); each leg routes through
+`LibSwap.swapWithFailover` with sentinel `loanId = 0`; output
+returns to the Diamond, re-credited into `treasuryBalances`. Target
+mix + thresholds are governance knobs (`ConfigFacet`
+`setTreasuryConvertTargetMix` / `setTreasuryConvertThresholds` /
+`setTreasuryWbtcAsset`; defaults 40/30/30, $10k, 30 days). The wBTC
+leg folds into the VPFI remainder when `treasuryWbtcAsset` is unset.
+
+**Hard precondition**: the convert function and the salary stream
+require **Diamond-as-treasury mode** (`s.treasury == address(this)`)
+— `treasuryBalances` only tracks convertible funds then. The
+external-EOA/multisig treasury mode is incompatible with the
+on-chain salary stream.
+
+### 12.3 Founder salary stream — `PayrollFacet`
+
+A Diamond-resident per-second accrual:
+`accrued = accruedAtAnchor + (paused ? 0 : (now - lastRateChangeAt)
+* ratePerSecond)`; `withdrawable = min(accrued, funded) - withdrawn`.
+
+- `createPayrollStream` / `setPayrollRate` / `setPayrollStreamPaused`
+  — ADMIN_ROLE → Timelock. `setPayrollRate` settles accrual at the
+  old rate first (no retroactive re-pricing) — the revisable lever.
+- `fundPayrollStream` — ADMIN_ROLE; debits `treasuryBalances[asset]`
+  into the stream's `funded`. The **periodic budget top-up**.
+- `withdrawSalary` — beneficiary-only, no timelock delay (earned
+  wages), Tier-1 sanctions-gated.
+
+**The load-bearing legal guarantee**: `withdrawable` is clamped to
+`funded`, so the stream dries up unless governance deliberately tops
+it up — a salary, not a perpetual claim. There is **no code path**
+from a fee accrual or from `convertTreasuryToTargetMix` into
+`fundPayrollStream` / `setPayrollRate`. A regression test
+(`test_treasuryAccrual_doesNotFundStream`) asserts this.
+
+### 12.4 Open decisions — resolved
+
+§7's open decisions, resolved 2026-05-16:
+
+1. **Founder allocation** — 6% hard Founders + a Model-A developer
+   grant from the 12% pool (not 12–15% combined as a bag).
+2. **Vesting** — 1-year cliff + 4-year linear; the salary stream
+   covers income during the cliff year.
+3. **Vester contract** — a non-upgradeable `VaipakamVestingWallet`
+   wrapping OZ `VestingWalletCliff` (chosen over Sablier — extra
+   dependency / audit surface — and over a custom design).
+4. **Target asset mix** — default 40 ETH / 30 wBTC / 30 VPFI BPS
+   (governance-tunable). Per-cycle distribution split (§4.5) stays
+   deferred to governance.
+5. **Conversion thresholds** — default $10k / 30 days, per-chain
+   tunable.
+
+### 12.5 Legal gating — still in force
+
+§6's pre-TGE securities-lawyer sign-off is unchanged and gates the
+**Track-2 deploy/wiring** steps: the genesis `mintVPFI` funding,
+`createPayrollStream` with a real beneficiary/rate, and live
+`fundPayrollStream` top-ups. The contract *code* is built and
+test-covered now; only the "press the button at TGE" actions wait
+on the lawyer. `DeployFounderVesting.s.sol` bakes this in — it
+deploys an empty vesting wallet by default and only mints the grant
+when `CONFIRM_TGE_FUNDING=YES`.
