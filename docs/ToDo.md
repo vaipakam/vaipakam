@@ -15,6 +15,10 @@
 
 ---
 
+- [ ] **T-073** `yetToPromote`: Make the Escrow / Vault more secure and also the frontend of `Your Vaipakam Vault` page in apps/defi to look and appear more secure.
+
+---
+
 - [ ] **T-072** `yetToPromote`: Have 3 modes in website `Basic/Advanced/Technical`, Basic: for Dummy users (with polished wordings), Advanced: for users with no technical knoweldge but can understand all financial jargons, Technical: for users with technical knoweldge but not much with all financial jargons
       what do you say? whats your take?
 
