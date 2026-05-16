@@ -377,6 +377,87 @@ contract MetricsFacet {
         nextIdx = i;
     }
 
+    /// @notice EC-003 Phase 2 — does `loanId` have an opposing-direction
+    ///         internal-match candidate right now?
+    /// @dev    Reads `s.assetPairActiveLoanIds[collateralAsset][principalAsset]`
+    ///         (the OPPOSING-direction key relative to `loanId`'s own
+    ///         asset pair). Returns the first candidate that:
+    ///           (a) is not `loanId` itself,
+    ///           (b) is in a matchable status (`Active` or `FallbackPending`),
+    ///           (c) has a fresh oracle reading on its `collateralAsset`
+    ///               (mirror of the gate `LibFallback.collateralEquivalent`
+    ///               uses — `tryGetAssetPrice` returns `ok=true` with a
+    ///               non-zero price; quorum disagreement surfaces here
+    ///               as `ok=false`).
+    ///
+    ///         Off-chain callers (keeper bot, frontend) can pre-flight
+    ///         the check before submitting `triggerInternalMatchLiquidation`
+    ///         or any of the Phase 3 auto-dispatch entry-points
+    ///         (`triggerLiquidation` / `triggerDefault` /
+    ///         `claimAsLenderWithRetry`). On-chain auto-dispatch in
+    ///         Phase 3 calls this same view internally.
+    ///
+    ///         Complexity: O(K) reads + O(K) oracle probes, where K is
+    ///         the length of the opposing-pair list. Bounded; not
+    ///         O(N) over all active loans.
+    ///
+    ///         Returns `(false, 0)` when:
+    ///           - the internal-match kill-switch is off,
+    ///           - the loan isn't in a matchable status itself,
+    ///           - no opposing-pair candidate passes the gates.
+    /// @param  loanId         The loan looking for a counterparty.
+    /// @return found          `true` iff at least one eligible candidate
+    ///                        was found in the opposing-pair list.
+    /// @return candidateId    The first eligible candidate's loan ID,
+    ///                        or `0` when `found` is false.
+    function hasInternalMatchCandidate(uint256 loanId)
+        external
+        view
+        returns (bool found, uint256 candidateId)
+    {
+        if (!LibVaipakam.cfgInternalMatchEnabled()) return (false, 0);
+
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        if (loan.id == 0) return (false, 0);
+        LibVaipakam.LoanStatus st = loan.status;
+        if (
+            st != LibVaipakam.LoanStatus.Active &&
+            st != LibVaipakam.LoanStatus.FallbackPending
+        ) return (false, 0);
+
+        uint256[] storage candidates = s.assetPairActiveLoanIds[
+            loan.collateralAsset
+        ][loan.principalAsset];
+        uint256 n = candidates.length;
+        for (uint256 i = 0; i < n; ++i) {
+            uint256 cid = candidates[i];
+            if (cid == loanId) continue;
+
+            LibVaipakam.Loan storage cand = s.loans[cid];
+            LibVaipakam.LoanStatus cst = cand.status;
+            if (
+                cst != LibVaipakam.LoanStatus.Active &&
+                cst != LibVaipakam.LoanStatus.FallbackPending
+            ) continue;
+
+            // Oracle gate — both legs of the eventual settlement need a
+            // priceable oracle. We only check the candidate's
+            // collateral here because the caller's side is already
+            // implicitly priceable (it's the loan being internally
+            // matched).
+            (bool ok, uint256 price, ) = OracleFacet(address(this))
+                .tryGetAssetPrice(cand.collateralAsset);
+            if (!ok || price == 0) continue;
+            (ok, price, ) = OracleFacet(address(this))
+                .tryGetAssetPrice(cand.principalAsset);
+            if (!ok || price == 0) continue;
+
+            return (true, cid);
+        }
+        return (false, 0);
+    }
+
     /// @notice Paginated slice of the active-offer list. O(limit) — the
     ///         underlying list is maintained swap-and-pop by LibMetricsHooks.
     /// @dev Symmetric with `getActiveLoansPaginated` so off-chain consumers
