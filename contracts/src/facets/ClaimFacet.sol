@@ -199,6 +199,29 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             loan.status != LibVaipakam.LoanStatus.FallbackPending
         ) revert InvalidLoanStatus();
 
+        // Already-claimed guard FIRST. A successful claim burns the
+        // lender position NFT, so on a double-claim attempt
+        // `requireLenderNFTOwner` below would revert
+        // `ERC721NonexistentToken` on the burned token — this guard
+        // must run before it so the caller sees the precise
+        // `AlreadyClaimed()` error. (`claim` is a storage pointer; a
+        // claim-time full match deletes the record, but that path
+        // returns early — see `fullyResolved` below — before any
+        // further read.)
+        LibVaipakam.ClaimInfo storage claim = s.lenderClaims[loanId];
+        if (claim.claimed) revert AlreadyClaimed();
+
+        // EC-007 — verify lender position-NFT ownership BEFORE the
+        // claim-time fallback resolution. `_resolveFallbackIfActive`
+        // runs the internal-match auto-dispatch, which pays the 1%
+        // matcher bonus to `msg.sender`. Gating ownership here keeps
+        // `claimAsLender` / `claimAsLenderWithRetry` lender-owner-only,
+        // so a third party cannot call the claim entry point purely to
+        // trigger the match and skim the matcher incentive. (Without
+        // this, the `fullyResolved` early-return path below would
+        // bypass the post-resolution ownership check entirely.)
+        LibAuth.requireLenderNFTOwner(loan);
+
         // README §7 lines 147–151: if this loan fell back to the claim-time
         // settlement path, attempt one more liquidation before paying the
         // lender. Success rewrites claims to principal-asset amounts; failure
@@ -229,17 +252,17 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             }
         }
 
-        LibVaipakam.ClaimInfo storage claim = s.lenderClaims[loanId];
-        if (claim.claimed) revert AlreadyClaimed();
         // Claimable if there's a recorded amount, or heldForLender funds, or an NFT rental to return,
-        // or an NFT collateral claim (for ERC-20 loans defaulting into NFT collateral)
+        // or an NFT collateral claim (for ERC-20 loans defaulting into NFT collateral).
+        // `claim` + the already-claimed guard were resolved at the top
+        // of this function; re-read nothing here.
         bool hasHeld = s.heldForLender[loanId] > 0;
         bool hasRentalNFT = loan.assetType != LibVaipakam.AssetType.ERC20;
         bool hasNFTCollateralClaim = claim.assetType != LibVaipakam.AssetType.ERC20;
         if (claim.amount == 0 && !hasHeld && !hasRentalNFT && !hasNFTCollateralClaim) revert NothingToClaim();
 
-        // Verify caller owns the lender's Vaipakam position NFT
-        LibAuth.requireLenderNFTOwner(loan);
+        // Lender position-NFT ownership was already verified at the top
+        // of this function (before the claim-time fallback resolution).
 
         // Mark claimed before transfer to prevent re-entrancy
         claim.claimed = true;

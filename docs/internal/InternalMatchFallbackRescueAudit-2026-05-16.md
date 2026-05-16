@@ -246,7 +246,7 @@ for the no-candidate path.
 
 | Suite | Cases | Covers |
 | --- | --- | --- |
-| `InternalMatchExecution.t.sol` | 9 new | FallbackPending leg full / partial / both-FP / oracle-unpriceable / snapshot-cleared / **EC-007 residual-in-Diamond / partial-then-second-match / partial-then-claim-lender-gets-residual / claim-time-full-auto-dispatch-no-revert** |
+| `InternalMatchExecution.t.sol` | 10 new | FallbackPending leg full / partial / both-FP / oracle-unpriceable / snapshot-cleared / **EC-007 residual-in-Diamond / partial-then-second-match / partial-then-claim-lender-gets-residual / claim-time-full-auto-dispatch-no-revert / claimAsLender-by-non-lender-reverts** |
 | `InternalMatchLiquidationGates.t.sol` | 3 updated | error rename `InternalMatchLoanNotActive → InternalMatchLoanNotMatchable` |
 | `MetricsFacetTest.t.sol` | 7 new | asset-pair index push/pop + `hasInternalMatchCandidate` status / LTV / oracle gates |
 | `InternalMatchAutoDispatch.t.sol` | 6 new | auto-dispatch helper: EOA-revert, kill-switch, no-candidate, valid settle, below-floor skip, terminal caller |
@@ -281,17 +281,42 @@ The fix: `_resolveFallbackIfActive` returns `bool fullyResolved`, and
 retry-swap paths return `false` and run the normal claim-record
 payout, unchanged.
 
-Verified by four tests in `InternalMatchExecution.t.sol`:
+A third defect surfaced from the PR #24 review of the second fix:
+the `fullyResolved` early-return was placed *before*
+`LibAuth.requireLenderNFTOwner`. Since the claim-time auto-dispatch
+pays the 1% matcher bonus to `msg.sender`, any non-lender could call
+`claimAsLender(loanId)` on a FallbackPending loan with a full match
+candidate, trigger the match, and skim the matcher incentive — a
+name-gated function (`claimAsLender` / `claimAsLenderWithRetry`) had
+become permissionless. The fix: hoist `requireLenderNFTOwner` to the
+top of `_claimAsLenderImpl`, immediately after the loan-status gate
+and *before* `_resolveFallbackIfActive`. Only the lender can now
+trigger the claim-time match, so only the lender earns the bonus —
+consistent with EC-003 D9 (bonus to the dispatching caller) and D7
+(claim-side internal-first was never intended to drop the owner
+gate).
+
+Verified by five tests in `InternalMatchExecution.t.sol`:
 `test_fallbackPending_partialRescue_residualInDiamond` (residual
 stays in Diamond, not the borrower's escrow),
 `test_fallbackPending_partialRescue_thenSecondMatch` (a
 partially-matched FallbackPending loan stays matchable),
 `test_fallbackPending_partialRescue_thenClaim_lenderGetsResidual`
 (the exact bug path — partial match → `claimAsLender` → lender
-receives the scaled residual, 8 500 × 7/10 = 5 950), and
+receives the scaled residual, 8 500 × 7/10 = 5 950),
 `test_fallbackPending_claimTime_fullAutoDispatch_noRevert` (a
 claim-time full match no longer reverts; both loans land
-`InternalMatched`).
+`InternalMatched`), and
+`test_fallbackPending_claimAsLender_byNonLender_reverts` (a
+non-lender call reverts `NotNFTOwner` and the match never fires).
+
+> **Auditor note — InternalMatched NFT lifecycle.** Loans that reach
+> `InternalMatched` do NOT burn their position NFTs via *any* entry
+> point (matcher-driven `triggerInternalMatchLiquidation` or the
+> Phase-3 auto-dispatch); the burn code in `RiskFacet` is commented
+> out by design. This is a uniform B.2/Phase-3 state, not introduced
+> by EC-007 — flagged here for the EC-003 review, not fixed in this
+> addendum.
 
 ## 10. Residual items for the auditor's attention
 

@@ -10,6 +10,7 @@ import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -573,9 +574,12 @@ contract InternalMatchExecutionTest is SetupTest {
         address aLenderEscrow = EscrowFactoryFacet(address(diamond))
             .getOrCreateUserEscrow(lender);
 
-        // The lender claims with no candidate hand-picked — the
-        // claim-time auto-dispatch finds LOAN_B and FULLY matches A.
-        // The call must succeed (no `NothingToClaim` revert).
+        // The LENDER (position-NFT owner) claims with no candidate
+        // hand-picked — the claim-time auto-dispatch finds LOAN_B and
+        // FULLY matches A. The call must succeed (no `NothingToClaim`
+        // revert). Ownership is checked before the auto-dispatch
+        // (EC-007 review fix), so the lender NFT must be mocked.
+        _mockLenderNFT(LOAN_A, lender);
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(LOAN_A);
 
@@ -596,6 +600,42 @@ contract InternalMatchExecutionTest is SetupTest {
             IERC20(mockERC20).balanceOf(aLenderEscrow),
             990,
             "A lender paid in principal asset by the match"
+        );
+    }
+
+    function test_fallbackPending_claimAsLender_byNonLender_reverts() public {
+        // EC-007 security fix (PR #24 review). `claimAsLender` runs the
+        // claim-time internal-match auto-dispatch, which pays the 1%
+        // matcher bonus to `msg.sender`. The lender position-NFT
+        // ownership check therefore MUST gate the call BEFORE the
+        // auto-dispatch — otherwise a third party could call
+        // `claimAsLender` on a FallbackPending loan with a full match
+        // candidate purely to trigger the match and skim the incentive.
+        // A non-lender call must revert, and the loan must stay
+        // FallbackPending (the match never ran).
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 1000, mockERC20, 1000);
+        _moveToFallbackPending(LOAN_A, borrower, mockCollateralERC20, 1000, 850, 20, true);
+        _mockLtv(LOAN_B, 9_000);
+        // The lender NFT is owned by `lender`; `matcher` is NOT the owner.
+        _mockLenderNFT(LOAN_A, lender);
+
+        vm.prank(matcher);
+        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
+        ClaimFacet(address(diamond)).claimAsLender(LOAN_A);
+
+        // The whole transaction reverted — the auto-dispatch never
+        // fired, so both loans are untouched and the would-be attacker
+        // collected no matcher incentive.
+        assertEq(
+            uint8(_getLoan(LOAN_A).status),
+            uint8(LibVaipakam.LoanStatus.FallbackPending),
+            "A stays FallbackPending - non-lender claim cannot trigger the match"
+        );
+        assertEq(
+            uint8(_getLoan(LOAN_B).status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "B untouched"
         );
     }
 
