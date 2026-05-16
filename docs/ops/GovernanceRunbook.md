@@ -499,9 +499,9 @@ the design just being a code reference.
 |---|---|
 | Where do operating fees accumulate? | Diamond as treasury (`s.treasury == address(this)`); per-token in `treasuryBalances[asset]`. |
 | When are accumulated fees converted? | Aggregated, threshold-or-time-triggered. NOT per-tx. |
-| What do they convert to? | ETH / WBTC / VPFI per admin-configurable mix. |
+| What do they convert to? | A fully governance-configurable target-allocation list of `(asset, %)` entries (`s.treasuryConvertTargets`) — no hardcoded reserve set. |
 | Does any cut auto-route to a "founder address"? | **No.** This is the load-bearing design choice. |
-| How do founders capture value? | (1) Genesis VPFI grant, vested over 4 years via a vester contract. (2) Discretionary governance-approved operating budget post-launch for the founding team's ongoing work. |
+| How do founders capture value? | (1) Genesis VPFI grant, vested 4 yr / 1 yr cliff via a `VaipakamVestingWallet`. (2) A founder **salary stream** (`PayrollFacet`) — a fixed governance-budgeted wage paid continuously from the treasury. (3) Discretionary governance-approved operating budget for ongoing team work. |
 
 ### The pattern we're NOT adopting (and why)
 
@@ -660,10 +660,47 @@ inertia where the team can't easily get paid, leading to attrition.
 Specifying upfront — genesis vest + governance budget — is the
 clean path.
 
+### As-built (T-600 — shipped 2026-05-16)
+
+The contract layer landed under T-600 (PR #25, branch
+`feat/t600-treasury-founder-comp`). Where the as-built differs from
+the plan-stage prose above, this subsection governs. Full detail:
+[`../DesignsAndPlans/TreasuryFunctionalSpec.md`](../DesignsAndPlans/TreasuryFunctionalSpec.md)
+(auditor) and `TreasuryExplainer.md` (plain-language).
+
+**Conversion — `TreasuryFacet.convertTreasuryAsset(tokenIn, perTargetCalls, minOuts)`.**
+One input asset per call (a keeper loops off-chain). The target
+allocation is the governance-configurable `s.treasuryConvertTargets`
+list — set atomically by `ConfigFacet.setTreasuryConvertTargets`,
+which is the single lever for **add / remove / reweight** a reserve
+asset and validates `Σ bps == 10000` on every write (1–8 entries, no
+zero address, no duplicates). Eligibility (USD-value OR max-interval)
+is unchanged; thresholds via `setTreasuryConvertThresholds`. Requires
+Diamond-as-treasury mode. **Governance op:** to change the reserve
+mix, submit the complete new `(asset, bps)` list to
+`setTreasuryConvertTargets`.
+
+**Founder salary — `PayrollFacet` (the new Layer 2).** The plan above
+listed only genesis-vest + discretionary budget; the as-built adds a
+**continuous salary stream**. `createPayrollStream` / `fundPayrollStream`
+/ `setPayrollRate` / `setPayrollStreamPaused` are ADMIN_ROLE → Timelock;
+`withdrawSalary` is beneficiary-only. A stream pays out only what
+governance has explicitly funded (`withdrawable = min(accrued, funded)
+− withdrawn`) — it is a salary, structurally NOT an automatic
+revenue share. **Governance op:** each budget period, call
+`fundPayrollStream(streamId, amount)` to top the stream up.
+
+**Vesting — `VaipakamVestingWallet`.** One per grantee; cliff +
+linear. Funded once at TGE via `TreasuryFacet.mintVPFI`. The genesis
+funding actions remain gated on the pre-TGE securities-lawyer
+sign-off (see "Pre-TGE prerequisites" above); `DeployFounderVesting.s.sol`
+enforces the gate (`CONFIRM_TGE_FUNDING=YES`).
+
 ### Cross-references
 
-- T-056 in [`../ToDo.md`](../ToDo.md) for the implementation
-  shape.
+- T-600 / T-056 in [`../ToDo.md`](../ToDo.md); card #4 on `@vaipakam-labs` is the live tracker.
+- [`../DesignsAndPlans/TreasuryFunctionalSpec.md`](../DesignsAndPlans/TreasuryFunctionalSpec.md) — auditor functional spec.
+- [`../DesignsAndPlans/TreasuryAndFounderDistribution.md`](../DesignsAndPlans/TreasuryAndFounderDistribution.md) §12 — as-built design record.
 - [`../internal/Tokenomics.md`](../internal/Tokenomics.md) for
   the genesis VPFI allocation breakdown (when it lands).
 - The protocol's existing `s.treasury` field, configurable via

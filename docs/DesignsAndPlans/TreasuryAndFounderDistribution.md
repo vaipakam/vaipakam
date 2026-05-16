@@ -17,7 +17,7 @@ contracts engineer who will eventually implement T-056.
 This document captures the proposed design for two coupled questions:
 
 1. **How does the protocol convert accumulated operating fees into a
-   stable target asset mix?**
+   stable target asset allocation?**
 2. **How do founders capture protocol value?**
 
 The original sketch (T-056 first draft) was: convert treasury tokens
@@ -47,7 +47,7 @@ and it carries dramatically lower legal / operational risk than the
 original sketch.
 
 The design has open questions — most notably the exact ratio in the
-target asset mix, the conversion thresholds, and the founder
+target asset allocation, the conversion thresholds, and the founder
 allocation percentage. Those need decisions before implementation.
 
 ---
@@ -295,7 +295,7 @@ A new admin-callable function on a TreasuryFacet (or extending
 EscrowFactoryFacet, depending on size):
 
 ```solidity
-function convertTreasuryToTargetMix(
+function convertTreasuryAsset(
     address[] calldata tokensIn,
     bytes[]   calldata aggregatorCallData,
     uint256[] calldata minOutEth,
@@ -309,7 +309,7 @@ function convertTreasuryToTargetMix(
   per-aggregator adapter facets that landed in Phase 7a).
 - **Slippage-bounded** via per-token `minOut` arguments.
 - **Output split** into ETH / WBTC / VPFI per a stored ratio
-  (`s.treasuryTargetMixBps[]`, three values summing to 10000 BPS).
+  (`s.treasuryConvertTargetsBps[]`, three values summing to 10000 BPS).
 - **Eligibility gate**: callable only when EITHER condition holds:
   - Accumulated USD-equivalent of any input token >
     `s.treasuryConvertUsdThreshold` (e.g. $10,000 default, knob).
@@ -380,7 +380,7 @@ VPFI-holder returns.
 
 | Storage slot | Type | Purpose | Setter |
 |---|---|---|---|
-| `s.treasuryTargetMixBps[]` | `uint16[3]` | ETH / WBTC / VPFI ratios in BPS, summing to 10000. | `setTreasuryTargetMixBps(uint16[3])`, ADMIN_ROLE. |
+| `s.treasuryConvertTargetsBps[]` | `uint16[3]` | ETH / WBTC / VPFI ratios in BPS, summing to 10000. | `setTreasuryConvertTargets(uint16[3])`, ADMIN_ROLE. |
 | `s.treasuryConvertUsdThreshold` | `uint256` | Per-token USD-equivalent threshold for triggering conversion. | `setTreasuryConvertUsdThreshold(uint256)`, ADMIN_ROLE. |
 | `s.treasuryConvertMaxIntervalDays` | `uint256` | Max days between conversions, regardless of balance. | `setTreasuryConvertMaxIntervalDays(uint256)`, ADMIN_ROLE. |
 | `s.treasuryLastConversionAt` | `uint64` | Timestamp of the last successful conversion. Maintained by the convert function. | (internal) |
@@ -393,7 +393,7 @@ can surface them.
 Pseudocode:
 
 ```
-function convertTreasuryToTargetMix(
+function convertTreasuryAsset(
     address[] tokensIn,
     bytes[] aggregatorCallData,
     uint256[] minOutEth,
@@ -409,9 +409,9 @@ function convertTreasuryToTargetMix(
         uint256 balance = treasuryBalances[token];
         require(balance > 0, "nothing to convert");
 
-        // Split per target mix:
-        uint256 toEth   = balance * targetMixBps[0] / 10000;
-        uint256 toWbtc  = balance * targetMixBps[1] / 10000;
+        // Split per target allocation:
+        uint256 toEth   = balance * targetBps[0] / 10000;
+        uint256 toWbtc  = balance * targetBps[1] / 10000;
         uint256 toVpfi  = balance - toEth - toWbtc;  // remainder
 
         // Three swaps via aggregator:
@@ -505,7 +505,7 @@ The following need explicit decisions before implementation:
    slightly opinionated UX), Hedgey Finance (cleanly designed,
    newer), custom (full control, audit cost). Recommend
    evaluating Sablier first.
-4. **Target asset mix** (ETH / WBTC / VPFI ratios). Subject to
+4. **Target asset allocation** (ETH / WBTC / VPFI ratios). Subject to
    tokenomics document; not yet specified. Proposed default 40 /
    30 / 30 BPS for Phase 1.
 5. **Conversion thresholds**:
@@ -572,7 +572,7 @@ The following need explicit decisions before implementation:
 - **Aggregator (1inch / 0x)**: a routing protocol that finds the
   best price across many DEXs for a given swap.
 - **BPS (basis points)**: 1/10000 = 0.01%. Used for the target
-  mix ratios and slippage tolerances.
+  allocation ratios and slippage tolerances.
 - **Genesis allocation**: the initial token distribution at TGE,
   before any user activity. Founder allocations are part of this.
 - **Realization event**: a tax event where income is recognized.
@@ -602,3 +602,114 @@ they're made.
   conversion + genesis vesting + governance budget design
   recommended. Document drafted; pending review by founders
   and legal counsel.
+- **2026-05-16** (T-600): founder-compensation decisions locked
+  with the (solo) founder and the contract layer implemented. The
+  three-layer income model + the founder **salary stream**
+  (`PayrollFacet`) + the `convertTreasuryAsset` function
+  shipped on branch `feat/t600-treasury-founder-comp`. See §12 for
+  the as-built record. Securities-lawyer sign-off (§6) is still
+  required before the Track-2 deploy/wiring steps.
+
+---
+
+## 12. Implementation update — T-600 (2026-05-16)
+
+The contract layer for this design landed on
+`feat/t600-treasury-founder-comp`. This section is the as-built
+record; where it differs from the proposal above, §12 governs.
+
+### 12.1 Founder income — the three-layer model
+
+Founder value capture is **three decoupled layers**, NOT a per-fee
+route:
+
+1. **Genesis VPFI allocation, vested** — the founder's ownership
+   stake. Per `TokenomicsTechSpec` §3 + §3a: a **6% Founders** hard
+   share, plus the founder (being the sole developer) draws a
+   *defined* developer grant from the **12% Developers & Team** pool
+   — Model A: not the whole pool, the remainder stays hiring
+   headroom. 1-year cliff + 4-year linear via a per-grantee
+   `VaipakamVestingWallet`.
+2. **Founder salary** — a continuous stream from the treasury
+   (`PayrollFacet`, §12.3). This is the *reliable monthly income*.
+   It is a **salary** — fixed rate, for work, revisable — NOT a
+   securities-style revenue share.
+3. **Pro-rata holder returns** — buyback-burn / staking lift the
+   value of Layer 1, the same as for any VPFI holder.
+
+This supersedes §4.3's "12–15%" placeholder. The founder's hard
+share is **6%**; the non-founder pools (Dev & Team 12%, Testers 6%,
+Ecosystem/Marketing 2%) are reserved mint headroom that never
+reverts to the founder.
+
+### 12.2 Treasury conversion — as built
+
+`TreasuryFacet.convertTreasuryAsset(tokenIn, perTargetCalls, minOuts)`
+— ADMIN_ROLE (Timelock post-handover). One `tokenIn` per call (a
+keeper loops off-chain); each leg routes through
+`LibSwap.swapWithFailover` with sentinel `loanId = 0`; output returns
+to the Diamond, re-credited into `treasuryBalances`. The target
+allocation is a **fully governance-configurable list** of
+`(asset, bps)` entries (`s.treasuryConvertTargets`), set atomically by
+`ConfigFacet.setTreasuryConvertTargets` — one setter that expresses
+add / remove / reweight and validates `Σ bps == 10000` on every write
+(1–8 entries, no zero address, no duplicates). There is no hardcoded
+ETH/wBTC/VPFI set and no compile-time default; the input balance is
+split pro-rata and the final list entry absorbs rounding. Eligibility
+thresholds (`setTreasuryConvertThresholds`; defaults $10k, 30 days)
+are the only remaining packed-config knobs.
+
+**Hard precondition**: the convert function and the salary stream
+require **Diamond-as-treasury mode** (`s.treasury == address(this)`)
+— `treasuryBalances` only tracks convertible funds then. The
+external-EOA/multisig treasury mode is incompatible with the
+on-chain salary stream.
+
+### 12.3 Founder salary stream — `PayrollFacet`
+
+A Diamond-resident per-second accrual:
+`accrued = accruedAtAnchor + (paused ? 0 : (now - lastRateChangeAt)
+* ratePerSecond)`; `withdrawable = min(accrued, funded) - withdrawn`.
+
+- `createPayrollStream` / `setPayrollRate` / `setPayrollStreamPaused`
+  — ADMIN_ROLE → Timelock. `setPayrollRate` settles accrual at the
+  old rate first (no retroactive re-pricing) — the revisable lever.
+- `fundPayrollStream` — ADMIN_ROLE; debits `treasuryBalances[asset]`
+  into the stream's `funded`. The **periodic budget top-up**.
+- `withdrawSalary` — beneficiary-only, no timelock delay (earned
+  wages), Tier-1 sanctions-gated.
+
+**The load-bearing legal guarantee**: `withdrawable` is clamped to
+`funded`, so the stream dries up unless governance deliberately tops
+it up — a salary, not a perpetual claim. There is **no code path**
+from a fee accrual or from `convertTreasuryAsset` into
+`fundPayrollStream` / `setPayrollRate`. A regression test
+(`test_treasuryAccrual_doesNotFundStream`) asserts this.
+
+### 12.4 Open decisions — resolved
+
+§7's open decisions, resolved 2026-05-16:
+
+1. **Founder allocation** — 6% hard Founders + a Model-A developer
+   grant from the 12% pool (not 12–15% combined as a bag).
+2. **Vesting** — 1-year cliff + 4-year linear; the salary stream
+   covers income during the cliff year.
+3. **Vester contract** — a non-upgradeable `VaipakamVestingWallet`
+   wrapping OZ `VestingWalletCliff` (chosen over Sablier — extra
+   dependency / audit surface — and over a custom design).
+4. **Target asset allocation** — default 40 ETH / 30 wBTC / 30 VPFI BPS
+   (governance-tunable). Per-cycle distribution split (§4.5) stays
+   deferred to governance.
+5. **Conversion thresholds** — default $10k / 30 days, per-chain
+   tunable.
+
+### 12.5 Legal gating — still in force
+
+§6's pre-TGE securities-lawyer sign-off is unchanged and gates the
+**Track-2 deploy/wiring** steps: the genesis `mintVPFI` funding,
+`createPayrollStream` with a real beneficiary/rate, and live
+`fundPayrollStream` top-ups. The contract *code* is built and
+test-covered now; only the "press the button at TGE" actions wait
+on the lawyer. `DeployFounderVesting.s.sol` bakes this in — it
+deploys an empty vesting wallet by default and only mints the grant
+when `CONFIRM_TGE_FUNDING=YES`.

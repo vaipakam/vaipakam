@@ -20,6 +20,7 @@ import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {OwnershipFacet} from "../src/facets/OwnershipFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
+import {PayrollFacet} from "../src/facets/PayrollFacet.sol";
 import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
@@ -541,10 +542,28 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](4);
         selectors[0] = TreasuryFacet.claimTreasuryFees.selector;
         selectors[1] = TreasuryFacet.getTreasuryBalance.selector;
         selectors[2] = TreasuryFacet.mintVPFI.selector;
+        selectors[3] = TreasuryFacet.convertTreasuryAsset.selector;
+        return selectors;
+    }
+
+    function getPayrollFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](8);
+        selectors[0] = PayrollFacet.createPayrollStream.selector;
+        selectors[1] = PayrollFacet.fundPayrollStream.selector;
+        selectors[2] = PayrollFacet.setPayrollRate.selector;
+        selectors[3] = PayrollFacet.setPayrollStreamPaused.selector;
+        selectors[4] = PayrollFacet.withdrawSalary.selector;
+        selectors[5] = PayrollFacet.getPayrollStream.selector;
+        selectors[6] = PayrollFacet.getWithdrawableSalary.selector;
+        selectors[7] = PayrollFacet.getPayrollStreamCount.selector;
         return selectors;
     }
 
@@ -777,7 +796,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](77);
+        selectors = new bytes4[](80);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -899,6 +918,10 @@ contract HelperTest {
         selectors[74] = ConfigFacet.setInternalMatchEnabled.selector;
         selectors[75] = ConfigFacet.setInternalMatchConfig.selector;
         selectors[76] = ConfigFacet.getInternalMatchConfigBundle.selector;
+        // T-600 — treasury-conversion knobs.
+        selectors[77] = ConfigFacet.setTreasuryConvertTargets.selector;
+        selectors[78] = ConfigFacet.setTreasuryConvertThresholds.selector;
+        selectors[79] = ConfigFacet.getTreasuryConvertConfig.selector;
         return selectors;
     }
 

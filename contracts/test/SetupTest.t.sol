@@ -25,6 +25,7 @@ import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {MetricsDashboardFacet} from "../src/facets/MetricsDashboardFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
+import {PayrollFacet} from "../src/facets/PayrollFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
  // For mock ERC20
@@ -138,6 +139,7 @@ contract SetupTest is Test {
     MetricsFacet metricsFacet;
     MetricsDashboardFacet metricsDashboardFacet;
     TreasuryFacet treasuryFacet;
+    PayrollFacet payrollFacet;
     VPFITokenFacet vpfiTokenFacet;
     TestMutatorFacet testMutatorFacet;
     ConfigFacet configFacet;
@@ -197,6 +199,7 @@ contract SetupTest is Test {
         metricsFacet = new MetricsFacet();
         metricsDashboardFacet = new MetricsDashboardFacet();
         treasuryFacet = new TreasuryFacet();
+        payrollFacet = new PayrollFacet();
         vpfiTokenFacet = new VPFITokenFacet();
         testMutatorFacet = new TestMutatorFacet();
         configFacet = new ConfigFacet();
@@ -206,7 +209,7 @@ contract SetupTest is Test {
         escrowImpl = new VaipakamEscrowImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](20);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](21);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -310,6 +313,12 @@ contract SetupTest is Test {
             facetAddress: address(metricsDashboardFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getMetricsDashboardFacetSelectors()
+        });
+        // T-600 — founder/contributor salary streams.
+        cuts[20] = IDiamondCut.FacetCut({
+            facetAddress: address(payrollFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getPayrollFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

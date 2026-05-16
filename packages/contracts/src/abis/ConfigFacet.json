@@ -804,6 +804,46 @@
   },
   {
     "type": "function",
+    "name": "getTreasuryConvertConfig",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "targets",
+        "type": "tuple[]",
+        "internalType": "struct LibVaipakam.TreasuryConvertTarget[]",
+        "components": [
+          {
+            "name": "asset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "bps",
+            "type": "uint16",
+            "internalType": "uint16"
+          }
+        ]
+      },
+      {
+        "name": "usdThreshold",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxIntervalDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lastConversionAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getTreasuryFeeBps",
     "inputs": [],
     "outputs": [
@@ -1482,6 +1522,49 @@
         "name": "tier3",
         "type": "uint16",
         "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setTreasuryConvertTargets",
+    "inputs": [
+      {
+        "name": "targets",
+        "type": "tuple[]",
+        "internalType": "struct LibVaipakam.TreasuryConvertTarget[]",
+        "components": [
+          {
+            "name": "asset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "bps",
+            "type": "uint16",
+            "internalType": "uint16"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setTreasuryConvertThresholds",
+    "inputs": [
+      {
+        "name": "usdThreshold",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxIntervalDays",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "outputs": [],
@@ -2190,6 +2273,38 @@
   },
   {
     "type": "event",
+    "name": "TreasuryConvertTargetsSet",
+    "inputs": [
+      {
+        "name": "count",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TreasuryConvertThresholdsSet",
+    "inputs": [
+      {
+        "name": "usdThreshold",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxIntervalDays",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "TwapGuardSet",
     "inputs": [
       {
@@ -2543,6 +2658,17 @@
         "name": "bps",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidTreasuryConvertTargets",
+    "inputs": [
+      {
+        "name": "reason",
+        "type": "string",
+        "internalType": "string"
       }
     ]
   },

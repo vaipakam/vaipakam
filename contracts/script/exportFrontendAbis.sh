@@ -97,6 +97,7 @@ FACETS=(
   "ProfileFacet"
   "RefinanceFacet"
   "RepayFacet"
+  "PayrollFacet"
   "RewardReporterFacet"
   "RiskFacet"
   "StakingRewardsFacet"
