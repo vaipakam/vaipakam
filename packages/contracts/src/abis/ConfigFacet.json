@@ -808,19 +808,21 @@
     "inputs": [],
     "outputs": [
       {
-        "name": "ethBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "wbtcBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "vpfiBps",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "targets",
+        "type": "tuple[]",
+        "internalType": "struct LibVaipakam.TreasuryConvertTarget[]",
+        "components": [
+          {
+            "name": "asset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "bps",
+            "type": "uint16",
+            "internalType": "uint16"
+          }
+        ]
       },
       {
         "name": "usdThreshold",
@@ -836,11 +838,6 @@
         "name": "lastConversionAt",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "wbtcAsset",
-        "type": "address",
-        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -1535,14 +1532,21 @@
     "name": "setTreasuryConvertTargets",
     "inputs": [
       {
-        "name": "ethBps",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "wbtcBps",
-        "type": "uint16",
-        "internalType": "uint16"
+        "name": "targets",
+        "type": "tuple[]",
+        "internalType": "struct LibVaipakam.TreasuryConvertTarget[]",
+        "components": [
+          {
+            "name": "asset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "bps",
+            "type": "uint16",
+            "internalType": "uint16"
+          }
+        ]
       }
     ],
     "outputs": [],
@@ -1561,19 +1565,6 @@
         "name": "maxIntervalDays",
         "type": "uint32",
         "internalType": "uint32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setTreasuryWbtcAsset",
-    "inputs": [
-      {
-        "name": "wbtcAsset",
-        "type": "address",
-        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -2285,16 +2276,10 @@
     "name": "TreasuryConvertTargetsSet",
     "inputs": [
       {
-        "name": "ethBps",
-        "type": "uint16",
+        "name": "count",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "wbtcBps",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -2314,19 +2299,6 @@
         "type": "uint32",
         "indexed": false,
         "internalType": "uint32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "TreasuryWbtcAssetSet",
-    "inputs": [
-      {
-        "name": "wbtcAsset",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -2694,14 +2666,9 @@
     "name": "InvalidTreasuryConvertTargets",
     "inputs": [
       {
-        "name": "ethBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "wbtcBps",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "reason",
+        "type": "string",
+        "internalType": "string"
       }
     ]
   },

@@ -33,9 +33,10 @@ makes the protocol resilient.
 ## 2. Fees arrive in many different tokens — so the treasury tidies up
 
 People lend and borrow lots of different tokens, so fees pile up as a
-messy mix of many assets. Periodically, the protocol can **convert**
-those scattered fee tokens into a small, stable set of reserve
-assets — **ETH, wrapped Bitcoin, and VPFI** (Vaipakam's own token).
+jumble of many assets. Periodically, the protocol can **convert** those
+scattered fee tokens into a small, stable set of **reserve assets** —
+expected to be assets like ETH, wrapped Bitcoin, and VPFI (Vaipakam's
+own token).
 
 A few things keep this honest and safe:
 
@@ -47,8 +48,11 @@ A few things keep this honest and safe:
   still owned by the protocol.
 - **It's price-protected.** Each trade has a minimum-output guard, so
   the treasury can't be drained through a bad swap.
-- **The split is set by governance** — currently around 40% ETH /
-  30% wrapped-BTC / 30% VPFI, and adjustable.
+- **The reserve set and the split are fully governance-controlled.**
+  Which assets the treasury converts into — and what percentage goes
+  to each — is a configurable list. Governance can add a reserve asset,
+  remove one, or re-weight the split; every such change is checked so
+  the percentages always add up to exactly 100%.
 
 ## 3. How the founder gets paid — a salary, in the open
 

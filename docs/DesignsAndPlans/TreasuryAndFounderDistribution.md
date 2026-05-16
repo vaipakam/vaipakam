@@ -644,16 +644,20 @@ reverts to the founder.
 
 ### 12.2 Treasury conversion — as built
 
-`TreasuryFacet.convertTreasuryAsset(tokenIn, ethCalls,
-wbtcCalls, vpfiCalls, minOutEth, minOutWbtc, minOutVpfi)` —
-ADMIN_ROLE (Timelock post-handover). One `tokenIn` per call (a
+`TreasuryFacet.convertTreasuryAsset(tokenIn, perTargetCalls, minOuts)`
+— ADMIN_ROLE (Timelock post-handover). One `tokenIn` per call (a
 keeper loops off-chain); each leg routes through
-`LibSwap.swapWithFailover` with sentinel `loanId = 0`; output
-returns to the Diamond, re-credited into `treasuryBalances`. Target
-allocation + thresholds are governance knobs (`ConfigFacet`
-`setTreasuryConvertTargets` / `setTreasuryConvertThresholds` /
-`setTreasuryWbtcAsset`; defaults 40/30/30, $10k, 30 days). The wBTC
-leg folds into the VPFI remainder when `treasuryWbtcAsset` is unset.
+`LibSwap.swapWithFailover` with sentinel `loanId = 0`; output returns
+to the Diamond, re-credited into `treasuryBalances`. The target
+allocation is a **fully governance-configurable list** of
+`(asset, bps)` entries (`s.treasuryConvertTargets`), set atomically by
+`ConfigFacet.setTreasuryConvertTargets` — one setter that expresses
+add / remove / reweight and validates `Σ bps == 10000` on every write
+(1–8 entries, no zero address, no duplicates). There is no hardcoded
+ETH/wBTC/VPFI set and no compile-time default; the input balance is
+split pro-rata and the final list entry absorbs rounding. Eligibility
+thresholds (`setTreasuryConvertThresholds`; defaults $10k, 30 days)
+are the only remaining packed-config knobs.
 
 **Hard precondition**: the convert function and the salary stream
 require **Diamond-as-treasury mode** (`s.treasury == address(this)`)

@@ -11,7 +11,7 @@
 
 ---
 
-- [ ] **T-600** `promotedToProjectCard`: Handling Treasury in a contract, See how it needs to be done and the funds that need to be distributed.
+- [ ] **T-600** `promotedToProjectCard`: Handling Treasury in a contract, See how it needs to be done and the funds that need to be distributed. — IMPLEMENTED on `feat/t600-treasury-founder-comp` (PR #25): treasury conversion (governance-configurable target-allocation list) + founder salary stream (`PayrollFacet`) + `VaipakamVestingWallet`; card #4 In review. TGE-funding actions gated on a securities-lawyer sign-off. Functional docs: `docs/DesignsAndPlans/TreasuryFunctionalSpec.md` (auditor) + `TreasuryExplainer.md` (users).
 
 ---
 

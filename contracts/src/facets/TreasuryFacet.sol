@@ -53,16 +53,15 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     /// @notice Emitted on a successful `convertTreasuryAsset`.
     /// @param tokenIn The input asset whose treasury balance was converted.
     /// @param amountIn The full input balance consumed.
-    /// @param toEth Input amount routed to the WETH leg.
-    /// @param toWbtc Input amount routed to the wrapped-BTC leg (0 if unset).
-    /// @param toVpfi Input amount routed to the VPFI leg (absorbs rounding).
+    /// @param targetCount The number of configured target legs the
+    ///        input was split across. Per-leg amounts are recoverable
+    ///        from the `treasuryBalances` deltas and the `LibSwap`
+    ///        swap-event stream (keyed on the sentinel `loanId == 0`).
     /// @custom:event-category state-change/treasury-mutation
     event TreasuryConverted(
         address indexed tokenIn,
         uint256 amountIn,
-        uint256 toEth,
-        uint256 toWbtc,
-        uint256 toVpfi
+        uint256 targetCount
     );
 
     // Facet-specific errors (InvalidAddress, NotCanonicalVPFIChain inherited
@@ -76,8 +75,12 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     /// @notice The conversion eligibility gate (USD-value OR max-interval)
     ///         has not been met yet.
     error ConversionNotEligible();
-    /// @notice A required convert-target address (WETH or VPFI) is unset.
-    error TreasuryConvertTargetUnset();
+    /// @notice No target allocation is configured — governance must call
+    ///         `ConfigFacet.setTreasuryConvertTargets` first.
+    error TreasuryConvertNoTargets();
+    /// @notice The per-target `calls` / `minOuts` arrays do not match the
+    ///         configured target count.
+    error TreasuryConvertArityMismatch(uint256 provided, uint256 expected);
     /// @notice A conversion leg's swap soft-failed across every adapter.
     error TreasuryConvertSwapFailed(address tokenOut);
 
@@ -175,8 +178,8 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     }
 
     /**
-     * @notice Convert one accumulated treasury asset into the governance
-     *         target allocation (WETH / wrapped-BTC / VPFI).
+     * @notice Convert one accumulated treasury asset into the governance-
+     *         configured target allocation.
      * @dev T-600. Legal-safe path: protocol-internal asset management —
      *      every output stays inside the Diamond (`recipient =
      *      address(this)`), credited back into `treasuryBalances`. There
@@ -187,35 +190,31 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
      *      Requires Diamond-as-treasury mode — `treasuryBalances` only
      *      tracks convertible funds when `s.treasury == address(this)`.
      *
+     *      The target allocation is the fully governance-configurable
+     *      `s.treasuryConvertTargets` list (`ConfigFacet.setTreasuryConvertTargets`)
+     *      — an ordered set of `(asset, bps)` entries summing to 10000.
+     *      The input balance is split pro-rata; the FINAL entry absorbs
+     *      integer-division rounding. `perTargetCalls[i]` / `minOuts[i]`
+     *      align with target `i`, so both arrays must have exactly the
+     *      configured target count.
+     *
      *      One `tokenIn` per call (a keeper loops off-chain): each call
      *      is atomic and independently auditable. Each leg routes through
      *      `LibSwap.swapWithFailover` — the same ranked-adapter try-list
      *      machinery `RiskFacet.triggerLiquidation` uses — with the
      *      sentinel `loanId = 0` (loan ids are 1-based) marking a
-     *      treasury conversion in the swap-event stream. The VPFI leg
-     *      absorbs integer-division rounding (treasury-favouring).
-     *
-     *      A leg whose target equals `tokenIn` is credited straight back
-     *      (no self-swap). The wrapped-BTC leg is skipped — its share
-     *      folding into the VPFI remainder — when `treasuryWbtcAsset`
-     *      is unset.
+     *      treasury conversion in the swap-event stream. A leg whose
+     *      target equals `tokenIn` is credited straight back (no
+     *      self-swap).
      *
      * @param tokenIn The treasury asset to convert (non-zero, non-empty balance).
-     * @param ethCalls Ranked adapter try-list for the tokenIn → WETH leg.
-     * @param wbtcCalls Ranked adapter try-list for the tokenIn → wBTC leg.
-     * @param vpfiCalls Ranked adapter try-list for the tokenIn → VPFI leg.
-     * @param minOutEth Slippage floor for the WETH leg.
-     * @param minOutWbtc Slippage floor for the wBTC leg.
-     * @param minOutVpfi Slippage floor for the VPFI leg.
+     * @param perTargetCalls Ranked adapter try-list per configured target.
+     * @param minOuts Slippage floor per configured target.
      */
     function convertTreasuryAsset(
         address tokenIn,
-        LibSwap.AdapterCall[] calldata ethCalls,
-        LibSwap.AdapterCall[] calldata wbtcCalls,
-        LibSwap.AdapterCall[] calldata vpfiCalls,
-        uint256 minOutEth,
-        uint256 minOutWbtc,
-        uint256 minOutVpfi
+        LibSwap.AdapterCall[][] calldata perTargetCalls,
+        uint256[] calldata minOuts
     ) external nonReentrant whenNotPaused onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
@@ -231,35 +230,33 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
             revert ConversionNotEligible();
         }
 
-        address weth = s.wethContract;
-        address wbtc = s.treasuryWbtcAsset; // may be address(0) → leg skipped
-        address vpfi = s.vpfiToken;
-        if (weth == address(0) || vpfi == address(0)) {
-            revert TreasuryConvertTargetUnset();
+        uint256 n = s.treasuryConvertTargets.length;
+        if (n == 0) revert TreasuryConvertNoTargets();
+        if (perTargetCalls.length != n) {
+            revert TreasuryConvertArityMismatch(perTargetCalls.length, n);
         }
-
-        // Target split. VPFI is the remainder, so it absorbs both
-        // integer-division rounding and a skipped (unset) wBTC leg.
-        uint256 toEth = (balance * LibVaipakam.cfgTreasuryConvertEthBps())
-            / LibVaipakam.BASIS_POINTS;
-        uint256 toWbtc = wbtc == address(0)
-            ? 0
-            : (balance * LibVaipakam.cfgTreasuryConvertWbtcBps())
-                / LibVaipakam.BASIS_POINTS;
-        uint256 toVpfi = balance - toEth - toWbtc;
+        if (minOuts.length != n) {
+            revert TreasuryConvertArityMismatch(minOuts.length, n);
+        }
 
         // CEI — zero the input balance and stamp the conversion time
         // before any external swap call.
         s.treasuryBalances[tokenIn] = 0;
         s.treasuryLastConversionAt = uint64(block.timestamp);
 
-        _convertLeg(tokenIn, weth, toEth, minOutEth, ethCalls, s);
-        if (wbtc != address(0)) {
-            _convertLeg(tokenIn, wbtc, toWbtc, minOutWbtc, wbtcCalls, s);
+        // Split pro-rata; the final target absorbs the rounding dust so
+        // the legs always sum back to exactly `balance`.
+        uint256 allocated;
+        for (uint256 i = 0; i < n; ++i) {
+            LibVaipakam.TreasuryConvertTarget storage t = s.treasuryConvertTargets[i];
+            uint256 amount = (i == n - 1)
+                ? balance - allocated
+                : (balance * t.bps) / LibVaipakam.BASIS_POINTS;
+            allocated += amount;
+            _convertLeg(tokenIn, t.asset, amount, minOuts[i], perTargetCalls[i], s);
         }
-        _convertLeg(tokenIn, vpfi, toVpfi, minOutVpfi, vpfiCalls, s);
 
-        emit TreasuryConverted(tokenIn, balance, toEth, toWbtc, toVpfi);
+        emit TreasuryConverted(tokenIn, balance, n);
     }
 
     /// @dev Settle one conversion leg. `tokenIn == tokenOut` short-circuits

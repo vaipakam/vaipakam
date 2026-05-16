@@ -84,12 +84,15 @@ income path.
 **What it adds, functionally:**
 
 - **Treasury conversion** — an admin (later timelock / governance) can
-  convert one accumulated fee asset into the protocol's target allocation of
-  ETH / wrapped-BTC / VPFI in a single call. The swap routes through the
+  convert one accumulated fee asset into the protocol's reserve assets
+  in a single call. The reserve set is a fully governance-configurable
+  target-allocation list — an ordered set of `(asset, %)` entries that
+  governance can add to, remove from, or re-weight via one atomic
+  setter (always validated to sum to 100%). The swap routes through the
   existing liquidation aggregator infrastructure; output stays inside
   the protocol's own custody. An eligibility gate (a value threshold OR
   a max interval) stops both dust-sized conversions and treasury
-  stagnation. Target allocation and thresholds are governance knobs.
+  stagnation.
 - **Founder salary stream** — a new payroll facet pays a founder (or any
   contributor) a continuous, per-second salary from the treasury. The
   rate is set by a governance budget decision and is revisable; the

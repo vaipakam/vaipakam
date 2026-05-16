@@ -27,9 +27,9 @@
         "internalType": "address"
       },
       {
-        "name": "ethCalls",
-        "type": "tuple[]",
-        "internalType": "struct LibSwap.AdapterCall[]",
+        "name": "perTargetCalls",
+        "type": "tuple[][]",
+        "internalType": "struct LibSwap.AdapterCall[][]",
         "components": [
           {
             "name": "adapterIdx",
@@ -44,53 +44,9 @@
         ]
       },
       {
-        "name": "wbtcCalls",
-        "type": "tuple[]",
-        "internalType": "struct LibSwap.AdapterCall[]",
-        "components": [
-          {
-            "name": "adapterIdx",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "data",
-            "type": "bytes",
-            "internalType": "bytes"
-          }
-        ]
-      },
-      {
-        "name": "vpfiCalls",
-        "type": "tuple[]",
-        "internalType": "struct LibSwap.AdapterCall[]",
-        "components": [
-          {
-            "name": "adapterIdx",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "data",
-            "type": "bytes",
-            "internalType": "bytes"
-          }
-        ]
-      },
-      {
-        "name": "minOutEth",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "minOutWbtc",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "minOutVpfi",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "minOuts",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
       }
     ],
     "outputs": [],
@@ -225,19 +181,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "toEth",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "toWbtc",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "toVpfi",
+        "name": "targetCount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -938,6 +882,27 @@
   },
   {
     "type": "error",
+    "name": "TreasuryConvertArityMismatch",
+    "inputs": [
+      {
+        "name": "provided",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expected",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TreasuryConvertNoTargets",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "TreasuryConvertSwapFailed",
     "inputs": [
       {
@@ -946,11 +911,6 @@
         "internalType": "address"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "TreasuryConvertTargetUnset",
-    "inputs": []
   },
   {
     "type": "error",

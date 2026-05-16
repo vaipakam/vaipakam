@@ -175,12 +175,11 @@ library LibVaipakam {
     uint16 constant MIN_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG = 0;           // governance can zero the bot incentive
     uint16 constant MAX_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG = 300;         // 3% per leg ceiling
     // ── Treasury-conversion (T-600) governance defaults ────────────────
-    // Target asset-allocation for `TreasuryFacet.convertTreasuryAsset`.
-    // ETH + WBTC BPS are stored; the VPFI BPS is the unstored remainder
-    // `10000 - eth - wbtc`. 0 ⇒ these defaults (40% ETH / 30% WBTC /
-    // 30% VPFI). See docs/DesignsAndPlans/TreasuryAndFounderDistribution.md.
-    uint16 constant TREASURY_CONVERT_ETH_BPS_DEFAULT = 4000;   // 40%
-    uint16 constant TREASURY_CONVERT_WBTC_BPS_DEFAULT = 3000;  // 30%
+    // The target asset allocation for `TreasuryFacet.convertTreasuryAsset`
+    // is a fully governance-configurable list of `(asset, bps)` entries —
+    // see `TreasuryConvertTarget` + `s.treasuryConvertTargets`. This cap
+    // bounds the per-conversion swap-leg count (gas).
+    uint256 constant MAX_TREASURY_CONVERT_TARGETS = 8;
     // Eligibility gate: a conversion may run once the accumulated
     // numeraire-value (1e18-scaled — USD by post-deploy default) of an
     // input token clears this threshold, OR the max interval lapses —
@@ -947,14 +946,12 @@ library LibVaipakam {
         // 5–7.7% external-liquidation discount borrowers would
         // otherwise pay. `0` ⇒ DEFAULT_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG.
         uint16 internalMatchIncentivePerLegBps;
-        // ── Treasury-conversion (T-600) — convert-to-target-allocation knobs ──
-        // Target asset-allocation BPS for `TreasuryFacet.convertTreasuryAsset`.
-        // The VPFI BPS is the unstored remainder `10000 - eth - wbtc`.
-        // Each `0 ⇒ TREASURY_CONVERT_{ETH,WBTC}_BPS_DEFAULT` (4000 /
-        // 3000 ⇒ 40/30/30). Setter (`ConfigFacet.setTreasuryConvertTargets`)
-        // enforces `eth + wbtc <= 10000`.
-        uint16 treasuryConvertEthBps;  // 0 ⇒ 4000
-        uint16 treasuryConvertWbtcBps; // 0 ⇒ 3000
+        // ── Treasury-conversion (T-600) eligibility thresholds ─────────
+        // The convert *target allocation* itself is the fully
+        // governance-configurable `s.treasuryConvertTargets` list (see
+        // `TreasuryConvertTarget`); only the eligibility thresholds live
+        // on the packed config.
+        //
         // Per-token numeraire-value (1e18) accumulation threshold that
         // makes a treasury conversion eligible. 0 ⇒
         // TREASURY_CONVERT_USD_THRESHOLD_DEFAULT ($10k).
@@ -2642,14 +2639,17 @@ library LibVaipakam {
         mapping(address => mapping(address => uint256[])) assetPairActiveLoanIds;
         mapping(address => mapping(address => mapping(uint256 => uint256))) assetPairActiveLoanIdsPos;
         // ── Treasury conversion (T-600) — config + runtime state ───────
-        // The "WBTC" leg target of `convertTreasuryAsset`. The
-        // WETH leg uses `wethContract` and the VPFI leg uses `vpfiToken`;
-        // wrapped-BTC has no other home, so it is pinned here by
-        // governance (`ConfigFacet.setTreasuryWbtcAsset`). May point at
-        // cbBTC / another canonical wrapped-BTC on chains without WBTC.
-        // Zero ⇒ the convert function's WBTC leg is skipped (its share
-        // folds into the VPFI remainder) until governance configures it.
-        address treasuryWbtcAsset;
+        // The fully governance-configurable target allocation for
+        // `convertTreasuryAsset`: an ordered list of `(asset, bps)`
+        // entries whose BPS sum to exactly 10000. Set atomically via
+        // `ConfigFacet.setTreasuryConvertTargets` (ADMIN_ROLE → Timelock
+        // → governance) — that one setter expresses add / remove /
+        // reweight, and validates the sum-to-10000 invariant on every
+        // write. Empty ⇒ `convertTreasuryAsset` reverts until governance
+        // configures it (asset addresses are per-chain — there is no
+        // sensible compile-time default). The FINAL entry absorbs
+        // integer-division rounding.
+        TreasuryConvertTarget[] treasuryConvertTargets;
         // Unix timestamp of the last successful
         // `TreasuryFacet.convertTreasuryAsset`. Drives the
         // time-based leg of the eligibility gate. 0 ⇒ never converted.
@@ -2664,6 +2664,18 @@ library LibVaipakam {
         // for services, not a securities-style revenue share.
         mapping(uint256 => PayrollStream) payrollStreams;
         uint256 payrollStreamCount;
+    }
+
+    /// @dev One entry of the treasury-conversion target allocation
+    ///      (T-600). `convertTreasuryAsset` splits the input balance
+    ///      across the configured list pro-rata to `bps`; the BPS of
+    ///      all entries sum to exactly 10000. Fully governance-set —
+    ///      `ConfigFacet.setTreasuryConvertTargets` replaces the whole
+    ///      list atomically, so add / remove / reweight is one call and
+    ///      the sum invariant is never transiently broken.
+    struct TreasuryConvertTarget {
+        address asset; // the reserve asset this leg converts into
+        uint16 bps;    // its share of each conversion, in basis points
     }
 
     /// @dev Founder / contributor salary stream (T-600 `PayrollFacet`).
@@ -3252,21 +3264,6 @@ library LibVaipakam {
         return v == 0
             ? uint256(DEFAULT_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG)
             : uint256(v);
-    }
-
-    /// @dev T-600 — treasury-conversion target-allocation ETH leg, in BPS.
-    ///      `0 ⇒ TREASURY_CONVERT_ETH_BPS_DEFAULT` (40%).
-    function cfgTreasuryConvertEthBps() internal view returns (uint256) {
-        uint16 v = storageSlot().protocolCfg.treasuryConvertEthBps;
-        return v == 0 ? uint256(TREASURY_CONVERT_ETH_BPS_DEFAULT) : uint256(v);
-    }
-
-    /// @dev T-600 — treasury-conversion target-allocation WBTC leg, in BPS.
-    ///      `0 ⇒ TREASURY_CONVERT_WBTC_BPS_DEFAULT` (30%). The VPFI leg
-    ///      is the unstored remainder `10000 - eth - wbtc`.
-    function cfgTreasuryConvertWbtcBps() internal view returns (uint256) {
-        uint16 v = storageSlot().protocolCfg.treasuryConvertWbtcBps;
-        return v == 0 ? uint256(TREASURY_CONVERT_WBTC_BPS_DEFAULT) : uint256(v);
     }
 
     /// @dev T-600 — per-token numeraire-value (1e18) accumulation

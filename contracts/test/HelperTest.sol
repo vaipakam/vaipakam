@@ -796,7 +796,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](81);
+        selectors = new bytes4[](80);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -921,8 +921,7 @@ contract HelperTest {
         // T-600 — treasury-conversion knobs.
         selectors[77] = ConfigFacet.setTreasuryConvertTargets.selector;
         selectors[78] = ConfigFacet.setTreasuryConvertThresholds.selector;
-        selectors[79] = ConfigFacet.setTreasuryWbtcAsset.selector;
-        selectors[80] = ConfigFacet.getTreasuryConvertConfig.selector;
+        selectors[79] = ConfigFacet.getTreasuryConvertConfig.selector;
         return selectors;
     }
 

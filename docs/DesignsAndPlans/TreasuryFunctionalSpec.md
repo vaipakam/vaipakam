@@ -54,16 +54,18 @@ function reads `treasuryBalances` (clean), never raw `balanceOf`.
 ```solidity
 function convertTreasuryAsset(
     address tokenIn,
-    LibSwap.AdapterCall[] calldata ethCalls,
-    LibSwap.AdapterCall[] calldata wbtcCalls,
-    LibSwap.AdapterCall[] calldata vpfiCalls,
-    uint256 minOutEth, uint256 minOutWbtc, uint256 minOutVpfi
+    LibSwap.AdapterCall[][] calldata perTargetCalls,
+    uint256[] calldata minOuts
 ) external nonReentrant whenNotPaused onlyRole(ADMIN_ROLE);
 ```
 
 Converts the entire accumulated treasury balance of one input asset
-into the target allocation. One `tokenIn` per call — a keeper loops
-off-chain; each call is atomic and independently auditable.
+across the **configured target allocation** — the governance-set
+`s.treasuryConvertTargets` list of `(asset, bps)` entries (§4). One
+`tokenIn` per call — a keeper loops off-chain; each call is atomic and
+independently auditable. `perTargetCalls[i]` / `minOuts[i]` align
+positionally with target `i`, so both arrays must have exactly the
+configured target count.
 
 **Control flow (in order):**
 
@@ -71,11 +73,10 @@ off-chain; each call is atomic and independently auditable.
 2. `tokenIn != address(0)` else revert `InvalidAddress`.
 3. `balance = s.treasuryBalances[tokenIn]`; `balance != 0` else revert `ZeroAmount`.
 4. Eligibility gate (`_eligibleForConversion`) else revert `ConversionNotEligible` — see §3.1.
-5. Resolve targets: `weth = s.wethContract`, `wbtc = s.treasuryWbtcAsset`, `vpfi = s.vpfiToken`. `weth` and `vpfi` non-zero else revert `TreasuryConvertTargetUnset`. `wbtc == address(0)` is permitted — the wBTC leg is skipped and folds into the VPFI remainder.
-6. Split: `toEth = balance·ethBps/10000`, `toWbtc = balance·wbtcBps/10000` (0 if `wbtc` unset), `toVpfi = balance − toEth − toWbtc`. **VPFI is the remainder** — it absorbs integer-division rounding and any skipped wBTC leg.
-7. **CEI**: `treasuryBalances[tokenIn] = 0` and `treasuryLastConversionAt = block.timestamp` are written *before* any external swap.
-8. Settle each leg via `_convertLeg` (§3.2).
-9. Emit `TreasuryConverted(tokenIn, balance, toEth, toWbtc, toVpfi)`.
+5. `n = s.treasuryConvertTargets.length`; `n != 0` else revert `TreasuryConvertNoTargets`. `perTargetCalls.length == n` and `minOuts.length == n` else revert `TreasuryConvertArityMismatch(provided, n)`.
+6. **CEI**: `treasuryBalances[tokenIn] = 0` and `treasuryLastConversionAt = block.timestamp` are written *before* any external swap.
+7. For each target `i`: `amount = (i == n−1) ? balance − allocated : balance·targets[i].bps/10000`. The **final entry absorbs** integer-division rounding, so the legs always sum back to exactly `balance`. Settle via `_convertLeg` (§3.2).
+8. Emit `TreasuryConverted(tokenIn, balance, n)`.
 
 ### 3.1 Eligibility gate
 
@@ -100,31 +101,51 @@ governance action, not part of this function.
 ### 3.3 Errors / events
 
 Errors: `TreasuryNotDiamond`, `ZeroAmount`, `ConversionNotEligible`,
-`TreasuryConvertTargetUnset`, `TreasuryConvertSwapFailed(tokenOut)`,
-`InvalidAddress`. Event: `TreasuryConverted`.
+`TreasuryConvertNoTargets`, `TreasuryConvertArityMismatch(provided, expected)`,
+`TreasuryConvertSwapFailed(tokenOut)`, `InvalidAddress`.
+Event: `TreasuryConverted(tokenIn, amountIn, targetCount)`.
 
 ---
 
-## 4. Configuration knobs (`ConfigFacet`)
+## 4. Configuration (`ConfigFacet`)
 
-All `onlyRole(ADMIN_ROLE)` (Timelock post-handover). Stored on
-`ProtocolConfig`; a stored `0` resolves to the library default via the
-`cfg*` getters — so a fresh deploy keeps the documented defaults until
-governance overrides.
+All `onlyRole(ADMIN_ROLE)` (Timelock post-handover).
 
-| Knob | Setter | Default | Bound |
-| --- | --- | --- | --- |
-| ETH-leg BPS | `setTreasuryConvertTargets(ethBps, wbtcBps)` | 4000 (40%) | `eth + wbtc ≤ 10000` else `InvalidTreasuryConvertTargets` |
-| wBTC-leg BPS | (same setter) | 3000 (30%) | — |
-| VPFI-leg BPS | — (unstored remainder `10000 − eth − wbtc`) | 3000 (30%) | — |
-| USD threshold | `setTreasuryConvertThresholds(usd, days)` | `10_000e18` | — |
-| Max interval (days) | (same setter) | 30 | — |
-| wBTC target asset | `setTreasuryWbtcAsset(address)` | unset | `address(0)` allowed → wBTC leg disabled |
+### 4.1 Target allocation — `setTreasuryConvertTargets`
 
-View: `getTreasuryConvertConfig()` returns the effective
-`(ethBps, wbtcBps, vpfiBps, usdThreshold, maxIntervalDays, lastConversionAt, wbtcAsset)`.
-Events: `TreasuryConvertTargetsSet`, `TreasuryConvertThresholdsSet`,
-`TreasuryWbtcAssetSet`.
+```solidity
+function setTreasuryConvertTargets(LibVaipakam.TreasuryConvertTarget[] calldata targets)
+    external onlyRole(ADMIN_ROLE);   // TreasuryConvertTarget { address asset; uint16 bps; }
+```
+
+The convert target allocation is a **fully governance-configurable
+list** of `(asset, bps)` entries — there is no hardcoded ETH/wBTC/VPFI
+set and no compile-time default (asset addresses are per-chain). This
+**single atomic setter expresses add / remove / reweight** — the caller
+passes the complete desired list each time. Validated on **every**
+write, so the sum-to-10000 invariant can never be transiently broken:
+
+- 1 .. `MAX_TREASURY_CONVERT_TARGETS` (8) entries — else `InvalidTreasuryConvertTargets("empty"|"too-many")`.
+- no zero `asset` — else `…("zero-asset")`.
+- no duplicate `asset` — else `…("duplicate-asset")`.
+- the `bps` of all entries sum to exactly `10000` — else `…("bps-not-10000")`.
+
+List **order matters** — the final entry absorbs `convertTreasuryAsset`'s
+rounding dust. A fresh deploy has an empty list ⇒ `convertTreasuryAsset`
+reverts `TreasuryConvertNoTargets` until governance configures it.
+Recommended first list: `[(WETH, 4000), (wBTC, 3000), (VPFI, 3000)]`.
+
+### 4.2 Eligibility thresholds — `setTreasuryConvertThresholds`
+
+`setTreasuryConvertThresholds(uint256 usdThreshold, uint32 maxIntervalDays)`
+— stored on `ProtocolConfig`; a stored `0` resolves to the library
+default (`10_000e18` / `30`) via the `cfg*` getters.
+
+### 4.3 View
+
+`getTreasuryConvertConfig()` returns
+`(TreasuryConvertTarget[] targets, usdThreshold, maxIntervalDays, lastConversionAt)`.
+Events: `TreasuryConvertTargetsSet(count)`, `TreasuryConvertThresholdsSet`.
 
 ---
 
@@ -209,7 +230,7 @@ grant. Funded once by `TreasuryFacet.mintVPFI(walletAddress, amount)`.
 ## 8. Invariants for the auditor to confirm
 
 1. `convertTreasuryAsset` is inert (`TreasuryNotDiamond`) unless `s.treasury == address(this)`.
-2. After a conversion, `treasuryBalances[tokenIn]` is 0 and the three target balances sum (post-swap) to the converted value — VPFI absorbs rounding.
+2. After a conversion, `treasuryBalances[tokenIn]` is 0 and the per-target credited amounts sum back to exactly the converted balance — the final target entry absorbs rounding.
 3. A swap soft-failure reverts the whole call; no partial state, no lost funds.
 4. `withdrawSalary` can never pay more than `funded − withdrawn`; `withdrawn` is monotone.
 5. No code path links `recordTreasuryAccrual` / `convertTreasuryAsset` → `fundPayrollStream` / `setPayrollRate`.

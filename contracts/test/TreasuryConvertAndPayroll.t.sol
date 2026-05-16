@@ -6,7 +6,6 @@ import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {PayrollFacet} from "../src/facets/PayrollFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
-import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
@@ -44,22 +43,13 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
 
     // ─── Convert harness ─────────────────────────────────────────────────
 
-    /// @dev Wire the three convert targets + a 1:1 mock swap adapter at
-    ///      slot 0, and seed `tokenIn` treasury balance + the Diamond's
-    ///      physical balance. `tokenIn` is `mockERC20`.
+    /// @dev Wire a 1:1 mock swap adapter, the standard 3-entry target
+    ///      allocation (40/30/30), and seed `tokenIn` (= `mockERC20`)
+    ///      treasury balance + the Diamond's physical balance.
     function _wireConvert(uint256 treasuryAmt) internal {
         wethTok = address(new ERC20Mock("WETH", "WETH", 18));
         wbtcTok = address(new ERC20Mock("WBTC", "WBTC", 8));
         vpfiTok = address(new ERC20Mock("VPFI", "VPFI", 18));
-
-        TestMutatorFacet(address(diamond)).setWethContractRaw(wethTok);
-        vm.prank(owner);
-        ConfigFacet(address(diamond)).setTreasuryWbtcAsset(wbtcTok);
-        // Register the VPFI target. `setVPFIToken` does not validate the
-        // target's interface, so a plain ERC20Mock stands in fine — the
-        // convert function only swaps INTO it, never calls VPFI methods.
-        vm.prank(owner);
-        VPFITokenFacet(address(diamond)).setVPFIToken(vpfiTok);
 
         adapter = new MockSwapAdapter("mock");
         vm.prank(owner);
@@ -67,6 +57,8 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
         // SetupTest already registered an adapter at slot 0 — ours is
         // the last entry, whatever its index.
         adapterIdx = AdminFacet(address(diamond)).getSwapAdapters().length - 1;
+
+        _setTargets(wethTok, 4000, wbtcTok, 3000, vpfiTok, 3000);
 
         // Treasury holds `treasuryAmt` of mockERC20 — counter + physical.
         TestMutatorFacet(address(diamond)).setTreasuryBalanceRaw(mockERC20, treasuryAmt);
@@ -78,9 +70,34 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
         ERC20Mock(vpfiTok).mint(address(adapter), treasuryAmt);
     }
 
-    function _calls() internal view returns (LibSwap.AdapterCall[] memory c) {
-        c = new LibSwap.AdapterCall[](1);
-        c[0] = LibSwap.AdapterCall({adapterIdx: adapterIdx, data: bytes("")});
+    /// @dev Replace the convert target allocation with a 3-entry list.
+    function _setTargets(
+        address a0, uint16 b0, address a1, uint16 b1, address a2, uint16 b2
+    ) internal {
+        LibVaipakam.TreasuryConvertTarget[] memory t =
+            new LibVaipakam.TreasuryConvertTarget[](3);
+        t[0] = LibVaipakam.TreasuryConvertTarget({asset: a0, bps: b0});
+        t[1] = LibVaipakam.TreasuryConvertTarget({asset: a1, bps: b1});
+        t[2] = LibVaipakam.TreasuryConvertTarget({asset: a2, bps: b2});
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setTreasuryConvertTargets(t);
+    }
+
+    /// @dev `n` per-target try-lists, each a single call at `adapterIdx`.
+    function _perTargetCalls(uint256 n)
+        internal
+        view
+        returns (LibSwap.AdapterCall[][] memory pc)
+    {
+        pc = new LibSwap.AdapterCall[][](n);
+        for (uint256 i = 0; i < n; ++i) {
+            pc[i] = new LibSwap.AdapterCall[](1);
+            pc[i][0] = LibSwap.AdapterCall({adapterIdx: adapterIdx, data: bytes("")});
+        }
+    }
+
+    function _minOuts(uint256 n) internal pure returns (uint256[] memory m) {
+        m = new uint256[](n);
     }
 
     // ─── Convert — gate reverts (no swap needed) ─────────────────────────
@@ -90,7 +107,7 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
         vm.prank(owner);
         vm.expectRevert(TreasuryFacet.TreasuryNotDiamond.selector);
         TreasuryFacet(address(diamond)).convertTreasuryAsset(
-            mockERC20, _calls(), _calls(), _calls(), 0, 0, 0
+            mockERC20, _perTargetCalls(0), _minOuts(0)
         );
     }
 
@@ -99,17 +116,30 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
         vm.prank(owner);
         vm.expectRevert(TreasuryFacet.ZeroAmount.selector);
         TreasuryFacet(address(diamond)).convertTreasuryAsset(
-            mockERC20, _calls(), _calls(), _calls(), 0, 0, 0
+            mockERC20, _perTargetCalls(0), _minOuts(0)
         );
     }
 
-    function test_convert_targetUnset_reverts() public {
+    function test_convert_noTargets_reverts() public {
+        // Balance seeded + eligible, but no target allocation configured.
         TestMutatorFacet(address(diamond)).setTreasuryBalanceRaw(mockERC20, 10_000);
-        TestMutatorFacet(address(diamond)).setWethContractRaw(address(0));
         vm.prank(owner);
-        vm.expectRevert(TreasuryFacet.TreasuryConvertTargetUnset.selector);
+        vm.expectRevert(TreasuryFacet.TreasuryConvertNoTargets.selector);
         TreasuryFacet(address(diamond)).convertTreasuryAsset(
-            mockERC20, _calls(), _calls(), _calls(), 0, 0, 0
+            mockERC20, _perTargetCalls(0), _minOuts(0)
+        );
+    }
+
+    function test_convert_arityMismatch_reverts() public {
+        _wireConvert(10_000); // 3 targets configured
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                TreasuryFacet.TreasuryConvertArityMismatch.selector, 2, 3
+            )
+        );
+        TreasuryFacet(address(diamond)).convertTreasuryAsset(
+            mockERC20, _perTargetCalls(2), _minOuts(2)
         );
     }
 
@@ -120,32 +150,30 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
 
         vm.prank(owner);
         TreasuryFacet(address(diamond)).convertTreasuryAsset(
-            mockERC20, _calls(), _calls(), _calls(), 0, 0, 0
+            mockERC20, _perTargetCalls(3), _minOuts(3)
         );
 
-        // Default allocation 40/30/30: toEth 4000, toWbtc 3000, toVpfi remainder 3000.
+        // Allocation 40/30/30: 4000 WETH, 3000 wBTC, 3000 VPFI (remainder).
         assertEq(_treasuryBal(mockERC20), 0, "tokenIn balance zeroed");
         assertEq(_treasuryBal(wethTok), 4_000, "WETH leg credited");
-        assertEq(_treasuryBal(wbtcTok), 3_000, "WBTC leg credited");
+        assertEq(_treasuryBal(wbtcTok), 3_000, "wBTC leg credited");
         assertEq(_treasuryBal(vpfiTok), 3_000, "VPFI leg (remainder) credited");
-        // Each leg swapped 1:1 through the mock — 3 distinct legs.
         assertEq(adapter.callCount(), 3, "one swap per leg");
     }
 
-    function test_convert_skipLeg_whenTokenInIsEthTarget() public {
+    function test_convert_skipLeg_whenTokenInIsTarget() public {
         _wireConvert(10_000);
-        // Make the WETH target == tokenIn — the ETH leg must skip-credit
-        // (no self-swap), only WBTC + VPFI legs swap.
-        TestMutatorFacet(address(diamond)).setWethContractRaw(mockERC20);
+        // Re-point the first target at `tokenIn` itself — that leg must
+        // skip-credit (no self-swap); only the other two legs swap.
+        _setTargets(mockERC20, 4000, wbtcTok, 3000, vpfiTok, 3000);
 
         vm.prank(owner);
         TreasuryFacet(address(diamond)).convertTreasuryAsset(
-            mockERC20, _calls(), _calls(), _calls(), 0, 0, 0
+            mockERC20, _perTargetCalls(3), _minOuts(3)
         );
 
-        // ETH leg (4000) credited straight back to mockERC20; WBTC + VPFI swapped.
-        assertEq(_treasuryBal(mockERC20), 4_000, "ETH leg skip-credited to tokenIn");
-        assertEq(_treasuryBal(wbtcTok), 3_000, "WBTC leg credited");
+        assertEq(_treasuryBal(mockERC20), 4_000, "self-target leg skip-credited");
+        assertEq(_treasuryBal(wbtcTok), 3_000, "wBTC leg credited");
         assertEq(_treasuryBal(vpfiTok), 3_000, "VPFI leg credited");
         assertEq(adapter.callCount(), 2, "self-target leg skipped the swap");
     }
@@ -156,7 +184,7 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
         // stamps `treasuryLastConversionAt = now`.
         vm.prank(owner);
         TreasuryFacet(address(diamond)).convertTreasuryAsset(
-            mockERC20, _calls(), _calls(), _calls(), 0, 0, 0
+            mockERC20, _perTargetCalls(3), _minOuts(3)
         );
         // A fresh small balance, retried immediately — inside the 30-day
         // interval AND below the USD threshold ⇒ the gate rejects it.
@@ -165,7 +193,7 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
         vm.prank(owner);
         vm.expectRevert(TreasuryFacet.ConversionNotEligible.selector);
         TreasuryFacet(address(diamond)).convertTreasuryAsset(
-            mockERC20, _calls(), _calls(), _calls(), 0, 0, 0
+            mockERC20, _perTargetCalls(3), _minOuts(3)
         );
     }
 
@@ -180,11 +208,74 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
             )
         );
         TreasuryFacet(address(diamond)).convertTreasuryAsset(
-            mockERC20, _calls(), _calls(), _calls(), 0, 0, 0
+            mockERC20, _perTargetCalls(3), _minOuts(3)
         );
 
         // Whole call reverted — the CEI-zeroed input balance is rolled back.
         assertEq(_treasuryBal(mockERC20), 10_000, "input balance restored on revert");
+    }
+
+    // ─── Convert target-list validation ──────────────────────────────────
+
+    function test_setTreasuryConvertTargets_empty_reverts() public {
+        LibVaipakam.TreasuryConvertTarget[] memory t =
+            new LibVaipakam.TreasuryConvertTarget[](0);
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ConfigFacet.InvalidTreasuryConvertTargets.selector, "empty"
+            )
+        );
+        ConfigFacet(address(diamond)).setTreasuryConvertTargets(t);
+    }
+
+    function test_setTreasuryConvertTargets_bpsNot10000_reverts() public {
+        LibVaipakam.TreasuryConvertTarget[] memory t =
+            new LibVaipakam.TreasuryConvertTarget[](2);
+        t[0] = LibVaipakam.TreasuryConvertTarget({asset: makeAddr("a"), bps: 4000});
+        t[1] = LibVaipakam.TreasuryConvertTarget({asset: makeAddr("b"), bps: 5000});
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ConfigFacet.InvalidTreasuryConvertTargets.selector, "bps-not-10000"
+            )
+        );
+        ConfigFacet(address(diamond)).setTreasuryConvertTargets(t);
+    }
+
+    function test_setTreasuryConvertTargets_duplicate_reverts() public {
+        address dup = makeAddr("dup");
+        LibVaipakam.TreasuryConvertTarget[] memory t =
+            new LibVaipakam.TreasuryConvertTarget[](2);
+        t[0] = LibVaipakam.TreasuryConvertTarget({asset: dup, bps: 5000});
+        t[1] = LibVaipakam.TreasuryConvertTarget({asset: dup, bps: 5000});
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ConfigFacet.InvalidTreasuryConvertTargets.selector, "duplicate-asset"
+            )
+        );
+        ConfigFacet(address(diamond)).setTreasuryConvertTargets(t);
+    }
+
+    function test_setTreasuryConvertTargets_addRemoveReweight() public {
+        _wireConvert(10_000);
+        // Re-point to a different 2-entry allocation (a "remove + reweight")
+        // and confirm the convert function follows the new list.
+        LibVaipakam.TreasuryConvertTarget[] memory t =
+            new LibVaipakam.TreasuryConvertTarget[](2);
+        t[0] = LibVaipakam.TreasuryConvertTarget({asset: wethTok, bps: 7000});
+        t[1] = LibVaipakam.TreasuryConvertTarget({asset: vpfiTok, bps: 3000});
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setTreasuryConvertTargets(t);
+
+        vm.prank(owner);
+        TreasuryFacet(address(diamond)).convertTreasuryAsset(
+            mockERC20, _perTargetCalls(2), _minOuts(2)
+        );
+        assertEq(_treasuryBal(wethTok), 7_000, "reweighted WETH leg");
+        assertEq(_treasuryBal(vpfiTok), 3_000, "reweighted VPFI leg");
+        assertEq(_treasuryBal(wbtcTok), 0, "removed wBTC leg got nothing");
     }
 
     // ─── Payroll — create / fund ─────────────────────────────────────────

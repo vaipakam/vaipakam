@@ -1032,7 +1032,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](81);
+        s = new bytes4[](80);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -1171,8 +1171,7 @@ contract DeployDiamond is Script {
         // T-600 — treasury-conversion knobs.
         s[77] = ConfigFacet.setTreasuryConvertTargets.selector;
         s[78] = ConfigFacet.setTreasuryConvertThresholds.selector;
-        s[79] = ConfigFacet.setTreasuryWbtcAsset.selector;
-        s[80] = ConfigFacet.getTreasuryConvertConfig.selector;
+        s[79] = ConfigFacet.getTreasuryConvertConfig.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
