@@ -15,7 +15,7 @@
 
 ---
 
-- [ ] **T-074** `yetToPromote`: privacy policy to say that error or issues that may surface up during your usage of Vaipakam will be stored and recorded of troubleshooting purposes for not more than 90 days unless it is required by a law for any investigation purposes. some thing like that what do you say?
+- [ ] **T-074** `promotedToProjectCard`: privacy policy to say that error or issues that may surface up during your usage of Vaipakam will be stored and recorded of troubleshooting purposes for not more than 90 days unless it is required by a law for any investigation purposes. some thing like that what do you say? — Promoted to [Issue #27](https://github.com/vaipakam/vaipakam/issues/27); implemented on `chore/privacy-policy-and-housekeeping` (PR #26, Privacy Policy v2). Open follow-up: the deletion path (support request vs. a direct delete-data button against D1).
 
 Deletion of data in the server is through support. or delet data button should delete the corresponding user data in D1? I lean with delete user data in D1 directly, what do you say?
 
