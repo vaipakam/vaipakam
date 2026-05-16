@@ -595,7 +595,13 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         //     distribution path so the (scaled) residual is paid out.
         //   - not match at all → `snap.active` unchanged; same
         //     fall-through.
-        RiskFacet(address(this)).attemptInternalMatchAutoDispatch(loanId);
+        //
+        // EC-003 Phase 3 (#21) — `msg.sender` is threaded as the
+        // explicit `matcher`. `_claimAsLenderImpl` has already verified
+        // it owns the lender position NFT (EC-007 hoisted that check
+        // ahead of this call), so the lender who triggers their own
+        // claim-time rescue is the matcher and earns the 1% bonus.
+        RiskFacet(address(this)).attemptInternalMatchAutoDispatch(loanId, msg.sender);
         // EC-007 — a full match consumed the snapshot and cleared the
         // lender claim records. Signal the caller to return early: if it
         // fell through to the claim-record payout it would read a zeroed

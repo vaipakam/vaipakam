@@ -549,7 +549,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // candidate to begin with; the revert preserves the original
         // B.2 semantic ("don't dump into the external book mid-window")
         // for that defensive edge.
-        if (RiskFacet(address(this)).attemptInternalMatchAutoDispatch(loanId)) {
+        if (RiskFacet(address(this)).attemptInternalMatchAutoDispatch(loanId, msg.sender)) {
             return;
         }
 
@@ -944,7 +944,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
                 uint256 movedY,
                 uint256 incentiveX,
                 uint256 incentiveY
-            ) = _executeTwoWayMatch(loanIdA, loanIdB);
+            ) = _executeTwoWayMatch(loanIdA, loanIdB, msg.sender);
             emit InternalMatchExecuted(
                 loanIdA, loanIdB, 0,
                 msg.sender,
@@ -959,7 +959,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
                 uint256 incentiveX,
                 uint256 incentiveY,
                 uint256 incentiveZ
-            ) = _executeThreeWayMatch(loanIdA, loanIdB, loanIdC);
+            ) = _executeThreeWayMatch(loanIdA, loanIdB, loanIdC, msg.sender);
             emit InternalMatchExecuted(
                 loanIdA, loanIdB, loanIdC,
                 msg.sender,
@@ -977,7 +977,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     ///      Each loan whose principal hits zero transitions to
     ///      InternalMatched. Residuals stay Active for the next
     ///      block's matching attempt or external fallback.
-    function _executeThreeWayMatch(uint256 loanIdA, uint256 loanIdB, uint256 loanIdC)
+    function _executeThreeWayMatch(uint256 loanIdA, uint256 loanIdB, uint256 loanIdC, address matcher)
         private
         returns (
             uint256 movedX,
@@ -1009,11 +1009,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         incentiveZ = (movedZ * incentiveBps) / LibVaipakam.BASIS_POINTS;
 
         // Leg X: B's collateral (= A's principal asset) → A.lender + matcher.
-        _settleLeg(lb.borrower, la.principalAsset, la.lender, movedX, incentiveX, bFromDiamond);
+        _settleLeg(lb.borrower, la.principalAsset, la.lender, movedX, incentiveX, matcher, bFromDiamond);
         // Leg Y: C's collateral (= B's principal asset) → B.lender + matcher.
-        _settleLeg(lc.borrower, lb.principalAsset, lb.lender, movedY, incentiveY, cFromDiamond);
+        _settleLeg(lc.borrower, lb.principalAsset, lb.lender, movedY, incentiveY, matcher, cFromDiamond);
         // Leg Z: A's collateral (= C's principal asset) → C.lender + matcher.
-        _settleLeg(la.borrower, lc.principalAsset, lc.lender, movedZ, incentiveZ, aFromDiamond);
+        _settleLeg(la.borrower, lc.principalAsset, lc.lender, movedZ, incentiveZ, matcher, aFromDiamond);
 
         // State updates — each loan's principal cleared by its leg,
         // each borrower's collateral debited by the NEXT loan's leg.
@@ -1055,12 +1055,21 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     ///      Settling FallbackPending legs straight from Diamond
     ///      custody keeps the residual in the Diamond, where the
     ///      snapshot-driven claim distribution expects it.
+    /// @param matcher Beneficiary of the 1% per-leg incentive. The
+    ///        caller MUST pass the genuine matcher explicitly — NOT
+    ///        rely on `msg.sender`. On the auto-dispatch path the
+    ///        match body runs inside an `onlyDiamondInternal`
+    ///        cross-facet call, so `msg.sender` is `address(this)`
+    ///        (the Diamond); paying the incentive to `msg.sender`
+    ///        there would strand it on the Diamond instead of the
+    ///        keeper / lender who triggered settlement.
     function _settleLeg(
         address payingBorrower,
         address asset,
         address receivingLender,
         uint256 moved,
         uint256 incentive,
+        address matcher,
         bool fromDiamondCustody
     ) private {
         if (moved == 0) return;
@@ -1080,11 +1089,14 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             );
         }
         if (incentive > 0) {
+            // EC-007 custody routing × #21 matcher-recipient fix: pay
+            // the incentive to `matcher` (never `msg.sender` — see the
+            // @param note), sourced from wherever the collateral sits.
             if (fromDiamondCustody) {
-                IERC20(asset).safeTransfer(msg.sender, incentive);
+                IERC20(asset).safeTransfer(matcher, incentive);
             } else {
                 EscrowFactoryFacet(address(this)).escrowWithdrawERC20(
-                    payingBorrower, asset, msg.sender, incentive
+                    payingBorrower, asset, matcher, incentive
                 );
             }
         }
@@ -1097,7 +1109,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     ///      neither party touches the diamond's balance directly.
     ///      Loans whose principal clears transition to
     ///      `InternalMatched`; partial residuals stay `Active`.
-    function _executeTwoWayMatch(uint256 loanIdA, uint256 loanIdB)
+    function _executeTwoWayMatch(uint256 loanIdA, uint256 loanIdB, address matcher)
         private
         returns (uint256 movedX, uint256 movedY, uint256 incentiveX, uint256 incentiveY)
     {
@@ -1124,9 +1136,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         incentiveY = (movedY * incentiveBps) / LibVaipakam.BASIS_POINTS;
 
         // Leg X — B's collateral (= A's principal asset) → A.lender + matcher.
-        _settleLeg(lb.borrower, la.principalAsset, la.lender, movedX, incentiveX, bFromDiamond);
+        _settleLeg(lb.borrower, la.principalAsset, la.lender, movedX, incentiveX, matcher, bFromDiamond);
         // Leg Y — A's collateral (= B's principal asset) → B.lender + matcher.
-        _settleLeg(la.borrower, lb.principalAsset, lb.lender, movedY, incentiveY, aFromDiamond);
+        _settleLeg(la.borrower, lb.principalAsset, lb.lender, movedY, incentiveY, matcher, aFromDiamond);
 
         // State updates — debt cleared by the gross moved amount
         // (borrower forfeits the full amount; the incentive % they
@@ -1316,10 +1328,19 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     ///          priceability + Active-leg LTV-floor) — all already
     ///          filtered by `hasInternalMatchCandidate`.
     ///
-    ///      The 1% matcher bonus is paid to `msg.sender` of the
-    ///      dispatching call (via `_settleLeg`'s `msg.sender`
-    ///      reference), preserving the keeper-incentive shape.
-    function attemptInternalMatchAutoDispatch(uint256 loanId)
+    ///      The 1% matcher bonus is paid to `matcher` — which the
+    ///      outer entry-point MUST pass as its own `msg.sender`. It
+    ///      cannot be derived from `msg.sender` here: this function
+    ///      runs inside an `onlyDiamondInternal` cross-facet call, so
+    ///      `msg.sender` is `address(this)` (the Diamond). Threading
+    ///      the beneficiary explicitly keeps the incentive flowing to
+    ///      the keeper / lender who triggered settlement instead of
+    ///      stranding it on the Diamond.
+    /// @param loanId  The loan being liquidated / claimed.
+    /// @param matcher The 1%-per-leg incentive beneficiary — the
+    ///        `msg.sender` of the outer `triggerLiquidation` /
+    ///        `triggerDefault` / `claimAsLender*` call.
+    function attemptInternalMatchAutoDispatch(uint256 loanId, address matcher)
         external
         onlyDiamondInternal
         returns (bool dispatched)
@@ -1345,11 +1366,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             uint256 movedY,
             uint256 incentiveX,
             uint256 incentiveY
-        ) = _executeTwoWayMatch(loanId, candidateId);
+        ) = _executeTwoWayMatch(loanId, candidateId, matcher);
 
         emit InternalMatchExecuted(
             loanId, candidateId, 0,
-            msg.sender,
+            matcher,
             movedX, movedY, 0,
             incentiveX, incentiveY, 0
         );
