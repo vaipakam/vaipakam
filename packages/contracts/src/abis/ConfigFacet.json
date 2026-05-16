@@ -1532,7 +1532,7 @@
   },
   {
     "type": "function",
-    "name": "setTreasuryConvertTargetMix",
+    "name": "setTreasuryConvertTargets",
     "inputs": [
       {
         "name": "ethBps",
@@ -2282,7 +2282,7 @@
   },
   {
     "type": "event",
-    "name": "TreasuryConvertTargetMixSet",
+    "name": "TreasuryConvertTargetsSet",
     "inputs": [
       {
         "name": "ethBps",
@@ -2691,7 +2691,7 @@
   },
   {
     "type": "error",
-    "name": "InvalidTreasuryConvertMix",
+    "name": "InvalidTreasuryConvertTargets",
     "inputs": [
       {
         "name": "ethBps",

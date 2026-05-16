@@ -84,12 +84,12 @@ income path.
 **What it adds, functionally:**
 
 - **Treasury conversion** — an admin (later timelock / governance) can
-  convert one accumulated fee asset into the protocol's target mix of
+  convert one accumulated fee asset into the protocol's target allocation of
   ETH / wrapped-BTC / VPFI in a single call. The swap routes through the
   existing liquidation aggregator infrastructure; output stays inside
   the protocol's own custody. An eligibility gate (a value threshold OR
   a max interval) stops both dust-sized conversions and treasury
-  stagnation. Target mix and thresholds are governance knobs.
+  stagnation. Target allocation and thresholds are governance knobs.
 - **Founder salary stream** — a new payroll facet pays a founder (or any
   contributor) a continuous, per-second salary from the treasury. The
   rate is set by a governance budget decision and is revisable; the

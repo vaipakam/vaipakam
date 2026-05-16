@@ -884,7 +884,7 @@ contract DeployDiamond is Script {
         s[0] = TreasuryFacet.claimTreasuryFees.selector;
         s[1] = TreasuryFacet.getTreasuryBalance.selector;
         s[2] = TreasuryFacet.mintVPFI.selector;
-        s[3] = TreasuryFacet.convertTreasuryToTargetMix.selector;
+        s[3] = TreasuryFacet.convertTreasuryAsset.selector;
     }
 
     function _getPayrollSelectors() internal pure returns (bytes4[] memory s) {
@@ -1169,7 +1169,7 @@ contract DeployDiamond is Script {
         s[75] = ConfigFacet.setInternalMatchConfig.selector;
         s[76] = ConfigFacet.getInternalMatchConfigBundle.selector;
         // T-600 — treasury-conversion knobs.
-        s[77] = ConfigFacet.setTreasuryConvertTargetMix.selector;
+        s[77] = ConfigFacet.setTreasuryConvertTargets.selector;
         s[78] = ConfigFacet.setTreasuryConvertThresholds.selector;
         s[79] = ConfigFacet.setTreasuryWbtcAsset.selector;
         s[80] = ConfigFacet.getTreasuryConvertConfig.selector;

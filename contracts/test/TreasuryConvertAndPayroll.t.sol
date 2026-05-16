@@ -17,8 +17,8 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 
 /**
  * @title TreasuryConvertAndPayroll.t.sol
- * @notice T-600 — coverage for `TreasuryFacet.convertTreasuryToTargetMix`
- *         (convert accumulated fees to the ETH/wBTC/VPFI target mix) and
+ * @notice T-600 — coverage for `TreasuryFacet.convertTreasuryAsset`
+ *         (convert accumulated fees to the ETH/wBTC/VPFI target allocation) and
  *         the `PayrollFacet` founder-salary streams.
  */
 contract TreasuryConvertAndPayrollTest is SetupTest {
@@ -89,7 +89,7 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
         TestMutatorFacet(address(diamond)).setTreasuryAddress(makeAddr("extEOA"));
         vm.prank(owner);
         vm.expectRevert(TreasuryFacet.TreasuryNotDiamond.selector);
-        TreasuryFacet(address(diamond)).convertTreasuryToTargetMix(
+        TreasuryFacet(address(diamond)).convertTreasuryAsset(
             mockERC20, _calls(), _calls(), _calls(), 0, 0, 0
         );
     }
@@ -98,7 +98,7 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
         // treasury == diamond (SetupTest), but no accrued balance.
         vm.prank(owner);
         vm.expectRevert(TreasuryFacet.ZeroAmount.selector);
-        TreasuryFacet(address(diamond)).convertTreasuryToTargetMix(
+        TreasuryFacet(address(diamond)).convertTreasuryAsset(
             mockERC20, _calls(), _calls(), _calls(), 0, 0, 0
         );
     }
@@ -108,7 +108,7 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
         TestMutatorFacet(address(diamond)).setWethContractRaw(address(0));
         vm.prank(owner);
         vm.expectRevert(TreasuryFacet.TreasuryConvertTargetUnset.selector);
-        TreasuryFacet(address(diamond)).convertTreasuryToTargetMix(
+        TreasuryFacet(address(diamond)).convertTreasuryAsset(
             mockERC20, _calls(), _calls(), _calls(), 0, 0, 0
         );
     }
@@ -119,11 +119,11 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
         _wireConvert(10_000);
 
         vm.prank(owner);
-        TreasuryFacet(address(diamond)).convertTreasuryToTargetMix(
+        TreasuryFacet(address(diamond)).convertTreasuryAsset(
             mockERC20, _calls(), _calls(), _calls(), 0, 0, 0
         );
 
-        // Default mix 40/30/30: toEth 4000, toWbtc 3000, toVpfi remainder 3000.
+        // Default allocation 40/30/30: toEth 4000, toWbtc 3000, toVpfi remainder 3000.
         assertEq(_treasuryBal(mockERC20), 0, "tokenIn balance zeroed");
         assertEq(_treasuryBal(wethTok), 4_000, "WETH leg credited");
         assertEq(_treasuryBal(wbtcTok), 3_000, "WBTC leg credited");
@@ -139,7 +139,7 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
         TestMutatorFacet(address(diamond)).setWethContractRaw(mockERC20);
 
         vm.prank(owner);
-        TreasuryFacet(address(diamond)).convertTreasuryToTargetMix(
+        TreasuryFacet(address(diamond)).convertTreasuryAsset(
             mockERC20, _calls(), _calls(), _calls(), 0, 0, 0
         );
 
@@ -155,7 +155,7 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
         // First conversion succeeds (time-leg: never converted) and
         // stamps `treasuryLastConversionAt = now`.
         vm.prank(owner);
-        TreasuryFacet(address(diamond)).convertTreasuryToTargetMix(
+        TreasuryFacet(address(diamond)).convertTreasuryAsset(
             mockERC20, _calls(), _calls(), _calls(), 0, 0, 0
         );
         // A fresh small balance, retried immediately — inside the 30-day
@@ -164,7 +164,7 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
         ERC20Mock(mockERC20).mint(address(diamond), 100);
         vm.prank(owner);
         vm.expectRevert(TreasuryFacet.ConversionNotEligible.selector);
-        TreasuryFacet(address(diamond)).convertTreasuryToTargetMix(
+        TreasuryFacet(address(diamond)).convertTreasuryAsset(
             mockERC20, _calls(), _calls(), _calls(), 0, 0, 0
         );
     }
@@ -179,7 +179,7 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
                 TreasuryFacet.TreasuryConvertSwapFailed.selector, wethTok
             )
         );
-        TreasuryFacet(address(diamond)).convertTreasuryToTargetMix(
+        TreasuryFacet(address(diamond)).convertTreasuryAsset(
             mockERC20, _calls(), _calls(), _calls(), 0, 0, 0
         );
 

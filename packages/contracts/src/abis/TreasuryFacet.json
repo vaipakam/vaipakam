@@ -19,7 +19,7 @@
   },
   {
     "type": "function",
-    "name": "convertTreasuryToTargetMix",
+    "name": "convertTreasuryAsset",
     "inputs": [
       {
         "name": "tokenIn",

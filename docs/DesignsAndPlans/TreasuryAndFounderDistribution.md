@@ -17,7 +17,7 @@ contracts engineer who will eventually implement T-056.
 This document captures the proposed design for two coupled questions:
 
 1. **How does the protocol convert accumulated operating fees into a
-   stable target asset mix?**
+   stable target asset allocation?**
 2. **How do founders capture protocol value?**
 
 The original sketch (T-056 first draft) was: convert treasury tokens
@@ -47,7 +47,7 @@ and it carries dramatically lower legal / operational risk than the
 original sketch.
 
 The design has open questions — most notably the exact ratio in the
-target asset mix, the conversion thresholds, and the founder
+target asset allocation, the conversion thresholds, and the founder
 allocation percentage. Those need decisions before implementation.
 
 ---
@@ -295,7 +295,7 @@ A new admin-callable function on a TreasuryFacet (or extending
 EscrowFactoryFacet, depending on size):
 
 ```solidity
-function convertTreasuryToTargetMix(
+function convertTreasuryAsset(
     address[] calldata tokensIn,
     bytes[]   calldata aggregatorCallData,
     uint256[] calldata minOutEth,
@@ -309,7 +309,7 @@ function convertTreasuryToTargetMix(
   per-aggregator adapter facets that landed in Phase 7a).
 - **Slippage-bounded** via per-token `minOut` arguments.
 - **Output split** into ETH / WBTC / VPFI per a stored ratio
-  (`s.treasuryTargetMixBps[]`, three values summing to 10000 BPS).
+  (`s.treasuryConvertTargetsBps[]`, three values summing to 10000 BPS).
 - **Eligibility gate**: callable only when EITHER condition holds:
   - Accumulated USD-equivalent of any input token >
     `s.treasuryConvertUsdThreshold` (e.g. $10,000 default, knob).
@@ -380,7 +380,7 @@ VPFI-holder returns.
 
 | Storage slot | Type | Purpose | Setter |
 |---|---|---|---|
-| `s.treasuryTargetMixBps[]` | `uint16[3]` | ETH / WBTC / VPFI ratios in BPS, summing to 10000. | `setTreasuryTargetMixBps(uint16[3])`, ADMIN_ROLE. |
+| `s.treasuryConvertTargetsBps[]` | `uint16[3]` | ETH / WBTC / VPFI ratios in BPS, summing to 10000. | `setTreasuryConvertTargets(uint16[3])`, ADMIN_ROLE. |
 | `s.treasuryConvertUsdThreshold` | `uint256` | Per-token USD-equivalent threshold for triggering conversion. | `setTreasuryConvertUsdThreshold(uint256)`, ADMIN_ROLE. |
 | `s.treasuryConvertMaxIntervalDays` | `uint256` | Max days between conversions, regardless of balance. | `setTreasuryConvertMaxIntervalDays(uint256)`, ADMIN_ROLE. |
 | `s.treasuryLastConversionAt` | `uint64` | Timestamp of the last successful conversion. Maintained by the convert function. | (internal) |
@@ -393,7 +393,7 @@ can surface them.
 Pseudocode:
 
 ```
-function convertTreasuryToTargetMix(
+function convertTreasuryAsset(
     address[] tokensIn,
     bytes[] aggregatorCallData,
     uint256[] minOutEth,
@@ -409,9 +409,9 @@ function convertTreasuryToTargetMix(
         uint256 balance = treasuryBalances[token];
         require(balance > 0, "nothing to convert");
 
-        // Split per target mix:
-        uint256 toEth   = balance * targetMixBps[0] / 10000;
-        uint256 toWbtc  = balance * targetMixBps[1] / 10000;
+        // Split per target allocation:
+        uint256 toEth   = balance * targetBps[0] / 10000;
+        uint256 toWbtc  = balance * targetBps[1] / 10000;
         uint256 toVpfi  = balance - toEth - toWbtc;  // remainder
 
         // Three swaps via aggregator:
@@ -505,7 +505,7 @@ The following need explicit decisions before implementation:
    slightly opinionated UX), Hedgey Finance (cleanly designed,
    newer), custom (full control, audit cost). Recommend
    evaluating Sablier first.
-4. **Target asset mix** (ETH / WBTC / VPFI ratios). Subject to
+4. **Target asset allocation** (ETH / WBTC / VPFI ratios). Subject to
    tokenomics document; not yet specified. Proposed default 40 /
    30 / 30 BPS for Phase 1.
 5. **Conversion thresholds**:
@@ -572,7 +572,7 @@ The following need explicit decisions before implementation:
 - **Aggregator (1inch / 0x)**: a routing protocol that finds the
   best price across many DEXs for a given swap.
 - **BPS (basis points)**: 1/10000 = 0.01%. Used for the target
-  mix ratios and slippage tolerances.
+  allocation ratios and slippage tolerances.
 - **Genesis allocation**: the initial token distribution at TGE,
   before any user activity. Founder allocations are part of this.
 - **Realization event**: a tax event where income is recognized.
@@ -605,7 +605,7 @@ they're made.
 - **2026-05-16** (T-600): founder-compensation decisions locked
   with the (solo) founder and the contract layer implemented. The
   three-layer income model + the founder **salary stream**
-  (`PayrollFacet`) + the `convertTreasuryToTargetMix` function
+  (`PayrollFacet`) + the `convertTreasuryAsset` function
   shipped on branch `feat/t600-treasury-founder-comp`. See §12 for
   the as-built record. Securities-lawyer sign-off (§6) is still
   required before the Track-2 deploy/wiring steps.
@@ -644,14 +644,14 @@ reverts to the founder.
 
 ### 12.2 Treasury conversion — as built
 
-`TreasuryFacet.convertTreasuryToTargetMix(tokenIn, ethCalls,
+`TreasuryFacet.convertTreasuryAsset(tokenIn, ethCalls,
 wbtcCalls, vpfiCalls, minOutEth, minOutWbtc, minOutVpfi)` —
 ADMIN_ROLE (Timelock post-handover). One `tokenIn` per call (a
 keeper loops off-chain); each leg routes through
 `LibSwap.swapWithFailover` with sentinel `loanId = 0`; output
 returns to the Diamond, re-credited into `treasuryBalances`. Target
-mix + thresholds are governance knobs (`ConfigFacet`
-`setTreasuryConvertTargetMix` / `setTreasuryConvertThresholds` /
+allocation + thresholds are governance knobs (`ConfigFacet`
+`setTreasuryConvertTargets` / `setTreasuryConvertThresholds` /
 `setTreasuryWbtcAsset`; defaults 40/30/30, $10k, 30 days). The wBTC
 leg folds into the VPFI remainder when `treasuryWbtcAsset` is unset.
 
@@ -678,7 +678,7 @@ A Diamond-resident per-second accrual:
 **The load-bearing legal guarantee**: `withdrawable` is clamped to
 `funded`, so the stream dries up unless governance deliberately tops
 it up — a salary, not a perpetual claim. There is **no code path**
-from a fee accrual or from `convertTreasuryToTargetMix` into
+from a fee accrual or from `convertTreasuryAsset` into
 `fundPayrollStream` / `setPayrollRate`. A regression test
 (`test_treasuryAccrual_doesNotFundStream`) asserts this.
 
@@ -693,7 +693,7 @@ from a fee accrual or from `convertTreasuryToTargetMix` into
 3. **Vester contract** — a non-upgradeable `VaipakamVestingWallet`
    wrapping OZ `VestingWalletCliff` (chosen over Sablier — extra
    dependency / audit surface — and over a custom design).
-4. **Target asset mix** — default 40 ETH / 30 wBTC / 30 VPFI BPS
+4. **Target asset allocation** — default 40 ETH / 30 wBTC / 30 VPFI BPS
    (governance-tunable). Per-cycle distribution split (§4.5) stays
    deferred to governance.
 5. **Conversion thresholds** — default $10k / 30 days, per-chain

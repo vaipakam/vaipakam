@@ -50,7 +50,7 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     /// @custom:event-category state-change/escrow-mutation
     event VPFIMinted(address indexed to, uint256 amount);
 
-    /// @notice Emitted on a successful `convertTreasuryToTargetMix`.
+    /// @notice Emitted on a successful `convertTreasuryAsset`.
     /// @param tokenIn The input asset whose treasury balance was converted.
     /// @param amountIn The full input balance consumed.
     /// @param toEth Input amount routed to the WETH leg.
@@ -69,7 +69,7 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     // from IVaipakamErrors).
     error ZeroAmount();
     error VPFITokenNotRegistered();
-    /// @notice `convertTreasuryToTargetMix` requires Diamond-as-treasury
+    /// @notice `convertTreasuryAsset` requires Diamond-as-treasury
     ///         mode (`s.treasury == address(this)`) — only then does
     ///         `treasuryBalances` track convertible funds.
     error TreasuryNotDiamond();
@@ -176,7 +176,7 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
 
     /**
      * @notice Convert one accumulated treasury asset into the governance
-     *         target mix (WETH / wrapped-BTC / VPFI).
+     *         target allocation (WETH / wrapped-BTC / VPFI).
      * @dev T-600. Legal-safe path: protocol-internal asset management —
      *      every output stays inside the Diamond (`recipient =
      *      address(this)`), credited back into `treasuryBalances`. There
@@ -208,7 +208,7 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
      * @param minOutWbtc Slippage floor for the wBTC leg.
      * @param minOutVpfi Slippage floor for the VPFI leg.
      */
-    function convertTreasuryToTargetMix(
+    function convertTreasuryAsset(
         address tokenIn,
         LibSwap.AdapterCall[] calldata ethCalls,
         LibSwap.AdapterCall[] calldata wbtcCalls,

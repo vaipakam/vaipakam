@@ -546,7 +546,7 @@ contract HelperTest {
         selectors[0] = TreasuryFacet.claimTreasuryFees.selector;
         selectors[1] = TreasuryFacet.getTreasuryBalance.selector;
         selectors[2] = TreasuryFacet.mintVPFI.selector;
-        selectors[3] = TreasuryFacet.convertTreasuryToTargetMix.selector;
+        selectors[3] = TreasuryFacet.convertTreasuryAsset.selector;
         return selectors;
     }
 
@@ -919,7 +919,7 @@ contract HelperTest {
         selectors[75] = ConfigFacet.setInternalMatchConfig.selector;
         selectors[76] = ConfigFacet.getInternalMatchConfigBundle.selector;
         // T-600 — treasury-conversion knobs.
-        selectors[77] = ConfigFacet.setTreasuryConvertTargetMix.selector;
+        selectors[77] = ConfigFacet.setTreasuryConvertTargets.selector;
         selectors[78] = ConfigFacet.setTreasuryConvertThresholds.selector;
         selectors[79] = ConfigFacet.setTreasuryWbtcAsset.selector;
         selectors[80] = ConfigFacet.getTreasuryConvertConfig.selector;

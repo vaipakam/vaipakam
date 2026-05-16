@@ -48,9 +48,9 @@ contract ConfigFacet is DiamondAccessControl {
     error InvalidLiquidityTier(uint8 provided);
     error PaaListInvalid(string reason);
     // ── Treasury conversion (T-600) ─────────────────────────────────────
-    /// @notice ETH + wBTC target-mix BPS exceed 10000 (the VPFI leg is the
+    /// @notice ETH + wBTC target-allocation BPS exceed 10000 (the VPFI leg is the
     ///         non-negative remainder, so the two stored legs must sum ≤ 100%).
-    error InvalidTreasuryConvertMix(uint256 ethBps, uint256 wbtcBps);
+    error InvalidTreasuryConvertTargets(uint256 ethBps, uint256 wbtcBps);
 
     /// ─── Events ─────────────────────────────────────────────────────
     /// @custom:event-category informational/config
@@ -191,9 +191,9 @@ contract ConfigFacet is DiamondAccessControl {
 
     // ── Treasury conversion (T-600) knobs ───────────────────────────────
 
-    /// @notice Emitted when the treasury-conversion target mix is rotated.
+    /// @notice Emitted when the treasury-conversion target allocation is rotated.
     /// @custom:event-category informational/config
-    event TreasuryConvertTargetMixSet(uint16 ethBps, uint16 wbtcBps);
+    event TreasuryConvertTargetsSet(uint16 ethBps, uint16 wbtcBps);
     /// @notice Emitted when the treasury-conversion eligibility thresholds change.
     /// @custom:event-category informational/config
     event TreasuryConvertThresholdsSet(uint256 usdThreshold, uint32 maxIntervalDays);
@@ -202,7 +202,7 @@ contract ConfigFacet is DiamondAccessControl {
     event TreasuryWbtcAssetSet(address wbtcAsset);
 
     /**
-     * @notice Set the treasury-conversion target asset mix.
+     * @notice Set the treasury-conversion target asset allocation.
      * @dev ADMIN_ROLE-only (Timelock post-handover). The VPFI leg is the
      *      implicit remainder `10000 - ethBps - wbtcBps`, so the two
      *      stored legs must sum to ≤ 10000. Pass `0` for either leg to
@@ -210,17 +210,17 @@ contract ConfigFacet is DiamondAccessControl {
      * @param ethBps Target WETH share, BPS. 0 ⇒ default 4000.
      * @param wbtcBps Target wrapped-BTC share, BPS. 0 ⇒ default 3000.
      */
-    function setTreasuryConvertTargetMix(uint16 ethBps, uint16 wbtcBps)
+    function setTreasuryConvertTargets(uint16 ethBps, uint16 wbtcBps)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
         if (uint256(ethBps) + uint256(wbtcBps) > LibVaipakam.BASIS_POINTS) {
-            revert InvalidTreasuryConvertMix(ethBps, wbtcBps);
+            revert InvalidTreasuryConvertTargets(ethBps, wbtcBps);
         }
         LibVaipakam.ProtocolConfig storage c = LibVaipakam.storageSlot().protocolCfg;
         c.treasuryConvertEthBps = ethBps;
         c.treasuryConvertWbtcBps = wbtcBps;
-        emit TreasuryConvertTargetMixSet(ethBps, wbtcBps);
+        emit TreasuryConvertTargetsSet(ethBps, wbtcBps);
     }
 
     /**
@@ -244,7 +244,7 @@ contract ConfigFacet is DiamondAccessControl {
     }
 
     /**
-     * @notice Pin the wrapped-BTC target of the treasury-conversion mix.
+     * @notice Pin the wrapped-BTC target of the treasury-conversion targets.
      * @dev ADMIN_ROLE-only. May be a chain's canonical WBTC, cbBTC, or
      *      another wrapped-BTC. `address(0)` is permitted and meaningful:
      *      it disables the wBTC leg (its share folds into the VPFI

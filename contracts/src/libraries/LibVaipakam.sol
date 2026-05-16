@@ -175,7 +175,7 @@ library LibVaipakam {
     uint16 constant MIN_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG = 0;           // governance can zero the bot incentive
     uint16 constant MAX_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG = 300;         // 3% per leg ceiling
     // ── Treasury-conversion (T-600) governance defaults ────────────────
-    // Target asset-mix for `TreasuryFacet.convertTreasuryToTargetMix`.
+    // Target asset-allocation for `TreasuryFacet.convertTreasuryAsset`.
     // ETH + WBTC BPS are stored; the VPFI BPS is the unstored remainder
     // `10000 - eth - wbtc`. 0 ⇒ these defaults (40% ETH / 30% WBTC /
     // 30% VPFI). See docs/DesignsAndPlans/TreasuryAndFounderDistribution.md.
@@ -947,11 +947,11 @@ library LibVaipakam {
         // 5–7.7% external-liquidation discount borrowers would
         // otherwise pay. `0` ⇒ DEFAULT_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG.
         uint16 internalMatchIncentivePerLegBps;
-        // ── Treasury-conversion (T-600) — convert-to-target-mix knobs ──
-        // Target asset-mix BPS for `TreasuryFacet.convertTreasuryToTargetMix`.
+        // ── Treasury-conversion (T-600) — convert-to-target-allocation knobs ──
+        // Target asset-allocation BPS for `TreasuryFacet.convertTreasuryAsset`.
         // The VPFI BPS is the unstored remainder `10000 - eth - wbtc`.
         // Each `0 ⇒ TREASURY_CONVERT_{ETH,WBTC}_BPS_DEFAULT` (4000 /
-        // 3000 ⇒ 40/30/30). Setter (`ConfigFacet.setTreasuryConvertTargetMix`)
+        // 3000 ⇒ 40/30/30). Setter (`ConfigFacet.setTreasuryConvertTargets`)
         // enforces `eth + wbtc <= 10000`.
         uint16 treasuryConvertEthBps;  // 0 ⇒ 4000
         uint16 treasuryConvertWbtcBps; // 0 ⇒ 3000
@@ -2642,7 +2642,7 @@ library LibVaipakam {
         mapping(address => mapping(address => uint256[])) assetPairActiveLoanIds;
         mapping(address => mapping(address => mapping(uint256 => uint256))) assetPairActiveLoanIdsPos;
         // ── Treasury conversion (T-600) — config + runtime state ───────
-        // The "WBTC" leg target of `convertTreasuryToTargetMix`. The
+        // The "WBTC" leg target of `convertTreasuryAsset`. The
         // WETH leg uses `wethContract` and the VPFI leg uses `vpfiToken`;
         // wrapped-BTC has no other home, so it is pinned here by
         // governance (`ConfigFacet.setTreasuryWbtcAsset`). May point at
@@ -2651,7 +2651,7 @@ library LibVaipakam {
         // folds into the VPFI remainder) until governance configures it.
         address treasuryWbtcAsset;
         // Unix timestamp of the last successful
-        // `TreasuryFacet.convertTreasuryToTargetMix`. Drives the
+        // `TreasuryFacet.convertTreasuryAsset`. Drives the
         // time-based leg of the eligibility gate. 0 ⇒ never converted.
         uint64 treasuryLastConversionAt;
         // ── Founder / contributor salary streams (T-600 PayrollFacet) ──
@@ -3254,14 +3254,14 @@ library LibVaipakam {
             : uint256(v);
     }
 
-    /// @dev T-600 — treasury-conversion target-mix ETH leg, in BPS.
+    /// @dev T-600 — treasury-conversion target-allocation ETH leg, in BPS.
     ///      `0 ⇒ TREASURY_CONVERT_ETH_BPS_DEFAULT` (40%).
     function cfgTreasuryConvertEthBps() internal view returns (uint256) {
         uint16 v = storageSlot().protocolCfg.treasuryConvertEthBps;
         return v == 0 ? uint256(TREASURY_CONVERT_ETH_BPS_DEFAULT) : uint256(v);
     }
 
-    /// @dev T-600 — treasury-conversion target-mix WBTC leg, in BPS.
+    /// @dev T-600 — treasury-conversion target-allocation WBTC leg, in BPS.
     ///      `0 ⇒ TREASURY_CONVERT_WBTC_BPS_DEFAULT` (30%). The VPFI leg
     ///      is the unstored remainder `10000 - eth - wbtc`.
     function cfgTreasuryConvertWbtcBps() internal view returns (uint256) {
