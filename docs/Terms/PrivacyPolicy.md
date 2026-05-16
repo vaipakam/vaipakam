@@ -25,12 +25,11 @@ NOT send your IP, user-agent, or browsing history.
 **Server-side error capture.** Every UI error (e.g. a transaction
 reverts, an oracle read fails) is recorded server-side at a
 Cloudflare Worker endpoint with a per-event UUID. The record
-carries: the redacted wallet (`0x…abcd`), error type / name /
-selector, which screen / flow / step you were in, your chain id,
-interface locale, theme, viewport size, and the app version. It
-also keeps a short slice of your journey log around the error —
-up to 5 entries before and 5 after, each just a timestamp and the
-screen or step you were in. Not recorded: full wallet address,
+carries: the redacted wallet (`0x…abcd`), the error type / name /
+selector and the technical error message (truncated, and free of
+anything you typed), which screen / flow / step you were in, your
+chain id, interface locale, theme, viewport size, and the app
+version. Not recorded: full wallet address,
 browser user-agent string, IP address (beyond transient
 rate-limiting), localStorage contents, cookies, or any free-form
 text you typed. The same UUID surfaces in any GitHub issue you
@@ -105,9 +104,10 @@ beyond what these tools inherently handle.
 ## Data retention
 
 - Journey-log telemetry: kept in your browser's local storage. A
-  short slice is uploaded only when an error occurs (see
-  "Server-side error capture") or when you explicitly attach it to
-  a support report.
+  slice leaves your browser only when you explicitly attach it to a
+  support report. (Separately, a single error record — not a
+  journey-log slice — is sent server-side on each error; see
+  "Server-side error capture".)
 - Server-side error records: pruned 90 days after capture.
 - Consent choice: kept in your browser's local storage indefinitely
   until you revoke or clear.

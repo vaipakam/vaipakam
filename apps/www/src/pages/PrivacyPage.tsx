@@ -64,14 +64,12 @@ export default function PrivacyPage() {
             (e.g. a transaction reverts, an oracle read fails) is
             recorded server-side at a Cloudflare Worker endpoint with
             a per-event UUID. The record carries: the redacted wallet
-            (<code>0x…abcd</code>), error type / name / selector,
-            which screen / flow / step you were in, your chain id,
-            interface locale, theme, viewport size, and the app
-            version. It also keeps a short slice of your journey
-            log around the error — up to 5 entries before and 5
-            after, each just a timestamp and the screen or step
-            you were in. <strong>Not</strong> recorded: full wallet
-            address, browser user-agent string, IP address (beyond
+            (<code>0x…abcd</code>), the error type / name / selector
+            and the technical error message (truncated, and free of
+            anything you typed), which screen / flow / step you were
+            in, your chain id, interface locale, theme, viewport size,
+            and the app version. <strong>Not</strong> recorded: full
+            wallet address, browser user-agent string, IP address (beyond
             transient rate-limiting), localStorage contents, cookies,
             or any free-form text you typed. The same UUID surfaces
             in any GitHub issue you choose to file, so support can
@@ -177,7 +175,8 @@ export default function PrivacyPage() {
               wallet-keyed journey-log entry and local-storage
               artefact on your device. Note: on-chain transactions
               are public and immutable — we have no power to erase
-              them.
+              them. If you want on-chain deletion, that's a wallet /
+              chain-level question, not a data-processor one.
             </li>
             <li>
               <strong>Right to object.</strong> You can revoke
@@ -208,9 +207,11 @@ export default function PrivacyPage() {
           <ul>
             <li>
               Journey-log telemetry: kept in your browser's local
-              storage. A short slice is uploaded only when an error
-              occurs (see "Server-side error capture") or when you
-              explicitly attach it to a support report.
+              storage. A slice leaves your browser only when you
+              explicitly attach it to a support report. (Separately,
+              a single error record — not a journey-log slice — is
+              sent server-side on each error; see "Server-side error
+              capture".)
             </li>
             <li>
               Server-side error records: pruned 90 days after
@@ -232,7 +233,8 @@ export default function PrivacyPage() {
           <h2>Changes to this Policy</h2>
           <p>
             We publish updates by bumping the version at the top of
-            this document. We do not require on-chain acceptance of
+            this document and announcing via the protocol's Discord
+            and X channels. We do not require on-chain acceptance of
             Privacy Policy changes — the{' '}
             <Link to="/terms">Terms of Service</Link> is the
             on-chain-signed agreement, and this Policy is a companion.

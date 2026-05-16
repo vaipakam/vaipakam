@@ -15,13 +15,19 @@ RESEARCH NOTES — NOT LEGAL ADVICE — REVIEW WITH A LICENSED ATTORNEY BEFORE A
 **Prepared by:** Vaipakam (operator) · assisted draft | **Date:** 2026-05-16 | **Status:** DRAFT
 **Product owner:** Operator (solo) | **Privacy reviewer:** Operator — *counsel review recommended on §2 and §3*
 
+> **Rev. 2026-05-17:** the ±5-entry journey-log slice (the §2.2 open
+> question) is **descoped** — server capture is the single error
+> record only. The fuller trail remains available solely via the
+> consensual "Report on GitHub" path. This PIA and Privacy Policy v2
+> are updated to match. Rationale: §2.2.
+
 ---
 
 ## Executive summary
 
 Vaipakam will capture UI errors server-side (Cloudflare D1) to troubleshoot and
-harden the app. Each record is wallet-keyed and includes a ~10-entry journey-log
-slice around the error; records auto-delete at 90 days. Processing is data-light,
+harden the app. Each record is a single wallet-keyed error event; records
+auto-delete at 90 days. Processing is data-light,
 pseudonymous, and now disclosed in Privacy Policy v2 — but it is **not yet built**,
 the legitimate-interest basis needs the assessment in §2, and the basis does **not
 cleanly carry to India's DPDP Act**. No blockers that can't be cleared pre-launch;
@@ -38,13 +44,14 @@ mechanism.
 **What:** On a UI error (e.g. a reverted transaction, a failed oracle read), the
 app posts an error report to a Cloudflare Worker endpoint, stored in Cloudflare D1.
 **Data categories:** per-event UUID; redacted wallet (`0x…abcd`); error
-type/name/selector; screen/flow/step; chain id; interface locale; theme; viewport
-size; app version; **plus a journey-log slice — up to 5 entries before and 5 after
-the error, each a timestamp + screen/step.**
+type/name/selector; a truncated technical error message (machine-generated; no
+user-typed free text); screen/flow/step; chain id; interface locale; theme;
+viewport size; app version. One record per error event — **no** journey-log slice
+(descoped, see the Rev. 2026-05-17 note and §2.2).
 **Data subjects:** Vaipakam's end users (wallet-connecting), global.
 **Purpose:** debugging, service reliability, security/fraud prevention.
-**New collection?** Yes — the journey log was previously browser-only; server-side
-storage is net-new.
+**New collection?** Yes — error events were previously surfaced only in the
+browser; server-side storage of the error record is net-new.
 
 ---
 
@@ -61,10 +68,14 @@ storage is net-new.
 1. **Purpose test — is the interest legitimate?** Yes. Keeping the app working,
    diagnosing failures, and detecting abuse are well-recognised legitimate interests.
 2. **Necessity test — is the processing necessary?** Largely yes, and the design
-   shows minimisation: redacted wallet only, no IP/user-agent/free-form text, a
-   bounded 10-entry slice rather than a whole session, 90-day deletion. Open
-   question: is the ±5-entry slice necessary, or would fewer entries debug just as
-   well? Document the engineering rationale.
+   shows minimisation: a single error record (not a session trace), redacted
+   wallet only, no IP/user-agent/free-form text, 90-day deletion. The ±5-entry
+   journey-log slice that an earlier draft proposed was **deliberately descoped**
+   (Rev. 2026-05-17): the single record — screen/flow/step plus the error
+   type/name/selector/message — already locates the failure, and the deeper
+   navigation trail remains available through the consensual "Report on GitHub"
+   path, which carries it only when a user actively chooses to file. Capturing a
+   navigation window for *every* error, without that choice, was not necessary.
 3. **Balancing test — does it override users' interests/rights?** Probably yes,
    given the minimisation — but two things weaken it: (a) the data is pseudonymous,
    not anonymous (see Risk 4), and (b) an LI basis carries a right to object
@@ -100,7 +111,8 @@ support (see §6). Retention-override → §7.
 | Policy commitment (Privacy Policy v2) | Consistent? | Notes |
 |---|---|---|
 | "Server-side error capture … pruned after 90 days" | 🟢 | v2 was written to describe this activity |
-| Journey-log slice (5 before/5 after) | 🟢 | Added to v2 §"Server-side error capture" |
+| Truncated technical error message captured | 🟢 | Disclosed in v2 §"Server-side error capture" (Rev. 2026-05-17) |
+| No journey-log slice in server capture | 🟢 | Slice descoped; v2 + this PIA updated to match (Rev. 2026-05-17) |
 | Legal basis stated as Art. 6(1)(f) legitimate interest | 🟡 | Stated in policy; the LIA backing it (§2) must exist before launch — and DPDP is unaddressed |
 | "Delete my data" button = local only; D1 via support | 🟢 | Disclosed; consistent with §6 |
 | Plugin config `## Privacy policy commitments` | 🔴 | Stale — still records v1 ("browser-only, never uploaded"). Must be updated to v2. |
@@ -115,15 +127,19 @@ without the feature shipped.
 
 | # | Risk | L | I | Mitigation | Status | Owner |
 |---|---|---|---|---|---|---|
-| 1 | Policy v2 describes server-side capture, but the feature isn't built — at launch the policy misrepresents reality, or ships differing from the policy text | M | M | Build feature to match v2 text (D1, 90-day prune, ±5 slice) before any real user; verify parity | Gap | Operator (dev) |
+| 1 | Policy v2 describes server-side capture, but the feature isn't built — at launch the policy misrepresents reality, or ships differing from the policy text | M | M | Build feature to match v2 text (D1, 90-day prune) before any real user; verify parity | Gap | Operator (dev) |
 | 2 | India-resident users' data captured with no valid DPDP basis (no LI equivalent) | M | H | Confirm DPDP basis with counsel; if consent is needed, add a consent path or geo-scoped handling | Gap | Counsel |
-| 3 | Journey-log slice captures a window of user navigation around an error — broader than the error; users may not expect it | M | L | Disclosed in v2 policy; entries minimal (timestamp + screen/step); bounded to ±5; redacted wallet | Planned | Operator |
-| 4 | "Redacted" wallet + chain id + timestamps + journey pattern may be re-identifiable against public on-chain data — pseudonymous, not anonymous | M | M | Treat records as personal data (this PIA does); keep retention short; minimise slice size | Planned | Operator |
-| 5 | LI basis triggers a right to object (Art. 21) and an access/portability expectation, but the "Download my data" / objection flows don't reach D1 — erasure also depends on a support process a solo operator must actually staff | M | M | Add a way to object to / opt out of error capture, or document why infeasible; extend access + deletion to cover D1; confirm support intake works | Gap | Operator (dev) |
+| 3 | "Redacted" wallet + chain id + timestamps may be re-identifiable against public on-chain data — pseudonymous, not anonymous | M | M | Treat records as personal data (this PIA does); keep retention short; one minimal record per error, no navigation window | Planned | Operator |
+| 4 | LI basis triggers a right to object (Art. 21) and an access/portability expectation, but the "Download my data" / objection flows don't reach D1 — erasure also depends on a support process a solo operator must actually staff | M | M | Add a way to object to / opt out of error capture, or document why infeasible; extend access + deletion to cover D1; confirm support intake works | Gap | Operator (dev) |
+
+> The earlier draft's Risk on the journey-log slice ("a window of
+> user navigation, broader than the error, users may not expect it")
+> is **removed** — the slice is descoped (Rev. 2026-05-17), so the
+> risk no longer exists rather than being merely mitigated.
 
 **Residual risk after mitigations:** Low-to-Medium. The activity is inherently
 low-sensitivity; residual risk concentrates in the DPDP basis question (Risk 2)
-and the rights-mechanism gap (Risk 5).
+and the rights-mechanism gap (Risk 4).
 
 ---
 
@@ -173,7 +189,7 @@ DPDP point and the LIA).*
 
 Conditions before a real user touches the live app:
 
-- [ ] Build server-side error capture to match Privacy Policy v2 (D1, 90-day prune, ±5 journey-log slice) — *Operator (dev)*
+- [ ] Build server-side error capture to match Privacy Policy v2 (D1, 90-day prune; single error record, no journey-log slice) — *Operator (dev)*
 - [ ] Confirm the India DPDP lawful basis with counsel; implement consent or geo-scoping if required — *Counsel*
 - [ ] Have counsel review this LIA (§2) — *Counsel*
 - [ ] Add a right-to-object / opt-out path for error capture, or document why it's infeasible; extend access + deletion to cover D1 records — *Operator (dev)*
