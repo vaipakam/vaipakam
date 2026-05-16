@@ -5,11 +5,15 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
 /**
  * @title InternalMatchExecution.t.sol
@@ -94,6 +98,29 @@ contract InternalMatchExecutionTest is SetupTest {
 
     function _getLoan(uint256 loanId) internal view returns (LibVaipakam.Loan memory) {
         return LoanFacet(address(diamond)).getLoanDetails(loanId);
+    }
+
+    /// @dev Satisfy `claimAsLender`'s position-NFT machinery for a
+    ///      `scaffoldActiveLoan`-seeded loan (which mints no real NFT):
+    ///      `ownerOf(lenderTokenId)` → `owner_`, and the void-returning
+    ///      `updateNFTStatus` / `burnNFT` cross-facet calls no-op.
+    function _mockLenderNFT(uint256 loanId, address owner_) internal {
+        uint256 tokenId = _getLoan(loanId).lenderTokenId;
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(IERC721.ownerOf.selector, tokenId),
+            abi.encode(owner_)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            ""
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector),
+            ""
+        );
     }
 
     function test_fullMatch_bothCleared() public {
@@ -410,6 +437,206 @@ contract InternalMatchExecutionTest is SetupTest {
         // B: fully cleared, InternalMatched.
         assertEq(uint8(bAfter.status), uint8(LibVaipakam.LoanStatus.InternalMatched));
         assertEq(bAfter.principal, 0);
+    }
+
+    // ─── EC-007 — partial-match residual stays in Diamond custody ───
+
+    function test_fallbackPending_partialRescue_residualInDiamond() public {
+        // EC-007 core fix: after a partial match of a FallbackPending
+        // leg, the residual collateral must stay in the DIAMOND's
+        // custody (not be rehydrated into the borrower's escrow). The
+        // snapshot stays `active` and continues to describe it, so a
+        // later claim distributes it correctly.
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 10_000, mockCollateralERC20, 10_000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 3_000, mockERC20, 3_000);
+        _moveToFallbackPending(LOAN_A, borrower, mockCollateralERC20, 10_000, 8_500, 200, true);
+        _mockLtv(LOAN_B, 9_000);
+
+        uint256 diamondCollatBefore =
+            IERC20(mockCollateralERC20).balanceOf(address(diamond));
+        address aBorrowerEscrow = EscrowFactoryFacet(address(diamond))
+            .getOrCreateUserEscrow(borrower);
+
+        vm.prank(matcher);
+        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+
+        LibVaipakam.Loan memory aAfter = _getLoan(LOAN_A);
+        // 3_000 of A's collateral was paid to B's lender; 7_000 residual.
+        assertEq(aAfter.collateralAmount, 7_000, "A residual collateral");
+        // The residual lives in the DIAMOND, not the borrower's escrow.
+        assertEq(
+            IERC20(mockCollateralERC20).balanceOf(address(diamond)),
+            diamondCollatBefore - 3_000,
+            "residual stays in Diamond custody"
+        );
+        assertEq(
+            IERC20(mockCollateralERC20).balanceOf(aBorrowerEscrow),
+            0,
+            "residual NOT rehydrated into borrower escrow"
+        );
+        assertEq(uint8(aAfter.status), uint8(LibVaipakam.LoanStatus.FallbackPending));
+    }
+
+    function test_fallbackPending_partialRescue_thenSecondMatch() public {
+        // A partially-matched FallbackPending loan must stay matchable —
+        // a second counterparty in a later block can clear the residual.
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 10_000, mockCollateralERC20, 10_000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 3_000, mockERC20, 3_000);
+        _moveToFallbackPending(LOAN_A, borrower, mockCollateralERC20, 10_000, 8_500, 200, true);
+        _mockLtv(LOAN_B, 9_000);
+
+        // First (partial) match — A: 10_000 → 7_000 principal, FallbackPending.
+        vm.prank(matcher);
+        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+        assertEq(_getLoan(LOAN_A).principal, 7_000);
+        assertEq(uint8(_getLoan(LOAN_A).status), uint8(LibVaipakam.LoanStatus.FallbackPending));
+
+        // Fresh opposing counterparty big enough to clear the 7_000 residual.
+        _seedLoan(LOAN_C, lender, borrowerB, mockCollateralERC20, 7_000, mockERC20, 7_000);
+        _mockLtv(LOAN_C, 9_000);
+
+        // Second match against the residual — settles from Diamond custody.
+        vm.prank(matcher);
+        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_C, 0);
+
+        LibVaipakam.Loan memory aFinal = _getLoan(LOAN_A);
+        assertEq(aFinal.principal, 0, "A residual fully cleared by second match");
+        assertEq(uint8(aFinal.status), uint8(LibVaipakam.LoanStatus.InternalMatched));
+    }
+
+    // ─── EC-007 — partial-match residual is claimable by the lender ─
+
+    function test_fallbackPending_partialRescue_thenClaim_lenderGetsResidual() public {
+        // EC-007 acceptance path (PR #22 / issue #23 review item 1).
+        // A partial match leaves a FallbackPending residual in the
+        // Diamond's custody; the lender must then be able to
+        // `claimAsLender` it. The pre-fix rehydration scattered the
+        // residual into the BORROWER's escrow, so the lender's
+        // escrow-sourced claim withdraw reverted — the lender could
+        // never collect a partially-rescued residual.
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 10_000, mockCollateralERC20, 10_000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 3_000, mockERC20, 3_000);
+        _moveToFallbackPending(LOAN_A, borrower, mockCollateralERC20, 10_000, 8_500, 200, true);
+        _mockLtv(LOAN_B, 9_000);
+        // Fallback-time claim record is collateral-asset denominated.
+        // The partial match scales `.amount`; `.asset` must be pre-set
+        // so the later escrow withdraw targets the right token.
+        TestMutatorFacet(address(diamond)).setLenderClaimAssetRaw(LOAN_A, mockCollateralERC20);
+
+        // Partial match — A: 10_000 → 7_000 residual, stays
+        // FallbackPending. Snapshot scales by 7/10: lender 8_500→5_950,
+        // treasury 200→140, borrower 1_300→910.
+        vm.prank(matcher);
+        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+        assertEq(
+            uint8(_getLoan(LOAN_A).status),
+            uint8(LibVaipakam.LoanStatus.FallbackPending),
+            "A stays FallbackPending after partial match"
+        );
+
+        // The lender claims. No opposing candidate remains (B is now
+        // InternalMatched), so the claim-time auto-dispatch finds
+        // nothing and the (scaled) residual is distributed via
+        // `_distributeFallbackCollateral` (Diamond → escrows), then the
+        // lender's claim record withdraws it to `msg.sender`.
+        _mockLenderNFT(LOAN_A, lender);
+        uint256 lenderBalBefore = IERC20(mockCollateralERC20).balanceOf(lender);
+
+        vm.prank(lender);
+        ClaimFacet(address(diamond)).claimAsLender(LOAN_A);
+
+        // Lender received the scaled residual: 8_500 * 7_000 / 10_000.
+        assertEq(
+            IERC20(mockCollateralERC20).balanceOf(lender) - lenderBalBefore,
+            5_950,
+            "lender claims the scaled partial-match residual"
+        );
+        assertEq(
+            uint8(_getLoan(LOAN_A).status),
+            uint8(LibVaipakam.LoanStatus.Defaulted),
+            "A terminally Defaulted once the residual is claimed"
+        );
+    }
+
+    function test_fallbackPending_claimTime_fullAutoDispatch_noRevert() public {
+        // PR #22 / issue #23 review item 2. A claim-time FULL internal
+        // match clears `snap.active` and deletes the lender claim
+        // records. `_claimAsLenderImpl` must short-circuit on the
+        // `fullyResolved` signal from `_resolveFallbackIfActive` —
+        // otherwise it reads the zeroed claim, reverts
+        // `NothingToClaim()`, and (because the auto-dispatch runs in
+        // THIS transaction) rolls back the successful match.
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 1000, mockERC20, 1000);
+        _moveToFallbackPending(LOAN_A, borrower, mockCollateralERC20, 1000, 850, 20, true);
+        _mockLtv(LOAN_B, 9_000);
+
+        address aLenderEscrow = EscrowFactoryFacet(address(diamond))
+            .getOrCreateUserEscrow(lender);
+
+        // The LENDER (position-NFT owner) claims with no candidate
+        // hand-picked — the claim-time auto-dispatch finds LOAN_B and
+        // FULLY matches A. The call must succeed (no `NothingToClaim`
+        // revert). Ownership is checked before the auto-dispatch
+        // (EC-007 review fix), so the lender NFT must be mocked.
+        _mockLenderNFT(LOAN_A, lender);
+        vm.prank(lender);
+        ClaimFacet(address(diamond)).claimAsLender(LOAN_A);
+
+        // Full match landed AND survived the claim call: both loans
+        // InternalMatched, and the lender was paid in the principal
+        // asset by the match settlement (1000 - 1% matcher fee).
+        assertEq(
+            uint8(_getLoan(LOAN_A).status),
+            uint8(LibVaipakam.LoanStatus.InternalMatched),
+            "A fully matched at claim time"
+        );
+        assertEq(
+            uint8(_getLoan(LOAN_B).status),
+            uint8(LibVaipakam.LoanStatus.InternalMatched),
+            "B matched"
+        );
+        assertEq(
+            IERC20(mockERC20).balanceOf(aLenderEscrow),
+            990,
+            "A lender paid in principal asset by the match"
+        );
+    }
+
+    function test_fallbackPending_claimAsLender_byNonLender_reverts() public {
+        // EC-007 security fix (PR #24 review). `claimAsLender` runs the
+        // claim-time internal-match auto-dispatch, which pays the 1%
+        // matcher bonus to `msg.sender`. The lender position-NFT
+        // ownership check therefore MUST gate the call BEFORE the
+        // auto-dispatch — otherwise a third party could call
+        // `claimAsLender` on a FallbackPending loan with a full match
+        // candidate purely to trigger the match and skim the incentive.
+        // A non-lender call must revert, and the loan must stay
+        // FallbackPending (the match never ran).
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 1000, mockERC20, 1000);
+        _moveToFallbackPending(LOAN_A, borrower, mockCollateralERC20, 1000, 850, 20, true);
+        _mockLtv(LOAN_B, 9_000);
+        // The lender NFT is owned by `lender`; `matcher` is NOT the owner.
+        _mockLenderNFT(LOAN_A, lender);
+
+        vm.prank(matcher);
+        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
+        ClaimFacet(address(diamond)).claimAsLender(LOAN_A);
+
+        // The whole transaction reverted — the auto-dispatch never
+        // fired, so both loans are untouched and the would-be attacker
+        // collected no matcher incentive.
+        assertEq(
+            uint8(_getLoan(LOAN_A).status),
+            uint8(LibVaipakam.LoanStatus.FallbackPending),
+            "A stays FallbackPending - non-lender claim cannot trigger the match"
+        );
+        assertEq(
+            uint8(_getLoan(LOAN_B).status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "B untouched"
+        );
     }
 
     function test_fallbackPending_oracleUnpriceable_reverts() public {

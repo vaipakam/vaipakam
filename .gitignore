@@ -28,6 +28,7 @@ dist/
 # Personal scratchpad — kept on disk for the operator's own notes
 # but not committed.
 docs/internal/RoughNotes.md
+docs/internal/RoughNotes-*.md
 
 # Claude Code per-machine / per-session runtime state. The
 # scheduled_tasks.lock file rewrites every session with a fresh
