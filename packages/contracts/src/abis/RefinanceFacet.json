@@ -212,22 +212,6 @@
   },
   {
     "type": "error",
-    "name": "IllegalTransition",
-    "inputs": [
-      {
-        "name": "from",
-        "type": "uint8",
-        "internalType": "enum LibVaipakam.LoanStatus"
-      },
-      {
-        "name": "to",
-        "type": "uint8",
-        "internalType": "enum LibVaipakam.LoanStatus"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "IlliquidAsset",
     "inputs": []
   },
@@ -307,6 +291,22 @@
     "type": "error",
     "name": "InvalidRefinanceOffer",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidTransition",
+    "inputs": [
+      {
+        "name": "from",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.LoanStatus"
+      },
+      {
+        "name": "to",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.LoanStatus"
+      }
+    ]
   },
   {
     "type": "error",

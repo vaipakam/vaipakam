@@ -20,6 +20,7 @@ import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessCont
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
  // For NFT updates/burns
 import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
+import {MetricsFacet} from "./MetricsFacet.sol";
  // For transfers
 import {ProfileFacet} from "./ProfileFacet.sol";
  // For KYC if high-value
@@ -58,6 +59,18 @@ import {LibSwap} from "../libraries/LibSwap.sol";
  */
 contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     using SafeERC20 for IERC20;
+
+    /// @dev EC-003 Phase 3 — restricts a call to cross-facet only
+    ///      (`msg.sender == address(this)`, i.e., another facet inside
+    ///      the Diamond reached us via `address(this).call(...)`).
+    ///      External callers via the Diamond's fallback have
+    ///      `msg.sender == EOA`. Same pattern `EscrowFactoryFacet` uses
+    ///      for its cross-facet-only entry-points.
+    error OnlyDiamondInternal();
+    modifier onlyDiamondInternal() {
+        if (msg.sender != address(this)) revert OnlyDiamondInternal();
+        _;
+    }
 
     /// @notice Emitted when an asset's risk parameters are updated.
     /// @dev PR2 of internal-match work (2026-05-14) dropped
@@ -520,9 +533,30 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 hf = RiskFacet(address(this)).calculateHealthFactor(loanId);
         if (hf >= LibVaipakam.HF_SCALE) revert HealthFactorNotLow();
 
+        // ── EC-003 Phase 3 — internal-match auto-dispatch ──────────────
+        // Before falling through to the external-aggregator swap, check
+        // whether an opposing-direction internal-match candidate exists.
+        // If yes, settle at oracle price (no DEX slippage), pay the 1%
+        // matcher bonus to `msg.sender`, and return. The caller is the
+        // de-facto matcher — same incentive shape that
+        // `triggerInternalMatchLiquidation` always had, just without
+        // requiring the caller to know which entry-point to pick.
+        //
+        // The priority-window revert below becomes a defensive no-op
+        // — if a candidate existed AND it passed the view's gates,
+        // auto-dispatch already fired. If we reach the revert it means
+        // either the candidate failed mid-flight or there was no
+        // candidate to begin with; the revert preserves the original
+        // B.2 semantic ("don't dump into the external book mid-window")
+        // for that defensive edge.
+        if (RiskFacet(address(this)).attemptInternalMatchAutoDispatch(loanId, msg.sender)) {
+            return;
+        }
+
         // ── Internal-match priority window (B.2 / PR4) ─────────────────
-        // When the kill-switch is on, the external swap-liquidation path
-        // is blocked for a configurable LTV band immediately above the
+        // When the kill-switch is on AND auto-dispatch above didn't fire
+        // (no candidate found), the external swap-liquidation path is
+        // blocked for a configurable LTV band immediately above the
         // loan's snapshotted liquidation threshold — giving internal
         // matchers a clean priority slot. Above that band, external
         // opens up (worst case: ~2% LTV deterioration vs today, well
@@ -910,7 +944,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
                 uint256 movedY,
                 uint256 incentiveX,
                 uint256 incentiveY
-            ) = _executeTwoWayMatch(loanIdA, loanIdB);
+            ) = _executeTwoWayMatch(loanIdA, loanIdB, msg.sender);
             emit InternalMatchExecuted(
                 loanIdA, loanIdB, 0,
                 msg.sender,
@@ -925,7 +959,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
                 uint256 incentiveX,
                 uint256 incentiveY,
                 uint256 incentiveZ
-            ) = _executeThreeWayMatch(loanIdA, loanIdB, loanIdC);
+            ) = _executeThreeWayMatch(loanIdA, loanIdB, loanIdC, msg.sender);
             emit InternalMatchExecuted(
                 loanIdA, loanIdB, loanIdC,
                 msg.sender,
@@ -943,7 +977,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     ///      Each loan whose principal hits zero transitions to
     ///      InternalMatched. Residuals stay Active for the next
     ///      block's matching attempt or external fallback.
-    function _executeThreeWayMatch(uint256 loanIdA, uint256 loanIdB, uint256 loanIdC)
+    function _executeThreeWayMatch(uint256 loanIdA, uint256 loanIdB, uint256 loanIdC, address matcher)
         private
         returns (
             uint256 movedX,
@@ -975,11 +1009,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         incentiveZ = (movedZ * incentiveBps) / LibVaipakam.BASIS_POINTS;
 
         // Leg X: B's collateral (= A's principal asset) → A.lender + matcher.
-        _settleLeg(lb.borrower, la.principalAsset, la.lender, movedX, incentiveX);
+        _settleLeg(lb.borrower, la.principalAsset, la.lender, movedX, incentiveX, matcher);
         // Leg Y: C's collateral (= B's principal asset) → B.lender + matcher.
-        _settleLeg(lc.borrower, lb.principalAsset, lb.lender, movedY, incentiveY);
+        _settleLeg(lc.borrower, lb.principalAsset, lb.lender, movedY, incentiveY, matcher);
         // Leg Z: A's collateral (= C's principal asset) → C.lender + matcher.
-        _settleLeg(la.borrower, lc.principalAsset, lc.lender, movedZ, incentiveZ);
+        _settleLeg(la.borrower, lc.principalAsset, lc.lender, movedZ, incentiveZ, matcher);
 
         // State updates — each loan's principal cleared by its leg,
         // each borrower's collateral debited by the NEXT loan's leg.
@@ -1004,12 +1038,21 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     ///      `incentive`. Extracted helper so the 2-way and 3-way
     ///      bodies share the cross-vault transfer logic without
     ///      duplication.
+    /// @param matcher Beneficiary of the 1% per-leg incentive. The
+    ///        caller MUST pass the genuine matcher explicitly — NOT
+    ///        rely on `msg.sender`. On the auto-dispatch path the
+    ///        match body runs inside an `onlyDiamondInternal`
+    ///        cross-facet call, so `msg.sender` is `address(this)`
+    ///        (the Diamond); paying the incentive to `msg.sender`
+    ///        there would strand it on the Diamond instead of the
+    ///        keeper / lender who triggered settlement.
     function _settleLeg(
         address payingBorrower,
         address asset,
         address receivingLender,
         uint256 moved,
-        uint256 incentive
+        uint256 incentive,
+        address matcher
     ) private {
         if (moved == 0) return;
         uint256 lenderShare = moved - incentive;
@@ -1025,7 +1068,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         }
         if (incentive > 0) {
             EscrowFactoryFacet(address(this)).escrowWithdrawERC20(
-                payingBorrower, asset, msg.sender, incentive
+                payingBorrower, asset, matcher, incentive
             );
         }
     }
@@ -1037,7 +1080,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     ///      neither party touches the diamond's balance directly.
     ///      Loans whose principal clears transition to
     ///      `InternalMatched`; partial residuals stay `Active`.
-    function _executeTwoWayMatch(uint256 loanIdA, uint256 loanIdB)
+    function _executeTwoWayMatch(uint256 loanIdA, uint256 loanIdB, address matcher)
         private
         returns (uint256 movedX, uint256 movedY, uint256 incentiveX, uint256 incentiveY)
     {
@@ -1066,9 +1109,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         incentiveY = (movedY * incentiveBps) / LibVaipakam.BASIS_POINTS;
 
         // Leg X — B's collateral (= A's principal asset) → A.lender + matcher.
-        _settleLeg(lb.borrower, la.principalAsset, la.lender, movedX, incentiveX);
+        _settleLeg(lb.borrower, la.principalAsset, la.lender, movedX, incentiveX, matcher);
         // Leg Y — A's collateral (= B's principal asset) → B.lender + matcher.
-        _settleLeg(la.borrower, lb.principalAsset, lb.lender, movedY, incentiveY);
+        _settleLeg(la.borrower, lb.principalAsset, lb.lender, movedY, incentiveY, matcher);
 
         // State updates — debt cleared by the gross moved amount
         // (borrower forfeits the full amount; the incentive % they
@@ -1257,6 +1300,71 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             borrowerClaim.amount = snap.borrowerCollateral;
             borrowerClaim.claimed = snap.borrowerCollateral == 0;
         }
+    }
+
+    /// @dev EC-003 Phase 3 — auto-dispatch helper. Called from every
+    ///      external-liquidation entry-point (`triggerLiquidation`,
+    ///      `triggerDefault`, `claimAsLenderWithRetry`) BEFORE the
+    ///      external-aggregator path so that any opposing-direction
+    ///      internal-match candidate gets settled at oracle price
+    ///      (zero aggregator slippage) first.
+    ///
+    ///      Returns `true` iff the auto-dispatch fired and the
+    ///      caller should NOT fall through to the external path.
+    ///      Returns `false` when:
+    ///        - the kill-switch is off,
+    ///        - no opposing candidate exists in the asset-pair index,
+    ///        - the candidate fails the per-leg gates (oracle
+    ///          priceability + Active-leg LTV-floor) — all already
+    ///          filtered by `hasInternalMatchCandidate`.
+    ///
+    ///      The 1% matcher bonus is paid to `matcher` — which the
+    ///      outer entry-point MUST pass as its own `msg.sender`. It
+    ///      cannot be derived from `msg.sender` here: this function
+    ///      runs inside an `onlyDiamondInternal` cross-facet call, so
+    ///      `msg.sender` is `address(this)` (the Diamond). Threading
+    ///      the beneficiary explicitly keeps the incentive flowing to
+    ///      the keeper / lender who triggered settlement instead of
+    ///      stranding it on the Diamond.
+    /// @param loanId  The loan being liquidated / claimed.
+    /// @param matcher The 1%-per-leg incentive beneficiary — the
+    ///        `msg.sender` of the outer `triggerLiquidation` /
+    ///        `triggerDefault` / `claimAsLender*` call.
+    function attemptInternalMatchAutoDispatch(uint256 loanId, address matcher)
+        external
+        onlyDiamondInternal
+        returns (bool dispatched)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!s.protocolCfg.internalMatchEnabled) return false;
+
+        (bool found, uint256 candidateId) = MetricsFacet(address(this))
+            .hasInternalMatchCandidate(loanId);
+        if (!found) return false;
+
+        // Settlement. `hasInternalMatchCandidate` has already filtered
+        // candidates by status (Active or FallbackPending), oracle
+        // priceability (both assets), and — for Active candidates —
+        // LTV-floor eligibility. The caller-loan side has been
+        // gated by the outer entry-point (HF<1 for triggerLiquidation,
+        // time-default conditions for triggerDefault, FallbackPending
+        // status for claim-time retry). `_executeTwoWayMatch` runs
+        // the partial-match α math + per-leg settlement + post-match
+        // snapshot scaling + lifecycle transition.
+        (
+            uint256 movedX,
+            uint256 movedY,
+            uint256 incentiveX,
+            uint256 incentiveY
+        ) = _executeTwoWayMatch(loanId, candidateId, matcher);
+
+        emit InternalMatchExecuted(
+            loanId, candidateId, 0,
+            matcher,
+            movedX, movedY, 0,
+            incentiveX, incentiveY, 0
+        );
+        return true;
     }
 
     /**

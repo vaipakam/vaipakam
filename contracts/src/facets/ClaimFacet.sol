@@ -16,6 +16,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
+import {RiskFacet} from "./RiskFacet.sol";
 import {IZeroExProxy} from "../interfaces/IZeroExProxy.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {ISwapAdapter} from "../interfaces/ISwapAdapter.sol";
@@ -205,11 +206,21 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // resolved, the loan is terminally Defaulted (no further cure).
         if (loan.status == LibVaipakam.LoanStatus.FallbackPending) {
             _resolveFallbackIfActive(loanId, loan, retryCalls);
-            LibLifecycle.transition(
-                loan,
-                LibVaipakam.LoanStatus.FallbackPending,
-                LibVaipakam.LoanStatus.Defaulted
-            );
+            // EC-003 Phase 3 — the auto-dispatch inside
+            // `_resolveFallbackIfActive` may have transitioned the
+            // loan to `InternalMatched` (on a full match). Only force
+            // the FallbackPending → Defaulted terminal when the loan
+            // is STILL FallbackPending (i.e., auto-dispatch didn't
+            // fire, OR partial-match left a residual). The Defaulted
+            // transition's allow-list edge from FallbackPending stays
+            // unchanged.
+            if (loan.status == LibVaipakam.LoanStatus.FallbackPending) {
+                LibLifecycle.transition(
+                    loan,
+                    LibVaipakam.LoanStatus.FallbackPending,
+                    LibVaipakam.LoanStatus.Defaulted
+                );
+            }
         }
 
         LibVaipakam.ClaimInfo storage claim = s.lenderClaims[loanId];
@@ -528,6 +539,30 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.FallbackSnapshot storage snap = s.fallbackSnapshot[loanId];
         if (!snap.active) return;
+
+        // EC-003 Phase 3 — internal-match-first at claim time. The
+        // candidate pool grows between keeper-tick and lender-claim
+        // (fresh Active counterparties, freshly-failed FallbackPending
+        // loans). Auto-dispatch here is the safety net for keeper
+        // outages + the race between keeper scan and lender claim.
+        //
+        // If auto-dispatch fires, `_rehydrateFallbackEscrowIfNeeded`
+        // inside the settlement marks `snap.active = false`, so the
+        // external-retry path below short-circuits cleanly. On full
+        // match the loan transitions FallbackPending → InternalMatched
+        // (handled by the caller — `_claimAsLenderImpl` guards the
+        // subsequent FallbackPending → Defaulted transition with a
+        // status re-check). On partial match the loan stays
+        // FallbackPending with a proportionally-reduced snapshot;
+        // the standard claim-time terminal still fires below via
+        // `_distributeFallbackCollateral` ... wait no, that path only
+        // runs while snap.active is true. After the auto-dispatch
+        // consumes the snapshot, the partial-match residual is
+        // claimable through the standard scaled `lenderClaims`
+        // record set by `_settleFallbackOrTransitionPostMatch`.
+        if (RiskFacet(address(this)).attemptInternalMatchAutoDispatch(loanId, msg.sender)) {
+            return;
+        }
 
         bool retrySucceeded;
         uint256 proceeds;

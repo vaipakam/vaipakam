@@ -722,7 +722,12 @@ contract MetricsFacetTest is SetupTest {
         l.assetType = LibVaipakam.AssetType.ERC20;
         l.collateralAssetType = LibVaipakam.AssetType.ERC20;
         l.startTime = uint64(block.timestamp);
-        l.liquidationLtvBpsAtInit = 8_500;
+        // Floor set below SetupTest's globally-mocked `calculateLTV`
+        // return (6666) so the EC-003 Phase 3 LTV-floor gate inside
+        // `hasInternalMatchCandidate` treats an Active candidate as
+        // liquidation-eligible. A floor at/above 6666 would make the
+        // view (correctly) skip the candidate as still-healthy.
+        l.liquidationLtvBpsAtInit = 6_000;
         TestMutatorFacet(address(diamond)).scaffoldActiveLoan(id, l);
     }
 

@@ -430,6 +430,10 @@ Tip: queue all 3 in the Safe at once, then sign once per signer (each signer's s
 
 ---
 
+- [ ] **ET-011** `yetToPromote`: In indexer, it should also check what is the max loan id and offer id and need to check if all the loans and offers have got captured into the D1 database, if not a stub row need to be inserted (or while inserting itself it get the fetch details from on-chain and then inserted, if fetch and inserting is an issue may be due to any reason like huge data port, timeout, etc, then atleast empty stub row with loadId / offer Id should be inserted) and the stub row need to be updated in the next run using isStub column. like a belt and suspenders method. and note down until which Id the stub rows has been insterd so that in next run it will continue from the stored id, what do you say? whats your take? is this necessary or you think its an overkill?
+
+---
+
 - [ ] **ET-010** `yetToPromote`: Is it possible for us to allow borrower to auction the NFT or illiquid assets before liquidating (means here full collateral transfer), so that it would be fair enough for both borrower and lender, what do you say?, if so, how do we go about it? is there a better approach? whats your take?
 
 ---
