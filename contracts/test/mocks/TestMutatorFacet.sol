@@ -518,6 +518,17 @@ contract TestMutatorFacet {
         return LibVaipakam._canTradeBetweenStorageGated(countryA, countryB);
     }
 
+    /// @notice EC-003 Phase 1 — overwrite the FallbackSnapshot for `loanId`
+    ///         directly. Test-only — lets a fixture scaffold a
+    ///         FallbackPending loan with realistic snap fields without
+    ///         running the full at-fallback liquidation flow.
+    function setFallbackSnapshotRaw(
+        uint256 loanId,
+        LibVaipakam.FallbackSnapshot memory snap
+    ) external {
+        LibVaipakam.storageSlot().fallbackSnapshot[loanId] = snap;
+    }
+
     function pushRewardEntry(
         address user,
         uint64 loanId,

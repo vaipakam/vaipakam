@@ -41,7 +41,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](61);
+        selectors = new bytes4[](62);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -152,6 +152,11 @@ contract HelperTest {
         // execution-body tests can scaffold loans without running
         // the `initiateLoan` flow.
         selectors[60] = TestMutatorFacet.setProtocolTrackedEscrowBalanceRaw.selector;
+        // EC-003 Phase 1 — direct write to `fallbackSnapshot[loanId]`
+        // so FallbackPending fixtures can scaffold the snap (lender /
+        // treasury / borrower entitlements + active flag) without
+        // running the full at-fallback liquidation flow.
+        selectors[61] = TestMutatorFacet.setFallbackSnapshotRaw.selector;
         return selectors;
     }
 
