@@ -6,8 +6,10 @@ import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibSwap} from "../src/libraries/LibSwap.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
@@ -83,7 +85,7 @@ contract InternalMatchAutoDispatchTest is SetupTest {
         // Direct EOA call to the external function should hit
         // `onlyDiamondInternal` and revert.
         vm.expectRevert(RiskFacet.OnlyDiamondInternal.selector);
-        RiskFacet(address(diamond)).attemptInternalMatchAutoDispatch(LOAN_A);
+        RiskFacet(address(diamond)).attemptInternalMatchAutoDispatch(LOAN_A, matcher);
     }
 
     // ─── No-candidate fall-through (returns false) ──────────────────
@@ -99,7 +101,7 @@ contract InternalMatchAutoDispatchTest is SetupTest {
         // Invoke via cross-facet pattern — pretend Diamond is calling us.
         vm.prank(address(diamond));
         bool dispatched = RiskFacet(address(diamond))
-            .attemptInternalMatchAutoDispatch(LOAN_A);
+            .attemptInternalMatchAutoDispatch(LOAN_A, matcher);
         assertFalse(dispatched);
     }
 
@@ -109,7 +111,7 @@ contract InternalMatchAutoDispatchTest is SetupTest {
 
         vm.prank(address(diamond));
         bool dispatched = RiskFacet(address(diamond))
-            .attemptInternalMatchAutoDispatch(LOAN_A);
+            .attemptInternalMatchAutoDispatch(LOAN_A, matcher);
         assertFalse(dispatched);
     }
 
@@ -139,7 +141,7 @@ contract InternalMatchAutoDispatchTest is SetupTest {
         // the inner call is the Diamond, satisfying onlyDiamondInternal.
         vm.prank(address(diamond));
         bool dispatched = RiskFacet(address(diamond))
-            .attemptInternalMatchAutoDispatch(LOAN_A);
+            .attemptInternalMatchAutoDispatch(LOAN_A, matcher);
         assertTrue(dispatched);
 
         LibVaipakam.Loan memory aAfter = LoanFacet(address(diamond)).getLoanDetails(LOAN_A);
@@ -152,10 +154,14 @@ contract InternalMatchAutoDispatchTest is SetupTest {
         // Lender payouts: 990 each leg (1000 - 1% matcher fee).
         assertEq(IERC20(mockERC20).balanceOf(aLenderEscrow) - aLenderXBefore, 990);
         assertEq(IERC20(mockCollateralERC20).balanceOf(bLenderEscrow) - bLenderYBefore, 990);
-        // Matcher bonus paid to msg.sender — which inside the
-        // delegatecall context is `address(diamond)`.
-        assertEq(IERC20(mockERC20).balanceOf(address(diamond)), 10);
-        assertEq(IERC20(mockCollateralERC20).balanceOf(address(diamond)), 10);
+        // Matcher bonus (1% per leg) goes to the `matcher` threaded
+        // into `attemptInternalMatchAutoDispatch` — NOT `msg.sender`,
+        // which inside the `onlyDiamondInternal` cross-facet call is
+        // `address(diamond)`. The Diamond must not pocket the fee.
+        assertEq(IERC20(mockERC20).balanceOf(matcher), 10, "leg-X incentive to the threaded matcher");
+        assertEq(IERC20(mockCollateralERC20).balanceOf(matcher), 10, "leg-Y incentive to the threaded matcher");
+        assertEq(IERC20(mockERC20).balanceOf(address(diamond)), 0, "incentive must not strand on the Diamond");
+        assertEq(IERC20(mockCollateralERC20).balanceOf(address(diamond)), 0, "incentive must not strand on the Diamond");
     }
 
     // ─── LTV-floor gate on Active candidates ────────────────────────
@@ -172,7 +178,7 @@ contract InternalMatchAutoDispatchTest is SetupTest {
 
         vm.prank(address(diamond));
         bool dispatched = RiskFacet(address(diamond))
-            .attemptInternalMatchAutoDispatch(LOAN_A);
+            .attemptInternalMatchAutoDispatch(LOAN_A, matcher);
         assertFalse(dispatched, "healthy candidate must not be force-liquidated");
     }
 
@@ -191,7 +197,61 @@ contract InternalMatchAutoDispatchTest is SetupTest {
 
         vm.prank(address(diamond));
         bool dispatched = RiskFacet(address(diamond))
-            .attemptInternalMatchAutoDispatch(LOAN_A);
+            .attemptInternalMatchAutoDispatch(LOAN_A, matcher);
         assertFalse(dispatched);
+    }
+
+    // ─── End-to-end — matcher incentive reaches the triggering EOA ──
+
+    function test_triggerLiquidation_autoDispatch_paysIncentiveToCaller() public {
+        // PR #21 review regression. An external EOA calls
+        // `triggerLiquidation`; the EC-003 Phase 3 auto-dispatch fires
+        // and settles the loan internally. The 1% matcher incentive
+        // MUST reach that EOA — not `address(diamond)`. The auto-
+        // dispatch reaches the match body through an
+        // `onlyDiamondInternal` cross-facet call, so `msg.sender`
+        // inside it is the Diamond; the fix threads the triggering
+        // EOA explicitly as `matcher`.
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 1000, mockERC20, 1000);
+        // Both legs need LTV >= floor (8500) for the candidate view's
+        // gate AND `_executeTwoWayMatch`'s per-leg LTV check.
+        _mockLtv(LOAN_A, 9_000);
+        _mockLtv(LOAN_B, 9_000);
+        // `triggerLiquidation` gates: sequencer healthy + HF < 1e18.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.sequencerHealthy.selector),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, LOAN_A),
+            abi.encode(uint256(0.9e18))
+        );
+
+        address keeper = makeAddr("keeperEOA");
+        LibSwap.AdapterCall[] memory noCalls = new LibSwap.AdapterCall[](0);
+
+        vm.prank(keeper);
+        RiskFacet(address(diamond)).triggerLiquidation(LOAN_A, noCalls);
+
+        // Auto-dispatch settled both loans internally.
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(LOAN_A).status),
+            uint8(LibVaipakam.LoanStatus.InternalMatched),
+            "A internally matched via triggerLiquidation auto-dispatch"
+        );
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(LOAN_B).status),
+            uint8(LibVaipakam.LoanStatus.InternalMatched),
+            "B matched"
+        );
+        // The 1% per-leg incentive went to the triggering EOA, and the
+        // Diamond pocketed nothing.
+        assertEq(IERC20(mockERC20).balanceOf(keeper), 10, "leg-X incentive to the EOA caller");
+        assertEq(IERC20(mockCollateralERC20).balanceOf(keeper), 10, "leg-Y incentive to the EOA caller");
+        assertEq(IERC20(mockERC20).balanceOf(address(diamond)), 0, "incentive not stranded on Diamond");
+        assertEq(IERC20(mockCollateralERC20).balanceOf(address(diamond)), 0, "incentive not stranded on Diamond");
     }
 }

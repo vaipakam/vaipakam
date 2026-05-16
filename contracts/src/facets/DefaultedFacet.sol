@@ -237,7 +237,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // are the same as HF-based: any caller who triggers default
         // when an internal match exists is the de-facto matcher and
         // earns the same incentive.
-        if (RiskFacet(address(this)).attemptInternalMatchAutoDispatch(loanId)) {
+        if (RiskFacet(address(this)).attemptInternalMatchAutoDispatch(loanId, msg.sender)) {
             return;
         }
 

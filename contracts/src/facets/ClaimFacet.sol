@@ -560,7 +560,7 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // consumes the snapshot, the partial-match residual is
         // claimable through the standard scaled `lenderClaims`
         // record set by `_settleFallbackOrTransitionPostMatch`.
-        if (RiskFacet(address(this)).attemptInternalMatchAutoDispatch(loanId)) {
+        if (RiskFacet(address(this)).attemptInternalMatchAutoDispatch(loanId, msg.sender)) {
             return;
         }
 
