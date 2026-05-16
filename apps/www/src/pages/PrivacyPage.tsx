@@ -25,9 +25,9 @@ export default function PrivacyPage() {
         <header>
           <h1>Vaipakam Privacy Policy</h1>
           <div className="legal-meta">
-            <span>Version 1</span>
+            <span>Version 2</span>
             <span>·</span>
-            <span>Effective 2026-04-24</span>
+            <span>Effective 2026-05-16</span>
           </div>
         </header>
 
@@ -36,7 +36,7 @@ export default function PrivacyPage() {
           <p>
             Vaipakam is non-custodial and has no accounts, no sign-ups,
             and no off-chain identity system. Given that, the data we
-            observe about you falls into four narrow categories.
+            observe about you falls into five narrow categories.
           </p>
 
           <p>
@@ -67,7 +67,10 @@ export default function PrivacyPage() {
             (<code>0x…abcd</code>), error type / name / selector,
             which screen / flow / step you were in, your chain id,
             interface locale, theme, viewport size, and the app
-            version. <strong>Not</strong> recorded: full wallet
+            version. It also keeps a short slice of your journey
+            log around the error — up to 5 entries before and 5
+            after, each just a timestamp and the screen or step
+            you were in. <strong>Not</strong> recorded: full wallet
             address, browser user-agent string, IP address (beyond
             transient rate-limiting), localStorage contents, cookies,
             or any free-form text you typed. The same UUID surfaces
@@ -204,9 +207,14 @@ export default function PrivacyPage() {
           <h2>Data retention</h2>
           <ul>
             <li>
-              Journey-log telemetry: kept in your browser only, never
-              uploaded unless you explicitly attach it to a support
-              report.
+              Journey-log telemetry: kept in your browser's local
+              storage. A short slice is uploaded only when an error
+              occurs (see "Server-side error capture") or when you
+              explicitly attach it to a support report.
+            </li>
+            <li>
+              Server-side error records: pruned 90 days after
+              capture.
             </li>
             <li>
               Consent choice: kept in your browser's local storage
