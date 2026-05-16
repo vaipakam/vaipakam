@@ -103,6 +103,30 @@ export function RiskDisclosures() {
             {t(key)}
           </p>
         ))}
+
+        <p className="risk-disclosures-learn-more">
+          {/*
+            Pin the explicit `/en` locale prefix. The marketing app's
+            `DefaultLocaleRedirect` bounces an unprefixed `/help/advanced`
+            to `/<locale>/help/advanced` for first-time visitors with a
+            non-English browser locale — but the localized Advanced
+            guides (`Advanced.de.md`, `.fr.md`, …) do not yet carry the
+            `liquidation-mechanics.*` anchors (translation is tracked
+            under EC-004 #13). An already-locale-prefixed path is left
+            untouched by the redirect, so `/en/help/advanced` reliably
+            renders `Advanced.en.md`, which has the anchors. Switch this
+            back to a locale-aware `/help/advanced` once EC-004 adds the
+            section + anchors to every localized guide.
+          */}
+          <a
+            href={marketingUrl('/en/help/advanced#liquidation-mechanics.case-1')}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="risk-consent-terms-link"
+          >
+            {t('riskDisclosures.learnMoreLabel')}
+          </a>
+        </p>
       </div>
 
       {showOriginal && <EnglishOriginalModal onClose={() => setShowOriginal(false)} />}
