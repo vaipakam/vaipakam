@@ -1468,14 +1468,10 @@
   },
   "simulationPreview": {
     "unavailable": "Aperçu de transaction indisponible sur cette chaîne / déploiement.",
-    "scanning": "Analyse de la transaction…",
-    "errorPrefix": "Erreur d'aperçu :",
-    "errorSuffix": ". La transaction on-chain n'est pas affectée — procéder avec prudence.",
-    "expectedStateChanges": "Changements d'état attendus",
-    "plusMore": "… plus {{count}} de plus",
-    "titleMalicious": "Blockaid a signalé cette transaction comme malveillante. NE PAS poursuivre.",
-    "titleWarning": "Blockaid a émis des avertissements — examiner les changements d'état avant de signer.",
-    "titlePreview": "Aperçu de transaction"
+    "scanning": "Simulation de la transaction…",
+    "okTitle": "Simulation réussie — cette transaction n'échouera pas.",
+    "revertPrefix": "Cette transaction échouerait :",
+    "revertSuffix": "Vérifiez les détails ci-dessus avant de signer."
   },
   "consent": {
     "dismissAria": "Ignorer — la question sera reposée à la prochaine visite",

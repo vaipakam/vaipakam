@@ -1894,7 +1894,18 @@ function AcceptSimulationPreview({
       }) as Hex);
 
   return (
-    <SimulationPreview tx={{ to: diamondAddress, data, value: 0n }} />
+    <SimulationPreview
+      tx={{
+        to: diamondAddress,
+        data,
+        value: 0n,
+        // Permit2 path encodes a placeholder (zeroed) signature, so
+        // the eth_call reverts at the signature check — an artefact,
+        // not a real failure. Tell the preflight to treat that one
+        // revert class as "unavailable" rather than "would revert".
+        allowSignatureRevert: permit2Eligible,
+      }}
+    />
   );
 }
 

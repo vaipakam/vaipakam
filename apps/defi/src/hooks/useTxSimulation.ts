@@ -34,6 +34,17 @@ export interface TxSimInput {
   to: Address;
   data: Hex;
   value?: bigint;
+  /**
+   * Set ONLY by a call site previewing calldata that carries a
+   * PLACEHOLDER signature it hasn't generated yet — the OfferBook
+   * accept-with-permit path encodes a zeroed Permit2 signature so
+   * the preflight sees the real Diamond entry point. On such a
+   * preview a signature-verification revert is an artefact, not a
+   * real failure, so it is downgraded to `unavailable` instead of
+   * `revert`. Unset everywhere else — a genuine permit / signature
+   * revert then surfaces normally as `would revert`. (PR #41 review.)
+   */
+  allowSignatureRevert?: boolean;
 }
 
 export interface SimResult {
@@ -57,6 +68,12 @@ export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
   const reqIdRef = useRef(0);
 
   const simulate = useCallback(async () => {
+    // Bump the request id FIRST — before any early return — so a
+    // chain switch or cleared input invalidates an `eth_call` still
+    // in flight from a previous render; otherwise it could resolve
+    // later and overwrite the guard's verdict with a stale
+    // ok/revert. (PR #41 Codex review.)
+    const myReq = ++reqIdRef.current;
     if (!input || !address || !publicClient) {
       setResult({ status: 'idle' });
       return;
@@ -71,7 +88,6 @@ export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
       setResult({ status: 'unavailable' });
       return;
     }
-    const myReq = ++reqIdRef.current;
     setResult({ status: 'loading' });
     try {
       // viem `call` === `eth_call`: executes the calldata from the
@@ -88,7 +104,7 @@ export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
       setResult({ status: 'ok' });
     } catch (err) {
       if (myReq !== reqIdRef.current) return;
-      setResult(classifyError(err));
+      setResult(classifyError(err, input.allowSignatureRevert ?? false));
     }
   }, [address, isCorrectChain, publicClient, input]);
 
@@ -105,22 +121,31 @@ export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
 /**
  * Map a thrown `eth_call` error to a `SimResult`.
  *
- * A clean on-chain revert with a readable reason → `revert`.
- * Everything else — an RPC/network failure, OR a revert that is an
- * artefact of previewing a not-yet-signed tx (a placeholder Permit2
- * signature on the accept-with-permit path) — → `unavailable`, so
- * the preview never raises a false alarm and never blocks.
+ * A clean on-chain revert with a readable reason → `revert`. An
+ * RPC / network failure → `unavailable` (no verdict).
+ *
+ * `allowSignatureRevert` (set only by a placeholder-signature
+ * preview — see `TxSimInput`) gates the one artefact case: a
+ * signature-verification revert. When it is `true` such a revert is
+ * the expected consequence of the zeroed Permit2 signature and is
+ * downgraded to `unavailable`. When `false` — every other call site
+ * — a permit / signature revert is a GENUINE failure and surfaces
+ * as `revert`, so real doomed transactions are never masked.
+ * (PR #41 Codex review — the gate was previously a blanket regex.)
  */
-function classifyError(err: unknown): SimResult {
+function classifyError(
+  err: unknown,
+  allowSignatureRevert: boolean,
+): SimResult {
   const msg = err instanceof BaseError ? err.shortMessage : String(err);
   if (!/revert/i.test(msg)) {
     // Network / RPC / timeout — no verdict.
     return { status: 'unavailable' };
   }
-  // Signature-verification reverts are expected when previewing the
-  // Permit2 single-sig accept path with a placeholder signature —
-  // not a real problem with the user's intended transaction.
-  if (/permit|signature|ecdsa|invalidsigner/i.test(msg)) {
+  if (
+    allowSignatureRevert &&
+    /permit|signature|ecdsa|invalidsigner/i.test(msg)
+  ) {
     return { status: 'unavailable' };
   }
   return { status: 'revert', revertReason: msg };

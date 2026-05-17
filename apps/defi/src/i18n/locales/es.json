@@ -1468,14 +1468,10 @@
   },
   "simulationPreview": {
     "unavailable": "Vista previa de transacción no disponible en esta cadena / despliegue.",
-    "scanning": "Escaneando transacción…",
-    "errorPrefix": "Error de vista previa:",
-    "errorSuffix": ". La transacción on-chain no se ve afectada — proceder con cautela.",
-    "expectedStateChanges": "Cambios de estado esperados",
-    "plusMore": "… más {{count}} adicionales",
-    "titleMalicious": "Blockaid ha marcado esta transacción como maliciosa. NO proceder.",
-    "titleWarning": "Blockaid ha emitido advertencias — revisar los cambios de estado antes de firmar.",
-    "titlePreview": "Vista previa de transacción"
+    "scanning": "Simulando la transacción…",
+    "okTitle": "Simulación correcta — esta transacción no se revertirá.",
+    "revertPrefix": "Esta transacción se revertiría:",
+    "revertSuffix": "Revisa los detalles anteriores antes de firmar."
   },
   "consent": {
     "dismissAria": "Descartar — preguntaremos de nuevo en la próxima visita",

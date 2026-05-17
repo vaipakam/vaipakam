@@ -1468,14 +1468,10 @@
   },
   "simulationPreview": {
     "unavailable": "Transaktionsvorschau auf dieser Chain / diesem Deployment nicht verfügbar.",
-    "scanning": "Transaktion wird gescannt…",
-    "errorPrefix": "Vorschau-Fehler:",
-    "errorSuffix": ". Die On-Chain-Tx ist davon nicht betroffen — mit Vorsicht fortfahren.",
-    "expectedStateChanges": "Erwartete Zustandsänderungen",
-    "plusMore": "… plus {{count}} weitere",
-    "titleMalicious": "Blockaid hat diese Transaktion als bösartig gekennzeichnet. NICHT fortfahren.",
-    "titleWarning": "Blockaid hat Warnungen gemeldet — Zustandsänderungen vor dem Signieren prüfen.",
-    "titlePreview": "Transaktionsvorschau"
+    "scanning": "Transaktion wird simuliert…",
+    "okTitle": "Simulation erfolgreich — diese Transaktion wird nicht fehlschlagen.",
+    "revertPrefix": "Diese Transaktion würde fehlschlagen:",
+    "revertSuffix": "Prüfen Sie die obigen Angaben, bevor Sie signieren."
   },
   "consent": {
     "dismissAria": "Verwerfen — wir fragen beim nächsten Besuch erneut",

@@ -1468,14 +1468,10 @@
   },
   "simulationPreview": {
     "unavailable": "이 체인 / 배포에서는 트랜잭션 미리보기를 사용할 수 없습니다.",
-    "scanning": "트랜잭션 스캔 중…",
-    "errorPrefix": "미리보기 오류:",
-    "errorSuffix": ". 온체인 트랜잭션은 영향을 받지 않습니다 — 신중하게 진행하십시오.",
-    "expectedStateChanges": "예상 상태 변경",
-    "plusMore": "… 그리고 {{count}}개 더",
-    "titleMalicious": "Blockaid가 이 트랜잭션을 악의적으로 표시했습니다. 진행하지 마십시오.",
-    "titleWarning": "Blockaid가 경고를 표시했습니다 — 서명 전 상태 변경을 검토하십시오.",
-    "titlePreview": "트랜잭션 미리보기"
+    "scanning": "트랜잭션 시뮬레이션 중…",
+    "okTitle": "시뮬레이션 성공 — 이 트랜잭션은 실패하지 않습니다.",
+    "revertPrefix": "이 트랜잭션은 실패합니다:",
+    "revertSuffix": "서명하기 전에 위의 세부 정보를 확인하세요."
   },
   "consent": {
     "dismissAria": "닫기 — 다음 방문 시 다시 묻습니다",
