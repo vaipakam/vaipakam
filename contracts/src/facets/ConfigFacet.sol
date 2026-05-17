@@ -47,6 +47,11 @@ contract ConfigFacet is DiamondAccessControl {
     error TierLtvBpsTooHigh(uint256 provided, uint256 maxAllowed);
     error InvalidLiquidityTier(uint8 provided);
     error PaaListInvalid(string reason);
+    // ── Treasury conversion (T-600) ─────────────────────────────────────
+    /// @notice The treasury-conversion target list failed validation.
+    ///         `reason` is one of: "empty", "too-many", "zero-asset",
+    ///         "duplicate-asset", "bps-not-10000".
+    error InvalidTreasuryConvertTargets(string reason);
 
     /// ─── Events ─────────────────────────────────────────────────────
     /// @custom:event-category informational/config
@@ -183,6 +188,109 @@ contract ConfigFacet is DiamondAccessControl {
         if (newBps > MAX_FEE_BPS) revert InvalidFeeBps(newBps, MAX_FEE_BPS);
         LibVaipakam.storageSlot().protocolCfg.lifMatcherFeeBps = newBps;
         emit LifMatcherFeeBpsSet(newBps);
+    }
+
+    // ── Treasury conversion (T-600) knobs ───────────────────────────────
+
+    /// @notice Emitted when the treasury-conversion target allocation is
+    ///         replaced. `count` is the new target-list length.
+    /// @custom:event-category informational/config
+    event TreasuryConvertTargetsSet(uint256 count);
+    /// @notice Emitted when the treasury-conversion eligibility thresholds change.
+    /// @custom:event-category informational/config
+    event TreasuryConvertThresholdsSet(uint256 usdThreshold, uint32 maxIntervalDays);
+
+    /**
+     * @notice Replace the treasury-conversion target allocation.
+     * @dev ADMIN_ROLE-only (Timelock post-handover). This single atomic
+     *      setter expresses add / remove / reweight — pass the complete
+     *      desired list each time. Validation (every write, so the
+     *      sum-to-10000 invariant can never be transiently broken):
+     *        - 1 .. MAX_TREASURY_CONVERT_TARGETS entries,
+     *        - no zero `asset`, no duplicate `asset`,
+     *        - the `bps` of all entries sum to exactly 10000.
+     *      Order matters: the FINAL entry absorbs `convertTreasuryAsset`'s
+     *      integer-division rounding dust.
+     * @param targets The complete `(asset, bps)` allocation list.
+     */
+    function setTreasuryConvertTargets(LibVaipakam.TreasuryConvertTarget[] calldata targets)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        uint256 n = targets.length;
+        if (n == 0) revert InvalidTreasuryConvertTargets("empty");
+        if (n > LibVaipakam.MAX_TREASURY_CONVERT_TARGETS) {
+            revert InvalidTreasuryConvertTargets("too-many");
+        }
+        uint256 sum;
+        for (uint256 i = 0; i < n; ++i) {
+            if (targets[i].asset == address(0)) {
+                revert InvalidTreasuryConvertTargets("zero-asset");
+            }
+            for (uint256 j = i + 1; j < n; ++j) {
+                if (targets[i].asset == targets[j].asset) {
+                    revert InvalidTreasuryConvertTargets("duplicate-asset");
+                }
+            }
+            sum += targets[i].bps;
+        }
+        if (sum != LibVaipakam.BASIS_POINTS) {
+            revert InvalidTreasuryConvertTargets("bps-not-10000");
+        }
+
+        LibVaipakam.TreasuryConvertTarget[] storage stored =
+            LibVaipakam.storageSlot().treasuryConvertTargets;
+        // Atomic replace — clear, then re-push the new list.
+        while (stored.length > 0) stored.pop();
+        for (uint256 i = 0; i < n; ++i) {
+            stored.push(targets[i]);
+        }
+        emit TreasuryConvertTargetsSet(n);
+    }
+
+    /**
+     * @notice Set the treasury-conversion eligibility thresholds.
+     * @dev ADMIN_ROLE-only. A conversion becomes eligible when EITHER the
+     *      input balance's numeraire value clears `usdThreshold` OR the
+     *      time since the last conversion exceeds `maxIntervalDays` —
+     *      whichever fires first. Pass `0` for either to reset it to the
+     *      library default.
+     * @param usdThreshold Per-token numeraire-value (1e18) threshold. 0 ⇒ $10k.
+     * @param maxIntervalDays Max days between conversions. 0 ⇒ 30.
+     */
+    function setTreasuryConvertThresholds(uint256 usdThreshold, uint32 maxIntervalDays)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.ProtocolConfig storage c = LibVaipakam.storageSlot().protocolCfg;
+        c.treasuryConvertUsdThreshold = usdThreshold;
+        c.treasuryConvertMaxIntervalDays = maxIntervalDays;
+        emit TreasuryConvertThresholdsSet(usdThreshold, maxIntervalDays);
+    }
+
+    /**
+     * @notice Effective treasury-conversion config — the configured
+     *         target-allocation list plus the eligibility thresholds.
+     * @return targets The `(asset, bps)` target list (empty until set).
+     * @return usdThreshold Effective numeraire-value eligibility threshold.
+     * @return maxIntervalDays Effective max days between conversions.
+     * @return lastConversionAt Unix timestamp of the last conversion (0 ⇒ never).
+     */
+    function getTreasuryConvertConfig()
+        external
+        view
+        returns (
+            LibVaipakam.TreasuryConvertTarget[] memory targets,
+            uint256 usdThreshold,
+            uint256 maxIntervalDays,
+            uint256 lastConversionAt
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        targets = s.treasuryConvertTargets;
+        usdThreshold = LibVaipakam.cfgTreasuryConvertUsdThreshold();
+        maxIntervalDays = LibVaipakam.cfgTreasuryConvertMaxIntervalDays();
+        lastConversionAt = s.treasuryLastConversionAt;
     }
 
     /// @notice Emitted on every change to the partial-liquidation close-factor cap.

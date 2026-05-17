@@ -174,6 +174,18 @@ library LibVaipakam {
     uint16 constant DEFAULT_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG = 100;     // 1%
     uint16 constant MIN_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG = 0;           // governance can zero the bot incentive
     uint16 constant MAX_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG = 300;         // 3% per leg ceiling
+    // ── Treasury-conversion (T-600) governance defaults ────────────────
+    // The target asset allocation for `TreasuryFacet.convertTreasuryAsset`
+    // is a fully governance-configurable list of `(asset, bps)` entries —
+    // see `TreasuryConvertTarget` + `s.treasuryConvertTargets`. This cap
+    // bounds the per-conversion swap-leg count (gas).
+    uint256 constant MAX_TREASURY_CONVERT_TARGETS = 8;
+    // Eligibility gate: a conversion may run once the accumulated
+    // numeraire-value (1e18-scaled — USD by post-deploy default) of an
+    // input token clears this threshold, OR the max interval lapses —
+    // whichever comes first.
+    uint256 constant TREASURY_CONVERT_USD_THRESHOLD_DEFAULT = 10_000e18; // $10k
+    uint32 constant TREASURY_CONVERT_MAX_INTERVAL_DAYS_DEFAULT = 30;     // 30 days
     // Default keeper-confidence tier for an asset the relay hasn't
     // touched yet — Tier 1, i.e. `effectiveTier` collapses to today's
     // `HF ≥ 1.5` until the off-chain 0x/1inch confidence accumulates.
@@ -934,6 +946,20 @@ library LibVaipakam {
         // 5–7.7% external-liquidation discount borrowers would
         // otherwise pay. `0` ⇒ DEFAULT_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG.
         uint16 internalMatchIncentivePerLegBps;
+        // ── Treasury-conversion (T-600) eligibility thresholds ─────────
+        // The convert *target allocation* itself is the fully
+        // governance-configurable `s.treasuryConvertTargets` list (see
+        // `TreasuryConvertTarget`); only the eligibility thresholds live
+        // on the packed config.
+        //
+        // Per-token numeraire-value (1e18) accumulation threshold that
+        // makes a treasury conversion eligible. 0 ⇒
+        // TREASURY_CONVERT_USD_THRESHOLD_DEFAULT ($10k).
+        uint256 treasuryConvertUsdThreshold; // 0 ⇒ default
+        // Max days between conversions — the time-based leg of the
+        // eligibility gate (fires whichever comes first). 0 ⇒
+        // TREASURY_CONVERT_MAX_INTERVAL_DAYS_DEFAULT (30).
+        uint32 treasuryConvertMaxIntervalDays; // 0 ⇒ default
     }
 
     /// @dev Struct to store parameters of createOffer function, avoiding stack-too-deep.
@@ -2612,6 +2638,65 @@ library LibVaipakam {
         // `claimAsLenderWithRetry`.
         mapping(address => mapping(address => uint256[])) assetPairActiveLoanIds;
         mapping(address => mapping(address => mapping(uint256 => uint256))) assetPairActiveLoanIdsPos;
+        // ── Treasury conversion (T-600) — config + runtime state ───────
+        // The fully governance-configurable target allocation for
+        // `convertTreasuryAsset`: an ordered list of `(asset, bps)`
+        // entries whose BPS sum to exactly 10000. Set atomically via
+        // `ConfigFacet.setTreasuryConvertTargets` (ADMIN_ROLE → Timelock
+        // → governance) — that one setter expresses add / remove /
+        // reweight, and validates the sum-to-10000 invariant on every
+        // write. Empty ⇒ `convertTreasuryAsset` reverts until governance
+        // configures it (asset addresses are per-chain — there is no
+        // sensible compile-time default). The FINAL entry absorbs
+        // integer-division rounding.
+        TreasuryConvertTarget[] treasuryConvertTargets;
+        // Unix timestamp of the last successful
+        // `TreasuryFacet.convertTreasuryAsset`. Drives the
+        // time-based leg of the eligibility gate. 0 ⇒ never converted.
+        uint64 treasuryLastConversionAt;
+        // ── Founder / contributor salary streams (T-600 PayrollFacet) ──
+        // Per-stream payroll state. `payrollStreamCount` is the monotone
+        // next-id source — stream ids are 1-based, so id 0 is an
+        // unambiguous "no stream" sentinel. A stream is funded ONLY by
+        // an explicit `fundPayrollStream` governance top-up — never by a
+        // fee accrual or a treasury conversion. That separation is the
+        // structural guarantee that the founder salary is compensation
+        // for services, not a securities-style revenue share.
+        mapping(uint256 => PayrollStream) payrollStreams;
+        uint256 payrollStreamCount;
+    }
+
+    /// @dev One entry of the treasury-conversion target allocation
+    ///      (T-600). `convertTreasuryAsset` splits the input balance
+    ///      across the configured list pro-rata to `bps`; the BPS of
+    ///      all entries sum to exactly 10000. Fully governance-set —
+    ///      `ConfigFacet.setTreasuryConvertTargets` replaces the whole
+    ///      list atomically, so add / remove / reweight is one call and
+    ///      the sum invariant is never transiently broken.
+    struct TreasuryConvertTarget {
+        address asset; // the reserve asset this leg converts into
+        uint16 bps;    // its share of each conversion, in basis points
+    }
+
+    /// @dev Founder / contributor salary stream (T-600 `PayrollFacet`).
+    ///      A continuous per-second accrual paid out of treasury funds:
+    ///        accrued = accruedAtAnchor
+    ///                  + (paused ? 0 : (now - lastRateChangeAt) * ratePerSecond)
+    ///        withdrawable = min(accrued, funded) - withdrawn
+    ///      Clamping the payout to `funded` is what makes the stream a
+    ///      SALARY — it dries up unless governance tops it up via
+    ///      `fundPayrollStream` — rather than a perpetual claim on
+    ///      protocol revenue.
+    struct PayrollStream {
+        address beneficiary;      // the only address that may withdraw
+        address asset;            // ERC-20 paid out (WETH / a stablecoin)
+        uint256 ratePerSecond;    // accrual rate, asset-wei per second
+        uint256 funded;           // cumulative governance top-ups
+        uint256 withdrawn;        // cumulative amount withdrawn
+        uint256 accruedAtAnchor;  // accrual already settled up to the anchor
+        uint64 lastRateChangeAt;  // anchor timestamp for the live accrual
+        bool paused;              // accrual frozen while true
+        bool exists;              // true once created — distinguishes a zeroed slot
     }
 
     /// @dev Cached tier-LTV reading. Updated permissionlessly via
@@ -3178,6 +3263,22 @@ library LibVaipakam {
         uint16 v = storageSlot().protocolCfg.internalMatchIncentivePerLegBps;
         return v == 0
             ? uint256(DEFAULT_INTERNAL_MATCH_INCENTIVE_BPS_PER_LEG)
+            : uint256(v);
+    }
+
+    /// @dev T-600 — per-token numeraire-value (1e18) accumulation
+    ///      threshold that makes a treasury conversion eligible.
+    function cfgTreasuryConvertUsdThreshold() internal view returns (uint256) {
+        uint256 v = storageSlot().protocolCfg.treasuryConvertUsdThreshold;
+        return v == 0 ? TREASURY_CONVERT_USD_THRESHOLD_DEFAULT : v;
+    }
+
+    /// @dev T-600 — max days between treasury conversions (time leg of
+    ///      the eligibility gate).
+    function cfgTreasuryConvertMaxIntervalDays() internal view returns (uint256) {
+        uint32 v = storageSlot().protocolCfg.treasuryConvertMaxIntervalDays;
+        return v == 0
+            ? uint256(TREASURY_CONVERT_MAX_INTERVAL_DAYS_DEFAULT)
             : uint256(v);
     }
 

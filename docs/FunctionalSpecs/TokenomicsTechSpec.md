@@ -64,11 +64,45 @@ Implementation target:
 | Security Auditors                     |       `2%` |     `4,600,000` | One-time grants upon delivery                    |
 | Regulatory Compliance Pool            |       `1%` |     `2,300,000` | One-time                                         |
 | Bug Bounty Programs                   |       `2%` |     `4,600,000` | Ongoing, locked in multi-sig                     |
-| Exchange Listings & Market Making     |      `14%` |    `32,200,000` | Liquidity + CEX incentives                       |
+| Exchange Listings & Market Making     |      `12%` |    `27,600,000` | Liquidity + CEX incentives                       |
+| Ecosystem / Community / Marketing     |       `2%` |     `4,600,000` | 0 cliff + ~12–18 mo linear; ops/governance multisig — see §3a |
 | **Early Fixed-Rate Purchase Program** |       `1%` |     `2,300,000` | Sold at `1 VPFI = 0.001 ETH`, caps admin-managed |
 | Platform Interaction Rewards          |      `30%` |    `69,000,000` | Usage-based rewards                              |
 | Staking Rewards                       |      `24%` |    `55,200,000` | `5% APR`, Vault-based                            |
 | **Total**                             |   **100%** | **230,000,000** | Hard cap enforced on Base                        |
+
+### 3a. People-pool semantics (Founders / Team / Testers / Ecosystem)
+
+The four allocation lines that fund people are reserved **mint headroom**,
+not pre-minted bags. The 230M is a *cap*, not a mandatory mint — an
+unallocated pool is simply never minted (lower circulating supply).
+
+- **Founders (6%)** — the founder's genuine ownership stake. 1-year
+  cliff + 4-year linear vesting via a per-grantee `VaipakamVestingWallet`.
+- **Developers & Team (12%)** — ongoing developer / operational hires.
+  The solo founder, being also the sole developer, draws a *defined*
+  developer grant from this pool — **not** the whole pool; the remainder
+  stays as genuine hiring headroom. Each hire gets their own vesting
+  wallet, granted as they join (founder-set in Phase 1; governance-
+  approved from Phase 2).
+- **Testers & Early Contributors (6%)** — early / pre-launch supporters
+  (beta testers, pre-TGE community contributors). Shorter cliff because
+  the contribution is front-loaded. Granted per-contributor, same
+  mechanism.
+- **Ecosystem / Community / Marketing (2%)** — a small genesis bridge so
+  the protocol can run launch-window marketing before fee revenue makes
+  treasury-funded marketing viable. **0 cliff + a short (~12–18 mo)
+  linear release** — it must be spendable at launch. Held by an
+  ops/governance multisig, **not** the founder's wallet. Ongoing
+  marketing beyond the launch window is treasury OpEx (see the
+  Treasury convert + distribution flow).
+
+**None of the non-founder pools ever revert to the founder.** If a pool
+is under-used, that headroom stays unminted; repurposing long-unused
+headroom is a governance decision directed to community uses
+(staking-reward top-up / burn), never a founder transfer. This is what
+keeps a solo-founder cap table clean — the founder's hard share is 6%,
+and the rest is genuinely earmarked for others.
 
 ---
 
