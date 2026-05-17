@@ -32,7 +32,7 @@
  *   GET  /frames/active-loans/image         — Frame SVG image
  *   POST /quote/0x                          — 0x v2 aggregator proxy
  *   POST /quote/1inch                       — 1inch v6 aggregator proxy
- *   POST /scan/blockaid                     — Blockaid scanner proxy
+ *   POST /scan/tx                           — GoPlus transaction-scan proxy
  *   ANY  /diag/record                       — diagnostics record capture
  *   POST /diag/erasure                      — frontend → erase own records
  *   POST /diag/erasure/status               — frontend → erasure status check
@@ -56,7 +56,7 @@ import { resolveEnv, type Env, type WorkerEnv } from './env';
 import { runPeriodicPreNotify } from './periodicPreNotify';
 import { runBuyWatchdog } from './buyWatchdog';
 import { handle0xQuote, handle1inchQuote } from './quoteProxy';
-import { handleBlockaidScan } from './scanProxy';
+import { handleTxScan } from './scanProxy';
 import { handleDiagRecord, pruneOldDiagErrors } from './diagRecord';
 import {
   handleDiagErasure,
@@ -149,9 +149,10 @@ export default {
       return handle1inchQuote(req, resolved);
     }
 
-    // Blockaid scan proxy — same shape as quote proxies above.
-    if (url.pathname === '/scan/blockaid' && req.method === 'POST') {
-      return handleBlockaidScan(req, resolved);
+    // GoPlus transaction-scan proxy (ET-001 — replaced Blockaid).
+    // Same shape as the quote proxies above.
+    if (url.pathname === '/scan/tx' && req.method === 'POST') {
+      return handleTxScan(req, resolved);
     }
 
     // Diagnostics record. CORS-locked + per-IP rate-limited inside

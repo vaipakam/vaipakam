@@ -3,48 +3,67 @@ import type { Address, Hex } from 'viem';
 import { useWallet } from '../context/WalletContext';
 
 /**
- * Phase 8b.2 — client-side transaction simulation preview via Blockaid.
+ * ET-001 — client-side transaction-scan preview, GoPlus-backed.
  *
- * Before the user clicks Confirm in the wallet, call `simulate()` with
- * the pending tx's `{ to, data, value }`. The hook posts to the
- * operator's Cloudflare Worker proxy at `${VITE_AGENT_ORIGIN}/scan/blockaid`,
- * which injects the Blockaid API key server-side and pass-throughs the
- * scanner JSON. The browser never sees the API key, satisfying the
- * docs' "API keys for transaction scanning and swap quotes must stay
- * server-side" rule (`docs/WebsiteReadme.md`).
+ * Before the user clicks Confirm in the wallet, the review modal
+ * passes the pending tx's `{ to, data, value }`; this hook posts it
+ * to the operator's Cloudflare Worker proxy at
+ * `${VITE_AGENT_ORIGIN}/scan/tx`. The worker exchanges the GoPlus
+ * App Key + App Secret for an access token server-side and calls
+ * GoPlus `abi/input_decode`; the browser never sees a credential.
  *
- * Blockaid returns a classification (benign / warning / malicious) plus
- * a structured `stateChanges` diff describing what the tx will move.
- * Render the result inline in the review modal so the user sees the
- * outcome before signing — closes the "blind signing" UX gap that
- * MetaMask's Security Alerts, Rabby's transaction previews, and
- * Coinbase Wallet's Blockaid integration all address.
+ * Replaces the Phase-8b Blockaid integration. GoPlus is a *risk-data*
+ * API, not a balance-diff simulator — so the result is a decoded
+ * call (method, parameters) plus risk flags (malicious target
+ * contract / malicious address parameters / risky signature), NOT a
+ * predicted asset diff. The hook name is kept for call-site
+ * stability; the shape it returns is GoPlus-native (`ScanResult`).
  *
- * Fails silently on proxy outage, missing key (the worker returns 503
- * `blockaid-not-configured`), or network hiccup: the preview is
- * advisory and MUST NOT block the tx. The hook's state simply stays
- * `{ status: 'unavailable' }` and the UI renders a subdued
- * "preview unavailable" footer instead of a full preview card.
+ * Fails soft on proxy outage, the operator kill switch
+ * (`TX_SCAN_ENABLED=false` → 503 `scan-disabled`), missing GoPlus
+ * creds (503 `scan-not-configured`), an unsupported chain, a GoPlus
+ * upstream error (502) or a network hiccup: the preview is advisory
+ * and MUST NOT block the tx. The state stays `{ status:
+ * 'unavailable' }` and the UI renders a subdued footer.
  */
 
-const HF_WATCHER_ORIGIN = (import.meta.env.VITE_AGENT_ORIGIN as
+const AGENT_ORIGIN = (import.meta.env.VITE_AGENT_ORIGIN as
   | string
   | undefined) ?? '';
 
-export interface StateChange {
-  kind: 'transfer-in' | 'transfer-out' | 'approval' | 'nft-in' | 'nft-out' | 'other';
-  asset?: Address;
-  amount?: bigint;
-  tokenId?: bigint;
-  description: string;
+/** Overall scan verdict (mirrors the worker's `TxScanVerdict`). */
+export type ScanVerdict = 'safe' | 'warning' | 'danger';
+
+/** Address-typed parameter enrichment from GoPlus. */
+export interface ScanAddress {
+  address: string;
+  isContract: boolean;
+  malicious: boolean;
+  contractName: string | null;
+  standard: string | null; // "erc20" | "erc721" | ...
+  symbol: string | null;
 }
 
-export type SimClassification = 'benign' | 'warning' | 'malicious';
+/** One decoded call parameter. */
+export interface ScanParam {
+  name: string;
+  type: string;
+  value: string | null;
+  address: ScanAddress | null;
+}
 
-export interface SimResult {
+/** Hook result — GoPlus-native scan shape + a fetch status. */
+export interface ScanResult {
   status: 'ready' | 'loading' | 'unavailable' | 'error';
-  classification?: SimClassification;
-  stateChanges?: StateChange[];
+  verdict?: ScanVerdict;
+  method?: string | null;
+  contractName?: string | null;
+  contractDescription?: string | null;
+  maliciousContract?: boolean;
+  riskySignature?: boolean;
+  risk?: string | null;
+  signatureDetail?: string | null;
+  params?: ScanParam[];
   warnings?: string[];
   errorMessage?: string;
 }
@@ -55,11 +74,11 @@ export interface TxSimInput {
   value?: bigint;
 }
 
-/** Debounced simulation — rapid successive updates (e.g. slider-driven
+/** Debounced scan — rapid successive updates (e.g. slider-driven
  *  what-ifs) trigger only the last call. Stale responses are dropped. */
 export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
   const { address, chainId } = useWallet();
-  const [result, setResult] = useState<SimResult>({ status: 'ready' });
+  const [result, setResult] = useState<ScanResult>({ status: 'ready' });
   const reqIdRef = useRef(0);
 
   const simulate = useCallback(async () => {
@@ -67,7 +86,7 @@ export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
       setResult({ status: 'ready' });
       return;
     }
-    if (!HF_WATCHER_ORIGIN) {
+    if (!AGENT_ORIGIN) {
       // No worker origin configured — the proxy isn't reachable from
       // this build. Mark unavailable so the UI renders a subdued
       // footer instead of a missing preview.
@@ -77,7 +96,7 @@ export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
     const myReq = ++reqIdRef.current;
     setResult({ status: 'loading' });
     try {
-      const res = await _callBlockaidProxy({
+      const res = await _callScanProxy({
         chainId,
         from: address as Address,
         ...input,
@@ -87,18 +106,15 @@ export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
     } catch (err) {
       if (myReq !== reqIdRef.current) return;
       const msg = err instanceof Error ? err.message : 'preview failed';
-      // Per the docs (`docs/WebsiteReadme.md`): "Blockaid unavailability
-      // must fail soft: it may collapse to a subtle preview-unavailable
-      // state, but it must not block the on-chain transaction path by
-      // itself." Anything that means "the scanner couldn't give us an
-      // answer" — missing key, network hiccup, rate-limit, upstream
-      // outage, etc. — downgrades to 'unavailable'. Only programmer
-      // bugs (a thrown synchronous exception we genuinely don't
-      // recognise) surface as a hard error.
-      const failSoft =
-        msg === 'blockaid-not-configured' ||
-        msg.startsWith('network') ||
-        msg.startsWith('proxy ');
+      // The scan is advisory and must fail soft: anything that means
+      // "the scanner couldn't give us a verdict" — kill switch,
+      // missing creds, unsupported chain, GoPlus upstream error,
+      // rate-limit, network hiccup, a malformed response — downgrades
+      // to 'unavailable' (a subdued footer). The worker returns those
+      // as a non-2xx status, surfaced here as a `proxy `/`network`
+      // message. Only a genuinely unrecognised thrown error becomes a
+      // hard 'error'.
+      const failSoft = msg.startsWith('network') || msg.startsWith('proxy ');
       if (failSoft) {
         setResult({ status: 'unavailable' });
         return;
@@ -125,10 +141,24 @@ interface ProxyRequest {
   value?: bigint;
 }
 
-async function _callBlockaidProxy(
+/** The worker's normalized `/scan/tx` response (see scanProxy.ts). */
+interface TxScanResponse {
+  verdict?: string;
+  method?: string | null;
+  contractName?: string | null;
+  contractDescription?: string | null;
+  maliciousContract?: boolean;
+  riskySignature?: boolean;
+  risk?: string | null;
+  signatureDetail?: string | null;
+  params?: ScanParam[];
+  warnings?: string[];
+}
+
+async function _callScanProxy(
   req: ProxyRequest,
-): Promise<Omit<SimResult, 'status'>> {
-  const url = `${HF_WATCHER_ORIGIN.replace(/\/$/, '')}/scan/blockaid`;
+): Promise<Omit<ScanResult, 'status'>> {
+  const url = `${AGENT_ORIGIN.replace(/\/$/, '')}/scan/tx`;
   let res: Response;
   try {
     res = await fetch(url, {
@@ -145,94 +175,34 @@ async function _callBlockaidProxy(
   } catch {
     throw new Error('network');
   }
-  if (res.status === 503) {
-    // Worker says the operator hasn't provisioned the Blockaid key
-    // yet (or `BLOCKAID_API_KEY` is empty). Treat as a quiet no-op.
-    throw new Error('blockaid-not-configured');
-  }
   if (!res.ok) {
+    // Every non-2xx — 503 (disabled / not-configured / chain
+    // unsupported), 502 (GoPlus upstream error), 429 (rate-limited),
+    // 400 (bad payload) — means "no verdict". The `proxy ` prefix
+    // routes it through the fail-soft branch in `useTxSimulation`.
     throw new Error(`proxy ${res.status}`);
   }
-  const json = (await res.json()) as BlockaidResponse;
+  const json = (await res.json()) as TxScanResponse;
 
-  // Per docs/WebsiteReadme.md the preview panel must distinguish
-  // benign / warning / malicious / preview-unavailable. An unknown
-  // (or missing) `result_type` could be a Blockaid schema change or
-  // a partial response — in either case we don't have a verdict, so
-  // surface as preview-unavailable rather than rendering a green
-  // benign card the user may misread as "scanner says it's safe".
-  // The error message starts with `proxy ` so the catch in
-  // `useTxSimulation` downgrades it to `{status:'unavailable'}` via
-  // the existing fail-soft branch.
-  const rt = json.validation?.result_type;
-  if (rt !== 'Benign' && rt !== 'Warning' && rt !== 'Malicious') {
+  // An unknown / missing `verdict` is a worker schema drift or a
+  // partial response — we don't have a verdict, so surface as
+  // preview-unavailable rather than rendering a card the user may
+  // misread. The `proxy ` prefix triggers the fail-soft downgrade.
+  const v = json.verdict;
+  if (v !== 'safe' && v !== 'warning' && v !== 'danger') {
     throw new Error('proxy malformed');
   }
 
   return {
-    classification: _mapClassification(rt),
-    stateChanges: _mapStateChanges(json.simulation),
-    warnings: json.validation?.features?.map((f) => f.description) ?? [],
+    verdict: v,
+    method: json.method ?? null,
+    contractName: json.contractName ?? null,
+    contractDescription: json.contractDescription ?? null,
+    maliciousContract: json.maliciousContract ?? false,
+    riskySignature: json.riskySignature ?? false,
+    risk: json.risk ?? null,
+    signatureDetail: json.signatureDetail ?? null,
+    params: json.params ?? [],
+    warnings: json.warnings ?? [],
   };
-}
-
-interface BlockaidResponse {
-  validation?: {
-    result_type?: string;
-    features?: Array<{ description: string }>;
-  };
-  simulation?: {
-    assets_diffs?: Record<
-      string,
-      Array<{
-        asset: { type: string; address?: string };
-        in?: Array<{ value?: string; raw_value?: string; token_id?: string }>;
-        out?: Array<{ value?: string; raw_value?: string; token_id?: string }>;
-      }>
-    >;
-  };
-}
-
-/// Caller (`_callBlockaidProxy`) has already rejected anything outside
-/// the known set, so this mapper only sees one of the three values.
-function _mapClassification(
-  rt: 'Benign' | 'Warning' | 'Malicious',
-): SimClassification {
-  switch (rt) {
-    case 'Benign':
-      return 'benign';
-    case 'Warning':
-      return 'warning';
-    case 'Malicious':
-      return 'malicious';
-  }
-}
-
-function _mapStateChanges(sim: BlockaidResponse['simulation']): StateChange[] {
-  if (!sim?.assets_diffs) return [];
-  const out: StateChange[] = [];
-  for (const [, diffs] of Object.entries(sim.assets_diffs)) {
-    for (const diff of diffs) {
-      const asset = diff.asset.address as Address | undefined;
-      for (const inEntry of diff.in ?? []) {
-        out.push({
-          kind: diff.asset.type === 'ERC20' ? 'transfer-in' : 'nft-in',
-          asset,
-          amount: inEntry.raw_value ? BigInt(inEntry.raw_value) : undefined,
-          tokenId: inEntry.token_id ? BigInt(inEntry.token_id) : undefined,
-          description: `Receive ${inEntry.value ?? inEntry.raw_value ?? '?'} from ${asset ?? 'unknown'}`,
-        });
-      }
-      for (const outEntry of diff.out ?? []) {
-        out.push({
-          kind: diff.asset.type === 'ERC20' ? 'transfer-out' : 'nft-out',
-          asset,
-          amount: outEntry.raw_value ? BigInt(outEntry.raw_value) : undefined,
-          tokenId: outEntry.token_id ? BigInt(outEntry.token_id) : undefined,
-          description: `Send ${outEntry.value ?? outEntry.raw_value ?? '?'} of ${asset ?? 'unknown'}`,
-        });
-      }
-    }
-  }
-  return out;
 }

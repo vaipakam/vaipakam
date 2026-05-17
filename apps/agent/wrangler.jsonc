@@ -67,7 +67,7 @@
 
   // Cloudflare built-in rate-limit bindings — one per upstream
   // service so a noisy /quote/0x caller can't drain the
-  // /scan/blockaid budget. 60 reqs / 60 seconds per IP each.
+  // /scan/tx budget. 60 reqs / 60 seconds per IP each.
   // namespace_id values are arbitrary unique integers per Worker;
   // operator may renumber to match their account-level scheme.
   "unsafe": {
@@ -85,7 +85,10 @@
         "simple": { "limit": 60, "period": 60 },
       },
       {
-        "name": "SCAN_BLOCKAID_RATELIMIT",
+        // ET-001 — renamed from SCAN_BLOCKAID_RATELIMIT (GoPlus
+        // replaced Blockaid). namespace_id kept so the existing
+        // rate-limit bucket carries over.
+        "name": "SCAN_TX_RATELIMIT",
         "type": "ratelimit",
         "namespace_id": "1003",
         "simple": { "limit": 60, "period": 60 },
@@ -122,6 +125,10 @@
   //                            per-wallet deletion hash. When unset,
   //                            connected-wallet capture skips writes
   //                            and the erasure endpoints 503.
+  //   - GOPLUS_APP_KEY,
+  //     GOPLUS_APP_SECRET    — ET-001: GoPlus Security API creds for
+  //                            the `/scan/tx` proxy (both needed —
+  //                            App Key + Secret → access token).
   //
   // NOT migrated (no signing-key secret here — Stage 3 architectural-
   // rebalance moved KEEPER_PRIVATE_KEY + runDailyOracleSnapshot to
@@ -147,14 +154,14 @@
     { "binding": "ZEROEX_API_KEY",      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "ZEROEX_API_KEY" },
     { "binding": "ONEINCH_API_KEY",     "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "ONEINCH_API_KEY" },
     { "binding": "DIAG_WALLET_HMAC_KEY", "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "DIAG_WALLET_HMAC_KEY" },
-    // `BLOCKAID_API_KEY` binding intentionally omitted — the operator
-    // has no Blockaid key and ET-001 (#32) replaces the Blockaid
-    // transaction scanner with GoPlus. While unbound, `/scan/blockaid`
-    // degrades gracefully (scanProxy.ts returns 503 on the absent
-    // key). ET-001 adds `GOPLUS_APP_KEY` + `GOPLUS_APP_SECRET`
-    // bindings here alongside the rewritten scan proxy; those two
-    // secrets are already staged in the `vaipakam-credentials` store
-    // ahead of that work.
+    // ET-001 (#32) — GoPlus scanner credentials for the `/scan/tx`
+    // proxy, which replaced the Blockaid transaction scanner. GoPlus
+    // auth needs BOTH: `goPlusClient.ts` exchanges App Key + App
+    // Secret for a short-lived access token. The old
+    // `BLOCKAID_API_KEY` binding was never wired (operator held no
+    // Blockaid key).
+    { "binding": "GOPLUS_APP_KEY",      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "GOPLUS_APP_KEY" },
+    { "binding": "GOPLUS_APP_SECRET",   "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "GOPLUS_APP_SECRET" },
   ],
 
   // Operator-managed vars (in `vars` below):
@@ -163,11 +170,15 @@
   //                                the frontend-facing endpoints.
   //   - DIAG_SAMPLE_RATE         — 0.0–1.0; default 1.0.
   //   - DIAG_RETENTION_DAYS      — int days; default 90.
+  //   - TX_SCAN_ENABLED          — ET-001 operator kill switch for
+  //                                the `/scan/tx` GoPlus scan proxy.
+  //                                'false' disables; default enabled.
   "vars": {
     "TG_BOT_USERNAME": "",
     "FRONTEND_ORIGIN": "https://defi.vaipakam.com,https://labs.vaipakam.com,https://www.vaipakam.com,https://vaipakam.com",
     "DIAG_SAMPLE_RATE": "1.0",
     "DIAG_RETENTION_DAYS": "90",
+    "TX_SCAN_ENABLED": "true",
   },
 
   "observability": {

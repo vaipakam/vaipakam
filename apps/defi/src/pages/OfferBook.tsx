@@ -1481,8 +1481,8 @@ interface AcceptReviewModalProps {
   discountPreview: DiscountPreview | null;
   protocolConfig: ProtocolConfig | null;
   /** True when {submitAccept} will pick the Permit2 single-sig path
-   *  for this offer. Drives the inline Blockaid preview so the
-   *  scanned calldata matches what the user is about to sign. */
+   *  for this offer. Drives the inline transaction-scan preview so
+   *  the scanned calldata matches what the user is about to sign. */
   permit2Eligible: boolean;
 }
 
@@ -1753,10 +1753,11 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
             offers skip the check (no DEX swap path applies). */}
         <AcceptLiquidityPreflight offer={offer} />
 
-        {/* Phase 8b.2 — Blockaid preview. Encodes the SAME calldata
-            the confirmation flow will submit (`acceptOfferWithPermit`
-            on the Permit2 path, classic `acceptOffer` otherwise) so
-            the scan reflects the on-chain action 1:1. */}
+        {/* ET-001 — GoPlus transaction-scan preview. Encodes the SAME
+            calldata the confirmation flow will submit
+            (`acceptOfferWithPermit` on the Permit2 path, classic
+            `acceptOffer` otherwise) so the scan reflects the on-chain
+            action 1:1. */}
         <AcceptSimulationPreview
           offer={offer}
           permit2Eligible={permit2Eligible}
@@ -1844,10 +1845,9 @@ interface PaginationProps {
  * encode `acceptOfferWithPermit(offerId, true, permit, signature)`
  * with placeholder permit fields so the scanner sees the SAME
  * Diamond entry point the wallet will sign. The signature isn't
- * cryptographically valid yet — Blockaid scans the calldata shape +
- * simulates the Permit2 pull from on-chain state, which is the
- * relevant safety surface; if the simulator rejects the placeholder
- * outright, useTxSimulation downgrades to "preview unavailable" via
+ * cryptographically valid yet — GoPlus decodes the calldata shape,
+ * which is the relevant safety surface; if the scan can't return a
+ * verdict, useTxSimulation downgrades to "preview unavailable" via
  * the existing fail-soft path.
  *
  * On the classic path we keep encoding `acceptOffer(offerId, true)`.
@@ -1871,9 +1871,9 @@ function AcceptSimulationPreview({
           true,
           // Placeholder permit — token / amount match the real pull;
           // nonce + deadline use safe defaults. Permit2 will reject
-          // this signature on-chain (zeroed), but Blockaid uses the
-          // calldata shape to simulate the Permit2 pull, which is
-          // the safety surface that matters for the preview.
+          // this signature on-chain (zeroed), but GoPlus decodes the
+          // calldata shape — the safety surface that matters for the
+          // preview.
           {
             permitted: {
               token: offer.collateralAsset as Address,

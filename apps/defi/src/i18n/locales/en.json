@@ -487,11 +487,13 @@
     "scanning": "Scanning transaction…",
     "errorPrefix": "Preview error:",
     "errorSuffix": ". The on-chain tx is unaffected — proceed with caution.",
-    "expectedStateChanges": "Expected state changes",
     "plusMore": "… plus {{count}} more",
-    "titleMalicious": "Blockaid flagged this transaction as malicious. Do NOT proceed.",
-    "titleWarning": "Blockaid surfaced warnings — review state changes before signing.",
-    "titlePreview": "Transaction preview"
+    "titleDanger": "GoPlus flagged this transaction as malicious. Do NOT proceed.",
+    "titleWarning": "GoPlus surfaced warnings — review the decoded call before signing.",
+    "titleSafe": "Transaction preview — no risks flagged by GoPlus.",
+    "decodedCall": "Decoded call",
+    "parameters": "Parameters",
+    "flaggedMalicious": "flagged malicious"
   },
   "consent": {
     "dismissAria": "Dismiss — we'll ask again next visit",

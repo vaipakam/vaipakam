@@ -1509,12 +1509,12 @@ export default function CreateOffer() {
           }
         />
 
-        {/* Phase 8b.2 — Blockaid preview of the pending createOffer
-            tx. Encodes the current form state into calldata so the
-            user sees exactly what their approval + create will move
-            before signing. Silently hides when the form isn't
+        {/* ET-001 — GoPlus transaction-scan preview of the pending
+            createOffer tx. Encodes the current form state into
+            calldata so the user sees the decoded call + GoPlus risk
+            flags before signing. Silently hides when the form isn't
             buildable yet (missing required fields / decimals still
-            loading) or when the Blockaid API key isn't configured. */}
+            loading) or when the GoPlus scanner isn't configured. */}
         <CreateOfferSimulationPreview
           toPayload={toPayload}
           diamondAddr={
