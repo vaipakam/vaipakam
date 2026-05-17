@@ -11,7 +11,11 @@
 
 ---
 
-- [ ] **T-079** `yetToPromote`: GoPlus token-security screening of offered assets — an **off-chain advisory** check, complementary to (not a replacement for) the Blowfish transaction-scanner (ET-001). GoPlus is a centralized Web2 REST API (token honeypot / scam / rugpull detection, address risk) — a Worker or the frontend calls it; a smart contract cannot. Use: at offer creation / accept, screen the collateral + principal tokens for honeypot/scam characteristics and surface a warning in the UI. Off-chain advisory only — it informs the UI or an off-chain gate; on-chain enforcement would need an oracle or an on-chain allowlist (a much larger change, not proposed here). Surfaced during the ET-001 (Blockaid→Blowfish) discussion under T-078.
+- [ ] **T-080** `promotedToProjectCard`: Protocol-level **on-chain transaction defense** via **CUBE3**. A transaction-firewall / real-time fraud-prevention layer protecting the Vaipakam Diamond from exploit / malicious transactions (reentrancy, oracle manipulation, …) against the protocol's OWN contracts — distinct from the GoPlus scanner (ET-001), which screens user-facing transactions + offered tokens. Chosen over Forta Firewall (heavier, rollup-grade, undisclosed flat fee); CUBE3's Detect + Manage tiers are free so evaluation is low-commitment, with the paid Protect tier doing active on-chain blocking. Phased: evaluate with the free Detect tier → design the Protect integration (on-chain enforcement model) → decide depth/cost. Production-hardening, NOT a pre-live blocker. Tracked as [Issue #33](https://github.com/vaipakam/vaipakam/issues/33).
+
+---
+
+- [ ] **T-079** `yetToPromote`: GoPlus token-security screening of offered assets — an **off-chain advisory** check, complementary to the GoPlus transaction-scanner (ET-001) — same provider, so the integration is shared. GoPlus is a centralized Web2 REST API (token honeypot / scam / rugpull detection, address risk) — a Worker or the frontend calls it; a smart contract cannot. Use: at offer creation / accept, screen the collateral + principal tokens for honeypot/scam characteristics and surface a warning in the UI. Off-chain advisory only — it informs the UI or an off-chain gate; on-chain enforcement would need an oracle or an on-chain allowlist (a much larger change, not proposed here). Surfaced during the ET-001 (Blockaid→GoPlus) discussion under T-078.
 
 ---
 
@@ -510,6 +514,6 @@ Also the info icon mapping inside protocol console should go only to `www` (http
 
 ---
 
-- [ ] **ET-001** `promotedToProjectCard`: Lets use Blowfish instead of Blockaid. Migrate the transaction-scanner (the apps/agent `/scan/blockaid` proxy + the frontend `SimulationPreview`) from Blockaid to Blowfish — Blockaid's API key couldn't be provisioned, which blocks the scanning feature's production readiness. Blowfish is industry-grade (per-transaction simulation + threat assessment — same category) with a usable free tier. Tracked as [Issue #32](https://github.com/vaipakam/vaipakam/issues/32).
+- [ ] **ET-001** `promotedToProjectCard`: Migrate the transaction-scanner (the apps/agent `/scan/blockaid` proxy + the frontend `SimulationPreview`) from Blockaid to **GoPlus** — Blockaid's API key couldn't be provisioned, which blocks the scanning feature's production readiness. After a Blowfish-vs-GoPlus comparison GoPlus was chosen: transaction simulation + threat assessment (covers SimulationPreview) plus token-security / malicious-address / rug-pull screening across 40+ chains, with generous free access — and one provider also covers the T-079 token-screening idea. Tracked as [Issue #32](https://github.com/vaipakam/vaipakam/issues/32).
 
 ---
