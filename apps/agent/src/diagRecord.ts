@@ -52,10 +52,12 @@
  * display are persisted. The keyed hash is what later lets a
  * signed erasure request reliably identify exactly that user's rows
  * (the redacted display collides across wallets, so it cannot).
- * When `wallet` is absent (not-connected session) or
- * `DIAG_WALLET_HMAC_KEY` is unconfigured, `wallet_hash` stays NULL
- * and the row is simply not reachable by the automated erasure
- * path — support remains the fallback for those.
+ * When `wallet` is absent (not-connected session), `wallet_hash`
+ * stays NULL and the row is simply not reachable by the automated
+ * erasure path — support remains the fallback for those. When a
+ * connected wallet is present but `DIAG_WALLET_HMAC_KEY` is missing,
+ * the Worker skips the write instead of creating a fresh
+ * non-erasable row.
  */
 
 import type { Env } from './env';
@@ -342,11 +344,24 @@ export async function handleDiagRecord(
   // Per-wallet deletion key (T-075). Computed transiently from the
   // full address the frontend sent; the full address is discarded
   // after this line and never persisted. Stays null for a
-  // not-connected session or when the HMAC key isn't configured —
-  // in both cases the row is captured normally but isn't reachable
-  // by the automated erasure path.
+  // not-connected session. If a connected-wallet record arrives
+  // while the HMAC key is missing, fail closed and skip the write so
+  // production cannot create fresh non-erasable wallet-keyed rows.
   let walletHashValue: string | null = null;
-  if (r.wallet && env.DIAG_WALLET_HMAC_KEY) {
+  if (r.wallet) {
+    if (!env.DIAG_WALLET_HMAC_KEY) {
+      return new Response(
+        JSON.stringify({
+          recorded: false,
+          reason: 'erasure_key_not_configured',
+          id: r.id,
+        }),
+        {
+          status: 200,
+          headers: { ...headers, 'content-type': 'application/json' },
+        },
+      );
+    }
     walletHashValue = await walletHash(r.wallet, env.DIAG_WALLET_HMAC_KEY);
   }
 

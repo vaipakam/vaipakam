@@ -115,8 +115,9 @@
   //   - DIAG_WALLET_HMAC_KEY     — T-075: server secret keying the
   //                                per-wallet deletion hash
   //                                (HMAC of the full wallet). When
-  //                                unset, wallet_hash is stored NULL
-  //                                and the erasure endpoints 503.
+  //                                unset, connected-wallet capture
+  //                                skips writes and the erasure
+  //                                endpoints 503.
   //                                (POST /diag/legal-hold has no
   //                                secret — it checks the caller's
   //                                on-chain ADMIN_ROLE instead.)

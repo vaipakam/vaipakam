@@ -31,7 +31,9 @@
 
 ---
 
-- [ ] **T-074** `yetToPromote`: Is it possible to have founders profit share every year from treasury and percentage is admin configurable (later by governance) within a range bound.
+- [ ] **T-074** `promotedToProjectCard`: privacy policy to say that error or issues that may surface up during your usage of Vaipakam will be stored and recorded of troubleshooting purposes for not more than 90 days unless it is required by a law for any investigation purposes. some thing like that what do you say? — Promoted to [Issue #27](https://github.com/vaipakam/vaipakam/issues/27); implemented on `chore/privacy-policy-and-housekeeping` (PR #26, Privacy Policy v2). Deletion-path follow-up is resolved by T-075 / [Issue #28](https://github.com/vaipakam/vaipakam/issues/28): users erase wallet-keyed D1 diagnostics records by signing an erasure request.
+
+Founder-profit-share note preserved from the T-075 branch conflict: see T-600 / treasury founder-compensation work for the yearly treasury profit-share and admin-configurable bounded percentage discussion.
 
 ---
 

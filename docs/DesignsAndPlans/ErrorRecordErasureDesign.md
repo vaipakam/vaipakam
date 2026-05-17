@@ -83,9 +83,12 @@ The frontend's `/diag/record` payload gains a `wallet` field — the
 **full** connected address (null when not connected). The Worker, in
 `diagRecord.ts`, derives `wallet_hash` from it via the new
 `diagHash.ts` helper and stores the hash; the full address is
-discarded. When `wallet` is absent or `DIAG_WALLET_HMAC_KEY` is
-unset, `wallet_hash` stays NULL — that row simply isn't reachable by
-automated erasure (support remains the fallback).
+discarded. When `wallet` is absent, `wallet_hash` stays NULL — that
+not-connected row simply isn't reachable by automated erasure
+(support remains the fallback). For connected-wallet records,
+`DIAG_WALLET_HMAC_KEY` is a production prerequisite and is now
+provisioned; deployment should not run wallet-keyed capture without
+it.
 
 ### 4.3 Endpoints — `apps/agent/src/diagErasure.ts`
 
@@ -244,50 +247,31 @@ never through endpoint logic.
 immutable row to `diag_legal_hold_audit` (which admin, when, what) —
 the defensible record that the protocol acted on a genuine order.
 
-## 6. Privacy Policy clause + PIA addendum (to merge on rebase)
+## 6. Privacy Policy + PIA update
 
-The Privacy Policy v2 and the PIA doc are introduced by PR #26
-(`chore/privacy-policy-and-housekeeping`), which is not yet on `main`.
-The T-075 branch is based on `main`, so the file edits below land
-when this branch is rebased after #26 merges. The verbatim text is
-recorded here so it is not lost.
+The Privacy Policy v2 and companion PIA now describe the T-075
+self-service erasure path directly:
 
-**Privacy Policy** — the v2 line that currently reads "deletion via
-support" should become:
-
-> You can have the error-diagnostics records associated with your
-> wallet erased at any time, directly and without a support ticket,
-> by signing an erasure request with that wallet in the app. To make
-> this possible we store a one-way keyed hash of your wallet address
-> alongside each record; your full address is used only momentarily
-> to compute that hash and is never stored. In rare cases where the
-> law requires us to retain specific records, automated erasure will
-> skip them; where the law permits, we will tell you so.
-
-**PIA addendum** — a new section in
-`PIA-2026-05-16-server-side-error-capture.md`:
-
-> **Erasure (Art 17).** Users erase their own `diag_errors` records
-> via a signed-request endpoint; identity is a server-side keyed
-> hash of the wallet (`HMAC`, key never client-side). Records under
-> a valid legal hold are skipped. The erasure endpoint returns a
-> uniform response and never enumerates retained records; a separate
-> signed status endpoint discloses retention only when an operator
-> has explicitly enabled disclosure for that wallet — gagged
-> retention orders are handled by leaving disclosure off.
+- users erase wallet-keyed `diag_errors` records by signing an
+  erasure request with the same wallet;
+- the Worker stores a one-way keyed wallet hash so rows can be
+  matched without persisting the full wallet address;
+- legal-hold records are skipped by the erasure endpoint; and
+- disclosure of retained records is handled only through the
+  separate signed status endpoint when an operator has explicitly
+  enabled disclosure for that wallet.
 
 ## 7. Deploy gate
 
-The mechanics are built and test-covered now. The **deploy** of the
-erasure + legal-hold endpoints is gated on a crypto/privacy-lawyer
+The mechanics are built and test-covered now. `DIAG_WALLET_HMAC_KEY`
+has been provisioned, so connected-wallet error records can receive
+their erasure key at capture time. The **deploy** of the erasure +
+legal-hold endpoints remains gated on a crypto/privacy-lawyer
 sign-off — valid retention obligations, gag-order handling, Art-17
-exemptions, the keyed-hash data-minimisation rationale. Until then,
-leaving `DIAG_WALLET_HMAC_KEY` unset keeps the erasure + status
-endpoints inert (503) and `wallet_hash` NULL; the legal-hold
-endpoint additionally does nothing useful until an `ADMIN_ROLE`
-wallet exists to authorise it — so the whole surface is a no-op on
-production behaviour pre-deploy. The frontend `recordFailureToServer`
-already gates on `VITE_DIAG_RECORD_ENABLED`.
+exemptions, and the keyed-hash data-minimisation rationale. The
+legal-hold endpoint also remains inert until an `ADMIN_ROLE` wallet
+authorises an action. The frontend `recordFailureToServer` already
+gates on `VITE_DIAG_RECORD_ENABLED`.
 
 ## 8. Follow-ups (not in this change)
 

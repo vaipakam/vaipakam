@@ -139,9 +139,10 @@ export interface Env {
   // `wallet_hash = HMAC-SHA256(fullWallet, DIAG_WALLET_HMAC_KEY)`.
   // A SECRET (set via `wrangler secret put`), never a `var` — if it
   // leaked, the keyed hash would collapse to a reversible unkeyed
-  // hash of a public address. When unset: the capture path simply
-  // stores a NULL `wallet_hash` (rows not erasable by the automated
-  // path) and the erasure / status endpoints return 503.
+  // hash of a public address. When unset: connected-wallet capture
+  // skips the write rather than creating a fresh non-erasable row;
+  // not-connected rows may still store NULL `wallet_hash`; and the
+  // erasure / status endpoints return 503.
   DIAG_WALLET_HMAC_KEY?: string;
 
   // T-075 — private R2 bucket holding the legal documents uploaded
