@@ -1,13 +1,13 @@
 # Vaipakam Privacy Policy
 
-**Version:** 1
-**Effective:** 2026-04-24
+**Version:** 2
+**Effective:** 2026-05-16
 
 ## What we collect
 
 Vaipakam is non-custodial and has no accounts, no sign-ups, and no
 off-chain identity system. Given that, the data we observe about you
-falls into four narrow categories.
+falls into five narrow categories.
 
 **On-chain activity.** Your wallet address and the transactions it
 sends are public by design — every action you take on the protocol is
@@ -21,6 +21,24 @@ messages (truncated, with wallet addresses shortened). It is stored in
 your browser's local storage by default. If you open a support report
 from the Diagnostics drawer, a copy is attached to that report. We do
 NOT send your IP, user-agent, or browsing history.
+
+**Server-side error capture.** Every UI error (e.g. a transaction
+reverts, an oracle read fails) is recorded server-side at a
+Cloudflare Worker endpoint with a per-event UUID. The record
+carries: the redacted wallet (`0x…abcd`), the error type / name /
+selector and the technical error message (truncated, and free of
+anything you typed), which screen / flow / step you were in, your
+chain id, interface locale, theme, viewport size, and the app
+version. Not recorded: full wallet address,
+browser user-agent string, IP address (beyond transient
+rate-limiting), localStorage contents, cookies, or any free-form
+text you typed. The same UUID surfaces in any GitHub issue you
+choose to file, so support can cross-reference an external report
+against a real session on our side. Records are pruned after 90
+days. The legal basis is "legitimate interest" (security, fraud
+prevention, and improving service reliability) under GDPR Art
+6(1)(f). To request deletion of records associated with your
+redacted wallet, contact support.
 
 **Google Analytics — only with consent.** If you accept analytics
 cookies in the consent banner, Google Analytics records anonymous
@@ -85,8 +103,12 @@ beyond what these tools inherently handle.
 
 ## Data retention
 
-- Journey-log telemetry: kept in your browser only, never uploaded
-  unless you explicitly attach it to a support report.
+- Journey-log telemetry: kept in your browser's local storage. A
+  slice leaves your browser only when you explicitly attach it to a
+  support report. (Separately, a single error record — not a
+  journey-log slice — is sent server-side on each error; see
+  "Server-side error capture".)
+- Server-side error records: pruned 90 days after capture.
 - Consent choice: kept in your browser's local storage indefinitely
   until you revoke or clear.
 - Google Analytics (with consent): subject to Google's own retention,
