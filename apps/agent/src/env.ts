@@ -62,13 +62,6 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
  *     `ONEINCH_API_KEY`    — server-side aggregator API keys for the
  *                            public `/quote/*` proxy endpoints.
  *                            Secrets Store bindings (T-078).
- *   - `GOPLUS_APP_KEY` /
- *     `GOPLUS_APP_SECRET`  — GoPlus Security API credentials for the
- *                            `/scan/tx` transaction-scan proxy
- *                            (ET-001 #32 — replaced Blockaid).
- *                            Secrets Store bindings; `goPlusClient.ts`
- *                            exchanges them for a short-lived access
- *                            token. Both unset → `/scan/tx` 503s.
  *   - `DIAG_WALLET_HMAC_KEY` — T-075 secret keying the per-wallet
  *                            deletion hash. Secrets Store binding
  *                            (T-078). The `/diag/legal-hold`
@@ -84,12 +77,9 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
  *      notifications but can't move funds.)
  *   - `QUOTE_0X_RATELIMIT`,
  *     `QUOTE_1INCH_RATELIMIT`,
- *     `SCAN_TX_RATELIMIT`,
  *     `DIAG_RECORD_RATELIMIT` — Cloudflare built-in rate-limit
  *                            bindings (one per upstream service).
  *                            Native bindings — not secrets.
- *   - `TX_SCAN_ENABLED`    — ET-001 operator kill switch for
- *                            `/scan/tx`. Plain `var`, not a secret.
  *   - `DIAG_SAMPLE_RATE`,
  *     `DIAG_RETENTION_DAYS` — diagnostics record sampling +
  *                            retention. Plain `var`s.
@@ -126,21 +116,10 @@ interface BaseEnv {
 
   // Cloudflare built-in rate-limit bindings — one per upstream
   // service so a noisy caller on /quote/0x can't drain the
-  // /scan/tx budget. Configured in wrangler.jsonc.
+  // /quote/1inch budget. Configured in wrangler.jsonc.
   QUOTE_0X_RATELIMIT?: RateLimitBinding;
   QUOTE_1INCH_RATELIMIT?: RateLimitBinding;
-  SCAN_TX_RATELIMIT?: RateLimitBinding;
   DIAG_RECORD_RATELIMIT?: RateLimitBinding;
-
-  // ET-001 — operator kill switch for the GoPlus transaction-scan
-  // proxy (`/scan/tx`). A plain var: `'false'` disables scanning
-  // (the endpoint 503s `scan-disabled` and the frontend shows the
-  // "preview unavailable" footer); any other value / unset =
-  // enabled. The slow, on-chain governance-controlled flag is a
-  // separate follow-up card — this var is the fast operator circuit
-  // breaker (a metered API / a vendor outage needs sub-minute
-  // reaction; a 48 h governance timelock cannot do that).
-  TX_SCAN_ENABLED?: string;
 
   // Diagnostics sampling (0.0–1.0; default 1.0 = write every accepted POST).
   // Coerced from string to float at read time. Out-of-range values
@@ -199,11 +178,6 @@ export interface WorkerEnv extends BaseEnv {
   ONEINCH_API_KEY?: SecretBinding;
   // T-075 — server secret keying the per-wallet deletion hash.
   DIAG_WALLET_HMAC_KEY?: SecretBinding;
-  // ET-001 — GoPlus Security API credentials for the `/scan/tx`
-  // proxy. GoPlus auth needs BOTH: App Key + App Secret are
-  // exchanged for a short-lived access token (`goPlusClient.ts`).
-  GOPLUS_APP_KEY?: SecretBinding;
-  GOPLUS_APP_SECRET?: SecretBinding;
 }
 
 /**
@@ -235,12 +209,6 @@ export interface Env extends BaseEnv {
   // Aggregator API keys for the public `/quote/*` proxies.
   ZEROEX_API_KEY?: string;
   ONEINCH_API_KEY?: string;
-  // ET-001 — GoPlus Security API credentials for the `/scan/tx`
-  // transaction-scan proxy. `goPlusClient.ts` exchanges them for a
-  // short-lived access token; `scanProxy.ts` 503s `scan-not-configured`
-  // when either is unset.
-  GOPLUS_APP_KEY?: string;
-  GOPLUS_APP_SECRET?: string;
 
   // T-075 — server secret for the per-wallet deletion key.
   // `wallet_hash = HMAC-SHA256(fullWallet, DIAG_WALLET_HMAC_KEY)`.
@@ -316,8 +284,6 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     zeroEx,
     oneInch,
     walletHmac,
-    goPlusKey,
-    goPlusSecret,
   ] = await Promise.all([
     readSecret(raw.RPC_BASE),
     readSecret(raw.RPC_ETH),
@@ -336,8 +302,6 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     readSecret(raw.ZEROEX_API_KEY),
     readSecret(raw.ONEINCH_API_KEY),
     readSecret(raw.DIAG_WALLET_HMAC_KEY),
-    readSecret(raw.GOPLUS_APP_KEY),
-    readSecret(raw.GOPLUS_APP_SECRET),
   ]);
   return {
     // Non-secret bindings / config — passed straight through.
@@ -345,9 +309,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     TG_BOT_USERNAME: raw.TG_BOT_USERNAME,
     QUOTE_0X_RATELIMIT: raw.QUOTE_0X_RATELIMIT,
     QUOTE_1INCH_RATELIMIT: raw.QUOTE_1INCH_RATELIMIT,
-    SCAN_TX_RATELIMIT: raw.SCAN_TX_RATELIMIT,
     DIAG_RECORD_RATELIMIT: raw.DIAG_RECORD_RATELIMIT,
-    TX_SCAN_ENABLED: raw.TX_SCAN_ENABLED,
     DIAG_SAMPLE_RATE: raw.DIAG_SAMPLE_RATE,
     DIAG_RETENTION_DAYS: raw.DIAG_RETENTION_DAYS,
     DIAG_LEGAL_DOCS: raw.DIAG_LEGAL_DOCS,
@@ -370,8 +332,6 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     ZEROEX_API_KEY: zeroEx,
     ONEINCH_API_KEY: oneInch,
     DIAG_WALLET_HMAC_KEY: walletHmac,
-    GOPLUS_APP_KEY: goPlusKey,
-    GOPLUS_APP_SECRET: goPlusSecret,
     // RPC_ZKEVM intentionally unset — Polygon zkEVM is out of scope.
   };
 }

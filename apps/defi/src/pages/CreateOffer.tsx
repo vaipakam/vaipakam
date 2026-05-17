@@ -1509,12 +1509,11 @@ export default function CreateOffer() {
           }
         />
 
-        {/* ET-001 — GoPlus transaction-scan preview of the pending
+        {/* ET-001 — pre-sign eth_call preflight of the pending
             createOffer tx. Encodes the current form state into
-            calldata so the user sees the decoded call + GoPlus risk
-            flags before signing. Silently hides when the form isn't
-            buildable yet (missing required fields / decimals still
-            loading) or when the GoPlus scanner isn't configured. */}
+            calldata so the user sees whether it would revert before
+            signing. Silently hides when the form isn't buildable yet
+            (missing required fields / decimals still loading). */}
         <CreateOfferSimulationPreview
           toPayload={toPayload}
           diamondAddr={

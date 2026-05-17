@@ -886,7 +886,7 @@ export default function LoanDetails() {
                     {t('loanDetails.repayConfirmReminderBody', { tokenId: loan.borrowerTokenId.toString() })}
                   </p>
                 )}
-                {/* ET-001 — GoPlus transaction-scan preview of the pending repay tx. */}
+                {/* ET-001 — pre-sign eth_call preflight of the pending repay tx. */}
                 <RepaySimulationPreview
                   loanId={BigInt(loanId!)}
                   diamondAddr={activeDiamondAddr as Address}
@@ -937,7 +937,7 @@ export default function LoanDetails() {
                   {actionLoading ? t('loanDetails.processing') : t('loanDetails.addCollateral')}
                 </button>
               </div>
-              {/* ET-001 — GoPlus transaction-scan preview of the pending
+              {/* ET-001 — pre-sign eth_call preflight of the pending
                   addCollateral tx. Hides silently when the amount input
                   is empty or doesn't parse. */}
               <AddCollateralSimulationPreview
@@ -1187,8 +1187,8 @@ function LoanKeeperPicker({ loanId, actionLoading, onToggle }: LoanKeeperPickerP
 }
 
 /**
- * ET-001 — GoPlus transaction-scan preview for the pending
- * `repayLoan` tx on this loan. No form state needed beyond the loan
+ * ET-001 — pre-sign eth_call preflight for the pending `repayLoan`
+ * tx on this loan. No form state needed beyond the loan
  * id; the exact
  * repay amount is resolved inside the contract from stored state.
  */
@@ -1210,10 +1210,10 @@ function RepaySimulationPreview({
 }
 
 /**
- * ET-001 — GoPlus transaction-scan preview for the pending
+ * ET-001 — pre-sign eth_call preflight for the pending
  * `addCollateral` tx. Waits for the amount input to parse
- * successfully before asking the scanner — avoids spamming scans
- * while the user is mid-typing.
+ * successfully before running the eth_call — avoids spamming the
+ * RPC while the user is mid-typing.
  */
 function AddCollateralSimulationPreview({
   loanId,

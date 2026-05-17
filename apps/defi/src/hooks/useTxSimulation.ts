@@ -1,72 +1,34 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Address, Hex } from 'viem';
+import { BaseError, type Address, type Hex } from 'viem';
 import { useWallet } from '../context/WalletContext';
+import { useDiamondPublicClient } from '../contracts/useDiamond';
 
 /**
- * ET-001 — client-side transaction-scan preview, GoPlus-backed.
+ * ET-001 — client-side pre-sign transaction preflight.
  *
  * Before the user clicks Confirm in the wallet, the review modal
- * passes the pending tx's `{ to, data, value }`; this hook posts it
- * to the operator's Cloudflare Worker proxy at
- * `${VITE_AGENT_ORIGIN}/scan/tx`. The worker exchanges the GoPlus
- * App Key + App Secret for an access token server-side and calls
- * GoPlus `abi/input_decode`; the browser never sees a credential.
+ * passes the pending tx's `{ to, data, value }`; this hook runs it
+ * as a viem **`eth_call`** against the chain's own RPC — a free,
+ * read-only simulation that executes the exact calldata and reports
+ * whether it would succeed or revert. Nothing is broadcast.
  *
- * Replaces the Phase-8b Blockaid integration. GoPlus is a *risk-data*
- * API, not a balance-diff simulator — so the result is a decoded
- * call (method, parameters) plus risk flags (malicious target
- * contract / malicious address parameters / risky signature), NOT a
- * predicted asset diff. The hook name is kept for call-site
- * stability; the shape it returns is GoPlus-native (`ScanResult`).
+ * History: this surface was Blockaid, then briefly a GoPlus proxy.
+ * Both were dropped — see PR #41. A pre-sign scan of a transaction
+ * against Vaipakam's *own audited Diamond* is a comprehension /
+ * correctness aid (catch a doomed tx before gas, let the user
+ * sanity-check), not a threat shield. A free `eth_call` delivers
+ * exactly that, on **every chain** Vaipakam runs (all testnets +
+ * mainnets) — unlike GoPlus's Transaction Simulation API, which is
+ * mainnet-only (3 chains) and could not serve the testnet phase.
+ * Third-party-asset risk (honeypot collateral, scam counterparty)
+ * is a separate surface — the GoPlus contextual checks, ET-012/14/
+ * 15/16.
  *
- * Fails soft on proxy outage, the operator kill switch
- * (`TX_SCAN_ENABLED=false` → 503 `scan-disabled`), missing GoPlus
- * creds (503 `scan-not-configured`), an unsupported chain, a GoPlus
- * upstream error (502) or a network hiccup: the preview is advisory
- * and MUST NOT block the tx. The state stays `{ status:
- * 'unavailable' }` and the UI renders a subdued footer.
+ * Advisory only: it MUST NOT block the transaction. On an RPC
+ * hiccup, or an artefact revert (e.g. a not-yet-valid Permit2
+ * signature on the accept-with-permit path), it degrades to a
+ * subdued "preview unavailable" footer.
  */
-
-const AGENT_ORIGIN = (import.meta.env.VITE_AGENT_ORIGIN as
-  | string
-  | undefined) ?? '';
-
-/** Overall scan verdict (mirrors the worker's `TxScanVerdict`). */
-export type ScanVerdict = 'safe' | 'warning' | 'danger';
-
-/** Address-typed parameter enrichment from GoPlus. */
-export interface ScanAddress {
-  address: string;
-  isContract: boolean;
-  malicious: boolean;
-  contractName: string | null;
-  standard: string | null; // "erc20" | "erc721" | ...
-  symbol: string | null;
-}
-
-/** One decoded call parameter. */
-export interface ScanParam {
-  name: string;
-  type: string;
-  value: string | null;
-  address: ScanAddress | null;
-}
-
-/** Hook result — GoPlus-native scan shape + a fetch status. */
-export interface ScanResult {
-  status: 'ready' | 'loading' | 'unavailable' | 'error';
-  verdict?: ScanVerdict;
-  method?: string | null;
-  contractName?: string | null;
-  contractDescription?: string | null;
-  maliciousContract?: boolean;
-  riskySignature?: boolean;
-  risk?: string | null;
-  signatureDetail?: string | null;
-  params?: ScanParam[];
-  warnings?: string[];
-  errorMessage?: string;
-}
 
 export interface TxSimInput {
   to: Address;
@@ -74,54 +36,51 @@ export interface TxSimInput {
   value?: bigint;
 }
 
-/** Debounced scan — rapid successive updates (e.g. slider-driven
- *  what-ifs) trigger only the last call. Stale responses are dropped. */
+export interface SimResult {
+  /**
+   * - `idle`        — no tx to preview yet
+   * - `loading`     — simulation in flight
+   * - `ok`          — `eth_call` succeeded; the tx will not revert
+   * - `revert`      — the tx would revert (`revertReason` set)
+   * - `unavailable` — no verdict (RPC down, or a preview artefact)
+   */
+  status: 'idle' | 'loading' | 'ok' | 'revert' | 'unavailable';
+  revertReason?: string;
+}
+
+/** Debounced preflight — rapid input changes (slider/form edits)
+ *  trigger only the last call; stale responses are dropped. */
 export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
-  const { address, chainId } = useWallet();
-  const [result, setResult] = useState<ScanResult>({ status: 'ready' });
+  const { address } = useWallet();
+  const publicClient = useDiamondPublicClient();
+  const [result, setResult] = useState<SimResult>({ status: 'idle' });
   const reqIdRef = useRef(0);
 
   const simulate = useCallback(async () => {
-    if (!input || !address || !chainId) {
-      setResult({ status: 'ready' });
-      return;
-    }
-    if (!AGENT_ORIGIN) {
-      // No worker origin configured — the proxy isn't reachable from
-      // this build. Mark unavailable so the UI renders a subdued
-      // footer instead of a missing preview.
-      setResult({ status: 'unavailable' });
+    if (!input || !address || !publicClient) {
+      setResult({ status: 'idle' });
       return;
     }
     const myReq = ++reqIdRef.current;
     setResult({ status: 'loading' });
     try {
-      const res = await _callScanProxy({
-        chainId,
-        from: address as Address,
-        ...input,
+      // viem `call` === `eth_call`: executes the calldata from the
+      // user's address against current state, returns on success,
+      // throws on revert. The read client is already bound to the
+      // wallet's active chain (`useDiamondPublicClient`).
+      await publicClient.call({
+        account: address as Address,
+        to: input.to,
+        data: input.data,
+        value: input.value,
       });
       if (myReq !== reqIdRef.current) return;
-      setResult({ status: 'ready', ...res });
+      setResult({ status: 'ok' });
     } catch (err) {
       if (myReq !== reqIdRef.current) return;
-      const msg = err instanceof Error ? err.message : 'preview failed';
-      // The scan is advisory and must fail soft: anything that means
-      // "the scanner couldn't give us a verdict" — kill switch,
-      // missing creds, unsupported chain, GoPlus upstream error,
-      // rate-limit, network hiccup, a malformed response — downgrades
-      // to 'unavailable' (a subdued footer). The worker returns those
-      // as a non-2xx status, surfaced here as a `proxy `/`network`
-      // message. Only a genuinely unrecognised thrown error becomes a
-      // hard 'error'.
-      const failSoft = msg.startsWith('network') || msg.startsWith('proxy ');
-      if (failSoft) {
-        setResult({ status: 'unavailable' });
-        return;
-      }
-      setResult({ status: 'error', errorMessage: msg });
+      setResult(classifyError(err));
     }
-  }, [address, chainId, input]);
+  }, [address, publicClient, input]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -133,76 +92,26 @@ export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
   return { result, refresh: simulate };
 }
 
-interface ProxyRequest {
-  chainId: number;
-  from: Address;
-  to: Address;
-  data: Hex;
-  value?: bigint;
-}
-
-/** The worker's normalized `/scan/tx` response (see scanProxy.ts). */
-interface TxScanResponse {
-  verdict?: string;
-  method?: string | null;
-  contractName?: string | null;
-  contractDescription?: string | null;
-  maliciousContract?: boolean;
-  riskySignature?: boolean;
-  risk?: string | null;
-  signatureDetail?: string | null;
-  params?: ScanParam[];
-  warnings?: string[];
-}
-
-async function _callScanProxy(
-  req: ProxyRequest,
-): Promise<Omit<ScanResult, 'status'>> {
-  const url = `${AGENT_ORIGIN.replace(/\/$/, '')}/scan/tx`;
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chainId: req.chainId,
-        from: req.from,
-        to: req.to,
-        data: req.data,
-        value: req.value ? '0x' + req.value.toString(16) : '0x0',
-      }),
-    });
-  } catch {
-    throw new Error('network');
+/**
+ * Map a thrown `eth_call` error to a `SimResult`.
+ *
+ * A clean on-chain revert with a readable reason → `revert`.
+ * Everything else — an RPC/network failure, OR a revert that is an
+ * artefact of previewing a not-yet-signed tx (a placeholder Permit2
+ * signature on the accept-with-permit path) — → `unavailable`, so
+ * the preview never raises a false alarm and never blocks.
+ */
+function classifyError(err: unknown): SimResult {
+  const msg = err instanceof BaseError ? err.shortMessage : String(err);
+  if (!/revert/i.test(msg)) {
+    // Network / RPC / timeout — no verdict.
+    return { status: 'unavailable' };
   }
-  if (!res.ok) {
-    // Every non-2xx — 503 (disabled / not-configured / chain
-    // unsupported), 502 (GoPlus upstream error), 429 (rate-limited),
-    // 400 (bad payload) — means "no verdict". The `proxy ` prefix
-    // routes it through the fail-soft branch in `useTxSimulation`.
-    throw new Error(`proxy ${res.status}`);
+  // Signature-verification reverts are expected when previewing the
+  // Permit2 single-sig accept path with a placeholder signature —
+  // not a real problem with the user's intended transaction.
+  if (/permit|signature|ecdsa|invalidsigner/i.test(msg)) {
+    return { status: 'unavailable' };
   }
-  const json = (await res.json()) as TxScanResponse;
-
-  // An unknown / missing `verdict` is a worker schema drift or a
-  // partial response — we don't have a verdict, so surface as
-  // preview-unavailable rather than rendering a card the user may
-  // misread. The `proxy ` prefix triggers the fail-soft downgrade.
-  const v = json.verdict;
-  if (v !== 'safe' && v !== 'warning' && v !== 'danger') {
-    throw new Error('proxy malformed');
-  }
-
-  return {
-    verdict: v,
-    method: json.method ?? null,
-    contractName: json.contractName ?? null,
-    contractDescription: json.contractDescription ?? null,
-    maliciousContract: json.maliciousContract ?? false,
-    riskySignature: json.riskySignature ?? false,
-    risk: json.risk ?? null,
-    signatureDetail: json.signatureDetail ?? null,
-    params: json.params ?? [],
-    warnings: json.warnings ?? [],
-  };
+  return { status: 'revert', revertReason: msg };
 }
