@@ -13,35 +13,64 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
  *   - HF watcher loop / autonomous liquidation         → apps/keeper
  *   - chain-event scan / D1 indexer / public read-API  → apps/indexer
  *
+ * T-078 — the secrets (per-chain RPC URLs, the Telegram bot token,
+ * the Push channel signer, the aggregator API keys, the Blockaid
+ * scanner key and the T-075 wallet-HMAC key) moved from per-Worker
+ * `wrangler secret put` strings to the account-level Cloudflare
+ * Secrets Store (`docs/DesignsAndPlans/SecretsStoreMigration.md`).
+ * A Secrets Store binding is read **asynchronously**
+ * (`await binding.get()`), so there are two env shapes:
+ *
+ *   - `WorkerEnv` — the RAW Cloudflare bindings the Worker handler
+ *     receives. The secret fields are Secrets Store bindings; the
+ *     D1 / R2 / rate-limit / plain-config fields are passed through.
+ *   - `Env` — the RESOLVED env passed to every downstream function:
+ *     every secret field is a plain string, exactly as before T-078.
+ *
+ * `resolveEnv()` bridges them — called **once** at the Worker entry
+ * point (`index.ts`), at the top of BOTH `scheduled` and `fetch`;
+ * all downstream code keeps taking the plain `Env` and stays
+ * synchronous. This is the "resolve at the boundary" containment
+ * pattern from `SecretsStoreMigration.md` §6.
+ *
  * Bindings:
  *
  *   - `DB`                 — D1 binding (handshake codes,
  *                            thresholds, diagnostics records,
  *                            cross-Worker reads of indexer's loan
  *                            tables for periodic-pre-notify scans).
+ *                            Native binding — not a secret.
  *   - `RPC_*`              — per-chain RPC URLs. Buy-watchdog needs
  *                            EVERY chain that has a VPFIBuyAdapter
  *                            deployed (mainnet + testnet) for
  *                            cross-chain reconciliation, so this is
  *                            the broadest RPC set of the three
  *                            Workers (includes POLYGON + POLYGON_AMOY
- *                            + every other chain, including the
- *                            Polygon zkEVM).
- *   - `TG_BOT_*`           — Telegram bot token + username. Powers
- *                            the `/tg/webhook` handshake AND the
- *                            outbound notifications dispatched by
- *                            `periodicPreNotify` and
- *                            `buyWatchdog`.
- *   - `PUSH_CHANNEL_PK`    — Push channel signer. Same usage shape
- *                            — outbound notifications from the
- *                            three crons.
+ *                            — agent-only — plus every other chain).
+ *                            Secrets Store bindings (T-078).
+ *   - `TG_BOT_TOKEN`       — Telegram bot token. Powers the
+ *                            `/tg/webhook` handshake AND the outbound
+ *                            notifications dispatched by
+ *                            `periodicPreNotify` and `buyWatchdog`.
+ *                            Secrets Store binding (T-078).
+ *   - `TG_BOT_USERNAME`    — public Telegram bot handle. A plain
+ *                            `var` — not a secret.
+ *   - `PUSH_CHANNEL_PK`    — Push channel signer. Outbound
+ *                            notifications from the crons. Secrets
+ *                            Store binding (T-078).
  *   - `ZEROEX_API_KEY` /
- *     `ONEINCH_API_KEY`    — server-side aggregator API keys for
- *                            the public `/quote/*` proxy endpoints.
- *                            Same secrets the keeper uses for
- *                            server-side liquidation quoting.
+ *     `ONEINCH_API_KEY`    — server-side aggregator API keys for the
+ *                            public `/quote/*` proxy endpoints.
+ *                            Secrets Store bindings (T-078).
  *   - `BLOCKAID_API_KEY`   — Blockaid Transaction Scanner API key
- *                            for the `/scan/blockaid` proxy.
+ *                            for the `/scan/blockaid` proxy. Secrets
+ *                            Store binding (T-078).
+ *   - `DIAG_WALLET_HMAC_KEY` — T-075 secret keying the per-wallet
+ *                            deletion hash. Secrets Store binding
+ *                            (T-078). The `/diag/legal-hold`
+ *                            endpoint has no secret of its own — it
+ *                            authenticates the caller by an on-chain
+ *                            `ADMIN_ROLE` check (see `diagAdminAuth.ts`).
  *   - (no signing-key consumer here any more — `KEEPER_PRIVATE_KEY`
  *      moved to apps/keeper alongside `runDailyOracleSnapshot`
  *      in the Stage 3 architectural-rebalance commit. The
@@ -54,37 +83,118 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
  *     `SCAN_BLOCKAID_RATELIMIT`,
  *     `DIAG_RECORD_RATELIMIT` — Cloudflare built-in rate-limit
  *                            bindings (one per upstream service).
- *                            Configured in wrangler.jsonc.
+ *                            Native bindings — not secrets.
  *   - `DIAG_SAMPLE_RATE`,
  *     `DIAG_RETENTION_DAYS` — diagnostics record sampling +
- *                            retention.
- *   - `DIAG_WALLET_HMAC_KEY` — T-075 secret keying the per-wallet
- *                            deletion hash. Set via
- *                            `wrangler secret put`. The
- *                            `/diag/legal-hold` endpoint has no
- *                            secret of its own — it authenticates
- *                            the caller by an on-chain `ADMIN_ROLE`
- *                            check (see `diagAdminAuth.ts`).
+ *                            retention. Plain `var`s.
  *   - `DIAG_LEGAL_DOCS`    — T-075 private R2 bucket storing the
  *                            legal documents uploaded with a hold.
- *                            Configured in wrangler.jsonc.
+ *                            Native binding — not a secret.
  *   - `FRONTEND_ORIGIN`    — CSV of allowed CORS origins for the
- *                            frontend-facing endpoints
- *                            (`/thresholds`, `/link/telegram`,
- *                            `/diag/record`). Frames + quote +
- *                            scan endpoints have their own CORS
- *                            policy (open / aggregator-paired).
+ *                            frontend-facing endpoints. Plain `var`.
  *
  * Diamond addresses come from `@vaipakam/contracts/deployments` —
  * the same artifact apps/{indexer,keeper} read.
  */
-export interface Env {
+
+/** A Cloudflare Secrets Store secret binding — read with `.get()`. */
+export type SecretBinding = { get(): Promise<string> };
+
+/** A Cloudflare built-in rate-limit binding. */
+type RateLimitBinding = {
+  limit(input: { key: string }): Promise<{ success: boolean }>;
+};
+
+/**
+ * The non-secret bindings + plain config — identical shape in both
+ * `WorkerEnv` and `Env` (D1 / R2 / rate-limit bindings and plain
+ * `var`s need no resolution). Kept in one place so the docs aren't
+ * duplicated across the two env interfaces.
+ */
+interface BaseEnv {
   DB: D1Database;
 
+  // Telegram (public bot handle — used to build the `t.me` deep
+  // link; the bot TOKEN is the separate Secrets Store binding).
+  TG_BOT_USERNAME?: string;
+
+  // Cloudflare built-in rate-limit bindings — one per upstream
+  // service so a noisy caller on /quote/0x can't drain the
+  // /scan/blockaid budget. Configured in wrangler.jsonc.
+  QUOTE_0X_RATELIMIT?: RateLimitBinding;
+  QUOTE_1INCH_RATELIMIT?: RateLimitBinding;
+  SCAN_BLOCKAID_RATELIMIT?: RateLimitBinding;
+  DIAG_RECORD_RATELIMIT?: RateLimitBinding;
+
+  // Diagnostics sampling (0.0–1.0; default 1.0 = write every accepted POST).
+  // Coerced from string to float at read time. Out-of-range values
+  // clamp to [0, 1].
+  DIAG_SAMPLE_RATE?: string;
+
+  // Diagnostics retention (days; default 90). Coerced from string
+  // to int; values < 1 are clamped up to 1.
+  DIAG_RETENTION_DAYS?: string;
+
+  // T-075 — private R2 bucket holding the legal documents uploaded
+  // when a protocol admin places a hold (the e-signed order /
+  // scanned letter). Content-addressed by SHA-256. Optional: when
+  // the binding is absent the legal-hold endpoint returns 503 for
+  // any action that carries a document.
+  DIAG_LEGAL_DOCS?: R2Bucket;
+
+  // CSV of allowed CORS origins for the frontend-facing endpoints
+  // (`/thresholds`, `/link/telegram`, `/diag/record`). Set in
+  // wrangler.jsonc:vars.
+  FRONTEND_ORIGIN: string;
+}
+
+/**
+ * The RAW Cloudflare bindings the Worker handler receives. The
+ * secret fields are Secrets Store bindings (declared in
+ * `wrangler.jsonc` → `secrets_store_secrets`) — resolve via
+ * `resolveEnv()` before any downstream use.
+ *
+ * No `RPC_ZKEVM` — Polygon zkEVM is out of scope (no secret bound);
+ * `getChainConfigs` simply skips that chain.
+ */
+export interface WorkerEnv extends BaseEnv {
   // Per-chain RPC URLs — buy-watchdog needs every chain with a
-  // VPFIBuyAdapter; periodicPreNotify needs every Diamond chain;
-  // dailyOracleSnapshot needs every Diamond chain. Most expansive
-  // RPC set of the three Workers.
+  // VPFIBuyAdapter; periodicPreNotify needs every Diamond chain.
+  // Most expansive RPC set of the three Workers.
+  RPC_BASE?: SecretBinding;
+  RPC_ETH?: SecretBinding;
+  RPC_ARB?: SecretBinding;
+  RPC_OP?: SecretBinding;
+  RPC_BNB?: SecretBinding;
+  RPC_POLYGON?: SecretBinding;
+  RPC_SEPOLIA?: SecretBinding;
+  RPC_BASE_SEPOLIA?: SecretBinding;
+  RPC_ARB_SEPOLIA?: SecretBinding;
+  RPC_OP_SEPOLIA?: SecretBinding;
+  RPC_POLYGON_AMOY?: SecretBinding;
+  RPC_BNB_TESTNET?: SecretBinding;
+
+  // Telegram bot token (handshake + outbound notifications).
+  TG_BOT_TOKEN?: SecretBinding;
+  // Push Protocol channel signer.
+  PUSH_CHANNEL_PK?: SecretBinding;
+  // Aggregator API keys for the public `/quote/*` proxies.
+  ZEROEX_API_KEY?: SecretBinding;
+  ONEINCH_API_KEY?: SecretBinding;
+  // Blockaid scan proxy.
+  BLOCKAID_API_KEY?: SecretBinding;
+  // T-075 — server secret keying the per-wallet deletion hash.
+  DIAG_WALLET_HMAC_KEY?: SecretBinding;
+}
+
+/**
+ * The RESOLVED env passed to all downstream code. Every secret
+ * field is a plain string; a missing / unconfigured chain or secret
+ * is `undefined` and the dependent code path skips it.
+ */
+export interface Env extends BaseEnv {
+  // Per-chain RPC URLs — buy-watchdog + periodicPreNotify. Each
+  // missing URL skips that chain.
   RPC_BASE?: string;
   RPC_ETH?: string;
   RPC_ARB?: string;
@@ -101,56 +211,25 @@ export interface Env {
 
   // Telegram (handshake + outbound notifications).
   TG_BOT_TOKEN?: string;
-  TG_BOT_USERNAME?: string;
-
   // Push Protocol channel signer.
   PUSH_CHANNEL_PK?: string;
-
   // Aggregator API keys for the public `/quote/*` proxies.
   ZEROEX_API_KEY?: string;
   ONEINCH_API_KEY?: string;
-
   // Blockaid scan proxy.
   BLOCKAID_API_KEY?: string;
+
+  // T-075 — server secret for the per-wallet deletion key.
+  // `wallet_hash = HMAC-SHA256(fullWallet, DIAG_WALLET_HMAC_KEY)`.
+  // When unset: connected-wallet capture skips the write rather than
+  // creating a fresh non-erasable row; not-connected rows may still
+  // store NULL `wallet_hash`; and the erasure / status endpoints
+  // return 503.
+  DIAG_WALLET_HMAC_KEY?: string;
 
   // (No signing-key field — Stage 3 architectural-rebalance moved
   // `KEEPER_PRIVATE_KEY` + `runDailyOracleSnapshot` to apps/keeper
   // so the only Worker that holds the signer is the keeper.)
-
-  // Cloudflare built-in rate-limit bindings — one per upstream
-  // service so a noisy caller on /quote/0x can't drain the
-  // /scan/blockaid budget. 60 reqs / 60 seconds per IP by default;
-  // configured in wrangler.jsonc.
-  QUOTE_0X_RATELIMIT?: { limit(input: { key: string }): Promise<{ success: boolean }> };
-  QUOTE_1INCH_RATELIMIT?: { limit(input: { key: string }): Promise<{ success: boolean }> };
-  SCAN_BLOCKAID_RATELIMIT?: { limit(input: { key: string }): Promise<{ success: boolean }> };
-  DIAG_RECORD_RATELIMIT?: { limit(input: { key: string }): Promise<{ success: boolean }> };
-
-  // Diagnostics sampling (0.0–1.0; default 1.0 = write every accepted POST).
-  // Coerced from string to float at read time. Out-of-range values
-  // clamp to [0, 1].
-  DIAG_SAMPLE_RATE?: string;
-
-  // Diagnostics retention (days; default 90). Coerced from string
-  // to int; values < 1 are clamped up to 1.
-  DIAG_RETENTION_DAYS?: string;
-
-  // T-075 — server secret for the per-wallet deletion key.
-  // `wallet_hash = HMAC-SHA256(fullWallet, DIAG_WALLET_HMAC_KEY)`.
-  // A SECRET (set via `wrangler secret put`), never a `var` — if it
-  // leaked, the keyed hash would collapse to a reversible unkeyed
-  // hash of a public address. When unset: connected-wallet capture
-  // skips the write rather than creating a fresh non-erasable row;
-  // not-connected rows may still store NULL `wallet_hash`; and the
-  // erasure / status endpoints return 503.
-  DIAG_WALLET_HMAC_KEY?: string;
-
-  // T-075 — private R2 bucket holding the legal documents uploaded
-  // when a protocol admin places a hold (the e-signed order /
-  // scanned letter). Content-addressed by SHA-256. Optional: when
-  // the binding is absent the legal-hold endpoint returns 503 for
-  // any action that carries a document.
-  DIAG_LEGAL_DOCS?: R2Bucket;
 
   // (T-075 — the `POST /diag/legal-hold` endpoint has NO env secret.
   // It authenticates the caller by recovering the request signature
@@ -158,11 +237,94 @@ export interface Env {
   // Diamond — see `diagAdminAuth.ts`. The contract's access-control
   // state is the source of truth; there is no admin list or shared
   // token in this Worker's env.)
+}
 
-  // CSV of allowed CORS origins for the frontend-facing endpoints
-  // (`/thresholds`, `/link/telegram`, `/diag/record`). Set in
-  // wrangler.jsonc:vars.
-  FRONTEND_ORIGIN: string;
+/** Read one Secrets Store binding, tolerating an absent binding. */
+async function readSecret(
+  b: SecretBinding | undefined,
+): Promise<string | undefined> {
+  return b ? b.get() : undefined;
+}
+
+/**
+ * Resolve the raw Worker bindings into the plain `Env` that every
+ * downstream function expects. All secrets are fetched in parallel.
+ * Call this **once** at the Worker entry point — at the top of both
+ * `scheduled` and `fetch` — never inside a hot path.
+ */
+export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
+  const [
+    base,
+    eth,
+    arb,
+    op,
+    bnb,
+    polygon,
+    sepolia,
+    baseSep,
+    arbSep,
+    opSep,
+    polygonAmoy,
+    bnbTest,
+    tgToken,
+    pushPk,
+    zeroEx,
+    oneInch,
+    blockaid,
+    walletHmac,
+  ] = await Promise.all([
+    readSecret(raw.RPC_BASE),
+    readSecret(raw.RPC_ETH),
+    readSecret(raw.RPC_ARB),
+    readSecret(raw.RPC_OP),
+    readSecret(raw.RPC_BNB),
+    readSecret(raw.RPC_POLYGON),
+    readSecret(raw.RPC_SEPOLIA),
+    readSecret(raw.RPC_BASE_SEPOLIA),
+    readSecret(raw.RPC_ARB_SEPOLIA),
+    readSecret(raw.RPC_OP_SEPOLIA),
+    readSecret(raw.RPC_POLYGON_AMOY),
+    readSecret(raw.RPC_BNB_TESTNET),
+    readSecret(raw.TG_BOT_TOKEN),
+    readSecret(raw.PUSH_CHANNEL_PK),
+    readSecret(raw.ZEROEX_API_KEY),
+    readSecret(raw.ONEINCH_API_KEY),
+    readSecret(raw.BLOCKAID_API_KEY),
+    readSecret(raw.DIAG_WALLET_HMAC_KEY),
+  ]);
+  return {
+    // Non-secret bindings / config — passed straight through.
+    DB: raw.DB,
+    TG_BOT_USERNAME: raw.TG_BOT_USERNAME,
+    QUOTE_0X_RATELIMIT: raw.QUOTE_0X_RATELIMIT,
+    QUOTE_1INCH_RATELIMIT: raw.QUOTE_1INCH_RATELIMIT,
+    SCAN_BLOCKAID_RATELIMIT: raw.SCAN_BLOCKAID_RATELIMIT,
+    DIAG_RECORD_RATELIMIT: raw.DIAG_RECORD_RATELIMIT,
+    DIAG_SAMPLE_RATE: raw.DIAG_SAMPLE_RATE,
+    DIAG_RETENTION_DAYS: raw.DIAG_RETENTION_DAYS,
+    DIAG_LEGAL_DOCS: raw.DIAG_LEGAL_DOCS,
+    FRONTEND_ORIGIN: raw.FRONTEND_ORIGIN,
+    // Resolved secrets.
+    RPC_BASE: base,
+    RPC_ETH: eth,
+    RPC_ARB: arb,
+    RPC_OP: op,
+    RPC_BNB: bnb,
+    RPC_POLYGON: polygon,
+    RPC_SEPOLIA: sepolia,
+    RPC_BASE_SEPOLIA: baseSep,
+    RPC_ARB_SEPOLIA: arbSep,
+    RPC_OP_SEPOLIA: opSep,
+    RPC_POLYGON_AMOY: polygonAmoy,
+    RPC_BNB_TESTNET: bnbTest,
+    TG_BOT_TOKEN: tgToken,
+    PUSH_CHANNEL_PK: pushPk,
+    ZEROEX_API_KEY: zeroEx,
+    ONEINCH_API_KEY: oneInch,
+    BLOCKAID_API_KEY: blockaid,
+    DIAG_WALLET_HMAC_KEY: walletHmac,
+    // RPC_ZKEVM intentionally unset — Polygon zkEVM is out of scope.
+  };
 }
 
 export interface ChainConfig {

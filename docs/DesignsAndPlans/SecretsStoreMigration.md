@@ -1,7 +1,8 @@
 # Secrets Store Migration — Design (T-078)
 
 **Card:** T-078 · **Issue:** [#31](https://github.com/vaipakam/vaipakam/issues/31)
-**Status:** design — store provisioned, migration not yet implemented.
+**Status:** implemented — all three Workers (indexer, keeper, agent)
+migrated; operator secret-provisioning + deploy remain.
 
 ## 1. Context
 
@@ -102,7 +103,7 @@ merged 2026-05-17** and this branch is rebased onto the merged
 | 0 | Store provisioned | ✓ done |
 | 1 | `apps/indexer` | ✓ done — `WorkerEnv` + `resolveEnv()` boundary-resolve; 11 `secrets_store_secrets` RPC bindings. tsc + event-coverage clean. Establishes the pattern. |
 | 2 | `apps/keeper` | ✓ done — 15 `secrets_store_secrets` bindings (10 RPC + `TG_BOT_TOKEN` + `PUSH_CHANNEL_PK` + `ZEROEX`/`ONEINCH` + `KEEPER_PRIVATE_KEY`); `BaseEnv` shares the non-secret config knobs. Same `WorkerEnv` + `resolveEnv` pattern. tsc clean. |
-| 3 | `apps/agent` | Adds `BLOCKAID_API_KEY` + `DIAG_WALLET_HMAC_KEY`. |
+| 3 | `apps/agent` | ✓ done — 18 `secrets_store_secrets` bindings (12 RPC incl. `RPC_POLYGON` / `RPC_POLYGON_AMOY` + `TG_BOT_TOKEN` + `PUSH_CHANNEL_PK` + `ZEROEX`/`ONEINCH` + `BLOCKAID_API_KEY` + `DIAG_WALLET_HMAC_KEY`); `BaseEnv` keeps the D1 / R2 / rate-limit bindings + plain config. `resolveEnv()` runs at the top of BOTH `scheduled` and `fetch`. tsc clean. |
 
 Each phase: operator creates that Worker's secrets in the store →
 wire bindings + code → typecheck → deploy.

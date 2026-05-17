@@ -52,7 +52,7 @@
  * the proxies are paired to the aggregator origins they wrap).
  */
 
-import type { Env } from './env';
+import { resolveEnv, type Env, type WorkerEnv } from './env';
 import { runPeriodicPreNotify } from './periodicPreNotify';
 import { runBuyWatchdog } from './buyWatchdog';
 import { handle0xQuote, handle1inchQuote } from './quoteProxy';
@@ -80,50 +80,58 @@ import { handshakeExpired, handshakeLinked } from './i18n';
 export default {
   async scheduled(
     _controller: ScheduledController,
-    env: Env,
+    env: WorkerEnv,
     ctx: ExecutionContext,
   ): Promise<void> {
+    // T-078 — resolve the Secrets Store bindings once, here at the
+    // entry point; all three passes get the plain resolved env.
+    const resolved = await resolveEnv(env);
     // Each pass wrapped so a transient D1 / RPC blip on one can't
     // wedge the others. Same isolation policy the ops/hf-watcher
     // monolith used internally.
     ctx.waitUntil(
-      runPeriodicPreNotify(env).catch((err) => {
+      runPeriodicPreNotify(resolved).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[agent] runPeriodicPreNotify pass failed:', err);
       }),
     );
     ctx.waitUntil(
-      runBuyWatchdog(env).catch((err) => {
+      runBuyWatchdog(resolved).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[agent] runBuyWatchdog pass failed:', err);
       }),
     );
     ctx.waitUntil(
-      pruneOldDiagErrors(env).catch((err) => {
+      pruneOldDiagErrors(resolved).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[agent] pruneOldDiagErrors pass failed:', err);
       }),
     );
   },
 
-  async fetch(req: Request, env: Env): Promise<Response> {
+  async fetch(req: Request, env: WorkerEnv): Promise<Response> {
     const url = new URL(req.url);
+
+    // T-078 — resolve the Secrets Store bindings once, here at the
+    // entry point; every route handler below gets the plain resolved
+    // env and stays synchronous.
+    const resolved = await resolveEnv(env);
 
     // Telegram webhook — no CORS, external caller (Telegram's edge
     // posts the update with no Origin header). Handles the link-code
     // handshake and replies 200 even on no-match so Telegram doesn't
     // retry.
     if (url.pathname === '/tg/webhook' && req.method === 'POST') {
-      return handleTelegramWebhook(req, env);
+      return handleTelegramWebhook(req, resolved);
     }
 
     // Farcaster Frames — public read-only, embeddable from any
     // Farcaster client. No CORS gate.
     if (url.pathname === '/frames/active-loans' && req.method === 'GET') {
-      return handleActiveLoansFrameInitial(req, env);
+      return handleActiveLoansFrameInitial(req, resolved);
     }
     if (url.pathname === '/frames/active-loans' && req.method === 'POST') {
-      return handleActiveLoansFramePost(req, env);
+      return handleActiveLoansFramePost(req, resolved);
     }
     if (url.pathname === '/frames/active-loans/image' && req.method === 'GET') {
       return handleActiveLoansFrameImage(req);
@@ -135,37 +143,37 @@ export default {
     // injects the operator-held API key server-side and returns the
     // aggregator JSON pass-through.
     if (url.pathname === '/quote/0x' && req.method === 'POST') {
-      return handle0xQuote(req, env);
+      return handle0xQuote(req, resolved);
     }
     if (url.pathname === '/quote/1inch' && req.method === 'POST') {
-      return handle1inchQuote(req, env);
+      return handle1inchQuote(req, resolved);
     }
 
     // Blockaid scan proxy — same shape as quote proxies above.
     if (url.pathname === '/scan/blockaid' && req.method === 'POST') {
-      return handleBlockaidScan(req, env);
+      return handleBlockaidScan(req, resolved);
     }
 
     // Diagnostics record. CORS-locked + per-IP rate-limited inside
     // `handleDiagRecord` itself, which reads `FRONTEND_ORIGIN` and
     // the `DIAG_RECORD_RATELIMIT` binding directly.
     if (url.pathname === '/diag/record') {
-      return handleDiagRecord(req, env);
+      return handleDiagRecord(req, resolved);
     }
 
     // Frontend-facing endpoints below — Origin gate.
     if (req.method === 'OPTIONS') {
-      return preflight(req, env);
+      return preflight(req, resolved);
     }
-    if (!isAllowedOrigin(req, env)) {
+    if (!isAllowedOrigin(req, resolved)) {
       return new Response('Forbidden', { status: 403 });
     }
 
     if (url.pathname === '/thresholds' && req.method === 'PUT') {
-      return handlePutThresholds(req, env);
+      return handlePutThresholds(req, resolved);
     }
     if (url.pathname === '/link/telegram' && req.method === 'POST') {
-      return handleIssueTelegramLink(req, env);
+      return handleIssueTelegramLink(req, resolved);
     }
 
     // Erasure (T-075) — user erases their own error-capture records
@@ -173,10 +181,14 @@ export default {
     // signature, verified inside the handlers. CORS-locked like the
     // other frontend endpoints.
     if (url.pathname === '/diag/erasure' && req.method === 'POST') {
-      return handleDiagErasure(req, env, resolveAllowedOrigin(req, env));
+      return handleDiagErasure(req, resolved, resolveAllowedOrigin(req, resolved));
     }
     if (url.pathname === '/diag/erasure/status' && req.method === 'POST') {
-      return handleDiagErasureStatus(req, env, resolveAllowedOrigin(req, env));
+      return handleDiagErasureStatus(
+        req,
+        resolved,
+        resolveAllowedOrigin(req, resolved),
+      );
     }
 
     // Legal hold (T-075) — protocol admin places / lifts a hold from
@@ -184,12 +196,16 @@ export default {
     // like the endpoints above; the request itself is signed and the
     // handler verifies the signer holds the on-chain ADMIN_ROLE.
     if (url.pathname === '/diag/legal-hold' && req.method === 'POST') {
-      return handleDiagLegalHold(req, env, resolveAllowedOrigin(req, env));
+      return handleDiagLegalHold(
+        req,
+        resolved,
+        resolveAllowedOrigin(req, resolved),
+      );
     }
 
     return new Response('Not found', { status: 404 });
   },
-} satisfies ExportedHandler<Env>;
+} satisfies ExportedHandler<WorkerEnv>;
 
 // ─── HTTP handlers ─────────────────────────────────────────────────
 

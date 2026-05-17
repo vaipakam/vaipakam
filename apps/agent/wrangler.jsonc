@@ -99,33 +99,58 @@
     ],
   },
 
-  // Operator-managed secrets (set via `wrangler secret put`):
-  //   - RPC_*                    — per-chain RPC URLs (Alchemy /
-  //                                Infura / etc.; carry API keys).
-  //                                Buy-watchdog needs every chain
-  //                                with a VPFIBuyAdapter (mainnet +
-  //                                testnet) — broadest RPC set of
-  //                                the three Workers.
-  //   - TG_BOT_TOKEN             — Telegram bot (handshake +
-  //                                outbound notifications).
-  //   - PUSH_CHANNEL_PK          — Push channel signer.
-  //   - ZEROEX_API_KEY,
-  //     ONEINCH_API_KEY          — public quote-proxy aggregator keys.
-  //   - BLOCKAID_API_KEY         — public scan-proxy key.
-  //   - DIAG_WALLET_HMAC_KEY     — T-075: server secret keying the
-  //                                per-wallet deletion hash
-  //                                (HMAC of the full wallet). When
-  //                                unset, connected-wallet capture
-  //                                skips writes and the erasure
-  //                                endpoints 503.
-  //                                (POST /diag/legal-hold has no
-  //                                secret — it checks the caller's
-  //                                on-chain ADMIN_ROLE instead.)
-  //   - (no signing-key secret here. Stage 3 architectural-rebalance
-  //     moved KEEPER_PRIVATE_KEY + runDailyOracleSnapshot to
-  //     apps/keeper so the only Worker that holds a signing key is
-  //     the keeper. Staging plan §2 least-privilege contract.)
+  // T-078 — the agent's secrets are read from the account-level
+  // Cloudflare Secrets Store (store `vaipakam-credentials`, id
+  // 1e66429d0fa24aa38a27bc05b7bcf63e), not per-Worker
+  // `wrangler secret put`. Each binding is resolved asynchronously
+  // once per cron tick / HTTP request in `resolveEnv()` (src/env.ts).
+  // Local `wrangler dev` needs the same secrets created WITHOUT the
+  // `--remote` flag.
   //
+  // Agent carries the broadest secret surface of the three Workers:
+  //   - RPC_*                — per-chain RPC URLs (carry API keys).
+  //                            Buy-watchdog needs every chain with a
+  //                            VPFIBuyAdapter (mainnet + testnet);
+  //                            includes RPC_POLYGON / RPC_POLYGON_AMOY
+  //                            which are agent-only. `RPC_ZKEVM` is
+  //                            omitted (Polygon zkEVM out of scope).
+  //   - TG_BOT_TOKEN         — Telegram bot (handshake + notifications).
+  //   - PUSH_CHANNEL_PK      — Push channel signer.
+  //   - ZEROEX_API_KEY,
+  //     ONEINCH_API_KEY      — public quote-proxy aggregator keys.
+  //   - BLOCKAID_API_KEY     — public scan-proxy key.
+  //   - DIAG_WALLET_HMAC_KEY — T-075: server secret keying the
+  //                            per-wallet deletion hash. When unset,
+  //                            connected-wallet capture skips writes
+  //                            and the erasure endpoints 503.
+  //
+  // NOT migrated (no signing-key secret here — Stage 3 architectural-
+  // rebalance moved KEEPER_PRIVATE_KEY + runDailyOracleSnapshot to
+  // apps/keeper so the only Worker that holds a signing key is the
+  // keeper; staging plan §2 least-privilege contract). The
+  // `/diag/legal-hold` endpoint also has no secret — it checks the
+  // caller's on-chain ADMIN_ROLE instead.
+  "secrets_store_secrets": [
+    { "binding": "RPC_BASE",            "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_BASE" },
+    { "binding": "RPC_ETH",             "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_ETH" },
+    { "binding": "RPC_ARB",             "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_ARB" },
+    { "binding": "RPC_OP",              "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_OP" },
+    { "binding": "RPC_BNB",             "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_BNB" },
+    { "binding": "RPC_POLYGON",         "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_POLYGON" },
+    { "binding": "RPC_SEPOLIA",         "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_SEPOLIA" },
+    { "binding": "RPC_BASE_SEPOLIA",    "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_BASE_SEPOLIA" },
+    { "binding": "RPC_ARB_SEPOLIA",     "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_ARB_SEPOLIA" },
+    { "binding": "RPC_OP_SEPOLIA",      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_OP_SEPOLIA" },
+    { "binding": "RPC_POLYGON_AMOY",    "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_POLYGON_AMOY" },
+    { "binding": "RPC_BNB_TESTNET",     "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_BNB_TESTNET" },
+    { "binding": "TG_BOT_TOKEN",        "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "TG_BOT_TOKEN" },
+    { "binding": "PUSH_CHANNEL_PK",     "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "PUSH_CHANNEL_PK" },
+    { "binding": "ZEROEX_API_KEY",      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "ZEROEX_API_KEY" },
+    { "binding": "ONEINCH_API_KEY",     "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "ONEINCH_API_KEY" },
+    { "binding": "BLOCKAID_API_KEY",    "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "BLOCKAID_API_KEY" },
+    { "binding": "DIAG_WALLET_HMAC_KEY", "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "DIAG_WALLET_HMAC_KEY" },
+  ],
+
   // Operator-managed vars (in `vars` below):
   //   - TG_BOT_USERNAME          — public bot handle.
   //   - FRONTEND_ORIGIN          — CSV of allowed CORS origins for
