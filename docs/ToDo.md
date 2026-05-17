@@ -11,6 +11,10 @@
 
 ---
 
+- [ ] **T-079** `yetToPromote`: GoPlus token-security screening of offered assets — an **off-chain advisory** check, complementary to (not a replacement for) the Blowfish transaction-scanner (ET-001). GoPlus is a centralized Web2 REST API (token honeypot / scam / rugpull detection, address risk) — a Worker or the frontend calls it; a smart contract cannot. Use: at offer creation / accept, screen the collateral + principal tokens for honeypot/scam characteristics and surface a warning in the UI. Off-chain advisory only — it informs the UI or an off-chain gate; on-chain enforcement would need an oracle or an on-chain allowlist (a much larger change, not proposed here). Surfaced during the ET-001 (Blockaid→Blowfish) discussion under T-078.
+
+---
+
 - [ ] **T-078** `promotedToProjectCard`: Sweep all Worker secrets into Cloudflare Secrets Store. Today each Worker's secrets are set per-Worker via `wrangler secret put`, and several (`RPC_*`, `TG_BOT_TOKEN`, `PUSH_CHANNEL_PK`, `ZEROEX_API_KEY`, `ONEINCH_API_KEY`) are duplicated across apps/agent + apps/keeper — rotating one means updating every Worker. Migrate to account-level Cloudflare Secrets Store: define each secret once, bind it into the Workers that need it (`secrets_store_secrets`), and change the consuming code to read from the binding (async `.get()`) instead of plain `env.*` strings. Worker-unique secrets (`KEEPER_PRIVATE_KEY`, `DIAG_WALLET_HMAC_KEY`) move too, for central management + an audit log. Caveats to honour in the sweep: (a) Secrets Store is still write-only — it is NOT a backup; readable copies of irreplaceable secrets must be kept off-Cloudflare, made at generation time; (b) no real private key / secret-grade API key may ever sit in a committed file (`wrangler.jsonc` vars, a committed `.env`) or in a frontend `VITE_*` variable — `VITE_*` values are bundled into the public client JS, so anything sensitive the frontend touches stays behind a Worker proxy (as the aggregator quote proxies already do); local Worker dev uses a gitignored `.dev.vars` with throwaway values. Surfaced during T-075. Tracked as [Issue #31](https://github.com/vaipakam/vaipakam/issues/31).
 
 ---
@@ -405,6 +409,7 @@ vaipakam-credentials
 Vaipakam-config
 vaipakam-terms
 vaipakam-policy
+vaipakam-legal-vault
 
 ---
 
@@ -505,6 +510,6 @@ Also the info icon mapping inside protocol console should go only to `www` (http
 
 ---
 
-- [ ] **ET-001** `yetToPromote`: Lets use Blowfish instead of Blockaid
+- [ ] **ET-001** `promotedToProjectCard`: Lets use Blowfish instead of Blockaid. Migrate the transaction-scanner (the apps/agent `/scan/blockaid` proxy + the frontend `SimulationPreview`) from Blockaid to Blowfish — Blockaid's API key couldn't be provisioned, which blocks the scanning feature's production readiness. Blowfish is industry-grade (per-transaction simulation + threat assessment — same category) with a usable free tier. Tracked as [Issue #32](https://github.com/vaipakam/vaipakam/issues/32).
 
 ---
