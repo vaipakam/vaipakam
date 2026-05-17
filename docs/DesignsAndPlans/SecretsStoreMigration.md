@@ -100,9 +100,9 @@ merged 2026-05-17** and this branch is rebased onto the merged
 | Phase | Scope | Notes |
 | --- | --- | --- |
 | 0 | Store provisioned | ✓ done |
-| 1 | `apps/indexer` | Smallest surface (`RPC_*` only) — establishes the binding + boundary-resolve pattern. |
+| 1 | `apps/indexer` | ✓ done — `WorkerEnv` + `resolveEnv()` boundary-resolve; 11 `secrets_store_secrets` RPC bindings. tsc + event-coverage clean. Establishes the pattern. |
 | 2 | `apps/keeper` | `RPC_*`, `TG_BOT_TOKEN`, `ZEROEX/ONEINCH`, `PUSH_CHANNEL_PK`, `KEEPER_PRIVATE_KEY`. |
-| 3 | `apps/agent` | After PR #29 merges. Adds `BLOCKAID_API_KEY` + `DIAG_WALLET_HMAC_KEY`. |
+| 3 | `apps/agent` | Adds `BLOCKAID_API_KEY` + `DIAG_WALLET_HMAC_KEY`. |
 
 Each phase: operator creates that Worker's secrets in the store →
 wire bindings + code → typecheck → deploy.
