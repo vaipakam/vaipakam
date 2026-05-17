@@ -102,11 +102,32 @@ export interface Env {
   CANCELLED_OFFER_RETENTION_DAYS?: string;
 }
 
-/** Read one Secrets Store binding, tolerating an absent binding. */
+/**
+ * Read one Secrets Store binding into a plain string.
+ *
+ * Tolerates BOTH an absent binding (`b` undefined) AND a failing
+ * fetch: a rejected `.get()` — a transient Secrets Store outage, or
+ * a secret deleted / deactivated after deploy — resolves to
+ * `undefined` rather than rejecting. `resolveEnv` fans every secret
+ * through `Promise.all`, so without this catch one unavailable
+ * secret would abort the whole resolve and take down the entire
+ * cron tick / every HTTP route — including paths that never touch
+ * that secret. Collapsing to `undefined` keeps the failure scoped to
+ * the one dependent feature: every `Env` secret field is optional
+ * and downstream code already handles `undefined` (skip that chain).
+ * (T-078 — PR #36 Codex review.)
+ */
 async function readSecret(
   b: SecretBinding | undefined,
 ): Promise<string | undefined> {
-  return b ? b.get() : undefined;
+  if (!b) return undefined;
+  try {
+    return await b.get();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[env] Secrets Store fetch failed; treating as unset:', err);
+    return undefined;
+  }
 }
 
 /**

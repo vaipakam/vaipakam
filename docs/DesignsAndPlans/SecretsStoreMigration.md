@@ -32,7 +32,8 @@ Provisioned 2026-05-17:
 | `ZEROEX_API_KEY` | agent, keeper | aggregator API key | yes |
 | `ONEINCH_API_KEY` | agent, keeper | aggregator API key | yes |
 | `PUSH_CHANNEL_PK` | agent, keeper | **signing key** (Push channel) | yes |
-| `BLOCKAID_API_KEY` | agent | scanner API key | no |
+| `BLOCKAID_API_KEY` | agent | scanner API key | no — see note |
+| `GOPLUS_APP_KEY` / `GOPLUS_APP_SECRET` | (agent, future) | GoPlus scanner credentials | no — see note |
 | `DIAG_WALLET_HMAC_KEY` | agent | HMAC key | no — added by T-075 |
 | `KEEPER_PRIVATE_KEY` | keeper | **on-chain signing key** (moves funds) | no |
 
@@ -42,6 +43,18 @@ Provisioned 2026-05-17:
 `CANCELLED_OFFER_RETENTION_DAYS`, and the `LIQ_*` / `SPLIT_*` /
 `PARTIAL_LIQ_*` keeper tuning knobs. These are configuration, not
 secrets.
+
+> **`BLOCKAID_API_KEY` — binding dropped (2026-05-17).** The
+> operator holds no Blockaid key, and ET-001 ([#32]) replaces the
+> Blockaid transaction scanner with **GoPlus**. So the agent's
+> `BLOCKAID_API_KEY` binding is **not** wired in Phase 3 — while it
+> is unbound, `/scan/blockaid` degrades gracefully (`scanProxy.ts`
+> 503s on the absent key). ET-001 adds `GOPLUS_APP_KEY` +
+> `GOPLUS_APP_SECRET` bindings alongside the rewritten scan proxy.
+> Those two GoPlus secrets are already staged in the
+> `vaipakam-credentials` store ahead of that work. GoPlus auth needs
+> **both** an App Key and an App Secret (exchanged for a short-lived
+> access token); the App Name is a label, not a runtime secret.
 
 ## 4. Decision (operator, 2026-05-17)
 
@@ -103,7 +116,7 @@ merged 2026-05-17** and this branch is rebased onto the merged
 | 0 | Store provisioned | ✓ done |
 | 1 | `apps/indexer` | ✓ done — `WorkerEnv` + `resolveEnv()` boundary-resolve; 11 `secrets_store_secrets` RPC bindings. tsc + event-coverage clean. Establishes the pattern. |
 | 2 | `apps/keeper` | ✓ done — 15 `secrets_store_secrets` bindings (10 RPC + `TG_BOT_TOKEN` + `PUSH_CHANNEL_PK` + `ZEROEX`/`ONEINCH` + `KEEPER_PRIVATE_KEY`); `BaseEnv` shares the non-secret config knobs. Same `WorkerEnv` + `resolveEnv` pattern. tsc clean. |
-| 3 | `apps/agent` | ✓ done — 18 `secrets_store_secrets` bindings (12 RPC incl. `RPC_POLYGON` / `RPC_POLYGON_AMOY` + `TG_BOT_TOKEN` + `PUSH_CHANNEL_PK` + `ZEROEX`/`ONEINCH` + `BLOCKAID_API_KEY` + `DIAG_WALLET_HMAC_KEY`); `BaseEnv` keeps the D1 / R2 / rate-limit bindings + plain config. `resolveEnv()` runs at the top of BOTH `scheduled` and `fetch`. tsc clean. |
+| 3 | `apps/agent` | ✓ done — 17 `secrets_store_secrets` bindings (12 RPC incl. `RPC_POLYGON` / `RPC_POLYGON_AMOY` + `TG_BOT_TOKEN` + `PUSH_CHANNEL_PK` + `ZEROEX`/`ONEINCH` + `DIAG_WALLET_HMAC_KEY`); `BLOCKAID_API_KEY` binding deliberately omitted (see §3 note — ET-001 GoPlus swap). `BaseEnv` keeps the D1 / R2 / rate-limit bindings + plain config. `resolveEnv()` runs at the top of BOTH `scheduled` and `fetch`. tsc clean. |
 
 Each phase: operator creates that Worker's secrets in the store →
 wire bindings + code → typecheck → deploy.
@@ -127,6 +140,21 @@ Confirmed against Cloudflare's Secrets Store → Workers documentation:
   `--remote`. So the operator provisions each secret twice — once
   `--remote` (production) and once local for `wrangler dev`. Unit
   tests (vitest) mock `env` and need neither.
+  - **The local (non-`--remote`) secret set is scoped per project
+    directory** — it lives in that directory's `.wrangler/` state,
+    not in a single account-wide local store. Verified 2026-05-17:
+    `wrangler secrets-store secret list <id>` (no `--remote`) run
+    from `apps/agent` returns *no secrets* while the same command
+    from `apps/defi` returns the full set, because the local
+    secrets had been created from `apps/defi`. **Consequence:** the
+    non-`--remote` secrets for each Worker must be created from
+    **within that Worker's own directory** — `apps/keeper`,
+    `apps/indexer`, `apps/agent` — or `wrangler dev` for that
+    Worker will see an empty local store. Creating them once under
+    some other directory (e.g. `apps/defi`, which is not even a
+    consumer of these secrets) does not help the three Workers.
+    The `--remote` (production) store, by contrast, is genuinely
+    account-wide and is provisioned once.
 
 ## 10. Out of scope
 

@@ -63,8 +63,11 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
  *                            public `/quote/*` proxy endpoints.
  *                            Secrets Store bindings (T-078).
  *   - `BLOCKAID_API_KEY`   — Blockaid Transaction Scanner API key
- *                            for the `/scan/blockaid` proxy. Secrets
- *                            Store binding (T-078).
+ *                            for the `/scan/blockaid` proxy. NOT a
+ *                            Secrets Store binding right now — the
+ *                            binding was dropped pending ET-001
+ *                            (#32), which swaps Blockaid for GoPlus.
+ *                            `scanProxy.ts` 503s while it is unset.
  *   - `DIAG_WALLET_HMAC_KEY` — T-075 secret keying the per-wallet
  *                            deletion hash. Secrets Store binding
  *                            (T-078). The `/diag/legal-hold`
@@ -181,10 +184,10 @@ export interface WorkerEnv extends BaseEnv {
   // Aggregator API keys for the public `/quote/*` proxies.
   ZEROEX_API_KEY?: SecretBinding;
   ONEINCH_API_KEY?: SecretBinding;
-  // Blockaid scan proxy.
-  BLOCKAID_API_KEY?: SecretBinding;
   // T-075 — server secret keying the per-wallet deletion hash.
   DIAG_WALLET_HMAC_KEY?: SecretBinding;
+  // (No `BLOCKAID_API_KEY` binding — dropped pending ET-001's GoPlus
+  // swap; see the `Env.BLOCKAID_API_KEY` note and wrangler.jsonc.)
 }
 
 /**
@@ -216,7 +219,11 @@ export interface Env extends BaseEnv {
   // Aggregator API keys for the public `/quote/*` proxies.
   ZEROEX_API_KEY?: string;
   ONEINCH_API_KEY?: string;
-  // Blockaid scan proxy.
+  // Blockaid scan-proxy key. Currently ALWAYS `undefined` — the
+  // Secrets Store binding was dropped pending ET-001 (#32), which
+  // swaps the Blockaid scanner for GoPlus. `scanProxy.ts` handles
+  // the unset key by 503-ing `/scan/blockaid`. The field is kept so
+  // that consumer stays typed; ET-001 replaces it with GoPlus creds.
   BLOCKAID_API_KEY?: string;
 
   // T-075 — server secret for the per-wallet deletion key.
@@ -239,11 +246,33 @@ export interface Env extends BaseEnv {
   // token in this Worker's env.)
 }
 
-/** Read one Secrets Store binding, tolerating an absent binding. */
+/**
+ * Read one Secrets Store binding into a plain string.
+ *
+ * Tolerates BOTH an absent binding (`b` undefined) AND a failing
+ * fetch: a rejected `.get()` — a transient Secrets Store outage, or
+ * a secret deleted / deactivated after deploy — resolves to
+ * `undefined` rather than rejecting. `resolveEnv` fans every secret
+ * through `Promise.all`, so without this catch one unavailable
+ * secret would abort the whole resolve and take down the entire
+ * cron tick / every HTTP route — including paths that never touch
+ * that secret. Collapsing to `undefined` keeps the failure scoped to
+ * the one dependent feature: every `Env` secret field is optional
+ * and downstream code already handles `undefined` (skip that chain /
+ * disable that adapter / 503 that one endpoint).
+ * (T-078 — PR #36 Codex review.)
+ */
 async function readSecret(
   b: SecretBinding | undefined,
 ): Promise<string | undefined> {
-  return b ? b.get() : undefined;
+  if (!b) return undefined;
+  try {
+    return await b.get();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[env] Secrets Store fetch failed; treating as unset:', err);
+    return undefined;
+  }
 }
 
 /**
@@ -270,7 +299,6 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     pushPk,
     zeroEx,
     oneInch,
-    blockaid,
     walletHmac,
   ] = await Promise.all([
     readSecret(raw.RPC_BASE),
@@ -289,7 +317,6 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     readSecret(raw.PUSH_CHANNEL_PK),
     readSecret(raw.ZEROEX_API_KEY),
     readSecret(raw.ONEINCH_API_KEY),
-    readSecret(raw.BLOCKAID_API_KEY),
     readSecret(raw.DIAG_WALLET_HMAC_KEY),
   ]);
   return {
@@ -321,8 +348,8 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     PUSH_CHANNEL_PK: pushPk,
     ZEROEX_API_KEY: zeroEx,
     ONEINCH_API_KEY: oneInch,
-    BLOCKAID_API_KEY: blockaid,
     DIAG_WALLET_HMAC_KEY: walletHmac,
+    // BLOCKAID_API_KEY left unset — no binding (dropped pending ET-001).
     // RPC_ZKEVM intentionally unset — Polygon zkEVM is out of scope.
   };
 }
