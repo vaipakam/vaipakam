@@ -7,7 +7,7 @@ import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
-import {FeedRegistryInterface} from "@chainlink/contracts/src/v0.8/interfaces/FeedRegistryInterface.sol";
+import {FeedRegistryInterface} from "@vaipakam-vendor/chainlink/FeedRegistryInterface.sol";
 import {MockChainlinkAggregator} from "./mocks/MockChainlinkAggregator.sol";
 
 /**

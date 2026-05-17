@@ -1,7 +1,12 @@
 @openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/
 @openzeppelin/contracts/=lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/
 @diamond-3/=lib/diamond-3-hardhat/contracts/
-@chainlink/contracts/=lib/chainlink-brownie-contracts/contracts/
+@chainlink/contracts-ccip/=lib/chainlink-ccip/chains/evm/
+@chainlink/contracts/=lib/chainlink-evm/contracts/
+@chainlink/local/=lib/chainlink-local/
+@openzeppelin/contracts@4.8.3/=lib/chainlink-local/src/vendor/openzeppelin-solidity/v4.8.3/contracts/
+@openzeppelin/contracts@5.0.2/=lib/chainlink-local/src/vendor/openzeppelin-solidity/v5.0.2/contracts/
+@vaipakam-vendor/=src/vendor/
 @layerzerolabs/lz-evm-protocol-v2/=lib/LayerZero-v2/packages/layerzero-v2/evm/protocol/
 @layerzerolabs/lz-evm-messagelib-v2/=lib/LayerZero-v2/packages/layerzero-v2/evm/messagelib/
 @layerzerolabs/lz-evm-oapp-v2/=lib/LayerZero-v2/packages/layerzero-v2/evm/oapp/

@@ -5,12 +5,13 @@ import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.s
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import {CCIPReceiver} from "@chainlink/contracts/src/v0.8/ccip/applications/CCIPReceiver.sol";
-import {Client} from "@chainlink/contracts/src/v0.8/ccip/libraries/Client.sol";
-import {IRouterClient} from "@chainlink/contracts/src/v0.8/ccip/interfaces/IRouterClient.sol";
+import {CCIPReceiver} from "@chainlink/contracts-ccip/contracts/applications/CCIPReceiver.sol";
+import {Client} from "@chainlink/contracts-ccip/contracts/libraries/Client.sol";
+import {IRouterClient} from "@chainlink/contracts-ccip/contracts/interfaces/IRouterClient.sol";
 
 import {GuardianPausable} from "./GuardianPausable.sol";
 import {ICrossChainMessenger, ICrossChainMessageRecipient} from "./ICrossChainMessenger.sol";
@@ -88,6 +89,7 @@ contract CcipMessenger is
     CCIPReceiver,
     Ownable2StepUpgradeable,
     GuardianPausable,
+    ReentrancyGuardTransient,
     UUPSUpgradeable,
     ICrossChainMessenger
 {
@@ -239,6 +241,7 @@ contract CcipMessenger is
         payable
         override
         whenNotPaused
+        nonReentrant
         returns (bytes32 messageId)
     {
         bytes32 channelId = channelOf[msg.sender];
@@ -261,11 +264,11 @@ contract CcipMessenger is
         messageId = router.ccipSend{value: fee}(selector, message);
         emit MessageSent(messageId, channelId, destinationChainId);
 
-        // Refund any fee overpayment. This is the LAST statement — every
-        // state write and the `ccipSend` are already done (CEI), so a
-        // re-entrant call from the (registered, trusted) handler can only
-        // begin an independent fresh send, never corrupt this one. The
-        // adapter custodies no balance between calls.
+        // Refund any fee overpayment. `nonReentrant` (transient guard) is
+        // still held here, so a re-entrant `sendMessage` from the handler's
+        // receive hook reverts rather than nesting; and it is the LAST
+        // statement, after `ccipSend` and every state write (CEI). The
+        // adapter custodies no balance between calls regardless.
         uint256 refund = msg.value - fee;
         if (refund > 0) {
             (bool ok, ) = msg.sender.call{value: refund}("");
@@ -404,10 +407,13 @@ contract CcipMessenger is
 
     /// @dev Build the CCIP message: addressed to the remote CcipMessenger,
     ///      carrying the `(channelId, payload)` routing envelope, fee paid
-    ///      in native gas, with a V2 extra-args gas limit. Out-of-order
-    ///      execution is allowed — Vaipakam's cross-chain messages carry
-    ///      their own `requestId` ordering and several chains enforce this
-    ///      flag anyway.
+    ///      in native gas, with a `GenericExtraArgsV2` gas limit. Out-of-
+    ///      order execution is allowed — Vaipakam's cross-chain messages
+    ///      carry their own `requestId` ordering and several chains enforce
+    ///      this flag anyway.
+    /// @dev `GenericExtraArgsV2` is the CCIP v1.6 name for what v1.5 called
+    ///      `EVMExtraArgsV2` — identical fields and tag, renamed because the
+    ///      tag is now valid across multiple chain families.
     function _buildMessage(
         address receiver,
         bytes32 channelId,
@@ -421,7 +427,7 @@ contract CcipMessenger is
             tokenAmounts: ccipTokens,
             feeToken: address(0),
             extraArgs: Client._argsToBytes(
-                Client.EVMExtraArgsV2({
+                Client.GenericExtraArgsV2({
                     gasLimit: destGasLimit,
                     allowOutOfOrderExecution: true
                 })

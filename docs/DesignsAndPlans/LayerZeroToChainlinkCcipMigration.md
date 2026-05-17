@@ -304,3 +304,51 @@ Phase 1.
 - Diamond facet changes — none needed (§2).
 - A runtime multi-provider framework — explicitly rejected (§2).
 - Non-EVM chains (Solana etc.) — out of all phases, as today.
+
+## 12. Implementation log — dependency & toolchain (Phase 1 / 1.5)
+
+**CCIP version — v1.6.2 (not v1.5).** The design was drafted around CCIP
+v1.5, but `chainlink-brownie-contracts` (the v1.5 source) was **archived
+2026-04-24** and its TokenPool contracts are pinned to a fixed
+`pragma 0.8.24` (Vaipakam compiles at 0.8.29). CCIP **v1.6** relaxed the
+pool pragmas to caret `^0.8.24` (native 0.8.29) — so the migration targets
+**CCIP v1.6.2**, the current audited, mainnet-live release.
+
+**Dependency — the `chainlink-local` package.** CCIP v1.6's npm package is
+not self-contained (it expects `@chainlink/contracts` + version-pinned OZ
+as a resolved dependency tree). Rather than hand-assemble that, the repo
+vendors **`smartcontractkit/chainlink-local` v0.2.8** — Chainlink's
+maintained, Foundry-native CCIP package, which curates the whole stack:
+`chainlink-ccip` (the CCIP v1.6.2 contracts), `chainlink-evm` (the shared
+`@chainlink/contracts` contracts) and the vendored OZ versions, **plus the
+CCIP Local Simulator** used for the Phase 6 anvil rehearsal.
+
+Vendoring specifics (`contracts/lib/`):
+- The libs are **de-nested** to flat top-level entries — `lib/chainlink-ccip`,
+  `lib/chainlink-evm`, `lib/chainlink-local` — because a nested Foundry
+  project (a `foundry.toml` + nested `lib/` inside a vendored lib) makes
+  Foundry's compile-scope auto-detection misbehave.
+- `lib/chainlink-evm` is **pruned** to `contracts/src/v0.8/{shared,keystone,
+  vendor}` — Vaipakam needs only the `shared` feed/access/token contracts;
+  the VRF / Automation / Functions trees are dropped.
+- Dependency `test/` material is excluded (`foundry.toml` `skip` + the
+  prune) — Vaipakam never runs Chainlink's own test suites.
+- `FeedRegistryInterface` is not carried by modern `chainlink-evm`; the one
+  frozen interface file is vendored at `src/vendor/chainlink/` behind the
+  `@vaipakam-vendor/` remapping.
+
+The archived `chainlink-brownie-contracts` submodule is removed entirely.
+
+**Reentrancy guard.** `CcipMessenger.sendMessage` carries OZ
+`ReentrancyGuardTransient` (`@openzeppelin/contracts/utils/`). OZ 5.5.0 no
+longer ships a separate `ReentrancyGuardUpgradeable` — the storage-based
+`ReentrancyGuard` is deprecated (removal in OZ v6.0); `ReentrancyGuardTransient`
+(EIP-1153 transient storage — supported on every Vaipakam chain) is the
+current variant and is upgrade-safe by construction (no persistent
+storage). `_ccipReceive` is intentionally left guard-free (only the
+`onlyRouter` gate) so the buy flow's receive→send path cannot deadlock on
+a shared guard.
+
+**API note:** CCIP v1.6 renamed `Client.EVMExtraArgsV2` →
+`Client.GenericExtraArgsV2` (identical fields/tag); `CcipMessenger` uses
+the v1.6 name.
