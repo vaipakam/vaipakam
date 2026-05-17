@@ -54,9 +54,12 @@ secrets.
 
 - **Store** — one (`vaipakam-credentials`), done.
 - **Secret values** — `wrangler secrets-store secret create
-  1e66429d0fa24aa38a27bc05b7bcf63e --name <NAME> --remote` (prompts
-  for the value). **The operator runs these** — the secret values
-  are operator-held; this migration only wires bindings + code.
+  1e66429d0fa24aa38a27bc05b7bcf63e --name <NAME> --scopes workers
+  --remote` (then prompts for the value — do NOT pass `--value`, it
+  lands the secret in shell history). `--scopes workers` is required
+  — the secrets are consumed by Workers. **The operator runs these**
+  — the secret values are operator-held; this migration only wires
+  bindings + code.
 - **Binding** — per Worker, a `secrets_store_secrets` array in
   `wrangler.jsonc`: `{ binding, store_id, secret_name }` per secret.
 - **Runtime** — a Secrets Store binding is read **asynchronously**:
