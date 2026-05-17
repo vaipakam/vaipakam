@@ -34,15 +34,22 @@
  *   POST /quote/1inch                       — 1inch v6 aggregator proxy
  *   POST /scan/blockaid                     — Blockaid scanner proxy
  *   ANY  /diag/record                       — diagnostics record capture
+ *   POST /diag/erasure                      — frontend → erase own records
+ *   POST /diag/erasure/status               — frontend → erasure status check
+ *   POST /diag/legal-hold                   — protocol admin → place/lift hold
  *   PUT  /thresholds                        — frontend → upsert HF bands
  *   POST /link/telegram                     — frontend → issue handshake code
  *
- * The `/thresholds`, `/link/telegram`, and `/diag/record` endpoints
- * are CORS-locked to `FRONTEND_ORIGIN`. The Telegram webhook +
- * Frames + quote / scan proxies have their own CORS posture (no
- * origin gate — Telegram and Farcaster post from arbitrary
- * infrastructure, and the proxies are paired to the aggregator
- * origins they wrap).
+ * The `/thresholds`, `/link/telegram`, `/diag/record`,
+ * `/diag/erasure`, `/diag/erasure/status` and `/diag/legal-hold`
+ * endpoints are CORS-locked to `FRONTEND_ORIGIN` — `/diag/legal-hold`
+ * is driven from the `apps/defi` protocol console, so it is a
+ * browser-facing endpoint; its authorization is the signer's
+ * on-chain `ADMIN_ROLE`, checked inside the handler. The Telegram
+ * webhook + Frames + quote / scan proxies have their own CORS
+ * posture (no origin gate
+ * — Telegram and Farcaster post from arbitrary infrastructure, and
+ * the proxies are paired to the aggregator origins they wrap).
  */
 
 import type { Env } from './env';
@@ -51,6 +58,11 @@ import { runBuyWatchdog } from './buyWatchdog';
 import { handle0xQuote, handle1inchQuote } from './quoteProxy';
 import { handleBlockaidScan } from './scanProxy';
 import { handleDiagRecord, pruneOldDiagErrors } from './diagRecord';
+import {
+  handleDiagErasure,
+  handleDiagErasureStatus,
+  handleDiagLegalHold,
+} from './diagErasure';
 import {
   handleActiveLoansFrameInitial,
   handleActiveLoansFramePost,
@@ -154,6 +166,25 @@ export default {
     }
     if (url.pathname === '/link/telegram' && req.method === 'POST') {
       return handleIssueTelegramLink(req, env);
+    }
+
+    // Erasure (T-075) — user erases their own error-capture records
+    // / checks erasure status. Both require an EIP-191 wallet
+    // signature, verified inside the handlers. CORS-locked like the
+    // other frontend endpoints.
+    if (url.pathname === '/diag/erasure' && req.method === 'POST') {
+      return handleDiagErasure(req, env, resolveAllowedOrigin(req, env));
+    }
+    if (url.pathname === '/diag/erasure/status' && req.method === 'POST') {
+      return handleDiagErasureStatus(req, env, resolveAllowedOrigin(req, env));
+    }
+
+    // Legal hold (T-075) — protocol admin places / lifts a hold from
+    // the apps/defi protocol console. Browser-facing, so Origin-gated
+    // like the endpoints above; the request itself is signed and the
+    // handler verifies the signer holds the on-chain ADMIN_ROLE.
+    if (url.pathname === '/diag/legal-hold' && req.method === 'POST') {
+      return handleDiagLegalHold(req, env, resolveAllowedOrigin(req, env));
     }
 
     return new Response('Not found', { status: 404 });

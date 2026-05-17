@@ -51,6 +51,20 @@
     },
   ],
 
+  // R2 bucket — T-075 — private store for the legal documents
+  // uploaded when a protocol admin places a diagnostics legal hold
+  // (the e-signed order / scanned letter). Private by default; the
+  // object key is the document's own SHA-256 (content-addressed).
+  // The operator provisions the bucket before the legal-hold
+  // endpoint is deployed; while the binding is absent, any
+  // legal-hold action carrying a document returns 503.
+  "r2_buckets": [
+    {
+      "binding": "DIAG_LEGAL_DOCS",
+      "bucket_name": "vaipakam-legal-docs",
+    },
+  ],
+
   // Cloudflare built-in rate-limit bindings — one per upstream
   // service so a noisy /quote/0x caller can't drain the
   // /scan/blockaid budget. 60 reqs / 60 seconds per IP each.
@@ -98,6 +112,14 @@
   //   - ZEROEX_API_KEY,
   //     ONEINCH_API_KEY          — public quote-proxy aggregator keys.
   //   - BLOCKAID_API_KEY         — public scan-proxy key.
+  //   - DIAG_WALLET_HMAC_KEY     — T-075: server secret keying the
+  //                                per-wallet deletion hash
+  //                                (HMAC of the full wallet). When
+  //                                unset, wallet_hash is stored NULL
+  //                                and the erasure endpoints 503.
+  //                                (POST /diag/legal-hold has no
+  //                                secret — it checks the caller's
+  //                                on-chain ADMIN_ROLE instead.)
   //   - (no signing-key secret here. Stage 3 architectural-rebalance
   //     moved KEEPER_PRIVATE_KEY + runDailyOracleSnapshot to
   //     apps/keeper so the only Worker that holds a signing key is

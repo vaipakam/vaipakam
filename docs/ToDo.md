@@ -11,7 +11,19 @@
 
 ---
 
+- [ ] **T-076** `yetToPromote`: Protocol console for public view should be different as it should not show the option to set flag for data retention disclosure, what do yousay? otherwise have seperate operator consol and have seperate operator EOA (or multisig) for these kind of operartions, what do you say? admins or founders or governance may not sit and do these kind of actions and operators should not hold important knobs and switches that governance or foumder may hold, whats your take? is there a better approach? not only for this flag but we may need to differentiate flags and knobs for operator and admin (later by governance), so that all that knobs and switches that are set by admins (later by governance) will be shown to public but not that is set by operaters, will that be fine? is there a better approach? whats your take?
+
+---
+
+- [ ] **T-075** `promotedToProjectCard`: User-initiated erasure of the server-side error-capture records (the `diag_errors` D1 table). GDPR Art-17-style right-to-erasure: a user signs an erasure-request message with their wallet, the apps/agent Worker verifies the signature and deletes their records. Needs a real per-wallet deletion key — a server-side `HMAC(fullWallet, serverSecret)` keyed hash, because the stored redacted wallet (`0x…abcd`) is non-unique and would collide. Admin-only legal-hold marks a wallet-hash as retain-required (automated deletion skips it); the erasure endpoint always returns a uniform "request processed" response (gag-order safe); a separate signed status endpoint surfaces a "retained by law" note only when an admin has flipped a per-wallet `disclosure_allowed` flag. Follow-up from T-074 / Issue #27. Tracked as [Issue #28](https://github.com/vaipakam/vaipakam/issues/28). Deploy gated on a crypto/privacy-lawyer sign-off.
+
+---
+
 - [ ] **T-600** `promotedToProjectCard`: Handling Treasury in a contract, See how it needs to be done and the funds that need to be distributed.
+
+---
+
+- [ ] **T-074** `yetToPromote`: Is it possible to have founders profit share every year from treasury and percentage is admin configurable (later by governance) within a range bound.
 
 ---
 

@@ -58,6 +58,16 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
  *   - `DIAG_SAMPLE_RATE`,
  *     `DIAG_RETENTION_DAYS` — diagnostics record sampling +
  *                            retention.
+ *   - `DIAG_WALLET_HMAC_KEY` — T-075 secret keying the per-wallet
+ *                            deletion hash. Set via
+ *                            `wrangler secret put`. The
+ *                            `/diag/legal-hold` endpoint has no
+ *                            secret of its own — it authenticates
+ *                            the caller by an on-chain `ADMIN_ROLE`
+ *                            check (see `diagAdminAuth.ts`).
+ *   - `DIAG_LEGAL_DOCS`    — T-075 private R2 bucket storing the
+ *                            legal documents uploaded with a hold.
+ *                            Configured in wrangler.jsonc.
  *   - `FRONTEND_ORIGIN`    — CSV of allowed CORS origins for the
  *                            frontend-facing endpoints
  *                            (`/thresholds`, `/link/telegram`,
@@ -124,6 +134,29 @@ export interface Env {
   // Diagnostics retention (days; default 90). Coerced from string
   // to int; values < 1 are clamped up to 1.
   DIAG_RETENTION_DAYS?: string;
+
+  // T-075 — server secret for the per-wallet deletion key.
+  // `wallet_hash = HMAC-SHA256(fullWallet, DIAG_WALLET_HMAC_KEY)`.
+  // A SECRET (set via `wrangler secret put`), never a `var` — if it
+  // leaked, the keyed hash would collapse to a reversible unkeyed
+  // hash of a public address. When unset: the capture path simply
+  // stores a NULL `wallet_hash` (rows not erasable by the automated
+  // path) and the erasure / status endpoints return 503.
+  DIAG_WALLET_HMAC_KEY?: string;
+
+  // T-075 — private R2 bucket holding the legal documents uploaded
+  // when a protocol admin places a hold (the e-signed order /
+  // scanned letter). Content-addressed by SHA-256. Optional: when
+  // the binding is absent the legal-hold endpoint returns 503 for
+  // any action that carries a document.
+  DIAG_LEGAL_DOCS?: R2Bucket;
+
+  // (T-075 — the `POST /diag/legal-hold` endpoint has NO env secret.
+  // It authenticates the caller by recovering the request signature
+  // and checking the signer holds the on-chain `ADMIN_ROLE` on the
+  // Diamond — see `diagAdminAuth.ts`. The contract's access-control
+  // state is the source of truth; there is no admin list or shared
+  // token in this Worker's env.)
 
   // CSV of allowed CORS origins for the frontend-facing endpoints
   // (`/thresholds`, `/link/telegram`, `/diag/record`). Set in

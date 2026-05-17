@@ -16,6 +16,7 @@
  *     "errorSelector": "0x12345678",
  *     "errorMessage": "…",            // truncated to 1000 chars at write
  *     "redactedWallet": "0x…abcd",    // pre-redacted by frontend
+ *     "wallet": "0x1234…full",        // optional, full address — see note
  *     "chainId": 84532,
  *     "loanId": "42",
  *     "offerId": "1138",
@@ -40,9 +41,25 @@
  *     respect its local 5-streak cap.
  *   - Field-length caps on every string. Numeric fields are coerced
  *     and clamped.
+ *
+ * T-075 capture-path note — the `wallet` field. The frontend sends
+ * the FULL connected wallet address (when one is connected) so the
+ * Worker can derive a per-wallet deletion key:
+ * `wallet_hash = HMAC(fullWallet, DIAG_WALLET_HMAC_KEY)` (see
+ * `diagHash.ts`). The full address is used transiently only — it is
+ * HMAC'd in memory and never written to D1. Only `wallet_hash` (the
+ * keyed, non-reversible hash) and the non-unique `redacted_wallet`
+ * display are persisted. The keyed hash is what later lets a
+ * signed erasure request reliably identify exactly that user's rows
+ * (the redacted display collides across wallets, so it cannot).
+ * When `wallet` is absent (not-connected session) or
+ * `DIAG_WALLET_HMAC_KEY` is unconfigured, `wallet_hash` stays NULL
+ * and the row is simply not reachable by the automated erasure
+ * path — support remains the fallback for those.
  */
 
 import type { Env } from './env';
+import { isHexAddress, walletHash } from './diagHash';
 
 const FRONTEND_TIMESTAMP_MAX_DRIFT_SECONDS = 6 * 60 * 60; // 6 hours
 
@@ -78,6 +95,7 @@ interface RecordBody {
   errorSelector?: unknown;
   errorMessage?: unknown;
   redactedWallet?: unknown;
+  wallet?: unknown;
   chainId?: unknown;
   loanId?: unknown;
   offerId?: unknown;
@@ -98,6 +116,10 @@ interface ValidatedRecord {
   errorSelector: string | null;
   errorMessage: string | null;
   redactedWallet: string | null;
+  /** Full wallet address — transient only. Used to compute
+   *  `wallet_hash`; NEVER persisted to D1. Null when the session has
+   *  no connected wallet or the field was malformed. */
+  wallet: string | null;
   chainId: number | null;
   loanId: string | null;
   offerId: string | null;
@@ -149,6 +171,10 @@ function validate(body: RecordBody, nowSeconds: number):
       errorSelector: optStr(body.errorSelector, CAP_ERROR_SELECTOR),
       errorMessage: optStr(body.errorMessage, CAP_ERROR_MESSAGE),
       redactedWallet: optStr(body.redactedWallet, CAP_WALLET),
+      // Full address kept transiently for the HMAC; reject anything
+      // that isn't a syntactically valid EVM address so a malformed
+      // value never reaches the hashing step.
+      wallet: isHexAddress(body.wallet) ? body.wallet : null,
       chainId:
         typeof body.chainId === 'number' && isFinite(body.chainId)
           ? Math.floor(body.chainId)
@@ -313,6 +339,17 @@ export async function handleDiagRecord(
 
   const fingerprint = await fingerprintOf(r);
 
+  // Per-wallet deletion key (T-075). Computed transiently from the
+  // full address the frontend sent; the full address is discarded
+  // after this line and never persisted. Stays null for a
+  // not-connected session or when the HMAC key isn't configured —
+  // in both cases the row is captured normally but isn't reachable
+  // by the automated erasure path.
+  let walletHashValue: string | null = null;
+  if (r.wallet && env.DIAG_WALLET_HMAC_KEY) {
+    walletHashValue = await walletHash(r.wallet, env.DIAG_WALLET_HMAC_KEY);
+  }
+
   if (await exceedsConsecutiveCap(env.DB, fingerprint)) {
     return new Response(
       JSON.stringify({
@@ -333,9 +370,9 @@ export async function handleDiagRecord(
          id, recorded_at, client_at, fingerprint,
          area, flow, step,
          error_type, error_name, error_selector, error_message,
-         redacted_wallet, chain_id, loan_id, offer_id,
+         redacted_wallet, wallet_hash, chain_id, loan_id, offer_id,
          app_locale, app_theme, viewport, app_version
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       r.id,
@@ -350,6 +387,7 @@ export async function handleDiagRecord(
       r.errorSelector,
       r.errorMessage,
       r.redactedWallet,
+      walletHashValue,
       r.chainId,
       r.loanId,
       r.offerId,
