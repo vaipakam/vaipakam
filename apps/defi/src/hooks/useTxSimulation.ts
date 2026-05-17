@@ -51,7 +51,7 @@ export interface SimResult {
 /** Debounced preflight — rapid input changes (slider/form edits)
  *  trigger only the last call; stale responses are dropped. */
 export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
-  const { address } = useWallet();
+  const { address, isCorrectChain } = useWallet();
   const publicClient = useDiamondPublicClient();
   const [result, setResult] = useState<SimResult>({ status: 'idle' });
   const reqIdRef = useRef(0);
@@ -61,13 +61,23 @@ export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
       setResult({ status: 'idle' });
       return;
     }
+    // The read client (`useDiamondPublicClient`) follows the wallet's
+    // chain only while that chain is supported; on an unsupported
+    // chain it falls back to DEFAULT_CHAIN. Simulating there would
+    // run the `eth_call` on a DIFFERENT network than the one the
+    // user will sign on — a misleading verdict. Surface that as
+    // "unavailable" instead. (PR #41 Codex review.)
+    if (!isCorrectChain) {
+      setResult({ status: 'unavailable' });
+      return;
+    }
     const myReq = ++reqIdRef.current;
     setResult({ status: 'loading' });
     try {
       // viem `call` === `eth_call`: executes the calldata from the
       // user's address against current state, returns on success,
-      // throws on revert. The read client is already bound to the
-      // wallet's active chain (`useDiamondPublicClient`).
+      // throws on revert. The read client is bound to the wallet's
+      // active chain (guarded above via `isCorrectChain`).
       await publicClient.call({
         account: address as Address,
         to: input.to,
@@ -80,7 +90,7 @@ export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
       if (myReq !== reqIdRef.current) return;
       setResult(classifyError(err));
     }
-  }, [address, publicClient, input]);
+  }, [address, isCorrectChain, publicClient, input]);
 
   useEffect(() => {
     const t = setTimeout(() => {
