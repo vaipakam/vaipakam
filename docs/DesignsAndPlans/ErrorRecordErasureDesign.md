@@ -199,7 +199,7 @@ Provision on `apps/agent`:
   existing `wallet_hash`** (old rows become unerasable by the
   automated path) — treat as long-lived.
 - `DIAG_LEGAL_DOCS` (R2 bucket) — `wrangler r2 bucket create
-  vaipakam-legal-docs`, already wired in `wrangler.jsonc`. Private
+  vaipakam-legal-vault`, already wired in `wrangler.jsonc`. Private
   by default; comfortably within R2's free tier (legal documents
   are small and rare). No access keys in env — the Worker reaches
   the bucket through the binding.
