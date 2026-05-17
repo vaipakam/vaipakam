@@ -61,7 +61,7 @@
   "r2_buckets": [
     {
       "binding": "DIAG_LEGAL_DOCS",
-      "bucket_name": "vaipakam-legal-docs",
+      "bucket_name": "vaipakam-legal-vault",
     },
   ],
 
