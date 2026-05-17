@@ -15,8 +15,8 @@ into the Workers that need it.
 
 Provisioned 2026-05-17:
 
-- Name: `vaipakam-secrets`
-- Store ID: `71506928d0ca4c029f4d248d96434d54`
+- Name: `vaipakam-credentials`
+- Store ID: `1e66429d0fa24aa38a27bc05b7bcf63e`
 - Account: `f8d28a27e95d4eab69364d7b3341fa7d`
 
 > Cloudflare Secrets Store is an **open beta**. Decision below (§4)
@@ -52,9 +52,9 @@ secrets.
 
 ## 5. Mechanics
 
-- **Store** — one (`vaipakam-secrets`), done.
+- **Store** — one (`vaipakam-credentials`), done.
 - **Secret values** — `wrangler secrets-store secret create
-  71506928d0ca4c029f4d248d96434d54 --name <NAME> --remote` (prompts
+  1e66429d0fa24aa38a27bc05b7bcf63e --name <NAME> --remote` (prompts
   for the value). **The operator runs these** — the secret values
   are operator-held; this migration only wires bindings + code.
 - **Binding** — per Worker, a `secrets_store_secrets` array in
@@ -81,15 +81,16 @@ auditable.
 
 ## 7. Coordination with PR #29 (T-075)
 
-PR #29 adds `DIAG_WALLET_HMAC_KEY` + the `DIAG_LEGAL_DOCS` R2 binding
-to `apps/agent`'s `env.ts` + `wrangler.jsonc`. This migration also
-rewrites those same two files. To avoid a messy 3-way merge:
+PR #29 added `DIAG_WALLET_HMAC_KEY` + the `DIAG_LEGAL_DOCS` R2
+binding to `apps/agent`'s `env.ts` + `wrangler.jsonc`. **PR #29
+merged 2026-05-17** and this branch is rebased onto the merged
+`main`, so the 3-way-merge risk is resolved:
 
-- **`apps/agent`'s migration lands after PR #29 merges** — then this
-  branch rebases onto the merged `main` and folds
-  `DIAG_WALLET_HMAC_KEY` into the Secrets Store set.
+- `apps/agent`'s phase folds `DIAG_WALLET_HMAC_KEY` into the Secrets
+  Store set; it stays last (phase 3) only because it has the
+  broadest secret surface.
 - `apps/keeper` and `apps/indexer` have **no overlap** with PR #29 —
-  they can be migrated first.
+  they go first regardless.
 
 ## 8. Phasing
 
