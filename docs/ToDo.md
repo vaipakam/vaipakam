@@ -401,6 +401,10 @@ deprecated.vaipakam.com
 dev.vaipakam.com
 admin.vaipakam.com
 vaipakam-protocol
+vaipakam-credentials
+Vaipakam-config
+vaipakam-terms
+vaipakam-policy
 
 ---
 
