@@ -77,8 +77,16 @@ export default function PrivacyPage() {
             on our side. Records are pruned after 90 days. The legal
             basis is "legitimate interest" (security, fraud prevention,
             and improving service reliability) under GDPR Art 6(1)(f).
-            To request deletion of records associated with your
-            redacted wallet, contact support.
+            You can have the error-diagnostics records associated with
+            your wallet erased at any time, directly and without a
+            support ticket, by signing an erasure request with that
+            wallet in the app. To make this possible we store a
+            one-way keyed hash of your wallet address alongside each
+            record; your full address is used only momentarily to
+            compute that hash and is never stored. In rare cases where
+            the law requires us to retain specific records, automated
+            erasure will skip them; where the law permits, we will tell
+            you so.
           </p>
 
           <p>

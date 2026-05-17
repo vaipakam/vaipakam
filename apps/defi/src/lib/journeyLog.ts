@@ -282,10 +282,17 @@ function recordFailureToServer(ev: JourneyEvent): void {
     consecutiveCount = 1;
   }
 
-  // Build the redacted payload. Wallet is shortened via the existing
-  // contract; error message is left as-is here (the Worker truncates
-  // server-side). The Worker validates field types + lengths and
-  // returns 400 on garbage; we don't retry.
+  // Build the payload. `redactedWallet` is the shortened display
+  // form (the only wallet form persisted for triage). `wallet` is
+  // the FULL connected address — sent so the Worker can derive a
+  // per-wallet deletion key (`HMAC(wallet, serverSecret)`, T-075)
+  // that later lets the user erase exactly their own records via a
+  // signed request. The Worker uses the full address transiently
+  // for the HMAC and never persists it; the redacted form alone is
+  // non-unique and so cannot serve as a deletion key. `wallet` is
+  // null for a not-connected session. The error message is left
+  // as-is (the Worker truncates server-side). The Worker validates
+  // field types + lengths and returns 400 on garbage; we don't retry.
   const payload = {
     id: ev.id,
     client_at: Math.floor(ev.timestamp / 1000),
@@ -297,6 +304,7 @@ function recordFailureToServer(ev: JourneyEvent): void {
     errorSelector: ev.errorSelector ?? null,
     errorMessage: ev.errorMessage ? ev.errorMessage.slice(0, 1000) : null,
     redactedWallet: redactAddress(ev.wallet ?? null),
+    wallet: ev.wallet ?? null,
     chainId: ev.chainId ?? null,
     loanId: ev.loanId ?? null,
     offerId: ev.offerId ?? null,

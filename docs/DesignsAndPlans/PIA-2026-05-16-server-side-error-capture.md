@@ -102,8 +102,8 @@ internal access.
 also appear in a GitHub issue the user files — the UUID alone is not personal data
 without the D1 record, so this is low-risk, but note GitHub is then a recipient of
 whatever the user pastes.
-**Retention:** auto-deleted 90 days after capture. Manual deletion on request via
-support (see §6). Retention-override → §7.
+**Retention:** auto-deleted 90 days after capture. Wallet-keyed records can also
+be erased by signed user request (see §6). Retention-override → §7.
 
 ---
 
@@ -114,8 +114,9 @@ support (see §6). Retention-override → §7.
 | "Server-side error capture … pruned after 90 days" | 🟢 | v2 describes the implemented Worker + D1 capture path and retention prune |
 | Truncated technical error message captured | 🟢 | Disclosed in v2 §"Server-side error capture" (Rev. 2026-05-17) |
 | No journey-log slice in server capture | 🟢 | Slice descoped; v2 + this PIA updated to match (Rev. 2026-05-17) |
+| Signed self-service erasure for D1 records | 🟢 | T-075 adds the wallet-signed erasure endpoint, keyed wallet hash, and legal-hold skip path |
 | Legal basis stated as Art. 6(1)(f) legitimate interest | 🟡 | Stated in policy; the LIA backing it (§2) must exist before launch — and DPDP is unaddressed |
-| "Delete my data" button = local only; D1 via support | 🟢 | Disclosed; consistent with §6 |
+| "Delete my data" button = local only; D1 erasure via signed request | 🟢 | Disclosed; consistent with §6 |
 | Plugin config `## Privacy policy commitments` | 🔴 | Stale — still records v1 ("browser-only, never uploaded"). Must be updated to v2. |
 
 ⚠️ The v2 policy text describes processing that exists in the Worker. Pre-live
@@ -149,10 +150,18 @@ and the rights-mechanism gap (Risk 4).
 | Right | Can be exercised? | How |
 |---|---|---|
 | Access | 🟡 Partial | "Download my data" exports browser data; D1 records not covered — needs a support-routed access path |
-| Deletion | 🟡 Partial | Browser data via button; D1 via support (manual, by design); 90-day auto-delete is the backstop |
+| Deletion | 🟢 Yes for wallet-keyed records | Browser data via button; D1 error records via signed erasure request keyed by wallet HMAC; records under valid legal hold are skipped and 90-day auto-delete remains the backstop |
 | Correction | 🟢 N/A in practice | Error logs are factual machine records; correction is not meaningful |
 | Portability | 🟡 Partial | JSON export covers browser data only; D1 not included |
 | Objection | 🔴 Gap | LI basis ⇒ Art. 21 right to object, but no mechanism to object to error capture specifically |
+
+**Erasure (Art 17).** Users erase their own `diag_errors` records via a
+signed-request endpoint; identity is a server-side keyed hash of the wallet
+(`HMAC`, key never client-side). Records under a valid legal hold are skipped.
+The erasure endpoint returns a uniform response and never enumerates retained
+records; a separate signed status endpoint discloses retention only when an
+operator has explicitly enabled disclosure for that wallet — gagged retention
+orders are handled by leaving disclosure off.
 
 ---
 
@@ -193,8 +202,8 @@ Conditions before a real user touches the live app:
 - [x] Confirm the implemented server-side capture matches Privacy Policy v2 (D1, 90-day prune; single error record, no journey-log slice) — *Operator (dev)*
 - [ ] Confirm the India DPDP lawful basis with counsel; implement consent or geo-scoping if required — *Counsel*
 - [ ] Have counsel review this LIA (§2) — *Counsel*
-- [ ] Add a right-to-object / opt-out path for error capture, or document why it's infeasible; extend access + deletion to cover D1 records — *Operator (dev)*
-- [ ] Sync `PrivacyPage.tsx`, verify the support-routed D1 deletion intake works, announce v2 on Discord/X at launch — *Operator*
+- [ ] Add a right-to-object / opt-out path for error capture, or document why it's infeasible; extend access to cover D1 records — *Operator (dev)*
+- [ ] Sync `PrivacyPage.tsx`, verify the signed D1 erasure path works, announce v2 on Discord/X at launch — *Operator*
 - [ ] Update the plugin config `## Privacy policy commitments` from v1 → v2 — *Operator / assistant*
 
 **Sign-off:** _________________ (operator), date _______

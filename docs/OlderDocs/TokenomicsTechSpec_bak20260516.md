@@ -258,7 +258,7 @@ Phase note:
 
 Both lender and borrower discounts are based purely on the VPFI balance held in the user's Vaipakam Vault on the respective lending chain. Moving VPFI into the Vault automatically counts as staking. Code-level contracts, storage fields, function names, and diagnostics may continue to use `escrow`.
 
-**Tiered Discount Table**  
+**Tiered Discount Table**
 applies to both lenders and borrowers
 
 | Tier   | Escrowed VPFI Balance      | Discount | Lender Effective Yield Fee | Borrower Effective Initiation Fee |
