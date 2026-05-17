@@ -109,15 +109,20 @@ wire bindings + code → typecheck → deploy.
 > indexer's `RPC_*`-only surface is the cleanest place to prove the
 > pattern.
 
-## 9. Open verification (beta product)
+## 9. API — verified (2026-05-17)
 
-Confirm against current Cloudflare docs before coding:
+Confirmed against Cloudflare's Secrets Store → Workers documentation:
 
-- the exact `secrets_store_secrets` `wrangler.jsonc` binding fields;
-- the runtime `.get()` API (return shape, caching, error behaviour);
-- local-dev behaviour — does `wrangler dev` still let a gitignored
-  `.dev.vars` override the binding, or is there a Secrets Store local
-  mode? Tests / `wrangler dev` must not need real production secrets.
+- **Binding** — `wrangler.jsonc` gets a `secrets_store_secrets`
+  array; each entry is `{ binding, store_id, secret_name }`.
+- **Runtime** — `const v = await env.<BINDING>.get()` — **async**,
+  returns a `Promise<string>`. Confirms the §6 ripple.
+- **Local dev** — `wrangler dev` **cannot** read production
+  (`--remote`) secrets. Local-only secrets are created with the same
+  `wrangler secrets-store secret create …` commands **without**
+  `--remote`. So the operator provisions each secret twice — once
+  `--remote` (production) and once local for `wrangler dev`. Unit
+  tests (vitest) mock `env` and need neither.
 
 ## 10. Out of scope
 
