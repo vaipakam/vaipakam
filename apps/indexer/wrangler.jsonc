@@ -52,6 +52,28 @@
     },
   ],
 
+  // T-078 — per-chain RPC URLs are read from the account-level
+  // Cloudflare Secrets Store (store `vaipakam-credentials`, id
+  // 1e66429d0fa24aa38a27bc05b7bcf63e), not per-Worker
+  // `wrangler secret put`. Each binding is resolved asynchronously
+  // once per request / cron tick in `resolveEnv()` (src/env.ts).
+  // Local `wrangler dev` needs the same secrets created WITHOUT the
+  // `--remote` flag. `RPC_ZKEVM` is omitted (Polygon zkEVM is out
+  // of scope); `RPC_POLYGON` is not used by the indexer.
+  "secrets_store_secrets": [
+    { "binding": "RPC_BASE",         "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_BASE" },
+    { "binding": "RPC_ETH",          "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_ETH" },
+    { "binding": "RPC_ARB",          "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_ARB" },
+    { "binding": "RPC_OP",           "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_OP" },
+    { "binding": "RPC_BNB",          "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_BNB" },
+    { "binding": "RPC_SEPOLIA",      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_SEPOLIA" },
+    { "binding": "RPC_BASE_SEPOLIA", "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_BASE_SEPOLIA" },
+    { "binding": "RPC_ARB_SEPOLIA",  "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_ARB_SEPOLIA" },
+    { "binding": "RPC_OP_SEPOLIA",   "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_OP_SEPOLIA" },
+    { "binding": "RPC_BNB_TESTNET",  "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_BNB_TESTNET" },
+    { "binding": "RPC_POLYGON_AMOY", "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_POLYGON_AMOY" },
+  ],
+
   // Custom-domain binding for the public read-API. Cloudflare
   // routes `indexer.vaipakam.com` traffic directly to this
   // Worker on `wrangler deploy` — no separate dashboard step.
@@ -62,13 +84,11 @@
     },
   ],
 
-  // Operator-managed secrets (set via `wrangler secret put`):
-  //   - RPC_*                          — per-chain RPC URLs (Alchemy /
-  //                                      Infura / etc.; carry API keys).
-  //                                      Includes RPC_POLYGON_AMOY since
-  //                                      loanRoutes consults it for the
-  //                                      chain-id → RPC mapping in
-  //                                      /loans/by-lender etc.
+  // Operator-managed secrets:
+  //   - RPC_*  — per-chain RPC URLs (Alchemy / Infura / etc.; carry
+  //              API keys). Held in the Cloudflare Secrets Store and
+  //              bound above via `secrets_store_secrets` (T-078) —
+  //              NOT `wrangler secret put`.
   //
   // Operator-managed vars (in `vars` below if any):
   //   - CANCELLED_OFFER_RETENTION_DAYS — int days (default 30 inside

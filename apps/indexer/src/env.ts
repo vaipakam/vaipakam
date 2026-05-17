@@ -1,32 +1,39 @@
 import { getDeployment } from '@vaipakam/contracts/deployments';
 
 /**
- * Typed env bindings for the apps/indexer Worker.
+ * Typed env for the apps/indexer Worker.
  *
- * Slimmed from the ops/hf-watcher monolith env so this Worker only
- * sees what it actually needs. Stage 3 PR3 of the Worker split
- * (see `docs/DesignsAndPlans/Stage3WorkerSplitPlan.md`) splits the
- * indexer-only bindings out from the keeper / agent surfaces:
+ * T-078 — the per-chain RPC URLs moved from per-Worker
+ * `wrangler secret put` strings to the account-level Cloudflare
+ * Secrets Store (`docs/DesignsAndPlans/SecretsStoreMigration.md`).
+ * A Secrets Store binding is read **asynchronously** (`await
+ * binding.get()`), so there are now two env shapes:
  *
+ *   - `WorkerEnv` — the RAW Cloudflare bindings the Worker handler
+ *     receives. `RPC_*` are Secrets Store bindings.
+ *   - `Env` — the RESOLVED env passed to every downstream function:
+ *     `RPC_*` are plain strings, exactly as before T-078.
+ *
+ * `resolveEnv()` bridges them. It is called **once** per `fetch` /
+ * `scheduled` at the Worker entry point (`index.ts`); all downstream
+ * code keeps taking the plain `Env` and stays synchronous. This is
+ * the "resolve at the boundary" containment pattern from
+ * `SecretsStoreMigration.md` §6 — the async surface is one place.
+ *
+ * Bindings:
  *   - `DB`                            — D1 binding (this Worker
  *                                       writes the offers / loans /
  *                                       activity tables; keeper +
  *                                       agent read them via the
  *                                       same shared database).
- *   - `RPC_*`                         — per-chain RPC URLs for the
- *                                       chain-event scan + the
- *                                       live-ownership multicalls
- *                                       in /loans/by-lender etc.
- *                                       Polygon Amoy is INCLUDED here
- *                                       (loanRoutes consults it for
- *                                       chain-id → RPC mapping); not
- *                                       Polygon mainnet (no Diamond
- *                                       there in Phase 1).
- *   - `CANCELLED_OFFER_RETENTION_DAYS` — int days; the
- *                                       cancelled-offer retention
- *                                       cron drops rows older than
- *                                       this. Default 30 inside the
- *                                       prune helper.
+ *   - `RPC_*`                         — per-chain RPC URLs (carry
+ *                                       API keys) — Secrets Store
+ *                                       bindings, declared in
+ *                                       `wrangler.jsonc` →
+ *                                       `secrets_store_secrets`.
+ *   - `CANCELLED_OFFER_RETENTION_DAYS` — a plain `var` (not a
+ *                                       secret); int days, default
+ *                                       30 inside the prune helper.
  *
  * What's deliberately NOT here (lives on apps/{keeper,agent}):
  *   - QUOTE_*_RATELIMIT / SCAN_BLOCKAID_RATELIMIT /
@@ -35,21 +42,48 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
  *   - TG_BOT_TOKEN / TG_BOT_USERNAME / PUSH_CHANNEL_PK — keeper +
  *     agent (notification dispatch)
  *   - KEEPER_PRIVATE_KEY / KEEPER_ENABLED — keeper
- *   - ZEROEX_API_KEY / ONEINCH_API_KEY — keeper (server-side
- *     liquidation quoting) + agent (public quote proxies)
- *   - FRONTEND_ORIGIN — indexer routes use OPEN CORS (T-041
- *     "public chain-indexer reads"), no per-origin gate
+ *   - ZEROEX_API_KEY / ONEINCH_API_KEY — keeper + agent
+ *   - FRONTEND_ORIGIN — indexer routes use OPEN CORS (T-041)
  *
- * Diamond addresses come from `@vaipakam/contracts/deployments` (the
- * consolidated `deployments.json` exported by
- * `contracts/script/exportFrontendDeployments.sh`). Same artifact
- * the frontend + keeper Workers read.
+ * Diamond addresses come from `@vaipakam/contracts/deployments`.
+ */
+
+/** A Cloudflare Secrets Store secret binding — read with `.get()`. */
+export type SecretBinding = { get(): Promise<string> };
+
+/**
+ * The RAW Cloudflare bindings the Worker handler receives. `RPC_*`
+ * are Secrets Store bindings — resolve via `resolveEnv()` before
+ * any downstream use.
+ *
+ * No `RPC_ZKEVM` — Polygon zkEVM is out of scope (no secret bound);
+ * `getChainConfigs` simply skips that chain.
+ */
+export interface WorkerEnv {
+  DB: D1Database;
+  RPC_BASE?: SecretBinding;
+  RPC_ETH?: SecretBinding;
+  RPC_ARB?: SecretBinding;
+  RPC_OP?: SecretBinding;
+  RPC_BNB?: SecretBinding;
+  RPC_SEPOLIA?: SecretBinding;
+  RPC_BASE_SEPOLIA?: SecretBinding;
+  RPC_ARB_SEPOLIA?: SecretBinding;
+  RPC_OP_SEPOLIA?: SecretBinding;
+  RPC_BNB_TESTNET?: SecretBinding;
+  RPC_POLYGON_AMOY?: SecretBinding;
+  CANCELLED_OFFER_RETENTION_DAYS?: string;
+}
+
+/**
+ * The RESOLVED env passed to all downstream code. `RPC_*` are plain
+ * strings; a missing / unconfigured chain is `undefined` and its
+ * chain scan is skipped this tick (see `getChainConfigs`).
  */
 export interface Env {
   DB: D1Database;
 
   // Per-chain RPC URLs — chain-event scan + live-ownership multicalls.
-  // Each missing URL skips that chain this tick.
   RPC_BASE?: string;
   RPC_ETH?: string;
   RPC_ARB?: string;
@@ -63,12 +97,87 @@ export interface Env {
   RPC_BNB_TESTNET?: string;
   RPC_POLYGON_AMOY?: string;
 
-  // 2026-05-08 — cancelled-offer retention in days. The chainIndexer
-  // stamps `cancelled_at` when an OfferCanceled / OfferClosed
-  // (reason=2) event lands; the cron-driven prune in
-  // cancelledOfferRetention.ts drops rows past this window. Default
-  // 30. String → int coerce + clamp at >= 1.
+  // 2026-05-08 — cancelled-offer retention in days. Default 30.
+  // String → int coerce + clamp at >= 1 inside the prune helper.
   CANCELLED_OFFER_RETENTION_DAYS?: string;
+}
+
+/**
+ * Read one Secrets Store binding into a plain string.
+ *
+ * Tolerates BOTH an absent binding (`b` undefined) AND a failing
+ * fetch: a rejected `.get()` — a transient Secrets Store outage, or
+ * a secret deleted / deactivated after deploy — resolves to
+ * `undefined` rather than rejecting. `resolveEnv` fans every secret
+ * through `Promise.all`, so without this catch one unavailable
+ * secret would abort the whole resolve and take down the entire
+ * cron tick / every HTTP route — including paths that never touch
+ * that secret. Collapsing to `undefined` keeps the failure scoped to
+ * the one dependent feature: every `Env` secret field is optional
+ * and downstream code already handles `undefined` (skip that chain).
+ * (T-078 — PR #36 Codex review.)
+ */
+async function readSecret(
+  b: SecretBinding | undefined,
+): Promise<string | undefined> {
+  if (!b) return undefined;
+  try {
+    return await b.get();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[env] Secrets Store fetch failed; treating as unset:', err);
+    return undefined;
+  }
+}
+
+/**
+ * Resolve the raw Worker bindings into the plain `Env` that every
+ * downstream function expects. All RPC secrets are fetched in
+ * parallel. Call this **once** per request / cron tick, at the
+ * Worker entry point — never inside a hot path.
+ */
+export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
+  const [
+    base,
+    eth,
+    arb,
+    op,
+    bnb,
+    sepolia,
+    baseSep,
+    arbSep,
+    opSep,
+    bnbTest,
+    polyAmoy,
+  ] = await Promise.all([
+    readSecret(raw.RPC_BASE),
+    readSecret(raw.RPC_ETH),
+    readSecret(raw.RPC_ARB),
+    readSecret(raw.RPC_OP),
+    readSecret(raw.RPC_BNB),
+    readSecret(raw.RPC_SEPOLIA),
+    readSecret(raw.RPC_BASE_SEPOLIA),
+    readSecret(raw.RPC_ARB_SEPOLIA),
+    readSecret(raw.RPC_OP_SEPOLIA),
+    readSecret(raw.RPC_BNB_TESTNET),
+    readSecret(raw.RPC_POLYGON_AMOY),
+  ]);
+  return {
+    DB: raw.DB,
+    CANCELLED_OFFER_RETENTION_DAYS: raw.CANCELLED_OFFER_RETENTION_DAYS,
+    RPC_BASE: base,
+    RPC_ETH: eth,
+    RPC_ARB: arb,
+    RPC_OP: op,
+    RPC_BNB: bnb,
+    RPC_SEPOLIA: sepolia,
+    RPC_BASE_SEPOLIA: baseSep,
+    RPC_ARB_SEPOLIA: arbSep,
+    RPC_OP_SEPOLIA: opSep,
+    RPC_BNB_TESTNET: bnbTest,
+    RPC_POLYGON_AMOY: polyAmoy,
+    // RPC_ZKEVM intentionally unset — Polygon zkEVM is out of scope.
+  };
 }
 
 export interface ChainConfig {
