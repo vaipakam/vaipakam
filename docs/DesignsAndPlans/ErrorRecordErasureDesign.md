@@ -306,7 +306,11 @@ already gates on `VITE_DIAG_RECORD_ENABLED`.
 - **Per-record hold granularity** — holds are currently per
   wallet-hash (all of a wallet's records). Finer granularity, if a
   real order ever needs it, is a later change.
-- **Legal-document retrieval** — there is currently no endpoint to
-  read a stored PDF back; the operator retrieves it from the R2
-  bucket directly (Cloudflare dashboard / API). An admin-only,
-  signed `GET` could be added if in-console review is wanted.
+- **Legal-document retrieval / viewing page** — there is currently
+  no endpoint to read a stored PDF back; the operator retrieves it
+  from the R2 bucket directly (Cloudflare dashboard / API). An
+  admin-only, signed `GET` plus an in-console viewing page is
+  tracked as **T-076**, which also covers the broader
+  operator-vs-admin console split (which knobs/flags are public, a
+  separate operator console / EOA, etc.). The viewing page must use
+  the `ADMIN_ROLE` check — never the `DIAG_WALLET_HMAC_KEY`.
