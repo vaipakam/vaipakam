@@ -1468,14 +1468,10 @@
   },
   "simulationPreview": {
     "unavailable": "此链 / 部署上的交易预览不可用。",
-    "scanning": "正在扫描交易…",
-    "errorPrefix": "预览错误：",
-    "errorSuffix": "。链上交易不受影响 — 请谨慎进行。",
-    "expectedStateChanges": "预期状态变化",
-    "plusMore": "… 还有{{count}}项",
-    "titleMalicious": "Blockaid将此交易标记为恶意。请勿继续。",
-    "titleWarning": "Blockaid显示了警告 — 签名前请审查状态变化。",
-    "titlePreview": "交易预览"
+    "scanning": "正在模拟交易…",
+    "okTitle": "模拟成功 — 此交易不会失败。",
+    "revertPrefix": "此交易将会失败:",
+    "revertSuffix": "签名前请核对上述详细信息。"
   },
   "consent": {
     "dismissAria": "关闭 — 下次访问时再询问",

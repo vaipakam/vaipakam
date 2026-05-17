@@ -484,14 +484,10 @@
   },
   "simulationPreview": {
     "unavailable": "Transaction preview unavailable on this chain / deployment.",
-    "scanning": "Scanning transaction…",
-    "errorPrefix": "Preview error:",
-    "errorSuffix": ". The on-chain tx is unaffected — proceed with caution.",
-    "expectedStateChanges": "Expected state changes",
-    "plusMore": "… plus {{count}} more",
-    "titleMalicious": "Blockaid flagged this transaction as malicious. Do NOT proceed.",
-    "titleWarning": "Blockaid surfaced warnings — review state changes before signing.",
-    "titlePreview": "Transaction preview"
+    "scanning": "Simulating transaction…",
+    "okTitle": "Simulated OK — this transaction will not revert.",
+    "revertPrefix": "This transaction would revert:",
+    "revertSuffix": "Review the details above before signing."
   },
   "consent": {
     "dismissAria": "Dismiss — we'll ask again next visit",

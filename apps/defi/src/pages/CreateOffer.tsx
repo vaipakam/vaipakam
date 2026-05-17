@@ -1509,12 +1509,11 @@ export default function CreateOffer() {
           }
         />
 
-        {/* Phase 8b.2 — Blockaid preview of the pending createOffer
-            tx. Encodes the current form state into calldata so the
-            user sees exactly what their approval + create will move
-            before signing. Silently hides when the form isn't
-            buildable yet (missing required fields / decimals still
-            loading) or when the Blockaid API key isn't configured. */}
+        {/* ET-001 — pre-sign eth_call preflight of the pending
+            createOffer tx. Encodes the current form state into
+            calldata so the user sees whether it would revert before
+            signing. Silently hides when the form isn't buildable yet
+            (missing required fields / decimals still loading). */}
         <CreateOfferSimulationPreview
           toPayload={toPayload}
           diamondAddr={

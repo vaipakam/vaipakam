@@ -32,7 +32,6 @@
  *   GET  /frames/active-loans/image         — Frame SVG image
  *   POST /quote/0x                          — 0x v2 aggregator proxy
  *   POST /quote/1inch                       — 1inch v6 aggregator proxy
- *   POST /scan/blockaid                     — Blockaid scanner proxy
  *   ANY  /diag/record                       — diagnostics record capture
  *   POST /diag/erasure                      — frontend → erase own records
  *   POST /diag/erasure/status               — frontend → erasure status check
@@ -46,17 +45,25 @@
  * is driven from the `apps/defi` protocol console, so it is a
  * browser-facing endpoint; its authorization is the signer's
  * on-chain `ADMIN_ROLE`, checked inside the handler. The Telegram
- * webhook + Frames + quote / scan proxies have their own CORS
- * posture (no origin gate
- * — Telegram and Farcaster post from arbitrary infrastructure, and
- * the proxies are paired to the aggregator origins they wrap).
+ * webhook + Frames + quote proxies have their own CORS posture (no
+ * origin gate — Telegram and Farcaster post from arbitrary
+ * infrastructure, and the proxies are paired to the aggregator
+ * origins they wrap).
+ *
+ * ET-001 — there is no transaction-scan proxy. The pre-sign
+ * transaction preview runs entirely in the frontend as a viem
+ * `eth_call` simulation against the chain's own RPC (no API key, so
+ * no server-side proxy is needed); see `apps/defi`
+ * `useTxSimulation`. The Blockaid → GoPlus migration was dropped:
+ * GoPlus's Transaction Simulation API is mainnet-only (3 chains)
+ * and Vaipakam runs on testnets — a free `eth_call` covers every
+ * chain.
  */
 
 import { resolveEnv, type Env, type WorkerEnv } from './env';
 import { runPeriodicPreNotify } from './periodicPreNotify';
 import { runBuyWatchdog } from './buyWatchdog';
 import { handle0xQuote, handle1inchQuote } from './quoteProxy';
-import { handleBlockaidScan } from './scanProxy';
 import { handleDiagRecord, pruneOldDiagErrors } from './diagRecord';
 import {
   handleDiagErasure,
@@ -147,11 +154,6 @@ export default {
     }
     if (url.pathname === '/quote/1inch' && req.method === 'POST') {
       return handle1inchQuote(req, resolved);
-    }
-
-    // Blockaid scan proxy — same shape as quote proxies above.
-    if (url.pathname === '/scan/blockaid' && req.method === 'POST') {
-      return handleBlockaidScan(req, resolved);
     }
 
     // Diagnostics record. CORS-locked + per-IP rate-limited inside

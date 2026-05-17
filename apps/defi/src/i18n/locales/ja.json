@@ -1468,14 +1468,10 @@
   },
   "simulationPreview": {
     "unavailable": "このチェーン / デプロイメントではトランザクションプレビューを利用できません。",
-    "scanning": "トランザクションをスキャン中…",
-    "errorPrefix": "プレビューエラー：",
-    "errorSuffix": "。オンチェーントランザクションには影響しません — 注意して進めてください。",
-    "expectedStateChanges": "予想される状態変化",
-    "plusMore": "… さらに{{count}}件",
-    "titleMalicious": "Blockaidはこのトランザクションを悪意あるものとしてフラグしました。続行しないでください。",
-    "titleWarning": "Blockaidが警告を表示しました — 署名前に状態変化を確認してください。",
-    "titlePreview": "トランザクションプレビュー"
+    "scanning": "トランザクションをシミュレーション中…",
+    "okTitle": "シミュレーション成功 — このトランザクションは失敗しません。",
+    "revertPrefix": "このトランザクションは失敗します:",
+    "revertSuffix": "署名する前に、上記の詳細を確認してください。"
   },
   "consent": {
     "dismissAria": "閉じる — 次回訪問時に再度確認します",

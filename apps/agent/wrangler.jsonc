@@ -67,7 +67,7 @@
 
   // Cloudflare built-in rate-limit bindings — one per upstream
   // service so a noisy /quote/0x caller can't drain the
-  // /scan/blockaid budget. 60 reqs / 60 seconds per IP each.
+  // /quote/1inch budget. 60 reqs / 60 seconds per IP each.
   // namespace_id values are arbitrary unique integers per Worker;
   // operator may renumber to match their account-level scheme.
   "unsafe": {
@@ -82,12 +82,6 @@
         "name": "QUOTE_1INCH_RATELIMIT",
         "type": "ratelimit",
         "namespace_id": "1002",
-        "simple": { "limit": 60, "period": 60 },
-      },
-      {
-        "name": "SCAN_BLOCKAID_RATELIMIT",
-        "type": "ratelimit",
-        "namespace_id": "1003",
         "simple": { "limit": 60, "period": 60 },
       },
       {
@@ -147,14 +141,14 @@
     { "binding": "ZEROEX_API_KEY",      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "ZEROEX_API_KEY" },
     { "binding": "ONEINCH_API_KEY",     "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "ONEINCH_API_KEY" },
     { "binding": "DIAG_WALLET_HMAC_KEY", "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "DIAG_WALLET_HMAC_KEY" },
-    // `BLOCKAID_API_KEY` binding intentionally omitted — the operator
-    // has no Blockaid key and ET-001 (#32) replaces the Blockaid
-    // transaction scanner with GoPlus. While unbound, `/scan/blockaid`
-    // degrades gracefully (scanProxy.ts returns 503 on the absent
-    // key). ET-001 adds `GOPLUS_APP_KEY` + `GOPLUS_APP_SECRET`
-    // bindings here alongside the rewritten scan proxy; those two
-    // secrets are already staged in the `vaipakam-credentials` store
-    // ahead of that work.
+    // ET-001 — no transaction-scan secret. The pre-sign transaction
+    // preview is a frontend-only viem `eth_call` simulation (no API
+    // key, so no server-side proxy). The Blockaid → GoPlus migration
+    // was dropped — GoPlus's Transaction Simulation API is
+    // mainnet-only (Eth/Base/BNB) and Vaipakam runs on testnets, so a
+    // free `eth_call` is the all-chain choice. The GoPlus contextual
+    // checks (ET-012/14/15/16) land later as their own cards and
+    // re-add `GOPLUS_APP_KEY` / `GOPLUS_APP_SECRET` then.
   ],
 
   // Operator-managed vars (in `vars` below):
