@@ -84,9 +84,15 @@
  * (`/frames/active-loans`) and the diagnostics record endpoint
  * (`/diag/record`) all live on `apps/{indexer,agent}`. The keeper
  * is intentionally cron-only so it has no public attack surface.
+ *
+ * T-078 — `scheduled()` calls `resolveEnv()` first. The secrets
+ * (RPC_*, the Telegram bot token, the Push signer, the aggregator
+ * API keys and `KEEPER_PRIVATE_KEY`) are Cloudflare Secrets Store
+ * bindings read asynchronously; `resolveEnv` fetches them once, at
+ * this boundary, and hands all five passes the plain resolved `Env`.
  */
 
-import type { Env } from './env';
+import { resolveEnv, type WorkerEnv } from './env';
 import { runWatcher } from './watcher';
 import { runDailyOracleSnapshot } from './dailyOracleSnapshot';
 import { runMatcher } from './matcher';
@@ -96,42 +102,45 @@ import { runLiquidator } from './liquidator';
 export default {
   async scheduled(
     _controller: ScheduledController,
-    env: Env,
+    env: WorkerEnv,
     ctx: ExecutionContext,
   ): Promise<void> {
+    // T-078 — resolve the Secrets Store bindings once, here at the
+    // entry point; all five passes get the plain resolved env.
+    const resolved = await resolveEnv(env);
     // Each pass wrapped so a transient RPC / D1 hiccup on one
     // can't wedge the next. Each pass also has its own per-chain
     // try/catch boundary inside; these outer guards are a final
     // safety net.
     ctx.waitUntil(
-      runWatcher(env).catch((err) => {
+      runWatcher(resolved).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[keeper] runWatcher pass failed:', err);
       }),
     );
     ctx.waitUntil(
-      runDailyOracleSnapshot(env).catch((err) => {
+      runDailyOracleSnapshot(resolved).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[keeper] runDailyOracleSnapshot pass failed:', err);
       }),
     );
     ctx.waitUntil(
-      runMatcher(env).catch((err) => {
+      runMatcher(resolved).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[keeper] runMatcher pass failed:', err);
       }),
     );
     ctx.waitUntil(
-      runLiquidityConfidence(env).catch((err) => {
+      runLiquidityConfidence(resolved).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[keeper] runLiquidityConfidence pass failed:', err);
       }),
     );
     ctx.waitUntil(
-      runLiquidator(env).catch((err) => {
+      runLiquidator(resolved).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[keeper] runLiquidator pass failed:', err);
       }),
     );
   },
-} satisfies ExportedHandler<Env>;
+} satisfies ExportedHandler<WorkerEnv>;

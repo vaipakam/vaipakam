@@ -101,7 +101,7 @@ merged 2026-05-17** and this branch is rebased onto the merged
 | --- | --- | --- |
 | 0 | Store provisioned | ✓ done |
 | 1 | `apps/indexer` | ✓ done — `WorkerEnv` + `resolveEnv()` boundary-resolve; 11 `secrets_store_secrets` RPC bindings. tsc + event-coverage clean. Establishes the pattern. |
-| 2 | `apps/keeper` | `RPC_*`, `TG_BOT_TOKEN`, `ZEROEX/ONEINCH`, `PUSH_CHANNEL_PK`, `KEEPER_PRIVATE_KEY`. |
+| 2 | `apps/keeper` | ✓ done — 15 `secrets_store_secrets` bindings (10 RPC + `TG_BOT_TOKEN` + `PUSH_CHANNEL_PK` + `ZEROEX`/`ONEINCH` + `KEEPER_PRIVATE_KEY`); `BaseEnv` shares the non-secret config knobs. Same `WorkerEnv` + `resolveEnv` pattern. tsc clean. |
 | 3 | `apps/agent` | Adds `BLOCKAID_API_KEY` + `DIAG_WALLET_HMAC_KEY`. |
 
 Each phase: operator creates that Worker's secrets in the store →

@@ -61,18 +61,41 @@
     },
   ],
 
-  // Operator-managed secrets (set via `wrangler secret put`):
-  //   - KEEPER_PRIVATE_KEY       — keeper EOA. Must be gas-funded
-  //                                on every chain with an RPC_* set.
-  //   - KEEPER_ENABLED           — 'true' to arm the autonomous
-  //                                liquidation path; absence / 'false'
-  //                                makes the keeper alert-only.
-  //   - RPC_*                    — per-chain RPC URLs (Alchemy /
-  //                                Infura / etc.; carry API keys).
-  //   - TG_BOT_TOKEN             — HF-band Telegram alerts.
-  //   - PUSH_CHANNEL_PK          — HF-band Push channel signer.
-  //   - ZEROEX_API_KEY,
-  //     ONEINCH_API_KEY          — server-side liquidation quoting.
+  // T-078 — the keeper's secrets are read from the account-level
+  // Cloudflare Secrets Store (store `vaipakam-credentials`, id
+  // 1e66429d0fa24aa38a27bc05b7bcf63e), not per-Worker
+  // `wrangler secret put`. Each binding is resolved asynchronously
+  // once per cron tick in `resolveEnv()` (src/env.ts). Local
+  // `wrangler dev` needs the same secrets created WITHOUT the
+  // `--remote` flag.
+  //
+  // `RPC_ZKEVM` is omitted (Polygon zkEVM out of scope); `RPC_POLYGON`
+  // / `RPC_POLYGON_AMOY` are agent-only. `TG_BOT_TOKEN` must still be
+  // created in the store (the `VaipakamBot` token) before deploy.
+  "secrets_store_secrets": [
+    { "binding": "RPC_BASE",          "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_BASE" },
+    { "binding": "RPC_ETH",           "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_ETH" },
+    { "binding": "RPC_ARB",           "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_ARB" },
+    { "binding": "RPC_OP",            "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_OP" },
+    { "binding": "RPC_BNB",           "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_BNB" },
+    { "binding": "RPC_SEPOLIA",       "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_SEPOLIA" },
+    { "binding": "RPC_BASE_SEPOLIA",  "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_BASE_SEPOLIA" },
+    { "binding": "RPC_ARB_SEPOLIA",   "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_ARB_SEPOLIA" },
+    { "binding": "RPC_OP_SEPOLIA",    "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_OP_SEPOLIA" },
+    { "binding": "RPC_BNB_TESTNET",   "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_BNB_TESTNET" },
+    { "binding": "TG_BOT_TOKEN",      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "TG_BOT_TOKEN" },
+    { "binding": "PUSH_CHANNEL_PK",   "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "PUSH_CHANNEL_PK" },
+    { "binding": "ZEROEX_API_KEY",    "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "ZEROEX_API_KEY" },
+    { "binding": "ONEINCH_API_KEY",   "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "ONEINCH_API_KEY" },
+    { "binding": "KEEPER_PRIVATE_KEY", "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "KEEPER_PRIVATE_KEY" },
+  ],
+
+  // Operator-managed vars (non-secret config — plain `vars`):
+  //   - KEEPER_ENABLED   — 'true' arms the autonomous liquidation /
+  //                        matcher / liquidity-confidence submit paths.
+  //   - TG_BOT_USERNAME  — public Telegram bot handle.
+  //   - FRONTEND_ORIGIN, LIQ_* / SPLIT_* / PARTIAL_LIQ_* tuning knobs
+  //     (see src/env.ts) — all optional, sensible defaults.
   "vars": {
     // Public Telegram bot handle (the @-name from BotFather). Filled
     // post-provision; the worker accepts an empty string and returns

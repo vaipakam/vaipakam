@@ -1,46 +1,139 @@
 import { getDeployment } from '@vaipakam/contracts/deployments';
 
 /**
- * Typed env bindings for the apps/keeper Worker.
+ * Typed env for the apps/keeper Worker.
  *
- * Slimmed from the ops/hf-watcher monolith env so this Worker only
- * sees what it actually needs. Stage 3 PR2 of the Worker split
- * (see `docs/DesignsAndPlans/Stage3WorkerSplitPlan.md`) splits the
- * keeper-only bindings out from the indexer / agent surfaces:
+ * T-078 — the secrets (per-chain RPC URLs, the Telegram bot token,
+ * the Push channel signer, the aggregator API keys, and the keeper
+ * signing key) moved from per-Worker `wrangler secret put` strings
+ * to the account-level Cloudflare Secrets Store
+ * (`docs/DesignsAndPlans/SecretsStoreMigration.md`). A Secrets Store
+ * binding is read **asynchronously** (`await binding.get()`), so
+ * there are two env shapes:
  *
- *   - `DB`               — D1 binding (thresholds + notify_state +
- *                          handshake codes; the keeper writes
- *                          notify_state and reads thresholds + codes)
- *   - `RPC_*`            — per-chain RPC URLs for HF reads + on-chain
- *                          liquidation submission (canonical chains
- *                          only; Polygon / Polygon-Amoy live on the
- *                          agent worker since they're buy-watchdog-only)
- *   - `TG_BOT_*`         — HF-band-downgrade Telegram alerts
- *   - `PUSH_CHANNEL_PK`  — Push channel signer for HF alerts
- *   - `ZEROEX_API_KEY` /
- *     `ONEINCH_API_KEY`  — server-side liquidation quotes (consumed
- *                          by `serverQuotes.ts` when the keeper packs
- *                          `triggerLiquidation` calls)
- *   - `KEEPER_*`         — autonomous keeper EOA secret + enable flag
+ *   - `WorkerEnv` — the RAW Cloudflare bindings the Worker handler
+ *     receives. The secret fields are Secrets Store bindings; the
+ *     non-secret config fields are plain strings.
+ *   - `Env` — the RESOLVED env passed to every downstream function:
+ *     every field is a plain string, exactly as before T-078.
  *
- * What's deliberately NOT here (lives on `apps/{indexer,agent}`):
- *   - QUOTE_0X_RATELIMIT / QUOTE_1INCH_RATELIMIT / SCAN_BLOCKAID_RATELIMIT
- *     / DIAG_RECORD_RATELIMIT — agent (HTTP rate-limit buckets)
- *   - DIAG_SAMPLE_RATE / DIAG_RETENTION_DAYS — agent
- *   - CANCELLED_OFFER_RETENTION_DAYS         — indexer
- *   - FRONTEND_ORIGIN                        — keeper has no fetch()
- *                                              handler, no CORS surface
- *   - RPC_POLYGON / RPC_POLYGON_AMOY         — agent (buy-watchdog only)
+ * `resolveEnv()` bridges them — called **once** per `scheduled` tick
+ * at the Worker entry point (`index.ts`); all downstream code keeps
+ * taking the plain `Env` and stays synchronous. This is the
+ * "resolve at the boundary" containment pattern from
+ * `SecretsStoreMigration.md` §6.
  *
- * Diamond addresses come from `@vaipakam/contracts/deployments` (the
- * consolidated `deployments.json` exported by
- * `contracts/script/exportFrontendDeployments.sh`). Same artifact the
- * frontend reads — operator workflow stays "redeploy contracts → run
- * export script → wrangler deploy" for the keeper too.
+ * Non-secret config (`TG_BOT_USERNAME`, `FRONTEND_ORIGIN`,
+ * `KEEPER_ENABLED`, the `LIQ_*` / `SPLIT_*` / `PARTIAL_LIQ_*` knobs)
+ * stays a plain `var` — NOT migrated to the Secrets Store.
+ *
+ * Diamond addresses come from `@vaipakam/contracts/deployments`.
  */
-export interface Env {
+
+/** A Cloudflare Secrets Store secret binding — read with `.get()`. */
+export type SecretBinding = { get(): Promise<string> };
+
+/**
+ * `DB` + the non-secret config knobs — identical shape in both
+ * `WorkerEnv` and `Env` (these are plain `var`s, not secrets, so
+ * they need no resolution). Kept in one place so the knob docs
+ * aren't duplicated across the two env interfaces.
+ */
+interface BaseEnv {
   DB: D1Database;
 
+  // Public Telegram bot handle (the @-name from BotFather). A plain
+  // var; without it the handshake link returns a null bot_url.
+  TG_BOT_USERNAME?: string;
+
+  // Connected-app origin for deep-links inside push / Telegram
+  // notifications (e.g. "View this loan" → `<FRONTEND_ORIGIN>/loans/{id}`).
+  // Defaults to `https://defi.vaipakam.com` when unset.
+  FRONTEND_ORIGIN?: string;
+
+  // Phase 7a.4 — autonomous-keeper enable flag. When
+  // `KEEPER_ENABLED == 'true'` AND `KEEPER_PRIVATE_KEY` is set, the
+  // liquidator / matcher / liquidity-confidence passes arm their
+  // on-chain submit paths. A plain var (not a secret).
+  KEEPER_ENABLED?: string;
+
+  // Depth-tiered-LTV liquidity-confidence relay knobs
+  // (`liquidityConfidence.ts`, §4.4 step 5). Both default
+  // conservatively when unset; demotion is always immediate.
+  /** consecutive eligible-to-promote ticks required before a step up (default 5) */
+  LIQ_CONFIDENCE_MIN_CHECKS?: string;
+  /** wall-clock days that eligible streak must also span (default 3) */
+  LIQ_CONFIDENCE_MIN_WINDOW_DAYS?: string;
+  // Tier-3 "battle-tested elsewhere" advisory — 2-of-3 ensemble in
+  // `liquidityConfidence.ts::battleTestedElsewhere`. All thresholds
+  // in plain USD; all optional with sensible defaults.
+  /** Signal ① — min USD TVL on one of {Aave v3, Compound v3, Morpho-blue}.
+   *  Default $10M. */
+  LIQ_TIER3_MIN_TVL_USD?: string;
+  /** Disable signal ① entirely (`1` / `true`). When disabled the
+   *  ensemble becomes 2-of-2 (stricter). Default off. */
+  LIQ_TIER3_DISABLE_DEFI_LISTING?: string;
+  /** Signal ② — min USD circulating market cap (CoinGecko). Default $1B. */
+  LIQ_TIER3_MIN_MCAP_USD?: string;
+  /** Signal ③ — min USD 24h trading volume (CoinGecko). Default $50M/day. */
+  LIQ_TIER3_MIN_VOL_USD?: string;
+
+  /** Liquidator-hardening — minimum bps improvement (split-sum vs
+   *  failover-top-1) required before the keeper submits
+   *  `triggerLiquidationSplit` over the default failover path.
+   *  Default 100 (1%). */
+  SPLIT_MIN_IMPROVEMENT_BPS?: string;
+
+  /** Liquidator-hardening — minimum HF (in BPS, 10_000 = HF_SCALE)
+   *  at which the keeper prefers `triggerPartialLiquidation` (50%
+   *  sweep) over a full liquidation. Default 9500 = 0.95. Below this
+   *  floor a 50% partial can't restore HF >= 1.0 (the on-chain
+   *  {PartialMustRestoreHF} gate would revert) so the keeper falls
+   *  back to the full path. Set to 10_000 to disable the partial
+   *  path. Tighten (e.g. 9700) for a more conservative regime. */
+  PARTIAL_LIQ_MIN_HF_BPS?: string;
+}
+
+/**
+ * The RAW Cloudflare bindings the Worker handler receives. The
+ * secret fields are Secrets Store bindings (declared in
+ * `wrangler.jsonc` → `secrets_store_secrets`) — resolve via
+ * `resolveEnv()` before any downstream use.
+ *
+ * No `RPC_ZKEVM` — Polygon zkEVM is out of scope (no secret bound);
+ * `getChainConfigs` simply skips that chain.
+ */
+export interface WorkerEnv extends BaseEnv {
+  // Per-chain RPC URLs — HF reads + liquidation submission.
+  RPC_BASE?: SecretBinding;
+  RPC_ETH?: SecretBinding;
+  RPC_ARB?: SecretBinding;
+  RPC_OP?: SecretBinding;
+  RPC_BNB?: SecretBinding;
+  RPC_SEPOLIA?: SecretBinding;
+  RPC_BASE_SEPOLIA?: SecretBinding;
+  RPC_ARB_SEPOLIA?: SecretBinding;
+  RPC_OP_SEPOLIA?: SecretBinding;
+  RPC_BNB_TESTNET?: SecretBinding;
+
+  // Telegram bot token — HF-band-downgrade alerts (watcher.ts).
+  TG_BOT_TOKEN?: SecretBinding;
+  // Push Protocol channel signer — parallel push-channel alert path.
+  PUSH_CHANNEL_PK?: SecretBinding;
+  // Aggregator API keys — server-side liquidation quoting.
+  ZEROEX_API_KEY?: SecretBinding;
+  ONEINCH_API_KEY?: SecretBinding;
+  // Autonomous-keeper EOA signing key. The ONLY Worker that holds a
+  // signing key (staging plan §2 least-privilege contract).
+  KEEPER_PRIVATE_KEY?: SecretBinding;
+}
+
+/**
+ * The RESOLVED env passed to all downstream code. Every field is a
+ * plain string; a missing / unconfigured chain or secret is
+ * `undefined` and the dependent pass skips it this tick.
+ */
+export interface Env extends BaseEnv {
   // Per-chain RPC URLs — HF reads + liquidation submission. Each
   // missing URL skips that chain this tick.
   RPC_BASE?: string;
@@ -55,106 +148,92 @@ export interface Env {
   RPC_OP_SEPOLIA?: string;
   RPC_BNB_TESTNET?: string;
 
-  // Telegram bot (secrets via wrangler). Powers HF-band-downgrade
-  // alerts dispatched by watcher.ts. Without TG_BOT_TOKEN the
-  // sendMessage helper is a no-op; without TG_BOT_USERNAME the
-  // handshake link returns null bot_url.
   TG_BOT_TOKEN?: string;
-  TG_BOT_USERNAME?: string;
-
-  // Push Protocol channel signer (secret). Same usage shape as
-  // TG_BOT_TOKEN — drives the parallel push-channel alert path.
   PUSH_CHANNEL_PK?: string;
-
-  // Phase 7a — aggregator API keys for server-side liquidation
-  // quoting. The keeper bypasses the public quote-proxy and hits
-  // 0x / 1inch directly with these keys. Without a key the
-  // matching adapter is skipped in the failover try-list.
   ZEROEX_API_KEY?: string;
   ONEINCH_API_KEY?: string;
-
-  // Connected-app origin for deep-links inside push / Telegram
-  // notifications (e.g. "View this loan" → `<FRONTEND_ORIGIN>/loans/{id}`).
-  // Stage 4 PR3 flattened the connected-app routes to root, so the
-  // path inside notifications is `/loans/...` (no `/app/` prefix).
-  // Defaults to `https://defi.vaipakam.com` when set in wrangler vars.
-  FRONTEND_ORIGIN?: string;
-
-  // Phase 7a.4 — autonomous keeper. When `KEEPER_ENABLED == 'true'`
-  // AND `KEEPER_PRIVATE_KEY` is set, the watcher submits
-  // `triggerLiquidation` for any subscribed-user loan whose on-chain
-  // HF crosses 1.0. The keeper EOA needs gas pre-funded on every
-  // chain it operates against — i.e. every chain with both an
-  // `RPC_*` env value AND a Diamond address recorded in
-  // `deployments.json`. Liquidation is permissionless on-chain —
-  // losing the race to another keeper / MEV bot is fine; the diamond
-  // reverts the second tx so no double-spend.
-  KEEPER_ENABLED?: string;
   KEEPER_PRIVATE_KEY?: string;
+}
 
-  // Depth-tiered-LTV liquidity-confidence relay (`liquidityConfidence.ts`,
-  // §4.4 step 5). The off-chain process knobs — how much aggregator-
-  // confirmed evidence must accumulate before the relay promotes an
-  // asset's on-chain `keeperTier` one step. Both default conservatively
-  // when unset; demotion is always immediate (no window) regardless.
-  // The relay only *submits* `setKeeperTier` when the keeper is enabled
-  // AND `depthTieredLtvEnabled` is on for the chain — it tracks the
-  // confidence counter in D1 either way so it catches up fast once
-  // governance flips the switch. (Wiring the Tier-3 "battle-tested on
-  // Aave/Compound/Morpho" advisory is a follow-up — until then the relay
-  // caps at Tier 2.)
-  /** consecutive eligible-to-promote ticks required before a step up (default 5) */
-  LIQ_CONFIDENCE_MIN_CHECKS?: string;
-  /** wall-clock days that eligible streak must also span (default 3) */
-  LIQ_CONFIDENCE_MIN_WINDOW_DAYS?: string;
-  // Tier-3 "battle-tested elsewhere" advisory — 2-of-3 ensemble in
-  // `liquidityConfidence.ts::battleTestedElsewhere`. The relay promotes
-  // an asset to Tier 3 only when ≥ 2 of the 3 signals below pass; the
-  // ensemble means no single source can single-handedly gate (or be
-  // dependent for) the promotion. All thresholds in plain USD (not the
-  // PAD × 1e6 scale the on-chain sizes use). All optional with sensible
-  // defaults; setting any to a custom value tunes that threshold.
-  /** Signal ① — Minimum USD TVL on at least one of {Aave v3, Compound v3,
-   *  Morpho-blue} (per DeFiLlama's `/pools`). Default $10M. */
-  LIQ_TIER3_MIN_TVL_USD?: string;
-  /** Disable signal ① entirely (`1` / `true`) — for operators who want
-   *  zero competitor-lending-platform-data dependence. When disabled
-   *  the ensemble becomes 2-of-2 (both CoinGecko signals required) —
-   *  stricter, safe. Default off (signal ① active). */
-  LIQ_TIER3_DISABLE_DEFI_LISTING?: string;
-  /** Signal ② — Minimum USD circulating market cap from CoinGecko's
-   *  free `/coins/{platform}/contract/{address}` endpoint. Default $1B. */
-  LIQ_TIER3_MIN_MCAP_USD?: string;
-  /** Signal ③ — Minimum USD 24-hour trading volume (CoinGecko, same
-   *  response as ②). Default $50M/day. */
-  LIQ_TIER3_MIN_VOL_USD?: string;
+/** Read one Secrets Store binding, tolerating an absent binding. */
+async function readSecret(
+  b: SecretBinding | undefined,
+): Promise<string | undefined> {
+  return b ? b.get() : undefined;
+}
 
-  // Liquidator-hardening — split-route swap decision.
-  /** Minimum bps improvement (split-sum vs failover-top-1) required
-   *  before the keeper submits `triggerLiquidationSplit` over the
-   *  default failover path. Below this the gas + atomic-revert risk
-   *  of a split-route isn't worth the marginal fill improvement.
-   *  Default 100 (1%). */
-  SPLIT_MIN_IMPROVEMENT_BPS?: string;
-
-  // Liquidator-hardening — partial-liquidation decision.
-  /** Minimum HF (in BPS, where 10_000 = HF_SCALE) at which the keeper
-   *  prefers `triggerPartialLiquidation` (50% sweep) over a full
-   *  liquidation. Default 9500 = 0.95. Rationale: at HF in [0.95, 1.0)
-   *  with a typical 85% `liqThreshold` and ~5% effective swap-fee, a
-   *  50% partial restores HF >= 1.0 with a small buffer — verified by
-   *  the algebra `f >= (T - 1.05r) / (T - 0.998)` where r = T/hfBefore.
-   *  Below this floor (HF < 0.95) a 50% partial isn't enough and the
-   *  on-chain {PartialMustRestoreHF} gate would revert, so the keeper
-   *  falls back to the full path (split-route or failover). Past
-   *  maturity, the partial path is locked out by the on-chain
-   *  {PartialAfterMaturity} guard regardless of this knob.
-   *
-   *  Tighten this (e.g. 9700 = 0.97) for jurisdictions / chains where
-   *  the operator wants a more conservative partial regime. Set to
-   *  10_000 to effectively disable the partial path (HF can't be both
-   *  >= 1.0 AND < 1.0 — the partial branch never fires). */
-  PARTIAL_LIQ_MIN_HF_BPS?: string;
+/**
+ * Resolve the raw Worker bindings into the plain `Env` that every
+ * downstream function expects. All secrets are fetched in parallel.
+ * Call this **once** per cron tick, at the Worker entry point —
+ * never inside a hot path.
+ */
+export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
+  const [
+    base,
+    eth,
+    arb,
+    op,
+    bnb,
+    sepolia,
+    baseSep,
+    arbSep,
+    opSep,
+    bnbTest,
+    tgToken,
+    pushPk,
+    zeroEx,
+    oneInch,
+    keeperKey,
+  ] = await Promise.all([
+    readSecret(raw.RPC_BASE),
+    readSecret(raw.RPC_ETH),
+    readSecret(raw.RPC_ARB),
+    readSecret(raw.RPC_OP),
+    readSecret(raw.RPC_BNB),
+    readSecret(raw.RPC_SEPOLIA),
+    readSecret(raw.RPC_BASE_SEPOLIA),
+    readSecret(raw.RPC_ARB_SEPOLIA),
+    readSecret(raw.RPC_OP_SEPOLIA),
+    readSecret(raw.RPC_BNB_TESTNET),
+    readSecret(raw.TG_BOT_TOKEN),
+    readSecret(raw.PUSH_CHANNEL_PK),
+    readSecret(raw.ZEROEX_API_KEY),
+    readSecret(raw.ONEINCH_API_KEY),
+    readSecret(raw.KEEPER_PRIVATE_KEY),
+  ]);
+  return {
+    // Non-secret config — passed straight through.
+    DB: raw.DB,
+    TG_BOT_USERNAME: raw.TG_BOT_USERNAME,
+    FRONTEND_ORIGIN: raw.FRONTEND_ORIGIN,
+    KEEPER_ENABLED: raw.KEEPER_ENABLED,
+    LIQ_CONFIDENCE_MIN_CHECKS: raw.LIQ_CONFIDENCE_MIN_CHECKS,
+    LIQ_CONFIDENCE_MIN_WINDOW_DAYS: raw.LIQ_CONFIDENCE_MIN_WINDOW_DAYS,
+    LIQ_TIER3_MIN_TVL_USD: raw.LIQ_TIER3_MIN_TVL_USD,
+    LIQ_TIER3_DISABLE_DEFI_LISTING: raw.LIQ_TIER3_DISABLE_DEFI_LISTING,
+    LIQ_TIER3_MIN_MCAP_USD: raw.LIQ_TIER3_MIN_MCAP_USD,
+    LIQ_TIER3_MIN_VOL_USD: raw.LIQ_TIER3_MIN_VOL_USD,
+    SPLIT_MIN_IMPROVEMENT_BPS: raw.SPLIT_MIN_IMPROVEMENT_BPS,
+    PARTIAL_LIQ_MIN_HF_BPS: raw.PARTIAL_LIQ_MIN_HF_BPS,
+    // Resolved secrets.
+    RPC_BASE: base,
+    RPC_ETH: eth,
+    RPC_ARB: arb,
+    RPC_OP: op,
+    RPC_BNB: bnb,
+    RPC_SEPOLIA: sepolia,
+    RPC_BASE_SEPOLIA: baseSep,
+    RPC_ARB_SEPOLIA: arbSep,
+    RPC_OP_SEPOLIA: opSep,
+    RPC_BNB_TESTNET: bnbTest,
+    TG_BOT_TOKEN: tgToken,
+    PUSH_CHANNEL_PK: pushPk,
+    ZEROEX_API_KEY: zeroEx,
+    ONEINCH_API_KEY: oneInch,
+    KEEPER_PRIVATE_KEY: keeperKey,
+    // RPC_ZKEVM intentionally unset — Polygon zkEVM is out of scope.
+  };
 }
 
 export interface ChainConfig {
