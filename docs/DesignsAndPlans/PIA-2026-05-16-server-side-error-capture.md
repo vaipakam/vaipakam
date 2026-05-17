@@ -28,10 +28,11 @@ RESEARCH NOTES — NOT LEGAL ADVICE — REVIEW WITH A LICENSED ATTORNEY BEFORE A
 Vaipakam will capture UI errors server-side (Cloudflare D1) to troubleshoot and
 harden the app. Each record is a single wallet-keyed error event; records
 auto-delete at 90 days. Processing is data-light,
-pseudonymous, and now disclosed in Privacy Policy v2 — but it is **not yet built**,
-the legitimate-interest basis needs the assessment in §2, and the basis does **not
-cleanly carry to India's DPDP Act**. No blockers that can't be cleared pre-launch;
-five conditions in §8.
+pseudonymous, implemented in the diagnostics Worker, and now disclosed in Privacy
+Policy v2. The legitimate-interest basis still needs the assessment in §2, and
+that basis does **not cleanly carry to India's DPDP Act**. No blockers that can't
+be cleared pre-launch; the remaining conditions in §8 are legal/rollout controls,
+not build blockers for the existing capture path.
 
 **Overall risk:** 🟡 **Medium** *(reviewer to confirm)* — low data sensitivity and
 short retention, offset by the DPDP lawful-basis gap and a missing right-to-object
@@ -110,16 +111,16 @@ support (see §6). Retention-override → §7.
 
 | Policy commitment (Privacy Policy v2) | Consistent? | Notes |
 |---|---|---|
-| "Server-side error capture … pruned after 90 days" | 🟢 | v2 was written to describe this activity |
+| "Server-side error capture … pruned after 90 days" | 🟢 | v2 describes the implemented Worker + D1 capture path and retention prune |
 | Truncated technical error message captured | 🟢 | Disclosed in v2 §"Server-side error capture" (Rev. 2026-05-17) |
 | No journey-log slice in server capture | 🟢 | Slice descoped; v2 + this PIA updated to match (Rev. 2026-05-17) |
 | Legal basis stated as Art. 6(1)(f) legitimate interest | 🟡 | Stated in policy; the LIA backing it (§2) must exist before launch — and DPDP is unaddressed |
 | "Delete my data" button = local only; D1 via support | 🟢 | Disclosed; consistent with §6 |
 | Plugin config `## Privacy policy commitments` | 🔴 | Stale — still records v1 ("browser-only, never uploaded"). Must be updated to v2. |
 
-⚠️ The v2 policy text describes processing not yet built. Pre-live this is
-acceptable; it becomes a live misrepresentation the moment a real user arrives
-without the feature shipped.
+⚠️ The v2 policy text describes processing that exists in the Worker. Pre-live
+rollout still depends on the legal and operational controls in §8 staying true
+at launch.
 
 ---
 
@@ -189,7 +190,7 @@ DPDP point and the LIA).*
 
 Conditions before a real user touches the live app:
 
-- [ ] Build server-side error capture to match Privacy Policy v2 (D1, 90-day prune; single error record, no journey-log slice) — *Operator (dev)*
+- [x] Confirm the implemented server-side capture matches Privacy Policy v2 (D1, 90-day prune; single error record, no journey-log slice) — *Operator (dev)*
 - [ ] Confirm the India DPDP lawful basis with counsel; implement consent or geo-scoping if required — *Counsel*
 - [ ] Have counsel review this LIA (§2) — *Counsel*
 - [ ] Add a right-to-object / opt-out path for error capture, or document why it's infeasible; extend access + deletion to cover D1 records — *Operator (dev)*
