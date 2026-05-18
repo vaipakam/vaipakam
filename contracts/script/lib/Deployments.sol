@@ -258,8 +258,10 @@ library Deployments {
 
     function writeIsCanonicalVPFI(bool v) internal { _writeBool(".isCanonicalVPFI", v); }
     function writeIsCanonicalReward(bool v) internal { _writeBool(".isCanonicalReward", v); }
-    function writeRewardLocalEid(uint32 eid) internal { _writeUint(".rewardLocalEid", uint256(eid)); }
-    function writeRewardBaseEid(uint32 eid) internal { _writeUint(".rewardBaseEid", uint256(eid)); }
+    // T-068: a chain's own identity is `block.chainid` — there is no
+    // `rewardLocalEid` to record. `rewardBaseChainId` is the canonical
+    // reward chain's EVM chain id (was the LayerZero `rewardBaseEid`).
+    function writeRewardBaseChainId(uint32 chainId) internal { _writeUint(".rewardBaseChainId", uint256(chainId)); }
     function writeRewardGraceSeconds(uint64 secs) internal { _writeUint(".rewardGraceSeconds", uint256(secs)); }
     function writeVpfiBuyReceiverEid(uint32 eid) internal { _writeUint(".vpfiBuyReceiverEid", uint256(eid)); }
     function writeInteractionLaunchTimestamp(uint256 ts) internal { _writeUint(".interactionLaunchTimestamp", ts); }

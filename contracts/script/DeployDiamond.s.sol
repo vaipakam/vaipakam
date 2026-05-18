@@ -439,9 +439,9 @@ contract DeployDiamond is Script {
         console.log("Treasury:             ", treasury);
         console.log("");
         console.log("!! Cross-chain reward plumbing still requires per-chain wiring:");
-        console.log("   - RewardReporterFacet.setRewardOApp / setLocalEid / setBaseEid");
+        console.log("   - RewardReporterFacet.setRewardOApp / setBaseChainId");
         console.log("   - RewardReporterFacet.setIsCanonicalRewardChain (true only on Base)");
-        console.log("   - RewardAggregatorFacet.setExpectedSourceEids (Base only)");
+        console.log("   - RewardAggregatorFacet.setExpectedSourceChainIds (Base only)");
         console.log("   See docs/ops/DeploymentRunbook.md section 3.");
     }
 
@@ -968,11 +968,11 @@ contract DeployDiamond is Script {
         s[20] = VPFIDiscountFacet.getUserVpfiDiscountState.selector;
         // Phase 8b.1 Permit2 addition.
         s[21] = VPFIDiscountFacet.depositVPFIToEscrowWithPermit.selector;
-        // #00010 fix — per-(buyer, originEid) wallet-cap reader. The
+        // #00010 fix — per-(buyer, originChainId) wallet-cap reader. The
         // canonical Diamond debits the cap bucket keyed by origin
         // chain; the frontend reads via this getter so direct buys
         // and bridged buys see consistent remaining-allowance values.
-        s[22] = VPFIDiscountFacet.getVPFISoldToByEid.selector;
+        s[22] = VPFIDiscountFacet.getVPFISoldToByChainId.selector;
     }
 
     function _getStakingRewardsSelectors() internal pure returns (bytes4[] memory s) {
@@ -1015,20 +1015,21 @@ contract DeployDiamond is Script {
     }
 
     function _getRewardReporterSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](12);
+        s = new bytes4[](11);
         s[0] = RewardReporterFacet.closeDay.selector;
         s[1] = RewardReporterFacet.onRewardBroadcastReceived.selector;
         s[2] = RewardReporterFacet.setRewardOApp.selector;
-        s[3] = RewardReporterFacet.setLocalEid.selector;
-        s[4] = RewardReporterFacet.setBaseEid.selector;
-        s[5] = RewardReporterFacet.setIsCanonicalRewardChain.selector;
-        s[6] = RewardReporterFacet.setRewardGraceSeconds.selector;
-        s[7] = RewardReporterFacet.getLocalChainInterestNumeraire18.selector;
-        s[8] = RewardReporterFacet.getChainReportSentAt.selector;
-        s[9] = RewardReporterFacet.getRewardReporterConfig.selector;
-        s[10] = RewardReporterFacet.getKnownGlobalInterestNumeraire18.selector;
+        // T-068: `setLocalEid` removed — a chain's own identity is
+        // `block.chainid`, no longer a settable endpoint id.
+        s[3] = RewardReporterFacet.setBaseChainId.selector;
+        s[4] = RewardReporterFacet.setIsCanonicalRewardChain.selector;
+        s[5] = RewardReporterFacet.setRewardGraceSeconds.selector;
+        s[6] = RewardReporterFacet.getLocalChainInterestNumeraire18.selector;
+        s[7] = RewardReporterFacet.getChainReportSentAt.selector;
+        s[8] = RewardReporterFacet.getRewardReporterConfig.selector;
+        s[9] = RewardReporterFacet.getKnownGlobalInterestNumeraire18.selector;
         // Single-field getter for the protocol-console knob registry.
-        s[11] = RewardReporterFacet.getRewardGraceSeconds.selector;
+        s[10] = RewardReporterFacet.getRewardGraceSeconds.selector;
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
@@ -1180,13 +1181,13 @@ contract DeployDiamond is Script {
         s[1] = RewardAggregatorFacet.finalizeDay.selector;
         s[2] = RewardAggregatorFacet.forceFinalizeDay.selector;
         s[3] = RewardAggregatorFacet.broadcastGlobal.selector;
-        s[4] = RewardAggregatorFacet.setExpectedSourceEids.selector;
+        s[4] = RewardAggregatorFacet.setExpectedSourceChainIds.selector;
         s[5] = RewardAggregatorFacet.isChainReported.selector;
         s[6] = RewardAggregatorFacet.getChainReport.selector;
         s[7] = RewardAggregatorFacet.getChainDailyReportCount.selector;
         s[8] = RewardAggregatorFacet.getDailyFirstReportAt.selector;
         s[9] = RewardAggregatorFacet.getDailyGlobalInterest.selector;
-        s[10] = RewardAggregatorFacet.getExpectedSourceEids.selector;
+        s[10] = RewardAggregatorFacet.getExpectedSourceChainIds.selector;
         s[11] = RewardAggregatorFacet.isDayReadyToFinalize.selector;
     }
 

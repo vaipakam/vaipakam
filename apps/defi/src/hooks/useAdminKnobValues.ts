@@ -2,7 +2,7 @@
  * T-042 Phase 2 — live-value reader for the admin dashboard.
  *
  * Issues a single batched read against the diamond (and the
- * `VPFIBuyReceiver` standalone contract on Base where applicable)
+ * `VpfiBuyReceiver` standalone contract on Base where applicable)
  * for every governance-tunable knob defined in `adminKnobsZones.ts`.
  * The dashboard cards subscribe to the returned map and render
  * each knob's current value relative to its hard bound + soft zones.
@@ -27,7 +27,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { type Abi } from 'viem';
 import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
-import { DIAMOND_ABI_VIEM, VPFIBuyReceiverABI } from '@vaipakam/contracts/abis';
+import { DIAMOND_ABI_VIEM, VpfiBuyReceiverABI } from '@vaipakam/contracts/abis';
 import { ADMIN_KNOBS, type KnobMeta } from '../lib/protocolConsoleKnobs';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 
@@ -43,7 +43,7 @@ export type KnobValuesMap = Record<string, KnobReadResult>;
 
 /**
  * Read a knob's current value from the diamond (or, for the
- * `VPFIBuyReceiver` knob, from the canonical-Base receiver address
+ * `VpfiBuyReceiver` knob, from the canonical-Base receiver address
  * resolved from the deployments JSON).
  *
  * We don't use the project's `Multicall3` helper here because the
@@ -63,7 +63,7 @@ export function useAdminKnobValues(): KnobValuesMap {
   );
 
   // Resolve the standalone-contract addresses we may need beyond the
-  // diamond. VPFIBuyReceiver lives at its own address on the
+  // diamond. VpfiBuyReceiver lives at its own address on the
   // canonical-VPFI chain.
   const vpfiBuyReceiver = useMemo(() => {
     const dep = getDeployment(chain.chainId) as
@@ -77,13 +77,13 @@ export function useAdminKnobValues(): KnobValuesMap {
     let cancelled = false;
 
     const target = (knob: KnobMeta): { address: string; abi: Abi } | null => {
-      // VPFIBuyReceiver knobs read from the standalone contract;
+      // VpfiBuyReceiver knobs read from the standalone contract;
       // every other knob targets the diamond.
-      if (knob.getter.facet === 'VPFIBuyReceiver') {
+      if (knob.getter.facet === 'VpfiBuyReceiver') {
         if (!vpfiBuyReceiver) return null;
         return {
           address: vpfiBuyReceiver,
-          abi: VPFIBuyReceiverABI as unknown as Abi,
+          abi: VpfiBuyReceiverABI as unknown as Abi,
         };
       }
       return {

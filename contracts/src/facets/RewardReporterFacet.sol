@@ -21,21 +21,21 @@ import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
  *      by `isCanonicalRewardChain`:
  *        - Base:   {closeDay} writes the local chain's `(lender, borrower)`
  *                  Numeraire18 pair directly into the aggregator sub-storage
- *                  keyed by `localEid`; no LayerZero packet is needed
- *                  because Base is its own aggregator.
+ *                  keyed by `block.chainid`; no cross-chain message is
+ *                  needed because Base is its own aggregator.
  *        - Mirror: {closeDay} forwards the pair via `IRewardOApp.sendChainReport`
- *                  to the Base-side OApp, paying LZ native fee out of
- *                  `msg.value`. The OApp delivers into
- *                  `RewardAggregatorFacet.onChainReportReceived` on Base.
+ *                  to the Base-side reward messenger, paying the CCIP
+ *                  native fee out of `msg.value`. The messenger delivers
+ *                  into `RewardAggregatorFacet.onChainReportReceived` on Base.
  *
  *      {onRewardBroadcastReceived} is the mirror-side trusted ingress
- *      handler: when Base finalizes day `D`, its OApp broadcasts the
- *      pair back and the mirror's OApp invokes this method, which
+ *      handler: when Base finalizes day `D`, its messenger broadcasts the
+ *      pair back and the mirror's messenger invokes this method, which
  *      populates `knownGlobal*InterestNumeraire18[D]` used by the §4 formula.
  *      Gated to `rewardOApp` — no other address may write these values.
  *
- *      Admin surface configures the cross-chain wiring (OApp address,
- *      local/Base eids, canonical flag, grace window) under
+ *      Admin surface configures the cross-chain wiring (messenger address,
+ *      canonical Base chain id, canonical flag, grace window) under
  *      `ADMIN_ROLE`. Each setter is one-shot + replaceable.
  */
 contract RewardReporterFacet is
@@ -53,14 +53,14 @@ contract RewardReporterFacet is
     ///         totals — directly to aggregator storage on Base, or via
     ///         the OApp on a mirror.
     /// @param dayId                 Interaction day being reported.
-    /// @param sourceEid             LayerZero eid of the source (local) chain.
+    /// @param sourceChainId         EVM chain id of the source (local) chain.
     /// @param lenderNumeraire18           Local lender USD-18 interest on `dayId`.
     /// @param borrowerNumeraire18         Local borrower USD-18 interest on `dayId`.
     /// @param viaOApp               False iff recorded directly (Base path).
     /// @custom:event-category informational/reward-transport
     event ChainInterestReported(
         uint256 indexed dayId,
-        uint32 indexed sourceEid,
+        uint32 indexed sourceChainId,
         uint256 lenderNumeraire18,
         uint256 borrowerNumeraire18,
         bool viaOApp
@@ -99,17 +99,17 @@ contract RewardReporterFacet is
      *
      *      Behaviour by chain kind:
      *        - Canonical (Base): writes the pair directly into
-     *          `chainDaily{Lender,Borrower}InterestNumeraire18[dayId][localEid]`
+     *          `chainDaily{Lender,Borrower}InterestNumeraire18[dayId][block.chainid]`
      *          and increments `chainDailyReportCount[dayId]`. No
-     *          LayerZero fee required; any `msg.value` is refunded.
+     *          cross-chain fee required; any `msg.value` is refunded.
      *        - Mirror: forwards the pair via
      *          {IRewardOApp.sendChainReport}. `msg.value` MUST cover the
-     *          LZ native fee; the OApp refunds leftover to the caller.
+     *          CCIP native fee; the messenger refunds leftover to the caller.
      *
      *      Reverts:
      *        - `RewardDayNotElapsed` if `dayId` ≥ `currentDay`.
      *        - `ChainDayAlreadyReported` if the local report already fired.
-     *        - `RewardOAppNotSet` / `BaseEidNotSet` on mirror chains that
+     *        - `RewardOAppNotSet` / `BaseChainIdNotSet` on mirror chains that
      *          have not been wired yet.
      *
      *      Whenever the write is recorded into aggregator storage on the
@@ -141,18 +141,18 @@ contract RewardReporterFacet is
         s.chainReportSentAt[dayId] = uint64(block.timestamp);
 
         if (s.isCanonicalRewardChain) {
-            // Base writes directly — bypass LayerZero for its own numbers.
-            uint32 eid = s.localEid;
-            _recordChainReportLocal(s, dayId, eid, lenderNumeraire18, borrowerNumeraire18);
+            // Base writes directly — no cross-chain hop for its own numbers.
+            uint32 chainId = uint32(block.chainid);
+            _recordChainReportLocal(s, dayId, chainId, lenderNumeraire18, borrowerNumeraire18);
             emit ChainInterestReported(
                 dayId,
-                eid,
+                chainId,
                 lenderNumeraire18,
                 borrowerNumeraire18,
                 /* viaOApp */ false
             );
 
-            // Refund any stray msg.value — canonical path is LZ-free.
+            // Refund any stray msg.value — canonical path is fee-free.
             if (msg.value != 0) {
                 (bool ok, ) = msg.sender.call{value: msg.value}("");
                 require(ok, "refund failed");
@@ -160,17 +160,17 @@ contract RewardReporterFacet is
         } else {
             address oApp = s.rewardOApp;
             if (oApp == address(0)) revert RewardOAppNotSet();
-            if (s.baseEid == 0) revert BaseEidNotSet();
+            if (s.baseChainId == 0) revert BaseChainIdNotSet();
 
             emit ChainInterestReported(
                 dayId,
-                s.localEid,
+                uint32(block.chainid),
                 lenderNumeraire18,
                 borrowerNumeraire18,
                 /* viaOApp */ true
             );
 
-            // Forward full msg.value; OApp refunds the caller directly.
+            // Forward full msg.value; messenger refunds the caller directly.
             IRewardOApp(oApp).sendChainReport{value: msg.value}(
                 dayId,
                 lenderNumeraire18,
@@ -181,7 +181,7 @@ contract RewardReporterFacet is
     }
 
     /// @dev Shared write path for Base-side "my own chain's report"
-    ///      and for the aggregator's LayerZero-ingress record hook.
+    ///      and for the aggregator's cross-chain-ingress record hook.
     ///      NOT public — the aggregator calls it through its own trusted
     ///      path. Left `internal` so RewardAggregatorFacet's sibling code
     ///      (same Diamond, same storage) can reuse it by re-implementing
@@ -189,14 +189,14 @@ contract RewardReporterFacet is
     function _recordChainReportLocal(
         LibVaipakam.Storage storage s,
         uint256 dayId,
-        uint32 sourceEid,
+        uint32 sourceChainId,
         uint256 lenderNumeraire18,
         uint256 borrowerNumeraire18
     ) internal {
-        s.chainDailyLenderInterestNumeraire18[dayId][sourceEid] = lenderNumeraire18;
-        s.chainDailyBorrowerInterestNumeraire18[dayId][sourceEid] = borrowerNumeraire18;
-        if (!s.chainDailyReported[dayId][sourceEid]) {
-            s.chainDailyReported[dayId][sourceEid] = true;
+        s.chainDailyLenderInterestNumeraire18[dayId][sourceChainId] = lenderNumeraire18;
+        s.chainDailyBorrowerInterestNumeraire18[dayId][sourceChainId] = borrowerNumeraire18;
+        if (!s.chainDailyReported[dayId][sourceChainId]) {
+            s.chainDailyReported[dayId][sourceChainId] = true;
             unchecked {
                 s.chainDailyReportCount[dayId] += 1;
             }
@@ -279,35 +279,24 @@ contract RewardReporterFacet is
         );
     }
 
-    /// @notice Set this Diamond's own LayerZero endpoint id — the key the
-    ///         Base aggregator uses to index this chain's reports.
-    /// @param eid LayerZero V2 endpoint id of the active chain.
-    function setLocalEid(
-        uint32 eid
-    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint32 old = s.localEid;
-        s.localEid = eid;
-        emit RewardReporterConfigUpdated(
-            bytes32("localEid"),
-            bytes32(uint256(old)),
-            bytes32(uint256(eid))
-        );
-    }
+    // NOTE: there is no `setLocalChainId` — a chain's own identity is
+    // `block.chainid`, read directly. T-068 dropped the old settable
+    // `localEid`; its storage slot is retained as
+    // `localEid_LEGACY_DO_NOT_USE` for layout stability.
 
-    /// @notice Set the canonical (Base) LayerZero endpoint id — the
-    ///         destination for mirror-side chain reports. Zero on Base.
-    /// @param eid LayerZero V2 endpoint id of the canonical reward chain.
-    function setBaseEid(
-        uint32 eid
+    /// @notice Set the canonical (Base) reward chain's EVM chain id —
+    ///         the destination for mirror-side chain reports. Zero on Base.
+    /// @param chainId EVM chain id of the canonical reward chain.
+    function setBaseChainId(
+        uint32 chainId
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint32 old = s.baseEid;
-        s.baseEid = eid;
+        uint32 old = s.baseChainId;
+        s.baseChainId = chainId;
         emit RewardReporterConfigUpdated(
-            bytes32("baseEid"),
+            bytes32("baseChainId"),
             bytes32(uint256(old)),
-            bytes32(uint256(eid))
+            bytes32(uint256(chainId))
         );
     }
 
@@ -419,9 +408,9 @@ contract RewardReporterFacet is
 
     /// @notice Snapshot the cross-chain reward wiring in one call — for
     ///         deploy / ops dashboards.
-    /// @return rewardOApp              Registered OApp address.
-    /// @return localEid                This chain's LZ eid.
-    /// @return baseEid                 Canonical chain's LZ eid.
+    /// @return rewardOApp              Registered reward messenger address.
+    /// @return localChainId           This chain's EVM chain id.
+    /// @return baseChainId            Canonical reward chain's EVM chain id.
     /// @return isCanonicalRewardChain  Canonical flag.
     /// @return rewardGraceSeconds      Grace window (0 ⇒ default 4h).
     function getRewardReporterConfig()
@@ -429,8 +418,8 @@ contract RewardReporterFacet is
         view
         returns (
             address rewardOApp,
-            uint32 localEid,
-            uint32 baseEid,
+            uint32 localChainId,
+            uint32 baseChainId,
             bool isCanonicalRewardChain,
             uint64 rewardGraceSeconds
         )
@@ -438,8 +427,8 @@ contract RewardReporterFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return (
             s.rewardOApp,
-            s.localEid,
-            s.baseEid,
+            uint32(block.chainid),
+            s.baseChainId,
             s.isCanonicalRewardChain,
             s.rewardGraceSeconds == 0
                 ? DEFAULT_REWARD_GRACE_SECONDS

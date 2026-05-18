@@ -120,14 +120,8 @@ contract VPFIDiscountFacetTest is SetupTest {
         weth = new ERC20Mock("Wrapped Ether", "WETH", 18);
         _facet().setVPFIBuyRate(RATE_WEI_PER_VPFI);
         _facet().setVPFIBuyCaps(GLOBAL_CAP, WALLET_CAP);
-        // Stamp `s.localEid` before enabling the buy switch — the
-        // canonical-chain direct-buy path now reverts
-        // `VPFICanonicalEidNotSet` when `localEid == 0`, because the
-        // per-(buyer, originEid) cap bucket would otherwise land in
-        // bucket 0 while the frontend reads the chain-registry eid
-        // (#00010 hardening). Use Base mainnet's eid here since the
-        // test simulates the canonical Base Diamond.
-        TestMutatorFacet(address(diamond)).setLocalEidForTest(30184);
+        // T-068: no `localEid` stamping needed — the direct-buy path
+        // keys the per-wallet cap bucket by `block.chainid`.
         _facet().setVPFIBuyEnabled(true);
         _facet().setVPFIDiscountETHPriceAsset(address(weth));
 
@@ -206,24 +200,28 @@ contract VPFIDiscountFacetTest is SetupTest {
         _facet().buyVPFIWithETH{value: 1 ether}();
     }
 
-    /// @notice #00010 hardening — direct buy must revert when
-    ///         `s.localEid` is unset, otherwise the on-chain bucket
-    ///         debit (eid 0) would silently desync from the
-    ///         frontend's per-chain reads (eid 30184 / 40245 / …).
-    function testBuyVPFIRevertsWhenLocalEidUnset() public {
-        // Roll localEid back to 0 so we can exercise the revert. The
-        // shared setUp stamps a non-zero eid before flipping the buy
-        // switch on; this test undoes that for the negative path only.
-        TestMutatorFacet(address(diamond)).setLocalEidForTest(0);
-        vm.prank(buyer);
-        vm.expectRevert(IVaipakamErrors.VPFICanonicalEidNotSet.selector);
-        _facet().buyVPFIWithETH{value: 1 ether}();
-    }
+    // T-068 removed `testBuyVPFIRevertsWhenLocalEidUnset`: the direct-buy
+    // path now keys the cap bucket by `block.chainid`, which is never
+    // zero, so the old `localEid == 0` revert is unreachable. The
+    // surviving `VPFIInvalidOriginChainId` guard in `_computeBuyAndDebitCaps`
+    // is defence-in-depth against a malformed origin and cannot be
+    // triggered through any well-formed public entry point.
 
     function testBuyVPFIRevertsOnZeroValue() public {
         vm.prank(buyer);
         vm.expectRevert(IVaipakamErrors.InvalidAmount.selector);
         _facet().buyVPFIWithETH{value: 0}();
+    }
+
+    /// @notice Codex review — the direct-buy path keys the per-wallet cap
+    ///         bucket by `uint32(block.chainid)`; a chain id wider than
+    ///         uint32 is rejected rather than silently truncated into the
+    ///         wrong bucket.
+    function testBuyVPFIRevertsWhenChainIdExceedsUint32() public {
+        vm.chainId(uint256(type(uint32).max) + 1);
+        vm.prank(buyer);
+        vm.expectRevert(IVaipakamErrors.VPFIInvalidOriginChainId.selector);
+        _facet().buyVPFIWithETH{value: 1 ether}();
     }
 
     function testBuyVPFIRevertsWhenAmountRoundsToZero() public {

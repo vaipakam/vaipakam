@@ -135,35 +135,22 @@ export function useVPFIDiscount(chainOverride?: ChainConfig | null) {
     try {
       // Per-wallet cap is bucketed by **origin chain** on the canonical
       // Diamond (per docs/TokenomicsTechSpec.md §8a + the on-chain
-      // {VPFIDiscountFacet._computeBuyAndDebitCaps} debit path). For a
-      // mirror-chain bridged buy, the canonical Diamond debits the bucket
-      // keyed on the user's ORIGIN chain eid (carried in the OFT message),
-      // not on the canonical chain's local eid. The historical
-      // {getVPFISoldTo(user)} returned the canonical chain's local-eid
-      // bucket — wrong for mirror buys, where it can show "remaining
-      // allowance" while the user's actual origin-chain bucket is already
-      // exhausted, leading to a Base-side refund/revert.
-      //
-      // Resolve the origin eid from `defaultChain` (the wallet's connected
-      // chain), regardless of any `chainOverride` used to read config from
-      // the canonical Diamond. When the eid is null (e.g. testnet entry
-      // without LZ wired) we read the legacy single-key getter so we don't
-      // start probing eid=0 unintentionally.
-      const originEid = defaultChain.lzEid ?? null;
+      // {VPFIDiscountFacet._computeBuyAndDebitCaps} debit path). The
+      // canonical Diamond debits the bucket keyed on the user's ORIGIN
+      // EVM chain id — for a bridged buy, the source chain id carried in
+      // the CCIP message; for a direct buy, Base's own `block.chainid`.
+      // Read that same per-chain bucket here, keyed on `defaultChain`
+      // (the wallet's connected chain), so the displayed remaining
+      // allowance matches what a buy will actually debit — regardless of
+      // any `chainOverride` used to read config from the canonical Diamond.
+      const originChainId = defaultChain.chainId;
       const soldToPromise: Promise<bigint> = !address
         ? Promise.resolve(0n)
-        : originEid !== null
-        ? (publicClient.readContract({
-            address: diamondAddress,
-            abi: DIAMOND_ABI,
-            functionName: 'getVPFISoldToByEid',
-            args: [address as Address, originEid],
-          }) as Promise<bigint>)
         : (publicClient.readContract({
             address: diamondAddress,
             abi: DIAMOND_ABI,
-            functionName: 'getVPFISoldTo',
-            args: [address as Address],
+            functionName: 'getVPFISoldToByChainId',
+            args: [address as Address, originChainId],
           }) as Promise<bigint>);
       const [tuple, soldToWallet] = await Promise.all([
         publicClient.readContract({

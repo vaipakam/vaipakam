@@ -7,7 +7,7 @@ import {LibSlippage} from "../libraries/LibSlippage.sol";
 import {LibPeerLTV} from "../libraries/LibPeerLTV.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import {FeedRegistryInterface} from "@chainlink/contracts/src/v0.8/interfaces/FeedRegistryInterface.sol";
+import {FeedRegistryInterface} from "@vaipakam-vendor/chainlink/FeedRegistryInterface.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import {AggregatorV2V3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV2V3Interface.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";

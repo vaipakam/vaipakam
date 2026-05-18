@@ -103,8 +103,8 @@ FACETS=(
   "StakingRewardsFacet"
   "TreasuryFacet"
   "VaipakamNFTFacet"
-  "VPFIBuyAdapter"
-  "VPFIBuyReceiver"
+  "VpfiBuyAdapter"
+  "VpfiBuyReceiver"
   "VPFIDiscountFacet"
   "VPFITokenFacet"
   # FlashLoanLiquidationPath.md Phase 3 — standalone reference

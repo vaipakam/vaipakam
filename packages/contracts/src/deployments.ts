@@ -155,10 +155,11 @@ export interface Deployment {
   rewardOApp?: HexAddress;
   rewardOAppBootstrapImpl?: HexAddress;
   rewardOAppRealImpl?: HexAddress;
-  rewardLocalEid?: number;
-  rewardBaseEid?: number;
+  // T-068: reward chains key by EVM chain id, not LayerZero endpoint id.
+  // A chain's own identity is `block.chainid` (no `rewardLocalEid`).
+  rewardBaseChainId?: number;
   rewardGraceSeconds?: number;
-  rewardExpectedSourceEids?: number[];
+  rewardExpectedSourceChainIds?: number[];
   interactionLaunchTimestamp?: string;
 
   // ── Universal cross-chain plumbing ──────────────────────────────

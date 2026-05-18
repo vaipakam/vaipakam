@@ -28,12 +28,12 @@ import {IRewardOApp} from "../interfaces/IRewardOApp.sol";
  *           `D+1` onward, forwarding `(lenderNumeraire18, borrowerNumeraire18)` via
  *           LayerZero.
  *        2. On arrival, the Base OApp calls {onChainReportReceived}
- *           which records the pair under the source eid, increments
+ *           which records the pair under the source chainId, increments
  *           `chainDailyReportCount[D]`, and stamps `dailyFirstReportAt[D]`.
- *        3. Once every expected eid has reported OR
+ *        3. Once every expected chainId has reported OR
  *           `rewardGraceSeconds` has elapsed since `dailyFirstReportAt[D]`,
  *           anyone may call {finalizeDay}. The finalizer sums reported
- *           eids, writes the `dailyGlobal*InterestNumeraire18[D]` pair,
+ *           chainIds, writes the `dailyGlobal*InterestNumeraire18[D]` pair,
  *           mirrors the pair into `knownGlobal*InterestNumeraire18[D]` for
  *           Base's own claim consumers, flips `dailyGlobalFinalized[D]`,
  *           and emits {DailyGlobalInterestFinalized}.
@@ -63,15 +63,15 @@ contract RewardAggregatorFacet is
     ///         aggregator. Useful for monitoring (per-chain coverage)
     ///         and for replaying missed broadcasts after a LZ outage.
     /// @param dayId                 Day being reported.
-    /// @param sourceEid             LayerZero eid of the mirror that reported.
+    /// @param sourceChainId             LayerZero chainId of the mirror that reported.
     /// @param lenderNumeraire18           Reported lender USD-18 for that chain.
     /// @param borrowerNumeraire18         Reported borrower USD-18 for that chain.
-    /// @param reportCount           Running count of expected eids
+    /// @param reportCount           Running count of expected chainIds
     ///                              reported for `dayId` (incl. this one).
     /// @custom:event-category informational/reward-transport
     event ChainReportAggregated(
         uint256 indexed dayId,
-        uint32 indexed sourceEid,
+        uint32 indexed sourceChainId,
         uint256 lenderNumeraire18,
         uint256 borrowerNumeraire18,
         uint32 reportCount
@@ -81,15 +81,15 @@ contract RewardAggregatorFacet is
     ///         downstream mirror must be able to trust that the pair is
     ///         immutable after this event fires.
     /// @param dayId                 Day being finalized.
-    /// @param globalLenderNumeraire18     Sum-across-eids lender USD-18.
-    /// @param globalBorrowerNumeraire18   Sum-across-eids borrower USD-18.
-    /// @param participatingEidCount Number of eids that contributed.
+    /// @param globalLenderNumeraire18     Sum-across-chainIds lender USD-18.
+    /// @param globalBorrowerNumeraire18   Sum-across-chainIds borrower USD-18.
+    /// @param participatingChainCount Number of chainIds that contributed.
     /// @custom:event-category informational/reward-transport
     event DailyGlobalInterestFinalized(
         uint256 indexed dayId,
         uint256 globalLenderNumeraire18,
         uint256 globalBorrowerNumeraire18,
-        uint32 participatingEidCount
+        uint32 participatingChainCount
     );
 
     /// @notice Emitted for every expected mirror whose daily report was
@@ -98,13 +98,13 @@ contract RewardAggregatorFacet is
     ///         {forceFinalizeDay} was used to close the day early. Ops
     ///         / governance can use this to reconcile out-of-band.
     /// @param dayId     Day that finalized.
-    /// @param sourceEid Mirror eid whose contribution was zeroed.
+    /// @param sourceChainId Mirror chainId whose contribution was zeroed.
     /// @param forced    True iff the zero came from {forceFinalizeDay}
     ///                  rather than the grace-window path.
     /// @custom:event-category informational/reward-transport
     event ChainContributionZeroed(
         uint256 indexed dayId,
-        uint32 indexed sourceEid,
+        uint32 indexed sourceChainId,
         bool forced
     );
 
@@ -115,20 +115,20 @@ contract RewardAggregatorFacet is
     /// @param dayId                 Day that was force-finalized.
     /// @param globalLenderNumeraire18     Lender denominator at force-finalize time.
     /// @param globalBorrowerNumeraire18   Borrower denominator at force-finalize time.
-    /// @param participatingEidCount Number of eids that contributed.
-    /// @param missingEidCount       Number of eids zeroed by the override.
+    /// @param participatingChainCount Number of chainIds that contributed.
+    /// @param missingChainCount       Number of chainIds zeroed by the override.
     /// @custom:event-category informational/reward-transport
     event DayForceFinalized(
         uint256 indexed dayId,
         uint256 globalLenderNumeraire18,
         uint256 globalBorrowerNumeraire18,
-        uint32 participatingEidCount,
-        uint32 missingEidCount
+        uint32 participatingChainCount,
+        uint32 missingChainCount
     );
 
     /// @notice Emitted when ops mutate the Base-side expected-source list.
     /// @custom:event-category informational/config
-    event ExpectedSourceEidsUpdated(uint32[] eids);
+    event ExpectedSourceChainIdsUpdated(uint32[] chainIds);
 
     // ─── Modifiers ──────────────────────────────────────────────────────────
 
@@ -154,37 +154,37 @@ contract RewardAggregatorFacet is
 
     /**
      * @notice Record a mirror's day-`D` `(lender, borrower)` USD-18 pair
-     *         under `sourceEid`.
+     *         under `sourceChainId`.
      * @dev Only callable by `rewardOApp`. Rejects duplicates via
-     *      `chainDailyReported[dayId][sourceEid]`. Rejects late reports
+     *      `chainDailyReported[dayId][sourceChainId]`. Rejects late reports
      *      once `dailyGlobalFinalized[dayId] == true`. Rejects unknown
-     *      source eids not in `expectedSourceEids`.
+     *      source chainIds not in `expectedSourceChainIds`.
      *
      *      Also serves as Base's own write path when {RewardReporterFacet.closeDay}
      *      runs on the canonical chain — that facet writes directly via
      *      shared storage, so it does NOT go through this method.
-     * @param sourceEid      LayerZero eid of the reporting mirror.
+     * @param sourceChainId      LayerZero chainId of the reporting mirror.
      * @param dayId          Day being reported.
      * @param lenderNumeraire18    Mirror's local lender USD-18 for `dayId`.
      * @param borrowerNumeraire18  Mirror's local borrower USD-18 for `dayId`.
      */
     function onChainReportReceived(
-        uint32 sourceEid,
+        uint32 sourceChainId,
         uint256 dayId,
         uint256 lenderNumeraire18,
         uint256 borrowerNumeraire18
     ) external onlyRewardOApp onlyCanonical {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
-        if (!_isExpectedEid(s, sourceEid)) revert SourceEidNotExpected();
+        if (!_isExpectedChainId(s, sourceChainId)) revert SourceChainIdNotExpected();
         if (s.dailyGlobalFinalized[dayId]) revert ReportAfterFinalization();
-        if (s.chainDailyReported[dayId][sourceEid]) {
+        if (s.chainDailyReported[dayId][sourceChainId]) {
             revert ChainDayAlreadyReported();
         }
 
-        s.chainDailyLenderInterestNumeraire18[dayId][sourceEid] = lenderNumeraire18;
-        s.chainDailyBorrowerInterestNumeraire18[dayId][sourceEid] = borrowerNumeraire18;
-        s.chainDailyReported[dayId][sourceEid] = true;
+        s.chainDailyLenderInterestNumeraire18[dayId][sourceChainId] = lenderNumeraire18;
+        s.chainDailyBorrowerInterestNumeraire18[dayId][sourceChainId] = borrowerNumeraire18;
+        s.chainDailyReported[dayId][sourceChainId] = true;
         uint32 count;
         unchecked {
             count = s.chainDailyReportCount[dayId] + 1;
@@ -196,7 +196,7 @@ contract RewardAggregatorFacet is
 
         emit ChainReportAggregated(
             dayId,
-            sourceEid,
+            sourceChainId,
             lenderNumeraire18,
             borrowerNumeraire18,
             count
@@ -209,12 +209,12 @@ contract RewardAggregatorFacet is
      * @notice Finalize the global denominators for day `D` once coverage
      *         or grace conditions are met.
      * @dev Permissionless — anyone may call once:
-     *        - every entry in `expectedSourceEids` has a report for `D`, OR
+     *        - every entry in `expectedSourceChainIds` has a report for `D`, OR
      *        - `block.timestamp >= dailyFirstReportAt[D] + graceSeconds`
      *          (with at least one report on file).
      *
      *      Sums reported `chainDaily*InterestNumeraire18` across all expected
-     *      eids (missing eids contribute zero and emit
+     *      chainIds (missing chainIds contribute zero and emit
      *      {ChainContributionZeroed}), writes the
      *      `dailyGlobal*InterestNumeraire18` pair, mirrors the pair into
      *      `knownGlobal*InterestNumeraire18` so Base-side claim flows see the
@@ -232,7 +232,7 @@ contract RewardAggregatorFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.dailyGlobalFinalized[dayId]) revert DayAlreadyFinalized();
 
-        uint256 nExpected = s.expectedSourceEids.length;
+        uint256 nExpected = s.expectedSourceChainIds.length;
         uint32 reportCount = s.chainDailyReportCount[dayId];
 
         bool fullCoverage = reportCount >= nExpected && nExpected != 0;
@@ -254,13 +254,13 @@ contract RewardAggregatorFacet is
      *         is incomplete AND the grace window has not elapsed.
      * @dev ADMIN_ROLE-gated. Exists so a single permanently offline
      *      chain (LZ outage, endpoint migration, operator downtime)
-     *      cannot brick global finalization forever. Every missing eid
+     *      cannot brick global finalization forever. Every missing chainId
      *      contributes zero to the denominator — governance should
      *      reconcile affected users out of band (e.g. Insurance pool).
      *
      *      Emits {DayForceFinalized} on top of {DailyGlobalInterestFinalized}
      *      so ops dashboards can distinguish admin overrides from
-     *      normal grace-window closes. Every zeroed eid fires
+     *      normal grace-window closes. Every zeroed chainId fires
      *      {ChainContributionZeroed} with `forced = true`.
      *
      *      Reverts `DayAlreadyFinalized` on replay. Does NOT require
@@ -285,7 +285,7 @@ contract RewardAggregatorFacet is
         _finalizeAndWrite(s, dayId, /* forced */ true);
     }
 
-    /// @dev Shared sum-expected-eids / write-globals / emit path used
+    /// @dev Shared sum-expected-chainIds / write-globals / emit path used
     ///      by both {finalizeDay} (grace/coverage path) and
     ///      {forceFinalizeDay} (admin override). Separated only to
     ///      keep the two public entry points each responsible for
@@ -295,7 +295,7 @@ contract RewardAggregatorFacet is
         uint256 dayId,
         bool forced
     ) internal {
-        uint32[] storage expected = s.expectedSourceEids;
+        uint32[] storage expected = s.expectedSourceChainIds;
         uint256 nExpected = expected.length;
 
         uint256 globalLender;
@@ -304,15 +304,15 @@ contract RewardAggregatorFacet is
         uint32 missing;
 
         for (uint256 i; i < nExpected; ) {
-            uint32 eid = expected[i];
-            if (s.chainDailyReported[dayId][eid]) {
-                globalLender += s.chainDailyLenderInterestNumeraire18[dayId][eid];
-                globalBorrower += s.chainDailyBorrowerInterestNumeraire18[dayId][eid];
+            uint32 chainId = expected[i];
+            if (s.chainDailyReported[dayId][chainId]) {
+                globalLender += s.chainDailyLenderInterestNumeraire18[dayId][chainId];
+                globalBorrower += s.chainDailyBorrowerInterestNumeraire18[dayId][chainId];
                 unchecked {
                     ++participating;
                 }
             } else {
-                emit ChainContributionZeroed(dayId, eid, forced);
+                emit ChainContributionZeroed(dayId, chainId, forced);
                 unchecked {
                     ++missing;
                 }
@@ -383,61 +383,62 @@ contract RewardAggregatorFacet is
 
     // ─── Admin ──────────────────────────────────────────────────────────────
 
-    /// @notice Set the full list of eids the Base aggregator expects to
-    ///         receive daily reports from. Include Base's own `localEid`
-    ///         (because Base is a source too) + every mirror eid.
+    /// @notice Set the full list of EVM chain ids the Base aggregator
+    ///         expects to receive daily reports from. Include Base's own
+    ///         `block.chainid` (because Base is a source too) + every
+    ///         mirror chain id.
     /// @dev Overwrites the previous list. Admin must keep it in sync
-    ///      with the mirror deployments; dropping an eid for a given
+    ///      with the mirror deployments; dropping a chain id for a given
     ///      day mid-flight causes that day to finalize with a lower
     ///      denominator.
-    /// @param eids Full replacement list of expected source eids.
-    function setExpectedSourceEids(
-        uint32[] calldata eids
+    /// @param chainIds Full replacement list of expected source chain ids.
+    function setExpectedSourceChainIds(
+        uint32[] calldata chainIds
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) onlyCanonical {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 len = s.expectedSourceEids.length;
-        // Pop existing, then push new — `delete s.expectedSourceEids`
+        uint256 len = s.expectedSourceChainIds.length;
+        // Pop existing, then push new — `delete s.expectedSourceChainIds`
         // does not recursively clear dynamic arrays in Diamond storage
         // across facets without an explicit loop.
         for (uint256 i; i < len; ) {
-            s.expectedSourceEids.pop();
+            s.expectedSourceChainIds.pop();
             unchecked {
                 ++i;
             }
         }
-        for (uint256 i; i < eids.length; ) {
-            s.expectedSourceEids.push(eids[i]);
+        for (uint256 i; i < chainIds.length; ) {
+            s.expectedSourceChainIds.push(chainIds[i]);
             unchecked {
                 ++i;
             }
         }
-        emit ExpectedSourceEidsUpdated(eids);
+        emit ExpectedSourceChainIdsUpdated(chainIds);
     }
 
     // ─── Views ──────────────────────────────────────────────────────────────
 
-    /// @notice Whether `sourceEid` has reported for `dayId`.
+    /// @notice Whether `sourceChainId` has reported for `dayId`.
     function isChainReported(
         uint256 dayId,
-        uint32 sourceEid
+        uint32 sourceChainId
     ) external view returns (bool) {
         return
-            LibVaipakam.storageSlot().chainDailyReported[dayId][sourceEid];
+            LibVaipakam.storageSlot().chainDailyReported[dayId][sourceChainId];
     }
 
     /// @notice Mirror-specific `(lender, borrower)` pair for `dayId`.
     function getChainReport(
         uint256 dayId,
-        uint32 sourceEid
+        uint32 sourceChainId
     ) external view returns (uint256 lenderNumeraire18, uint256 borrowerNumeraire18) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return (
-            s.chainDailyLenderInterestNumeraire18[dayId][sourceEid],
-            s.chainDailyBorrowerInterestNumeraire18[dayId][sourceEid]
+            s.chainDailyLenderInterestNumeraire18[dayId][sourceChainId],
+            s.chainDailyBorrowerInterestNumeraire18[dayId][sourceChainId]
         );
     }
 
-    /// @notice Running count of expected eids that have reported for `dayId`.
+    /// @notice Running count of expected chainIds that have reported for `dayId`.
     function getChainDailyReportCount(
         uint256 dayId
     ) external view returns (uint32) {
@@ -453,8 +454,8 @@ contract RewardAggregatorFacet is
 
     /// @notice Finalization status + pair for `dayId`.
     /// @return finalized            True iff {finalizeDay} has run for `dayId`.
-    /// @return globalLenderNumeraire18    Sum-across-eids lender USD-18.
-    /// @return globalBorrowerNumeraire18  Sum-across-eids borrower USD-18.
+    /// @return globalLenderNumeraire18    Sum-across-chainIds lender USD-18.
+    /// @return globalBorrowerNumeraire18  Sum-across-chainIds borrower USD-18.
     function getDailyGlobalInterest(
         uint256 dayId
     )
@@ -474,9 +475,9 @@ contract RewardAggregatorFacet is
         );
     }
 
-    /// @notice Full list of eids the aggregator expects to hear from.
-    function getExpectedSourceEids() external view returns (uint32[] memory) {
-        return LibVaipakam.storageSlot().expectedSourceEids;
+    /// @notice Full list of chainIds the aggregator expects to hear from.
+    function getExpectedSourceChainIds() external view returns (uint32[] memory) {
+        return LibVaipakam.storageSlot().expectedSourceChainIds;
     }
 
     /// @notice Whether `finalizeDay(dayId)` can be called now.
@@ -492,7 +493,7 @@ contract RewardAggregatorFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.dailyGlobalFinalized[dayId]) return (false, 1);
 
-        uint32 nExpected = uint32(s.expectedSourceEids.length);
+        uint32 nExpected = uint32(s.expectedSourceChainIds.length);
         uint32 count = s.chainDailyReportCount[dayId];
         uint64 firstAt = s.dailyFirstReportAt[dayId];
 
@@ -510,16 +511,16 @@ contract RewardAggregatorFacet is
 
     // ─── Internals ──────────────────────────────────────────────────────────
 
-    /// @dev Linear scan over `expectedSourceEids` — the list is tiny
+    /// @dev Linear scan over `expectedSourceChainIds` — the list is tiny
     ///      (≤ ~5 Phase-1 chains), and a set-style bitmap would burn
     ///      storage slots for a membership we only check on ingress.
-    function _isExpectedEid(
+    function _isExpectedChainId(
         LibVaipakam.Storage storage s,
-        uint32 eid
+        uint32 chainId
     ) internal view returns (bool) {
-        uint32[] storage list = s.expectedSourceEids;
+        uint32[] storage list = s.expectedSourceChainIds;
         for (uint256 i; i < list.length; ) {
-            if (list[i] == eid) return true;
+            if (list[i] == chainId) return true;
             unchecked {
                 ++i;
             }

@@ -6,7 +6,21 @@ solc_version = '0.8.29'
 viaIR = true
 optimizer = true
 optimizer_runs = 200
-threads = 8 
+threads = 8
+
+# T-068 — the vendored Chainlink `chainlink-ccip` / `chainlink-evm` trees
+# carry Chainlink's OWN Foundry test files (`*.t.sol`) and test helpers.
+# `forge test` test-discovery would otherwise try to compile them, and they
+# fail (they expect Chainlink's own remapping context — a different
+# `forge-std`, old OZ versions, etc.). Vaipakam never runs dependency
+# tests, so this excludes them from compilation. Production CCIP/pool
+# contracts are unaffected — only the deps' `test/` material is skipped.
+skip = [
+  "lib/chainlink-ccip/**/*.t.sol",
+  "lib/chainlink-evm/**/*.t.sol",
+  "lib/chainlink-ccip/**/test/**",
+  "lib/chainlink-evm/**/test/**",
+]
 
 # Filesystem cheatcode permissions. Required by `script/lib/Deployments.sol`
 # so deploy scripts can WRITE the per-chain `deployments/<chain>/addresses.json`

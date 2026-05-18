@@ -311,44 +311,48 @@ scoped fields. Exception: `vpfiBuyPaymentToken` carries
 runtime sentinel, not a missing field, and the consumer maps zero
 → null at the boundary.
 
-## Cross-Chain Security Policy (DVN + Pause)
+## Cross-Chain Security Policy (CCIP)
 
-Every LayerZero OApp / OFT in this repo (`VPFIOFTAdapter`, `VPFIMirror`,
-`VPFIBuyAdapter`, `VPFIBuyReceiver`, `VaipakamRewardOApp`) ships with the
-LayerZero defaults, which are **1-required / 0-optional DVN** — the
-single-verifier shape that the April 2026 cross-chain bridge exploit
-rode. A mainnet deploy that inherits those defaults is **not**
-acceptable.
+Vaipakam's cross-chain layer runs on **Chainlink CCIP** — T-068 migrated
+it off LayerZero. CCIP's security is operated by Chainlink (a committing
+DON, an executing DON, and an independent **Risk Management Network** with
+a separate codebase + operators that re-verifies every message) and is
+uniform for every integrator. There is **no DVN fleet to select or
+configure** and no insecure default — the LayerZero "1-required /
+0-optional DVN" footgun (the shape the April 2026 ~$292M Kelp bridge
+exploit rode) does not exist here.
 
-**Mainnet-deploy gate** — before routing real value, all of the below must
-be true:
+The cross-chain code lives in `contracts/src/crosschain/`:
+- `ICrossChainMessenger` — the provider-agnostic port; domain contracts
+  depend only on this, never on a CCIP library.
+- `CcipMessenger` — the single CCIP-aware adapter.
+- `VPFIMirrorToken` + the stock CCIP `LockReleaseTokenPool` /
+  `BurnMintTokenPool` — VPFI as a Cross-Chain Token (CCT).
+- `VpfiBuyAdapter` / `VpfiBuyReceiver` — the cross-chain fixed-rate buy
+  flow (the two-step release is kept).
+- `VaipakamRewardMessenger` — cross-chain reward accounting.
 
-1. `ConfigureLZConfig.s.sol` has run against every (OApp, eid) pair. This
-   sets the DVN set, confirmations, libraries, and enforced options.
-2. `VPFIBuyAdapter.setRateLimits(50_000e18, 500_000e18)` has been called.
-   Defaults are `type(uint256).max` (disabled) at deploy time.
-3. `LZConfig.t.sol` passes — it asserts every OApp × eid reflects the
-   policy and fails the build otherwise.
+**Mainnet-deploy gates** — before routing real value:
 
-**DVN policy**: **3 required + 2 optional, threshold 1-of-2.** Required:
-LayerZero Labs + Google Cloud + Polyhedra or Nethermind. Optional:
-BWare Labs + Stargate/Horizen. Operator diversity is load-bearing
-— different corporate operators, different infra.
+1. CCIP lanes enabled and each `CcipMessenger`'s registry configured —
+   chainId↔CCIP-selector, remote messengers, channel peers.
+2. Per-lane CCIP **rate limits** set on every VPFI TokenPool via
+   `VpfiPoolRateGovernor` (the bounds-checked `rateLimitAdmin`). Starting
+   values: capacity 50,000 VPFI, refill ≈5.8 VPFI/s. The governor refuses
+   to disable a lane's limit and range-bounds every value (ET-008).
+3. The CCT admin (CCIP `TokenAdminRegistry`) and every cross-chain
+   contract's owner = the admin multisig → governance timelock.
 
-**Chain scope (Phase 1)**: Ethereum, Base, Arbitrum, Optimism, Polygon
-zkEVM, BNB Chain. Polygon PoS is out of Phase 1 (weaker bridge trust).
-Solana is out of scope for all phases until further notice.
+**Pause lever**: every cross-chain contract carries `GuardianPausable` —
+guardian-or-owner `pause()`, owner-only `unpause()`, on both the send and
+receive paths. A paused inbound reverts; CCIP records it as a failed
+message, manually re-executable once unpaused, so nothing is lost.
 
-**Confirmations**: Ethereum 15 / Base 10 / OP 10 / Arb 10 / zkEVM 20 /
-BNB 15. Higher numbers are acceptable; lower numbers require justification.
+**Chain scope (Phase 1)**: Ethereum, Base, Arbitrum, Optimism, BNB Chain.
+zk-rollup chains and Solana are out of scope.
 
-**Pause lever**: every LZ-facing contract exposes owner-gated `pause()` /
-`unpause()` on both send and receive paths. Use in the first minutes of
-a suspected incident; a precedent in the April 2026 cross-chain bridge
-incident (a 46-minute pause) blocked ~$200M of follow-up drain.
-
-Full detail in [`contracts/README.md`](contracts/README.md) under
-"Cross-Chain Security".
+Full detail in
+[`docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md`](docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md).
 
 ## VPFIBuyAdapter — payment-token mode by chain
 

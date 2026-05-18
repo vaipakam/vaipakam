@@ -458,12 +458,12 @@ export const ADMIN_KNOBS: KnobMeta[] = [
     midMin: '0',
     midMax: '1',
     getter: {
-      facet: 'VPFIBuyReceiver',
+      facet: 'VpfiBuyReceiver',
       fn: 'reconciliationWatchdogEnabled',
       returns: 'bool',
     },
     setter: {
-      facet: 'VPFIBuyReceiver',
+      facet: 'VpfiBuyReceiver',
       fn: 'setReconciliationWatchdogEnabled',
       args: [{ name: 'enabled', type: 'bool' }],
     },

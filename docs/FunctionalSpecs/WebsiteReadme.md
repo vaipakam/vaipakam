@@ -124,6 +124,8 @@ Legal and data-rights requirements:
 - a disabled Terms gate state should exist for testnet / pre-launch operation, so the code path can ship without forcing acceptance before governance activates it
 - the Privacy page should explain what Vaipakam collects, what it deliberately does not collect, who receives consented analytics data, and how users can exercise GDPR / CCPA-style data rights
 - data-rights UI must live on a dedicated connected-app page at `/app/data-rights`, with action cards for exporting or deleting Vaipakam-namespaced browser storage and clear explanation that public on-chain state cannot be erased by frontend action
+- data-rights UI should also provide a user-initiated erasure path for server-side diagnostic error records where that feature is enabled. The request should be authenticated by wallet signature, should use a privacy-preserving wallet identity rather than storing or exposing the raw wallet address, and should return the same user-facing response whether records were deleted, absent, or temporarily retained under a legal hold.
+- legal-hold status and document handling should remain an admin-only compliance surface, with a secured private document vault and append-only audit history. User-facing erasure screens should not reveal whether a gagged legal hold exists.
 - the issue-details drawer should stay scoped to support diagnostics: reporting, downloading / clearing the current in-memory journey log, and linking to `/app/data-rights` for broader browser-storage rights
 - the Data Rights page should also expose a `Download journey log (this session)` card so a user can share the live session buffer even when the issue drawer is hidden by operator configuration
 - Delete-my-data controls should use a deliberate confirmation step and should enumerate the concrete local effects before deleting, including consent reset, journey-log clearing, cached event-index removal, and theme / language / mode preference reset
@@ -196,11 +198,11 @@ Transaction-safety and single-signature flows:
 - review modals for Offer Book accept, Create Offer submit, Repay, and Add Collateral should support the Permit2-first pattern where the action uses Uniswap Permit2 when possible and falls back to the classic approve-plus-action path when Permit2 is unavailable or unsupported
 - Permit2 should be presented as a convenience that reduces wallet popups for supported ERC-20 actions, not as a requirement to use Vaipakam
 - Permit signatures should use the canonical Permit2 deployment at `0x000000000022D473030F116dDEE9F6B43aC78BA3`, expire after 30 minutes, and include clear review copy so users understand the asset and amount being authorized
-- before the final confirmation on supported review modals, the app should show a transaction preview panel backed by the server-side Blockaid proxy when available
-- the transaction preview panel should distinguish benign previews, warnings, malicious classifications, and preview-unavailable states with clear severity styling
-- Blockaid unavailability must fail soft: it may collapse to a subtle preview-unavailable state, but it must not block the on-chain transaction path by itself
-- API keys for transaction scanning and swap quotes must stay server-side; the browser should call only worker-internal proxy routes
-- review modals should continue to treat the wallet transaction and smart contract call as the source of truth; scanner output is informational safety context
+- before the final confirmation on supported review modals, the app should show a transaction preview panel based on an in-app chain simulation of the pending transaction
+- the transaction preview panel should distinguish `simulated OK`, `would revert` with a readable reason when available, and `preview unavailable`
+- transaction preview is advisory only and must never block signing by itself; the wallet transaction and mined receipt remain the source of truth
+- preview copy should avoid false-safe states before a real simulation result arrives, and known placeholder-signature cases such as Permit2 preview artefacts should be shown as unavailable rather than as genuine failures
+- third-party risk scanners, if used later for token, NFT, address, approval, or counterparty risk, should be separate from Vaipakam's pre-sign transaction simulation and should not require a transaction-scan Worker proxy for ordinary Vaipakam contract calls
 
 Wallet connection UX:
 
@@ -259,7 +261,7 @@ Borrower VPFI discount UX:
 - the page should not require or prompt the user to manually switch to the canonical chain in order to buy VPFI
 - if the protocol routes the purchase through canonical-chain infrastructure under the hood, that complexity should be abstracted away from the user-facing purchase flow
 - buy-card labels, rate stats, tooltips, and balance checks should be asset-aware: ETH-native chains may label the pay asset as the chain's native gas asset, while WETH-pull chains such as BNB Chain or Polygon PoS must label the configured bridged WETH payment token clearly and provide a verification link for that exact asset
-- LayerZero fee copy should label the fee in the active chain's native gas symbol, even when the VPFI purchase amount itself is paid with bridged WETH
+- cross-chain execution-fee copy should label the fee in the active chain's native gas symbol, even when the VPFI purchase amount itself is paid with bridged WETH
 - the fixed-rate `Buy VPFI` flow should follow the active tokenomics spec and must not rely on a silent pre-minted sale reserve unless a later approved design explicitly reintroduces one
 - if the purchase route settles through a Base-chain receiver, VPFI must be minted or released only after the receiver actually receives ETH, and the delivered VPFI amount must be calculated from the received ETH amount
 - after purchase, the VPFI should be delivered to the user's wallet on the chain where the user chose to buy
@@ -320,7 +322,7 @@ Reward-claiming UX:
 - after a successful claim, the UI should:
   - show a success state with the exact amount claimed
   - refresh wallet balance and Vaipakam Vault balance in real time
-  - offer an optional one-click `Bridge to another chain` action through the official LayerZero bridge flow if the user wants to move claimed VPFI, including a direct link to `https://layerzero.superbridge.app/` when appropriate
+  - offer an optional bridge action through the supported VPFI cross-chain transfer surface if the user wants to move claimed VPFI to another chain, without requiring that bridge action for ordinary reward claims
 - if the user has no pending rewards on the current chain, the `Claim Rewards` action should be disabled or hidden with a helpful message such as `No rewards available to claim on this chain`
 - if the user recently changed Vaipakam Vault balance through deposit, withdrawal, or fee deduction, reward displays must still calculate correctly up to the current block
 - if the user switches chains, the active reward surfaces should refresh and show rewards specific to the newly connected chain
@@ -373,7 +375,7 @@ Unstaking VPFI:
 - unstaking should be treated as instant with no lock-up period
 - users should still be allowed to unstake while they have active loans, but the UI must clearly warn them about the immediate reduction in discount tier and staking rewards
 - if the user has enabled the shared `Use VPFI for fee discount` consent flag, the UI should warn that unstaking may reduce or disable future fee discounts
-- after unstaking, the UI may offer the standard LayerZero bridge flow if the user wants to move that VPFI to another chain, including a direct link to `https://layerzero.superbridge.app/`
+- after unstaking, the UI may offer the supported VPFI cross-chain transfer surface if the user wants to move that VPFI to another chain
 - if the user has zero VPFI in escrow, the unstake action should be hidden or disabled with a helpful message
 - if active loans currently rely on Vault-held VPFI for fee-discount eligibility, the unstake flow should show a clear warning before confirmation
 - if the user switches chains, `/app/buy-vpfi` should refresh and show the Vaipakam Vault balance, staking rewards, and unstake availability for the newly connected chain

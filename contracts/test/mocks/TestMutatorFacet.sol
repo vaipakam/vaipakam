@@ -487,15 +487,14 @@ contract TestMutatorFacet {
         return LibVaipakam.storageSlot().userSeen[u];
     }
 
-    /// @notice Test-only: stamp `s.localEid` without going through the
-    ///         RewardReporterFacet path. Production sets this via
-    ///         `RewardReporterFacet.setLocalEid` (admin-gated). Tests
-    ///         that exercise the canonical-chain VPFI fixed-rate buy
-    ///         must set a non-zero `localEid` here so the per-(buyer,
-    ///         originEid) cap bucket is well-defined; the on-chain
-    ///         entry point reverts `VPFICanonicalEidNotSet` otherwise.
+    /// @notice Vestigial (T-068): writes the deprecated `localEid`
+    ///         legacy slot. The reward + VPFI-buy facets now derive a
+    ///         chain's identity from `block.chainid`, so nothing reads
+    ///         this value any more — the writer is retained only so the
+    ///         62-entry test-mutator selector list need not be
+    ///         re-indexed. Safe to drop together with that re-index.
     function setLocalEidForTest(uint32 eid) external {
-        LibVaipakam.storageSlot().localEid = eid;
+        LibVaipakam.storageSlot().localEid_LEGACY_DO_NOT_USE = eid;
     }
 
     /// @notice Append a {LibVaipakam.RewardEntry} record for `user` and link

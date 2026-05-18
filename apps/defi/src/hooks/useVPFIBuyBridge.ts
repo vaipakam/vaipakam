@@ -12,12 +12,12 @@ import {
 } from 'viem';
 import { useWalletClient } from 'wagmi';
 import { useWallet } from '../context/WalletContext';
-import { VPFIBuyAdapterABI } from '@vaipakam/contracts/abis';
+import { VpfiBuyAdapterABI } from '@vaipakam/contracts/abis';
 import { beginStep } from '../lib/journeyLog';
 import { decodeContractError } from '@vaipakam/lib/decodeContractError';
 import type { ChainConfig } from '../contracts/config';
 
-const ADAPTER_ABI = VPFIBuyAdapterABI as unknown as Abi;
+const ADAPTER_ABI = VpfiBuyAdapterABI as unknown as Abi;
 
 const ERC20_APPROVE_ABI = parseAbi([
   'function allowance(address owner, address spender) view returns (uint256)',
@@ -25,9 +25,9 @@ const ERC20_APPROVE_ABI = parseAbi([
 ]) as unknown as Abi;
 
 /**
- * Reason codes emitted by VPFIBuyReceiver when it rejects a bridged buy
+ * Reason codes emitted by VpfiBuyReceiver when it rejects a bridged buy
  * (`BuyRefunded.reason`). Kept inline — these are spec constants
- * (`IVPFIBuyMessages.FAIL_REASON_*`), not runtime-variable.
+ * (`IVpfiBuyCcipMessages.FAIL_REASON_*`), not runtime-variable.
  */
 const REFUND_REASONS: Record<number, string> = {
   0: 'Unknown failure on Base',
@@ -52,10 +52,10 @@ export type BridgeStatus =
 export interface BridgeQuote {
   /** Wei the buyer is committing (paymentToken unit in WETH mode). */
   ethWei: bigint;
-  /** LayerZero native fee required for the send leg. */
-  lzFee: bigint;
-  /** `msg.value` the buyer must send. `ethWei + lzFee` in native mode,
-   *  `lzFee` alone in WETH mode. */
+  /** CCIP native fee required for the send leg. */
+  ccipFee: bigint;
+  /** `msg.value` the buyer must send. `ethWei + ccipFee` in native mode,
+   *  `ccipFee` alone in WETH mode. */
   totalValue: bigint;
   /** Payment mode inferred from `adapter.paymentToken()`. */
   mode: 'native' | 'token';
@@ -68,8 +68,9 @@ export interface BridgeBuyState {
   /** requestId returned by `buy()` — tracks this specific purchase across its
    *  async lifecycle. */
   requestId: bigint | null;
-  /** LayerZero GUID for the outbound BUY_REQUEST; deep-link into LZScan. */
-  lzGuid: string | null;
+  /** CCIP message id for the outbound BUY_REQUEST; deep-link into the
+   *  CCIP explorer. */
+  messageId: string | null;
   /** Origin-chain tx hash that initiated the buy. */
   txHash: string | null;
   /** VPFI (18-dec) landed on the user's wallet — populated when status = landed. */
@@ -82,7 +83,7 @@ export interface BridgeBuyState {
 const INITIAL_STATE: BridgeBuyState = {
   status: 'idle',
   requestId: null,
-  lzGuid: null,
+  messageId: null,
   txHash: null,
   vpfiOut: null,
   refundReason: null,
@@ -97,7 +98,7 @@ type PendingBuyStruct = {
   status: number;
 };
 
-/** Mirrors the `BuyStatus` enum ordering in VPFIBuyAdapter.sol. */
+/** Mirrors the `BuyStatus` enum ordering in VpfiBuyAdapter.sol. */
 const STATUS_NONE = 0;
 const STATUS_PENDING = 1;
 const STATUS_RESOLVED_SUCCESS = 2;
@@ -113,15 +114,15 @@ const INITIAL_POLL_DELAY_MS = 15_000;
  * network.
  *
  * Flow:
- *  1. `quote(ethWei, minVpfiOut)` resolves the LayerZero native fee and the
+ *  1. `quote(ethWei, minVpfiOut)` resolves the CCIP native fee and the
  *     `msg.value` the buyer must send. Also discovers whether the adapter is
  *     in native-ETH or WETH mode.
  *  2. `buy(...)` submits the transaction: approves the payment token if
- *     needed, then calls `adapter.buy(...)`. Extracts `(requestId, lzGuid)`
+ *     needed, then calls `adapter.buy(...)`. Extracts `(requestId, messageId)`
  *     from the `BuyRequested` event and kicks off a poll loop against
  *     `pendingBuys(requestId)` until the adapter marks the request resolved.
  *  3. On `ResolvedSuccess`, status → `landed` and `vpfiOut` is hydrated from
- *     the corresponding `BuyResolvedSuccess` log. The VPFI OFT transfer lands
+ *     the corresponding `BuyResolvedSuccess` log. The VPFI CCIP transfer lands
  *     on the user's wallet asynchronously — downstream balance hooks should
  *     reload on `landed`.
  *  4. On `ResolvedRefunded`, status → `refunded` with a decoded reason.
@@ -166,7 +167,7 @@ export function useVPFIBuyBridge(chain: ChainConfig | null) {
   }, []);
 
   /**
-   * Preview the LayerZero fee + compute `msg.value`. Reads `paymentToken` so
+   * Preview the CCIP fee + compute `msg.value`. Reads `paymentToken` so
    * the caller can display the right copy (native vs WETH-approval).
    */
   const quote = useCallback(
@@ -174,12 +175,13 @@ export function useVPFIBuyBridge(chain: ChainConfig | null) {
       if (!readClient || !adapterAddress) return null;
       if (ethWei === 0n) return null;
       const [fee, paymentToken] = await Promise.all([
+        // `VpfiBuyAdapter.quoteBuy` returns a single `uint256 nativeFee`.
         readClient.readContract({
           address: adapterAddress,
           abi: ADAPTER_ABI,
           functionName: 'quoteBuy',
           args: [ethWei, minVpfiOut],
-        }) as Promise<{ nativeFee: bigint; lzTokenFee: bigint }>,
+        }) as Promise<bigint>,
         readClient.readContract({
           address: adapterAddress,
           abi: ADAPTER_ABI,
@@ -190,8 +192,8 @@ export function useVPFIBuyBridge(chain: ChainConfig | null) {
         paymentToken === zeroAddress ? 'native' : 'token';
       return {
         ethWei,
-        lzFee: fee.nativeFee,
-        totalValue: mode === 'native' ? ethWei + fee.nativeFee : fee.nativeFee,
+        ccipFee: fee,
+        totalValue: mode === 'native' ? ethWei + fee : fee,
         mode,
         paymentToken: mode === 'token' ? paymentToken : null,
       };
@@ -338,16 +340,16 @@ export function useVPFIBuyBridge(chain: ChainConfig | null) {
         });
 
         // The `buy()` return values are unavailable from a broadcast tx — we
-        // decode `(requestId, lzGuid)` from the synchronously-emitted
+        // decode `(requestId, messageId)` from the synchronously-emitted
         // `BuyRequested` log instead.
         const parsed = parseEventLogs({
           abi: ADAPTER_ABI,
           eventName: 'BuyRequested',
           logs: receipt.logs,
-        }) as Array<{ args: { requestId?: bigint; guid?: string } }>;
+        }) as Array<{ args: { requestId?: bigint; messageId?: string } }>;
         const evt = parsed[0];
         const requestId = evt?.args?.requestId ?? null;
-        const lzGuid = (evt?.args?.guid ?? null) as string | null;
+        const messageId = (evt?.args?.messageId ?? null) as string | null;
 
         if (requestId == null) {
           throw new Error(
@@ -358,14 +360,14 @@ export function useVPFIBuyBridge(chain: ChainConfig | null) {
         setState({
           status: 'pending',
           requestId,
-          lzGuid,
+          messageId,
           txHash,
           vpfiOut: null,
           refundReason: null,
           error: null,
         });
         schedulePoll(requestId);
-        step.success({ note: `requestId=${requestId}, guid=${lzGuid}` });
+        step.success({ note: `requestId=${requestId}, messageId=${messageId}` });
       } catch (err) {
         setState({
           ...INITIAL_STATE,
@@ -419,7 +421,7 @@ export function useVPFIBuyBridge(chain: ChainConfig | null) {
   );
 
   return {
-    /** True iff this chain has a VPFIBuyAdapter deployed. When false, the
+    /** True iff this chain has a VpfiBuyAdapter deployed. When false, the
      *  hook's action methods are no-ops and the UI should surface the
      *  canonical-chain buy instead. */
     available: !!adapterAddress,

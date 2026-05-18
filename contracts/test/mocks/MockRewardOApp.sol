@@ -116,13 +116,13 @@ contract MockRewardOApp is IRewardOApp {
     /// @dev Test prank: the mock calls the Diamond's aggregator as itself
     ///      (`msg.sender == rewardOApp`), satisfying `onlyRewardOApp`.
     function deliverChainReport(
-        uint32 sourceEid,
+        uint32 sourceChainId,
         uint256 dayId,
         uint256 lenderNumeraire18,
         uint256 borrowerNumeraire18
     ) external {
         RewardAggregatorFacet(diamond).onChainReportReceived(
-            sourceEid,
+            sourceChainId,
             dayId,
             lenderNumeraire18,
             borrowerNumeraire18
