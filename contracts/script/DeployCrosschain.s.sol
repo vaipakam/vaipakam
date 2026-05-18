@@ -22,6 +22,13 @@ import {VpfiBuyReceiver} from "../src/crosschain/VpfiBuyReceiver.sol";
 import {VaipakamRewardMessenger} from "../src/crosschain/VaipakamRewardMessenger.sol";
 import {Deployments} from "./lib/Deployments.sol";
 
+/// @dev The slice of OZ/Chainlink `Ownable2Step` this script drives — the
+///      CCIP `TokenPool` is `Ownable2Step`, so a fresh pool is owned by
+///      the deploying EOA and ownership moves in two steps.
+interface IOwnable2Step {
+    function transferOwnership(address newOwner) external;
+}
+
 /**
  * @title DeployCrosschain
  * @notice T-068 Phase 6 — deploys the Chainlink CCIP cross-chain stack on
@@ -127,6 +134,13 @@ contract DeployCrosschain is Script {
             );
             console.log("BurnMintTokenPool:      ", pool);
         }
+
+        // Hand the pool to `admin` so it joins every other cross-chain
+        // contract under one owner. `TokenPool` is `Ownable2Step`: this
+        // sets `admin` as the *pending* owner; `ConfigureCcip.s.sol`
+        // (admin-broadcast) completes the handover with `acceptOwnership()`
+        // before it wires lanes or the `rateLimitAdmin`.
+        IOwnable2Step(pool).transferOwnership(admin);
 
         // ── VpfiPoolRateGovernor — every chain. Needs the pool address. ──
         VpfiPoolRateGovernor govImpl = new VpfiPoolRateGovernor();
