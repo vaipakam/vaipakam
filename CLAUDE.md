@@ -623,3 +623,27 @@ historical breadcrumb.
 4. When applying labels, pick from `.github/LABELS.md` exclusively.
    If a needed label is missing from that doc, add it there first
    (with a one-line "use for" entry), then apply.
+
+## Release notes — per-PR fragments
+
+Release notes use a **fragment** model so they merge atomically with the
+work and never lag behind a merge.
+
+- **Every behaviour-changing PR carries its own fragment** in its diff:
+  a file `docs/ReleaseNotes/unreleased/<TASK-ID>-<slug>.md`, written in
+  plain English (no code), describing what changed and why. Copy
+  `docs/ReleaseNotes/unreleased/_TEMPLATE.md` as the starting point.
+  This is part of the PR — not a post-merge step.
+- **After the day's PRs merge**, fold the fragments into the dated file:
+  `bash docs/ReleaseNotes/assemble.sh` (defaults to today UTC; pass a
+  `YYYY-MM-DD` to override). It concatenates every pending fragment into
+  `docs/ReleaseNotes/ReleaseNotes-<date>.md`, removes the fragments, and
+  prints the commit steps. Review, add an intro paragraph, commit.
+- A non-blocking CI check (`.github/workflows/release-notes-drift.yml`)
+  warns in the Actions tab if a merge to `main` changed `contracts/src/`
+  or `apps/` but added no `docs/ReleaseNotes/` entry.
+
+This is the structural half of the post-merge definition-of-done: every
+merge → release notes + tick the related `docs/ToDo.md` entry + the
+`@vaipakam-labs` card moves to Done (automatic, via `Closes #<issue>` in
+the PR body). Never batch the release-notes update.
