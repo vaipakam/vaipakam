@@ -61,12 +61,22 @@ library Deployments {
         return string.concat("deployments/", chainSlug(), "/addresses.json");
     }
 
-    /// Per-chain folder slug. Used both for the file path and for
-    /// resolving the matching legacy env-var prefix
-    /// (`BASE_SEPOLIA_…`, etc.). Add new chains here when the protocol
-    /// expands.
+    /// Per-chain folder slug for the *active* chain. Used both for the
+    /// file path and for resolving the matching legacy env-var prefix
+    /// (`BASE_SEPOLIA_…`, etc.).
     function chainSlug() internal view returns (string memory) {
-        uint256 cid = block.chainid;
+        return slugForChainId(block.chainid);
+    }
+
+    /// Per-chain folder slug for an arbitrary EVM chain id. Factored out
+    /// of {chainSlug} so cross-chain wiring scripts can resolve a *remote*
+    /// chain's artifact path. Add new chains here when the protocol
+    /// expands.
+    function slugForChainId(uint256 cid)
+        internal
+        pure
+        returns (string memory)
+    {
         if (cid == 1)         return "ethereum";
         if (cid == 8453)      return "base";
         if (cid == 84532)     return "base-sepolia";
@@ -119,10 +129,11 @@ library Deployments {
     function readEscrowImpl()      internal view returns (address) { return _readAddr(".escrowImpl",      "ESCROW_IMPL_ADDRESS"); }
     function readTimelock()        internal view returns (address) { return _readAddr(".timelock",        "TIMELOCK_ADDRESS"); }
     function readVPFIToken()       internal view returns (address) { return _readAddr(".vpfiToken",       "VPFI_TOKEN_ADDRESS"); }
-    function readVPFIOFTAdapter()  internal view returns (address) { return _readAddr(".vpfiOftAdapter",  "VPFI_OFT_ADAPTER_ADDRESS"); }
     function readVPFIBuyAdapter()  internal view returns (address) { return _readAddr(".vpfiBuyAdapter",  "VPFI_BUY_ADAPTER_ADDRESS"); }
     function readVPFIBuyReceiver() internal view returns (address) { return _readAddr(".vpfiBuyReceiver", "VPFI_BUY_RECEIVER_ADDRESS"); }
-    function readRewardOApp()      internal view returns (address) { return _readAddr(".rewardOApp",      "REWARD_OAPP_ADDRESS"); }
+    // T-068 CCIP: the cross-chain reward contract is `VaipakamRewardMessenger`,
+    // recorded under `.rewardMessenger` by `DeployCrosschain.s.sol`.
+    function readRewardMessenger() internal view returns (address) { return _readAddr(".rewardMessenger", "REWARD_MESSENGER_ADDRESS"); }
     function readFlashLoanLiquidator() internal view returns (address) { return _tryReadAddr(".flashLoanLiquidator"); }
 
     // Track-C mock infra (Base Sepolia testnet only). Falls back to env on chains
@@ -144,6 +155,45 @@ library Deployments {
         return _readAddr(jsonKey, envKey);
     }
 
+    /// Read an address key from *another* chain's deployment artifact.
+    /// Cross-chain wiring scripts (`ConfigureCcip.s.sol`) need a remote
+    /// chain's deployed contract addresses to wire lanes / channel peers;
+    /// every chain's deploy writes its own
+    /// `deployments/<slug>/addresses.json`, and after the
+    /// deploy-all-chains-first pass the runbook prescribes, every remote
+    /// artifact is already on disk.
+    ///
+    /// Reverts if the remote artifact is missing or the key is unset — a
+    /// cross-chain wire must fail loud, never silently wire `address(0)`.
+    function readAddressForChain(uint256 chainId, string memory jsonKey)
+        internal
+        view
+        returns (address)
+    {
+        string memory p = string.concat(
+            "deployments/", slugForChainId(chainId), "/addresses.json"
+        );
+        require(
+            _fileExists(p),
+            string.concat(
+                "Deployments: no artifact for chain ",
+                cheats.toString(chainId),
+                " (run the deploy on that chain first)"
+            )
+        );
+        address a = cheats.parseJsonAddress(cheats.readFile(p), jsonKey);
+        require(
+            a != address(0),
+            string.concat(
+                "Deployments: ",
+                jsonKey,
+                " unset for chain ",
+                cheats.toString(chainId)
+            )
+        );
+        return a;
+    }
+
     // ── Typed writes ───────────────────────────────────────────────────────
     //
     // Writes are intentionally append-style: each writer reads the
@@ -158,18 +208,18 @@ library Deployments {
     function writeTimelock(address a)        internal { _writeAddr(".timelock",        a); }
     function writeVPFIToken(address a)       internal { _writeAddr(".vpfiToken",       a); }
     function writeVPFITokenImpl(address a)   internal { _writeAddr(".vpfiTokenImpl",   a); }
-    function writeVPFIOFTAdapter(address a)  internal { _writeAddr(".vpfiOftAdapter",  a); }
-    function writeVPFIOFTAdapterImpl(address a) internal { _writeAddr(".vpfiOftAdapterImpl", a); }
     function writeVPFIMirror(address a)      internal { _writeAddr(".vpfiMirror",      a); }
     function writeVPFIMirrorImpl(address a)  internal { _writeAddr(".vpfiMirrorImpl",  a); }
     function writeVPFIBuyAdapter(address a)  internal { _writeAddr(".vpfiBuyAdapter",  a); }
     function writeVPFIBuyAdapterImpl(address a) internal { _writeAddr(".vpfiBuyAdapterImpl", a); }
     function writeVPFIBuyReceiver(address a) internal { _writeAddr(".vpfiBuyReceiver", a); }
     function writeVPFIBuyReceiverImpl(address a) internal { _writeAddr(".vpfiBuyReceiverImpl", a); }
-    function writeRewardOApp(address a)      internal { _writeAddr(".rewardOApp",      a); }
+    // ── T-068 CCIP cross-chain stack (Phase 6) ─────────────────────────────
+    function writeCcipMessenger(address a)        internal { _writeAddr(".ccipMessenger",        a); }
+    function writeVpfiTokenPool(address a)        internal { _writeAddr(".vpfiTokenPool",        a); }
+    function writeVpfiPoolRateGovernor(address a) internal { _writeAddr(".vpfiPoolRateGovernor", a); }
+    function writeRewardMessenger(address a)      internal { _writeAddr(".rewardMessenger",      a); }
     function writeFlashLoanLiquidator(address a) internal { _writeAddr(".flashLoanLiquidator", a); }
-    function writeRewardOAppBootstrapImpl(address a) internal { _writeAddr(".rewardOAppBootstrapImpl", a); }
-    function writeRewardOAppRealImpl(address a)      internal { _writeAddr(".rewardOAppRealImpl",      a); }
     function writeWeth(address a)            internal { _writeAddr(".weth",            a); }
     function writeTreasury(address a)        internal { _writeAddr(".treasury",        a); }
     function writeAdmin(address a)           internal { _writeAddr(".admin",           a); }
@@ -294,6 +344,38 @@ library Deployments {
         if (cid == 137)       return 30109; // Polygon
         if (cid == 31337)     return 31337; // Anvil — sentinel only; no real LZ traffic on a local node.
         revert("Deployments: no LZ EID mapped for chainid");
+    }
+
+    // ── CCIP chain-selector resolver (per chain) ──────────────────────────
+    //
+    // The Chainlink CCIP analogue of {lzEidForChain}: every chain has a
+    // provider-published 64-bit "chain selector" that CCIP routes on.
+    // Centralised here so `ConfigureCcip.s.sol` and the rehearsal harness
+    // resolve a chain → selector without the operator hand-keying the
+    // table. Source: Chainlink CCIP "Supported Networks" directory.
+    //
+    // Anvil (31337) is intentionally absent — a local node has no CCIP
+    // deployment; the anvil rehearsal uses `CCIPLocalSimulator`, which
+    // mints its own selectors at runtime.
+
+    function ccipSelectorForChainId(uint256 cid)
+        internal
+        pure
+        returns (uint64)
+    {
+        if (cid == 1)         return 5009297550715157269;  // Ethereum
+        if (cid == 8453)      return 15971525489660198786; // Base
+        if (cid == 42161)     return 4949039107694359620;  // Arbitrum One
+        if (cid == 10)        return 3734403246176062136;  // Optimism
+        if (cid == 56)        return 11344663589394136015; // BNB Chain
+        if (cid == 137)       return 4051577828743386545;  // Polygon PoS
+        if (cid == 11155111)  return 16015286601757825753; // Sepolia
+        if (cid == 84532)     return 10344971235874465080; // Base Sepolia
+        if (cid == 421614)    return 3478487238524512106;  // Arbitrum Sepolia
+        if (cid == 11155420)  return 5224473277236331295;  // OP Sepolia
+        if (cid == 97)        return 13264668187771770619; // BNB Chain testnet
+        if (cid == 80002)     return 16281711391670634445; // Polygon Amoy
+        revert("Deployments: no CCIP selector mapped for chainid");
     }
 
     /// Stamp the file with `chainId` + `deployedAt`. Called from the
