@@ -647,3 +647,26 @@ This is the structural half of the post-merge definition-of-done: every
 merge → release notes + tick the related `docs/ToDo.md` entry + the
 `@vaipakam-labs` card moves to Done (automatic, via `Closes #<issue>` in
 the PR body). Never batch the release-notes update.
+
+## Dependabot — off-chain only
+
+Dependency-update automation is scoped on purpose (see `.github/dependabot.yml`):
+
+- **Covered** — `github-actions` (CI action versions) and `npm` (the
+  pnpm workspace: `apps/*` + `packages/*` — viem, wagmi, React, wrangler,
+  transitive deps). Weekly, grouped, `infra`-labelled.
+- **Deliberately NOT covered** — the on-chain Solidity dependencies
+  under `contracts/lib/` (forge-std, openzeppelin-contracts-upgradeable,
+  chainlink-local, diamond-3-hardhat). They are git submodules pinned to
+  an AUDITED commit set; bumping one changes audited bytecode, so it must
+  be a deliberate, reviewed, re-audited decision — never an automated PR.
+  No `gitsubmodule` ecosystem is configured, precisely so Dependabot
+  leaves the contract dependency set frozen.
+
+Every `uses:` in `.github/workflows/` is pinned to a full commit SHA
+(with a trailing `# vX` comment that Dependabot reads to offer bumps) —
+a moved tag can't silently change CI behaviour.
+
+Dependabot PRs are **never auto-merged** — each goes through the same
+review + CI + Codex review as any other change; a Dependabot PR touching
+anything the keeper / agent signing path depends on gets full scrutiny.
