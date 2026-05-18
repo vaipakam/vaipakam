@@ -9,7 +9,6 @@ import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
-import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 
 /**
@@ -45,21 +44,26 @@ contract ReplaceStaleFacets is Script {
         EscrowFactoryFacet escrowFactoryFacet = new EscrowFactoryFacet();
         ConfigFacet configFacet = new ConfigFacet();
         OracleAdminFacet oracleAdminFacet = new OracleAdminFacet();
-        RewardReporterFacet rewardReporterFacet = new RewardReporterFacet();
 
         console.log("OfferFacet:          ", address(offerFacet));
         console.log("OracleFacet:         ", address(oracleFacet));
         console.log("EscrowFactoryFacet:  ", address(escrowFactoryFacet));
         console.log("ConfigFacet:         ", address(configFacet));
         console.log("OracleAdminFacet:    ", address(oracleAdminFacet));
-        console.log("RewardReporterFacet: ", address(rewardReporterFacet));
 
-        // 9 cuts:
+        // T-068: RewardReporterFacet is intentionally NOT refreshed here.
+        // The LayerZero→CCIP migration changed its selector SET (removed
+        // `setLocalEid`, renamed `setBaseEid`→`setBaseChainId`), and a
+        // `Replace` cut cannot migrate a facet whose selector set changed
+        // — that needs a Remove(old) + Add(new) migration, which a live
+        // pre-T-068 diamond gets via the dedicated CCIP deploy/migration
+        // path, not this one-off bytecode-refresh script.
+
+        // 7 cuts:
         //   3 Replace (Offer / Oracle / EscrowFactory bytecode refresh)
         //   1 Replace + 1 Add (ConfigFacet — existing 28 selectors + 27 missing for protocol-console knobs)
         //   1 Replace + 1 Add (OracleAdminFacet — existing 20 + 10 missing Pyth/admin getters)
-        //   1 Replace + 1 Add (RewardReporterFacet — existing 11 + 1 missing getRewardGraceSeconds)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](9);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](7);
         cuts[0] = _replace(address(offerFacet), _offerSelectors());
         cuts[1] = _replace(address(oracleFacet), _oracleSelectors());
         cuts[2] = _replace(address(escrowFactoryFacet), _escrowFactorySelectors());
@@ -67,14 +71,12 @@ contract ReplaceStaleFacets is Script {
         cuts[4] = _add(address(configFacet), _configFacetMissingSelectors());
         cuts[5] = _replace(address(oracleAdminFacet), _oracleAdminExistingSelectors());
         cuts[6] = _add(address(oracleAdminFacet), _oracleAdminMissingSelectors());
-        cuts[7] = _replace(address(rewardReporterFacet), _rewardReporterExistingSelectors());
-        cuts[8] = _add(address(rewardReporterFacet), _rewardReporterMissingSelectors());
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
         vm.stopBroadcast();
 
-        console.log("DiamondCut applied: 6 facets replaced + 38 missing selectors added.");
+        console.log("DiamondCut applied: 5 facets replaced + 37 missing selectors added.");
     }
 
     function _add(address facet, bytes4[] memory selectors)
@@ -236,29 +238,9 @@ contract ReplaceStaleFacets is Script {
         s[9] = OracleAdminFacet.getPythConfidenceMaxBps.selector;
     }
 
-    /// @dev The 11 RewardReporterFacet selectors registered on the
-    ///      live diamond by the initial DeployDiamond run.
-    function _rewardReporterExistingSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](10);
-        s[0] = RewardReporterFacet.closeDay.selector;
-        s[1] = RewardReporterFacet.getChainReportSentAt.selector;
-        s[2] = RewardReporterFacet.getKnownGlobalInterestNumeraire18.selector;
-        s[3] = RewardReporterFacet.getLocalChainInterestNumeraire18.selector;
-        s[4] = RewardReporterFacet.getRewardReporterConfig.selector;
-        s[5] = RewardReporterFacet.onRewardBroadcastReceived.selector;
-        // T-068: `setLocalEid` removed — chain identity is `block.chainid`.
-        s[6] = RewardReporterFacet.setBaseChainId.selector;
-        s[7] = RewardReporterFacet.setIsCanonicalRewardChain.selector;
-        s[8] = RewardReporterFacet.setRewardGraceSeconds.selector;
-        s[9] = RewardReporterFacet.setRewardOApp.selector;
-    }
-
-    /// @dev The single missing RewardReporterFacet selector
-    ///      (getRewardGraceSeconds — paired with the existing setter).
-    function _rewardReporterMissingSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](1);
-        s[0] = RewardReporterFacet.getRewardGraceSeconds.selector;
-    }
+    // RewardReporterFacet selector helpers removed (T-068) — see the
+    // note in `run()`: the eid→chainId migration changed the facet's
+    // selector set, so a `Replace`-based refresh no longer applies.
 
     function _escrowFactorySelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](27);
