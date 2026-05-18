@@ -167,6 +167,11 @@ library Deployments {
     function writeVPFIBuyReceiver(address a) internal { _writeAddr(".vpfiBuyReceiver", a); }
     function writeVPFIBuyReceiverImpl(address a) internal { _writeAddr(".vpfiBuyReceiverImpl", a); }
     function writeRewardOApp(address a)      internal { _writeAddr(".rewardOApp",      a); }
+    // ── T-068 CCIP cross-chain stack (Phase 6) ─────────────────────────────
+    function writeCcipMessenger(address a)        internal { _writeAddr(".ccipMessenger",        a); }
+    function writeVpfiTokenPool(address a)        internal { _writeAddr(".vpfiTokenPool",        a); }
+    function writeVpfiPoolRateGovernor(address a) internal { _writeAddr(".vpfiPoolRateGovernor", a); }
+    function writeRewardMessenger(address a)      internal { _writeAddr(".rewardMessenger",      a); }
     function writeFlashLoanLiquidator(address a) internal { _writeAddr(".flashLoanLiquidator", a); }
     function writeRewardOAppBootstrapImpl(address a) internal { _writeAddr(".rewardOAppBootstrapImpl", a); }
     function writeRewardOAppRealImpl(address a)      internal { _writeAddr(".rewardOAppRealImpl",      a); }
