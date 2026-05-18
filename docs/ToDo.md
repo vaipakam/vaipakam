@@ -11,6 +11,10 @@
 
 ---
 
+- [ ] **T-083**: Implement `webhook` for all state changes in on-chain to reflect in webpage (all current flow will become a fallback), the most import task to make things faster in webpage. what do you say? whats your take? is there a better approach?
+
+---
+
 - [ ] **T-082** — Work on yearly profit share to founder from treasury profit, the percentage should be admin configurable (later by governance) within range bonunded values, what do you say? is that normal? is there a better approach? what other major DeFi or DEX platforms are doing, how they split the profits and how much percent of profit go to founders?
 
 ---
