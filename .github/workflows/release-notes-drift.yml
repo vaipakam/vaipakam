@@ -1,0 +1,59 @@
+# Release-notes drift check.
+#
+# Non-blocking backstop for the per-PR release-note fragment convention
+# (docs/ReleaseNotes/unreleased/). On every push to main, if the merge
+# changed contracts or app code but added no docs/ReleaseNotes/ entry,
+# emit a warning + job-summary note so the gap is visible in the Actions
+# tab. It never fails the run — release notes are a discipline, not a
+# merge gate.
+name: Release-notes drift check
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for a release-note fragment
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # Resolve the diff base. `github.event.before` is all-zeros on a
+          # branch's first push / unrelated history — fall back to HEAD^.
+          if [ -z "${BEFORE:-}" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            BEFORE="$(git rev-parse HEAD^ 2>/dev/null || echo '')"
+          fi
+          if [ -z "$BEFORE" ]; then
+            echo "No diff base — skipping drift check."
+            exit 0
+          fi
+
+          changed="$(git diff --name-only "$BEFORE" "$AFTER")"
+          work="$(printf '%s\n' "$changed" | grep -E '^(contracts/src/|apps/)' || true)"
+          notes="$(printf '%s\n' "$changed" | grep -E '^docs/ReleaseNotes/' || true)"
+
+          if [ -n "$work" ] && [ -z "$notes" ]; then
+            echo "::warning title=Release-notes drift::This merge changed contracts/ or apps/ but added no docs/ReleaseNotes/ fragment. Add one under docs/ReleaseNotes/unreleased/ per the fragment convention."
+            {
+              echo "### ⚠️ Release-notes drift"
+              echo ""
+              echo "This merge touched \`contracts/src/\` or \`apps/\` but added no"
+              echo "\`docs/ReleaseNotes/\` change. Add a release-note fragment under"
+              echo "\`docs/ReleaseNotes/unreleased/\` — see that directory's README."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Release-notes check OK." >> "$GITHUB_STEP_SUMMARY"
+          fi
