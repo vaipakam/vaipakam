@@ -188,6 +188,9 @@ contract VaipakamRewardMessenger is
     error InsufficientFee(uint256 provided, uint256 required);
     /// @notice The fee-remainder refund to the supplied address failed.
     error RefundFailed();
+    /// @notice The inbound source chain id does not fit the `uint32`
+    ///         origin tag the reward aggregator expects.
+    error ChainIdTooLarge(uint256 sourceChainId);
 
     // ─── Construction ───────────────────────────────────────────────────────
 
@@ -371,6 +374,14 @@ contract VaipakamRewardMessenger is
 
         if (msgType == MSG_TYPE_REPORT) {
             if (!isCanonical) revert ReportOnMirror();
+            // The aggregator tags each report with a uint32 origin chain.
+            // A wider source id is an operator misconfiguration — reject
+            // it rather than let a silent truncation misattribute the
+            // report (and corrupt per-chain reward accounting) onto
+            // another chain.
+            if (sourceChainId > type(uint32).max) {
+                revert ChainIdTooLarge(sourceChainId);
+            }
             emit ReportReceived(sourceChainId, dayId, a, b);
             IRewardAggregatorIngress(diamond).onChainReportReceived(
                 uint32(sourceChainId), dayId, a, b

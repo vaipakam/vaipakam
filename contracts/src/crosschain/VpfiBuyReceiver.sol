@@ -172,6 +172,9 @@ contract VpfiBuyReceiver is
     /// @notice {retryStuckDelivery} could not dispatch — e.g. the ETH
     ///         float is too low or the lane is unconfigured.
     error RetryDispatchFailed(uint64 requestId);
+    /// @notice The inbound source chain id does not fit the `uint32`
+    ///         origin tag the Diamond's bridged-buy ingress expects.
+    error ChainIdTooLarge(uint256 sourceChainId);
 
     // ─── Construction ───────────────────────────────────────────────────────
 
@@ -280,7 +283,14 @@ contract VpfiBuyReceiver is
             return (false, 0, FAIL_REASON_PROCESS_REVERT);
         }
         // The Diamond's bridged-buy ingress takes a uint32 origin-chain
-        // tag; every Vaipakam chain id fits in uint32.
+        // tag. Every in-scope Vaipakam chain id fits in uint32; a wider
+        // id is an operator misconfiguration — reject it loudly rather
+        // than let a silent truncation alias it onto another chain. The
+        // revert is pre-mint, so CCIP simply records a re-executable
+        // failed message and the buyer's source-chain funds time out.
+        if (sourceChainId > type(uint32).max) {
+            revert ChainIdTooLarge(sourceChainId);
+        }
         try
             IVpfiBuyDiamond(diamond).processBridgedBuy(
                 buyer, uint32(sourceChainId), amountIn, minVpfiOut

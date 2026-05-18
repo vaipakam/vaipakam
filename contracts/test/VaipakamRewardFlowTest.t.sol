@@ -295,4 +295,24 @@ contract VaipakamRewardFlowTest is Test {
         vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
         rewardMirror.sendChainReport{value: fee}(1, 0, 0, payable(address(diamondMirror)));
     }
+
+    // ─── Lossy chain-id cast guard (Codex review) ───────────────────────────
+
+    function test_Receive_RevertWhen_ReportChainIdTooLarge() public {
+        // A source chain id beyond uint32 would silently alias onto
+        // another chain's reward aggregation — rejected before ingress.
+        uint256 bigChain = uint256(type(uint32).max) + 1;
+        vm.prank(address(messengerBase));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VaipakamRewardMessenger.ChainIdTooLarge.selector, bigChain
+            )
+        );
+        rewardBase.onCrossChainMessage(
+            bigChain,
+            address(rewardMirror),
+            abi.encode(REPORT, uint256(1), uint256(0), uint256(0)),
+            _empty()
+        );
+    }
 }

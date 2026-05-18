@@ -260,6 +260,7 @@ contract VpfiBuyAdapter is
     error UnexpectedDeliveryToken(address token);
     /// @notice Native-mode {buy} `msg.value` did not cover `amountIn`.
     error NativeValueTooLow();
+    error InsufficientFee(uint256 provided, uint256 required);
     error PendingBuyNotFound();
     error BuyAlreadyResolved();
     error RefundTimeoutNotElapsed();
@@ -362,9 +363,10 @@ contract VpfiBuyAdapter is
     /// @notice Buy VPFI on Base at the fixed rate, from this chain.
     /// @dev Native mode: `msg.value == amountIn + <quoted fee>`. Token
     ///      mode: the adapter pulls `amountIn` of {paymentToken} and
-    ///      `msg.value == <quoted fee>`. The fee is forwarded to the
-    ///      messenger, which quotes CCIP internally and refunds any
-    ///      overage to this adapter.
+    ///      `msg.value == <quoted fee>`. The adapter re-quotes the exact
+    ///      CCIP fee and forwards only that; any surplus the buyer
+    ///      supplied (a padded or stale {quoteBuy} — CCIP fees fluctuate)
+    ///      is refunded to the buyer, never stranded in the adapter.
     /// @param amountIn   Wei (ETH-denominated) the buyer stakes.
     /// @param minVpfiOut Slippage guard forwarded to Base.
     /// @return requestId Tracking id for {reclaimTimedOutBuy} + events.
@@ -419,8 +421,19 @@ contract VpfiBuyAdapter is
 
         bytes memory payload =
             abi.encode(requestId, msg.sender, amountIn, minVpfiOut);
+
+        // Re-quote the exact CCIP fee and forward only that. Forwarding
+        // the buyer's full `nativeFee` would land any overpayment in the
+        // messenger's refund to THIS adapter (its `msg.sender`), where it
+        // is stranded — so the adapter quotes, sends exact, and returns
+        // the surplus to the buyer below (CEI).
+        uint256 ccipFee = ICrossChainMessenger(messenger).quoteMessageFee(
+            baseChainId, payload, _noTokens(), destGasLimit
+        );
+        if (nativeFee < ccipFee) revert InsufficientFee(nativeFee, ccipFee);
+
         messageId = ICrossChainMessenger(messenger).sendMessage{
-            value: nativeFee
+            value: ccipFee
         }(baseChainId, payload, _noTokens(), destGasLimit);
 
         pendingBuys[requestId] = PendingBuy({
@@ -434,6 +447,18 @@ contract VpfiBuyAdapter is
         emit BuyRequested(
             requestId, msg.sender, baseChainId, amountIn, minVpfiOut, messageId
         );
+
+        // CEI: refund the fee surplus last, after every state write. The
+        // surplus is always native gas — CCIP's fee token is native even
+        // in token-payment mode.
+        uint256 feeSurplus;
+        unchecked {
+            feeSurplus = nativeFee - ccipFee;
+        }
+        if (feeSurplus > 0) {
+            (bool ok, ) = payable(msg.sender).call{value: feeSurplus}("");
+            if (!ok) revert EthSendFailed();
+        }
     }
 
     // ─── Timeout refund ─────────────────────────────────────────────────────

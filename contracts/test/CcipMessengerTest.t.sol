@@ -408,4 +408,64 @@ contract CcipMessengerTest is Test {
         vm.expectRevert();
         messengerA.initialize(owner);
     }
+
+    // ─── Config-integrity guards (Codex review — one-to-one maps) ───────────
+
+    function test_SetChainSelector_RevertWhen_SelectorBoundToAnotherChain()
+        public
+    {
+        // SEL_B is already bound to CHAIN_B in setUp. Binding it to a
+        // second chain would orphan CHAIN_B's lane — rejected.
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CcipMessenger.SelectorAlreadyBound.selector, SEL_B, CHAIN_B
+            )
+        );
+        messengerA.setChainSelector(999, SEL_B);
+
+        // Re-binding the SAME chain to its own selector stays idempotent.
+        vm.prank(owner);
+        messengerA.setChainSelector(CHAIN_B, SEL_B);
+        assertEq(messengerA.chainIdOf(SEL_B), CHAIN_B, "still one-to-one");
+    }
+
+    function test_RegisterChannel_RevertWhen_HandlerBoundToAnotherChannel()
+        public
+    {
+        // handlerA is already registered on CHANNEL in setUp.
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CcipMessenger.HandlerAlreadyBound.selector,
+                address(handlerA),
+                CHANNEL
+            )
+        );
+        messengerA.registerChannel(keccak256("other-channel"), address(handlerA));
+    }
+
+    function test_SendMessage_RevertWhen_DuplicateToken() public {
+        // A token list naming the same address twice — `forceApprove`
+        // replaces (not accumulates) the allowance, so this is rejected.
+        uint256 amount = 1_000e18;
+        token.mint(address(handlerA), 2 * amount);
+        handlerA.approve(address(token), address(messengerA), 2 * amount);
+
+        ICrossChainMessenger.TokenAmount[] memory dup =
+            new ICrossChainMessenger.TokenAmount[](2);
+        dup[0] =
+            ICrossChainMessenger.TokenAmount({token: address(token), amount: amount});
+        dup[1] =
+            ICrossChainMessenger.TokenAmount({token: address(token), amount: amount});
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CcipMessenger.DuplicateToken.selector, address(token)
+            )
+        );
+        handlerA.send{value: fee}(
+            address(messengerA), CHAIN_B, abi.encode("x"), dup, 200_000
+        );
+    }
 }

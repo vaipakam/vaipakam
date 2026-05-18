@@ -198,6 +198,15 @@ contract CcipMessenger is
     error InsufficientFee(uint256 provided, uint256 required);
     /// @notice The fee-overpayment refund to the calling handler failed.
     error RefundFailed();
+    /// @notice A CCIP selector is already bound to a different chain id —
+    ///         the selector↔chain map must stay one-to-one.
+    error SelectorAlreadyBound(uint64 selector, uint256 boundChainId);
+    /// @notice A handler is already registered on a different channel —
+    ///         the channel↔handler map must stay one-to-one.
+    error HandlerAlreadyBound(address handler, bytes32 boundChannelId);
+    /// @notice The outbound token list named the same token twice; each
+    ///         token may appear at most once per message.
+    error DuplicateToken(address token);
 
     // ─── Construction ───────────────────────────────────────────────────────
 
@@ -390,18 +399,28 @@ contract CcipMessenger is
     /// @dev Pull each token from the calling handler into this adapter and
     ///      approve the router for the CCIP transfer. `forceApprove`
     ///      tolerates tokens that require a zero-then-set allowance.
+    /// @dev A token may appear at most once: `forceApprove` *replaces* the
+    ///      router allowance per entry, so a repeated address would leave
+    ///      only the last amount approved and `ccipSend` would revert
+    ///      mid-list. A duplicate is rejected up front with a clear error.
     function _pullTokens(
         TokenAmount[] calldata tokens
     ) internal returns (Client.EVMTokenAmount[] memory ccipTokens) {
         ccipTokens = new Client.EVMTokenAmount[](tokens.length);
         address router = getRouter();
         for (uint256 i; i < tokens.length; ++i) {
-            IERC20 token = IERC20(tokens[i].token);
+            address tokenAddr = tokens[i].token;
+            for (uint256 j; j < i; ++j) {
+                if (tokens[j].token == tokenAddr) {
+                    revert DuplicateToken(tokenAddr);
+                }
+            }
+            IERC20 token = IERC20(tokenAddr);
             uint256 amount = tokens[i].amount;
             token.safeTransferFrom(msg.sender, address(this), amount);
             token.forceApprove(router, amount);
             ccipTokens[i] =
-                Client.EVMTokenAmount({token: tokens[i].token, amount: amount});
+                Client.EVMTokenAmount({token: tokenAddr, amount: amount});
         }
     }
 
@@ -447,6 +466,15 @@ contract CcipMessenger is
         uint64 selector
     ) external onlyOwner {
         if (chainId == 0) revert ZeroChainId();
+        // Keep the map one-to-one: a selector already pointing at another
+        // chain would, on this write, leave that chain's `chainSelectorOf`
+        // entry orphaned and silently re-route its inbound messages here.
+        if (selector != 0) {
+            uint256 boundChain = chainIdOf[selector];
+            if (boundChain != 0 && boundChain != chainId) {
+                revert SelectorAlreadyBound(selector, boundChain);
+            }
+        }
         uint64 previous = chainSelectorOf[chainId];
         // Drop a stale reverse entry if this chain's selector changes.
         if (previous != 0 && previous != selector) delete chainIdOf[previous];
@@ -475,6 +503,15 @@ contract CcipMessenger is
         address handler
     ) external onlyOwner {
         if (channelId == bytes32(0)) revert ZeroChannelId();
+        // Keep the map one-to-one: a handler already registered on another
+        // channel would stay reachable inbound via both channels while its
+        // outbound messages are stamped with only the latest — misrouting.
+        if (handler != address(0)) {
+            bytes32 boundChannel = channelOf[handler];
+            if (boundChannel != bytes32(0) && boundChannel != channelId) {
+                revert HandlerAlreadyBound(handler, boundChannel);
+            }
+        }
         address previous = handlerOf[channelId];
         if (previous != address(0)) delete channelOf[previous];
         handlerOf[channelId] = handler;

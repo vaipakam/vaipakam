@@ -339,6 +339,66 @@ contract VpfiBuyFlowTest is Test {
 
     // ─── Receiver-side stuck retry ──────────────────────────────────────────
 
+    // ─── Fee-surplus refund (Codex review P1) ───────────────────────────────
+
+    function test_Buy_RefundsFeeSurplus() public {
+        // The buyer pads the fee (a stale/conservative quoteBuy). The
+        // adapter forwards only the exact CCIP fee and refunds the rest —
+        // the surplus must reach the buyer, not strand in the adapter.
+        uint256 amountIn = 1 ether;
+        uint256 overpay = 0.3 ether;
+        uint256 buyerBefore = buyer.balance;
+
+        vm.prank(buyer);
+        adapter.buy{value: amountIn + fee + overpay}(amountIn, 0);
+
+        assertEq(
+            buyer.balance,
+            buyerBefore - amountIn - fee,
+            "only amountIn + exact fee spent - surplus refunded"
+        );
+        assertEq(
+            address(adapter).balance,
+            amountIn,
+            "adapter holds only the locked amountIn, no stray fee"
+        );
+    }
+
+    function test_Buy_RevertWhen_FeeBelowQuote() public {
+        uint256 amountIn = 1 ether;
+        vm.prank(buyer);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VpfiBuyAdapter.InsufficientFee.selector, fee - 1, fee
+            )
+        );
+        adapter.buy{value: amountIn + fee - 1}(amountIn, 0);
+    }
+
+    // ─── Lossy chain-id cast guard (Codex review) ───────────────────────────
+
+    function test_Receive_RevertWhen_SourceChainIdTooLarge() public {
+        // A source chain id beyond uint32 would silently alias onto
+        // another chain's bridged-buy accounting — rejected pre-mint.
+        uint256 bigChain = uint256(type(uint32).max) + 1;
+        bytes memory payload =
+            abi.encode(uint64(1), buyer, uint256(1 ether), uint256(0));
+        vm.prank(address(messengerBase));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VpfiBuyReceiver.ChainIdTooLarge.selector, bigChain
+            )
+        );
+        receiver.onCrossChainMessage(
+            bigChain,
+            address(adapter),
+            payload,
+            new ICrossChainMessenger.TokenAmount[](0)
+        );
+    }
+
+    // ─── Receiver-side stuck retry ──────────────────────────────────────────
+
     function test_Receiver_StuckDelivery_Retry() public {
         // Drain the receiver's ETH float so leg-2 cannot pay its fee — the
         // VPFI is minted but the delivery soft-fails and parks as stuck.
