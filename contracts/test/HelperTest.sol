@@ -724,12 +724,15 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](6);
         selectors[0] = MetricsDashboardFacet.getUserDashboardSnapshot.selector;
         selectors[1] = MetricsDashboardFacet.getUserDashboardLoans.selector;
         selectors[2] = MetricsDashboardFacet.getUserDashboardOffers.selector;
         selectors[3] = MetricsDashboardFacet.getUserDashboardClaimables.selector;
         selectors[4] = MetricsDashboardFacet.getUserDashboardLoansBothSides.selector;
+        // `MAX_PAGE_LIMIT` is a `public constant`; its auto-getter has
+        // no type-level `.selector`, so the signature is hashed directly.
+        selectors[5] = bytes4(keccak256("MAX_PAGE_LIMIT()"));
         return selectors;
     }
 

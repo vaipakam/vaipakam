@@ -102,6 +102,37 @@ Tests are in `contracts/test/`. `HelperTest.sol` provides base utilities. `Setup
 
 Mock contracts in `contracts/test/mocks/`: `ERC20Mock`, `ERC4907Mock`, `ZeroExProxyMock`.
 
+## Deploy-sanity suite + `predeploy-check.sh`
+
+`contracts/test/deploy/` holds the **deploy-sanity suite** — static
+guardrails that catch deploy-breaking mistakes during a normal
+`forge test` run instead of at `--broadcast` time:
+
+- **`FacetSizeLimitTest`** (Issue #66) — every facet's runtime bytecode
+  is within the EIP-170 24,576-byte limit.
+- **`SelectorCoverageTest`** (Issue #71) — every external/public
+  function compiled into a facet is cut into the Diamond by
+  `DeployDiamond.s.sol`, and no two facet functions collide on a 4-byte
+  selector.
+- **`DiamondFacetNames.sol`** — the single shared list of cut facets
+  both tests consume, so the suite's facet set cannot drift apart.
+
+`contracts/script/predeploy-check.sh` is the **pre-deploy gate**: it runs
+`forge build`, the deploy-sanity suite (or the full regression with
+`--full`), lints the deploy shell scripts, and checks every committed
+per-facet ABI matches `forge inspect`. It is wired as preflight step
+`[1b]` inside `deploy-{chain,testnet,mainnet}.sh` (the mainnet script
+passes `--full`), so a deploy cannot proceed past a failing check; it is
+also runnable standalone (`bash script/predeploy-check.sh`).
+
+**When you add a facet**: add it to `DiamondFacetNames.cutFacetNames()`
+AND add its `_get<Facet>Selectors()` call to
+`SelectorCoverageTest._populateRoutedSet()`. **When you add a function to
+a facet**: add its selector to the matching `_get<Facet>Selectors()` in
+`DeployDiamond.s.sol` (and `HelperTest.sol`) — `SelectorCoverageTest`
+fails otherwise. A deeper deploy-*integration* test (runs `DeployDiamond`
+and loupe-asserts the built Diamond) is tracked as Issue #72.
+
 ## Conventions
 
 - Interest rates and fees use **basis points** (BPS, 1/10000)

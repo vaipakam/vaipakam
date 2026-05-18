@@ -488,6 +488,22 @@ else
   mark_done "build"
 fi
 
+# ── 1b. Pre-deploy sanity check ───────────────────────────────────────
+# Runs the deploy-sanity forge suite (FacetSizeLimitTest — every facet
+# under EIP-170; SelectorCoverageTest — every facet selector cut into the
+# Diamond) and lints the deploy shell scripts. A failure here means the
+# build is unsafe to broadcast — stop before touching a chain.
+
+if step_done "predeploy-check"; then
+  echo
+  echo "[1b] Pre-deploy sanity check (skipped — marker exists)"
+else
+  echo
+  echo "[1b] Pre-deploy sanity check"
+  bash "$SCRIPT_DIR/predeploy-check.sh"
+  mark_done "predeploy-check"
+fi
+
 # ── 2. Diamond ────────────────────────────────────────────────────────
 
 if step_done "diamond"; then

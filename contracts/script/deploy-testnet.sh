@@ -802,6 +802,12 @@ EOF
   forge build
 
   echo
+  echo "[1b] Pre-deploy sanity check"
+  # Deploy-sanity forge suite (facet sizes + selector coverage) + deploy
+  # shell-script lint. A failure aborts the deploy before any broadcast.
+  bash "$SCRIPT_DIR/predeploy-check.sh"
+
+  echo
   echo "[2] DeployDiamond.s.sol"
   forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --slow
 

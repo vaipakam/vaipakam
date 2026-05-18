@@ -35,6 +35,10 @@ fs_permissions = [
   # `SlippageCensus.assets.json`) from this directory. Read-only — the
   # scripts never write to script/.
   { access = "read", path = "./script/" },
+  # Issue #71 — test/deploy/SelectorCoverageTest reads compiled facet
+  # artifacts (`out/<Facet>.sol/<Facet>.json`) to introspect each
+  # facet's `methodIdentifiers`. Read-only — the build artifact tree.
+  { access = "read", path = "./out/" },
 ]
 
 [profile.coverage]
