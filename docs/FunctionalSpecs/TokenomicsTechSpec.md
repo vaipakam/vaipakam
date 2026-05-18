@@ -47,7 +47,7 @@ Scope note:
 Implementation target:
 
 - token contract path: `contracts/src/token/VPFIToken.sol`
-- omnichain token standard: `LayerZero OFT V2`
+- cross-chain token standard: Chainlink Cross-Chain Token using CCIP
 - Phase 1 active scope here: token deployment, cap enforcement, initial mint, mint registration, mint-control plumbing, and live fee-utility integration
 - frontend consumers should read the token contract's live `decimals()` value for VPFI unit formatting, with `18` as the graceful fallback while reads are loading or unavailable
 
@@ -193,8 +193,8 @@ Problem:
 
 Topology:
 
-- `Base` is the **canonical reward chain** — consistent with the VPFI OFT canonical rule and the §7 canonical-address rule
-- every non-canonical Diamond (mirror chains) acts as a **reporter**: at day-close it publishes its daily interest total to `Base` over LayerZero
+- `Base` is the **canonical reward chain** — consistent with the canonical VPFI token rule and the §7 canonical-address rule
+- every non-canonical Diamond (mirror chains) acts as a **reporter**: at day-close it publishes its daily interest total to `Base` over the approved cross-chain messenger
 - `Base` acts as the **aggregator**: it accumulates chain totals into `dailyGlobalInterestNumeraire` and then **broadcasts that single number back** to every mirror
 - `claimInteractionRewards()` runs **locally on each chain** using the mirror's own user-level interest data and the broadcast global denominator — users never have to leave their lending chain to claim once the relevant loan has closed
 
@@ -204,33 +204,33 @@ Day-close emission contract (mirror → Base):
 - payload:
   - `dayId` (uint64, UTC day number)
   - `chainInterestNumeraire18` (uint256, 1e18-scaled, sum of `lenderInterestEarned + borrowerInterestPaid` on that chain for day `D`, quoted in the active numeraire)
-- transport: LayerZero `OApp.send(...)` from the mirror Diamond to the `Base` Diamond, peered via `setPeer`
-- each `(dayId, sourceEid)` pair must be idempotent on the `Base` side — duplicate messages for the same day are rejected
+- transport: the configured cross-chain messenger from the mirror Diamond to the `Base` Diamond, restricted to approved chain and peer channels
+- each `(dayId, sourceChainId)` pair must be idempotent on the `Base` side — duplicate messages for the same day are rejected
 
 Finalization on Base:
 
-- storage key: `dailyChainInterest[dayId][sourceEid] -> uint256`
-- finalization rule: `dailyGlobalInterestNumeraire[dayId]` is finalized once all expected mirror eids have reported for `dayId`, OR after a **4-hour grace window** past `dayId + 1` UTC, whichever comes first
+- storage key: daily chain interest by day and source EVM chain id
+- finalization rule: `dailyGlobalInterestNumeraire[dayId]` is finalized once all expected mirror chain ids have reported for `dayId`, OR after a **4-hour grace window** past `dayId + 1` UTC, whichever comes first
 - any late-arriving report is recorded for audit but does **not** retroactively change a finalized global — this preserves claim determinism
 - finalization event: `DailyGlobalInterestFinalized(dayId, dailyGlobalInterestNumeraire, participatingEids)`
 
 Broadcast back to mirrors (Base → mirror):
 
-- once finalized, `Base` sends the finalized `dailyGlobalInterestNumeraire[dayId]` to every mirror via `OApp.send(...)`
+- once finalized, `Base` sends the finalized `dailyGlobalInterestNumeraire[dayId]` to every mirror through the configured cross-chain messenger
 - mirrors store it as `knownGlobalInterest[dayId]` — this is the denominator used by their local `claimInteractionRewards()` once the relevant loan-close gate is satisfied
 - a claim for `dayId` reverts locally if `knownGlobalInterest[dayId] == 0` (not yet broadcast)
 
-lzRead alternative (pull model):
+Pull-query alternative:
 
-- instead of a push-broadcast, `Base` can issue an `lzRead` query to each mirror at day-close to pull `chainInterestNumeraire18` directly — a single quorum read returns all chain totals in one message
-- once `lzRead` is GA on all Phase 1 chains, this replaces the mirror-side push path with a single aggregator-driven pull
-- the mirror-side broadcast of `dailyGlobalInterestNumeraire` still happens either way — `lzRead` only covers the inbound leg
+- if the selected cross-chain stack exposes a reliable read-style query, `Base` may pull each mirror's daily interest total directly at day-close rather than waiting for mirror push messages
+- once that pull model is available on every Phase 1 chain, it may replace the mirror-side push path with an aggregator-driven pull
+- the mirror-side broadcast of `dailyGlobalInterestNumeraire` still happens either way; the pull model only covers the inbound reporting leg
 
 Reward pool funding on mirrors:
 
 - the interaction-reward VPFI pool (`69,000,000` cap) is held on `Base` (canonical mint chain)
-- per-day per-chain VPFI payout budget = `(dailyChainInterest[D][eid] / dailyGlobalInterestNumeraire[D]) × dailyPool[D]`
-- the `Base` treasury bridges that budget to each mirror via the existing VPFI OFT path as part of finalization
+- per-day per-chain VPFI payout budget = `(dailyChainInterest[D][chainId] / dailyGlobalInterestNumeraire[D]) × dailyPool[D]`
+- the `Base` treasury bridges that budget to each mirror through the configured cross-chain token path as part of finalization
 - mirror-side `claimInteractionRewards()` draws from the local VPFI reward vault after the relevant loan has closed; no synthetic IOUs, no cross-chain claim hops
 
 Accounting identity:
@@ -241,16 +241,16 @@ Accounting identity:
 
 Failure modes and safety:
 
-- **missing chain for day D** (e.g. RPC outage on a mirror past the grace window): treated as `chainInterest = 0`; finalization emits `ChainReportMissed(dayId, eid)`; governance may replay a reconciliation payment from the Insurance pool but must not reopen a finalized `dayId`
-- **LayerZero outage / delayed packet**: claims for affected days are simply delayed (not lost) — the pull model's natural backstop
+- **missing chain for day D** (e.g. RPC outage on a mirror past the grace window): treated as `chainInterest = 0`; finalization emits a missed-chain report keyed by day and EVM chain id; governance may replay a reconciliation payment from the Insurance pool but must not reopen a finalized `dayId`
+- **cross-chain message outage / delayed packet**: claims for affected days are simply delayed (not lost) — the pull model's natural backstop
 - **timestamp drift across chains**: day boundary is fixed to UTC 00:00 on-chain via `block.timestamp / 1 days`; small per-chain block-time drift is absorbed within the 4-hour grace window
-- **double-counting**: `(dayId, eid)` idempotency key on the Base side prevents replay; mirror emits are guarded by a `lastDayIdReported` check
-- **re-org on a mirror**: if a mirror reorgs after emission, the message may be lost mid-flight; LayerZero redelivery handles most cases, governance replay handles the long tail
+- **double-counting**: `(dayId, chainId)` idempotency key on the Base side prevents replay; mirror emits are guarded by a last-reported-day check
+- **re-org on a mirror**: if a mirror reorgs after emission, the message may be lost mid-flight; cross-chain message redelivery handles most cases, governance replay handles the long tail
 
-Diamond surface (Pahse 1 to add):
+Diamond surface (Phase 1 to add):
 
-- `RewardReporterFacet` (on every mirror): `closeDay(dayId)`, `_sendChainInterest(...)` (private OApp send), view `getLocalChainInterestNumeraire18(dayId)`
-- `RewardAggregatorFacet` (on Base only): `lzReceive` handler for inbound mirror reports, `finalizeDay(dayId)` (permissionless once the grace window elapses), view `getKnownGlobalInterestNumeraire18(dayId)`
+- `RewardReporterFacet` (on every mirror): day-close reporting and local chain-interest views
+- `RewardAggregatorFacet` (on Base only): inbound report handling, day finalization once the grace window elapses, and known-global-interest views
 - `ClaimFacet` (on every chain): `claimInteractionRewards(dayId[])` using `knownGlobalInterest[dayId]` as denominator
 
 Testing requirements beyond §9:
@@ -522,7 +522,7 @@ To enable easy early access to VPFI for discounts:
 - fixed rate: **`1 VPFI = 0.001 ETH`**
 - allocation: `1%` = `2,300,000 VPFI`
 - global cap: `2,300,000 VPFI`
-- per-wallet cap: configurable by admin, applied per origin-chain LayerZero endpoint ID rather than as one cross-chain wallet cap
+- per-wallet cap: configurable by admin, applied per origin EVM chain id rather than as one cross-chain wallet cap
 - initial recommendation: `30,000 VPFI` per wallet per chain — this is the live per-chain user limit surfaced on `/app/buy-vpfi` until admin explicitly reconfigures it
 - ETH received from the fixed-rate purchase program is sent to Treasury and recycled according to the Treasury Recycling Rule
 - when the purchase flow routes through the Base canonical receiver, VPFI must be minted or released only after the Base receiver has actually received ETH; quoted, requested, or expected ETH amounts must never be enough to mint VPFI by themselves
@@ -530,7 +530,7 @@ To enable easy early access to VPFI for discounts:
 
 ### 8a. User-Facing Purchase Flow
 
-The public `/buy-vpfi` route is a no-wallet marketing / education surface. The wallet-bearing `Buy VPFI` controls live inside the connected app at `/app/buy-vpfi`. The app page never asks the user to switch manually to the canonical `Base` chain. Any cross-chain routing, canonical-chain settlement, or LayerZero OFT activity needed under the hood is abstracted away by the page itself.
+The public `/buy-vpfi` route is a no-wallet marketing / education surface. The wallet-bearing `Buy VPFI` controls live inside the connected app at `/app/buy-vpfi`. The app page never asks the user to switch manually to the canonical `Base` chain. Any cross-chain routing, canonical-chain settlement, or CCIP activity needed under the hood is abstracted away by the page itself.
 
 Two explicit user steps, in this order:
 
@@ -541,7 +541,7 @@ Per-wallet cap display:
 
 - when the admin has not yet configured a per-wallet cap on-chain, `/app/buy-vpfi` MUST display the Phase 1 recommendation (`30,000 VPFI`) as the effective per-chain cap — `Uncapped` is not a valid user-facing state
 - the displayed "your remaining allowance" always equals `effectiveCap - soldToWallet`, where `effectiveCap` falls back to `30,000 VPFI` when `perWalletCap == 0` on-chain
-- this allowance is keyed by `(buyer, originEid)`, where `originEid` is the LayerZero endpoint ID of the chain where the buy originated; buying up to the cap on one origin chain does not by itself consume the user's allowance on another chain unless admin later introduces an explicit cross-chain cap model
+- this allowance is keyed by the buyer and the origin EVM chain id where the buy originated; buying up to the cap on one origin chain does not by itself consume the user's allowance on another chain unless admin later introduces an explicit cross-chain cap model
 - likewise, VPFI deposited into escrow on a given chain counts toward lender / borrower fee-discount tiers only for loans initiated on that same chain
 
 VPFI held in escrow simultaneously satisfies the staking model and the fee-discount tier table in §6 on that same chain — a single deposit serves both purposes locally, but does not qualify loans initiated on other chains.
@@ -558,20 +558,20 @@ Payment-token mode requirements:
 - adapter initialization and payment-token rotation must reject EOAs, non-ERC-20 contracts, and ERC-20s whose `decimals()` value is not `18`, so an operator cannot accidentally configure USDC or another wrong-decimal token as the ETH-equivalent payment asset
 - deployment scripts should pre-flight strict-WETH chains and refuse native-gas mode there, while logging payment-token metadata for operator confirmation against the published canonical WETH address
 - the frontend should display the actual buy asset for the active chain and adapter mode rather than hardcoding `ETH`; native-gas chains should show the chain's native gas asset, while WETH-pull chains should show the configured bridged WETH token and provide a verification link to the relevant market-data page
-- in WETH-pull mode, approval and balance checks should target the configured ERC-20 payment token; LayerZero execution fees remain paid in the chain's native gas token and should be labelled with that native symbol
-- buy-adapter deployments should encode a default LayerZero Type-3 buy-options payload so `quoteBuy` works immediately after deploy without requiring a separate post-deploy `setBuyOptions` transaction first; the default LzReceive gas budget should be conservative and chain-tunable, with a companion script able to update live adapters using the same `OptionsBuilder` recipe
+- in WETH-pull mode, approval and balance checks should target the configured ERC-20 payment token; cross-chain execution fees remain paid in the chain's native gas token and should be labelled with that native symbol
+- buy-adapter deployments should configure sane default CCIP lane and execution settings so quotes and buys can work immediately after deploy without a separate post-deploy tuning ceremony
 - mirror-chain `VPFIBuyAdapter` deployments must expose `getRateLimits()` returning the per-request cap and rolling 24-hour daily cap configured through `setRateLimits`
 - deployment health checks and mainnet verify phases must treat unlimited default buy-adapter rate limits as a hard readiness failure; operators should be able to verify configured limits through public getters rather than raw storage-slot inspection
 - canonical chains that do not deploy a buy adapter are exempt from buy-adapter rate-limit checks
 
 Cross-chain buy settlement hardening:
 
-- the canonical receiver must not OFT-send fixed-rate buy VPFI directly to the buyer wallet on the source chain; it should target the source-chain buy adapter through LayerZero OFT compose
-- the compose payload must include the buy request id, and the source-chain adapter must release VPFI only when `pendingBuys[requestId]` exists and names the buyer recorded by the source-chain `buy()` call
-- forged or replayed compose arrivals must not pay an arbitrary wallet; unmatched or already-settled request ids should be recorded as stuck VPFI and recoverable only by owner / governance to a configured recipient
-- the compose handler must authenticate both the LayerZero endpoint caller and the configured local VPFI mirror source; deployments must configure receiver `buyAdapterByEid` plus source-adapter `vpfiToken` and `vpfiMirror`
-- a separate `BUY_SUCCESS` reply path should not be required for successful buys; the OFT compose arrival is the success signal and should release source-chain escrowed payment to treasury where applicable
-- operator-configured OFT send options for the back leg must include gas for both LzReceive minting and LzCompose adapter execution; deploy-time defaults should exist, and a post-deploy script should allow controlled gas-budget adjustment
+- the canonical receiver must not send fixed-rate buy VPFI directly to an arbitrary buyer wallet on the source chain; delivery should route through the approved source-chain buy adapter
+- the delivery message must include the buy request identity, and the source-chain adapter must release VPFI only when a matching pending buy exists and names the buyer recorded by the local buy request
+- forged or replayed deliveries must not pay an arbitrary wallet; unmatched or already-settled request identities should be recorded as stuck VPFI and recoverable only by owner / governance to a configured recipient
+- inbound delivery must authenticate the approved cross-chain messenger, the source chain, the remote messenger, and the expected token peer before any buyer-facing release
+- a separate success reply path should not be required for successful buys; the authenticated token delivery is the success signal and should release source-chain escrowed payment to treasury where applicable
+- if a buyer overpays the quoted cross-chain execution fee, the buy path should forward only the required fee and refund the surplus to the buyer
 
 Permit2 requirements for VPFI utility flows:
 
@@ -592,13 +592,27 @@ All VPFI received as fees is recycled as follows, and ETH received from the fixe
 
 If the insurance / bug bounty pool exceeds `2%` of total supply, any surplus VPFI is also recycled using the same `38 / 38 / 24` split.
 
+Treasury management:
+
+- governance should be able to convert accumulated fee assets into a configured reserve-asset allocation in one deliberate treasury action
+- the reserve set should be governance-configurable as ordered asset / percentage targets that must sum to `100%`
+- treasury conversion should avoid dust-sized execution by requiring either a minimum value threshold or a maximum time-since-last-conversion threshold
+- converted output remains in protocol-controlled treasury custody; treasury conversion is not a user reward push
+
+Founder and contributor compensation:
+
+- contributor salary streams should be explicit budgeted treasury expenses, funded deliberately for a budget period and withdrawable only up to the funded amount
+- salary streams must not be automatic percentages of protocol fees and must not be funded implicitly when fees accrue
+- genesis founder, team, early-contributor, and ecosystem grants should use per-grantee vesting wallets with the approved cliff and linear-release terms
+- real genesis funding actions, including founder grants and salary-stream activation, should remain gated on legal sign-off before token generation
+
 ---
 
 ## 10. Multi-Chain Deployment Strategy
 
 Standard:
 
-- `LayerZero OFT V2`
+- Chainlink Cross-Chain Token through CCIP
 
 Purpose:
 
@@ -617,21 +631,22 @@ Additional rollout chains for the intended Phase 1 production rollout:
 
 Deployment flow:
 
-1. deploy `VPFIToken.sol` as the canonical OFT deployment on `Base`
+1. deploy the canonical VPFI token on `Base`
 2. if an initial supply tranche is used for treasury- or allocation-managed distribution, mint it to the secure multi-sig plus timelock-controlled treasury setup; the fixed-rate purchase program itself must not rely on a pre-minted sale reserve
-3. deploy connected peer contracts on the additional supported chains
-4. wire LayerZero peer configuration so omnichain transfers preserve one global supply model
+3. deploy connected mirror-token and cross-chain messenger contracts on the additional supported chains
+4. wire CCIP lanes, remote messengers, token pools, and channel peers so cross-chain transfers preserve one global supply model
 5. keep token symbol and metadata consistent as `VPFI` on every supported chain
 6. configure mirror-chain buy-adapter rate limits to finite caps before verification; adapters that remain at unlimited deployment defaults must be treated as not production-ready
-7. hand OApp ownership to the configured Governance Safe only from the current on-chain owner key, with scripts reading `owner()` first and skipping with operator guidance when the signer does not match
-8. wire OApp peers according to the current owner of each source OApp: direct owner broadcasts where the admin EOA still owns the source, and Safe Transaction Builder batches where the Governance Safe owns the source
+7. hand cross-chain messenger, token-pool, and adapter ownership to the configured Governance Safe only from the current on-chain owner key, with scripts reading current authority first and skipping with operator guidance when the signer does not match
+8. verify every cross-chain lane from the perspective of both the local chain and the remote chain before it is considered production-ready
 
 Architecture clarification:
 
-- only `VPFI` is cross-chain through `LayerZero OFT V2`
+- only `VPFI` and reward-accounting messages are cross-chain through CCIP
 - the Vaipakam lending / borrowing / rental core protocol remains single-chain per deployment
 - in Phase 1, the core protocol should be deployed as separate Diamond instances on `Base`, `Polygon`, `Arbitrum`, `Optimism`, and `Ethereum mainnet`
 - loans, offers, collateral, repayment, claims, liquidation, preclose, refinance, and keeper actions must stay local to the deployment chain of that specific protocol instance
+- all protocol-owned cross-chain accounting should key chain identity by EVM chain id. Legacy endpoint-id style identifiers must not be used for per-wallet buy caps, reward reports, events, or frontend / watchdog reconciliation.
 
 Canonical-address rule:
 
@@ -639,22 +654,23 @@ Canonical-address rule:
 - canonical addresses must be published in `docs/` and surfaced on the public dashboard / transparency UI
 - CREATE2 deployment salts and version strings are part of the token deployment artifact. Where shared deterministic addresses are intended, rehearsals should confirm address parity across chains; if a predicted address already has bytecode from a prior rehearsal, operators should either reuse the idempotent deployment state or bump the documented salt / version before resuming.
 
-LayerZero hardening requirements:
+CCIP hardening requirements:
 
-- each reward OApp packet type must validate the exact expected encoded payload size before decoding; for the current report / broadcast tuple this is `128` bytes
-- malformed, undersized, or oversized reward packets must revert with a typed payload-size error carrying the observed and expected sizes
-- peer wiring is considered complete only after every expected `(source OApp, remote eid)` pair returns the right-padded peer address from `peers(uint32)`. Runbooks should preserve decoded batch review data for Safe-routed peer wiring.
-- mainnet DVN configuration defaults to a hardened `3 required + 2 optional, threshold 1-of-2` policy. Testnet rehearsals may use an explicit `1 required + 1 optional, threshold 1-of-1` mode for operator practice, but mainnet scripts must keep the hardened policy as the default.
-- testnet DVN broadcasts may be deliberately parked when the live endpoint defaults are functionally equivalent to the intended rehearsal posture and the ceremony would add many low-signal broadcasts. Mainnet hardening must still be explicit and verified before launch.
+- domain contracts should depend on a provider-neutral cross-chain messenger abstraction; provider-specific behavior should be isolated to the approved messenger adapter so a future provider migration does not leak through the loan, reward, or tokenomics surfaces
+- the messenger must maintain allowlists for supported remote chains, remote messengers, and channel peers, and must reject inbound or outbound messages outside those allowlists
+- chain selector and channel-handler configuration must stay one-to-one. A governance or operator action that would make one local chain map to multiple remote identities, or one channel map to multiple handlers, must be rejected rather than silently replacing state.
+- cross-chain token transfers must have bounded, governance-tunable rate limits per lane. Defaults must not be unlimited, and rate limits must not be disabled entirely.
+- outbound messages should reject duplicate token entries and invalid chain identity values before attempting a send
+- inbound messages should reject out-of-range or mismatched chain identity values rather than silently attributing a message to the wrong chain
 - fixed-rate buy reconciliation should be monitored off-chain: canonical-chain processed buy events should be cross-checked against source-chain `BuyRequested` events by request id, buyer, and amount
-- the buy-reconciliation watchdog should run from the operations Worker, read canonical-chain processed-buy events, resolve the originating LayerZero endpoint id to that source chain's RPC and adapter address, and verify that a matching source-chain `BuyRequested` event exists with the same request id, buyer, and amount
+- the buy-reconciliation watchdog should run from the operations Worker, read canonical-chain processed-buy events, resolve the originating EVM chain id to that source chain's RPC and adapter address, and verify that a matching source-chain `BuyRequested` event exists with the same request id, buyer, and amount
 - the buy-reconciliation watchdog should expose an on-chain kill switch for planned ceremonies; auto-pausing on mismatch is an operations decision for a later phase, not a Phase 1 requirement
 - watchdog coverage requires operator-provided source-chain RPC secrets for every configured buy lane. Missing RPC secrets should cause that lane to be skipped with an operator-visible log rather than causing the entire watchdog pass to fail.
-- off-chain monitoring should watch DVN-set drift for each configured `(chain, OApp, peer eid, send / receive)` pair
-- off-chain monitoring should check OFT supply invariants by comparing Base canonical-adapter locked VPFI against the sum of mirror-chain `totalSupply()` values
+- off-chain monitoring should watch configured CCIP lane, token-pool, messenger-peer, and rate-limit state for drift
+- off-chain monitoring should check cross-chain token supply invariants by comparing canonical-chain locked / minted accounting against the sum of mirror-chain supplies
 - off-chain monitoring should alert on oversized single-transaction VPFI flows above an operator-configured threshold
-- the LayerZero ops watcher should remain internal / private and separate from the public HF watcher / keeper reference implementation
-- LayerZero watcher secrets should remain chain-scope explicit. Mainnet-shaped `OAPP_*` environment keys must not be populated with testnet addresses just to make a rehearsal worker start; use testnet-specific configuration or leave the lane disabled.
+- the CCIP ops watcher should remain internal / private and separate from the public HF watcher / keeper reference implementation
+- CCIP watcher secrets and lane configuration should remain chain-scope explicit. Mainnet-shaped environment keys must not be populated with testnet addresses just to make a rehearsal worker start; use testnet-specific configuration or leave the lane disabled.
 
 ---
 
@@ -729,7 +745,7 @@ Testing requirements:
 - extend invariant coverage
 - include supply-cap enforcement tests
 - include receipt-based mint/release tests for the fixed-rate purchase path, including successful receipt, failed receipt, and partial receipt cases
-- include cross-chain / OFT configuration tests where practical
+- include cross-chain token and messenger configuration tests where practical
 - include reward-accounting and vesting tests
 - include buyback-routing tests
 - include preferred-chain fixed-rate purchase tests where purchased VPFI is delivered to the user's wallet on that same chain
@@ -752,7 +768,7 @@ Frontend integration requirements:
 - tier tables, staking APR labels, pool-cap labels, rental buffer displays, max slippage, treasury fee, LIF, and minimum Health Factor copy should use live config placeholders instead of hardcoded locale text
 - VPFI tier thresholds returned in base units should be converted through shared token-display helpers before they appear in tier tables, consent copy, or tooltip placeholders
 - `/app/buy-vpfi` should let users buy from their preferred supported chain without manually switching to canonical `Base`
-- `/app/buy-vpfi` is the single user-facing purchase / stake / unstake flow; public `/buy-vpfi` is the education surface. Any bridge, canonical-chain settlement, OFT routing, or Base-receiver complexity must be abstracted behind the app flow.
+- `/app/buy-vpfi` is the single user-facing purchase / stake / unstake flow; public `/buy-vpfi` is the education surface. Any bridge, canonical-chain settlement, cross-chain token routing, or Base-receiver complexity must be abstracted behind the app flow.
 - the purchase page must show the exact ETH required, resulting VPFI amount, fixed rate, remaining global supply, and chain-local wallet allowance
 - after purchase, the page should guide a separate explicit wallet-to-escrow deposit action on the same chain; it must not auto-deposit purchased VPFI into escrow
 - the deposit step should prefer Permit2 where supported, fall back cleanly to classic approval, and explain that Permit2 is optional convenience rather than a replacement for token-level allowance control
