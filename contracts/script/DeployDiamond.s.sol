@@ -175,8 +175,8 @@ contract DeployDiamond is Script {
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
         // Split into two halves to stay under Base Sepolia's per-tx
-        // gas cap (~18M observed) — a single 32-facet cut estimates at
-        // ~17M, and forge's default 1.3× multiplier pushes the sent
+        // gas cap (~18M observed) — a single all-facets cut estimates
+        // at ~17M, and forge's default 1.3× multiplier pushes the sent
         // gas-limit over the cap. Two halves @ ~8.5M each, padded to
         // ~11M, land well under. Any chain that can take the single
         // cut will also accept two halves; this is strictly safer.
@@ -215,11 +215,11 @@ contract DeployDiamond is Script {
         IDiamondCut(diamond).diamondCut(secondHalf, address(0), "");
         console.log("Diamond cut 2/2 complete:", cuts.length - mid, "facets added.");
         // Post-cut-2 sanity: every facet added across both cuts must
-        // now be loupe-visible. Same off-by-one note as cut 1 — the
-        // DiamondCutFacet stays out of `facetAddresses[]`, so the
-        // expected count is `cuts.length` (32 today), not 33. The
-        // selector for `diamondCut` itself is still callable; it
-        // just isn't enumerated by the loupe walk.
+        // now be loupe-visible. The DiamondCutFacet stays out of
+        // `facetAddresses[]` (constructor-installed, not cut), so the
+        // expected loupe count is exactly `cuts.length`. The selector
+        // for `diamondCut` itself is still callable; it just isn't
+        // enumerated by the loupe walk.
         uint256 expectedAfterCut2 = cuts.length;
         uint256 actualAfterCut2 = DiamondLoupeFacet(diamond)
             .facetAddresses()
@@ -250,9 +250,10 @@ contract DeployDiamond is Script {
         //     `VaipakamDiamond.constructor` — `LibPausable.pause()` is
         //     the last constructor write) so the half-cut window
         //     between `diamondCut 1/2` and `diamondCut 2/2` cannot be
-        //     exploited via half-2 selectors. By this point all 32
-        //     facets are cut, every init call above has landed, and
-        //     the post-cut facet-count assertion has passed — safe
+        //     exploited via half-2 selectors. By this point every
+        //     facet in `cuts` is cut, every init call above has
+        //     landed, and the post-cut facet-count assertion
+        //     (`actualAfterCut2 == cuts.length`) has passed — safe
         //     to flip the bit back. The deployer holds PAUSER_ROLE
         //     from Step 5a's `initializeAccessControl`, so this call
         //     succeeds without an extra grant. Mainnet operators that
@@ -321,6 +322,17 @@ contract DeployDiamond is Script {
         // permission only fails the file step, not the deploy.
         Deployments.writeChainHeader();
         Deployments.writeDiamond(diamond);
+
+        // Issue #69 — record the authoritative facet count into
+        // addresses.json so the shell verify phase exact-matches the
+        // live diamond against it. This is the single source of truth:
+        // no hardcoded facet count drifts in the deploy scripts.
+        // Written here, after `vm.stopBroadcast()` and alongside the
+        // other artifact writes — never mid-broadcast — so a revert in
+        // Step 5/6 can't leave a `.facetCount` that disagrees with the
+        // `.diamond` / facet-address keys still describing the prior
+        // deploy.
+        Deployments.writeUint(".facetCount", cuts.length);
 
         // Per-chain context that downstream scripts (and the frontend
         // env builder) consume directly from addresses.json:

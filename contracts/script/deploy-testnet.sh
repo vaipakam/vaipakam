@@ -1520,17 +1520,24 @@ phase_verify() {
   # second half silently drops due to a gas spike or RPC hiccup. Catch
   # it here on mainnet too, before any role-rotation ceremony locks
   # the deploy in.
-  # 32 cut facets — DiamondCutFacet is callable but not loupe-
-  # enumerated (see DeployDiamond.s.sol post-cut comment).
-  EXPECTED_FACETS=32
+  # DiamondCutFacet is callable but not loupe-enumerated, so the loupe
+  # count equals the cut-entry count exactly. DeployDiamond records the
+  # authoritative count in addresses.json (.facetCount, Issue #69) —
+  # read it and require an EXACT match; a `>=` floor would green-light
+  # a stale / half-cut diamond that is MISSING a facet.
+  EXPECTED_FACETS=$(jq -r '.facetCount // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
+  if [ -z "$EXPECTED_FACETS" ]; then
+    echo "  FAIL: .facetCount missing from $DEPLOY_DIR/addresses.json — re-run --phase contracts." >&2
+    exit 1
+  fi
   FACET_COUNT_RAW=$(cast call "$DIAMOND" 'facetAddresses()(address[])' --rpc-url "$RPC" 2>/dev/null \
     | tr ',' '\n' | grep -c '0x' || echo 0)
-  if [ "$FACET_COUNT_RAW" -lt "$EXPECTED_FACETS" ]; then
-    echo "  FAIL: $FACET_COUNT_RAW facets registered, expected $EXPECTED_FACETS." >&2
+  if [ "$FACET_COUNT_RAW" -ne "$EXPECTED_FACETS" ]; then
+    echo "  FAIL: $FACET_COUNT_RAW facets registered, expected exactly $EXPECTED_FACETS (stale / half-cut diamond)." >&2
     echo "        Run --phase contracts again before any other phase." >&2
     exit 1
   fi
-  echo "  ✓ $FACET_COUNT_RAW facets (≥ $EXPECTED_FACETS expected)"
+  echo "  ✓ all $FACET_COUNT_RAW expected facets registered"
 
   echo
   echo "[3] Master flag state"
