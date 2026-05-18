@@ -17,6 +17,7 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
+import {RiskMatchLiquidationFacet} from "./RiskMatchLiquidationFacet.sol";
 import {IZeroExProxy} from "../interfaces/IZeroExProxy.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {ISwapAdapter} from "../interfaces/ISwapAdapter.sol";
@@ -601,7 +602,7 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // it owns the lender position NFT (EC-007 hoisted that check
         // ahead of this call), so the lender who triggers their own
         // claim-time rescue is the matcher and earns the 1% bonus.
-        RiskFacet(address(this)).attemptInternalMatchAutoDispatch(loanId, msg.sender);
+        RiskMatchLiquidationFacet(address(this)).attemptInternalMatchAutoDispatch(loanId, msg.sender);
         // EC-007 — a full match consumed the snapshot and cleared the
         // lender claim records. Signal the caller to return early: if it
         // fell through to the claim-record payout it would read a zeroed

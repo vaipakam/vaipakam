@@ -14,6 +14,7 @@ import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
@@ -371,7 +372,7 @@ contract PositiveFlowsGapFillers is Test {
         AddCollateralFacet addCollateralFacet = new AddCollateralFacet();
         AccessControlFacet accessControlFacet = new AccessControlFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](14);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](15);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -438,6 +439,7 @@ contract PositiveFlowsGapFillers is Test {
             functionSelectors: helperTest.getAccessControlFacetSelectors()
         });
         cuts[13] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
+        cuts[14] = IDiamondCut.FacetCut({facetAddress: address(new RiskMatchLiquidationFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskMatchLiquidationFacetSelectors()});
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
     }
 

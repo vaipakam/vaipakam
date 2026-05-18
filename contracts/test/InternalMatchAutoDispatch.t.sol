@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
@@ -84,8 +85,8 @@ contract InternalMatchAutoDispatchTest is SetupTest {
     function test_attemptAutoDispatch_eoa_reverts() public {
         // Direct EOA call to the external function should hit
         // `onlyDiamondInternal` and revert.
-        vm.expectRevert(RiskFacet.OnlyDiamondInternal.selector);
-        RiskFacet(address(diamond)).attemptInternalMatchAutoDispatch(LOAN_A, matcher);
+        vm.expectRevert(RiskMatchLiquidationFacet.OnlyDiamondInternal.selector);
+        RiskMatchLiquidationFacet(address(diamond)).attemptInternalMatchAutoDispatch(LOAN_A, matcher);
     }
 
     // ─── No-candidate fall-through (returns false) ──────────────────
@@ -100,7 +101,7 @@ contract InternalMatchAutoDispatchTest is SetupTest {
 
         // Invoke via cross-facet pattern — pretend Diamond is calling us.
         vm.prank(address(diamond));
-        bool dispatched = RiskFacet(address(diamond))
+        bool dispatched = RiskMatchLiquidationFacet(address(diamond))
             .attemptInternalMatchAutoDispatch(LOAN_A, matcher);
         assertFalse(dispatched);
     }
@@ -110,7 +111,7 @@ contract InternalMatchAutoDispatchTest is SetupTest {
         _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
 
         vm.prank(address(diamond));
-        bool dispatched = RiskFacet(address(diamond))
+        bool dispatched = RiskMatchLiquidationFacet(address(diamond))
             .attemptInternalMatchAutoDispatch(LOAN_A, matcher);
         assertFalse(dispatched);
     }
@@ -140,7 +141,7 @@ contract InternalMatchAutoDispatchTest is SetupTest {
         // which delegates to RiskFacet's gated entry. `msg.sender` of
         // the inner call is the Diamond, satisfying onlyDiamondInternal.
         vm.prank(address(diamond));
-        bool dispatched = RiskFacet(address(diamond))
+        bool dispatched = RiskMatchLiquidationFacet(address(diamond))
             .attemptInternalMatchAutoDispatch(LOAN_A, matcher);
         assertTrue(dispatched);
 
@@ -177,7 +178,7 @@ contract InternalMatchAutoDispatchTest is SetupTest {
         _mockLtv(LOAN_B, 5_000);
 
         vm.prank(address(diamond));
-        bool dispatched = RiskFacet(address(diamond))
+        bool dispatched = RiskMatchLiquidationFacet(address(diamond))
             .attemptInternalMatchAutoDispatch(LOAN_A, matcher);
         assertFalse(dispatched, "healthy candidate must not be force-liquidated");
     }
@@ -196,7 +197,7 @@ contract InternalMatchAutoDispatchTest is SetupTest {
         );
 
         vm.prank(address(diamond));
-        bool dispatched = RiskFacet(address(diamond))
+        bool dispatched = RiskMatchLiquidationFacet(address(diamond))
             .attemptInternalMatchAutoDispatch(LOAN_A, matcher);
         assertFalse(dispatched);
     }

@@ -17,6 +17,7 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {VaipakamEscrowImplementation} from "../src/VaipakamEscrowImplementation.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -53,6 +54,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {VaipakamEscrowImplementation} from "../src/VaipakamEscrowImplementation.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -131,6 +133,7 @@ contract SetupTest is Test {
     LoanFacet loanFacet;
     DefaultedFacet defaultFacet;
     RiskFacet riskFacet; // Added
+    RiskMatchLiquidationFacet riskMatchLiquidationFacet;
     RepayFacet repayFacet;
     AdminFacet adminFacet;
     ClaimFacet claimFacet;
@@ -191,6 +194,7 @@ contract SetupTest is Test {
         loanFacet = new LoanFacet();
         defaultFacet = new DefaultedFacet();
         riskFacet = new RiskFacet();
+        riskMatchLiquidationFacet = new RiskMatchLiquidationFacet();
         repayFacet = new RepayFacet();
         adminFacet = new AdminFacet();
         claimFacet = new ClaimFacet();
@@ -209,7 +213,7 @@ contract SetupTest is Test {
         escrowImpl = new VaipakamEscrowImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](21);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](22);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -319,6 +323,11 @@ contract SetupTest is Test {
             facetAddress: address(payrollFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getPayrollFacetSelectors()
+        });
+        cuts[21] = IDiamondCut.FacetCut({
+            facetAddress: address(riskMatchLiquidationFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRiskMatchLiquidationFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

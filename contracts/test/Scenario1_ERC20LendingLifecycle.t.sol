@@ -15,6 +15,7 @@ import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
@@ -107,7 +108,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         helperTest        = new HelperTest();
 
         // Cut all facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](14);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](15);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferFacetSelectors()});
         cuts[1]  = IDiamondCut.FacetCut({facetAddress: address(profileFacet),       action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
         cuts[2]  = IDiamondCut.FacetCut({facetAddress: address(oracleFacet),        action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});
@@ -122,6 +123,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         cuts[11] = IDiamondCut.FacetCut({facetAddress: address(addCollateralFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAddCollateralFacetSelectors()});
         cuts[12] = IDiamondCut.FacetCut({facetAddress: address(accessControlFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAccessControlFacetSelectors()});
         cuts[13] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
+        cuts[14] = IDiamondCut.FacetCut({facetAddress: address(new RiskMatchLiquidationFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskMatchLiquidationFacetSelectors()});
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
         AdminFacet(address(diamond)).unpause();

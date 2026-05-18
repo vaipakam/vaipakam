@@ -22,6 +22,7 @@ import {IERC4907} from "../src/interfaces/IERC4907.sol";
 import {VaipakamEscrowImplementation} from "../src/VaipakamEscrowImplementation.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {IZeroExProxy} from "../src/interfaces/IZeroExProxy.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
@@ -62,6 +63,7 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {IERC4907} from "../src/interfaces/IERC4907.sol";
 import {VaipakamEscrowImplementation} from "../src/VaipakamEscrowImplementation.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -203,7 +205,7 @@ contract DefaultedFacetTest is Test {
         escrowImpl = new VaipakamEscrowImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](15);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](16);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -276,6 +278,7 @@ contract DefaultedFacetTest is Test {
         });
         cuts[14] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
 
+        cuts[15] = IDiamondCut.FacetCut({facetAddress: address(new RiskMatchLiquidationFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskMatchLiquidationFacetSelectors()});
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
         AdminFacet(address(diamond)).unpause();

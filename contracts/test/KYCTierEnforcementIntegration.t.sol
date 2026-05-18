@@ -14,6 +14,7 @@ import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
@@ -238,7 +239,7 @@ contract KYCTierEnforcementIntegration is Test {
         AdminFacet adminFacet = new AdminFacet();
         AccessControlFacet accessControlFacet = new AccessControlFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](10);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](11);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -285,6 +286,7 @@ contract KYCTierEnforcementIntegration is Test {
             functionSelectors: helperTest.getAccessControlFacetSelectors()
         });
         cuts[9] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
+        cuts[10] = IDiamondCut.FacetCut({facetAddress: address(new RiskMatchLiquidationFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskMatchLiquidationFacetSelectors()});
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
     }
 

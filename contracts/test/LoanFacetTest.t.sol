@@ -17,6 +17,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {VaipakamEscrowImplementation} from "../src/VaipakamEscrowImplementation.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
  // Added for HF/LTV mocks
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -47,6 +48,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {VaipakamEscrowImplementation} from "../src/VaipakamEscrowImplementation.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
@@ -154,7 +156,7 @@ contract LoanFacetTest is Test {
         escrowImpl = new VaipakamEscrowImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](11);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](12);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -211,6 +213,7 @@ contract LoanFacetTest is Test {
             functionSelectors: helperTest.getConfigFacetSelectors()
         });
 
+        cuts[11] = IDiamondCut.FacetCut({facetAddress: address(new RiskMatchLiquidationFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskMatchLiquidationFacetSelectors()});
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
         // Diamond born paused (LibPausable). Clear via direct
