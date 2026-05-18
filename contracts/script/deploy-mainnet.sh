@@ -346,13 +346,26 @@ fi
 # chain — Ethereum, Base, Arbitrum, Optimism, BNB, Polygon each have a
 # distinct CCIP Router / RMN proxy / registry — so the .env carries a
 # `<VAR>_<SLUG>` entry per chain and the active chain's set is resolved
-# here. A pre-set bare `CCIP_*` (no per-slug var) is left untouched.
+# here.
+#
+# On mainnet a bare `CCIP_*` is NOT a safe fallback: if the per-slug var
+# for the selected chain is missing, that bare value silently applies
+# SOME OTHER chain's router / registry to this deploy — a miswired
+# cross-chain lane that preflight (presence-only) would not catch. So a
+# bare `CCIP_*` with no matching `<VAR>_<SLUG>` is a hard error here.
 for _ccip_var in CCIP_ROUTER CCIP_RMN_PROXY \
                  CCIP_TOKEN_ADMIN_REGISTRY CCIP_REGISTRY_MODULE_OWNER_CUSTOM; do
   _ccip_slug_var="${_ccip_var}_${CCIP_SLUG}"
   if [ -n "${!_ccip_slug_var:-}" ]; then
     export "$_ccip_var"="${!_ccip_slug_var}"
+  elif [ -n "${!_ccip_var:-}" ]; then
+    echo "Error: $_ccip_slug_var is not set in .env, but a bare $_ccip_var is —" >&2
+    echo "       that would wire the WRONG chain's CCIP address into the" >&2
+    echo "       $CHAIN_SLUG deploy. Set $_ccip_slug_var explicitly." >&2
+    exit 1
   fi
+  # If neither is set, $_ccip_var stays unset — the env preflight / the
+  # phase's own checks report it as a plain missing var.
 done
 
 # ── Phase markers + history sidecar ───────────────────────────────────
