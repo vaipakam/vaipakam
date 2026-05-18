@@ -195,3 +195,61 @@ CCIP stack over — the cutover runbook flags this as a manual multisig
 step until that script is updated.
 
 Closes #60.
+
+## Thread — T-068: Handover.s.sol brought onto the CCIP stack
+
+The post-deploy ADMIN → governance handover script
+(`script/Handover.s.sol`, the `--phase handover` step) was left
+LayerZero-shaped after the cross-chain migration. Its Diamond-side work
+— rotating the access-control roles and the Diamond's ownership to the
+governance Safe and the Timelock, then renouncing the admin EOA's
+authority — was always provider-agnostic and correct. Its cross-chain
+half was not: it rotated the deleted LayerZero contract set and never
+touched the new CCIP contracts, so a mainnet handover would have left
+the CCIP messenger, the VPFI token pool, and the rate governor still
+owned by the hot admin key — a violation of the project's cross-chain
+security policy.
+
+The script now hands the full CCIP contract set — the messenger, the
+VPFI token pool, the rate governor, the reward messenger, and the
+per-chain mirror token and buy adapter / receiver — to the governance
+Timelock, and rotates the Cross-Chain Token administrator (the Chainlink
+token-admin registry entry for VPFI) to the Timelock as well. The
+Timelock was chosen as the destination for consistency with the
+Diamond's own ownership: these contracts are upgradeable, so their owner
+gates upgrades and lane configuration, which fits a review-window delay
+— and fast incident response is still covered by the guardian pause
+lever every cross-chain contract carries.
+
+A simplification fell out of the migration: because the deploy and
+configuration scripts leave every cross-chain contract owned by the one
+admin address, the old per-contract owner-key juggling is gone — every
+ownership transfer is signed by the single admin key.
+
+Closes #63.
+
+## Thread — T-068: deploy-script broadcasting phases gated behind preflight
+
+The tiered mainnet and testnet deploy scripts run as a sequence of named
+phases (`preflight`, `contracts`, `ccip-wire`, `configure`, `handover`,
+…), each invoked as a deliberate operator action. The `preflight` phase
+held the two checks that must hold before any on-chain broadcast — that
+the configured RPC actually serves the expected chain, and (on mainnet)
+that the operator has attested to signing from a hardware wallet — but
+nothing forced `preflight` to run first. An operator could invoke a
+broadcasting phase directly and skip both checks, so a mispointed RPC
+URL could send a deploy to the wrong network unnoticed.
+
+Those critical checks are now factored into a gate that runs at the top
+of every broadcasting phase — `contracts`, `ccip-wire`, `swap-adapters`,
+`configure`, and `handover` — not only in the optional `preflight`
+phase. The RPC-serves-the-right-chain check is re-run every time, so it
+reflects the current `.env` rather than whatever was true whenever
+`preflight` last ran; the mainnet hardware-signer attestation is
+enforced on every mainnet broadcast. The check was implemented as a
+re-run rather than a "preflight already ran" marker precisely so it
+cannot go stale. `preflight` itself still runs the gate plus its fuller
+informational checks. The testnet script gets the same gate minus the
+hardware-signer leg, which has no testnet analogue.
+
+Closes #62.
