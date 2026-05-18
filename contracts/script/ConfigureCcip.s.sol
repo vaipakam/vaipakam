@@ -11,6 +11,7 @@ import {TokenAdminRegistry} from
     "@chainlink/contracts-ccip/contracts/tokenAdminRegistry/TokenAdminRegistry.sol";
 import {RegistryModuleOwnerCustom} from
     "@chainlink/contracts-ccip/contracts/tokenAdminRegistry/RegistryModuleOwnerCustom.sol";
+import {IOwner} from "@chainlink/contracts-ccip/contracts/interfaces/IOwner.sol";
 
 import {CcipMessenger} from "../src/crosschain/CcipMessenger.sol";
 import {VPFIMirrorToken} from "../src/crosschain/VPFIMirrorToken.sol";
@@ -159,6 +160,26 @@ contract ConfigureCcip is Script {
         }
 
         require(c.laneChainIds.length > 0, "ConfigureCcip: no lanes given");
+
+        // On a mirror the buy + reward channels peer with canonical Base,
+        // so the messenger MUST get Base's chain-selector + remote-messenger
+        // wired — and that only happens for chain ids listed in
+        // CCIP_LANE_CHAIN_IDS. A lane list that omits Base still passes
+        // `ccip-wire` and `verify`, but then every outbound buy / reward
+        // send reverts `UnconfiguredChain(baseChainId)`. Fail loud here.
+        if (!c.canonical) {
+            bool baseInLanes;
+            for (uint256 i; i < c.laneChainIds.length; ++i) {
+                if (c.laneChainIds[i] == c.baseChainId) {
+                    baseInLanes = true;
+                    break;
+                }
+            }
+            require(
+                baseInLanes,
+                "ConfigureCcip: CCIP_LANE_CHAIN_IDS must include BASE_CHAIN_ID on a mirror chain"
+            );
+        }
 
         console.log("=== T-068 Phase 6 - CCIP wiring ===");
         console.log("Chain id:        ", block.chainid);
@@ -357,13 +378,30 @@ contract ConfigureCcip is Script {
     ///      safe.
     function _registerCct(Ctx memory c) internal {
         TokenAdminRegistry reg = TokenAdminRegistry(c.registry);
+
+        // `registerAdminViaOwner` requires the caller to be the token's
+        // `owner()`. The mirror VPFI is owned by `admin`, so that holds;
+        // but the canonical `VPFIToken`'s owner can be a separate
+        // governance / timelock key — in which case the call would revert
+        // mid-broadcast and block `ccip-wire`. Pre-check ownership: if the
+        // broadcasting admin is not the token owner, skip CCT registration
+        // with a clear instruction (the token owner runs it separately —
+        // see the cutover runbook §8) rather than reverting the whole pass.
+        address tokenOwner = IOwner(c.localToken).owner();
+        if (tokenOwner != c.admin) {
+            console.log("CCT: SKIPPED - broadcasting admin is not the token owner.");
+            console.log("  VPFI token:  ", c.localToken);
+            console.log("  token owner: ", tokenOwner);
+            console.log("  broadcaster: ", c.admin);
+            console.log("  Register VPFI as a CCT as the token owner:");
+            console.log("  registerAdminViaOwner, acceptAdminRole, setPool.");
+            return;
+        }
+
         TokenAdminRegistry.TokenConfig memory cfg =
             reg.getTokenConfig(c.localToken);
 
         if (cfg.administrator == address(0) && cfg.pendingAdministrator == address(0)) {
-            // `registerAdminViaOwner` requires the caller to be the
-            // token's `owner()` — true for the mirror VPFI (owned by
-            // admin) and required of the canonical VPFIToken (see runbook).
             RegistryModuleOwnerCustom(c.moduleOwner).registerAdminViaOwner(
                 c.localToken
             );

@@ -1518,31 +1518,39 @@ phase_verify() {
   # not run — fail-hard and refuse to mark verify done.
   POOL=$(jq -r '.vpfiTokenPool // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
   GOVERNOR=$(jq -r '.vpfiPoolRateGovernor // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
-  if [ -n "$POOL" ] && [ -n "$GOVERNOR" ]; then
-    echo
-    echo "[4] CCIP TokenPool rate-limit wiring"
-    RL_ADMIN=$(cast call "$POOL" 'getRateLimitAdmin()(address)' --rpc-url "$RPC" 2>/dev/null || echo "")
-    SUPPORTED=$(cast call "$POOL" 'getSupportedChains()(uint64[])' --rpc-url "$RPC" 2>/dev/null || echo "")
-    echo "  rateLimitAdmin   = $RL_ADMIN"
-    echo "  supported lanes  = $SUPPORTED"
-    if [ -z "$RL_ADMIN" ]; then
-      echo "  ✗ getRateLimitAdmin() call failed — pool may not be deployed at $POOL."
-      exit 1
-    fi
-    # cast returns checksummed addresses — lowercase both sides to compare.
-    if [ "$(echo "$RL_ADMIN" | tr 'A-F' 'a-f')" != "$(echo "$GOVERNOR" | tr 'A-F' 'a-f')" ]; then
-      echo "  ✗ FAIL: the pool's rateLimitAdmin is not the VpfiPoolRateGovernor."
-      echo "          The bounded rate-limit path is not wired — run --phase"
-      echo "          ccip-wire before declaring the deploy ready."
-      exit 1
-    fi
-    if [ -z "$SUPPORTED" ] || [ "$SUPPORTED" = "[]" ]; then
-      echo "  ✗ FAIL: the pool has no CCIP lanes configured. Per-lane rate"
-      echo "          limits cannot exist without a lane — run --phase ccip-wire."
-      exit 1
-    fi
-    echo "  ✓ governor is rateLimitAdmin + lanes present — rate limits enforced."
+  echo
+  echo "[4] CCIP TokenPool rate-limit wiring"
+  # The contracts phase deploys the TokenPool + governor on EVERY chain,
+  # so a missing key is not "n/a" — it means the phase did not land (or a
+  # stale pre-CCIP artifact is in place). Fail hard rather than skip the
+  # checks and still print a green verify.
+  if [ -z "$POOL" ] || [ -z "$GOVERNOR" ]; then
+    echo "  ✗ FAIL: vpfiTokenPool / vpfiPoolRateGovernor missing from"
+    echo "          deployments/$CHAIN_SLUG/addresses.json — the contracts phase"
+    echo "          did not land. Re-run --phase contracts before verify."
+    exit 1
   fi
+  RL_ADMIN=$(cast call "$POOL" 'getRateLimitAdmin()(address)' --rpc-url "$RPC" 2>/dev/null || echo "")
+  SUPPORTED=$(cast call "$POOL" 'getSupportedChains()(uint64[])' --rpc-url "$RPC" 2>/dev/null || echo "")
+  echo "  rateLimitAdmin   = $RL_ADMIN"
+  echo "  supported lanes  = $SUPPORTED"
+  if [ -z "$RL_ADMIN" ]; then
+    echo "  ✗ getRateLimitAdmin() call failed — pool may not be deployed at $POOL."
+    exit 1
+  fi
+  # cast returns checksummed addresses — lowercase both sides to compare.
+  if [ "$(echo "$RL_ADMIN" | tr 'A-F' 'a-f')" != "$(echo "$GOVERNOR" | tr 'A-F' 'a-f')" ]; then
+    echo "  ✗ FAIL: the pool's rateLimitAdmin is not the VpfiPoolRateGovernor."
+    echo "          The bounded rate-limit path is not wired — run --phase"
+    echo "          ccip-wire before declaring the deploy ready."
+    exit 1
+  fi
+  if [ -z "$SUPPORTED" ] || [ "$SUPPORTED" = "[]" ]; then
+    echo "  ✗ FAIL: the pool has no CCIP lanes configured. Per-lane rate"
+    echo "          limits cannot exist without a lane — run --phase ccip-wire."
+    exit 1
+  fi
+  echo "  ✓ governor is rateLimitAdmin + lanes present — rate limits enforced."
 
   echo
   echo "verify OK. Continue with the role-rotation ceremony (DeploymentRunbook §6)."
