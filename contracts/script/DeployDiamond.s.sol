@@ -175,8 +175,8 @@ contract DeployDiamond is Script {
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
         // Split into two halves to stay under Base Sepolia's per-tx
-        // gas cap (~18M observed) — a single 32-facet cut estimates at
-        // ~17M, and forge's default 1.3× multiplier pushes the sent
+        // gas cap (~18M observed) — a single all-facets cut estimates
+        // at ~17M, and forge's default 1.3× multiplier pushes the sent
         // gas-limit over the cap. Two halves @ ~8.5M each, padded to
         // ~11M, land well under. Any chain that can take the single
         // cut will also accept two halves; this is strictly safer.
@@ -250,9 +250,10 @@ contract DeployDiamond is Script {
         //     `VaipakamDiamond.constructor` — `LibPausable.pause()` is
         //     the last constructor write) so the half-cut window
         //     between `diamondCut 1/2` and `diamondCut 2/2` cannot be
-        //     exploited via half-2 selectors. By this point all 32
-        //     facets are cut, every init call above has landed, and
-        //     the post-cut facet-count assertion has passed — safe
+        //     exploited via half-2 selectors. By this point every
+        //     facet in `cuts` is cut, every init call above has
+        //     landed, and the post-cut facet-count assertion
+        //     (`actualAfterCut2 == cuts.length`) has passed — safe
         //     to flip the bit back. The deployer holds PAUSER_ROLE
         //     from Step 5a's `initializeAccessControl`, so this call
         //     succeeds without an extra grant. Mainnet operators that
