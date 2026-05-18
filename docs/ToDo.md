@@ -74,7 +74,7 @@ Founder-profit-share note preserved from the T-075 branch conflict: see T-600 / 
 
 ---
 
-- [ ] **T-068** `promotedToProjectCard` ([Issue #5](https://github.com/vaipakam/vaipakam/issues/5), [PR #46](https://github.com/vaipakam/vaipakam/pull/46) — in review): Change LayerZero to Chainlink CCIP
+- [x] **T-068** — DONE 2026-05-18 ([Issue #5](https://github.com/vaipakam/vaipakam/issues/5), [PR #46](https://github.com/vaipakam/vaipakam/pull/46)). Migrated the cross-chain layer from LayerZero to Chainlink CCIP behind the provider-agnostic `ICrossChainMessenger` seam — `CcipMessenger` adapter, VPFI as a Cross-Chain Token, the cross-chain buy + reward flows, and the Diamond facets moved off the LayerZero endpoint-id model onto EVM chain ids. Phase 6 (CCIP deploy scripts, anvil rehearsal, testnet cutover) remains.
 
 ---
 

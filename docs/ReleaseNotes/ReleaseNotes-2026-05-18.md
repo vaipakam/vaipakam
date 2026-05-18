@@ -110,3 +110,46 @@ The full test suite is green throughout: 1993 passed / 0 failed / 5
 skipped — the CCIP-stack tests built across the phases, seven targeted
 tests for the automated-review fixes, and the reward-plumbing tests
 reworked to exercise the chain-id model.
+
+## Thread — release-notes automation: per-PR fragments + CI drift backstop (PR #48)
+
+Release notes were appended to a per-day file from memory after each
+merge, and that lagged — 2026-05-17 had five threads merge to `main`
+with no release-notes coverage, and the 2026-05-16 file was committed
+mid-day so it missed that day's later merges.
+
+Release notes now use a fragment model. Every behaviour-changing PR
+carries its own note as a small file under
+`docs/ReleaseNotes/unreleased/`, committed in the PR's own diff — so the
+note merges atomically with the work and two PRs landing the same day
+never append-conflict. After the day's PRs merge,
+`docs/ReleaseNotes/assemble.sh` folds the pending fragments into the
+dated `ReleaseNotes-<date>.md` file and clears them. A non-blocking CI
+check warns in the Actions tab when a merge to `main` changed contract
+or app code but added no release-notes entry. The convention is
+documented in `docs/ReleaseNotes/unreleased/README.md` and `CLAUDE.md`.
+
+This release note is itself the first fragment authored under the new
+convention. Closes #47.
+
+## Thread — Dependabot for off-chain deps + SHA-pinned CI actions (PR #50)
+
+The platform had no automated dependency-vulnerability hygiene, and CI
+workflow actions referenced floating tags (`@v4`) rather than pinned
+commit SHAs — a moved tag could silently change CI behaviour.
+
+Dependabot is now enabled, scoped to the off-chain surface only:
+`github-actions` (CI action versions) and `npm` (the pnpm workspace —
+`apps/*` + `packages/*`, the real CVE surface: viem, wagmi, React,
+wrangler and their transitive dependencies). Updates run weekly, are
+grouped to limit PR noise, and are `infra`-labelled. The on-chain
+Solidity dependencies under `contracts/lib/` are deliberately excluded
+— they are git submodules pinned to an audited commit set, and bumping
+one changes audited bytecode, so a contract-dependency bump stays a
+deliberate, reviewed, re-audited decision rather than an automated PR.
+
+Separately, every `uses:` in `.github/workflows/` is now pinned to a
+full commit SHA (with a trailing `# vX` comment Dependabot reads to keep
+offering version bumps). Dependabot PRs are never auto-merged — each
+goes through the same review + CI + Codex review as any change. Closes
+#49.
