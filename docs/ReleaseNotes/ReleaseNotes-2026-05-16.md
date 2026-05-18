@@ -1,6 +1,6 @@
 # Release Notes — 2026-05-16
 
-Two threads in flight today, both addressing gaps the C.1 audit thread surfaced when it closed the previous evening: a documentation surface for the liquidation-fallback mechanics (which the consent-flow polish deliberately pulled out of the Risk Disclosures), and the first phase of a deeper rework that lets internal-match rescue stuck `FallbackPending` loans whose at-fallback liquidation failed transiently.
+A full day across several threads. Most address gaps the C.1 audit thread surfaced when it closed the previous evening: a documentation surface for the liquidation-fallback mechanics (which the consent-flow polish deliberately pulled out of the Risk Disclosures), and a deeper rework that lets internal-match rescue stuck `FallbackPending` loans whose at-fallback liquidation failed transiently — that rework shipped end-to-end today as EC-003 Phases 1-4, plus the EC-007 partial-match fix its own audit surfaced. Separately, T-600 builds the treasury-management and founder-compensation contract layer.
 
 ## Thread 1 — EC-005: liquidation-fallback mechanics in AUG + FAQ (PR #17)
 
@@ -46,15 +46,80 @@ Tests:
 
 PR: [#18](https://github.com/vaipakam/vaipakam/pull/18). Phase 1 ships standalone — the keeper bot can already use the widened gate manually; the full auto-dispatch UX win comes in Phases 2-3.
 
-## What's next — EC-003 Phases 2-4
+## EC-003 Phases 2-4 — internal-match auto-dispatch (shipped)
 
-Each phase ships standalone so we can pause between for review / testnet bake.
+Phases 2-4 all merged the same day, each standalone.
 
-- **Phase 2** — Asset-pair index `s.activeLoansByAssetPair[principalAsset][collateralAsset] = uint256[]` (push on `initiateLoan`, swap-and-pop on terminal-status transition; FallbackPending stays in the index). New `MetricsFacet.hasInternalMatchCandidate(loanId)` view backed by the index — O(K) lookup where K is loans in that exact asset-pair, not O(N) over all active loans. Foundation for Phase 3.
-- **Phase 3** — Auto-dispatch in `triggerLiquidation` / `triggerDefault` / `claimAsLenderWithRetry`. Each entry-point calls `hasInternalMatchCandidate` first; on hit, settles via internal-match with the existing 1% matcher bonus paid to `msg.sender` of the dispatching call; on miss, falls through to the existing external-aggregator path. The user's claim-time insight is the load-bearing argument: at lender-claim time, the candidate pool has grown to include FallbackPending loans that appeared since the keeper's last scan — the claim-side branch isn't redundant with Phase 1's keeper-driven rescue, it's the safety net for the gap between keeper-tick and lender-claim.
-- **Phase 4** — Keeper bot drops the Active-only filter in `internalMatcher.ts`; AUG section "How Liquidation Actually Works" gains a "Pre-claim internal-match rescue" subsection; FAQ entry extended; new audit-package addendum `InternalMatchFallbackRescueAudit-<date>.md`.
+**Phase 2 — asset-pair index + candidate view (PR #19).** Adds a
+per-(principal asset, collateral asset) index of matchable loans to
+protocol storage — a loan is added at initiation and removed when it
+reaches a terminal status; the Active ↔ FallbackPending transition
+deliberately keeps a loan in the index, since FallbackPending loans stay
+matchable. On top of the index sits a new read-only view that, given a
+loan, scans the opposing-direction list and returns the first
+counterparty loan that passes a status gate and an oracle-priceability
+gate. Its cost is bounded by the number of loans in that exact asset
+pair, not by every active loan — the property the Phase 3 auto-dispatch
+depends on. The storage fields are appended, so there is no slot shift
+and no migration risk.
 
-Plan file: `~/.claude/plans/breezy-jumping-fountain.md`.
+**Phase 3 — auto-dispatch from every liquidation entry-point (PR #21).**
+Wires that candidate view into all three liquidation entry-points —
+HF-based liquidation, time-based default, and the claim-time
+lender-claim path. Each now, before falling through to the external swap
+aggregator, checks for an internal-match candidate; on a hit it settles
+the loan against the opposing counterparty at oracle price (zero
+aggregator slippage); on a miss it falls through unchanged. The
+claim-time branch is not redundant with the keeper bot: the candidate
+pool grows between a keeper tick and a lender's claim, so claim-time
+dispatch is a genuine second rescue window. Phase 3 also added an
+LTV-floor gate to the candidate view, so auto-dispatch can never
+force-liquidate a *healthy* counterparty (FallbackPending candidates
+skip the check — they are past the threshold by definition). One
+review-caught detail: the 1% matcher incentive must reach the real
+caller of the dispatching entry-point, but auto-dispatch reaches
+settlement through an internal call where that caller's identity is
+lost — so the caller address is now threaded explicitly through the
+settlement path, and the incentive reaches the triggering keeper or
+lender rather than stranding on the Diamond.
+
+**Phase 4 — keeper bot + docs (PR #22).** The no-contract-change closing
+phase: the keeper bot's loan-scan filter is widened from Active-only to
+Active + FallbackPending so FallbackPending rescue candidates surface; a
+"Pre-claim internal-match rescue" subsection is added to the Advanced
+User Guide's liquidation section; the FAQ is extended; and a new
+external-auditor addendum catalogues every invariant the EC-003 feature
+introduced. Closes [#12](https://github.com/vaipakam/vaipakam/issues/12).
+
+## EC-007 — partial-match FallbackPending residual claimability (PR #24)
+
+The EC-003 Phase 4 audit addendum flagged that only the *full*-match
+path had end-to-end coverage. Investigation found the partial-match path
+was not merely uncovered but broken. EC-003 Phase 1 settled
+FallbackPending legs by *rehydration* — pushing the loan's full
+collateral back into the *borrower's* escrow so the existing settlement
+machinery ran unchanged. That worked for a full match, but after a
+*partial* match the unmatched residual was left sitting in the
+borrower's escrow — while a lender claim withdraws from the *lender's*
+escrow. A lender claiming the residual of a partially-matched
+FallbackPending loan hit a revert.
+
+EC-007 replaces rehydration with status-aware settlement: a
+FallbackPending leg's collateral is now moved directly from the
+Diamond's own custody, while an Active leg still withdraws from the
+borrower escrow as before. FallbackPending collateral stays in the
+Diamond for the whole FallbackPending span; on a partial match only the
+matched portion leaves and the scaled residual stays put, resolvable by
+a later match or claim. Review then surfaced two more issues fixed in
+the same PR: a claim-time *full* internal match left the caller falling
+through into a now-empty claim record and reverting "nothing to claim"
+— which rolled back the successful match — fixed by returning early on a
+fully-resolved match; and that early return initially sat *before* the
+lender-NFT ownership check, briefly making a name-gated claim function
+permissionless (any caller could trigger the match purely to skim the
+matcher bonus) — fixed by hoisting the ownership and already-claimed
+guards to the top of the claim path. No contract-signature, ABI, or
+storage changes. Closes [#23](https://github.com/vaipakam/vaipakam/issues/23).
 
 ## Commits + PRs
 
@@ -62,10 +127,14 @@ Plan file: `~/.claude/plans/breezy-jumping-fountain.md`.
 | --- | --- |
 | `7019344` | docs(EC-005): document liquidation-fallback mechanics in AUG + FAQ + Risk-Disclosures cross-link → PR #17 |
 | `333c746` | feat(EC-003 Phase 1): FallbackPending loans become a valid leg in triggerInternalMatchLiquidation → PR #18 |
+| `eb82ddf` | feat(EC-003 Phase 2): asset-pair index + hasInternalMatchCandidate view → PR #19 |
+| `7459b52` | feat(EC-003 Phase 3): auto-dispatch internal-match from every liquidation entry-point → PR #21 |
+| `836cd80` | docs(EC-003 Phase 4): keeper-bot enable + AUG/FAQ + audit addendum → PR #22 |
+| `1552527` | fix(EC-007): partial-match FallbackPending residual claimability → PR #24 |
 
 ## Operational
 
-- **No production behaviour change** from either PR independently. EC-005 is docs-only. EC-003 Phase 1 widens an entry-point gate but the keeper bot's existing detector (filtered to `Active` only) won't surface FallbackPending candidates until Phase 4 wires them in. The contract is ready; the off-chain dispatcher catches up in Phase 4.
+- **EC-003 + EC-007 — the full internal-match rescue funnel shipped today.** EC-005 is docs-only. EC-003 Phase 1 widened the entry-point gate; Phases 2-4 added the asset-pair index, auto-dispatch from every liquidation entry-point, and the keeper-bot + docs; EC-007 then fixed the partial-match claim revert that the Phase 4 audit surfaced. Net on-chain effect: HF-liquidation, time-default, and lender-claim now all attempt an internal match (oracle-priced, zero aggregator slippage) before falling through to the external swap, and FallbackPending loans are valid rescue legs throughout. Storage shape unchanged across all four phases + EC-007; no migration risk.
 - **Audit story** — Phase 1 adds one new lifecycle edge to the existing `LibLifecycle` allow-list, two new errors, two new helpers (`_assertOraclePriceable`, `_rehydrateFallbackEscrowIfNeeded`), and one new piece of post-settlement housekeeping. Storage shape unchanged. No migration risk. The `_isLegal → _isValid` rename is mechanical inside one file with no external consumers.
 - **Cross-references**:
   - [`docs/internal/OffchainDataFetchAudit-2026-05-15.md`](../internal/OffchainDataFetchAudit-2026-05-15.md) — the C.1 audit doc whose closure narrative led to EC-003.
