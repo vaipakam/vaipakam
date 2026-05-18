@@ -229,12 +229,6 @@ contract DeployDiamond is Script {
             "DeployDiamond: cut 2/2 did not register all facets"
         );
 
-        // Issue #69 — record the authoritative facet count into
-        // addresses.json so the shell verify phase exact-matches the
-        // live diamond against it. This is the single source of truth:
-        // no hardcoded facet count drifts in the deploy scripts.
-        Deployments.writeUint(".facetCount", cuts.length);
-
         // ── Step 5: Post-deployment initialization ──────────────────────
         // 5a. Initialize access control (grants all roles to admin)
         AccessControlFacet(diamond).initializeAccessControl();
@@ -327,6 +321,17 @@ contract DeployDiamond is Script {
         // permission only fails the file step, not the deploy.
         Deployments.writeChainHeader();
         Deployments.writeDiamond(diamond);
+
+        // Issue #69 — record the authoritative facet count into
+        // addresses.json so the shell verify phase exact-matches the
+        // live diamond against it. This is the single source of truth:
+        // no hardcoded facet count drifts in the deploy scripts.
+        // Written here, after `vm.stopBroadcast()` and alongside the
+        // other artifact writes — never mid-broadcast — so a revert in
+        // Step 5/6 can't leave a `.facetCount` that disagrees with the
+        // `.diamond` / facet-address keys still describing the prior
+        // deploy.
+        Deployments.writeUint(".facetCount", cuts.length);
 
         // Per-chain context that downstream scripts (and the frontend
         // env builder) consume directly from addresses.json:
