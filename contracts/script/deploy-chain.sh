@@ -49,13 +49,12 @@
 #     command (no `--phase handover` step exists to gate) and is
 #     refused on mainnet chain-slugs anyway, so neither guard has
 #     a place to attach.
-#   - LayerZero peer wiring across chains — needs canonical AND
-#     mirror deployed first; the 2-leg `setPeer` ceremony is in
-#     `WireVPFIPeers.s.sol`. Run after `deploy-chain.sh` lands the
-#     pair on both sides.
-#   - LayerZero DVN policy — `ConfigureLZConfig.s.sol` carries DVN
-#     addresses + thresholds that are operator-curated per chain.
-#     Run separately (instructions in DeploymentRunbook).
+#   - CCIP lane + channel wiring across chains — needs every chain
+#     deployed first; `ConfigureCcip.s.sol` reads each chain's
+#     addresses.json to wire selectors / messengers / channel peers /
+#     TokenPool lanes. Run once per chain after `deploy-chain.sh` has
+#     landed on every chain in the topology (the multi-chain
+#     orchestrators do this automatically).
 #   - Wrangler secrets (`wrangler secret put TG_BOT_TOKEN` etc.) —
 #     operator-specific, never in any repo. Pre-provisioned per
 #     Worker; this script verifies presence (read-only) but never
@@ -88,10 +87,6 @@
 #     --skip-vpfi      — skip the VPFI lane + reward OApp (handy when
 #                        re-running after a partial failure that already
 #                        landed those)
-#     --skip-lz-config — skip the per-chain `ConfigureLZConfig.s.sol`
-#                        DVN policy step (auto-skipped anyway when
-#                        DVN_REQUIRED_1 isn't set in .env, but the
-#                        explicit flag also suppresses the warning)
 #     --fresh          — wipe contracts/deployments/<chain>/addresses.json
 #                        before deploying. Use when rehearsing — old
 #                        state from a prior deploy can't bleed into the
@@ -124,9 +119,10 @@
 # Pre-flight:
 #   - `.env` populated (DEPLOYER_PRIVATE_KEY, ADMIN_PRIVATE_KEY, ADMIN_ADDRESS,
 #     TREASURY_ADDRESS, VPFI_OWNER, VPFI_TREASURY, VPFI_INITIAL_MINTER,
-#     <CHAIN>_RPC_URL for the target chain, and the LZ_ENDPOINT_*
-#     entry for the target chain). The script `set -a` sources `.env`
-#     before any forge call so per-chain env vars surface.
+#     <CHAIN>_RPC_URL for the target chain, and the CCIP_ROUTER_* /
+#     CCIP_RMN_PROXY_* entries for the target chain). The script
+#     `set -a` sources `.env` before any forge call so per-chain env
+#     vars surface.
 #   - Workspace install: `pnpm install` at the monorepo root has been
 #     run, so apps/{defi,www,keeper,indexer,agent} all have their
 #     `node_modules` symlink chains in place. The script does NOT
@@ -212,7 +208,7 @@ Per-app skip flags (Cloudflare deploys):
   --skip-indexer   --skip-agent     --skip-cf  (alias for all five)
 
 Other flags:
-  --skip-vpfi      --skip-lz-config
+  --skip-vpfi
   --fresh          --resume         --verify-contracts
 
 For mainnet, use deploy-mainnet.sh — refuses to land mainnet here.
@@ -230,7 +226,6 @@ SKIP_KEEPER=0
 SKIP_INDEXER=0
 SKIP_AGENT=0
 SKIP_VPFI=0
-SKIP_LZ_CONFIG=0
 FRESH=0
 RESUME=0
 VERIFY_CONTRACTS=0
@@ -250,7 +245,6 @@ while [ $# -gt 0 ]; do
       SKIP_KEEPER=1; SKIP_INDEXER=1; SKIP_AGENT=1
       ;;
     --skip-vpfi)        SKIP_VPFI=1 ;;
-    --skip-lz-config)   SKIP_LZ_CONFIG=1 ;;
     --fresh)            FRESH=1 ;;
     --resume)           RESUME=1 ;;
     --verify-contracts) VERIFY_CONTRACTS=1 ;;
@@ -279,23 +273,23 @@ case "$CHAIN_SLUG" in
     exec bash "$SCRIPT_DIR/anvil-bootstrap.sh"
     ;;
   base-sepolia)
-    CHAIN_ID=84532;     RPC_VAR="BASE_SEPOLIA_RPC_URL"; IS_CANONICAL=1; LZ_EID=40245
-    LZ_ENDPOINT_VAR="LZ_ENDPOINT_BASE_SEPOLIA" ;;
+    CHAIN_ID=84532;     RPC_VAR="BASE_SEPOLIA_RPC_URL"; IS_CANONICAL=1
+    CCIP_SLUG="BASE_SEPOLIA" ;;
   sepolia)
-    CHAIN_ID=11155111;  RPC_VAR="SEPOLIA_RPC_URL";       IS_CANONICAL=0; LZ_EID=40161
-    LZ_ENDPOINT_VAR="LZ_ENDPOINT_SEPOLIA" ;;
+    CHAIN_ID=11155111;  RPC_VAR="SEPOLIA_RPC_URL";       IS_CANONICAL=0
+    CCIP_SLUG="SEPOLIA" ;;
   arb-sepolia)
-    CHAIN_ID=421614;    RPC_VAR="ARB_SEPOLIA_RPC_URL";   IS_CANONICAL=0; LZ_EID=40231
-    LZ_ENDPOINT_VAR="LZ_ENDPOINT_ARB_SEPOLIA" ;;
+    CHAIN_ID=421614;    RPC_VAR="ARB_SEPOLIA_RPC_URL";   IS_CANONICAL=0
+    CCIP_SLUG="ARB_SEPOLIA" ;;
   op-sepolia)
-    CHAIN_ID=11155420;  RPC_VAR="OP_SEPOLIA_RPC_URL";    IS_CANONICAL=0; LZ_EID=40232
-    LZ_ENDPOINT_VAR="LZ_ENDPOINT_OP_SEPOLIA" ;;
+    CHAIN_ID=11155420;  RPC_VAR="OP_SEPOLIA_RPC_URL";    IS_CANONICAL=0
+    CCIP_SLUG="OP_SEPOLIA" ;;
   bnb-testnet)
-    CHAIN_ID=97;        RPC_VAR="BNB_TESTNET_RPC_URL";   IS_CANONICAL=0; LZ_EID=40102
-    LZ_ENDPOINT_VAR="LZ_ENDPOINT_BNB_TESTNET" ;;
+    CHAIN_ID=97;        RPC_VAR="BNB_TESTNET_RPC_URL";   IS_CANONICAL=0
+    CCIP_SLUG="BNB_TESTNET" ;;
   polygon-amoy)
-    CHAIN_ID=80002;     RPC_VAR="POLYGON_AMOY_RPC_URL";  IS_CANONICAL=0; LZ_EID=40267
-    LZ_ENDPOINT_VAR="LZ_ENDPOINT_POLYGON_AMOY" ;;
+    CHAIN_ID=80002;     RPC_VAR="POLYGON_AMOY_RPC_URL";  IS_CANONICAL=0
+    CCIP_SLUG="POLYGON_AMOY" ;;
   base|ethereum|arbitrum|optimism|polygon-zkevm|bnb|polygon)
     cat >&2 <<EOF
 Refusing to run mainnet chain '$CHAIN_SLUG' from deploy-chain.sh.
@@ -326,16 +320,21 @@ if [ -z "$RPC" ]; then
   exit 1
 fi
 
-# Per-chain LZ_ENDPOINT dispatch. The RewardOApp / VPFI deploy
-# scripts read a single `LZ_ENDPOINT` env var, but that's the
-# CURRENT-chain endpoint — it differs per chain on mainnet (Base,
-# Ethereum, Arb, OP, etc. all have distinct V2 endpoints). The
-# rehearsal-time .env carries `LZ_ENDPOINT_<SLUG>` per chain plus
-# a single `LZ_ENDPOINT` that happens to match all 3 sepolia
-# variants. Override LZ_ENDPOINT here from the per-slug var so
-# the same .env works on mainnet without manual editing.
-if [ -n "${!LZ_ENDPOINT_VAR:-}" ]; then
-  export LZ_ENDPOINT="${!LZ_ENDPOINT_VAR}"
+# Per-chain CCIP Router + RMN-proxy dispatch. `DeployCrosschain.s.sol`
+# reads a single `CCIP_ROUTER` / `CCIP_RMN_PROXY` pair — the CURRENT
+# chain's — but both differ per chain (Base, Ethereum, Arb, OP, BNB
+# each have a distinct CCIP Router + RMN proxy). The .env carries
+# `CCIP_ROUTER_<SLUG>` / `CCIP_RMN_PROXY_<SLUG>` per chain; resolve the
+# active chain's pair here so one .env serves every chain without
+# manual editing between runs. A pre-set `CCIP_ROUTER` / `CCIP_RMN_PROXY`
+# (no per-slug var) is left untouched — handy for a single-chain run.
+CCIP_ROUTER_VAR="CCIP_ROUTER_${CCIP_SLUG}"
+CCIP_RMN_PROXY_VAR="CCIP_RMN_PROXY_${CCIP_SLUG}"
+if [ -n "${!CCIP_ROUTER_VAR:-}" ]; then
+  export CCIP_ROUTER="${!CCIP_ROUTER_VAR}"
+fi
+if [ -n "${!CCIP_RMN_PROXY_VAR:-}" ]; then
+  export CCIP_RMN_PROXY="${!CCIP_RMN_PROXY_VAR}"
 fi
 
 # Confirm RPC actually points at the expected chain. Catches the
@@ -354,36 +353,41 @@ EOF
   exit 1
 fi
 
-# Required env vars for every chain. REWARD_VERSION baked into the
-# CREATE2 salt for the RewardOApp deploy — same value across chains
-# yields deterministic addresses; missing it bails the script at
-# step [5] mid-flight (after Diamond + Timelock + VPFI lane have
-# already landed on-chain). Catching it in pre-flight saves the
-# faucet-ETH burn from a partial deploy.
+# Required env vars for every chain. `CCIP_ROUTER` / `CCIP_RMN_PROXY`
+# are the active chain's CCIP infrastructure (resolved per-slug just
+# above); a missing one would bail `DeployCrosschain.s.sol` mid-flight
+# (after Diamond + Timelock have already landed on-chain). Catching it
+# in pre-flight saves the faucet-ETH burn from a partial deploy.
 for v in DEPLOYER_PRIVATE_KEY ADMIN_PRIVATE_KEY ADMIN_ADDRESS TREASURY_ADDRESS \
          VPFI_OWNER VPFI_TREASURY VPFI_INITIAL_MINTER \
-         TIMELOCK_PROPOSER REWARD_VERSION REWARD_OWNER BASE_EID \
-         VPFI_BUY_RECEIVER_EID LZ_ENDPOINT \
-         REPORT_OPTIONS_HEX BROADCAST_OPTIONS_HEX; do
+         TIMELOCK_PROPOSER CCIP_ROUTER CCIP_RMN_PROXY; do
   if [ -z "${!v:-}" ]; then
     echo "Error: \$$v required in .env but not set." >&2
     exit 1
   fi
 done
 
+# Mirror chains additionally need BASE_CHAIN_ID — the EVM chain id of
+# canonical Base — so DeployCrosschain can point the reward + buy flows
+# back at the canonical receiver. Canonical Base is its own base and
+# stores baseChainId = 0, so the check is mirror-only.
+if [ "$IS_CANONICAL" = "0" ] && [ -z "${BASE_CHAIN_ID:-}" ]; then
+  echo "Error: \$BASE_CHAIN_ID required in .env for mirror chains." >&2
+  exit 1
+fi
+
 echo "═══════════════════════════════════════════════════════════════"
 echo "deploy-chain.sh"
 echo "  chain-slug:    $CHAIN_SLUG"
 echo "  chain-id:      $CHAIN_ID"
-echo "  lz-eid:        $LZ_EID"
+echo "  ccip router:   $CCIP_ROUTER"
 if [ "$IS_CANONICAL" = "1" ]; then
-  echo "  vpfi lane:     CANONICAL  (DeployVPFICanonical + DeployVPFIBuyReceiver)"
+  echo "  crosschain:    CANONICAL  (lock/release VPFI pool + buy receiver)"
 else
-  echo "  vpfi lane:     MIRROR     (DeployVPFIMirror + DeployVPFIBuyAdapter)"
+  echo "  crosschain:    MIRROR     (mirror VPFI + burn/mint pool + buy adapter)"
 fi
 echo "  rpc:           $RPC"
 echo "  skip-vpfi:     $SKIP_VPFI"
-echo "  skip-lz-config:$SKIP_LZ_CONFIG"
 echo "  fresh:         $FRESH"
 echo "  resume:        $RESUME"
 echo "  verify-cts:    $VERIFY_CONTRACTS"
@@ -546,84 +550,33 @@ else
   mark_done "timelock"
 fi
 
-# ── 4. VPFI lane (canonical vs mirror) ────────────────────────────────
+# ── 4. CCIP cross-chain stack ─────────────────────────────────────────
+# `DeployCrosschain.s.sol` deploys the whole T-068 CCIP stack for this
+# one chain in a single run — the CcipMessenger, the VPFI CCIP TokenPool
+# (lock/release on canonical Base, burn/mint on a mirror), the
+# VpfiPoolRateGovernor, the VaipakamRewardMessenger, and the buy receiver
+# (canonical) or the mirror VPFI token + buy adapter (mirror). It picks
+# canonical-vs-mirror itself from block.chainid — no per-branch env
+# juggling, unlike the retired LayerZero scripts.
+#
+# Cross-chain LANE + CHANNEL wiring is deliberately NOT here: it needs
+# every chain in the topology deployed first (ConfigureCcip.s.sol reads
+# each chain's addresses.json to wire peers). That pass runs once per
+# chain AFTER this script has landed on every chain — see the follow-up
+# note at the end of this script and the cutover runbook.
 
-if [ "$SKIP_VPFI" = "0" ] && step_done "vpfi-lane"; then
+if [ "$SKIP_VPFI" = "0" ] && step_done "crosschain"; then
   echo
-  echo "[4-5] VPFI lane + Reward OApp (skipped — marker exists)"
+  echo "[4] CCIP cross-chain stack (skipped — marker exists)"
 elif [ "$SKIP_VPFI" = "0" ]; then
-  if [ "$IS_CANONICAL" = "1" ]; then
-    echo
-    echo "[4a] DeployVPFICanonical.s.sol  (canonical lane — OFTAdapter + token)"
-    forge script script/DeployVPFICanonical.s.sol --rpc-url "$RPC" --broadcast --slow
-
-    echo
-    echo "[4b] DeployVPFIBuyReceiver.s.sol  (canonical lane — buy receiver on Base)"
-    forge script script/DeployVPFIBuyReceiver.s.sol --rpc-url "$RPC" --broadcast --slow
-  else
-    echo
-    echo "[4a] DeployVPFIMirror.s.sol  (mirror lane — mirror OFT)"
-    forge script script/DeployVPFIMirror.s.sol --rpc-url "$RPC" --broadcast --slow
-
-    echo
-    echo "[4b] DeployVPFIBuyAdapter.s.sol  (mirror lane — buy adapter)"
-    forge script script/DeployVPFIBuyAdapter.s.sol --rpc-url "$RPC" --broadcast --slow
-
-    # ── 4c. Buy-VPFI rate limits (mirror chains only) ─────────────────
-    # The BuyAdapter ships with `setRateLimits(uint256.max, uint256.max)`
-    # at deploy time — i.e. effectively disabled — per the project's
-    # mainnet-deploy gate (`CLAUDE.md` "Cross-Chain Security Policy").
-    # Without an explicit `setRateLimits` after deploy, a buy request
-    # carrying a malformed amount could mint unbounded VPFI on the
-    # canonical receiver. Defaults applied here:
-    #   per-block:  50_000 × 1e18 VPFI  (override via VPFI_BUY_RATE_PER_BLOCK)
-    #   per-day:    500_000 × 1e18 VPFI (override via VPFI_BUY_RATE_PER_DAY)
-    # The April-2026 cross-chain bridge incident (~$200M drained) rode
-    # an unrate-limited adapter; setting these on every deploy makes
-    # mainnet readiness depend on the deploy artefact, not on a manual
-    # follow-up step that's easy to forget.
-    echo
-    echo "[4c] Buy-VPFI rate limits (mirror — VPFIBuyAdapter.setRateLimits)"
-    BUY_ADAPTER=$(jq -r '.vpfiBuyAdapter // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
-    if [ -z "$BUY_ADAPTER" ]; then
-      echo "  ⚠ no vpfiBuyAdapter in addresses.json — skipping rate-limit set."
-    else
-      RATE_PER_BLOCK="${VPFI_BUY_RATE_PER_BLOCK:-50000000000000000000000}"   # 50_000 × 1e18
-      RATE_PER_DAY="${VPFI_BUY_RATE_PER_DAY:-500000000000000000000000}"     # 500_000 × 1e18
-      echo "  cast send setRateLimits($RATE_PER_BLOCK, $RATE_PER_DAY) on $BUY_ADAPTER"
-      cast send "$BUY_ADAPTER" 'setRateLimits(uint256,uint256)' \
-        "$RATE_PER_BLOCK" "$RATE_PER_DAY" \
-        --private-key "$ADMIN_PRIVATE_KEY" \
-        --rpc-url "$RPC" \
-        2>&1 | grep -E "^status" | head -1 || true
-    fi
-  fi
-
-  # Reward OApp — canonical-vs-mirror branched the same way.
   echo
-  echo "[5] DeployRewardOAppCreate2.s.sol"
-  if [ "$IS_CANONICAL" = "1" ]; then
-    export IS_CANONICAL_REWARD=true
-    # The RewardOApp contract enforces BASE_EID=0 on the canonical
-    # chain (it IS the base, so there's no peer eid to point at).
-    # The user's .env carries BASE_EID=40245 (the canonical eid)
-    # for mirror-chain deploys; override here when we're running
-    # on the canonical itself.
-    export BASE_EID=0
-  else
-    export IS_CANONICAL_REWARD=false
-    # Mirror chains: BASE_EID points at the canonical's lzEid.
-    # The .env value (40245 for Base Sepolia rehearsal) is correct
-    # for mirrors so no override needed — but make it explicit for
-    # clarity rather than rely on .env being right.
-    export BASE_EID=40245
-  fi
-  forge script script/DeployRewardOAppCreate2.s.sol --rpc-url "$RPC" --broadcast --slow
-  snapshot_addresses "post-vpfi-and-reward"
-  mark_done "vpfi-lane"
+  echo "[4] DeployCrosschain.s.sol  (CCIP cross-chain stack)"
+  forge script script/DeployCrosschain.s.sol --rpc-url "$RPC" --broadcast --slow
+  snapshot_addresses "post-crosschain"
+  mark_done "crosschain"
 else
   echo
-  echo "[4-5] Skipping VPFI lane + Reward OApp (--skip-vpfi)"
+  echo "[4] Skipping CCIP cross-chain stack (--skip-vpfi)"
 fi
 
 # ── 5b. Master-flag flip (testnet ergonomics) ─────────────────────────
@@ -656,43 +609,27 @@ else
   echo "  Final master flags: $(cast call $DIAMOND_ADDR 'getMasterFlags()(bool,bool,bool)' --rpc-url $RPC | tr '\n' ' ')"
 fi
 
-# ── 5c. LZ DVN policy (per-chain) ─────────────────────────────────────
-# `ConfigureLZConfig.s.sol` sets the DVN required + optional set,
-# confirmations, send/recv libraries, and threshold for each (OApp,
-# remote-eid) pair on THIS chain. Per CLAUDE.md "Cross-Chain Security
-# Policy": 3 required + 2 optional, threshold 1-of-2, operator
-# diversity load-bearing. Without this step, OApps inherit
-# LayerZero's 1-required / 0-optional default — the same single-
-# verifier shape that rode the April-2026 cross-chain bridge exploit.
+# ── 5c. CCIP lane / channel wiring — NOT a single-chain step ──────────
+# CCIP needs no per-chain DVN policy — there is no DVN fleet to curate
+# (Chainlink operates a uniform committing DON + executing DON + an
+# independent Risk Management Network for every integrator; the
+# LayerZero 1-required / 0-optional footgun does not exist here, per
+# CLAUDE.md "Cross-Chain Security Policy"). So the old per-chain
+# `ConfigureLZConfig.s.sol` step has no CCIP analogue.
 #
-# Cross-chain peer-wiring (`setPeer`) is NOT here — peers need both
-# legs deployed first, so the wiring lives in `deploy-peers.sh`
-# which runs once after every chain's `deploy-chain.sh` lands.
-#
-# Auto-skipped if DVN_REQUIRED_1 isn't set (testnet rehearsals
-# without a curated DVN set just leave OApps on LayerZero defaults
-# — acceptable on a chain with no real value, but logged loudly so
-# the operator notices).
+# What DOES need wiring — chain selectors, remote messengers, the
+# vpfi-buy / vpfi-reward channel peers, the TokenPool lanes + rate
+# limits, and the TokenAdminRegistry CCT registration — is
+# `ConfigureCcip.s.sol`. It reads EVERY chain's addresses.json to wire
+# peers, so it cannot run until every chain in the topology has been
+# deployed. The multi-chain orchestrators (deploy-testnet.sh /
+# deploy-mainnet.sh) run it as a final pass once every chain has landed;
+# a standalone single-chain run wires it by hand per the cutover
+# runbook. Nothing to do here.
 
-if [ "$SKIP_LZ_CONFIG" = "1" ]; then
-  echo
-  echo "[5c] Skipping ConfigureLZConfig (--skip-lz-config)"
-elif [ -z "${DVN_REQUIRED_1:-}" ]; then
-  echo
-  echo "[5c] Skipping ConfigureLZConfig — DVN_REQUIRED_1 not set in .env."
-  echo "     OApps remain on LayerZero's 1-required / 0-optional default."
-  echo "     For mainnet this is a security gap; populate DVN_REQUIRED_1/2/3,"
-  echo "     DVN_OPTIONAL_1/2, CONFIRMATIONS, OAPP, SEND_LIB, RECV_LIB,"
-  echo "     REMOTE_EIDS in .env per contracts/README.md before re-running."
-elif step_done "lz-config"; then
-  echo
-  echo "[5c] ConfigureLZConfig (skipped — marker exists)"
-else
-  echo
-  echo "[5c] ConfigureLZConfig.s.sol  (per-chain DVN + libs + confirmations)"
-  forge script script/ConfigureLZConfig.s.sol --rpc-url "$RPC" --broadcast --slow
-  mark_done "lz-config"
-fi
+echo
+echo "[5c] CCIP lane/channel wiring — deferred to the post-all-chains pass"
+echo "     (ConfigureCcip.s.sol; see the follow-up note below)."
 
 # ── 5cb. Phase 7a swap-adapter chain ──────────────────────────────────
 # Deploys the ZeroExAggregatorAdapter + OneInchAggregatorAdapter and
@@ -1258,11 +1195,14 @@ fi
 echo "  artifact:      contracts/deployments/$CHAIN_SLUG/addresses.json"
 echo
 echo "Follow-up steps NOT in this script:"
-echo "  1. Cross-chain LZ peer wiring (after EVERY chain in your"
+echo "  1. CCIP lane + channel wiring (after EVERY chain in your"
 echo "     topology has had this script run):"
-echo "        bash contracts/script/deploy-peers.sh"
-echo "     Walks the deployments/ tree and wires setPeer on every"
-echo "     (canonical, mirror) leg + Reward-OApp mesh."
+echo "        CCIP_LANE_CHAIN_IDS=<other chain ids> \\"
+echo "        forge script script/ConfigureCcip.s.sol --rpc-url <rpc> --broadcast"
+echo "     Wires chain selectors, remote messengers, the vpfi-buy /"
+echo "     vpfi-reward channel peers, the TokenPool lanes + rate limits,"
+echo "     and the TokenAdminRegistry CCT registration. Run it once per"
+echo "     chain. The multi-chain orchestrators do this automatically."
 echo "  2. Role rotation to governance + timelock — DeploymentRunbook §6"
 echo "     (multi-party ceremony, deliberately out of any script)"
 echo "═══════════════════════════════════════════════════════════════"
