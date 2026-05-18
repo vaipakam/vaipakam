@@ -198,7 +198,7 @@ Usage:
   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase <phase> [confirm-flags]
 
 Mainnet chain-slugs:
-  ethereum  base  arbitrum  optimism  polygon-zkevm  bnb  polygon
+  ethereum  base  arbitrum  optimism  bnb  polygon
 
 Phases:
   preflight       — Read-only, run first. No broadcasts.
@@ -297,7 +297,16 @@ case "$CHAIN_SLUG" in
   optimism)
     CHAIN_ID=10;      RPC_VAR="OPTIMISM_RPC_URL";      IS_CANONICAL=0; CCIP_SLUG="OPTIMISM";      WETH_PULL_VAR="" ;;
   polygon-zkevm)
-    CHAIN_ID=1101;    RPC_VAR="POLYGON_ZKEVM_RPC_URL"; IS_CANONICAL=0; CCIP_SLUG="POLYGON_ZKEVM"; WETH_PULL_VAR="" ;;
+    cat >&2 <<EOF
+Refusing to run 'polygon-zkevm' from deploy-mainnet.sh.
+
+zk-rollup chains are excluded from Vaipakam's cross-chain set by operator
+decision — see LayerZeroToChainlinkCcipMigration.md §10. There is no CCIP
+chain selector for chain 1101, so the 'ccip-wire' phase could not wire it;
+the chain is intentionally not a deploy target.
+EOF
+    exit 1
+    ;;
   bnb)
     CHAIN_ID=56;      RPC_VAR="BNB_RPC_URL";           IS_CANONICAL=0; CCIP_SLUG="BNB";           WETH_PULL_VAR="BNB_VPFI_BUY_PAYMENT_TOKEN" ;;
   polygon)
@@ -1199,7 +1208,6 @@ case "$CHAIN_SLUG" in
   base)          EXPECTED_RPC_SECRET="RPC_BASE" ;;
   arbitrum)      EXPECTED_RPC_SECRET="RPC_ARB" ;;
   optimism)      EXPECTED_RPC_SECRET="RPC_OP" ;;
-  polygon-zkevm) EXPECTED_RPC_SECRET="RPC_ZKEVM" ;;
   bnb)           EXPECTED_RPC_SECRET="RPC_BNB" ;;
   polygon)       EXPECTED_RPC_SECRET="RPC_POLYGON" ;;
   *)             EXPECTED_RPC_SECRET="" ;;
