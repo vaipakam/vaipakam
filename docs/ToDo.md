@@ -11,6 +11,10 @@
 
 ---
 
+- [ ] **T-082** — Work on yearly profit share to founder from treasury profit, the percentage should be admin configurable (later by governance) within range bonunded values, what do you say? is that normal? is there a better approach? what other major DeFi or DEX platforms are doing, how they split the profits and how much percent of profit go to founders?
+
+---
+
 - [x] **T-081** — DONE 2026-05-17 (doc `docs/internal/ThirdPartyDependencyAudit-2026-05-17.md`; [Issue #34](https://github.com/vaipakam/vaipakam/issues/34)). Third-party dependency modularity audit — catalogued all ~20 external dependencies (on-chain + off-chain) with a swappability verdict each: 🟢 9 config-swappable / 🟡 9 code-swappable / 🔴 2 deep-integrated. The two deep-integrated (LayerZero → tracked T-068, Cloudflare → tracked T-077) are inherent and already on the tracker. Verdict: platform is well-modularized for provider-swapping; no structural change needed. The audit also corrected a stale assumption — Pyth is present (numeraire cross-check, T-033), not removed.
 
 ---
