@@ -637,7 +637,7 @@ Deployment flow:
 4. wire CCIP lanes, remote messengers, token pools, and channel peers so cross-chain transfers preserve one global supply model
 5. keep token symbol and metadata consistent as `VPFI` on every supported chain
 6. configure mirror-chain buy-adapter rate limits to finite caps before verification; adapters that remain at unlimited deployment defaults must be treated as not production-ready
-7. hand cross-chain messenger, token-pool, and adapter ownership to the configured Governance Safe only from the current on-chain owner key, with scripts reading current authority first and skipping with operator guidance when the signer does not match
+7. hand cross-chain messenger, token-pool, rate-governor, reward-messenger, adapter, and Cross-Chain Token administrator authority to the configured Timelock / Governance Safe path only from the current on-chain owner key, with scripts reading current authority first and skipping with operator guidance when the signer does not match
 8. verify every cross-chain lane from the perspective of both the local chain and the remote chain before it is considered production-ready
 
 Architecture clarification:
