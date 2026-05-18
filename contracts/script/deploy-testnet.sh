@@ -427,6 +427,36 @@ snapshot_addresses() {
   fi
 }
 
+# ── Preflight gate ────────────────────────────────────────────────────
+# The phase dispatcher does NOT enforce that `--phase preflight` ran
+# before a broadcasting phase — an operator can invoke `contracts`,
+# `ccip-wire`, `swap-adapters`, `configure` or `handover` directly. The
+# one safety check that MUST hold before any broadcast — the RPC
+# actually serves the expected chain — is factored here and re-run at
+# the top of every broadcasting phase. (The mainnet hardware-signer
+# attestation has no testnet analogue; deploy-mainnet.sh's gate adds
+# it. `phase_preflight` calls this gate, then its fuller checks.)
+
+_assert_rpc_chain() {
+  # A mispointed RPC URL is the single most dangerous deploy mistake —
+  # broadcasting a chain's deploy against the wrong network.
+  local hex dec
+  hex=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d '{"jsonrpc":"2.0","method":"eth_chainId","id":1}' "$RPC" \
+    | sed -E 's/.*"result":"([^"]+)".*/\1/' || true)
+  dec=$(printf "%d\n" "$hex" 2>/dev/null || echo 0)
+  if [ "$dec" != "$CHAIN_ID" ]; then
+    echo "FAIL: $RPC_VAR points at chainId=$dec, expected $CHAIN_ID for '$CHAIN_SLUG'." >&2
+    exit 1
+  fi
+  echo "  ✓ RPC chainId matches  ($CHAIN_ID)"
+}
+
+# The critical gate every broadcasting phase runs first.
+_preflight_gate() {
+  _assert_rpc_chain
+}
+
 # ── Phase: preflight ──────────────────────────────────────────────────
 
 phase_preflight() {
@@ -434,16 +464,8 @@ phase_preflight() {
   echo "deploy-testnet.sh — preflight  ($CHAIN_SLUG / $CHAIN_ID)"
   echo "═══════════════════════════════════════════════════════════════"
 
-  # 1. RPC chainId
-  RESPONSE_CHAIN_HEX=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d '{"jsonrpc":"2.0","method":"eth_chainId","id":1}' "$RPC" \
-    | sed -E 's/.*"result":"([^"]+)".*/\1/' || true)
-  RESPONSE_CHAIN_DEC=$(printf "%d\n" "$RESPONSE_CHAIN_HEX" 2>/dev/null || echo 0)
-  if [ "$RESPONSE_CHAIN_DEC" != "$CHAIN_ID" ]; then
-    echo "FAIL: $RPC_VAR points at chainId=$RESPONSE_CHAIN_DEC, expected $CHAIN_ID."
-    exit 1
-  fi
-  echo "  ✓ RPC chainId matches  ($CHAIN_ID)"
+  # 1. The critical gate — RPC chain match.
+  _preflight_gate
 
   # 2. Required env vars
   MISSING=()
@@ -619,6 +641,7 @@ seed_indexer_cursor_safe_head() {
 # ── Phase: contracts ──────────────────────────────────────────────────
 
 phase_contracts() {
+  _preflight_gate
   if [ "$CONFIRM_MULTISIG" != "1" ]; then
     cat >&2 <<EOF
 Refusing --phase contracts on mainnet without --confirm-i-have-multisig-ready.
@@ -914,6 +937,7 @@ EOF
 # Policy"), so the old --confirm-dvn-policy-reviewed gate is gone.
 
 phase_ccip_wire() {
+  _preflight_gate
   if [ -z "${CCIP_LANE_CHAIN_IDS:-}" ]; then
     cat >&2 <<EOF
 Refusing --phase ccip-wire: CCIP_LANE_CHAIN_IDS unset in .env.
@@ -943,6 +967,7 @@ EOF
 # ── Phase: swap-adapters ──────────────────────────────────────────────
 
 phase_swap_adapters() {
+  _preflight_gate
   if [ -z "${INITIAL_SETTLERS:-}" ]; then
     cat >&2 <<EOF
 Refusing --phase swap-adapters: INITIAL_SETTLERS env var unset.
@@ -1009,6 +1034,7 @@ EOF
 # count + the same ADMIN signer surface as mainnet day.
 
 phase_configure() {
+  _preflight_gate
   if phase_already_done "configure"; then
     cat >&2 <<EOF
 Refusing --phase configure: marker file exists at
@@ -1058,6 +1084,7 @@ EOF
 # gets caught here, where the only cost is faucet ETH.
 
 phase_handover() {
+  _preflight_gate
   if [ "$CONFIRM_MULTISIG" != "1" ]; then
     cat >&2 <<EOF
 Refusing --phase handover without --confirm-i-have-multisig-ready.
