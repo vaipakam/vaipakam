@@ -398,6 +398,61 @@ snapshot_addresses() {
   fi
 }
 
+# ── Preflight gate ────────────────────────────────────────────────────
+# The phase dispatcher does NOT enforce that `--phase preflight` ran
+# before a broadcasting phase — an operator can invoke `contracts`,
+# `ccip-wire`, `swap-adapters`, `configure` or `handover` directly. So
+# the two safety checks that MUST hold before any broadcast — the RPC
+# actually serves the expected chain, and the mainnet hardware-signer
+# attestation — are factored here and re-run at the top of every
+# broadcasting phase. `phase_preflight` calls the same gate, then adds
+# its fuller (env-presence / balance / WETH) checks.
+
+_assert_rpc_chain() {
+  # A mispointed RPC URL is the single most dangerous deploy mistake —
+  # broadcasting a chain's deploy against the wrong network. Re-checked
+  # before every broadcast, not just in the optional preflight phase.
+  local hex dec
+  hex=$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d '{"jsonrpc":"2.0","method":"eth_chainId","id":1}' "$RPC" \
+    | sed -E 's/.*"result":"([^"]+)".*/\1/' || true)
+  dec=$(printf "%d\n" "$hex" 2>/dev/null || echo 0)
+  if [ "$dec" != "$CHAIN_ID" ]; then
+    echo "FAIL: $RPC_VAR points at chainId=$dec, expected $CHAIN_ID for '$CHAIN_SLUG'." >&2
+    exit 1
+  fi
+  echo "  ✓ RPC chainId matches  ($CHAIN_ID)"
+}
+
+_assert_mainnet_hw_signer() {
+  # The Admin EOA holds ADMIN_ROLE / ORACLE_ADMIN_ROLE / etc. through
+  # the entire config window between `--phase contracts` and `--phase
+  # handover` (hours-to-days). A hot .env key compromised in that window
+  # = full protocol control to the attacker. Refuse to broadcast on
+  # mainnet unless the operator has attested to a hardware signer — the
+  # `--confirm-mainnet-hardware-signer` flag is that signed statement
+  # (the script can't verify the signing path directly; `.markers/`
+  # records the flag was passed).
+  if [ "$CONFIRM_HW_SIGNER" != "1" ]; then
+    cat >&2 <<EOF
+
+FAIL: mainnet broadcast requires the hardware-wallet attestation.
+
+Refusing to broadcast with ADMIN_PRIVATE_KEY sourced from .env on
+MAINNET. Re-run with --confirm-mainnet-hardware-signer once the Admin
+EOA's signing path is a hardware wallet (Ledger / Trezor / Frame / …).
+EOF
+    exit 1
+  fi
+  echo "  ✓ Mainnet hardware-signer attestation passed"
+}
+
+# The critical gate every broadcasting phase runs first.
+_preflight_gate() {
+  _assert_rpc_chain
+  _assert_mainnet_hw_signer
+}
+
 # ── Phase: preflight ──────────────────────────────────────────────────
 
 phase_preflight() {
@@ -405,16 +460,8 @@ phase_preflight() {
   echo "deploy-mainnet.sh — preflight  ($CHAIN_SLUG / $CHAIN_ID)"
   echo "═══════════════════════════════════════════════════════════════"
 
-  # 1. RPC chainId
-  RESPONSE_CHAIN_HEX=$(curl -s -X POST -H 'Content-Type: application/json' \
-    -d '{"jsonrpc":"2.0","method":"eth_chainId","id":1}' "$RPC" \
-    | sed -E 's/.*"result":"([^"]+)".*/\1/' || true)
-  RESPONSE_CHAIN_DEC=$(printf "%d\n" "$RESPONSE_CHAIN_HEX" 2>/dev/null || echo 0)
-  if [ "$RESPONSE_CHAIN_DEC" != "$CHAIN_ID" ]; then
-    echo "FAIL: $RPC_VAR points at chainId=$RESPONSE_CHAIN_DEC, expected $CHAIN_ID."
-    exit 1
-  fi
-  echo "  ✓ RPC chainId matches  ($CHAIN_ID)"
+  # 1. The critical gate — RPC chain match + mainnet hardware-signer.
+  _preflight_gate
 
   # 2. Required env vars
   MISSING=()
@@ -444,49 +491,6 @@ phase_preflight() {
   DEPLOYER_ADDR=$(cast wallet address --private-key "$DEPLOYER_PRIVATE_KEY" 2>/dev/null || echo "?")
   BAL=$(cast balance "$DEPLOYER_ADDR" --rpc-url "$RPC" 2>/dev/null || echo "?")
   echo "  ✓ Deployer:  $DEPLOYER_ADDR    balance: $BAL wei"
-
-  # 3b. Mainnet hardware-wallet enforcement (ratified 2026-05-14).
-  # The Admin EOA holds ADMIN_ROLE / ORACLE_ADMIN_ROLE / etc.
-  # during the entire config window between `--phase contracts`
-  # and `--phase handover`. On mainnet that's hours-to-days of
-  # window during which compromising the .env private key gives
-  # an attacker full protocol control (rotate oracles, set fee
-  # parameters to absurd values, pause indefinitely, grant new
-  # roles, transferOwnership somewhere else — bricking the
-  # planned multisig handover). Refuse to broadcast on mainnet
-  # unless the operator has explicitly asserted they're using a
-  # hardware signer (Ledger / Trezor / Frame / similar) rather
-  # than a hot key from .env.
-  #
-  # Testnets are exempt (--confirm flag bypass not needed there;
-  # this whole script refuses non-mainnet chains, and
-  # `deploy-chain.sh` keeps the .env flow for rehearsal
-  # convenience).
-  if [ "$CONFIRM_HW_SIGNER" != "1" ]; then
-    echo
-    echo "FAIL: mainnet deploy requires hardware-wallet for Admin EOA."
-    echo
-    echo "Refusing to broadcast with ADMIN_PRIVATE_KEY sourced from .env"
-    echo "on MAINNET. The Admin EOA holds ADMIN_ROLE / ORACLE_ADMIN_ROLE"
-    echo "during the entire config window between --phase contracts and"
-    echo "--phase handover (typically hours-to-days). Hot-key compromise"
-    echo "during that window = full protocol control to the attacker."
-    echo
-    echo "Required:"
-    echo "  1. Configure your signing path to a hardware wallet"
-    echo "     (Ledger / Trezor / Frame / etc.) for the Admin EOA."
-    echo "  2. Re-run with --confirm-mainnet-hardware-signer to attest"
-    echo "     you've done so. (The flag is the operator's signed"
-    echo "     statement; the script can't verify the signing path"
-    echo "     directly — but the audit trail in .markers/ records"
-    echo "     that the flag was passed.)"
-    echo
-    echo "Testnet rehearsal in apps/keeper / deploy-chain.sh keeps the"
-    echo ".env hot-key flow for convenience. Mainnet does not."
-    echo
-    exit 1
-  fi
-  echo "  ✓ Mainnet hardware-signer attestation passed"
 
   # 4. WETH-pull check (if applicable)
   if [ -n "$WETH_PULL_VAR" ]; then
@@ -535,6 +539,7 @@ archive_chain_state() {
 # ── Phase: contracts ──────────────────────────────────────────────────
 
 phase_contracts() {
+  _preflight_gate
   if [ "$CONFIRM_MULTISIG" != "1" ]; then
     cat >&2 <<EOF
 Refusing --phase contracts on mainnet without --confirm-i-have-multisig-ready.
@@ -782,6 +787,7 @@ EOF
 # Security Policy"). The LayerZero DVN-curation gate is therefore gone.
 
 phase_ccip_wire() {
+  _preflight_gate
   if [ -z "${CCIP_LANE_CHAIN_IDS:-}" ]; then
     cat >&2 <<EOF
 Refusing --phase ccip-wire: CCIP_LANE_CHAIN_IDS unset in .env.
@@ -816,6 +822,7 @@ EOF
 # ── Phase: swap-adapters ──────────────────────────────────────────────
 
 phase_swap_adapters() {
+  _preflight_gate
   if [ -z "${INITIAL_SETTLERS:-}" ]; then
     cat >&2 <<EOF
 Refusing --phase swap-adapters: INITIAL_SETTLERS env var unset.
@@ -882,6 +889,7 @@ EOF
 # ADMIN_PRIVATE_KEY broadcasts still have the role surface they need.
 
 phase_configure() {
+  _preflight_gate
   if phase_already_done "configure"; then
     cat >&2 <<EOF
 Refusing --phase configure: marker file exists at
@@ -932,6 +940,7 @@ EOF
 # DeployerZeroRolesTest hard exit gate can pass.
 
 phase_handover() {
+  _preflight_gate
   if [ "$CONFIRM_MULTISIG" != "1" ]; then
     cat >&2 <<EOF
 Refusing --phase handover without --confirm-i-have-multisig-ready.
