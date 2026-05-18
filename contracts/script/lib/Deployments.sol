@@ -129,10 +129,11 @@ library Deployments {
     function readEscrowImpl()      internal view returns (address) { return _readAddr(".escrowImpl",      "ESCROW_IMPL_ADDRESS"); }
     function readTimelock()        internal view returns (address) { return _readAddr(".timelock",        "TIMELOCK_ADDRESS"); }
     function readVPFIToken()       internal view returns (address) { return _readAddr(".vpfiToken",       "VPFI_TOKEN_ADDRESS"); }
-    function readVPFIOFTAdapter()  internal view returns (address) { return _readAddr(".vpfiOftAdapter",  "VPFI_OFT_ADAPTER_ADDRESS"); }
     function readVPFIBuyAdapter()  internal view returns (address) { return _readAddr(".vpfiBuyAdapter",  "VPFI_BUY_ADAPTER_ADDRESS"); }
     function readVPFIBuyReceiver() internal view returns (address) { return _readAddr(".vpfiBuyReceiver", "VPFI_BUY_RECEIVER_ADDRESS"); }
-    function readRewardOApp()      internal view returns (address) { return _readAddr(".rewardOApp",      "REWARD_OAPP_ADDRESS"); }
+    // T-068 CCIP: the cross-chain reward contract is `VaipakamRewardMessenger`,
+    // recorded under `.rewardMessenger` by `DeployCrosschain.s.sol`.
+    function readRewardMessenger() internal view returns (address) { return _readAddr(".rewardMessenger", "REWARD_MESSENGER_ADDRESS"); }
     function readFlashLoanLiquidator() internal view returns (address) { return _tryReadAddr(".flashLoanLiquidator"); }
 
     // Track-C mock infra (Base Sepolia testnet only). Falls back to env on chains
@@ -207,23 +208,18 @@ library Deployments {
     function writeTimelock(address a)        internal { _writeAddr(".timelock",        a); }
     function writeVPFIToken(address a)       internal { _writeAddr(".vpfiToken",       a); }
     function writeVPFITokenImpl(address a)   internal { _writeAddr(".vpfiTokenImpl",   a); }
-    function writeVPFIOFTAdapter(address a)  internal { _writeAddr(".vpfiOftAdapter",  a); }
-    function writeVPFIOFTAdapterImpl(address a) internal { _writeAddr(".vpfiOftAdapterImpl", a); }
     function writeVPFIMirror(address a)      internal { _writeAddr(".vpfiMirror",      a); }
     function writeVPFIMirrorImpl(address a)  internal { _writeAddr(".vpfiMirrorImpl",  a); }
     function writeVPFIBuyAdapter(address a)  internal { _writeAddr(".vpfiBuyAdapter",  a); }
     function writeVPFIBuyAdapterImpl(address a) internal { _writeAddr(".vpfiBuyAdapterImpl", a); }
     function writeVPFIBuyReceiver(address a) internal { _writeAddr(".vpfiBuyReceiver", a); }
     function writeVPFIBuyReceiverImpl(address a) internal { _writeAddr(".vpfiBuyReceiverImpl", a); }
-    function writeRewardOApp(address a)      internal { _writeAddr(".rewardOApp",      a); }
     // ── T-068 CCIP cross-chain stack (Phase 6) ─────────────────────────────
     function writeCcipMessenger(address a)        internal { _writeAddr(".ccipMessenger",        a); }
     function writeVpfiTokenPool(address a)        internal { _writeAddr(".vpfiTokenPool",        a); }
     function writeVpfiPoolRateGovernor(address a) internal { _writeAddr(".vpfiPoolRateGovernor", a); }
     function writeRewardMessenger(address a)      internal { _writeAddr(".rewardMessenger",      a); }
     function writeFlashLoanLiquidator(address a) internal { _writeAddr(".flashLoanLiquidator", a); }
-    function writeRewardOAppBootstrapImpl(address a) internal { _writeAddr(".rewardOAppBootstrapImpl", a); }
-    function writeRewardOAppRealImpl(address a)      internal { _writeAddr(".rewardOAppRealImpl",      a); }
     function writeWeth(address a)            internal { _writeAddr(".weth",            a); }
     function writeTreasury(address a)        internal { _writeAddr(".treasury",        a); }
     function writeAdmin(address a)           internal { _writeAddr(".admin",           a); }

@@ -1497,43 +1497,43 @@ phase_verify() {
   echo "[3] Master flag state"
   echo "  getMasterFlags() = $(cast call "$DIAMOND" 'getMasterFlags()(bool,bool,bool)' --rpc-url "$RPC" 2>/dev/null | tr '\n' ' ' || echo '?')"
 
-  # If a VPFIBuyAdapter is present (mirror chain), confirm rate
-  # limits are non-default (i.e. NOT uint256.max). The mainnet
-  # cross-chain security policy requires explicit limits before any
-  # buy-vpfi traffic — this is the verify-time backstop in case
-  # `--phase contracts` skipped the post-deploy setRateLimits.
-  BUY_ADAPTER=$(jq -r '.vpfiBuyAdapter // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
-  if [ -n "$BUY_ADAPTER" ]; then
+  # CCIP per-lane rate limits live on the VPFI TokenPool and are set
+  # through the bounds-checked VpfiPoolRateGovernor — the CLAUDE.md
+  # "Cross-Chain Security Policy" gate. Verify the wiring is in place:
+  # the governor must be the pool's rateLimitAdmin, and at least one
+  # CCIP lane must be configured (per-lane limits cannot exist without
+  # a lane). A missing or wrong wiring means `--phase ccip-wire` has
+  # not run — fail-hard and refuse to mark verify done.
+  POOL=$(jq -r '.vpfiTokenPool // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
+  GOVERNOR=$(jq -r '.vpfiPoolRateGovernor // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
+  if [ -n "$POOL" ] && [ -n "$GOVERNOR" ]; then
     echo
-    echo "[4] Buy-VPFI rate limits"
-    # Both caps are read via VPFIBuyAdapter.getRateLimits() (added
-    # post-rehearsal — see ContractFollowupsFromRehearsal-2026-05-06.md
-    # Item 1). uint256.max in either slot means the canonical-mint
-    # cap is still at the unlimited default — that's a mainnet-deploy
-    # gate per CLAUDE.md "Cross-Chain Security Policy", so fail-hard
-    # with a non-zero exit and refuse to mark verify done.
-    RATE_LIMITS_RAW=$(cast call "$BUY_ADAPTER" 'getRateLimits()(uint256,uint256)' --rpc-url "$RPC" 2>/dev/null || echo "")
-    if [ -z "$RATE_LIMITS_RAW" ]; then
-      echo "  ✗ getRateLimits() call failed — adapter may not be deployed at $BUY_ADAPTER."
+    echo "[4] CCIP TokenPool rate-limit wiring"
+    RL_ADMIN=$(cast call "$POOL" 'getRateLimitAdmin()(address)' --rpc-url "$RPC" 2>/dev/null || echo "")
+    SUPPORTED=$(cast call "$POOL" 'getSupportedChains()(uint64[])' --rpc-url "$RPC" 2>/dev/null || echo "")
+    echo "  rateLimitAdmin   = $RL_ADMIN"
+    echo "  supported lanes  = $SUPPORTED"
+    if [ -z "$RL_ADMIN" ]; then
+      echo "  ✗ getRateLimitAdmin() call failed — pool may not be deployed at $POOL."
       exit 1
     fi
-    PER_REQ=$(echo "$RATE_LIMITS_RAW" | sed -n '1p' | awk '{print $1}')
-    DAILY=$(echo "$RATE_LIMITS_RAW" | sed -n '2p' | awk '{print $1}')
-    UINT256_MAX="115792089237316195423570985008687907853269984665640564039457584007913129639935"
-    echo "  perRequestCap = $PER_REQ"
-    echo "  dailyCap      = $DAILY"
-    if [ "$PER_REQ" = "$UINT256_MAX" ] || [ "$DAILY" = "$UINT256_MAX" ]; then
-      echo "  ✗ FAIL: at least one rate-limit cap is still at type(uint256).max."
-      echo "          A canonical-mint mainnet deploy with unlimited spend is a"
-      echo "          mainnet-deploy gate violation. Send setRateLimits(...) and"
-      echo "          re-run --phase verify before declaring deploy ready."
+    # cast returns checksummed addresses — lowercase both sides to compare.
+    if [ "$(echo "$RL_ADMIN" | tr 'A-F' 'a-f')" != "$(echo "$GOVERNOR" | tr 'A-F' 'a-f')" ]; then
+      echo "  ✗ FAIL: the pool's rateLimitAdmin is not the VpfiPoolRateGovernor."
+      echo "          The bounded rate-limit path is not wired — run --phase"
+      echo "          ccip-wire before declaring the deploy ready."
       exit 1
     fi
-    echo "  ✓ both caps finite — BuyAdapter ready for canonical mint."
+    if [ -z "$SUPPORTED" ] || [ "$SUPPORTED" = "[]" ]; then
+      echo "  ✗ FAIL: the pool has no CCIP lanes configured. Per-lane rate"
+      echo "          limits cannot exist without a lane — run --phase ccip-wire."
+      exit 1
+    fi
+    echo "  ✓ governor is rateLimitAdmin + lanes present — rate limits enforced."
   fi
 
   echo
-  echo "verify OK. Continue with the role-rotation + LZ peer-wiring ceremonies."
+  echo "verify OK. Continue with the role-rotation ceremony (DeploymentRunbook §6)."
   mark_phase_done "verify"
 }
 

@@ -56,16 +56,15 @@ contract ConfigureRewardReporter is Script {
         uint256 deployerKey = vm.envUint("ADMIN_PRIVATE_KEY");
         // Read prior deploy artifacts. Diamond reads from
         // deployments/<chain>/addresses.json with chain-prefixed env
-        // fallback. The reward messenger is special-cased: the
-        // CREATE2-bootstrap proxy is byte-identical across every chain in
-        // the mesh, so historical operator runbooks set a single
-        // un-prefixed `REWARD_OAPP_PROXY` env var rather than 6
-        // chain-prefixed copies. Honour that legacy path first, then fall
-        // through to the addresses.json reader.
+        // fallback. The reward messenger (`VaipakamRewardMessenger`,
+        // T-068 CCIP) is recorded under `.rewardMessenger`; an explicit
+        // `REWARD_OAPP_PROXY` env var, when set, overrides the artifact
+        // read — the multi-chain orchestrators pass it so this script
+        // never has to depend on the artifact key staying in step.
         address diamond = Deployments.readDiamond();
         address rewardOApp = vm.envOr("REWARD_OAPP_PROXY", address(0));
         if (rewardOApp == address(0)) {
-            rewardOApp = Deployments.readRewardOApp();
+            rewardOApp = Deployments.readRewardMessenger();
         }
         // EVM chain id of the canonical (Base) reward chain — the
         // destination for mirror-side chain reports. The reward facets
@@ -109,7 +108,7 @@ contract ConfigureRewardReporter is Script {
         // Mirror the per-chain reward-mesh config into the artifact so
         // downstream scripts + the frontend env builder don't have to
         // re-read env vars or query the Diamond.
-        Deployments.writeRewardOApp(rewardOApp);
+        Deployments.writeRewardMessenger(rewardOApp);
         Deployments.writeRewardBaseChainId(baseChainId);
         Deployments.writeRewardGraceSeconds(grace);
         Deployments.writeIsCanonicalReward(canonical);

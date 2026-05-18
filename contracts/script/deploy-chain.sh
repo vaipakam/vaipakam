@@ -686,34 +686,16 @@ else
     echo "  nextLoanId()     = $(cast call "$DIAMOND_FOR_HEALTH" 'nextLoanId()(uint256)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
     echo "  facetCount       = $(cast call "$DIAMOND_FOR_HEALTH" 'facetAddresses()(address[])' --rpc-url "$RPC" 2>/dev/null | tr ',' '\n' | grep -c '0x' || echo '?')"
     echo "  getMasterFlags() = $(cast call "$DIAMOND_FOR_HEALTH" 'getMasterFlags()(bool,bool,bool)' --rpc-url "$RPC" 2>/dev/null | tr '\n' ' ' || echo '?')"
-    BA=$(jq -r '.vpfiBuyAdapter // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
-    if [ -n "$BA" ]; then
-      echo "  buyAdapter       = $BA"
-      # Read both caps via the `getRateLimits()` tuple-getter (added
-      # post-rehearsal — see ContractFollowupsFromRehearsal-2026-05-06.md
-      # Item 1). uint256.max in either field means the post-deploy
-      # `setRateLimits` call (step [4c]) didn't land or didn't take
-      # effect — hard-fail with a non-zero exit so the operator
-      # cannot accidentally treat a deploy as healthy when the
-      # canonical-mint rate limit is still at the unlimited default.
-      RATE_LIMITS_RAW=$(cast call "$BA" 'getRateLimits()(uint256,uint256)' --rpc-url "$RPC" 2>/dev/null || echo "")
-      if [ -z "$RATE_LIMITS_RAW" ]; then
-        echo "    rateLimits     = ? (getRateLimits call failed)"
-      else
-        # cast call returns "<perRequest>\n<daily>" for tuple returns.
-        PER_REQ=$(echo "$RATE_LIMITS_RAW" | sed -n '1p' | awk '{print $1}')
-        DAILY=$(echo "$RATE_LIMITS_RAW" | sed -n '2p' | awk '{print $1}')
-        UINT256_MAX="115792089237316195423570985008687907853269984665640564039457584007913129639935"
-        echo "    perRequestCap  = $PER_REQ"
-        echo "    dailyCap       = $DAILY"
-        if [ "$PER_REQ" = "$UINT256_MAX" ] || [ "$DAILY" = "$UINT256_MAX" ]; then
-          echo "    ✗ FAIL: a rate-limit cap is still at the unlimited default."
-          echo "             setRateLimits in step [4c] either didn't land or"
-          echo "             passed type(uint256).max. Deploy is NOT healthy."
-          exit 1
-        fi
-        echo "    ✓ both caps finite — BuyAdapter ready for canonical mint."
-      fi
+    POOL_FOR_HEALTH=$(jq -r '.vpfiTokenPool // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
+    if [ -n "$POOL_FOR_HEALTH" ]; then
+      echo "  vpfiTokenPool    = $POOL_FOR_HEALTH"
+      # The CCIP per-lane rate limits live on this pool, set via the
+      # VpfiPoolRateGovernor in the post-all-chains `ccip-wire` pass —
+      # NOT in this single-chain deploy. So a freshly-deployed pool here
+      # legitimately has no lanes yet; just surface the rateLimitAdmin
+      # so the operator can eyeball it (zero address until ccip-wire).
+      echo "    rateLimitAdmin = $(cast call "$POOL_FOR_HEALTH" 'getRateLimitAdmin()(address)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
+      echo "    (CCIP lanes + rate limits are wired by ConfigureCcip.s.sol)"
     fi
   } | tee "$HEALTH_LOG"
   echo "  ✓ health log → $(basename "$HEALTH_LOG")"
