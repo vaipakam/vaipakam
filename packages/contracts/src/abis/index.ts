@@ -26,8 +26,12 @@ import VPFITokenFacetABI from './VPFITokenFacet.json';
 import VPFIDiscountFacetABI from './VPFIDiscountFacet.json';
 import StakingRewardsFacetABI from './StakingRewardsFacet.json';
 import InteractionRewardsFacetABI from './InteractionRewardsFacet.json';
-import VPFIBuyAdapterABI from './VPFIBuyAdapter.json';
-import VPFIBuyReceiverABI from './VPFIBuyReceiver.json';
+// T-068 renamed these contracts VPFIBuyAdapter/VPFIBuyReceiver →
+// VpfiBuyAdapter/VpfiBuyReceiver when the cross-chain buy flow moved
+// from LayerZero to CCIP. The export identifiers stay stable so
+// consumers are untouched; only the JSON source is re-pointed.
+import VPFIBuyAdapterABI from './VpfiBuyAdapter.json';
+import VPFIBuyReceiverABI from './VpfiBuyReceiver.json';
 import RewardReporterFacetABI from './RewardReporterFacet.json';
 import ConfigFacetABI from './ConfigFacet.json';
 import LegalFacetABI from './LegalFacet.json';
