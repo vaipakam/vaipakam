@@ -5,6 +5,7 @@ import LoanFacetABI from './LoanFacet.json';
 import RepayFacetABI from './RepayFacet.json';
 import DefaultedFacetABI from './DefaultedFacet.json';
 import RiskFacetABI from './RiskFacet.json';
+import RiskMatchLiquidationFacetABI from './RiskMatchLiquidationFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
 import OracleAdminFacetABI from './OracleAdminFacet.json';
@@ -47,6 +48,7 @@ export {
   RepayFacetABI,
   DefaultedFacetABI,
   RiskFacetABI,
+  RiskMatchLiquidationFacetABI,
   ClaimFacetABI,
   OracleFacetABI,
   OracleAdminFacetABI,
@@ -93,6 +95,7 @@ export const DIAMOND_ABI = [
   ...RepayFacetABI,
   ...DefaultedFacetABI,
   ...RiskFacetABI,
+  ...RiskMatchLiquidationFacetABI,
   ...ClaimFacetABI,
   ...OracleFacetABI,
   ...OracleAdminFacetABI,
