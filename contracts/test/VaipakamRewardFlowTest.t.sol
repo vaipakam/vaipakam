@@ -1,0 +1,298 @@
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.29;
+
+import {Test} from "forge-std/Test.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+
+import {CcipMessenger} from "../src/crosschain/CcipMessenger.sol";
+import {VaipakamRewardMessenger} from "../src/crosschain/VaipakamRewardMessenger.sol";
+import {ICrossChainMessenger} from "../src/crosschain/ICrossChainMessenger.sol";
+import {MockCcipRouter} from "./mocks/MockCcipRouter.sol";
+
+/// @dev Records the reward-ingress calls — stands in for a Vaipakam Diamond.
+contract MockRewardDiamond {
+    uint32 public lastReportChain;
+    uint256 public lastReportDay;
+    uint256 public lastReportLender;
+    uint256 public lastReportBorrower;
+    uint256 public reportCount;
+
+    uint256 public lastBcastDay;
+    uint256 public lastBcastLender;
+    uint256 public lastBcastBorrower;
+    uint256 public bcastCount;
+
+    function onChainReportReceived(
+        uint32 src,
+        uint256 day,
+        uint256 l,
+        uint256 b
+    ) external {
+        lastReportChain = src;
+        lastReportDay = day;
+        lastReportLender = l;
+        lastReportBorrower = b;
+        ++reportCount;
+    }
+
+    function onRewardBroadcastReceived(
+        uint256 day,
+        uint256 l,
+        uint256 b
+    ) external {
+        lastBcastDay = day;
+        lastBcastLender = l;
+        lastBcastBorrower = b;
+        ++bcastCount;
+    }
+
+    receive() external payable {}
+}
+
+/**
+ * @title VaipakamRewardFlowTest
+ * @notice T-068 Phase 4 — end-to-end tests for the CCIP reward flow.
+ *         Two real {CcipMessenger}s carry REPORT (mirror→Base) and
+ *         BROADCAST (Base→mirror) between two {VaipakamRewardMessenger}s.
+ */
+contract VaipakamRewardFlowTest is Test {
+    uint256 internal constant MIRROR = 1;
+    uint256 internal constant BASE = 8453;
+    uint64 internal constant SEL_MIRROR = 5009297550715157269;
+    uint64 internal constant SEL_BASE = 15971525489660198786;
+    bytes32 internal constant CHANNEL =
+        keccak256("vaipakam.ccip.channel.vpfi-reward");
+    uint256 internal constant GAS = 400_000;
+
+    // Payload msgType tags (internal constants on the contract).
+    uint8 internal constant REPORT = 1;
+    uint8 internal constant BROADCAST = 2;
+
+    address internal owner = makeAddr("owner");
+
+    MockCcipRouter internal router;
+    CcipMessenger internal messengerMirror;
+    CcipMessenger internal messengerBase;
+    VaipakamRewardMessenger internal rewardMirror;
+    VaipakamRewardMessenger internal rewardBase;
+    MockRewardDiamond internal diamondMirror;
+    MockRewardDiamond internal diamondBase;
+
+    uint256 internal fee;
+
+    function setUp() public {
+        router = new MockCcipRouter();
+        router.setSupported(SEL_MIRROR, true);
+        router.setSupported(SEL_BASE, true);
+        fee = router.fixedFee();
+
+        diamondMirror = new MockRewardDiamond();
+        diamondBase = new MockRewardDiamond();
+
+        messengerMirror = _deployMessenger();
+        messengerBase = _deployMessenger();
+        rewardMirror = _deployReward(messengerMirror, diamondMirror, false, BASE);
+        rewardBase = _deployReward(messengerBase, diamondBase, true, 0);
+
+        vm.startPrank(owner);
+        messengerMirror.setChainSelector(BASE, SEL_BASE);
+        messengerMirror.setRemoteMessenger(BASE, address(messengerBase));
+        messengerMirror.registerChannel(CHANNEL, address(rewardMirror));
+        messengerMirror.setChannelPeer(CHANNEL, BASE, address(rewardBase));
+
+        messengerBase.setChainSelector(MIRROR, SEL_MIRROR);
+        messengerBase.setRemoteMessenger(MIRROR, address(messengerMirror));
+        messengerBase.registerChannel(CHANNEL, address(rewardBase));
+        messengerBase.setChannelPeer(CHANNEL, MIRROR, address(rewardMirror));
+
+        uint256[] memory dests = new uint256[](1);
+        dests[0] = MIRROR;
+        rewardBase.setBroadcastDestinations(dests);
+        vm.stopPrank();
+
+        vm.deal(address(diamondMirror), 10 ether);
+        vm.deal(address(diamondBase), 10 ether);
+    }
+
+    function _deployMessenger() internal returns (CcipMessenger) {
+        CcipMessenger impl = new CcipMessenger(address(router));
+        return CcipMessenger(
+            address(
+                new ERC1967Proxy(
+                    address(impl),
+                    abi.encodeCall(CcipMessenger.initialize, (owner))
+                )
+            )
+        );
+    }
+
+    function _deployReward(
+        CcipMessenger m,
+        MockRewardDiamond d,
+        bool canonical,
+        uint256 baseChainId
+    ) internal returns (VaipakamRewardMessenger) {
+        VaipakamRewardMessenger impl = new VaipakamRewardMessenger();
+        return VaipakamRewardMessenger(
+            payable(
+                new ERC1967Proxy(
+                    address(impl),
+                    abi.encodeCall(
+                        VaipakamRewardMessenger.initialize,
+                        (owner, address(m), address(d), canonical, baseChainId, GAS)
+                    )
+                )
+            )
+        );
+    }
+
+    function _empty()
+        internal
+        pure
+        returns (ICrossChainMessenger.TokenAmount[] memory)
+    {
+        return new ICrossChainMessenger.TokenAmount[](0);
+    }
+
+    // ─── REPORT: mirror → Base ──────────────────────────────────────────────
+
+    function test_Report_MirrorToBase() public {
+        vm.prank(address(diamondMirror));
+        rewardMirror.sendChainReport{value: fee}(
+            42, 1_000 ether, 500 ether, payable(address(diamondMirror))
+        );
+        assertEq(router.pendingCount(), 1, "report captured");
+
+        router.deliver(0, SEL_MIRROR);
+
+        assertEq(diamondBase.reportCount(), 1, "Base aggregator got the report");
+        assertEq(diamondBase.lastReportChain(), uint32(MIRROR), "source chain tagged");
+        assertEq(diamondBase.lastReportDay(), 42, "dayId");
+        assertEq(diamondBase.lastReportLender(), 1_000 ether, "lender numeraire");
+        assertEq(diamondBase.lastReportBorrower(), 500 ether, "borrower numeraire");
+    }
+
+    // ─── BROADCAST: Base → mirror ───────────────────────────────────────────
+
+    function test_Broadcast_BaseToMirror() public {
+        vm.prank(address(diamondBase));
+        rewardBase.broadcastGlobal{value: fee}(
+            42, 9_000 ether, 4_000 ether, payable(address(diamondBase))
+        );
+        assertEq(router.pendingCount(), 1, "broadcast captured");
+
+        router.deliver(0, SEL_BASE);
+
+        assertEq(diamondMirror.bcastCount(), 1, "mirror reporter got the broadcast");
+        assertEq(diamondMirror.lastBcastDay(), 42, "dayId");
+        assertEq(diamondMirror.lastBcastLender(), 9_000 ether, "global lender");
+        assertEq(diamondMirror.lastBcastBorrower(), 4_000 ether, "global borrower");
+    }
+
+    // ─── Sender access control ──────────────────────────────────────────────
+
+    function test_SendChainReport_RevertWhen_NotDiamond() public {
+        vm.deal(address(this), 1 ether);
+        vm.expectRevert(VaipakamRewardMessenger.OnlyDiamond.selector);
+        rewardMirror.sendChainReport{value: fee}(1, 0, 0, payable(owner));
+    }
+
+    function test_BroadcastGlobal_RevertWhen_NotDiamond() public {
+        vm.deal(address(this), 1 ether);
+        vm.expectRevert(VaipakamRewardMessenger.OnlyDiamond.selector);
+        rewardBase.broadcastGlobal{value: fee}(1, 0, 0, payable(owner));
+    }
+
+    // ─── Inbound routing + integrity guards ─────────────────────────────────
+
+    function test_Receive_RevertWhen_NotMessenger() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VaipakamRewardMessenger.NotMessenger.selector, address(this)
+            )
+        );
+        rewardBase.onCrossChainMessage(
+            MIRROR,
+            address(rewardMirror),
+            abi.encode(REPORT, uint256(1), uint256(0), uint256(0)),
+            _empty()
+        );
+    }
+
+    function test_Receive_RevertWhen_ReportOnMirror() public {
+        // A REPORT-kind payload delivered to a mirror instance.
+        vm.prank(address(messengerMirror));
+        vm.expectRevert(VaipakamRewardMessenger.ReportOnMirror.selector);
+        rewardMirror.onCrossChainMessage(
+            BASE,
+            address(rewardBase),
+            abi.encode(REPORT, uint256(1), uint256(0), uint256(0)),
+            _empty()
+        );
+    }
+
+    function test_Receive_RevertWhen_BroadcastOnCanonical() public {
+        vm.prank(address(messengerBase));
+        vm.expectRevert(VaipakamRewardMessenger.BroadcastOnCanonical.selector);
+        rewardBase.onCrossChainMessage(
+            MIRROR,
+            address(rewardMirror),
+            abi.encode(BROADCAST, uint256(1), uint256(0), uint256(0)),
+            _empty()
+        );
+    }
+
+    function test_Receive_RevertWhen_PayloadSizeWrong() public {
+        // A short (padded-attack-shaped) payload — the length pin rejects it.
+        bytes memory short = abi.encode(REPORT);
+        vm.prank(address(messengerBase));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VaipakamRewardMessenger.PayloadSizeMismatch.selector,
+                short.length,
+                uint256(128)
+            )
+        );
+        rewardBase.onCrossChainMessage(
+            MIRROR, address(rewardMirror), short, _empty()
+        );
+    }
+
+    function test_Receive_RevertWhen_UnknownMessageType() public {
+        vm.prank(address(messengerBase));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VaipakamRewardMessenger.UnknownMessageType.selector, uint8(9)
+            )
+        );
+        rewardBase.onCrossChainMessage(
+            MIRROR,
+            address(rewardMirror),
+            abi.encode(uint8(9), uint256(1), uint256(0), uint256(0)),
+            _empty()
+        );
+    }
+
+    // ─── Quotes ─────────────────────────────────────────────────────────────
+
+    function test_Quotes() public view {
+        assertEq(
+            rewardMirror.quoteSendChainReport(1, 0, 0), fee, "report quote"
+        );
+        // One broadcast destination → one fee.
+        assertEq(
+            rewardBase.quoteBroadcastGlobal(1, 0, 0), fee, "broadcast quote"
+        );
+    }
+
+    // ─── Pause ──────────────────────────────────────────────────────────────
+
+    function test_Pause_FreezesReport() public {
+        vm.prank(owner);
+        rewardMirror.pause();
+        vm.prank(address(diamondMirror));
+        vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
+        rewardMirror.sendChainReport{value: fee}(1, 0, 0, payable(address(diamondMirror)));
+    }
+}
