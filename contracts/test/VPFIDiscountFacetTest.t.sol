@@ -213,6 +213,17 @@ contract VPFIDiscountFacetTest is SetupTest {
         _facet().buyVPFIWithETH{value: 0}();
     }
 
+    /// @notice Codex review — the direct-buy path keys the per-wallet cap
+    ///         bucket by `uint32(block.chainid)`; a chain id wider than
+    ///         uint32 is rejected rather than silently truncated into the
+    ///         wrong bucket.
+    function testBuyVPFIRevertsWhenChainIdExceedsUint32() public {
+        vm.chainId(uint256(type(uint32).max) + 1);
+        vm.prank(buyer);
+        vm.expectRevert(IVaipakamErrors.VPFIInvalidOriginChainId.selector);
+        _facet().buyVPFIWithETH{value: 1 ether}();
+    }
+
     function testBuyVPFIRevertsWhenAmountRoundsToZero() public {
         // With weiPerVpfi == 1e15, any msg.value < 1e-3 wei would round to
         // zero VPFI. Set a much larger rate so a realistic msg.value rounds

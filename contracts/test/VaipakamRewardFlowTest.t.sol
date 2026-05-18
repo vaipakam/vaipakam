@@ -315,4 +315,30 @@ contract VaipakamRewardFlowTest is Test {
             _empty()
         );
     }
+
+    // ─── Token-bearing message rejected (Codex review) ──────────────────────
+
+    function test_Receive_RevertWhen_TokensAttached() public {
+        // The reward channel is data-only — a token-bearing message has
+        // no recovery path here, so it must revert (CCIP keeps it
+        // re-executable) rather than strand the tokens on this contract.
+        ICrossChainMessenger.TokenAmount[] memory toks =
+            new ICrossChainMessenger.TokenAmount[](1);
+        toks[0] = ICrossChainMessenger.TokenAmount({
+            token: address(0xBEEF),
+            amount: 1
+        });
+        vm.prank(address(messengerBase));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VaipakamRewardMessenger.UnexpectedTokens.selector, uint256(1)
+            )
+        );
+        rewardBase.onCrossChainMessage(
+            MIRROR,
+            address(rewardMirror),
+            abi.encode(REPORT, uint256(1), uint256(0), uint256(0)),
+            toks
+        );
+    }
 }

@@ -251,14 +251,16 @@ interface IVaipakamErrors {
     error AssetPaused(address asset);
 
     // ─── VPFI Fixed-Rate Buy: origin-chain guard ───────────────────────────
-    /// @notice Fixed-rate VPFI buy reached the caps pipeline with a zero
-    ///         origin chain id. A zero key would land every buy in
-    ///         storage bucket 0, desyncing the frontend's per-chain
-    ///         allowance view from the on-chain ledger. It cannot occur
-    ///         on a well-formed call — direct buys pass `block.chainid`,
-    ///         bridged buys pass a CcipMessenger-resolved source chain
-    ///         id — so this is a defence-in-depth reject of a malformed
-    ///         origin.
+    /// @notice Fixed-rate VPFI buy reached the caps pipeline with an
+    ///         origin chain id that cannot key the per-wallet cap bucket
+    ///         — either zero, or wider than the `uint32` bucket key.
+    ///         Zero would land every buy in storage bucket 0; an
+    ///         over-wide id would truncate into the wrong bucket. Either
+    ///         desyncs the frontend's per-chain allowance view from the
+    ///         on-chain ledger. It cannot occur on a well-formed call —
+    ///         direct buys pass `block.chainid`, bridged buys pass a
+    ///         CcipMessenger-resolved source chain id — so this is a
+    ///         defence-in-depth reject of a malformed origin.
     error VPFIInvalidOriginChainId();
 
     // ─── Permit2 ────────────────────────────────────────────────────────────

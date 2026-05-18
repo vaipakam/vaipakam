@@ -250,7 +250,13 @@ contract VPFIDiscountFacet is
         // Direct buy on the canonical Base Diamond — origin = local
         // chain. The per-wallet cap is keyed on the buyer's origin
         // chain (`block.chainid` here), so Base-direct buys do not
-        // consume the buyer's cap on any mirror chain.
+        // consume the buyer's cap on any mirror chain. `block.chainid`
+        // must fit the uint32 cap-bucket key — the canonical chain's id
+        // always does; this guard is defence-in-depth against a silent
+        // truncation writing usage into the wrong bucket.
+        if (block.chainid > type(uint32).max) {
+            revert VPFIInvalidOriginChainId();
+        }
         uint256 vpfiOut = _computeBuyAndDebitCaps(
             msg.sender,
             uint32(block.chainid),

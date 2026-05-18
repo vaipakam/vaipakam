@@ -337,8 +337,6 @@ contract VpfiBuyFlowTest is Test {
         adapter.buy{value: 1 ether + fee}(1 ether, 0);
     }
 
-    // ─── Receiver-side stuck retry ──────────────────────────────────────────
-
     // ─── Fee-surplus refund (Codex review P1) ───────────────────────────────
 
     function test_Buy_RefundsFeeSurplus() public {
@@ -395,6 +393,31 @@ contract VpfiBuyFlowTest is Test {
             payload,
             new ICrossChainMessenger.TokenAmount[](0)
         );
+    }
+
+    // ─── Payment-token rotation guard (Codex review P1) ─────────────────────
+
+    function test_SetPaymentToken_RevertWhen_PendingBuysExist() public {
+        // A pending buy holds a lock in the current payment asset;
+        // rotating the token now would settle it in the wrong asset.
+        vm.prank(buyer);
+        adapter.buy{value: 1 ether + fee}(1 ether, 0);
+        assertEq(adapter.totalPendingAmountIn(), 1 ether, "buy is pending");
+
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VpfiBuyAdapter.PaymentTokenRotationBlocked.selector, 1 ether
+            )
+        );
+        adapter.setPaymentToken(address(0));
+
+        // Once the buy resolves, rotation is allowed again.
+        _deliver(0, SEL_MIRROR);
+        _deliver(1, SEL_BASE);
+        assertEq(adapter.totalPendingAmountIn(), 0, "pending drained");
+        vm.prank(owner);
+        adapter.setPaymentToken(address(0));
     }
 
     // ─── Receiver-side stuck retry ──────────────────────────────────────────

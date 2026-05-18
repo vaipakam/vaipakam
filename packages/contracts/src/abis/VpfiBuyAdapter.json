@@ -1437,6 +1437,17 @@
   },
   {
     "type": "error",
+    "name": "PaymentTokenRotationBlocked",
+    "inputs": [
+      {
+        "name": "totalPendingAmountIn",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "PendingBuyNotFound",
     "inputs": []
   },

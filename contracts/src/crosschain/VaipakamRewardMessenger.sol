@@ -191,6 +191,11 @@ contract VaipakamRewardMessenger is
     /// @notice The inbound source chain id does not fit the `uint32`
     ///         origin tag the reward aggregator expects.
     error ChainIdTooLarge(uint256 sourceChainId);
+    /// @notice A reward message arrived carrying CCIP tokens. The reward
+    ///         channel is data-only — this contract has no token-recovery
+    ///         path, so a token-bearing message is rejected (CCIP records
+    ///         it failed + re-executable) rather than stranding assets.
+    error UnexpectedTokens(uint256 count);
 
     // ─── Construction ───────────────────────────────────────────────────────
 
@@ -362,9 +367,14 @@ contract VaipakamRewardMessenger is
         uint256 sourceChainId,
         address /* sourceSender */,
         bytes calldata payload,
-        ICrossChainMessenger.TokenAmount[] calldata /* tokens */
+        ICrossChainMessenger.TokenAmount[] calldata tokens
     ) external override whenNotPaused nonReentrant {
         if (msg.sender != messenger) revert NotMessenger(msg.sender);
+        // The reward channel is data-only. The messenger forwards any
+        // attached tokens to this contract before the callback, and this
+        // contract has no recovery path — reject a token-bearing message
+        // so CCIP marks it failed + re-executable instead of stranding it.
+        if (tokens.length != 0) revert UnexpectedTokens(tokens.length);
         if (payload.length != EXPECTED_PAYLOAD_SIZE) {
             revert PayloadSizeMismatch(payload.length, EXPECTED_PAYLOAD_SIZE);
         }

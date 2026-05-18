@@ -266,6 +266,10 @@ contract VpfiBuyAdapter is
     error RefundTimeoutNotElapsed();
     error EthSendFailed();
     error RescueWouldTouchPendingLock();
+    /// @notice {setPaymentToken} called while PENDING buys still hold a
+    ///         lock in the old payment asset — rotating now would settle
+    ///         them in the wrong token.
+    error PaymentTokenRotationBlocked(uint256 totalPendingAmountIn);
     error BuyExceedsPerRequestCap(uint256 amountIn, uint256 cap);
     error BuyExceedsDailyCap(uint256 attemptedTotal, uint256 cap);
     error PaymentTokenNotContract(address token);
@@ -665,10 +669,16 @@ contract VpfiBuyAdapter is
         treasury = newTreasury;
     }
 
-    /// @notice Rotate the payment token. Validated up-front; only change
-    ///         when there are no PENDING buys (locked balances would
-    ///         otherwise refund in the wrong asset).
+    /// @notice Rotate the payment token. Validated up-front, and rejected
+    ///         while any PENDING buy still holds a lock in the current
+    ///         asset — settlement / refund / timeout-reclaim all read the
+    ///         live `paymentToken`, so rotating mid-flight would settle an
+    ///         in-flight buy in the wrong token. Drain (or `reclaimTimedOutBuy`)
+    ///         every pending buy first; `pause()` stops new ones meanwhile.
     function setPaymentToken(address newToken) external onlyOwner {
+        if (totalPendingAmountIn != 0) {
+            revert PaymentTokenRotationBlocked(totalPendingAmountIn);
+        }
         _assertPaymentTokenSane(newToken);
         emit PaymentTokenSet(paymentToken, newToken);
         paymentToken = newToken;
