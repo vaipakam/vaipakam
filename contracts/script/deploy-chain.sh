@@ -513,7 +513,9 @@ fi
 # the new ABI). DiamondLoupe's `facetAddresses()` is the authoritative
 # post-deploy answer.
 #
-# Expected: 32 cut facets + 1 DiamondCutFacet (constructor-added) = 33.
+# The expected count is NOT hardcoded — DeployDiamond records the
+# authoritative cuts.length into addresses.json (.facetCount, Issue
+# #69); the check below exact-matches the live loupe count against it.
 
 echo
 echo "[2b] Post-cut facet-count verification (DiamondLoupe)"
@@ -523,19 +525,28 @@ if [ -z "$DIAMOND_ADDR" ]; then
   echo "      Either the script reverted silently or addresses.json wasn't written." >&2
   exit 1
 fi
-# DiamondCutFacet is selector-callable but NOT enumerated by the
-# Loupe (constructor writes the selector mapping directly without
-# touching facetAddresses[]), so the visible count is exactly the
-# number of cut entries — 32 today, not 33.
-EXPECTED_FACETS=32
-FACET_COUNT_RAW=$(cast call "$DIAMOND_ADDR" 'facetAddresses()(address[])' --rpc-url "$RPC" 2>/dev/null \
-  | tr ',' '\n' | grep -c '0x' || echo 0)
-if [ "$FACET_COUNT_RAW" -lt "$EXPECTED_FACETS" ]; then
-  echo "FAIL: diamond at $DIAMOND_ADDR has $FACET_COUNT_RAW facets, expected $EXPECTED_FACETS." >&2
-  echo "      The diamondCut likely landed only its first half. Re-run with --fresh." >&2
+# DiamondCutFacet is selector-callable but NOT enumerated by the Loupe
+# (constructor writes the selector mapping directly without touching
+# facetAddresses[]), so the loupe count equals the number of cut
+# entries exactly. DeployDiamond records that authoritative count in
+# addresses.json (.facetCount, Issue #69); read it and require an
+# EXACT match — a `>=` floor would green-light a stale or partially
+# migrated diamond that is MISSING a facet.
+EXPECTED_FACETS=$(jq -r '.facetCount // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
+if [ -z "$EXPECTED_FACETS" ]; then
+  echo "FAIL: .facetCount missing from deployments/$CHAIN_SLUG/addresses.json." >&2
+  echo "      DeployDiamond.s.sol records it — re-run step [2]." >&2
   exit 1
 fi
-echo "  ✓ diamond at $DIAMOND_ADDR has $FACET_COUNT_RAW facets (≥ $EXPECTED_FACETS expected)"
+FACET_COUNT_RAW=$(cast call "$DIAMOND_ADDR" 'facetAddresses()(address[])' --rpc-url "$RPC" 2>/dev/null \
+  | tr ',' '\n' | grep -c '0x' || echo 0)
+if [ "$FACET_COUNT_RAW" -ne "$EXPECTED_FACETS" ]; then
+  echo "FAIL: diamond at $DIAMOND_ADDR has $FACET_COUNT_RAW facets, expected exactly $EXPECTED_FACETS." >&2
+  echo "      The diamond is incomplete / stale (a half cut, or a facet missing)." >&2
+  echo "      Re-run with --fresh." >&2
+  exit 1
+fi
+echo "  ✓ diamond at $DIAMOND_ADDR has all $FACET_COUNT_RAW expected facets"
 
 # ── 3. Timelock ───────────────────────────────────────────────────────
 

@@ -215,11 +215,11 @@ contract DeployDiamond is Script {
         IDiamondCut(diamond).diamondCut(secondHalf, address(0), "");
         console.log("Diamond cut 2/2 complete:", cuts.length - mid, "facets added.");
         // Post-cut-2 sanity: every facet added across both cuts must
-        // now be loupe-visible. Same off-by-one note as cut 1 — the
-        // DiamondCutFacet stays out of `facetAddresses[]`, so the
-        // expected count is `cuts.length` (32 today), not 33. The
-        // selector for `diamondCut` itself is still callable; it
-        // just isn't enumerated by the loupe walk.
+        // now be loupe-visible. The DiamondCutFacet stays out of
+        // `facetAddresses[]` (constructor-installed, not cut), so the
+        // expected loupe count is exactly `cuts.length`. The selector
+        // for `diamondCut` itself is still callable; it just isn't
+        // enumerated by the loupe walk.
         uint256 expectedAfterCut2 = cuts.length;
         uint256 actualAfterCut2 = DiamondLoupeFacet(diamond)
             .facetAddresses()
@@ -228,6 +228,12 @@ contract DeployDiamond is Script {
             actualAfterCut2 == expectedAfterCut2,
             "DeployDiamond: cut 2/2 did not register all facets"
         );
+
+        // Issue #69 — record the authoritative facet count into
+        // addresses.json so the shell verify phase exact-matches the
+        // live diamond against it. This is the single source of truth:
+        // no hardcoded facet count drifts in the deploy scripts.
+        Deployments.writeUint(".facetCount", cuts.length);
 
         // ── Step 5: Post-deployment initialization ──────────────────────
         // 5a. Initialize access control (grants all roles to admin)
