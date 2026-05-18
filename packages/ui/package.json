@@ -48,9 +48,9 @@
     "@types/react-dom": "^19.2.3",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "react-i18next": "^17.0.4",
-    "i18next": "^26.0.8",
-    "viem": "^2.48.4",
-    "lucide-react": "^1.8.0"
+    "react-i18next": "^17.0.8",
+    "i18next": "^26.2.0",
+    "viem": "^2.49.3",
+    "lucide-react": "^1.16.0"
   }
 }
