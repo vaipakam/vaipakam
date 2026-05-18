@@ -1,0 +1,51 @@
+# Dependabot — off-chain dependency hygiene only.
+#
+# Scope is deliberate (see CLAUDE.md "Dependabot"):
+#   - github-actions : keep CI actions current; pairs with the
+#                      SHA-pinning of every `uses:` in .github/workflows.
+#   - npm            : the pnpm workspace (apps/* + packages/*) — the
+#                      real CVE surface (viem, wagmi, React, wrangler, …).
+#
+# NOT covered, on purpose: the on-chain Solidity dependencies under
+# `contracts/lib/` (forge-std, openzeppelin-contracts-upgradeable,
+# chainlink-local, diamond-3-hardhat). Those are git submodules pinned
+# to an AUDITED commit set — they must be bumped only as a deliberate,
+# reviewed, re-audited decision, never by an automated PR. No
+# `gitsubmodule` ecosystem is configured here precisely so Dependabot
+# leaves the audited contract dependency set frozen.
+#
+# Dependabot PRs are NEVER auto-merged — each goes through the same
+# review + CI + Codex review as any other change.
+version: 2
+updates:
+  # ── CI action versions ──────────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(ci)"
+    labels:
+      - "infra"
+
+  # ── Off-chain npm / pnpm workspace (apps/* + packages/*) ────────────
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    # Minor + patch bumps land as one grouped PR to limit noise; a
+    # major bump gets its own PR so the breaking change is visible.
+    groups:
+      npm-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - "infra"
