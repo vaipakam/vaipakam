@@ -20,13 +20,18 @@ import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
  *          separately via the keeper-authorization flow, NOT in this
  *          script)
  *        - ERC-173 ownership of the Diamond (gates `diamondCut`)
- *        - Ownable2Step ownership of every LZ OApp deployed on this
- *          chain (VPFIOFTAdapter or VPFIMirror, VPFIBuyAdapter or
- *          VPFIBuyReceiver, VaipakamRewardOApp). This is held on
- *          ADMIN through the `--phase configure` window so the
- *          ~90 onlyOwner-gated `setConfig`/`setPeer`/
- *          `setEnforcedOptions` calls can be signed by a single
- *          EOA without cross-chain multisig coordination.
+ *        - Ownable2Step ownership of every CCIP cross-chain contract
+ *          deployed on this chain — `CcipMessenger`, the VPFI
+ *          `TokenPool`, `VpfiPoolRateGovernor`, `VaipakamRewardMessenger`,
+ *          and the chain-scoped `VPFIMirrorToken` + `VpfiBuyAdapter`
+ *          (mirror) / `VpfiBuyReceiver` (canonical). `DeployCrosschain`
+ *          initializes every one with ADMIN as owner — and `ConfigureCcip`
+ *          accepts the pool's `Ownable2Step` handover as ADMIN — so the
+ *          whole CCIP stack is ADMIN-owned through the `ccip-wire`
+ *          window; the lane / channel / rate-limit config calls are all
+ *          signed by the single ADMIN EOA.
+ *        - The CCT admin — the CCIP `TokenAdminRegistry` administrator
+ *          for VPFI — also held on ADMIN (set by `ConfigureCcip`).
  *
  *      This script (run as ADMIN against a single chain at
  *      `--phase handover`) hands every long-lived authority off to
@@ -55,18 +60,22 @@ import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
  *           after which a separate one-shot script renounces
  *           them. They have no DEFAULT_ADMIN-level authority, so
  *           a delayed renounce is safe.
- *        6. OApp ownership → DEFAULT_ADMIN_ADDRESS via Ownable2Step's
- *           first leg (transferOwnership). The DEFAULT_ADMIN
- *           multisig must call `acceptOwnership` on each OApp
- *           within Ownable2Step's pending-owner window — that's
- *           the multi-party ceremony component; this script
- *           prints the calldata + addresses for the operator to
- *           paste into the Safe UI.
+ *        6. CCIP cross-chain ownership + the CCT admin → the Timelock,
+ *           via the first leg of each two-step transfer
+ *           (`transferOwnership` / `transferAdminRole`). The Timelock
+ *           gates UUPS upgrades and lane / rate-limit config, so it
+ *           gets the same review-window delay as the Diamond's ERC-173
+ *           ownership (step 4) — operator decision, T-068 follow-up.
+ *           The Timelock must then `acceptOwnership` on each contract
+ *           and `acceptAdminRole` on the registry, executed through its
+ *           schedule/execute queue — the multi-party ceremony
+ *           component; this script prints the calldata + targets.
  *
- *      AFTER this script lands and AFTER the multisig accepts every
- *      OApp's pending ownership, `DeployerZeroRolesTest.t.sol` runs
- *      as the hard exit gate — asserting the deployer + admin EOAs
- *      hold zero authority on this chain.
+ *      AFTER this script lands and AFTER the Timelock accepts every
+ *      CCIP contract's pending ownership (and the pending CCT admin
+ *      role), `DeployerZeroRolesTest.t.sol` runs as the hard exit gate
+ *      — asserting the deployer + admin EOAs hold zero authority on
+ *      this chain.
  *
  *      This script does NOT use Multicall3. AccessControl's
  *      `grantRole`/`renounceRole` and OZ's `transferOwnership` all
@@ -81,6 +90,11 @@ import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
  *        ADMIN_ADDRESS            — corresponding EOA, used for renounce
  *        DEFAULT_ADMIN_ADDRESS    — governance Safe address
  *        PAUSER_ADDRESS           — Pauser Safe address
+ *        CCIP_TOKEN_ADMIN_REGISTRY — optional; the chain's CCIP
+ *                                   `TokenAdminRegistry`. When set, the
+ *                                   CCT admin for VPFI is rotated to the
+ *                                   Timelock; when unset, that leg is
+ *                                   skipped with a notice.
  *        ADDRESSES_JSON_PATH      — optional override; defaults to
  *                                   contracts/deployments/<slug>/
  *                                   addresses.json. The script reads
@@ -88,8 +102,9 @@ import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
  *                                   ADDRESSES_JSON_PATH is unset.
  *
  *      Reads from addresses.json:
- *        diamond, timelock, vpfiOftAdapter | vpfiMirror,
- *        vpfiBuyAdapter | vpfiBuyReceiver, rewardOApp
+ *        diamond, timelock, ccipMessenger, vpfiTokenPool,
+ *        vpfiPoolRateGovernor, rewardMessenger,
+ *        vpfiToken | vpfiMirror, vpfiBuyReceiver | vpfiBuyAdapter
  *
  *      Per CLAUDE.md "Deployments sync — Omit-keys policy", canonical
  *      and mirror keys are mutually exclusive on any single chain;
@@ -135,17 +150,26 @@ contract Handover is Script {
 
         address diamond = _readAddrOrRevert(addrJson, "diamond", addressesPath);
         address timelock = _readAddrOrRevert(addrJson, "timelock", addressesPath);
-        address oft = _readAddrOptional(addrJson, "vpfiOftAdapter");
+        // CCIP cross-chain stack — every chain. `DeployCrosschain` writes
+        // these keys; all are ADMIN-owned after `ConfigureCcip`.
+        address ccipMessenger = _readAddrOptional(addrJson, "ccipMessenger");
+        address tokenPool = _readAddrOptional(addrJson, "vpfiTokenPool");
+        address rateGovernor = _readAddrOptional(addrJson, "vpfiPoolRateGovernor");
+        address rewardMessenger = _readAddrOptional(addrJson, "rewardMessenger");
+        // Chain-scoped per the omit-keys policy: a mirror carries
+        // `vpfiMirror` + `vpfiBuyAdapter`; canonical Base carries
+        // `vpfiBuyReceiver` (its VPFI is the pre-existing `vpfiToken`).
         address mirror = _readAddrOptional(addrJson, "vpfiMirror");
         address buyAdapter = _readAddrOptional(addrJson, "vpfiBuyAdapter");
         address buyReceiver = _readAddrOptional(addrJson, "vpfiBuyReceiver");
-        // The Reward OApp lands at addresses.json key `.rewardOApp`
-        // (per Deployments.writeRewardOApp / Deployments.readRewardOApp
-        // — script/lib/Deployments.sol). Earlier drafts of this file
-        // used `.vaipakamReward` which is NOT what the deploy script
-        // writes; that key always returned address(0) and silently
-        // skipped the rewardOApp transfer.
-        address rewardOApp = _readAddrOptional(addrJson, "rewardOApp");
+
+        // The VPFI token whose CCT admin is rotated below — the
+        // pre-existing `vpfiToken` on canonical Base, the `vpfiMirror`
+        // ERC20 on a mirror.
+        bool canonical = block.chainid == 8453 || block.chainid == 84532;
+        address vpfiToken = canonical
+            ? _readAddrOptional(addrJson, "vpfiToken")
+            : mirror;
 
         // ── 2. Sanity — the three Safes must be distinct ────────────
         // The .env.example ships with three different addresses; if
@@ -210,53 +234,63 @@ contract Handover is Script {
 
         vm.stopBroadcast();
 
-        // ── 3f. OApp ownership transfers (separate broadcast windows) ──
-        // Each LZ OApp deployed by Deploy{VPFICanonical,VPFIMirror,
-        // VPFIBuyAdapter,VPFIBuyReceiver,RewardOAppCreate2}.s.sol is
-        // initialized with an owner read from a different env var:
-        //   - vpfiOftAdapter / vpfiMirror / vpfiBuyAdapter /
-        //     vpfiBuyReceiver  → owner = VPFI_OWNER
-        //   - rewardOApp                  → owner = REWARD_OWNER
-        // Neither env var is necessarily ADMIN_ADDRESS — the operator
-        // chooses at deploy time. So the OApp transfers can NOT
-        // broadcast as ADMIN; they have to broadcast as the EOA
-        // matching each contract's on-chain owner.
+        // ── 3f. CCIP cross-chain ownership → Timelock ───────────────────
+        // The whole CCIP stack is ADMIN-owned `Ownable2Step` —
+        // `DeployCrosschain` initializes every proxy with ADMIN and
+        // `ConfigureCcip` accepts the pools' ownership as ADMIN — so
+        // every transfer here broadcasts as ADMIN, and the LZ-era
+        // per-owner-key resolution is no longer needed.
         //
-        // Resolution: read VPFI_OWNER_PRIVATE_KEY and REWARD_OWNER_
-        // DEPLOYER_PRIVATE_KEY from env if present; fall back to ADMIN_PRIVATE_
-        // KEY (the common case where VPFI_OWNER == ADMIN_ADDRESS).
-        // Then per OApp, compare the signing key's EOA against the
-        // on-chain owner and skip with a clear warning on mismatch
-        // — the operator runs the transfer manually for that OApp.
-        // This keeps the happy path (one EOA = ADMIN = VPFI_OWNER =
-        // REWARD_OWNER) frictionless while making the mismatch case
-        // recoverable instead of a confusing revert.
-        uint256 vpfiOwnerKey = _envOptionalKey("VPFI_OWNER_PRIVATE_KEY", adminKey);
-        uint256 rewardOwnerKey = _envOptionalKey("REWARD_OWNER_PRIVATE_KEY", adminKey);
+        // `transferOwnership` is the first leg of `Ownable2Step`; the
+        // Timelock accepts in step 4. `_transferCrossChainOwnership`
+        // skips with a notice when a contract is not deployed on this
+        // chain, or not ADMIN-owned — never a confusing mid-run revert.
+        _transferCrossChainOwnership(adminKey, ccipMessenger,   "ccipMessenger",        timelock);
+        _transferCrossChainOwnership(adminKey, tokenPool,       "vpfiTokenPool",        timelock);
+        _transferCrossChainOwnership(adminKey, rateGovernor,    "vpfiPoolRateGovernor", timelock);
+        _transferCrossChainOwnership(adminKey, rewardMessenger, "rewardMessenger",      timelock);
+        _transferCrossChainOwnership(adminKey, mirror,          "vpfiMirror",           timelock);
+        _transferCrossChainOwnership(adminKey, buyAdapter,      "vpfiBuyAdapter",       timelock);
+        _transferCrossChainOwnership(adminKey, buyReceiver,     "vpfiBuyReceiver",      timelock);
 
-        _transferOAppOwnership(vpfiOwnerKey,   oft,         "vpfiOftAdapter",  governanceSafe);
-        _transferOAppOwnership(vpfiOwnerKey,   mirror,      "vpfiMirror",      governanceSafe);
-        _transferOAppOwnership(vpfiOwnerKey,   buyAdapter,  "vpfiBuyAdapter",  governanceSafe);
-        _transferOAppOwnership(vpfiOwnerKey,   buyReceiver, "vpfiBuyReceiver", governanceSafe);
-        _transferOAppOwnership(rewardOwnerKey, rewardOApp,  "rewardOApp",      governanceSafe);
+        // ── 3g. CCT admin → Timelock ────────────────────────────────────
+        // The CCIP `TokenAdminRegistry` administrator for VPFI rotates to
+        // the Timelock as well — `transferAdminRole` is the first leg of
+        // a two-step transfer; the Timelock `acceptAdminRole`s in step 4.
+        // Skipped when CCIP_TOKEN_ADMIN_REGISTRY is unset, or when ADMIN
+        // is not the current administrator (CCT registration may have
+        // been done by a separate token owner — see ConfigureCcip
+        // `_registerCct`, which itself skips when admin != token owner).
+        address cctRegistry = vm.envOr("CCIP_TOKEN_ADMIN_REGISTRY", address(0));
+        bool cctRotated =
+            _transferCctAdmin(adminKey, cctRegistry, vpfiToken, timelock);
 
-        // ── 4. Print the multisig-side calldata for acceptOwnership ──
-        // The governance Safe must accept on each OApp before the
-        // pending transfer takes effect. We emit the calldata + target
-        // addresses here so the operator can paste them into the Safe
-        // UI without hand-typing. acceptOwnership() takes no args —
-        // calldata is the bare 4-byte selector.
-        bytes4 acceptSel = bytes4(keccak256("acceptOwnership()"));
+        // ── 4. Print the Timelock-side accept calldata ──────────────────
+        // Each pending transfer needs the Timelock to accept it (through
+        // its schedule/execute queue) before it takes effect. Emit the
+        // calldata + targets so the operator can queue them without
+        // hand-typing. `acceptOwnership()` takes no args — calldata is
+        // the bare 4-byte selector.
         console.log("");
         console.log("=========================================================");
-        console.log("NEXT STEP - governance Safe must acceptOwnership on each:");
+        console.log("NEXT STEP - the Timelock must accept each pending transfer:");
         console.log("=========================================================");
-        console.log("  acceptOwnership() selector:", vm.toString(abi.encodePacked(acceptSel)));
-        if (oft != address(0)) console.log("    target: vpfiOftAdapter   @", oft);
-        if (mirror != address(0)) console.log("    target: vpfiMirror       @", mirror);
-        if (buyAdapter != address(0)) console.log("    target: vpfiBuyAdapter   @", buyAdapter);
-        if (buyReceiver != address(0)) console.log("    target: vpfiBuyReceiver  @", buyReceiver);
-        if (rewardOApp != address(0)) console.log("    target: rewardOApp       @", rewardOApp);
+        console.log(
+            "  acceptOwnership() selector:",
+            vm.toString(abi.encodePacked(bytes4(keccak256("acceptOwnership()"))))
+        );
+        if (ccipMessenger != address(0)) console.log("    target: ccipMessenger        @", ccipMessenger);
+        if (tokenPool != address(0)) console.log("    target: vpfiTokenPool        @", tokenPool);
+        if (rateGovernor != address(0)) console.log("    target: vpfiPoolRateGovernor @", rateGovernor);
+        if (rewardMessenger != address(0)) console.log("    target: rewardMessenger      @", rewardMessenger);
+        if (mirror != address(0)) console.log("    target: vpfiMirror           @", mirror);
+        if (buyAdapter != address(0)) console.log("    target: vpfiBuyAdapter       @", buyAdapter);
+        if (buyReceiver != address(0)) console.log("    target: vpfiBuyReceiver      @", buyReceiver);
+        if (cctRotated) {
+            console.log("  acceptAdminRole(address) on the CCIP TokenAdminRegistry:");
+            console.log("    registry:      ", cctRegistry);
+            console.log("    arg localToken:", vpfiToken);
+        }
         console.log("");
         console.log("After all are accepted, run DeployerZeroRolesTest as the");
         console.log("hard exit gate to assert deployer + admin hold no authority.");
@@ -297,59 +331,83 @@ contract Handover is Script {
         }
     }
 
-    /// @dev Read an optional uint env (a private key, here). Returns
-    ///      `fallbackKey` if the env var is unset or doesn't parse as
-    ///      a 256-bit unsigned int. Used so VPFI_OWNER_PRIVATE_KEY /
-    ///      REWARD_OWNER_PRIVATE_KEY can be omitted in the
-    ///      single-EOA case where ADMIN_PRIVATE_KEY signs everything.
-    function _envOptionalKey(string memory name, uint256 fallbackKey) internal returns (uint256) {
-        try vm.envUint(name) returns (uint256 k) {
-            if (k != 0) return k;
-        } catch {}
-        return fallbackKey;
-    }
-
-    /// @dev Transfer OApp ownership to `newOwner` if (and only if) the
-    ///      EOA matching `signingKey` is currently the on-chain owner.
-    ///      On mismatch, log a clear skip + the operator's recovery
-    ///      path. Each successful transfer broadcasts in its own
-    ///      single-tx window — Foundry sequences the broadcasts as
-    ///      separate transactions, which is the only correct way to
-    ///      hit `onlyOwner`-gated `transferOwnership` (Multicall3 batching
-    ///      would set msg.sender = Multicall3 and revert).
-    function _transferOAppOwnership(
+    /// @dev Transfer a CCIP cross-chain contract's `Ownable2Step`
+    ///      ownership to `newOwner` if (and only if) the EOA matching
+    ///      `signingKey` is currently the on-chain owner. On mismatch,
+    ///      log a clear skip + the operator's recovery path. Each
+    ///      successful transfer broadcasts in its own single-tx window —
+    ///      Foundry sequences the broadcasts as separate transactions,
+    ///      which is the only correct way to hit `onlyOwner`-gated
+    ///      `transferOwnership` (Multicall3 batching would set
+    ///      msg.sender = Multicall3 and revert).
+    function _transferCrossChainOwnership(
         uint256 signingKey,
-        address oapp,
+        address target,
         string memory label,
         address newOwner
     ) internal {
-        if (oapp == address(0)) {
-            // Not deployed on this chain (e.g. canonical-only key on
-            // a mirror chain) — silently skip.
+        if (target == address(0)) {
+            // Not deployed on this chain (e.g. a canonical-only contract
+            // on a mirror chain, or vice-versa) — silently skip.
             return;
         }
         address signer = vm.addr(signingKey);
-        address currentOwner = IOwnable2Step(oapp).owner();
+        address currentOwner = IOwnable2Step(target).owner();
         if (currentOwner != signer) {
-            console.log("  SKIP OApp transfer:", label);
-            console.log("    address:        ", oapp);
+            console.log("  SKIP ownership transfer:", label);
+            console.log("    address:        ", target);
             console.log("    on-chain owner: ", currentOwner);
             console.log("    signing key EOA:", signer);
-            console.log("    Set the matching *_OWNER_PRIVATE_KEY env var, or run");
-            console.log("    transferOwnership manually from a wallet that owns this OApp.");
+            console.log("    transferOwnership must be run from the current owner.");
             return;
         }
         vm.broadcast(signingKey);
-        IOwnable2Step(oapp).transferOwnership(newOwner);
-        console.log("  OApp transferOwnership pending:", label);
-        console.log("    address:    ", oapp);
+        IOwnable2Step(target).transferOwnership(newOwner);
+        console.log("  transferOwnership pending:", label);
+        console.log("    address:    ", target);
         console.log("    pending to: ", newOwner);
+    }
+
+    /// @dev Rotate the CCIP `TokenAdminRegistry` administrator for
+    ///      `token` to `newAdmin`, first leg of a two-step transfer.
+    ///      Returns true iff the transfer was broadcast. Skips — never
+    ///      reverts — when the registry / token is unknown or when the
+    ///      `signingKey` EOA is not the current administrator.
+    function _transferCctAdmin(
+        uint256 signingKey,
+        address registry,
+        address token,
+        address newAdmin
+    ) internal returns (bool) {
+        if (registry == address(0)) {
+            console.log("  SKIP CCT admin transfer: CCIP_TOKEN_ADMIN_REGISTRY unset.");
+            return false;
+        }
+        if (token == address(0)) {
+            console.log("  SKIP CCT admin transfer: no VPFI token in addresses.json.");
+            return false;
+        }
+        address signer = vm.addr(signingKey);
+        address currentAdmin =
+            ITokenAdminRegistry(registry).getTokenConfig(token).administrator;
+        if (currentAdmin != signer) {
+            console.log("  SKIP CCT admin transfer:", token);
+            console.log("    current administrator:", currentAdmin);
+            console.log("    signing key EOA:      ", signer);
+            console.log("    transferAdminRole must be run from the current admin.");
+            return false;
+        }
+        vm.broadcast(signingKey);
+        ITokenAdminRegistry(registry).transferAdminRole(token, newAdmin);
+        console.log("  CCT transferAdminRole pending:", token);
+        console.log("    pending to:", newAdmin);
+        return true;
     }
 }
 
 // ── Minimal interfaces ────────────────────────────────────────────────
-// Keep these inline rather than importing from src/. The script doesn't
-// need any of the surrounding facet logic, just the four selectors.
+// Keep these inline rather than importing from src/ (or the CCIP libs).
+// The script needs only these selectors, not the surrounding logic.
 
 interface IAccessControl {
     function grantRole(bytes32 role, address account) external;
@@ -363,4 +421,23 @@ interface IOwnership {
 interface IOwnable2Step {
     function owner() external view returns (address);
     function transferOwnership(address newOwner) external;
+}
+
+/// @dev The slice of the CCIP `TokenAdminRegistry` the CCT-admin
+///      handover needs. `TokenConfig` mirrors the registry's struct
+///      (administrator, pendingAdministrator, tokenPool).
+interface ITokenAdminRegistry {
+    struct TokenConfig {
+        address administrator;
+        address pendingAdministrator;
+        address tokenPool;
+    }
+
+    function getTokenConfig(address token)
+        external
+        view
+        returns (TokenConfig memory);
+
+    function transferAdminRole(address localToken, address newAdmin)
+        external;
 }
