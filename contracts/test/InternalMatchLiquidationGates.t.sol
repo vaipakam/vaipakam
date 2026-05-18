@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -81,29 +82,29 @@ contract InternalMatchLiquidationGatesTest is SetupTest {
     function test_killSwitchOff_reverts() public {
         vm.prank(owner);
         ConfigFacet(address(diamond)).setInternalMatchEnabled(false);
-        vm.expectRevert(RiskFacet.InternalMatchDisabled.selector);
-        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+        vm.expectRevert(RiskMatchLiquidationFacet.InternalMatchDisabled.selector);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
     }
 
     function test_selfPair_AequalsB_reverts() public {
         vm.expectRevert(
-            abi.encodeWithSelector(RiskFacet.InternalMatchSelfPair.selector, LOAN_A)
+            abi.encodeWithSelector(RiskMatchLiquidationFacet.InternalMatchSelfPair.selector, LOAN_A)
         );
-        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_A, 0);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_A, 0);
     }
 
     function test_selfPair_CequalsA_reverts() public {
         vm.expectRevert(
-            abi.encodeWithSelector(RiskFacet.InternalMatchSelfPair.selector, LOAN_A)
+            abi.encodeWithSelector(RiskMatchLiquidationFacet.InternalMatchSelfPair.selector, LOAN_A)
         );
-        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, LOAN_A);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, LOAN_A);
     }
 
     function test_selfPair_CequalsB_reverts() public {
         vm.expectRevert(
-            abi.encodeWithSelector(RiskFacet.InternalMatchSelfPair.selector, LOAN_B)
+            abi.encodeWithSelector(RiskMatchLiquidationFacet.InternalMatchSelfPair.selector, LOAN_B)
         );
-        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, LOAN_B);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, LOAN_B);
     }
 
     function test_loanANotActive_reverts() public {
@@ -123,9 +124,9 @@ contract InternalMatchLiquidationGatesTest is SetupTest {
         TestMutatorFacet(address(diamond)).setLoan(LOAN_A, l);
 
         vm.expectRevert(
-            abi.encodeWithSelector(RiskFacet.InternalMatchLoanNotMatchable.selector, LOAN_A)
+            abi.encodeWithSelector(RiskMatchLiquidationFacet.InternalMatchLoanNotMatchable.selector, LOAN_A)
         );
-        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
     }
 
     function test_loanBNotActive_reverts() public {
@@ -144,9 +145,9 @@ contract InternalMatchLiquidationGatesTest is SetupTest {
         TestMutatorFacet(address(diamond)).setLoan(LOAN_B, l);
 
         vm.expectRevert(
-            abi.encodeWithSelector(RiskFacet.InternalMatchLoanNotMatchable.selector, LOAN_B)
+            abi.encodeWithSelector(RiskMatchLiquidationFacet.InternalMatchLoanNotMatchable.selector, LOAN_B)
         );
-        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
     }
 
     function test_loanCNotActive_reverts() public {
@@ -165,9 +166,9 @@ contract InternalMatchLiquidationGatesTest is SetupTest {
         TestMutatorFacet(address(diamond)).setLoan(LOAN_C, l);
 
         vm.expectRevert(
-            abi.encodeWithSelector(RiskFacet.InternalMatchLoanNotMatchable.selector, LOAN_C)
+            abi.encodeWithSelector(RiskMatchLiquidationFacet.InternalMatchLoanNotMatchable.selector, LOAN_C)
         );
-        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, LOAN_C);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, LOAN_C);
     }
 
     function test_assetMismatch_reverts() public {
@@ -189,10 +190,10 @@ contract InternalMatchLiquidationGatesTest is SetupTest {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                RiskFacet.InternalMatchAssetMismatch.selector, LOAN_A, LOAN_B
+                RiskMatchLiquidationFacet.InternalMatchAssetMismatch.selector, LOAN_A, LOAN_B
             )
         );
-        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
     }
 
     function test_chainBroken_reverts() public {
@@ -205,11 +206,11 @@ contract InternalMatchLiquidationGatesTest is SetupTest {
         // C.principal — so the cycle breaks at C→A.
         vm.expectRevert(
             abi.encodeWithSelector(
-                RiskFacet.InternalMatchChainBroken.selector,
+                RiskMatchLiquidationFacet.InternalMatchChainBroken.selector,
                 LOAN_A, LOAN_B, LOAN_C
             )
         );
-        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, LOAN_C);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, LOAN_C);
     }
 
     function test_ltvBelowFloor_reverts() public {
@@ -234,13 +235,13 @@ contract InternalMatchLiquidationGatesTest is SetupTest {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                RiskFacet.InternalMatchLtvBelowFloor.selector,
+                RiskMatchLiquidationFacet.InternalMatchLtvBelowFloor.selector,
                 LOAN_A,
                 uint256(6_666),
                 uint256(9_500)
             )
         );
-        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
     }
 
     // Note: the `test_validPair_emitsPlaceholderEvent` test that

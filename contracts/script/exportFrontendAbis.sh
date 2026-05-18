@@ -100,6 +100,7 @@ FACETS=(
   "PayrollFacet"
   "RewardReporterFacet"
   "RiskFacet"
+  "RiskMatchLiquidationFacet"
   "StakingRewardsFacet"
   "TreasuryFacet"
   "VaipakamNFTFacet"

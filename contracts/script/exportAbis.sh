@@ -68,7 +68,8 @@ fi
 # meaningful and should be paired with a bot-side update.
 FACETS=(
   "MetricsFacet"      # getActiveLoansCount, getActiveLoansPaginated, getActiveOffersCount, getActiveOffersPaginated, getMatchEligibleLoans (internal-match detector)
-  "RiskFacet"         # calculateHealthFactor, triggerLiquidation, triggerInternalMatchLiquidation
+  "RiskFacet"         # calculateHealthFactor, triggerLiquidation
+  "RiskMatchLiquidationFacet" # triggerInternalMatchLiquidation — moved here from RiskFacet in the #66 EIP-170 split
   "LoanFacet"         # getLoanDetails
   "OfferFacet"        # createOffer / acceptOffer (kept for completeness — pre-2026-04 the matcher fns lived here)
   "OfferCancelFacet"  # getOffer (offer hydration in offerMatcher detector — moved from OfferFacet in EIP-170 split)

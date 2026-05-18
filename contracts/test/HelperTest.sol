@@ -13,6 +13,7 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
@@ -451,7 +452,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](10);
+        selectors = new bytes4[](8);
         selectors[0] = RiskFacet.updateRiskParams.selector;
         selectors[1] = RiskFacet.calculateLTV.selector;
         selectors[2] = RiskFacet.calculateHealthFactor.selector;
@@ -474,16 +475,27 @@ contract HelperTest {
         // by default — the selector is wired but the entry-point
         // reverts `DiscountPathDisabled` until governance flips it.
         selectors[7] = RiskFacet.triggerLiquidationDiscounted.selector;
-        // PR4 of internal-match work — match-liquidation entry point.
-        // Body-less in PR4 (validates and emits placeholder event);
-        // PR5 fills in the cross-vault transfer + incentive payout.
-        // Kill-switch defaults `false` so the selector is dormant.
-        selectors[8] = RiskFacet.triggerInternalMatchLiquidation.selector;
-        // EC-003 Phase 3 — auto-dispatch helper. External-facing for
-        // cross-facet calls from DefaultedFacet + ClaimFacet but
-        // gated by `onlyDiamondInternal` so EOAs can't invoke it
-        // directly through the Diamond's fallback.
-        selectors[9] = RiskFacet.attemptInternalMatchAutoDispatch.selector;
+    }
+
+    /// @notice Selectors for `RiskMatchLiquidationFacet` — the
+    ///         internal-match liquidation cluster extracted from
+    ///         `RiskFacet` (Issue #66) so neither facet exceeds the
+    ///         EIP-170 size limit.
+    ///           - `triggerInternalMatchLiquidation` — permissionless
+    ///             2-loan / 3-loan match. Kill-switch defaults `false`.
+    ///           - `attemptInternalMatchAutoDispatch` — `onlyDiamondInternal`
+    ///             auto-dispatch hook; wired for cross-facet routing,
+    ///             not EOA-callable.
+    function getRiskMatchLiquidationFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](2);
+        selectors[0] =
+            RiskMatchLiquidationFacet.triggerInternalMatchLiquidation.selector;
+        selectors[1] =
+            RiskMatchLiquidationFacet.attemptInternalMatchAutoDispatch.selector;
     }
 
     function getClaimFacetSelectors()

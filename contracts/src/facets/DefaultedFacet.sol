@@ -20,6 +20,7 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
+import {RiskMatchLiquidationFacet} from "./RiskMatchLiquidationFacet.sol";
 import {IZeroExProxy} from "../interfaces/IZeroExProxy.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 
@@ -237,7 +238,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // are the same as HF-based: any caller who triggers default
         // when an internal match exists is the de-facto matcher and
         // earns the same incentive.
-        if (RiskFacet(address(this)).attemptInternalMatchAutoDispatch(loanId, msg.sender)) {
+        if (RiskMatchLiquidationFacet(address(this)).attemptInternalMatchAutoDispatch(loanId, msg.sender)) {
             return;
         }
 

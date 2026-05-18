@@ -17,6 +17,7 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
@@ -48,7 +49,7 @@ contract PauseGatingTest is Test {
         diamond = new VaipakamDiamond(address(this), address(cutFacet));
         HelperTest helper = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](16);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](17);
         cuts[0] = _cut(address(new AccessControlFacet()), helper.getAccessControlFacetSelectors());
         cuts[1] = _cut(address(new AdminFacet()), helper.getAdminFacetSelectors());
         cuts[2] = _cut(address(new OfferFacet()), helper.getOfferFacetSelectors());
@@ -66,6 +67,7 @@ contract PauseGatingTest is Test {
         cuts[13] = _cut(address(new ProfileFacet()), helper.getProfileFacetSelectors());
         cuts[14] = _cut(address(new TreasuryFacet()), helper.getTreasuryFacetSelectors());
 
+        cuts[16] = _cut(address(new RiskMatchLiquidationFacet()), helper.getRiskMatchLiquidationFacetSelectors());
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
         AccessControlFacet(address(diamond)).initializeAccessControl();

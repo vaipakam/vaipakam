@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -141,7 +142,7 @@ contract InternalMatchExecutionTest is SetupTest {
         uint256 bLenderYBefore = IERC20(mockCollateralERC20).balanceOf(bLenderEscrow);
 
         vm.prank(matcher);
-        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
 
         // Moved amounts: 1000 each leg. Bot share: 10 each leg
         // (1% of 1000). Lender share: 990 each.
@@ -176,7 +177,7 @@ contract InternalMatchExecutionTest is SetupTest {
         _mockLtv(LOAN_B, 9_000);
 
         vm.prank(matcher);
-        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
 
         LibVaipakam.Loan memory aAfter = _getLoan(LOAN_A);
         LibVaipakam.Loan memory bAfter = _getLoan(LOAN_B);
@@ -201,7 +202,7 @@ contract InternalMatchExecutionTest is SetupTest {
         ConfigFacet(address(diamond)).setInternalMatchConfig(200, 300);
 
         vm.prank(matcher);
-        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
 
         // 3% of 10_000 per leg = 300 in each asset.
         assertEq(IERC20(mockERC20).balanceOf(matcher), 300);
@@ -230,7 +231,7 @@ contract InternalMatchExecutionTest is SetupTest {
         ConfigFacet(address(diamond)).setInternalMatchConfig(200, 100);
 
         vm.prank(matcher);
-        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
 
         // 1% of 5_000 per leg = 50 in each asset.
         assertEq(IERC20(mockERC20).balanceOf(matcher), 50);
@@ -254,7 +255,7 @@ contract InternalMatchExecutionTest is SetupTest {
         _mockLtv(LOAN_C, 9_000);
 
         vm.prank(matcher);
-        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, LOAN_C);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, LOAN_C);
 
         // All three loans fully cleared (1000 each leg, all
         // collateral fully consumed).
@@ -301,7 +302,7 @@ contract InternalMatchExecutionTest is SetupTest {
 
         vm.prank(matcher);
         vm.expectRevert();
-        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
 
         LibVaipakam.Loan memory aAfter = _getLoan(LOAN_A);
         assertEq(aAfter.principal, 10_000, "A.principal untouched");
@@ -381,7 +382,7 @@ contract InternalMatchExecutionTest is SetupTest {
             .getOrCreateUserEscrow(lenderB);
 
         vm.prank(matcher);
-        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
 
         // A's lender received 990 X (1000 - 1% matcher fee).
         assertEq(IERC20(mockERC20).balanceOf(aLenderEscrow), 990, "A lender principal-asset payout");
@@ -404,7 +405,7 @@ contract InternalMatchExecutionTest is SetupTest {
         _moveToFallbackPending(LOAN_B, borrowerB, mockERC20, 1000, 850, 20, true);
 
         vm.prank(matcher);
-        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
 
         LibVaipakam.Loan memory aAfter = _getLoan(LOAN_A);
         LibVaipakam.Loan memory bAfter = _getLoan(LOAN_B);
@@ -425,7 +426,7 @@ contract InternalMatchExecutionTest is SetupTest {
         _mockLtv(LOAN_B, 9_000);
 
         vm.prank(matcher);
-        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
 
         LibVaipakam.Loan memory aAfter = _getLoan(LOAN_A);
         LibVaipakam.Loan memory bAfter = _getLoan(LOAN_B);
@@ -458,7 +459,7 @@ contract InternalMatchExecutionTest is SetupTest {
             .getOrCreateUserEscrow(borrower);
 
         vm.prank(matcher);
-        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
 
         LibVaipakam.Loan memory aAfter = _getLoan(LOAN_A);
         // 3_000 of A's collateral was paid to B's lender; 7_000 residual.
@@ -487,7 +488,7 @@ contract InternalMatchExecutionTest is SetupTest {
 
         // First (partial) match — A: 10_000 → 7_000 principal, FallbackPending.
         vm.prank(matcher);
-        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
         assertEq(_getLoan(LOAN_A).principal, 7_000);
         assertEq(uint8(_getLoan(LOAN_A).status), uint8(LibVaipakam.LoanStatus.FallbackPending));
 
@@ -497,7 +498,7 @@ contract InternalMatchExecutionTest is SetupTest {
 
         // Second match against the residual — settles from Diamond custody.
         vm.prank(matcher);
-        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_C, 0);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_C, 0);
 
         LibVaipakam.Loan memory aFinal = _getLoan(LOAN_A);
         assertEq(aFinal.principal, 0, "A residual fully cleared by second match");
@@ -527,7 +528,7 @@ contract InternalMatchExecutionTest is SetupTest {
         // FallbackPending. Snapshot scales by 7/10: lender 8_500→5_950,
         // treasury 200→140, borrower 1_300→910.
         vm.prank(matcher);
-        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
         assertEq(
             uint8(_getLoan(LOAN_A).status),
             uint8(LibVaipakam.LoanStatus.FallbackPending),
@@ -672,11 +673,11 @@ contract InternalMatchExecutionTest is SetupTest {
         vm.prank(matcher);
         vm.expectRevert(
             abi.encodeWithSelector(
-                RiskFacet.InternalMatchAssetUnpriceable.selector,
+                RiskMatchLiquidationFacet.InternalMatchAssetUnpriceable.selector,
                 mockCollateralERC20
             )
         );
-        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
     }
 
     function test_fallbackPending_snapshotCleared_onFullRescue() public {
@@ -690,7 +691,7 @@ contract InternalMatchExecutionTest is SetupTest {
         _mockLtv(LOAN_B, 9_000);
 
         vm.prank(matcher);
-        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
 
         // Read the cleared claims via getLoanDetails — they were set in
         // collateral-units at fallback time and should be zeroed by the

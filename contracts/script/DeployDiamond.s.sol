@@ -23,6 +23,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
@@ -87,6 +88,8 @@ contract DeployDiamond is Script {
         RepayFacet repayFacet = new RepayFacet();
         DefaultedFacet defaultedFacet = new DefaultedFacet();
         RiskFacet riskFacet = new RiskFacet();
+        RiskMatchLiquidationFacet riskMatchLiquidationFacet =
+            new RiskMatchLiquidationFacet();
         ClaimFacet claimFacet = new ClaimFacet();
         AddCollateralFacet addCollateralFacet = new AddCollateralFacet();
         TreasuryFacet treasuryFacet = new TreasuryFacet();
@@ -129,7 +132,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 34 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](34);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](35);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -165,6 +168,10 @@ contract DeployDiamond is Script {
         cuts[31] = _buildCut(address(offerCancelFacet), _getOfferCancelSelectors());
         cuts[32] = _buildCut(address(metricsDashboardFacet), _getMetricsDashboardSelectors());
         cuts[33] = _buildCut(address(payrollFacet), _getPayrollSelectors());
+        cuts[34] = _buildCut(
+            address(riskMatchLiquidationFacet),
+            _getRiskMatchLiquidationSelectors()
+        );
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
         // Split into two halves to stay under Base Sepolia's per-tx
@@ -372,6 +379,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("repayFacet",              address(repayFacet));
         Deployments.writeFacet("defaultedFacet",          address(defaultedFacet));
         Deployments.writeFacet("riskFacet",               address(riskFacet));
+        Deployments.writeFacet("riskMatchLiquidationFacet", address(riskMatchLiquidationFacet));
         Deployments.writeFacet("claimFacet",              address(claimFacet));
         Deployments.writeFacet("addCollateralFacet",      address(addCollateralFacet));
         Deployments.writeFacet("treasuryFacet",           address(treasuryFacet));
@@ -418,6 +426,7 @@ contract DeployDiamond is Script {
         console.log("RepayFacet:           ", address(repayFacet));
         console.log("DefaultedFacet:       ", address(defaultedFacet));
         console.log("RiskFacet:            ", address(riskFacet));
+        console.log("RiskMatchLiquidationFacet:", address(riskMatchLiquidationFacet));
         console.log("ClaimFacet:           ", address(claimFacet));
         console.log("AddCollateralFacet:   ", address(addCollateralFacet));
         console.log("TreasuryFacet:        ", address(treasuryFacet));
@@ -827,7 +836,7 @@ contract DeployDiamond is Script {
     }
 
     function _getRiskSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](10);
+        s = new bytes4[](8);
         s[0] = RiskFacet.updateRiskParams.selector;
         s[1] = RiskFacet.calculateLTV.selector;
         s[2] = RiskFacet.calculateHealthFactor.selector;
@@ -849,18 +858,28 @@ contract DeployDiamond is Script {
         // selector is wired but the entry-point reverts
         // `DiscountPathDisabled` until governance flips it on per chain.
         s[7] = RiskFacet.triggerLiquidationDiscounted.selector;
-        // PR4 of internal-match work (2026-05-15) — match-liquidation
-        // entry point. Body-less in PR4 (validates and emits placeholder
-        // event); PR5 adds the cross-vault transfer + incentive payout.
-        // Kill-switch `internalMatchEnabled` defaults `false` so the
-        // selector is dormant on every fresh deploy.
-        s[8] = RiskFacet.triggerInternalMatchLiquidation.selector;
-        // EC-003 Phase 3 — auto-dispatch helper invoked from
-        // RiskFacet.triggerLiquidation, DefaultedFacet.triggerDefault,
-        // and ClaimFacet._resolveFallbackIfActive. Guarded by
-        // `onlyDiamondInternal` so the selector exists for cross-facet
-        // routing but isn't callable by EOAs.
-        s[9] = RiskFacet.attemptInternalMatchAutoDispatch.selector;
+    }
+
+    /// @dev Selectors for `RiskMatchLiquidationFacet` — the internal-match
+    ///      liquidation cluster extracted from `RiskFacet` (Issue #66) so
+    ///      neither facet exceeds the EIP-170 size limit.
+    ///        - `triggerInternalMatchLiquidation` — permissionless 2-loan
+    ///          or 3-loan internal match. Kill-switch `internalMatchEnabled`
+    ///          defaults `false`, so the selector is dormant on a fresh
+    ///          deploy.
+    ///        - `attemptInternalMatchAutoDispatch` — `onlyDiamondInternal`
+    ///          auto-dispatch hook the HF-liquidation / default / claim
+    ///          entry points call before falling through to the
+    ///          aggregator path. Wired for cross-facet routing; not
+    ///          EOA-callable.
+    function _getRiskMatchLiquidationSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](2);
+        s[0] = RiskMatchLiquidationFacet.triggerInternalMatchLiquidation.selector;
+        s[1] = RiskMatchLiquidationFacet.attemptInternalMatchAutoDispatch.selector;
     }
 
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {
