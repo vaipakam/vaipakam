@@ -74,7 +74,7 @@ Founder-profit-share note preserved from the T-075 branch conflict: see T-600 / 
 
 ---
 
-- [ ] **T-068** `promotedToProjectCard`: Change LayerZero to Chainlink CCIP
+- [ ] **T-068** `promotedToProjectCard` ([Issue #5](https://github.com/vaipakam/vaipakam/issues/5), [PR #46](https://github.com/vaipakam/vaipakam/pull/46) — in review): Change LayerZero to Chainlink CCIP
 
 ---
 
