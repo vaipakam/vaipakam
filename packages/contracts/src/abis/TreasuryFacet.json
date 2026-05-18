@@ -278,7 +278,7 @@
   },
   {
     "type": "error",
-    "name": "BaseEidNotSet",
+    "name": "BaseChainIdNotSet",
     "inputs": []
   },
   {
@@ -872,7 +872,7 @@
   },
   {
     "type": "error",
-    "name": "SourceEidNotExpected",
+    "name": "SourceChainIdNotExpected",
     "inputs": []
   },
   {
@@ -949,17 +949,17 @@
   },
   {
     "type": "error",
-    "name": "VPFICanonicalEidNotSet",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "VPFIEscrowBalanceInsufficient",
     "inputs": []
   },
   {
     "type": "error",
     "name": "VPFIGlobalCapExceeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIInvalidOriginChainId",
     "inputs": []
   },
   {

@@ -12,7 +12,7 @@ import { useWalletClient } from "wagmi";
 import { parseEther, formatEther } from "viem";
 import {
   DIAMOND_ABI_VIEM as DIAMOND_ABI,
-  VPFIBuyAdapterABI,
+  VpfiBuyAdapterABI,
 } from "@vaipakam/contracts/abis";
 import { SimulationPreview } from "../components/app/SimulationPreview";
 import {
@@ -95,12 +95,12 @@ interface BridgeLandedInfo {
   vpfiOut: bigint | null;
   /** Origin-chain tx that kicked off the bridged buy, if known. */
   txHash: string | null;
-  /** LayerZero GUID for the outbound message, if known. */
-  lzGuid: string | null;
+  /** CCIP message id for the outbound message, if known. */
+  messageId: string | null;
   /** Source of the signal — `'adapter'` means the adapter's `pendingBuys`
    *  poll returned `RESOLVED_SUCCESS`; `'balance'` means we inferred the
    *  arrival by watching the user's VPFI balance (fallback path for when
-   *  the adapter status lags behind the OFT delivery). */
+   *  the adapter status lags behind the CCIP delivery). */
   source: "adapter" | "balance";
 }
 
@@ -119,7 +119,7 @@ interface BridgeLandedBannerProps {
  * and VPFI has landed in the user's wallet. Two independent signals drive
  * it: the adapter's poll resolving to `RESOLVED_SUCCESS`, or — as a
  * fallback — the user's VPFI wallet balance increasing by the expected
- * amount. The latter covers cases where the LZ OFT delivers the tokens
+ * amount. The latter covers cases where CCIP delivers the tokens
  * before the adapter's status propagates (or the adapter polling misses
  * the transition for an RPC reason).
  */
@@ -156,7 +156,7 @@ function BridgeLandedBanner({
             You can also import the token into MetaMask so your wallet UI tracks
             the balance.
           </p>
-          {(landed.txHash || landed.lzGuid) && (
+          {(landed.txHash || landed.messageId) && (
             <p
               className="stat-label"
               style={{
@@ -181,9 +181,9 @@ function BridgeLandedBanner({
                   Origin tx <ExternalLink size={12} />
                 </a>
               )}
-              {landed.lzGuid && (
+              {landed.messageId && (
                 <a
-                  href={`https://layerzeroscan.com/tx/${landed.lzGuid}`}
+                  href={`https://ccip.chain.link/msg/${landed.messageId}`}
                   target="_blank"
                   rel="noreferrer"
                   style={{
@@ -193,7 +193,7 @@ function BridgeLandedBanner({
                     gap: 4,
                   }}
                 >
-                  LayerZero trace <ExternalLink size={12} />
+                  CCIP trace <ExternalLink size={12} />
                 </a>
               )}
             </p>
@@ -280,7 +280,7 @@ function FlowBanner({ step, txHash, blockExplorer, onReset }: FlowBannerProps) {
  *      preferred supported chain — never a manual chain-switch flow (spec
  *      §8a). On the canonical chain the page calls `buyVPFIWithETH` on the
  *      Diamond directly; on every other supported chain the buy routes
- *      through `VPFIBuyAdapter` + LayerZero and VPFI lands back in the
+ *      through `VpfiBuyAdapter` over CCIP and VPFI lands back in the
  *      user's wallet on the same chain they're connected to.
  *   2. **Deposit** VPFI into the user's personal escrow on the *lending*
  *      chain. Always an explicit user action — the protocol never auto-funds
@@ -413,7 +413,7 @@ export default function BuyVPFI() {
   // We can't rely solely on `bridge.state.status === 'landed'` to show the
   // confirmation banner: that transition requires the adapter's
   // `pendingBuys(requestId)` to flip to `RESOLVED_SUCCESS`, which can lag
-  // the actual OFT delivery (or be missed entirely by the poll loop under
+  // the actual CCIP token delivery (or be missed entirely by the poll loop under
   // RPC flake). As a backup signal, we snapshot the user's VPFI balance at
   // submit time plus the expected delivery amount, poll userVpfi while
   // pending, and fire a "balance-detected" landing when the wallet crosses
@@ -451,7 +451,7 @@ export default function BuyVPFI() {
       setBalanceDetectedLanding({
         vpfiOut: bridgedExpectation.expectedVpfi,
         txHash: bridge.state.txHash,
-        lzGuid: bridge.state.lzGuid,
+        messageId: bridge.state.messageId,
         source: "balance",
       });
       void reloadEscrow();
@@ -461,7 +461,7 @@ export default function BuyVPFI() {
       // way back to your wallet" banner keeps showing alongside the
       // delivered-confirmation banner until the adapter poll catches up
       // (which may never happen if the poll has drifted). We already
-      // captured `txHash` / `lzGuid` above, so resetting the bridge
+      // captured `txHash` / `messageId` above, so resetting the bridge
       // state here doesn't drop any info the landed banner needs.
       if (bridge.state.status === "pending") {
         bridge.reset();
@@ -484,7 +484,7 @@ export default function BuyVPFI() {
       ? {
           vpfiOut: bridge.state.vpfiOut,
           txHash: bridge.state.txHash,
-          lzGuid: bridge.state.lzGuid,
+          messageId: bridge.state.messageId,
           source: "adapter",
         }
       : balanceDetectedLanding;
@@ -561,7 +561,7 @@ export default function BuyVPFI() {
   // Wraps bridge.buy to add the same re-entry guard we apply on the
   // canonical-chain path. The bridge hook's internal state transitions
   // happen across async awaits, so leaving the button enabled during that
-  // window can fire two LayerZero sends.
+  // window can fire two CCIP sends.
   const handleBridgedBuy = async () => {
     if (buyInFlight.current) return;
     if (!quote) return;
@@ -958,7 +958,7 @@ export default function BuyVPFI() {
 
       {/* Prominent "landed" banner for the bridged buy path. The canonical
           buy's FlowBanner fires on the tx `step === 'success'`; the bridged
-          path has no such step (the wait is on the LZ round-trip, not a
+          path has no such step (the wait is on the CCIP round-trip, not a
           local tx), so it needs its own banner driven by bridge state. */}
       <BridgeLandedBanner
         landed={landedInfo}
@@ -1030,7 +1030,7 @@ export default function BuyVPFI() {
 
       {/* Step 1 — buy VPFI from the user's preferred chain. Canonical chain
            calls the Diamond directly; every other chain routes through the
-           VPFIBuyAdapter + LayerZero round-trip, with VPFI delivered back
+           VPFIBuyAdapter + CCIP round-trip, with VPFI delivered back
            to the user's wallet on the same chain they're connected to. The
            page never asks the user to switch chains (spec §8a).
            `id="step-1"` is the deep-link target from the landing-page VPFI
@@ -1805,7 +1805,7 @@ interface BridgedBuyCardProps {
   bridge: ReturnType<typeof useVPFIBuyBridge>;
   /** Caller-owned submit handler — wraps bridge.buy() with a re-entry guard
    *  so a double-click during the quote/approve/submit window doesn't fire
-   *  a second LayerZero send. */
+   *  a second CCIP send. */
   onBuy: () => void | Promise<void>;
   originChain: ChainConfig;
   canonical: ChainConfig;
@@ -1815,7 +1815,7 @@ interface BridgedBuyCardProps {
  * Cross-chain buy card — shown on any non-canonical chain whose VPFIBuyAdapter
  * is deployed. Shares the ETH input + VPFI quote UI with {@link BuyCard} but
  * routes the tx through {@link useVPFIBuyBridge} and renders the extra pending
- * / landed / refunded states unique to the LayerZero round-trip.
+ * / landed / refunded states unique to the CCIP round-trip.
  */
 function BridgedBuyCard({
   buyConfig,
@@ -1831,11 +1831,11 @@ function BridgedBuyCard({
   canonical,
 }: BridgedBuyCardProps) {
   const { t } = useTranslation();
-  const [lzFee, setLzFee] = useState<bigint | null>(null);
+  const [ccipFee, setCcipFee] = useState<bigint | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [mode, setMode] = useState<"native" | "token" | null>(null);
 
-  // Re-quote the LayerZero fee whenever the amount changes. The on-chain
+  // Re-quote the CCIP fee whenever the amount changes. The on-chain
   // quoter doesn't depend on the caller, so debouncing is unnecessary — only
   // the keystroke frequency of the input rate-limits this.
   //
@@ -1847,7 +1847,7 @@ function BridgedBuyCard({
   useEffect(() => {
     let cancelled = false;
     if (!quote) {
-      setLzFee(null);
+      setCcipFee(null);
       setQuoteError(null);
       return;
     }
@@ -1860,11 +1860,11 @@ function BridgedBuyCard({
       .quote(quote.ethWei, quote.vpfi)
       .then((q) => {
         if (cancelled || !q) return;
-        setLzFee(q.lzFee);
+        setCcipFee(q.ccipFee);
         setMode(q.mode);
         setQuoteError(null);
         step.success({
-          note: `lzFee=${q.lzFee.toString()} mode=${q.mode}`,
+          note: `ccipFee=${q.ccipFee.toString()} mode=${q.mode}`,
         });
       })
       .catch((err) => {
@@ -1913,11 +1913,11 @@ function BridgedBuyCard({
   const pending = s.status === "pending";
   const inputDisabled = submitting || pending;
   // For the native-ETH payment mode we can compute a safe "Use max":
-  // reserve gas + the current LayerZero fee (paid as native). In token
+  // reserve gas + the current CCIP fee (paid as native). In token
   // mode the user is paying an ERC20 (e.g. WETH) so the ETH balance isn't
   // the limiting resource for the buy amount — skip the max button to
   // avoid misleading the user.
-  const reserveWei = ETH_GAS_RESERVE_WEI + (lzFee ?? 0n);
+  const reserveWei = ETH_GAS_RESERVE_WEI + (ccipFee ?? 0n);
   const maxSpendWei =
     mode === "native" && ethBalance != null && ethBalance > reserveWei
       ? ethBalance - reserveWei
@@ -1926,14 +1926,14 @@ function BridgedBuyCard({
     mode === "native" && ethBalance != null
       ? formatEthTrimmed(maxSpendWei)
       : null;
-  // Native mode: the user pays ethWei + lzFee as msg.value.
-  // Token  mode: msg.value is only the lzFee (ethWei comes from the ERC20).
+  // Native mode: the user pays ethWei + ccipFee as msg.value.
+  // Token  mode: msg.value is only the ccipFee (ethWei comes from the ERC20).
   const totalNativeWei =
     quote == null
       ? 0n
       : mode === "token"
-        ? (lzFee ?? 0n)
-        : quote.ethWei + (lzFee ?? 0n);
+        ? (ccipFee ?? 0n)
+        : quote.ethWei + (ccipFee ?? 0n);
   const exceedsBalance =
     ethBalance != null && quote != null && totalNativeWei > ethBalance;
   const inputEmpty = ethInput.trim() === "";
@@ -1946,15 +1946,15 @@ function BridgedBuyCard({
         : quoteError
           // Surface the decoded quote-revert reason in the disabled-button
           // tooltip too — without this branch the tooltip stayed at
-          // "Estimating LayerZero fee…" indefinitely on a quoteBuy revert,
-          // because `lzFee` never resolves. The inline error paragraph
+          // "Estimating CCIP fee…" indefinitely on a quoteBuy revert,
+          // because `ccipFee` never resolves. The inline error paragraph
           // below also renders, but the tooltip is what the user sees on
           // hover and is the path the troubleshooting flow points at.
-          ? `LayerZero fee estimate failed: ${quoteError}`
-          : lzFee == null
-            ? "Estimating LayerZero fee…"
+          ? `CCIP fee estimate failed: ${quoteError}`
+          : ccipFee == null
+            ? "Estimating CCIP fee…"
             : exceedsBalance
-              ? `Amount plus LayerZero fee exceeds your wallet balance (${formatEthTrimmed(ethBalance!)} ETH)`
+              ? `Amount plus CCIP fee exceeds your wallet balance (${formatEthTrimmed(ethBalance!)} ETH)`
               : null;
 
   return (
@@ -2022,8 +2022,8 @@ function BridgedBuyCard({
             onClick={() => setEthInput(maxSpendEth)}
             disabled={inputDisabled}
             data-tooltip={`Reserves ${formatEthTrimmed(ETH_GAS_RESERVE_WEI)} ETH for gas${
-              lzFee != null && lzFee > 0n
-                ? ` and ${formatEthTrimmed(lzFee)} ETH for the LayerZero fee`
+              ccipFee != null && ccipFee > 0n
+                ? ` and ${formatEthTrimmed(ccipFee)} ETH for the CCIP fee`
                 : ""
             }.`}
             data-tooltip-placement="below-end"
@@ -2070,18 +2070,18 @@ function BridgedBuyCard({
           padding: "6px 12px",
           marginBottom: 12,
         }}
-        data-tooltip="LayerZero fee is to bridge Tokens to and from different Chain"
+        data-tooltip="CCIP fee is to bridge Tokens to and from different Chain"
         data-tooltip-placement="below"
       >
         <span className="stat-label" style={{ margin: 0, cursor: "help" }}>
-          LayerZero fee
+          CCIP fee
         </span>
         <span className="mono" style={{ fontWeight: 500, cursor: "help" }}>
-          {lzFee == null
+          {ccipFee == null
             ? quote
               ? "estimating…"
               : "—"
-            : `${formatEther(lzFee)} ETH`}
+            : `${formatEther(ccipFee)} ETH`}
         </span>
       </div>
 
@@ -2099,7 +2099,7 @@ function BridgedBuyCard({
           className="stat-label"
           style={{ margin: "0 0 8px", color: "var(--accent-red, #ef4444)" }}
         >
-          Amount plus LayerZero fee exceeds your wallet ETH balance of{" "}
+          Amount plus CCIP fee exceeds your wallet ETH balance of{" "}
           {formatEthTrimmed(ethBalance!)} ETH.
         </p>
       )}
@@ -2121,11 +2121,11 @@ function BridgedBuyCard({
       {/* Phase 8b.2 transaction-preview surface for the bridged-buy
           path. Encodes `VPFIBuyAdapter.buy(ethWei, minVpfiOut)` against
           the origin chain's adapter — the same calldata the submit
-          handler signs (with `value = ethWei + lzFee`). */}
+          handler signs (with `value = ethWei + ccipFee`). */}
       <SimulationPreview
         tx={
           quote &&
-          lzFee != null &&
+          ccipFee != null &&
           !capExceeded &&
           !exceedsBalance &&
           !inputEmpty &&
@@ -2133,11 +2133,11 @@ function BridgedBuyCard({
             ? {
                 to: originChain.vpfiBuyAdapter as Address,
                 data: encodeFunctionData({
-                  abi: VPFIBuyAdapterABI as Abi,
+                  abi: VpfiBuyAdapterABI as Abi,
                   functionName: "buy",
                   args: [quote.ethWei, quote.vpfi],
                 }) as Hex,
-                value: quote.ethWei + lzFee,
+                value: quote.ethWei + ccipFee,
               }
             : null
         }
@@ -2151,7 +2151,7 @@ function BridgedBuyCard({
           capExceeded ||
           submitting ||
           pending ||
-          lzFee == null ||
+          ccipFee == null ||
           exceedsBalance ||
           inputEmpty
         }
@@ -2178,7 +2178,7 @@ interface BridgedStatusProps {
   canonical: ChainConfig;
 }
 
-/** Expected happy-path window for a LayerZero round-trip (3 min). Drives
+/** Expected happy-path window for a CCIP round-trip (3 min). Drives
  *  the countdown shown during the "pending" state; after this expires the
  *  copy shifts to "taking longer than usual". */
 const BRIDGE_EXPECTED_MS = 3 * 60 * 1000;
@@ -2288,7 +2288,7 @@ function BridgedStatus({ bridge, originChain, canonical }: BridgedStatusProps) {
             <span>
               {s.status === "pending"
                 ? "VPFI is on its way back to your wallet"
-                : "Submitting to LayerZero…"}
+                : "Submitting to CCIP…"}
             </span>
             {s.status === "pending" && (
               <span
@@ -2305,7 +2305,7 @@ function BridgedStatus({ bridge, originChain, canonical }: BridgedStatusProps) {
                 }}
                 data-tooltip={
                   overdue
-                    ? `LayerZero delivery has exceeded the typical 3 min window. Elapsed: ${formatMmSs(elapsedMs)}.`
+                    ? `CCIP delivery has exceeded the typical 3 min window. Elapsed: ${formatMmSs(elapsedMs)}.`
                     : `Estimated time until VPFI lands in your wallet.`
                 }
               >
@@ -2318,7 +2318,7 @@ function BridgedStatus({ bridge, originChain, canonical }: BridgedStatusProps) {
           <p className="stat-label" style={{ margin: 0 }}>
             {s.status === "pending"
               ? overdue
-                ? `Buy accepted on ${originChain.name}. LayerZero delivery is taking longer than the typical 3 min — this can happen under heavy cross-chain traffic. We're still watching for the ${canonical.name}-side delivery, and the page will update automatically when VPFI arrives.`
+                ? `Buy accepted on ${originChain.name}. CCIP delivery is taking longer than the typical 3 min — this can happen under heavy cross-chain traffic. We're still watching for the ${canonical.name}-side delivery, and the page will update automatically when VPFI arrives.`
                 : `Buy accepted on ${originChain.name}. Waiting for ${canonical.name} to process and bridge VPFI back — typically 1–3 minutes.`
               : "Confirm the transaction in your wallet."}
           </p>
@@ -2337,11 +2337,11 @@ function BridgedStatus({ bridge, originChain, canonical }: BridgedStatusProps) {
               >
                 Origin tx <ExternalLink size={12} />
               </a>
-              {s.lzGuid && (
+              {s.messageId && (
                 <>
                   {"  ·  "}
                   <a
-                    href={`https://layerzeroscan.com/tx/${s.lzGuid}`}
+                    href={`https://ccip.chain.link/msg/${s.messageId}`}
                     target="_blank"
                     rel="noreferrer"
                     style={{
@@ -2351,7 +2351,7 @@ function BridgedStatus({ bridge, originChain, canonical }: BridgedStatusProps) {
                       gap: 4,
                     }}
                   >
-                    LayerZero trace <ExternalLink size={12} />
+                    CCIP trace <ExternalLink size={12} />
                   </a>
                 </>
               )}
@@ -2369,7 +2369,7 @@ function BridgedStatus({ bridge, originChain, canonical }: BridgedStatusProps) {
               >
                 The bridge has been pending for over{" "}
                 {Math.floor(BRIDGE_RECLAIM_AFTER_MS / 60_000)} minutes. If
-                LayerZero is stuck, you can reclaim your funds on{" "}
+                CCIP is stuck, you can reclaim your funds on{" "}
                 {originChain.name}.
               </p>
               <button

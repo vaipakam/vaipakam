@@ -85,8 +85,8 @@ contract ConfigureRewardReporter is Script {
 
         vm.startBroadcast(deployerKey);
         RewardReporterFacet rr = RewardReporterFacet(diamond);
-        rr.setLocalEid(localEid);
-        rr.setBaseEid(baseEid);
+        // T-068: no `setLocalEid` — a chain's identity is `block.chainid`.
+        rr.setBaseChainId(baseEid);
         rr.setRewardOApp(rewardOApp);
         rr.setRewardGraceSeconds(grace);
         rr.setIsCanonicalRewardChain(canonical);
@@ -97,8 +97,8 @@ contract ConfigureRewardReporter is Script {
                 console.log("WARNING: canonical chain but REWARD_EXPECTED_SOURCE_EIDS empty; skipping aggregator wiring.");
             } else {
                 uint32[] memory eids = _parseEidCsv(csv);
-                RewardAggregatorFacet(diamond).setExpectedSourceEids(eids);
-                console.log("Expected source eids set:", eids.length);
+                RewardAggregatorFacet(diamond).setExpectedSourceChainIds(eids);
+                console.log("Expected source chains set:", eids.length);
             }
         }
         vm.stopBroadcast();

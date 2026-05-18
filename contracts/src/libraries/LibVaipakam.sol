@@ -1762,8 +1762,8 @@ library LibVaipakam {
         uint256 vpfiFixedRateGlobalCap;
         // Per-(wallet, origin-chain) cap on VPFI sold through the
         // fixed-rate buy. Enforced against
-        // `vpfiFixedRateSoldToByEid[user][originEid]` (declared at
-        // the end of this struct). Zero resolves to the spec default
+        // `vpfiFixedRateSoldToByChainId[user][originChainId]` (declared
+        // at the end of this struct). Zero resolves to the spec default
         // {VPFI_FIXED_WALLET_CAP} (30k VPFI, see
         // docs/TokenomicsTechSpec.md §8a) via {cfgVpfiFixedWalletCap}.
         // As with the global cap, no "uncapped" mode is exposed. The
@@ -1785,8 +1785,9 @@ library LibVaipakam {
         // — it only gates `buyVPFIWithETH`. Set via setVPFIBuyEnabled.
         bool vpfiFixedRateBuyEnabled;
         // DEPRECATED — single-key per-wallet running total. Replaced by
-        // the per-(buyer, originEid) mapping {vpfiFixedRateSoldToByEid}
-        // declared at the end of this struct. The slot is preserved
+        // the per-(buyer, originChainId) mapping
+        // {vpfiFixedRateSoldToByChainId} declared at the end of this
+        // struct. The slot is preserved
         // only because the Diamond storage layout is append-only; the
         // facet code no longer reads or writes this mapping. Per spec
         // (docs/TokenomicsTechSpec.md §8a) the per-wallet cap is now
@@ -1897,13 +1898,14 @@ library LibVaipakam {
         ///      ingress + finalize + broadcast trigger. Admin-settable so
         ///      the flag is parity-independent of the Diamond deployment.
         bool isCanonicalRewardChain;
-        /// @dev LayerZero V2 endpoint id of THIS chain. Stamped on
-        ///      outbound chain reports and used by the Base aggregator
-        ///      to key per-chain sub-totals.
-        uint32 localEid;
-        /// @dev Base (canonical) chain's LayerZero endpoint id. Mirrors
-        ///      send chain reports to this eid; zero on Base itself.
-        uint32 baseEid;
+        /// @dev DEPRECATED (T-068 LayerZero→CCIP). The reward flow no
+        ///      longer stores a per-chain endpoint id — `block.chainid`
+        ///      is the chain identity. Slot retained for storage-layout
+        ///      stability; never read or written.
+        uint32 localEid_LEGACY_DO_NOT_USE;
+        /// @dev EVM chain id of the canonical (Base) reward chain.
+        ///      Mirrors send chain reports here; zero on Base itself.
+        uint32 baseChainId;
         /// @dev Authorized LayerZero OApp address on this chain. Only
         ///      this address may call the trusted ingress handlers
         ///      (aggregator receive on Base, broadcast receive on mirrors).
@@ -1913,11 +1915,11 @@ library LibVaipakam {
         ///      expected mirror has reported. Defaults to 4 hours when
         ///      unset. Admin-configurable.
         uint64 rewardGraceSeconds;
-        /// @dev Base-only: list of remote LayerZero eids that are
-        ///      expected to report each day (every mirror chain in the
-        ///      mesh, PLUS the Base chain's own `localEid` because Base
-        ///      is also a source of interest). Admin-maintained.
-        uint32[] expectedSourceEids;
+        /// @dev Base-only: list of EVM chain ids expected to report each
+        ///      day (every mirror chain in the mesh, PLUS the Base chain's
+        ///      own `block.chainid` because Base is also a source of
+        ///      interest). Admin-maintained.
+        uint32[] expectedSourceChainIds;
         // ── Reporter side (every chain) ────────────────────────────────
         /// @dev Per-chain per-day "already reported" guard. Set when the
         ///      local Diamond successfully ships its day-`D` report (on
@@ -1926,15 +1928,15 @@ library LibVaipakam {
         mapping(uint256 => uint64) chainReportSentAt;
         // ── Aggregator side (Base only) ────────────────────────────────
         /// @dev Base-only: lender-side local Numeraire18 interest reported by
-        ///      chain `eid` for day `D`.
+        ///      chain id for day `D`.
         mapping(uint256 => mapping(uint32 => uint256)) chainDailyLenderInterestNumeraire18;
         /// @dev Base-only: borrower-side local Numeraire18 interest reported by
-        ///      chain `eid` for day `D`.
+        ///      chain id for day `D`.
         mapping(uint256 => mapping(uint32 => uint256)) chainDailyBorrowerInterestNumeraire18;
-        /// @dev Base-only: `(dayId, eid)` idempotency guard — rejects
+        /// @dev Base-only: `(dayId, chainId)` idempotency guard — rejects
         ///      duplicate reports for the same `(day, chain)` pair.
         mapping(uint256 => mapping(uint32 => bool)) chainDailyReported;
-        /// @dev Base-only: number of expected eids that have reported
+        /// @dev Base-only: number of expected chains that have reported
         ///      for day `D` so far. Used to decide full-coverage fast
         ///      finalization.
         mapping(uint256 => uint32) chainDailyReportCount;
@@ -1948,10 +1950,10 @@ library LibVaipakam {
         ///      determinism).
         mapping(uint256 => bool) dailyGlobalFinalized;
         /// @dev Base-only: finalized global lender Numeraire18 interest for
-        ///      day `D` (sum across reported eids).
+        ///      day `D` (sum across reported chains).
         mapping(uint256 => uint256) dailyGlobalLenderInterestNumeraire18;
         /// @dev Base-only: finalized global borrower Numeraire18 interest for
-        ///      day `D` (sum across reported eids).
+        ///      day `D` (sum across reported chains).
         mapping(uint256 => uint256) dailyGlobalBorrowerInterestNumeraire18;
         // ── Consumer side (every chain) ────────────────────────────────
         /// @dev Finalized global lender denominator known on this chain
@@ -2404,8 +2406,8 @@ library LibVaipakam {
         ///      PYTH_CONFIDENCE_MAX_BPS_MAX]` by the setter.
         uint16 pythConfidenceMaxBps;
         // ─── Per-Origin-Chain VPFI Fixed-Rate Wallet Caps ───────────────
-        /// @dev Per-(buyer, originEid) running total of VPFI bought at
-        ///      the fixed rate. Replaces the legacy
+        /// @dev Per-(buyer, originChainId) running total of VPFI bought
+        ///      at the fixed rate. Replaces the legacy
         ///      `vpfiFixedRateSoldTo[buyer]` global key — that flat
         ///      mapping is no longer written nor read by the buy /
         ///      bridged-buy paths (its slot is preserved only because
@@ -2417,11 +2419,11 @@ library LibVaipakam {
         ///      one shared global wallet cap. A user buying up to the
         ///      cap on one origin chain does not consume their cap on
         ///      another. For direct buys via {buyVPFIWithETH} the
-        ///      `originEid` is the canonical chain's `localEid`; for
-        ///      bridged buys via {processBridgedBuy} it is the
-        ///      caller-asserted `originEid` argument carried from the
-        ///      OFT message.
-        mapping(address => mapping(uint32 => uint256)) vpfiFixedRateSoldToByEid;
+        ///      `originChainId` is the canonical chain's own
+        ///      `block.chainid`; for bridged buys via {processBridgedBuy}
+        ///      it is the source EVM chain id carried from the CCIP
+        ///      message.
+        mapping(address => mapping(uint32 => uint256)) vpfiFixedRateSoldToByChainId;
         // ── Range Orders Phase 1 — match-override slot ─────────────────
         // Set by `OfferFacet.matchOffers` immediately before
         // cross-facet-calling `LoanFacet.initiateLoan`, read by

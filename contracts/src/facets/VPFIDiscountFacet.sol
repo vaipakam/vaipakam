@@ -111,16 +111,16 @@ contract VPFIDiscountFacet is
     /// @notice Emitted when a bridged buy lands on Base — mirrors the
     ///         {VPFIPurchasedWithETH} event but for the cross-chain
     ///         path. VPFI is transferred to the registered bridged-buy
-    ///         receiver (not the buyer), which then OFT-bridges it back
-    ///         to `buyer` on their origin chain.
+    ///         receiver (not the buyer), which then bridges it back to
+    ///         `buyer` on their origin chain over CCIP.
     /// @param buyer        Buyer on the origin chain.
-    /// @param originEid    LayerZero eid of the buyer's origin chain.
-    /// @param vpfiAmount   VPFI credited to the buyer (via OFT bridge back).
+    /// @param originChainId EVM chain id of the buyer's origin chain.
+    /// @param vpfiAmount   VPFI credited to the buyer (via the CCIP bridge back).
     /// @param ethAmountPaid Native ETH the buyer paid on the origin chain.
     /// @custom:event-category state-change/escrow-mutation
     event VPFIBridgedBuyProcessed(
         address indexed buyer,
-        uint32 indexed originEid,
+        uint32 indexed originChainId,
         uint256 vpfiAmount,
         uint256 ethAmountPaid
     );
@@ -249,11 +249,11 @@ contract VPFIDiscountFacet is
         LibVaipakam._assertNotSanctioned(msg.sender);
         // Direct buy on the canonical Base Diamond — origin = local
         // chain. The per-wallet cap is keyed on the buyer's origin
-        // chain (Base in this case), so Base-direct buys do not
+        // chain (`block.chainid` here), so Base-direct buys do not
         // consume the buyer's cap on any mirror chain.
         uint256 vpfiOut = _computeBuyAndDebitCaps(
             msg.sender,
-            LibVaipakam.storageSlot().localEid,
+            uint32(block.chainid),
             msg.value
         );
 
@@ -279,18 +279,18 @@ contract VPFIDiscountFacet is
     /**
      * @notice Cross-chain entry point: process a fixed-rate buy that
      *         was paid for on a non-Base chain and arrived via the
-     *         {VPFIBuyReceiver} OApp.
+     *         {VpfiBuyReceiver} CCIP contract.
      * @dev Gated to `s.bridgedBuyReceiver`. Runs the IDENTICAL
      *      caps/rate/reserve pipeline as {buyVPFIWithETH} so the 2.3M
      *      global cap holds across the whole mesh (Base is the only
      *      gate). The per-wallet cap (default 30K VPFI) is enforced
-     *      **per origin chain** — this call's `originEid` is the
+     *      **per origin chain** — this call's `originChainId` is the
      *      bucket key, so a buyer who has spent their cap on Polygon
      *      can still buy up to the cap on Optimism (per
      *      docs/TokenomicsTechSpec.md §8a).
      *
      *      VPFI is transferred to `msg.sender` (the receiver contract),
-     *      which then fires an OFT send to deliver it to `buyer` on
+     *      which then fires a CCIP send to deliver it to `buyer` on
      *      their origin chain. `ethAmountPaid` is informational only —
      *      the ETH itself was settled in the buyer's local treasury on
      *      the origin chain; Base never sees it, which is why no ETH
@@ -304,9 +304,9 @@ contract VPFIDiscountFacet is
      *
      *      Emits {VPFIBridgedBuyProcessed}.
      * @param buyer         Buyer on the origin chain.
-     * @param originEid     LayerZero eid of the buyer's origin chain.
+     * @param originChainId EVM chain id of the buyer's origin chain.
      *                      Used as the second key on
-     *                      `vpfiFixedRateSoldToByEid[buyer][originEid]`
+     *                      `vpfiFixedRateSoldToByChainId[buyer][originChainId]`
      *                      so the per-wallet cap is bucketed per origin
      *                      chain (NOT shared globally across all chains).
      * @param ethAmountPaid Native ETH the buyer paid on the origin
@@ -319,7 +319,7 @@ contract VPFIDiscountFacet is
      */
     function processBridgedBuy(
         address buyer,
-        uint32 originEid,
+        uint32 originChainId,
         uint256 ethAmountPaid,
         uint256 minVpfiOut
     )
@@ -337,19 +337,19 @@ contract VPFIDiscountFacet is
         }
 
         // Bridged buy — origin = the buyer's chain, asserted by the
-        // OFT message (validated upstream by the bridged-buy receiver
-        // against the registered peer). The per-wallet cap is keyed
-        // on that origin so the same buyer can buy up to the Phase 1
-        // 30K cap on each origin chain independently, as required by
-        // docs/TokenomicsTechSpec.md §8a.
-        vpfiOut = _computeBuyAndDebitCaps(buyer, originEid, ethAmountPaid);
+        // CCIP message (validated upstream by the bridged-buy receiver
+        // against the registered channel peer). The per-wallet cap is
+        // keyed on that origin so the same buyer can buy up to the
+        // Phase 1 30K cap on each origin chain independently, as
+        // required by docs/TokenomicsTechSpec.md §8a.
+        vpfiOut = _computeBuyAndDebitCaps(buyer, originChainId, ethAmountPaid);
         if (vpfiOut < minVpfiOut) revert VPFIBuyAmountTooSmall();
 
-        // Hand VPFI to the receiver; it will OFT-bridge to `buyer` on
-        // `originEid`. Receiver must approve and call OFT in the same tx.
+        // Hand VPFI to the receiver; it will CCIP-bridge to `buyer` on
+        // `originChainId`. Receiver must approve + send in the same tx.
         IERC20(s.vpfiToken).safeTransfer(msg.sender, vpfiOut);
 
-        emit VPFIBridgedBuyProcessed(buyer, originEid, vpfiOut, ethAmountPaid);
+        emit VPFIBridgedBuyProcessed(buyer, originChainId, vpfiOut, ethAmountPaid);
     }
 
     /// @dev Shared caps/rate/reserve pipeline. Reverts with the same
@@ -357,34 +357,34 @@ contract VPFIDiscountFacet is
     ///      caller must ensure the context is Base (both public entry
     ///      points do).
     /// @param buyer         Per-wallet-cap key.
-    /// @param originEid     LayerZero V2 endpoint id of the buyer's
-    ///                      origin chain. The per-wallet cap bucket is
-    ///                      keyed on `(buyer, originEid)` so the same
+    /// @param originChainId EVM chain id of the buyer's origin chain.
+    ///                      The per-wallet cap bucket is keyed on
+    ///                      `(buyer, originChainId)` so the same
     ///                      buyer's cap on each origin chain is
     ///                      independent (per docs/TokenomicsTechSpec.md
     ///                      §8a). For direct buys this is the canonical
-    ///                      chain's `localEid`; for bridged buys it is
-    ///                      the asserted-from-message origin eid.
+    ///                      chain's own `block.chainid`; for bridged
+    ///                      buys it is the source chain id asserted by
+    ///                      the CCIP message.
     /// @param ethAmount     Native ETH amount paid.
     /// @return vpfiOut      VPFI amount to deliver at the current rate.
     function _computeBuyAndDebitCaps(
         address buyer,
-        uint32 originEid,
+        uint32 originChainId,
         uint256 ethAmount
     ) internal returns (uint256 vpfiOut) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (!s.isCanonicalVPFIChain) revert NotCanonicalVPFIChain();
         if (!s.vpfiFixedRateBuyEnabled) revert VPFIBuyDisabled();
-        // Per-wallet cap is bucketed per origin chain (`vpfiFixedRateSoldToByEid[buyer][originEid]`).
-        // A zero `originEid` would silently land every direct buy in
-        // bucket 0 while the frontend reads the chain registry's known
-        // LZ eid (e.g. 30184 / 40245), desyncing the displayed remaining
-        // allowance from the on-chain ledger. Reject loudly so the
-        // operator must complete the LZ wiring (`setLocalEid`, peer
-        // setup) before flipping the buy switch on. Bridged buys fall
-        // under the same gate — an `originEid == 0` from the bridged
-        // receiver would only occur on a malformed OFT message.
-        if (originEid == 0) revert VPFICanonicalEidNotSet();
+        // Per-wallet cap is bucketed per origin chain
+        // (`vpfiFixedRateSoldToByChainId[buyer][originChainId]`).
+        // A zero `originChainId` would silently land every buy in
+        // bucket 0, desyncing the frontend's per-chain allowance view
+        // from the on-chain ledger. It cannot happen on a well-formed
+        // call — direct buys pass `block.chainid`, bridged buys pass a
+        // CcipMessenger-resolved source chain id — so this is a
+        // defence-in-depth reject of a malformed origin.
+        if (originChainId == 0) revert VPFIInvalidOriginChainId();
 
         uint256 weiPerVpfi = s.vpfiFixedRateWeiPerVpfi;
         if (weiPerVpfi == 0) revert VPFIBuyRateNotSet();
@@ -404,7 +404,7 @@ contract VPFIDiscountFacet is
         if (newTotal > LibVaipakam.cfgVpfiFixedGlobalCap())
             revert VPFIGlobalCapExceeded();
 
-        uint256 newWallet = s.vpfiFixedRateSoldToByEid[buyer][originEid] + vpfiOut;
+        uint256 newWallet = s.vpfiFixedRateSoldToByChainId[buyer][originChainId] + vpfiOut;
         if (newWallet > LibVaipakam.cfgVpfiFixedWalletCap())
             revert VPFIPerWalletCapExceeded();
 
@@ -412,7 +412,7 @@ contract VPFIDiscountFacet is
         if (onHand < vpfiOut) revert VPFIReserveInsufficient();
 
         s.vpfiFixedRateTotalSold = newTotal;
-        s.vpfiFixedRateSoldToByEid[buyer][originEid] = newWallet;
+        s.vpfiFixedRateSoldToByChainId[buyer][originChainId] = newWallet;
     }
 
     /**
@@ -876,11 +876,11 @@ contract VPFIDiscountFacet is
 
     /// @notice VPFI already purchased by `user` at the fixed rate
     ///         from THIS chain's local origin (i.e. the local Diamond's
-    ///         `localEid`). Per-wallet caps are bucketed per origin
+    ///         `block.chainid`). Per-wallet caps are bucketed per origin
     ///         chain; this getter returns the local-origin bucket so
-    ///         legacy callers reading the running total for the
+    ///         callers reading the running total for the
     ///         currently-connected chain see the value they expect.
-    ///         Use {getVPFISoldToByEid} to query a specific origin
+    ///         Use {getVPFISoldToByChainId} to query a specific origin
     ///         chain's bucket.
     /// @param  user   Address whose cumulative fixed-rate buy total to read.
     /// @return soldTo Cumulative VPFI (18 dec) `user` has purchased
@@ -888,23 +888,23 @@ contract VPFIDiscountFacet is
     ///                origin bucket.
     function getVPFISoldTo(address user) external view returns (uint256 soldTo) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        return s.vpfiFixedRateSoldToByEid[user][s.localEid];
+        return s.vpfiFixedRateSoldToByChainId[user][uint32(block.chainid)];
     }
 
     /// @notice VPFI already purchased by `user` at the fixed rate
-    ///         against the per-wallet cap bucket for `originEid`.
+    ///         against the per-wallet cap bucket for `originChainId`.
     ///         The Phase 1 30K wallet cap applies independently per
     ///         origin chain (per docs/TokenomicsTechSpec.md §8a).
     /// @param  user      Address whose cumulative buy total to read.
-    /// @param  originEid LayerZero V2 endpoint id of the origin chain.
+    /// @param  originChainId EVM chain id of the origin chain.
     /// @return soldTo    Cumulative VPFI (18 dec) `user` has purchased
-    ///                   from `originEid`.
-    function getVPFISoldToByEid(address user, uint32 originEid)
+    ///                   from `originChainId`.
+    function getVPFISoldToByChainId(address user, uint32 originChainId)
         external
         view
         returns (uint256 soldTo)
     {
-        return LibVaipakam.storageSlot().vpfiFixedRateSoldToByEid[user][originEid];
+        return LibVaipakam.storageSlot().vpfiFixedRateSoldToByChainId[user][originChainId];
     }
 
     // ─── Admin ───────────────────────────────────────────────────────────────

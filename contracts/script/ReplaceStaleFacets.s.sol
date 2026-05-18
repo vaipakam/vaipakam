@@ -239,18 +239,18 @@ contract ReplaceStaleFacets is Script {
     /// @dev The 11 RewardReporterFacet selectors registered on the
     ///      live diamond by the initial DeployDiamond run.
     function _rewardReporterExistingSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](11);
+        s = new bytes4[](10);
         s[0] = RewardReporterFacet.closeDay.selector;
         s[1] = RewardReporterFacet.getChainReportSentAt.selector;
         s[2] = RewardReporterFacet.getKnownGlobalInterestNumeraire18.selector;
         s[3] = RewardReporterFacet.getLocalChainInterestNumeraire18.selector;
         s[4] = RewardReporterFacet.getRewardReporterConfig.selector;
         s[5] = RewardReporterFacet.onRewardBroadcastReceived.selector;
-        s[6] = RewardReporterFacet.setBaseEid.selector;
+        // T-068: `setLocalEid` removed — chain identity is `block.chainid`.
+        s[6] = RewardReporterFacet.setBaseChainId.selector;
         s[7] = RewardReporterFacet.setIsCanonicalRewardChain.selector;
-        s[8] = RewardReporterFacet.setLocalEid.selector;
-        s[9] = RewardReporterFacet.setRewardGraceSeconds.selector;
-        s[10] = RewardReporterFacet.setRewardOApp.selector;
+        s[8] = RewardReporterFacet.setRewardGraceSeconds.selector;
+        s[9] = RewardReporterFacet.setRewardOApp.selector;
     }
 
     /// @dev The single missing RewardReporterFacet selector

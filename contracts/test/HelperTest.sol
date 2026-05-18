@@ -81,10 +81,10 @@ contract HelperTest {
         selectors[35] = TestMutatorFacet.getUserSeenFlag.selector;
         selectors[36] = TestMutatorFacet.setEthUsdFeedRaw.selector;
         selectors[37] = TestMutatorFacet.setInteractionCapVpfiPerEthRaw.selector;
-        // Test-only `s.localEid` writer. The on-chain canonical-buy
-        // entry point (VPFIDiscountFacet) reverts `VPFICanonicalEidNotSet`
-        // when `s.localEid == 0`; tests that exercise direct buys must
-        // stamp a non-zero value via this selector during setUp.
+        // Vestigial (T-068): writes the deprecated `localEid` legacy
+        // slot. The canonical-buy path now keys the per-wallet cap by
+        // `block.chainid`, so no stamping is needed — kept only so the
+        // 62-entry selector list need not be re-indexed.
         selectors[38] = TestMutatorFacet.setLocalEidForTest.selector;
         selectors[39] = TestMutatorFacet.pushRewardEntry.selector;
         // Gated default-DENY country-pair check — exposed for the
@@ -765,11 +765,11 @@ contract HelperTest {
         // Phase 8b.1 Permit2 addition — signature-transfer variant of
         // {depositVPFIToEscrow}.
         selectors[17] = VPFIDiscountFacet.depositVPFIToEscrowWithPermit.selector;
-        // Per-(buyer, originEid) wallet-cap query. The Phase 1 30K
+        // Per-(buyer, originChainId) wallet-cap query. The Phase 1 30K
         // per-wallet cap applies independently per origin chain
         // (docs/TokenomicsTechSpec.md §8a); this selector lets
         // off-chain consumers read each origin bucket explicitly.
-        selectors[18] = VPFIDiscountFacet.getVPFISoldToByEid.selector;
+        selectors[18] = VPFIDiscountFacet.getVPFISoldToByChainId.selector;
         return selectors;
     }
 
@@ -957,20 +957,20 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](12);
+        selectors = new bytes4[](11);
         selectors[0] = RewardReporterFacet.closeDay.selector;
         selectors[1] = RewardReporterFacet.onRewardBroadcastReceived.selector;
         selectors[2] = RewardReporterFacet.setRewardOApp.selector;
-        selectors[3] = RewardReporterFacet.setLocalEid.selector;
-        selectors[4] = RewardReporterFacet.setBaseEid.selector;
-        selectors[5] = RewardReporterFacet.setIsCanonicalRewardChain.selector;
-        selectors[6] = RewardReporterFacet.setRewardGraceSeconds.selector;
-        selectors[7] = RewardReporterFacet.getLocalChainInterestNumeraire18.selector;
-        selectors[8] = RewardReporterFacet.getChainReportSentAt.selector;
-        selectors[9] = RewardReporterFacet.getRewardReporterConfig.selector;
-        selectors[10] = RewardReporterFacet.getKnownGlobalInterestNumeraire18.selector;
+        // T-068: `setLocalEid` removed — chain identity is `block.chainid`.
+        selectors[3] = RewardReporterFacet.setBaseChainId.selector;
+        selectors[4] = RewardReporterFacet.setIsCanonicalRewardChain.selector;
+        selectors[5] = RewardReporterFacet.setRewardGraceSeconds.selector;
+        selectors[6] = RewardReporterFacet.getLocalChainInterestNumeraire18.selector;
+        selectors[7] = RewardReporterFacet.getChainReportSentAt.selector;
+        selectors[8] = RewardReporterFacet.getRewardReporterConfig.selector;
+        selectors[9] = RewardReporterFacet.getKnownGlobalInterestNumeraire18.selector;
         // Single-field getter for the protocol-console knob registry.
-        selectors[11] = RewardReporterFacet.getRewardGraceSeconds.selector;
+        selectors[10] = RewardReporterFacet.getRewardGraceSeconds.selector;
         return selectors;
     }
 
@@ -984,13 +984,13 @@ contract HelperTest {
         selectors[1] = RewardAggregatorFacet.finalizeDay.selector;
         selectors[2] = RewardAggregatorFacet.forceFinalizeDay.selector;
         selectors[3] = RewardAggregatorFacet.broadcastGlobal.selector;
-        selectors[4] = RewardAggregatorFacet.setExpectedSourceEids.selector;
+        selectors[4] = RewardAggregatorFacet.setExpectedSourceChainIds.selector;
         selectors[5] = RewardAggregatorFacet.isChainReported.selector;
         selectors[6] = RewardAggregatorFacet.getChainReport.selector;
         selectors[7] = RewardAggregatorFacet.getChainDailyReportCount.selector;
         selectors[8] = RewardAggregatorFacet.getDailyFirstReportAt.selector;
         selectors[9] = RewardAggregatorFacet.getDailyGlobalInterest.selector;
-        selectors[10] = RewardAggregatorFacet.getExpectedSourceEids.selector;
+        selectors[10] = RewardAggregatorFacet.getExpectedSourceChainIds.selector;
         selectors[11] = RewardAggregatorFacet.isDayReadyToFinalize.selector;
         return selectors;
     }

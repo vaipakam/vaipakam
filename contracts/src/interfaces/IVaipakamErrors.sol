@@ -207,13 +207,13 @@ interface IVaipakamErrors {
     /// @notice `rewardOApp` has not been configured on this Diamond yet.
     error RewardOAppNotSet();
     /// @notice Mirror-side Diamond has not been told the canonical
-    ///         chain's LayerZero eid (`baseEid`) yet.
-    error BaseEidNotSet();
+    ///         reward chain's EVM chain id (`baseChainId`) yet.
+    error BaseChainIdNotSet();
     /// @notice Day id in the caller's request is not strictly less than
     ///         the current interaction day — only fully-elapsed days can
     ///         be reported or finalized.
     error RewardDayNotElapsed();
-    /// @notice Same `(dayId, sourceEid)` report already received — the
+    /// @notice Same `(dayId, sourceChainId)` report already received — the
     ///         idempotency key rejects replays to preserve claim determinism.
     error ChainDayAlreadyReported();
     /// @notice A chain report arrived AFTER `dailyGlobalFinalized[dayId]`
@@ -227,9 +227,9 @@ interface IVaipakamErrors {
     ///         reported AND before the `rewardGraceSeconds` fallback
     ///         window elapsed.
     error DayNotReadyToFinalize();
-    /// @notice `sourceEid` on an inbound chain report is not in the
-    ///         Base aggregator's `expectedSourceEids` list.
-    error SourceEidNotExpected();
+    /// @notice `sourceChainId` on an inbound chain report is not in the
+    ///         Base aggregator's `expectedSourceChainIds` list.
+    error SourceChainIdNotExpected();
     /// @notice Mirror-side rebroadcast attempted to overwrite a global
     ///         denominator that was already set for the same day with a
     ///         different value.
@@ -250,18 +250,16 @@ interface IVaipakamErrors {
     /// @param asset The paused asset that triggered the revert.
     error AssetPaused(address asset);
 
-    // ─── VPFI Fixed-Rate Buy: deploy gate ──────────────────────────────────
-    /// @notice Fixed-rate VPFI buy attempted while the canonical Diamond's
-    ///         `localEid` has not been configured yet. Without a non-zero
-    ///         `localEid` direct-buy debits would land in storage bucket 0,
-    ///         while the frontend reads the bucket keyed on the chain
-    ///         registry's known LayerZero eid (e.g. 30184 for Base mainnet,
-    ///         40245 for Base Sepolia). The buckets would silently desync,
-    ///         showing full remaining allowance to a user whose bucket-0
-    ///         on-chain total is already at the cap. Operators MUST call
-    ///         `RewardReporterFacet.setLocalEid(...)` before flipping
-    ///         `setVPFIBuyEnabled(true)` on the canonical Diamond.
-    error VPFICanonicalEidNotSet();
+    // ─── VPFI Fixed-Rate Buy: origin-chain guard ───────────────────────────
+    /// @notice Fixed-rate VPFI buy reached the caps pipeline with a zero
+    ///         origin chain id. A zero key would land every buy in
+    ///         storage bucket 0, desyncing the frontend's per-chain
+    ///         allowance view from the on-chain ledger. It cannot occur
+    ///         on a well-formed call — direct buys pass `block.chainid`,
+    ///         bridged buys pass a CcipMessenger-resolved source chain
+    ///         id — so this is a defence-in-depth reject of a malformed
+    ///         origin.
+    error VPFIInvalidOriginChainId();
 
     // ─── Permit2 ────────────────────────────────────────────────────────────
     /// @notice Permit2 path rejected because the signed `permit.permitted.token`

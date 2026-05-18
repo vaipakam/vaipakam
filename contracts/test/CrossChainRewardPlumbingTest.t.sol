@@ -23,7 +23,7 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 ///           - Admin surface (setters + role gate + event wiring)
 ///           - `closeDay` on canonical (Base) AND mirror branches
 ///           - `onChainReportReceived` ingress gates (auth, duplicate,
-///             late-after-finalize, unknown-eid)
+///             late-after-finalize, unknown-chain)
 ///           - `finalizeDay` preconditions (coverage vs grace, replay)
 ///           - `forceFinalizeDay` (admin-only, even with zero reports)
 ///           - `broadcastGlobal` (only-after-finalize, refund, retry)
@@ -45,11 +45,12 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
     address internal alice;
     address internal bob;
 
-    // Use distinct eids to catch accidental self-inclusion bugs.
-    uint32 internal constant EID_BASE = 30_184; // Base mainnet (canonical)
-    uint32 internal constant EID_ARB = 30_110; // Arbitrum (mirror)
-    uint32 internal constant EID_OP = 30_111; // Optimism (mirror)
-    uint32 internal constant EID_UNKNOWN = 30_999; // Not in expected list
+    // Real EVM chain ids — distinct, to catch self-inclusion bugs.
+    // The Diamond's `block.chainid` is set per-test via `vm.chainId`.
+    uint32 internal constant CHAIN_BASE = 8453; // Base mainnet (canonical)
+    uint32 internal constant CHAIN_ARB = 42161; // Arbitrum (mirror)
+    uint32 internal constant CHAIN_OP = 10; // Optimism (mirror)
+    uint32 internal constant CHAIN_UNKNOWN = 137; // Polygon — not in expected list
 
     function setUp() public {
         setupHelper();
@@ -98,22 +99,25 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
     }
 
     /// @dev Configure the Diamond as the canonical (Base) reward chain.
+    ///      `vm.chainId` makes the Diamond's `block.chainid` the canonical
+    ///      id — the reward facets derive chain identity from it directly.
     function _configureCanonical() internal {
-        _rep().setLocalEid(EID_BASE);
-        _rep().setBaseEid(EID_BASE);
+        vm.chainId(CHAIN_BASE);
+        _rep().setBaseChainId(CHAIN_BASE);
         _rep().setIsCanonicalRewardChain(true);
         _rep().setRewardOApp(address(oApp));
-        uint32[] memory eids = new uint32[](3);
-        eids[0] = EID_BASE;
-        eids[1] = EID_ARB;
-        eids[2] = EID_OP;
-        _agg().setExpectedSourceEids(eids);
+        uint32[] memory chainIds = new uint32[](3);
+        chainIds[0] = CHAIN_BASE;
+        chainIds[1] = CHAIN_ARB;
+        chainIds[2] = CHAIN_OP;
+        _agg().setExpectedSourceChainIds(chainIds);
     }
 
-    /// @dev Configure the Diamond as a mirror (non-canonical).
-    function _configureMirror(uint32 localEid) internal {
-        _rep().setLocalEid(localEid);
-        _rep().setBaseEid(EID_BASE);
+    /// @dev Configure the Diamond as a mirror (non-canonical). `vm.chainId`
+    ///      stands the Diamond up on the mirror's chain id.
+    function _configureMirror(uint32 localChainId) internal {
+        vm.chainId(localChainId);
+        _rep().setBaseChainId(CHAIN_BASE);
         _rep().setIsCanonicalRewardChain(false);
         _rep().setRewardOApp(address(oApp));
     }
@@ -128,16 +132,13 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _rep().setRewardOApp(address(oApp));
     }
 
-    function testSetLocalEidRequiresAdminRole() public {
-        vm.prank(alice);
-        vm.expectRevert();
-        _rep().setLocalEid(EID_BASE);
-    }
+    // T-068 removed `testSetLocalEidRequiresAdminRole` — `setLocalEid`
+    // no longer exists; a chain's identity is `block.chainid`.
 
-    function testSetBaseEidRequiresAdminRole() public {
+    function testSetBaseChainIdRequiresAdminRole() public {
         vm.prank(alice);
         vm.expectRevert();
-        _rep().setBaseEid(EID_BASE);
+        _rep().setBaseChainId(CHAIN_BASE);
     }
 
     function testSetIsCanonicalRequiresAdminRole() public {
@@ -152,21 +153,21 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _rep().setRewardGraceSeconds(7200);
     }
 
-    function testSetExpectedSourceEidsRequiresAdminRole() public {
+    function testSetExpectedSourceChainIdsRequiresAdminRole() public {
         _configureCanonical();
-        uint32[] memory eids = new uint32[](1);
-        eids[0] = EID_ARB;
+        uint32[] memory chainIds = new uint32[](1);
+        chainIds[0] = CHAIN_ARB;
         vm.prank(alice);
         vm.expectRevert();
-        _agg().setExpectedSourceEids(eids);
+        _agg().setExpectedSourceChainIds(chainIds);
     }
 
-    function testSetExpectedSourceEidsRevertsOnMirror() public {
-        _configureMirror(EID_ARB);
-        uint32[] memory eids = new uint32[](1);
-        eids[0] = EID_ARB;
+    function testSetExpectedSourceChainIdsRevertsOnMirror() public {
+        _configureMirror(CHAIN_ARB);
+        uint32[] memory chainIds = new uint32[](1);
+        chainIds[0] = CHAIN_ARB;
         vm.expectRevert(NotCanonicalRewardChain.selector);
-        _agg().setExpectedSourceEids(eids);
+        _agg().setExpectedSourceChainIds(chainIds);
     }
 
     function testConfigGetterReturnsDefaultGraceWhenUnset() public {
@@ -182,21 +183,21 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         assertEq(grace, 9999, "custom grace echoed");
     }
 
-    function testExpectedSourceEidsListReplacement() public {
+    function testExpectedSourceChainIdsListReplacement() public {
         _configureCanonical();
 
         // Sanity: initial list size is 3.
-        assertEq(_agg().getExpectedSourceEids().length, 3, "initial list");
+        assertEq(_agg().getExpectedSourceChainIds().length, 3, "initial list");
 
         uint32[] memory shorter = new uint32[](2);
-        shorter[0] = EID_BASE;
-        shorter[1] = EID_ARB;
-        _agg().setExpectedSourceEids(shorter);
+        shorter[0] = CHAIN_BASE;
+        shorter[1] = CHAIN_ARB;
+        _agg().setExpectedSourceChainIds(shorter);
 
-        uint32[] memory out = _agg().getExpectedSourceEids();
+        uint32[] memory out = _agg().getExpectedSourceChainIds();
         assertEq(out.length, 2, "list replaced");
-        assertEq(out[0], EID_BASE);
-        assertEq(out[1], EID_ARB);
+        assertEq(out[0], CHAIN_BASE);
+        assertEq(out[1], CHAIN_ARB);
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -220,9 +221,9 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
         _rep().closeDay(1);
 
-        // Base path writes directly under its own eid.
-        assertTrue(_agg().isChainReported(1, EID_BASE), "base reported");
-        (uint256 l, uint256 b) = _agg().getChainReport(1, EID_BASE);
+        // Base path writes directly under its own chain id.
+        assertTrue(_agg().isChainReported(1, CHAIN_BASE), "base reported");
+        (uint256 l, uint256 b) = _agg().getChainReport(1, CHAIN_BASE);
         assertEq(l, 60e18, "lender report");
         assertEq(b, 40e18, "borrower report");
         assertEq(_agg().getChainDailyReportCount(1), 1, "count incremented");
@@ -286,7 +287,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
     // ════════════════════════════════════════════════════════════════════════
 
     function testCloseDayMirrorForwardsToOApp() public {
-        _configureMirror(EID_ARB);
+        _configureMirror(CHAIN_ARB);
         InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(
             block.timestamp
         );
@@ -307,11 +308,11 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         assertEq(oApp.lastSendValue(), 0.3 ether, "full msg.value forwarded");
 
         // Mirror path does NOT write to aggregator storage locally.
-        assertFalse(_agg().isChainReported(1, EID_ARB));
+        assertFalse(_agg().isChainReported(1, CHAIN_ARB));
     }
 
     function testCloseDayMirrorRevertsWithoutOApp() public {
-        _configureMirror(EID_ARB);
+        _configureMirror(CHAIN_ARB);
         _rep().setRewardOApp(address(0));
         InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(
             block.timestamp
@@ -324,9 +325,9 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _rep().closeDay(1);
     }
 
-    function testCloseDayMirrorRevertsWithoutBaseEid() public {
-        _configureMirror(EID_ARB);
-        _rep().setBaseEid(0);
+    function testCloseDayMirrorRevertsWithoutBaseChainId() public {
+        _configureMirror(CHAIN_ARB);
+        _rep().setBaseChainId(0);
         InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(
             block.timestamp
         );
@@ -334,7 +335,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _mut().setKnownGlobalSet(1, false);
         vm.warp(block.timestamp + 2 days + 1);
 
-        vm.expectRevert(BaseEidNotSet.selector);
+        vm.expectRevert(BaseChainIdNotSet.selector);
         _rep().closeDay(1);
     }
 
@@ -346,50 +347,50 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _configureCanonical();
         vm.prank(alice);
         vm.expectRevert(NotAuthorizedRewardOApp.selector);
-        _agg().onChainReportReceived(EID_ARB, 1, 10e18, 5e18);
+        _agg().onChainReportReceived(CHAIN_ARB, 1, 10e18, 5e18);
     }
 
     function testOnChainReportRevertsOnNonCanonical() public {
-        _configureMirror(EID_ARB);
+        _configureMirror(CHAIN_ARB);
         // Even the registered OApp cannot deliver reports to a mirror.
         vm.expectRevert(NotCanonicalRewardChain.selector);
-        oApp.deliverChainReport(EID_OP, 1, 10e18, 5e18);
+        oApp.deliverChainReport(CHAIN_OP, 1, 10e18, 5e18);
     }
 
-    function testOnChainReportRevertsOnUnknownEid() public {
+    function testOnChainReportRevertsOnUnknownChainId() public {
         _configureCanonical();
-        vm.expectRevert(SourceEidNotExpected.selector);
-        oApp.deliverChainReport(EID_UNKNOWN, 1, 10e18, 5e18);
+        vm.expectRevert(SourceChainIdNotExpected.selector);
+        oApp.deliverChainReport(CHAIN_UNKNOWN, 1, 10e18, 5e18);
     }
 
     function testOnChainReportRevertsOnDuplicate() public {
         _configureCanonical();
-        oApp.deliverChainReport(EID_ARB, 1, 10e18, 5e18);
+        oApp.deliverChainReport(CHAIN_ARB, 1, 10e18, 5e18);
         vm.expectRevert(ChainDayAlreadyReported.selector);
-        oApp.deliverChainReport(EID_ARB, 1, 10e18, 5e18);
+        oApp.deliverChainReport(CHAIN_ARB, 1, 10e18, 5e18);
     }
 
     function testOnChainReportRevertsAfterFinalization() public {
         _configureCanonical();
-        oApp.deliverChainReport(EID_BASE, 1, 10e18, 5e18);
-        oApp.deliverChainReport(EID_ARB, 1, 10e18, 5e18);
-        oApp.deliverChainReport(EID_OP, 1, 10e18, 5e18);
+        oApp.deliverChainReport(CHAIN_BASE, 1, 10e18, 5e18);
+        oApp.deliverChainReport(CHAIN_ARB, 1, 10e18, 5e18);
+        oApp.deliverChainReport(CHAIN_OP, 1, 10e18, 5e18);
         _agg().finalizeDay(1);
 
         vm.expectRevert(ReportAfterFinalization.selector);
-        // Even with a fresh eid (if list grew) the finalized-gate fires first.
-        oApp.deliverChainReport(EID_ARB, 1, 1, 1);
+        // Even with a fresh chain id (if list grew) the finalized-gate fires first.
+        oApp.deliverChainReport(CHAIN_ARB, 1, 1, 1);
     }
 
     function testOnChainReportStampsFirstReportAt() public {
         _configureCanonical();
         uint64 t0 = uint64(block.timestamp);
-        oApp.deliverChainReport(EID_ARB, 1, 10e18, 5e18);
+        oApp.deliverChainReport(CHAIN_ARB, 1, 10e18, 5e18);
         assertEq(_agg().getDailyFirstReportAt(1), t0, "first stamped");
 
         // Subsequent reports do not move the stamp.
         vm.warp(block.timestamp + 1 hours);
-        oApp.deliverChainReport(EID_OP, 1, 1e18, 1e18);
+        oApp.deliverChainReport(CHAIN_OP, 1, 1e18, 1e18);
         assertEq(_agg().getDailyFirstReportAt(1), t0, "first stays");
     }
 
@@ -398,7 +399,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
     // ════════════════════════════════════════════════════════════════════════
 
     function testFinalizeRevertsOnMirror() public {
-        _configureMirror(EID_ARB);
+        _configureMirror(CHAIN_ARB);
         vm.expectRevert(NotCanonicalRewardChain.selector);
         _agg().finalizeDay(1);
     }
@@ -411,17 +412,17 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
     function testFinalizeRevertsBeforeGraceAndIncompleteCoverage() public {
         _configureCanonical();
-        oApp.deliverChainReport(EID_ARB, 1, 10e18, 5e18);
-        // Only 1 of 3 expected eids reported, grace (4h) not elapsed.
+        oApp.deliverChainReport(CHAIN_ARB, 1, 10e18, 5e18);
+        // Only 1 of 3 expected chainIds reported, grace (4h) not elapsed.
         vm.expectRevert(DayNotReadyToFinalize.selector);
         _agg().finalizeDay(1);
     }
 
     function testFinalizeWithFullCoverageAtAnyTime() public {
         _configureCanonical();
-        oApp.deliverChainReport(EID_BASE, 1, 10e18, 5e18);
-        oApp.deliverChainReport(EID_ARB, 1, 20e18, 10e18);
-        oApp.deliverChainReport(EID_OP, 1, 30e18, 15e18);
+        oApp.deliverChainReport(CHAIN_BASE, 1, 10e18, 5e18);
+        oApp.deliverChainReport(CHAIN_ARB, 1, 20e18, 10e18);
+        oApp.deliverChainReport(CHAIN_OP, 1, 30e18, 15e18);
 
         _agg().finalizeDay(1);
         (bool fin, uint256 gl, uint256 gb) = _agg().getDailyGlobalInterest(1);
@@ -432,7 +433,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
     function testFinalizeAfterGraceElapsesWithPartialCoverage() public {
         _configureCanonical();
-        oApp.deliverChainReport(EID_ARB, 1, 10e18, 5e18);
+        oApp.deliverChainReport(CHAIN_ARB, 1, 10e18, 5e18);
 
         vm.warp(block.timestamp + 4 hours + 1);
         _agg().finalizeDay(1);
@@ -443,23 +444,23 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         assertEq(gb, 5e18, "only reported borrower");
     }
 
-    function testFinalizeEmitsChainContributionZeroedForMissingEids() public {
+    function testFinalizeEmitsChainContributionZeroedForMissingChains() public {
         _configureCanonical();
-        oApp.deliverChainReport(EID_ARB, 1, 10e18, 5e18);
+        oApp.deliverChainReport(CHAIN_ARB, 1, 10e18, 5e18);
 
         vm.warp(block.timestamp + 4 hours + 1);
 
-        // Two eids missing: EID_BASE and EID_OP.
+        // Two chainIds missing: CHAIN_BASE and CHAIN_OP.
         vm.expectEmit(true, true, false, true);
         emit RewardAggregatorFacet.ChainContributionZeroed(
             1,
-            EID_BASE,
+            CHAIN_BASE,
             /* forced */ false
         );
         vm.expectEmit(true, true, false, true);
         emit RewardAggregatorFacet.ChainContributionZeroed(
             1,
-            EID_OP,
+            CHAIN_OP,
             /* forced */ false
         );
         _agg().finalizeDay(1);
@@ -467,9 +468,9 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
     function testFinalizeRevertsOnReplay() public {
         _configureCanonical();
-        oApp.deliverChainReport(EID_BASE, 1, 1e18, 1e18);
-        oApp.deliverChainReport(EID_ARB, 1, 1e18, 1e18);
-        oApp.deliverChainReport(EID_OP, 1, 1e18, 1e18);
+        oApp.deliverChainReport(CHAIN_BASE, 1, 1e18, 1e18);
+        oApp.deliverChainReport(CHAIN_ARB, 1, 1e18, 1e18);
+        oApp.deliverChainReport(CHAIN_OP, 1, 1e18, 1e18);
         _agg().finalizeDay(1);
 
         vm.expectRevert(DayAlreadyFinalized.selector);
@@ -478,9 +479,9 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
     function testFinalizeMirrorsIntoKnownGlobalOnBase() public {
         _configureCanonical();
-        oApp.deliverChainReport(EID_BASE, 1, 7e18, 3e18);
-        oApp.deliverChainReport(EID_ARB, 1, 5e18, 2e18);
-        oApp.deliverChainReport(EID_OP, 1, 3e18, 1e18);
+        oApp.deliverChainReport(CHAIN_BASE, 1, 7e18, 3e18);
+        oApp.deliverChainReport(CHAIN_ARB, 1, 5e18, 2e18);
+        oApp.deliverChainReport(CHAIN_OP, 1, 3e18, 1e18);
         _agg().finalizeDay(1);
 
         (uint256 gl, uint256 gb, bool isSet) = _rep()
@@ -502,7 +503,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
     }
 
     function testForceFinalizeRevertsOnMirror() public {
-        _configureMirror(EID_ARB);
+        _configureMirror(CHAIN_ARB);
         vm.expectRevert(NotCanonicalRewardChain.selector);
         _agg().forceFinalizeDay(1);
     }
@@ -521,13 +522,13 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         public
     {
         _configureCanonical();
-        oApp.deliverChainReport(EID_ARB, 1, 2e18, 1e18);
+        oApp.deliverChainReport(CHAIN_ARB, 1, 2e18, 1e18);
 
-        // Missing eids (BASE, OP) emit ChainContributionZeroed with forced=true.
+        // Missing chainIds (BASE, OP) emit ChainContributionZeroed with forced=true.
         vm.expectEmit(true, true, false, true);
-        emit RewardAggregatorFacet.ChainContributionZeroed(1, EID_BASE, true);
+        emit RewardAggregatorFacet.ChainContributionZeroed(1, CHAIN_BASE, true);
         vm.expectEmit(true, true, false, true);
-        emit RewardAggregatorFacet.ChainContributionZeroed(1, EID_OP, true);
+        emit RewardAggregatorFacet.ChainContributionZeroed(1, CHAIN_OP, true);
         // Plus DayForceFinalized at the end.
         vm.expectEmit(true, false, false, true);
         emit RewardAggregatorFacet.DayForceFinalized(
@@ -558,14 +559,14 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
     }
 
     function testBroadcastRevertsOnMirror() public {
-        _configureMirror(EID_ARB);
+        _configureMirror(CHAIN_ARB);
         vm.expectRevert(NotCanonicalRewardChain.selector);
         _agg().broadcastGlobal(1);
     }
 
     function testBroadcastRevertsWithoutOApp() public {
         _configureCanonical();
-        oApp.deliverChainReport(EID_BASE, 1, 1e18, 1e18);
+        oApp.deliverChainReport(CHAIN_BASE, 1, 1e18, 1e18);
         vm.warp(block.timestamp + 4 hours + 1);
         _agg().finalizeDay(1);
         _rep().setRewardOApp(address(0));
@@ -576,9 +577,9 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
     function testBroadcastForwardsFinalizedPairToOApp() public {
         _configureCanonical();
-        oApp.deliverChainReport(EID_BASE, 1, 7e18, 3e18);
-        oApp.deliverChainReport(EID_ARB, 1, 5e18, 2e18);
-        oApp.deliverChainReport(EID_OP, 1, 3e18, 1e18);
+        oApp.deliverChainReport(CHAIN_BASE, 1, 7e18, 3e18);
+        oApp.deliverChainReport(CHAIN_ARB, 1, 5e18, 2e18);
+        oApp.deliverChainReport(CHAIN_OP, 1, 3e18, 1e18);
         _agg().finalizeDay(1);
 
         vm.deal(alice, 1 ether);
@@ -595,9 +596,9 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
     function testBroadcastIsRetryFriendly() public {
         _configureCanonical();
-        oApp.deliverChainReport(EID_BASE, 1, 7e18, 3e18);
-        oApp.deliverChainReport(EID_ARB, 1, 5e18, 2e18);
-        oApp.deliverChainReport(EID_OP, 1, 3e18, 1e18);
+        oApp.deliverChainReport(CHAIN_BASE, 1, 7e18, 3e18);
+        oApp.deliverChainReport(CHAIN_ARB, 1, 5e18, 2e18);
+        oApp.deliverChainReport(CHAIN_OP, 1, 3e18, 1e18);
         _agg().finalizeDay(1);
 
         _agg().broadcastGlobal(1);
@@ -611,21 +612,21 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
     // ════════════════════════════════════════════════════════════════════════
 
     function testBroadcastReceivedRevertsWhenNotOApp() public {
-        _configureMirror(EID_ARB);
+        _configureMirror(CHAIN_ARB);
         vm.prank(alice);
         vm.expectRevert(NotAuthorizedRewardOApp.selector);
         _rep().onRewardBroadcastReceived(1, 10e18, 5e18);
     }
 
     function testBroadcastReceivedRevertsWhenOAppUnset() public {
-        _configureMirror(EID_ARB);
+        _configureMirror(CHAIN_ARB);
         _rep().setRewardOApp(address(0));
         vm.expectRevert(NotAuthorizedRewardOApp.selector);
         oApp.deliverBroadcast(1, 10e18, 5e18);
     }
 
     function testBroadcastReceivedSetsKnownGlobalAndEmits() public {
-        _configureMirror(EID_ARB);
+        _configureMirror(CHAIN_ARB);
 
         vm.expectEmit(true, false, false, true);
         emit RewardReporterFacet.KnownGlobalInterestSet(1, 10e18, 5e18);
@@ -639,14 +640,14 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
     }
 
     function testBroadcastReceivedIdempotentOnMatchingReplay() public {
-        _configureMirror(EID_ARB);
+        _configureMirror(CHAIN_ARB);
         oApp.deliverBroadcast(1, 10e18, 5e18);
         // Identical values — must succeed silently (no revert).
         oApp.deliverBroadcast(1, 10e18, 5e18);
     }
 
     function testBroadcastReceivedRevertsOnDivergentReplay() public {
-        _configureMirror(EID_ARB);
+        _configureMirror(CHAIN_ARB);
         oApp.deliverBroadcast(1, 10e18, 5e18);
         vm.expectRevert(KnownGlobalAlreadySet.selector);
         oApp.deliverBroadcast(1, 99e18, 5e18);
@@ -665,7 +666,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
     function testIsDayReadyReturnsThreeDuringGrace() public {
         _configureCanonical();
-        oApp.deliverChainReport(EID_ARB, 1, 1e18, 1e18);
+        oApp.deliverChainReport(CHAIN_ARB, 1, 1e18, 1e18);
         (bool ready, uint8 reason) = _agg().isDayReadyToFinalize(1);
         assertFalse(ready);
         assertEq(reason, 3, "reason=waiting");
@@ -673,9 +674,9 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
     function testIsDayReadyReturnsReadyOnCoverage() public {
         _configureCanonical();
-        oApp.deliverChainReport(EID_BASE, 1, 1e18, 1e18);
-        oApp.deliverChainReport(EID_ARB, 1, 1e18, 1e18);
-        oApp.deliverChainReport(EID_OP, 1, 1e18, 1e18);
+        oApp.deliverChainReport(CHAIN_BASE, 1, 1e18, 1e18);
+        oApp.deliverChainReport(CHAIN_ARB, 1, 1e18, 1e18);
+        oApp.deliverChainReport(CHAIN_OP, 1, 1e18, 1e18);
         (bool ready, uint8 reason) = _agg().isDayReadyToFinalize(1);
         assertTrue(ready);
         assertEq(reason, 0);
@@ -683,7 +684,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
     function testIsDayReadyReturnsReadyAfterGraceEvenPartial() public {
         _configureCanonical();
-        oApp.deliverChainReport(EID_ARB, 1, 1e18, 1e18);
+        oApp.deliverChainReport(CHAIN_ARB, 1, 1e18, 1e18);
         vm.warp(block.timestamp + 4 hours + 1);
         (bool ready, uint8 reason) = _agg().isDayReadyToFinalize(1);
         assertTrue(ready);
@@ -692,9 +693,9 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
     function testIsDayReadyReturnsOneWhenFinalized() public {
         _configureCanonical();
-        oApp.deliverChainReport(EID_BASE, 1, 1e18, 1e18);
-        oApp.deliverChainReport(EID_ARB, 1, 1e18, 1e18);
-        oApp.deliverChainReport(EID_OP, 1, 1e18, 1e18);
+        oApp.deliverChainReport(CHAIN_BASE, 1, 1e18, 1e18);
+        oApp.deliverChainReport(CHAIN_ARB, 1, 1e18, 1e18);
+        oApp.deliverChainReport(CHAIN_OP, 1, 1e18, 1e18);
         _agg().finalizeDay(1);
         (bool ready, uint8 reason) = _agg().isDayReadyToFinalize(1);
         assertFalse(ready);
@@ -721,9 +722,9 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
     function testFinalizePauseGated() public {
         _configureCanonical();
-        oApp.deliverChainReport(EID_BASE, 1, 1e18, 1e18);
-        oApp.deliverChainReport(EID_ARB, 1, 1e18, 1e18);
-        oApp.deliverChainReport(EID_OP, 1, 1e18, 1e18);
+        oApp.deliverChainReport(CHAIN_BASE, 1, 1e18, 1e18);
+        oApp.deliverChainReport(CHAIN_ARB, 1, 1e18, 1e18);
+        oApp.deliverChainReport(CHAIN_OP, 1, 1e18, 1e18);
 
         AdminFacet(address(diamond)).pause();
         vm.expectRevert();
@@ -732,9 +733,9 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
     function testBroadcastPauseGated() public {
         _configureCanonical();
-        oApp.deliverChainReport(EID_BASE, 1, 1e18, 1e18);
-        oApp.deliverChainReport(EID_ARB, 1, 1e18, 1e18);
-        oApp.deliverChainReport(EID_OP, 1, 1e18, 1e18);
+        oApp.deliverChainReport(CHAIN_BASE, 1, 1e18, 1e18);
+        oApp.deliverChainReport(CHAIN_ARB, 1, 1e18, 1e18);
+        oApp.deliverChainReport(CHAIN_OP, 1, 1e18, 1e18);
         _agg().finalizeDay(1);
 
         AdminFacet(address(diamond)).pause();
@@ -748,12 +749,12 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         // docs/ops/AdminKeysAndPause.md.
         _configureCanonical();
         AdminFacet(address(diamond)).pause();
-        oApp.deliverChainReport(EID_ARB, 1, 1e18, 1e18); // succeeds
-        assertTrue(_agg().isChainReported(1, EID_ARB));
+        oApp.deliverChainReport(CHAIN_ARB, 1, 1e18, 1e18); // succeeds
+        assertTrue(_agg().isChainReported(1, CHAIN_ARB));
     }
 
     function testOnRewardBroadcastIngressNotPauseGated() public {
-        _configureMirror(EID_ARB);
+        _configureMirror(CHAIN_ARB);
         AdminFacet(address(diamond)).pause();
         oApp.deliverBroadcast(1, 10e18, 5e18); // succeeds
         (, , bool isSet) = _rep().getKnownGlobalInterestNumeraire18(1);
@@ -766,18 +767,18 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
     function testOldOAppRejectedAfterRotation() public {
         _configureCanonical();
-        oApp.deliverChainReport(EID_ARB, 1, 1e18, 1e18);
+        oApp.deliverChainReport(CHAIN_ARB, 1, 1e18, 1e18);
 
         MockRewardOApp newOApp = new MockRewardOApp(address(diamond));
         _rep().setRewardOApp(address(newOApp));
 
         // Old mock can no longer deliver.
         vm.expectRevert(NotAuthorizedRewardOApp.selector);
-        oApp.deliverChainReport(EID_OP, 1, 1e18, 1e18);
+        oApp.deliverChainReport(CHAIN_OP, 1, 1e18, 1e18);
 
         // New one can.
-        newOApp.deliverChainReport(EID_OP, 1, 1e18, 1e18);
-        assertTrue(_agg().isChainReported(1, EID_OP));
+        newOApp.deliverChainReport(CHAIN_OP, 1, 1e18, 1e18);
+        assertTrue(_agg().isChainReported(1, CHAIN_OP));
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -804,8 +805,8 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _rep().closeDay(1);
 
         // 2. Other chains deliver via OApp.
-        oApp.deliverChainReport(EID_ARB, 1, 20e18, 0);
-        oApp.deliverChainReport(EID_OP, 1, 10e18, 0);
+        oApp.deliverChainReport(CHAIN_ARB, 1, 20e18, 0);
+        oApp.deliverChainReport(CHAIN_OP, 1, 10e18, 0);
 
         // 3. Finalize.
         _agg().finalizeDay(1);
