@@ -15,24 +15,25 @@ import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {HelperTest} from "./HelperTest.sol";
 
-import {LZGuardianPausable} from "../src/token/LZGuardianPausable.sol";
-import {GuardianHarness} from "./LZGuardian.t.sol";
+import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import {GuardianPausable} from "../src/crosschain/GuardianPausable.sol";
 
 /**
  * @title GovernanceHandoverTest
  * @notice End-to-end integration test for the Safe + Timelock + Guardian
  *         handover. Simulates the logical steps the deploy scripts take
- *         (GrantOpsRoles → TransferAdminToTimelock → MigrateOAppGovernance
- *         → Safe-scheduled acceptOwnership) against a self-contained
- *         minimal Diamond + OApp harness, then asserts every invariant
- *         listed in `docs/GovernanceRunbook.md`'s readback verification
- *         section.
+ *         (grant ops roles → transfer admin to the timelock → hand the
+ *         cross-chain contracts to the timelock → Safe-scheduled
+ *         acceptOwnership) against a self-contained minimal Diamond +
+ *         cross-chain-contract harness, then asserts every invariant in
+ *         `docs/GovernanceRunbook.md`'s readback verification section.
  *
- *         Intended to run as a pre-mainnet CI gate alongside
- *         `LZConfig.t.sol`. Catches any drift in the migration scripts
- *         OR in the facets' role / ownership surface that would leave
- *         residual EOA authority after handover.
+ *         Intended as a pre-mainnet CI gate. Catches any drift in the
+ *         migration scripts OR in the facets' role / ownership surface
+ *         that would leave residual EOA authority after handover.
  */
 contract GovernanceHandoverTest is Test {
     // ─── Actors ─────────────────────────────────────────────────────────────
@@ -45,8 +46,8 @@ contract GovernanceHandoverTest is Test {
     // ─── Contracts ──────────────────────────────────────────────────────────
     VaipakamDiamond internal diamond;
     TimelockController internal timelock;
-    GuardianHarness internal oappA; // stand-in for VPFIOFTAdapter / RewardOApp
-    GuardianHarness internal oappB; // stand-in for a second OApp on the chain
+    CrossChainGuardianHarness internal oappA; // stand-in for a cross-chain contract
+    CrossChainGuardianHarness internal oappB; // stand-in for a 2nd cross-chain contract
     OwnableERC20Stub internal vpfiToken; // stand-in for VPFIToken (Ownable2Step)
 
     // ─── Setup ──────────────────────────────────────────────────────────────
@@ -65,9 +66,10 @@ contract GovernanceHandoverTest is Test {
         AccessControlFacet(address(diamond)).initializeAccessControl();
         AdminFacet(address(diamond)).unpause();
 
-        // Ownable2Step stand-ins for the LZ OApps + VPFIToken. Real
-        // OApps would inherit LZGuardianPausable via OAppUpgradeable;
-        // GuardianHarness isolates the guardian-pause surface.
+        // Stand-ins for the cross-chain contracts (CcipMessenger,
+        // VpfiBuyAdapter, VaipakamRewardMessenger) — they inherit
+        // {GuardianPausable}; the harness isolates that guardian + owner
+        // surface — plus an Ownable2Step VPFIToken stand-in.
         oappA = _deployOappHarness(deployer);
         oappB = _deployOappHarness(deployer);
         vpfiToken = new OwnableERC20Stub(deployer);
@@ -355,14 +357,62 @@ contract GovernanceHandoverTest is Test {
         IDiamondCut(address(d)).diamondCut(cuts, address(0), "");
     }
 
-    function _deployOappHarness(address owner_) internal returns (GuardianHarness proxy) {
-        GuardianHarness impl = new GuardianHarness();
-        bytes memory initData = abi.encodeWithSelector(
-            GuardianHarness.initialize.selector,
-            owner_
+    function _deployOappHarness(
+        address owner_
+    ) internal returns (CrossChainGuardianHarness proxy) {
+        CrossChainGuardianHarness impl = new CrossChainGuardianHarness();
+        ERC1967Proxy p = new ERC1967Proxy(
+            address(impl),
+            abi.encodeCall(CrossChainGuardianHarness.initialize, (owner_))
         );
-        ERC1967Proxy p = new ERC1967Proxy(address(impl), initData);
-        return GuardianHarness(address(p));
+        return CrossChainGuardianHarness(address(p));
+    }
+}
+
+/**
+ * @dev Minimal UUPS contract that mixes in {GuardianPausable} — the same
+ *      guardian + Ownable2Step surface every Vaipakam cross-chain contract
+ *      (CcipMessenger, VpfiBuyAdapter, VpfiBuyReceiver,
+ *      VaipakamRewardMessenger) carries. Used as their stand-in for the
+ *      handover invariant checks.
+ */
+contract CrossChainGuardianHarness is
+    Initializable,
+    Ownable2StepUpgradeable,
+    GuardianPausable,
+    UUPSUpgradeable
+{
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address owner_) external initializer {
+        __Ownable_init(owner_);
+        __Ownable2Step_init();
+        __GuardianPausable_init();
+    }
+
+    function pause() external onlyGuardianOrOwner {
+        _pause();
+    }
+
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
+
+    function transferOwnership(
+        address newOwner
+    ) public override(OwnableUpgradeable, Ownable2StepUpgradeable) onlyOwner {
+        Ownable2StepUpgradeable.transferOwnership(newOwner);
+    }
+
+    function _transferOwnership(
+        address newOwner
+    ) internal override(OwnableUpgradeable, Ownable2StepUpgradeable) {
+        Ownable2StepUpgradeable._transferOwnership(newOwner);
     }
 }
 

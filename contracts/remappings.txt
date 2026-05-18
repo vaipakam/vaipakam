@@ -7,13 +7,3 @@
 @openzeppelin/contracts@4.8.3/=lib/chainlink-local/src/vendor/openzeppelin-solidity/v4.8.3/contracts/
 @openzeppelin/contracts@5.0.2/=lib/chainlink-local/src/vendor/openzeppelin-solidity/v5.0.2/contracts/
 @vaipakam-vendor/=src/vendor/
-@layerzerolabs/lz-evm-protocol-v2/=lib/LayerZero-v2/packages/layerzero-v2/evm/protocol/
-@layerzerolabs/lz-evm-messagelib-v2/=lib/LayerZero-v2/packages/layerzero-v2/evm/messagelib/
-@layerzerolabs/lz-evm-oapp-v2/=lib/LayerZero-v2/packages/layerzero-v2/evm/oapp/
-@layerzerolabs/oapp-evm/=lib/devtools/packages/oapp-evm/
-@layerzerolabs/oapp-evm-upgradeable/=lib/devtools/packages/oapp-evm-upgradeable/
-@layerzerolabs/oft-evm/=lib/devtools/packages/oft-evm/
-@layerzerolabs/oft-evm-upgradeable/=lib/devtools/packages/oft-evm-upgradeable/
-@layerzerolabs/test-devtools-evm-foundry/=lib/devtools/packages/test-devtools-evm-foundry/
-solidity-bytes-utils/=lib/solidity-bytes-utils/
-@layerzerolabs/lz-evm-v1-0.7/=lib/LayerZero/
