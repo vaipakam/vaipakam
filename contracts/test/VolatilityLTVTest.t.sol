@@ -56,7 +56,7 @@ contract VolatilityLTVTest is SetupTest, IVaipakamErrors {
         uint256 collateral
     ) internal returns (uint256) {
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -81,7 +81,7 @@ contract VolatilityLTVTest is SetupTest, IVaipakamErrors {
         );
 
         vm.prank(borrower);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         return 1;
     }
 

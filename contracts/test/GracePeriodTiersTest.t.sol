@@ -43,7 +43,7 @@ contract GracePeriodTiersTest is SetupTest {
 
     function _createSeedLoan() internal returns (uint256) {
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -67,7 +67,7 @@ contract GracePeriodTiersTest is SetupTest {
             })
         );
         vm.prank(borrower);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         return 1;
     }
 

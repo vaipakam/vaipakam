@@ -253,7 +253,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         // Create active loan: original lender creates offer, borrower accepts
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -277,11 +277,11 @@ contract EarlyWithdrawalFacetTest is Test {
             })
         );
         vm.prank(borrower);
-        activeLoanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        activeLoanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         // New lender creates a buy offer (Lender-type, not yet accepted)
         vm.prank(newLender);
-        buyOfferId = OfferFacet(address(diamond)).createOffer(
+        buyOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -405,7 +405,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         // Create buy offer with duration <= remaining (29 days) to satisfy borrower-favorability
         vm.prank(newLender);
-        uint256 localBuyOffer = OfferFacet(address(diamond)).createOffer(
+        uint256 localBuyOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -467,7 +467,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // so newRemainingInterest > originalRemainingInterest → shortfall path
         // and since warp is 0 days, accrued = 0 < shortfall → pays remainingShortfall from lender
         vm.prank(newLender);
-        uint256 highRateBuyOffer = OfferFacet(address(diamond)).createOffer(
+        uint256 highRateBuyOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -513,7 +513,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         // Create offer with duration <= remaining (15 days) to satisfy borrower-favorability
         vm.prank(newLender);
-        uint256 slightlyHigherOffer = OfferFacet(address(diamond)).createOffer(
+        uint256 slightlyHigherOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -555,7 +555,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testSellLoanAcruedZeroCallsTransferToTreasuryWithZero() public {
         // Same rate buy offer, no warp (accrued=0), newRemaining==original → no shortfall, transfer 0 to treasury
         vm.prank(newLender);
-        uint256 sameRateOffer = OfferFacet(address(diamond)).createOffer(
+        uint256 sameRateOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -608,7 +608,7 @@ contract EarlyWithdrawalFacetTest is Test {
     /// @dev Covers CrossFacetCallFailed("Principal transfer failed") in sellLoanViaBuyOffer.
     function testSellLoanPrincipalTransferFails() public {
         vm.prank(newLender);
-        uint256 buyOffer = OfferFacet(address(diamond)).createOffer(
+        uint256 buyOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -647,7 +647,7 @@ contract EarlyWithdrawalFacetTest is Test {
     /// @dev Covers CrossFacetCallFailed("Burn old NFT failed") in sellLoanViaBuyOffer.
     function testSellLoanBurnNFTFails() public {
         vm.prank(newLender);
-        uint256 buyOffer = OfferFacet(address(diamond)).createOffer(
+        uint256 buyOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -683,7 +683,7 @@ contract EarlyWithdrawalFacetTest is Test {
     /// @dev Covers CrossFacetCallFailed("Mint new NFT failed") in sellLoanViaBuyOffer.
     function testSellLoanMintNFTFails() public {
         vm.prank(newLender);
-        uint256 buyOffer = OfferFacet(address(diamond)).createOffer(
+        uint256 buyOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -732,7 +732,7 @@ contract EarlyWithdrawalFacetTest is Test {
         ERC20(differentAsset).approve(nlEscrow, type(uint256).max);
 
         vm.prank(newLender);
-        uint256 wrongOffer = OfferFacet(address(diamond)).createOffer(
+        uint256 wrongOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: differentAsset,
@@ -763,7 +763,7 @@ contract EarlyWithdrawalFacetTest is Test {
     /// @dev Covers InvalidSaleOffer when buyOffer.amount < loan.principal
     function testSellLoanRevertsInsufficientPrincipal() public {
         vm.prank(newLender);
-        uint256 lowOffer = OfferFacet(address(diamond)).createOffer(
+        uint256 lowOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -802,7 +802,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.warp(block.timestamp + 20 days);
 
         vm.prank(newLender);
-        uint256 longOffer = OfferFacet(address(diamond)).createOffer(
+        uint256 longOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -834,7 +834,7 @@ contract EarlyWithdrawalFacetTest is Test {
     /// @dev Covers InvalidSaleOffer when buyOffer.collateralAmount > loan.collateralAmount
     function testSellLoanRevertsCollateralTooHigh() public {
         vm.prank(newLender);
-        uint256 highCollOffer = OfferFacet(address(diamond)).createOffer(
+        uint256 highCollOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -932,7 +932,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testSellLoanNoShortfallLowerRate() public {
         // Use lower rate so no shortfall and no excess deposit
         vm.prank(newLender);
-        uint256 lowRateOffer = OfferFacet(address(diamond)).createOffer(
+        uint256 lowRateOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -971,7 +971,7 @@ contract EarlyWithdrawalFacetTest is Test {
     /// @dev Covers Burn offer NFT failed path
     function testSellLoanBurnOfferNFTFails() public {
         vm.prank(newLender);
-        uint256 localBuyOffer = OfferFacet(address(diamond)).createOffer(
+        uint256 localBuyOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -1029,7 +1029,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         // Create offer with different prepay asset
         vm.prank(newLender);
-        uint256 wrongPrepay = OfferFacet(address(diamond)).createOffer(
+        uint256 wrongPrepay = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -1070,7 +1070,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(owner); RiskFacet(address(diamond)).updateRiskParams(otherToken, 8000, 300, 1000);
 
         vm.prank(newLender);
-        uint256 wrongColl = OfferFacet(address(diamond)).createOffer(
+        uint256 wrongColl = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -1103,7 +1103,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testSellLoanExcessRefund() public {
         // Create buy offer with higher principal than loan
         vm.prank(newLender);
-        uint256 excessOffer = OfferFacet(address(diamond)).createOffer(
+        uint256 excessOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -1142,7 +1142,7 @@ contract EarlyWithdrawalFacetTest is Test {
     /// @dev Covers excess refund failure path
     function testSellLoanExcessRefundFails() public {
         vm.prank(newLender);
-        uint256 excessOffer = OfferFacet(address(diamond)).createOffer(
+        uint256 excessOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -1897,7 +1897,7 @@ contract EarlyWithdrawalFacetTest is Test {
         EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(lender, mockERC20, 100 ether);
 
         vm.prank(newLender);
-        uint256 buyOffer = OfferFacet(address(diamond)).createOffer(
+        uint256 buyOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -1946,7 +1946,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         // Create a high-rate buy offer with duration fitting remaining
         vm.prank(newLender);
-        uint256 highRateOffer = OfferFacet(address(diamond)).createOffer(
+        uint256 highRateOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,

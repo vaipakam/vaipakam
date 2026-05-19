@@ -127,7 +127,7 @@ contract PositiveFlowsGapFillers is Test {
 
         uint256 offerId = _createLenderOffer();
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         LibVaipakam.Loan memory L =
             LoanFacet(address(diamond)).getLoanDetails(loanId);
@@ -165,7 +165,7 @@ contract PositiveFlowsGapFillers is Test {
 
         uint256 offerId = _createLenderOffer();
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         uint256 expectedFee = (PRINCIPAL * LOAN_INITIATION_FEE_BPS) / BASIS_POINTS;
         // Range Orders Phase 1 — 1% LIF matcher kickback. The acceptor
@@ -216,7 +216,7 @@ contract PositiveFlowsGapFillers is Test {
     function test_Positive_PartialRepay_TwoStep_CompletesWithNoDust() public {
         uint256 offerId = _createLenderOffer();
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         LibVaipakam.Loan memory L0 =
             LoanFacet(address(diamond)).getLoanDetails(loanId);
@@ -296,7 +296,7 @@ contract PositiveFlowsGapFillers is Test {
         );
 
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         assertTrue(
             ProfileFacet(address(diamond)).isLoanKeeperEnabled(loanId, keeperEOA),
@@ -331,7 +331,7 @@ contract PositiveFlowsGapFillers is Test {
 
     function _createLenderOffer() internal returns (uint256 offerId) {
         vm.prank(lender);
-        offerId = OfferFacet(address(diamond)).createOffer(
+        offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockUSDC,

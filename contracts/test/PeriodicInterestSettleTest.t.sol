@@ -53,7 +53,7 @@ contract PeriodicInterestSettleTest is SetupTest {
         returns (uint256 newLoanId)
     {
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -77,7 +77,7 @@ contract PeriodicInterestSettleTest is SetupTest {
             })
         );
         vm.prank(borrower);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         return 1;
     }
 
@@ -134,7 +134,7 @@ contract PeriodicInterestSettleTest is SetupTest {
     function testPreview_NoneCadence() public {
         // Manufacture a None-cadence loan via a separate offer.
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -158,7 +158,7 @@ contract PeriodicInterestSettleTest is SetupTest {
             })
         );
         vm.prank(borrower);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         uint256 noneLoanId = 2;
         (
             uint8 cadence,
@@ -220,7 +220,7 @@ contract PeriodicInterestSettleTest is SetupTest {
     function testSettle_RevertsForNoneCadence() public {
         // A None-cadence loan can't be settled.
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -244,7 +244,7 @@ contract PeriodicInterestSettleTest is SetupTest {
             })
         );
         vm.prank(borrower);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         uint256 noneLoanId = 2;
         vm.warp(block.timestamp + 30 days + 2 days);
         vm.expectPartialRevert(IVaipakamErrors.PeriodicSettleNotApplicable.selector);

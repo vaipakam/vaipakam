@@ -197,7 +197,7 @@ contract Scenario8_BorrowerPreclose is Test {
 
         // Create active loan: lender creates Lender offer, borrower accepts
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -221,7 +221,7 @@ contract Scenario8_BorrowerPreclose is Test {
             })
         );
         vm.prank(borrower);
-        activeLoanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        activeLoanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         // Give diamond some ERC20 for internal transfers (treasury fee etc.)
         ERC20Mock(mockERC20).mint(address(diamond), 100000 ether);
@@ -235,7 +235,7 @@ contract Scenario8_BorrowerPreclose is Test {
 
         // newBorrower creates a Borrower offer (matching loan terms)
         vm.prank(newBorrower);
-        uint256 borrowerOfferId = OfferFacet(address(diamond)).createOffer(
+        uint256 borrowerOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,

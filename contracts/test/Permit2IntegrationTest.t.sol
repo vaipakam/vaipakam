@@ -142,7 +142,7 @@ contract Permit2IntegrationTest is SetupTest {
         uint256 escrowBalBefore = IERC20(mockERC20).balanceOf(lenderEscrow);
 
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOfferWithPermit(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOfferWithPermit(
             _lenderERC20OfferParams(principal),
             permit,
             ""
@@ -167,7 +167,7 @@ contract Permit2IntegrationTest is SetupTest {
         vm.prank(lender);
         IERC20(mockERC20).approve(address(diamond), principal);
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             _lenderERC20OfferParams(principal)
         );
 
@@ -183,7 +183,7 @@ contract Permit2IntegrationTest is SetupTest {
         );
 
         vm.prank(borrower);
-        OfferFacet(address(diamond)).acceptOfferWithPermit(
+        OfferAcceptFacet(address(diamond)).acceptOfferWithPermit(
             offerId,
             /*acceptorRiskAndTermsConsent=*/ true,
             permit,
@@ -243,7 +243,7 @@ contract Permit2IntegrationTest is SetupTest {
                 mockCollateralERC20
             )
         );
-        OfferFacet(address(diamond)).createOfferWithPermit(
+        OfferCreateFacet(address(diamond)).createOfferWithPermit(
             _lenderERC20OfferParams(principal),
             wrongPermit,
             ""
@@ -257,7 +257,7 @@ contract Permit2IntegrationTest is SetupTest {
         vm.prank(lender);
         IERC20(mockERC20).approve(address(diamond), principal);
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             _lenderERC20OfferParams(principal)
         );
 
@@ -275,7 +275,7 @@ contract Permit2IntegrationTest is SetupTest {
                 mockERC20
             )
         );
-        OfferFacet(address(diamond)).acceptOfferWithPermit(
+        OfferAcceptFacet(address(diamond)).acceptOfferWithPermit(
             offerId,
             /*acceptorRiskAndTermsConsent=*/ true,
             wrongPermit,

@@ -126,7 +126,7 @@ contract SanctionsOracleTest is RiskFacetTest {
                 lender
             )
         );
-        OfferFacet(address(diamond)).createOffer(_buildLenderOfferParams());
+        OfferCreateFacet(address(diamond)).createOffer(_buildLenderOfferParams());
     }
 
     // ─── acceptOffer enforcement ───────────────────────────────────────────
@@ -134,7 +134,7 @@ contract SanctionsOracleTest is RiskFacetTest {
     function test_acceptOffer_RevertsWhenAcceptorSanctioned() public {
         // Step 1: clean creator posts an offer.
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             _buildLenderOfferParams()
         );
 
@@ -149,7 +149,7 @@ contract SanctionsOracleTest is RiskFacetTest {
                 borrower
             )
         );
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
     }
 
     function test_acceptOffer_RevertsWhenCreatorSanctionedAfterPosting() public {
@@ -157,7 +157,7 @@ contract SanctionsOracleTest is RiskFacetTest {
         // before anyone accepts. The accept call must still revert so the
         // acceptor doesn't unwittingly pair with a now-tainted counterparty.
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             _buildLenderOfferParams()
         );
 
@@ -171,7 +171,7 @@ contract SanctionsOracleTest is RiskFacetTest {
                 lender
             )
         );
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
     }
 
     // ─── Tier-1 enforcement at non-OfferFacet entry points ────────────────

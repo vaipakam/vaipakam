@@ -235,7 +235,7 @@ contract ClaimFacetTest is Test {
         uint256 durationDays
     ) internal returns (uint256 loanId) {
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -259,7 +259,7 @@ contract ClaimFacetTest is Test {
             })
         );
         vm.prank(borrower);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         loanId = 1; // First loan
     }
 

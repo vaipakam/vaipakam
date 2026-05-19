@@ -180,7 +180,7 @@ contract RefinanceFacetTest is Test {
 
         // Create active loan: Lender A -> Borrower (Alice)
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -204,11 +204,11 @@ contract RefinanceFacetTest is Test {
             })
         );
         vm.prank(borrower);
-        activeLoanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        activeLoanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         // Alice creates a Borrower Offer for refinancing (lower rate = better terms)
         vm.prank(borrower);
-        borrowerOfferId = OfferFacet(address(diamond)).createOffer(
+        borrowerOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
@@ -248,7 +248,7 @@ contract RefinanceFacetTest is Test {
         vm.prank(address(diamond));
         EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(newLender, mockERC20, PRINCIPAL);
         vm.prank(newLender);
-        loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
     }
 
     // ─── refinanceLoan reverts ────────────────────────────────────────────────
@@ -277,7 +277,7 @@ contract RefinanceFacetTest is Test {
     function testRefinanceLoanRevertsInvalidOffer_LenderType() public {
         // Create a Lender-type offer (should be rejected — refinance requires Borrower offer)
         vm.prank(newLender);
-        uint256 badOffer = OfferFacet(address(diamond)).createOffer(
+        uint256 badOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -327,7 +327,7 @@ contract RefinanceFacetTest is Test {
         vm.prank(otherBorrower); ERC20(mockCollateralERC20).approve(otherEscrow, type(uint256).max);
 
         vm.prank(otherBorrower);
-        uint256 otherOffer = OfferFacet(address(diamond)).createOffer(
+        uint256 otherOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
@@ -434,7 +434,7 @@ contract RefinanceFacetTest is Test {
     function testRefinanceLoanRevertsInvalidOfferAmountTooLow() public {
         // Create a new borrower offer with amount < PRINCIPAL
         vm.prank(borrower);
-        uint256 smallOffer = OfferFacet(address(diamond)).createOffer(
+        uint256 smallOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
@@ -466,7 +466,7 @@ contract RefinanceFacetTest is Test {
         vm.prank(address(diamond));
         EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(newLender, mockERC20, PRINCIPAL / 2);
         vm.prank(newLender);
-        OfferFacet(address(diamond)).acceptOffer(smallOffer, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(smallOffer, true);
 
         vm.prank(borrower);
         vm.expectRevert(RefinanceFacet.InvalidRefinanceOffer.selector);
@@ -735,7 +735,7 @@ contract RefinanceFacetTest is Test {
 
         // Borrower creates offer with different lendingAsset
         vm.prank(borrower);
-        uint256 badOffer = OfferFacet(address(diamond)).createOffer(
+        uint256 badOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: otherERC20,
@@ -765,7 +765,7 @@ contract RefinanceFacetTest is Test {
         vm.prank(address(diamond));
         EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(newLender, otherERC20, PRINCIPAL);
         vm.prank(newLender);
-        OfferFacet(address(diamond)).acceptOffer(badOffer, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(badOffer, true);
 
         vm.prank(borrower);
         vm.expectRevert(RefinanceFacet.InvalidRefinanceOffer.selector);
@@ -793,7 +793,7 @@ contract RefinanceFacetTest is Test {
 
         // Borrower creates offer with same lendingAsset but different collateralAsset
         vm.prank(borrower);
-        uint256 badOffer = OfferFacet(address(diamond)).createOffer(
+        uint256 badOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
@@ -822,7 +822,7 @@ contract RefinanceFacetTest is Test {
         vm.prank(address(diamond));
         EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(newLender, mockERC20, PRINCIPAL);
         vm.prank(newLender);
-        OfferFacet(address(diamond)).acceptOffer(badOffer, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(badOffer, true);
 
         vm.prank(borrower);
         vm.expectRevert(RefinanceFacet.InvalidRefinanceOffer.selector);
@@ -845,7 +845,7 @@ contract RefinanceFacetTest is Test {
 
         // Borrower creates offer with different prepayAsset
         vm.prank(borrower);
-        uint256 badOffer = OfferFacet(address(diamond)).createOffer(
+        uint256 badOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
@@ -874,7 +874,7 @@ contract RefinanceFacetTest is Test {
         vm.prank(address(diamond));
         EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(newLender, mockERC20, PRINCIPAL);
         vm.prank(newLender);
-        OfferFacet(address(diamond)).acceptOffer(badOffer, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(badOffer, true);
 
         vm.prank(borrower);
         vm.expectRevert(RefinanceFacet.InvalidRefinanceOffer.selector);
@@ -887,7 +887,7 @@ contract RefinanceFacetTest is Test {
     function testRefinanceLoanRevertsNoLinkedLoan() public {
         // Create a borrower offer and manipulate it to appear accepted without a real loan
         vm.prank(borrower);
-        uint256 fakeOffer = OfferFacet(address(diamond)).createOffer(
+        uint256 fakeOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
@@ -919,7 +919,7 @@ contract RefinanceFacetTest is Test {
         vm.prank(address(diamond));
         EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(newLender, mockERC20, PRINCIPAL);
         vm.prank(newLender);
-        OfferFacet(address(diamond)).acceptOffer(fakeOffer, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(fakeOffer, true);
 
         // Clear the offerIdToLoanId mapping via the layout-resilient
         // mutator so newLoanId lookup returns 0.
@@ -1020,7 +1020,7 @@ contract RefinanceFacetTest is Test {
     function testRefinanceLoanNoShortfallHigherNewRate() public {
         // Create a new borrower offer with same rate as original (no shortfall)
         vm.prank(borrower);
-        uint256 sameRateOfferId = OfferFacet(address(diamond)).createOffer(
+        uint256 sameRateOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,

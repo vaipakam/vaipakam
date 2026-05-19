@@ -221,7 +221,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
     /// @dev Creates the lender's ERC1155 rental offer and has the borrower accept.
     function _createAndAcceptNFTRental() internal returns (uint256 loanId) {
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(mockNFT1155),
@@ -246,7 +246,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
         );
 
         vm.prank(borrower);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         loanId = 1;
     }
 

@@ -190,7 +190,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
 
         // Create active loan: lender creates Lender offer, borrower accepts
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -214,7 +214,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
             })
         );
         vm.prank(borrower);
-        activeLoanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        activeLoanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         // Mint tokens to diamond for internal transfers (treasury fee etc.)
         ERC20Mock(mockERC20).mint(address(diamond), 100000 ether);
@@ -231,7 +231,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
 
         // newLender creates a Lender offer (buy offer) with duration=29 (remaining days)
         vm.prank(newLender);
-        uint256 buyOfferId = OfferFacet(address(diamond)).createOffer(
+        uint256 buyOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,

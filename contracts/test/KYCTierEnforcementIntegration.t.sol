@@ -129,7 +129,7 @@ contract KYCTierEnforcementIntegration is Test {
     function test_Tier0_AllowedBelowTier0Threshold() public {
         uint256 offerId = _lenderOffer(PRINCIPAL_UNDER_TIER0);
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         LibVaipakam.Loan memory L =
             LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(L.status), uint8(LibVaipakam.LoanStatus.Active));
@@ -141,7 +141,7 @@ contract KYCTierEnforcementIntegration is Test {
         uint256 offerId = _lenderOffer(PRINCIPAL_BETWEEN_TIER0_AND_TIER1);
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.KYCRequired.selector);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
     }
 
     // ─── Tier-1: passes the middle band, blocked above $10k ─────────────
@@ -153,7 +153,7 @@ contract KYCTierEnforcementIntegration is Test {
         uint256 offerId = _lenderOffer(PRINCIPAL_BETWEEN_TIER0_AND_TIER1);
         ProfileFacet(address(diamond)).updateKYCTier(borrower, LibVaipakam.KYCTier.Tier1);
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         LibVaipakam.Loan memory L =
             LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(L.status), uint8(LibVaipakam.LoanStatus.Active));
@@ -166,7 +166,7 @@ contract KYCTierEnforcementIntegration is Test {
         ProfileFacet(address(diamond)).updateKYCTier(borrower, LibVaipakam.KYCTier.Tier1);
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.KYCRequired.selector);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
     }
 
     // ─── Tier-2: unlimited ───────────────────────────────────────────────
@@ -177,7 +177,7 @@ contract KYCTierEnforcementIntegration is Test {
         uint256 offerId = _lenderOffer(PRINCIPAL_ABOVE_TIER1);
         ProfileFacet(address(diamond)).updateKYCTier(borrower, LibVaipakam.KYCTier.Tier2);
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         LibVaipakam.Loan memory L =
             LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(L.status), uint8(LibVaipakam.LoanStatus.Active));
@@ -192,7 +192,7 @@ contract KYCTierEnforcementIntegration is Test {
         AdminFacet(address(diamond)).setKYCEnforcement(false);
         uint256 offerId = _lenderOffer(PRINCIPAL_BETWEEN_TIER0_AND_TIER1);
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         LibVaipakam.Loan memory L =
             LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(L.status), uint8(LibVaipakam.LoanStatus.Active));
@@ -202,7 +202,7 @@ contract KYCTierEnforcementIntegration is Test {
 
     function _lenderOffer(uint256 principal) internal returns (uint256 offerId) {
         vm.prank(lender);
-        offerId = OfferFacet(address(diamond)).createOffer(
+        offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockUSDC,

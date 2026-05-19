@@ -246,7 +246,7 @@ contract Scenario2_NFTRentalLending is Test {
     function _createAndAcceptNFTRental() internal returns (uint256 loanId) {
         // Lender creates offer
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(mockNFT721),
@@ -272,7 +272,7 @@ contract Scenario2_NFTRentalLending is Test {
 
         // Borrower accepts offer
         vm.prank(borrower);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         loanId = 1; // First loan
     }
 

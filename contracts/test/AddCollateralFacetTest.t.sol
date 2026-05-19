@@ -227,7 +227,7 @@ contract AddCollateralFacetTest is Test {
     /// @dev Creates a lender offer and borrower accepts it to initiate a liquid ERC20 loan.
     function _createActiveLiquidLoan() internal returns (uint256 loanId) {
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -251,14 +251,14 @@ contract AddCollateralFacetTest is Test {
             })
         );
         vm.prank(borrower);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         loanId = 1;
     }
 
     /// @dev Creates a loan with illiquid collateral (mockIlliquidERC20).
     function _createActiveIlliquidLoan() internal returns (uint256 loanId) {
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -282,7 +282,7 @@ contract AddCollateralFacetTest is Test {
             })
         );
         vm.prank(borrower);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         loanId = 1;
     }
 

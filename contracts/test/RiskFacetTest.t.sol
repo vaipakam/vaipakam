@@ -704,7 +704,7 @@ contract RiskFacetTest is Test {
     // Helper to create and accept offer to start a loan
     function createAndAcceptOffer() internal returns (uint256 loanId) {
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -731,7 +731,7 @@ contract RiskFacetTest is Test {
         );
 
         vm.prank(borrower);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         loanId = 1; // Assuming first loan ID
     }
@@ -1001,7 +1001,7 @@ contract RiskFacetTest is Test {
         mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Illiquid);
         // Create a loan with illiquid collateral
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -1027,7 +1027,7 @@ contract RiskFacetTest is Test {
             })
         );
         vm.prank(borrower);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         uint256 loanId = 1;
         // Restore mockERC20 to liquid after loan creation
         mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
@@ -1762,7 +1762,7 @@ contract RiskFacetTest is Test {
         );
 
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -1788,7 +1788,7 @@ contract RiskFacetTest is Test {
             })
         );
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(
             offerId,
             true
         );

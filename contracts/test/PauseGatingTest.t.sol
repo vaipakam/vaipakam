@@ -93,12 +93,12 @@ contract PauseGatingTest is Test {
     function test_pause_createOffer() public {
         LibVaipakam.CreateOfferParams memory p;
         vm.expectRevert(LibPausable.EnforcedPause.selector);
-        OfferFacet(address(diamond)).createOffer(p);
+        OfferCreateFacet(address(diamond)).createOffer(p);
     }
 
     function test_pause_acceptOffer() public {
         vm.expectRevert(LibPausable.EnforcedPause.selector);
-        OfferFacet(address(diamond)).acceptOffer(0, false);
+        OfferAcceptFacet(address(diamond)).acceptOffer(0, false);
     }
 
     function test_pause_cancelOffer() public {

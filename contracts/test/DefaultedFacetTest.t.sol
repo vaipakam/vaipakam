@@ -549,7 +549,7 @@ contract DefaultedFacetTest is Test {
         uint256 quantity
     ) internal returns (uint256 loanId) {
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: lendingAsset,
@@ -574,7 +574,7 @@ contract DefaultedFacetTest is Test {
         );
 
         vm.prank(borrower);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         // Assume loanId = 1 (first loan)
         loanId = 1; // Adjust if multiple

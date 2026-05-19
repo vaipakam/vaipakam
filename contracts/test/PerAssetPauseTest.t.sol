@@ -217,7 +217,7 @@ contract PerAssetPauseTest is Test {
         p.lendingAsset = ASSET_A;
         p.collateralAsset = ASSET_B;
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.AssetPaused.selector, ASSET_A));
-        OfferFacet(address(diamond)).createOffer(p);
+        OfferCreateFacet(address(diamond)).createOffer(p);
     }
 
     function test_createOffer_blockedWhenCollateralAssetPaused() public {
@@ -228,7 +228,7 @@ contract PerAssetPauseTest is Test {
         p.lendingAsset = ASSET_A;
         p.collateralAsset = ASSET_B;
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.AssetPaused.selector, ASSET_B));
-        OfferFacet(address(diamond)).createOffer(p);
+        OfferCreateFacet(address(diamond)).createOffer(p);
     }
 
     function test_createOffer_unblockedAfterUnpause() public {
@@ -243,7 +243,7 @@ contract PerAssetPauseTest is Test {
         // are expected and acceptable — we only assert the AssetPaused
         // revert is gone.
         vm.expectRevert();
-        try OfferFacet(address(diamond)).createOffer(p) {} catch (bytes memory reason) {
+        try OfferCreateFacet(address(diamond)).createOffer(p) {} catch (bytes memory reason) {
             _assertReasonNotAssetPaused(reason, ASSET_A);
             _assertReasonNotAssetPaused(reason, ASSET_B);
         }
@@ -260,7 +260,7 @@ contract PerAssetPauseTest is Test {
         p.amount = 1;
         p.lendingAsset = address(0);
         p.collateralAsset = address(0);
-        try OfferFacet(address(diamond)).createOffer(p) {
+        try OfferCreateFacet(address(diamond)).createOffer(p) {
             // Succeeded — fine, the pause gate is not a blocker on zero.
         } catch (bytes memory reason) {
             _assertReasonNotAssetPaused(reason, address(0));

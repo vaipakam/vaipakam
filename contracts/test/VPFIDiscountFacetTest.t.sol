@@ -495,7 +495,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         _facet().setVPFIDiscountConsent(true);
 
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(
             offerId,
             true
         );
@@ -558,7 +558,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         uint256 treasuryVpfiBefore = vpfiToken.balanceOf(treasuryRecipient);
 
         vm.prank(borrower);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         // Fee = 0.1% of principal flows into treasury in the lending
         // asset, MINUS the 1% Range Orders Phase 1 matcher kickback
@@ -607,7 +607,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         uint256 treasuryVpfiBefore = vpfiToken.balanceOf(treasuryRecipient);
 
         vm.prank(borrower);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         // No VPFI moved — discount path skipped entirely.
         assertEq(
@@ -763,7 +763,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         IERC20(mockCollateralERC20).approve(address(diamond), principal);
 
         vm.prank(borrower);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -805,7 +805,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         IERC20(mockCollateralERC20).approve(address(diamond), principal);
 
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         // Phase 5 custody: the Diamond holds the full LIF in VPFI.
         (uint256 rebateAtInit, uint256 heldAtInit) = ClaimFacet(address(diamond))
@@ -893,7 +893,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         IERC20(mockCollateralERC20).approve(address(diamond), principal);
 
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         // Immediately unstake the lot — stamp-refresh fix should set the
         // post-withdraw stamp at tier 0, so the whole loan period accrues
@@ -957,7 +957,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         IERC20(mockCollateralERC20).approve(address(diamond), principal);
 
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         // Skip past grace period so time-based default fires.
         vm.warp(block.timestamp + 60 days);
@@ -999,7 +999,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         ERC20Mock(mockERC20).mint(lender, amount);
         vm.prank(lender);
         return
-            OfferFacet(address(diamond)).createOffer(
+            OfferCreateFacet(address(diamond)).createOffer(
                 LibVaipakam.CreateOfferParams({
                     offerType: LibVaipakam.OfferType.Lender,
                     lendingAsset: mockERC20,

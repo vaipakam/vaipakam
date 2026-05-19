@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -163,31 +164,43 @@ contract HelperTest {
     }
 
     // Facet-specific selector getters (list all public/external manually)
-    function getOfferFacetSelectors()
+    /// @dev `OfferFacet` was split into `OfferCreateFacet` /
+    ///      `OfferAcceptFacet` (Issue #67 — EIP-170 headroom). The seven
+    ///      former `getOfferFacetSelectors()` entries are partitioned
+    ///      across the two getters below; the selector VALUES are
+    ///      unchanged (a selector is the keccak of the signature,
+    ///      independent of which facet hosts it).
+    function getOfferCreateFacetSelectors()
         public
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](7);
-        selectors[0] = OfferFacet.createOffer.selector;
+        selectors = new bytes4[](4);
+        selectors[0] = OfferCreateFacet.createOffer.selector;
+        selectors[1] = OfferCreateFacet.getUserEscrow.selector;
+        // Phase 8b.1 Permit2 addition.
+        selectors[2] = OfferCreateFacet.createOfferWithPermit.selector;
+        // Cross-facet entry consumed by PrecloseFacet.offsetWithNewOffer
+        // (Option 3 offset flow) — address(this)-only gating.
+        selectors[3] = OfferCreateFacet.createOfferInternal.selector;
+        return selectors;
+    }
+
+    function getOfferAcceptFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](3);
         // Single `acceptOffer(uint256,bool)` signature — the VPFI discount
         // path is governed by the platform-level consent flag set via
         // VPFIDiscountFacet.setVPFIDiscountConsent, not a per-call boolean.
-        selectors[1] = bytes4(keccak256("acceptOffer(uint256,bool)"));
-        selectors[2] = OfferFacet.getUserEscrow.selector;
-        // Phase 8b.1 Permit2 additions — additive entries that coexist
-        // with the classic `createOffer` / `acceptOffer` paths.
-        selectors[3] = OfferFacet.createOfferWithPermit.selector;
-        selectors[4] = OfferFacet.acceptOfferWithPermit.selector;
+        selectors[0] = bytes4(keccak256("acceptOffer(uint256,bool)"));
+        // Phase 8b.1 Permit2 addition.
+        selectors[1] = OfferAcceptFacet.acceptOfferWithPermit.selector;
         // Cross-facet entry consumed by OfferMatchFacet.matchOffers
-        // (Range Orders Phase 1 EIP-170 split).
-        selectors[5] = OfferFacet.acceptOfferInternal.selector;
-        // Cross-facet entry consumed by PrecloseFacet.offsetWithNewOffer
-        // (Option 3 offset flow) — same address(this)-only gating.
-        selectors[6] = OfferFacet.createOfferInternal.selector;
-        // `cancelOffer`, `getCompatibleOffers`, `getOffer`,
-        // `getOfferDetails` moved to OfferCancelFacet — see
-        // `getOfferCancelFacetSelectors` below.
+        // (Range Orders Phase 1 EIP-170 split) — address(this)-only.
+        selectors[2] = OfferAcceptFacet.acceptOfferInternal.selector;
         return selectors;
     }
 

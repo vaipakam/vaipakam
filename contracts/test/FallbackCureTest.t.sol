@@ -61,7 +61,7 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
     function _createAndEnterFallback() internal returns (uint256) {
         // Offer + accept.
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -85,7 +85,7 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
             })
         );
         vm.prank(borrower);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         // Past grace.
         vm.warp(block.timestamp + DURATION_DAYS * 1 days + 3 days + 1);

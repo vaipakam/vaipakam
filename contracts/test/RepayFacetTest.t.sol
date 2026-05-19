@@ -272,7 +272,7 @@ contract RepayFacetTest is Test {
 
         // Assume create/accept loan for tests (mock or call)
         // vm.prank(lender);
-        // uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        // uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
         //     LibVaipakam.OfferType.Lender,
         //     mockERC20, // lendingAsset,
         //     1000, //amount,
@@ -288,13 +288,13 @@ contract RepayFacetTest is Test {
         // );
 
         // vm.prank(borrower);
-        // uint256 loanId = OfferFacet(address(diamond)).acceptOffer(
+        // uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(
         //     offerId,
         //     true
         // );
 
         // vm.prank(lender);
-        // uint256 offerId2 = OfferFacet(address(diamond)).createOffer(
+        // uint256 offerId2 = OfferCreateFacet(address(diamond)).createOffer(
         //     LibVaipakam.OfferType.Lender,
         //     mockNFT721, // lendingAsset,
         //     1000, //amount,
@@ -310,7 +310,7 @@ contract RepayFacetTest is Test {
         // );
 
         // vm.prank(borrower);
-        // uint256 loanId2 = OfferFacet(address(diamond)).acceptOffer(
+        // uint256 loanId2 = OfferAcceptFacet(address(diamond)).acceptOffer(
         //     offerId2,
         //     true
         // );
@@ -318,7 +318,7 @@ contract RepayFacetTest is Test {
 
     function helperOfferLoan() public {
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -343,13 +343,13 @@ contract RepayFacetTest is Test {
         );
 
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(
             offerId,
             true
         );
 
         vm.prank(lender);
-        uint256 offerId2 = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId2 = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNFT721,
@@ -374,7 +374,7 @@ contract RepayFacetTest is Test {
         );
 
         vm.prank(borrower);
-        uint256 loanId2 = OfferFacet(address(diamond)).acceptOffer(
+        uint256 loanId2 = OfferAcceptFacet(address(diamond)).acceptOffer(
             offerId2,
             true
         );
@@ -591,7 +591,7 @@ contract RepayFacetTest is Test {
     ///      open. See `LibVaipakam.Offer.allowsPartialRepay` doc.
     function testRepayPartialRevertsWhenLenderOfferDisallowed() public {
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -615,7 +615,7 @@ contract RepayFacetTest is Test {
             })
         );
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         // Snapshot reads correctly: loan inherits the offer's flag.
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
@@ -642,7 +642,7 @@ contract RepayFacetTest is Test {
         // escrow needs ≥ principal + LIF treasury fee, so fund it via
         // deal() against the proxy address.
         vm.prank(borrower);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
@@ -675,7 +675,7 @@ contract RepayFacetTest is Test {
         EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(lender, mockERC20, 2000);
 
         vm.prank(lender);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertTrue(loan.allowsPartialRepay, "snapshot should reflect borrower's request");
@@ -1265,7 +1265,7 @@ contract RepayFacetTest is Test {
     /// @dev Helper to create a loan with a specific duration in days.
     function helperOfferLoanWithDuration(uint256 durationDays) internal returns (uint256 loanId) {
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -1290,7 +1290,7 @@ contract RepayFacetTest is Test {
         );
 
         vm.prank(borrower);
-        loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
     }
 
     /// @dev 3-day loan: grace = 1 hour. Repay at endTime + 59 minutes succeeds.

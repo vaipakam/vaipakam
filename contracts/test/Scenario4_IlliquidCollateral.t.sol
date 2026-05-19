@@ -181,7 +181,7 @@ contract Scenario4_IlliquidCollateral is Test {
         // Step 1: Lender creates offer with illiquid collateral consent
         // Both assets mocked as illiquid during setUp to avoid MixedCollateralNotAllowed
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockUSDC,
@@ -207,7 +207,7 @@ contract Scenario4_IlliquidCollateral is Test {
 
         // Step 2: Borrower accepts with illiquid consent = true
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         // Verify loan is Active with riskAndTermsConsentFromBoth
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);

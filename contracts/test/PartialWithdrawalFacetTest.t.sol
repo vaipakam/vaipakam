@@ -166,7 +166,7 @@ contract PartialWithdrawalFacetTest is Test {
         vm.prank(borrower); ERC20(mockCollateralERC20).approve(borrowerEscrow, type(uint256).max);
 
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -190,7 +190,7 @@ contract PartialWithdrawalFacetTest is Test {
             })
         );
         vm.prank(borrower);
-        activeLoanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        activeLoanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
     }
 
     // ─── partialWithdrawCollateral reverts ───────────────────────────────────

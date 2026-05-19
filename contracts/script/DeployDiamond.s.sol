@@ -16,7 +16,8 @@ import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
@@ -75,7 +76,8 @@ contract DeployDiamond is Script {
         OracleAdminFacet oracleAdminFacet = new OracleAdminFacet();
         VaipakamNFTFacet nftFacet = new VaipakamNFTFacet();
         EscrowFactoryFacet escrowFactoryFacet = new EscrowFactoryFacet();
-        OfferFacet offerFacet = new OfferFacet();
+        OfferCreateFacet offerCreateFacet = new OfferCreateFacet();
+        OfferAcceptFacet offerAcceptFacet = new OfferAcceptFacet();
         // Range Orders Phase 1 EIP-170 split: matchOffers + previewMatch
         // live on a separate facet to keep OfferFacet under the
         // 24576-byte runtime-bytecode ceiling.
@@ -131,8 +133,8 @@ contract DeployDiamond is Script {
         console.log("Diamond deployed at:", diamond);
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
-        // 34 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](35);
+        // 35 facets (DiamondCutFacet already added by constructor)
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](36);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -143,7 +145,7 @@ contract DeployDiamond is Script {
         cuts[6] = _buildCut(address(oracleAdminFacet), _getOracleAdminSelectors());
         cuts[7] = _buildCut(address(nftFacet), _getNFTSelectors());
         cuts[8] = _buildCut(address(escrowFactoryFacet), _getEscrowFactorySelectors());
-        cuts[9] = _buildCut(address(offerFacet), _getOfferSelectors());
+        cuts[9] = _buildCut(address(offerCreateFacet), _getOfferCreateSelectors());
         cuts[10] = _buildCut(address(loanFacet), _getLoanSelectors());
         cuts[11] = _buildCut(address(repayFacet), _getRepaySelectors());
         cuts[12] = _buildCut(address(defaultedFacet), _getDefaultedSelectors());
@@ -171,6 +173,12 @@ contract DeployDiamond is Script {
         cuts[34] = _buildCut(
             address(riskMatchLiquidationFacet),
             _getRiskMatchLiquidationSelectors()
+        );
+        // Issue #67 — OfferFacet's accept half. The create half is
+        // cuts[9]; both replace the former single `offerFacet` cut.
+        cuts[35] = _buildCut(
+            address(offerAcceptFacet),
+            _getOfferAcceptSelectors()
         );
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
@@ -384,7 +392,8 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("oracleAdminFacet",        address(oracleAdminFacet));
         Deployments.writeFacet("vaipakamNFTFacet",        address(nftFacet));
         Deployments.writeFacet("escrowFactoryFacet",      address(escrowFactoryFacet));
-        Deployments.writeFacet("offerFacet",              address(offerFacet));
+        Deployments.writeFacet("offerCreateFacet",        address(offerCreateFacet));
+        Deployments.writeFacet("offerAcceptFacet",        address(offerAcceptFacet));
         Deployments.writeFacet("offerMatchFacet",         address(offerMatchFacet));
         Deployments.writeFacet("offerCancelFacet",        address(offerCancelFacet));
         Deployments.writeFacet("loanFacet",               address(loanFacet));
@@ -431,7 +440,8 @@ contract DeployDiamond is Script {
         console.log("OracleAdminFacet:     ", address(oracleAdminFacet));
         console.log("VaipakamNFTFacet:     ", address(nftFacet));
         console.log("EscrowFactoryFacet:   ", address(escrowFactoryFacet));
-        console.log("OfferFacet:           ", address(offerFacet));
+        console.log("OfferCreateFacet:     ", address(offerCreateFacet));
+        console.log("OfferAcceptFacet:     ", address(offerAcceptFacet));
         console.log("OfferMatchFacet:      ", address(offerMatchFacet));
         console.log("OfferCancelFacet:     ", address(offerCancelFacet));
         console.log("LoanFacet:            ", address(loanFacet));
@@ -772,31 +782,37 @@ contract DeployDiamond is Script {
         s[30] = EscrowFactoryFacet.escrowBannedSource.selector;
     }
 
-    function _getOfferSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
-        s[0] = OfferFacet.createOffer.selector;
-        s[1] = OfferFacet.acceptOffer.selector;
-        s[2] = OfferFacet.getUserEscrow.selector;
-        // Phase 8b.1 Permit2 additions.
-        s[3] = OfferFacet.createOfferWithPermit.selector;
-        s[4] = OfferFacet.acceptOfferWithPermit.selector;
+    /// @dev Issue #67 — `OfferFacet` was split into `OfferCreateFacet`
+    ///      and `OfferAcceptFacet` for EIP-170 headroom. The former
+    ///      `_getOfferSelectors()` seven entries are partitioned across
+    ///      the two getters below; selector VALUES are unchanged.
+    function _getOfferCreateSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](4);
+        s[0] = OfferCreateFacet.createOffer.selector;
+        s[1] = OfferCreateFacet.getUserEscrow.selector;
+        // Phase 8b.1 Permit2 addition.
+        s[2] = OfferCreateFacet.createOfferWithPermit.selector;
+        // Cross-facet entry used by `PrecloseFacet.offsetWithNewOffer`
+        // (Option 3) to mint a new lender offer without colliding on
+        // the shared diamond reentrancy guard the caller already holds.
+        // `address(this)`-only gated inside the facet body.
+        s[3] = OfferCreateFacet.createOfferInternal.selector;
+    }
+
+    function _getOfferAcceptSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = OfferAcceptFacet.acceptOffer.selector;
+        // Phase 8b.1 Permit2 addition.
+        s[1] = OfferAcceptFacet.acceptOfferWithPermit.selector;
         // Cross-facet entry point used exclusively by
         // `OfferMatchFacet.matchOffers` to invoke the same
         // `_acceptOffer` plumbing without re-acquiring the shared
-        // nonReentrant lock that the outer matchOffers already
-        // holds. Gated to `msg.sender == address(this)` inside the
-        // facet body — EOAs cannot call it directly through the
-        // diamond fallback. (Range Orders Phase 1 EIP-170 split.)
-        s[5] = OfferFacet.acceptOfferInternal.selector;
-        // Cross-facet entry used by `PrecloseFacet.offsetWithNewOffer`
-        // (Option 3) to mint a new lender offer without colliding on
-        // the shared diamond reentrancy guard the caller already
-        // holds. Same `address(this)`-only gating as
-        // `acceptOfferInternal`.
-        s[6] = OfferFacet.createOfferInternal.selector;
+        // nonReentrant lock. `address(this)`-only gated inside the
+        // facet body — EOAs cannot call it through the fallback.
+        s[2] = OfferAcceptFacet.acceptOfferInternal.selector;
         // `cancelOffer`, `getCompatibleOffers`, `getOffer`, and
-        // `getOfferDetails` moved to `OfferCancelFacet` as part of
-        // the second EIP-170 split — see `_getOfferCancelSelectors`.
+        // `getOfferDetails` live on `OfferCancelFacet` — see
+        // `_getOfferCancelSelectors`.
     }
 
     /// @dev OfferMatchFacet — Range Orders Phase 1 bot-driven offer
