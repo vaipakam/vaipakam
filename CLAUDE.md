@@ -683,6 +683,33 @@ merge → release notes + tick the related `docs/ToDo.md` entry + the
 `@vaipakam-labs` card moves to Done (automatic, via `Closes #<issue>` in
 the PR body). Never batch the release-notes update.
 
+## Functional specs — per-PR domain updates
+
+`docs/FunctionalSpecs/` is the **code-free, current-state** functional
+reference for the platform — the complete "what the platform does", and
+a doubles-as test-design reference. It is kept current the same way
+release notes are: **every behaviour-changing PR updates the relevant
+`docs/FunctionalSpecs/<domain>.md` in the same diff as its release-note
+fragment** — not as a post-merge step (a separate step drifts).
+
+- The release-note fragment is the *changelog* ("PR #N changed X"); the
+  Functional Spec edit is the *current-state* view ("the platform does
+  X"). Written together in the one PR — the spec section is **rewritten**
+  to the new behaviour, never appended to. Release notes are never
+  deleted; the two doc families coexist.
+- Code-free — plain English, observable/testable behaviour. No Solidity,
+  TypeScript, or ABIs.
+- The drift check in `.github/workflows/release-notes-drift.yml` warns
+  (non-blocking) if a merge changed `contracts/src/` or `apps/` but
+  touched no `docs/FunctionalSpecs/` doc — same backstop the release-note
+  fragments have.
+- See [`docs/FunctionalSpecs/README.md`](docs/FunctionalSpecs/README.md)
+  for the doc set, the domain slicing, and the full rules.
+
+Release notes, design docs (`docs/DesignsAndPlans/`), and functional
+specs stay separate on purpose: changelog vs. design exploration vs.
+current-state truth.
+
 ## Dependabot — off-chain only
 
 Dependency-update automation is scoped on purpose (see `.github/dependabot.yml`):
