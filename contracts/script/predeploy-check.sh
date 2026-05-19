@@ -199,14 +199,27 @@ else
         fi
         continue
       fi
+      # Compare the COMMITTED content (git HEAD) against `forge inspect`,
+      # not the working-tree file. The deploy's consumers receive the
+      # committed/published package, not the local working tree — a
+      # regenerated-but-uncommitted JSON would otherwise read in-sync
+      # here while the committed state is still stale.
+      local rel
+      rel="$(git -C "$dir" ls-files --full-name -- "$name.json" 2>/dev/null)"
+      if [ -z "$rel" ]; then
+        # Untracked — reported by the FACETS cross-check below as
+        # "present but UNTRACKED". Skip the content compare (no committed
+        # content to read).
+        continue
+      fi
       checked=$((checked + 1))
       if ! diff -q \
-        <(jq -S . "$f" 2>/dev/null) \
+        <(git -C "$dir" show "HEAD:$rel" 2>/dev/null | jq -S . 2>/dev/null) \
         <(printf '%s' "$fresh" | jq -S . 2>/dev/null) >/dev/null 2>&1; then
         if [ "$hard" -eq 1 ]; then
-          echo "  ✗ $label — $name.json is stale vs the compiled ABI" >&2
+          echo "  ✗ $label — committed $name.json is stale vs the compiled ABI" >&2
         else
-          echo "  ⚠ $label — $name.json is stale vs the compiled ABI" >&2
+          echo "  ⚠ $label — committed $name.json is stale vs the compiled ABI" >&2
         fi
         drift=$((drift + 1))
       fi
