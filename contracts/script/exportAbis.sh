@@ -71,7 +71,8 @@ FACETS=(
   "RiskFacet"         # calculateHealthFactor, triggerLiquidation
   "RiskMatchLiquidationFacet" # triggerInternalMatchLiquidation — moved here from RiskFacet in the #66 EIP-170 split
   "LoanFacet"         # getLoanDetails
-  "OfferFacet"        # createOffer / acceptOffer (kept for completeness — pre-2026-04 the matcher fns lived here)
+  "OfferCreateFacet"  # createOffer / getUserEscrow
+  "OfferAcceptFacet"  # acceptOffer / acceptOfferInternal
   "OfferCancelFacet"  # getOffer (offer hydration in offerMatcher detector — moved from OfferFacet in EIP-170 split)
   "OfferMatchFacet"   # previewMatch, matchOffers — current home of the matcher selectors after the facet split
   "ConfigFacet"       # getInternalMatchConfigBundle — kill-switch + tunables read by the internalMatcher detector

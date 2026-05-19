@@ -39,7 +39,8 @@
 import { createPublicClient, http, type Abi, type Address } from 'viem';
 import {
   MetricsFacetABI,
-  OfferFacetABI,
+  OfferCreateFacetABI,
+  OfferAcceptFacetABI,
   OfferCancelFacetABI,
   OfferMatchFacetABI,
 } from '@vaipakam/contracts/abis';
@@ -58,7 +59,8 @@ import {
 // Diamond.
 const MATCHER_ABI: Abi = [
   ...(MetricsFacetABI as Abi),
-  ...(OfferFacetABI as Abi),
+  ...(OfferCreateFacetABI as Abi),
+  ...(OfferAcceptFacetABI as Abi),
   ...(OfferCancelFacetABI as Abi),
   ...(OfferMatchFacetABI as Abi),
 ];
