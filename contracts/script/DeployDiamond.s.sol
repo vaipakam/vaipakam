@@ -834,11 +834,21 @@ contract DeployDiamond is Script {
     }
 
     function _getRepaySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](7);
         s[0] = RepayFacet.repayLoan.selector;
         s[1] = RepayFacet.repayPartial.selector;
         s[2] = RepayFacet.autoDeductDaily.selector;
         s[3] = RepayFacet.calculateRepaymentAmount.selector;
+        // T-034 — Periodic Interest Payment: the permissionless settler
+        // entry point plus its two companion views. These were added to
+        // RepayFacet in the T-034 PR2 work and wired into HelperTest's
+        // test-diamond list, but this production cut list was missed —
+        // so a real deploy shipped a Diamond where they revert
+        // `FunctionDoesNotExist`. Surfaced by the Issue #71
+        // selector-coverage guardrail.
+        s[4] = RepayFacet.previewPeriodicSettle.selector;
+        s[5] = RepayFacet.nextPeriodCheckpoint.selector;
+        s[6] = RepayFacet.settlePeriodicInterest.selector;
     }
 
     function _getDefaultedSelectors() internal pure returns (bytes4[] memory s) {
@@ -1309,12 +1319,18 @@ contract DeployDiamond is Script {
     /// scalar snapshot + three paginated list views collapse the
     /// frontend Dashboard's 13-RPC first-load into 3 calls.
     function _getMetricsDashboardSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        s = new bytes4[](6);
         s[0] = MetricsDashboardFacet.getUserDashboardSnapshot.selector;
         s[1] = MetricsDashboardFacet.getUserDashboardLoans.selector;
         s[2] = MetricsDashboardFacet.getUserDashboardOffers.selector;
         s[3] = MetricsDashboardFacet.getUserDashboardClaimables.selector;
         s[4] = MetricsDashboardFacet.getUserDashboardLoansBothSides.selector;
+        // Public pagination cap — exposed on the Diamond so a UI can
+        // size its page requests. Was missed in this cut list; surfaced
+        // by the Issue #71 selector-coverage guardrail. `MAX_PAGE_LIMIT`
+        // is a `public constant`; its auto-getter has no type-level
+        // `.selector`, so the signature is hashed directly.
+        s[5] = bytes4(keccak256("MAX_PAGE_LIMIT()"));
     }
 
     /// Phase 4.1 — Terms-of-Service acceptance gate. The gate stays
