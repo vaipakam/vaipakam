@@ -683,6 +683,44 @@ merge → release notes + tick the related `docs/ToDo.md` entry + the
 `@vaipakam-labs` card moves to Done (automatic, via `Closes #<issue>` in
 the PR body). Never batch the release-notes update.
 
+## Functional specs — per-PR domain updates
+
+`docs/FunctionalSpecs/` is the **code-free, implementation-independent**
+specification of what the platform is **intended** to do — the test
+oracle. **Load-bearing rule: it is sourced from the documents, never
+transcribed from the contract code.** A spec derived from the code
+cannot catch a bug — it would just confirm "the code does what the code
+does" and lock real bugs in. The code is the thing *under test*, never
+the *source* of the spec.
+
+It is kept current the same way release notes are: **every
+behaviour-changing PR updates the relevant
+`docs/FunctionalSpecs/<domain>.md` in the same diff as its release-note
+fragment** — not as a post-merge step (a separate step drifts).
+
+- The release-note fragment is the *changelog* ("PR #N changed X"); the
+  Functional Spec edit is the *intended-behaviour* view ("the platform
+  is meant to do X"). The author **states the intent** they set out to
+  build — never transcribes the code just written. If that code has a
+  bug, the spec stays correct and the divergence audit catches it.
+- Code-free — plain English, observable/testable behaviour. No Solidity,
+  TypeScript, or ABIs.
+- `docs/FunctionalSpecs/_CodeVsDocsAudit.md` records code-vs-spec
+  divergences (candidate bugs / stale docs). Code-observed behaviour
+  enters the spec **only** via an explicit human intent-decision — never
+  silently.
+- The drift check in `.github/workflows/release-notes-drift.yml` warns
+  (non-blocking) if a merge changed `contracts/src/` or `apps/` but
+  touched no `docs/FunctionalSpecs/` doc — same backstop the release-note
+  fragments have.
+- See [`docs/FunctionalSpecs/README.md`](docs/FunctionalSpecs/README.md)
+  for the doc set, the domain slicing, the conflict-precedence rule, and
+  the full rules.
+
+Release notes, design docs (`docs/DesignsAndPlans/`), and functional
+specs stay separate on purpose: changelog vs. design exploration vs.
+intended-behaviour spec.
+
 ## Dependabot — off-chain only
 
 Dependency-update automation is scoped on purpose (see `.github/dependabot.yml`):

@@ -1,12 +1,17 @@
-# Release-notes drift check.
+# Docs-drift check — release notes + functional specs.
 #
-# Non-blocking backstop for the per-PR release-note fragment convention
-# (docs/ReleaseNotes/unreleased/). On every push to main, if the merge
-# changed contracts or app code but added no docs/ReleaseNotes/ entry,
-# emit a warning + job-summary note so the gap is visible in the Actions
-# tab. It never fails the run — release notes are a discipline, not a
-# merge gate.
-name: Release-notes drift check
+# Non-blocking backstop for two per-PR documentation conventions:
+#   - the release-note fragment  (docs/ReleaseNotes/unreleased/)
+#   - the functional-spec update (docs/FunctionalSpecs/)
+#
+# On every push to main, if the merge changed contracts or app code but
+# touched neither doc family, emit a warning + job-summary note so the
+# gap is visible in the Actions tab. It never fails the run — these are
+# disciplines, not merge gates.
+#
+# (Filename kept as release-notes-drift.yml for stable references; the
+# check now covers functional specs too.)
+name: Docs-drift check (release notes + functional specs)
 
 on:
   push:
@@ -23,7 +28,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check for a release-note fragment
+      - name: Check for release-note + functional-spec updates
         env:
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.sha }}
@@ -44,8 +49,12 @@ jobs:
           changed="$(git diff --name-only "$BEFORE" "$AFTER")"
           work="$(printf '%s\n' "$changed" | grep -E '^(contracts/src/|apps/)' || true)"
           notes="$(printf '%s\n' "$changed" | grep -E '^docs/ReleaseNotes/' || true)"
+          specs="$(printf '%s\n' "$changed" | grep -E '^docs/FunctionalSpecs/' || true)"
+
+          ok=1
 
           if [ -n "$work" ] && [ -z "$notes" ]; then
+            ok=0
             echo "::warning title=Release-notes drift::This merge changed contracts/ or apps/ but added no docs/ReleaseNotes/ fragment. Add one under docs/ReleaseNotes/unreleased/ per the fragment convention."
             {
               echo "### ⚠️ Release-notes drift"
@@ -54,6 +63,20 @@ jobs:
               echo "\`docs/ReleaseNotes/\` change. Add a release-note fragment under"
               echo "\`docs/ReleaseNotes/unreleased/\` — see that directory's README."
             } >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "Release-notes check OK." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ -n "$work" ] && [ -z "$specs" ]; then
+            ok=0
+            echo "::warning title=Functional-specs drift::This merge changed contracts/ or apps/ but touched no docs/FunctionalSpecs/ doc. Update the relevant domain spec to the new behaviour — see docs/FunctionalSpecs/README.md."
+            {
+              echo "### ⚠️ Functional-specs drift"
+              echo ""
+              echo "This merge touched \`contracts/src/\` or \`apps/\` but updated no"
+              echo "\`docs/FunctionalSpecs/\` doc. Rewrite the affected domain spec to"
+              echo "the new current-state behaviour — see \`docs/FunctionalSpecs/README.md\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ "$ok" = 1 ]; then
+            echo "Docs-drift check OK." >> "$GITHUB_STEP_SUMMARY"
           fi
