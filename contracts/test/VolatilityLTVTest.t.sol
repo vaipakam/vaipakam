@@ -4,7 +4,8 @@ pragma solidity ^0.8.29;
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
@@ -56,7 +57,7 @@ contract VolatilityLTVTest is SetupTest, IVaipakamErrors {
         uint256 collateral
     ) internal returns (uint256) {
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -81,7 +82,7 @@ contract VolatilityLTVTest is SetupTest, IVaipakamErrors {
         );
 
         vm.prank(borrower);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         return 1;
     }
 

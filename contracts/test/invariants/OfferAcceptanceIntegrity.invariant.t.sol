@@ -3,7 +3,8 @@ pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
 import {InvariantBase} from "./InvariantBase.sol";
-import {OfferFacet} from "../../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";

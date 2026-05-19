@@ -7,7 +7,7 @@ import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
-import {OfferFacet} from "./OfferFacet.sol";
+import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
 
 /**
@@ -195,7 +195,7 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // prevents EOAs from calling it directly.
         bytes memory ret = LibFacet.crossFacetCallReturn(
             abi.encodeWithSelector(
-                OfferFacet.acceptOfferInternal.selector,
+                OfferAcceptFacet.acceptOfferInternal.selector,
                 borrowerOfferId,
                 /* acceptorRiskAndTermsConsent */ true,
                 /* usePermit */ false

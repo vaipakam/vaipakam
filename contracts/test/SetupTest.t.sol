@@ -6,7 +6,8 @@ import {Test} from "forge-std/Test.sol";
 import {console} from "forge-std/console.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -43,7 +44,8 @@ import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
 import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {HelperTest} from "./HelperTest.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -124,7 +126,8 @@ contract SetupTest is Test {
 
     // Facet addresses
     DiamondCutFacet cutFacet;
-    OfferFacet offerFacet;
+    OfferCreateFacet offerCreateFacet;
+    OfferAcceptFacet offerAcceptFacet;
     OfferCancelFacet offerCancelFacet;
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
@@ -185,7 +188,8 @@ contract SetupTest is Test {
         cutFacet = new DiamondCutFacet();
         diamond = new VaipakamDiamond(owner, address(cutFacet));
 
-        offerFacet = new OfferFacet();
+        offerCreateFacet = new OfferCreateFacet();
+        offerAcceptFacet = new OfferAcceptFacet();
         offerCancelFacet = new OfferCancelFacet();
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
@@ -213,11 +217,16 @@ contract SetupTest is Test {
         escrowImpl = new VaipakamEscrowImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](22);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](23);
         cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(offerFacet),
+            facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getOfferFacetSelectors() // .getOfferFacetSelectors()
+            functionSelectors: helperTest.getOfferCreateFacetSelectors() // .getOfferCreateFacetSelectors()
+        });
+        cuts[22] = IDiamondCut.FacetCut({
+            facetAddress: address(offerAcceptFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferAcceptFacetSelectors()
         });
         cuts[1] = IDiamondCut.FacetCut({
             facetAddress: address(profileFacet),

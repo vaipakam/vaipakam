@@ -10,7 +10,8 @@ import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
@@ -49,10 +50,11 @@ contract PauseGatingTest is Test {
         diamond = new VaipakamDiamond(address(this), address(cutFacet));
         HelperTest helper = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](17);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](18);
         cuts[0] = _cut(address(new AccessControlFacet()), helper.getAccessControlFacetSelectors());
         cuts[1] = _cut(address(new AdminFacet()), helper.getAdminFacetSelectors());
-        cuts[2] = _cut(address(new OfferFacet()), helper.getOfferFacetSelectors());
+        cuts[2] = _cut(address(new OfferCreateFacet()), helper.getOfferCreateFacetSelectors());
+        cuts[17] = _cut(address(new OfferAcceptFacet()), helper.getOfferAcceptFacetSelectors());
         cuts[15] = _cut(address(new OfferCancelFacet()), helper.getOfferCancelFacetSelectors());
         cuts[3] = _cut(address(new LoanFacet()), helper.getLoanFacetSelectors());
         cuts[4] = _cut(address(new RepayFacet()), helper.getRepayFacetSelectors());
@@ -93,12 +95,12 @@ contract PauseGatingTest is Test {
     function test_pause_createOffer() public {
         LibVaipakam.CreateOfferParams memory p;
         vm.expectRevert(LibPausable.EnforcedPause.selector);
-        OfferFacet(address(diamond)).createOffer(p);
+        OfferCreateFacet(address(diamond)).createOffer(p);
     }
 
     function test_pause_acceptOffer() public {
         vm.expectRevert(LibPausable.EnforcedPause.selector);
-        OfferFacet(address(diamond)).acceptOffer(0, false);
+        OfferAcceptFacet(address(diamond)).acceptOffer(0, false);
     }
 
     function test_pause_cancelOffer() public {

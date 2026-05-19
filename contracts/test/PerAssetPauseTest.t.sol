@@ -8,7 +8,8 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
@@ -39,7 +40,7 @@ contract PerAssetPauseTest is Test {
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](6);
         cuts[0] = _cut(address(new AccessControlFacet()), helper.getAccessControlFacetSelectors());
         cuts[1] = _cut(address(new AdminFacet()), helper.getAdminFacetSelectors());
-        cuts[2] = _cut(address(new OfferFacet()), helper.getOfferFacetSelectors());
+        cuts[2] = _cut(address(new OfferCreateFacet()), helper.getOfferCreateFacetSelectors());
         cuts[3] = _cut(address(new AddCollateralFacet()), helper.getAddCollateralFacetSelectors());
         cuts[4] = _cut(address(new EarlyWithdrawalFacet()), helper.getEarlyWithdrawalFacetSelectors());
         cuts[5] = _cut(address(new OfferCancelFacet()), helper.getOfferCancelFacetSelectors());
@@ -207,7 +208,7 @@ contract PerAssetPauseTest is Test {
         assertTrue(AdminFacet(address(diamond)).isAssetPaused(ASSET_A));
     }
 
-    // ─── Creation-path gating: OfferFacet.createOffer ────────────────────
+    // ─── Creation-path gating: OfferCreateFacet.createOffer ────────────────────
 
     function test_createOffer_blockedWhenLendingAssetPaused() public {
         AdminFacet(address(diamond)).pauseAsset(ASSET_A);
@@ -217,7 +218,7 @@ contract PerAssetPauseTest is Test {
         p.lendingAsset = ASSET_A;
         p.collateralAsset = ASSET_B;
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.AssetPaused.selector, ASSET_A));
-        OfferFacet(address(diamond)).createOffer(p);
+        OfferCreateFacet(address(diamond)).createOffer(p);
     }
 
     function test_createOffer_blockedWhenCollateralAssetPaused() public {
@@ -228,7 +229,7 @@ contract PerAssetPauseTest is Test {
         p.lendingAsset = ASSET_A;
         p.collateralAsset = ASSET_B;
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.AssetPaused.selector, ASSET_B));
-        OfferFacet(address(diamond)).createOffer(p);
+        OfferCreateFacet(address(diamond)).createOffer(p);
     }
 
     function test_createOffer_unblockedAfterUnpause() public {
@@ -243,7 +244,7 @@ contract PerAssetPauseTest is Test {
         // are expected and acceptable — we only assert the AssetPaused
         // revert is gone.
         vm.expectRevert();
-        try OfferFacet(address(diamond)).createOffer(p) {} catch (bytes memory reason) {
+        try OfferCreateFacet(address(diamond)).createOffer(p) {} catch (bytes memory reason) {
             _assertReasonNotAssetPaused(reason, ASSET_A);
             _assertReasonNotAssetPaused(reason, ASSET_B);
         }
@@ -260,7 +261,7 @@ contract PerAssetPauseTest is Test {
         p.amount = 1;
         p.lendingAsset = address(0);
         p.collateralAsset = address(0);
-        try OfferFacet(address(diamond)).createOffer(p) {
+        try OfferCreateFacet(address(diamond)).createOffer(p) {
             // Succeeded — fine, the pause gate is not a blocker on zero.
         } catch (bytes memory reason) {
             _assertReasonNotAssetPaused(reason, address(0));

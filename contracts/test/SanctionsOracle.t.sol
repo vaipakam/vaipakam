@@ -3,7 +3,8 @@ pragma solidity ^0.8.29;
 
 import {RiskFacetTest} from "./RiskFacetTest.t.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
@@ -126,7 +127,7 @@ contract SanctionsOracleTest is RiskFacetTest {
                 lender
             )
         );
-        OfferFacet(address(diamond)).createOffer(_buildLenderOfferParams());
+        OfferCreateFacet(address(diamond)).createOffer(_buildLenderOfferParams());
     }
 
     // ─── acceptOffer enforcement ───────────────────────────────────────────
@@ -134,7 +135,7 @@ contract SanctionsOracleTest is RiskFacetTest {
     function test_acceptOffer_RevertsWhenAcceptorSanctioned() public {
         // Step 1: clean creator posts an offer.
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             _buildLenderOfferParams()
         );
 
@@ -149,7 +150,7 @@ contract SanctionsOracleTest is RiskFacetTest {
                 borrower
             )
         );
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
     }
 
     function test_acceptOffer_RevertsWhenCreatorSanctionedAfterPosting() public {
@@ -157,7 +158,7 @@ contract SanctionsOracleTest is RiskFacetTest {
         // before anyone accepts. The accept call must still revert so the
         // acceptor doesn't unwittingly pair with a now-tainted counterparty.
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             _buildLenderOfferParams()
         );
 
@@ -171,12 +172,12 @@ contract SanctionsOracleTest is RiskFacetTest {
                 lender
             )
         );
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
     }
 
     // ─── Tier-1 enforcement at non-OfferFacet entry points ────────────────
     //
-    // OfferFacet.createOffer / acceptOffer were already gated; tests for
+    // OfferCreateFacet.createOffer / acceptOffer were already gated; tests for
     // those live above. This block covers the additional Tier-1 sites
     // added per the post-audit hardening pass:
     //   - EscrowFactoryFacet.getOrCreateUserEscrow

@@ -5,7 +5,8 @@ pragma solidity ^0.8.29;
 import {Test} from "forge-std/Test.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -63,7 +64,8 @@ contract Scenario2_NFTRentalLending is Test {
 
     // Facet instances
     DiamondCutFacet cutFacet;
-    OfferFacet offerFacet;
+    OfferCreateFacet offerCreateFacet;
+    OfferAcceptFacet offerAcceptFacet;
     OfferCancelFacet offerCancelFacet;
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
@@ -125,7 +127,8 @@ contract Scenario2_NFTRentalLending is Test {
         // Deploy facets
         cutFacet = new DiamondCutFacet();
         diamond = new VaipakamDiamond(owner, address(cutFacet));
-        offerFacet = new OfferFacet();
+        offerCreateFacet = new OfferCreateFacet();
+        offerAcceptFacet = new OfferAcceptFacet();
         offerCancelFacet = new OfferCancelFacet();
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
@@ -143,8 +146,13 @@ contract Scenario2_NFTRentalLending is Test {
         escrowImpl = new VaipakamEscrowImplementation();
 
         // Cut all facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](15);
-        cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferFacetSelectors()});
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](16);
+        cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
+        cuts[15] = IDiamondCut.FacetCut({
+            facetAddress: address(offerAcceptFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferAcceptFacetSelectors()
+        });
         cuts[1] = IDiamondCut.FacetCut({facetAddress: address(profileFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
         cuts[2] = IDiamondCut.FacetCut({facetAddress: address(oracleFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});
         cuts[3] = IDiamondCut.FacetCut({facetAddress: address(nftFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaipakamNFTFacetSelectors()});
@@ -246,7 +254,7 @@ contract Scenario2_NFTRentalLending is Test {
     function _createAndAcceptNFTRental() internal returns (uint256 loanId) {
         // Lender creates offer
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(mockNFT721),
@@ -272,7 +280,7 @@ contract Scenario2_NFTRentalLending is Test {
 
         // Borrower accepts offer
         vm.prank(borrower);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         loanId = 1; // First loan
     }
 

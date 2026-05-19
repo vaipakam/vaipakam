@@ -6,7 +6,8 @@ import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -36,7 +37,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
  *           - Tier 2 (full)    — allowed at $10,000+.
  *
  *         Each rung is exercised via the full offer → accept path so the
- *         test doubles as a regression guard for `OfferFacet.acceptOffer`
+ *         test doubles as a regression guard for `OfferAcceptFacet.acceptOffer`
  *         and `_calculateTransactionValueNumeraire`, not just the
  *         `ProfileFacet.meetsKYCRequirement` view (which has unit-level
  *         coverage).
@@ -129,7 +130,7 @@ contract KYCTierEnforcementIntegration is Test {
     function test_Tier0_AllowedBelowTier0Threshold() public {
         uint256 offerId = _lenderOffer(PRINCIPAL_UNDER_TIER0);
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         LibVaipakam.Loan memory L =
             LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(L.status), uint8(LibVaipakam.LoanStatus.Active));
@@ -141,7 +142,7 @@ contract KYCTierEnforcementIntegration is Test {
         uint256 offerId = _lenderOffer(PRINCIPAL_BETWEEN_TIER0_AND_TIER1);
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.KYCRequired.selector);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
     }
 
     // ─── Tier-1: passes the middle band, blocked above $10k ─────────────
@@ -153,7 +154,7 @@ contract KYCTierEnforcementIntegration is Test {
         uint256 offerId = _lenderOffer(PRINCIPAL_BETWEEN_TIER0_AND_TIER1);
         ProfileFacet(address(diamond)).updateKYCTier(borrower, LibVaipakam.KYCTier.Tier1);
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         LibVaipakam.Loan memory L =
             LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(L.status), uint8(LibVaipakam.LoanStatus.Active));
@@ -166,18 +167,18 @@ contract KYCTierEnforcementIntegration is Test {
         ProfileFacet(address(diamond)).updateKYCTier(borrower, LibVaipakam.KYCTier.Tier1);
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.KYCRequired.selector);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
     }
 
     // ─── Tier-2: unlimited ───────────────────────────────────────────────
 
     /// @notice Tier-2 borrower clears every threshold. End-to-end proof that
-    ///         the full KYC gate chains through OfferFacet.acceptOffer.
+    ///         the full KYC gate chains through OfferAcceptFacet.acceptOffer.
     function test_Tier2_AllowedAboveTier1Threshold() public {
         uint256 offerId = _lenderOffer(PRINCIPAL_ABOVE_TIER1);
         ProfileFacet(address(diamond)).updateKYCTier(borrower, LibVaipakam.KYCTier.Tier2);
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         LibVaipakam.Loan memory L =
             LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(L.status), uint8(LibVaipakam.LoanStatus.Active));
@@ -192,7 +193,7 @@ contract KYCTierEnforcementIntegration is Test {
         AdminFacet(address(diamond)).setKYCEnforcement(false);
         uint256 offerId = _lenderOffer(PRINCIPAL_BETWEEN_TIER0_AND_TIER1);
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         LibVaipakam.Loan memory L =
             LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(L.status), uint8(LibVaipakam.LoanStatus.Active));
@@ -202,7 +203,7 @@ contract KYCTierEnforcementIntegration is Test {
 
     function _lenderOffer(uint256 principal) internal returns (uint256 offerId) {
         vm.prank(lender);
-        offerId = OfferFacet(address(diamond)).createOffer(
+        offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockUSDC,
@@ -228,7 +229,8 @@ contract KYCTierEnforcementIntegration is Test {
     }
 
     function _cutCoreFacets() internal {
-        OfferFacet offerFacet = new OfferFacet();
+        OfferCreateFacet offerCreateFacet = new OfferCreateFacet();
+        OfferAcceptFacet offerAcceptFacet = new OfferAcceptFacet();
         OfferCancelFacet offerCancelFacet = new OfferCancelFacet();
         ProfileFacet profileFacet = new ProfileFacet();
         OracleFacet oracleFacet = new OracleFacet();
@@ -239,11 +241,16 @@ contract KYCTierEnforcementIntegration is Test {
         AdminFacet adminFacet = new AdminFacet();
         AccessControlFacet accessControlFacet = new AccessControlFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](11);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](12);
         cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(offerFacet),
+            facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getOfferFacetSelectors()
+            functionSelectors: helperTest.getOfferCreateFacetSelectors()
+        });
+        cuts[11] = IDiamondCut.FacetCut({
+            facetAddress: address(offerAcceptFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferAcceptFacetSelectors()
         });
         cuts[1] = IDiamondCut.FacetCut({
             facetAddress: address(profileFacet),

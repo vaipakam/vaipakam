@@ -18,7 +18,7 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
-import {OfferFacet} from "./OfferFacet.sol";
+import {OfferCreateFacet} from "./OfferCreateFacet.sol";
 
 /**
  * @title EarlyWithdrawalFacet
@@ -403,7 +403,7 @@ contract EarlyWithdrawalFacet is
             creatorRiskAndTermsConsent
         );
         bytes memory result = LibFacet.crossFacetCallReturn(
-            abi.encodeWithSelector(OfferFacet.createOffer.selector, params),
+            abi.encodeWithSelector(OfferCreateFacet.createOffer.selector, params),
             OfferCreationFailed.selector
         );
         saleOfferId = abi.decode(result, (uint256));

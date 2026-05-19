@@ -14,7 +14,8 @@ import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Recei
 import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -41,7 +42,8 @@ contract EscrowFactoryFacetTest is Test {
     DiamondCutFacet cutFacet;
     EscrowFactoryFacet escrowFacet;
     AdminFacet adminFacet;
-    OfferFacet offerFacet;
+    OfferCreateFacet offerCreateFacet;
+    OfferAcceptFacet offerAcceptFacet;
     OfferCancelFacet offerCancelFacet;
     AccessControlFacet accessControlFacet;
     HelperTest helperTest;
@@ -64,13 +66,14 @@ contract EscrowFactoryFacetTest is Test {
         diamond = new VaipakamDiamond(owner, address(cutFacet));
         escrowFacet = new EscrowFactoryFacet();
         adminFacet = new AdminFacet();
-        offerFacet = new OfferFacet();
+        offerCreateFacet = new OfferCreateFacet();
+        offerAcceptFacet = new OfferAcceptFacet();
         offerCancelFacet = new OfferCancelFacet();
         accessControlFacet = new AccessControlFacet();
         TestMutatorFacet testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](6);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](7);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(escrowFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -82,9 +85,14 @@ contract EscrowFactoryFacetTest is Test {
             functionSelectors: helperTest.getAdminFacetSelectors()
         });
         cuts[2] = IDiamondCut.FacetCut({
-            facetAddress: address(offerFacet),
+            facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getOfferFacetSelectors()
+            functionSelectors: helperTest.getOfferCreateFacetSelectors()
+        });
+        cuts[6] = IDiamondCut.FacetCut({
+            facetAddress: address(offerAcceptFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferAcceptFacetSelectors()
         });
         cuts[3] = IDiamondCut.FacetCut({
             facetAddress: address(accessControlFacet),

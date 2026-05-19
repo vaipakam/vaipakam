@@ -4,7 +4,8 @@ pragma solidity ^0.8.29;
 import {Test} from "forge-std/Test.sol";
 import {defaultAdapterCalls} from "../helpers/AdapterCallHelpers.sol";
 import {InvariantBase} from "./InvariantBase.sol";
-import {OfferFacet} from "../../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
@@ -114,7 +115,7 @@ contract Handler is Test {
         });
 
         vm.prank(lender);
-        try OfferFacet(diamond).createOffer(p) returns (uint256 id) {
+        try OfferCreateFacet(diamond).createOffer(p) returns (uint256 id) {
             lenderOfferIds.push(id);
             ghostDeposits[usdc] += amount;
         } catch {}
@@ -161,7 +162,7 @@ contract Handler is Test {
         });
 
         vm.prank(borrower);
-        try OfferFacet(diamond).createOffer(p) returns (uint256 id) {
+        try OfferCreateFacet(diamond).createOffer(p) returns (uint256 id) {
             borrowerOfferIds.push(id);
             ghostDeposits[weth] += collateralAmount;
         } catch {}
@@ -183,7 +184,7 @@ contract Handler is Test {
         if (ERC20Mock(weth).balanceOf(borrower) < o.collateralAmount) return;
 
         vm.prank(borrower);
-        try OfferFacet(diamond).acceptOffer(offerId, true) returns (uint256 loanId) {
+        try OfferAcceptFacet(diamond).acceptOffer(offerId, true) returns (uint256 loanId) {
             loanIds.push(loanId);
             ghostDeposits[weth] += o.collateralAmount;
             ghostWithdrawals[usdc] += o.amount; // principal leaves escrow to borrower wallet
@@ -207,7 +208,7 @@ contract Handler is Test {
         if (ERC20Mock(usdc).balanceOf(lender) < o.amount) return;
 
         vm.prank(lender);
-        try OfferFacet(diamond).acceptOffer(offerId, true) returns (uint256 loanId) {
+        try OfferAcceptFacet(diamond).acceptOffer(offerId, true) returns (uint256 loanId) {
             loanIds.push(loanId);
             ghostDeposits[usdc] += o.amount;
             ghostWithdrawals[usdc] += o.amount; // principal flows lender→borrower through escrow

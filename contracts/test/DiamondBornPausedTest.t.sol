@@ -8,7 +8,8 @@ import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {HelperTest} from "./HelperTest.sol";
 
@@ -88,7 +89,7 @@ contract DiamondBornPausedTest is Test {
 
     /// @notice While in the born-paused state, any facet selector
     ///         gated by `whenNotPaused` must revert
-    ///         `LibPausable.EnforcedPause`. Uses {OfferFacet.createOffer}
+    ///         `LibPausable.EnforcedPause`. Uses {OfferCreateFacet.createOffer}
     ///         as the canary — its modifier ordering hits
     ///         `whenNotPaused` first, before any role / oracle /
     ///         input-validation work, so the revert is observable
@@ -97,10 +98,10 @@ contract DiamondBornPausedTest is Test {
         _addAccessControlAndAdmin();
         AccessControlFacet(address(diamond)).initializeAccessControl();
 
-        bytes4[] memory selectors = helper.getOfferFacetSelectors();
+        bytes4[] memory selectors = helper.getOfferCreateFacetSelectors();
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(new OfferFacet()),
+            facetAddress: address(new OfferCreateFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: selectors
         });
@@ -108,7 +109,7 @@ contract DiamondBornPausedTest is Test {
 
         LibVaipakam.CreateOfferParams memory params;
         vm.expectRevert(LibPausable.EnforcedPause.selector);
-        OfferFacet(address(diamond)).createOffer(params);
+        OfferCreateFacet(address(diamond)).createOffer(params);
     }
 
     // ─── helpers ────────────────────────────────────────────────────────────

@@ -6,7 +6,8 @@ import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -127,7 +128,7 @@ contract PositiveFlowsGapFillers is Test {
 
         uint256 offerId = _createLenderOffer();
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         LibVaipakam.Loan memory L =
             LoanFacet(address(diamond)).getLoanDetails(loanId);
@@ -165,7 +166,7 @@ contract PositiveFlowsGapFillers is Test {
 
         uint256 offerId = _createLenderOffer();
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         uint256 expectedFee = (PRINCIPAL * LOAN_INITIATION_FEE_BPS) / BASIS_POINTS;
         // Range Orders Phase 1 — 1% LIF matcher kickback. The acceptor
@@ -216,7 +217,7 @@ contract PositiveFlowsGapFillers is Test {
     function test_Positive_PartialRepay_TwoStep_CompletesWithNoDust() public {
         uint256 offerId = _createLenderOffer();
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         LibVaipakam.Loan memory L0 =
             LoanFacet(address(diamond)).getLoanDetails(loanId);
@@ -296,7 +297,7 @@ contract PositiveFlowsGapFillers is Test {
         );
 
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         assertTrue(
             ProfileFacet(address(diamond)).isLoanKeeperEnabled(loanId, keeperEOA),
@@ -331,7 +332,7 @@ contract PositiveFlowsGapFillers is Test {
 
     function _createLenderOffer() internal returns (uint256 offerId) {
         vm.prank(lender);
-        offerId = OfferFacet(address(diamond)).createOffer(
+        offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockUSDC,
@@ -357,7 +358,8 @@ contract PositiveFlowsGapFillers is Test {
     }
 
     function _cutCoreFacets() internal {
-        OfferFacet offerFacet = new OfferFacet();
+        OfferCreateFacet offerCreateFacet = new OfferCreateFacet();
+        OfferAcceptFacet offerAcceptFacet = new OfferAcceptFacet();
         OfferCancelFacet offerCancelFacet = new OfferCancelFacet();
         ProfileFacet profileFacet = new ProfileFacet();
         OracleFacet oracleFacet = new OracleFacet();
@@ -372,11 +374,16 @@ contract PositiveFlowsGapFillers is Test {
         AddCollateralFacet addCollateralFacet = new AddCollateralFacet();
         AccessControlFacet accessControlFacet = new AccessControlFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](15);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](16);
         cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(offerFacet),
+            facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getOfferFacetSelectors()
+            functionSelectors: helperTest.getOfferCreateFacetSelectors()
+        });
+        cuts[15] = IDiamondCut.FacetCut({
+            facetAddress: address(offerAcceptFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferAcceptFacetSelectors()
         });
         cuts[1] = IDiamondCut.FacetCut({
             facetAddress: address(profileFacet),

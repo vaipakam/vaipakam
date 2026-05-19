@@ -8,7 +8,8 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -142,7 +143,7 @@ contract Permit2IntegrationTest is SetupTest {
         uint256 escrowBalBefore = IERC20(mockERC20).balanceOf(lenderEscrow);
 
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOfferWithPermit(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOfferWithPermit(
             _lenderERC20OfferParams(principal),
             permit,
             ""
@@ -167,7 +168,7 @@ contract Permit2IntegrationTest is SetupTest {
         vm.prank(lender);
         IERC20(mockERC20).approve(address(diamond), principal);
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             _lenderERC20OfferParams(principal)
         );
 
@@ -183,7 +184,7 @@ contract Permit2IntegrationTest is SetupTest {
         );
 
         vm.prank(borrower);
-        OfferFacet(address(diamond)).acceptOfferWithPermit(
+        OfferAcceptFacet(address(diamond)).acceptOfferWithPermit(
             offerId,
             /*acceptorRiskAndTermsConsent=*/ true,
             permit,
@@ -243,7 +244,7 @@ contract Permit2IntegrationTest is SetupTest {
                 mockCollateralERC20
             )
         );
-        OfferFacet(address(diamond)).createOfferWithPermit(
+        OfferCreateFacet(address(diamond)).createOfferWithPermit(
             _lenderERC20OfferParams(principal),
             wrongPermit,
             ""
@@ -257,7 +258,7 @@ contract Permit2IntegrationTest is SetupTest {
         vm.prank(lender);
         IERC20(mockERC20).approve(address(diamond), principal);
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             _lenderERC20OfferParams(principal)
         );
 
@@ -275,7 +276,7 @@ contract Permit2IntegrationTest is SetupTest {
                 mockERC20
             )
         );
-        OfferFacet(address(diamond)).acceptOfferWithPermit(
+        OfferAcceptFacet(address(diamond)).acceptOfferWithPermit(
             offerId,
             /*acceptorRiskAndTermsConsent=*/ true,
             wrongPermit,

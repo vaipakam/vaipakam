@@ -3,7 +3,8 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
@@ -80,7 +81,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         LibVaipakam.CreateOfferParams memory p
     ) internal returns (uint256) {
         vm.prank(lender);
-        return OfferFacet(address(diamond)).createOffer(p);
+        return OfferCreateFacet(address(diamond)).createOffer(p);
     }
 
     function _expectCadenceNotAllowed(
@@ -277,7 +278,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         uint256 offerId = _create(_baseLenderParams(1000 ether, 60, MONTHLY));
         uint256 startTs = block.timestamp;
         vm.prank(borrower);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         LibVaipakam.Loan memory l =
             LoanFacet(address(diamond)).getLoanDetails(1);
@@ -291,7 +292,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
     function testNoneCadence_LoanSnapshotIsNone() public {
         uint256 offerId = _create(_baseLenderParams(1000 ether, 30, NONE_C));
         vm.prank(borrower);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         LibVaipakam.Loan memory l =
             LoanFacet(address(diamond)).getLoanDetails(1);
         assertEq(uint8(l.periodicInterestCadence), uint8(NONE_C));

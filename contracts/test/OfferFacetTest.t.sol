@@ -6,7 +6,9 @@ import {Test} from "forge-std/Test.sol";
 import {console} from "forge-std/console.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {LibUserEscrow} from "../src/libraries/LibUserEscrow.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
@@ -34,7 +36,8 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC1155Mock} from "./mocks/ERC1155Mock.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {HelperTest} from "./HelperTest.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -115,13 +118,17 @@ contract OfferFacetTest is Test {
         HelperTest helperTest = new HelperTest();
 
         // Prepare cuts for required facets
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](9);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](10);
         cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(new OfferFacet()),
+            facetAddress: address(new OfferCreateFacet()),
             action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: getOfferFacetSelectors() // getSelectors("OfferFacet")
+            functionSelectors: getOfferCreateFacetSelectors()
         });
-        // logSelectors("OfferFacet", cuts[0]);
+        cuts[9] = IDiamondCut.FacetCut({
+            facetAddress: address(new OfferAcceptFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: getOfferAcceptFacetSelectors()
+        });
         cuts[1] = IDiamondCut.FacetCut({
             facetAddress: address(new ProfileFacet()),
             action: IDiamondCut.FacetCutAction.Add,
@@ -248,20 +255,29 @@ contract OfferFacetTest is Test {
     }
 
     // Facet-specific selector getters (list all public/external manually)
-    function getOfferFacetSelectors()
+    function getOfferCreateFacetSelectors()
         internal
         pure
         returns (bytes4[] memory selectors)
     {
-        // OfferFacet split for EIP-170: cancelOffer +
-        // getCompatibleOffers + getOffer moved to OfferCancelFacet,
-        // which is cut into the test diamond separately above.
-        selectors = new bytes4[](3);
-        selectors[0] = OfferFacet.createOffer.selector;
+        // OfferFacet split into OfferCreateFacet / OfferAcceptFacet
+        // (Issue #67); cancelOffer + getCompatibleOffers + getOffer are
+        // on OfferCancelFacet, cut into the test diamond separately.
+        selectors = new bytes4[](2);
+        selectors[0] = OfferCreateFacet.createOffer.selector;
+        selectors[1] = OfferCreateFacet.getUserEscrow.selector;
+        return selectors;
+    }
+
+    function getOfferAcceptFacetSelectors()
+        internal
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](1);
         // Single `acceptOffer(uint256,bool)` — VPFI discount path is gated
         // by the platform-level consent flag, not a per-call boolean.
-        selectors[1] = bytes4(keccak256("acceptOffer(uint256,bool)"));
-        selectors[2] = OfferFacet.getUserEscrow.selector;
+        selectors[0] = bytes4(keccak256("acceptOffer(uint256,bool)"));
         return selectors;
     }
 
@@ -385,7 +401,7 @@ contract OfferFacetTest is Test {
     function testCreateERC20LenderOffer() public {
         console.log("Entered into test Function");
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -435,7 +451,7 @@ contract OfferFacetTest is Test {
     function testCreateOfferRevertsWhenLendingEqualsCollateral() public {
         vm.prank(user1);
         vm.expectRevert(IVaipakamErrors.SelfCollateralizedOffer.selector);
-        OfferFacet(address(diamond)).createOffer(
+        OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -462,7 +478,7 @@ contract OfferFacetTest is Test {
 
     function testCreateNFTRentalLenderOffer() public {
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNFT721,
@@ -515,7 +531,7 @@ contract OfferFacetTest is Test {
         TestMutatorFacet(address(diamond)).setKYCEnforcementFlag(true);
 
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -542,7 +558,7 @@ contract OfferFacetTest is Test {
         // No KYC (Tier0 by default) → revert because $3000 > Tier0 threshold ($1000)
         vm.expectRevert(IVaipakamErrors.KYCRequired.selector);
         vm.prank(user2);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         // Grant Tier1 KYC (sufficient for $1k–$10k range)
         vm.prank(owner);
@@ -557,7 +573,7 @@ contract OfferFacetTest is Test {
             abi.encode(1) // Mock loanId
         );
         vm.prank(user2);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(
             offerId,
             true
         );
@@ -578,7 +594,7 @@ contract OfferFacetTest is Test {
         ProfileFacet(address(diamond)).setUserCountry("IR");
 
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -604,12 +620,12 @@ contract OfferFacetTest is Test {
 
         vm.expectRevert(IVaipakamErrors.CountriesNotCompatible.selector);
         vm.prank(user3);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
     }
 
     function testAcceptNFTRentalLocksPrepayAndSetsUser() public {
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNFT721,
@@ -649,7 +665,7 @@ contract OfferFacetTest is Test {
         deal(mockERC20, user2, expectedPrepay + buffer);
 
         vm.prank(user2);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(
             offerId,
             true
         );
@@ -664,7 +680,7 @@ contract OfferFacetTest is Test {
 
     function testCancelOfferReleasesAssets() public {
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -704,7 +720,7 @@ contract OfferFacetTest is Test {
     ///      `delete s.offers[offerId]` wipes the storage slot.
     function testCancelOfferEmitsRichDetailsEvent() public {
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -776,7 +792,7 @@ contract OfferFacetTest is Test {
         vm.expectRevert /* Invalid */();
         vm.prank(user1);
         // Create Offer with amount=0
-        OfferFacet(address(diamond)).createOffer(
+        OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -816,7 +832,7 @@ contract OfferFacetTest is Test {
         TestMutatorFacet(address(diamond)).setKYCEnforcementFlag(true);
         // Test threshold logic for KYC: $1 price * 2010e18 tokens = $2010e18 > Tier0 threshold
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -843,7 +859,7 @@ contract OfferFacetTest is Test {
         // No KYC (Tier0) → revert because $2010 > Tier0 threshold ($1000)
         vm.expectRevert(IVaipakamErrors.KYCRequired.selector);
         vm.prank(user2);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         // Grant Tier1 KYC (amount=2010e18 * $1 = $2,010e18 needs Tier1)
         vm.prank(owner);
@@ -858,7 +874,7 @@ contract OfferFacetTest is Test {
             abi.encode(1) // Mock loanId
         );
         vm.prank(user2);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(
             offerId,
             true
         );
@@ -869,9 +885,9 @@ contract OfferFacetTest is Test {
 
     /// @dev Covers durationDays == 0 → InvalidOfferType revert
     function testCreateOfferRevertsIfDurationZero() public {
-        vm.expectRevert(OfferFacet.InvalidOfferType.selector);
+        vm.expectRevert(OfferCreateFacet.InvalidOfferType.selector);
         vm.prank(user1);
-        OfferFacet(address(diamond)).createOffer(
+        OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -903,13 +919,13 @@ contract OfferFacetTest is Test {
     function testCreateOfferRevertsIfDurationAboveCap() public {
         vm.expectRevert(
             abi.encodeWithSelector(
-                OfferFacet.OfferDurationExceedsCap.selector,
+                OfferCreateFacet.OfferDurationExceedsCap.selector,
                 uint256(366),
                 uint256(LibVaipakam.MAX_OFFER_DURATION_DAYS_DEFAULT)
             )
         );
         vm.prank(user1);
-        OfferFacet(address(diamond)).createOffer(
+        OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -942,7 +958,7 @@ contract OfferFacetTest is Test {
 
         vm.expectRevert(IVaipakamErrors.RiskAndTermsConsentRequired.selector);
         vm.prank(user1);
-        OfferFacet(address(diamond)).createOffer(
+        OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNFT721,
@@ -970,7 +986,7 @@ contract OfferFacetTest is Test {
     /// @dev Covers Borrower offer with ERC20 collateral: borrower locks collateral in escrow
     function testCreateBorrowerOfferERC20() public {
         vm.prank(user2);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
@@ -1002,7 +1018,7 @@ contract OfferFacetTest is Test {
     /// @dev Covers cancelOffer → NotOfferCreator revert (wrong caller)
     function testCancelOfferRevertsNotCreator() public {
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -1040,7 +1056,7 @@ contract OfferFacetTest is Test {
         ProfileFacet(address(diamond)).updateKYCTier(user2, LibVaipakam.KYCTier.Tier2);
 
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -1072,11 +1088,11 @@ contract OfferFacetTest is Test {
         );
         vm.startPrank(user2);
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         vm.stopPrank();
         // Keep mocks; cancelOffer checks offer.accepted BEFORE making any cross-facet calls
 
-        vm.expectRevert(OfferFacet.OfferAlreadyAccepted.selector);
+        vm.expectRevert(OfferAcceptFacet.OfferAlreadyAccepted.selector);
         vm.prank(user1);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
@@ -1084,9 +1100,9 @@ contract OfferFacetTest is Test {
 
     /// @dev Covers acceptOffer → InvalidOffer when offer creator is address(0)
     function testAcceptOfferRevertsInvalidOffer() public {
-        vm.expectRevert(OfferFacet.InvalidOffer.selector);
+        vm.expectRevert(OfferAcceptFacet.InvalidOffer.selector);
         vm.prank(user2);
-        OfferFacet(address(diamond)).acceptOffer(9999, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(9999, true);
     }
 
     /// @dev Covers acceptOffer → OfferAlreadyAccepted revert (double accept)
@@ -1103,7 +1119,7 @@ contract OfferFacetTest is Test {
         ProfileFacet(address(diamond)).setUserCountry("FR");
 
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -1134,13 +1150,13 @@ contract OfferFacetTest is Test {
         );
         vm.startPrank(user2);
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         vm.stopPrank();
         // Keep mocks active; the second acceptOffer should hit OfferAlreadyAccepted BEFORE any cross-facet call
 
-        vm.expectRevert(OfferFacet.OfferAlreadyAccepted.selector);
+        vm.expectRevert(OfferAcceptFacet.OfferAlreadyAccepted.selector);
         vm.prank(user3);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         vm.clearMockedCalls();
     }
 
@@ -1148,7 +1164,7 @@ contract OfferFacetTest is Test {
     function testAcceptOfferRevertsNonLiquidNoConsent() public {
         // user1 creates NFT lender offer with consent=true
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNFT721,
@@ -1179,13 +1195,13 @@ contract OfferFacetTest is Test {
 
         vm.expectRevert(IVaipakamErrors.RiskAndTermsConsentRequired.selector);
         vm.prank(user2);
-        OfferFacet(address(diamond)).acceptOffer(offerId, false);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, false);
     }
 
     /// @dev Covers cancelOffer for NFT ERC721 lender offer: withdraws ERC721 from escrow
     function testCancelNFTLenderOffer() public {
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNFT721,
@@ -1224,7 +1240,7 @@ contract OfferFacetTest is Test {
     function testCancelBorrowerOfferERC20() public {
         uint256 balBefore = ERC20(mockERC20).balanceOf(user2);
         vm.prank(user2);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
@@ -1266,7 +1282,7 @@ contract OfferFacetTest is Test {
         collateralNFT.approve(address(diamond), 42);
 
         vm.prank(user2);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
@@ -1312,7 +1328,7 @@ contract OfferFacetTest is Test {
         collateral1155.setApprovalForAll(address(diamond), true);
 
         vm.prank(user2);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
@@ -1357,7 +1373,7 @@ contract OfferFacetTest is Test {
         ProfileFacet(address(diamond)).updateKYCTier(user2, LibVaipakam.KYCTier.Tier2);
         // user2 creates a Borrower offer (they want to borrow)
         vm.prank(user2);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
@@ -1394,7 +1410,7 @@ contract OfferFacetTest is Test {
             abi.encode(2)
         );
         vm.prank(user1);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         assertEq(loanId, 2);
         vm.clearMockedCalls();
     }
@@ -1403,7 +1419,7 @@ contract OfferFacetTest is Test {
     function testGetCompatibleOffersReturnsList() public {
         // user1 (US) creates offer
         vm.prank(user1);
-        OfferFacet(address(diamond)).createOffer(
+        OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -1437,7 +1453,7 @@ contract OfferFacetTest is Test {
     function testCreateBorrowerOfferERC721PrepayPath() public {
         // user1 first creates the lender offer with NFT asset
         vm.prank(user1);
-        OfferFacet(address(diamond)).createOffer(
+        OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNFT721,
@@ -1485,7 +1501,7 @@ contract OfferFacetTest is Test {
         );
 
         vm.prank(user2);
-        uint256 offerId2 = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId2 = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: address(nft2),
@@ -1535,7 +1551,7 @@ contract OfferFacetTest is Test {
         nft1155.setApprovalForAll(lenderEscrow, true);
 
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(nft1155),
@@ -1588,7 +1604,7 @@ contract OfferFacetTest is Test {
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
 
         vm.prank(user2);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: address(nft2),
@@ -1635,7 +1651,7 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
         vm.prank(user2);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: address(nft1155),
@@ -1670,7 +1686,7 @@ contract OfferFacetTest is Test {
     /// @dev Covers cancelOffer CrossFacetCallFailed when ERC20 escrow withdraw fails.
     function testCancelLenderOfferERC20WithdrawFails() public {
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -1709,7 +1725,7 @@ contract OfferFacetTest is Test {
     /// @dev Covers cancelOffer CrossFacetCallFailed when burnNFT fails.
     function testCancelLenderOfferBurnNFTFails() public {
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -1771,7 +1787,7 @@ contract OfferFacetTest is Test {
             abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
         );
         vm.prank(user2);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: address(nft1155b),
@@ -1801,7 +1817,7 @@ contract OfferFacetTest is Test {
     /// @dev Covers cancelOffer Borrower offer CrossFacetCallFailed when unlock fails.
     function testCancelBorrowerOfferUnlockFails() public {
         vm.prank(user2);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
@@ -1843,7 +1859,7 @@ contract OfferFacetTest is Test {
         // user1 created NFT offer (illiquid lending asset, liquid collateral)
         // already done in setUp. Create a new one for clarity.
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNFT721,
@@ -1881,7 +1897,7 @@ contract OfferFacetTest is Test {
         ERC20(mockERC20).approve(EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(user2), type(uint256).max);
 
         vm.prank(user2);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         vm.clearMockedCalls();
     }
 
@@ -1890,7 +1906,7 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         MockRentableNFT721(mockNFT721).approve(address(diamond), 1);
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNFT721,
@@ -1938,7 +1954,7 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         IERC1155(address(nft1155x)).setApprovalForAll(address(diamond), true);
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(nft1155x),
@@ -1982,7 +1998,7 @@ contract OfferFacetTest is Test {
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
         // Borrower ERC721 offer: lending asset is mockNFT721 (ERC721), prepay deposited in ERC20
         vm.prank(user2);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockNFT721,
@@ -2034,7 +2050,7 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
         vm.prank(user2);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: address(nft1155y),
@@ -2079,7 +2095,7 @@ contract OfferFacetTest is Test {
         ProfileFacet(address(diamond)).updateKYCTier(user2, LibVaipakam.KYCTier.Tier2);
 
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -2121,7 +2137,7 @@ contract OfferFacetTest is Test {
 
         vm.prank(user2);
         vm.expectRevert(bytes("transfer fail"));
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         vm.clearMockedCalls();
     }
 
@@ -2130,7 +2146,7 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         MockRentableNFT721(mockNFT721).approve(address(diamond), 1);
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNFT721,
@@ -2170,7 +2186,7 @@ contract OfferFacetTest is Test {
 
         vm.prank(user2);
         vm.expectRevert(bytes("set renter fail"));
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         vm.clearMockedCalls();
     }
 
@@ -2179,7 +2195,7 @@ contract OfferFacetTest is Test {
         // Cast to uint8(99) won't work in Solidity; use vm.prank and direct call with raw bytes.
         // We need to pass an invalid enum value - use a direct low-level call.
         bytes memory callData = abi.encodeWithSelector(
-            OfferFacet.createOffer.selector,
+            OfferCreateFacet.createOffer.selector,
             LibVaipakam.OfferType.Lender,
             mockERC20,
             uint256(1000),
@@ -2207,8 +2223,8 @@ contract OfferFacetTest is Test {
             "escrow fail"
         );
         vm.prank(user1);
-        vm.expectRevert(abi.encodeWithSelector(OfferFacet.GetUserEscrowFailed.selector, "Get User Escrow failed"));
-        OfferFacet(address(diamond)).createOffer(
+        vm.expectRevert(abi.encodeWithSelector(LibUserEscrow.GetUserEscrowFailed.selector, "Get User Escrow failed"));
+        OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -2243,7 +2259,7 @@ contract OfferFacetTest is Test {
         );
         vm.prank(user1);
         vm.expectRevert(IVaipakamErrors.NFTMintFailed.selector);
-        OfferFacet(address(diamond)).createOffer(
+        OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -2280,7 +2296,7 @@ contract OfferFacetTest is Test {
         ProfileFacet(address(diamond)).updateKYCTier(user3, LibVaipakam.KYCTier.Tier2);
 
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -2314,7 +2330,7 @@ contract OfferFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(1)));
 
         vm.prank(user3);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         vm.clearMockedCalls();
     }
 
@@ -2328,7 +2344,7 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
         vm.prank(user2);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockNFT721,
@@ -2357,7 +2373,7 @@ contract OfferFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(2)));
 
         vm.prank(user1);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         vm.clearMockedCalls();
     }
 
@@ -2384,7 +2400,7 @@ contract OfferFacetTest is Test {
 
         // Creator grants illiquid consent
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(illiquidERC20),
@@ -2424,7 +2440,7 @@ contract OfferFacetTest is Test {
 
         // acceptorRiskAndTermsConsent = true; lendingAsset is illiquid ERC20, collateral is liquid
         vm.prank(user2);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         vm.clearMockedCalls();
     }
 
@@ -2446,7 +2462,7 @@ contract OfferFacetTest is Test {
 
         // Lender offer: liquid lendingAsset, illiquid collateral, both consent
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -2480,7 +2496,7 @@ contract OfferFacetTest is Test {
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
 
         vm.prank(user2);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         vm.clearMockedCalls();
     }
 
@@ -2492,7 +2508,7 @@ contract OfferFacetTest is Test {
         ProfileFacet(address(diamond)).updateKYCTier(user2, LibVaipakam.KYCTier.Tier2);
 
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -2524,7 +2540,7 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         ERC20(mockERC20).approve(EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(user2), type(uint256).max);
         vm.prank(user2);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         vm.clearMockedCalls();
 
         // getCompatibleOffers iterates over the active-offer list; the accepted one is absent.
@@ -2556,7 +2572,7 @@ contract OfferFacetTest is Test {
         nft1155.setApprovalForAll(lenderEscrow, true);
 
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(nft1155),
@@ -2602,7 +2618,7 @@ contract OfferFacetTest is Test {
         collateralNFT.approve(address(diamond), 42);
 
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -2634,7 +2650,7 @@ contract OfferFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(5)));
 
         vm.prank(user2);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         assertGt(loanId, 0);
 
         // NFT should be in borrower's escrow
@@ -2656,7 +2672,7 @@ contract OfferFacetTest is Test {
         collateral1155.setApprovalForAll(address(diamond), true);
 
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -2688,7 +2704,7 @@ contract OfferFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(6)));
 
         vm.prank(user2);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         assertGt(loanId, 0);
 
         // ERC1155 should be in borrower's escrow
@@ -2713,7 +2729,7 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
         vm.prank(user2);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: address(nft1155),
@@ -2748,7 +2764,7 @@ contract OfferFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(7)));
 
         vm.prank(user1);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         assertEq(loanId, 7);
 
         // ERC1155 should be in lender's escrow
@@ -2768,7 +2784,7 @@ contract OfferFacetTest is Test {
         collateralNFT.approve(address(diamond), 50);
 
         vm.prank(user2);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
@@ -2813,7 +2829,7 @@ contract OfferFacetTest is Test {
         ProfileFacet(address(diamond)).updateKYCTier(user2, LibVaipakam.KYCTier.Tier2);
 
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -2858,7 +2874,7 @@ contract OfferFacetTest is Test {
         ERC20(mockERC20).approve(EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(user2), type(uint256).max);
 
         vm.prank(user2);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         assertGt(loanId, 0);
         vm.clearMockedCalls();
     }
@@ -2869,7 +2885,7 @@ contract OfferFacetTest is Test {
         ProfileFacet(address(diamond)).updateKYCTier(user2, LibVaipakam.KYCTier.Tier2);
 
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -2915,7 +2931,7 @@ contract OfferFacetTest is Test {
 
         vm.prank(user2);
         vm.expectRevert(bytes("sale fail"));
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         vm.clearMockedCalls();
     }
 
@@ -2925,7 +2941,7 @@ contract OfferFacetTest is Test {
         ProfileFacet(address(diamond)).updateKYCTier(user2, LibVaipakam.KYCTier.Tier2);
 
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -2970,7 +2986,7 @@ contract OfferFacetTest is Test {
         ERC20(mockERC20).approve(EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(user2), type(uint256).max);
 
         vm.prank(user2);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         assertGt(loanId, 0);
         vm.clearMockedCalls();
     }
@@ -2981,7 +2997,7 @@ contract OfferFacetTest is Test {
         ProfileFacet(address(diamond)).updateKYCTier(user2, LibVaipakam.KYCTier.Tier2);
 
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -3027,7 +3043,7 @@ contract OfferFacetTest is Test {
 
         vm.prank(user2);
         vm.expectRevert(bytes("offset fail"));
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         vm.clearMockedCalls();
     }
 
@@ -3039,7 +3055,7 @@ contract OfferFacetTest is Test {
         ProfileFacet(address(diamond)).updateKYCTier(user2, LibVaipakam.KYCTier.Tier2);
 
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -3090,7 +3106,7 @@ contract OfferFacetTest is Test {
         ERC20(mockERC20).approve(EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(user2), type(uint256).max);
 
         vm.prank(user2);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         assertGt(loanId, 0);
         vm.clearMockedCalls();
     }
@@ -3101,7 +3117,7 @@ contract OfferFacetTest is Test {
         ProfileFacet(address(diamond)).updateKYCTier(user2, LibVaipakam.KYCTier.Tier2);
 
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -3137,7 +3153,7 @@ contract OfferFacetTest is Test {
 
         vm.prank(user2);
         vm.expectRevert(bytes("loan fail"));
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         vm.clearMockedCalls();
     }
 
@@ -3151,7 +3167,7 @@ contract OfferFacetTest is Test {
         collateral1155.setApprovalForAll(address(diamond), true);
 
         vm.prank(user2);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
@@ -3200,7 +3216,7 @@ contract OfferFacetTest is Test {
         collateralNFT.approve(address(diamond), 42);
 
         vm.prank(user2);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
@@ -3240,7 +3256,7 @@ contract OfferFacetTest is Test {
         collateral1155.setApprovalForAll(address(diamond), true);
 
         vm.prank(user2);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
@@ -3277,7 +3293,7 @@ contract OfferFacetTest is Test {
         mockOracleLiquidity(address(collateralNFT), LibVaipakam.LiquidityStatus.Illiquid);
 
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -3310,7 +3326,7 @@ contract OfferFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(1)));
 
         vm.prank(user2);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         assertGt(loanId, 0);
 
         // Verify NFT was transferred to borrower escrow
@@ -3329,7 +3345,7 @@ contract OfferFacetTest is Test {
         mockOracleLiquidity(address(collateral1155), LibVaipakam.LiquidityStatus.Illiquid);
 
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -3360,7 +3376,7 @@ contract OfferFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(1)));
 
         vm.prank(user2);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         assertGt(loanId, 0);
         vm.clearMockedCalls();
     }
@@ -3381,7 +3397,7 @@ contract OfferFacetTest is Test {
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
 
         vm.prank(user2);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockNFT721,
@@ -3413,7 +3429,7 @@ contract OfferFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(1)));
 
         vm.prank(user1);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         assertGt(loanId, 0);
 
         // NFT should be in lender's escrow
@@ -3431,7 +3447,7 @@ contract OfferFacetTest is Test {
         mockOracleLiquidity(mockNFT721, LibVaipakam.LiquidityStatus.Illiquid);
 
         vm.prank(user2);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockNFT721,
@@ -3476,7 +3492,7 @@ contract OfferFacetTest is Test {
         nft1155.setApprovalForAll(address(diamond), true);
 
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(nft1155),
@@ -3521,7 +3537,7 @@ contract OfferFacetTest is Test {
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
 
         vm.prank(user2);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: address(nft1155),
@@ -3564,7 +3580,7 @@ contract OfferFacetTest is Test {
 
         // Lender creates ERC1155 NFT rental offer
         vm.prank(user1);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(nft1155),
@@ -3599,7 +3615,7 @@ contract OfferFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(10)));
 
         vm.prank(user2);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         assertEq(loanId, 10);
         vm.clearMockedCalls();
     }
@@ -3614,7 +3630,7 @@ contract OfferFacetTest is Test {
         collateralNFT.approve(address(diamond), 55);
 
         vm.prank(user2);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,

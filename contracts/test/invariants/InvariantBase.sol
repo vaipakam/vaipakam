@@ -4,7 +4,8 @@ pragma solidity ^0.8.29;
 import {Test} from "forge-std/Test.sol";
 import {VaipakamDiamond} from "../../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
-import {OfferFacet} from "../../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {OracleFacet} from "../../src/facets/OracleFacet.sol";
@@ -97,7 +98,8 @@ contract InvariantBase is Test {
     }
 
     function _cutAllFacets() internal {
-        OfferFacet offerFacet = new OfferFacet();
+        OfferCreateFacet offerCreateFacet = new OfferCreateFacet();
+        OfferAcceptFacet offerAcceptFacet = new OfferAcceptFacet();
         OfferCancelFacet offerCancelFacet = new OfferCancelFacet();
         ProfileFacet profileFacet = new ProfileFacet();
         OracleFacet oracleFacet = new OracleFacet();
@@ -114,8 +116,13 @@ contract InvariantBase is Test {
         TestMutatorFacet mutatorFacet = new TestMutatorFacet();
         MetricsFacet metricsFacet = new MetricsFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](17);
-        cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferFacetSelectors()});
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](18);
+        cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
+        cuts[17] = IDiamondCut.FacetCut({
+            facetAddress: address(offerAcceptFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferAcceptFacetSelectors()
+        });
         // OfferCancelFacet — cancelOffer + read views, carved out for
         // the EIP-170 split. Same selectors land on the diamond.
         cuts[1] = IDiamondCut.FacetCut({facetAddress: address(profileFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});

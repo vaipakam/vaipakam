@@ -6,7 +6,8 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
@@ -265,14 +266,14 @@ contract AnvilNewPositiveFlows is Script {
         // Lender posts an offer with partial-repay opt-in ON.
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferFacet(diamond).createOffer(_lenderOfferAllowsPartial());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferAllowsPartial());
         vm.stopBroadcast();
         console.log("Lender offer with allowsPartialRepay=true:", offerId);
 
         // Borrower accepts.
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferFacet(diamond).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
         vm.stopBroadcast();
         console.log("Loan initiated:", loanId);
 
@@ -332,12 +333,12 @@ contract AnvilNewPositiveFlows is Script {
         // Alice + Lender A create + accept an offer → loan L1.
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerL1 = OfferFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 offerL1 = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
 
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanL1 = OfferFacet(diamond).acceptOffer(offerL1, true);
+        uint256 loanL1 = OfferAcceptFacet(diamond).acceptOffer(offerL1, true);
         vm.stopBroadcast();
         console.log("L1 (original loan) initiated:", loanL1);
 
@@ -347,7 +348,7 @@ contract AnvilNewPositiveFlows is Script {
         // wallet again (she has 10 WETH per setup, plenty).
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 refinanceOfferId = OfferFacet(diamond).createOffer(_borrowerRefinanceOffer());
+        uint256 refinanceOfferId = OfferCreateFacet(diamond).createOffer(_borrowerRefinanceOffer());
         vm.stopBroadcast();
         console.log("Alice's refinance borrower offer:", refinanceOfferId);
 
@@ -355,7 +356,7 @@ contract AnvilNewPositiveFlows is Script {
         // principal in her wallet.
         vm.startBroadcast(newLenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        OfferFacet(diamond).acceptOffer(refinanceOfferId, true);
+        OfferAcceptFacet(diamond).acceptOffer(refinanceOfferId, true);
         vm.stopBroadcast();
 
         // Alice repays Lender A using L2's principal. refinanceLoan is
@@ -662,11 +663,11 @@ contract AnvilNewPositiveFlows is Script {
         // pre-flag). Use the standard helpers.
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferFacet(diamond).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
         vm.stopBroadcast();
         console.log("Pre-flag loan initiated:", loanId);
 
@@ -756,11 +757,11 @@ contract AnvilNewPositiveFlows is Script {
         // Step 1: take a fresh loan.
         vm.startBroadcast(BobKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
         vm.startBroadcast(AliceKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferFacet(diamond).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
         vm.stopBroadcast();
         console.log("Loan initiated for keeper-auth scenario:", loanId);
 
@@ -882,7 +883,7 @@ contract AnvilNewPositiveFlows is Script {
 
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, amountMax);
-        uint256 lenderOfferId = OfferFacet(diamond).createOffer(
+        uint256 lenderOfferId = OfferCreateFacet(diamond).createOffer(
             _rangedLenderOffer(amountMin, amountMax, rateMin, rateMax, lenderCollateral)
         );
         vm.stopBroadcast();
@@ -897,7 +898,7 @@ contract AnvilNewPositiveFlows is Script {
         // $3400 — comfortably above the 2.5k principal target.
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT * 3);
-        uint256 borrowerOffer1 = OfferFacet(diamond).createOffer(
+        uint256 borrowerOffer1 = OfferCreateFacet(diamond).createOffer(
             _matchableBorrowerOffer(2_500e6, 500, COLLATERAL_AMOUNT * 3)
         );
         vm.stopBroadcast();
@@ -934,7 +935,7 @@ contract AnvilNewPositiveFlows is Script {
         vm.startBroadcast(newBorrowerKey);
         uint256 b2Collateral = (COLLATERAL_AMOUNT * 25) / 10; // 2.5 WETH
         weth.approve(diamond, b2Collateral);
-        uint256 borrowerOffer2 = OfferFacet(diamond).createOffer(
+        uint256 borrowerOffer2 = OfferCreateFacet(diamond).createOffer(
             _matchableBorrowerOfferAs(newBorrower, 2_000e6, 500, b2Collateral)
         );
         // newBorrower also doubles as the matcher here — fine, the
@@ -1063,12 +1064,12 @@ contract AnvilNewPositiveFlows is Script {
 
         vm.startBroadcast(LiamKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 lenderOfferId = OfferFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 lenderOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
 
         vm.startBroadcast(AliceKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanL1 = OfferFacet(diamond).acceptOffer(lenderOfferId, true);
+        uint256 loanL1 = OfferAcceptFacet(diamond).acceptOffer(lenderOfferId, true);
         vm.stopBroadcast();
         console.log("L1 (Liam -> Alice) initiated:", loanL1);
 
@@ -1078,7 +1079,7 @@ contract AnvilNewPositiveFlows is Script {
         // L1.collateralAmount. We use exact-match terms for simplicity.
         vm.startBroadcast(BenKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 benOfferId = OfferFacet(diamond).createOffer(_borrowerOfferTakeoverFor(Ben));
+        uint256 benOfferId = OfferCreateFacet(diamond).createOffer(_borrowerOfferTakeoverFor(Ben));
         vm.stopBroadcast();
         console.log("Ben's takeover offer:", benOfferId);
 
@@ -1163,12 +1164,12 @@ contract AnvilNewPositiveFlows is Script {
         // Setup loan L1: Liam -> Alice.
         vm.startBroadcast(LiamKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 lenderOfferId = OfferFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 lenderOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
 
         vm.startBroadcast(AliceKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanL1 = OfferFacet(diamond).acceptOffer(lenderOfferId, true);
+        uint256 loanL1 = OfferAcceptFacet(diamond).acceptOffer(lenderOfferId, true);
         vm.stopBroadcast();
         console.log("L1 (Liam -> Alice) initiated:", loanL1);
 
@@ -1201,7 +1202,7 @@ contract AnvilNewPositiveFlows is Script {
         // releases Alice's collateral.
         vm.startBroadcast(CharlieKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 newLoanId = OfferFacet(diamond).acceptOffer(offsetOfferId, true);
+        uint256 newLoanId = OfferAcceptFacet(diamond).acceptOffer(offsetOfferId, true);
         vm.stopBroadcast();
         console.log("Charlie accepted -> new loanId:", newLoanId);
 
@@ -1315,11 +1316,11 @@ contract AnvilNewPositiveFlows is Script {
         // and liquid lending asset triggers tryApplyBorrowerLif.
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferFacet(diamond).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
         vm.stopBroadcast();
         console.log("Loan initiated under VPFI discount path:", loanId);
 
@@ -1541,7 +1542,7 @@ contract AnvilNewPositiveFlows is Script {
         );
         vm.startBroadcast(newLenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
         console.log("Post-unpause createOffer succeeded; offerId:", offerId);
         // Note: do NOT cancel here. Range Orders Phase 1 enforces a
@@ -1582,7 +1583,7 @@ contract AnvilNewPositiveFlows is Script {
         // sufficient evidence the global pause was lifted.
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
         console.log("Post-unpause sanity create ok; offerId:", offerId);
 
@@ -1615,12 +1616,12 @@ contract AnvilNewPositiveFlows is Script {
 
         vm.startBroadcast(newLenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
 
         vm.startBroadcast(newBorrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferFacet(diamond).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
         vm.stopBroadcast();
 
         vm.startBroadcast(newBorrowerKey);
@@ -1695,7 +1696,7 @@ contract AnvilNewPositiveFlows is Script {
         params.collateralAmount = 2 * COLLATERAL_AMOUNT;
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT * 2);
-        uint256 offerId = OfferFacet(diamond).createOffer(params);
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(params);
         vm.stopBroadcast();
         console.log("Post-re-enable range offer accepted; offerId:", offerId);
 
@@ -1727,11 +1728,11 @@ contract AnvilNewPositiveFlows is Script {
         // Step 1: Liam (newLender) lends to newBorrower → loan active.
         vm.startBroadcast(newLenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
         vm.startBroadcast(newBorrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferFacet(diamond).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
         vm.stopBroadcast();
         console.log("L1 (newLender -> newBorrower) initiated:", loanId);
 
@@ -1740,7 +1741,7 @@ contract AnvilNewPositiveFlows is Script {
         // collateral parity (or no-worse terms for borrower).
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 buyOfferId = OfferFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 buyOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
         console.log("Bob's buy offer:", buyOfferId);
 

@@ -6,7 +6,8 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
@@ -111,14 +112,14 @@ contract SepoliaActiveLoan is Script {
         // ── Lender creates offer ────────────────────────────────────────
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferFacet(diamond).createOffer(_offerParams());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_offerParams());
         vm.stopBroadcast();
         console.log("Offer created:", offerId);
 
         // ── Borrower accepts ────────────────────────────────────────────
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferFacet(diamond).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
         vm.stopBroadcast();
 
         LibVaipakam.Loan memory loan = LoanFacet(diamond).getLoanDetails(loanId);

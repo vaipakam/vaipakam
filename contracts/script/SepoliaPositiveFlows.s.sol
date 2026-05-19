@@ -8,7 +8,8 @@ import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {ERC4907Mock} from "../test/mocks/ERC4907Mock.sol";
 import {ERC1155RentableMock} from "../test/mocks/ERC1155RentableMock.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
@@ -264,7 +265,7 @@ contract SepoliaPositiveFlows is Script {
         uint256 offerId3;
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        offerId3 = OfferFacet(diamond).createOffer(_borrowerOfferParams());
+        offerId3 = OfferCreateFacet(diamond).createOffer(_borrowerOfferParams());
         vm.stopBroadcast();
         console.log("Borrower created offer:", offerId3);
 
@@ -276,7 +277,7 @@ contract SepoliaPositiveFlows is Script {
         // `protocolTrackedEscrowBalance` counter).
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 loanId3 = OfferFacet(diamond).acceptOffer(offerId3, true);
+        uint256 loanId3 = OfferAcceptFacet(diamond).acceptOffer(offerId3, true);
         vm.stopBroadcast();
         console.log("Lender accepted, loanId:", loanId3);
 
@@ -365,7 +366,7 @@ contract SepoliaPositiveFlows is Script {
             uint256 balBefore5 = usdc.balanceOf(lender);
             vm.startBroadcast(lenderKey);
             usdc.approve(diamond, LOAN_AMOUNT);
-            uint256 offerId5 = OfferFacet(diamond).createOffer(_lenderOfferParams());
+            uint256 offerId5 = OfferCreateFacet(diamond).createOffer(_lenderOfferParams());
             vm.stopBroadcast();
             if (partialFillOn) vm.sleep(310 * 1000);
             vm.startBroadcast(lenderKey);
@@ -383,7 +384,7 @@ contract SepoliaPositiveFlows is Script {
             uint256 balBefore6 = weth.balanceOf(borrower);
             vm.startBroadcast(borrowerKey);
             weth.approve(diamond, COLLATERAL_AMOUNT);
-            uint256 offerId6 = OfferFacet(diamond).createOffer(_borrowerOfferParams());
+            uint256 offerId6 = OfferCreateFacet(diamond).createOffer(_borrowerOfferParams());
             vm.stopBroadcast();
             if (partialFillOn) vm.sleep(310 * 1000);
             vm.startBroadcast(borrowerKey);
@@ -433,7 +434,7 @@ contract SepoliaPositiveFlows is Script {
         uint256 buyOfferId;
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        buyOfferId = OfferFacet(diamond).createOffer(
+        buyOfferId = OfferCreateFacet(diamond).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(usdc),
@@ -494,7 +495,7 @@ contract SepoliaPositiveFlows is Script {
         // Lender creates offer: lend USDC (liquid), collateral = illiquidToken
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId9 = OfferFacet(diamond).createOffer(
+        uint256 offerId9 = OfferCreateFacet(diamond).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(usdc),
@@ -523,7 +524,7 @@ contract SepoliaPositiveFlows is Script {
         // Borrower accepts with illiquid consent
         vm.startBroadcast(borrowerKey);
         illiquidToken.approve(diamond, 200e18);
-        uint256 loanId9 = OfferFacet(diamond).acceptOffer(offerId9, true);
+        uint256 loanId9 = OfferAcceptFacet(diamond).acceptOffer(offerId9, true);
         vm.stopBroadcast();
         console.log("Loan initiated, loanId:", loanId9);
 
@@ -546,7 +547,7 @@ contract SepoliaPositiveFlows is Script {
         // Borrower creates offer: wants USDC loan, offers ERC721 NFT as collateral
         vm.startBroadcast(borrowerKey);
         nft721.approve(diamond, 110); // tokenId 110
-        uint256 offerId10 = OfferFacet(diamond).createOffer(
+        uint256 offerId10 = OfferCreateFacet(diamond).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: address(usdc),
@@ -576,7 +577,7 @@ contract SepoliaPositiveFlows is Script {
         // principal inline via the chokepoint, so an approve is enough.
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 loanId10 = OfferFacet(diamond).acceptOffer(offerId10, true);
+        uint256 loanId10 = OfferAcceptFacet(diamond).acceptOffer(offerId10, true);
         vm.stopBroadcast();
         console.log("Loan initiated, loanId:", loanId10);
 
@@ -599,7 +600,7 @@ contract SepoliaPositiveFlows is Script {
         // Borrower creates offer: wants USDC, offers ERC1155 (tokenId=1, qty=10) as collateral
         vm.startBroadcast(borrowerKey);
         nft1155.setApprovalForAll(diamond, true);
-        uint256 offerId11 = OfferFacet(diamond).createOffer(
+        uint256 offerId11 = OfferCreateFacet(diamond).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: address(usdc),
@@ -629,7 +630,7 @@ contract SepoliaPositiveFlows is Script {
         // principal inline via the chokepoint.
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 loanId11 = OfferFacet(diamond).acceptOffer(offerId11, true);
+        uint256 loanId11 = OfferAcceptFacet(diamond).acceptOffer(offerId11, true);
         vm.stopBroadcast();
         console.log("Loan initiated, loanId:", loanId11);
 
@@ -652,7 +653,7 @@ contract SepoliaPositiveFlows is Script {
             // Lender creates rental offer: lend ERC721 (tokenId=100), daily fee=10 USDC, 7 days
             vm.startBroadcast(newLenderKey);
             nft721.approve(diamond, 120); // tokenId 120 belongs to newLender
-            uint256 offerId12 = OfferFacet(diamond).createOffer(
+            uint256 offerId12 = OfferCreateFacet(diamond).createOffer(
                 LibVaipakam.CreateOfferParams({
                     offerType: LibVaipakam.OfferType.Lender,
                     lendingAsset: address(nft721),
@@ -687,7 +688,7 @@ contract SepoliaPositiveFlows is Script {
             uint256 totalPrepay12 = DAILY_FEE * 7 + (DAILY_FEE * 7 * 500) / 10000;
             vm.startBroadcast(newBorrowerKey);
             usdc.approve(diamond, totalPrepay12);
-            uint256 loanId12 = OfferFacet(diamond).acceptOffer(offerId12, true);
+            uint256 loanId12 = OfferAcceptFacet(diamond).acceptOffer(offerId12, true);
             vm.stopBroadcast();
             console.log("Rental loan initiated, loanId:", loanId12);
 
@@ -719,7 +720,7 @@ contract SepoliaPositiveFlows is Script {
             uint256 dailyFee1155 = 5e6;
             vm.startBroadcast(newLenderKey);
             nft1155.setApprovalForAll(diamond, true);
-            uint256 offerId13 = OfferFacet(diamond).createOffer(
+            uint256 offerId13 = OfferCreateFacet(diamond).createOffer(
                 LibVaipakam.CreateOfferParams({
                     offerType: LibVaipakam.OfferType.Lender,
                     lendingAsset: address(nft1155),
@@ -752,7 +753,7 @@ contract SepoliaPositiveFlows is Script {
             uint256 totalPrepay13 = dailyFee1155 * 7 + (dailyFee1155 * 7 * 500) / 10000;
             vm.startBroadcast(newBorrowerKey);
             usdc.approve(diamond, totalPrepay13);
-            uint256 loanId13 = OfferFacet(diamond).acceptOffer(offerId13, true);
+            uint256 loanId13 = OfferAcceptFacet(diamond).acceptOffer(offerId13, true);
             vm.stopBroadcast();
             console.log("Rental loan initiated, loanId:", loanId13);
 
@@ -786,7 +787,7 @@ contract SepoliaPositiveFlows is Script {
         // Lender creates offer: lend illiquidLending, collateral = illiquidToken
         vm.startBroadcast(lenderKey);
         illiquidLending.approve(diamond, 500e18);
-        uint256 offerId14 = OfferFacet(diamond).createOffer(
+        uint256 offerId14 = OfferCreateFacet(diamond).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(illiquidLending),
@@ -815,7 +816,7 @@ contract SepoliaPositiveFlows is Script {
         // Borrower accepts with illiquid consent
         vm.startBroadcast(borrowerKey);
         illiquidToken.approve(diamond, 1000e18);
-        uint256 loanId14 = OfferFacet(diamond).acceptOffer(offerId14, true);
+        uint256 loanId14 = OfferAcceptFacet(diamond).acceptOffer(offerId14, true);
         vm.stopBroadcast();
         console.log("Loan initiated, loanId:", loanId14);
 
@@ -837,7 +838,7 @@ contract SepoliaPositiveFlows is Script {
         // Lender creates offer: lend illiquidToken, collateral = WETH (liquid)
         vm.startBroadcast(lenderKey);
         illiquidToken.approve(diamond, 200e18);
-        uint256 offerId15 = OfferFacet(diamond).createOffer(
+        uint256 offerId15 = OfferCreateFacet(diamond).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(illiquidToken),
@@ -866,7 +867,7 @@ contract SepoliaPositiveFlows is Script {
         // Borrower accepts with illiquid consent
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId15 = OfferFacet(diamond).acceptOffer(offerId15, true);
+        uint256 loanId15 = OfferAcceptFacet(diamond).acceptOffer(offerId15, true);
         vm.stopBroadcast();
         console.log("Loan initiated, loanId:", loanId15);
 
@@ -983,7 +984,7 @@ contract SepoliaPositiveFlows is Script {
     function _createLenderOffer(uint256 key, address acct) internal returns (uint256 offerId) {
         vm.startBroadcast(key);
         usdc.approve(diamond, LOAN_AMOUNT);
-        offerId = OfferFacet(diamond).createOffer(_lenderOfferParams());
+        offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferParams());
         vm.stopBroadcast();
         console.log("Lender offer created:", offerId);
     }
@@ -991,7 +992,7 @@ contract SepoliaPositiveFlows is Script {
     function _acceptOffer(uint256 key, address acct, uint256 offerId) internal returns (uint256 loanId) {
         vm.startBroadcast(key);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        loanId = OfferFacet(diamond).acceptOffer(offerId, true);
+        loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
         vm.stopBroadcast();
     }
 

@@ -6,7 +6,8 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
@@ -283,11 +284,11 @@ contract AnvilNegativeFlows is Script {
         // Spin up a fresh active loan.
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferFacet(diamond).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
         vm.stopBroadcast();
 
         // Try claimAsLender on the still-Active loan.
@@ -311,12 +312,12 @@ contract AnvilNegativeFlows is Script {
         usdc.approve(diamond, LOAN_AMOUNT);
         LibVaipakam.CreateOfferParams memory p = _lenderOfferStandard();
         p.allowsPartialRepay = false;
-        uint256 offerId = OfferFacet(diamond).createOffer(p);
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(p);
         vm.stopBroadcast();
 
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferFacet(diamond).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
         vm.stopBroadcast();
 
         // Try a partial repay.
@@ -345,7 +346,7 @@ contract AnvilNegativeFlows is Script {
     ) internal returns (bool ok) {
         vm.prank(caller);
         (ok, ) = address(diamond).call(
-            abi.encodeWithSelector(OfferFacet.createOffer.selector, p)
+            abi.encodeWithSelector(OfferCreateFacet.createOffer.selector, p)
         );
     }
 

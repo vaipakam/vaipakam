@@ -11,7 +11,8 @@ import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
@@ -30,7 +31,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 ///          - cap + kill-switch + reserve guards
 ///          - bridge-then-deposit helper
 ///          - quote view
-///          - OfferFacet.acceptOffer discount path gated by the platform-
+///          - OfferAcceptFacet.acceptOffer discount path gated by the platform-
 ///            level VPFI-discount consent flag (happy + silent-fallback
 ///            branches)
 ///          - emitDiscountApplied access gating
@@ -495,7 +496,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         _facet().setVPFIDiscountConsent(true);
 
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(
             offerId,
             true
         );
@@ -558,7 +559,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         uint256 treasuryVpfiBefore = vpfiToken.balanceOf(treasuryRecipient);
 
         vm.prank(borrower);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         // Fee = 0.1% of principal flows into treasury in the lending
         // asset, MINUS the 1% Range Orders Phase 1 matcher kickback
@@ -607,7 +608,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         uint256 treasuryVpfiBefore = vpfiToken.balanceOf(treasuryRecipient);
 
         vm.prank(borrower);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         // No VPFI moved — discount path skipped entirely.
         assertEq(
@@ -763,7 +764,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         IERC20(mockCollateralERC20).approve(address(diamond), principal);
 
         vm.prank(borrower);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -805,7 +806,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         IERC20(mockCollateralERC20).approve(address(diamond), principal);
 
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         // Phase 5 custody: the Diamond holds the full LIF in VPFI.
         (uint256 rebateAtInit, uint256 heldAtInit) = ClaimFacet(address(diamond))
@@ -893,7 +894,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         IERC20(mockCollateralERC20).approve(address(diamond), principal);
 
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         // Immediately unstake the lot — stamp-refresh fix should set the
         // post-withdraw stamp at tier 0, so the whole loan period accrues
@@ -957,7 +958,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         IERC20(mockCollateralERC20).approve(address(diamond), principal);
 
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         // Skip past grace period so time-based default fires.
         vm.warp(block.timestamp + 60 days);
@@ -999,7 +1000,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         ERC20Mock(mockERC20).mint(lender, amount);
         vm.prank(lender);
         return
-            OfferFacet(address(diamond)).createOffer(
+            OfferCreateFacet(address(diamond)).createOffer(
                 LibVaipakam.CreateOfferParams({
                     offerType: LibVaipakam.OfferType.Lender,
                     lendingAsset: mockERC20,

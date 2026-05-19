@@ -1,4 +1,5 @@
-import OfferFacetABI from './OfferFacet.json';
+import OfferCreateFacetABI from './OfferCreateFacet.json';
+import OfferAcceptFacetABI from './OfferAcceptFacet.json';
 import OfferCancelFacetABI from './OfferCancelFacet.json';
 import OfferMatchFacetABI from './OfferMatchFacet.json';
 import LoanFacetABI from './LoanFacet.json';
@@ -41,7 +42,8 @@ import LegalFacetABI from './LegalFacet.json';
 import FlashLoanLiquidatorABI from './FlashLoanLiquidator.json';
 
 export {
-  OfferFacetABI,
+  OfferCreateFacetABI,
+  OfferAcceptFacetABI,
   OfferCancelFacetABI,
   OfferMatchFacetABI,
   LoanFacetABI,
@@ -88,7 +90,8 @@ import type { Abi } from 'viem';
  *  directly. Once Phase B-full is complete and the last ethers call site
  *  is gone, collapse this back to a single `Abi`-typed export. */
 export const DIAMOND_ABI = [
-  ...OfferFacetABI,
+  ...OfferCreateFacetABI,
+  ...OfferAcceptFacetABI,
   ...OfferCancelFacetABI,
   ...OfferMatchFacetABI,
   ...LoanFacetABI,

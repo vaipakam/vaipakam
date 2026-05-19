@@ -5,7 +5,8 @@ pragma solidity ^0.8.29;
 import {Test} from "forge-std/Test.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
@@ -76,7 +77,8 @@ contract WorkflowComplianceAndRejection is Test {
     MockRentableNFT721Test mockNFT;
 
     DiamondCutFacet cutFacet;
-    OfferFacet offerFacet;
+    OfferCreateFacet offerCreateFacet;
+    OfferAcceptFacet offerAcceptFacet;
     OfferCancelFacet offerCancelFacet;
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
@@ -141,7 +143,8 @@ contract WorkflowComplianceAndRejection is Test {
         // Deploy facets
         cutFacet = new DiamondCutFacet();
         diamond = new VaipakamDiamond(owner, address(cutFacet));
-        offerFacet = new OfferFacet();
+        offerCreateFacet = new OfferCreateFacet();
+        offerAcceptFacet = new OfferAcceptFacet();
         offerCancelFacet = new OfferCancelFacet();
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
@@ -161,8 +164,13 @@ contract WorkflowComplianceAndRejection is Test {
         TestMutatorFacet testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](19);
-        cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferFacetSelectors()});
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](20);
+        cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
+        cuts[19] = IDiamondCut.FacetCut({
+            facetAddress: address(offerAcceptFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferAcceptFacetSelectors()
+        });
         cuts[1]  = IDiamondCut.FacetCut({facetAddress: address(profileFacet),        action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
         cuts[2]  = IDiamondCut.FacetCut({facetAddress: address(oracleFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});
         cuts[3]  = IDiamondCut.FacetCut({facetAddress: address(nftFacet),            action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaipakamNFTFacetSelectors()});
@@ -268,7 +276,7 @@ contract WorkflowComplianceAndRejection is Test {
 
         // ── Create active ERC20 loan (lender creates offer, borrower accepts) ──
         vm.prank(lender);
-        uint256 erc20OfferId = OfferFacet(address(diamond)).createOffer(
+        uint256 erc20OfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(mockUSDC),
@@ -292,7 +300,7 @@ contract WorkflowComplianceAndRejection is Test {
             })
         );
         vm.prank(borrower);
-        activeLoanId = OfferFacet(address(diamond)).acceptOffer(erc20OfferId, true);
+        activeLoanId = OfferAcceptFacet(address(diamond)).acceptOffer(erc20OfferId, true);
 
         // ── Create active NFT rental loan ──
         // Mint NFT to lender, approve to diamond
@@ -322,7 +330,7 @@ contract WorkflowComplianceAndRejection is Test {
         // NFT rental: lender creates offer with dailyFee=1 ether, 30 days
         // Prepay = 1 ether * 30 = 30 ether + 5% buffer = 31.5 ether
         vm.prank(lender);
-        uint256 nftOfferId = OfferFacet(address(diamond)).createOffer(
+        uint256 nftOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(mockNFT),
@@ -348,7 +356,7 @@ contract WorkflowComplianceAndRejection is Test {
 
         // Borrower accepts the NFT rental offer (pays prepay from mockUSDC)
         vm.prank(borrower);
-        nftLoanId = OfferFacet(address(diamond)).acceptOffer(nftOfferId, true);
+        nftLoanId = OfferAcceptFacet(address(diamond)).acceptOffer(nftOfferId, true);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -362,7 +370,7 @@ contract WorkflowComplianceAndRejection is Test {
         vm.skip(true);
         // Lender creates a new offer
         vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(mockUSDC),
@@ -389,7 +397,7 @@ contract WorkflowComplianceAndRejection is Test {
         // sanctionedUser (IR) tries to accept -> CountriesNotCompatible
         vm.prank(sanctionedUser);
         vm.expectRevert(IVaipakamErrors.CountriesNotCompatible.selector);
-        OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
     }
 
     /// @notice sanctionedUser creates a borrower offer. Borrower tries transferObligationViaOffer -> reverts CountriesNotCompatible
@@ -399,7 +407,7 @@ contract WorkflowComplianceAndRejection is Test {
         // Allow IR<->IR trade so sanctionedUser can create an offer (createOffer itself does not check country)
         // sanctionedUser creates a Borrower offer
         vm.prank(sanctionedUser);
-        uint256 sanctionedOfferId = OfferFacet(address(diamond)).createOffer(
+        uint256 sanctionedOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: address(mockUSDC),
@@ -437,7 +445,7 @@ contract WorkflowComplianceAndRejection is Test {
         vm.skip(true);
         // sanctionedUser creates a Lender offer
         vm.prank(sanctionedUser);
-        uint256 sanctionedOfferId = OfferFacet(address(diamond)).createOffer(
+        uint256 sanctionedOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(mockUSDC),
@@ -488,7 +496,7 @@ contract WorkflowComplianceAndRejection is Test {
 
         // Create a small offer: 100 USDC (= $100 at $1 price, well below $1000 threshold)
         vm.prank(lender);
-        uint256 smallOfferId = OfferFacet(address(diamond)).createOffer(
+        uint256 smallOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(mockUSDC),
@@ -514,7 +522,7 @@ contract WorkflowComplianceAndRejection is Test {
 
         // Tier0 user can accept small offer (no KYC required)
         vm.prank(noKycUser);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(smallOfferId, true);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(smallOfferId, true);
         assertTrue(loanId > 0, "Loan should be created for small amount without KYC");
     }
 
@@ -534,7 +542,7 @@ contract WorkflowComplianceAndRejection is Test {
 
         // Create a large offer: 10000 USDC (= $10000 at $1 price, requires Tier2)
         vm.prank(lender);
-        uint256 largeOfferId = OfferFacet(address(diamond)).createOffer(
+        uint256 largeOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(mockUSDC),
@@ -561,7 +569,7 @@ contract WorkflowComplianceAndRejection is Test {
         // Tier0 user cannot accept large offer -> KYCRequired
         vm.prank(noKycUser);
         vm.expectRevert(IVaipakamErrors.KYCRequired.selector);
-        OfferFacet(address(diamond)).acceptOffer(largeOfferId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(largeOfferId, true);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -572,7 +580,7 @@ contract WorkflowComplianceAndRejection is Test {
     function test_EarlyWithdrawal_RejectsNFTRental_Option1() public {
         // Create a buy offer from newLender (Lender type)
         vm.prank(newLender);
-        uint256 buyOfferId = OfferFacet(address(diamond)).createOffer(
+        uint256 buyOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(mockUSDC),
@@ -614,7 +622,7 @@ contract WorkflowComplianceAndRejection is Test {
     function test_Refinance_RejectsNFTRental() public {
         // Borrower creates a Borrower offer for refinancing
         vm.prank(borrower);
-        uint256 refiOfferId = OfferFacet(address(diamond)).createOffer(
+        uint256 refiOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: address(mockUSDC),
