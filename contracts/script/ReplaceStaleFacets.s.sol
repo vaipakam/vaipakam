@@ -108,17 +108,27 @@ contract ReplaceStaleFacets is Script {
 
     function _offerCreateSelectors() internal pure returns (bytes4[] memory s) {
         // OfferFacet split into OfferCreateFacet / OfferAcceptFacet
-        // (Issue #67). cancelOffer / getCompatibleOffers / getOffer are
-        // on OfferCancelFacet — pair this with a sibling cut for that
-        // facet if those selectors also need a bytecode refresh.
-        s = new bytes4[](2);
+        // (Issue #67). This MUST mirror `DeployDiamond._getOfferCreateSelectors()`
+        // in full — a `Replace` cut that moves only a subset would leave
+        // the unlisted selectors (createOfferWithPermit / createOfferInternal)
+        // pointed at the old facet, splitting the diamond across stale and
+        // new code. cancelOffer / getCompatibleOffers / getOffer are on
+        // OfferCancelFacet — refresh those via a sibling cut if needed.
+        s = new bytes4[](4);
         s[0] = OfferCreateFacet.createOffer.selector;
         s[1] = OfferCreateFacet.getUserEscrow.selector;
+        s[2] = OfferCreateFacet.createOfferWithPermit.selector;
+        s[3] = OfferCreateFacet.createOfferInternal.selector;
     }
 
     function _offerAcceptSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](1);
+        // Mirrors `DeployDiamond._getOfferAcceptSelectors()` in full —
+        // refresh the whole accept surface (Permit2 accept + the
+        // `matchOffers` internal entry), not just `acceptOffer`.
+        s = new bytes4[](3);
         s[0] = OfferAcceptFacet.acceptOffer.selector;
+        s[1] = OfferAcceptFacet.acceptOfferWithPermit.selector;
+        s[2] = OfferAcceptFacet.acceptOfferInternal.selector;
     }
 
     function _oracleSelectors() internal pure returns (bytes4[] memory s) {

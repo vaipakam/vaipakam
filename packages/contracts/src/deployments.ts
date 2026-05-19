@@ -48,6 +48,11 @@ export interface DeploymentFacets {
   legalFacet?: HexAddress;
   loanFacet?: HexAddress;
   metricsFacet?: HexAddress;
+  offerAcceptFacet?: HexAddress;
+  offerCreateFacet?: HexAddress;
+  /** Pre-#67 deploys carried a single `offerFacet`; post-#67 deploys
+   *  write `offerCreateFacet` + `offerAcceptFacet` instead. Kept so the
+   *  type still describes a pre-split deployment's addresses.json. */
   offerFacet?: HexAddress;
   offerMatchFacet?: HexAddress;
   oracleAdminFacet?: HexAddress;
