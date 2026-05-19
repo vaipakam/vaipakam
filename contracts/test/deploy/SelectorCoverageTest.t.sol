@@ -111,27 +111,14 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
         string[35] memory facets = cutFacetNames();
         uint256 collisions;
         for (uint256 i; i < facets.length; ++i) {
-            string[] memory sigs = _facetSelectorSignatures(facets[i]);
-            for (uint256 j; j < sigs.length; ++j) {
-                bytes4 sel = bytes4(keccak256(bytes(sigs[j])));
-                string memory seen = _firstSigFor[sel];
-                if (bytes(seen).length == 0) {
-                    _firstSigFor[sel] = sigs[j];
-                } else if (
-                    keccak256(bytes(seen)) != keccak256(bytes(sigs[j]))
-                ) {
-                    // Same selector, different signatures — a genuine
-                    // 4-byte hash collision. (An identical signature
-                    // inherited by two facets is not a collision: it is
-                    // cut once, under one owning facet.)
-                    ++collisions;
-                    emit log_named_string(
-                        string.concat("COLLISION  selector clash with"),
-                        string.concat(seen, "  <=>  ", sigs[j])
-                    );
-                }
-            }
+            collisions += _recordAndCountCollisions(facets[i]);
         }
+        // `DiamondCutFacet` is absent from `cutFacetNames()` (it is
+        // constructor-installed, not cut), but its `diamondCut` selector
+        // IS live on the Diamond from construction onward. A facet
+        // function colliding with it would make the real `Add` cut
+        // revert, so it must be in the collision scan.
+        collisions += _recordAndCountCollisions("DiamondCutFacet");
         assertEq(
             collisions,
             0,
@@ -139,6 +126,30 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
             "facet functions hash to the same selector; the Diamond "
             "cannot be cut until one is renamed"
         );
+    }
+
+    /// @dev Record a facet's selectors into `_firstSigFor` and count any
+    ///      that collide with an already-seen *different* signature. An
+    ///      identical signature inherited by two facets is not a
+    ///      collision — it is cut once, under one owning facet.
+    function _recordAndCountCollisions(string memory facet)
+        private
+        returns (uint256 found)
+    {
+        string[] memory sigs = _facetSelectorSignatures(facet);
+        for (uint256 j; j < sigs.length; ++j) {
+            bytes4 sel = bytes4(keccak256(bytes(sigs[j])));
+            string memory seen = _firstSigFor[sel];
+            if (bytes(seen).length == 0) {
+                _firstSigFor[sel] = sigs[j];
+            } else if (keccak256(bytes(seen)) != keccak256(bytes(sigs[j]))) {
+                ++found;
+                emit log_named_string(
+                    "COLLISION  selector clash",
+                    string.concat(seen, "  <=>  ", sigs[j])
+                );
+            }
+        }
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────
@@ -199,18 +210,31 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
         _addAll(_getRiskMatchLiquidationSelectors());
     }
 
-    /// @dev Add a selector list to the routed set, rejecting a zero
-    ///      selector. A `bytes4(0)` entry means a `_get*Selectors()`
-    ///      array was declared larger than the slots it fills — the
-    ///      `new bytes4[](N)` size drifted past the `s[i] = ...`
-    ///      assignments, leaving an unwired hole that would cut the
-    ///      zero selector into the Diamond.
+    /// @dev Add a selector list to the routed set, rejecting two faults:
+    ///
+    ///      - A zero selector — a `bytes4(0)` entry means a
+    ///        `_get*Selectors()` array was declared larger than the
+    ///        slots it fills (the `new bytes4[](N)` size drifted past
+    ///        the `s[i] = ...` assignments), leaving an unwired hole.
+    ///      - A duplicate selector — the same selector appearing twice,
+    ///        within one `_get*Selectors()` array or across two cut
+    ///        lists. `LibDiamond.addFunctions` rejects an `Add` for a
+    ///        selector that already maps to a facet, so a duplicate
+    ///        makes the real `diamondCut` revert and the cut list
+    ///        undeployable. A silent overwrite here would leave the
+    ///        coverage test green on an undeployable list.
     function _addAll(bytes4[] memory sels) private {
         for (uint256 i; i < sels.length; ++i) {
             assertTrue(
                 sels[i] != bytes4(0),
                 "DeployDiamond._get*Selectors() has an unfilled (zero) "
                 "slot -- the new bytes4[](N) size exceeds the assignments"
+            );
+            assertFalse(
+                _routed[sels[i]],
+                "DeployDiamond's cut lists route the same selector twice "
+                "-- diamondCut's Add rejects an already-mapped selector, "
+                "so the cut is undeployable; remove the duplicate"
             );
             _routed[sels[i]] = true;
         }

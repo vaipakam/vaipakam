@@ -493,16 +493,16 @@ fi
 # under EIP-170; SelectorCoverageTest — every facet selector cut into the
 # Diamond) and lints the deploy shell scripts. A failure here means the
 # build is unsafe to broadcast — stop before touching a chain.
-
-if step_done "predeploy-check"; then
-  echo
-  echo "[1b] Pre-deploy sanity check (skipped — marker exists)"
-else
-  echo
-  echo "[1b] Pre-deploy sanity check"
-  bash "$SCRIPT_DIR/predeploy-check.sh"
-  mark_done "predeploy-check"
-fi
+#
+# Deliberately NOT step-marker gated: unlike the deploy steps below, a
+# sanity gate must re-run on EVERY (re)run, including a resumed run
+# after a contract or ABI edit. If it were marker-skipped, a run that
+# wrote the marker then failed at step [2] could, on a later rerun
+# after edits, broadcast the Diamond without re-validating it. It is
+# cheap relative to the deploy itself.
+echo
+echo "[1b] Pre-deploy sanity check"
+bash "$SCRIPT_DIR/predeploy-check.sh"
 
 # ── 2. Diamond ────────────────────────────────────────────────────────
 

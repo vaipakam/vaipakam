@@ -180,8 +180,21 @@ else
     for f in "$dir"/*.json; do
       [ -e "$f" ] || continue
       name="$(basename "$f" .json)"
+      # Allowlisted non-contract metadata files — intentionally not ABIs.
       case "$name" in _source|deployments) continue ;; esac
-      fresh="$(forge inspect "$name" abi --json 2>/dev/null)" || continue
+      if ! fresh="$(forge inspect "$name" abi --json 2>/dev/null)"; then
+        # No resolvable contract for this JSON. For a hard dir that is a
+        # failure — a facet renamed/removed but its committed ABI left
+        # behind would otherwise ship stale selectors while the gate
+        # stayed green. For an advisory dir, skip quietly.
+        if [ "$hard" -eq 1 ]; then
+          echo "  ✗ $label — $name.json has no resolvable contract" >&2
+          echo "    (facet renamed/removed? delete the stale JSON, or" >&2
+          echo "    allowlist it in predeploy-check.sh)" >&2
+          drift=$((drift + 1))
+        fi
+        continue
+      fi
       checked=$((checked + 1))
       if ! diff -q \
         <(jq -S . "$f" 2>/dev/null) \

@@ -32,7 +32,7 @@ contract FacetSizeLimitTest is Test, DiamondFacetNames {
     uint256 internal constant EIP170_LIMIT = 24_576;
 
     /// @notice Every facet's runtime bytecode must be within EIP-170.
-    function test_EveryFacetUnderEip170SizeLimit() public {
+    function test_EveryFacetUnderEip170SizeLimit() public view {
         string[35] memory facets = cutFacetNames();
         for (uint256 i; i < facets.length; ++i) {
             _assertUnderLimit(facets[i]);
