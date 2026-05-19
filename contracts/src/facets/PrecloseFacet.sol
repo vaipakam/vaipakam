@@ -22,7 +22,7 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
-import {OfferFacet} from "./OfferFacet.sol";
+import {OfferCreateFacet} from "./OfferCreateFacet.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
 
 /**
@@ -889,7 +889,7 @@ contract PrecloseFacet is
         // check.
         (bool success, bytes memory result) = address(this).call(
             abi.encodeWithSelector(
-                OfferFacet.createOfferInternal.selector,
+                OfferCreateFacet.createOfferInternal.selector,
                 msg.sender,
                 params
             )

@@ -3,7 +3,8 @@ pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
 import {InvariantBase} from "../invariants/InvariantBase.sol";
-import {OfferFacet} from "../../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../../src/facets/OfferAcceptFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
@@ -77,7 +78,7 @@ contract ScenarioFallbackClaimRaceTest is Test {
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
         });
         vm.prank(lender);
-        offerId = OfferFacet(diamond).createOffer(p);
+        offerId = OfferCreateFacet(diamond).createOffer(p);
     }
 
     function _acceptAsBorrower(address borrower, uint256 offerId)
@@ -85,7 +86,7 @@ contract ScenarioFallbackClaimRaceTest is Test {
         returns (uint256 loanId)
     {
         vm.prank(borrower);
-        loanId = OfferFacet(diamond).acceptOffer(offerId, true);
+        loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
     }
 
     // ── Scenario A ─────────────────────────────────────────────────────

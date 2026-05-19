@@ -6,7 +6,8 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
@@ -176,7 +177,7 @@ contract SepoliaOpenOffers is Script {
         // acceptOffer time via `transferFrom`. So approval is all that's
         // needed for the offer to be acceptable later.
         usdc.approve(diamond, t.principal);
-        offerId = OfferFacet(diamond).createOffer(LibVaipakam.CreateOfferParams({
+        offerId = OfferCreateFacet(diamond).createOffer(LibVaipakam.CreateOfferParams({
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: address(usdc),
             amount: t.principal,
@@ -206,7 +207,7 @@ contract SepoliaOpenOffers is Script {
         // into the borrower's per-user escrow at createOffer so the commitment
         // is real by the time a lender browses the book.
         weth.approve(diamond, t.collateral);
-        offerId = OfferFacet(diamond).createOffer(LibVaipakam.CreateOfferParams({
+        offerId = OfferCreateFacet(diamond).createOffer(LibVaipakam.CreateOfferParams({
             offerType: LibVaipakam.OfferType.Borrower,
             lendingAsset: address(usdc),
             amount: t.principal,

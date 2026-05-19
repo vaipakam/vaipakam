@@ -3,7 +3,8 @@ pragma solidity ^0.8.29;
 
 import {RiskFacetTest} from "./RiskFacetTest.t.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
@@ -176,7 +177,7 @@ contract SanctionsOracleTest is RiskFacetTest {
 
     // ─── Tier-1 enforcement at non-OfferFacet entry points ────────────────
     //
-    // OfferFacet.createOffer / acceptOffer were already gated; tests for
+    // OfferCreateFacet.createOffer / acceptOffer were already gated; tests for
     // those live above. This block covers the additional Tier-1 sites
     // added per the post-audit hardening pass:
     //   - EscrowFactoryFacet.getOrCreateUserEscrow

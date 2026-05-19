@@ -4,7 +4,8 @@ pragma solidity ^0.8.29;
 import {Test} from "forge-std/Test.sol";
 import {InvariantBase} from "./InvariantBase.sol";
 import {AdminFacet} from "../../src/facets/AdminFacet.sol";
-import {OfferFacet} from "../../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
@@ -152,7 +153,7 @@ contract PauseHandler is Test {
             durationDays
         );
         vm.prank(lender);
-        try OfferFacet(diamond).createOffer(p) returns (uint256 id) {
+        try OfferCreateFacet(diamond).createOffer(p) returns (uint256 id) {
             lenderOfferIds.push(id);
             if (anyPausedBefore) violations++;
         } catch {}
@@ -182,7 +183,7 @@ contract PauseHandler is Test {
             durationDays
         );
         vm.prank(borrower);
-        try OfferFacet(diamond).createOffer(p) returns (uint256 id) {
+        try OfferCreateFacet(diamond).createOffer(p) returns (uint256 id) {
             borrowerOfferIds.push(id);
             if (anyPausedBefore) violations++;
         } catch {}
@@ -206,7 +207,7 @@ contract PauseHandler is Test {
         bool anyPausedBefore = usdcPaused || wethPaused;
 
         vm.prank(borrower);
-        try OfferFacet(diamond).acceptOffer(offerId, true) returns (uint256 loanId) {
+        try OfferAcceptFacet(diamond).acceptOffer(offerId, true) returns (uint256 loanId) {
             loanIds.push(loanId);
             _popAt(lenderOfferIds, idx);
             if (anyPausedBefore) violations++;
@@ -229,7 +230,7 @@ contract PauseHandler is Test {
         bool anyPausedBefore = usdcPaused || wethPaused;
 
         vm.prank(lender);
-        try OfferFacet(diamond).acceptOffer(offerId, true) returns (uint256 loanId) {
+        try OfferAcceptFacet(diamond).acceptOffer(offerId, true) returns (uint256 loanId) {
             loanIds.push(loanId);
             _popAt(borrowerOfferIds, idx);
             if (anyPausedBefore) violations++;

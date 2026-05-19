@@ -11,7 +11,8 @@ import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
@@ -30,7 +31,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 ///          - cap + kill-switch + reserve guards
 ///          - bridge-then-deposit helper
 ///          - quote view
-///          - OfferFacet.acceptOffer discount path gated by the platform-
+///          - OfferAcceptFacet.acceptOffer discount path gated by the platform-
 ///            level VPFI-discount consent flag (happy + silent-fallback
 ///            branches)
 ///          - emitDiscountApplied access gating

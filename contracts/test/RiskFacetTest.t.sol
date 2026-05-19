@@ -7,7 +7,8 @@ import {Vm} from "forge-std/Vm.sol";
 import {console} from "forge-std/console.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
@@ -52,7 +53,8 @@ import {Test} from "forge-std/Test.sol";
 import {console} from "forge-std/console.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -138,7 +140,8 @@ contract RiskFacetTest is Test {
 
     // Facet addresses
     DiamondCutFacet cutFacet;
-    OfferFacet offerFacet;
+    OfferCreateFacet offerCreateFacet;
+    OfferAcceptFacet offerAcceptFacet;
     OfferCancelFacet offerCancelFacet;
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
@@ -167,7 +170,8 @@ contract RiskFacetTest is Test {
     // uint256 constant HF_SCALE = 1e18;
 
     // DiamondCutFacet cutFacet;
-    // OfferFacet offerFacet;
+    // OfferCreateFacet offerCreateFacet;
+    OfferAcceptFacet offerAcceptFacet;
     // ProfileFacet profileFacet;
     // OracleFacet oracleFacet;
     // VaipakamNFTFacet nftFacet;
@@ -219,7 +223,8 @@ contract RiskFacetTest is Test {
         cutFacet = new DiamondCutFacet();
         diamond = new VaipakamDiamond(owner, address(cutFacet));
 
-        offerFacet = new OfferFacet();
+        offerCreateFacet = new OfferCreateFacet();
+        offerAcceptFacet = new OfferAcceptFacet();
 
         offerCancelFacet = new OfferCancelFacet();
         profileFacet = new ProfileFacet();
@@ -241,11 +246,16 @@ contract RiskFacetTest is Test {
         escrowImpl = new VaipakamEscrowImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](16);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](17);
         cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(offerFacet),
+            facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getOfferFacetSelectors()
+            functionSelectors: helperTest.getOfferCreateFacetSelectors()
+        });
+        cuts[16] = IDiamondCut.FacetCut({
+            facetAddress: address(offerAcceptFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferAcceptFacetSelectors()
         });
         cuts[1] = IDiamondCut.FacetCut({
             facetAddress: address(profileFacet),
@@ -590,7 +600,8 @@ contract RiskFacetTest is Test {
     //     cutFacet = new DiamondCutFacet();
     //     diamond = new VaipakamDiamond(owner, address(cutFacet));
 
-    //     offerFacet = new OfferFacet();
+    //     offerCreateFacet = new OfferCreateFacet();
+        offerAcceptFacet = new OfferAcceptFacet();
     //     profileFacet = new ProfileFacet();
     //     oracleFacet = new OracleFacet();
     //     nftFacet = new VaipakamNFTFacet();
@@ -603,7 +614,7 @@ contract RiskFacetTest is Test {
 
     //     // Cut facets
     //     IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](7);
-    //     cuts[0] = _createFacetCut(address(offerFacet));
+    //     cuts[0] = _createFacetCut(address(offerCreateFacet));
     //     cuts[1] = _createFacetCut(address(profileFacet));
     //     cuts[2] = _createFacetCut(address(oracleFacet));
     //     cuts[3] = _createFacetCut(address(nftFacet));

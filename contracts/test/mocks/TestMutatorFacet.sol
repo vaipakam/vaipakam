@@ -51,7 +51,7 @@ contract TestMutatorFacet {
     function scaffoldOpenOffer(uint256 offerId, LibVaipakam.Offer memory data) external {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.offers[offerId] = data;
-        // Mirror prod's OfferFacet.createOffer: populate the per-user
+        // Mirror prod's OfferCreateFacet.createOffer: populate the per-user
         // index. `LibMetricsHooks.onOfferCreated` covers the active
         // list + counters; the per-user index lives separately.
         s.userOfferIds[data.creator].push(offerId);

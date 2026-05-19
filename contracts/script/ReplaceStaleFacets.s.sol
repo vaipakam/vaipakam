@@ -4,7 +4,8 @@ pragma solidity ^0.8.29;
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
@@ -39,13 +40,14 @@ contract ReplaceStaleFacets is Script {
 
         vm.startBroadcast(deployerKey);
 
-        OfferFacet offerFacet = new OfferFacet();
+        OfferFacet offerCreateFacet = new OfferCreateFacet();
+        offerAcceptFacet = new OfferAcceptFacet();
         OracleFacet oracleFacet = new OracleFacet();
         EscrowFactoryFacet escrowFactoryFacet = new EscrowFactoryFacet();
         ConfigFacet configFacet = new ConfigFacet();
         OracleAdminFacet oracleAdminFacet = new OracleAdminFacet();
 
-        console.log("OfferFacet:          ", address(offerFacet));
+        console.log("OfferFacet:          ", address(offerCreateFacet));
         console.log("OracleFacet:         ", address(oracleFacet));
         console.log("EscrowFactoryFacet:  ", address(escrowFactoryFacet));
         console.log("ConfigFacet:         ", address(configFacet));
@@ -64,7 +66,7 @@ contract ReplaceStaleFacets is Script {
         //   1 Replace + 1 Add (ConfigFacet — existing 28 selectors + 27 missing for protocol-console knobs)
         //   1 Replace + 1 Add (OracleAdminFacet — existing 20 + 10 missing Pyth/admin getters)
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](7);
-        cuts[0] = _replace(address(offerFacet), _offerSelectors());
+        cuts[0] = _replace(address(offerCreateFacet), _offerSelectors());
         cuts[1] = _replace(address(oracleFacet), _oracleSelectors());
         cuts[2] = _replace(address(escrowFactoryFacet), _escrowFactorySelectors());
         cuts[3] = _replace(address(configFacet), _configFacetExistingSelectors());
@@ -110,9 +112,9 @@ contract ReplaceStaleFacets is Script {
         // ReplaceStaleFacets-style cut for OfferCancelFacet if those
         // selectors also need replacement.
         s = new bytes4[](3);
-        s[0] = OfferFacet.createOffer.selector;
-        s[1] = OfferFacet.acceptOffer.selector;
-        s[2] = OfferFacet.getUserEscrow.selector;
+        s[0] = OfferCreateFacet.createOffer.selector;
+        s[1] = OfferAcceptFacet.acceptOffer.selector;
+        s[2] = OfferCreateFacet.getUserEscrow.selector;
     }
 
     function _oracleSelectors() internal pure returns (bytes4[] memory s) {

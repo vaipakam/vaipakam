@@ -6,7 +6,8 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
@@ -206,11 +207,11 @@ contract AnvilNewPartialFlows is Script {
         // Leg 1: fully-filled lender offer (closed).
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 filledOfferId = OfferFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 filledOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 filledLoanId = OfferFacet(diamond).acceptOffer(filledOfferId, true);
+        uint256 filledLoanId = OfferAcceptFacet(diamond).acceptOffer(filledOfferId, true);
         vm.stopBroadcast();
         console.log("Filled offer:", filledOfferId, "loan:", filledLoanId);
 
@@ -224,7 +225,7 @@ contract AnvilNewPartialFlows is Script {
         rangeP.collateralAmount = 5 * COLLATERAL_AMOUNT;
         vm.startBroadcast(newLenderKey);
         usdc.approve(diamond, LOAN_AMOUNT * 5);
-        uint256 rangeOfferId = OfferFacet(diamond).createOffer(rangeP);
+        uint256 rangeOfferId = OfferCreateFacet(diamond).createOffer(rangeP);
         vm.stopBroadcast();
 
         // Borrower posts a [1k, 1k] borrower offer matching at the
@@ -233,7 +234,7 @@ contract AnvilNewPartialFlows is Script {
         bP.collateralAmount = COLLATERAL_AMOUNT;
         vm.startBroadcast(newBorrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 borrowerOfferId = OfferFacet(diamond).createOffer(bP);
+        uint256 borrowerOfferId = OfferCreateFacet(diamond).createOffer(bP);
         vm.stopBroadcast();
         vm.startBroadcast(deployerKey);
         OfferMatchFacet(diamond).matchOffers(rangeOfferId, borrowerOfferId);
@@ -263,12 +264,12 @@ contract AnvilNewPartialFlows is Script {
         p.allowsPartialRepay = true;
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferFacet(diamond).createOffer(p);
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(p);
         vm.stopBroadcast();
 
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferFacet(diamond).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
         vm.stopBroadcast();
 
         // Repay 30% (300 USDC) — typical partial-repay UX.
@@ -302,12 +303,12 @@ contract AnvilNewPartialFlows is Script {
 
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
 
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferFacet(diamond).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
         vm.stopBroadcast();
 
         // Borrower doubles collateral (adds another 1 WETH).
@@ -337,12 +338,12 @@ contract AnvilNewPartialFlows is Script {
 
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
 
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferFacet(diamond).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
         vm.stopBroadcast();
 
         // Borrower → keeper authorization (3 switches per LibAuth):
@@ -381,11 +382,11 @@ contract AnvilNewPartialFlows is Script {
         // Step 1: original loan.
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 origOfferId = OfferFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 origOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferFacet(diamond).acceptOffer(origOfferId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(origOfferId, true);
         vm.stopBroadcast();
 
         // Step 2: borrower posts a refinance offer (cheaper rate).
@@ -393,7 +394,7 @@ contract AnvilNewPartialFlows is Script {
         refiP.interestRateBps = INTEREST_BPS / 2;
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 refiOfferId = OfferFacet(diamond).createOffer(refiP);
+        uint256 refiOfferId = OfferCreateFacet(diamond).createOffer(refiP);
         vm.stopBroadcast();
 
         LibVaipakam.Offer memory refi = OfferCancelFacet(diamond).getOffer(refiOfferId);
@@ -412,7 +413,7 @@ contract AnvilNewPartialFlows is Script {
     /// @dev SKIPPED on Anvil broadcast — `createLoanSaleOffer` has TWO
     ///      pre-existing bugs that block end-to-end execution:
     ///        (a) Reentrancy collision: `_submitSaleOffer` cross-facet-
-    ///            calls `OfferFacet.createOffer`, which is also
+    ///            calls `OfferCreateFacet.createOffer`, which is also
     ///            `nonReentrant` on the diamond-shared lock. Same
     ///            shape as the completeOffset bug fixed in N6 via
     ///            `completeOffsetInternal` — needs a parallel
@@ -493,11 +494,11 @@ contract AnvilNewPartialFlows is Script {
 
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferFacet(diamond).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
         vm.stopBroadcast();
 
         // Borrower repays without anyone calling claim — leaves both

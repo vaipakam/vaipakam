@@ -6,7 +6,9 @@ import {Test} from "forge-std/Test.sol";
 import {console} from "forge-std/console.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {LibUserEscrow} from "../src/libraries/LibUserEscrow.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
@@ -34,7 +36,8 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC1155Mock} from "./mocks/ERC1155Mock.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {HelperTest} from "./HelperTest.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -117,9 +120,9 @@ contract OfferFacetTest is Test {
         // Prepare cuts for required facets
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](9);
         cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(new OfferFacet()),
+            facetAddress: address(new OfferCreateFacet()),
             action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: getOfferFacetSelectors() // getSelectors("OfferFacet")
+            functionSelectors: getOfferCreateFacetSelectors() // getSelectors("OfferFacet")
         });
         // logSelectors("OfferFacet", cuts[0]);
         cuts[1] = IDiamondCut.FacetCut({
@@ -248,7 +251,7 @@ contract OfferFacetTest is Test {
     }
 
     // Facet-specific selector getters (list all public/external manually)
-    function getOfferFacetSelectors()
+    function getOfferCreateFacetSelectors()
         internal
         pure
         returns (bytes4[] memory selectors)
@@ -257,11 +260,11 @@ contract OfferFacetTest is Test {
         // getCompatibleOffers + getOffer moved to OfferCancelFacet,
         // which is cut into the test diamond separately above.
         selectors = new bytes4[](3);
-        selectors[0] = OfferFacet.createOffer.selector;
+        selectors[0] = OfferCreateFacet.createOffer.selector;
         // Single `acceptOffer(uint256,bool)` — VPFI discount path is gated
         // by the platform-level consent flag, not a per-call boolean.
         selectors[1] = bytes4(keccak256("acceptOffer(uint256,bool)"));
-        selectors[2] = OfferFacet.getUserEscrow.selector;
+        selectors[2] = OfferCreateFacet.getUserEscrow.selector;
         return selectors;
     }
 
@@ -869,7 +872,7 @@ contract OfferFacetTest is Test {
 
     /// @dev Covers durationDays == 0 → InvalidOfferType revert
     function testCreateOfferRevertsIfDurationZero() public {
-        vm.expectRevert(OfferFacet.InvalidOfferType.selector);
+        vm.expectRevert(OfferCreateFacet.InvalidOfferType.selector);
         vm.prank(user1);
         OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
@@ -903,7 +906,7 @@ contract OfferFacetTest is Test {
     function testCreateOfferRevertsIfDurationAboveCap() public {
         vm.expectRevert(
             abi.encodeWithSelector(
-                OfferFacet.OfferDurationExceedsCap.selector,
+                OfferCreateFacet.OfferDurationExceedsCap.selector,
                 uint256(366),
                 uint256(LibVaipakam.MAX_OFFER_DURATION_DAYS_DEFAULT)
             )
@@ -1076,7 +1079,7 @@ contract OfferFacetTest is Test {
         vm.stopPrank();
         // Keep mocks; cancelOffer checks offer.accepted BEFORE making any cross-facet calls
 
-        vm.expectRevert(OfferFacet.OfferAlreadyAccepted.selector);
+        vm.expectRevert(OfferAcceptFacet.OfferAlreadyAccepted.selector);
         vm.prank(user1);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
@@ -1084,7 +1087,7 @@ contract OfferFacetTest is Test {
 
     /// @dev Covers acceptOffer → InvalidOffer when offer creator is address(0)
     function testAcceptOfferRevertsInvalidOffer() public {
-        vm.expectRevert(OfferFacet.InvalidOffer.selector);
+        vm.expectRevert(OfferAcceptFacet.InvalidOffer.selector);
         vm.prank(user2);
         OfferAcceptFacet(address(diamond)).acceptOffer(9999, true);
     }
@@ -1138,7 +1141,7 @@ contract OfferFacetTest is Test {
         vm.stopPrank();
         // Keep mocks active; the second acceptOffer should hit OfferAlreadyAccepted BEFORE any cross-facet call
 
-        vm.expectRevert(OfferFacet.OfferAlreadyAccepted.selector);
+        vm.expectRevert(OfferAcceptFacet.OfferAlreadyAccepted.selector);
         vm.prank(user3);
         OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
         vm.clearMockedCalls();
@@ -2179,7 +2182,7 @@ contract OfferFacetTest is Test {
         // Cast to uint8(99) won't work in Solidity; use vm.prank and direct call with raw bytes.
         // We need to pass an invalid enum value - use a direct low-level call.
         bytes memory callData = abi.encodeWithSelector(
-            OfferFacet.createOffer.selector,
+            OfferCreateFacet.createOffer.selector,
             LibVaipakam.OfferType.Lender,
             mockERC20,
             uint256(1000),
@@ -2207,7 +2210,7 @@ contract OfferFacetTest is Test {
             "escrow fail"
         );
         vm.prank(user1);
-        vm.expectRevert(abi.encodeWithSelector(OfferFacet.GetUserEscrowFailed.selector, "Get User Escrow failed"));
+        vm.expectRevert(abi.encodeWithSelector(LibUserEscrow.GetUserEscrowFailed.selector, "Get User Escrow failed"));
         OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,

@@ -4,7 +4,8 @@ pragma solidity ^0.8.29;
 
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -45,9 +46,9 @@ contract CheckSelectors is Script {
         // OfferFacet split: cancelOffer + getCompatibleOffers moved
         // to OfferCancelFacet for the EIP-170 split.
         selectors = new bytes4[](5);
-        selectors[0] = OfferFacet.createOffer.selector;
-        selectors[1] = OfferFacet.acceptOffer.selector;
-        selectors[2] = OfferFacet.getUserEscrow.selector;
+        selectors[0] = OfferCreateFacet.createOffer.selector;
+        selectors[1] = OfferAcceptFacet.acceptOffer.selector;
+        selectors[2] = OfferCreateFacet.getUserEscrow.selector;
         selectors[3] = OfferCancelFacet.cancelOffer.selector;
         selectors[4] = OfferCancelFacet.getCompatibleOffers.selector;
         // selectors[5] = OfferFacet._simulateLTV.selector;

@@ -5,7 +5,8 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 
@@ -129,7 +130,7 @@ contract SeedAnvilOffers is Script {
         // ── Step 3: Lender creates the range offer ──────────────────────
         vm.startBroadcast(LENDER_ANVIL_KEY);
         IERC20(mUSDC).approve(diamond, LENDER_AMOUNT_MAX);
-        uint256 lenderOfferId = OfferFacet(diamond).createOffer(
+        uint256 lenderOfferId = OfferCreateFacet(diamond).createOffer(
             _lenderOfferParams(mUSDC, mWBTC)
         );
         vm.stopBroadcast();
@@ -137,7 +138,7 @@ contract SeedAnvilOffers is Script {
         // ── Step 4: Borrower creates the matching single-fill offer ─────
         vm.startBroadcast(BORROWER_ANVIL_KEY);
         IERC20(mWBTC).approve(diamond, BORROWER_COLLAT);
-        uint256 borrowerOfferId = OfferFacet(diamond).createOffer(
+        uint256 borrowerOfferId = OfferCreateFacet(diamond).createOffer(
             _borrowerOfferParams(mUSDC, mWBTC)
         );
         vm.stopBroadcast();

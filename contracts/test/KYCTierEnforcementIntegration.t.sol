@@ -6,7 +6,8 @@ import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
-import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -36,7 +37,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
  *           - Tier 2 (full)    — allowed at $10,000+.
  *
  *         Each rung is exercised via the full offer → accept path so the
- *         test doubles as a regression guard for `OfferFacet.acceptOffer`
+ *         test doubles as a regression guard for `OfferAcceptFacet.acceptOffer`
  *         and `_calculateTransactionValueNumeraire`, not just the
  *         `ProfileFacet.meetsKYCRequirement` view (which has unit-level
  *         coverage).
@@ -172,7 +173,7 @@ contract KYCTierEnforcementIntegration is Test {
     // ─── Tier-2: unlimited ───────────────────────────────────────────────
 
     /// @notice Tier-2 borrower clears every threshold. End-to-end proof that
-    ///         the full KYC gate chains through OfferFacet.acceptOffer.
+    ///         the full KYC gate chains through OfferAcceptFacet.acceptOffer.
     function test_Tier2_AllowedAboveTier1Threshold() public {
         uint256 offerId = _lenderOffer(PRINCIPAL_ABOVE_TIER1);
         ProfileFacet(address(diamond)).updateKYCTier(borrower, LibVaipakam.KYCTier.Tier2);
@@ -228,7 +229,8 @@ contract KYCTierEnforcementIntegration is Test {
     }
 
     function _cutCoreFacets() internal {
-        OfferFacet offerFacet = new OfferFacet();
+        OfferFacet offerCreateFacet = new OfferCreateFacet();
+        offerAcceptFacet = new OfferAcceptFacet();
         OfferCancelFacet offerCancelFacet = new OfferCancelFacet();
         ProfileFacet profileFacet = new ProfileFacet();
         OracleFacet oracleFacet = new OracleFacet();
@@ -239,11 +241,16 @@ contract KYCTierEnforcementIntegration is Test {
         AdminFacet adminFacet = new AdminFacet();
         AccessControlFacet accessControlFacet = new AccessControlFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](11);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](12);
         cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(offerFacet),
+            facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getOfferFacetSelectors()
+            functionSelectors: helperTest.getOfferCreateFacetSelectors()
+        });
+        cuts[11] = IDiamondCut.FacetCut({
+            facetAddress: address(offerAcceptFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferAcceptFacetSelectors()
         });
         cuts[1] = IDiamondCut.FacetCut({
             facetAddress: address(profileFacet),
