@@ -212,18 +212,27 @@ else
       fi
     done
     # Cross-check the directory against the export script's `FACETS=(...)`
-    # list — catch a *missing* required ABI (a facet added without
-    # committing its JSON, or a JSON deleted). The loop above only sees
-    # files that exist, so a missing one would otherwise pass silently.
+    # list — catch a required ABI that is missing OR present-but-untracked.
+    # The loop above only sees files that exist, so a missing one would
+    # otherwise pass silently; and consumers receive the committed /
+    # published package state, not the local working tree, so a
+    # generated-but-uncommitted JSON must not pass either — require the
+    # file to be git-tracked.
     if [ -n "$export_script" ] && [ -f "$export_script" ]; then
-      local expected
+      local expected why
       for expected in $(sed -n '/FACETS=(/,/^)/p' "$export_script" \
                           | grep -oE '"[A-Za-z0-9_]+"' | tr -d '"'); do
-        [ -f "$dir/$expected.json" ] && continue
-        if [ "$hard" -eq 1 ]; then
-          echo "  ✗ $label — required ABI $expected.json is MISSING" >&2
+        git -C "$dir" ls-files --error-unmatch -- "$expected.json" \
+          >/dev/null 2>&1 && continue
+        if [ -f "$dir/$expected.json" ]; then
+          why="present but UNTRACKED (not committed)"
         else
-          echo "  ⚠ $label — required ABI $expected.json is MISSING" >&2
+          why="MISSING"
+        fi
+        if [ "$hard" -eq 1 ]; then
+          echo "  ✗ $label — required ABI $expected.json is $why" >&2
+        else
+          echo "  ⚠ $label — required ABI $expected.json is $why" >&2
         fi
         drift=$((drift + 1))
       done
