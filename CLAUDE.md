@@ -58,7 +58,8 @@ Cross-facet calls use `address(this).call(abi.encodeWithSelector(...))` — this
 
 | Facet                  | Role                                                                        |
 | ---------------------- | --------------------------------------------------------------------------- |
-| **OfferFacet**         | Create/accept/cancel lending & borrowing offers                             |
+| **OfferCreateFacet**   | Create lending & borrowing offers (cancellation → OfferCancelFacet, range-matching → OfferMatchFacet) |
+| **OfferAcceptFacet**   | Accept an offer → initiate the loan                                         |
 | **LoanFacet**          | Initiate loans, enforce HF >= 1.5 and LTV constraints                       |
 | **RepayFacet**         | Full/partial repayment, NFT daily deductions, late fees                     |
 | **DefaultedFacet**     | Time-based defaults (grace period expired)                                  |

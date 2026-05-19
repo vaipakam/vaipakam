@@ -31,8 +31,12 @@
 #          them creeping back in.
 #
 #   4. ABI-export-in-sync — every committed per-facet ABI JSON matches
-#      current `forge inspect <Facet> abi`. A stale committed ABI ships
-#      consumers that mis-decode the deployed contract. Frontend ABIs
+#      current `forge inspect <Facet> abi`, AND every facet the export
+#      script's `FACETS=(...)` list expects has a committed JSON (a
+#      *missing* required ABI — a facet added without committing its
+#      JSON, or a JSON deleted — is caught here, not just a stale one).
+#      A stale or missing committed ABI ships consumers that mis-decode
+#      (or cannot bind) the deployed contract. Frontend ABIs
 #      (packages/contracts/src/abis) ship inside this monorepo, so drift
 #      there fails the gate. Keeper-bot ABIs (the sibling
 #      vaipakam-keeper-bot repo, when checked out) are re-synced and
@@ -171,7 +175,7 @@ else
   # contract deploy must not be hard-blocked on that repo's state, but
   # the operator is still told to re-sync it).
   check_abi_dir() {
-    local label="$1" dir="$2" hard="$3" drift=0 checked=0
+    local label="$1" dir="$2" hard="$3" export_script="$4" drift=0 checked=0
     if [ ! -d "$dir" ]; then
       echo "  · $label — $dir not present, skipping"
       return 0
@@ -207,6 +211,23 @@ else
         drift=$((drift + 1))
       fi
     done
+    # Cross-check the directory against the export script's `FACETS=(...)`
+    # list — catch a *missing* required ABI (a facet added without
+    # committing its JSON, or a JSON deleted). The loop above only sees
+    # files that exist, so a missing one would otherwise pass silently.
+    if [ -n "$export_script" ] && [ -f "$export_script" ]; then
+      local expected
+      for expected in $(sed -n '/FACETS=(/,/^)/p' "$export_script" \
+                          | grep -oE '"[A-Za-z0-9_]+"' | tr -d '"'); do
+        [ -f "$dir/$expected.json" ] && continue
+        if [ "$hard" -eq 1 ]; then
+          echo "  ✗ $label — required ABI $expected.json is MISSING" >&2
+        else
+          echo "  ⚠ $label — required ABI $expected.json is MISSING" >&2
+        fi
+        drift=$((drift + 1))
+      done
+    fi
     if [ "$drift" -eq 0 ]; then
       echo "  ✓ $label — $checked facet ABI(s) in sync"
     elif [ "$hard" -eq 1 ]; then
@@ -219,9 +240,11 @@ else
     fi
   }
   check_abi_dir "frontend ABIs" \
-    "$REPO_ROOT/packages/contracts/src/abis" 1
+    "$REPO_ROOT/packages/contracts/src/abis" 1 \
+    "$SCRIPT_DIR/exportFrontendAbis.sh"
   check_abi_dir "keeper-bot ABIs" \
-    "$REPO_ROOT/../vaipakam-keeper-bot/src/abis" 0
+    "$REPO_ROOT/../vaipakam-keeper-bot/src/abis" 0 \
+    "$SCRIPT_DIR/exportAbis.sh"
 fi
 
 # ── Verdict ───────────────────────────────────────────────────────────
