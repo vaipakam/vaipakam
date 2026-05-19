@@ -171,7 +171,7 @@ contract RiskFacetTest is Test {
 
     // DiamondCutFacet cutFacet;
     // OfferCreateFacet offerCreateFacet;
-    OfferAcceptFacet offerAcceptFacet;
+    // OfferAcceptFacet offerAcceptFacet;
     // ProfileFacet profileFacet;
     // OracleFacet oracleFacet;
     // VaipakamNFTFacet nftFacet;
@@ -601,7 +601,7 @@ contract RiskFacetTest is Test {
     //     diamond = new VaipakamDiamond(owner, address(cutFacet));
 
     //     offerCreateFacet = new OfferCreateFacet();
-        offerAcceptFacet = new OfferAcceptFacet();
+    //     offerAcceptFacet = new OfferAcceptFacet();
     //     profileFacet = new ProfileFacet();
     //     oracleFacet = new OracleFacet();
     //     nftFacet = new VaipakamNFTFacet();

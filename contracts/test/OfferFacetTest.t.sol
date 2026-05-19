@@ -118,13 +118,17 @@ contract OfferFacetTest is Test {
         HelperTest helperTest = new HelperTest();
 
         // Prepare cuts for required facets
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](9);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](10);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(new OfferCreateFacet()),
             action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: getOfferCreateFacetSelectors() // getSelectors("OfferFacet")
+            functionSelectors: getOfferCreateFacetSelectors()
         });
-        // logSelectors("OfferFacet", cuts[0]);
+        cuts[9] = IDiamondCut.FacetCut({
+            facetAddress: address(new OfferAcceptFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: getOfferAcceptFacetSelectors()
+        });
         cuts[1] = IDiamondCut.FacetCut({
             facetAddress: address(new ProfileFacet()),
             action: IDiamondCut.FacetCutAction.Add,
@@ -256,15 +260,24 @@ contract OfferFacetTest is Test {
         pure
         returns (bytes4[] memory selectors)
     {
-        // OfferFacet split for EIP-170: cancelOffer +
-        // getCompatibleOffers + getOffer moved to OfferCancelFacet,
-        // which is cut into the test diamond separately above.
-        selectors = new bytes4[](3);
+        // OfferFacet split into OfferCreateFacet / OfferAcceptFacet
+        // (Issue #67); cancelOffer + getCompatibleOffers + getOffer are
+        // on OfferCancelFacet, cut into the test diamond separately.
+        selectors = new bytes4[](2);
         selectors[0] = OfferCreateFacet.createOffer.selector;
+        selectors[1] = OfferCreateFacet.getUserEscrow.selector;
+        return selectors;
+    }
+
+    function getOfferAcceptFacetSelectors()
+        internal
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](1);
         // Single `acceptOffer(uint256,bool)` — VPFI discount path is gated
         // by the platform-level consent flag, not a per-call boolean.
-        selectors[1] = bytes4(keccak256("acceptOffer(uint256,bool)"));
-        selectors[2] = OfferCreateFacet.getUserEscrow.selector;
+        selectors[0] = bytes4(keccak256("acceptOffer(uint256,bool)"));
         return selectors;
     }
 

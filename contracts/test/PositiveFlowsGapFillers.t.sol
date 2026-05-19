@@ -358,8 +358,8 @@ contract PositiveFlowsGapFillers is Test {
     }
 
     function _cutCoreFacets() internal {
-        OfferFacet offerCreateFacet = new OfferCreateFacet();
-        offerAcceptFacet = new OfferAcceptFacet();
+        OfferCreateFacet offerCreateFacet = new OfferCreateFacet();
+        OfferAcceptFacet offerAcceptFacet = new OfferAcceptFacet();
         OfferCancelFacet offerCancelFacet = new OfferCancelFacet();
         ProfileFacet profileFacet = new ProfileFacet();
         OracleFacet oracleFacet = new OracleFacet();

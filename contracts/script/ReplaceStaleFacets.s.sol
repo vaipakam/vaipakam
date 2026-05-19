@@ -40,8 +40,8 @@ contract ReplaceStaleFacets is Script {
 
         vm.startBroadcast(deployerKey);
 
-        OfferFacet offerCreateFacet = new OfferCreateFacet();
-        offerAcceptFacet = new OfferAcceptFacet();
+        OfferCreateFacet offerCreateFacet = new OfferCreateFacet();
+        OfferAcceptFacet offerAcceptFacet = new OfferAcceptFacet();
         OracleFacet oracleFacet = new OracleFacet();
         EscrowFactoryFacet escrowFactoryFacet = new EscrowFactoryFacet();
         ConfigFacet configFacet = new ConfigFacet();
@@ -65,8 +65,9 @@ contract ReplaceStaleFacets is Script {
         //   3 Replace (Offer / Oracle / EscrowFactory bytecode refresh)
         //   1 Replace + 1 Add (ConfigFacet — existing 28 selectors + 27 missing for protocol-console knobs)
         //   1 Replace + 1 Add (OracleAdminFacet — existing 20 + 10 missing Pyth/admin getters)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](7);
-        cuts[0] = _replace(address(offerCreateFacet), _offerSelectors());
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](8);
+        cuts[0] = _replace(address(offerCreateFacet), _offerCreateSelectors());
+        cuts[7] = _replace(address(offerAcceptFacet), _offerAcceptSelectors());
         cuts[1] = _replace(address(oracleFacet), _oracleSelectors());
         cuts[2] = _replace(address(escrowFactoryFacet), _escrowFactorySelectors());
         cuts[3] = _replace(address(configFacet), _configFacetExistingSelectors());
@@ -105,16 +106,19 @@ contract ReplaceStaleFacets is Script {
         });
     }
 
-    function _offerSelectors() internal pure returns (bytes4[] memory s) {
-        // Post-OfferFacet split: cancelOffer / getCompatibleOffers /
-        // getOffer live on OfferCancelFacet now. This script targets
-        // only what OfferFacet still owns; pair it with a sibling
-        // ReplaceStaleFacets-style cut for OfferCancelFacet if those
-        // selectors also need replacement.
-        s = new bytes4[](3);
+    function _offerCreateSelectors() internal pure returns (bytes4[] memory s) {
+        // OfferFacet split into OfferCreateFacet / OfferAcceptFacet
+        // (Issue #67). cancelOffer / getCompatibleOffers / getOffer are
+        // on OfferCancelFacet — pair this with a sibling cut for that
+        // facet if those selectors also need a bytecode refresh.
+        s = new bytes4[](2);
         s[0] = OfferCreateFacet.createOffer.selector;
-        s[1] = OfferAcceptFacet.acceptOffer.selector;
-        s[2] = OfferCreateFacet.getUserEscrow.selector;
+        s[1] = OfferCreateFacet.getUserEscrow.selector;
+    }
+
+    function _offerAcceptSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = OfferAcceptFacet.acceptOffer.selector;
     }
 
     function _oracleSelectors() internal pure returns (bytes4[] memory s) {
