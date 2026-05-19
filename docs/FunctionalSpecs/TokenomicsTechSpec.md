@@ -183,7 +183,7 @@ Public read surface:
 
 Phase note:
 
-- this subsection is `Pahse 1` scope, deployed alongside the rest of §4
+- this subsection is `Phase 1` scope, deployed alongside the rest of §4
 
 Problem:
 
@@ -212,7 +212,7 @@ Finalization on Base:
 - storage key: daily chain interest by day and source EVM chain id
 - finalization rule: `dailyGlobalInterestNumeraire[dayId]` is finalized once all expected mirror chain ids have reported for `dayId`, OR after a **4-hour grace window** past `dayId + 1` UTC, whichever comes first
 - any late-arriving report is recorded for audit but does **not** retroactively change a finalized global — this preserves claim determinism
-- finalization event: `DailyGlobalInterestFinalized(dayId, dailyGlobalInterestNumeraire, participatingEids)`
+- finalization records must identify participating chains by EVM chain id, not by legacy cross-chain endpoint identifiers
 
 Broadcast back to mirrors (Base → mirror):
 
@@ -656,12 +656,15 @@ Canonical-address rule:
 
 CCIP hardening requirements:
 
+- Chainlink CCIP is the intended Phase 1 cross-chain provider. The platform must rely on CCIP's uniform security model rather than a per-integrator verifier-policy configuration surface.
 - domain contracts should depend on a provider-neutral cross-chain messenger abstraction; provider-specific behavior should be isolated to the approved messenger adapter so a future provider migration does not leak through the loan, reward, or tokenomics surfaces
 - the messenger must maintain allowlists for supported remote chains, remote messengers, and channel peers, and must reject inbound or outbound messages outside those allowlists
 - chain selector and channel-handler configuration must stay one-to-one. A governance or operator action that would make one local chain map to multiple remote identities, or one channel map to multiple handlers, must be rejected rather than silently replacing state.
 - cross-chain token transfers must have bounded, governance-tunable rate limits per lane. Defaults must not be unlimited, and rate limits must not be disabled entirely.
 - outbound messages should reject duplicate token entries and invalid chain identity values before attempting a send
 - inbound messages should reject out-of-range or mismatched chain identity values rather than silently attributing a message to the wrong chain
+- fixed-rate cross-chain buys must release VPFI only when the source-chain delivery matches a genuine pending buy recorded for the same buyer and request identity
+- successful fixed-rate buys should use authenticated token delivery as the success signal; a separate cross-chain success reply should not be required to complete a valid purchase
 - fixed-rate buy reconciliation should be monitored off-chain: canonical-chain processed buy events should be cross-checked against source-chain `BuyRequested` events by request id, buyer, and amount
 - the buy-reconciliation watchdog should run from the operations Worker, read canonical-chain processed-buy events, resolve the originating EVM chain id to that source chain's RPC and adapter address, and verify that a matching source-chain `BuyRequested` event exists with the same request id, buyer, and amount
 - the buy-reconciliation watchdog should expose an on-chain kill switch for planned ceremonies; auto-pausing on mismatch is an operations decision for a later phase, not a Phase 1 requirement
