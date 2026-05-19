@@ -48,14 +48,44 @@ import {Deployments} from "./lib/Deployments.sol";
 
 contract DeployDiamond is Script {
     // ── Deployed addresses (logged at the end) ──────────────────────────
-    address diamond;
-    address diamondCutFacet;
+    // `public` so the deploy-integration test (Issue #72) can read the
+    // built Diamond after calling `run()` — the script's own
+    // `Deployments.writeDiamond(...)` artifact path is FS-write and only
+    // useful for downstream operator scripts; an in-process test reads
+    // the storage var directly.
+    address public diamond;
+    address public diamondCutFacet;
 
+    /// @notice Operator entry point — reads `ADMIN_ADDRESS`,
+    ///         `TREASURY_ADDRESS`, `DEPLOYER_PRIVATE_KEY` from env and
+    ///         delegates to `runWith(...)`. Foundry's `forge script
+    ///         DeployDiamond --broadcast` invokes this.
     function run() external virtual {
-        // ── Configuration ───────────────────────────────────────────────
-        address admin = vm.envAddress("ADMIN_ADDRESS");
-        address treasury = vm.envAddress("TREASURY_ADDRESS");
-        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        runWith(
+            vm.envAddress("ADMIN_ADDRESS"),
+            vm.envAddress("TREASURY_ADDRESS"),
+            vm.envUint("DEPLOYER_PRIVATE_KEY")
+        );
+    }
+
+    /// @notice Parameterised entry point — same deploy logic, but admin /
+    ///         treasury / deployer-key are passed directly instead of read
+    ///         from env vars.
+    /// @dev    Issue #72 — env-var-driven invocation races under Foundry's
+    ///         default-parallel test runner (`vm.setEnv` writes to the
+    ///         PROCESS env, shared across every test thread, so two tests
+    ///         calling `run()` concurrently with different admins can
+    ///         clobber each other's `ADMIN_ADDRESS` mid-broadcast). The
+    ///         deploy-integration test calls `runWith(...)` directly to
+    ///         pass admin / treasury / deployer-key as Solidity args — no
+    ///         env-var round-trip, no parallel-test race. Production
+    ///         `forge script` invocations keep using `run()` and are
+    ///         unaffected.
+    function runWith(
+        address admin,
+        address treasury,
+        uint256 deployerKey
+    ) public virtual {
         address deployerAddr = vm.addr(deployerKey);
 
         console.log("=== Vaipakam Diamond Deployment ===");
@@ -237,6 +267,41 @@ contract DeployDiamond is Script {
             "DeployDiamond: cut 2/2 did not register all facets"
         );
 
+        // Issue #72 — per-selector ownership assertion. The count check
+        // above only proves "N distinct facet addresses are registered";
+        // it would still pass if any selector got mis-routed (e.g. two
+        // facets share a selector and the second cut overwrote the
+        // first's route silently). Walk `cuts[]` — the source of truth
+        // for what we just dispatched — and assert each selector resolves
+        // on the live diamond to *that cut's* facet address. Catches:
+        //   - Selector collisions where the later cut clobbered an
+        //     earlier facet's selector without any per-cut revert.
+        //   - A facet that compiled but whose runtime bytecode didn't
+        //     register the expected selector set (impossible in well-
+        //     formed Solidity, but the assertion is cheap and the failure
+        //     mode silent without it).
+        //   - Drift between the script's `_getXSelectors()` list and the
+        //     actual on-chain routing (catches mismatches that the static
+        //     SelectorCoverageTest would miss when run against the live
+        //     deploy rather than its mirror).
+        //
+        // O(total selectors) — same loop the diamondCut itself walked,
+        // run again as read-only loupe queries against the just-built
+        // diamond. Reverts the entire broadcast if any selector is
+        // mis-routed; no half-state is persisted because Foundry rolls
+        // back the broadcast on require failure.
+        DiamondLoupeFacet loupe = DiamondLoupeFacet(diamond);
+        for (uint256 i = 0; i < cuts.length; i++) {
+            for (uint256 j = 0; j < cuts[i].functionSelectors.length; j++) {
+                bytes4 sel = cuts[i].functionSelectors[j];
+                address routed = loupe.facetAddress(sel);
+                require(
+                    routed == cuts[i].facetAddress,
+                    "DeployDiamond: selector routed to wrong facet"
+                );
+            }
+        }
+
         // ── Step 5: Post-deployment initialization ──────────────────────
         // 5a. Initialize access control (grants all roles to admin)
         AccessControlFacet(diamond).initializeAccessControl();
@@ -328,6 +393,21 @@ contract DeployDiamond is Script {
         // canonical source of truth post-deploy. Writes happen OUTSIDE
         // the broadcast (no on-chain effect) so a missing FS-write
         // permission only fails the file step, not the deploy.
+        //
+        // Issue #72 — operator/test escape hatch: set
+        // `DEPLOY_SKIP_ARTIFACTS=true` to bypass the addresses.json
+        // writes entirely. The deploy-integration test sets this so a
+        // `forge test` run can exercise `run()` end-to-end (Steps 1–6
+        // including the per-selector ownership assertion above) without
+        // clobbering the committed `deployments/anvil/addresses.json`
+        // every CI invocation. Also useful for dry-run-style local
+        // experiments where the operator wants to deploy + inspect the
+        // diamond without overwriting the artifact in their working tree.
+        if (vm.envOr("DEPLOY_SKIP_ARTIFACTS", false)) {
+            console.log("DEPLOY_SKIP_ARTIFACTS=true -- skipping addresses.json writes.");
+            return;
+        }
+
         Deployments.writeChainHeader();
         Deployments.writeDiamond(diamond);
 
