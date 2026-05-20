@@ -1,0 +1,49 @@
+# Code vs Docs Audit
+
+`docs/FunctionalSpecs/` is the **code-INDEPENDENT specification** of what
+the platform is **intended** to do — the test oracle. The contract code is
+the thing *under test*, never the *source* of the spec. (See
+`docs/FunctionalSpecs/README.md` for the full rules; the load-bearing one
+is: the spec is sourced from documents, never transcribed from code.)
+
+This file records places where observed code behaviour diverges from what
+the spec says is intended. Each divergence is a **candidate bug** (the
+code is wrong and the spec is right) OR **a stale doc** (the spec needs
+to catch up with an intent-decision the project owner has since made) —
+the two are never silently reconciled. Code-observed behaviour enters the
+spec ONLY via an explicit intent-decision from the project owner, not by
+copying what the code does.
+
+## How to use this file
+
+1. When review surfaces a contract behaviour that doesn't match
+   `docs/FunctionalSpecs/<domain>.md`, append a row to **Open findings**
+   below with: date, the divergent symbol (`Facet.function` or
+   spec-section reference), one-line summary, and a status of `pending
+   triage`.
+2. Triage decides:
+   - **Code is wrong** → file a bug-fix card on `@vaipakam-labs`,
+     reference this entry from the card body. When fixed, move the
+     finding to **Resolved findings** with the closing PR / commit.
+   - **Spec is wrong** → owner provides an intent-decision in writing,
+     the spec doc is updated, the finding moves to Resolved with the
+     intent-decision note + the closing spec-update PR.
+3. Open findings count is itself audit-relevant — a growing list signals
+   drift; auditors will read this file.
+
+## Open findings
+
+| Date | Divergent symbol | Spec section | One-line summary | Status |
+|------|------------------|--------------|------------------|--------|
+| (none yet — open findings will appear here) |
+
+## Resolved findings
+
+| Date opened | Divergent symbol | Resolution | Closed by |
+|-------------|------------------|------------|-----------|
+| (none yet — resolved entries move here with the closing PR / commit reference) |
+
+---
+
+*Maintained by the project owner; review-surfaced findings appended by
+reviewers (human or AI) with a one-line description.*

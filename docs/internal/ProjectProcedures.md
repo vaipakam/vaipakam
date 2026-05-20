@@ -109,21 +109,25 @@ final stage.
 ☐ Background-poller running for the PR (§3.3)
 ```
 
-### 3.2 Codex review — priority levels
+### 3.2 Codex review — canonical triggers
 
-`@codex P<levels> review` triggers Codex's GitHub review. Pick levels by
-risk:
+`AGENTS.md` at the repo root defines the canonical Codex command surface.
+This handbook mirrors it; if the two diverge, AGENTS.md wins.
 
-| Levels | When to use |
+| Trigger | When to use |
 |---|---|
-| `P1` only | Lowest-risk PRs: docs-only, tooling tweaks, comment fixes |
-| `P1 P2` | Most routine code changes — refactors, additions to existing tested patterns |
-| `P1 P2 P3` | Higher-risk changes: deploy script edits, ruleset changes, security-sensitive code |
-| (none) | Skip Codex on truly trivial changes (typo, single-line comment). Rare. |
+| `@codex review normal` | Routine implementation review — confirms PR matches issue / card / acceptance criteria; checks correctness, integration, missing tests / docs / config. |
+| `@codex review adversarial` | Failure-mode + abuse-case sweep — malicious inputs, auth bypass, replay, race conditions, fund-loss paths, stuck-state scenarios. |
+| `@codex review full` | Both `normal` and `adversarial`. **Default for any card in "In review" status unless the work is clearly low-risk.** |
+| `@codex review full security-critical` | High-risk changes — contracts that move funds or change accounting; liquidation / settlement / escrow / treasury / oracle / cross-chain logic; auth / admin / keeper / worker / API / privacy / compliance / secret-management / irreversible-migration changes. |
+| (no trigger) | Skip Codex only on truly trivial changes — typo fix, comment-only edit. Rare. |
 
-After each fix iteration, **post a new `@codex <levels> review`
-comment.** Codex's auto-review on push fires once, but explicit triggers
-re-run the review on the new commit.
+After each fix iteration, **post a fresh trigger comment** to re-run Codex
+against the new commit. Codex's auto-review on push fires once on its own,
+but explicit triggers force a re-review.
+
+See AGENTS.md → "Codex commands" for the full description of what each
+mode actually checks.
 
 ### 3.3 Background-poller — never `gh pr view --json comments`
 
