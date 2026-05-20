@@ -62,5 +62,37 @@ Tracked as part of the mainnet rollout workflow rather than as a
 new code change, since the ruleset can't reference a context that
 hasn't run at least once.
 
+**Path-filter + timeout fix.** First exercise of the required-status-
+checks rule on a docs/workflow-only PR (this PR itself) surfaced two
+problems: `contracts-fast` and `contracts-full` ran on a PR that
+changed no `.sol` files, and `contracts-fast`'s 15-minute timeout
+ceiling cancelled the cold-cache run at exactly 15 m 15 s — before
+the deploy-sanity step could complete. Two amendments fold in here:
+
+- **Path filter** — a new lightweight `detect-changes` job runs
+  first on every PR (~30 s — checkout + `git diff` between PR head
+  and base). It exports two outputs (`contracts`, `workspaces`)
+  signalling whether the diff touches paths each downstream job
+  cares about. `contracts-fast`, `contracts-full`, and `workspaces`
+  each `if:`-guard on the matching output. When the guard is false
+  (a pure docs / workflow-only PR), the job is reported as
+  "skipped" — and branch protection treats skipped-due-to-`if` as
+  a SUCCESS for required-status-checks. So a docs-only PR sees all
+  three downstream jobs go skipped → ready-to-merge without ever
+  burning ~25 min of forge build.
+
+  NOT using `on.pull_request.paths:` at workflow level because
+  that would skip the WHOLE workflow — the required-check status
+  never gets posted, and branch protection then blocks the merge
+  forever waiting for it. The job-level `if:` pattern is the
+  officially-blessed solution for this.
+
+- **Timeout bumps** — `contracts-fast` 15 → 45 min,
+  `contracts-full` 30 → 45 min. Cold-cache cold-clone forge build
+  is dominated by submodule clone (~2-3 min) + viaIR compile
+  (5-15 min); the earlier 15-min ceiling auto-killed runs that
+  hadn't even reached the test phase. Warm-cache runs finish in
+  2-3 min and never touch the new ceiling.
+
 Closes #74 (the rest of the arc; the CI workflow itself landed in
 PR #84).

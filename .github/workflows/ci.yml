@@ -63,6 +63,84 @@ permissions:
   contents: read
 
 jobs:
+  # ── detect-changes ────────────────────────────────────────────────────
+  # Lightweight first-pass job that runs on every PR (~30 s total). Diffs
+  # the PR head against its base (or the push commit against HEAD~1) and
+  # exports two boolean outputs:
+  #
+  #   contracts: any file under contracts/ OR foundry config OR this
+  #              workflow / the mainnet-gate workflow changed
+  #   workspaces: any file under apps/ or packages/ OR the pnpm lockfile
+  #               or root package.json changed
+  #
+  # Other jobs `if:`-guard on these outputs. When the guard is false,
+  # GitHub Actions reports the job as "skipped" — and branch protection
+  # treats skipped-due-to-`if` as a SUCCESS for required-status-checks.
+  # So a PR that only touches docs/* (no contracts, no workspaces) sees
+  # all three downstream jobs go skipped → ready-to-merge without any
+  # workflow change burning ~25 min of forge build.
+  #
+  # NOT using `on.pull_request.paths:` at workflow level because that
+  # makes GitHub skip the WHOLE workflow — the required-check status
+  # never gets posted, and branch protection then blocks the merge
+  # forever waiting for it.
+  detect-changes:
+    name: detect-changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      contracts: ${{ steps.diff.outputs.contracts }}
+      workspaces: ${{ steps.diff.outputs.workspaces }}
+    steps:
+      - name: Checkout (shallow — diff range only)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # fetch-depth: 0 so git diff can resolve the PR base sha. The
+          # rest of the workflow doesn't depend on full history.
+          fetch-depth: 0
+
+      - name: Determine changed paths
+        id: diff
+        run: |
+          set -eu
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            HEAD="${{ github.event.pull_request.head.sha }}"
+          else
+            # `push` event — diff the pushed commit against its parent.
+            BASE="${{ github.event.before }}"
+            HEAD="${{ github.sha }}"
+            # On the very first commit to a branch `before` is all-zeros.
+            # Fall back to comparing against HEAD~1.
+            if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+              BASE=$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)
+            fi
+          fi
+          echo "Diff range: $BASE..$HEAD"
+          CHANGED=$(git diff --name-only "$BASE" "$HEAD" || git diff --name-only HEAD~1 HEAD)
+          echo "Changed files:"
+          echo "$CHANGED"
+
+          # Contracts-affecting paths: anything in contracts/, foundry
+          # config in contracts/, the CI workflow itself (so a workflow
+          # change DOES re-validate contracts), and the mainnet-gate
+          # workflow (audit-trail coherence).
+          CONTRACTS_RE='^(contracts/|\.github/workflows/(ci|mainnet-gate)\.yml$)'
+          if echo "$CHANGED" | grep -Eq "$CONTRACTS_RE"; then
+            echo "contracts=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "contracts=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Workspaces-affecting paths: anything under apps/ or packages/,
+          # plus the lockfile + root package.json that govern hoisting.
+          WORKSPACES_RE='^(apps/|packages/|pnpm-lock\.yaml|package\.json|\.github/workflows/ci\.yml$)'
+          if echo "$CHANGED" | grep -Eq "$WORKSPACES_RE"; then
+            echo "workspaces=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "workspaces=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # Two contracts jobs, designed for different cost/coverage trade-offs:
   #
   #   contracts-fast  — `predeploy-check.sh` without `--full`. Runs the
@@ -97,8 +175,17 @@ jobs:
   # build the same artifacts as the full regression, so warm hits transfer.
   contracts-fast:
     name: contracts-fast (forge + predeploy-check)
+    needs: detect-changes
+    if: needs.detect-changes.outputs.contracts == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Timeout bumped from the original 15 → 45 min. Cold-cache cold-clone
+    # forge build is dominated by submodule clone (~2-3 min) + viaIR
+    # compile (5-15 min) + the deploy-sanity test step (~30 s). The
+    # earlier 15-min ceiling auto-killed runs that hadn't even reached
+    # the test phase (observed on PR #86's cold-cache run — cancelled at
+    # exactly 15 min 15 s). Warm-cache runs finish in 2-3 min and never
+    # touch this ceiling; cold-cache runs need the headroom.
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: contracts
@@ -185,8 +272,14 @@ jobs:
   # any cutover.
   contracts-full:
     name: contracts-full (forge + predeploy-check --full)  [informational]
+    needs: detect-changes
+    if: needs.detect-changes.outputs.contracts == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Timeout bumped from 30 → 45 min — same rationale as contracts-fast,
+    # plus the full regression itself takes 5-10 min once the build is
+    # warm. Cold-cache + full regression: ~20-30 min is the realistic
+    # ceiling; 45 leaves headroom for runner variability.
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: contracts
@@ -229,6 +322,8 @@ jobs:
 
   workspaces:
     name: workspaces (pnpm typecheck)
+    needs: detect-changes
+    if: needs.detect-changes.outputs.workspaces == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
