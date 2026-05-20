@@ -76,45 +76,26 @@ updates:
 
   # ── Vendored Solidity submodules — suppress all Dependabot PRs ───────
   # Each vendored library under `contracts/lib/` is a git submodule
-  # pinned to an audited commit. Registering each directory here with
-  # `ignore: [{ dependency-name: "*" }]` disables BOTH version-update
-  # AND security-update PRs against that subtree. See the header
+  # pinned to an audited commit. Their JS tooling trees ship with
+  # multiple nested package.json / pnpm-lock.yaml manifests at varying
+  # depths (e.g. `lib/chainlink-ccip/chains/evm/`, the OZ submodule's
+  # own nested submodules under `lib/openzeppelin-contracts-upgradeable
+  # /lib/openzeppelin-contracts/`, etc.) — too many to enumerate
+  # individually without going stale on the next submodule bump. The
+  # `directories:` glob below catches every manifest under the wildcard
+  # in a single block; `ignore: [{ dependency-name: "*" }]` plus
+  # `open-pull-requests-limit: 0` then disables BOTH version-update
+  # AND security-update PRs for each matched manifest. See the header
   # comment above for the security-update-scanner quirk this works
   # around.
+  #
+  # Note re. root `/` overlap: the root npm entry above only scans the
+  # pnpm-workspace root manifests (`pnpm-workspace.yaml` lists only
+  # `apps/*` + `packages/*`), so it never reaches `contracts/lib/**`.
+  # The glob below is the only entry that registers those paths.
   - package-ecosystem: "npm"
-    directory: "/contracts/lib/diamond-3-hardhat"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 0
-    ignore:
-      - dependency-name: "*"
-
-  - package-ecosystem: "npm"
-    directory: "/contracts/lib/openzeppelin-contracts-upgradeable"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 0
-    ignore:
-      - dependency-name: "*"
-
-  - package-ecosystem: "npm"
-    directory: "/contracts/lib/chainlink-ccip"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 0
-    ignore:
-      - dependency-name: "*"
-
-  - package-ecosystem: "npm"
-    directory: "/contracts/lib/chainlink-evm"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 0
-    ignore:
-      - dependency-name: "*"
-
-  - package-ecosystem: "npm"
-    directory: "/contracts/lib/chainlink-local"
+    directories:
+      - "/contracts/lib/**"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 0
