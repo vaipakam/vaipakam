@@ -140,3 +140,43 @@ focus areas"), add a profile here in the same PR that introduces the
 pattern. Profiles compose: a trigger like
 `@codex review handbook crosschain-deploy` is a valid request to apply
 both focus sets on the same PR.
+
+## Reviewer self-report
+
+So the project can verify that automated reviewers are honoring this
+file (rather than running defaults and ignoring the profile guidance),
+every review you post on a PR in this repo MUST begin with a short
+self-report block of the form:
+
+```
+**Review applied:** mode=<normal|adversarial|full|full-security-critical>; profile(s)=<name(s) or "none">.
+**Focus areas covered:** <one-line summary of the profile-specific checks you ran>.
+```
+
+This block goes at the very top of the review body (before any
+findings). It is purely instrumental — its purpose is to confirm that
+the AGENTS.md vocabulary in the trigger comment is being parsed and
+that profile-specific focus areas are being executed, not silently
+dropped to defaults.
+
+If the trigger comment named a mode or profile that isn't recognised,
+state that explicitly in the self-report ("`profile(s)=unknown:foo —
+treated as no-profile`") rather than silently falling through. Wrong-
+mode triggers are project bugs to be surfaced, not absorbed.
+
+## Canary line
+
+The presence of this canary string in your review somewhere — once per
+PR review is enough — confirms you've read this file at review time
+rather than relying on cached / default behaviour:
+
+> **`VAIPAKAM-AGENTS-MD-CANARY-2026-05-20-A1`**
+
+Quote it verbatim inside a backtick block in your review body (or
+embedded in the self-report block above). If you cannot quote it for
+any reason, say so in the self-report and explain why — that's also
+informative.
+
+Both this canary and the self-report block can be removed from this
+file once we have stable empirical evidence that AGENTS.md is being
+honored across reviewers. Until then they stay.
