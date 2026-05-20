@@ -33,6 +33,7 @@ Use these labels consistently when triaging issues, creating project items, or l
 ## Triage Notes
 
 - Prefer one primary type label: `bug`, `enhancement`, `documentation`, `chore`, `refactor`, `infra`, or `perf`.
-- Add `security`, `audit`, `testnet-rehearsal`, or `mainnet-rollout` as cross-cutting labels when relevant.
+- Add `security`, `audit`, `breaking-change`, `testnet-rehearsal`, or `mainnet-rollout` as cross-cutting labels when relevant. `breaking-change` is the one that drives the release-drafter MAJOR semver bump — don't forget to apply it to genuinely incompatible PRs.
+- `dependencies` is applied automatically by Dependabot (alongside `infra`) — no manual action needed there.
 - Use outcome labels (`duplicate`, `invalid`, `wontfix`) when closing or de-scoping an issue.
 - Mirror label intent into the `@vaipakam-labs` project fields where useful: `Module`, `Priority`, `Size`, `Estimate`, and `Iteration`.

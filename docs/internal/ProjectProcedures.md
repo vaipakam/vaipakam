@@ -437,8 +437,10 @@ slicing, the conflict-precedence rule, and the full rules.
 and updates a SINGLE draft GitHub Release with each merged PR
 appended under its category. Categories are driven by PR labels (the
 same set from `.github/LABELS.md`); the next-version suggestion is
-label-driven (`breaking` → major; `enhancement` / `feature` → minor;
-everything else → patch).
+label-driven (`breaking-change` → major; `enhancement` → minor;
+every other documented type label → patch). Aliases like `breaking` /
+`feature` / `fix` are NOT in the taxonomy, so they don't drive the
+resolver — label PRs with the documented names.
 
 The drafted release stays a **draft** until the maintainer reviews
 the body + edits the tag + clicks "Publish release". Auto-drafting

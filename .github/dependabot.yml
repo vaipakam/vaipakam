@@ -29,8 +29,14 @@ updates:
         patterns: ["*"]
     commit-message:
       prefix: "chore(ci)"
+    # Both labels apply — `infra` is the operational category for the
+    # @vaipakam-labs board's Module field; `dependencies` is what the
+    # release-drafter config's Dependencies bucket keys on. Specifying
+    # `labels:` here replaces Dependabot's default `dependencies` label,
+    # so we have to add it back explicitly alongside `infra`.
     labels:
       - "infra"
+      - "dependencies"
 
   # ── Off-chain npm / pnpm workspace (apps/* + packages/*) ────────────
   - package-ecosystem: "npm"
@@ -47,5 +53,11 @@ updates:
           - "patch"
     commit-message:
       prefix: "chore(deps)"
+    # Both labels apply — `infra` is the operational category for the
+    # @vaipakam-labs board's Module field; `dependencies` is what the
+    # release-drafter config's Dependencies bucket keys on. Specifying
+    # `labels:` here replaces Dependabot's default `dependencies` label,
+    # so we have to add it back explicitly alongside `infra`.
     labels:
       - "infra"
+      - "dependencies"

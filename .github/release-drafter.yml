@@ -106,8 +106,9 @@ template: |
 
   ---
 
-  **Pinned commit:** `$RESOLVED_VERSION` → check this release's tag
-  for the exact SHA the artefacts were built from.
+  **Pinned tag:** `$RESOLVED_VERSION`. The exact commit SHA the
+  artefacts were built from is the SHA this Release is pinned to —
+  click the tag from the Releases page to see it.
 
   For the **functional narrative** (plain-English description of
   what changed and why), read the matching dated file under
