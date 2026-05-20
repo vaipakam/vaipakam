@@ -243,27 +243,12 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         return (ctx.borrowValueUSD * LibVaipakam.BASIS_POINTS) / collateralValueUSD;
     }
 
-    /// @dev Thin wrapper over the context-based helpers so the mutating
-    ///      path still exposes the original two-call simulate flow.
-    function _simulateHF(
-        LibVaipakam.Loan storage loan,
-        uint256 tempCollateral
-    ) internal view returns (uint256) {
-        ValuationContext memory ctx = _loadValuationContext(loan);
-        uint256 collateralUSD = (tempCollateral * ctx.collateralPrice) /
-            ctx.collateralPriceDivisor;
-        return _hfFromContext(ctx, collateralUSD);
-    }
-
-    function _simulateLTV(
-        LibVaipakam.Loan storage loan,
-        uint256 tempCollateral
-    ) internal view returns (uint256) {
-        ValuationContext memory ctx = _loadValuationContext(loan);
-        uint256 collateralUSD = (tempCollateral * ctx.collateralPrice) /
-            ctx.collateralPriceDivisor;
-        return _ltvFromContext(ctx, collateralUSD);
-    }
+    // `_simulateHF` + `_simulateLTV` (previously here) removed in #148
+    // Phase 5 — the mutating path now folds both into a single
+    // `_loadValuationContext` + `_hfFromContext` / `_ltvFromContext`
+    // call, with the per-iteration loop body inline. See the comment at
+    // ~line 161 ("search. Previously each iteration called _simulateHF
+    // + _simulateLTV") for the refactor history.
 
     // Internal helper for current borrow balance with accrued interest
     function _calculateCurrentBorrowBalance(

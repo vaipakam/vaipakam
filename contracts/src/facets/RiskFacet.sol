@@ -1858,13 +1858,13 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             (10 ** collateralFeedDecimals) / (10 ** collateralTokenDecimals);
     }
 
-    /// @dev Get 0x Proxy address
-    function _getZeroExProxy() internal view returns (address) {
-        return LibVaipakam.storageSlot().zeroExProxy;
-    }
-
-    /// @dev Get 0x Proxy address
-    function _getAllowanceTarget() internal view returns (address) {
-        return LibVaipakam.storageSlot().allowanceTarget;
-    }
+    // `_getZeroExProxy` + `_getAllowanceTarget` (previously here)
+    // removed in #148 Phase 5 — leftovers from the pre-Phase-7a
+    // 0x-direct liquidation path that was replaced by the 4-DEX
+    // adapter pattern (`AggregatorAdapterBase` + per-aggregator
+    // adapters). Live liquidation paths now read `zeroExProxy` /
+    // `allowanceTarget` via `LibVaipakam.storageSlot()` directly at
+    // each call site. The commented-out legacy block earlier in this
+    // file (around line 1625) is the original 0x-direct flow these
+    // wrappers existed to serve; leaving it in place as history.
 }

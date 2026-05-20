@@ -866,6 +866,18 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 claimed: false
             });
 
+            // Three best-effort cleanup calls below. Each writes to the
+            // same `ok` local, which Slither flags as `write-after-write`.
+            // The reuse is intentional: every cleanup is non-critical
+            // (the inline comments mark them so), independent of the
+            // others, and the loan still transitions to Repaid at the
+            // end of the block regardless of cleanup outcome. The two
+            // `ok; // discard` no-op statements are Solidity-side hints
+            // (silence unused-variable warnings) — they don't gate
+            // anything. If any one of these cleanups becomes
+            // load-bearing in future, replace the shared `ok` with
+            // per-call locals and lift this comment.
+
             // Reset renter (non-critical — renter may have already expired)
             (bool ok, ) = address(this).call(
                 abi.encodeWithSelector(
@@ -880,6 +892,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             ok; // discard
 
             // Update NFTs to Loan Repaid (non-critical)
+            // slither-disable-next-line write-after-write
             (ok, ) = address(this).call(
                 abi.encodeWithSelector(
                     VaipakamNFTFacet.updateNFTStatus.selector,
@@ -888,6 +901,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                     LibVaipakam.LoanPositionStatus.LoanRepaid
                 )
             );
+            // slither-disable-next-line write-after-write
             (ok, ) = address(this).call(
                 abi.encodeWithSelector(
                     VaipakamNFTFacet.updateNFTStatus.selector,
