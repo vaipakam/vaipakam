@@ -50,9 +50,20 @@ Worker secrets:
 |---|---|
 | `RPC_*` | Per-chain RPC URLs (carry API keys). |
 
-D1 binding: `DB` (Cloudflare D1 instance per environment).
-
 No signing keys ever — read-only by design.
+
+### D1 — owns the canonical schema for `vaipakam-archive` (staging)
+
+The `DB` binding in `wrangler.jsonc` points at the **`vaipakam-archive`** D1 database (id `3cffebf5-b652-4da7-953c-9e1d143ad2fe`), the **staging** database the Cloudflare staging deploy uses — see [`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md`](../../docs/DesignsAndPlans/CloudflareStagingDeployPlan.md) §3 for the staging-vs-primary split. This Worker is the **schema owner**: `apps/indexer/migrations/` is the single source of truth for every table the live db holds, even ones only the sibling Workers write to (`apps/keeper` and `apps/agent` both bind to the same database id; neither has its own `migrations/` directory).
+
+Apply migrations from inside this directory:
+
+```bash
+wrangler d1 migrations apply vaipakam-archive --local    # local dev
+wrangler d1 migrations apply vaipakam-archive --remote   # the staging d1
+```
+
+Any schema change — even for a table only keeper or agent writes — lands as a new `apps/indexer/migrations/NNNN_<slug>.sql` file. See [`CLAUDE.md` § "Cloudflare D1 schema discipline"](../../CLAUDE.md) for the convention.
 
 ## Related
 
