@@ -94,9 +94,11 @@ final stage.
 ```
 ☐ Branch follows §2.1 naming
 ☐ Commits follow §2.2 format + are signed (§2.3)
-☐ Release-notes fragment in docs/ReleaseNotes/unreleased/<task-id>-<slug>.md
+☐ Release-notes fragment at docs/ReleaseNotes/unreleased/<task-id>-<slug>.md
+   (only if the PR changes behaviour — skip for pure docs / chore / CI-config PRs)
 ☐ FunctionalSpecs updated if behaviour changed (see §6)
-☐ Locally green: forge build, predeploy-check.sh, pnpm typecheck
+☐ Locally green: `cd contracts && forge build && bash script/predeploy-check.sh`
+   + (from repo root) `pnpm -r typecheck`
 ☐ Card on @vaipakam-labs moved to "In review" (§5.3)
 ☐ gh pr create with body covering: What, Why, Verification, Closes #N
 ☐ Codex review request: `@codex P<levels> review` (§3.2)
@@ -313,8 +315,12 @@ Eight independent gates on every merge:
 8. ✅ signed commits
 ```
 
-`contracts-full` runs in parallel as **informational only** — surfaces
-the full 2,012-test regression on every PR but doesn't gate the merge.
+`contracts-full` runs **serialized after** `contracts-fast` (using
+its `needs:` dependency + the warm cache `contracts-fast` saves at
+job end), as **informational only** — surfaces the full 2,012-test
+regression on every PR but doesn't gate the merge. Serializing the
+two jobs eliminates the duplicate cold-cache forge build that a
+parallel layout would pay for.
 
 ### 7.2 `Protect main` ruleset (keeper-bot)
 
@@ -545,8 +551,14 @@ to a decision. Listed by category.
   imports break the diamond pattern and miss the cut-table guarantees.
 
 - **`viaIR = true` + `optimizer_runs = 200` is non-negotiable.** Drives
-  every build. Run `nice -n -10 ionice -c 2 -n 0 forge build/test/script`
-  — viaIR runs 5-15 min and 8 GB RSS; low priority causes 2-3×
+  every build. Prefix every long forge invocation with
+  `nice -n -10 ionice -c 2 -n 0` for the same priority reason:
+  ```bash
+  nice -n -10 ionice -c 2 -n 0 forge build
+  nice -n -10 ionice -c 2 -n 0 forge test
+  nice -n -10 ionice -c 2 -n 0 forge script <ScriptName>
+  ```
+  viaIR runs 5-15 min and ~8 GB RSS; low priority causes 2-3×
   slowdowns under parallel desktop load.
 
 ### 12.4 Retail-deploy policy — three OFF gates

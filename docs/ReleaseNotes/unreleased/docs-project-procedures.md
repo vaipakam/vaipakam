@@ -17,11 +17,12 @@ redundant:
   "picking up a card", "post-merge sweep", and the eight `Protect
   main` gates.
 
-Eleven sections: repository topology, git procedures, PR workflow,
+Twelve sections: repository topology, git procedures, PR workflow,
 post-merge sweep, project board (`@vaipakam-labs`) discipline,
 release notes + FunctionalSpecs, CI + branch protection, issues +
 labels, tooling reference, pre-audit hardening current-state summary,
-and living-doc rules.
+living-doc rules, and project-specific conventions worth knowing
+(the "weird from outside but deliberate" rules + the gotchas).
 
 The doc explicitly distinguishes what lives in the repo (procedures
 that need to survive across machines / contributors / time) from
