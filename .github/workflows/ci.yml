@@ -55,28 +55,46 @@ jobs:
 
     steps:
       - name: Checkout (with submodules — chainlink-evm, OZ, diamond-3, etc.)
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           submodules: recursive
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
+        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
         with:
           version: stable
 
       # Foundry's `out/` (artifact tree) and `cache/` (incremental compile)
-      # together cut a warm `forge build` from ~10 min to ~90 s. Key the
-      # cache by remappings.txt + foundry.toml so config changes invalidate.
+      # together cut a warm `forge build` from ~10 min to ~90 s.
+      #
+      # Cache key design (Codex review on PR #84 caught two bugs in the first
+      # cut, both fixed here):
+      #
+      #   - Submodule bumps MUST invalidate the cache. The earlier
+      #     `hashFiles('contracts/lib/**/.git/HEAD')` glob silently never
+      #     matched anything — `actions/checkout` puts submodules as gitlink
+      #     references, not as `.git/HEAD` files under the workspace tree, so
+      #     `hashFiles` returned a no-op hash and a submodule bump went
+      #     unnoticed. We now scope the key to `${{ github.sha }}` so the
+      #     cache lineage advances on every commit (which captures
+      #     submodule bumps because the parent commit's tree includes the
+      #     submodule's pinned SHA).
+      #
+      #   - The broad fallback `forge-${{ runner.os }}-` (no config hash)
+      #     could restore from a completely different foundry.toml /
+      #     remappings.txt lineage. Removed. The single fallback retains
+      #     the config-hash prefix so we only ever restore from same-config
+      #     caches; Foundry's own incremental compile then skips unchanged
+      #     files inside that cache for warm-build speed.
       - name: Cache forge artifacts
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             contracts/out
             contracts/cache
-          key: forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/remappings.txt', 'contracts/lib/**/.git/HEAD') }}-${{ hashFiles('contracts/src/**/*.sol', 'contracts/script/**/*.sol', 'contracts/test/**/*.sol') }}
+          key: forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/remappings.txt') }}-${{ github.sha }}
           restore-keys: |
-            forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/remappings.txt', 'contracts/lib/**/.git/HEAD') }}-
-            forge-${{ runner.os }}-
+            forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/remappings.txt') }}-
 
       # The predeploy-check gate does everything we want CI to verify on the
       # contract side — `--full` swaps the deploy-sanity suite for the full
@@ -93,7 +111,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           # The release-notes-drift check reads git history; submodules not
           # needed for the TS side, so skip them to save ~30 s clone time.
@@ -102,10 +120,10 @@ jobs:
       # pnpm action handles `packageManager: "pnpm@10.4.1"` from package.json,
       # so we don't pin a version here — it auto-picks the corepack-declared one.
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           # CLAUDE.md / `apps/agent/package.json` requires Node ≥22 for the
           # native `--experimental-strip-types` TS execution path. CI uses 22
@@ -116,14 +134,30 @@ jobs:
       - name: Install workspace dependencies
         run: pnpm install --frozen-lockfile
 
-      # `-r typecheck` fans out across workspaces. Only the workspaces that
-      # declare a `typecheck` script run (apps/{keeper,indexer,agent}, plus
-      # apps/defi via `tsc -b` inside its build script). apps/indexer's
-      # typecheck additionally runs `check-event-coverage.mjs` — the
-      # event-coverage guardrail that fails CI if a state-change event
-      # contracted-side has no indexer handler.
-      - name: pnpm -r typecheck
-        run: pnpm -r typecheck
+      # Per-workspace typecheck steps, ONE STEP PER WORKSPACE, instead of
+      # `pnpm -r typecheck`. The fan-out version silently passes if a
+      # workspace removes its `typecheck` script — a workspace whose
+      # typecheck script is deleted (intentionally or by accident) would
+      # still let CI go green. Listing each workspace explicitly forces a
+      # red CI on that scenario (the step errors with "command not found"
+      # rather than silently no-opping).
+      #
+      # `apps/defi` typechecks via `tsc -b --noEmit` directly because its
+      # workspace doesn't declare a `typecheck` script (the type-check is
+      # bundled into the `build` script's `tsc -b && vite build`). We avoid
+      # the full build to keep CI fast — `--noEmit` is the structural-only
+      # half of the build and is what matters for "did the types break".
+      - name: Typecheck — apps/keeper
+        run: pnpm --filter @vaipakam/keeper typecheck
+
+      - name: Typecheck — apps/indexer (incl. check-event-coverage)
+        run: pnpm --filter @vaipakam/indexer typecheck
+
+      - name: Typecheck — apps/agent
+        run: pnpm --filter @vaipakam/agent typecheck
+
+      - name: Typecheck — apps/defi (tsc -b --noEmit)
+        run: pnpm --filter @vaipakam/defi exec tsc -b --noEmit
 
       # `pnpm -r test` (the vitest suites in apps/defi and apps/agent) is
       # intentionally NOT wired into this required-check workflow. apps/defi

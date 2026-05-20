@@ -1,4 +1,4 @@
-## Thread — CI required-check workflow (PR #<n>)
+## Thread — CI required-check workflow (PR #84)
 
 Until this change every pull request that landed on `main` had been
 verified only locally — the `Protect main` branch ruleset required a
