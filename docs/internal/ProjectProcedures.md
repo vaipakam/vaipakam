@@ -97,8 +97,12 @@ final stage.
 ☐ Release-notes fragment at docs/ReleaseNotes/unreleased/<task-id>-<slug>.md
    (only if the PR changes behaviour — skip for pure docs / chore / CI-config PRs)
 ☐ FunctionalSpecs updated if behaviour changed (see §6)
-☐ Locally green: `cd contracts && forge build && bash script/predeploy-check.sh`
-   + (from repo root) `pnpm -r typecheck`
+☐ Locally green:
+   `cd contracts && forge build && bash script/predeploy-check.sh`
+   then (from repo root) per-workspace typechecks matching CI —
+   `pnpm --filter @vaipakam/keeper typecheck && pnpm --filter @vaipakam/indexer typecheck && pnpm --filter @vaipakam/agent typecheck && pnpm --filter @vaipakam/defi exec tsc -b --noEmit && pnpm --filter @vaipakam/www typecheck`
+   (don't use `pnpm -r typecheck` — it silently skips workspaces
+   without a `typecheck` script, e.g. `apps/defi`)
 ☐ Card on @vaipakam-labs moved to "In review" (§5.3)
 ☐ gh pr create with body covering: What, Why, Verification, Closes #N
 ☐ Codex review request: `@codex P<levels> review` (§3.2)
@@ -315,12 +319,25 @@ Eight independent gates on every merge:
 8. ✅ signed commits
 ```
 
-`contracts-full` runs **serialized after** `contracts-fast` (using
-its `needs:` dependency + the warm cache `contracts-fast` saves at
-job end), as **informational only** — surfaces the full 2,012-test
-regression on every PR but doesn't gate the merge. Serializing the
-two jobs eliminates the duplicate cold-cache forge build that a
-parallel layout would pay for.
+`contracts-full` runs **serialized after** `contracts-fast` (via
+`needs:`), as **informational only** — surfaces the full 2,012-test
+regression on every PR but doesn't gate the merge. The serial
+ordering's actual benefit:
+
+- **Eliminates the parallel-save race** on the shared cache key
+  (parallel jobs writing the same key risk one job's save being
+  discarded).
+- **Avoids attributing TWO cold-cache forge builds to a single run**
+  in observability — the run sequences `build → test → full-test`
+  cleanly rather than building twice.
+- **Fail-fast** — if `contracts-fast` is red, `contracts-full` skips
+  entirely (the `if:` guard depends on `contracts-fast.result == 'success'`).
+
+It does NOT make same-run cache transfer happen. `actions/cache` only
+restores from caches saved in PRIOR runs — both jobs' cache restores
+read from prior-run state, not from each other within the run. The
+inline comments in `.github/workflows/ci.yml` (contracts-full cache
+section) state this explicitly.
 
 ### 7.2 `Protect main` ruleset (keeper-bot)
 
