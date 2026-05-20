@@ -1,0 +1,35 @@
+# GitHub Actions allowlist — paste into:
+#   Settings → Actions → General → "Allow X, vaipakam, and select non-X actions"
+#
+# Set policy to "Allow vaipakam, and select non-X actions" then add the
+# pattern list below.
+#
+# Each entry is SHA-pinned in `.github/workflows/*.yml` — the allowlist
+# pattern uses the action's repo path (without SHA) since Settings UI
+# accepts wildcards but not SHAs.
+#
+# Audited 2026-05-20 against every `uses:` in .github/workflows/.
+
+# GitHub-published (covered by the built-in "Allow actions by GitHub" toggle):
+actions/add-to-project@*
+actions/cache@*
+actions/checkout@*
+actions/configure-pages@*
+actions/deploy-pages@*
+actions/setup-node@*
+actions/upload-artifact@*
+actions/upload-pages-artifact@*
+github/codeql-action/*@*
+
+# Foundry — official Foundry GitHub Action:
+foundry-rs/foundry-toolchain@*
+
+# pnpm — official pnpm Action:
+pnpm/action-setup@*
+
+# Third-party (review per-bump):
+crytic/slither-action@*          # Trail of Bits — Slither's official Action
+dorny/paths-filter@*             # widely-used path-filter helper
+softprops/action-gh-release@*    # widely-used release-attach Action
+
+# DENY everything else.
