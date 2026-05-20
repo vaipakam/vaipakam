@@ -67,8 +67,11 @@ jobs:
           if [[ -n "${MANUAL_LABEL:-}" ]]; then
             LABEL="$MANUAL_LABEL"
           else
-            # Default: "kickoff sync — YYYY-MM-DD" (this Monday's date in UTC).
-            LABEL="kickoff sync — $(date -u +%F)"
+            # Default label is just the date — the title template
+            # already prepends "Iteration kickoff sync — " so the
+            # resolved title becomes "Iteration kickoff sync — YYYY-
+            # MM-DD" exactly once (the earlier version double-prefixed).
+            LABEL="$(date -u +%F)"
           fi
           echo "label=$LABEL" >> "$GITHUB_OUTPUT"
           echo "Resolved iteration label: $LABEL"
@@ -89,6 +92,16 @@ jobs:
           # If it's been closed by the maintainer, a fresh card opens.
           pinned: false
           close-previous: false
+          # Use ADD_TO_PROJECT_PAT (a maintainer-owned PAT with
+          # `repo` + `project` scopes) instead of the default
+          # GITHUB_TOKEN. GitHub Actions intentionally does NOT
+          # start downstream workflow runs for events emitted by
+          # GITHUB_TOKEN (avoids accidental loops), so if we used
+          # the default token here the auto-add-to-project workflow
+          # would never fire on the created Issue — defeating the
+          # whole auto-routing-to-Backlog story. The PAT is the
+          # documented workaround per CLAUDE.md "Task tracking".
+          token: ${{ secrets.ADD_TO_PROJECT_PAT }}
           body: |
             **Auto-filed by `.github/workflows/iteration-kickoff-sync.yml`** at the start of a new iteration.
 
@@ -98,7 +111,7 @@ jobs:
 
             ## Checklist
 
-            - [ ] Walk the agent-memory files modified since the previous iteration's sync (see [`~/.claude/projects/-home-pranav-Codes-Vaipakam-vaipakam/memory/`](https://github.com/vaipakam/vaipakam/blob/main/docs/internal/ProjectProcedures.md#56-milestones--pinned-issues)).
+            - [ ] Walk the agent-memory files modified since the previous iteration's sync. The ritual + sentinel-file convention is documented in [`ProjectProcedures.md §5.7`](https://github.com/vaipakam/vaipakam/blob/main/docs/internal/ProjectProcedures.md#57-iteration-kickoff-sync--fold-rules-into-the-handbook).
             - [ ] Classify each modified memory note:
               - **Project rule** (operator / contributor / auditor needs to know it) → fold into the appropriate `docs/internal/ProjectProcedures.md` section.
               - **Agent-specific personal discipline** (e.g. "I tend to forget X") → stays in memory only.
@@ -120,4 +133,7 @@ jobs:
 
             🤖 Auto-filed via `.github/workflows/iteration-kickoff-sync.yml`
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # `with.token` (above) overrides this for issue-bot's
+          # internal API client; keeping a fallback env for any
+          # action step that reads from env-vars.
+          GITHUB_TOKEN: ${{ secrets.ADD_TO_PROJECT_PAT }}

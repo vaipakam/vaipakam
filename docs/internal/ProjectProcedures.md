@@ -422,7 +422,11 @@ one as duplicate when reviewing).
 
 1. List memory files modified since the previous iteration's sync —
    on the agent's machine that's
-   `find ~/.claude/projects/.../memory -newer .last-iteration-sync`.
+   `find ~/.claude/projects/-home-pranav-Codes-Vaipakam-vaipakam/memory -newer ~/.claude/projects/-home-pranav-Codes-Vaipakam-vaipakam/memory/.last-iteration-sync -name '*.md'`
+   (absolute paths for both the search root and the reference
+   sentinel — `find` resolves `-newer` relative to its own cwd, so a
+   relative sentinel breaks the moment the operator runs the command
+   from anywhere other than the memory dir).
 2. For each modified note, classify:
    - **Project rule** (operator / contributor / auditor needs it) →
      fold into the appropriate section of this file.
@@ -432,8 +436,9 @@ one as duplicate when reviewing).
 3. Land the sync as a single docs PR titled
    `docs(handbook): iteration close-out sync — fold rules from
    <date> through <date>`.
-4. Touch sentinel `.last-iteration-sync` to record the close
-   timestamp.
+4. Touch sentinel
+   `~/.claude/projects/-home-pranav-Codes-Vaipakam-vaipakam/memory/.last-iteration-sync`
+   to record the close timestamp.
 5. Close the auto-filed card referencing the merged PR.
 
 **Steady state.** Most iterations will fold 0-2 rules; some will
