@@ -108,8 +108,12 @@ Three additional pieces:
   watch the time budget; if it creeps, split or trim.
 - `contracts-full` being informational means a green PR can sit on
   `main` with a latent regression flagged in the run but not
-  blocking. Mitigation: the `release-notes drift` workflow + the
-  `mainnet-gate` net catch this before any release ships.
+  blocking. Mitigation: `mainnet-gate.yml` re-runs the full
+  regression on every push / PR to `release/**` and every `v*` tag
+  push, so a regression that reaches `main` can't reach a
+  deployable ref. (The `release-notes-drift` workflow is unrelated
+  — it warns on missing docs updates and does not exercise the
+  forge test suite.)
 
 ## Alternatives considered
 

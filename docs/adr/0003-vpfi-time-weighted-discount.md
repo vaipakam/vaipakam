@@ -112,11 +112,12 @@ Specifically:
   "every proper-close calls `settleBorrowerLifProper`" invariant,
   leaving `vpfiHeld` stranded. Mitigation: documented in
   `CLAUDE.md`; auditor checklist; test coverage in
-  `VPFIDiscountTest`.
+  `VPFIDiscountFacetTest` + `VPFIDiscountBoundariesTest`.
 - The accumulator math (running BPS × seconds) requires careful
   handling of edge cases (zero balance, no time elapsed,
-  overflow). Mitigation: 25 unit tests in
-  `contracts/test/token/VPFIDiscountTest.t.sol`.
+  overflow). Mitigation: 44 unit tests across
+  `contracts/test/VPFIDiscountFacetTest.t.sol` (29 cases) +
+  `contracts/test/VPFIDiscountBoundariesTest.t.sol` (15 cases).
 
 ## Alternatives considered
 
@@ -147,7 +148,8 @@ returnable.
 - Source:
   [`contracts/src/libraries/LibVPFIDiscount.sol`](../../contracts/src/libraries/LibVPFIDiscount.sol),
   [`contracts/src/facets/ClaimFacet.sol`](../../contracts/src/facets/ClaimFacet.sol)
-- Tests: `contracts/test/token/VPFIDiscountTest.t.sol` (25 cases)
+- Tests: `contracts/test/VPFIDiscountFacetTest.t.sol` (29 cases) +
+  `contracts/test/VPFIDiscountBoundariesTest.t.sol` (15 cases)
 - Spec: [`docs/FunctionalSpecs/TokenomicsTechSpec.md`](../FunctionalSpecs/TokenomicsTechSpec.md) §5.2b
 - Release narrative: [`docs/ReleaseNotes/ReleaseNotes-2026-04-23-to-24.md`](../ReleaseNotes/ReleaseNotes-2026-04-23-to-24.md)
 - Policy summary: [`CLAUDE.md`](../../CLAUDE.md) § "VPFI Fee Discounts"
