@@ -28,6 +28,7 @@ Use these labels consistently when triaging issues, creating project items, or l
 | `perf` | Gas optimizations, RPC budget reductions, latency improvements, and throughput work. |
 | `testnet-rehearsal` | Items that block or support per-chain testnet rehearsals. |
 | `mainnet-rollout` | Items that gate per-chain mainnet enablement. |
+| `breaking-change` | Changes that break API / ABI / on-chain compatibility. Drives the MAJOR semver bump per `.github/release-drafter.yml`. Apply to contract-surface changes that shift function selectors or storage layout, frontend API shape changes consumers pin against, and CCIP message-format changes. Most pre-mainnet work doesn't need this label — it's reserved for genuinely incompatible changes. |
 
 ## Triage Notes
 

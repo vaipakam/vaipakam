@@ -25,10 +25,9 @@
 name: Release drafter
 
 on:
+  # Merge to main is the only signal we care about — every merged PR
+  # generates a push to main, so the push trigger covers it.
   push:
-    branches: [main]
-  pull_request:
-    types: [opened, reopened, synchronize, closed]
     branches: [main]
   workflow_dispatch:
 
@@ -45,19 +44,18 @@ permissions:
 jobs:
   update-release-draft:
     runs-on: ubuntu-latest
-    # Only run when the trigger matters:
-    #  - push to main (post-merge): always; this is the main signal.
-    #  - pull_request closed events: only if the PR was actually merged.
-    #  - pull_request opened/synced events: useful for the autolabeler
-    #    feature (if/when we adopt it). Drop if it's noisy.
-    #  - workflow_dispatch: always.
-    if: |
-      github.event_name == 'push' ||
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' && github.event.pull_request.merged == true) ||
-      (github.event_name == 'pull_request' && github.event.action == 'opened') ||
-      (github.event_name == 'pull_request' && github.event.action == 'reopened') ||
-      (github.event_name == 'pull_request' && github.event.action == 'synchronize')
+    # Why no `pull_request` trigger / no fancy `if:` filter:
+    #  - The release-drafter action runs in release-update mode here
+    #    (`contents: write`). For PR contexts from forks / untrusted
+    #    actors, GITHUB_TOKEN is read-only — the step would fail
+    #    noisily on every PR open/sync, swamping the Actions tab.
+    #  - The merged-PR signal IS captured: a merge generates a push
+    #    to main, which this workflow runs on. Dropping the
+    #    pull_request trigger entirely simplifies the matrix and
+    #    avoids the fork-PR failure mode.
+    #  - If we ever want the release-drafter autolabeler (separate
+    #    from release-update mode), give it its OWN workflow file
+    #    with read-only permissions.
     steps:
       - name: Update draft release
         uses: release-drafter/release-drafter@da8b9b696abad2ad997580e49f4c1c2e03cc2bd2 # v7.3.0

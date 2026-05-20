@@ -7,9 +7,12 @@
 # - Categories are driven by PR labels (the same set the Project
 #   board uses, per .github/LABELS.md).
 # - Suggests the next semver based on label-driven version-bump
-#   rules below — `breaking` → major, `feature`/`enhancement` →
-#   minor, `fix`/`bug`/`security`/`infra`/`chore`/`refactor`/
-#   `perf`/`documentation` → patch.
+#   rules below — `breaking-change` → major, `enhancement` → minor,
+#   `bug`/`security`/`infra`/`chore`/`refactor`/`perf`/`documentation`
+#   /`audit`/`dependencies`/`testnet-rehearsal`/`mainnet-rollout` →
+#   patch. Aliases like `feature` / `fix` are NOT in `.github/LABELS.md`
+#   so they don't appear here either — keeps the config tight against
+#   the documented taxonomy.
 # - DOES NOT publish silently. The draft sits in the Releases tab
 #   until the maintainer reviews the body + edits the tag + clicks
 #   "Publish release". This is the deliberate gate — auto-drafting
@@ -28,16 +31,13 @@ tag-template: 'v$RESOLVED_VERSION'
 categories:
   - title: '🚨 Breaking changes'
     labels:
-      - 'breaking'
       - 'breaking-change'
   - title: '✨ Features'
     labels:
       - 'enhancement'
-      - 'feature'
   - title: '🐛 Bug fixes'
     labels:
       - 'bug'
-      - 'fix'
   - title: '🔒 Security'
     labels:
       - 'security'
@@ -70,23 +70,22 @@ exclude-labels:
   - 'invalid'
   - 'question'
 
-# Label-driven semver bump suggestion.
-# `breaking` → major; `feature`/`enhancement` → minor; everything
-# else → patch. The maintainer can override the resolved version
-# in the draft UI before publishing.
+# Label-driven semver bump suggestion. Only labels documented in
+# `.github/LABELS.md` are listed; aliases like `feature` / `fix` are
+# deliberately absent so the config tracks the taxonomy 1:1.
+# `breaking-change` → major; `enhancement` → minor; everything else
+# → patch. The maintainer can override the resolved version in the
+# draft UI before publishing.
 version-resolver:
   major:
     labels:
-      - 'breaking'
       - 'breaking-change'
   minor:
     labels:
       - 'enhancement'
-      - 'feature'
   patch:
     labels:
       - 'bug'
-      - 'fix'
       - 'security'
       - 'infra'
       - 'perf'
