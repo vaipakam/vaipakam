@@ -1,0 +1,68 @@
+# release-drafter workflow — auto-drafts the next GitHub Release on
+# every PR merge to main.
+#
+# Why this exists:
+# - The `docs/ReleaseNotes/` fragment system covers the
+#   functional narrative (plain English, no code). What's missing
+#   is the PR-level changelog GitHub Releases hosts.
+# - Auditors / ecosystem integrators expect a Releases tab they can
+#   subscribe to. Today `gh release list` is empty — this workflow
+#   fixes that for every PR going forward.
+# - The drafted release stays a DRAFT until the maintainer reviews
+#   + tags + publishes. Nothing ships silently.
+#
+# Trigger discipline:
+# - `pull_request.types: [closed]` + the merged-check guard below
+#   ensures we only run on actual merges (not "closed without merge").
+# - `workflow_dispatch` lets the maintainer rebuild the draft from
+#   scratch — useful after manually editing labels on past PRs.
+# - Pairs with `.github/workflows/release.yml` (which attaches the
+#   per-chain artefact bundle at `v*` tag push). Two-stage release:
+#   1. release-drafter.yml drafts the body as PRs merge.
+#   2. Maintainer reviews + tags `v*` → mainnet-gate.yml runs the
+#      full forge regression + release.yml attaches artefacts.
+
+name: Release drafter
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, reopened, synchronize, closed]
+    branches: [main]
+  workflow_dispatch:
+
+# Only one draft update at a time — running multiple instances in
+# parallel could write conflicting bodies to the same draft release.
+concurrency:
+  group: release-drafter
+  cancel-in-progress: false   # don't lose a merge's contribution to the body
+
+permissions:
+  contents: write       # required to create / update the draft release
+  pull-requests: read   # required to read merged PR titles + labels
+
+jobs:
+  update-release-draft:
+    runs-on: ubuntu-latest
+    # Only run when the trigger matters:
+    #  - push to main (post-merge): always; this is the main signal.
+    #  - pull_request closed events: only if the PR was actually merged.
+    #  - pull_request opened/synced events: useful for the autolabeler
+    #    feature (if/when we adopt it). Drop if it's noisy.
+    #  - workflow_dispatch: always.
+    if: |
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true) ||
+      (github.event_name == 'pull_request' && github.event.action == 'opened') ||
+      (github.event_name == 'pull_request' && github.event.action == 'reopened') ||
+      (github.event_name == 'pull_request' && github.event.action == 'synchronize')
+    steps:
+      - name: Update draft release
+        uses: release-drafter/release-drafter@da8b9b696abad2ad997580e49f4c1c2e03cc2bd2 # v7.3.0
+        with:
+          config-name: release-drafter.yml
+          publish: false   # always stays a draft; maintainer publishes manually
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
