@@ -589,17 +589,27 @@ to a decision. Listed by category.
   viaIR runs 5-15 min and ~8 GB RSS; low priority causes 2-3×
   slowdowns under parallel desktop load.
 
-### 12.4 Retail-deploy policy — three OFF gates
+### 12.4 Retail-deploy gating policy — sanctions ON; KYC and country-pair OFF
 
-- **No KYC, no sanctions-screening, no country-pair gating in the
-  retail deploy.** All three are runtime-disabled. Industrial-user
-  variant is a SEPARATE deploy on a separate fork with these flipped
-  on — don't enable on the retail deploy.
+- **KYC and country-pair gating: OFF on retail.** Both are runtime-
+  disabled. The industrial-user variant is a SEPARATE deploy on a
+  separate fork with these flipped on — don't enable on the retail
+  deploy. See ADR-0002.
+
+- **Sanctions screening: REQUIRED on retail.** Distinct from KYC.
+  `ProfileFacet.setSanctionsOracle(<chainalysis-oracle>)` MUST be
+  called once the oracle's address is known. Tier-1 entry points
+  revert for flagged callers; Tier-2 close-out paths stay open so the
+  unflagged counterparty can be made whole. While unset, sanctions
+  screening fails open (intentional pre-`setSanctionsOracle` window).
 
 - **Don't mention OR negate KYC / identity / country gating in user
   copy.** Website, whitepaper, overview, user guide, marketing — all
   silent on these. Retail product is permissionless end-state, not
-  "permissionless for now".
+  "permissionless for now". Sanctions wording in user copy stays
+  minimal: a single defensive bullet under "Prohibited use"; the
+  full message surfaces ONLY in the in-app banner shown to flagged
+  wallets and in contract revert messages.
 
 - **Sanctions wording, when it appears, stays minimal.** ToS has ONE
   defensive bullet. The full three-line message is shown only when a

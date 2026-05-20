@@ -41,7 +41,7 @@ That's the point of the record.
 | # | Title | Status |
 |---|---|---|
 | [ADR-0001](0001-eip-2535-diamond-pattern.md) | Adopt EIP-2535 Diamond Pattern for the core protocol | Accepted |
-| [ADR-0002](0002-no-kyc-on-retail.md) | No KYC, no sanctions, no country-pair gates on the retail deploy | Accepted |
+| [ADR-0002](0002-no-kyc-on-retail.md) | Retail-deploy gating policy — sanctions ON; KYC and country-pair OFF | Accepted |
 | [ADR-0003](0003-vpfi-time-weighted-discount.md) | Time-weighted accumulator for VPFI fee discounts | Accepted |
 | [ADR-0004](0004-ccip-over-layerzero.md) | Migrate cross-chain transport from LayerZero to Chainlink CCIP | Accepted |
 | [ADR-0005](0005-depth-tiered-ltv.md) | Depth-tiered LTV behind a kill-switch | Accepted |

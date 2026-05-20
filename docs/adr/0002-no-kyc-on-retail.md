@@ -1,4 +1,4 @@
-# ADR-0002: No KYC, no sanctions, no country-pair gates on the retail deploy
+# ADR-0002: Retail-deploy gating policy — sanctions ON; KYC and country-pair OFF
 
 **Status:** Accepted
 **Date:** 2026 (ratified per `CLAUDE.md` § "Retail-deploy policy"; ADR backfilled 2026-05-20)
