@@ -8,11 +8,23 @@
 #
 # NOT covered, on purpose: the on-chain Solidity dependencies under
 # `contracts/lib/` (forge-std, openzeppelin-contracts-upgradeable,
-# chainlink-local, diamond-3-hardhat). Those are git submodules pinned
-# to an AUDITED commit set — they must be bumped only as a deliberate,
-# reviewed, re-audited decision, never by an automated PR. No
-# `gitsubmodule` ecosystem is configured here precisely so Dependabot
-# leaves the audited contract dependency set frozen.
+# chainlink-local, chainlink-ccip, chainlink-evm, diamond-3-hardhat).
+# Those are git submodules pinned to an AUDITED commit set — they must
+# be bumped only as a deliberate, reviewed, re-audited decision, never
+# by an automated PR. No `gitsubmodule` ecosystem is configured here
+# precisely so Dependabot leaves the audited contract dependency set
+# frozen.
+#
+# Suppressing `contracts/lib/*` requires more than the root-only npm
+# `directory: "/"` scope below, because Dependabot's **security-update**
+# scanner walks every package-lock.json in the repo regardless of the
+# version-update `directory:` config (a documented Dependabot quirk:
+# config controls version updates only, not vulnerability-driven
+# security PRs). The `ignore: [{ dependency-name: "*" }]` blocks below
+# explicitly disable BOTH scanners for each vendored Solidity submodule
+# that ships its own JS tooling tree. See issue #153 for the policy gap
+# this closed (5 unwanted PRs landed against diamond-3-hardhat in May
+# 2026 before this suppression was in place).
 #
 # Dependabot PRs are NEVER auto-merged — each goes through the same
 # review + CI + Codex review as any other change.
@@ -61,3 +73,31 @@ updates:
     labels:
       - "infra"
       - "dependencies"
+
+  # ── Vendored Solidity submodules — suppress all Dependabot PRs ───────
+  # Each vendored library under `contracts/lib/` is a git submodule
+  # pinned to an audited commit. Their JS tooling trees ship with
+  # multiple nested package.json / pnpm-lock.yaml manifests at varying
+  # depths (e.g. `lib/chainlink-ccip/chains/evm/`, the OZ submodule's
+  # own nested submodules under `lib/openzeppelin-contracts-upgradeable
+  # /lib/openzeppelin-contracts/`, etc.) — too many to enumerate
+  # individually without going stale on the next submodule bump. The
+  # `directories:` glob below catches every manifest under the wildcard
+  # in a single block; `ignore: [{ dependency-name: "*" }]` plus
+  # `open-pull-requests-limit: 0` then disables BOTH version-update
+  # AND security-update PRs for each matched manifest. See the header
+  # comment above for the security-update-scanner quirk this works
+  # around.
+  #
+  # Note re. root `/` overlap: the root npm entry above only scans the
+  # pnpm-workspace root manifests (`pnpm-workspace.yaml` lists only
+  # `apps/*` + `packages/*`), so it never reaches `contracts/lib/**`.
+  # The glob below is the only entry that registers those paths.
+  - package-ecosystem: "npm"
+    directories:
+      - "/contracts/lib/**"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
