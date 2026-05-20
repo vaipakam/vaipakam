@@ -103,9 +103,9 @@ final stage.
    `pnpm --filter @vaipakam/keeper typecheck && pnpm --filter @vaipakam/indexer typecheck && pnpm --filter @vaipakam/agent typecheck && pnpm --filter @vaipakam/defi exec tsc -b --noEmit && pnpm --filter @vaipakam/www typecheck`
    (don't use `pnpm -r typecheck` — it silently skips workspaces
    without a `typecheck` script, e.g. `apps/defi`)
-☐ Card on @vaipakam-labs moved to "In review" (§5.3)
 ☐ gh pr create with body covering: What, Why, Verification, Closes #N
-☐ Codex review request: `@codex P<levels> review` (§3.2)
+☐ Card on @vaipakam-labs moved to "In review" (§5.3 — happens after the PR exists)
+☐ Codex review request: `@codex review <mode>` (§3.2 — mode ∈ `normal` / `adversarial` / `full` / `full security-critical`)
 ☐ Background-poller running for the PR (§3.3)
 ```
 
@@ -337,11 +337,15 @@ ordering's actual benefit:
 - **Fail-fast** — if `contracts-fast` is red, `contracts-full` skips
   entirely (the `if:` guard depends on `contracts-fast.result == 'success'`).
 
-It does NOT make same-run cache transfer happen. `actions/cache` only
-restores from caches saved in PRIOR runs — both jobs' cache restores
-read from prior-run state, not from each other within the run. The
-inline comments in `.github/workflows/ci.yml` (contracts-full cache
-section) state this explicitly.
+Same-run cache transfer is the whole point: `actions/cache` saves at
+job END (post step); a downstream job in the SAME workflow run, gated
+by `needs:`, then restores that just-saved cache by key. That's why
+`contracts-fast` → `contracts-full` is serialized — `contracts-full`
+restores the cache `contracts-fast` saved seconds earlier in the same
+run, so the full regression rides on a warm foundry artifact tree
+instead of paying a second cold rebuild. The inline comments in
+`.github/workflows/ci.yml` (`contracts-full` cache section, lines
+~200-210) walk through the save→restore-in-same-run mechanics.
 
 ### 7.2 `Protect main` ruleset (keeper-bot)
 
@@ -351,9 +355,12 @@ required-status-checks for `Typecheck` + `ABI shape sanity`.
 ### 7.3 Mainnet-gate workflow
 
 `.github/workflows/mainnet-gate.yml` runs `predeploy-check.sh --full`
-on every push to `release/**` branches and every `v*` tag push. Audit
-trail captured on tag push (resolved solc + per-facet bytecode sizes
-vs EIP-170). Hard gate before any mainnet cutover.
+on every push to `release/**` branches, every PR targeting `release/**`,
+every `v*` tag push, and on `workflow_dispatch` (manual reruns for
+audit prep / hot patches). Audit trail captured on tag push (resolved
+solc + per-facet bytecode sizes vs EIP-170). Hard gate before any
+mainnet cutover — every path that touches a release-track ref runs
+the full regression.
 
 ### 7.4 Path filter — `detect-changes` job
 
@@ -370,8 +377,8 @@ SUCCESS for required checks → docs-only PRs merge in <1 min.
 ### 7.5 Foundry cache key — content-based
 
 ```
-key:         forge-${runner.os}-${hashFiles(foundry.toml, remappings.txt, .submodule-state)}-${hashFiles(**.sol)}
-restore-key: forge-${runner.os}-${hashFiles(foundry.toml, remappings.txt, .submodule-state)}-
+key:         forge-${runner.os}-${hashFiles('contracts/foundry.toml', 'contracts/remappings.txt', 'contracts/.submodule-state')}-${hashFiles('contracts/src/**/*.sol', 'contracts/script/**/*.sol', 'contracts/test/**/*.sol')}
+restore-key: forge-${runner.os}-${hashFiles('contracts/foundry.toml', 'contracts/remappings.txt', 'contracts/.submodule-state')}-
 ```
 
 Structured so `actions/cache`'s **prefix** matching works correctly.
