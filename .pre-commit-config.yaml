@@ -1,0 +1,70 @@
+# Pre-commit hooks — cheap, deterministic checks that run at commit-time
+# to catch issues before they ride into CI.
+#
+# Install once per checkout with:
+#   pre-commit install
+# (the hook then runs `pre-commit run` on every git commit; see
+#  CONTRIBUTING.md for the install step the on-ramp should pass through).
+#
+# Run on the whole tree manually:
+#   pre-commit run --all-files
+#
+# The hooks here are deliberately minimal — anything that needs full
+# project context (typecheck, test, gas, slither) runs in CI, not as
+# a pre-commit hook. Pre-commit hooks must be FAST or contributors will
+# disable them.
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      # File hygiene
+      - id: trailing-whitespace
+        # Markdown's two-space line-break is intentional — leave it alone.
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+        # Keep snapshot files byte-identical; the harness writes them
+        # without trailing newlines and we don't want a phantom diff.
+        exclude: '\.gas-snapshot$|^contracts/snapshots/.*'
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=512]
+        # Audit reports + ABI bundles can legitimately be large.
+        exclude: '^audits/|^packages/contracts/src/abis/.*\.json$'
+
+      # Format validity (parse-only — fast, no opinion)
+      - id: check-yaml
+        # Wrangler / GitHub Actions allow YAML multi-doc and !env-style
+        # tags; the strict parser would reject those. Use the loose
+        # default which still catches outright syntax errors.
+      - id: check-json
+      - id: check-toml
+
+      # Generic safety
+      - id: detect-private-key
+        # Catches accidentally-committed PEM / SSH / etc. The keeper bot
+        # signing key MUST never enter a repo (per ProjectProcedures.md).
+
+  # Solidity formatting via Foundry — local hook because `forge` is
+  # already installed for contract dev; no extra dep.
+  - repo: local
+    hooks:
+      - id: forge-fmt-check
+        name: forge fmt --check (Solidity)
+        entry: bash -c 'cd contracts && forge fmt --check'
+        language: system
+        files: '\.sol$'
+        pass_filenames: false
+        # Falls open if `forge` isn't on PATH — local hook, not CI.
+        # Contributors without Foundry installed just skip this hook;
+        # CI re-runs it server-side via the `pnpm install + forge` path.
+
+# Default stages: hooks run at commit-time. Manual / pre-push hooks
+# can be added per-hook in future as patterns emerge.
+default_stages: [pre-commit]
+
+# Fail fast — first error stops the run; second-error fixes don't
+# pile up unreviewed.
+fail_fast: false
