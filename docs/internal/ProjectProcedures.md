@@ -98,7 +98,7 @@ final stage.
    (only if the PR changes behaviour — skip for pure docs / chore / CI-config PRs)
 ☐ FunctionalSpecs updated if behaviour changed (see §6)
 ☐ Locally green:
-   `cd contracts && forge build && bash script/predeploy-check.sh`
+   `cd contracts && nice -n -10 ionice -c 2 -n 0 forge build && bash script/predeploy-check.sh`
    then (from repo root) per-workspace typechecks matching CI —
    `pnpm --filter @vaipakam/keeper typecheck && pnpm --filter @vaipakam/indexer typecheck && pnpm --filter @vaipakam/agent typecheck && pnpm --filter @vaipakam/defi exec tsc -b --noEmit && pnpm --filter @vaipakam/www typecheck`
    (don't use `pnpm -r typecheck` — it silently skips workspaces
@@ -454,7 +454,7 @@ the parent of both repos).
 
 ```bash
 cd contracts
-forge build   # always before exporting
+nice -n -10 ionice -c 2 -n 0 forge build   # always before exporting
 
 # Frontend / Workers — writes to packages/contracts/src/abis/
 bash script/exportFrontendAbis.sh
