@@ -11,18 +11,33 @@ broken `forge build`, a regressed test, or a typecheck failure and
 the only thing standing between it and `main` was the reviewer's
 local-run discipline.
 
-A new `ci.yml` workflow closes that gap. Two parallel jobs:
+A new `ci.yml` workflow closes that gap. Three parallel jobs, split
+into a fast required-check tier and a slower informational tier:
 
-- **`contracts`** runs `bash contracts/script/predeploy-check.sh --full`
-  end-to-end — the same gate the mainnet runbook invokes as its
-  `[1b]` preflight step. That cohesive script covers `forge build`,
-  the full regression test sweep (with the slow invariant suite
-  excluded, matching the local convention), the deploy shell-script
-  lint, and the per-facet ABI-in-sync check the predeploy-missing-
-  ABI work landed earlier. Because CI runs exactly what the
-  pre-deploy gate runs, CI green guarantees the gate will accept the
-  state at deploy time — drift between "passes CI" and "the deploy
-  script will accept" is no longer possible.
+- **`contracts-fast`** runs `bash contracts/script/predeploy-check.sh`
+  (no `--full`) — `forge build`, the deploy-sanity suite (the 12
+  tests under `test/deploy/` covering EIP-170 facet sizes, selector
+  coverage and ownership, the deploy-integration test), the deploy
+  shell-script lint, and the per-facet ABI-in-sync check. ~30-60s.
+  Designed to be the required-status-check (the follow-up that
+  wires it into the `Protect main` ruleset is tracked as `74.B`).
+  Catches the regression classes that would block an actual
+  `--broadcast` deploy.
+
+- **`contracts-full`** runs the same script with `--full`, which
+  swaps the deploy-sanity suite for the full
+  `forge test --no-match-path "test/invariants/*"` regression
+  (2,012 tests). Matches what `deploy-mainnet.sh --full` invokes at
+  its preflight step. Runs in parallel with `contracts-fast`,
+  surfaces a red on the PR if any non-deploy-sanity test regresses,
+  but is **informational only** — not in the required-status-check
+  rule. The rationale: paying 10-15 min on every PR for the full
+  suite when the deploy-blocker classes are already covered by the
+  fast check is over-blocking; the full suite still runs so we see
+  any drift, but a docs-only PR isn't gated on it. The release/*
+  branch / `v*` tag-gated `mainnet-gate.yml` workflow (tracked as
+  `74.C`) re-runs `--full` as a hard gate before any cutover, which
+  is the line where the full suite matters.
 
 - **`workspaces`** runs `pnpm install --frozen-lockfile` and then
   `pnpm -r typecheck`, fanning out across every workspace under
