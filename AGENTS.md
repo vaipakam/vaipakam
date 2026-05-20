@@ -68,3 +68,75 @@ failure-path inspection, and stricter test expectations.
 - Contracts/funds/admin/security changes: `review full security-critical`.
 - Stacked PRs: review the linked stack and stated merge order, not only the
   currently visible PR.
+
+## Project-specific review profiles
+
+These are project-specific orientations layered on top of the four canonical
+modes. When the trigger comment names a profile (e.g.
+`@codex review handbook`), Codex should pick up the mode it implies AND the
+extra focus areas listed under that profile.
+
+### `@codex review handbook`
+
+Equivalent to `review normal` plus:
+
+- check every cross-reference path in the changed doc resolves — the file
+  exists, line / anchor citations are correct, code snippets quoted from
+  workflows match the workflow YAML;
+- flag stale CI / workflow snippets against `.github/workflows/*.yml`
+  (especially cache key shapes + the `detect-changes`-then-guard pattern);
+- verify command examples use canonical syntax (Codex triggers from this
+  file's §`GitHub Review Commands`; labels from `.github/LABELS.md`;
+  forge / pnpm invocations matching `CLAUDE.md`'s "Build & Test Commands");
+- treat conflict between the handbook and the source file as a handbook
+  bug — flag it for the doc author, not the source author.
+
+Use this for PRs to `docs/internal/ProjectProcedures.md`, `CONTRIBUTING.md`,
+`AGENTS.md` itself, `.github/LABELS.md`, and any other operator-handbook-
+class document.
+
+### `@codex review crosschain-deploy`
+
+Equivalent to `review full security-critical` plus:
+
+- cross-check rate-limit values + chain set against
+  `docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md` §10
+  (capacity 50,000 VPFI, refill ≈5.8 VPFI/s as starting values);
+- verify owner = admin multisig → governance timelock on every cross-chain
+  contract introduced or modified by the PR;
+- confirm `GuardianPausable` is wired on BOTH the send and receive paths
+  for any cross-chain message-handling change;
+- check that `_assertPaymentTokenSane` (or its equivalent guards) covers
+  the chain set the PR touches, per the `VPFIBuyAdapter` payment-token-
+  mode policy in `CLAUDE.md`.
+
+Use this for PRs touching `contracts/src/crosschain/`,
+`contracts/script/DeployCrosschain.s.sol`,
+`contracts/script/ConfigureCcip.s.sol`, or any token-pool / messenger /
+adapter contract.
+
+### `@codex review design-doc`
+
+Equivalent to `review adversarial` plus:
+
+- treat the doc as the spec under review, not as a description of code;
+- stress-test the doc against attack scenarios, edge cases, race
+  conditions, and operational failure modes BEFORE implementation;
+- challenge the trade-offs section — surface trade-offs the doc author
+  may have under-weighted or missed entirely;
+- check the doc is internally consistent — definitions used uniformly,
+  invariants not silently relaxed in later sections;
+- propose at least one alternative approach the doc didn't consider.
+
+Use this on doc-only PRs to `docs/DesignsAndPlans/` — the pattern is to
+open a design proposal as its own PR, get a clean adversarial pass on the
+DOC, then implement against the ratified spec in a follow-up PR.
+
+---
+
+Profiles are intentionally extensible — when a recurring review pattern
+emerges (e.g. "every Stage-N source-tree refactor PR needs the same
+focus areas"), add a profile here in the same PR that introduces the
+pattern. Profiles compose: a trigger like
+`@codex review handbook crosschain-deploy` is a valid request to apply
+both focus sets on the same PR.
