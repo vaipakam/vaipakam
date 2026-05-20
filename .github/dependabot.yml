@@ -8,11 +8,23 @@
 #
 # NOT covered, on purpose: the on-chain Solidity dependencies under
 # `contracts/lib/` (forge-std, openzeppelin-contracts-upgradeable,
-# chainlink-local, diamond-3-hardhat). Those are git submodules pinned
-# to an AUDITED commit set — they must be bumped only as a deliberate,
-# reviewed, re-audited decision, never by an automated PR. No
-# `gitsubmodule` ecosystem is configured here precisely so Dependabot
-# leaves the audited contract dependency set frozen.
+# chainlink-local, chainlink-ccip, chainlink-evm, diamond-3-hardhat).
+# Those are git submodules pinned to an AUDITED commit set — they must
+# be bumped only as a deliberate, reviewed, re-audited decision, never
+# by an automated PR. No `gitsubmodule` ecosystem is configured here
+# precisely so Dependabot leaves the audited contract dependency set
+# frozen.
+#
+# Suppressing `contracts/lib/*` requires more than the root-only npm
+# `directory: "/"` scope below, because Dependabot's **security-update**
+# scanner walks every package-lock.json in the repo regardless of the
+# version-update `directory:` config (a documented Dependabot quirk:
+# config controls version updates only, not vulnerability-driven
+# security PRs). The `ignore: [{ dependency-name: "*" }]` blocks below
+# explicitly disable BOTH scanners for each vendored Solidity submodule
+# that ships its own JS tooling tree. See issue #153 for the policy gap
+# this closed (5 unwanted PRs landed against diamond-3-hardhat in May
+# 2026 before this suppression was in place).
 #
 # Dependabot PRs are NEVER auto-merged — each goes through the same
 # review + CI + Codex review as any other change.
@@ -61,3 +73,50 @@ updates:
     labels:
       - "infra"
       - "dependencies"
+
+  # ── Vendored Solidity submodules — suppress all Dependabot PRs ───────
+  # Each vendored library under `contracts/lib/` is a git submodule
+  # pinned to an audited commit. Registering each directory here with
+  # `ignore: [{ dependency-name: "*" }]` disables BOTH version-update
+  # AND security-update PRs against that subtree. See the header
+  # comment above for the security-update-scanner quirk this works
+  # around.
+  - package-ecosystem: "npm"
+    directory: "/contracts/lib/diamond-3-hardhat"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
+
+  - package-ecosystem: "npm"
+    directory: "/contracts/lib/openzeppelin-contracts-upgradeable"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
+
+  - package-ecosystem: "npm"
+    directory: "/contracts/lib/chainlink-ccip"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
+
+  - package-ecosystem: "npm"
+    directory: "/contracts/lib/chainlink-evm"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
+
+  - package-ecosystem: "npm"
+    directory: "/contracts/lib/chainlink-local"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
