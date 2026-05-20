@@ -84,7 +84,11 @@ jobs:
           # Slither auto-detects Foundry projects (recent versions).
           # Pin the slither version inside the action so reports are
           # stable across runs.
-          slither-version: 0.11.5
+          # 0.11.5+ require Python >=3.10; the slither-action's docker
+          # base image carries an older Python, so pin to the newest
+          # version compatible with that base (0.11.4 as of 2026-05-20).
+          # Revisit when the action's base image updates.
+          slither-version: 0.11.4
           # Emit SARIF so GitHub's code-scanning surface can render
           # findings inline on the PR.
           sarif: slither-results.sarif

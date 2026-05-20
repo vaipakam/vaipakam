@@ -96,16 +96,23 @@ jobs:
             forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/remappings.txt', 'contracts/.submodule-state') }}-
 
       - name: Forge snapshot --check (5% tolerance)
-        # `--tolerance 500` is in basis points: 500 = 5%. Any test
-        # whose gas increases by more than 5% from the committed
-        # baseline fails the run.
+        # `--tolerance` is a percentage (0-100), not basis points.
+        # 5 = 5%. Any test whose gas increases by more than 5% from
+        # the committed baseline fails the run.
         #
         # `--no-match-path "test/invariants/*"` matches the local
         # convention for snapshot generation; invariant tests run a
         # randomised harness whose gas is non-deterministic.
+        #
+        # NOTE: local development prefixes forge with
+        # `nice -n -10 ionice -c 2 -n 0` for priority on a shared
+        # workstation. GitHub-hosted runners deny `CAP_SYS_NICE` so
+        # the prefix would error here — dropped from the CI step
+        # (the failure-remediation summary below still names it for
+        # local use).
         run: |
           cd contracts
-          nice -n -10 ionice -c 2 -n 0 forge snapshot --check --tolerance 500 --no-match-path "test/invariants/*"
+          forge snapshot --check --tolerance 5 --no-match-path "test/invariants/*"
 
       - name: Diff hint on failure
         # When the check fails (gas regression), drop a one-line
