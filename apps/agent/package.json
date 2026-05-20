@@ -11,7 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@pushprotocol/restapi": "^0.0.1",
+    "@pushprotocol/restapi": "^1.7.32",
     "@vaipakam/contracts": "workspace:*",
     "@vaipakam/lib": "workspace:*",
     "ethers": "^6.13.0",
