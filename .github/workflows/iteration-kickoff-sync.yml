@@ -1,0 +1,139 @@
+# Iteration kickoff sync — file the weekly "fold rules into handbook" card
+# ----------------------------------------------------------------------
+# Why this exists:
+# - Discipline rules learned mid-iteration get saved to agent memory
+#   (`~/.claude/projects/.../memory/`) but don't automatically reach
+#   `docs/internal/ProjectProcedures.md` — the public-facing handbook
+#   contributors / auditors read.
+# - The sync ritual closes that gap. To avoid relying on maintainer
+#   memory ("did I do the sync this Monday?"), this workflow files the
+#   ritual card automatically every Monday morning UTC.
+# - The card sits as "Backlog" on @vaipakam-labs until the maintainer
+#   picks it up; if it's still open the following Monday, the next
+#   run still files a fresh card (acceptable redundancy — the previous
+#   one can be closed as duplicate during the sync).
+#
+# Cadence:
+# - Cron: '5 0 * * MON' = Mondays 00:05 UTC, aligned with the GitHub
+#   Project's iteration boundary (Iteration N+1 starts Monday 00:00).
+#   The 5-minute offset gives GitHub's iteration-rollover machinery a
+#   beat to settle before this workflow queries.
+# - GitHub Actions cron is best-effort, not precise — peak-load delays
+#   of a few minutes are normal. Acceptable for a Monday-morning ritual.
+#
+# Scope:
+# - Runs only on the default branch (`main`) — that's where the
+#   workflow file lives + where the schedule trigger fires from.
+# - `workflow_dispatch` lets the maintainer fire it manually
+#   off-cadence (e.g. test, or to make up for a missed Monday).
+#
+# Required permissions:
+# - `issues: write` — the issue-bot Action needs this to file the card.
+# - `contents: read` — for the Action checkout step.
+#
+# See Issue #107 + ProjectProcedures.md §5.7 for the discipline this
+# automates.
+
+name: Iteration kickoff sync (weekly)
+
+on:
+  schedule:
+    - cron: '5 0 * * MON'   # 00:05 UTC every Monday
+  workflow_dispatch:
+    inputs:
+      iteration_label:
+        description: 'Manual override label for the iteration (e.g. "Iteration 3" — used in the card title)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  file-kickoff-card:
+    name: File the iteration kickoff sync card
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Compute iteration label
+        id: iter
+        env:
+          MANUAL_LABEL: ${{ inputs.iteration_label }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${MANUAL_LABEL:-}" ]]; then
+            LABEL="$MANUAL_LABEL"
+          else
+            # Default label is just the date — the title template
+            # already prepends "Iteration kickoff sync — " so the
+            # resolved title becomes "Iteration kickoff sync — YYYY-
+            # MM-DD" exactly once (the earlier version double-prefixed).
+            LABEL="$(date -u +%F)"
+          fi
+          echo "label=$LABEL" >> "$GITHUB_OUTPUT"
+          echo "Resolved iteration label: $LABEL"
+
+      - name: File the iteration-kickoff-sync card
+        # imjohnbo/issue-bot creates the Issue from a body that we
+        # inline here (kept short — the substantive checklist lives in
+        # the ISSUE_TEMPLATE file so contributors can also use it
+        # manually if they ever need to).
+        uses: imjohnbo/issue-bot@3188c6ce06249206709d3b1f274d0d4c5a521601 # v3
+        with:
+          title: "Iteration kickoff sync — ${{ steps.iter.outputs.label }}"
+          labels: "documentation,chore"
+          assignees: "Raja4Shekar"
+          # `body-includes` ensures we don't create a duplicate while
+          # the previous kickoff card is still open. If a card with
+          # this title-prefix already exists open, the bot is a no-op.
+          # If it's been closed by the maintainer, a fresh card opens.
+          pinned: false
+          close-previous: false
+          # Use ADD_TO_PROJECT_PAT (a maintainer-owned PAT with
+          # `repo` + `project` scopes) instead of the default
+          # GITHUB_TOKEN. GitHub Actions intentionally does NOT
+          # start downstream workflow runs for events emitted by
+          # GITHUB_TOKEN (avoids accidental loops), so if we used
+          # the default token here the auto-add-to-project workflow
+          # would never fire on the created Issue — defeating the
+          # whole auto-routing-to-Backlog story. The PAT is the
+          # documented workaround per CLAUDE.md "Task tracking".
+          token: ${{ secrets.ADD_TO_PROJECT_PAT }}
+          body: |
+            **Auto-filed by `.github/workflows/iteration-kickoff-sync.yml`** at the start of a new iteration.
+
+            ## What
+
+            Sync rules learned in the previous iteration into the canonical handbook + apply any automation that was queued.
+
+            ## Checklist
+
+            - [ ] Walk the agent-memory files modified since the previous iteration's sync. The ritual + sentinel-file convention is documented in [`ProjectProcedures.md §5.7`](https://github.com/vaipakam/vaipakam/blob/main/docs/internal/ProjectProcedures.md#57-iteration-kickoff-sync--fold-rules-into-the-handbook).
+            - [ ] Classify each modified memory note:
+              - **Project rule** (operator / contributor / auditor needs to know it) → fold into the appropriate `docs/internal/ProjectProcedures.md` section.
+              - **Agent-specific personal discipline** (e.g. "I tend to forget X") → stays in memory only.
+              - **Already covered in ProjectProcedures.md** → no action.
+            - [ ] Land the sync as a single docs PR with title pattern: `docs(handbook): iteration close-out sync — fold rules from <date> through <date>`.
+            - [ ] Touch sentinel `.last-iteration-sync` in the agent-memory dir to record the close timestamp.
+            - [ ] If a card from the PREVIOUS iteration's sync is still open and the work is done, close it referencing the merged PR.
+            - [ ] Update the previous iteration's status on the [`@vaipakam-labs`](https://github.com/users/vaipakam/projects/1) board: move any remaining "In review" cards to Done or carry to the new iteration.
+
+            ## References
+
+            - Discipline: [`ProjectProcedures.md §5.7`](https://github.com/vaipakam/vaipakam/blob/main/docs/internal/ProjectProcedures.md)
+            - Original Issue: [#107](https://github.com/vaipakam/vaipakam/issues/107)
+            - Memory directory (machine-local): `~/.claude/projects/-home-pranav-Codes-Vaipakam-vaipakam/memory/`
+
+            ## If you're picking this up
+
+            Most weeks the work is small (review 0-3 memory notes; fold 0-2 into the handbook). Some iterations have no new rules at all — close this card with a one-line "no rules to fold this iteration" note. That's the expected steady-state once the discipline matures.
+
+            🤖 Auto-filed via `.github/workflows/iteration-kickoff-sync.yml`
+        env:
+          # `with.token` (above) overrides this for issue-bot's
+          # internal API client; keeping a fallback env for any
+          # action step that reads from env-vars.
+          GITHUB_TOKEN: ${{ secrets.ADD_TO_PROJECT_PAT }}
