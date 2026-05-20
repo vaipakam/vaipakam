@@ -51,19 +51,28 @@ jobs:
         with:
           fetch-depth: 2
       - id: filter
+        env:
+          # Use event-payload SHAs rather than `origin/<base_ref>` — the
+          # remote ref isn't reliably present after a shallow checkout.
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           if [[ "${{ github.event_name }}" == "push" ]]; then
             echo "contracts=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          BASE_SHA="$(git merge-base origin/${{ github.base_ref }} HEAD || echo '')"
-          if [[ -z "$BASE_SHA" ]]; then
+          if [[ -z "$BASE_SHA" ]] || ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            # Fall open if the base SHA isn't in our shallow clone.
             echo "contracts=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          changed="$(git diff --name-only "$BASE_SHA" HEAD)"
-          if printf '%s\n' "$changed" | grep -qE '^contracts/(src|test|script)/|^contracts/foundry\.toml$|^contracts/remappings\.txt$|^\.gitmodules$|^contracts/\.gas-snapshot$|^\.github/workflows/gas-snapshot\.yml$'; then
+          changed="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+          # `contracts/lib/**` covers submodule pointer bumps — a
+          # chainlink-evm / chainlink-ccip / OZ-upgradeable submodule
+          # update can shift gas without touching `contracts/src/`,
+          # so it has to gate the regression check.
+          if printf '%s\n' "$changed" | grep -qE '^contracts/(src|test|script|lib)/|^contracts/foundry\.toml$|^contracts/remappings\.txt$|^\.gitmodules$|^contracts/\.gas-snapshot$|^\.github/workflows/gas-snapshot\.yml$'; then
             echo "contracts=true" >> "$GITHUB_OUTPUT"
           else
             echo "contracts=false" >> "$GITHUB_OUTPUT"

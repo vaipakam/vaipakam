@@ -29,13 +29,21 @@ on:
     paths:
       - 'contracts/src/**/*.sol'
       - 'contracts/foundry.toml'
+      - 'contracts/remappings.txt'
+      - '.gitmodules'
       - '.github/workflows/contracts-docs.yml'
   workflow_dispatch:
 
-# Only one Pages deployment at a time; superseded runs cancel.
+# Concurrency scoping:
+# - PR preview builds get their own per-PR group so two PRs don't fight,
+#   and a new PR build can supersede an older one for the same PR.
+# - Push-to-main / workflow_dispatch deploys share the `pages-deploy`
+#   group so the Pages site never has overlapping deploys.
+# A flat workflow-level `pages` group with cancel-in-progress was wrong:
+# PR builds would cancel in-flight production deploys to the live site.
 concurrency:
-  group: 'pages'
-  cancel-in-progress: true
+  group: ${{ github.event_name == 'pull_request' && format('contracts-docs-pr-{0}', github.event.pull_request.number) || 'contracts-docs-pages-deploy' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

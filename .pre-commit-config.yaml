@@ -53,13 +53,18 @@ repos:
     hooks:
       - id: forge-fmt-check
         name: forge fmt --check (Solidity)
-        entry: bash -c 'cd contracts && forge fmt --check'
+        # `language: system` would HARD-fail with "command not found"
+        # if Foundry isn't installed, blocking commits on contributor
+        # machines that don't have it. The `command -v forge` guard
+        # makes the hook genuinely no-op in that case (a skip-with-zero-
+        # exit), which is the behaviour the surrounding doc claims.
+        # Contributors with Foundry get the check; those without are
+        # not penalised; CI re-runs the check server-side via the
+        # pnpm + forge install path so the gate isn't silent.
+        entry: bash -c 'if command -v forge >/dev/null 2>&1; then cd contracts && forge fmt --check; else echo "  (forge not installed; skipping forge fmt — CI will re-check)"; fi'
         language: system
         files: '\.sol$'
         pass_filenames: false
-        # Falls open if `forge` isn't on PATH — local hook, not CI.
-        # Contributors without Foundry installed just skip this hook;
-        # CI re-runs it server-side via the `pnpm install + forge` path.
 
 # Default stages: hooks run at commit-time. Manual / pre-push hooks
 # can be added per-hook in future as patterns emerge.
