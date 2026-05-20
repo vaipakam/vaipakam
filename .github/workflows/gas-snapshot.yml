@@ -14,9 +14,17 @@
 #
 # Convention: when you legitimately add gas (new feature, more storage
 # writes, new event), regenerate the snapshot with:
-#   cd contracts && nice -n -10 ionice -c 2 -n 0 forge snapshot --no-match-path "test/invariants/*"
+#   cd contracts && nice -n -10 ionice -c 2 -n 0 forge snapshot \
+#     --no-match-path "test/invariants/*" \
+#     --no-match-test '(_Sanctions_(AcceptOffer|SellLoan|TransferObligation)_Blocked|testSellLoanRevertsCountriesNotCompatible|testAcceptOfferBlocksSanctionedCountries)'
 # and commit the diff alongside the code change. CI then compares the
-# new commit against the new snapshot.
+# new commit against the new snapshot using the same exclusions.
+#
+# Why the `--no-match-test` regex: forge's `--check --tolerance` has a
+# divide-by-zero quirk on tests that report `(gas: 0)` — five early-
+# revert sanctions/country tests trigger that quirk. Skipping them in
+# both snapshot generation and the check loses no detection value
+# (their actual gas IS zero) and avoids cosmetic CI failures.
 
 name: Gas snapshot
 
@@ -104,6 +112,13 @@ jobs:
         # convention for snapshot generation; invariant tests run a
         # randomised harness whose gas is non-deterministic.
         #
+        # `--no-match-test '(_Sanctions_...|test...CountriesNotCompatible|test...BlocksSanctionedCountries)'`
+        # skips five early-revert tests that report `(gas: 0)`. forge's
+        # tolerance math divides by the expected gas; when that's zero
+        # any consumed value (including 0 itself) triggers a false
+        # "Diff" failure. The regex must match the same set used at
+        # snapshot generation time (see the file-header convention).
+        #
         # NOTE: local development prefixes forge with
         # `nice -n -10 ionice -c 2 -n 0` for priority on a shared
         # workstation. GitHub-hosted runners deny `CAP_SYS_NICE` so
@@ -112,7 +127,9 @@ jobs:
         # local use).
         run: |
           cd contracts
-          forge snapshot --check --tolerance 5 --no-match-path "test/invariants/*"
+          forge snapshot --check --tolerance 5 \
+            --no-match-path "test/invariants/*" \
+            --no-match-test '(_Sanctions_(AcceptOffer|SellLoan|TransferObligation)_Blocked|testSellLoanRevertsCountriesNotCompatible|testAcceptOfferBlocksSanctionedCountries)'
 
       - name: Diff hint on failure
         # When the check fails (gas regression), drop a one-line
@@ -133,7 +150,9 @@ jobs:
             echo "2. **Accept the regression** (legitimate cost of a new feature):"
             echo "   regenerate the snapshot locally and commit:"
             echo "   \`\`\`bash"
-            echo "   cd contracts && nice -n -10 ionice -c 2 -n 0 forge snapshot --no-match-path \"test/invariants/*\""
+            echo "   cd contracts && nice -n -10 ionice -c 2 -n 0 forge snapshot \\"
+            echo "     --no-match-path \"test/invariants/*\" \\"
+            echo "     --no-match-test '(_Sanctions_(AcceptOffer|SellLoan|TransferObligation)_Blocked|testSellLoanRevertsCountriesNotCompatible|testAcceptOfferBlocksSanctionedCountries)'"
             echo "   git add contracts/.gas-snapshot"
             echo "   \`\`\`"
             echo ""
