@@ -304,6 +304,13 @@ contract VaipakamRewardMessenger is
             if (msg.value - spent < fee) {
                 revert InsufficientFee(msg.value - spent, fee);
             }
+            // Slither flags this loop body as `msg-value-loop` /
+            // `arbitrary-send-eth`. The per-iter `fee` is the exact value
+            // just re-quoted from `messenger`, and the recipient is the
+            // admin-set CCIP adapter (rotated via owner-only
+            // `setMessenger`). The `spent` cumulator + `msg.value`
+            // pre-check bound total outflow. Not a vuln.
+            // slither-disable-next-line arbitrary-send-eth,msg-value-loop
             bytes32 messageId = ICrossChainMessenger(messenger).sendMessage{
                 value: fee
             }(dst, payload, _noTokens(), destGasLimit);
@@ -421,6 +428,10 @@ contract VaipakamRewardMessenger is
             destinationChainId, payload, _noTokens(), destGasLimit
         );
         if (budget < fee) revert InsufficientFee(budget, fee);
+        // `messenger` is the admin-set CCIP adapter (rotated via
+        // owner-only `setMessenger`), and `fee` is the exact value just
+        // re-quoted from that same contract.
+        // slither-disable-next-line arbitrary-send-eth
         messageId = ICrossChainMessenger(messenger).sendMessage{value: fee}(
             destinationChainId, payload, _noTokens(), destGasLimit
         );

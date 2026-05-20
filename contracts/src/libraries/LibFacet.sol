@@ -182,6 +182,12 @@ library LibFacet {
         uint256 amount
     ) internal {
         if (amount == 0) return;
+        // Slither flags non-msg.sender `from` as "arbitrary-send-erc20".
+        // Here `payer` consented to the move via `IERC20.approve(diamond,
+        // ≥amount)` (every caller is a Diamond facet that gated the
+        // approval upstream — e.g. acceptOffer / repayLoan). The
+        // recipient is the admin-owned treasury address. Not a vuln.
+        // slither-disable-next-line arbitrary-send-erc20
         IERC20(asset).safeTransferFrom(
             payer,
             LibVaipakam.storageSlot().treasury,

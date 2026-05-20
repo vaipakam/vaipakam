@@ -436,6 +436,13 @@ contract VpfiBuyAdapter is
         );
         if (nativeFee < ccipFee) revert InsufficientFee(nativeFee, ccipFee);
 
+        // Slither flags the `value: ccipFee` forward as "arbitrary-send-eth"
+        // because the recipient (`messenger`) is a state-variable address.
+        // `messenger` is the admin-set `CcipMessenger` adapter for this
+        // chain — admin-rotated via `setMessenger`, not caller-controlled —
+        // and the value is the exact CCIP fee just re-quoted from that same
+        // contract. Not a vuln.
+        // slither-disable-next-line arbitrary-send-eth
         messageId = ICrossChainMessenger(messenger).sendMessage{
             value: ccipFee
         }(baseChainId, payload, _noTokens(), destGasLimit);
@@ -625,6 +632,12 @@ contract VpfiBuyAdapter is
         if (amount == 0) return;
         address token = paymentToken;
         if (token == address(0)) {
+            // `treasury` is admin-set via `setTreasury` (owner-only) — not
+            // caller-controlled — so the native send target is fixed by
+            // governance, not by an arbitrary buyer input. Settled-buy
+            // release path is invoked only after a successful response
+            // from the canonical receiver.
+            // slither-disable-next-line arbitrary-send-eth
             (bool ok, ) = payable(treasury).call{value: amount}("");
             if (!ok) revert EthSendFailed();
         } else {
