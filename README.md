@@ -6,6 +6,63 @@
 
 ---
 
+## For auditors and integrators
+
+The canonical **technical whitepaper** lives at
+[`apps/www/src/content/whitepaper/Whitepaper.en.md`](apps/www/src/content/whitepaper/Whitepaper.en.md)
+— that file is the rendered surface on the public website and the
+authoritative version for citation. The body of this README (below)
+carries an older copy of the whitepaper that is being retired in
+favour of the `apps/www` source (tracked under [#100](https://github.com/vaipakam/vaipakam/issues/100));
+prefer the canonical path for any new reference. Day-to-day repo
+orientation:
+
+| Looking for | Read |
+|---|---|
+| Canonical technical whitepaper | [`apps/www/src/content/whitepaper/Whitepaper.en.md`](apps/www/src/content/whitepaper/Whitepaper.en.md) |
+| Conventions, build commands, PR workflow, branch protection, CI design | [`docs/internal/ProjectProcedures.md`](docs/internal/ProjectProcedures.md) |
+| Architectural decisions + their rationale | [`docs/adr/`](docs/adr/) |
+| Domain terminology | [`docs/GLOSSARY.md`](docs/GLOSSARY.md) |
+| Intended-behaviour specification (code-independent) | [`docs/FunctionalSpecs/`](docs/FunctionalSpecs/) |
+| Design exploration + plans | [`docs/DesignsAndPlans/`](docs/DesignsAndPlans/) |
+| Release narrative + per-PR fragments | [`docs/ReleaseNotes/`](docs/ReleaseNotes/) |
+| Third-party audit reports + responses | [`audits/`](audits/) |
+| Incident response | [`docs/ops/IncidentRunbook.md`](docs/ops/IncidentRunbook.md) |
+| Codex review commands + project-specific profiles | [`AGENTS.md`](AGENTS.md) |
+| Issue templates (bug / feature request / audit finding) | [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/) |
+| Code ownership map | [`.github/CODEOWNERS`](.github/CODEOWNERS) |
+| How to contribute | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
+| Community standards | [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) |
+
+**Deploy state.** No mainnet deployment yet — the protocol is in
+pre-mainnet hardening. Testnet deployments (Base Sepolia, Sepolia) are
+exercised continuously via the deploy-sanity suite + flow scripts under
+`contracts/script/`. The cross-chain layer (CCIP) hasn't shipped to
+testnet yet — operator-gated Stage 2 of T-068. See the `audit-prep`
+milestone on the [`@vaipakam-labs`](https://github.com/users/vaipakam/projects/1)
+project board for the gate-list.
+
+**Audit status.** No third-party audit yet; one is the next milestone
+after the `audit-prep` gates close. The `audits/` directory is
+pre-created so the first auditor's deliverable has a home; the
+[`audit_finding`](.github/ISSUE_TEMPLATE/audit_finding.yml) Issue
+template is the structured channel for findings.
+
+**Security disclosure.** Vulnerabilities go through the private channel
+documented in [`docs/ops/IncidentRunbook.md`](docs/ops/IncidentRunbook.md)
+— **not** a public Issue.
+
+> **Note (2026-05 — known doc drift).** The legacy whitepaper text
+> below still references "LayerZero OFT V2" for the cross-chain layer.
+> T-068 migrated the protocol to **Chainlink CCIP** in April 2026. The
+> canonical whitepaper at
+> [`apps/www/src/content/whitepaper/Whitepaper.en.md`](apps/www/src/content/whitepaper/Whitepaper.en.md)
+> is the current source of truth; the live spec is
+> [`docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md`](docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md)
+> and [`CLAUDE.md`](CLAUDE.md) §"Cross-Chain Security Policy (CCIP)".
+
+---
+
 ## Abstract
 
 Vaipakam is a non-custodial peer-to-peer credit protocol for over-collateralized
