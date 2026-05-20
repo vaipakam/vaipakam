@@ -1,0 +1,154 @@
+# Release artifact workflow
+# -------------------------
+# When a `v*` tag is pushed, this workflow assembles the deployment +
+# ABI bundle a third-party auditor or ecosystem integrator needs to pin
+# their analysis "as of" that specific release, and attaches it to the
+# GitHub Release.
+#
+# Why we need this:
+# - Auditors should be able to say "I reviewed Vaipakam v0.5.0" and
+#   download exactly the same per-chain Diamond+facet addresses and
+#   per-facet ABI JSONs that shipped that tag — without having to
+#   archive-clone the repo.
+# - Ecosystem integrators (Chainlink, indexers, third-party keeper
+#   bots) want a programmatically-pinnable bundle, not a moving target.
+#
+# Bundle contents:
+# - `addresses-<chain-slug>.json` — one per per-chain
+#   `contracts/deployments/<slug>/addresses.json` that exists at tag time.
+# - `deployments.json` — the consolidated frontend/Worker bundle from
+#   `packages/contracts/src/deployments.json` (if present at tag time).
+# - `abis.tar.gz` — the per-facet ABI JSONs under
+#   `packages/contracts/src/abis/` (the same bundle every consumer
+#   imports via `@vaipakam/contracts/abis`).
+#
+# This workflow does NOT gate the release. The full forge regression
+# gate is `mainnet-gate.yml`, which runs on the same `v*` tag push in
+# parallel. The convention is: only push a `v*` tag after the
+# corresponding `release/**` branch has been gated green by
+# `mainnet-gate` — see `docs/internal/ProjectProcedures.md` §7.3.
+
+name: Release artifacts
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to (re-)build a release for (e.g. v0.1.0)'
+        required: true
+
+# Read access to the repo is enough to checkout + tar; we need write to
+# `contents` to create / update the GitHub Release entry.
+permissions:
+  contents: write
+
+jobs:
+  release-artifacts:
+    name: Bundle + attach release artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # Need full history so we can resolve the tag's commit + write
+          # the provenance line into the release body.
+          fetch-depth: 0
+          # On workflow_dispatch, check out the named tag rather than
+          # whatever ref the run was triggered against.
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+
+      - name: Resolve tag + commit
+        id: tag
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          SHA=$(git rev-list -n 1 "$TAG")
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Resolved tag '$TAG' to commit '$SHA'"
+
+      - name: Bundle deployment + ABI artifacts
+        id: bundle
+        run: |
+          set -euo pipefail
+          mkdir -p release-artifacts
+
+          # Per-chain addresses — one file per deployment slug present.
+          # Pre-mainnet tags may only have sepolia / base-sepolia, so we
+          # don't fail if a slug is absent.
+          for d in contracts/deployments/*/; do
+            [[ -d "$d" ]] || continue
+            slug=$(basename "$d")
+            if [[ -f "$d/addresses.json" ]]; then
+              cp "$d/addresses.json" "release-artifacts/addresses-$slug.json"
+              echo "  bundled addresses-$slug.json"
+            fi
+          done
+
+          # Consolidated frontend / Worker deployments bundle.
+          if [[ -f packages/contracts/src/deployments.json ]]; then
+            cp packages/contracts/src/deployments.json release-artifacts/deployments.json
+            echo "  bundled deployments.json (consolidated)"
+          fi
+
+          # Per-facet ABI JSONs.
+          if [[ -d packages/contracts/src/abis ]]; then
+            tar -czf release-artifacts/abis.tar.gz -C packages/contracts/src abis
+            echo "  bundled abis.tar.gz"
+          fi
+
+          # Tell the next step whether we have anything to attach.
+          COUNT=$(find release-artifacts -type f | wc -l)
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "release-artifacts/ contents:"
+          ls -la release-artifacts/
+
+      - name: Create / update GitHub Release with attachments
+        if: steps.bundle.outputs.count != '0'
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: "Vaipakam ${{ steps.tag.outputs.tag }}"
+          # We don't want a release the operator hasn't reviewed to go
+          # straight to "latest" — create as draft, the operator
+          # promotes it manually once the narrative body is ready.
+          draft: true
+          # `prerelease` is filled in semver-style: anything with a
+          # hyphen (rc/alpha/beta) is a prerelease.
+          prerelease: ${{ contains(steps.tag.outputs.tag, '-') }}
+          body: |
+            **Pinned commit:** [`${{ steps.tag.outputs.sha }}`](https://github.com/vaipakam/vaipakam/commit/${{ steps.tag.outputs.sha }})
+
+            **Bundled artifacts** — pin your analysis / integration to this exact set:
+
+            - `addresses-<chain-slug>.json` — per-chain Diamond + facet addresses snapshotted at this tag.
+            - `deployments.json` — consolidated frontend / Worker bundle (every chain in one object, keyed by `chainId`).
+            - `abis.tar.gz` — per-facet ABI JSONs (the same bundle every consumer imports via `@vaipakam/contracts/abis`).
+
+            See [`docs/ReleaseNotes/`](https://github.com/vaipakam/vaipakam/tree/${{ steps.tag.outputs.sha }}/docs/ReleaseNotes) for the functional narrative.
+
+            ---
+
+            *Auto-attached by [`.github/workflows/release.yml`](https://github.com/vaipakam/vaipakam/blob/${{ steps.tag.outputs.sha }}/.github/workflows/release.yml). The full forge regression gate runs in parallel under [`mainnet-gate.yml`](https://github.com/vaipakam/vaipakam/blob/${{ steps.tag.outputs.sha }}/.github/workflows/mainnet-gate.yml).*
+          files: |
+            release-artifacts/*
+          # Don't fail the workflow if a sub-glob doesn't match — for
+          # pre-mainnet tags some artifact families are intentionally
+          # absent (no `deployments.json` until first frontend export,
+          # no chain folders until first deploy).
+          fail_on_unmatched_files: false
+
+      - name: Summarize (no artifacts case)
+        if: steps.bundle.outputs.count == '0'
+        run: |
+          echo "::warning::No deployment / ABI artifacts found at tag ${{ steps.tag.outputs.tag }}."
+          echo "This is expected for pre-deploy tags. The GitHub Release was NOT created."
+          echo "Push deployments to contracts/deployments/<chain>/ + run exportFrontendAbis.sh / exportFrontendDeployments.sh, then re-run this workflow via workflow_dispatch."

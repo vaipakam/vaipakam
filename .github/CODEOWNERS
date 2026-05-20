@@ -1,0 +1,99 @@
+# CODEOWNERS — path-based review routing for Vaipakam.
+#
+# Why this file exists:
+# --------------------
+# 1. It tells GitHub who to auto-request review from when a PR touches a path.
+# 2. It documents OWNERSHIP for auditors — "who is responsible for THIS code?".
+#    The answer happens to be the same person today (solo dev), but the
+#    STRUCTURE makes the load-bearing subsystems visible and creates the
+#    scaffolding for additional reviewers / contributors to be slotted in
+#    later without re-architecting governance.
+#
+# Conventions:
+# - Path globs follow .gitignore-style matching.
+# - The LAST matching pattern wins. Order matters — go from broadest to
+#   narrowest (catch-all first, specific subsystems below).
+# - Branch-protection on `main` requires the CODEOWNERS reviewer to approve
+#   any PR touching their paths (per `Protect main` ruleset; see
+#   `docs/internal/ProjectProcedures.md` §7).
+
+# ---------------------------------------------------------------------------
+# Global owner — everything not matched below
+# ---------------------------------------------------------------------------
+*                                                  @Raja4Shekar
+
+# ---------------------------------------------------------------------------
+# Contracts — Solidity source, scripts, tests, deploy artifacts
+# ---------------------------------------------------------------------------
+# Whole tree
+/contracts/                                        @Raja4Shekar
+
+# Risk / oracle / liquidation — load-bearing for asset safety
+/contracts/src/facets/RiskFacet.sol                @Raja4Shekar
+/contracts/src/facets/OracleFacet.sol              @Raja4Shekar
+/contracts/src/facets/DefaultedFacet.sol           @Raja4Shekar
+
+# Cross-chain layer (CCIP) — fund movement across chains
+/contracts/src/crosschain/                         @Raja4Shekar
+
+# Diamond core + storage — changing this changes every facet
+/contracts/src/VaipakamDiamond.sol                 @Raja4Shekar
+/contracts/src/libraries/LibVaipakam.sol           @Raja4Shekar
+/contracts/src/libraries/LibVPFIDiscount.sol       @Raja4Shekar
+
+# Deploy + sanity scripts — changing these changes the deployed surface
+/contracts/script/                                 @Raja4Shekar
+/contracts/test/deploy/                            @Raja4Shekar
+
+# ---------------------------------------------------------------------------
+# Cloudflare Workers — keeper signs txs, indexer reads, agent serves API
+# ---------------------------------------------------------------------------
+/apps/keeper/                                      @Raja4Shekar
+/apps/indexer/                                     @Raja4Shekar
+/apps/agent/                                       @Raja4Shekar
+
+# ---------------------------------------------------------------------------
+# Frontend surfaces
+# ---------------------------------------------------------------------------
+/apps/defi/                                        @Raja4Shekar
+/apps/www/                                         @Raja4Shekar
+/apps/labs/                                        @Raja4Shekar
+
+# ---------------------------------------------------------------------------
+# Shared packages — ABIs + deployments + lib + UI
+# ---------------------------------------------------------------------------
+/packages/contracts/                               @Raja4Shekar
+/packages/lib/                                     @Raja4Shekar
+/packages/ui/                                      @Raja4Shekar
+
+# ---------------------------------------------------------------------------
+# Governance / agent / convention files — high-trust, low-volume
+# ---------------------------------------------------------------------------
+# AGENTS.md is the canonical shared agent-guidance file. CLAUDE.md is the
+# project-specific Claude Code instructions. Both shape automated review.
+/AGENTS.md                                         @Raja4Shekar
+/CLAUDE.md                                         @Raja4Shekar
+/CONTRIBUTING.md                                   @Raja4Shekar
+/CODE_OF_CONDUCT.md                                @Raja4Shekar
+/.github/CODEOWNERS                                @Raja4Shekar
+/.github/LABELS.md                                 @Raja4Shekar
+
+# Workflows + Actions configuration — changing these changes CI behaviour
+/.github/workflows/                                @Raja4Shekar
+/.github/dependabot.yml                            @Raja4Shekar
+/.github/ISSUE_TEMPLATE/                           @Raja4Shekar
+
+# ---------------------------------------------------------------------------
+# Docs — living documentation: design, specs, release notes, runbooks
+# ---------------------------------------------------------------------------
+/docs/                                             @Raja4Shekar
+/docs/internal/ProjectProcedures.md                @Raja4Shekar
+/docs/FunctionalSpecs/                             @Raja4Shekar
+/docs/DesignsAndPlans/                             @Raja4Shekar
+/docs/ReleaseNotes/                                @Raja4Shekar
+/docs/ops/                                         @Raja4Shekar
+
+# ---------------------------------------------------------------------------
+# Audits — third-party + internal audit reports
+# ---------------------------------------------------------------------------
+/audits/                                           @Raja4Shekar

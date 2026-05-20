@@ -1,0 +1,128 @@
+name: Audit finding
+description: A finding from a security audit, security researcher, or internal pre-audit review.
+title: "[Audit] "
+labels: ["audit", "security"]
+assignees:
+  - Raja4Shekar
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for findings from a third-party audit
+        engagement OR an internal pre-audit review. For a "regular"
+        bug, use the `bug` template instead.
+
+        **If the finding is an in-scope security issue that an attacker
+        could exploit before a fix lands — STOP and use the private
+        disclosure channel in `docs/ops/IncidentRunbook.md`.** Do NOT
+        file this as a public Issue.
+
+        Public audit findings should only be filed AFTER coordination
+        with the maintainers OR after the engagement's coordinated
+        disclosure window closes.
+
+  - type: input
+    id: finding-id
+    attributes:
+      label: Finding ID
+      description: "Auditor's identifier (e.g. `RV-VAI-001`, `QS-002`). For internal reviews, use the convention `INT-YYYY-NNN`."
+      placeholder: "RV-VAI-001"
+    validations:
+      required: true
+
+  - type: input
+    id: auditor
+    attributes:
+      label: Auditor / Source
+      description: "Audit firm, researcher handle, or `Internal Review`."
+      placeholder: "Runtime Verification / @anon-researcher / Internal Review"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: "Auditor's rating. P0 == Critical (asset loss, protocol halt); P1 == High (fund-at-risk, severe degradation); P2 == Medium (specific-condition exploit, recoverable); P3 == Low (informational, defense-in-depth)."
+      options:
+        - P0 — Critical
+        - P1 — High
+        - P2 — Medium
+        - P3 — Low / Informational
+    validations:
+      required: true
+
+  - type: textarea
+    id: location
+    attributes:
+      label: Location
+      description: "Specific file(s) + line range(s) the finding applies to. Use file:line citations like `contracts/src/facets/RiskFacet.sol:142-158`."
+      placeholder: |
+        contracts/src/facets/RiskFacet.sol:142-158
+        contracts/src/libraries/LibVaipakam.sol:88
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: "What the finding is. Be precise. Include the attack scenario or correctness gap; include reproduction steps if applicable."
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: "What an attacker (or the bug) can cause. Quantify when possible (fund at risk, denial of service, state corruption, etc.)."
+    validations:
+      required: true
+
+  - type: textarea
+    id: recommendation
+    attributes:
+      label: Auditor's recommendation
+      description: "The fix or mitigation the auditor recommends. Copy verbatim from the report — do not paraphrase."
+    validations:
+      required: false
+
+  - type: dropdown
+    id: disposition
+    attributes:
+      label: Initial disposition
+      description: "Initial triage call. Final disposition is captured in the closing commit / response file under `audits/<auditor>/responses/`."
+      options:
+        - Pending triage
+        - Accepted — will fix
+        - Acknowledged — won't fix (rationale needed)
+        - Disputed (rationale needed)
+    validations:
+      required: true
+
+  - type: input
+    id: engagement
+    attributes:
+      label: Engagement folder
+      description: "Subfolder under `audits/` this finding belongs to (e.g. `runtime-verification-2026`). Leave blank for internal review."
+      placeholder: "runtime-verification-2026"
+    validations:
+      required: false
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context
+      description: "Anything else worth capturing — related findings, cross-references to design docs, prior incidents."
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Filing checklist
+      options:
+        - label: I confirm this is **not** an in-scope, currently-exploitable security issue (those go private via `docs/ops/IncidentRunbook.md`).
+          required: true
+        - label: I have set the appropriate severity above based on the auditor's rating, not my own.
+          required: true
