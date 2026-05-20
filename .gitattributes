@@ -1,1 +1,80 @@
+# Existing — graphify-out merge driver
 graphify-out/graph.json merge=graphify-merge
+
+# ----------------------------------------------------------------------
+# EOL normalisation
+# ----------------------------------------------------------------------
+# Default: detect-and-store-LF. Windows contributors get CRLF in
+# their working copy; everyone else sees LF; the index stays LF.
+* text=auto eol=lf
+
+# Force LF for files where mismatch is a real bug class
+*.sh         text eol=lf
+*.bash       text eol=lf
+*.yaml       text eol=lf
+*.yml        text eol=lf
+*.json       text eol=lf
+*.toml       text eol=lf
+*.sol        text eol=lf
+*.ts         text eol=lf
+*.tsx        text eol=lf
+*.js         text eol=lf
+*.jsx        text eol=lf
+*.md         text eol=lf
+*.py         text eol=lf
+*.txt        text eol=lf
+LICENSE      text eol=lf
+Makefile     text eol=lf
+
+# ----------------------------------------------------------------------
+# Binary — never normalise; never diff as text
+# ----------------------------------------------------------------------
+*.png        binary
+*.jpg        binary
+*.jpeg       binary
+*.gif        binary
+*.svg        binary
+*.ico        binary
+*.pdf        binary
+*.zip        binary
+*.tar.gz     binary
+*.wasm       binary
+*.gas-snapshot binary
+
+# ----------------------------------------------------------------------
+# Linguist — fix the GitHub language-stats bar
+# ----------------------------------------------------------------------
+# Vendored deps shouldn't count towards the repo's language mix.
+# Submodules (forge-std, openzeppelin-contracts-upgradeable,
+# chainlink-local, diamond-3-hardhat) are typically excluded by
+# GitHub Linguist anyway, but explicit marking is portable + safer
+# against future Linguist behaviour changes.
+contracts/lib/forge-std/**                          linguist-vendored
+contracts/lib/openzeppelin-contracts-upgradeable/** linguist-vendored
+contracts/lib/chainlink-local/**                    linguist-vendored
+contracts/lib/diamond-3-hardhat/**                  linguist-vendored
+
+# chainlink-ccip + chainlink-evm are NOT git submodules (they sit
+# under contracts/lib/ as tracked subdirectories — likely copied in
+# or via `git subtree`). Without explicit linguist-vendored, they
+# heavily skew the language stats — Chainlink's `chainlink-evm` and
+# `chainlink-ccip` together include thousands of vendor Solidity
+# files that are not Vaipakam code.
+contracts/lib/chainlink-ccip/** linguist-vendored
+contracts/lib/chainlink-evm/**  linguist-vendored
+
+# Per-facet ABI JSONs are mechanically generated — mark as
+# generated so Linguist excludes them from the language bar AND so
+# `git diff` defaults to summary mode.
+packages/contracts/src/abis/**/*.json linguist-generated
+
+# Solidity artefacts (out/) — generated. Already gitignored, but
+# defensive.
+contracts/out/** linguist-generated
+
+# Audit reports (audits/) — these are documentation of FINDINGS,
+# but their language is whatever the auditor wrote in (often
+# Markdown + embedded PDF). Mark vendored so Linguist doesn't
+# attribute them to the repo's mix.
+audits/**/*.pdf  linguist-vendored binary
+audits/**/*.md   linguist-documentation
