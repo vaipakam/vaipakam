@@ -66,6 +66,10 @@ jobs:
           # higher coverage at modest extra CI time. Acceptable for a
           # repo with one developer + paying full attention.
           queries: security-extended
+          # `paths-ignore` covers vendored Solidity submodule tooling
+          # (OZ Certora scripts, chainlink deploy scripts, etc.) —
+          # same exclusion list as `contracts/slither.config.json`.
+          config-file: ./.github/codeql/codeql-config.yml
 
       - name: Autobuild
         # For JS/TS, autobuild is a no-op (interpreted languages) but
