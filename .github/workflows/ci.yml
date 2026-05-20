@@ -159,6 +159,9 @@ jobs:
       - name: Typecheck — apps/defi (tsc -b --noEmit)
         run: pnpm --filter @vaipakam/defi exec tsc -b --noEmit
 
+      - name: Typecheck — apps/www
+        run: pnpm --filter @vaipakam/www typecheck
+
       # `pnpm -r test` (the vitest suites in apps/defi and apps/agent) is
       # intentionally NOT wired into this required-check workflow. apps/defi
       # has pre-existing test-setup failures (Issue #85 — PublicDashboard +
