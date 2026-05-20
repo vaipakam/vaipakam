@@ -1,34 +1,41 @@
-## Thread — Delete dead alpha/ + ops/lz-watcher/ trees (PR #<n>)
+## Thread — Delete the dead alpha/ archive (PR #<n>)
 
-Removed the two legacy directories whose functional replacements have
-been live for weeks but whose `package-lock.json` files were still
-generating Dependabot security alerts.
+Removed the `alpha/` archive — the v1 React/Vite frontend and the
+first-generation Cloudflare-Worker HF watcher that pre-dated the
+Stage 3 source-tree refactor — whose `package-lock.json` files had
+been the source of seven open Dependabot security alerts. The
+deletion had been scheduled in `pnpm-workspace.yaml`'s archive
+block ("Scheduled for full removal once the new architecture has
+been live for a few weeks without a fallback being needed (single
+`rm -rf alpha/` commit)"); this PR is that commit.
 
-`alpha/` (451 git-tracked files) carried the original v1
-React/Vite frontend and a first-generation Cloudflare-Worker
-HF-watcher that pre-dated the Stage 3 source-tree refactor. The live
-versions live under `apps/defi`, `apps/keeper`, `apps/indexer`, and
-`apps/agent` — they reuse none of the alpha code, only the design
-ideas — and the whitepaper that briefly lived under `alpha/` was
-already re-homed to `apps/www/src/content/whitepaper/`. Six
-Dependabot alerts on `alpha/frontend/package-lock.json` and one on
-`alpha/hf-watcher/package-lock.json` are closed by removing the
-manifests.
+The live successors are `apps/defi` (in place of `alpha/frontend`)
+and `apps/keeper`/`apps/indexer`/`apps/agent` (the Stage-3 Worker
+split that subsumed `alpha/hf-watcher`). The Cloudflare Workers
+that the archive sources last built — `vaipakam-alpha` and
+`vaipakam-hf-watcher` — are operator-managed and have to be
+undeployed via the Cloudflare dashboard separately; that's a runtime
+action, not a repo change. If a fallback is ever needed,
+`git checkout <this-commit>~ -- alpha` restores the tree byte-for-
+byte from history.
 
-`ops/lz-watcher/` (16 git-tracked files) was the LayerZero-era
-keeper that T-068's CCIP migration replaced with the receive-side
-in `apps/keeper`. After the migration merged in May 2026 the
-directory has been unreachable from any live import or workflow;
-the single Dependabot alert on `ops/lz-watcher/package-lock.json`
-disappears with it.
+The `pnpm-workspace.yaml` comment block that documented the archive
+was replaced with a one-paragraph pointer to this commit so the
+workspace layout doc stays self-describing.
 
-This is Phase 4 of issue #135 — closing the last 8 of the 366
-open Dependabot alerts the audit-prep triage started from. No
-runtime change; the deletion is git-tracked-only and reversible
-from history if the legacy code ever needs to be re-checked. The
-sibling `ops/{subgraph,tenderly}/` directories stay — both are
-operationally live (subgraph indexer config, Tenderly observability
-config). The `dependabot.yml` config does not need an update — once
-the manifests are gone Dependabot stops scanning them.
+Closes 7 Dependabot alerts (6 on `alpha/frontend/package-lock.json`,
+1 on `alpha/hf-watcher/package-lock.json`).
 
-Closes #135.
+What this PR does **NOT** touch:
+
+- `ops/lz-watcher/` stays — it is **active production tooling**, a
+  5-minute-cron Cloudflare Worker that watches the LayerZero V2 surface
+  for DVN-count drift, OFT mint/burn imbalance, and oversized VPFI flow
+  (alerts to the internal ops Telegram channel). Its single Dependabot
+  alert (`ws < 8.20.1`) is the same advisory the workspace overrides in
+  PR #137 closed for the pnpm tree — it will be addressed in a separate
+  pass that extends the override or the Dependabot scope to that Worker.
+- `ops/{subgraph,tenderly}/` stay — both are operationally live.
+
+Closes part of #135 (Phase 4 of 4 — alpha only; the lz-watcher alert
+is the one remaining open after this lands, tracked as a follow-up).

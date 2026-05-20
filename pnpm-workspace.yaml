@@ -25,23 +25,16 @@
 # it's a Solidity project, not a JS package. Its build tooling
 # (`forge`) operates on its own root.
 #
-# `alpha/` is the FROZEN ARCHIVE root — also intentionally NOT
-# in this workspace. Holds:
-#   - alpha/frontend      pre-Stage-4 monolithic frontend snapshot,
-#                          bound to alpha.vaipakam.com via the
-#                          `vaipakam-alpha` Cloudflare Worker.
-#   - alpha/hf-watcher    pre-Stage-3 monolithic ops Worker
-#                          snapshot, source for the still-running
-#                          `vaipakam-hf-watcher` Cloudflare Worker.
-# Both restored from main@f48c99fa. Do NOT patch — see
-# `alpha/README.md`. Living outside the workspace means
-# `pnpm install` doesn't resolve the archive's pinned dependency
-# tree (which differs from the live workspace's versions and
-# would surface peer-dep warnings on every install) and
-# workspace-wide commands skip the archive automatically.
-# Scheduled for full removal once the new architecture has been
-# live for a few weeks without a fallback being needed
-# (single `rm -rf alpha/` commit).
+# `alpha/` (the FROZEN ARCHIVE root that held `alpha/frontend` and
+# `alpha/hf-watcher`) was removed in the Phase 4 cleanup of issue #135.
+# It had been scheduled for `rm -rf alpha/` once the Stage 3+4
+# successors (apps/defi, apps/keeper, apps/indexer, apps/agent) had been
+# live without a fallback being needed. The two Cloudflare Workers that
+# were last built from the archive sources — `vaipakam-alpha` (formerly
+# bound to alpha.vaipakam.com) and `vaipakam-hf-watcher` — are operator-
+# managed; undeploying them is a Cloudflare-dashboard action, not a
+# repo change. If a fallback is ever needed, `git checkout main~ -- alpha`
+# from the commit that deleted the tree restores it byte-for-byte.
 #
 # `ops/{lz-watcher,subgraph,tenderly}` are ACTIVE production
 # tooling (LayerZero security monitor, drift subgraph, Tenderly
