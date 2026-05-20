@@ -324,6 +324,66 @@ When introducing a new convention (like field discipline), backfill
 cards from the CURRENT iteration only. Don't reach back into completed
 iterations unless that data is needed for retrospective.
 
+### 5.6 Milestones + Pinned Issues
+
+The project board tracks fine-grained card state. Two GitHub-native
+surfaces sit ABOVE the board:
+
+- **Milestones** — strategic-cadence groupings. Each open Issue + PR
+  is assigned to a milestone; closed milestones show progress
+  against the named release tranche.
+- **Pinned Issues** — at most 3 per repo, visible at the top of the
+  Issues tab regardless of recency. The "what every visitor reads
+  first" layer.
+
+**Milestones in use:**
+
+| Milestone | Focus |
+|---|---|
+| `audit-prep` | Pre-audit hardening — branch protection, signed commits, CI gates, ADRs, glossary, SECURITY.md, CodeQL + Slither + gas-snapshot tracking, Cloudflare posture, dependency triage. |
+| `audit-1` | Third-party audit engagement window. |
+| `audit-1-fixes` | Findings remediation from audit-1. |
+| `mainnet-cutover` | Testnet → mainnet rollout per the cutover runbook. |
+| `post-mainnet-v1.1` | Deferred items + feature iteration. |
+
+Adding a new milestone is a Settings UI action (Issues tab →
+Milestones → New milestone) — name + optional date + one-paragraph
+description.
+
+**Pinned Issues in use** — three permanent slots, content maintained
+as the project evolves:
+
+1. **"Read this first: audit context"** — orientation for auditors,
+   ecosystem integrators, contributors. Points at the canonical
+   whitepaper, ADRs, FunctionalSpecs, ProjectProcedures, SECURITY.md,
+   audits/. Updated per major milestone close.
+2. **"How to contribute"** — on-ramp for new contributors. Points at
+   CONTRIBUTING.md + good-first-issue label + the project board
+   filtered for `help wanted`. Stable; updates when the contribution
+   process changes.
+3. **"Vaipakam roadmap"** — milestones table + the freeze policy
+   during audit-prep + audit-1. Updates when a milestone
+   opens / closes.
+
+**Discipline — what goes where:**
+
+| Concept | Lives on |
+|---|---|
+| Day-to-day work | Project board (`@vaipakam-labs`) |
+| Strategic release cadence | Milestones |
+| First-look discovery surface | Pinned Issues |
+| Release narrative | `docs/ReleaseNotes/` |
+| Design exploration | `docs/DesignsAndPlans/` |
+
+Every open Issue has BOTH a Status (board) AND a Milestone — the two
+are orthogonal axes. Status says "where is this in flight"; milestone
+says "when in the release cadence".
+
+Sibling `vaipakam-keeper-bot` uses the same pattern with bot-scoped
+milestones (no `audit-1` — the keeper bot doesn't ship to mainnet on
+its own cadence; its release cadence follows the monorepo's ABI-sync
+events).
+
 ---
 
 ## 6. Release notes + FunctionalSpecs
