@@ -1,0 +1,15 @@
+# CodeQL configuration for Vaipakam.
+#
+# Mirrors the exclusion strategy in `contracts/slither.config.json`:
+# the JS/TS tooling embedded inside vendored Solidity submodules under
+# `contracts/lib/*` is upstream library code we ship unmodified
+# (OpenZeppelin's CERTORA verification scripts, the chainlink-ccip
+# deploy scripts, etc.). Re-analyzing it would have us "fix" code that
+# the library's own audit + CI already covers, and the findings don't
+# reach any Vaipakam-deployed surface.
+#
+# See `docs/internal/ProjectProcedures.md` §7 for the wider
+# static-analysis suppression convention.
+
+paths-ignore:
+  - contracts/lib/**

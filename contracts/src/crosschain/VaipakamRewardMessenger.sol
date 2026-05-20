@@ -278,6 +278,19 @@ contract VaipakamRewardMessenger is
     ///         every configured mirror.
     /// @dev Diamond-only. `msg.value` must cover the SUM of the per-lane
     ///      quotes (see {quoteBroadcastGlobal}); the remainder is refunded.
+    ///
+    ///      Slither flags the function as a whole with `msg-value-loop`
+    ///      because `msg.value` is read inside the per-destination
+    ///      for-loop. The pattern is intentional and bounded: the
+    ///      `spent` cumulator plus the pre-iter `msg.value - spent < fee`
+    ///      check make the total outflow ≤ `msg.value`, and the surplus
+    ///      is refunded after the loop. The per-statement suppression
+    ///      below silences the inner-statement match; this start/end
+    ///      block silences the function-level match so the Code
+    ///      Scanning queue stays clean. Removing the loop would mean N
+    ///      separate operator txs for one global report — strictly
+    ///      worse UX with no safety gain.
+    // slither-disable-start msg-value-loop
     function broadcastGlobal(
         uint256 dayId,
         uint256 globalLenderNumeraire18,
@@ -327,6 +340,7 @@ contract VaipakamRewardMessenger is
 
         _refund(refundAddress, msg.value - spent);
     }
+    // slither-disable-end msg-value-loop
 
     /// @notice Quote the fee for a {sendChainReport}.
     function quoteSendChainReport(
