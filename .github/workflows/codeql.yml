@@ -1,0 +1,78 @@
+# CodeQL static analysis — GitHub's native code-scanner.
+# -----------------------------------------------------
+# Why this exists:
+# - Free for public repos; strong on TypeScript/JavaScript (our
+#   Cloudflare Workers + frontend surface).
+# - Limited on Solidity — that's covered by Slither
+#   (`.github/workflows/slither.yml`). CodeQL is the complementary
+#   coverage for the JS/TS half of the codebase.
+# - Findings land in the same code-scanning surface Slither populates
+#   (Repository → Security → Code scanning), giving auditors and the
+#   maintainer one consolidated view.
+#
+# Languages covered:
+# - `javascript-typescript` — covers `apps/{defi,www,labs,keeper,
+#   indexer,agent}/`, `packages/{contracts,lib,ui}/`, plus root config.
+#   We use the single `javascript-typescript` language (the modern
+#   CodeQL pack that supersedes the separate `javascript` and
+#   `typescript` languages — recommended by GitHub since 2024).
+#
+# Languages NOT covered here:
+# - Solidity → `slither.yml`.
+# - Python → no consumer-facing Python in the repo.
+
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly safety scan — catches transitively-introduced issues
+    # that didn't show up at PR time (e.g. a CodeQL pack update finds
+    # a class of bug we previously didn't flag).
+    - cron: '17 6 * * 1'   # Mondays 06:17 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  security-events: write    # required to write SARIF to code-scanning
+  actions: read             # required by the analyze action
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript]
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@78ed0c7291d93e40c51b085850dc669a4c3ab73b # v3
+        with:
+          languages: ${{ matrix.language }}
+          # `security-extended` adds queries beyond the default set —
+          # higher coverage at modest extra CI time. Acceptable for a
+          # repo with one developer + paying full attention.
+          queries: security-extended
+
+      - name: Autobuild
+        # For JS/TS, autobuild is a no-op (interpreted languages) but
+        # the step is required by the analyze step.
+        uses: github/codeql-action/autobuild@78ed0c7291d93e40c51b085850dc669a4c3ab73b # v3
+
+      - name: Perform analysis
+        uses: github/codeql-action/analyze@78ed0c7291d93e40c51b085850dc669a4c3ab73b # v3
+        with:
+          category: '/language:${{ matrix.language }}'

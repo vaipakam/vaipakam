@@ -10,17 +10,38 @@ For admin-key custody, role custody, and the timelock that mediates privileged c
 
 ## Reporting a vulnerability
 
-Email `security@vaipakam.xyz` (PGP key in repo root `security.asc`). Do **not** open a public GitHub issue.
+Two private channels — pick either:
+
+1. **GitHub Security Advisories (preferred for first-time reporters)** —
+   file privately at
+   [`vaipakam/vaipakam/security/advisories/new`](https://github.com/vaipakam/vaipakam/security/advisories/new).
+   No email required; the advisory is invisible to the public until
+   it's published. Maintainers see it immediately. This is the
+   channel GitHub's built-in private vulnerability reporting
+   surfaces.
+2. **Email** `security@vaipakam.xyz` (PGP key in repo root
+   `security.asc`). Use this if you need an out-of-band channel,
+   prefer encrypted comms, or are not comfortable filing through
+   GitHub.
+
+**Do not** open a public GitHub Issue for security-sensitive reports.
 
 We aim to acknowledge within 24h and provide a remediation ETA within 72h. In-scope:
 
 - any facet under [`contracts/src/facets/`](contracts/src/facets/)
 - the escrow implementation and Diamond proxy under [`contracts/src/`](contracts/src/)
 - the swap adapters under [`contracts/src/adapters/`](contracts/src/adapters/) (Phase 7a `LibSwap` failover)
-- the LayerZero OApp / OFT surface under [`contracts/src/token/`](contracts/src/token/) (`VPFIOFTAdapter`, `VPFIMirror`, `VPFIBuyAdapter`, `VPFIBuyReceiver`, `VaipakamRewardOApp`)
-- the cross-chain reward mesh (`RewardReporterFacet`, `RewardAggregatorFacet`)
+- the **Chainlink CCIP** cross-chain surface under [`contracts/src/crosschain/`](contracts/src/crosschain/) (`CcipMessenger`, `VPFIMirrorToken`, `VpfiBuyAdapter`, `VpfiBuyReceiver`, `VaipakamRewardMessenger`, `VpfiPoolRateGovernor`, the stock CCIP `LockReleaseTokenPool` / `BurnMintTokenPool` instances)
+- the cross-chain reward mesh (`RewardReporterFacet`, `RewardAggregatorFacet`, `VaipakamRewardMessenger`)
 - the subgraph state-machine guard under [`ops/subgraph/`](ops/subgraph/)
 - the Permit2 integration path (`LibPermit2`)
+
+> **Note (2026-05 — partial drift):** the body of this document still
+> carries `## Cross-chain security — LayerZero hardening` content
+> from before the T-068 CCIP migration (April 2026). The in-scope
+> list above and ADR-0004 reflect the current architecture; the
+> body section is tracked for rewrite separately so this PR
+> stays narrow.
 
 Out-of-scope: testnet configuration drift, known issues tracked in audit reports, anything requiring compromise of the admin multi-sig, and the public reference keeper bot in the sibling [`vaipakam-keeper-bot`](https://github.com/vaipakam/vaipakam-keeper-bot) repo (which holds no Diamond role and only submits permissionless `triggerLiquidation` calls — see [`docs/ops/AdminKeysAndPause.md`](docs/ops/AdminKeysAndPause.md) for why no role is granted).
 
