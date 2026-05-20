@@ -78,7 +78,7 @@ signature. Set this up once per machine:
 
 Convention: never use `--delete-branch` on merge. Branches stay in place
 for troubleshooting. Project owner sweep-deletes stale branches at the
-final stage. (See `feedback-keep-merged-branches` memory.)
+final stage.
 
 ---
 
@@ -126,8 +126,7 @@ Launch with the harness's background mechanism (NOT shell `&`/`disown`):
 ~/.claude/scripts/pr-poll.sh 84 --interval 60
 ```
 
-Exits on first delta; harness re-invokes the agent. See
-`feedback-pr-poll-tool` memory.
+Exits on first delta; harness re-invokes the agent.
 
 ### 3.4 Iterating on Codex findings — discipline
 
@@ -146,8 +145,6 @@ For every finding:
 7. **Push + reply.** Reply to the inline thread with the commit hash
    that addressed it. Move card In review → In progress at step 1,
    back to In review at step 7.
-
-See `feedback-blocking-review-process` memory.
 
 ### 3.5 Merge — squash-merge, never delete
 
@@ -181,8 +178,6 @@ If the merge changed behaviour (contracts/src/* or apps/*), also:
 ```
 ☐ FunctionalSpecs domain doc updated (§6).
 ```
-
-See `feedback-post-merge-definition-of-done` memory.
 
 ---
 
@@ -246,8 +241,6 @@ rewriting the field.
 When introducing a new convention (like field discipline), backfill
 cards from the CURRENT iteration only. Don't reach back into completed
 iterations unless that data is needed for retrospective.
-
-See `feedback-iteration-sprint-discipline` memory.
 
 ---
 
@@ -390,14 +383,14 @@ own auto-add is one-repo-per-UI-rule.
 ### 9.1 PR poller — `~/.claude/scripts/pr-poll.sh`
 
 Persistent across sessions. Covers reviews + inline ` ```suggestion `
-blocks + reactions + check-runs + workflow-runs. See
-`feedback-pr-poll-tool` memory for details + the `--watch-all` mode.
+blocks + reactions + check-runs + workflow-runs. Has a `--watch-all`
+mode for cross-PR polling via the GitHub `/notifications` endpoint.
 
 ### 9.2 Graphify with Solidity support — `~/.claude/scripts/graphify-apply-solidity-patch.py`
 
 graphify upstream 0.8.13 + surgical port of PR #707's
 `extract_solidity` block. Re-apply after any `pip install --upgrade
-graphifyy`. See `feedback-graphify-solidity-setup` memory.
+graphifyy`. Delete the patch script once PR #707 merges upstream.
 
 ### 9.3 Cross-layer linker — `graphify-out/cross_layer_link.py`
 
@@ -458,20 +451,26 @@ adds proof of full-regression green before any mainnet artifact.
 ## 11. Living-doc rules
 
 **Update this file whenever a procedure changes.** It is committed,
-versioned, and audit-relevant. A new convention that lives only in an
-AI memory or a Slack message is invisible to the next person reading
-the repo.
+versioned, and audit-relevant. A new convention that lives only in
+an off-repo location (an AI memory, a Slack message, a developer's
+head) is invisible to the next person reading the repo.
 
-Conventions that DO live only in agent memory (per-machine
-`~/.claude/projects/...`):
+**Scope of this doc:** every rule that needs to survive across
+machines, contributors, and time. If a rule has a real
+external-reader audience (an auditor, a new contributor, a future
+maintainer), it lives here.
 
-- Codex review level guidance per finding category
-- The polling tool's launch hygiene
-- The graphify Solidity patch re-application
+**Out of scope:** a few tool-side, agent-only operational details
+that are recreated from agent state on a clean machine and don't
+apply to humans following this doc (e.g. how an AI assistant should
+choose Codex review levels per finding category; how to launch the
+background poller via the agent harness; how to re-apply the
+graphify Solidity patch after a pip upgrade). External contributors
+don't need any of these — they're internal AI plumbing.
 
-These are TOOL-side conventions — they don't survive a clean machine
-or a new contributor; they're recreated from the memories. Procedures
-that need to survive across machines / contributors / time live here.
+The two systems (this doc + agent-side state) reflect the same
+project rules but are independently maintained. If they diverge,
+this doc wins — agent state should be rewritten to match.
 
 ---
 
@@ -520,8 +519,7 @@ to a decision. Listed by category.
 - **`viaIR = true` + `optimizer_runs = 200` is non-negotiable.** Drives
   every build. Run `nice -n -10 ionice -c 2 -n 0 forge build/test/script`
   — viaIR runs 5-15 min and 8 GB RSS; low priority causes 2-3×
-  slowdowns under parallel desktop load. (See
-  `feedback-forge-high-priority` memory.)
+  slowdowns under parallel desktop load.
 
 ### 12.4 Retail-deploy policy — three OFF gates
 
@@ -546,7 +544,6 @@ to a decision. Listed by category.
   Sepolia, Arb Sepolia, and other testnets intentionally skip the
   multisig handover step so flow tests keep working on EOA keys.
   **Mainnet cutover is the ONLY place `--phase handover` runs.**
-  (See `project-testnet-no-handover` memory.)
 
 - **Mainnet deploy DEFERRED.** Phase 7 + Phase 9 contract changes can
   land in any order before the eventual cutover. No urgency to
@@ -611,8 +608,9 @@ to a decision. Listed by category.
 - **Cloudflare Workers Static Assets — NEVER use `/*` catch-all in
   `_redirects`.** Status-200 rewrites fire unconditionally and
   intercept JS/JSON before the file matcher. Rely on
-  `wrangler.jsonc`'s `not_found_handling` for SPA fallback.
-  (See `feedback-cloudflare-redirects-spa` memory — bit us once.)
+  `wrangler.jsonc`'s `not_found_handling` for SPA fallback. (Bit us
+  once during a Phase 6 frontend deploy — the 200-rewrite intercepted
+  ABI JSON fetches and the app silently fell back to a stale chain.)
 
 - **Indexer event-coverage guardrail.** `apps/indexer`'s `EVENT_ABI` is
   DERIVED from the compiled `DIAMOND_ABI_VIEM` (never hand-typed).
@@ -631,8 +629,7 @@ to a decision. Listed by category.
 - **User reviews `@vaipakam-labs` cards ONLY when Status is "In
   review".** Agent must transition cards Backlog → In progress →
   In review → Done. If a card is sitting in In progress, the user
-  isn't expected to look at it. (See
-  `feedback-project-card-review-status` memory.)
+  isn't expected to look at it.
 
 - **Multi-iteration cards: set FIRST iteration of activity, don't
   rewrite on close.** Preserves "when did this work START"
@@ -656,8 +653,8 @@ to a decision. Listed by category.
 
 - **`pr-poll.sh` must launch via `Bash run_in_background:true`, NOT
   shell `&` / `disown`.** Mixing them silently orphans the poller
-  (zero-byte output file, no task-notification). Hit this once — see
-  `feedback-pr-poll-tool` memory.
+  (zero-byte output file, no task-notification). Hit this once during
+  the PR #84 iteration cycle.
 
 ### 12.12 Release-notes intro paragraphs
 
