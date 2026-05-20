@@ -25,7 +25,7 @@ Tomorrow (per [`RangeOffersDesign.md`](../../docs/DesignsAndPlans/RangeOffersDes
 
 ```bash
 pnpm --filter @vaipakam/keeper dev      # local wrangler dev (no live txs)
-pnpm --filter @vaipakam/keeper deploy   # via .github/workflows/deploy-workers.yml in CI
+pnpm --filter @vaipakam/keeper deploy   # wrangler deploy; uses `wrangler login` on the operator's machine
 ```
 
 ## How to test

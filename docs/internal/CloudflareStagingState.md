@@ -52,7 +52,6 @@ Workers default URLs (for direct reachability before custom-domain SSL is fully 
 - [ ] Source-tree refactor: `frontend/` → `apps/defi/`, `ops/hf-watcher/` → split into
       `apps/agent/` + `apps/indexer/` + `apps/keeper/`
 - [ ] Per-app `wrangler.jsonc` with this state's IDs
-- [ ] `.github/workflows/deploy-workers.yml` matrix
 - [ ] Apply migrations to `vaipakam-archive`
 - [ ] Add `0011_offers_cancelled_at.sql` migration for cancelled-offer D1 capture
 - [ ] Update chainIndexer.ts: UPDATE-on-OfferCanceled instead of DELETE

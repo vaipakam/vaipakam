@@ -25,7 +25,7 @@ The connected app (`apps/defi`) reads from this Worker via `VITE_INDEXER_ORIGIN`
 
 ```bash
 pnpm --filter @vaipakam/indexer dev       # local wrangler dev against testnet
-pnpm --filter @vaipakam/indexer deploy    # via .github/workflows/deploy-workers.yml
+pnpm --filter @vaipakam/indexer deploy    # wrangler deploy; uses `wrangler login` on the operator's machine
 ```
 
 ## How to test
