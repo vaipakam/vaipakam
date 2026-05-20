@@ -659,8 +659,10 @@ to a decision. Listed by category.
 - **All Workers + frontend read from `@vaipakam/contracts/abis` and
   `@vaipakam/contracts/deployments`.** Single source of truth. After
   contract changes, run `contracts/script/exportFrontendAbis.sh` +
-  `contracts/script/exportFrontendDeployments.sh` and `pnpm -r
-  typecheck` to confirm consumers still compile.
+  `contracts/script/exportFrontendDeployments.sh`, then the
+  per-workspace typechecks listed in §3.1's PR checklist (NOT
+  `pnpm -r typecheck` — that command skips workspaces without a
+  `typecheck` script, missing the apps/defi tsc invocation).
 
 - **Cloudflare Workers Static Assets — NEVER use `/*` catch-all in
   `_redirects`.** Status-200 rewrites fire unconditionally and
