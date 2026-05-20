@@ -87,6 +87,7 @@ jobs:
         uses: crytic/slither-action@4fd765aeef19915d04ddf0be90c2930036a774d8 # v0.4.1
         with:
           target: contracts/
+          slither-config: contracts/slither.config.json
           # Slither auto-detects Foundry projects (recent versions).
           # Pin the slither version inside the action so reports are
           # stable across runs.

@@ -290,6 +290,13 @@ contract EscrowFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         // Diamond (this facet runs in Diamond's context), checks
         // allowance[user][Diamond] >= amount, and moves amount from
         // user to proxy.
+        // Slither flags `transferFrom` with non-msg.sender `from` as
+        // "arbitrary-send-erc20", but `user` here is gated by the
+        // Diamond's allowance: the user must have called
+        // `IERC20.approve(diamond, ≥amount)` first, so they consented
+        // to the move. The escrow proxy receiving the funds is the
+        // user's own escrow (one-per-user, deterministic). Not a vuln.
+        // slither-disable-next-line arbitrary-send-erc20
         IERC20(token).safeTransferFrom(user, proxy, amount);
         LibVaipakam.recordEscrowDeposit(user, token, amount);
     }
@@ -324,6 +331,10 @@ contract EscrowFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         uint256 amount
     ) external onlyDiamondInternal {
         address proxy = getOrCreateUserEscrow(user);
+        // Same shape as `escrowDepositERC20` — see the rationale block
+        // there. `payer` consented via `IERC20.approve(diamond,≥amount)`;
+        // the proxy receiving the funds is `user`'s own escrow.
+        // slither-disable-next-line arbitrary-send-erc20
         IERC20(token).safeTransferFrom(payer, proxy, amount);
         LibVaipakam.recordEscrowDeposit(user, token, amount);
     }

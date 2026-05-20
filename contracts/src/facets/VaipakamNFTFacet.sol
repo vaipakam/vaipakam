@@ -250,6 +250,15 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
         return LibERC721.isApprovedForAll(owner, operator);
     }
 
+    // Slither's `arbitrary-send-erc20` heuristic flags any `transferFrom`
+    // with non-msg.sender `from`. This IS the ERC-721 `transferFrom`
+    // function from the standard interface — by definition the spender
+    // moves the owner's token via approval (`approve` / `setApprovalFor
+    // All`). `LibERC721.transferFrom` enforces the standard ERC-721
+    // permission check (msg.sender == from || isApprovedForAll[from]
+    // [msg.sender] || getApproved[tokenId] == msg.sender) before any
+    // state write. Not a vuln — standard ERC-721 semantic.
+    // slither-disable-next-line arbitrary-send-erc20
     function transferFrom(address from, address to, uint256 tokenId) external override nonReentrant {
         LibERC721.transferFrom(from, to, tokenId);
     }
@@ -402,6 +411,13 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
     function _buildDescription(
         MetricsFacet.NFTPositionSummary memory s
     ) internal pure returns (string memory) {
+        // Slither flags consecutive dynamic types in `abi.encodePacked` as
+        // a potential collision source. This output is a human-readable
+        // string baked into the ERC-721 token URI for marketplace display
+        // (never hashed, never used as a key) — different inputs SHOULD
+        // collide-visibly in the rendered text, which is the whole point
+        // of the format. Not a vuln.
+        // slither-disable-next-line encode-packed-collision
         return string(
             abi.encodePacked(
                 "Vaipakam ",
@@ -431,6 +447,12 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
     function _buildAttributes(
         MetricsFacet.NFTPositionSummary memory s
     ) internal pure returns (string memory) {
+        // See `_buildDescription` for the encode-packed-collision rationale:
+        // this output is the JSON `attributes` array baked into the ERC-721
+        // token URI for marketplace display — not hashed, not signed, not
+        // used as a map key. Concatenating three fragments here is the
+        // viaIR stack-budget workaround documented above the function.
+        // slither-disable-next-line encode-packed-collision
         return string(
             abi.encodePacked(
                 _attributesIdentity(s),

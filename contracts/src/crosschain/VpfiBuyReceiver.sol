@@ -243,6 +243,10 @@ contract VpfiBuyReceiver is
             // Pre-mint failure — a BUY_FAILED send MAY revert (CCIP will
             // re-execute; `processBridgedBuy` simply fails again — safe).
             emit BridgedBuyFailed(requestId, sourceChainId, buyer, reason);
+            // `messenger` is the admin-set CCIP adapter; the value is the
+            // exact fail-leg fee just re-quoted from that same contract.
+            // Same rationale as the success-leg send below.
+            // slither-disable-next-line arbitrary-send-eth
             ICrossChainMessenger(messenger).sendMessage{value: _quoteFailFee(sourceChainId, requestId, reason)}(
                 sourceChainId,
                 abi.encode(requestId, reason),
@@ -327,6 +331,10 @@ contract VpfiBuyReceiver is
         returns (uint256 fee) {
             if (address(this).balance < fee) return (bytes32(0), false);
             IERC20(vpfiToken).forceApprove(messenger, vpfiOut);
+            // `messenger` is the admin-set CCIP adapter — rotated via
+            // `setMessenger` (owner-only), not caller-controlled. `fee` is
+            // the exact value just re-quoted from that same contract.
+            // slither-disable-next-line arbitrary-send-eth
             try
                 ICrossChainMessenger(messenger).sendMessage{value: fee}(
                     sourceChainId, payload, toks, destGasLimit
@@ -406,6 +414,12 @@ contract VpfiBuyReceiver is
     ///         top up the ETH float or fix the lane config and retry.
     /// @param requestId      The stuck request.
     /// @param sourceChainId  The mirror chain to deliver to.
+    // Slither flags `reentrancy-eth` because `stuckVPFIByRequest` /
+    // `totalStuckVPFI` are written after the external `_tryDeliver` call
+    // (which forwards ETH to `messenger`). Gated by `onlyOwner` AND
+    // `nonReentrant`; the recipient is the admin-set messenger, not an
+    // attacker contract. Not a vuln.
+    // slither-disable-next-line reentrancy-eth
     function retryStuckDelivery(
         uint64 requestId,
         uint256 sourceChainId

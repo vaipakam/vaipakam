@@ -1,0 +1,13 @@
+{
+  "comment": "Slither configuration for Vaipakam. The exclusions below cover vendored Solidity that Vaipakam doesn't author or compile against directly. In-source Vaipakam suppressions live as `// slither-disable-next-line <detector>` annotations in the .sol files themselves, with a one-line rationale on the preceding comment — so every suppression carries an audit trail. See docs/internal/ProjectProcedures.md §7 for the Slither workflow convention.",
+
+  "filter_paths": "lib/openzeppelin-contracts-upgradeable|lib/chainlink-ccip|lib/chainlink-evm|lib/chainlink-local|lib/diamond-3-hardhat|lib/forge-std",
+
+  "exclude_dependencies": true,
+
+  "exclude_informational": false,
+  "exclude_low": false,
+  "exclude_medium": false,
+  "exclude_high": false,
+  "exclude_optimization": false
+}
