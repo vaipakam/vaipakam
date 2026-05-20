@@ -32,4 +32,7 @@ crytic/slither-action@*          # Trail of Bits — Slither's official Action
 dorny/paths-filter@*             # widely-used path-filter helper
 softprops/action-gh-release@*    # widely-used release-attach Action
 
+imjohnbo/issue-bot@*              # used by .github/workflows/iteration-kickoff-sync.yml
+release-drafter/release-drafter@* # used by .github/workflows/release-drafter.yml
+
 # DENY everything else.
