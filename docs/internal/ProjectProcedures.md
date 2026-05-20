@@ -20,7 +20,12 @@ Two repos work together:
 | `vaipakam/vaipakam` | **public** | Monorepo. Solidity contracts, frontend (apps/defi), Workers (apps/{keeper,indexer,agent,www}), shared packages, docs. |
 | `vaipakam/vaipakam-keeper-bot` | **public** (flipped 2026-05-20) | Reference keeper bot — sibling of the monorepo, MIT-licensed, single-author. ABI JSONs sync'd from monorepo via `contracts/script/exportAbis.sh`. |
 
-Both repos enforce identical `Protect main` rulesets (see §7).
+Both repos enforce near-identical `Protect main` rulesets — same rule
+types (deletion / non-fast-forward / linear / PR-with-thread / signed),
+different `required_status_checks` contexts (the monorepo gates on
+`detect-changes` + `contracts-fast` + `workspaces` for 8 gates total;
+the keeper-bot gates on `Typecheck` + `ABI shape sanity` for 6).
+See §7 for the gate-by-gate detail.
 
 ---
 
@@ -392,30 +397,47 @@ graphify upstream 0.8.13 + surgical port of PR #707's
 `extract_solidity` block. Re-apply after any `pip install --upgrade
 graphifyy`. Delete the patch script once PR #707 merges upstream.
 
-### 9.3 Cross-layer linker — `graphify-out/cross_layer_link.py`
+### 9.3 Cross-layer linker — `graphify-out/cross_layer_link.py` (local-only)
 
 Bridges Vaipakam Solidity contracts to their ABI JSONs / doc mentions
 / frontend imports via name-matching. ~157 INFERRED `mirrors_contract`
 edges. Re-run after a fresh `/graphify .` pass.
 
+Lives under `graphify-out/`, which is gitignored — the script is a
+local helper, not a tracked repo artifact. Recreate from session
+state or copy from another machine if needed.
+
 ### 9.4 Pre-deploy gate — `contracts/script/predeploy-check.sh`
 
 Single cohesive gate that CI's `contracts-fast` and `contracts-full`
 both invoke, and that the mainnet-deploy script also runs at preflight
-step `[1b]`. Modes:
+step `[1b]`. Always run from the `contracts/` directory. Modes:
 
-- `bash predeploy-check.sh` — deploy-sanity suite (12 tests)
-- `bash predeploy-check.sh --full` — full regression (2,012 tests)
+```bash
+cd contracts
+bash script/predeploy-check.sh           # deploy-sanity suite (12 tests)
+bash script/predeploy-check.sh --full    # full regression (2,012 tests)
+```
 
 What it does: forge build → forge test → shell-script lint → per-facet
 ABI-in-sync check (committed JSONs must match `forge inspect`).
 
 ### 9.5 ABI export scripts
 
+Both scripts must be run from `contracts/`. The `KEEPER_BOT_DIR` env
+points UP and OVER to the sibling `vaipakam-keeper-bot` repo on disk
+(two `..` from `contracts/`: one up to the monorepo root, one up to
+the parent of both repos).
+
 ```bash
+cd contracts
 forge build   # always before exporting
-bash contracts/script/exportFrontendAbis.sh    # → packages/contracts/src/abis/
-KEEPER_BOT_DIR=../../vaipakam-keeper-bot bash contracts/script/exportAbis.sh  # → keeper-bot/src/abis/
+
+# Frontend / Workers — writes to packages/contracts/src/abis/
+bash script/exportFrontendAbis.sh
+
+# Keeper bot — writes to ../../vaipakam-keeper-bot/src/abis/
+KEEPER_BOT_DIR=../../vaipakam-keeper-bot bash script/exportAbis.sh
 ```
 
 Both write `_source.json` with the upstream commit hash so the
@@ -494,8 +516,10 @@ to a decision. Listed by category.
 
 ### 12.2 Files / paths to NOT touch
 
-- **`docs/internal/RoughNotes.md` is user-owned.** AI never edits it.
-  User-only scratch space for ideas / questions / half-formed plans.
+- **`docs/internal/RoughNotes.md` is user-owned** and gitignored on
+  purpose — local-only scratch space for ideas / questions /
+  half-formed plans. AI never edits it. The file won't appear in the
+  repo on GitHub even though it's referenced in agent context.
 
 - **`docs/internal/PendingTasks-yyyy-mm-dd.md` is retired** (replaced
   by the `@vaipakam-labs` Project as live tracker). The latest file
@@ -504,6 +528,10 @@ to a decision. Listed by category.
 - **`docs/ToDo.md`** carries the user-facing ET-### follow-up list.
   Closed items stay ticked for audit history; open ones get promoted
   to Project Issues.
+
+- **`graphify-out/`** is gitignored end-to-end. Anything under that
+  directory (the graph JSON, the HTML viz, the cross-layer linker
+  script) is per-machine — not part of the canonical repo state.
 
 ### 12.3 Solidity / on-chain
 
@@ -675,9 +703,18 @@ to a decision. Listed by category.
 - `CLAUDE.md` — AI-instruction shape of these conventions
 - `.github/LABELS.md` — Vaipakam label vocabulary
 - `docs/FunctionalSpecs/README.md` — FunctionalSpecs corpus rules
-- `docs/ReleaseNotes/README.md` — release-notes fragment / fold flow
-- `docs/internal/RoughNotes.md` — user's free-form scratch (untouched
-  by AI by convention)
+- `docs/ReleaseNotes/unreleased/README.md` — release-notes fragment
+  template + the per-PR fragment convention
+- `docs/ReleaseNotes/assemble.sh` — the fold script that produces the
+  dated `ReleaseNotes-yyyy-mm-dd.md` files
+
+Local-only / gitignored references (not in the repo on GitHub but
+present on the project owner's working tree):
+
+- `docs/internal/RoughNotes.md` — user's free-form scratch space
+  (gitignored on purpose, untouched by AI by convention)
+- `graphify-out/` — graphify pipeline output + the cross-layer
+  helper, recreated per machine
 
 ---
 
