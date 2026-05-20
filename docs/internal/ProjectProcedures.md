@@ -142,18 +142,29 @@ This handbook mirrors it; if the two diverge, AGENTS.md wins.
 | `full security-critical` | High-risk changes — contracts that move funds or change accounting; liquidation / settlement / escrow / treasury / oracle / cross-chain logic; auth / admin / keeper / worker / API / privacy / compliance / secret-management / irreversible-migration changes. |
 | (no trigger) | Skip Codex only on truly trivial changes — typo fix, comment-only edit. Rare. |
 
-**Caption convention:** the first time a trigger appears in a PR body
-or comment, include a one-line explainer below it so a reader new to
-the project doesn't have to chase AGENTS.md:
+**Caption convention (permanent):** when a trigger uses a profile
+suffix, include a short caption directly below it so a reader new to
+the project doesn't have to chase AGENTS.md. Keep this on **every PR
+going forward**, not just early ones — the audience is future
+contributors (including community PRs) landing cold without having
+read AGENTS.md yet. One inline line of self-documentation is cheap
+and discoverable.
+
+Caption template — substitute the actual mode + profile:
 
 > ```
 > @codex review full handbook
 > ```
-> *Mode `full` is the canonical Codex review depth; profile `handbook`
-> is project-specific (defined in [AGENTS.md](../../AGENTS.md)).*
+> *`full` = canonical Codex mode; `handbook` = project profile
+> (see [AGENTS.md](../../AGENTS.md)).*
 
-Subsequent re-triggers in the same PR (after a fix push) can omit the
-caption.
+Sub-rules:
+
+- **First trigger in each PR**: always include the caption.
+- **Re-triggers in the same PR** (after a fix push): caption can be
+  omitted — the first one is visible above in the same thread.
+- **Profile-less triggers** (`@codex review full` with no profile
+  suffix): no caption needed — nothing project-specific to explain.
 
 After each fix iteration, **post a fresh trigger comment** to re-run
 Codex against the new commit. Codex's auto-review on push fires once

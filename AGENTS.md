@@ -164,15 +164,28 @@ Where:
   definition implies one — that way the mode-driven review depth
   applies regardless of how Codex handles the profile keyword.
 
-The first time a trigger appears in a PR body or comment, include a
-short caption naming the mode + profile so a reader new to the
-project doesn't have to look them up:
+When a trigger uses a profile suffix, include a short caption directly
+underneath it so a reader new to the project doesn't have to look up
+project-specific terminology. **Permanent convention** — keep it on
+every PR going forward, not just the early ones. The audience is
+future contributors (including community PRs) who land cold without
+having read this file yet; one inline line of self-documentation is
+cheap and discoverable.
 
-> *Mode `full` is the canonical Codex review depth; profile
-> `handbook` is project-specific (defined in this AGENTS.md).*
+Caption template — substitute the actual mode + profile:
 
-Subsequent re-triggers in the same PR (e.g. after a fix push) can
-omit the caption.
+> *`<mode>` = canonical Codex mode; `<profile>` = project profile
+> (see [AGENTS.md](AGENTS.md)).*
+
+Sub-rules:
+
+- **First trigger in each PR**: always include the caption.
+- **Re-triggers later in the same PR** (after a fix push): caption
+  can be omitted — the first one is visible above in the same
+  thread.
+- **Profile-less triggers** (e.g. `@codex review full` with no
+  profile suffix): no caption needed — nothing project-specific to
+  explain.
 
 ## Verification history — what we know about AGENTS.md being read
 
