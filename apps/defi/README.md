@@ -24,7 +24,7 @@ Architecturally:
 ```bash
 pnpm --filter @vaipakam/defi dev       # local Vite dev server with hot reload
 pnpm --filter @vaipakam/defi build     # production build
-pnpm --filter @vaipakam/defi deploy    # via .github/workflows/deploy-workers.yml
+pnpm --filter @vaipakam/defi deploy    # wrangler deploy; uses `wrangler login` on the operator's machine
 ```
 
 A `.env.local` is required for the dev loop — see Configuration below.
