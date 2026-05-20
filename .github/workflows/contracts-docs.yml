@@ -30,6 +30,7 @@ on:
       - 'contracts/src/**/*.sol'
       - 'contracts/foundry.toml'
       - 'contracts/remappings.txt'
+      - 'contracts/lib/**'        # submodule gitlink pointer bumps shift forge doc output too
       - '.gitmodules'
       - '.github/workflows/contracts-docs.yml'
   workflow_dispatch:
