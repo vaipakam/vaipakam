@@ -2,10 +2,24 @@
 
 Decentralized P2P lending protocol using the EIP-2535 Diamond Standard, with
 per-user UUPS escrow proxies, NFT-collateralized loans, Chainlink-priced
-risk, and a LayerZero OFT V2 cross-chain governance token (VPFI).
+risk, and a **Chainlink CCIP** cross-chain layer carrying the VPFI governance
+token (T-068 migrated this from LayerZero to CCIP — April 2026).
 
 Language: Solidity `0.8.29` (`via_ir = true`, optimizer 200 runs).
 Toolchain: Foundry.
+
+> **Note (2026-05 — known doc drift).** The cross-chain architecture
+> sections below still describe the pre-T-068 LayerZero OFT V2 surface.
+> The protocol now runs on **Chainlink CCIP** — `contracts/src/crosschain/`
+> (`CcipMessenger`, `VPFIMirrorToken`, the buy adapter / receiver pair,
+> `VaipakamRewardMessenger`, `VpfiPoolRateGovernor`, plus the stock CCIP
+> `LockReleaseTokenPool` / `BurnMintTokenPool`). See
+> [ADR-0004](../docs/adr/0004-ccip-over-layerzero.md) for the migration
+> rationale and
+> [LayerZeroToChainlinkCcipMigration.md](../docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md)
+> for the spec. The body of this README is tracked for a separate
+> rewrite PR (out of scope for the #100 README-polish arc — full
+> rewrite, deserves its own PR).
 
 ---
 

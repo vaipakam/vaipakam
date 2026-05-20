@@ -540,6 +540,54 @@ against keeper-bot release tags for ABI-stability.
 version-bump rules + body template; edit there to adjust the
 labelling scheme.
 
+### 6.5 Per-workspace README template
+
+Every workspace under `apps/` / `packages/` / `contracts/` carries
+its own `README.md` following a canonical template — so a visitor
+landing in `apps/keeper/README.md` cold gets the same orientation
+they'd get from `apps/indexer/README.md` or any other workspace.
+Consistency beats per-workspace cleverness here; an auditor or
+ecosystem integrator landing on the first README they see should
+know exactly where each section lives.
+
+**Section order (REQUIRED for every workspace README):**
+
+1. **Title + one-line description.** Audience-targeted: "this is the
+   X Worker that does Y", not "code for Z".
+2. **Status badges.** Workspace typecheck status, workspace test
+   status, deploy status if applicable. Badges link to the latest
+   workflow run.
+3. **What is this** (2-3 paragraphs). Purpose, position in the
+   system, explicit non-goals (what this workspace deliberately
+   does NOT do — usually the most useful section for cold readers).
+4. **How to run** (dev loop). The exact `pnpm --filter
+   @vaipakam/<workspace> dev` (or `wrangler dev`, etc.) invocation
+   + any environment-setup notes.
+5. **How to test.** The exact per-workspace test invocation matching
+   CI. Same shape across every workspace.
+6. **Architecture.** Cross-links to relevant `docs/DesignsAndPlans/`
+   + `docs/FunctionalSpecs/` + ADRs. No code in this section —
+   point to the spec docs that carry the load.
+7. **Configuration.** Env vars (`.env.local`), secrets (Cloudflare
+   Worker secrets via `wrangler secret put`), deploy story.
+8. **Related.** Cross-links to sibling workspaces this one talks
+   to (e.g. `apps/indexer` reads from / writes to which other apps).
+
+**Audit policy:** when adding a new workspace, the README is part
+of the same PR. When changing a workspace's surface meaningfully
+(new endpoint, new secret, new sibling dependency), the README
+update is part of the same PR. Drift between code and README is a
+real failure mode — treat README updates the way release-notes
+fragments are treated (§6.1).
+
+**Root `README.md` is the technical whitepaper** — its template is
+different (audience: external readers landing on the GitHub repo
+cold, looking for protocol-level intro). It carries the "For
+auditors and integrators" quick-links table that points at every
+load-bearing doc (added in PR #93). The canonical whitepaper text
+lives at
+[`apps/www/src/content/whitepaper/Whitepaper.en.md`](../../apps/www/src/content/whitepaper/Whitepaper.en.md).
+
 ---
 
 ## 7. CI required-checks + branch protection
