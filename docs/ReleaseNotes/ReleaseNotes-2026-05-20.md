@@ -266,3 +266,202 @@ hand-maintained mirror — are deferred to the deploy-integration test
 both authoritatively.
 
 Closes #75.
+
+## Thread — CI required-check workflow (PR #84)
+
+Until this change every pull request that landed on `main` had been
+verified only locally — the `Protect main` branch ruleset required a
+pull-request review (with one approver and thread resolution) but had
+no `required_status_checks` rule, so no automated CI gate ran. The
+`release-notes-drift.yml` workflow was the only check that touched
+pull requests, and it is deliberately non-blocking. That left a real
+gap: a contributor — or the assistant — could open a PR with a
+broken `forge build`, a regressed test, or a typecheck failure and
+the only thing standing between it and `main` was the reviewer's
+local-run discipline.
+
+A new `ci.yml` workflow closes that gap. Three parallel jobs, split
+into a fast required-check tier and a slower informational tier:
+
+- **`contracts-fast`** runs `bash contracts/script/predeploy-check.sh`
+  (no `--full`) — `forge build`, the deploy-sanity suite (the 12
+  tests under `test/deploy/` covering EIP-170 facet sizes, selector
+  coverage and ownership, the deploy-integration test), the deploy
+  shell-script lint, and the per-facet ABI-in-sync check. ~30-60s.
+  Designed to be the required-status-check (the follow-up that
+  wires it into the `Protect main` ruleset is tracked as `74.B`).
+  Catches the regression classes that would block an actual
+  `--broadcast` deploy.
+
+- **`contracts-full`** runs the same script with `--full`, which
+  swaps the deploy-sanity suite for the full
+  `forge test --no-match-path "test/invariants/*"` regression
+  (2,012 tests). Matches what `deploy-mainnet.sh --full` invokes at
+  its preflight step. Runs in parallel with `contracts-fast`,
+  surfaces a red on the PR if any non-deploy-sanity test regresses,
+  but is **informational only** — not in the required-status-check
+  rule. The rationale: paying 10-15 min on every PR for the full
+  suite when the deploy-blocker classes are already covered by the
+  fast check is over-blocking; the full suite still runs so we see
+  any drift, but a docs-only PR isn't gated on it. The release/*
+  branch / `v*` tag-gated `mainnet-gate.yml` workflow (tracked as
+  `74.C`) re-runs `--full` as a hard gate before any cutover, which
+  is the line where the full suite matters.
+
+- **`workspaces`** runs `pnpm install --frozen-lockfile` and then one
+  explicit `pnpm --filter @vaipakam/<name> typecheck` step per
+  workspace — `apps/keeper`, `apps/indexer` (which also runs the
+  `check-event-coverage.mjs` guardrail), `apps/agent`, `apps/defi`
+  (via `tsc -b --noEmit`), and `apps/www`. Listed explicitly rather
+  than `pnpm -r typecheck` so deleting a workspace's `typecheck`
+  script errors with "command not found" rather than silently
+  no-opping. The vitest test step (`pnpm -r test`) is deliberately
+  NOT included — the first CI run on this PR surfaced pre-existing
+  test-setup failures in `apps/defi` (PublicDashboard + LoanDetails
+  tests need a `ChainProvider` wrap, Issue #85). Once #85 is fixed,
+  `pnpm -r test` joins this workflow in a small follow-up PR.
+
+All three jobs are independent and run in parallel, with concurrency
+serialisation per branch so a fresh push cancels the older in-flight
+run. Foundry's artifact tree and incremental compile cache are keyed
+content-based on `foundry.toml` + `remappings.txt` + the pinned
+submodule SHAs (snapshotted into `.submodule-state` by a pre-step)
++ the contracts source tree, structured so the restore-key prefix-
+matches the primary key (the v4 design after four Codex iterations).
+Warm builds across same-config commits drop from cold ~10 min to
+~90 s.
+
+This PR ships the workflow in non-blocking form. The `Protect main`
+ruleset will be updated in a follow-up PR (`74.B`) to add a
+`required_status_checks` rule referencing **`contracts-fast`** and
+**`workspaces`** (NOT `contracts-full` — that one is deliberately
+informational, see the rationale above). Staging the rollout this
+way lets the workflow demonstrate green runs on real PRs before
+becoming a hard gate. Required-signatures, and the equivalent
+keeper-bot main protection, are also follow-ups in the same
+hardening arc.
+
+Closes #74.
+
+## Thread — Pre-audit branch hardening: mainnet-gate workflow + signed commits + keeper-bot protection (PR #<n>)
+
+This change closes out the `74.C` follow-up arc from PR #84 — the
+items deferred when the contracts CI was split into `contracts-fast`
+(required, deploy-sanity only) and `contracts-full` (informational,
+runs the full regression on every PR but doesn't gate merges).
+
+Three changes ship together:
+
+**Mainnet-gate workflow.** A new `.github/workflows/mainnet-gate.yml`
+runs `bash contracts/script/predeploy-check.sh --full` on every push
+to a `release/**` branch and every `v*` tag push. This is the same
+script the mainnet runbook invokes at preflight step `[1b]`, so a
+release-track commit cannot ship a state the deploy script would
+reject. The split between routine PR CI (fast, sanity-only) and the
+mainnet gate (slow, full regression) gives us the right cost/coverage
+trade-off — small PRs aren't blocked on a 10-15 min regression, but
+no release-track commit slips through without it. The workflow also
+captures audit-trail evidence on tag pushes: resolved compiler
+version + every facet's runtime bytecode size against the EIP-170
+ceiling, logged into the workflow run record.
+
+**Required signed commits on `main`.** The `Protect main` ruleset now
+includes a `required_signatures` rule. The current pattern — squash-
+merging via `gh pr merge --squash` — produces a GitHub-signed merge
+commit on `main`, so the rule passes for every PR merge automatically.
+Direct pushes (which were already blocked by branch protection)
+remain blocked. The rule is a defence-in-depth backstop against a
+hypothetical future bypass.
+
+**Keeper-bot now public + protected.** The reference keeper bot
+(`vaipakam/vaipakam-keeper-bot`) is flipped from private to public,
+and an equivalent `Protect main` ruleset is created on it: the same
+six rules as the monorepo's main protection, with the keeper-bot's
+two CI jobs (`Typecheck`, `ABI shape sanity`) wired as required
+status checks. The repo was always intended to flip public at
+mainnet cutover; doing it now lets the equivalent branch-protection
+free-tier kick in (GitHub's free branch-protection requires a public
+repo, no GitHub Pro upgrade needed).
+
+Combined with `contracts-fast` and `workspaces` being added to the
+required-status-checks rule (the `74.B` change that landed alongside
+PR #84's merge), the `Protect main` ruleset on the monorepo now
+enforces eight independent gates on every merge:
+
+- no branch deletion
+- no force-push / non-fast-forward
+- linear history (squash / rebase only)
+- pull-request required, with thread resolution
+- `contracts-fast` must be SUCCESS
+- `workspaces` must be SUCCESS
+- signed commits
+- (`contracts-full` runs in parallel but is informational — see PR #84
+  for the rationale)
+
+The `release/**` branch family doesn't yet have its own ruleset —
+that lands when the first release branch is cut. A small follow-up
+will add a ruleset scoped to `refs/heads/release/**` that requires
+the `mainnet-gate-full` context, so a force-push or unsanctioned
+merge to a release branch cannot bypass the full-regression gate.
+Tracked as part of the mainnet rollout workflow rather than as a
+new code change, since the ruleset can't reference a context that
+hasn't run at least once.
+
+**Path-filter + timeout fix.** First exercise of the required-status-
+checks rule on a docs/workflow-only PR (this PR itself) surfaced two
+problems: `contracts-fast` and `contracts-full` ran on a PR that
+changed no `.sol` files, and `contracts-fast`'s 15-minute timeout
+ceiling cancelled the cold-cache run at exactly 15 m 15 s — before
+the deploy-sanity step could complete. Two amendments fold in here:
+
+- **Path filter** — a new lightweight `detect-changes` job runs
+  first on every PR (~30 s — checkout + `git diff` between PR head
+  and base). It exports two outputs (`contracts`, `workspaces`)
+  signalling whether the diff touches paths each downstream job
+  cares about. `contracts-fast`, `contracts-full`, and `workspaces`
+  each `if:`-guard on the matching output. When the guard is false
+  (a pure docs / workflow-only PR), the job is reported as
+  "skipped" — and branch protection treats skipped-due-to-`if` as
+  a SUCCESS for required-status-checks. So a docs-only PR sees all
+  three downstream jobs go skipped → ready-to-merge without ever
+  burning ~25 min of forge build.
+
+  NOT using `on.pull_request.paths:` at workflow level because
+  that would skip the WHOLE workflow — the required-check status
+  never gets posted, and branch protection then blocks the merge
+  forever waiting for it. The job-level `if:` pattern is the
+  officially-blessed solution for this.
+
+- **Timeout bumps** — `contracts-fast` 15 → 45 min,
+  `contracts-full` 30 → 45 min. Cold-cache cold-clone forge build
+  is dominated by submodule clone (~2-3 min) + viaIR compile
+  (5-15 min); the earlier 15-min ceiling auto-killed runs that
+  hadn't even reached the test phase. Warm-cache runs finish in
+  2-3 min and never touch the new ceiling.
+
+- **Detector hardening (Codex round-2 review caught three more):**
+
+  - Workspace detector regex now includes `pnpm-workspace.yaml`
+    (P1) — that file declares the workspace member list, so a
+    change there could add / drop a workspace the typecheck steps
+    target. Previously a workspace-membership edit would silently
+    skip CI.
+
+  - Contracts detector regex now includes `.gitmodules` (P2) — a
+    submodule URL or path edit invalidates the foundry cache key
+    (the `.submodule-state` pre-step) and rebuilds the graph, so
+    contracts CI must re-run.
+
+  - `detect-changes` is now itself a required-status-check on the
+    `Protect main` ruleset (P1, the most important catch). Without
+    this, a transient failure inside the detector (checkout
+    timeout, runner exhaustion, network blip) would auto-skip the
+    downstream `contracts-fast` / `workspaces` jobs via the
+    `needs:` constraint — and branch protection treats
+    skipped-due-to-`needs-failed` as success-equivalent, letting
+    an un-validated PR through the merge gate. Making detect-
+    changes required closes that hole: detector failure now turns
+    red on the PR directly and blocks merge.
+
+Closes #74 (the rest of the arc; the CI workflow itself landed in
+PR #84).
