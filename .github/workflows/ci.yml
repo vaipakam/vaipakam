@@ -68,22 +68,34 @@ jobs:
   # the PR head against its base (or the push commit against HEAD~1) and
   # exports two boolean outputs:
   #
-  #   contracts: any file under contracts/ OR foundry config OR this
-  #              workflow / the mainnet-gate workflow changed
-  #   workspaces: any file under apps/ or packages/ OR the pnpm lockfile
-  #               or root package.json changed
+  #   contracts: any file under contracts/, `.gitmodules` (submodule
+  #              URL / pin edit invalidates the cache key), or the ci /
+  #              mainnet-gate workflows
+  #   workspaces: any file under apps/ or packages/, the pnpm lockfile,
+  #               pnpm-workspace.yaml (declares workspace members),
+  #               root package.json, or the ci workflow
   #
-  # Other jobs `if:`-guard on these outputs. When the guard is false,
-  # GitHub Actions reports the job as "skipped" — and branch protection
-  # treats skipped-due-to-`if` as a SUCCESS for required-status-checks.
-  # So a PR that only touches docs/* (no contracts, no workspaces) sees
-  # all three downstream jobs go skipped → ready-to-merge without any
-  # workflow change burning ~25 min of forge build.
+  # Downstream jobs `if:`-guard on these outputs. When the guard is
+  # false, GitHub Actions reports the job as "skipped" — and branch
+  # protection treats skipped-due-to-`if` as a SUCCESS for required-
+  # status-checks. So a PR that only touches docs/* (no contracts, no
+  # workspaces) sees all three downstream jobs go skipped → ready-to-
+  # merge without any workflow change burning ~25 min of forge build.
   #
   # NOT using `on.pull_request.paths:` at workflow level because that
   # makes GitHub skip the WHOLE workflow — the required-check status
   # never gets posted, and branch protection then blocks the merge
   # forever waiting for it.
+  #
+  # Defensive: `detect-changes` IS also in the required-status-checks
+  # rule on `Protect main`. If detect-changes itself fails (checkout
+  # timeout, network blip, runner exhaustion), the downstream jobs
+  # would otherwise auto-skip via the `needs:` constraint — which
+  # branch protection treats as SUCCESS. Without detect-changes in the
+  # required-check set, a transient infra failure could let an
+  # un-validated PR through the merge gate. Making it required closes
+  # that hole: detect-changes failing turns red on the PR and blocks
+  # merge directly. Operator investigates, re-runs, or amends.
   detect-changes:
     name: detect-changes
     runs-on: ubuntu-latest
@@ -123,9 +135,12 @@ jobs:
 
           # Contracts-affecting paths: anything in contracts/, foundry
           # config in contracts/, the CI workflow itself (so a workflow
-          # change DOES re-validate contracts), and the mainnet-gate
-          # workflow (audit-trail coherence).
-          CONTRACTS_RE='^(contracts/|\.github/workflows/(ci|mainnet-gate)\.yml$)'
+          # change DOES re-validate contracts), the mainnet-gate
+          # workflow (audit-trail coherence), and `.gitmodules` — a
+          # submodule URL / path edit is exactly the class of change
+          # the content-based cache key invalidates on, so contracts
+          # CI must re-run to confirm the rebuilt graph still passes.
+          CONTRACTS_RE='^(contracts/|\.gitmodules$|\.github/workflows/(ci|mainnet-gate)\.yml$)'
           if echo "$CHANGED" | grep -Eq "$CONTRACTS_RE"; then
             echo "contracts=true" >> "$GITHUB_OUTPUT"
           else
@@ -133,8 +148,11 @@ jobs:
           fi
 
           # Workspaces-affecting paths: anything under apps/ or packages/,
-          # plus the lockfile + root package.json that govern hoisting.
-          WORKSPACES_RE='^(apps/|packages/|pnpm-lock\.yaml|package\.json|\.github/workflows/ci\.yml$)'
+          # the lockfile + root package.json that govern hoisting, AND
+          # `pnpm-workspace.yaml` — that file declares the workspace
+          # member list, so a change there can add / drop a workspace
+          # that the typecheck steps target.
+          WORKSPACES_RE='^(apps/|packages/|pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|\.github/workflows/ci\.yml$)'
           if echo "$CHANGED" | grep -Eq "$WORKSPACES_RE"; then
             echo "workspaces=true" >> "$GITHUB_OUTPUT"
           else

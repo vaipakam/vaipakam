@@ -94,5 +94,29 @@ the deploy-sanity step could complete. Two amendments fold in here:
   hadn't even reached the test phase. Warm-cache runs finish in
   2-3 min and never touch the new ceiling.
 
+- **Detector hardening (Codex round-2 review caught three more):**
+
+  - Workspace detector regex now includes `pnpm-workspace.yaml`
+    (P1) — that file declares the workspace member list, so a
+    change there could add / drop a workspace the typecheck steps
+    target. Previously a workspace-membership edit would silently
+    skip CI.
+
+  - Contracts detector regex now includes `.gitmodules` (P2) — a
+    submodule URL or path edit invalidates the foundry cache key
+    (the `.submodule-state` pre-step) and rebuilds the graph, so
+    contracts CI must re-run.
+
+  - `detect-changes` is now itself a required-status-check on the
+    `Protect main` ruleset (P1, the most important catch). Without
+    this, a transient failure inside the detector (checkout
+    timeout, runner exhaustion, network blip) would auto-skip the
+    downstream `contracts-fast` / `workspaces` jobs via the
+    `needs:` constraint — and branch protection treats
+    skipped-due-to-`needs-failed` as success-equivalent, letting
+    an un-validated PR through the merge gate. Making detect-
+    changes required closes that hole: detector failure now turns
+    red on the PR directly and blocks merge.
+
 Closes #74 (the rest of the arc; the CI workflow itself landed in
 PR #84).
