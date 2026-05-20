@@ -269,6 +269,29 @@ allowlist it — the May-2026 "every loan stuck active" bug (the indexer
 missing the preclose/offset/refinance terminal events, plus drifted
 arg counts on `LoanRepaid`/`LoanDefaulted`) can't recur silently.
 
+## Cloudflare D1 schema discipline
+
+The three plain Workers (`apps/indexer`, `apps/keeper`, `apps/agent`)
+all bind to **one shared D1 database** — `vaipakam-archive`
+(database_id `3cffebf5-b652-4da7-953c-9e1d143ad2fe`). The schema is
+**owned by `apps/indexer/migrations/`** — that's the single source of
+truth for every table the live db holds. `apps/keeper` and `apps/agent`
+intentionally have no `migrations/` directory of their own; they
+read/write the same tables via the shared binding.
+
+**Rule**: every schema change — even for a table only `keeper` or
+`agent` writes — lands as a new file under
+`apps/indexer/migrations/NNNN_<slug>.sql`. Apply with
+`wrangler d1 migrations apply vaipakam-archive --remote` from inside
+`apps/indexer/`. Never `wrangler d1 execute --command "CREATE TABLE..."`
+directly on the deployed db: that diverges the migrations record from
+the live schema and breaks fresh-environment bootstrap.
+
+The `ops/lz-watcher` Worker uses a **separate** D1 (`vaipakam-lz-alerts-db`,
+schema in `ops/lz-watcher/migrations/`) for trust-boundary reasons —
+its internal ops alerts must not co-locate with user-facing data. Don't
+fold those tables into `vaipakam-archive`.
+
 ## Deployments sync (Stage 3 split — single target)
 
 Every consumer in the monorepo — apps/{defi,www} for the React

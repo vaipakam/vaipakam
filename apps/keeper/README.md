@@ -55,6 +55,12 @@ Cloudflare Worker secrets (set via `wrangler secret put`):
 
 See [`CLAUDE.md` § "Deployments sync"](../../CLAUDE.md) for the full secret list and rotation cadence.
 
+### D1 — shared `vaipakam-archive`
+
+The `DB` binding in `wrangler.jsonc` points at the **`vaipakam-archive`** D1 database (id `3cffebf5-b652-4da7-953c-9e1d143ad2fe`), **shared** with `apps/indexer` and `apps/agent`. The keeper writes `user_thresholds`, `notify_state`, `telegram_links`, `liquidity_confidence`, and reads `loans` / `offers` / `oracle_snapshot_state`.
+
+**There is no `apps/keeper/migrations/` directory by design.** The canonical schema for every table this Worker touches lives in [`apps/indexer/migrations/`](../indexer/migrations/) — the indexer owns the schema, the other two Workers share the database. Schema changes for tables only keeper writes still land as a new `apps/indexer/migrations/NNNN_*.sql` file; applying it via `wrangler d1 migrations apply vaipakam-archive --remote` from inside `apps/indexer/` updates the live db for all three consumers.
+
 ## Related
 
 - `apps/agent` — the proactive-notifications / Frame / Telegram-bot Worker (no signing key).

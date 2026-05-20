@@ -7,12 +7,17 @@
 
 ## D1
 
-| Database | ID | Region |
-|---|---|---|
-| `vaipakam-archive` | `3cffebf5-b652-4da7-953c-9e1d143ad2fe` | APAC |
+| Database | ID | Region | Schema owner | Other binders |
+|---|---|---|---|---|
+| `vaipakam-archive` | `3cffebf5-b652-4da7-953c-9e1d143ad2fe` | APAC | `apps/indexer` (canonical `migrations/`) | `apps/keeper`, `apps/agent` |
 
-Migrations not yet applied — will run from `apps/agent/` once the
-source-tree split lands.
+**Topology**: single shared D1, owned by indexer. The keeper and agent
+Workers bind to the same `database_id` and read/write the same tables
+(`user_thresholds`, `notify_state`, `telegram_links`,
+`liquidity_confidence`, `diag_errors`, `diag_legal_holds`,
+`diag_legal_hold_audit`); they intentionally have no `migrations/`
+directory of their own. Apply with `wrangler d1 migrations apply
+vaipakam-archive --remote` from inside `apps/indexer/`.
 
 ## Workers (all currently serving placeholder 503)
 
