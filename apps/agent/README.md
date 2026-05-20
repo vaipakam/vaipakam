@@ -1,0 +1,63 @@
+# @vaipakam/agent
+
+**Proactive notifications + operator-side service Worker. Holds aggregator + push + bot credentials. NO signing key — by design.**
+
+[![Workspaces typecheck](https://github.com/vaipakam/vaipakam/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/vaipakam/vaipakam/actions/workflows/ci.yml)
+
+## What is this
+
+The **proactive-notifications + public-Frame + operator-services Worker**. Stage 3 PR4 of the Worker split (see [Stage3WorkerSplitPlan.md](../../docs/DesignsAndPlans/Stage3WorkerSplitPlan.md)). Five responsibilities:
+
+- **Proactive notifications** — periodic interest pre-notify; Push + Telegram dispatchers (`PUSH_CHANNEL_PK` + `TG_BOT_TOKEN`).
+- **Cross-chain monitoring** — buy-watchdog reconciliation across the CCIP buy flow.
+- **Public Farcaster Frame** — `/frames/active-loans` GET + POST + image rendering.
+- **Operator services** — server-side aggregator quote proxies at `/quote/{0x,1inch}` + Blockaid scan proxy at `/scan/blockaid`.
+- **Frontend-facing endpoints** — Telegram-bot webhook `/tg/webhook`; diagnostics record capture `/diag/record`; settings endpoints `/thresholds PUT` + `/link/telegram POST`.
+
+**Crucially: this Worker holds NO signing key.** The Stage 3 architectural-rebalance moved `KEEPER_PRIVATE_KEY` (and the daily oracle snapshot signer it powered) to `apps/keeper`. A compromised agent produces stale data but **can't move funds** — that's the staging plan §2 least-privilege contract.
+
+**Non-goals:** no autonomous on-chain submissions (those belong to `apps/keeper`); no chain-event indexing into D1 (that belongs to `apps/indexer`); no user-facing write endpoints (writes happen via the connected app + a wallet signature).
+
+## How to run
+
+```bash
+pnpm --filter @vaipakam/agent dev       # local wrangler dev
+pnpm --filter @vaipakam/agent deploy    # via .github/workflows/deploy-workers.yml
+```
+
+## How to test
+
+```bash
+pnpm --filter @vaipakam/agent typecheck
+pnpm --filter @vaipakam/agent exec tsc -p . --noEmit
+```
+
+## Architecture
+
+- Stage 3 Worker split: [`docs/DesignsAndPlans/Stage3WorkerSplitPlan.md`](../../docs/DesignsAndPlans/Stage3WorkerSplitPlan.md).
+- Staging plan §2 least-privilege contract — the load-bearing reason this Worker holds no signing key.
+- ADR-0004 (CCIP migration) — context for the cross-chain buy-watchdog responsibility.
+
+## Configuration
+
+Worker `wrangler.jsonc:vars`:
+
+- `FRONTEND_ORIGIN`, `TG_BOT_USERNAME`, `DIAG_*` knobs.
+
+Worker secrets (via `wrangler secret put`):
+
+| Secret | Purpose |
+|---|---|
+| `RPC_*` | Per-chain RPC URLs (carry API keys). |
+| `TG_BOT_TOKEN` | Telegram bot credential. |
+| `PUSH_CHANNEL_PK` | Push channel signing key (not a chain key — a push protocol identity). |
+| `ZEROEX_API_KEY` / `ONEINCH_API_KEY` | Aggregator quote proxy credentials. |
+
+No `KEEPER_PRIVATE_KEY` here — that's `apps/keeper` exclusively.
+
+## Related
+
+- `apps/keeper` — sibling signing Worker; this one defers all on-chain submissions to it.
+- `apps/indexer` — sibling read-API Worker; this Worker reads from there for stats it doesn't compute locally.
+- `apps/defi` — primary consumer of `/quote/*`, `/scan/blockaid`, `/diag/record`, `/thresholds`, `/link/telegram`.
+- `packages/contracts` — ABI / deployment source.
