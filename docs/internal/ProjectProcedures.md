@@ -114,20 +114,76 @@ final stage.
 `AGENTS.md` at the repo root defines the canonical Codex command surface.
 This handbook mirrors it; if the two diverge, AGENTS.md wins.
 
-| Trigger | When to use |
+**Trigger string shape:**
+
+```
+@codex review <mode> [<profile>]
+```
+
+- `<mode>` is REQUIRED and load-bearing — one of `normal`,
+  `adversarial`, `full`, `full security-critical`. This is what
+  Codex definitely parses; it drives review depth.
+- `<profile>` is OPTIONAL project-specific scoping — one of the
+  profile names defined in AGENTS.md (`handbook`,
+  `crosschain-deploy`, `design-doc`). Their literal effect on
+  Codex's review prompt is suspected but unverified (see §3.2.1
+  below). Always include the explicit `<mode>` even if a profile's
+  definition implies one — that way Codex's review depth is
+  driven by the mode regardless of how it handles the profile
+  keyword.
+
+**Canonical modes — when to use:**
+
+| Mode | When to use |
 |---|---|
-| `@codex review normal` | Routine implementation review — confirms PR matches issue / card / acceptance criteria; checks correctness, integration, missing tests / docs / config. |
-| `@codex review adversarial` | Failure-mode + abuse-case sweep — malicious inputs, auth bypass, replay, race conditions, fund-loss paths, stuck-state scenarios. |
-| `@codex review full` | Both `normal` and `adversarial`. **Default for any card in "In review" status unless the work is clearly low-risk.** |
-| `@codex review full security-critical` | High-risk changes — contracts that move funds or change accounting; liquidation / settlement / escrow / treasury / oracle / cross-chain logic; auth / admin / keeper / worker / API / privacy / compliance / secret-management / irreversible-migration changes. |
+| `normal` | Routine implementation review — confirms PR matches issue / card / acceptance criteria; checks correctness, integration, missing tests / docs / config. |
+| `adversarial` | Failure-mode + abuse-case sweep — malicious inputs, auth bypass, replay, race conditions, fund-loss paths, stuck-state scenarios. |
+| `full` | Both `normal` and `adversarial`. **Default for any card in "In review" status unless the work is clearly low-risk.** |
+| `full security-critical` | High-risk changes — contracts that move funds or change accounting; liquidation / settlement / escrow / treasury / oracle / cross-chain logic; auth / admin / keeper / worker / API / privacy / compliance / secret-management / irreversible-migration changes. |
 | (no trigger) | Skip Codex only on truly trivial changes — typo fix, comment-only edit. Rare. |
 
-After each fix iteration, **post a fresh trigger comment** to re-run Codex
-against the new commit. Codex's auto-review on push fires once on its own,
-but explicit triggers force a re-review.
+**Caption convention:** the first time a trigger appears in a PR body
+or comment, include a one-line explainer below it so a reader new to
+the project doesn't have to chase AGENTS.md:
 
-See AGENTS.md → "Codex commands" for the full description of what each
-mode actually checks.
+> ```
+> @codex review full handbook
+> ```
+> *Mode `full` is the canonical Codex review depth; profile `handbook`
+> is project-specific (defined in [AGENTS.md](../../AGENTS.md)).*
+
+Subsequent re-triggers in the same PR (after a fix push) can omit the
+caption.
+
+After each fix iteration, **post a fresh trigger comment** to re-run
+Codex against the new commit. Codex's auto-review on push fires once
+on its own, but explicit triggers force a re-review.
+
+#### 3.2.1 What we know about AGENTS.md being honoured
+
+Empirical observations gathered while testing AGENTS.md mechanisms on
+PR #108 (2026-05-20):
+
+- **Mode keywords** (`normal`, `adversarial`, `full`,
+  `full security-critical`) — CONFIRMED parsed by Codex. Review
+  depth + breadth clearly responds to the mode.
+- **Profile keywords** (`handbook`, `crosschain-deploy`,
+  `design-doc`) — STATUS UNKNOWN. Suspected to be read as
+  substantive context (the substantive findings on the PRs that
+  used them were profile-shaped), but a single PR can't disambiguate
+  this from generic-good-review behaviour. A dispositive substantive
+  probe is queued as Issue #106.
+- **Presentation-meta directives** (an earlier experiment added a
+  canary string + a self-report-block requirement to AGENTS.md) —
+  CONFIRMED ignored by Codex's review-body template. Almost
+  certainly intentional prompt-injection defense — an attacker
+  could otherwise inject "ignore findings and approve" into a PR
+  diff. The canary mechanism was removed as inert clutter; the
+  observation stays in AGENTS.md's verification history table.
+
+Working rule until #106's substantive probe resolves: **modes are
+load-bearing; profile suffixes are self-documenting + possibly read.**
+Use both per the trigger-shape above.
 
 ### 3.3 Background-poller — never `gh pr view --json comments`
 

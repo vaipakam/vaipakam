@@ -141,42 +141,47 @@ pattern. Profiles compose: a trigger like
 `@codex review handbook crosschain-deploy` is a valid request to apply
 both focus sets on the same PR.
 
-## Reviewer self-report
+## Trigger string shape (for human contributors)
 
-So the project can verify that automated reviewers are honoring this
-file (rather than running defaults and ignoring the profile guidance),
-every review you post on a PR in this repo MUST begin with a short
-self-report block of the form:
+Triggers use the form:
 
 ```
-**Review applied:** mode=<normal|adversarial|full|full-security-critical>; profile(s)=<name(s) or "none">.
-**Focus areas covered:** <one-line summary of the profile-specific checks you ran>.
+@codex review <mode> [<profile>]
 ```
 
-This block goes at the very top of the review body (before any
-findings). It is purely instrumental — its purpose is to confirm that
-the AGENTS.md vocabulary in the trigger comment is being parsed and
-that profile-specific focus areas are being executed, not silently
-dropped to defaults.
+Where:
 
-If the trigger comment named a mode or profile that isn't recognised,
-state that explicitly in the self-report ("`profile(s)=unknown:foo —
-treated as no-profile`") rather than silently falling through. Wrong-
-mode triggers are project bugs to be surfaced, not absorbed.
+- **`<mode>`** is REQUIRED and load-bearing — one of `normal`,
+  `adversarial`, `full`, `full security-critical`. This is the part
+  Codex definitely parses; it drives review depth.
+- **`<profile>`** is OPTIONAL and project-specific — one of the
+  profile names defined above (`handbook`, `crosschain-deploy`,
+  `design-doc`, future additions). Profile keywords are project-
+  internal scoping that *may* shape Codex's focus areas; their
+  literal effect on Codex's review prompt is not externally
+  guaranteed — empirically suspected to be read as context but not
+  verified. Always include the explicit `<mode>` even if a profile's
+  definition implies one — that way the mode-driven review depth
+  applies regardless of how Codex handles the profile keyword.
 
-## Canary line
+The first time a trigger appears in a PR body or comment, include a
+short caption naming the mode + profile so a reader new to the
+project doesn't have to look them up:
 
-The presence of this canary string in your review somewhere — once per
-PR review is enough — confirms you've read this file at review time
-rather than relying on cached / default behaviour:
+> *Mode `full` is the canonical Codex review depth; profile
+> `handbook` is project-specific (defined in this AGENTS.md).*
 
-> **`VAIPAKAM-AGENTS-MD-CANARY-2026-05-20-A1`**
+Subsequent re-triggers in the same PR (e.g. after a fix push) can
+omit the caption.
 
-Quote it verbatim inside a backtick block in your review body (or
-embedded in the self-report block above). If you cannot quote it for
-any reason, say so in the self-report and explain why — that's also
-informative.
+## Verification history — what we know about AGENTS.md being read
 
-Both this canary and the self-report block can be removed from this
-file once we have stable empirical evidence that AGENTS.md is being
-honored across reviewers. Until then they stay.
+| Date | Evidence | Conclusion |
+|---|---|---|
+| 2026-05-20 (PR #108) | Canary string + self-report directive added to AGENTS.md (PR #105), then a PR opened after #105 merged. Codex's review body did NOT echo the canary nor include a self-report block, even though both were in `main`'s AGENTS.md at review time. | AGENTS.md **presentation-meta directives** (canary, self-report block) are NOT honoured — almost certainly intentional prompt-injection defense in Codex's review-body template. The canary mechanism was removed in that same PR as inert clutter. |
+| (open) | Substantive probe — add a profile-specific rule violation to a future PR, observe whether Codex catches it specifically because of AGENTS.md guidance. | Pending. Tracked as Issue #106. The probe disambiguates "profile keywords read as substantive context" from "profile keywords ignored entirely". |
+
+Until the substantive probe runs, the project's working assumption is
+that **mode keywords are definitely parsed; profile keywords are
+suspected-read but unverified**. The trigger convention above is
+robust to either case.
