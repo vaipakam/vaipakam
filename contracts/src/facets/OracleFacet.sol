@@ -659,6 +659,17 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ///          maxDeviationBps`. Reverts with
     ///          {OracleCrossCheckDivergence} so the caller surfaces a
     ///          structured error instead of a generic price-failure.
+    // Slither's `pyth-unchecked-publishtime` and `pyth-unchecked-confidence`
+    // detectors match `getPriceUnsafe(` and walk only the next ~5
+    // statements looking for `.publishTime` / `.conf` reads. Our checks
+    // sit ~20 lines below because we snapshot the Pyth Price struct
+    // first (defensive copy out of the try/catch frame). The
+    // publishTime gate is at the `block.timestamp > snap.publishTime +
+    // maxStale` line; the confidence gate is at the `confBps > confMax`
+    // line. Both are load-bearing and both are tested in
+    // OracleCrossCheckTest. Not a vuln.
+    // slither-disable-start pyth-unchecked-publishtime
+    // slither-disable-start pyth-unchecked-confidence
     function _validatePythCrossCheck(
         uint256 chainlinkPrice,
         uint8 chainlinkDecimals
@@ -718,6 +729,8 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             );
         }
     }
+    // slither-disable-end pyth-unchecked-confidence
+    // slither-disable-end pyth-unchecked-publishtime
 
     /// @dev Convert Pyth's (price, expo) representation into a
     ///      uint256 expressed in `targetDecimals`. Pyth feeds carry
@@ -1726,6 +1739,19 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
 
     /// @dev Feed Registry lookup, try/catch wrapped. Returns `address(0)`
     ///      on missing feed or registry failure.
+    ///
+    ///      Slither's `chainlink-feed-registry` detector warns the Feed
+    ///      Registry is only deployed on Ethereum Mainnet — true, and
+    ///      handled by design: `LibVaipakam.Storage.chainlnkRegistry` is
+    ///      stored as `address(0)` on every non-mainnet chain (see the
+    ///      storage-slot comment at LibVaipakam.sol:1629). Every caller
+    ///      of `_registryFeed` first guards with `if (registry !=
+    ///      address(0))`, so on L2s the registry branch is never
+    ///      reached and pricing falls through to the direct-feed lookup
+    ///      path. Setting `chainlnkRegistry` to a real address on
+    ///      mainnet is therefore an optional fast path, not a
+    ///      requirement. Not a vuln.
+    // slither-disable-next-line chainlink-feed-registry
     function _registryFeed(address registry, address base, address quote)
         private
         view
