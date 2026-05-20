@@ -4,8 +4,12 @@ graphify-out/graph.json merge=graphify-merge
 # ----------------------------------------------------------------------
 # EOL normalisation
 # ----------------------------------------------------------------------
-# Default: detect-and-store-LF. Windows contributors get CRLF in
-# their working copy; everyone else sees LF; the index stays LF.
+# Default: store LF in the index AND check out LF on every platform.
+# `eol=lf` overrides Git's platform-default checkout-EOL, so Windows
+# contributors see LF in their working copy too (not CRLF). This is
+# the right shape for a project that ships shell scripts + Solidity:
+# a CRLF working copy round-tripping through git would break tooling
+# that reads files via the index.
 * text=auto eol=lf
 
 # Force LF for files where mismatch is a real bug class
@@ -29,11 +33,15 @@ Makefile     text eol=lf
 # ----------------------------------------------------------------------
 # Binary — never normalise; never diff as text
 # ----------------------------------------------------------------------
+# Note on SVG: deliberately NOT marked binary. SVGs are XML text and
+# are diffable / mergeable — UI icon + logo edits under apps/defi /
+# apps/www are real source we want to see inline diffs for. Image
+# editors that emit a single-line "minified" SVG are still text;
+# git diff handles them fine.
 *.png        binary
 *.jpg        binary
 *.jpeg       binary
 *.gif        binary
-*.svg        binary
 *.ico        binary
 *.pdf        binary
 *.zip        binary

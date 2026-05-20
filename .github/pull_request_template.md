@@ -7,8 +7,12 @@ a chore that has no tracking Issue), and say "n/a — <reason>".
 
 For the Codex trigger:
 - The canonical form is `@codex review <mode> [<profile>]`.
-- See [AGENTS.md](AGENTS.md) for `<mode>` and `<profile>` semantics +
-  the per-PR caption convention.
+- See [AGENTS.md](https://github.com/vaipakam/vaipakam/blob/main/AGENTS.md)
+  for `<mode>` and `<profile>` semantics + the per-PR caption
+  convention. (Absolute URL because this template's relative link
+  `[AGENTS.md](AGENTS.md)` doesn't reliably resolve once the body is
+  injected into a PR description — PR bodies render outside any
+  file-relative context.)
 -->
 
 ## What
