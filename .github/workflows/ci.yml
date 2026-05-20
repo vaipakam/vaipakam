@@ -159,7 +159,18 @@ jobs:
             echo "workspaces=false" >> "$GITHUB_OUTPUT"
           fi
 
-  # Two contracts jobs, designed for different cost/coverage trade-offs:
+  # Two contracts jobs, designed for different cost/coverage trade-offs.
+  # Serialized — contracts-full runs AFTER contracts-fast so the full
+  # regression rides on the warm foundry cache contracts-fast just saved,
+  # rather than redoing the cold forge build itself:
+  #
+  #   detect-changes
+  #     ↓
+  #   contracts-fast (forge build + deploy-sanity, ~30-60 s warm /
+  #                   ~5-15 min cold)                ← required gate
+  #     ↓ (cache saved at job end → next job restores)
+  #   contracts-full (warm-restore + full regression, ~5-10 min)
+  #                                                  ← informational
   #
   #   contracts-fast  — `predeploy-check.sh` without `--full`. Runs the
   #                     deploy-sanity suite (`test/deploy/*` — 12 tests
@@ -167,30 +178,38 @@ jobs:
   #                     ownership, deploy integration) + ABI-in-sync check
   #                     + shell-script lint. Catches the deploy-blocker
   #                     regression classes (#66 / #71 / #72 / #75 + #69).
-  #                     ~30-60 s. INTENDED as the required-check
-  #                     (74.B wires it into Protect main's
-  #                     required_status_checks rule).
+  #                     Wired into Protect main's required_status_checks
+  #                     rule (74.B) — it is the gating contract check.
   #
   #   contracts-full  — `predeploy-check.sh --full`. Runs the full
   #                     regression (2,012 tests, no invariants). Matches
   #                     what `deploy-mainnet.sh --full` invokes at
-  #                     preflight. INFORMATIONAL only on PRs — runs in
-  #                     parallel with contracts-fast and surfaces results
-  #                     on the PR, but is NOT in the required-status-
-  #                     checks rule. Trade-off acknowledged: a subtle
-  #                     regression that only the full suite catches could
-  #                     land on main between merge and the next
-  #                     mainnet-gate run. Mitigations:
+  #                     preflight. INFORMATIONAL on PRs — surfaces results
+  #                     on the PR but NOT in the required-status-checks
+  #                     rule. Trade-off acknowledged: a subtle regression
+  #                     that only the full suite catches could land on
+  #                     main between merge and the next mainnet-gate run.
+  #                     Mitigations:
   #                       1. The full job still runs and shows red on the
   #                          PR — anyone watching CI can hold the merge or
   #                          revert post-merge.
-  #                       2. A follow-up `mainnet-gate.yml` workflow
-  #                          (74.C tracker) runs --full as a hard gate on
-  #                          release/* branches and v* tags — the last
-  #                          line of defence before any cutover.
+  #                       2. `mainnet-gate.yml` runs --full as a hard gate
+  #                          on release/* branches and v* tags (74.C) —
+  #                          the last line of defence before any cutover.
   #
-  # Both jobs share the same foundry cache key — the deploy-sanity tests
-  # build the same artifacts as the full regression, so warm hits transfer.
+  # Why serial (not parallel)? Parallel would mean TWO cold-cache forge
+  # builds on a typical fresh PR — wasteful. The serial design reuses
+  # contracts-fast's just-saved cache for contracts-full's restore,
+  # halving the cold-cache compute footprint. Critical-path latency to
+  # merge-ready is UNCHANGED (contracts-fast is the gate either way).
+  # The only cost is contracts-full's wall-clock visibility on the PR
+  # arrives ~5-10 min later — informational only, not gating.
+  #
+  # Cache-save / restore mechanics: `actions/cache` saves at job END
+  # (post-action hook fires when the job finishes). A subsequent job in
+  # the SAME workflow run can then restore that just-saved cache by key.
+  # Both jobs share the identical content-based key; contracts-fast
+  # populates it; contracts-full reads it.
   contracts-fast:
     name: contracts-fast (forge + predeploy-check)
     needs: detect-changes
@@ -290,14 +309,25 @@ jobs:
   # any cutover.
   contracts-full:
     name: contracts-full (forge + predeploy-check --full)  [informational]
-    needs: detect-changes
-    if: needs.detect-changes.outputs.contracts == 'true'
+    # `needs: [detect-changes, contracts-fast]` makes this job wait for
+    # contracts-fast to finish. The benefit is the cache: contracts-fast
+    # saves the freshly-built `out/` + `cache/` at its job end; this job
+    # restores from that same key on start, so the `forge build` step
+    # here hits warm artifacts and skips re-compilation.
+    #
+    # The `if:` runs this job ONLY when contracts-fast succeeded AND the
+    # path-filter said contracts changed. If contracts-fast failed,
+    # contracts-full is skipped — fail-fast: no point running the full
+    # regression on a broken build.
+    needs: [detect-changes, contracts-fast]
+    if: |
+      needs.detect-changes.outputs.contracts == 'true'
+      && needs.contracts-fast.result == 'success'
     runs-on: ubuntu-latest
-    # Timeout bumped from 30 → 45 min — same rationale as contracts-fast,
-    # plus the full regression itself takes 5-10 min once the build is
-    # warm. Cold-cache + full regression: ~20-30 min is the realistic
-    # ceiling; 45 leaves headroom for runner variability.
-    timeout-minutes: 45
+    # Timeout is shorter now (45 → 30 min) — this job no longer pays for
+    # cold forge build. Warm-restore + full regression caps at ~15 min on
+    # observed runs; 30 leaves headroom for runner variability.
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: contracts
