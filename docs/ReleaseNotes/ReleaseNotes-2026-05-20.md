@@ -1,18 +1,25 @@
 # Release Notes — 2026-05-20
 
-Six threads in this batch — they form one coherent "harden the deploy
-gate" arc that ran from a local-anvil deploy attempt surfacing an
-EIP-170 size breach on `RiskFacet` (#66) to a full per-selector
-ownership assertion baked into `DeployDiamond.run()` itself (#72), with
-intermediate guardrails for facet-count drift (#69), selector coverage
-(#71), the proactive `OfferFacet` split before its own size breach
-(#67), and a pre-deploy gate that catches a committed-ABI file that
-went missing (#75). The deploy pipeline now refuses to ship a Diamond
-that would not register correctly on-chain — and every guardrail runs
-in CI on the regular `forge test` cycle, not only at `--broadcast`
-time. The next thread on this arc (#74) lifts these from "the script
-asserts it" to "CI required-checks block a merge that would regress
-them."
+Nine threads in this batch — they form one coherent "harden the
+deploy gate" arc that ran from a local-anvil deploy attempt surfacing
+an EIP-170 size breach on `RiskFacet` (#66) to a full required-check
+CI gate on `main` (#74), with intermediate guardrails for facet-count
+drift (#69), selector coverage (#71), the proactive `OfferFacet` split
+before its own size breach (#67), a pre-deploy gate that catches a
+committed-ABI file that went missing (#75), a per-selector ownership
+assertion baked into `DeployDiamond.run()` itself with a CI integration
+test (#72), and a CI-hygiene follow-up that serializes the two
+contracts jobs so the cold-cache forge build is paid for only once per
+PR. The deploy pipeline now refuses to ship a Diamond that would not
+register correctly on-chain, every guardrail runs in CI on the regular
+`forge test` cycle (not only at `--broadcast` time), AND CI is now a
+required-status-check on the `Protect main` ruleset rather than a
+manual-discipline promise. Combined with required-signed-commits and
+the keeper-bot's equivalent protection (the rest of #74), the
+`Protect main` ruleset on the monorepo now enforces eight independent
+gates on every merge, with a tag-gated `mainnet-gate.yml` workflow
+standing by to re-run the full 2,012-test regression as a hard gate
+before any cutover.
 
 ## Thread — RiskFacet split to clear the EIP-170 contract-size limit (PR #68)
 
@@ -465,3 +472,45 @@ the deploy-sanity step could complete. Two amendments fold in here:
 
 Closes #74 (the rest of the arc; the CI workflow itself landed in
 PR #84).
+
+## Thread — Serialize contracts CI jobs to halve cold-cache build cost (PR #<n>)
+
+The CI workflow that landed in #84 + #86 ran `contracts-fast` and
+`contracts-full` in parallel. Both jobs invoked `predeploy-check.sh`,
+which itself runs a cold `forge build` before testing — so a typical
+fresh PR paid for the same compile twice on two parallel runners.
+Compute is free on public repos, so this didn't cost a dollar, but
+the duplicate work was visible as wasted CI minutes and would matter
+materially if Vaipakam ever moved to a self-hosted runner (one
+machine, sequential builds, full cost on each duplicate).
+
+This change serializes the two jobs: `contracts-full` now
+`needs: contracts-fast`. The cache mechanics that make this efficient:
+
+- `actions/cache` saves the cache at job END (post-action hook fires
+  when the job finishes — `out/` + `cache/` get persisted under the
+  content-based key contracts-fast just populated).
+- A subsequent job in the SAME workflow run that hits `actions/cache`
+  with the same key restores from that just-saved entry.
+- contracts-full now restores contracts-fast's freshly-built
+  artifacts, so its own `forge build` step hits warm and skips
+  re-compile entirely.
+
+Critical-path latency to merge-ready is UNCHANGED: contracts-fast is
+the required-status-check gate either way. The only observable
+difference is that contracts-full's wall-clock visibility on the PR
+arrives ~5-10 min later than before — it's informational only, not
+gating, so a slight delay there doesn't slow merges.
+
+A bonus property of the serial design: if contracts-fast fails, the
+`if: needs.contracts-fast.result == 'success'` guard skips
+contracts-full entirely. Fail-fast — no point burning compute on a
+full regression when the build itself is broken.
+
+The `contracts-full` timeout drops from 45 → 30 min in this change.
+With warm-cache restore the cold-build minutes are no longer in this
+job's budget; 30 min leaves comfortable headroom for the full
+regression itself (~5-15 min observed) plus runner variability.
+
+Closes #74 (the optional CI-hygiene optimisation; the required-check
+gate landed earlier in this arc).
