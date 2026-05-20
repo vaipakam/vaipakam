@@ -7,13 +7,17 @@ gap the card originally flagged does not actually exist:
 
 The three plain Workers (`apps/indexer`, `apps/keeper`, `apps/agent`)
 all bind to a **single shared D1 database** — `vaipakam-archive`,
-database_id `3cffebf5-b652-4da7-953c-9e1d143ad2fe`. Every table that
-keeper or agent reads/writes (`user_thresholds`, `notify_state`,
-`telegram_links`, `liquidity_confidence`, `diag_errors`,
-`diag_legal_holds`, `diag_legal_hold_audit`, plus reads of `loans` /
-`offers` / `oracle_snapshot_state`) is already covered by the existing
-`apps/indexer/migrations/` directory. The schema is fully tracked; the
-gap was purely documentation.
+database_id `3cffebf5-b652-4da7-953c-9e1d143ad2fe`, the staging
+database the Cloudflare staging deploy uses (see
+`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md` §3 for the
+staging-vs-primary split). Every table any of the three Workers
+reads or writes — keeper writes
+`user_thresholds`/`notify_state`/`telegram_links`/`liquidity_confidence`/`oracle_snapshot_state`
+and reads `loans`/`offers`; agent writes
+`user_thresholds`/`notify_state`/`telegram_links`/`loans`/`diag_errors`/`diag_legal_holds`/`diag_legal_hold_audit`
+— is already covered by the existing `apps/indexer/migrations/`
+directory. The schema is fully tracked; the gap was purely
+documentation.
 
 This PR records the topology in three places. Each per-Worker README
 gets a new "D1 — shared `vaipakam-archive`" subsection explaining the

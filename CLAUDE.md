@@ -273,11 +273,15 @@ arg counts on `LoanRepaid`/`LoanDefaulted`) can't recur silently.
 
 The three plain Workers (`apps/indexer`, `apps/keeper`, `apps/agent`)
 all bind to **one shared D1 database** — `vaipakam-archive`
-(database_id `3cffebf5-b652-4da7-953c-9e1d143ad2fe`). The schema is
-**owned by `apps/indexer/migrations/`** — that's the single source of
-truth for every table the live db holds. `apps/keeper` and `apps/agent`
+(database_id `3cffebf5-b652-4da7-953c-9e1d143ad2fe`), the **staging**
+database the Cloudflare staging deploy uses (see
+[`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md`](docs/DesignsAndPlans/CloudflareStagingDeployPlan.md)
+§3 for the staging-vs-primary split). The schema is **owned by
+`apps/indexer/migrations/`** — that's the single source of truth for
+every table the live db holds. `apps/keeper` and `apps/agent`
 intentionally have no `migrations/` directory of their own; they
-read/write the same tables via the shared binding.
+read and write a subset of the shared tables via the same binding
+(see the per-Worker READMEs for the exact write/read split).
 
 **Rule**: every schema change — even for a table only `keeper` or
 `agent` writes — lands as a new file under
