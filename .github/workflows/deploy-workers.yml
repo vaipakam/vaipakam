@@ -46,6 +46,15 @@ concurrency:
   group: deploy-workers-${{ github.ref }}
   cancel-in-progress: true
 
+# Default-deny posture. The workflow needs to READ contents (checkout +
+# wrangler-build) but does not need to write anything back to the repo
+# — the deploy targets Cloudflare via `wrangler deploy`, using the
+# CLOUDFLARE_API_TOKEN secret, not GITHUB_TOKEN. Explicit `permissions:`
+# block makes the minimum-required surface auditable + prevents a
+# compromised marketplace action from escalating via GITHUB_TOKEN.
+permissions:
+  contents: read
+
 jobs:
   detect-changes:
     runs-on: ubuntu-latest

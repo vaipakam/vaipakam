@@ -452,6 +452,40 @@ Structured so `actions/cache`'s **prefix** matching works correctly.
 Warm hits across same-config commits; cold rebuild only on config /
 submodule / source change.
 
+### 7.6 GitHub Actions security toggles (Settings UI)
+
+The `.github/workflows/` files are SHA-pinned (every `uses:` carries a
+40-char commit hash + trailing `# vN` annotation Dependabot reads).
+That defends against the moved-tag class of supply-chain attack. The
+**org/repo Settings** layer is the policy backstop that prevents an
+unvetted marketplace action from running in the first place.
+
+Five Settings UI toggles enforce that policy. None can be set via
+`gh` CLI; every one is a maintainer-side action under
+**Settings → Actions → General**:
+
+1. **Allowed-actions list** — Policy: "Allow `vaipakam`, and select
+   non-`vaipakam` actions." Pattern list lives at
+   [`.github/allowed-actions.txt`](../../.github/allowed-actions.txt)
+   in the repo. Paste-from-file when configuring.
+2. **Fork PR approval** — "Require approval for first-time
+   contributors who are new to GitHub" (stricter than the default).
+3. **Workflow permissions** — Default = "Read repository contents and
+   packages permissions" (read-only). Per-workflow opt-in to writes
+   via an explicit `permissions:` block in the workflow YAML.
+4. **Actions on forks** — Disabled.
+5. **GITHUB_TOKEN scope on fork PRs** — Read-only by default; verify
+   the toggle reflects that.
+
+Every workflow under `.github/workflows/` MUST declare its own
+explicit `permissions:` block — that's how the per-workflow opt-in
+works. Audited list as of 2026-05-20: every workflow declares one;
+add this audit to any future workflow-adding PR.
+
+CODEOWNERS protection on `.github/workflows/` (`/.github/workflows/
+@Raja4Shekar`) is the orthogonal axis — requires owner review on
+workflow changes, regardless of who opens the PR.
+
 ---
 
 ## 8. Issue + label discipline
