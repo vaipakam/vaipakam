@@ -39,32 +39,37 @@ into a fast required-check tier and a slower informational tier:
   `74.C`) re-runs `--full` as a hard gate before any cutover, which
   is the line where the full suite matters.
 
-- **`workspaces`** runs `pnpm install --frozen-lockfile` and then
-  `pnpm -r typecheck`, fanning out across every workspace under
-  `apps/` and `packages/`. The typecheck pass covers the keeper,
-  indexer, and agent Workers — and the indexer's
-  `check-event-coverage.mjs` guardrail, so a contract state-change
-  event added without a matching indexer handler fails CI here. The
-  vitest test step (`pnpm -r test`) is deliberately not included in
-  the required-check yet — the first CI run on this PR surfaced
-  pre-existing test-setup failures in `apps/defi`
-  (PublicDashboard + LoanDetails tests need a `ChainProvider`
-  wrap, Issue #85). Including those failures in a required check
-  would have shipped a red CI on day one. Once #85 is fixed, the
-  `pnpm -r test` step can be added back in a small follow-up PR.
+- **`workspaces`** runs `pnpm install --frozen-lockfile` and then one
+  explicit `pnpm --filter @vaipakam/<name> typecheck` step per
+  workspace — `apps/keeper`, `apps/indexer` (which also runs the
+  `check-event-coverage.mjs` guardrail), `apps/agent`, `apps/defi`
+  (via `tsc -b --noEmit`), and `apps/www`. Listed explicitly rather
+  than `pnpm -r typecheck` so deleting a workspace's `typecheck`
+  script errors with "command not found" rather than silently
+  no-opping. The vitest test step (`pnpm -r test`) is deliberately
+  NOT included — the first CI run on this PR surfaced pre-existing
+  test-setup failures in `apps/defi` (PublicDashboard + LoanDetails
+  tests need a `ChainProvider` wrap, Issue #85). Once #85 is fixed,
+  `pnpm -r test` joins this workflow in a small follow-up PR.
 
-Both jobs are independent and run in parallel, with concurrency
+All three jobs are independent and run in parallel, with concurrency
 serialisation per branch so a fresh push cancels the older in-flight
 run. Foundry's artifact tree and incremental compile cache are keyed
-on `foundry.toml` + `remappings.txt` + the contracts source tree, so
-warm builds drop from the cold ~10 min figure to ~90 s.
+content-based on `foundry.toml` + `remappings.txt` + the pinned
+submodule SHAs (snapshotted into `.submodule-state` by a pre-step)
++ the contracts source tree, structured so the restore-key prefix-
+matches the primary key (the v4 design after four Codex iterations).
+Warm builds across same-config commits drop from cold ~10 min to
+~90 s.
 
 This PR ships the workflow in non-blocking form. The `Protect main`
-ruleset will be updated in a follow-up PR to add a
-`required_status_checks` rule referencing the `contracts` and
-`workspaces` job names — staging the rollout this way lets the
-workflow demonstrate green runs on real PRs before becoming a hard
-gate. Required-signatures, and the equivalent keeper-bot main
-protection, are also follow-ups in the same hardening arc.
+ruleset will be updated in a follow-up PR (`74.B`) to add a
+`required_status_checks` rule referencing **`contracts-fast`** and
+**`workspaces`** (NOT `contracts-full` — that one is deliberately
+informational, see the rationale above). Staging the rollout this
+way lets the workflow demonstrate green runs on real PRs before
+becoming a hard gate. Required-signatures, and the equivalent
+keeper-bot main protection, are also follow-ups in the same
+hardening arc.
 
 Closes #74.

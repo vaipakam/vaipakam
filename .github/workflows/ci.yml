@@ -1,19 +1,37 @@
 # CI — required-check workflow gating every PR to main.
 #
-# Two parallel jobs, each runs the same gate locally and in CI:
+# Three parallel jobs, split into a fast required-check tier and a slower
+# informational tier:
 #
-#   contracts      Solidity build + full regression + ABI-in-sync + shell
-#                  lint. This is exactly `bash contracts/script/predeploy-check.sh --full`
-#                  — the same gate `deploy-mainnet.sh` runs as its `[1b]` preflight
-#                  step, so CI and the pre-deploy gate are guaranteed to agree.
+#   contracts-fast    `bash contracts/script/predeploy-check.sh` (no
+#                     `--full`) — forge build + deploy-sanity suite
+#                     (`test/deploy/*`) + ABI-in-sync check + shell-script
+#                     lint. ~30-60 s. Catches the deploy-blocker regression
+#                     classes (#66 size, #71 selector coverage, #72
+#                     ownership, #75 ABI, #69 facet-count).
 #
-#   workspaces     pnpm workspace typechecks (apps/keeper, apps/indexer,
-#                  apps/agent — incl. the indexer's event-coverage script)
-#                  + vitest test suites (apps/defi, apps/agent).
+#   contracts-full    `bash contracts/script/predeploy-check.sh --full` —
+#                     the full 2,012-test regression. Same script the
+#                     mainnet runbook invokes at preflight step [1b].
+#                     ~10-15 min. INFORMATIONAL on PRs — runs alongside
+#                     contracts-fast, surfaces results on the PR, but
+#                     deliberately NOT in the required-status-checks rule.
 #
-# Both must pass for `Protect main` to allow a PR merge. The required-status-
-# checks rule on the `Protect main` ruleset references the job names below
-# (`contracts` and `workspaces`) — keep these names stable, or update the
+#   workspaces        pnpm workspace typechecks (apps/keeper, apps/indexer
+#                     — incl. the indexer's event-coverage script,
+#                     apps/agent, apps/defi via `tsc -b --noEmit`,
+#                     apps/www). The vitest test suites in apps/defi +
+#                     apps/agent are NOT run here — pre-existing test-
+#                     setup failures tracked as Issue #85; once that's
+#                     resolved, `pnpm -r test` joins this workflow in a
+#                     small follow-up PR.
+#
+# For the `Protect main` ruleset's required-status-checks rule, wire
+# `contracts-fast` and `workspaces` — `contracts-full` deliberately stays
+# off the rule so a 10-15 min full-regression run doesn't gate routine
+# PRs. The release/* / `v*` tag-gated `mainnet-gate.yml` follow-up
+# (tracked as 74.C) re-runs `predeploy-check.sh --full` as a hard gate
+# before any cutover. Keep these job names stable, or update the
 # ruleset in lockstep.
 #
 # Non-blocking workflows that also run on PRs:
@@ -188,9 +206,14 @@ jobs:
         working-directory: contracts
         run: git submodule status --recursive > .submodule-state
 
-      # Same cache key as contracts-fast — deploy-sanity and full regression
-      # build the same artifacts, so warm hits transfer cleanly between the
-      # two jobs. Whichever runs first warms the cache; the other reuses it.
+      # Same cache key as contracts-fast. Within a single workflow run the
+      # two jobs DO NOT share a warm cache — `actions/cache` only restores
+      # from caches saved by PRIOR runs (the save happens at job end). The
+      # benefit of identical keys is across runs: when this run's
+      # contracts-full saves a cache, the NEXT run's contracts-fast and
+      # contracts-full both restore from it. So both jobs hit a cold
+      # restore on the very first run after a config / submodule / .sol
+      # change, but converge on warm hits on every subsequent run.
       - name: Cache forge artifacts
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
@@ -205,7 +228,7 @@ jobs:
         run: bash script/predeploy-check.sh --full
 
   workspaces:
-    name: workspaces (pnpm typecheck + test)
+    name: workspaces (pnpm typecheck)
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
