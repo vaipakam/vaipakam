@@ -67,34 +67,44 @@ jobs:
       # Foundry's `out/` (artifact tree) and `cache/` (incremental compile)
       # together cut a warm `forge build` from ~10 min to ~90 s.
       #
-      # Cache key design (Codex review on PR #84 caught two bugs in the first
-      # cut, both fixed here):
+      # Cache key design — content-based, captures every input that can
+      # invalidate a compile artifact:
       #
-      #   - Submodule bumps MUST invalidate the cache. The earlier
-      #     `hashFiles('contracts/lib/**/.git/HEAD')` glob silently never
-      #     matched anything — `actions/checkout` puts submodules as gitlink
-      #     references, not as `.git/HEAD` files under the workspace tree, so
-      #     `hashFiles` returned a no-op hash and a submodule bump went
-      #     unnoticed. We now scope the key to `${{ github.sha }}` so the
-      #     cache lineage advances on every commit (which captures
-      #     submodule bumps because the parent commit's tree includes the
-      #     submodule's pinned SHA).
+      #   - foundry.toml + remappings.txt    (compiler config)
+      #   - .submodule-state                  (pinned submodule SHAs, written
+      #                                       fresh into the workspace by the
+      #                                       pre-step below; `actions/checkout`
+      #                                       puts submodules as gitlink refs
+      #                                       so we can't reach `.git/HEAD`
+      #                                       files via hashFiles directly)
+      #   - contracts/{src,script,test}/**/*.sol  (the actual source)
       #
-      #   - The broad fallback `forge-${{ runner.os }}-` (no config hash)
-      #     could restore from a completely different foundry.toml /
-      #     remappings.txt lineage. Removed. The single fallback retains
-      #     the config-hash prefix so we only ever restore from same-config
-      #     caches; Foundry's own incremental compile then skips unchanged
-      #     files inside that cache for warm-build speed.
+      # Codex review iterations on PR #84 walked us through three wrong
+      # designs before this one:
+      #   v1: hashFiles('contracts/lib/**/.git/HEAD') — no-op glob,
+      #       submodule bumps never invalidated.
+      #   v2: ${{ github.sha }} — per-commit miss + cache-action saves a
+      #       new entry every run, churns the 10 GB cache budget.
+      #   v3 (this): content-based hash, stable across no-op commits,
+      #       invalidates only when an actual input changes.
+      #
+      # The single restore-key fallback drops the .sol hash so a
+      # source-only diff restores from the most recent same-config /
+      # same-submodule cache and Foundry's incremental compile skips
+      # unchanged files for warm-build speed.
+      - name: Snapshot submodule SHAs (for content-based cache key)
+        working-directory: contracts
+        run: git submodule status --recursive > .submodule-state
+
       - name: Cache forge artifacts
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             contracts/out
             contracts/cache
-          key: forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/remappings.txt') }}-${{ github.sha }}
+          key: forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/remappings.txt', 'contracts/.submodule-state', 'contracts/src/**/*.sol', 'contracts/script/**/*.sol', 'contracts/test/**/*.sol') }}
           restore-keys: |
-            forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/remappings.txt') }}-
+            forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/remappings.txt', 'contracts/.submodule-state') }}-
 
       # The predeploy-check gate does everything we want CI to verify on the
       # contract side — `--full` swaps the deploy-sanity suite for the full
