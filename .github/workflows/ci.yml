@@ -1,0 +1,131 @@
+# CI — required-check workflow gating every PR to main.
+#
+# Two parallel jobs, each runs the same gate locally and in CI:
+#
+#   contracts      Solidity build + full regression + ABI-in-sync + shell
+#                  lint. This is exactly `bash contracts/script/predeploy-check.sh --full`
+#                  — the same gate `deploy-mainnet.sh` runs as its `[1b]` preflight
+#                  step, so CI and the pre-deploy gate are guaranteed to agree.
+#
+#   workspaces     pnpm workspace typechecks (apps/keeper, apps/indexer,
+#                  apps/agent — incl. the indexer's event-coverage script)
+#                  + vitest test suites (apps/defi, apps/agent).
+#
+# Both must pass for `Protect main` to allow a PR merge. The required-status-
+# checks rule on the `Protect main` ruleset references the job names below
+# (`contracts` and `workspaces`) — keep these names stable, or update the
+# ruleset in lockstep.
+#
+# Non-blocking workflows that also run on PRs:
+#   - release-notes-drift.yml — warns if a behaviour change lacks a release
+#     note or FunctionalSpecs update.
+#   - add-to-project.yml — auto-cards new Issues onto @vaipakam-labs.
+#
+# Forge build is heavy (5–15 min cold per CLAUDE.md) — the job timeout is set
+# generously and Foundry's own `cache/` + the `out/` artifact tree are
+# cached across runs to keep warm-build times in the 1–2 min range.
+
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  # Per-ref serialisation — a new push to the same branch cancels the previous
+  # in-flight run so we don't burn minutes verifying a commit that's already
+  # been superseded.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    name: contracts (forge + predeploy-check --full)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: contracts
+
+    steps:
+      - name: Checkout (with submodules — chainlink-evm, OZ, diamond-3, etc.)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      # Foundry's `out/` (artifact tree) and `cache/` (incremental compile)
+      # together cut a warm `forge build` from ~10 min to ~90 s. Key the
+      # cache by remappings.txt + foundry.toml so config changes invalidate.
+      - name: Cache forge artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            contracts/out
+            contracts/cache
+          key: forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/remappings.txt', 'contracts/lib/**/.git/HEAD') }}-${{ hashFiles('contracts/src/**/*.sol', 'contracts/script/**/*.sol', 'contracts/test/**/*.sol') }}
+          restore-keys: |
+            forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/remappings.txt', 'contracts/lib/**/.git/HEAD') }}-
+            forge-${{ runner.os }}-
+
+      # The predeploy-check gate does everything we want CI to verify on the
+      # contract side — `--full` swaps the deploy-sanity suite for the full
+      # `forge test --no-match-path "test/invariants/*"` regression, matching
+      # the gate `deploy-mainnet.sh` invokes. Running it here means a PR can't
+      # land a state the mainnet runbook would reject at deploy time.
+      - name: Pre-deploy check (full regression)
+        run: bash script/predeploy-check.sh --full
+
+  workspaces:
+    name: workspaces (pnpm typecheck + test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # The release-notes-drift check reads git history; submodules not
+          # needed for the TS side, so skip them to save ~30 s clone time.
+          fetch-depth: 1
+
+      # pnpm action handles `packageManager: "pnpm@10.4.1"` from package.json,
+      # so we don't pin a version here — it auto-picks the corepack-declared one.
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          # CLAUDE.md / `apps/agent/package.json` requires Node ≥22 for the
+          # native `--experimental-strip-types` TS execution path. CI uses 22
+          # LTS to match what the keeper-bot CI also pins to.
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      # `-r typecheck` fans out across workspaces. Only the workspaces that
+      # declare a `typecheck` script run (apps/{keeper,indexer,agent}, plus
+      # apps/defi via `tsc -b` inside its build script). apps/indexer's
+      # typecheck additionally runs `check-event-coverage.mjs` — the
+      # event-coverage guardrail that fails CI if a state-change event
+      # contracted-side has no indexer handler.
+      - name: pnpm -r typecheck
+        run: pnpm -r typecheck
+
+      # Vitest suites live in apps/defi + apps/agent. `-r test` fans out;
+      # workspaces without a `test` script are skipped cleanly.
+      - name: pnpm -r test
+        run: pnpm -r test
