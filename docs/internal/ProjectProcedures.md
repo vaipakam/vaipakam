@@ -384,6 +384,63 @@ milestones (no `audit-1` — the keeper bot doesn't ship to mainnet on
 its own cadence; its release cadence follows the monorepo's ABI-sync
 events).
 
+### 5.7 Iteration kickoff sync — fold rules into the handbook
+
+Discipline rules learned mid-iteration get saved to agent memory under
+`~/.claude/projects/-home-pranav-Codes-Vaipakam-vaipakam/memory/` so
+the agent doesn't lose them across sessions. That memory is invisible
+to operators, contributors, and auditors who only read this handbook.
+The **iteration kickoff sync** closes the gap by folding agent-memory
+rules into `docs/internal/ProjectProcedures.md` (this file) every
+iteration boundary.
+
+**Cadence — iteration begin, not end.** The ritual happens Monday
+mornings UTC, the moment Iteration N+1 starts. Three reasons:
+
+- Monday morning is already a planning ritual (picking cards from
+  Backlog, setting field values per §5.3) — the sync attaches to
+  something that already happens.
+- The next iteration's work runs against an UPDATED handbook —
+  rules learned in Iteration N land in this file before Iteration
+  N+1 PRs begin, so the new iteration's PRs reference canonical
+  wording.
+- Iteration-end is the riskiest moment to add a ritual — work is
+  being landed under deadline pressure; new ceremony there gets
+  skipped.
+
+**Automation — the card is auto-filed.**
+[`.github/workflows/iteration-kickoff-sync.yml`](../../.github/workflows/iteration-kickoff-sync.yml)
+fires on cron `5 0 * * MON` (Mondays 00:05 UTC) and files the
+"Iteration kickoff sync — <date>" card via `imjohnbo/issue-bot`.
+Auto-add-to-project routes it to the Backlog. The maintainer picks
+it up first thing Monday, performs the sync, lands a docs PR, and
+closes the card. If a card from the previous Monday is still open,
+the new card co-exists as Backlog (the maintainer closes the older
+one as duplicate when reviewing).
+
+**The ritual itself:**
+
+1. List memory files modified since the previous iteration's sync —
+   on the agent's machine that's
+   `find ~/.claude/projects/.../memory -newer .last-iteration-sync`.
+2. For each modified note, classify:
+   - **Project rule** (operator / contributor / auditor needs it) →
+     fold into the appropriate section of this file.
+   - **Agent-specific personal discipline** (e.g. "I tend to forget
+     X") → stays in memory only.
+   - **Already covered here** → no action.
+3. Land the sync as a single docs PR titled
+   `docs(handbook): iteration close-out sync — fold rules from
+   <date> through <date>`.
+4. Touch sentinel `.last-iteration-sync` to record the close
+   timestamp.
+5. Close the auto-filed card referencing the merged PR.
+
+**Steady state.** Most iterations will fold 0-2 rules; some will
+fold none. Both outcomes are fine — close the card with a one-line
+"no rules to fold this iteration" note. The discipline's value is
+the periodic FORCING FUNCTION, not the volume.
+
 ---
 
 ## 6. Release notes + FunctionalSpecs
