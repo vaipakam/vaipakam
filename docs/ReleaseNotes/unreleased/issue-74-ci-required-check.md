@@ -25,12 +25,18 @@ A new `ci.yml` workflow closes that gap. Two parallel jobs:
   script will accept" is no longer possible.
 
 - **`workspaces`** runs `pnpm install --frozen-lockfile` and then
-  `pnpm -r typecheck` + `pnpm -r test`, fanning out across every
-  workspace under `apps/` and `packages/`. The typecheck pass
-  covers the keeper, indexer, and agent Workers — and the
-  indexer's `check-event-coverage.mjs` guardrail, so a contract
-  state-change event added without a matching indexer handler
-  fails CI here.
+  `pnpm -r typecheck`, fanning out across every workspace under
+  `apps/` and `packages/`. The typecheck pass covers the keeper,
+  indexer, and agent Workers — and the indexer's
+  `check-event-coverage.mjs` guardrail, so a contract state-change
+  event added without a matching indexer handler fails CI here. The
+  vitest test step (`pnpm -r test`) is deliberately not included in
+  the required-check yet — the first CI run on this PR surfaced
+  pre-existing test-setup failures in `apps/defi`
+  (PublicDashboard + LoanDetails tests need a `ChainProvider`
+  wrap, Issue #85). Including those failures in a required check
+  would have shipped a red CI on day one. Once #85 is fixed, the
+  `pnpm -r test` step can be added back in a small follow-up PR.
 
 Both jobs are independent and run in parallel, with concurrency
 serialisation per branch so a fresh push cancels the older in-flight
