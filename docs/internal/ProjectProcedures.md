@@ -431,6 +431,53 @@ silently.
 See `docs/FunctionalSpecs/README.md` for the doc set, the domain
 slicing, the conflict-precedence rule, and the full rules.
 
+### 6.4 GitHub Releases — auto-drafted by `release-drafter`
+
+`.github/workflows/release-drafter.yml` watches PR merges to `main`
+and updates a SINGLE draft GitHub Release with each merged PR
+appended under its category. Categories are driven by PR labels (the
+same set from `.github/LABELS.md`); the next-version suggestion is
+label-driven (`breaking-change` → major; `enhancement` → minor;
+every other documented type label → patch). Aliases like `breaking` /
+`feature` / `fix` are NOT in the taxonomy, so they don't drive the
+resolver — label PRs with the documented names.
+
+The drafted release stays a **draft** until the maintainer reviews
+the body + edits the tag + clicks "Publish release". Auto-drafting
+≠ auto-publishing — nothing ships silently.
+
+**Tagging cadence:**
+
+- **End-of-iteration** patch tags (every 7 days on Monday): optional;
+  pick a version, publish the draft. Useful for the iteration close-
+  out narrative even on weeks where nothing audit-relevant ships.
+- **Named milestone-close** releases (`audit-prep`, `mainnet-cutover`,
+  etc.): publish at the milestone close.
+- **Mainnet artefact** tags (`v*`): gated by `mainnet-gate.yml`
+  regardless. `release-drafter` just contributes the body.
+
+**Two-stage release pipeline:**
+
+1. `release-drafter.yml` drafts the body as PRs merge — automatic.
+2. Maintainer reviews + tags → `mainnet-gate.yml` runs the full
+   forge regression on the new tag, and `release.yml` (§7.3 sibling)
+   attaches the per-chain `addresses-<slug>.json` + consolidated
+   `deployments.json` + `abis.tar.gz` to the release.
+
+The fragment system (§6.1, §6.2) and `release-drafter` are
+complementary: fragments are the human-curated functional
+narrative; the GitHub Release body is the PR-level changelog.
+Auditors read fragments; ecosystem integrators read the GitHub
+Release.
+
+**Sibling `vaipakam-keeper-bot`** uses the same pattern with its
+own bot-scoped `release-drafter.yml`. External consumers pin
+against keeper-bot release tags for ABI-stability.
+
+`.github/release-drafter.yml` carries the category mapping +
+version-bump rules + body template; edit there to adjust the
+labelling scheme.
+
 ---
 
 ## 7. CI required-checks + branch protection

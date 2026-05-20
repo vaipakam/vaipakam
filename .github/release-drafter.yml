@@ -1,0 +1,132 @@
+# release-drafter config — auto-drafts GitHub Releases from merged PRs.
+# https://github.com/release-drafter/release-drafter
+#
+# What this does:
+# - Watches PRs merged to `main`. On each merge, updates a SINGLE
+#   draft release with the merged PR appended under its category.
+# - Categories are driven by PR labels (the same set the Project
+#   board uses, per .github/LABELS.md).
+# - Suggests the next semver based on label-driven version-bump
+#   rules below — `breaking-change` → major, `enhancement` → minor,
+#   `bug`/`security`/`infra`/`chore`/`refactor`/`perf`/`documentation`
+#   /`audit`/`dependencies`/`testnet-rehearsal`/`mainnet-rollout` →
+#   patch. Aliases like `feature` / `fix` are NOT in `.github/LABELS.md`
+#   so they don't appear here either — keeps the config tight against
+#   the documented taxonomy.
+# - DOES NOT publish silently. The draft sits in the Releases tab
+#   until the maintainer reviews the body + edits the tag + clicks
+#   "Publish release". This is the deliberate gate — auto-drafting
+#   != auto-publishing.
+#
+# Tagging cadence (per ProjectProcedures.md §6.x):
+# - End-of-iteration patch tags (every 7 days on Monday, optional).
+# - Named release tags at named milestone close (audit-prep,
+#   mainnet-cutover, etc.).
+# - Mainnet artefact tags are gated by `mainnet-gate.yml` regardless
+#   — release-drafter just helps with the body content.
+
+name-template: 'v$RESOLVED_VERSION'
+tag-template: 'v$RESOLVED_VERSION'
+
+categories:
+  - title: '🚨 Breaking changes'
+    labels:
+      - 'breaking-change'
+  - title: '✨ Features'
+    labels:
+      - 'enhancement'
+  - title: '🐛 Bug fixes'
+    labels:
+      - 'bug'
+  - title: '🔒 Security'
+    labels:
+      - 'security'
+  - title: '🛠 Infrastructure / CI'
+    labels:
+      - 'infra'
+      - 'perf'
+      - 'refactor'
+  - title: '📦 Audit / mainnet rollout'
+    labels:
+      - 'audit'
+      - 'testnet-rehearsal'
+      - 'mainnet-rollout'
+  - title: '📚 Documentation'
+    labels:
+      - 'documentation'
+  - title: '🧹 Chores'
+    labels:
+      - 'chore'
+  - title: '⬆️ Dependencies'
+    labels:
+      - 'dependencies'
+
+# Anything tagged `release-notes-skip` doesn't surface in the
+# drafted body (rare — most things should appear somewhere).
+exclude-labels:
+  - 'release-notes-skip'
+  - 'duplicate'
+  - 'wontfix'
+  - 'invalid'
+  - 'question'
+
+# Label-driven semver bump suggestion. Only labels documented in
+# `.github/LABELS.md` are listed; aliases like `feature` / `fix` are
+# deliberately absent so the config tracks the taxonomy 1:1.
+# `breaking-change` → major; `enhancement` → minor; everything else
+# → patch. The maintainer can override the resolved version in the
+# draft UI before publishing.
+version-resolver:
+  major:
+    labels:
+      - 'breaking-change'
+  minor:
+    labels:
+      - 'enhancement'
+  patch:
+    labels:
+      - 'bug'
+      - 'security'
+      - 'infra'
+      - 'perf'
+      - 'refactor'
+      - 'chore'
+      - 'documentation'
+      - 'audit'
+      - 'dependencies'
+      - 'testnet-rehearsal'
+      - 'mainnet-rollout'
+  default: patch
+
+# `$CHANGES` is the auto-rendered category list of merged PRs.
+template: |
+  ## Vaipakam $RESOLVED_VERSION
+
+  $CHANGES
+
+  ---
+
+  **Pinned tag:** `$RESOLVED_VERSION`. The exact commit SHA the
+  artefacts were built from is the SHA this Release is pinned to —
+  click the tag from the Releases page to see it.
+
+  For the **functional narrative** (plain-English description of
+  what changed and why), read the matching dated file under
+  [`docs/ReleaseNotes/`](https://github.com/vaipakam/vaipakam/tree/main/docs/ReleaseNotes).
+  This auto-drafted body is the PR-level changelog; the dated
+  narrative is the human-curated companion.
+
+  **Auditors + ecosystem integrators**: see the
+  [`release.yml`](https://github.com/vaipakam/vaipakam/blob/main/.github/workflows/release.yml)
+  workflow — it auto-attaches per-chain `addresses-<slug>.json` +
+  consolidated `deployments.json` + `abis.tar.gz` to every `v*` tag
+  push so this release becomes programmatically pinnable.
+
+# Cosmetics — PRs are listed with author + number, grouped by
+# the categories above.
+change-template: '- $TITLE @$AUTHOR (#$NUMBER)'
+change-title-escapes: '\<*_&'   # escape Markdown that PR titles sometimes carry
+
+# No-PR-this-cycle message — keeps the draft tidy if a release
+# window closes with no qualifying PRs.
+no-changes-template: '- _No user-facing changes — internal maintenance only._'

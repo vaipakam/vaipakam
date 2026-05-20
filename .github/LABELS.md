@@ -28,10 +28,12 @@ Use these labels consistently when triaging issues, creating project items, or l
 | `perf` | Gas optimizations, RPC budget reductions, latency improvements, and throughput work. |
 | `testnet-rehearsal` | Items that block or support per-chain testnet rehearsals. |
 | `mainnet-rollout` | Items that gate per-chain mainnet enablement. |
+| `breaking-change` | Changes that break API / ABI / on-chain compatibility. Drives the MAJOR semver bump per `.github/release-drafter.yml`. Apply to contract-surface changes that shift function selectors or storage layout, frontend API shape changes consumers pin against, and CCIP message-format changes. Most pre-mainnet work doesn't need this label — it's reserved for genuinely incompatible changes. |
 
 ## Triage Notes
 
 - Prefer one primary type label: `bug`, `enhancement`, `documentation`, `chore`, `refactor`, `infra`, or `perf`.
-- Add `security`, `audit`, `testnet-rehearsal`, or `mainnet-rollout` as cross-cutting labels when relevant.
+- Add `security`, `audit`, `breaking-change`, `testnet-rehearsal`, or `mainnet-rollout` as cross-cutting labels when relevant. `breaking-change` is the one that drives the release-drafter MAJOR semver bump — don't forget to apply it to genuinely incompatible PRs.
+- `dependencies` is applied automatically by Dependabot (alongside `infra`) — no manual action needed there.
 - Use outcome labels (`duplicate`, `invalid`, `wontfix`) when closing or de-scoping an issue.
 - Mirror label intent into the `@vaipakam-labs` project fields where useful: `Module`, `Priority`, `Size`, `Estimate`, and `Iteration`.
