@@ -475,6 +475,204 @@ that need to survive across machines / contributors / time live here.
 
 ---
 
+## 12. Project-specific conventions worth knowing
+
+Rules that look weird from outside but have a deliberate rationale.
+Most have bitten us at least once or were specifically argued through
+to a decision. Listed by category.
+
+### 12.1 Git + identity
+
+- **`gh` is logged in as `vaipakam` (the org), but commits stay
+  authored as `Raja4Shekar`.** The org account does PR / comment /
+  project-board operations; commit authorship stays the personal
+  identity for attribution. Don't merge the two — they serve
+  different purposes.
+
+- **`Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>`
+  on every AI-assisted commit.** Not optional. Same trailer in PR
+  bodies for PRs whose body was AI-drafted.
+
+### 12.2 Files / paths to NOT touch
+
+- **`docs/internal/RoughNotes.md` is user-owned.** AI never edits it.
+  User-only scratch space for ideas / questions / half-formed plans.
+
+- **`docs/internal/PendingTasks-yyyy-mm-dd.md` is retired** (replaced
+  by the `@vaipakam-labs` Project as live tracker). The latest file
+  in that series is a frozen historical breadcrumb — read-only.
+
+- **`docs/ToDo.md`** carries the user-facing ET-### follow-up list.
+  Closed items stay ticked for audit history; open ones get promoted
+  to Project Issues.
+
+### 12.3 Solidity / on-chain
+
+- **ERC20 approvals: exact amount, never `MaxUint256`.** Approve only
+  what each action needs; revoke when done. Reduces blast radius if
+  a hook / facet has a bug.
+
+- **Cross-facet calls use `address(this).call(abi.encodeWithSelector(...))`
+  — never direct facet-to-facet imports.** Goes through the diamond's
+  fallback, routes to the target facet via the cut table. Direct
+  imports break the diamond pattern and miss the cut-table guarantees.
+
+- **`viaIR = true` + `optimizer_runs = 200` is non-negotiable.** Drives
+  every build. Run `nice -n -10 ionice -c 2 -n 0 forge build/test/script`
+  — viaIR runs 5-15 min and 8 GB RSS; low priority causes 2-3×
+  slowdowns under parallel desktop load. (See
+  `feedback-forge-high-priority` memory.)
+
+### 12.4 Retail-deploy policy — three OFF gates
+
+- **No KYC, no sanctions-screening, no country-pair gating in the
+  retail deploy.** All three are runtime-disabled. Industrial-user
+  variant is a SEPARATE deploy on a separate fork with these flipped
+  on — don't enable on the retail deploy.
+
+- **Don't mention OR negate KYC / identity / country gating in user
+  copy.** Website, whitepaper, overview, user guide, marketing — all
+  silent on these. Retail product is permissionless end-state, not
+  "permissionless for now".
+
+- **Sanctions wording, when it appears, stays minimal.** ToS has ONE
+  defensive bullet. The full three-line message is shown only when a
+  flagged wallet connects (in-app `SanctionsBanner`) and in contract
+  revert messages — never on marketing surfaces.
+
+### 12.5 Deploy / testnet discipline
+
+- **Testnet rehearsals stay deployer/admin-owned.** Base Sepolia,
+  Sepolia, Arb Sepolia, and other testnets intentionally skip the
+  multisig handover step so flow tests keep working on EOA keys.
+  **Mainnet cutover is the ONLY place `--phase handover` runs.**
+  (See `project-testnet-no-handover` memory.)
+
+- **Mainnet deploy DEFERRED.** Phase 7 + Phase 9 contract changes can
+  land in any order before the eventual cutover. No urgency to
+  sequence them in a specific way. Re-evaluate when audit prep
+  starts.
+
+- **Predeploy-check IS the gate, in both CI and deploy.** CI's
+  `contracts-fast` and `mainnet-gate.yml` both run the same
+  `predeploy-check.sh` script that `deploy-mainnet.sh` invokes at
+  preflight step `[1b]`. Drift between "passes CI" and "the deploy
+  script will accept" is structurally impossible.
+
+### 12.6 Dependency management
+
+- **Dependabot is scoped to OFF-CHAIN only** (`github-actions` + `npm`).
+  Contract dependencies under `contracts/lib/` are git submodules
+  pinned to an AUDITED commit set — bumping any of them changes
+  audited bytecode, so it must be a deliberate, reviewed, re-audited
+  decision. No `gitsubmodule` ecosystem is configured.
+
+- **Every `uses:` in workflows is SHA-pinned with a trailing `# vX`
+  comment.** Dependabot reads the comment to offer bumps; the SHA
+  protects against a moved tag.
+
+- **Dependabot PRs are NEVER auto-merged.** Same review + CI + Codex
+  scrutiny as any other change.
+
+### 12.7 Review discipline
+
+- **Codex code suggestions are advisory.** Don't blindly apply the
+  literal patch. Confirm the finding is real, weigh alternatives,
+  record the chosen approach in the PR thread, then fix the way
+  that's right for the codebase.
+
+- **Architecture-work iterates 3-6 rounds.** For security /
+  architecture changes, expect multiple cycles of
+  alternative-exploration before approval. Don't push back on
+  iteration — it's the right shape.
+
+- **Always propose alternatives BEFORE committing to a non-trivial
+  design path.** Let the user decide. Surface tradeoffs honestly.
+
+### 12.8 Testing
+
+- **Test scope includes flows NOT in the Advanced User Guide.** The
+  guide is one input; also map bot/keeper-driven flows (matchOffers,
+  liquidation), MEV defenses (cancel cooldown, dust close),
+  admin/governance, treasury, cross-chain, sanctions Tier-1/2 paths,
+  every external entry point.
+
+- **Tests run with `nice -n -10 ionice -c 2 -n 0`** for the same
+  performance reason as the build (§12.3).
+
+### 12.9 Workers + frontend
+
+- **All Workers + frontend read from `@vaipakam/contracts/abis` and
+  `@vaipakam/contracts/deployments`.** Single source of truth. After
+  contract changes, run `contracts/script/exportFrontendAbis.sh` +
+  `contracts/script/exportFrontendDeployments.sh` and `pnpm -r
+  typecheck` to confirm consumers still compile.
+
+- **Cloudflare Workers Static Assets — NEVER use `/*` catch-all in
+  `_redirects`.** Status-200 rewrites fire unconditionally and
+  intercept JS/JSON before the file matcher. Rely on
+  `wrangler.jsonc`'s `not_found_handling` for SPA fallback.
+  (See `feedback-cloudflare-redirects-spa` memory — bit us once.)
+
+- **Indexer event-coverage guardrail.** `apps/indexer`'s `EVENT_ABI` is
+  DERIVED from the compiled `DIAMOND_ABI_VIEM` (never hand-typed).
+  `apps/indexer/scripts/check-event-coverage.mjs` (wired into the
+  workspace's `typecheck` script) fails CI if any contract event
+  tagged `@custom:event-category state-change/loan-mutation` or
+  `state-change/offer-mutation` lacks an indexer handler AND isn't
+  in the script's `DELIBERATELY_NOT_HANDLED` allowlist.
+
+### 12.10 Project-board nuances
+
+- **One card per work item, even multi-phase.** If a piece of work
+  splits into multiple PRs (74.A, 74.B, 74.C), keep ONE card and
+  update its status as the phases progress. Don't fragment.
+
+- **User reviews `@vaipakam-labs` cards ONLY when Status is "In
+  review".** Agent must transition cards Backlog → In progress →
+  In review → Done. If a card is sitting in In progress, the user
+  isn't expected to look at it. (See
+  `feedback-project-card-review-status` memory.)
+
+- **Multi-iteration cards: set FIRST iteration of activity, don't
+  rewrite on close.** Preserves "when did this work START"
+  provenance.
+
+- **Don't backfill past iterations** unless the data is meaningful
+  for retrospective. Forward-looking discipline only.
+
+### 12.11 Tooling — gotchas
+
+- **`graphify` is on upstream 0.8.13 + a surgical port of PR #707's
+  Solidity extractor.** After any `pip install --upgrade graphifyy`,
+  re-apply with `python3 ~/.claude/scripts/graphify-apply-solidity-patch.py`.
+  Verify: `from graphify.detect import CODE_EXTENSIONS; '.sol' in CODE_EXTENSIONS`.
+  Delete the patch script when PR #707 merges upstream.
+
+- **`graphify update .` (AST-only) is FREE; `/graphify .` (full
+  pipeline) costs LLM tokens.** Use the cheap one for routine
+  freshness; the expensive one only after major refactors that need
+  community-structure re-detection.
+
+- **`pr-poll.sh` must launch via `Bash run_in_background:true`, NOT
+  shell `&` / `disown`.** Mixing them silently orphans the poller
+  (zero-byte output file, no task-notification). Hit this once — see
+  `feedback-pr-poll-tool` memory.
+
+### 12.12 Release-notes intro paragraphs
+
+- **The intro paragraph of a dated `ReleaseNotes-yyyy-mm-dd.md` is a
+  hand-written framing**, not generated by `assemble.sh`. After
+  folding fragments, re-read the threads and rewrite the intro if
+  the day's work forms a coherent arc.
+
+- **Don't claim "N threads in this batch" without recounting** — when
+  multiple PRs feed into one dated file across a day, the count drifts.
+  Bit us once on PR #87 / #90 where the intro said "Six" while the
+  file had eight sections.
+
+---
+
 ## Cross-references
 
 - `CLAUDE.md` — AI-instruction shape of these conventions
