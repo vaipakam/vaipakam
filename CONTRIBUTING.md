@@ -32,6 +32,12 @@ git clone https://github.com/vaipakam/vaipakam.git
 cd vaipakam
 pnpm install
 
+# One-time: install the pre-commit hook (requires `pre-commit` on PATH;
+# install with `pipx install pre-commit` or `brew install pre-commit`).
+# Catches trailing whitespace, EOF newlines, large files, JSON/YAML
+# syntax, and runs `forge fmt --check` on staged Solidity files.
+pre-commit install
+
 # Build + test contracts (always under contracts/)
 cd contracts
 nice -n -10 ionice -c 2 -n 0 forge build

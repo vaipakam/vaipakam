@@ -1,0 +1,110 @@
+# Slither static analysis — Solidity-specific findings the Foundry
+# compiler / test suite can't surface (reentrancy heuristics, taint
+# tracking, controlled-call analysis, etc.).
+#
+# Informational initially — failures show up in the PR conversation
+# but don't block merge. Once the report stabilises and any false
+# positives are triaged + suppressed via the `// slither-disable-next-
+# line <detector>` convention OR `slither.config.json` filters, this
+# workflow can flip to required-check.
+#
+# Slither is path-filter-gated like the rest of contracts CI: it only
+# runs when contracts files change.
+
+name: Slither (informational)
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Concurrency: cancel earlier runs on the same PR to keep latency low.
+# (Branches that aren't main / a PR head get cancelled too, which is
+#  what we want.)
+concurrency:
+  group: slither-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write    # so the Slither action can post a sticky comment
+  security-events: write  # required for github/codeql-action/upload-sarif
+
+jobs:
+  detect-changes:
+    # Reuse the same path-filter shape as `ci.yml` so docs-only PRs
+    # don't run slither. Inline so this workflow is self-contained
+    # (matches the pattern used in mainnet-gate.yml).
+    runs-on: ubuntu-latest
+    outputs:
+      contracts: ${{ steps.filter.outputs.contracts }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect contracts changes
+        id: filter
+        env:
+          # Use the event payload's base SHA, not `origin/<base_ref>` — the
+          # remote ref isn't reliably present after a shallow checkout. Per
+          # Codex review on PR #108.
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          # On push to main we always run; on pull_request we diff against base.
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            echo "contracts=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ -z "$BASE_SHA" ]] || ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            # Base SHA missing or not in our shallow clone — fall open
+            # (treat as touched) rather than silently skipping the check.
+            echo "contracts=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+          if printf '%s\n' "$changed" | grep -qE '^contracts/|^\.gitmodules$|^\.github/workflows/slither\.yml$'; then
+            echo "contracts=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "contracts=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  slither:
+    name: Slither static analysis
+    needs: detect-changes
+    if: needs.detect-changes.outputs.contracts == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Run Slither
+        uses: crytic/slither-action@4fd765aeef19915d04ddf0be90c2930036a774d8 # v0.4.1
+        with:
+          target: contracts/
+          # Slither auto-detects Foundry projects (recent versions).
+          # Pin the slither version inside the action so reports are
+          # stable across runs.
+          # 0.11.5+ require Python >=3.10; the slither-action's docker
+          # base image carries an older Python, so pin to the newest
+          # version compatible with that base (0.11.4 as of 2026-05-20).
+          # Revisit when the action's base image updates.
+          slither-version: 0.11.4
+          # Emit SARIF so GitHub's code-scanning surface can render
+          # findings inline on the PR.
+          sarif: slither-results.sarif
+          # Don't fail the workflow on findings — this workflow is
+          # informational. Authors see the report in the PR; merging
+          # is governed by `contracts-fast` (required) and Codex.
+          fail-on: none
+
+      - name: Upload Slither SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@78ed0c7291d93e40c51b085850dc669a4c3ab73b # v3
+        with:
+          sarif_file: slither-results.sarif
