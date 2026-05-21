@@ -45,3 +45,16 @@ the Settings UI is the runtime gate).
 After this PR merges the two retired workflows are gone from the
 Actions tab and the `Slither (informational)` / `Gas snapshot` runs
 appear as jobs inside `ci` rather than as separate workflow runs.
+
+A second optimisation is in this PR: `contracts-fast` now also
+`needs: workspaces`, so a TypeScript-side failure short-circuits the
+expensive forge build before it starts. Cold-PR wall-clock to merge-
+ready grows by workspaces' 2-3 min (workspaces must finish first),
+but the ~10 min of forge build that today runs alongside a failing
+workspaces typecheck is saved entirely. CodeQL stays parallel for
+now — its `Analyze (javascript-typescript)` lives in a separate
+workflow file (`codeql.yml`) and GitHub Actions doesn't support
+cross-workflow `needs:` dependencies. Folding CodeQL into `ci.yml`
+is tracked as a follow-up card so the next reviewer sees the
+deliberate scope choice.
+

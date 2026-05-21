@@ -1,12 +1,19 @@
 # CI — required-check workflow gating every PR to main.
 #
 # Five jobs total, split into a fast required-check tier and slower
-# informational tiers, all sharing ONE warm foundry cache:
+# informational tiers, all sharing ONE warm foundry cache. The cheap
+# checks run BEFORE the expensive forge build so a TypeScript-side
+# failure doesn't burn a 10-min cold forge build before surfacing:
 #
-#   detect-changes (required)
+#   detect-changes (required, ~30s)
 #     ↓
-#   contracts-fast (required) ← does the ONLY cold forge build per PR;
-#       ↓                       saves cache for the rest to restore
+#   workspaces     (required, ~2-3 min) ← cheap fail-fast gate
+#     ↓
+#   contracts-fast (required, ~10 min cold) ← does the ONLY cold
+#       ↓                                     forge build per PR;
+#       │                                     saves cache for the
+#       │                                     informational tier
+#       │                                     below to restore
 #       ├── contracts-full (informational; full forge test regression)
 #       ├── gas-snapshot   (informational; `forge snapshot --check`)
 #       └── slither        (informational; Solidity static analysis,
@@ -234,8 +241,34 @@ jobs:
   # populates it; contracts-full reads it.
   contracts-fast:
     name: contracts-fast (forge + predeploy-check)
-    needs: detect-changes
-    if: needs.detect-changes.outputs.contracts == 'true'
+    # Fail-fast ordering: gate the expensive forge build on the cheap
+    # workspaces typecheck. If workspaces FAILS (a TypeScript-side bug
+    # that branch protection would block merge for anyway), there's no
+    # point burning the cold forge build's ~10 min just to surface a
+    # second red — contracts-fast skips, saving the compute. The
+    # workspaces job is already in the Protect main required-status-
+    # checks rule, so its red directly blocks merge; contracts-fast
+    # auto-skipping doesn't bypass that gate.
+    #
+    # The `!cancelled()` prefix is the GitHub-Actions idiom that lets
+    # the `if:` evaluate when a `needs:` dep was SKIPPED (e.g. on a
+    # contracts-only PR where the workspaces path-filter excluded it).
+    # Without `!cancelled()`, a skipped need would auto-skip this job
+    # too — wrong outcome.
+    #
+    # Trade-off (consistent with feedback_ci_compute_over_wall_clock):
+    # wall-clock to merge-ready grows by workspaces' 2-3 min on every
+    # PR (workspaces must finish before contracts-fast starts), in
+    # exchange for ~10 min of forge compute saved on workspace-fail
+    # PRs. CodeQL / Analyze stay parallel today — they live in their
+    # own workflow (codeql.yml) and cross-workflow `needs:` isn't
+    # supported; folding them into ci.yml is tracked as the
+    # "CodeQL → ci.yml fold" follow-up card.
+    needs: [detect-changes, workspaces]
+    if: |
+      !cancelled()
+      && needs.detect-changes.outputs.contracts == 'true'
+      && needs.workspaces.result != 'failure'
     runs-on: ubuntu-latest
     # Timeout bumped from the original 15 → 45 min. Cold-cache cold-clone
     # forge build is dominated by submodule clone (~2-3 min) + viaIR
