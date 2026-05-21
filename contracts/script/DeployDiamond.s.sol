@@ -337,6 +337,27 @@ contract DeployDiamond is Script {
         AdminFacet(diamond).unpause();
         console.log("Protocol unpaused.");
 
+        // 5f. Enable the canonical-limit-order (GTC) master flags
+        //     (Issue #102 / ADR-0010). Each is governance-tunable via
+        //     ConfigFacet.set*Enabled and defaults `false` at the
+        //     contract level — the kill-switch convention from ADR-0005.
+        //     Fresh Vaipakam deploys come up in GTC mode (lender ceiling
+        //     / borrower floor, partial-fill both sides, full range on
+        //     amount + rate + collateral) by FLIPPING THESE HERE rather
+        //     than changing the storage default. Operators that want a
+        //     conservative bake on a brand-new deployment can comment
+        //     these four lines out and call them manually after a
+        //     review window.
+        //
+        //     The deployer holds ADMIN_ROLE (granted by
+        //     initializeAccessControl at Step 5a above), so these calls
+        //     succeed before the Step 6 handover.
+        ConfigFacet(diamond).setRangeAmountEnabled(true);
+        ConfigFacet(diamond).setRangeRateEnabled(true);
+        ConfigFacet(diamond).setRangeCollateralEnabled(true);
+        ConfigFacet(diamond).setPartialFillEnabled(true);
+        console.log("GTC master flags enabled (range amount/rate/collateral + partial-fill).");
+
         // ── Step 6: Handover to admin (only when admin != deployer) ─────
         // Phase-1 testnet pattern: deployer EOA signs the deploy but the
         // long-lived privileged EOA is a separate admin address. After the

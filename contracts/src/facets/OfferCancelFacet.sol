@@ -193,27 +193,37 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                 if (offer.collateralAssetType == LibVaipakam.AssetType.ERC20) {
                     // Issue #164 — `createOffer` pre-escrows the
                     // UPPER bound (`collateralAmountMax`, post auto-
-                    // collapse). On cancel we must refund whatever
-                    // is actually parked in escrow, otherwise the
-                    // `max - min` tail of a ranged borrower offer is
-                    // trapped after cancellation. Legacy fallback
-                    // (`collateralAmountMax == 0` from a pre-#164
-                    // storage row that never went through the new
-                    // createOffer) reads as `collateralAmount` — the
-                    // same convention the lender-side pro-rate uses.
-                    uint256 borrowerColRefund = offer.collateralAmountMax == 0
+                    // collapse). Legacy fallback (`collateralAmountMax
+                    // == 0` from a pre-#164 storage row) reads as
+                    // `collateralAmount`.
+                    //
+                    // Codex P0 on #102 round-1 — under partial-fill,
+                    // a borrower offer can be cancelled AFTER some
+                    // matches have already minted loans against it
+                    // (`offer.accepted` stays false until dust-close).
+                    // The cancel-refund must subtract
+                    // `collateralAmountFilled` (the portion of pre-
+                    // escrowed collateral that's BACKING LIVE LOANS),
+                    // otherwise the borrower withdraws collateral that
+                    // still collateralises open obligations — a real
+                    // fund-lock vector. Symmetric with the lender
+                    // side's `effAmountMax - amountFilled` refund.
+                    uint256 borrowerColMax = offer.collateralAmountMax == 0
                         ? offer.collateralAmount
                         : offer.collateralAmountMax;
-                    LibFacet.crossFacetCall(
-                        abi.encodeWithSelector(
-                            EscrowFactoryFacet.escrowWithdrawERC20.selector,
-                            msg.sender,
-                            offer.collateralAsset,
-                            msg.sender,
-                            borrowerColRefund
-                        ),
-                        EscrowWithdrawFailed.selector
-                    );
+                    uint256 borrowerColRefund = borrowerColMax - offer.collateralAmountFilled;
+                    if (borrowerColRefund > 0) {
+                        LibFacet.crossFacetCall(
+                            abi.encodeWithSelector(
+                                EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                                msg.sender,
+                                offer.collateralAsset,
+                                msg.sender,
+                                borrowerColRefund
+                            ),
+                            EscrowWithdrawFailed.selector
+                        );
+                    }
                 } else if (offer.collateralAssetType == LibVaipakam.AssetType.ERC721) {
                     LibFacet.crossFacetCall(
                         abi.encodeWithSelector(

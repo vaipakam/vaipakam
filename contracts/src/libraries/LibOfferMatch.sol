@@ -146,6 +146,57 @@ library LibOfferMatch {
         unchecked { return (a + b) / 2; }
     }
 
+    /// @notice Resolve the effective borrower `amountMax` for the GTC
+    ///         default (storage `0`) by deriving from collateral max ×
+    ///         effective init-LTV cap. Per ADR-0010 §3 / RangeOffersDesign
+    ///         §17.3.
+    /// @dev    Reads the SAME effective init-LTV cap that
+    ///         `LoanFacet._checkInitialLtvAndHf` consults at admission —
+    ///         `min(asset loanInitMaxLtvBps, effectiveTierMaxInitLtvBps(tier))`
+    ///         — so the preview never advertises borrower capacity above
+    ///         what admission allows. Reusing the existing
+    ///         `LibRiskMath.maxLendingForCollateral` would use the tier
+    ///         LIQUIDATION LTV (post-creation safety threshold) instead
+    ///         of the init-LTV cap; the new sibling
+    ///         `LibRiskMath.maxLendingForLtvCap` takes the cap
+    ///         explicitly so the GTC derivation uses the right one.
+    ///
+    ///         Falls back gracefully:
+    ///         - Storage default `0` + no derivable cap (`maxLendingForLtvCap`
+    ///           returns 0 on missing oracle / no-borrow tier) ⇒ the offer
+    ///           is effectively unmatchable until the inputs resolve.
+    ///         - Storage value `> 0` (advanced-mode explicit override) ⇒
+    ///           return the stored value verbatim, honoring the user's
+    ///           tighter ceiling.
+    function _effBorrowerAmountMax(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.Offer storage B
+    ) private view returns (uint256) {
+        if (B.amountMax != 0) {
+            return B.amountMax;       // advanced override
+        }
+        // GTC default — derive at match-time using the same cap
+        // admission enforces. Same pattern as the synthetic-init-gate
+        // block below in this function for lender-side reqCollateral.
+        uint8 effTier = OracleFacet(address(this))
+                            .getEffectiveLiquidityTier(B.collateralAsset);
+        uint256 maxLtv  = s.assetRiskParams[B.collateralAsset].loanInitMaxLtvBps;
+        uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(effTier));
+        uint256 cap     = maxLtv < tierCap ? maxLtv : tierCap;
+        // Effective borrower collateral max (apply the symmetric
+        // `collateralAmountMax == 0 ⇒ collateralAmount` fallback that
+        // every other reader uses).
+        uint256 borrowerCollMax = B.collateralAmountMax == 0
+            ? B.collateralAmount
+            : B.collateralAmountMax;
+        return LibRiskMath.maxLendingForLtvCap(
+            borrowerCollMax,
+            B.lendingAsset,
+            B.collateralAsset,
+            cap
+        );
+    }
+
     /// @notice Validate a candidate match between two offers and
     ///         compute the concrete (amount, rateBps, reqCollateral)
     ///         the resulting loan would carry. Pure of side effects;
@@ -155,12 +206,26 @@ library LibOfferMatch {
     ///         fail), the per-tier LTV cap when it's on (`MatchError.LtvAboveTier`)
     ///         — so a bot can filter pairs the binding gate would revert
     ///         without paying for the reverting tx.
-    /// @dev    Borrower-offer is single-fill in Phase 1; this preview
-    ///         enforces that the borrower's `amountFilled == 0`. For
-    ///         lender-offer (which can be partial-filled), uses
-    ///         `amountMax - amountFilled` as remaining capacity. See
-    ///         design §4.1 for the validity matrix and §10.3 for the
-    ///         partial-fill semantics.
+    /// @dev    Post-#102, both sides support partial-fill symmetrically.
+    ///         Lender remaining = `L.amountMax - L.amountFilled`. Borrower
+    ///         remaining = `effBorrowerAmountMax - B.amountFilled` where
+    ///         `effBorrowerAmountMax` applies the ADR-0010 §3 fallback:
+    ///         when `B.amountMax == 0` (GTC default), derive the ceiling
+    ///         from `maxLendingForLtvCap(collateralAmountMax, init-LTV cap)`
+    ///         using the SAME effective init-LTV cap that
+    ///         `LoanFacet._checkInitialLtvAndHf` consults at admission.
+    ///
+    ///         The Phase 1 borrower single-fill rule (offer becomes
+    ///         `accepted = true` after one match, destroying the unused
+    ///         range) is preserved when `partialFillEnabled` is OFF —
+    ///         `OfferAcceptFacet._acceptOffer` flips `accepted = true`
+    ///         unconditionally in that case, so `previewMatch`'s
+    ///         `B.accepted` guard naturally cascade-skips subsequent
+    ///         matches. When `partialFillEnabled` is ON, the accept
+    ///         flip is deferred to `OfferMatchFacet.matchOffers`' dust-
+    ///         close branch, allowing repeated matches to consume the
+    ///         borrower's remaining capacity until dust. See
+    ///         RangeOffersDesign §17.3 / ADR-0010 for the full design.
     function previewMatch(uint256 lenderOfferId, uint256 borrowerOfferId)
         internal
         view
@@ -210,9 +275,34 @@ library LibOfferMatch {
 
         // Lender's remaining capacity = amountMax - amountFilled.
         uint256 lenderRemaining = L.amountMax - L.amountFilled;
-        // Range overlap on amount: [max(L.min, B.min), min(lenderRemaining, B.max)].
+        // Borrower's effective amountMax — apply the ADR-0010 §3 fallback
+        // when storage default `0` (GTC default; the SSTORE was skipped
+        // for the same reason #169 skipped collateralAmountMax). Uses the
+        // SAME init-LTV cap that `_checkInitialLtvAndHf` consults at
+        // admission so we don't advertise borrower capacity above what
+        // admission will allow.
+        uint256 effBorrowerAmountMax = _effBorrowerAmountMax(s, B);
+        // Borrower's remaining capacity = effBorrowerAmountMax - amountFilled.
+        // Pre-#102, `B.amountFilled` was always 0 (single-fill rule); post-
+        // #102, it accumulates per match symmetric to the lender side.
+        //
+        // Codex round-1 P1 — when `B.amountMax == 0` (GTC default) the
+        // effective ceiling is RE-DERIVED on every preview from current
+        // oracle prices + the autonomous-tier-LTV cache; meanwhile
+        // `B.amountFilled` is HISTORICAL (cumulative from prior matches
+        // at older prices). A market move that drops the derived
+        // ceiling below filled would underflow `effBorrowerAmountMax -
+        // B.amountFilled` (Solidity 0.8.x checked arithmetic = panic
+        // revert), bricking `previewMatch` instead of returning a clean
+        // structured `AmountNoOverlap`. Clamp before the subtract.
+        if (effBorrowerAmountMax <= B.amountFilled) {
+            r.errorCode = MatchError.AmountNoOverlap;
+            return r;
+        }
+        uint256 borrowerRemaining = effBorrowerAmountMax - B.amountFilled;
+        // Range overlap on amount: [max(L.min, B.min), min(lenderRemaining, borrowerRemaining)].
         uint256 lo = L.amount > B.amount ? L.amount : B.amount;
-        uint256 hi = lenderRemaining < B.amountMax ? lenderRemaining : B.amountMax;
+        uint256 hi = lenderRemaining < borrowerRemaining ? lenderRemaining : borrowerRemaining;
         if (lo > hi) {
             r.errorCode = MatchError.AmountNoOverlap;
             return r;
