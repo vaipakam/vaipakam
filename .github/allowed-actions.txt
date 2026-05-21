@@ -8,7 +8,7 @@
 # pattern uses the action's repo path (without SHA) since Settings UI
 # accepts wildcards but not SHAs.
 #
-# Audited 2026-05-20 against every `uses:` in .github/workflows/.
+# Audited 2026-05-21 against every `uses:` in .github/workflows/.
 
 # GitHub-published (covered by the built-in "Allow actions by GitHub" toggle):
 actions/add-to-project@*
@@ -17,6 +17,7 @@ actions/checkout@*
 actions/configure-pages@*
 actions/deploy-pages@*
 actions/setup-node@*
+actions/setup-python@*           # added 2026-05-21 (host-runner Slither via pip)
 actions/upload-artifact@*
 actions/upload-pages-artifact@*
 github/codeql-action/*@*
@@ -28,7 +29,12 @@ foundry-rs/foundry-toolchain@*
 pnpm/action-setup@*
 
 # Third-party (review per-bump):
-crytic/slither-action@*          # Trail of Bits — Slither's official Action
+# crytic/slither-action@*        REMOVED 2026-05-21 — Slither now runs
+#                                via host-runner `pip install
+#                                slither-analyzer` in `ci.yml`'s
+#                                slither job so it shares the foundry
+#                                cache contracts-fast warms. Was
+#                                Trail of Bits' official Action.
 dorny/paths-filter@*             # widely-used path-filter helper
 softprops/action-gh-release@*    # widely-used release-attach Action
 

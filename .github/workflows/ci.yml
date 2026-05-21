@@ -1,7 +1,29 @@
 # CI — required-check workflow gating every PR to main.
 #
-# Three parallel jobs, split into a fast required-check tier and a slower
-# informational tier:
+# Five jobs total, split into a fast required-check tier and slower
+# informational tiers, all sharing ONE warm foundry cache:
+#
+#   detect-changes (required)
+#     ↓
+#   contracts-fast (required) ← does the ONLY cold forge build per PR;
+#       ↓                       saves cache for the rest to restore
+#       ├── contracts-full (informational; full forge test regression)
+#       ├── gas-snapshot   (informational; `forge snapshot --check`)
+#       └── slither        (informational; Solidity static analysis,
+#                           reads slither.config.json filter_paths)
+#
+# All four contract-touching jobs share the identical content-based
+# cache key — one forge cold-build per PR, the rest restore-and-go.
+# Pre-2026-05-21 this workflow only owned `contracts-{fast,full}`;
+# gas-snapshot and slither lived in their own workflow files that ran
+# in parallel, so a contracts-touching PR cold-built forge up to three
+# times. Folded both in here so the per-PR compute-unit cost drops to
+# one cold build. Wall-clock to merge-ready (contracts-fast — the
+# gating check) is UNCHANGED; informational tiers arrive ~5-10 min
+# later on cold-cache PRs, which is the deliberate trade-off (see
+# feedback_ci_compute_over_wall_clock in agent memory).
+#
+# Jobs in the original required-check shape:
 #
 #   contracts-fast    `bash contracts/script/predeploy-check.sh` (no
 #                     `--full`) — forge build + deploy-sanity suite
@@ -367,6 +389,215 @@ jobs:
 
       - name: Pre-deploy check (full regression)
         run: bash script/predeploy-check.sh --full
+
+  # ── gas-snapshot ───────────────────────────────────────────────────────
+  # Folded into ci.yml so it serializes after contracts-fast — that
+  # way it ALWAYS hits a warm foundry cache (contracts-fast just saved
+  # it in this same workflow run, AND the shared content-keyed cache
+  # hits across runs too). Previously this was a standalone
+  # `gas-snapshot.yml` workflow that triggered in parallel with ci.yml
+  # on `pull_request` — meaning two cold-cache `forge build`s would
+  # race on every fresh PR. The per-PR compute-unit cost is the
+  # priority (see feedback_ci_compute_over_wall_clock in agent
+  # memory); wall-clock to the gas-snapshot result on a cold-cache PR
+  # is now ~5-10 min later, but the wall-clock to merge-ready
+  # (contracts-fast — the gating check) is UNCHANGED.
+  #
+  # INFORMATIONAL — not in the Protect main required-status-checks
+  # rule. A gas regression surfaces as a red on this job but doesn't
+  # gate merge.
+  gas-snapshot:
+    name: Gas snapshot diff
+    needs: [detect-changes, contracts-fast]
+    if: |
+      needs.detect-changes.outputs.contracts == 'true'
+      && needs.contracts-fast.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write   # for the gas-diff sticky comment
+    defaults:
+      run:
+        working-directory: contracts
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
+        with:
+          version: stable
+
+      - name: Snapshot submodule SHAs (for content-based cache key)
+        run: git submodule status --recursive > .submodule-state
+
+      # Same cache key shape as contracts-fast + contracts-full. The
+      # cache is saved by contracts-fast at its job end; this job
+      # restores it on start, so the inevitable `forge build` inside
+      # `forge snapshot` hits warm artifacts and skips re-compilation.
+      - name: Restore forge artifacts (warm from contracts-fast)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            contracts/out
+            contracts/cache
+          key: forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/remappings.txt', 'contracts/.submodule-state') }}-${{ hashFiles('contracts/src/**/*.sol', 'contracts/script/**/*.sol', 'contracts/test/**/*.sol') }}
+          restore-keys: |
+            forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/remappings.txt', 'contracts/.submodule-state') }}-
+
+      - name: Forge snapshot --check (5% tolerance)
+        # `--tolerance` is a percentage (0-100), not basis points.
+        # 5 = 5%. Any test whose gas increases by more than 5% from
+        # the committed baseline fails the run.
+        #
+        # `--no-match-path "test/invariants/*"` matches local
+        # convention for snapshot generation; invariant tests run a
+        # randomised harness whose gas is non-deterministic.
+        #
+        # `--no-match-test '(_Sanctions_...|test...CountriesNotCompatible|test...BlocksSanctionedCountries)'`
+        # skips five early-revert tests that report `(gas: 0)`. forge's
+        # tolerance math divides by the expected gas; when that's zero
+        # any consumed value triggers a false "Diff" failure. The regex
+        # must match the same set used at snapshot generation time.
+        #
+        # NOTE: local development prefixes forge with
+        # `nice -n -10 ionice -c 2 -n 0` for priority on a shared
+        # workstation. GitHub-hosted runners deny `CAP_SYS_NICE` so the
+        # prefix would error here — dropped from the CI step.
+        run: |
+          forge snapshot --check --tolerance 5 \
+            --no-match-path "test/invariants/*" \
+            --no-match-test '(_Sanctions_(AcceptOffer|SellLoan|TransferObligation)_Blocked|testSellLoanRevertsCountriesNotCompatible|testAcceptOfferBlocksSanctionedCountries)'
+
+      - name: Diff hint on failure
+        # When the check fails (gas regression), drop a one-line
+        # remediation guide into the job summary so the contributor
+        # knows what to run locally to update the baseline.
+        if: failure()
+        run: |
+          {
+            echo "## ⛽ Gas regression detected"
+            echo ""
+            echo "One or more tests exceed the +5% gas tolerance vs"
+            echo "the committed \`contracts/.gas-snapshot\`."
+            echo ""
+            echo "Options:"
+            echo "1. **Reduce the gas** — investigate the regressing test(s) and"
+            echo "   identify the source. Often an accidental O(n) where O(1)"
+            echo "   was expected, or a redundant storage write."
+            echo "2. **Accept the regression** (legitimate cost of a new feature):"
+            echo "   regenerate the snapshot locally and commit:"
+            echo "   \`\`\`bash"
+            echo "   cd contracts && nice -n -10 ionice -c 2 -n 0 forge snapshot \\"
+            echo "     --no-match-path \"test/invariants/*\" \\"
+            echo "     --no-match-test '(_Sanctions_(AcceptOffer|SellLoan|TransferObligation)_Blocked|testSellLoanRevertsCountriesNotCompatible|testAcceptOfferBlocksSanctionedCountries)'"
+            echo "   git add contracts/.gas-snapshot"
+            echo "   \`\`\`"
+            echo ""
+            echo "See \`docs/internal/ProjectProcedures.md\` for the snapshot convention."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── slither ────────────────────────────────────────────────────────────
+  # Folded into ci.yml so it shares the SAME foundry build that
+  # contracts-fast warmed — previously this ran via the
+  # `crytic/slither-action` Docker container that did its own forge
+  # build inside the container, invisible to and unshareable with the
+  # host-runner cache. That meant every contracts-touching PR cold-
+  # built forge TWICE: once for ci.yml, once for slither.
+  #
+  # The crytic action wrapped three things (slither install, slither
+  # run, SARIF emission); each is a one-liner on the host runner:
+  #   - `pip install slither-analyzer==0.11.4`
+  #   - `slither contracts/ --config-file contracts/slither.config.json
+  #     --sarif contracts/slither-results.sarif`
+  #   - `github/codeql-action/upload-sarif` (already used by the old
+  #     slither.yml)
+  #
+  # 0.11.5+ requires Python ≥3.10; the action's docker image carried
+  # an older Python, so the comment in old slither.yml pinned 0.11.4.
+  # GitHub-hosted runners ship Python 3.10+ today so this constraint
+  # would relax — keep the pin anyway for report-stability across
+  # runs. Revisit when slither's own release cadence shifts.
+  #
+  # INFORMATIONAL — `fail-on: none` equivalent here is just not
+  # propagating slither's exit code. The script captures slither's
+  # return value but the step always succeeds; the SARIF upload
+  # populates the security/code-scanning surface either way.
+  slither:
+    name: Slither static analysis
+    needs: [detect-changes, contracts-fast]
+    if: |
+      needs.detect-changes.outputs.contracts == 'true'
+      && needs.contracts-fast.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write   # SARIF upload to code-scanning surface
+    defaults:
+      run:
+        working-directory: contracts
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
+        with:
+          version: stable
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.10'
+
+      - name: Snapshot submodule SHAs (for content-based cache key)
+        run: git submodule status --recursive > .submodule-state
+
+      # Same cache key shape as contracts-fast + contracts-full +
+      # gas-snapshot. contracts-fast saved this at its job end; this
+      # job restores it, so slither's forge build hits warm artifacts.
+      - name: Restore forge artifacts (warm from contracts-fast)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            contracts/out
+            contracts/cache
+          key: forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/remappings.txt', 'contracts/.submodule-state') }}-${{ hashFiles('contracts/src/**/*.sol', 'contracts/script/**/*.sol', 'contracts/test/**/*.sol') }}
+          restore-keys: |
+            forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/remappings.txt', 'contracts/.submodule-state') }}-
+
+      - name: Install slither-analyzer
+        # 0.11.4 pin matches the old slither.yml — keeps detector
+        # output stable across runs even when 0.11.5+ ships new rules.
+        run: pip install slither-analyzer==0.11.4
+
+      - name: Run Slither
+        # Slither auto-detects the Foundry project layout and re-uses
+        # the restored `out/` + `cache/` (skipping its own forge build
+        # when those are warm). `--sarif` emits SARIF directly — no
+        # need for the crytic action's wrapper. `|| true` matches the
+        # old workflow's `fail-on: none` semantics; the SARIF upload
+        # is the real product, not the exit code.
+        run: |
+          slither . \
+            --config-file slither.config.json \
+            --sarif slither-results.sarif \
+            || true
+
+      - name: Upload Slither SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@78ed0c7291d93e40c51b085850dc669a4c3ab73b # v3
+        with:
+          sarif_file: contracts/slither-results.sarif
 
   workspaces:
     name: workspaces (pnpm typecheck)
