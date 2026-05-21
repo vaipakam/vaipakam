@@ -11,6 +11,9 @@ import { prewarmTokenMeta } from '../lib/tokenMeta';
 import { useMyOffers, type MyOfferStatus } from '../hooks/useMyOffers';
 import { useClaimables } from '../hooks/useClaimables';
 import { useDashboardLoansBothSides } from '../hooks/useDashboardLoansBothSides';
+import { useOfferGroupedLoans } from '../hooks/useOfferGroupedLoans';
+import { OfferGroupCard } from '../components/OfferGroupCard';
+import '../components/OfferGroupCard.css';
 import {
   loanWithRiskAndSideToSummary,
   loansToRiskMap,
@@ -148,6 +151,21 @@ export default function Dashboard() {
         (statusFilter === 'all' || l.status === statusFilter),
       ),
     [loans, roleFilter, statusFilter],
+  );
+
+  // Group loans by their originating offer for the #124 "loans by offer"
+  // section. Builds from `filteredLoans` (NOT `loans`) so the grouped
+  // section honours the active role/status filters — otherwise users
+  // could see fan-outs containing loans the flat table is intentionally
+  // hiding. Per Codex P2 finding on PR #162 round-1. The hook returns
+  // ALL groups including single-child ones; `multiChildGroups` filters
+  // to `counts.total >= 2` so this section only surfaces when there's
+  // an actual range-order fan-out to display (single-child loans stay
+  // in the flat table below, no duplication).
+  const offerGroups = useOfferGroupedLoans(filteredLoans, inlineRisks);
+  const multiChildGroups = useMemo(
+    () => offerGroups.filter((g) => g.counts.total >= 2),
+    [offerGroups],
   );
 
   // Snap back to page 0 whenever a filter narrows the set past the current
@@ -510,6 +528,30 @@ export default function Dashboard() {
             </button>
           </div>
         ) : (
+          <>
+            {/* #124 — Offer-grouped section. Surfaces only when at least
+                one offer fanned out into 2+ loans (range orders, partial
+                fills). Single-child offers stay in the flat table below
+                — rendering them here too would duplicate the row. The
+                grouped cards carry totals, weighted-avg rate, MIN HF,
+                and click-to-expand child loan rows; cross-link to
+                `/offers/:offerId` for the original terms. */}
+            {multiChildGroups.length > 0 && (
+              <div className="offer-groups-section">
+                <h3 style={{ margin: '0 0 12px', fontSize: '1.05rem' }}>
+                  Loans by offer
+                  <span style={{ marginLeft: 8, opacity: 0.7, fontWeight: 400, fontSize: '0.85rem' }}>
+                    ({multiChildGroups.length} fan-out{multiChildGroups.length === 1 ? '' : 's'})
+                  </span>
+                </h3>
+                {multiChildGroups.map((group) => (
+                  <OfferGroupCard
+                    key={group.offerId.toString()}
+                    group={group}
+                  />
+                ))}
+              </div>
+            )}
           <div className="loans-table-wrap">
             <table className="loans-table">
               <thead>
@@ -658,6 +700,7 @@ export default function Dashboard() {
               unit="loan"
             />
           </div>
+          </>
         )}
       </div>
 

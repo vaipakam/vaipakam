@@ -29,6 +29,15 @@ dist/
 # but not committed.
 docs/internal/RoughNotes.md
 docs/internal/RoughNotes-*.md
+# Screenshot / image scratchpad — the operator's reference area; never
+# committed. See `feedback_git_add_explicit` (agent memory) for the
+# regression this rule guards against (PR #162 round-1).
+docs/internal/*.png
+docs/internal/*.jpg
+docs/internal/*.jpeg
+docs/internal/*.gif
+docs/internal/*.webp
+docs/internal/*.svg
 
 # Claude Code per-machine / per-session runtime state. The
 # scheduled_tasks.lock file rewrites every session with a fresh

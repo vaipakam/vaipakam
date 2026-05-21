@@ -177,6 +177,7 @@ export function useUserLoans(address: string | null) {
         if (!isLender && !isBorrower) continue;
         found.push({
           id: loan.id,
+          offerId: loan.offerId,
           principal: loan.principal,
           principalAsset: loan.principalAsset,
           assetType: Number(loan.assetType ?? 0n),

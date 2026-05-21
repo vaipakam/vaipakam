@@ -113,6 +113,15 @@ export type LoanRole = 'lender' | 'borrower';
  */
 export interface LoanSummary {
   id: bigint;
+  /** Originating offer's id. Populated from the on-chain `Loan.offerId`
+   *  field so the Dashboard can group loans by the offer that
+   *  generated them (e.g. a range-order lender offer that filled
+   *  across N loans renders one parent row with N children).
+   *  Always present — every loan was created by an offer accept,
+   *  so this field is never absent on-chain. Type-narrowed to
+   *  `bigint` (not `bigint | undefined`) to keep the grouping path
+   *  exhaustive at the call site. */
+  offerId: bigint;
   principal: bigint;
   principalAsset: string;
   /** Principal asset type (0 = ERC20, 1 = ERC721, 2 = ERC1155). Drives

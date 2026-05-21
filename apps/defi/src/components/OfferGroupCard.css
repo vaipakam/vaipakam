@@ -1,0 +1,117 @@
+/* Issue #124 — Offer-grouped loans card.
+ *
+ * Mirrors the existing dashboard's visual idiom: same brand-coloured
+ * anchor links, same status-badge chip shape, mono cells for asset
+ * fields. Sits comfortably alongside today's flat loans table; not
+ * a different surface.
+ */
+
+.offer-group-card {
+  border: 1px solid var(--border, #ddd);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  background: var(--card-bg, #fff);
+}
+
+.offer-group-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.offer-group-card__title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+}
+
+.offer-group-card__child-count {
+  font-weight: 400;
+  font-size: 0.875rem;
+  opacity: 0.7;
+}
+
+.offer-group-card__toggle {
+  background: transparent;
+  border: 1px solid var(--border, #ddd);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 0.875rem;
+  cursor: pointer;
+  color: var(--text, inherit);
+}
+
+.offer-group-card__toggle:hover {
+  background: var(--hover-bg, rgba(0, 0, 0, 0.04));
+}
+
+.offer-group-card__totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.offer-group-card__totals > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.offer-group-card__label {
+  font-size: 0.75rem;
+  opacity: 0.65;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.offer-group-card__value {
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+.offer-group-card__collateral {
+  margin-bottom: 10px;
+}
+
+.offer-group-card__collateral ul {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+
+.offer-group-card__collateral li {
+  font-size: 0.875rem;
+}
+
+.offer-group-card__children {
+  margin-top: 8px;
+  border-top: 1px dashed var(--border, #ddd);
+  padding-top: 10px;
+}
+
+.offer-group-card__child-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.offer-group-card__child-table th,
+.offer-group-card__child-table td {
+  padding: 6px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--border, #eee);
+}
+
+.offer-group-card__child-table th {
+  font-weight: 500;
+  opacity: 0.7;
+}
+
+.offer-group-card__child-table tr:last-child td {
+  border-bottom: none;
+}
