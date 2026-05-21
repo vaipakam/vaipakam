@@ -17,6 +17,10 @@ import { type LoanSummary, type LoanStatus, type LoanRole } from '../types/loan'
 
 interface ContractLoanShape {
   id: bigint;
+  // Originating offer's id — always present on chain (every loan was
+  // accepted from an offer). The Dashboard surfaces this to group
+  // children of a range-order parent under one row.
+  offerId: bigint;
   principal: bigint;
   principalAsset: Address;
   assetType: number;
@@ -50,6 +54,7 @@ export function loanWithRiskAndSideToSummary(
   const role: LoanRole = row.borrowerSide ? 'borrower' : 'lender';
   return {
     id: loan.id,
+    offerId: loan.offerId,
     principal: loan.principal,
     principalAsset: loan.principalAsset,
     assetType: Number(loan.assetType),
