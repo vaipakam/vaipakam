@@ -238,33 +238,61 @@ library LibOfferMatch {
         uint256 reqFromLender = L.amountMax == 0
             ? L.collateralAmount
             : (L.collateralAmount * r.matchAmount) / L.amountMax;
-        // Issue #164 — borrower-side collateral range. The borrower's
-        // committed range is `[collateralAmount, collateralAmountMax]`
-        // minus the cumulative `collateralAmountFilled` from prior
-        // matches (Phase 1: always 0 on borrower offers because
-        // borrower-side partial-fill ships with #102). The actual
-        // locked amount clamps UP to the borrower's min — a borrower
-        // who committed `min=1 ETH` gets that 1 ETH locked even when
-        // the lender's pro-rated requirement is below it (better HF
-        // cushion, lender happy). Mirrors how amount works today:
-        // `lo = max(L.amount, B.amount)` — both sides' minimums
-        // constrain the floor together, not separately.
+        // Issue #164 — borrower-side collateral range. Two regimes,
+        // chosen by whether `collateralAmountMax` actually widens the
+        // borrower's committed range:
         //
-        // On a legacy single-value borrower offer (auto-collapsed
-        // `collateralAmount == collateralAmountMax`), the clamp is
-        // a no-op identity: `max(reqFromLender, B.collateralAmount)`
-        // equals `B.collateralAmount` whenever the existing
-        // `reqFromLender <= B.collateralAmount` precondition holds,
-        // so today's lock-min-and-refund-the-rest behaviour is
-        // preserved bit-for-bit.
-        uint256 borrowerCeiling =
-            B.collateralAmountMax - B.collateralAmountFilled;
-        uint256 picked = reqFromLender > B.collateralAmount
-            ? reqFromLender
-            : B.collateralAmount;
-        if (picked > borrowerCeiling) {
-            r.errorCode = MatchError.CollateralBelowRequired;
-            return r;
+        //   (1) Legacy / single-value borrower offer (
+        //       `collateralAmountMax == collateralAmount` post auto-
+        //       collapse, OR `collateralAmountMax == 0` which is the
+        //       pre-#164 storage default if/when a live diamond ever
+        //       gets upgraded onto this code without a per-offer
+        //       backfill — the same `0 ⇒ floor` fallback that the
+        //       lender side uses one line above): preserve the pre-
+        //       #164 semantic exactly. The picked / locked collateral
+        //       equals the lender's pro-rated requirement; the
+        //       borrower's posted overage is refunded by the
+        //       OfferMatchFacet excess-refund hook. Single-value
+        //       borrowers' UX expectation is "I posted X and the
+        //       protocol locks what's actually needed up to X" — that
+        //       lock-the-requirement / refund-the-rest behaviour MUST
+        //       survive the storage migration bit-for-bit.
+        //
+        //   (2) Real ranged borrower offer (`collateralAmountMax >
+        //       collateralAmount`): clamp the locked amount UP to the
+        //       borrower's min so a borrower who committed AT LEAST
+        //       X gets at least X locked (better HF cushion, lender
+        //       happy). Mirrors how amount works today —
+        //       `lo = max(L.amount, B.amount)`. Match fails only when
+        //       the clamped value exceeds the borrower's remaining
+        //       ceiling.
+        uint256 borrowerCollMax = B.collateralAmountMax == 0
+            ? B.collateralAmount
+            : B.collateralAmountMax;
+        bool borrowerRanged = borrowerCollMax > B.collateralAmount;
+        uint256 picked;
+        if (borrowerRanged) {
+            // Range mode — clamp-up.
+            uint256 borrowerCeiling =
+                borrowerCollMax - B.collateralAmountFilled;
+            picked = reqFromLender > B.collateralAmount
+                ? reqFromLender
+                : B.collateralAmount;
+            if (picked > borrowerCeiling) {
+                r.errorCode = MatchError.CollateralBelowRequired;
+                return r;
+            }
+        } else {
+            // Single-value / legacy mode — pre-#164 semantic exactly.
+            // Borrower's posted collateral must cover the lender's
+            // pro-rated requirement; the LOCKED amount stays at that
+            // requirement and the OfferMatchFacet excess-refund hook
+            // returns the overage to the borrower's wallet.
+            if (B.collateralAmount < reqFromLender) {
+                r.errorCode = MatchError.CollateralBelowRequired;
+                return r;
+            }
+            picked = reqFromLender;
         }
         r.reqCollateral = picked;
 

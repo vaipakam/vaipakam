@@ -22,15 +22,34 @@ it on-chain. This release adds the missing axis.
   across all Phase 1 borrower matches. Wired in now so #102 (borrower
   partial-fill) can start writing without another storage migration.
 
-**Match semantics — the clamp-up choice.** When the lender's pro-rated
-required collateral `reqL` falls below the borrower's posted minimum,
-the loan locks the borrower's minimum instead of `reqL`. Borrower
-committed to AT LEAST X — they get X locked even when the lender would
-have accepted less (better HF cushion, lender happy). The match fails
-only when `clamp(reqL, [B.collateralAmount, B.collateralAmountMax])`
-exceeds the borrower's max. Mirrors how the amount overlap works
-today (`lo = max(L.amount, B.amount)` — both sides' minimums constrain
-the floor together).
+**Match semantics — single-value preserved, clamp-up only on real
+ranges.** Per Codex round-1 P1, the two cases are branched explicitly:
+
+- **Single-value / legacy borrower offer** (`collateralAmountMax ==
+  collateralAmount`, OR `collateralAmountMax == 0` for a pre-#164
+  storage row): pre-#164 semantic exactly. Locked collateral equals
+  the lender's pro-rated requirement; OfferMatchFacet refunds the
+  overage. Borrower UX expectation ("I posted X and the protocol
+  locks what's actually needed up to X") is preserved bit-for-bit.
+
+- **Real ranged borrower offer** (`collateralAmountMax >
+  collateralAmount`): clamp the locked amount UP to the borrower's
+  min so a borrower who committed AT LEAST X gets at least X locked
+  (better HF cushion, lender happy). Mirrors how amount overlap
+  works today (`lo = max(L.amount, B.amount)` — both sides' minimums
+  constrain the floor together). Match fails only when the clamped
+  value exceeds the borrower's remaining ceiling.
+
+Round-1 review also surfaced a fund-lock regression on the cancel path
+(borrower had escrowed `collateralAmountMax` but
+`OfferCancelFacet.cancelOffer` was still withdrawing
+`collateralAmount` — the `max - min` tail would have been trapped on
+cancellation of a ranged offer). Fixed in round-2 so the cancel-side
+refund mirrors the create-side pre-escrow. Same legacy-fallback
+(`collateralAmountMax == 0 ⇒ collateralAmount`) applies to the
+OfferMatchFacet excess-refund hook as well, so a hypothetical
+post-deploy upgrade onto live storage with pre-#164 offers can't trap
+their collateral on the first match.
 
 **Lender side stays single-value** on collateral. The lender's
 `collateralAmount` slot is their derived requirement (at `amountMax`,

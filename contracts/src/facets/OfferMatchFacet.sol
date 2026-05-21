@@ -238,21 +238,30 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // never overage to refund.
         {
             LibVaipakam.Offer storage B = s.offers[borrowerOfferId];
-            if (
-                B.collateralAssetType == LibVaipakam.AssetType.ERC20
-                && B.collateralAmountMax > mr.reqCollateral
-            ) {
-                uint256 excess = B.collateralAmountMax - mr.reqCollateral;
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        EscrowFactoryFacet.escrowWithdrawERC20.selector,
-                        B.creator,           // pull from borrower's escrow
-                        B.collateralAsset,
-                        B.creator,           // refund to borrower's wallet
-                        excess
-                    ),
-                    EscrowWithdrawFailed.selector
-                );
+            if (B.collateralAssetType == LibVaipakam.AssetType.ERC20) {
+                // Legacy fallback: a borrower offer created before
+                // #164 carries `collateralAmountMax == 0` in storage.
+                // Read-side then collapses to `collateralAmount` so
+                // the pulled / refunded amounts agree with the pre-
+                // #164 deposit. (Fresh-#164 offers always carry
+                // `collateralAmountMax > 0` thanks to the auto-
+                // collapse at createOffer.)
+                uint256 borrowerPulled = B.collateralAmountMax == 0
+                    ? B.collateralAmount
+                    : B.collateralAmountMax;
+                if (borrowerPulled > mr.reqCollateral) {
+                    uint256 excess = borrowerPulled - mr.reqCollateral;
+                    LibFacet.crossFacetCall(
+                        abi.encodeWithSelector(
+                            EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                            B.creator,           // pull from borrower's escrow
+                            B.collateralAsset,
+                            B.creator,           // refund to borrower's wallet
+                            excess
+                        ),
+                        EscrowWithdrawFailed.selector
+                    );
+                }
             }
         }
 

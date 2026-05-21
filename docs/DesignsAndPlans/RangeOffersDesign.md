@@ -1435,36 +1435,66 @@ collateral as they can get (over-collateralisation strengthens HF).
 `LenderCollateralRangeNotAllowed` error, independent of the kill-
 switch state.
 
-### 16.3 Match math — clamp-up on the borrower min
+### 16.3 Match math — two regimes (legacy preserved, clamp-up on ranges)
 
-Borrower's committed range is `[collateralAmount, collateralAmountMax
-- collateralAmountFilled]`. Match-time, the locked amount C is:
+The match-time logic branches on whether the borrower's collateral
+shape is actually ranged (`collateralAmountMax > collateralAmount`).
+Round-1 Codex review surfaced this as a P1 — earlier drafts of the
+clamp-up logic broke the legacy single-value semantic; the corrected
+shape is:
 
 ```text
-reqL    = L.collateralAmount × matchAmount / L.amountMax      // lender's pro-rated requirement
-picked  = max(reqL, B.collateralAmount)                       // clamp UP to borrower's min
-ceiling = B.collateralAmountMax - B.collateralAmountFilled
-if picked > ceiling → MatchError.CollateralBelowRequired
-else: lock `picked`; refund `B.collateralAmountMax - picked` to borrower
+reqL = L.collateralAmount × matchAmount / L.amountMax      // lender's pro-rated requirement
+borrowerCollMax = B.collateralAmountMax == 0
+                  ? B.collateralAmount        // pre-#164 storage fallback
+                  : B.collateralAmountMax
+
+if borrowerCollMax > B.collateralAmount:
+    // Range mode — clamp UP to borrower's min.
+    ceiling = borrowerCollMax - B.collateralAmountFilled
+    picked  = max(reqL, B.collateralAmount)
+    if picked > ceiling → MatchError.CollateralBelowRequired
+else:
+    // Single-value / legacy mode — pre-#164 semantic exactly.
+    if B.collateralAmount < reqL → MatchError.CollateralBelowRequired
+    picked = reqL                            // lock the requirement
+                                             // OfferMatchFacet refunds the overage
 ```
 
-The clamp-up choice is symmetric with how amount overlap works in
-§4.1 — `lo = max(L.amount, B.amount)`. Both sides' minimums constrain
-the floor TOGETHER, not separately. A borrower who committed to AT
-LEAST X gets X locked even when the lender's pro-rated requirement
-is below it (better HF cushion, lender happy). The match fails only
-when the clamped value exceeds the borrower's remaining ceiling.
+The clamp-up choice for range mode is symmetric with how amount
+overlap works in §4.1 — `lo = max(L.amount, B.amount)`. Both sides'
+minimums constrain the floor TOGETHER. A borrower who committed to AT
+LEAST X gets X locked even when the lender's pro-rated requirement is
+below it (better HF cushion, lender happy). Match fails only when the
+clamped value exceeds the borrower's remaining ceiling.
 
 ### 16.4 Backward compat — legacy single-value preserved bit-for-bit
 
-On a legacy single-value borrower offer (`collateralAmountMax == 0`
-at create-time, auto-collapsed to `collateralAmountMax ==
-collateralAmount`), the clamp is a no-op identity: `max(reqL,
-B.collateralAmount)` equals `B.collateralAmount` whenever the
-existing `reqL ≤ B.collateralAmount` precondition holds. The pulled
-amount stays `B.collateralAmount` (auto-collapse), the refund stays
-`B.collateralAmount - reqL` — same numbers the pre-#164 contract
-produced, byte-for-byte.
+The single-value branch above is what makes "byte-for-byte identical
+to pre-#164" hold. On a legacy single-value borrower offer
+(`collateralAmountMax == 0` at create-time, auto-collapsed to
+`collateralAmountMax == collateralAmount`), `borrowerRanged` is
+`false`, and the match locks `reqL` exactly — same as the pre-#164
+contract. The `OfferMatchFacet` excess-refund hook returns
+`B.collateralAmount - reqL` to the borrower's wallet — same numbers
+as before. And the pre-#164 storage fallback (`collateralAmountMax ==
+0 ⇒ collateralAmount`) means a hypothetical post-deploy upgrade onto
+live storage with pre-#164 offers can't accidentally trap collateral
+or render those offers unmatchable.
+
+### 16.4a Cancel-side refund mirrors the create-side pre-escrow
+
+`OfferCreateFacet._pullCreatorAssetsClassic` pre-escrows the upper
+bound (`effCollateralAmountMax`, post auto-collapse) for borrower
+ERC-20 offers. The matching cancel path
+(`OfferCancelFacet.cancelOffer` borrower-side ERC-20 branch) MUST
+refund `collateralAmountMax`, not `collateralAmount` — otherwise the
+`max - min` tail of a ranged borrower offer would be trapped after
+cancellation. Same `0 ⇒ collateralAmount` storage fallback applies.
+Round-1 Codex review caught this; the corrected shape is now the
+load-bearing invariant: **borrower-side ERC-20 escrow movements
+(deposit / match-consume / match-refund / cancel-refund) all anchor
+on `effCollateralAmountMax`, not `collateralAmount`.**
 
 ### 16.5 Pre-escrow widens
 
