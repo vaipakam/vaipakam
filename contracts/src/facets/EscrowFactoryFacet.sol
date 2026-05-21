@@ -986,8 +986,17 @@ contract EscrowFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     function getOfferAmount(
         uint256 offerId
     ) external view returns (uint256 amount) {
-        LibVaipakam.Offer memory offer = LibVaipakam.storageSlot().offers[offerId];
-        return offer.amount;
+        // Issue #169 follow-up — direct field SLOAD via storage pointer.
+        // The previous shape (`LibVaipakam.Offer memory offer = ...;
+        // return offer.amount;`) copied the FULL Offer struct into
+        // memory just to return one field; on a non-existent offer that
+        // was a cold SLOAD per struct slot. After #164 added slots 18
+        // (`collateralAmountMax`) + 19 (`collateralAmountFilled`), that
+        // showed up as the +8.3% gas regression on
+        // `testGetOfferAmountReturnsZeroForNonExistent`. Collapsing to a
+        // single SLOAD of the field actually read recovers that and
+        // trims gas off the happy path too.
+        return LibVaipakam.storageSlot().offers[offerId].amount;
     }
 
     /**
