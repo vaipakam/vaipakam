@@ -100,8 +100,19 @@ concurrency:
   # Per-ref serialisation — a new push to the same branch cancels the previous
   # in-flight run so we don't burn minutes verifying a commit that's already
   # been superseded.
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  #
+  # Concurrency group includes `${{ github.event_name }}` so the weekly
+  # `schedule` run lives in its OWN group ("ci-refs/heads/main-schedule")
+  # separate from the push-driven group ("ci-refs/heads/main-push"). That
+  # prevents a routine push to main from cancelling the in-progress safety
+  # scan — the scan is the only chance we have to catch CodeQL-pack drift,
+  # submodule pin drift, and dep-bump-triggered failures between
+  # commit-driven runs.
+  #
+  # `cancel-in-progress: true` only on PR events — push and schedule events
+  # let prior runs finish (per Codex review on PR #160).
+  group: ci-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -220,18 +231,21 @@ jobs:
           fi
 
   # ── analyze-jstypescript ──────────────────────────────────────────────
-  # CodeQL static analysis on the TypeScript/JavaScript surface (apps/*
-  # + packages/*). Folded into ci.yml in #158 so a CodeQL failure can
-  # short-circuit the downstream forge build (`contracts-fast` now
-  # `needs: analyze-jstypescript` too). Pre-fold this lived as its own
+  # CodeQL static analysis on the TypeScript/JavaScript surface. Folded
+  # into ci.yml in #158 so a CodeQL failure can short-circuit the
+  # downstream forge build (`contracts-fast` now `needs:
+  # analyze-jstypescript` too). Pre-fold this lived as its own
   # `codeql.yml` workflow file — and because GitHub Actions doesn't
   # support cross-workflow `needs:` dependencies, a CodeQL failure
-  # could race the cold forge build in parallel. Now both gate on the
-  # same detect-changes path-filter.
+  # could race the cold forge build in parallel.
   #
-  # Gated on the `workspaces` path-filter (apps/* + packages/* changes)
-  # since that's the only surface CodeQL's javascript-typescript pack
-  # analyses; a contracts-only or docs-only PR skips this job.
+  # Runs on every PR — NOT gated on the workspaces path-filter. CodeQL
+  # walks JS/TS at the repo level (root tsconfig, root scripts/, the
+  # CodeQL config files in .github/codeql/ themselves), not just under
+  # apps/* + packages/*. The original codeql.yml ran on every PR
+  # unconditionally; this preserves that behaviour so a config-only or
+  # root-script-only PR can't bypass the scan (per Codex review on
+  # PR #160 — P1 and P2 findings).
   #
   # The `security-extended` query pack inherits from the original
   # codeql.yml — wider coverage at modest CI cost. Findings land on
@@ -240,13 +254,9 @@ jobs:
   # INFORMATIONAL by default but listed in `contracts-fast` needs:,
   # so its FAILURE blocks the expensive forge build downstream even
   # though it's not in the Protect main required-status-checks rule.
-  # A skipped CodeQL run (path-filter false) does NOT block — the
-  # `if: needs.analyze-jstypescript.result != 'failure'` on
-  # contracts-fast allows skipped here.
   analyze-jstypescript:
     name: Analyze (javascript-typescript)
     needs: detect-changes
-    if: needs.detect-changes.outputs.workspaces == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
