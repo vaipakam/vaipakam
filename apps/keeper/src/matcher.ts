@@ -326,11 +326,33 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
         const ok = await submitMatch(ctx, L.id, B.id, p);
         if (ok) {
           submits += 1;
-          // Borrower offers are single-fill in Phase 1 — don't try this
-          // borrower against another lender this tick. The lender stays
-          // in the loop (partial fills allowed: the next borrower in the
-          // bucket may match its remaining capacity).
-          break;
+          // Issue #172 / #102 — post-borrower-partial-fill, borrower
+          // offers are NOT single-fill anymore. Don't break the inner
+          // loop on success: the same lender may have remaining capacity
+          // to fan-out across additional borrowers in this tick, and the
+          // same borrower (post-this match) may still have capacity that
+          // a DIFFERENT lender in `lenderList` could fill.
+          //
+          // The `attempted` set already prevents re-trying the exact
+          // (L,B) pair within a tick. After a successful submit, both
+          // L's and B's `amountFilled` have grown on-chain; the next
+          // `previewMatch` call within this tick reads the updated state
+          // and returns the right overlap (or `AmountNoOverlap` /
+          // dust-close, which the `if (!p || p.errorCode !== Ok)`
+          // continue above handles cleanly).
+          //
+          // Early-exit only when the preview reports the lender is now
+          // FULLY filled (`lenderRemainingPostMatch == 0n`). Anything
+          // smaller — where the lender still has some capacity that
+          // might not meet the per-match minimum — is left to the
+          // contract's `previewMatch` to filter on the next iteration;
+          // the extra preview call per exhausted lender per tick is
+          // cheap relative to fan-out wins on healthy ones.
+          if (p.lenderRemainingPostMatch === 0n) {
+            break;
+          }
+          // Otherwise fall through to the next borrower for this lender.
+          continue;
         }
       }
     }
