@@ -1,13 +1,14 @@
 # CI — required-check workflow gating every PR to main.
 #
-# Five jobs total, split into a fast required-check tier and slower
+# Six jobs total, split into a fast required-check tier and slower
 # informational tiers, all sharing ONE warm foundry cache. The cheap
 # checks run BEFORE the expensive forge build so a TypeScript-side
 # failure doesn't burn a 10-min cold forge build before surfacing:
 #
 #   detect-changes (required, ~30s)
 #     ↓
-#   workspaces     (required, ~2-3 min) ← cheap fail-fast gate
+#   workspaces             (required, ~2-3 min) ┬─ cheap fail-fast
+#   analyze-jstypescript   (informational, ~2 min) ┘  gates
 #     ↓
 #   contracts-fast (required, ~10 min cold) ← does the ONLY cold
 #       ↓                                     forge build per PR;
@@ -18,6 +19,11 @@
 #       ├── gas-snapshot   (informational; `forge snapshot --check`)
 #       └── slither        (informational; Solidity static analysis,
 #                           reads slither.config.json filter_paths)
+#
+# Weekly cron (Mondays 06:17 UTC) inherited from the retired
+# codeql.yml — re-runs the full graph against main to catch CodeQL-
+# pack drift, submodule pin drift, and dep-bump-triggered failures
+# between commit-driven runs.
 #
 # All four contract-touching jobs share the identical content-based
 # cache key — one forge cold-build per PR, the rest restore-and-go.
@@ -79,17 +85,39 @@ on:
     branches: [main]
   push:
     branches: [main]
+  schedule:
+    # Weekly safety scan — inherited from the retired codeql.yml. The
+    # CodeQL pack itself updates between PRs, so a clean main can grow
+    # new findings between scheduled scans even with no commits. Runs
+    # the FULL ci.yml graph weekly (CodeQL + Slither + gas-snapshot +
+    # forge build) — a small recurring cost in exchange for a safety
+    # net that catches submodule drift, dep-bump-triggered failures,
+    # and new CodeQL-pack rule classes between human-driven runs.
+    - cron: '17 6 * * 1'   # Mondays 06:17 UTC (inherited slot)
   workflow_dispatch:
 
 concurrency:
   # Per-ref serialisation — a new push to the same branch cancels the previous
   # in-flight run so we don't burn minutes verifying a commit that's already
   # been superseded.
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  #
+  # Concurrency group includes `${{ github.event_name }}` so the weekly
+  # `schedule` run lives in its OWN group ("ci-refs/heads/main-schedule")
+  # separate from the push-driven group ("ci-refs/heads/main-push"). That
+  # prevents a routine push to main from cancelling the in-progress safety
+  # scan — the scan is the only chance we have to catch CodeQL-pack drift,
+  # submodule pin drift, and dep-bump-triggered failures between
+  # commit-driven runs.
+  #
+  # `cancel-in-progress: true` only on PR events — push and schedule events
+  # let prior runs finish (per Codex review on PR #160).
+  group: ci-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
+  security-events: write   # SARIF uploads (Slither + CodeQL)
+  actions: read            # required by github/codeql-action/analyze
 
 jobs:
   # ── detect-changes ────────────────────────────────────────────────────
@@ -144,6 +172,20 @@ jobs:
         id: diff
         run: |
           set -eu
+          # `schedule` (weekly cron) and `workflow_dispatch` (manual)
+          # events have no diff range — there's no PR-base to compare
+          # against and no `before` SHA. Fall open: treat everything as
+          # changed so the full graph runs. Weekly is the intended
+          # safety-net behaviour (catches submodule drift, dep-bump-
+          # triggered failures, new CodeQL-pack rules); manual dispatch
+          # is the operator saying "run the full thing now anyway".
+          if [ "${{ github.event_name }}" = "schedule" ] \
+              || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Schedule/manual trigger — treating everything as changed"
+            echo "contracts=true" >> "$GITHUB_OUTPUT"
+            echo "workspaces=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE="${{ github.event.pull_request.base.sha }}"
             HEAD="${{ github.event.pull_request.head.sha }}"
@@ -187,6 +229,66 @@ jobs:
           else
             echo "workspaces=false" >> "$GITHUB_OUTPUT"
           fi
+
+  # ── analyze-jstypescript ──────────────────────────────────────────────
+  # CodeQL static analysis on the TypeScript/JavaScript surface. Folded
+  # into ci.yml in #158 so a CodeQL failure can short-circuit the
+  # downstream forge build (`contracts-fast` now `needs:
+  # analyze-jstypescript` too). Pre-fold this lived as its own
+  # `codeql.yml` workflow file — and because GitHub Actions doesn't
+  # support cross-workflow `needs:` dependencies, a CodeQL failure
+  # could race the cold forge build in parallel.
+  #
+  # Runs on every PR — NOT gated on the workspaces path-filter. CodeQL
+  # walks JS/TS at the repo level (root tsconfig, root scripts/, the
+  # CodeQL config files in .github/codeql/ themselves), not just under
+  # apps/* + packages/*. The original codeql.yml ran on every PR
+  # unconditionally; this preserves that behaviour so a config-only or
+  # root-script-only PR can't bypass the scan (per Codex review on
+  # PR #160 — P1 and P2 findings).
+  #
+  # The `security-extended` query pack inherits from the original
+  # codeql.yml — wider coverage at modest CI cost. Findings land on
+  # the same Security → Code scanning surface Slither populates.
+  #
+  # INFORMATIONAL by default but listed in `contracts-fast` needs:,
+  # so its FAILURE blocks the expensive forge build downstream even
+  # though it's not in the Protect main required-status-checks rule.
+  analyze-jstypescript:
+    name: Analyze (javascript-typescript)
+    needs: detect-changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write   # SARIF → Code scanning
+      actions: read            # required by github/codeql-action/analyze
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@78ed0c7291d93e40c51b085850dc669a4c3ab73b # v3
+        with:
+          languages: javascript-typescript
+          # `security-extended` adds queries beyond the default set —
+          # higher coverage at modest extra CI time. Acceptable for a
+          # repo with one developer + paying full attention.
+          queries: security-extended
+          # `paths-ignore` covers vendored Solidity submodule tooling
+          # (OZ Certora scripts, chainlink deploy scripts, etc.) —
+          # same exclusion list as `contracts/slither.config.json`.
+          config-file: ./.github/codeql/codeql-config.yml
+
+      - name: Autobuild
+        # For JS/TS, autobuild is a no-op (interpreted languages) but
+        # the step is required by the analyze step.
+        uses: github/codeql-action/autobuild@78ed0c7291d93e40c51b085850dc669a4c3ab73b # v3
+
+      - name: Perform analysis
+        uses: github/codeql-action/analyze@78ed0c7291d93e40c51b085850dc669a4c3ab73b # v3
+        with:
+          category: '/language:javascript-typescript'
 
   # Two contracts jobs, designed for different cost/coverage trade-offs.
   # Serialized — contracts-full runs AFTER contracts-fast so the full
@@ -242,29 +344,36 @@ jobs:
   contracts-fast:
     name: contracts-fast (forge + predeploy-check)
     # Fail-fast ordering: gate the expensive forge build on the cheap
-    # workspaces typecheck. If workspaces FAILS (a TypeScript-side bug
-    # that branch protection would block merge for anyway), there's no
-    # point burning the cold forge build's ~10 min just to surface a
-    # second red — contracts-fast skips, saving the compute. The
-    # workspaces job is already in the Protect main required-status-
-    # checks rule, so its red directly blocks merge; contracts-fast
-    # auto-skipping doesn't bypass that gate.
+    # workspaces typecheck. If workspaces FAILS, there's no point
+    # burning the cold forge build's ~10 min just to surface a second
+    # red — contracts-fast skips, saving the compute. workspaces IS
+    # in the Protect main required-status-checks rule, so its red
+    # directly blocks merge; contracts-fast auto-skipping via the
+    # `if:` does NOT bypass that gate.
     #
-    # The `!cancelled()` prefix is the GitHub-Actions idiom that lets
-    # the `if:` evaluate when a `needs:` dep was SKIPPED (e.g. on a
-    # contracts-only PR where the workspaces path-filter excluded it).
-    # Without `!cancelled()`, a skipped need would auto-skip this job
-    # too — wrong outcome.
+    # analyze-jstypescript is listed in `needs:` for the sequencing
+    # — it must finish before contracts-fast starts so they don't
+    # race for runner minutes — but is NOT in the `if:` condition.
+    # Reason: analyze-jstypescript is NOT a required check on Protect
+    # main. If we added `needs.analyze-jstypescript.result != 'failure'`
+    # to the `if:`, then a CodeQL failure would auto-skip contracts-
+    # fast — and branch protection treats "skipped" as SUCCESS for
+    # required checks. The PR would be mergeable with NO forge build
+    # ever run. So CodeQL failures DON'T save forge compute; that's
+    # the safety-vs-compute trade-off (per Codex round-2 review on
+    # PR #160 — P1 finding).
+    #
+    # The `!cancelled()` prefix lets the `if:` evaluate when a
+    # `needs:` dep was SKIPPED — e.g. on a contracts-only PR where
+    # the workspaces path-filter excluded it. Without `!cancelled()`,
+    # a skipped need would auto-skip this job too.
     #
     # Trade-off (consistent with feedback_ci_compute_over_wall_clock):
-    # wall-clock to merge-ready grows by workspaces' 2-3 min on every
-    # PR (workspaces must finish before contracts-fast starts), in
-    # exchange for ~10 min of forge compute saved on workspace-fail
-    # PRs. CodeQL / Analyze stay parallel today — they live in their
-    # own workflow (codeql.yml) and cross-workflow `needs:` isn't
-    # supported; folding them into ci.yml is tracked as the
-    # "CodeQL → ci.yml fold" follow-up card.
-    needs: [detect-changes, workspaces]
+    # wall-clock to merge-ready grows by ~max(workspaces,
+    # analyze-jstypescript) — both run in parallel before contracts-fast
+    # — in exchange for ~10 min of forge compute saved on workspaces-
+    # fail PRs.
+    needs: [detect-changes, workspaces, analyze-jstypescript]
     if: |
       !cancelled()
       && needs.detect-changes.outputs.contracts == 'true'
