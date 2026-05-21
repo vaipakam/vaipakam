@@ -1,6 +1,6 @@
 # Canonical Limit-Order — Phase 2 Design
 
-**Status**: Draft, awaiting ratification.
+**Status**: Ratified 2026-05-22 (operator approval after multi-round design pass + Codex P2 review on PR #184).
 **Tracking card**: [#183](https://github.com/vaipakam/vaipakam/issues/183).
 **Closes / resolves**: the `_acceptOffer` direct-accept deferral from PR
 [#175](https://github.com/vaipakam/vaipakam/pull/175) (Codex P1×5 round-1
@@ -142,8 +142,15 @@ in dust-close math.
 The frontend computes the implicit storage fields client-side using
 the connected wallet's read-access to:
 - Asset oracle prices (via `OracleFacet.getAssetPrice`).
-- Tier-LTV caps (via `OracleFacet.getEffectiveLiquidityTier` +
-  `LibVaipakam.tierLtvLibraryDefaultBps` constants).
+- The **runtime** effective tier-LTV cap (via
+  `OracleFacet.getEffectiveLiquidityTier(asset)` →
+  `LibVaipakam.effectiveTierMaxInitLtvBps(tier)`). Codex #184
+  round-1 P2 — using the library-default constants
+  (`tierLtvLibraryDefaultBps(tier)`) would drift from runtime
+  whenever the autonomous-tier-LTV cache refreshes, causing
+  derived `amountMax` / `collateralAmount` to mis-match what
+  `LoanFacet._checkInitialLtvAndHf` actually enforces at match
+  time. Always read the runtime effective value.
 
 #### Lender derivations
 
@@ -163,11 +170,19 @@ The borrower side carries more substantive derivations:
 
 ```
 tier             = readOnChain(getEffectiveLiquidityTier(collateralAsset))
-ltvCap           = tierLtvLibraryDefaultBps(tier)
+ltvCap_bps       = readOnChain(effectiveTierMaxInitLtvBps(tier))   // BPS, e.g. 5000 = 50%
 collateralUSD    = collateralAmountMax × oracle(collateralAsset)
-maxLendingUSD    = collateralUSD × ltvCap / BASIS_POINTS
+maxLendingUSD    = collateralUSD × ltvCap_bps / BASIS_POINTS       // BASIS_POINTS = 10_000
 amountMax        = maxLendingUSD / oracle(lendingAsset)
-collateralAmount = max(1, ⌈amount × oracle(lendingAsset) / oracle(collateralAsset) / ltvCap⌉)
+// Inverse of the maxLending math, both directions scaled by BASIS_POINTS
+// so the BPS ltvCap never appears unscaled in either formula.
+// Codex #184 round-1 P1 — the previous draft divided by `ltvCap`
+// directly which understated required collateral by `BASIS_POINTS` ×.
+collateralAmount = max(
+                     1,
+                     ⌈ amount × oracle(lendingAsset) × BASIS_POINTS
+                       / (oracle(collateralAsset) × ltvCap_bps) ⌉
+                   )
                    // The collateral floor that backs the borrower's minimum loan.
 interestRateBps  = 1
 ```
@@ -309,20 +324,32 @@ Storage:
 - Reads `collateralAmount = 8 ETH` → borrower locks 8 ETH collateral
 - One-click "Accept full" UX. ✓
 
-**Borrower posts**: rate 5%, lendingAmount $1k min, collateral 5 ETH max.
+**Borrower posts**: rate 5%, lendingAmount $1k min, collateral 5 ETH max. Tier-1 init-LTV cap = 50% (= 5000 bps). ETH oracle = $500.
 
-Storage (with derivation):
+Storage (with derivation per §2.4):
 - `amount = $1k`
-- `amountMax = $2.5k` (derived: 5 ETH × $500 × 50% LTV / $1 = $1250, then adjusted per tier; numbers illustrative)
+- `amountMax = $1.25k` (derived: 5 ETH × $500 × 5000 / 10_000 / $1 = $1,250)
 - `interestRateBps = 1` (~0% — near-zero floor)
 - `interestRateBpsMax = 500` (borrower's ceiling / limit)
-- `collateralAmount = ~2 ETH` (derived)
+- `collateralAmount ≈ 0.004 ETH` (derived: ⌈$1k × 1 × 10_000 / ($500 × 5000)⌉ = ⌈4⌉ tokens-worth = ~$4 / ($500/ETH) ≈ 0.008 ETH; rounded conservatively up). Numbers approximate — the exact bps × oracle math matters less than the structural shape.
 - `collateralAmountMax = 5 ETH`
 
-**Lender direct-accepts the borrower offer**:
-- Reads `amount = $1k` → lender extends $1k principal
-- Reads `interestRateBpsMax = 5%` → loan locks at 5% (the borrower's ceiling, the lender's best case)
-- Reads `collateralAmount = ~2 ETH` → ~2 ETH backs the loan, remaining 3 ETH stays in borrower escrow (refunded on dust-close at the borrower offer's terminal)
+**Lender direct-accepts the borrower offer** (Codex #184 round-1 P1
+— Phase 2 explicitly defines direct-accept residual handling
+because dust-close fires only in `matchOffers`, not `_acceptOffer`):
+- Reads `amount = $1k` → lender extends $1k principal.
+- Reads `interestRateBpsMax = 5%` → loan locks at 5% (the borrower's ceiling, the lender's best case).
+- Reads `collateralAmount = derived floor` → that derived collateral backs the loan.
+- **Residual refund**: `_acceptOffer` on a borrower offer with
+  `collateralAmountMax > collateralAmount` refunds the excess
+  (`collateralAmountMax - collateralAmount`) to the borrower's
+  wallet in the same tx. Borrower offer becomes `accepted = true`
+  (single-fill direct-accept terminates the offer). Symmetric with
+  the legacy Phase 1 single-fill fallback that was in
+  `OfferMatchFacet` before #102 lifted it for the matchOffers path.
+- One-click "Accept floor" UX. ✓ Lenders wanting MORE than the
+  borrower's floor must go via `matchOffers` (which can pick within
+  the range).
 
 ---
 
@@ -486,7 +513,7 @@ OfferDetails (§6.4).
 | Rate | reads `offer.interestRateBps` | reads `offer.interestRateBpsMax` (now formally the ceiling / limit — semantic swap per role) |
 | **NEW: Depth at this rate** | — | Cumulative `amount` across all borrower offers at this rate or higher (better-for-lender-or-equal) |
 | Duration | unchanged | unchanged |
-| Collateral | reads `offer.collateralAmount` | **Split into two values**: `"Committed: <collateralAmount>  ·  Available: <collateralAmountMax>"` |
+| Collateral | reads `offer.collateralAmount` | **Split into two values**: `"Committed (floor): <collateralAmount>  ·  Available (unfilled): <collateralAmountMax - collateralAmountFilled>"`. Codex #184 round-1 P2 — the "Available" column must subtract `collateralAmountFilled` so partially-matched borrower offers don't overstate their remaining backing. |
 | Liquidity | badge | unchanged |
 | Action | "Accept" | unchanged surface; role-aware reads |
 
@@ -558,12 +585,13 @@ Files to change:
 
 | File | Change | Estimated LOC |
 |---|---|---|
-| `contracts/src/facets/OfferCreateFacet.sol` | Drop auto-collapse; add invariant reverts; add typed errors | ~60 (delete ~40, add ~100) |
-| `contracts/src/facets/OfferAcceptFacet.sol` | Role-aware reads in `_acceptOffer`: `amountMax` for lender / `amount` for borrower; `interestRateBps` for lender / `interestRateBpsMax` for borrower | ~30 (delete ~5, add ~35) |
+| `contracts/src/facets/OfferCreateFacet.sol` | Drop auto-collapse; add invariant reverts; add typed errors; remove now-dead range-flag kill-switch gates (`rangeAmountEnabled` / `rangeRateEnabled` / `rangeCollateralEnabled` at create) | ~60 (delete ~40, add ~100) |
+| `contracts/src/facets/OfferAcceptFacet.sol` | (a) Role-aware reads in `_acceptOffer`: introduce `effectivePrincipal` local (resolves to `matchOverride.amount` when active, else `offer.amountMax` for lender / `offer.amount` for borrower); replace ERC20-path LIF + transfer + KYC + `OfferAccepted` event reads. (b) `OfferAccepted` event payload `matchAmount` field changes semantic — was `offer.amount`, now `effectivePrincipal`. Indexers/analytics see real loan size for lender direct-accept (not the 10% minPartialFill slice). (c) Codex #184 P1 — direct-accept on a borrower offer (non-match path) where `collateralAmountMax > collateralAmount` MUST refund the excess to the borrower's wallet in the same tx (symmetric with the legacy single-fill fallback that lived in OfferMatchFacet pre-#102). Without this, residual collateral gets stranded when the borrower offer flips `accepted = true`. | ~50 (delete ~5, add ~55) |
+| `contracts/src/facets/LoanFacet.sol` | `initiateLoan` direct-accept branch becomes role-aware: `loan.principal = isLender ? offer.amountMax : offer.amount`; `loan.interestRateBps = isLender ? offer.interestRateBps : offer.interestRateBpsMax`; `loan.collateralAmount = offer.collateralAmount`. matchOffers path unchanged. | ~20 |
 | `contracts/src/libraries/LibOfferMatch.sol` | Delete `_effBorrowerAmountMax` + all call sites; simplify previewMatch | ~80 (delete ~60, add ~20) |
-| `contracts/src/facets/OfferMatchFacet.sol` | Delete the post-match block's derivation branch; simplify | ~50 (delete ~30, add ~20) |
+| `contracts/src/facets/OfferMatchFacet.sol` | Delete the post-match block's derivation branch; simplify; remove now-unused `LibRiskMath` + `OracleFacet` imports | ~50 (delete ~30, add ~20) |
 
-Total contract diff: ~220 LOC net.
+Total contract diff: ~260 LOC net (revised up from 220 to account for the LoanFacet role-aware reads + the borrower-offer direct-accept residual-refund block in OfferAcceptFacet, both surfaced by Codex #184 review).
 
 ### 8.2 Tests
 
@@ -659,13 +687,20 @@ consumes nearly the whole offer at the lender's floor rate).
 ### 9.4 Sepolia / testnet rehearsal scripts
 
 **Risk**: rehearsal scripts (`SepoliaActiveLoan.s.sol`,
-`SepoliaOpenOffers.s.sol`, etc.) may ship `amountMax = 0` or `amount
-= amountMax` from Phase 1. Under Phase 2 they revert with the new
-typed errors.
+`SepoliaOpenOffers.s.sol`, etc.) may ship `amountMax = 0` from
+Phase 1 (relying on the dropped auto-collapse). Under Phase 2 they
+revert with `AmountMaxMustBePositive`.
 
-**Mitigation**: audit the rehearsal scripts in the implementation
-PR; update them to ship canonical role-aware values matching the new
-contract invariants. Small fixed set.
+**Not a risk**: scripts that ship `amount = amountMax` (the
+single-value shape). Under the §2.2 invariant `amountMax >= amount`,
+equality is explicitly allowed (single-value offer); these scripts
+continue to work without changes. Codex #184 round-1 P2 — earlier
+draft incorrectly grouped this with the `= 0` revert case.
+
+**Mitigation**: audit rehearsal scripts in the implementation PR for
+the `amountMax = 0` pattern specifically; update those to ship the
+single-value `amountMax = amount` shape (or the canonical range
+values) so they don't trip the new invariant. Small fixed set.
 
 **Severity**: Low. Caught at testnet rehearsal, before mainnet.
 
