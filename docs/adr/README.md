@@ -49,6 +49,7 @@ That's the point of the record.
 | [ADR-0007](0007-functionalspecs-doc-sourced.md) | FunctionalSpecs are sourced from documents, never transcribed from code | Accepted |
 | [ADR-0008](0008-per-user-escrow-factory.md) | Per-user UUPS escrow via factory, not a commingled vault | Accepted |
 | [ADR-0009](0009-bsl-vs-mit-license.md) | BSL-1.1 on the protocol, MIT on the public reference keeper bot | Accepted |
+| [ADR-0010](0010-canonical-rate-semantics.md) | Canonical limit-order semantics for Offer min/max fields (lender = ceiling, borrower = floor; LTV/HF derived not entered; `loanInitMaxLtvBps` live-at-match) | Accepted |
 
 ## Filing a new ADR
 

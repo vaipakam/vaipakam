@@ -1529,6 +1529,98 @@ the testnet bake.
 
 ---
 
+## 17. Canonical limit-order semantics (Issue #163 / ADR-0010)
+
+Where §1-§16 describe the **contract storage layout** (`amount` /
+`amountMax`, `interestRateBps` / `interestRateBpsMax`,
+`collateralAmount` / `collateralAmountMax`), §17 documents the
+**user-facing semantic** that the frontend translates into those
+storage fields. The full decision record lives in
+[`docs/adr/0010-canonical-rate-semantics.md`](../adr/0010-canonical-rate-semantics.md);
+this section is the design-doc companion that an implementer reading
+RangeOffersDesign reaches first.
+
+### 17.1 The user-side mental model
+
+Lenders and borrowers think in role-asymmetric headlines:
+
+| Side | Headline number | What the contract stores |
+|---|---|---|
+| Lender | *"Lend up to X"* | `amountMax = X` (pre-escrowed); `amount = 1 wei` (placeholder) |
+| Lender | *"Require at least Z collateral"* | `collateralAmount = Z` (single-value per #164 lender invariant) |
+| Lender | *"At min P% APR"* | `interestRateBps = P×100`; `interestRateBpsMax = 10_000` (= `MAX_INTEREST_BPS`) |
+| Borrower | *"Borrow at least Y"* | `amount = Y`; `amountMax = 0` (derived at match) |
+| Borrower | *"Lock up to W collateral"* | `collateralAmountMax = W` (pre-escrowed); `collateralAmount = 0 (or 1 wei)` |
+| Borrower | *"At max Q% APR"* | `interestRateBps = 0`; `interestRateBpsMax = Q×100` |
+
+### 17.2 LTV / HF are derived guidance only
+
+The frontend never asks the user for an LTV or HF target. It computes
+both at every meaningful match point (at `amount`, at `amountMax`,
+at the midpoint of overlap with the most-likely counterparty) and
+renders color-coded risk indicators inline (green ≤ 50 %, yellow ≤ 65 %,
+orange ≤ protocol max, red > protocol max — would revert at
+`MaxLendingAboveCeiling` / `MinCollateralBelowFloor`).
+
+### 17.3 Borrower `amountMax` symmetry — single-value with match-time derivation
+
+Mirrors the lender-side collateral single-value pattern (§16.2):
+borrower's GTC default ships `amountMax = 0`; the match path applies
+the fallback using the SAME effective init-LTV cap that
+`LoanFacet._checkInitialLtvAndHf` consults at admission —
+`cap = min(asset loanInitMaxLtvBps, effectiveTierMaxInitLtvBps(tier))`,
+the existing pattern from `LibOfferMatch.previewMatch`'s synthetic-
+init-gate block:
+
+```
+uint8 effTier = OracleFacet(address(this))
+                    .getEffectiveLiquidityTier(B.collateralAsset);
+uint256 maxLtv  = s.assetRiskParams[B.collateralAsset].loanInitMaxLtvBps;
+uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(effTier));
+uint256 cap     = maxLtv < tierCap ? maxLtv : tierCap;
+
+uint256 effBorrowerAmountMax = B.amountMax == 0
+    ? LibRiskMath.maxLendingForLtvCap(
+          effBorrowerCollMax(B),
+          B.lendingAsset,
+          B.collateralAsset,
+          cap                             // single cap applied INSIDE the helper
+      )
+    : B.amountMax;                         // advanced override
+```
+
+The pseudocode references `LibRiskMath.maxLendingForLtvCap` — **a new
+sibling of the existing `minCollateralForLtvCap`** that #102's
+implementation will add. The existing `LibRiskMath.maxLendingForCollateral`
+uses tier LIQUIDATION LTV (the post-creation safety threshold), NOT
+the init-LTV cap — reusing it would advertise borrower capacity above
+what admission allows. See ADR-0010 §3 for the full rationale.
+
+Same `0 ⇒ derived` collapse applies in `_emitOfferCreatedDetails` so
+the `OfferCreatedDetails` event payload always carries the LOGICAL
+ceiling, never the storage default.
+
+### 17.4 `loanInitMaxLtvBps` stays live-at-match (NOT snapshotted on Offer)
+
+Asymmetric with `liquidationLtvBpsAtInit` (which IS snapshotted on
+`Loan`). Rationale (full version in ADR-0010 §4): `loanInitMaxLtvBps`
+is an **admission ceiling**, not a lifetime risk envelope; the
+AutonomousLtvAndOracleFallback Phase 5 design intent is for offers to
+track responsive peer-derived LTV refinements rather than freeze at
+create-time.
+
+### 17.5 Borrower partial-fill (#102) is the load-bearing dependency
+
+The GTC semantic described above requires borrower offers to be
+multi-fill. Phase 1's single-fill rule destroys the unused range on
+the first match. Issue [#102](https://github.com/vaipakam/vaipakam/issues/102)
+lifts that rule and is **gating for the frontend GTC implementation
+in [#165](https://github.com/vaipakam/vaipakam/issues/165)**. Until
+#102 ships, any frontend implementing §17.1's mapping MUST display a
+"single-match" warning on borrower offers.
+
+---
+
 ## Sources & prior art
 
 - a yield protocol's RFQ matching for yield tokens
