@@ -218,6 +218,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
                 allowsPartialRepay: false,
                 amountMax: 0,
                 interestRateBpsMax: 0,
+                collateralAmountMax: 0,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
@@ -259,6 +260,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
                 allowsPartialRepay: false,
                 amountMax: 0,
                 interestRateBpsMax: 0,
+                collateralAmountMax: 0,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );

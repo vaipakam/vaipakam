@@ -986,6 +986,7 @@ contract AnvilNewPositiveFlows is Script {
             allowsPartialRepay: false,
             amountMax: amtMax,
             interestRateBpsMax: rMax,
+            collateralAmountMax: 0,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
         });
     }
@@ -1023,6 +1024,7 @@ contract AnvilNewPositiveFlows is Script {
             allowsPartialRepay: false,
             amountMax: 0,         // single-point amount
             interestRateBpsMax: 0,// single-point rate
+            collateralAmountMax: 0, // #164 — single-point collateral
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
         });
     }
@@ -1127,6 +1129,7 @@ contract AnvilNewPositiveFlows is Script {
             allowsPartialRepay: false,
             amountMax: 0,
             interestRateBpsMax: 0,
+            collateralAmountMax: 0,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
         });
     }
@@ -1797,6 +1800,7 @@ contract AnvilNewPositiveFlows is Script {
             allowsPartialRepay: false,
             amountMax: 0,
             interestRateBpsMax: 0,
+            collateralAmountMax: 0,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
         });
     }
@@ -1829,6 +1833,7 @@ contract AnvilNewPositiveFlows is Script {
             allowsPartialRepay: false,
             amountMax: 0,
             interestRateBpsMax: 0,
+            collateralAmountMax: 0,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
         });
     }

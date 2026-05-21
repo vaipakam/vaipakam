@@ -1170,7 +1170,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](80);
+        s = new bytes4[](81);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -1310,6 +1310,10 @@ contract DeployDiamond is Script {
         s[77] = ConfigFacet.setTreasuryConvertTargets.selector;
         s[78] = ConfigFacet.setTreasuryConvertThresholds.selector;
         s[79] = ConfigFacet.getTreasuryConvertConfig.selector;
+        // Issue #164 — borrower-side collateral range master flag.
+        // Defaults `false` on a fresh deploy; flipped on by governance
+        // via the setter below. See docs/RangeOffersDesign.md §3.
+        s[80] = ConfigFacet.setRangeCollateralEnabled.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {

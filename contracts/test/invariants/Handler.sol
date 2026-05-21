@@ -111,6 +111,7 @@ contract Handler is Test {
             allowsPartialRepay: true,
             amountMax: 0,
             interestRateBpsMax: 0,
+            collateralAmountMax: 0,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
         });
 
@@ -158,6 +159,7 @@ contract Handler is Test {
             allowsPartialRepay: true,
             amountMax: 0,
             interestRateBpsMax: 0,
+            collateralAmountMax: 0,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
         });
 

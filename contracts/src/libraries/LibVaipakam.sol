@@ -758,6 +758,14 @@ library LibVaipakam {
         bool rangeAmountEnabled;
         bool rangeRateEnabled;
         bool partialFillEnabled;
+        // Phase 1 follow-up (Issue #164) — borrower-side collateral
+        // range. Mirrors the lender-side amount range: when off (the
+        // default), every offer must have `collateralAmountMax ==
+        // collateralAmount` (single-value), so today's behaviour is
+        // unchanged. Flipped on by governance via
+        // `ConfigFacet.setRangeCollateralEnabled` once the contract
+        // halves of #164 have baked on testnet.
+        bool rangeCollateralEnabled;
         // ── VPFI discount tier thresholds (18-dec VPFI; 0 ⇒ default) ──
         uint256 vpfiTier1Min; // 0 ⇒ VPFI_TIER1_MIN (100e18)
         uint256 vpfiTier2Min; // 0 ⇒ VPFI_TIER2_MIN (1_000e18)
@@ -1009,6 +1017,17 @@ library LibVaipakam {
         //    the protocol config; see §15 of the design doc.
         uint256 amountMax;
         uint256 interestRateBpsMax;
+        // ── Issue #164 — borrower-side collateral range (mirrors
+        //    `amountMax`). Lender offers stay single-value: the
+        //    createOffer write-side rejects a lender offer with
+        //    `collateralAmountMax > collateralAmount` (the field is
+        //    auto-collapsed to `collateralAmount` so the storage
+        //    invariant `collateralAmount == collateralAmountMax`
+        //    always holds for lender offers). Borrower offers can
+        //    range — leaving `collateralAmountMax == 0` auto-collapses
+        //    to single-value semantics, preserving backward compat for
+        //    every legacy borrower-side test / script.
+        uint256 collateralAmountMax;
         // ── T-034 — Periodic Interest Payment cadence ─────────────────
         // Lender's chosen settlement cadence. Default `None` (zero in
         // the enum) preserves backward compat with every existing
@@ -1094,6 +1113,29 @@ library LibVaipakam {
         uint256 interestRateBpsMax; // ≥ interestRateBps; 0 ⇒ collapse to interestRateBps.
         // Slot 17 — packed: createdAt(8) + 24 bytes headroom
         uint64 createdAt; // Unix-seconds; stamped at createOffer.
+        // ── Issue #164 — borrower-side collateral range. Append-only
+        //    at the end of the Offer struct so the storage layout
+        //    stays additive (no slot re-ordering). The legacy
+        //    `collateralAmount` above semantically equals the MIN of
+        //    the range on borrower offers (lender offers keep
+        //    `collateralAmount == collateralAmountMax` as a structural
+        //    invariant — see CreateOfferParams.collateralAmountMax for
+        //    the createOffer-time enforcement). A single-value offer
+        //    satisfies `collateralAmountMax == collateralAmount`;
+        //    auto-collapsed when the caller leaves the new field at 0.
+        //    Lender side stays single-value because the lender's
+        //    `collateralAmount` slot already represents their derived
+        //    requirement (at `amountMax`); a max wouldn't add meaning.
+        // Slot 18 — ≥ collateralAmount; 0 ⇒ collapse to collateralAmount at create.
+        uint256 collateralAmountMax;
+        // Slot 19 — cumulative collateral consumed across all matches
+        //          against this offer. Borrower-side partial-fills are
+        //          NOT enabled in Phase 1 (mirrors `amountFilled`), so
+        //          this field stays 0 across all Phase 1 borrower
+        //          matches. Wired in for #102 (borrower partial-fill)
+        //          to start writing — adding the slot now keeps the
+        //          storage layout stable across the #164 → #102 step.
+        uint256 collateralAmountFilled;
     }
 
     /**

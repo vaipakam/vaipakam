@@ -209,6 +209,7 @@ contract Scenario4_IlliquidCollateral is Test {
                 allowsPartialRepay: false,
                 amountMax: 0,
                 interestRateBpsMax: 0,
+                collateralAmountMax: 0,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );

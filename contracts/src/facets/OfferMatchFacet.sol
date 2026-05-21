@@ -215,14 +215,21 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // ── Borrower-side excess-collateral refund (Range Orders
         // Phase 1, symmetric with the lender-side dust-close below).
         //
-        // The match locked `mr.reqCollateral` of collateral against
-        // the loan, but the borrower may have posted MORE at offer-
-        // create time (over-collateralized). Since borrower offers
-        // are single-fill in Phase 1, the excess can never be reused
-        // by another match — leaving it in escrow would trap the
-        // funds. Refund to the borrower's wallet immediately so the
+        // OfferCreateFacet pre-escrows the borrower's collateral
+        // UPPER bound at create-time (`offer.collateralAmountMax`,
+        // post auto-collapse). The match locked `mr.reqCollateral`
+        // — which is `clamp(reqFromLender, [B.collateralAmount,
+        // B.collateralAmountMax])` per #164's clamp-up semantics.
+        // The unused tail `B.collateralAmountMax - mr.reqCollateral`
+        // is refunded to the borrower's wallet immediately so the
         // invariant "escrow only holds collateral committed to an
-        // active offer or live loan" stays clean.
+        // active offer or live loan" stays clean. Since borrower
+        // offers are single-fill in Phase 1, the tail can never be
+        // reused by another match — leaving it in escrow would trap
+        // the funds. On a legacy single-value borrower offer
+        // (auto-collapsed `collateralAmountMax == collateralAmount`)
+        // this code path lands at the same numbers as the pre-#164
+        // implementation, byte-for-byte.
         //
         // ERC-20 collateral only: NFT collateral (ERC-721 / ERC-1155)
         // is whole-or-nothing — the borrower posts exactly the token
@@ -231,21 +238,30 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // never overage to refund.
         {
             LibVaipakam.Offer storage B = s.offers[borrowerOfferId];
-            if (
-                B.collateralAssetType == LibVaipakam.AssetType.ERC20
-                && B.collateralAmount > mr.reqCollateral
-            ) {
-                uint256 excess = B.collateralAmount - mr.reqCollateral;
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        EscrowFactoryFacet.escrowWithdrawERC20.selector,
-                        B.creator,           // pull from borrower's escrow
-                        B.collateralAsset,
-                        B.creator,           // refund to borrower's wallet
-                        excess
-                    ),
-                    EscrowWithdrawFailed.selector
-                );
+            if (B.collateralAssetType == LibVaipakam.AssetType.ERC20) {
+                // Legacy fallback: a borrower offer created before
+                // #164 carries `collateralAmountMax == 0` in storage.
+                // Read-side then collapses to `collateralAmount` so
+                // the pulled / refunded amounts agree with the pre-
+                // #164 deposit. (Fresh-#164 offers always carry
+                // `collateralAmountMax > 0` thanks to the auto-
+                // collapse at createOffer.)
+                uint256 borrowerPulled = B.collateralAmountMax == 0
+                    ? B.collateralAmount
+                    : B.collateralAmountMax;
+                if (borrowerPulled > mr.reqCollateral) {
+                    uint256 excess = borrowerPulled - mr.reqCollateral;
+                    LibFacet.crossFacetCall(
+                        abi.encodeWithSelector(
+                            EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                            B.creator,           // pull from borrower's escrow
+                            B.collateralAsset,
+                            B.creator,           // refund to borrower's wallet
+                            excess
+                        ),
+                        EscrowWithdrawFailed.selector
+                    );
+                }
             }
         }
 

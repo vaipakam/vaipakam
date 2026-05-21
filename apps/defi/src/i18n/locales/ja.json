@@ -217,7 +217,8 @@
       "prepayAssetInvalid": "前払い資産のアドレスが無効です。",
       "riskAndTermsConsentRequired": "オファーを作成する前に、異常市場の清算フォールバック条件に同意する必要があります。",
       "amountMaxBelowMin": "最大数量は最小数量を下回ることはできません。",
-      "rateMaxBelowMin": "最大金利は最小金利を下回ることはできません。"
+      "rateMaxBelowMin": "最大金利は最小金利を下回ることはできません。",
+      "collateralAmountMaxBelowMin": "最大担保額は最小担保額を下回ることはできません。"
     },
     "hintAssetTypeAuto": "貸付資産のコントラクトアドレスから自動検出されます。下にアドレスを貼り付けるか選択して入力してください。",
     "hintCollateralAssetTypeAuto": "担保コントラクトアドレスから自動検出されます。",

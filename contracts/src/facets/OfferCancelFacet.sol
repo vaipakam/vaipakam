@@ -191,13 +191,26 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             // Borrower: unlock what was actually deposited at create.
             if (offer.assetType == LibVaipakam.AssetType.ERC20) {
                 if (offer.collateralAssetType == LibVaipakam.AssetType.ERC20) {
+                    // Issue #164 — `createOffer` pre-escrows the
+                    // UPPER bound (`collateralAmountMax`, post auto-
+                    // collapse). On cancel we must refund whatever
+                    // is actually parked in escrow, otherwise the
+                    // `max - min` tail of a ranged borrower offer is
+                    // trapped after cancellation. Legacy fallback
+                    // (`collateralAmountMax == 0` from a pre-#164
+                    // storage row that never went through the new
+                    // createOffer) reads as `collateralAmount` — the
+                    // same convention the lender-side pro-rate uses.
+                    uint256 borrowerColRefund = offer.collateralAmountMax == 0
+                        ? offer.collateralAmount
+                        : offer.collateralAmountMax;
                     LibFacet.crossFacetCall(
                         abi.encodeWithSelector(
                             EscrowFactoryFacet.escrowWithdrawERC20.selector,
                             msg.sender,
                             offer.collateralAsset,
                             msg.sender,
-                            offer.collateralAmount
+                            borrowerColRefund
                         ),
                         EscrowWithdrawFailed.selector
                     );

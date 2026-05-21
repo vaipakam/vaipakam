@@ -217,7 +217,8 @@
       "prepayAssetInvalid": "Prepayment asset का पता अमान्य है।",
       "riskAndTermsConsentRequired": "Offer बनाने से पहले आपको असामान्य बाज़ार fallback liquidation शर्तों से सहमत होना होगा।",
       "amountMaxBelowMin": "अधिकतम राशि न्यूनतम से कम नहीं हो सकती।",
-      "rateMaxBelowMin": "अधिकतम ब्याज दर न्यूनतम से कम नहीं हो सकती।"
+      "rateMaxBelowMin": "अधिकतम ब्याज दर न्यूनतम से कम नहीं हो सकती।",
+      "collateralAmountMaxBelowMin": "अधिकतम ज़मानत न्यूनतम से कम नहीं हो सकती।"
     },
     "hintAssetTypeAuto": "ऋण संपत्ति के कॉन्ट्रैक्ट पते से स्वतः पहचाना गया। इसे भरने के लिए नीचे पता पेस्ट करें या चुनें।",
     "hintCollateralAssetTypeAuto": "गिरवी कॉन्ट्रैक्ट पते से स्वतः पहचाना गया।",

@@ -196,6 +196,7 @@ contract SepoliaOpenOffers is Script {
             allowsPartialRepay: false,
             amountMax: 0,
             interestRateBpsMax: 0,
+            collateralAmountMax: 0,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
         }));
         vm.stopBroadcast();
@@ -226,6 +227,7 @@ contract SepoliaOpenOffers is Script {
             allowsPartialRepay: false,
             amountMax: 0,
             interestRateBpsMax: 0,
+            collateralAmountMax: 0,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
         }));
         vm.stopBroadcast();

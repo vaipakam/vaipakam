@@ -824,7 +824,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](80);
+        selectors = new bytes4[](81);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -950,6 +950,8 @@ contract HelperTest {
         selectors[77] = ConfigFacet.setTreasuryConvertTargets.selector;
         selectors[78] = ConfigFacet.setTreasuryConvertThresholds.selector;
         selectors[79] = ConfigFacet.getTreasuryConvertConfig.selector;
+        // Issue #164 — borrower-side collateral range master flag.
+        selectors[80] = ConfigFacet.setRangeCollateralEnabled.selector;
         return selectors;
     }
 

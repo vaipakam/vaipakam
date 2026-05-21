@@ -217,7 +217,8 @@
       "prepayAssetInvalid": "Adresse des Vorauszahlungs-Vermögens ist ungültig.",
       "riskAndTermsConsentRequired": "Sie müssen den Bedingungen für die Liquidation bei abnormalen Marktverhältnissen zustimmen, bevor Sie ein Angebot erstellen.",
       "amountMaxBelowMin": "Der Höchstbetrag darf nicht kleiner als der Mindestbetrag sein.",
-      "rateMaxBelowMin": "Der Höchstzinssatz darf nicht kleiner als der Mindestzinssatz sein."
+      "rateMaxBelowMin": "Der Höchstzinssatz darf nicht kleiner als der Mindestzinssatz sein.",
+      "collateralAmountMaxBelowMin": "Die maximale Sicherheit darf nicht kleiner als die minimale sein."
     },
     "hintAssetTypeAuto": "Automatisch aus der Vertragsadresse des zu verleihenden Assets erkannt. Fügen Sie unten eine Adresse ein oder wählen Sie eine aus, um dieses Feld zu füllen.",
     "hintCollateralAssetTypeAuto": "Automatisch aus der Vertragsadresse der Sicherheit erkannt.",

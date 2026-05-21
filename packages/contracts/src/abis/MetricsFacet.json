@@ -1231,6 +1231,16 @@
             "name": "createdAt",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "collateralAmountMax",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralAmountFilled",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       },

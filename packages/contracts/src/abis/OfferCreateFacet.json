@@ -99,6 +99,11 @@
             "internalType": "uint256"
           },
           {
+            "name": "collateralAmountMax",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
             "name": "periodicInterestCadence",
             "type": "uint8",
             "internalType": "enum LibVaipakam.PeriodicInterestCadence"
@@ -220,6 +225,11 @@
             "internalType": "uint256"
           },
           {
+            "name": "collateralAmountMax",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
             "name": "periodicInterestCadence",
             "type": "uint8",
             "internalType": "enum LibVaipakam.PeriodicInterestCadence"
@@ -332,6 +342,11 @@
           },
           {
             "name": "interestRateBpsMax",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralAmountMax",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -515,6 +530,11 @@
           },
           {
             "name": "interestRateBpsMax",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralAmountMax",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -793,6 +813,11 @@
   },
   {
     "type": "error",
+    "name": "InvalidCollateralAmountRange",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidKeeperActions",
     "inputs": []
   },
@@ -854,6 +879,11 @@
   {
     "type": "error",
     "name": "LenderCannotRepayOwnLoan",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LenderCollateralRangeNotAllowed",
     "inputs": []
   },
   {

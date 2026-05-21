@@ -1405,6 +1405,130 @@ on `Storage`; pre-launch reorder is fine.
 
 ---
 
+## 16. Borrower-side collateral range (Issue #164)
+
+Phase 1 (this doc's body above) added ranges on **amount** and
+**interest rate**. Issue #164 closes the third axis — the
+**borrower-side collateral**. Mirrors the lending-amount pattern exactly
+(append-only storage, auto-collapse, master kill-switch) so the new
+mechanic feels structurally familiar to the matching core that already
+processes range pairs.
+
+### 16.1 What it adds
+
+Two append-only fields on the `Offer` struct (slots 18, 19):
+
+| Field | Semantic |
+|---|---|
+| `collateralAmountMax` | Borrower's upper bound on what they'll lock. Single-value offers auto-collapse to `collateralAmount` (every legacy single-value caller behaves identically). |
+| `collateralAmountFilled` | Cumulative collateral consumed across all matches against this offer. Stays 0 across Phase 1 borrower matches (borrower-side partial-fill is gated to #102). |
+
+### 16.2 Why lender side stays single-value
+
+The lender's `collateralAmount` slot is their **derived requirement**
+(at `amountMax`, pro-rated to the matched amount via the §10.4 math).
+It already expresses "the minimum collateral I'll accept" — a max
+wouldn't add operational meaning since lenders want as much
+collateral as they can get (over-collateralisation strengthens HF).
+`createOffer` rejects a lender offer with
+`collateralAmountMax > collateralAmount` with the typed
+`LenderCollateralRangeNotAllowed` error, independent of the kill-
+switch state.
+
+### 16.3 Match math — two regimes (legacy preserved, clamp-up on ranges)
+
+The match-time logic branches on whether the borrower's collateral
+shape is actually ranged (`collateralAmountMax > collateralAmount`).
+Round-1 Codex review surfaced this as a P1 — earlier drafts of the
+clamp-up logic broke the legacy single-value semantic; the corrected
+shape is:
+
+```text
+reqL = L.collateralAmount × matchAmount / L.amountMax      // lender's pro-rated requirement
+borrowerCollMax = B.collateralAmountMax == 0
+                  ? B.collateralAmount        // pre-#164 storage fallback
+                  : B.collateralAmountMax
+
+if borrowerCollMax > B.collateralAmount:
+    // Range mode — clamp UP to borrower's min.
+    ceiling = borrowerCollMax - B.collateralAmountFilled
+    picked  = max(reqL, B.collateralAmount)
+    if picked > ceiling → MatchError.CollateralBelowRequired
+else:
+    // Single-value / legacy mode — pre-#164 semantic exactly.
+    if B.collateralAmount < reqL → MatchError.CollateralBelowRequired
+    picked = reqL                            // lock the requirement
+                                             // OfferMatchFacet refunds the overage
+```
+
+The clamp-up choice for range mode is symmetric with how amount
+overlap works in §4.1 — `lo = max(L.amount, B.amount)`. Both sides'
+minimums constrain the floor TOGETHER. A borrower who committed to AT
+LEAST X gets X locked even when the lender's pro-rated requirement is
+below it (better HF cushion, lender happy). Match fails only when the
+clamped value exceeds the borrower's remaining ceiling.
+
+### 16.4 Backward compat — legacy single-value preserved bit-for-bit
+
+The single-value branch above is what makes "byte-for-byte identical
+to pre-#164" hold. On a legacy single-value borrower offer
+(`collateralAmountMax == 0` at create-time, auto-collapsed to
+`collateralAmountMax == collateralAmount`), `borrowerRanged` is
+`false`, and the match locks `reqL` exactly — same as the pre-#164
+contract. The `OfferMatchFacet` excess-refund hook returns
+`B.collateralAmount - reqL` to the borrower's wallet — same numbers
+as before. And the pre-#164 storage fallback (`collateralAmountMax ==
+0 ⇒ collateralAmount`) means a hypothetical post-deploy upgrade onto
+live storage with pre-#164 offers can't accidentally trap collateral
+or render those offers unmatchable.
+
+### 16.4a Cancel-side refund mirrors the create-side pre-escrow
+
+`OfferCreateFacet._pullCreatorAssetsClassic` pre-escrows the upper
+bound (`effCollateralAmountMax`, post auto-collapse) for borrower
+ERC-20 offers. The matching cancel path
+(`OfferCancelFacet.cancelOffer` borrower-side ERC-20 branch) MUST
+refund `collateralAmountMax`, not `collateralAmount` — otherwise the
+`max - min` tail of a ranged borrower offer would be trapped after
+cancellation. Same `0 ⇒ collateralAmount` storage fallback applies.
+Round-1 Codex review caught this; the corrected shape is now the
+load-bearing invariant: **borrower-side ERC-20 escrow movements
+(deposit / match-consume / match-refund / cancel-refund) all anchor
+on `effCollateralAmountMax`, not `collateralAmount`.**
+
+### 16.5 Pre-escrow widens
+
+`OfferCreateFacet._pullCreatorAssetsClassic` (and the Permit2
+sibling) now pulls `effCollateralAmountMax` (the auto-collapsed upper
+bound) for borrower ERC-20 offers instead of `collateralAmount`. The
+existing OfferMatchFacet excess-refund hook returns the unused tail
+(`collateralAmountMax - picked`) to the borrower's wallet at match-
+time — same pattern the lender-side amount range uses for partial-
+fill leftovers.
+
+### 16.6 Sequencing with #102
+
+[#102](https://github.com/vaipakam/vaipakam/issues/102) lifts the
+Phase 1 borrower-side single-fill rule and lets one borrower offer
+back multiple loans. That work needs `collateralAmountFilled` to be
+load-bearing storage from match #2 onwards. Landing the field
+without writing to it (this PR) keeps #102 a pure behaviour change
+rather than a behaviour + storage migration. Same pattern Phase 1
+used with `amountFilled` on borrower offers.
+
+### 16.7 Kill-switch — `rangeCollateralEnabled`
+
+A fourth flag on `ProtocolConfig`, defaulting `false`. While off,
+`createOffer` enforces `collateralAmountMax ≤ collateralAmount` (post
+auto-collapse: equality only — i.e., single-value), rejecting any
+real range with the typed `FunctionDisabled(4)`. Distinct
+`whichFlag` from the existing 1/2/3 so the frontend validator
+surfaces a precise "collateral range disabled" hint. Flipped on by
+governance via `ConfigFacet.setRangeCollateralEnabled(true)` after
+the testnet bake.
+
+---
+
 ## Sources & prior art
 
 - a yield protocol's RFQ matching for yield tokens

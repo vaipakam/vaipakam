@@ -74,6 +74,7 @@ contract PeriodicInterestSettleTest is SetupTest {
                 allowsPartialRepay: true,
                 amountMax: 0,
                 interestRateBpsMax: 0,
+                collateralAmountMax: 0,
                 periodicInterestCadence: MONTHLY
             })
         );
@@ -155,6 +156,7 @@ contract PeriodicInterestSettleTest is SetupTest {
                 allowsPartialRepay: false,
                 amountMax: 0,
                 interestRateBpsMax: 0,
+                collateralAmountMax: 0,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
@@ -241,6 +243,7 @@ contract PeriodicInterestSettleTest is SetupTest {
                 allowsPartialRepay: false,
                 amountMax: 0,
                 interestRateBpsMax: 0,
+                collateralAmountMax: 0,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );

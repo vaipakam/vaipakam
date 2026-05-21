@@ -217,7 +217,8 @@
       "prepayAssetInvalid": "La dirección del activo de prepago no es válida.",
       "riskAndTermsConsentRequired": "Debes aceptar los términos de liquidación de respaldo en mercados anómalos antes de crear una oferta.",
       "amountMaxBelowMin": "El monto máximo no puede ser menor que el mínimo.",
-      "rateMaxBelowMin": "La tasa de interés máxima no puede ser menor que la mínima."
+      "rateMaxBelowMin": "La tasa de interés máxima no puede ser menor que la mínima.",
+      "collateralAmountMaxBelowMin": "La garantía máxima no puede ser menor que la mínima."
     },
     "hintAssetTypeAuto": "Detectado automáticamente desde la dirección del contrato del activo a prestar. Pega o selecciona una dirección abajo para completar este campo.",
     "hintCollateralAssetTypeAuto": "Detectado automáticamente desde la dirección del contrato del colateral.",
