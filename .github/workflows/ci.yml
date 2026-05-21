@@ -344,33 +344,40 @@ jobs:
   contracts-fast:
     name: contracts-fast (forge + predeploy-check)
     # Fail-fast ordering: gate the expensive forge build on the cheap
-    # workspaces typecheck AND on CodeQL's JS/TS analysis. If either
-    # FAILS (a TypeScript-side bug or a CodeQL-pack-flagged finding),
-    # there's no point burning the cold forge build's ~10 min just to
-    # surface a second red — contracts-fast skips, saving the compute.
-    # workspaces IS in the Protect main required-status-checks rule
-    # (so its red directly blocks merge); CodeQL is informational but
-    # contributors usually want to fix CodeQL findings before merging.
+    # workspaces typecheck. If workspaces FAILS, there's no point
+    # burning the cold forge build's ~10 min just to surface a second
+    # red — contracts-fast skips, saving the compute. workspaces IS
+    # in the Protect main required-status-checks rule, so its red
+    # directly blocks merge; contracts-fast auto-skipping via the
+    # `if:` does NOT bypass that gate.
     #
-    # The `!cancelled()` prefix is the GitHub-Actions idiom that lets
-    # the `if:` evaluate when a `needs:` dep was SKIPPED — e.g. on a
-    # contracts-only PR where neither workspaces nor analyze-jstypescript
-    # are triggered (path-filter false), this still allows the
-    # downstream `contracts-fast` to run. Without `!cancelled()`, a
-    # skipped need would auto-skip this job too.
+    # analyze-jstypescript is listed in `needs:` for the sequencing
+    # — it must finish before contracts-fast starts so they don't
+    # race for runner minutes — but is NOT in the `if:` condition.
+    # Reason: analyze-jstypescript is NOT a required check on Protect
+    # main. If we added `needs.analyze-jstypescript.result != 'failure'`
+    # to the `if:`, then a CodeQL failure would auto-skip contracts-
+    # fast — and branch protection treats "skipped" as SUCCESS for
+    # required checks. The PR would be mergeable with NO forge build
+    # ever run. So CodeQL failures DON'T save forge compute; that's
+    # the safety-vs-compute trade-off (per Codex round-2 review on
+    # PR #160 — P1 finding).
+    #
+    # The `!cancelled()` prefix lets the `if:` evaluate when a
+    # `needs:` dep was SKIPPED — e.g. on a contracts-only PR where
+    # the workspaces path-filter excluded it. Without `!cancelled()`,
+    # a skipped need would auto-skip this job too.
     #
     # Trade-off (consistent with feedback_ci_compute_over_wall_clock):
     # wall-clock to merge-ready grows by ~max(workspaces,
     # analyze-jstypescript) — both run in parallel before contracts-fast
-    # — in exchange for ~10 min of forge compute saved on TypeScript-
-    # side failures. Net for a TypeScript-clean PR is ~3 min added vs
-    # the pre-#157 shape.
+    # — in exchange for ~10 min of forge compute saved on workspaces-
+    # fail PRs.
     needs: [detect-changes, workspaces, analyze-jstypescript]
     if: |
       !cancelled()
       && needs.detect-changes.outputs.contracts == 'true'
       && needs.workspaces.result != 'failure'
-      && needs.analyze-jstypescript.result != 'failure'
     runs-on: ubuntu-latest
     # Timeout bumped from the original 15 → 45 min. Cold-cache cold-clone
     # forge build is dominated by submodule clone (~2-3 min) + viaIR
