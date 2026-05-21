@@ -212,6 +212,26 @@ contract OfferCreateFacet is
     /// on a Lender offer. The lender's `collateralAmount` already
     /// expresses their derived requirement; a max wouldn't add meaning.
     error LenderCollateralRangeNotAllowed();
+    // ── Canonical Limit-Order Phase 2 errors (#183) — strict
+    //    non-zero invariants replacing the dropped auto-collapse.
+    /// `params.amount == 0`. Every offer must have a positive minimum.
+    error AmountMustBePositive();
+    /// `params.amountMax == 0`. Under Phase 2 the canonical mapping
+    /// always carries an explicit max (lender's `lendingAmount`,
+    /// borrower's derived ceiling). The Phase 1 auto-collapse fallback
+    /// is gone — callers shipping 0 here get fail-loud.
+    error AmountMaxMustBePositive();
+    /// `params.interestRateBpsMax == 0`. Symmetric strict requirement
+    /// on the rate ceiling.
+    error InterestRateMaxMustBePositive();
+    /// `params.collateralAmountMax == 0`. Strict requirement on the
+    /// collateral upper bound.
+    error CollateralAmountMaxMustBePositive();
+    /// `params.collateralAmount == 0`. Strict requirement on the
+    /// collateral lower bound — both lender (single-value required
+    /// collateral) and borrower (derived floor commit) need a
+    /// positive value.
+    error CollateralMustBePositive();
     /// Lender offer's `collateralAmount` is below the system-derived
     /// minimum needed to keep HF >= 1.5e18 at `amountMax` (worst case).
     /// Surfaces with `(provided, floor)` so the UI can show the gap.
@@ -987,50 +1007,36 @@ contract OfferCreateFacet is
         offer.tokenId = params.tokenId;
         offer.quantity = params.quantity;
         offer.prepayAsset = params.prepayAsset;
-        // ── Range Orders Phase 1 (docs/RangeOffersDesign.md §2.1, §15)
-        // Auto-collapse: when caller leaves `amountMax == 0`, copy the
-        // legacy single value into `amountMax` so the offer is treated
-        // as single-value (`amountMin == amountMax`). Same for the rate
-        // pair. This preserves backward compat for every existing test
-        // / script that builds CreateOfferParams without the new fields.
-        // Range mode (`amountMax > amount`) is gated on the master flag
-        // — when off, callers must collapse client-side.
-        LibVaipakam.ProtocolConfig storage cfg =
-            LibVaipakam.storageSlot().protocolCfg;
-        uint256 effAmountMax = params.amountMax == 0
-            ? params.amount
-            : params.amountMax;
-        uint256 effRateMax = params.interestRateBpsMax == 0
-            ? params.interestRateBps
-            : params.interestRateBpsMax;
-        // Range invariants: min ≤ max, max within sanity ceiling.
-        if (effAmountMax < params.amount) revert InvalidAmountRange();
-        if (effRateMax < params.interestRateBps) revert InvalidRateRange();
-        if (effRateMax > LibVaipakam.MAX_INTEREST_BPS) {
+        // ── Canonical Limit-Order Phase 2 (#183, see
+        //    docs/DesignsAndPlans/CanonicalLimitOrderPhase2Design.md):
+        //    the Phase 1 auto-collapse (`amountMax == 0 → amount`) is
+        //    dropped. Callers MUST ship explicit non-zero values for
+        //    `amount`, `amountMax`, `interestRateBpsMax`. The canonical
+        //    frontend always does so per the role-aware mapping
+        //    (lender ships `amount = minPartialFillAmount`, `amountMax
+        //    = lendingAmount`; borrower ships `amount = lendingAmount`
+        //    min, `amountMax = derived from collateral × tier-LTV`).
+        //
+        //    The Phase 1 kill-switches that blocked range offers at
+        //    create time (`rangeAmountEnabled`, `rangeRateEnabled`,
+        //    `rangeCollateralEnabled`) are removed — every Phase 2
+        //    offer is canonically a range (lender amount differs from
+        //    amountMax via the minPartialFill rule), so the OFF state
+        //    would block every legitimate offer. The flags remain in
+        //    `ProtocolConfig` as dead-config until a follow-up card
+        //    sweeps them. `partialFillEnabled` keeps its runtime role
+        //    in `OfferMatchFacet.matchOffers` (matching is the gated
+        //    operation, not create).
+        if (params.amount == 0) revert AmountMustBePositive();
+        if (params.amountMax == 0) revert AmountMaxMustBePositive();
+        if (params.amountMax < params.amount) revert InvalidAmountRange();
+        if (params.interestRateBpsMax == 0) revert InterestRateMaxMustBePositive();
+        if (params.interestRateBpsMax < params.interestRateBps) revert InvalidRateRange();
+        if (params.interestRateBpsMax > LibVaipakam.MAX_INTEREST_BPS) {
             revert InterestRateAboveCeiling();
         }
-        // Master kill-switch enforcement: if the flag is off, the only
-        // permitted shape is the collapsed single-value offer.
-        if (!cfg.rangeAmountEnabled && effAmountMax != params.amount) {
-            revert FunctionDisabled(1);
-        }
-        if (!cfg.rangeRateEnabled && effRateMax != params.interestRateBps) {
-            revert FunctionDisabled(2);
-        }
-        // `partialFillEnabled` only matters on lender offers — borrower
-        // offers stay single-fill in Phase 1 regardless. Even on lender
-        // side, a single-value (collapsed) amount range can never
-        // partial-fill (one match exhausts), so the flag check is
-        // restricted to ranged-amount lender offers.
-        if (
-            !cfg.partialFillEnabled
-            && params.offerType == LibVaipakam.OfferType.Lender
-            && effAmountMax != params.amount
-        ) {
-            revert FunctionDisabled(3);
-        }
-        offer.amountMax = effAmountMax;
-        offer.interestRateBpsMax = effRateMax;
+        offer.amountMax = params.amountMax;
+        offer.interestRateBpsMax = params.interestRateBpsMax;
         offer.amountFilled = 0;
         offer.createdAt = uint64(block.timestamp);
     }
@@ -1052,58 +1058,41 @@ contract OfferCreateFacet is
         // `offerKeeperEnabled[offerId][keeper]`. Creator enables specific
         // keepers post-create via `ProfileFacet.setOfferKeeperEnabled`.
 
-        // ── Issue #164 — borrower-side collateral range. Same auto-
-        // collapse convention as the amount/rate ranges above: leaving
-        // `params.collateralAmountMax == 0` collapses the offer to
-        // single-value (`collateralAmount == collateralAmountMax`), so
-        // every legacy caller that never touches the new field keeps
-        // its existing behaviour byte-for-byte. Lender offers MUST
-        // collapse (the lender's `collateralAmount` is a derived
-        // requirement, not a posted asset — a max would have no
-        // operational meaning), enforced after the collapse step so
-        // the error message can name the structural cause directly.
-        uint256 effCollateralAmountMax = params.collateralAmountMax == 0
-            ? params.collateralAmount
-            : params.collateralAmountMax;
-        if (effCollateralAmountMax < params.collateralAmount) {
+        // ── Canonical Limit-Order Phase 2 (#183) — same shape as the
+        //    amount/rate block above. Auto-collapse dropped; explicit
+        //    non-zero `collateralAmountMax` required from every caller.
+        //    Lender offers stay single-value on collateral
+        //    (`collateralAmount == collateralAmountMax`) per #164's
+        //    framing — the lender's collateralAmount IS their derived
+        //    requirement; a separate max wouldn't add meaning. Borrower
+        //    offers are RANGED on collateral (their `collateralAmount`
+        //    is the derived floor matching their `amount` floor; their
+        //    `collateralAmountMax` is the user's posted max commit).
+        //    The `rangeCollateralEnabled` create-time kill-switch is
+        //    removed (every Phase 2 borrower offer would be blocked
+        //    under OFF since collateral is canonically ranged).
+        if (params.collateralAmount == 0) revert CollateralMustBePositive();
+        if (params.collateralAmountMax == 0) revert CollateralAmountMaxMustBePositive();
+        if (params.collateralAmountMax < params.collateralAmount) {
             revert InvalidCollateralAmountRange();
         }
         if (
             params.offerType == LibVaipakam.OfferType.Lender
-            && effCollateralAmountMax != params.collateralAmount
+            && params.collateralAmountMax != params.collateralAmount
         ) {
             revert LenderCollateralRangeNotAllowed();
         }
-        // Master kill-switch — while `rangeCollateralEnabled` is off
-        // (default), the only permitted shape is the collapsed single-
-        // value collateral. Borrower offers with a real range
-        // (`max > min`) get rejected with whichFlag=4 so the frontend
-        // validator can surface a precise "feature disabled" hint
-        // distinct from the amount/rate flags (whichFlag=1/2/3).
-        LibVaipakam.ProtocolConfig storage cfgColl =
-            LibVaipakam.storageSlot().protocolCfg;
-        if (
-            !cfgColl.rangeCollateralEnabled
-            && effCollateralAmountMax != params.collateralAmount
-        ) {
-            revert FunctionDisabled(4);
-        }
-        // Issue #169 follow-up — single-value optimisation. Only SSTORE
-        // when the offer is actually ranged. Single-value (legacy)
-        // offers leave `offer.collateralAmountMax` at its default `0`;
-        // every read site (previewMatch, the OfferMatchFacet excess-
-        // refund hook, OfferCancelFacet.cancelOffer's borrower-side
-        // refund, the borrower-side MaxLendingAboveCeiling check
-        // below) already collapses `collateralAmountMax == 0 ⇒
-        // collateralAmount` via the legacy-fallback that Codex round-1
-        // surfaced. So skipping the SSTORE here is semantically
-        // identical to writing `collateralAmount`, and it saves ~22.1 K
-        // gas on every legacy single-value createOffer — recovering
-        // the +5.4-8.3% gas regression PR #167's gas-snapshot job
-        // flagged on the five createOffer-adjacent tests.
-        if (effCollateralAmountMax != params.collateralAmount) {
-            offer.collateralAmountMax = effCollateralAmountMax;
-        }
+        // Canonical Limit-Order Phase 2 (#183) — the Phase 1 #169
+        // SSTORE-skip optimisation is retired. Under the strict
+        // invariant `collateralAmountMax >= collateralAmount > 0`,
+        // storage always holds an explicit non-zero value (the
+        // canonical frontend ships the user's max collateral commit;
+        // lender single-value offers ship it equal to
+        // `collateralAmount`). The read-side `collateralAmountMax == 0
+        //  ⇒ collateralAmount` fallbacks elsewhere in this facet are
+        // dead code under the new invariant; they stay as defensive
+        // no-ops and will get swept in a follow-up.
+        offer.collateralAmountMax = params.collateralAmountMax;
         // `collateralAmountFilled` defaults to 0 from struct
         // initialization; it stays 0 across Phase 1 borrower matches
         // (single-fill rule). #102 lifts the single-fill rule and

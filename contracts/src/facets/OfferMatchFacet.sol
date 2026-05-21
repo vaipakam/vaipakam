@@ -4,13 +4,11 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
-import {LibRiskMath} from "../libraries/LibRiskMath.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
-import {OracleFacet} from "./OracleFacet.sol";
 import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
 
 /**
@@ -335,26 +333,15 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         if (s.protocolCfg.partialFillEnabled && !Bm.accepted) {
             Bm.amountFilled += mr.matchAmount;
             Bm.collateralAmountFilled += mr.reqCollateral;
-            // Resolve the borrower's effective amountMax via the same
-            // ADR-0010 §3 fallback `previewMatch` used to gate this
-            // match (`0 ⇒ derived from collateralAmountMax × init-LTV cap`).
+            // #183 (Canonical Limit-Order Phase 2): direct storage read
+            // for the borrower's effective ceiling. The GTC derivation
+            // (`amountMax == 0 → derive from collateralAmountMax ×
+            // init-LTV cap`) is deleted — under the new invariant
+            // `amountMax > 0`, storage never holds the zero sentinel.
+            // Frontend computes the value at create-time and ships
+            // explicit non-zero; see
+            // `docs/DesignsAndPlans/CanonicalLimitOrderPhase2Design.md` §5.
             uint256 effBorrowerAmountMax = Bm.amountMax;
-            if (effBorrowerAmountMax == 0) {
-                uint8 effTier = OracleFacet(address(this))
-                                    .getEffectiveLiquidityTier(Bm.collateralAsset);
-                uint256 maxLtv  = s.assetRiskParams[Bm.collateralAsset].loanInitMaxLtvBps;
-                uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(effTier));
-                uint256 cap     = maxLtv < tierCap ? maxLtv : tierCap;
-                uint256 borrowerCollMax = Bm.collateralAmountMax == 0
-                    ? Bm.collateralAmount
-                    : Bm.collateralAmountMax;
-                effBorrowerAmountMax = LibRiskMath.maxLendingForLtvCap(
-                    borrowerCollMax,
-                    Bm.lendingAsset,
-                    Bm.collateralAsset,
-                    cap
-                );
-            }
             uint256 borrowerRemaining = effBorrowerAmountMax - Bm.amountFilled;
             if (borrowerRemaining < Bm.amount) {
                 // Dust-close: refund residual collateral and flip accepted.

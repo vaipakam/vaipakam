@@ -459,8 +459,27 @@ contract OfferAcceptFacet is
             revert RiskAndTermsConsentRequired();
         }
 
+        // #183 (Canonical Limit-Order Phase 2) — effective principal
+        // for the loan being initiated. Three sources in precedence:
+        //   1. matchOffers in flight → matcher-computed midpoint
+        //      stamped in `s.matchOverride.amount`.
+        //   2. Direct-accept on a Lender offer → lender's headline
+        //      max (`offer.amountMax` — what they're providing).
+        //   3. Direct-accept on a Borrower offer → borrower's headline
+        //      floor (`offer.amount` — their min need).
+        // Used by KYC (must gate on real value at risk), the LIF math,
+        // the principal transfer, and the OfferAccepted event payload.
+        // Single source of truth prevents the field-semantic drift
+        // PR #175's Codex P1 finding warned about. Computed BEFORE the
+        // KYC check because KYC value-numeraire depends on it.
+        uint256 effectivePrincipal = s.matchOverride.active
+            ? s.matchOverride.amount
+            : (offer.offerType == LibVaipakam.OfferType.Lender
+                ? offer.amountMax
+                : offer.amount);
+
         // Tiered KYC check based on transaction value (per README Section 16)
-        uint256 valueNumeraire = _calculateTransactionValueNumeraire(offer);
+        uint256 valueNumeraire = _calculateTransactionValueNumeraire(offer, effectivePrincipal);
         if (
             !ProfileFacet(address(this)).meetsKYCRequirement(offer.creator, valueNumeraire) ||
             !ProfileFacet(address(this)).meetsKYCRequirement(acceptor, valueNumeraire)
@@ -484,6 +503,9 @@ contract OfferAcceptFacet is
             lenderEscrow = LibUserEscrow.getOrCreate(lender);
             borrowerEscrow = LibUserEscrow.getOrCreate(borrower);
         }
+        // `effectivePrincipal` was computed earlier (before KYC) so the
+        // value is available for KYC, LIF math, principal transfer, and
+        // the OfferAccepted event payload below. See #183.
         uint256 vpfiDiscountDeducted;
         if (offer.assetType == LibVaipakam.AssetType.ERC20) {
             // Borrower-offer ERC-20 path: lender is the acceptor and has
@@ -561,17 +583,17 @@ contract OfferAcceptFacet is
                 lendingAssetLiquidity == LibVaipakam.LiquidityStatus.Liquid
             ) {
                 (discountApplied, vpfiDiscountDeducted) = LibVPFIDiscount
-                    .tryApplyBorrowerLif(offer.lendingAsset, offer.amount, borrower);
+                    .tryApplyBorrowerLif(offer.lendingAsset, effectivePrincipal, borrower);
             }
 
             uint256 netToBorrower;
             if (discountApplied) {
-                netToBorrower = offer.amount;
+                netToBorrower = effectivePrincipal;
             } else {
-                uint256 initiationFee = (offer.amount *
+                uint256 initiationFee = (effectivePrincipal *
                     LibVaipakam.cfgLoanInitiationFeeBps()) /
                     LibVaipakam.BASIS_POINTS;
-                netToBorrower = offer.amount - initiationFee;
+                netToBorrower = effectivePrincipal - initiationFee;
 
                 if (initiationFee > 0) {
                     // Range Orders Phase 1 — 1% LIF matcher kickback.
@@ -868,13 +890,17 @@ contract OfferAcceptFacet is
         // counter is reserved for the partial-fill range-orders code path
         // (gated behind `partialFillEnabled`); it stays 0 in legacy single
         // accepts. The event reports the EFFECTIVE post-accept fill amount,
-        // which equals the full offer amount once accepted.
-        uint256 effFilled = offer.accepted ? offer.amount : offer.amountFilled;
+        // which equals the loan principal once accepted (post-#183 the
+        // loan principal IS the role-aware effective principal computed
+        // at the top of this function — `amountMax` for lender direct-
+        // accept, `amount` for borrower direct-accept, `matchOverride.amount`
+        // for the matched path).
+        uint256 effFilled = offer.accepted ? effectivePrincipal : offer.amountFilled;
         emit OfferAccepted(
             offerId,
             msg.sender,
             loanId,
-            offer.amount,
+            effectivePrincipal,
             effFilled,
             offer.accepted
         );
@@ -889,8 +915,16 @@ contract OfferAcceptFacet is
     ///      `OracleFacet.getAssetPrice` which returns numeraire-quoted truth
     ///      (USD by post-deploy default; whatever governance has rotated to
     ///      otherwise) — see Numeraire generalization (B1) release notes.
+    ///
+    /// @dev #183 (Canonical Limit-Order Phase 2) — `lendingAmount` is
+    ///      the actual loan principal (role-aware for direct-accept,
+    ///      matcher-midpoint under matchOffers), NOT the raw
+    ///      `offer.amount` (which under Phase 2 is the lender's
+    ///      `minPartialFillAmount` for lender offers, NOT the lent
+    ///      amount). KYC must gate on real value at risk.
     function _calculateTransactionValueNumeraire(
-        LibVaipakam.Offer storage offer
+        LibVaipakam.Offer storage offer,
+        uint256 lendingAmount
     ) internal view returns (uint256 valueNumeraire) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
@@ -901,7 +935,7 @@ contract OfferAcceptFacet is
             (uint256 price, uint8 feedDecimals) = OracleFacet(address(this))
                 .getAssetPrice(offer.lendingAsset);
             uint8 tokenDecimals = IERC20Metadata(offer.lendingAsset).decimals();
-            valueNumeraire += (offer.amount * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
+            valueNumeraire += (lendingAmount * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
         } else if (offer.assetType != LibVaipakam.AssetType.ERC20) {
             // For NFT rentals: Rental value = amount (fee) * durationDays, but since illiquid, ≡ 0
             valueNumeraire += 0;

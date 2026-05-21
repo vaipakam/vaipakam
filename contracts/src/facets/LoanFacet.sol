@@ -667,8 +667,17 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             loan.collateralAmount = mo.collateralAmount;
             loan.matcher = mo.matcher;
         } else {
-            loan.interestRateBps = offer.interestRateBps;
-            loan.principal = offer.amount;
+            // #183 (Canonical Limit-Order Phase 2) — role-aware reads
+            // for direct-accept. Lender offers post their headline in
+            // `amountMax` (max provide) and `interestRateBps` (their
+            // floor / DEX limit); borrower offers post in `amount`
+            // (min need) and `interestRateBpsMax` (their ceiling /
+            // DEX limit). Direct-accept locks the loan at those values.
+            // See docs/DesignsAndPlans/CanonicalLimitOrderPhase2Design.md
+            // §3 for the full convention.
+            bool isLender = offer.offerType == LibVaipakam.OfferType.Lender;
+            loan.principal      = isLender ? offer.amountMax        : offer.amount;
+            loan.interestRateBps = isLender ? offer.interestRateBps  : offer.interestRateBpsMax;
             loan.collateralAmount = offer.collateralAmount;
             // matcher stamped by the legacy `_acceptOffer` post-init
             // hook (already in PR3-A).

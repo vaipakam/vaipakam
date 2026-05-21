@@ -146,56 +146,15 @@ library LibOfferMatch {
         unchecked { return (a + b) / 2; }
     }
 
-    /// @notice Resolve the effective borrower `amountMax` for the GTC
-    ///         default (storage `0`) by deriving from collateral max ×
-    ///         effective init-LTV cap. Per ADR-0010 §3 / RangeOffersDesign
-    ///         §17.3.
-    /// @dev    Reads the SAME effective init-LTV cap that
-    ///         `LoanFacet._checkInitialLtvAndHf` consults at admission —
-    ///         `min(asset loanInitMaxLtvBps, effectiveTierMaxInitLtvBps(tier))`
-    ///         — so the preview never advertises borrower capacity above
-    ///         what admission allows. Reusing the existing
-    ///         `LibRiskMath.maxLendingForCollateral` would use the tier
-    ///         LIQUIDATION LTV (post-creation safety threshold) instead
-    ///         of the init-LTV cap; the new sibling
-    ///         `LibRiskMath.maxLendingForLtvCap` takes the cap
-    ///         explicitly so the GTC derivation uses the right one.
-    ///
-    ///         Falls back gracefully:
-    ///         - Storage default `0` + no derivable cap (`maxLendingForLtvCap`
-    ///           returns 0 on missing oracle / no-borrow tier) ⇒ the offer
-    ///           is effectively unmatchable until the inputs resolve.
-    ///         - Storage value `> 0` (advanced-mode explicit override) ⇒
-    ///           return the stored value verbatim, honoring the user's
-    ///           tighter ceiling.
-    function _effBorrowerAmountMax(
-        LibVaipakam.Storage storage s,
-        LibVaipakam.Offer storage B
-    ) private view returns (uint256) {
-        if (B.amountMax != 0) {
-            return B.amountMax;       // advanced override
-        }
-        // GTC default — derive at match-time using the same cap
-        // admission enforces. Same pattern as the synthetic-init-gate
-        // block below in this function for lender-side reqCollateral.
-        uint8 effTier = OracleFacet(address(this))
-                            .getEffectiveLiquidityTier(B.collateralAsset);
-        uint256 maxLtv  = s.assetRiskParams[B.collateralAsset].loanInitMaxLtvBps;
-        uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(effTier));
-        uint256 cap     = maxLtv < tierCap ? maxLtv : tierCap;
-        // Effective borrower collateral max (apply the symmetric
-        // `collateralAmountMax == 0 ⇒ collateralAmount` fallback that
-        // every other reader uses).
-        uint256 borrowerCollMax = B.collateralAmountMax == 0
-            ? B.collateralAmount
-            : B.collateralAmountMax;
-        return LibRiskMath.maxLendingForLtvCap(
-            borrowerCollMax,
-            B.lendingAsset,
-            B.collateralAsset,
-            cap
-        );
-    }
+    // Note: `_effBorrowerAmountMax` was deleted in #183 (Canonical
+    // Limit-Order Phase 2). Under the new invariant `amountMax > 0`
+    // enforced at create time, storage never holds the legacy GTC
+    // sentinel `0`, so the derivation that resolved that case is dead
+    // code. Callers read `B.amountMax` directly. See
+    // `docs/DesignsAndPlans/CanonicalLimitOrderPhase2Design.md` §5 for
+    // the full rationale; the frontend now derives the borrower's max
+    // client-side at offer-create time (oracle × tier-LTV) and ships
+    // the explicit non-zero value to `OfferCreateFacet`.
 
     /// @notice Validate a candidate match between two offers and
     ///         compute the concrete (amount, rateBps, reqCollateral)
@@ -275,26 +234,19 @@ library LibOfferMatch {
 
         // Lender's remaining capacity = amountMax - amountFilled.
         uint256 lenderRemaining = L.amountMax - L.amountFilled;
-        // Borrower's effective amountMax — apply the ADR-0010 §3 fallback
-        // when storage default `0` (GTC default; the SSTORE was skipped
-        // for the same reason #169 skipped collateralAmountMax). Uses the
-        // SAME init-LTV cap that `_checkInitialLtvAndHf` consults at
-        // admission so we don't advertise borrower capacity above what
-        // admission will allow.
-        uint256 effBorrowerAmountMax = _effBorrowerAmountMax(s, B);
-        // Borrower's remaining capacity = effBorrowerAmountMax - amountFilled.
-        // Pre-#102, `B.amountFilled` was always 0 (single-fill rule); post-
-        // #102, it accumulates per match symmetric to the lender side.
+        // Borrower's effective amountMax — direct storage read post-#183.
+        // The GTC derivation `_effBorrowerAmountMax` is deleted; storage
+        // always holds an explicit non-zero ceiling (frontend computes
+        // `collateralAmountMax × tier-LTV-cap` and ships the value at
+        // create-time). See CanonicalLimitOrderPhase2Design §5.
         //
-        // Codex round-1 P1 — when `B.amountMax == 0` (GTC default) the
-        // effective ceiling is RE-DERIVED on every preview from current
-        // oracle prices + the autonomous-tier-LTV cache; meanwhile
-        // `B.amountFilled` is HISTORICAL (cumulative from prior matches
-        // at older prices). A market move that drops the derived
-        // ceiling below filled would underflow `effBorrowerAmountMax -
-        // B.amountFilled` (Solidity 0.8.x checked arithmetic = panic
-        // revert), bricking `previewMatch` instead of returning a clean
-        // structured `AmountNoOverlap`. Clamp before the subtract.
+        // The underflow guard below stays load-bearing: `B.amountFilled`
+        // accumulates per match, and a third-party caller (script, fork)
+        // could in theory create an offer with `amountMax < amountFilled`
+        // after an upgrade pause (no path exists today, but the guard
+        // costs nothing and forces a clean `AmountNoOverlap` instead of
+        // a panic revert).
+        uint256 effBorrowerAmountMax = B.amountMax;
         if (effBorrowerAmountMax <= B.amountFilled) {
             r.errorCode = MatchError.AmountNoOverlap;
             return r;
