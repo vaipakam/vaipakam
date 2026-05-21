@@ -193,6 +193,83 @@ library LibRiskMath {
         ceiling = (principalUSD * principalScale) / pricePrincipal;
     }
 
+    /// @notice Largest lending amount (principal-asset wei) the borrower
+    ///         can accept on the offer such that the LTV at the posted
+    ///         collateral stays AT OR BELOW the provided `capBps`. Sibling
+    ///         of `minCollateralForLtvCap` (same caller, opposite direction
+    ///         of the LTV constraint); ADR-0010 §3 added this helper so
+    ///         the canonical-limit-order GTC default can derive the
+    ///         borrower's effective `amountMax` at match-time using the
+    ///         SAME init-LTV cap admission consults at
+    ///         `LoanFacet._checkInitialLtvAndHf`.
+    /// @dev    Distinct from `maxLendingForCollateral` (which uses tier
+    ///         LIQUIDATION LTV — the post-creation safety threshold ~80% —
+    ///         and solves for HF >= 1.5). This helper takes the INIT-LTV
+    ///         cap explicitly (`min(asset loanInitMaxLtvBps,
+    ///         effectiveTierMaxInitLtvBps(tier))` per ADR-0010 §3) so
+    ///         callers can apply the cap that admission actually enforces
+    ///         rather than the looser liquidation threshold. Reusing
+    ///         `maxLendingForCollateral` for the GTC derivation would
+    ///         advertise borrower capacity ABOVE what admission allows —
+    ///         exactly the failure mode Codex round-1 on PR #171 caught.
+    ///
+    ///         Returns:
+    ///         - `0` if `collateralAmount == 0`
+    ///         - `0` if `capBps == 0` — collateral is tagged no-borrow
+    ///           (the dual of `minCollateralForLtvCap` returning
+    ///           `type(uint256).max` for the same condition)
+    ///         - `0` if oracle price is missing on either leg — fall
+    ///           through to the runtime gate. Borrower-friendly: an
+    ///           offer derived with `amountMax = 0` because of a missing
+    ///           feed simply won't match until the feed comes back,
+    ///           rather than advertising a stale ceiling.
+    ///         - otherwise: `floor((collateralUSD × capBps × principalScale)
+    ///                            / (BASIS_POINTS × pricePrincipal))`.
+    ///           Truncating is borrower-friendly: the returned ceiling
+    ///           is the largest amount that can definitely satisfy
+    ///           `LTV ≤ capBps`; any larger amount might fail the
+    ///           runtime gate.
+    /// @param collateralAmount The borrower's posted collateral, native units.
+    /// @param principalAsset   ERC-20 the borrower wants to receive.
+    /// @param collateralAsset  ERC-20 the borrower is posting.
+    /// @param capBps           Effective init-LTV cap (basis points). Caller
+    ///                         is expected to pass `min(asset
+    ///                         loanInitMaxLtvBps,
+    ///                         effectiveTierMaxInitLtvBps(tier))` to match
+    ///                         `_checkInitialLtvAndHf`.
+    /// @return ceiling         Max lending wei the borrower may accept at
+    ///                         the given cap.
+    function maxLendingForLtvCap(
+        uint256 collateralAmount,
+        address principalAsset,
+        address collateralAsset,
+        uint256 capBps
+    ) internal view returns (uint256 ceiling) {
+        if (collateralAmount == 0) return 0;
+        // Symmetric with `minCollateralForLtvCap`'s `capBps == 0 ⇒
+        // type(uint256).max` branch (no-borrow collateral). On the
+        // max-lending side, no-borrow means the borrower can accept
+        // at most 0 — i.e., no match is feasible. Returning 0 keeps
+        // the downstream `previewMatch` overlap check (`hi >= lo`)
+        // honest: `lo = max(L.amount, B.amount) > 0`, so an offer
+        // against no-borrow collateral never matches via the GTC
+        // derivation path.
+        if (capBps == 0) return 0;
+
+        (uint256 collateralUSD, uint256 pricePrincipal, uint256 principalScale) =
+            _gatherUsd(collateralAmount, collateralAsset, principalAsset);
+        if (collateralUSD == 0 || pricePrincipal == 0) return 0;
+
+        // Solve for principalUSD at LTV == capBps:
+        //   principalUSD == collateralUSD × capBps / BASIS_POINTS
+        uint256 principalUSD =
+            (collateralUSD * capBps) / LibVaipakam.BASIS_POINTS;
+
+        // Convert back to principal-asset wei. Truncating division is
+        // borrower-friendly per the docstring.
+        ceiling = (principalUSD * principalScale) / pricePrincipal;
+    }
+
     /// @dev Internal: returns (subjectUSD_raw, priceOther, scaleOther)
     ///      for the math above. `subjectUSD_raw` is `subjectAmount ×
     ///      subjectPrice / subjectScale`, where `subjectScale =

@@ -906,7 +906,36 @@ contract OfferCreateFacet is
         f.collateralAmount = offer.collateralAmount;
         f.interestRateBps = offer.interestRateBps;
         f.durationDays = offer.durationDays;
-        f.amountMax = offer.amountMax;
+        // Issue #102 / ADR-0010 §3 — indexers see the LOGICAL borrower
+        // amount ceiling, never the storage default. The GTC default
+        // ships `amountMax = 0` on borrower offers and derives the
+        // effective ceiling at match-time from `collateralAmountMax ×
+        // effective init-LTV cap`. Apply the same collapse here so the
+        // event payload mirrors what `previewMatch` sees, sparing
+        // indexers from having to re-derive (and from observing the raw
+        // storage 0). Lender offers always have `amountMax > 0` (pre-
+        // escrow requirement) so the conditional is a no-op for them.
+        if (offer.amountMax == 0
+            && offer.offerType == LibVaipakam.OfferType.Borrower) {
+            uint8 effTier = OracleFacet(address(this))
+                                .getEffectiveLiquidityTier(offer.collateralAsset);
+            uint256 maxLtv  = LibVaipakam.storageSlot()
+                                .assetRiskParams[offer.collateralAsset]
+                                .loanInitMaxLtvBps;
+            uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(effTier));
+            uint256 cap     = maxLtv < tierCap ? maxLtv : tierCap;
+            uint256 borrowerCollMax = offer.collateralAmountMax == 0
+                ? offer.collateralAmount
+                : offer.collateralAmountMax;
+            f.amountMax = LibRiskMath.maxLendingForLtvCap(
+                borrowerCollMax,
+                offer.lendingAsset,
+                offer.collateralAsset,
+                cap
+            );
+        } else {
+            f.amountMax = offer.amountMax;
+        }
         f.interestRateBpsMax = offer.interestRateBpsMax;
         // Issue #169 follow-up — indexers see the LOGICAL upper bound,
         // never the storage default. The single-value-SSTORE-skip

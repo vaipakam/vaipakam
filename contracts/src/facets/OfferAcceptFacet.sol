@@ -772,8 +772,25 @@ contract OfferAcceptFacet is
             ? s.matchOverride.matcher
             : msg.sender;
 
-        // Update offer
-        offer.accepted = true;
+        // Update offer.
+        //
+        // Issue #102 — defer the `offer.accepted = true` flip when this
+        // is a matchOffers-driven accept against a BORROWER offer and
+        // `partialFillEnabled` is on. In that mode, `OfferMatchFacet.matchOffers`
+        // computes the borrower's remaining capacity post-match and flips
+        // `accepted = true` only on dust-close — symmetric with how the
+        // lender side already behaves on `matchOffers`. The legacy
+        // single-match `acceptOffer` path (matchOverride NOT active) still
+        // flips unconditionally; same for lender offers under any flag
+        // state; same for borrower offers when partial-fill is off
+        // (Phase 1 single-fill rule preserved as a fallback).
+        bool deferAcceptFlip =
+            s.matchOverride.active
+            && offer.offerType == LibVaipakam.OfferType.Borrower
+            && s.protocolCfg.partialFillEnabled;
+        if (!deferAcceptFlip) {
+            offer.accepted = true;
+        }
         LibMetricsHooks.onOfferAccepted(offerId);
 
         // Phase 5: record the Diamond-held VPFI against the loan once

@@ -4,10 +4,12 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
+import {LibRiskMath} from "../libraries/LibRiskMath.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
+import {OracleFacet} from "./OracleFacet.sol";
 import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
 
 /**
@@ -236,16 +238,24 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // ids and quantity the offer references, so reqCollateral
         // always equals borrowerOffer.collateralAmount and there's
         // never overage to refund.
-        {
+        // Issue #102 — borrower-side per-match refund is now CONDITIONAL
+        // on partial-fill mode. Under Phase 1 single-fill (the fallback
+        // when `partialFillEnabled` is off), the entire excess
+        // `collateralAmountMax - mr.reqCollateral` is refunded on the
+        // first (and only) match — that's the existing #164 behaviour.
+        // Under partial-fill (#102), the borrower's pre-escrowed
+        // collateral STAYS in custody across matches; only the residual
+        // is refunded on dust-close at the bottom of this function.
+        // Distinguish via the same flag `OfferAcceptFacet._acceptOffer`
+        // uses for the symmetric `accepted = true` deferral.
+        if (!s.protocolCfg.partialFillEnabled) {
             LibVaipakam.Offer storage B = s.offers[borrowerOfferId];
             if (B.collateralAssetType == LibVaipakam.AssetType.ERC20) {
                 // Legacy fallback: a borrower offer created before
                 // #164 carries `collateralAmountMax == 0` in storage.
                 // Read-side then collapses to `collateralAmount` so
                 // the pulled / refunded amounts agree with the pre-
-                // #164 deposit. (Fresh-#164 offers always carry
-                // `collateralAmountMax > 0` thanks to the auto-
-                // collapse at createOffer.)
+                // #164 deposit.
                 uint256 borrowerPulled = B.collateralAmountMax == 0
                     ? B.collateralAmount
                     : B.collateralAmountMax;
@@ -265,9 +275,11 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             }
         }
 
-        // ── Lender-side post-match accounting. The borrower offer is
-        // already marked `accepted = true` by `_acceptOffer`. The
-        // lender offer survives unless this match exhausted it.
+        // ── Lender-side post-match accounting. Under Phase 1 single-
+        // fill, the borrower offer was already marked `accepted = true`
+        // by `_acceptOffer`; under #102 partial-fill, the borrower-side
+        // accounting block BELOW handles the dust-close + accept-flip
+        // for borrower offers (symmetric to this lender-side block).
         LibVaipakam.Offer storage L = s.offers[lenderOfferId];
         L.amountFilled += mr.matchAmount;
         uint256 lenderRemaining = L.amountMax - L.amountFilled;
@@ -306,12 +318,81 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             );
         }
 
-        // §3.4 — borrower-side post-match snapshot. Phase 1 borrower
-        // offers are single-fill, so `amountFilled` storage stays 0 even
-        // when `accepted == true`; the event reports the EFFECTIVE post-
-        // match fill (= the offer's amount once accepted).
+        // ── Borrower-side post-match accounting (Issue #102; symmetric
+        // with the lender block above). Only fires when
+        // `partialFillEnabled` is ON — otherwise the inner `_acceptOffer`
+        // already flipped `accepted = true` on the borrower offer (Phase
+        // 1 single-fill fallback). When ON, this block:
+        //   - Increments `B.amountFilled` + `B.collateralAmountFilled`
+        //     by the matched amounts.
+        //   - Auto-closes on dust: if the leftover can't satisfy the
+        //     borrower's per-match minimum (`B.amount`), refund the
+        //     residual collateral to the borrower's wallet and flip
+        //     `accepted = true`. Mirrors the lender-side dust-close
+        //     condition exactly.
         LibVaipakam.Offer storage Bm = s.offers[borrowerOfferId];
-        uint256 borrowerEffFilled = Bm.accepted ? Bm.amount : Bm.amountFilled;
+        if (s.protocolCfg.partialFillEnabled && !Bm.accepted) {
+            Bm.amountFilled += mr.matchAmount;
+            Bm.collateralAmountFilled += mr.reqCollateral;
+            // Resolve the borrower's effective amountMax via the same
+            // ADR-0010 §3 fallback `previewMatch` used to gate this
+            // match (`0 ⇒ derived from collateralAmountMax × init-LTV cap`).
+            uint256 effBorrowerAmountMax = Bm.amountMax;
+            if (effBorrowerAmountMax == 0) {
+                uint8 effTier = OracleFacet(address(this))
+                                    .getEffectiveLiquidityTier(Bm.collateralAsset);
+                uint256 maxLtv  = s.assetRiskParams[Bm.collateralAsset].loanInitMaxLtvBps;
+                uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(effTier));
+                uint256 cap     = maxLtv < tierCap ? maxLtv : tierCap;
+                uint256 borrowerCollMax = Bm.collateralAmountMax == 0
+                    ? Bm.collateralAmount
+                    : Bm.collateralAmountMax;
+                effBorrowerAmountMax = LibRiskMath.maxLendingForLtvCap(
+                    borrowerCollMax,
+                    Bm.lendingAsset,
+                    Bm.collateralAsset,
+                    cap
+                );
+            }
+            uint256 borrowerRemaining = effBorrowerAmountMax - Bm.amountFilled;
+            if (borrowerRemaining < Bm.amount) {
+                // Dust-close: refund residual collateral and flip accepted.
+                if (Bm.collateralAssetType == LibVaipakam.AssetType.ERC20) {
+                    uint256 borrowerCollPulled = Bm.collateralAmountMax == 0
+                        ? Bm.collateralAmount
+                        : Bm.collateralAmountMax;
+                    if (borrowerCollPulled > Bm.collateralAmountFilled) {
+                        uint256 collRefund = borrowerCollPulled - Bm.collateralAmountFilled;
+                        LibFacet.crossFacetCall(
+                            abi.encodeWithSelector(
+                                EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                                Bm.creator,           // pull from borrower's escrow
+                                Bm.collateralAsset,
+                                Bm.creator,           // refund to borrower's wallet
+                                collRefund
+                            ),
+                            EscrowWithdrawFailed.selector
+                        );
+                    }
+                }
+                Bm.accepted = true;
+                emit OfferClosed(
+                    borrowerOfferId,
+                    borrowerRemaining == 0
+                        ? OfferCloseReason.FullyFilled
+                        : OfferCloseReason.Dust
+                );
+            }
+        }
+        // §3.4 — borrower-side post-match snapshot.
+        // Pre-#102 (single-fill): `amountFilled` storage stays 0 even
+        //   when `accepted == true`; the event reports the EFFECTIVE
+        //   post-match fill (= the offer's `amount` once accepted).
+        // Post-#102 (partial-fill ON): `amountFilled` accumulates per
+        //   match; the event reports it directly.
+        uint256 borrowerEffFilled = (s.protocolCfg.partialFillEnabled || Bm.amountFilled > 0)
+            ? Bm.amountFilled
+            : (Bm.accepted ? Bm.amount : 0);
         emit OfferMatched(
             lenderOfferId,
             borrowerOfferId,

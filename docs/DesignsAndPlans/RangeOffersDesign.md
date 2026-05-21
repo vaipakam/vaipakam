@@ -1609,15 +1609,41 @@ AutonomousLtvAndOracleFallback Phase 5 design intent is for offers to
 track responsive peer-derived LTV refinements rather than freeze at
 create-time.
 
-### 17.5 Borrower partial-fill (#102) is the load-bearing dependency
+### 17.5 Borrower partial-fill (#102 — LANDED)
 
-The GTC semantic described above requires borrower offers to be
-multi-fill. Phase 1's single-fill rule destroys the unused range on
-the first match. Issue [#102](https://github.com/vaipakam/vaipakam/issues/102)
-lifts that rule and is **gating for the frontend GTC implementation
-in [#165](https://github.com/vaipakam/vaipakam/issues/165)**. Until
-#102 ships, any frontend implementing §17.1's mapping MUST display a
-"single-match" warning on borrower offers.
+Phase 1's single-fill rule destroyed the unused range on the first
+match against a borrower offer; #102 lifts that rule **end-to-end**:
+
+- `LibOfferMatch.previewMatch` now uses `borrowerRemaining =
+  effBorrowerAmountMax - B.amountFilled` (with the §17.3 derivation
+  for the GTC default).
+- `OfferAcceptFacet._acceptOffer` defers the `B.accepted = true`
+  flip when (matchOffers-driven path && borrower offer &&
+  `partialFillEnabled` on). Legacy paths (single-match acceptOffer,
+  lender offers, or partial-fill off) keep the immediate flip.
+- `OfferMatchFacet.matchOffers` now has a symmetric borrower-side
+  post-match accounting block: increments `B.amountFilled` +
+  `B.collateralAmountFilled`, auto-closes on dust (`remaining <
+  B.amount`), refunds residual collateral on dust-close. The
+  per-match collateral refund hook (#164's behaviour) is GATED on
+  `!partialFillEnabled` — when partial-fill is on, the borrower's
+  pre-escrowed collateral stays in custody across matches and is
+  only refunded on dust-close.
+- A new `LibRiskMath.maxLendingForLtvCap(collateral, principal,
+  collat, capBps)` helper sits next to `minCollateralForLtvCap` to
+  supply the cap-aware ceiling the §17.3 derivation needs.
+- The kill-switch `partialFillEnabled` now governs BOTH sides
+  symmetrically; `DeployDiamond.s.sol` flips it (along with
+  `rangeAmountEnabled`, `rangeRateEnabled`, `rangeCollateralEnabled`)
+  to `true` post-init so fresh Vaipakam deploys come up in GTC mode
+  by default. The kill-switch shape stays single-flag (Option A from
+  the #102 design discussion) — there's no scenario where one side's
+  partial-fill should be enabled without the other.
+
+The `B.accepted` guard in `previewMatch` still cascade-blocks repeated
+matches when partial-fill is OFF (Phase 1 single-fill semantic
+preserved as a defensive fallback). The full design rationale lives
+in ADR-0010 §6.
 
 ---
 
