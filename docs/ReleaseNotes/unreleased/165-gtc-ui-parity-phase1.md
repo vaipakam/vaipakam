@@ -50,10 +50,24 @@ What's NOT in this PR — explicitly deferred to a Phase 2 follow-up so this MVP
 - Manual: lender / borrower toggle on `CreateOffer.tsx` swaps the field labels live; payload submit translates the user's single-value input through the new role-asymmetric mapping
 - Contract-side: ADR-0010 mapping is what the deployed contracts already honor (via PRs #167 / #170 / #174)
 
+### Round-1 Codex correction — payload reverts to single-value
+
+Codex round-1 on PR #175 caught five P1s + one P2 that collectively revealed: the ADR-0010 §17.1 split-floor/ceiling mapping was written assuming `OfferMatchFacet.matchOffers` is the canonical match flow, but the contract still exposes `OfferAcceptFacet.acceptOffer` for direct single-match accepts. The direct-accept path reads `offer.amount`, `offer.interestRateBps`, and `offer.collateralAmount` literally — not via the matchOverride derivation. Shipping the ADR split-mapping would have let:
+
+- a borrower direct-accept a lender offer with `amount = 1 wei` and walk away with a 1-wei loan;
+- a lender direct-accept a borrower offer with `interestRateBps = 0` at 0 % APR;
+- a lender direct-accept a borrower offer with `collateralAmount = 0` without pulling any collateral.
+
+All real underpayment / fund-loss vectors caught pre-merge.
+
+**Phase 1 corrected scope** (what this PR ships): role-asymmetric LABELS over **single-value** payloads. The user's headline number lands in the floor field (`amount` / `interestRateBps` / `collateralAmount`); the `*Max` ceilings auto-collapse to zero. The contract reads `*Max == 0` as "treat as single-value at the floor", so both the direct-accept path AND `matchOffers` land at the same loan terms. The UX shift (lender thinks "Lend up to X", borrower thinks "Borrow at least Y") is purely labels — fully audit-safe.
+
+**Phase 2 will revisit the full ADR-0010 §17.1 mapping** — either by gating legacy `acceptOffer` on a flag at the contract level (prevents the underpayment class structurally), or by adding explicit min/max range inputs for users that want true range orders. Both are contract-touching follow-ups out of #165 Phase 1's scope.
+
 ### Dependencies
 
-- ✅ #102 (PR #174) — borrower partial-fill (required so the borrower-side "Borrow at least" label is honest; the contract now actually supports multi-fill matches)
-- ✅ #163.A (PR #171) — ADR-0010 (the design lock this PR implements)
+- ✅ #102 (PR #174) — borrower partial-fill (the contract surface that #165 Phase 2 will plumb through)
+- ✅ #163.A (PR #171) — ADR-0010 (the design lock; Phase 1 implements the LABELS half; Phase 2 implements the contract-mapping half)
 - ✅ #164 (PR #167) — borrower collateral range
 - ✅ #169 (PR #170) — single-cold-compile CI shape
 

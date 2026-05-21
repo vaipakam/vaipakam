@@ -260,67 +260,71 @@ export interface OfferPayloadDecimals {
 }
 
 /**
- * Issue #165 / ADR-0010 §17.1 — canonical limit-order semantic mapping.
+ * Issue #165 Phase 1 — role-asymmetric UI LABELS over single-value
+ * payloads.
  *
- * The frontend translates user-meaningful headline numbers into the
- * contract's floor + ceiling storage fields per role. The user enters
- * ONE value per field per role; this function maps it appropriately.
+ * The user enters ONE value per field; the form labels in
+ * `CreateOffer.tsx` are role-asymmetric per ADR-0010 §17.1 (lender
+ * thinks "Lend up to X", borrower thinks "Borrow at least Y"), but the
+ * **contract payload ships single-value** with the user's headline
+ * number in the floor field and the `*Max` ceilings auto-collapsed to
+ * zero. The contract reads `*Max == 0` as "treat as single-value at
+ * the floor".
  *
- *   Lender  "Lend up to X"          ⇒ amount=1wei,  amountMax=X
- *   Lender  "At min P%"             ⇒ interestRateBps=P*100, interestRateBpsMax=MAX_INTEREST_BPS
- *   Lender  "Require at least Z"    ⇒ collateralAmount=Z (single-value lender invariant)
- *   Borrower "Borrow at least Y"    ⇒ amount=Y,     amountMax=0 (contract derives from collateral × init-LTV cap)
- *   Borrower "At max Q%"            ⇒ interestRateBps=0, interestRateBpsMax=Q*100
- *   Borrower "Lock up to W"         ⇒ collateralAmount=0, collateralAmountMax=W (pre-escrowed)
+ * Why NOT the ADR-0010 §17.1 split-floor/ceiling mapping yet:
  *
- * MAX_INTEREST_BPS mirrors `LibVaipakam.MAX_INTEREST_BPS = 10_000` (100% APR
- * — the contract's protocol cap). Lender's `amount = 1 wei` is the placeholder
- * described in ADR-0010 §5 (artifact of `params.amount > 0` invariant; behaves
- * as effectively zero against any practical borrower floor).
+ * ADR-0010's mapping table (lender's `amount = 1 wei` + `amountMax = X`;
+ * borrower's `collateralAmount = 0` + `collateralAmountMax = W`;
+ * borrower's `interestRateBps = 0`; etc.) was written assuming the
+ * `OfferMatchFacet.matchOffers` path is the canonical match flow.
+ * The contract still exposes `OfferAcceptFacet.acceptOffer` for
+ * single-match direct accepts — that path reads `offer.amount`,
+ * `offer.interestRateBps`, and `offer.collateralAmount` DIRECTLY (see
+ * `_acceptOffer`'s `matchOverride.active == false` branch). Shipping
+ * the ADR split-mapping breaks the direct-accept path: e.g., a lender
+ * offer with `amount = 1 wei` lets a borrower call `acceptOffer` and
+ * walk away with a 1-wei loan; a borrower offer with `interestRateBps
+ * = 0` is accepted at 0 % APR; a borrower offer with `collateralAmount
+ * = 0` is direct-accepted without pulling any collateral. Codex
+ * round-1 on PR #175 caught all of these as P1s.
  *
- * Advanced-mode min/max sliders (the old `s.amountMax` / `s.interestRateMax` /
- * `s.collateralAmountMax` form-state fields) are no longer the canonical
- * input surface. They remain in `OfferFormState` for backwards-compat with
- * any deep-linked URL that still carries them, but the GTC default ignores
- * them entirely.
+ * Phase 1 of #165 (this code) ships:
+ *   - role-asymmetric LABELS in the form (the UX shift)
+ *   - single-value payloads (the safe contract shape — both
+ *     match paths land at the same loan terms)
+ *
+ * Phase 2 of #165 will revisit the full ADR-0010 §17.1 mapping —
+ * either by gating legacy `acceptOffer` on a flag at the contract
+ * level (preventing the underpayment class structurally), or by
+ * adding explicit min/max range inputs for users that want true
+ * range orders. Until then, the Phase-1 surface is "role-asymmetric
+ * labels over single-value semantics" — fully audit-safe and
+ * preserves both accept paths' invariants.
  */
-const MAX_INTEREST_BPS = 10_000;
-
 export function toCreateOfferPayload(
   s: OfferFormState,
   decimals: OfferPayloadDecimals = {},
 ): CreateOfferPayload {
   const lendingDecimals = decimals.lending ?? 18;
   const collateralDecimals = decimals.collateral ?? 18;
-  const isLender = s.offerType === 'lender';
 
-  // Single user-entered numbers (one per field per role).
-  const userAmount = s.assetType === 'erc20'
-    ? parseUnits(s.amount, lendingDecimals)
-    : BigInt(s.amount);
-  const userCollateral = s.collateralAssetType === 'erc20'
+  const collateralWei = s.collateralAssetType === 'erc20'
     ? parseUnits(s.collateralAmount || '0', collateralDecimals)
     : BigInt(s.collateralAmount || '0');
-  const userRateBps = s.interestRate === ''
-    ? 0
-    : Math.round(parseFloat(s.interestRate) * 100);
 
-  // Role-asymmetric routing — the lender's headline number is the
-  // CEILING; the borrower's headline number is the FLOOR.
-  const amount             = isLender ? 1n           : userAmount;
-  const amountMax          = isLender ? userAmount   : 0n;
-  const collateralAmount   = isLender ? userCollateral : 0n;
-  const collateralAmountMax = isLender ? 0n           : userCollateral;
-  const interestRateBps    = isLender ? userRateBps  : 0;
-  const interestRateBpsMax = isLender ? MAX_INTEREST_BPS : userRateBps;
+  const lendingAmount = s.assetType === 'erc20'
+    ? parseUnits(s.amount, lendingDecimals)
+    : BigInt(s.amount);
 
   return {
-    offerType: isLender ? 0 : 1,
+    offerType: s.offerType === 'lender' ? 0 : 1,
     lendingAsset: s.lendingAsset,
-    amount,
-    interestRateBps,
+    amount: lendingAmount,
+    interestRateBps: s.interestRate === ''
+      ? 0
+      : Math.round(parseFloat(s.interestRate) * 100),
     collateralAsset: s.collateralAsset || ZERO_ADDRESS,
-    collateralAmount,
+    collateralAmount: collateralWei,
     durationDays: parseInt(s.durationDays, 10),
     assetType: kindToEnum(s.assetType),
     tokenId: BigInt(s.tokenId || '0'),
@@ -331,9 +335,15 @@ export function toCreateOfferPayload(
     collateralTokenId: BigInt(s.collateralTokenId || '0'),
     collateralQuantity: BigInt(s.collateralQuantity || '0'),
     allowsPartialRepay: s.allowsPartialRepay,
-    amountMax,
-    interestRateBpsMax,
-    collateralAmountMax,
+    // Phase 1 ships single-value payloads. The contract reads
+    // `*Max == 0` as "treat as single-value at the floor", so both
+    // the legacy `acceptOffer` direct path and `matchOffers`
+    // collapse to the same single match point. Phase 2 will
+    // re-introduce explicit range inputs (and decide whether to
+    // gate `acceptOffer` on range-shaped offers at the contract).
+    amountMax: 0n,
+    interestRateBpsMax: 0,
+    collateralAmountMax: 0n,
     periodicInterestCadence: s.periodicInterestCadence,
   };
 }
