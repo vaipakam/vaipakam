@@ -259,53 +259,68 @@ export interface OfferPayloadDecimals {
   collateral?: number;
 }
 
+/**
+ * Issue #165 / ADR-0010 §17.1 — canonical limit-order semantic mapping.
+ *
+ * The frontend translates user-meaningful headline numbers into the
+ * contract's floor + ceiling storage fields per role. The user enters
+ * ONE value per field per role; this function maps it appropriately.
+ *
+ *   Lender  "Lend up to X"          ⇒ amount=1wei,  amountMax=X
+ *   Lender  "At min P%"             ⇒ interestRateBps=P*100, interestRateBpsMax=MAX_INTEREST_BPS
+ *   Lender  "Require at least Z"    ⇒ collateralAmount=Z (single-value lender invariant)
+ *   Borrower "Borrow at least Y"    ⇒ amount=Y,     amountMax=0 (contract derives from collateral × init-LTV cap)
+ *   Borrower "At max Q%"            ⇒ interestRateBps=0, interestRateBpsMax=Q*100
+ *   Borrower "Lock up to W"         ⇒ collateralAmount=0, collateralAmountMax=W (pre-escrowed)
+ *
+ * MAX_INTEREST_BPS mirrors `LibVaipakam.MAX_INTEREST_BPS = 10_000` (100% APR
+ * — the contract's protocol cap). Lender's `amount = 1 wei` is the placeholder
+ * described in ADR-0010 §5 (artifact of `params.amount > 0` invariant; behaves
+ * as effectively zero against any practical borrower floor).
+ *
+ * Advanced-mode min/max sliders (the old `s.amountMax` / `s.interestRateMax` /
+ * `s.collateralAmountMax` form-state fields) are no longer the canonical
+ * input surface. They remain in `OfferFormState` for backwards-compat with
+ * any deep-linked URL that still carries them, but the GTC default ignores
+ * them entirely.
+ */
+const MAX_INTEREST_BPS = 10_000;
+
 export function toCreateOfferPayload(
   s: OfferFormState,
   decimals: OfferPayloadDecimals = {},
 ): CreateOfferPayload {
   const lendingDecimals = decimals.lending ?? 18;
   const collateralDecimals = decimals.collateral ?? 18;
+  const isLender = s.offerType === 'lender';
 
-  const collateralWei = s.collateralAssetType === 'erc20'
-    ? parseUnits(s.collateralAmount || '0', collateralDecimals)
-    : BigInt(s.collateralAmount || '0');
-
-  const lendingAmount = s.assetType === 'erc20'
+  // Single user-entered numbers (one per field per role).
+  const userAmount = s.assetType === 'erc20'
     ? parseUnits(s.amount, lendingDecimals)
     : BigInt(s.amount);
-
-  // Range Orders Phase 1 auto-collapse: blank `amountMax` /
-  // `interestRateMax` produces 0 in the payload, which the contract's
-  // `_writeOfferPrincipalFields` reads as "treat as single value"
-  // (`amountMax = amount`, `interestRateBpsMax = interestRateBps`).
-  // Keeps the payload shape stable across basic and advanced modes —
-  // the UI just leaves the bound fields empty when ranges are off.
-  const amountMax = s.amountMax.trim() === ''
-    ? 0n
-    : (s.assetType === 'erc20'
-      ? parseUnits(s.amountMax, lendingDecimals)
-      : BigInt(s.amountMax));
-  const interestRateBpsMax = s.interestRateMax.trim() === ''
+  const userCollateral = s.collateralAssetType === 'erc20'
+    ? parseUnits(s.collateralAmount || '0', collateralDecimals)
+    : BigInt(s.collateralAmount || '0');
+  const userRateBps = s.interestRate === ''
     ? 0
-    : Math.round(parseFloat(s.interestRateMax) * 100);
-  // Issue #164 — borrower-side collateral upper bound. Mirrors the
-  // amount-range auto-collapse: blank ⇒ 0n, which the contract reads
-  // as "lock exactly `collateralAmount`". The UI input for this lands
-  // with #165; today the form-state field stays empty everywhere and
-  // every payload ships with `collateralAmountMax = 0n`.
-  const collateralAmountMax = s.collateralAmountMax.trim() === ''
-    ? 0n
-    : (s.collateralAssetType === 'erc20'
-      ? parseUnits(s.collateralAmountMax, collateralDecimals)
-      : BigInt(s.collateralAmountMax));
+    : Math.round(parseFloat(s.interestRate) * 100);
+
+  // Role-asymmetric routing — the lender's headline number is the
+  // CEILING; the borrower's headline number is the FLOOR.
+  const amount             = isLender ? 1n           : userAmount;
+  const amountMax          = isLender ? userAmount   : 0n;
+  const collateralAmount   = isLender ? userCollateral : 0n;
+  const collateralAmountMax = isLender ? 0n           : userCollateral;
+  const interestRateBps    = isLender ? userRateBps  : 0;
+  const interestRateBpsMax = isLender ? MAX_INTEREST_BPS : userRateBps;
 
   return {
-    offerType: s.offerType === 'lender' ? 0 : 1,
+    offerType: isLender ? 0 : 1,
     lendingAsset: s.lendingAsset,
-    amount: lendingAmount,
-    interestRateBps: Math.round(parseFloat(s.interestRate) * 100),
+    amount,
+    interestRateBps,
     collateralAsset: s.collateralAsset || ZERO_ADDRESS,
-    collateralAmount: collateralWei,
+    collateralAmount,
     durationDays: parseInt(s.durationDays, 10),
     assetType: kindToEnum(s.assetType),
     tokenId: BigInt(s.tokenId || '0'),

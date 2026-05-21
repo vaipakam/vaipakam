@@ -91,12 +91,18 @@ export default function CreateOffer() {
   const rentalBufferBps = protocolConfig
     ? BigInt(protocolConfig.rentalBufferBps)
     : 500n; // fall back to compile-time default during the first render
-  const showAmountRange = Boolean(
-    showAdvanced && protocolConfig?.rangeAmountEnabled,
-  );
-  const showRateRange = Boolean(
-    showAdvanced && protocolConfig?.rangeRateEnabled,
-  );
+  // Issue #165 / ADR-0010 §17 — under the canonical limit-order GTC
+  // semantic the user enters ONE value per field per role; the
+  // contract's min/max routing happens in `toCreateOfferPayload`.
+  // The legacy Advanced-mode min/max sliders are no longer the
+  // canonical surface. We force these flags off so the dual-input
+  // row at lines ~1042-1089 stays hidden under every mode. The form-
+  // state `amountMax` / `interestRateMax` / `collateralAmountMax`
+  // fields remain in `OfferFormState` for backwards-compat with any
+  // deep-linked URL that still carries them, but the payload
+  // translation ignores them under the GTC mapping.
+  const showAmountRange = false;
+  const showRateRange = false;
   // Banner-copy interpolation params for the lender / borrower discount
   // banners — surface live treasury fee, loan-initiation fee, and the
   // top-tier discount % so governance changes flow into the marketing
@@ -988,12 +994,18 @@ export default function CreateOffer() {
 
           <div className="form-row">
             <div className="form-group">
+              {/* Issue #165 / ADR-0010 §17.1 — role-asymmetric labels.
+                  The user enters their headline number: lender's "Lend
+                  up to X" (ceiling); borrower's "Borrow at least Y"
+                  (floor). `toCreateOfferPayload` routes it into the
+                  contract's `amount` / `amountMax` per role. NFT
+                  rentals stay symmetric (single-value daily fee). */}
               <label className="form-label">
                 {isRental
                   ? t('createOffer.dailyRentalFee')
-                  : showAmountRange
-                    ? t('createOffer.amountMin')
-                    : t('createOffer.amount')}
+                  : form.offerType === 'lender'
+                    ? t('createOffer.amountLender')
+                    : t('createOffer.amountBorrower')}
               </label>
               <input
                 className="form-input"
@@ -1012,10 +1024,15 @@ export default function CreateOffer() {
               </span>
             </div>
             <div className="form-group">
+              {/* Role-asymmetric rate label. Lender's "min %" is the
+                  floor (`interestRateBps`); borrower's "max %" is the
+                  ceiling (`interestRateBpsMax`). `toCreateOfferPayload`
+                  fills the opposite end with the protocol cap
+                  (`MAX_INTEREST_BPS = 10000` / `0`). */}
               <label className="form-label">
-                {showRateRange
-                  ? t('createOffer.interestRateMin')
-                  : t('createOffer.interestRate')}
+                {form.offerType === 'lender'
+                  ? t('createOffer.interestRateLender')
+                  : t('createOffer.interestRateBorrower')}
               </label>
               <input
                 className="form-input"
@@ -1283,7 +1300,17 @@ export default function CreateOffer() {
 
           <div className="form-row">
             <div className="form-group">
-              <label className="form-label">{t('createOffer.collateralAmount')}</label>
+              {/* Issue #165 / ADR-0010 §17.1 — role-asymmetric collateral
+                  label. Lender's "Require at least Z" sets the floor
+                  (`collateralAmount`, single-value per #164 lender
+                  invariant); borrower's "Lock up to W" sets the ceiling
+                  (`collateralAmountMax`, pre-escrowed). The payload
+                  translation routes accordingly. */}
+              <label className="form-label">
+                {form.offerType === 'lender'
+                  ? t('createOffer.collateralAmountLender')
+                  : t('createOffer.collateralAmountBorrower')}
+              </label>
               <input
                 className="form-input"
                 type="number"
