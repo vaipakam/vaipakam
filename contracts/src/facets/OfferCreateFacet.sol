@@ -482,15 +482,23 @@ contract OfferCreateFacet is
                 // Borrower's accepted lending ceiling (their `amountMax`)
                 // can't exceed the system-derived ceiling implied by the
                 // MAX collateral they're willing to lock. Issue #164:
-                // the upper bound is `offer.collateralAmountMax` (post
-                // auto-collapse), not `params.collateralAmount` — a
-                // borrower posting min=1 ETH / max=3 ETH should be
-                // allowed to back the larger `amountMax` their max
-                // collateral supports. The check still uses the same
-                // `LibRiskMath.maxLendingForCollateral` math; only the
-                // collateral argument widens.
+                // the upper bound is the auto-collapsed collateral max
+                // (= `params.collateralAmount` for legacy single-value
+                // offers; the literal `params.collateralAmountMax` for
+                // ranged offers).
+                //
+                // Issue #169 follow-up — compute from `params` rather
+                // than `offer.collateralAmountMax` because the storage
+                // SSTORE was elided in single-value mode to save gas
+                // (storage default `0` ⇒ collateralAmount via the read-
+                // side fallback everywhere else, but here we just use
+                // the local `params` field directly so we don't have to
+                // re-derive the auto-collapse from a storage read).
+                uint256 effBorrowerCollMax = params.collateralAmountMax == 0
+                    ? params.collateralAmount
+                    : params.collateralAmountMax;
                 uint256 ceiling = LibRiskMath.maxLendingForCollateral(
-                    offer.collateralAmountMax,
+                    effBorrowerCollMax,
                     params.lendingAsset,
                     params.collateralAsset
                 );
@@ -900,7 +908,17 @@ contract OfferCreateFacet is
         f.durationDays = offer.durationDays;
         f.amountMax = offer.amountMax;
         f.interestRateBpsMax = offer.interestRateBpsMax;
-        f.collateralAmountMax = offer.collateralAmountMax;
+        // Issue #169 follow-up — indexers see the LOGICAL upper bound,
+        // never the storage default. The single-value-SSTORE-skip
+        // optimisation in `_writeOfferCollateralFields` leaves
+        // `offer.collateralAmountMax == 0` on legacy / single-value
+        // offers; apply the same `0 ⇒ collateralAmount` collapse here
+        // so the event payload mirrors what every read site (preview,
+        // refund, cancel) sees. Without this, indexers would have to
+        // know about the SSTORE-skip — leaky abstraction.
+        f.collateralAmountMax = offer.collateralAmountMax == 0
+            ? offer.collateralAmount
+            : offer.collateralAmountMax;
         f.creatorRiskAndTermsConsent = offer.creatorRiskAndTermsConsent;
         f.allowsPartialRepay = offer.allowsPartialRepay;
         f.periodicInterestCadence = offer.periodicInterestCadence;
@@ -1041,7 +1059,22 @@ contract OfferCreateFacet is
         ) {
             revert FunctionDisabled(4);
         }
-        offer.collateralAmountMax = effCollateralAmountMax;
+        // Issue #169 follow-up — single-value optimisation. Only SSTORE
+        // when the offer is actually ranged. Single-value (legacy)
+        // offers leave `offer.collateralAmountMax` at its default `0`;
+        // every read site (previewMatch, the OfferMatchFacet excess-
+        // refund hook, OfferCancelFacet.cancelOffer's borrower-side
+        // refund, the borrower-side MaxLendingAboveCeiling check
+        // below) already collapses `collateralAmountMax == 0 ⇒
+        // collateralAmount` via the legacy-fallback that Codex round-1
+        // surfaced. So skipping the SSTORE here is semantically
+        // identical to writing `collateralAmount`, and it saves ~22.1 K
+        // gas on every legacy single-value createOffer — recovering
+        // the +5.4-8.3% gas regression PR #167's gas-snapshot job
+        // flagged on the five createOffer-adjacent tests.
+        if (effCollateralAmountMax != params.collateralAmount) {
+            offer.collateralAmountMax = effCollateralAmountMax;
+        }
         // `collateralAmountFilled` defaults to 0 from struct
         // initialization; it stays 0 across Phase 1 borrower matches
         // (single-fill rule). #102 lifts the single-fill rule and

@@ -1,5 +1,5 @@
 # Contracts documentation site — auto-generated NatSpec docs published
-# to GitHub Pages on every push to `main`.
+# to GitHub Pages on push to `main`.
 #
 # Why this exists:
 # - Auditors browsing the protocol can read the per-function NatSpec
@@ -10,41 +10,32 @@
 #   between "what the docs say" and "what the contract does", since
 #   NatSpec lives next to the code.
 #
-# Site URL (once GitHub Pages is enabled in repo Settings):
-#   https://vaipakam.github.io/vaipakam/
+# Site URL: https://vaipakam.github.io/vaipakam/
 #
-# Trigger discipline:
+# Trigger discipline (post Issue #169 fold):
 # - `main` push: rebuilds + deploys.
-# - PRs: builds only (artifact upload, no deploy) — lets reviewers
-#   confirm the build hasn't broken before merging.
-# - `workflow_dispatch`: manual rebuild + deploy (for cache-bust or
-#   after a stuck deploy).
+# - `workflow_dispatch`: manual rebuild + deploy (cache-bust / recovery).
+# - PRs: NO LONGER triggered here. The `build-docs` job in `ci.yml`
+#   handles PR-preview rendering, downstream of `contracts-fast` so
+#   the forge build only happens ONCE per PR (instead of racing with
+#   `contracts-fast` for a parallel cold compile). This file now owns
+#   ONLY the Pages-deploy concern on push-to-main.
 
 name: Contracts docs
 
 on:
   push:
     branches: [main]
-  pull_request:
-    paths:
-      - 'contracts/src/**/*.sol'
-      - 'contracts/foundry.toml'
-      - 'contracts/remappings.txt'
-      - 'contracts/lib/**'        # submodule gitlink pointer bumps shift forge doc output too
-      - '.gitmodules'
-      - '.github/workflows/contracts-docs.yml'
   workflow_dispatch:
 
 # Concurrency scoping:
-# - PR preview builds get their own per-PR group so two PRs don't fight,
-#   and a new PR build can supersede an older one for the same PR.
-# - Push-to-main / workflow_dispatch deploys share the `pages-deploy`
-#   group so the Pages site never has overlapping deploys.
-# A flat workflow-level `pages` group with cancel-in-progress was wrong:
-# PR builds would cancel in-flight production deploys to the live site.
+# Push-to-main / workflow_dispatch deploys share the `pages-deploy`
+# group so the Pages site never has overlapping deploys. PR-preview
+# builds moved to ci.yml and use the cancel-in-progress on the parent
+# `ci-${{ github.ref }}-pull_request` group, so they don't fight here.
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('contracts-docs-pr-{0}', github.event.pull_request.number) || 'contracts-docs-pages-deploy' }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: contracts-docs-pages-deploy
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -120,29 +111,19 @@ jobs:
           EOF
 
       - name: Configure GitHub Pages
-        if: github.event_name != 'pull_request'
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
 
       - name: Upload Pages artifact
-        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
           path: contracts/docs/book
 
-      - name: Upload PR-preview artifact
-        if: github.event_name == 'pull_request'
-        # On PRs, upload as a regular artifact so reviewers can
-        # download + inspect without enabling Pages writes for forks.
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: contracts-docs-pr-${{ github.event.pull_request.number }}
-          path: contracts/docs/book
-          retention-days: 7
+      # NOTE: the PR-preview artifact upload path moved to ci.yml's
+      # `build-docs` job (Issue #169). This workflow now only handles
+      # push-to-main deploys, so no PR-event branches remain.
 
   deploy:
     name: Deploy to Pages
-    # Only deploys on push-to-main / manual trigger, never on PRs.
-    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     environment:
