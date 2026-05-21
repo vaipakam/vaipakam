@@ -848,18 +848,12 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
         }
     }
 
-    /// @dev Checks if a status indicates loan closure (terminal state). Terminal
-    ///      states are Repaid, Defaulted, Liquidated, and Closed — FallbackPending
-    ///      is explicitly non-terminal because the borrower can still cure.
-    function _isClosedStatus(
-        LibVaipakam.LoanPositionStatus status
-    ) internal pure returns (bool) {
-        return
-            status == LibVaipakam.LoanPositionStatus.LoanClosed ||
-            status == LibVaipakam.LoanPositionStatus.LoanRepaid ||
-            status == LibVaipakam.LoanPositionStatus.LoanDefaulted ||
-            status == LibVaipakam.LoanPositionStatus.LoanLiquidated;
-    }
+    // `_isClosedStatus` (previously here) removed in #148 Phase 5 —
+    // every call site was refactored to compare the status enum
+    // directly. The terminal-state set (Repaid / Defaulted /
+    // Liquidated / Closed; FallbackPending is non-terminal because
+    // the borrower can still cure) is documented inline at each
+    // remaining caller.
 
     /// @dev Render the enum for tokenURI attributes.
     ///      Keep these strings stable — off-chain indexers key on them.
