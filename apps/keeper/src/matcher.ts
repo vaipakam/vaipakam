@@ -36,7 +36,7 @@
  * table via the shared D1 binding and only `previewMatch` on-chain.
  */
 
-import { createPublicClient, http, type Abi, type Address } from 'viem';
+import { createPublicClient, http, type Abi, type Address, type Hex } from 'viem';
 import {
   MetricsFacetABI,
   OfferCreateFacetABI,
@@ -78,6 +78,15 @@ const MAX_PREVIEW_CALLS_PER_TICK = 2000;
 /** Per-tick cap on `matchOffers` submissions — a busy book shouldn't
  *  burn the keeper's whole gas budget in one cron tick. */
 const MAX_SUBMITS_PER_TICK = 25;
+
+/** Codex #176 round-2 P2 — per-chain wall-time budget. `submitMatch`
+ *  awaits `waitForTransactionReceipt` (up to ~30 s per match post-#172);
+ *  `runMatcher` runs chains sequentially. Without a budget, one
+ *  congested chain can consume `MAX_SUBMITS_PER_TICK × 30 s` ≈ 12.5 min
+ *  and push the scheduled invocation past the Workers cron wall-time
+ *  limit, starving later chains for that tick. 90 s per chain leaves
+ *  headroom for ~3 multi-chain ticks within a 5-min cron envelope. */
+const PER_CHAIN_WALL_TIME_BUDGET_MS = 90_000;
 
 /** `LibOfferMatch.MatchError` index 0 == Ok. */
 const MATCH_ERR_OK = 0;
@@ -260,8 +269,9 @@ async function submitMatch(
 ): Promise<boolean> {
   const account = ctx.wallet.account;
   if (!account) return false;
+  let hash: Hex;
   try {
-    const hash = await ctx.wallet.writeContract({
+    hash = await ctx.wallet.writeContract({
       address: ctx.diamond,
       abi: MATCHER_ABI,
       functionName: 'matchOffers',
@@ -269,10 +279,6 @@ async function submitMatch(
       account,
       chain: ctx.wallet.chain,
     });
-    console.log(
-      `[matcher] chain=${ctx.chainId} matched lender=${Number(lenderId)} borrower=${Number(borrowerId)} tx=${hash} amount=${preview.matchAmount.toString()} rateBps=${Number(preview.matchRateBps)} lenderRemaining=${preview.lenderRemainingPostMatch.toString()}`,
-    );
-    return true;
   } catch (err) {
     const errStr = String(err);
     // FunctionDisabled(3) — the partialFillEnabled master kill-switch.
@@ -287,11 +293,56 @@ async function submitMatch(
       }
     } else {
       console.log(
-        `[matcher] chain=${ctx.chainId} matchOffers lender=${Number(lenderId)} borrower=${Number(borrowerId)} failed: ${errStr.slice(0, 200)}`,
+        `[matcher] chain=${ctx.chainId} matchOffers lender=${Number(lenderId)} borrower=${Number(borrowerId)} broadcast failed: ${errStr.slice(0, 200)}`,
       );
     }
     return false;
   }
+
+  // Codex #176 round-1 P1 — wait for inclusion before returning success.
+  // Without this, the matcher tick's inner loop continues immediately
+  // and the next `previewMatch` reads `latest` state which doesn't
+  // include the just-broadcast tx's effects. Subsequent (L,B) pairs
+  // then evaluate against PRE-match lender capacity, queue up multiple
+  // matches against the SAME unallocated balance, and most of them
+  // revert when mined — burning keeper gas AND wasting
+  // `MAX_SUBMITS_PER_TICK` slots that should go to valid pairs.
+  //
+  // Pattern mirrors `apps/keeper/src/dailyOracleSnapshot.ts:127` (the
+  // existing sibling that waits for receipt before continuing). 30s
+  // timeout per match — bounded by chain block time × small constant.
+  // Worst-case tick duration: `MAX_SUBMITS_PER_TICK × ~block_time`,
+  // which is acceptable given the cron cadence (the next cron either
+  // overlaps via the Workers concurrency lock or starts fresh state).
+  try {
+    const receipt = await ctx.client.waitForTransactionReceipt({
+      hash,
+      timeout: 30_000,
+    });
+    if (receipt.status !== 'success') {
+      // On-chain revert — another keeper / a borrower cancel / a
+      // governance flip raced us. Log it; caller breaks the inner
+      // loop on `false` because the lender's state has moved beyond
+      // what previewMatch predicted, and subsequent submits would
+      // likely revert for the same reason.
+      console.log(
+        `[matcher] chain=${ctx.chainId} matchOffers lender=${Number(lenderId)} borrower=${Number(borrowerId)} reverted on-chain tx=${hash}`,
+      );
+      return false;
+    }
+  } catch (err) {
+    // Timeout (tx dropped from mempool or RPC slow) — assume in-flight
+    // and back off this lender for the tick.
+    console.log(
+      `[matcher] chain=${ctx.chainId} matchOffers lender=${Number(lenderId)} borrower=${Number(borrowerId)} receipt wait failed tx=${hash}: ${String(err).slice(0, 200)}`,
+    );
+    return false;
+  }
+
+  console.log(
+    `[matcher] chain=${ctx.chainId} matched lender=${Number(lenderId)} borrower=${Number(borrowerId)} tx=${hash} amount=${preview.matchAmount.toString()} rateBps=${Number(preview.matchRateBps)} lenderRemaining=${preview.lenderRemainingPostMatch.toString()}`,
+  );
+  return true;
 }
 
 /** One pass over a chain's order book. */
@@ -301,20 +352,30 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
   const offers = await hydrateOffers(ctx, ids);
   const { lenders, borrowers } = partitionByBucket(offers);
 
+  // Codex #176 round-2 P2 — bound the chain's wall-time so a congested
+  // chain can't starve later chains in the same cron tick. Each call
+  // site checks `overBudget()` before doing more work.
+  const tickStart = Date.now();
+  const overBudget = () =>
+    Date.now() - tickStart > PER_CHAIN_WALL_TIME_BUDGET_MS;
+
   let previewCalls = 0;
   let submits = 0;
   const attempted = new Set<string>();
 
   for (const [key, lenderList] of lenders) {
     if (submits >= MAX_SUBMITS_PER_TICK) break;
+    if (overBudget()) break;
     const borrowerList = borrowers.get(key);
     if (!borrowerList || borrowerList.length === 0) continue;
 
     for (const L of lenderList) {
       if (submits >= MAX_SUBMITS_PER_TICK) break;
+      if (overBudget()) break;
       for (const B of borrowerList) {
         if (previewCalls >= MAX_PREVIEW_CALLS_PER_TICK) break;
         if (submits >= MAX_SUBMITS_PER_TICK) break;
+        if (overBudget()) break;
         const pairKey = `${L.id}:${B.id}`;
         if (attempted.has(pairKey)) continue;
         attempted.add(pairKey);
@@ -326,19 +387,60 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
         const ok = await submitMatch(ctx, L.id, B.id, p);
         if (ok) {
           submits += 1;
-          // Borrower offers are single-fill in Phase 1 — don't try this
-          // borrower against another lender this tick. The lender stays
-          // in the loop (partial fills allowed: the next borrower in the
-          // bucket may match its remaining capacity).
-          break;
+          // Issue #172 / #102 — post-borrower-partial-fill, borrower
+          // offers are NOT single-fill anymore. Don't break the inner
+          // loop on success: the same lender may have remaining capacity
+          // to fan-out across additional borrowers in this tick, and the
+          // same borrower (post-this match) may still have capacity that
+          // a DIFFERENT lender in `lenderList` could fill.
+          //
+          // The `attempted` set already prevents re-trying the exact
+          // (L,B) pair within a tick. After a successful submit, both
+          // L's and B's `amountFilled` have grown on-chain; the next
+          // `previewMatch` call within this tick reads the updated state
+          // and returns the right overlap (or `AmountNoOverlap` /
+          // dust-close, which the `if (!p || p.errorCode !== Ok)`
+          // continue above handles cleanly).
+          //
+          // Early-exit only when the preview reports the lender is now
+          // FULLY filled (`lenderRemainingPostMatch == 0n`). Anything
+          // smaller — where the lender still has some capacity that
+          // might not meet the per-match minimum — is left to the
+          // contract's `previewMatch` to filter on the next iteration;
+          // the extra preview call per exhausted lender per tick is
+          // cheap relative to fan-out wins on healthy ones.
+          if (p.lenderRemainingPostMatch === 0n) {
+            break;
+          }
+          // Otherwise fall through to the next borrower for this lender.
+          continue;
         }
+        // Codex #176 round-2 P1 — `submitMatch` returned false. The
+        // three causes (broadcast failure, on-chain revert,
+        // `waitForTransactionReceipt` timeout) all leave L's state
+        // uncertain — the tx may still be in flight, or another keeper
+        // / a borrower-cancel raced us. Trying L against B2/B3 in the
+        // same tick would re-evaluate against possibly-stale state
+        // and either queue duplicate matches (the race the #176
+        // round-1 fix existed to prevent) or burn preview calls on
+        // doomed pairs. Back off this lender for the tick — `attempted`
+        // already prevents (L,B1) retry, but we need an explicit
+        // `break` to skip the rest of the borrower list too.
+        break;
       }
     }
   }
 
   if (submits > 0 || previewCalls > 0) {
     console.log(
-      `[matcher] chain=${ctx.chainId} activeOffers=${offers.length} previewCalls=${previewCalls} submits=${submits}`,
+      `[matcher] chain=${ctx.chainId} activeOffers=${offers.length} previewCalls=${previewCalls} submits=${submits} elapsedMs=${Date.now() - tickStart}`,
+    );
+  }
+  if (overBudget()) {
+    console.log(
+      `[matcher] chain=${ctx.chainId} wall-time budget exhausted (${
+        Date.now() - tickStart
+      }ms); deferring remaining work to next tick`,
     );
   }
 }
