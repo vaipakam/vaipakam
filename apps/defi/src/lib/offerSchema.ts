@@ -83,6 +83,16 @@ export interface OfferFormState {
    *  "5.5"). Empty ⇒ single-value mode. Gated on `rangeRateEnabled`
    *  + Advanced mode in the UI. */
   interestRateMax: string;
+  /** Issue #164 — borrower-side upper bound of the collateral range.
+   *  Empty ⇒ single-value mode (auto-collapses to
+   *  `collateralAmountMax = 0` in the payload, which the contract
+   *  reads as "lock exactly `collateralAmount`"). Lender offers must
+   *  leave this empty — the contract rejects a lender offer with
+   *  `collateralAmountMax > collateralAmount` regardless of the master
+   *  flag. The UI input lands with #165 (basic/advanced parity); for
+   *  now the field stays empty everywhere and the contract sees
+   *  single-value collateral on every offer. */
+  collateralAmountMax: string;
   /** T-034 — lender's chosen Periodic Interest Payment cadence.
    *  Numeric value matches the on-chain enum (0 = None ... 4 = Annual).
    *  Default `0` (None) preserves backward compat. Visible only when
@@ -111,6 +121,7 @@ export const initialOfferForm: OfferFormState = {
   allowsPartialRepay: false,
   amountMax: '',
   interestRateMax: '',
+  collateralAmountMax: '',
   periodicInterestCadence: 0, // None
 };
 
@@ -140,6 +151,13 @@ export interface CreateOfferPayload {
   /** Range Orders Phase 1 — upper bound of the interest-rate range
    *  (BPS). `0` ⇒ auto-collapse. Otherwise must be ≥ `interestRateBps`. */
   interestRateBpsMax: number;
+  /** Issue #164 — borrower-side upper bound of the collateral range.
+   *  `0n` ⇒ auto-collapse (the contract reads `collateralAmountMax ==
+   *  0` as "use `collateralAmount`"). Otherwise must be ≥
+   *  `collateralAmount`. Lender offers must always pass `0n` here —
+   *  the contract rejects ranged collateral on lender offers
+   *  unconditionally. */
+  collateralAmountMax: bigint;
   /** T-034 — Periodic Interest Payment cadence (0 = None ... 4 = Annual). */
   periodicInterestCadence: number;
 }
@@ -161,7 +179,8 @@ export type OfferFormError =
   | { code: 'prepayAssetInvalid' }
   | { code: 'riskAndTermsConsentRequired' }
   | { code: 'amountMaxBelowMin' }
-  | { code: 'rateMaxBelowMin' };
+  | { code: 'rateMaxBelowMin' }
+  | { code: 'collateralAmountMaxBelowMin' };
 
 /**
  * Shallow field-by-field validation. Returns the first error found, or null
@@ -203,6 +222,17 @@ export function validateOfferForm(s: OfferFormState): OfferFormError | null {
     && Number(s.interestRateMax) < Number(s.interestRate)
   ) {
     return { code: 'rateMaxBelowMin' };
+  }
+  // Issue #164 — borrower-side collateral upper bound, when populated,
+  // must be ≥ the posted minimum. The contract enforces the same
+  // invariant on-chain with `InvalidCollateralAmountRange`; this
+  // client-side check exists purely to surface the gap before the user
+  // pays gas.
+  if (
+    s.collateralAmountMax.trim() !== ''
+    && Number(s.collateralAmountMax) < Number(s.collateralAmount)
+  ) {
+    return { code: 'collateralAmountMaxBelowMin' };
   }
   return null;
 }
@@ -258,6 +288,16 @@ export function toCreateOfferPayload(
   const interestRateBpsMax = s.interestRateMax.trim() === ''
     ? 0
     : Math.round(parseFloat(s.interestRateMax) * 100);
+  // Issue #164 — borrower-side collateral upper bound. Mirrors the
+  // amount-range auto-collapse: blank ⇒ 0n, which the contract reads
+  // as "lock exactly `collateralAmount`". The UI input for this lands
+  // with #165; today the form-state field stays empty everywhere and
+  // every payload ships with `collateralAmountMax = 0n`.
+  const collateralAmountMax = s.collateralAmountMax.trim() === ''
+    ? 0n
+    : (s.collateralAssetType === 'erc20'
+      ? parseUnits(s.collateralAmountMax, collateralDecimals)
+      : BigInt(s.collateralAmountMax));
 
   return {
     offerType: s.offerType === 'lender' ? 0 : 1,
@@ -278,6 +318,7 @@ export function toCreateOfferPayload(
     allowsPartialRepay: s.allowsPartialRepay,
     amountMax,
     interestRateBpsMax,
+    collateralAmountMax,
     periodicInterestCadence: s.periodicInterestCadence,
   };
 }

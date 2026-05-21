@@ -45,7 +45,7 @@ library LibOfferMatch {
         DurationMismatch,         // durationDays differ
         AmountNoOverlap,          // [maxMin, minMax] empty
         RateNoOverlap,
-        CollateralBelowRequired,  // borrower's posted collateral < lender's required at the matched amount
+        CollateralBelowRequired,  // borrower's range can't cover the lender's pro-rated requirement (post-#164: `picked = max(reqFromLender, B.collateralAmount)` exceeds `B.collateralAmountMax - B.collateralAmountFilled`)
         OfferAccepted,            // either offer already terminal
         WrongOfferType,           // L isn't Lender or B isn't Borrower
         HFTooLow,                 // (depthTieredLtvEnabled off) synthetic HF at matched amount + collateral < 1.5e18
@@ -235,14 +235,38 @@ library LibOfferMatch {
         // Pro-rated collateral required for THIS match (§10.4).
         // Lender's `collateralAmount` is the requirement at amountMax;
         // pro-rate against the matched amount.
-        r.reqCollateral = L.amountMax == 0
+        uint256 reqFromLender = L.amountMax == 0
             ? L.collateralAmount
             : (L.collateralAmount * r.matchAmount) / L.amountMax;
-        // Borrower's posted collateral must cover the requirement.
-        if (B.collateralAmount < r.reqCollateral) {
+        // Issue #164 — borrower-side collateral range. The borrower's
+        // committed range is `[collateralAmount, collateralAmountMax]`
+        // minus the cumulative `collateralAmountFilled` from prior
+        // matches (Phase 1: always 0 on borrower offers because
+        // borrower-side partial-fill ships with #102). The actual
+        // locked amount clamps UP to the borrower's min — a borrower
+        // who committed `min=1 ETH` gets that 1 ETH locked even when
+        // the lender's pro-rated requirement is below it (better HF
+        // cushion, lender happy). Mirrors how amount works today:
+        // `lo = max(L.amount, B.amount)` — both sides' minimums
+        // constrain the floor together, not separately.
+        //
+        // On a legacy single-value borrower offer (auto-collapsed
+        // `collateralAmount == collateralAmountMax`), the clamp is
+        // a no-op identity: `max(reqFromLender, B.collateralAmount)`
+        // equals `B.collateralAmount` whenever the existing
+        // `reqFromLender <= B.collateralAmount` precondition holds,
+        // so today's lock-min-and-refund-the-rest behaviour is
+        // preserved bit-for-bit.
+        uint256 borrowerCeiling =
+            B.collateralAmountMax - B.collateralAmountFilled;
+        uint256 picked = reqFromLender > B.collateralAmount
+            ? reqFromLender
+            : B.collateralAmount;
+        if (picked > borrowerCeiling) {
             r.errorCode = MatchError.CollateralBelowRequired;
             return r;
         }
+        r.reqCollateral = picked;
 
         // Synthetic init-gate check at the matched (amount, reqCollateral)
         // — must mirror `LoanFacet._checkInitialLtvAndHf` so a bot's

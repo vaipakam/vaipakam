@@ -217,7 +217,8 @@
       "prepayAssetInvalid": "L'adresse de l'actif de paiement anticipé est invalide.",
       "riskAndTermsConsentRequired": "Vous devez accepter les conditions de repli en cas de liquidation sur marché anormal avant de créer une offre.",
       "amountMaxBelowMin": "Le montant maximum ne peut pas être inférieur au minimum.",
-      "rateMaxBelowMin": "Le taux d'intérêt maximum ne peut pas être inférieur au minimum."
+      "rateMaxBelowMin": "Le taux d'intérêt maximum ne peut pas être inférieur au minimum.",
+      "collateralAmountMaxBelowMin": "Le maximum de garantie ne peut pas être inférieur au minimum."
     },
     "hintAssetTypeAuto": "Détecté automatiquement à partir de l'adresse du contrat de l'actif prêté. Collez ou choisissez une adresse ci-dessous pour remplir ce champ.",
     "hintCollateralAssetTypeAuto": "Détecté automatiquement à partir de l'adresse du contrat de collatéral.",

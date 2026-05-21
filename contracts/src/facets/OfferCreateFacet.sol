@@ -97,6 +97,13 @@ contract OfferCreateFacet is
         uint256 durationDays;
         uint256 amountMax;
         uint256 interestRateBpsMax;
+        // Issue #164 — borrower-side collateral upper bound, post
+        // auto-collapse. Equals `collateralAmount` on lender offers
+        // and on single-value borrower offers; > collateralAmount only
+        // on ranged borrower offers. Carrying it on the companion event
+        // means indexer / frontend cache merges can render the
+        // borrower-side range without a follow-up `getOffer` read.
+        uint256 collateralAmountMax;
         bool creatorRiskAndTermsConsent;
         bool allowsPartialRepay;
         LibVaipakam.PeriodicInterestCadence periodicInterestCadence;
@@ -197,6 +204,14 @@ contract OfferCreateFacet is
     error InvalidRateRange();
     /// Range invariant: `interestRateBpsMax > MAX_INTEREST_BPS`.
     error InterestRateAboveCeiling();
+    /// Issue #164 — borrower-side collateral range invariant:
+    /// `collateralAmount > collateralAmountMax`.
+    error InvalidCollateralAmountRange();
+    /// Issue #164 — lender offers must stay single-value on collateral:
+    /// `collateralAmountMax != 0 && collateralAmountMax != collateralAmount`
+    /// on a Lender offer. The lender's `collateralAmount` already
+    /// expresses their derived requirement; a max wouldn't add meaning.
+    error LenderCollateralRangeNotAllowed();
     /// Lender offer's `collateralAmount` is below the system-derived
     /// minimum needed to keep HF >= 1.5e18 at `amountMax` (worst case).
     /// Surfaces with `(provided, floor)` so the UI can show the gap.
@@ -466,9 +481,16 @@ contract OfferCreateFacet is
             } else {
                 // Borrower's accepted lending ceiling (their `amountMax`)
                 // can't exceed the system-derived ceiling implied by the
-                // collateral they're posting.
+                // MAX collateral they're willing to lock. Issue #164:
+                // the upper bound is `offer.collateralAmountMax` (post
+                // auto-collapse), not `params.collateralAmount` — a
+                // borrower posting min=1 ETH / max=3 ETH should be
+                // allowed to back the larger `amountMax` their max
+                // collateral supports. The check still uses the same
+                // `LibRiskMath.maxLendingForCollateral` math; only the
+                // collateral argument widens.
                 uint256 ceiling = LibRiskMath.maxLendingForCollateral(
-                    params.collateralAmount,
+                    offer.collateralAmountMax,
                     params.lendingAsset,
                     params.collateralAsset
                 );
@@ -719,12 +741,22 @@ contract OfferCreateFacet is
             // Borrower: lock collateral (or prepay for NFT rental).
             if (params.assetType == LibVaipakam.AssetType.ERC20) {
                 if (params.collateralAssetType == LibVaipakam.AssetType.ERC20) {
+                    // Issue #164 — pre-escrow the upper bound
+                    // (`collateralAmountMax`) so the borrower-range
+                    // case mirrors the lender-side amount-range pull:
+                    // OfferMatchFacet's excess-refund hook returns the
+                    // unused tail to the borrower's wallet at match-
+                    // time. Auto-collapse (zero ⇒ collateralAmount)
+                    // keeps legacy single-value callers byte-identical.
+                    uint256 borrowerPull = params.collateralAmountMax == 0
+                        ? params.collateralAmount
+                        : params.collateralAmountMax;
                     LibFacet.crossFacetCall(
                         abi.encodeWithSelector(
                             EscrowFactoryFacet.escrowDepositERC20.selector,
                             creator,
                             params.collateralAsset,
-                            params.collateralAmount
+                            borrowerPull
                         ),
                         EscrowDepositFailed.selector
                     );
@@ -780,7 +812,12 @@ contract OfferCreateFacet is
             return params.amountMax == 0 ? params.amount : params.amountMax;
         }
         if (params.assetType == LibVaipakam.AssetType.ERC20) {
-            return params.collateralAmount;
+            // Issue #164 — Permit2 pulls the upper bound so the
+            // borrower-range path matches the classic-path pre-escrow.
+            // Auto-collapse for legacy single-value callers.
+            return params.collateralAmountMax == 0
+                ? params.collateralAmount
+                : params.collateralAmountMax;
         }
         // NFT rental borrower offer — Permit2 pulls the prepay.
         LibVaipakam.Offer storage offer = LibVaipakam.storageSlot().offers[offerId];
@@ -863,6 +900,7 @@ contract OfferCreateFacet is
         f.durationDays = offer.durationDays;
         f.amountMax = offer.amountMax;
         f.interestRateBpsMax = offer.interestRateBpsMax;
+        f.collateralAmountMax = offer.collateralAmountMax;
         f.creatorRiskAndTermsConsent = offer.creatorRiskAndTermsConsent;
         f.allowsPartialRepay = offer.allowsPartialRepay;
         f.periodicInterestCadence = offer.periodicInterestCadence;
@@ -966,6 +1004,48 @@ contract OfferCreateFacet is
         // Phase 6: keeper access is per-keeper via
         // `offerKeeperEnabled[offerId][keeper]`. Creator enables specific
         // keepers post-create via `ProfileFacet.setOfferKeeperEnabled`.
+
+        // ── Issue #164 — borrower-side collateral range. Same auto-
+        // collapse convention as the amount/rate ranges above: leaving
+        // `params.collateralAmountMax == 0` collapses the offer to
+        // single-value (`collateralAmount == collateralAmountMax`), so
+        // every legacy caller that never touches the new field keeps
+        // its existing behaviour byte-for-byte. Lender offers MUST
+        // collapse (the lender's `collateralAmount` is a derived
+        // requirement, not a posted asset — a max would have no
+        // operational meaning), enforced after the collapse step so
+        // the error message can name the structural cause directly.
+        uint256 effCollateralAmountMax = params.collateralAmountMax == 0
+            ? params.collateralAmount
+            : params.collateralAmountMax;
+        if (effCollateralAmountMax < params.collateralAmount) {
+            revert InvalidCollateralAmountRange();
+        }
+        if (
+            params.offerType == LibVaipakam.OfferType.Lender
+            && effCollateralAmountMax != params.collateralAmount
+        ) {
+            revert LenderCollateralRangeNotAllowed();
+        }
+        // Master kill-switch — while `rangeCollateralEnabled` is off
+        // (default), the only permitted shape is the collapsed single-
+        // value collateral. Borrower offers with a real range
+        // (`max > min`) get rejected with whichFlag=4 so the frontend
+        // validator can surface a precise "feature disabled" hint
+        // distinct from the amount/rate flags (whichFlag=1/2/3).
+        LibVaipakam.ProtocolConfig storage cfgColl =
+            LibVaipakam.storageSlot().protocolCfg;
+        if (
+            !cfgColl.rangeCollateralEnabled
+            && effCollateralAmountMax != params.collateralAmount
+        ) {
+            revert FunctionDisabled(4);
+        }
+        offer.collateralAmountMax = effCollateralAmountMax;
+        // `collateralAmountFilled` defaults to 0 from struct
+        // initialization; it stays 0 across Phase 1 borrower matches
+        // (single-fill rule). #102 lifts the single-fill rule and
+        // starts writing this field.
     }
 
     /**

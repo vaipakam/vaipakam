@@ -717,7 +717,8 @@
       "prepayAssetInvalid": "Prepayment asset address is invalid.",
       "riskAndTermsConsentRequired": "You must agree to the abnormal-market liquidation fallback terms before creating an offer.",
       "amountMaxBelowMin": "Maximum amount cannot be smaller than the minimum.",
-      "rateMaxBelowMin": "Maximum interest rate cannot be smaller than the minimum."
+      "rateMaxBelowMin": "Maximum interest rate cannot be smaller than the minimum.",
+      "collateralAmountMaxBelowMin": "Maximum collateral cannot be smaller than the minimum."
     },
     "hintAssetTypeAuto": "Auto-detected from the lending-asset contract address. Paste or pick an address below to populate this.",
     "hintCollateralAssetTypeAuto": "Auto-detected from the collateral contract address.",

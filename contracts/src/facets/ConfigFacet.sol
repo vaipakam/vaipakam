@@ -79,6 +79,9 @@ contract ConfigFacet is DiamondAccessControl {
     event RangeRateEnabledSet(bool enabled);
     /// @custom:event-category informational/config
     event PartialFillEnabledSet(bool enabled);
+    /// Issue #164 — borrower-side collateral range master flag.
+    /// @custom:event-category informational/config
+    event RangeCollateralEnabledSet(bool enabled);
 
     // ── T-044 — admin-configurable loan-default grace schedule ──────────
     /// @custom:event-category informational/config
@@ -863,6 +866,23 @@ contract ConfigFacet is DiamondAccessControl {
     {
         LibVaipakam.storageSlot().protocolCfg.partialFillEnabled = enabled;
         emit PartialFillEnabledSet(enabled);
+    }
+
+    /// @notice Issue #164 — toggle whether borrower offers may carry a
+    ///         collateral range (`collateralAmountMax > collateralAmount`).
+    ///         While off (the default), every offer is forced to a
+    ///         single-value collateral shape and behaves bit-for-bit
+    ///         like the pre-#164 contract. Lender offers stay single-
+    ///         value regardless of this flag — the createOffer write-
+    ///         side rejects a ranged-collateral lender offer with
+    ///         `LenderCollateralRangeNotAllowed` independent of the
+    ///         flag's state. See docs/RangeOffersDesign.md §3.
+    function setRangeCollateralEnabled(bool enabled)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.storageSlot().protocolCfg.rangeCollateralEnabled = enabled;
+        emit RangeCollateralEnabledSet(enabled);
     }
 
     /// ─── Depth-tiered LTV (Piece B) — governance globals ────────────

@@ -1405,6 +1405,100 @@ on `Storage`; pre-launch reorder is fine.
 
 ---
 
+## 16. Borrower-side collateral range (Issue #164)
+
+Phase 1 (this doc's body above) added ranges on **amount** and
+**interest rate**. Issue #164 closes the third axis — the
+**borrower-side collateral**. Mirrors the lending-amount pattern exactly
+(append-only storage, auto-collapse, master kill-switch) so the new
+mechanic feels structurally familiar to the matching core that already
+processes range pairs.
+
+### 16.1 What it adds
+
+Two append-only fields on the `Offer` struct (slots 18, 19):
+
+| Field | Semantic |
+|---|---|
+| `collateralAmountMax` | Borrower's upper bound on what they'll lock. Single-value offers auto-collapse to `collateralAmount` (every legacy single-value caller behaves identically). |
+| `collateralAmountFilled` | Cumulative collateral consumed across all matches against this offer. Stays 0 across Phase 1 borrower matches (borrower-side partial-fill is gated to #102). |
+
+### 16.2 Why lender side stays single-value
+
+The lender's `collateralAmount` slot is their **derived requirement**
+(at `amountMax`, pro-rated to the matched amount via the §10.4 math).
+It already expresses "the minimum collateral I'll accept" — a max
+wouldn't add operational meaning since lenders want as much
+collateral as they can get (over-collateralisation strengthens HF).
+`createOffer` rejects a lender offer with
+`collateralAmountMax > collateralAmount` with the typed
+`LenderCollateralRangeNotAllowed` error, independent of the kill-
+switch state.
+
+### 16.3 Match math — clamp-up on the borrower min
+
+Borrower's committed range is `[collateralAmount, collateralAmountMax
+- collateralAmountFilled]`. Match-time, the locked amount C is:
+
+```text
+reqL    = L.collateralAmount × matchAmount / L.amountMax      // lender's pro-rated requirement
+picked  = max(reqL, B.collateralAmount)                       // clamp UP to borrower's min
+ceiling = B.collateralAmountMax - B.collateralAmountFilled
+if picked > ceiling → MatchError.CollateralBelowRequired
+else: lock `picked`; refund `B.collateralAmountMax - picked` to borrower
+```
+
+The clamp-up choice is symmetric with how amount overlap works in
+§4.1 — `lo = max(L.amount, B.amount)`. Both sides' minimums constrain
+the floor TOGETHER, not separately. A borrower who committed to AT
+LEAST X gets X locked even when the lender's pro-rated requirement
+is below it (better HF cushion, lender happy). The match fails only
+when the clamped value exceeds the borrower's remaining ceiling.
+
+### 16.4 Backward compat — legacy single-value preserved bit-for-bit
+
+On a legacy single-value borrower offer (`collateralAmountMax == 0`
+at create-time, auto-collapsed to `collateralAmountMax ==
+collateralAmount`), the clamp is a no-op identity: `max(reqL,
+B.collateralAmount)` equals `B.collateralAmount` whenever the
+existing `reqL ≤ B.collateralAmount` precondition holds. The pulled
+amount stays `B.collateralAmount` (auto-collapse), the refund stays
+`B.collateralAmount - reqL` — same numbers the pre-#164 contract
+produced, byte-for-byte.
+
+### 16.5 Pre-escrow widens
+
+`OfferCreateFacet._pullCreatorAssetsClassic` (and the Permit2
+sibling) now pulls `effCollateralAmountMax` (the auto-collapsed upper
+bound) for borrower ERC-20 offers instead of `collateralAmount`. The
+existing OfferMatchFacet excess-refund hook returns the unused tail
+(`collateralAmountMax - picked`) to the borrower's wallet at match-
+time — same pattern the lender-side amount range uses for partial-
+fill leftovers.
+
+### 16.6 Sequencing with #102
+
+[#102](https://github.com/vaipakam/vaipakam/issues/102) lifts the
+Phase 1 borrower-side single-fill rule and lets one borrower offer
+back multiple loans. That work needs `collateralAmountFilled` to be
+load-bearing storage from match #2 onwards. Landing the field
+without writing to it (this PR) keeps #102 a pure behaviour change
+rather than a behaviour + storage migration. Same pattern Phase 1
+used with `amountFilled` on borrower offers.
+
+### 16.7 Kill-switch — `rangeCollateralEnabled`
+
+A fourth flag on `ProtocolConfig`, defaulting `false`. While off,
+`createOffer` enforces `collateralAmountMax ≤ collateralAmount` (post
+auto-collapse: equality only — i.e., single-value), rejecting any
+real range with the typed `FunctionDisabled(4)`. Distinct
+`whichFlag` from the existing 1/2/3 so the frontend validator
+surfaces a precise "collateral range disabled" hint. Flipped on by
+governance via `ConfigFacet.setRangeCollateralEnabled(true)` after
+the testnet bake.
+
+---
+
 ## Sources & prior art
 
 - a yield protocol's RFQ matching for yield tokens

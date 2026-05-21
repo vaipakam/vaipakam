@@ -215,14 +215,21 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // ── Borrower-side excess-collateral refund (Range Orders
         // Phase 1, symmetric with the lender-side dust-close below).
         //
-        // The match locked `mr.reqCollateral` of collateral against
-        // the loan, but the borrower may have posted MORE at offer-
-        // create time (over-collateralized). Since borrower offers
-        // are single-fill in Phase 1, the excess can never be reused
-        // by another match — leaving it in escrow would trap the
-        // funds. Refund to the borrower's wallet immediately so the
+        // OfferCreateFacet pre-escrows the borrower's collateral
+        // UPPER bound at create-time (`offer.collateralAmountMax`,
+        // post auto-collapse). The match locked `mr.reqCollateral`
+        // — which is `clamp(reqFromLender, [B.collateralAmount,
+        // B.collateralAmountMax])` per #164's clamp-up semantics.
+        // The unused tail `B.collateralAmountMax - mr.reqCollateral`
+        // is refunded to the borrower's wallet immediately so the
         // invariant "escrow only holds collateral committed to an
-        // active offer or live loan" stays clean.
+        // active offer or live loan" stays clean. Since borrower
+        // offers are single-fill in Phase 1, the tail can never be
+        // reused by another match — leaving it in escrow would trap
+        // the funds. On a legacy single-value borrower offer
+        // (auto-collapsed `collateralAmountMax == collateralAmount`)
+        // this code path lands at the same numbers as the pre-#164
+        // implementation, byte-for-byte.
         //
         // ERC-20 collateral only: NFT collateral (ERC-721 / ERC-1155)
         // is whole-or-nothing — the borrower posts exactly the token
@@ -233,9 +240,9 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             LibVaipakam.Offer storage B = s.offers[borrowerOfferId];
             if (
                 B.collateralAssetType == LibVaipakam.AssetType.ERC20
-                && B.collateralAmount > mr.reqCollateral
+                && B.collateralAmountMax > mr.reqCollateral
             ) {
-                uint256 excess = B.collateralAmount - mr.reqCollateral;
+                uint256 excess = B.collateralAmountMax - mr.reqCollateral;
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
                         EscrowFactoryFacet.escrowWithdrawERC20.selector,

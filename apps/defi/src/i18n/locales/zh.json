@@ -217,7 +217,8 @@
       "prepayAssetInvalid": "Prepayment asset 地址无效。",
       "riskAndTermsConsentRequired": "创建报价前,您必须同意异常市场清算回退条款。",
       "amountMaxBelowMin": "最大金额不能小于最小金额。",
-      "rateMaxBelowMin": "最高利率不能小于最低利率。"
+      "rateMaxBelowMin": "最高利率不能小于最低利率。",
+      "collateralAmountMaxBelowMin": "最高担保金额不能小于最低担保金额。"
     },
     "hintAssetTypeAuto": "根据出借资产合约地址自动检测。请在下方粘贴或选择地址以填充此项。",
     "hintCollateralAssetTypeAuto": "根据抵押合约地址自动检测。",
