@@ -811,6 +811,40 @@ contract OfferAcceptFacet is
             && offer.offerType == LibVaipakam.OfferType.Borrower
             && s.protocolCfg.partialFillEnabled;
         if (!deferAcceptFlip) {
+            // #183 (Canonical Limit-Order Phase 2) — direct-accept
+            // residual-collateral refund for borrower offers (PR #184
+            // Codex round-1 P1.2). When a lender direct-accepts a
+            // borrower offer where `collateralAmountMax >
+            // collateralAmount`, the borrower's pre-escrowed excess
+            // (`collateralAmountMax - collateralAmount`) would
+            // otherwise be stranded — the offer terminates here
+            // (`accepted = true` below) but matchOffers' dust-close
+            // refund branch doesn't fire on this path. Symmetric
+            // with the legacy single-fill fallback that lives in
+            // `OfferMatchFacet.matchOffers` lines 252-277 for the
+            // partialFillEnabled = OFF case. ERC-20 collateral only:
+            // NFT collateral is whole-or-nothing (collateralAmountMax
+            // == collateralAmount always for ERC721/ERC1155 by the
+            // OfferCreateFacet `LenderCollateralRangeNotAllowed`-style
+            // structural invariants).
+            if (
+                !s.matchOverride.active
+                && offer.offerType == LibVaipakam.OfferType.Borrower
+                && offer.collateralAssetType == LibVaipakam.AssetType.ERC20
+                && offer.collateralAmountMax > offer.collateralAmount
+            ) {
+                uint256 collRefund = offer.collateralAmountMax - offer.collateralAmount;
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                        offer.creator,           // pull from borrower's escrow
+                        offer.collateralAsset,
+                        offer.creator,           // refund to borrower's wallet
+                        collRefund
+                    ),
+                    EscrowWithdrawFailed.selector
+                );
+            }
             offer.accepted = true;
             // Codex round-1 P1 — `LibMetricsHooks.onOfferAccepted`
             // mutates `activeOfferIdsList` + `assetPairActiveOfferIds`
