@@ -6,6 +6,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibRiskMath} from "../libraries/LibRiskMath.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
@@ -376,6 +377,16 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
                     }
                 }
                 Bm.accepted = true;
+                // Codex round-1 P1 — pair the metrics-hook fire with
+                // the accept-flip. The hook was deferred by
+                // `OfferAcceptFacet._acceptOffer` on every partial-fill
+                // match against this borrower offer; we fire it ONCE
+                // here at dust-close so the offer leaves the active-
+                // discovery indexes at the moment it actually becomes
+                // terminal. Two state changes (`accepted = true` +
+                // active-list removal) stay tightly coupled and can't
+                // drift.
+                LibMetricsHooks.onOfferAccepted(borrowerOfferId);
                 emit OfferClosed(
                     borrowerOfferId,
                     borrowerRemaining == 0

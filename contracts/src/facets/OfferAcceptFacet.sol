@@ -790,8 +790,17 @@ contract OfferAcceptFacet is
             && s.protocolCfg.partialFillEnabled;
         if (!deferAcceptFlip) {
             offer.accepted = true;
+            // Codex round-1 P1 — `LibMetricsHooks.onOfferAccepted`
+            // mutates `activeOfferIdsList` + `assetPairActiveOfferIds`
+            // to REMOVE the offer from the active-discovery indexes.
+            // Under partial-fill the borrower offer is STILL active
+            // until dust-close, so the hook fire must be deferred to
+            // `OfferMatchFacet.matchOffers`' dust-close branch (where
+            // it lands alongside the actual `accepted = true` flip).
+            // The metrics hook stays tightly coupled to the accept-flip
+            // so the two state changes can't drift.
+            LibMetricsHooks.onOfferAccepted(offerId);
         }
-        LibMetricsHooks.onOfferAccepted(offerId);
 
         // Phase 5: record the Diamond-held VPFI against the loan once
         // the loan id is known. The settlement helpers

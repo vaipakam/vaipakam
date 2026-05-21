@@ -285,6 +285,20 @@ library LibOfferMatch {
         // Borrower's remaining capacity = effBorrowerAmountMax - amountFilled.
         // Pre-#102, `B.amountFilled` was always 0 (single-fill rule); post-
         // #102, it accumulates per match symmetric to the lender side.
+        //
+        // Codex round-1 P1 — when `B.amountMax == 0` (GTC default) the
+        // effective ceiling is RE-DERIVED on every preview from current
+        // oracle prices + the autonomous-tier-LTV cache; meanwhile
+        // `B.amountFilled` is HISTORICAL (cumulative from prior matches
+        // at older prices). A market move that drops the derived
+        // ceiling below filled would underflow `effBorrowerAmountMax -
+        // B.amountFilled` (Solidity 0.8.x checked arithmetic = panic
+        // revert), bricking `previewMatch` instead of returning a clean
+        // structured `AmountNoOverlap`. Clamp before the subtract.
+        if (effBorrowerAmountMax <= B.amountFilled) {
+            r.errorCode = MatchError.AmountNoOverlap;
+            return r;
+        }
         uint256 borrowerRemaining = effBorrowerAmountMax - B.amountFilled;
         // Range overlap on amount: [max(L.min, B.min), min(lenderRemaining, borrowerRemaining)].
         uint256 lo = L.amount > B.amount ? L.amount : B.amount;
