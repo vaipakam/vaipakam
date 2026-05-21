@@ -21,16 +21,19 @@
  */
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { formatUnits } from 'viem';
 import type { OfferGroup } from '../hooks/useOfferGroupedLoans';
-import { LoanStatus, LOAN_STATUS_LABELS } from '../types/loan';
+import { LoanStatus, LOAN_STATUS_LABELS, AssetType } from '../types/loan';
+import { TokenAmount } from './app/TokenAmount';
 
 const BPS_DIVISOR = 100;
 const HF_SCALE = 10n ** 18n;
 
-/** Display the weighted-average rate as a percentage string. */
+/** Display the weighted-average rate as a percentage string. A literal
+ *  0n is rendered as "0.00%" — a loan can legitimately carry 0% interest
+ *  (promotional / family loans) and "—" would mis-label it as missing.
+ *  Per Codex P2 finding on PR #162 round-1.
+ */
 function formatRateBps(rateBps: bigint): string {
-  if (rateBps === 0n) return '—';
   // `rateBps` is BPS (1/10000). Convert to %, two decimals.
   const whole = rateBps / BigInt(BPS_DIVISOR);
   const fractional = rateBps % BigInt(BPS_DIVISOR);
@@ -108,9 +111,17 @@ export function OfferGroupCard({ group, defaultExpanded = false }: Props) {
         <div>
           <span className="offer-group-card__label">Total filled</span>
           <span className="offer-group-card__value mono">
-            {group.principalAssetType === 0
-              ? formatUnits(group.totalPrincipal, 18)
-              : group.totalPrincipal.toString()}
+            {group.principalAssetType === AssetType.ERC20 ? (
+              <TokenAmount
+                amount={group.totalPrincipal}
+                address={group.principalAsset}
+              />
+            ) : (
+              // For ERC721 / ERC1155, totalPrincipal is a unit count
+              // (e.g. number of NFT-rental days summed across children).
+              // Render plain — no decimals scaling.
+              group.totalPrincipal.toString()
+            )}
           </span>
         </div>
         <div>
@@ -145,11 +156,27 @@ export function OfferGroupCard({ group, defaultExpanded = false }: Props) {
           <ul>
             {collateralRows.map((bucket) => (
               <li key={bucket.asset} className="mono">
-                {bucket.assetType === 0
-                  ? formatUnits(bucket.totalAmount, 18)
-                  : bucket.childCount === 1
+                {bucket.assetType === AssetType.ERC20 ? (
+                  // Honour token decimals — the canonical TokenAmount
+                  // component pulls from the meta cache.
+                  <TokenAmount amount={bucket.totalAmount} address={bucket.asset} />
+                ) : bucket.assetType === AssetType.ERC1155 ? (
+                  // ERC1155 — `totalAmount` is the SUM of `collateralAmount`
+                  // (= per-item quantity). For a single child show
+                  // `Q× #tokenId`; for multi-child render the cumulative
+                  // quantity and the bucket's children count. Dropping
+                  // the quantity (as the round-1 shape did) would make
+                  // 1-copy and 100-copy collateral look identical.
+                  bucket.childCount === 1
+                    ? `${bucket.totalAmount.toString()}× #${bucket.firstTokenId.toString()}`
+                    : `${bucket.totalAmount.toString()} units across ${bucket.childCount} items`
+                ) : (
+                  // ERC721 — `collateralAmount` is always 1 on chain;
+                  // the meaningful identifier is the tokenId.
+                  bucket.childCount === 1
                     ? `#${bucket.firstTokenId.toString()}`
-                    : `${bucket.childCount} items`}
+                    : `${bucket.childCount} items`
+                )}
                 {' · '}
                 <span style={{ opacity: 0.7 }}>
                   {bucket.asset.slice(0, 6)}…{bucket.asset.slice(-4)}
@@ -184,13 +211,32 @@ export function OfferGroupCard({ group, defaultExpanded = false }: Props) {
                     </Link>
                   </td>
                   <td className="mono">
-                    {child.assetType === 0
-                      ? formatUnits(child.principal, 18)
-                      : `#${child.principalTokenId.toString()}`}
+                    {child.assetType === AssetType.ERC20 ? (
+                      <TokenAmount
+                        amount={child.principal}
+                        address={child.principalAsset}
+                      />
+                    ) : child.assetType === AssetType.ERC1155 ? (
+                      // ERC1155 — render quantity + token id, e.g. `50× #7`.
+                      // Dropping the quantity would make 1-copy and 50-copy
+                      // loans look identical.
+                      `${child.principal.toString()}× #${child.principalTokenId.toString()}`
+                    ) : (
+                      // ERC721 — single-unit; the id is the meaningful piece.
+                      `#${child.principalTokenId.toString()}`
+                    )}
                   </td>
                   <td>{formatRateBps(child.interestRateBps)}</td>
                   <td>
-                    <span className={`status-pill status-${child.status}`}>
+                    {/* Match the Dashboard's flat-table status convention
+                        (status-badge + lowercased semantic label). Round-1
+                        used a status-pill / numeric shape that wasn't
+                        defined anywhere in the app's CSS. */}
+                    <span
+                      className={`status-badge ${
+                        LOAN_STATUS_LABELS[child.status as LoanStatus]?.toLowerCase() ?? ''
+                      }`}
+                    >
                       {LOAN_STATUS_LABELS[child.status as LoanStatus] ?? '—'}
                     </span>
                   </td>

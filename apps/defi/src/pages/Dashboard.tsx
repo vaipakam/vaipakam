@@ -91,16 +91,6 @@ export default function Dashboard() {
     [bothSidesRows],
   );
   const inlineRisks = useMemo(() => loansToRiskMap(bothSidesRows), [bothSidesRows]);
-  // Group loans by their originating offer for the #124 "loans by offer"
-  // section. The hook returns ALL groups including single-child ones; the
-  // render below filters to `counts.total >= 2` so this section only
-  // surfaces when there's an actual range-order fan-out to display
-  // (single-child loans stay in the flat table below, no duplication).
-  const offerGroups = useOfferGroupedLoans(loans, inlineRisks);
-  const multiChildGroups = useMemo(
-    () => offerGroups.filter((g) => g.counts.total >= 2),
-    [offerGroups],
-  );
   const loading = clientLoading;
 
   // Pre-warm the ERC-20 symbol/decimals cache for every asset that
@@ -161,6 +151,21 @@ export default function Dashboard() {
         (statusFilter === 'all' || l.status === statusFilter),
       ),
     [loans, roleFilter, statusFilter],
+  );
+
+  // Group loans by their originating offer for the #124 "loans by offer"
+  // section. Builds from `filteredLoans` (NOT `loans`) so the grouped
+  // section honours the active role/status filters — otherwise users
+  // could see fan-outs containing loans the flat table is intentionally
+  // hiding. Per Codex P2 finding on PR #162 round-1. The hook returns
+  // ALL groups including single-child ones; `multiChildGroups` filters
+  // to `counts.total >= 2` so this section only surfaces when there's
+  // an actual range-order fan-out to display (single-child loans stay
+  // in the flat table below, no duplication).
+  const offerGroups = useOfferGroupedLoans(filteredLoans, inlineRisks);
+  const multiChildGroups = useMemo(
+    () => offerGroups.filter((g) => g.counts.total >= 2),
+    [offerGroups],
   );
 
   // Snap back to page 0 whenever a filter narrows the set past the current
