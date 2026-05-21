@@ -31,10 +31,24 @@ The matcher was already mostly correct. It filtered out `accepted` offers during
 - **Public reference keeper bot at `vaipakam/vaipakam-keeper-bot`** — separate sibling repo; needs the same single-line fix applied via the keeper-bot ABI sync flow. Tracked outside this PR (the public bot updates lag the production matcher by design).
 - **Borrower-side dust-close handling**: when a borrower offer reaches dust-close (per #102), the contract auto-closes it and emits `OfferClosed`. The matcher's `hydrateOffers` filter (`accepted`) already excludes dust-closed offers on the NEXT tick. No matcher-side change needed.
 
+### Round-1 Codex correction — wait for tx inclusion before continuing
+
+Codex round-1 caught a P1 race: `submitMatch` used `writeContract` (which returns on BROADCAST), not waiting for inclusion. Without waiting, the loop continued to subsequent (L, B) pairs immediately; the next `previewMatch` read `latest` state which didn't include the broadcast tx's effects yet, so multiple matches got queued against the same lender's unconsumed capacity. The first match landed; the rest reverted when mined.
+
+Fixed by mirroring the sibling pattern at `apps/keeper/src/dailyOracleSnapshot.ts:127`:
+
+```ts
+const hash = await ctx.wallet.writeContract({ ... });
+const receipt = await ctx.client.waitForTransactionReceipt({ hash, timeout: 30_000 });
+if (receipt.status !== 'success') return false;  // on-chain revert
+```
+
+Trade-off: tick wall-clock now includes block-time per match. Worst-case: `MAX_SUBMITS_PER_TICK (25) × block_time`. Acceptable; the next cron either overlaps via the Workers concurrency lock or starts fresh state. Far cheaper than burning gas on N-1 reverts every tick.
+
 ### Verification
 
-- ✅ `pnpm --filter @vaipakam/keeper exec tsc -p . --noEmit` clean
-- Manual: with `partialFillEnabled` on (true on every fresh Vaipakam deploy post-#102), a single matcher tick now consumes multiple slices of a borrower offer across compatible lenders; observable via `[matcher] submits=N` log line (N ≥ 2 on a busy book).
+- ✅ `pnpm --filter @vaipakam/keeper exec tsc -p . --noEmit` clean (both pre- and post-fix)
+- Manual: with `partialFillEnabled` on (true on every fresh Vaipakam deploy post-#102), a single matcher tick now consumes multiple slices of a borrower offer across compatible lenders; observable via `[matcher] submits=N` log line (N ≥ 2 on a busy book). Each match awaits receipt before the next is broadcast.
 
 ### Dependencies
 

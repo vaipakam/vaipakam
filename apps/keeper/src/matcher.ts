@@ -36,7 +36,7 @@
  * table via the shared D1 binding and only `previewMatch` on-chain.
  */
 
-import { createPublicClient, http, type Abi, type Address } from 'viem';
+import { createPublicClient, http, type Abi, type Address, type Hex } from 'viem';
 import {
   MetricsFacetABI,
   OfferCreateFacetABI,
@@ -260,8 +260,9 @@ async function submitMatch(
 ): Promise<boolean> {
   const account = ctx.wallet.account;
   if (!account) return false;
+  let hash: Hex;
   try {
-    const hash = await ctx.wallet.writeContract({
+    hash = await ctx.wallet.writeContract({
       address: ctx.diamond,
       abi: MATCHER_ABI,
       functionName: 'matchOffers',
@@ -269,10 +270,6 @@ async function submitMatch(
       account,
       chain: ctx.wallet.chain,
     });
-    console.log(
-      `[matcher] chain=${ctx.chainId} matched lender=${Number(lenderId)} borrower=${Number(borrowerId)} tx=${hash} amount=${preview.matchAmount.toString()} rateBps=${Number(preview.matchRateBps)} lenderRemaining=${preview.lenderRemainingPostMatch.toString()}`,
-    );
-    return true;
   } catch (err) {
     const errStr = String(err);
     // FunctionDisabled(3) — the partialFillEnabled master kill-switch.
@@ -287,11 +284,56 @@ async function submitMatch(
       }
     } else {
       console.log(
-        `[matcher] chain=${ctx.chainId} matchOffers lender=${Number(lenderId)} borrower=${Number(borrowerId)} failed: ${errStr.slice(0, 200)}`,
+        `[matcher] chain=${ctx.chainId} matchOffers lender=${Number(lenderId)} borrower=${Number(borrowerId)} broadcast failed: ${errStr.slice(0, 200)}`,
       );
     }
     return false;
   }
+
+  // Codex #176 round-1 P1 — wait for inclusion before returning success.
+  // Without this, the matcher tick's inner loop continues immediately
+  // and the next `previewMatch` reads `latest` state which doesn't
+  // include the just-broadcast tx's effects. Subsequent (L,B) pairs
+  // then evaluate against PRE-match lender capacity, queue up multiple
+  // matches against the SAME unallocated balance, and most of them
+  // revert when mined — burning keeper gas AND wasting
+  // `MAX_SUBMITS_PER_TICK` slots that should go to valid pairs.
+  //
+  // Pattern mirrors `apps/keeper/src/dailyOracleSnapshot.ts:127` (the
+  // existing sibling that waits for receipt before continuing). 30s
+  // timeout per match — bounded by chain block time × small constant.
+  // Worst-case tick duration: `MAX_SUBMITS_PER_TICK × ~block_time`,
+  // which is acceptable given the cron cadence (the next cron either
+  // overlaps via the Workers concurrency lock or starts fresh state).
+  try {
+    const receipt = await ctx.client.waitForTransactionReceipt({
+      hash,
+      timeout: 30_000,
+    });
+    if (receipt.status !== 'success') {
+      // On-chain revert — another keeper / a borrower cancel / a
+      // governance flip raced us. Log it; caller breaks the inner
+      // loop on `false` because the lender's state has moved beyond
+      // what previewMatch predicted, and subsequent submits would
+      // likely revert for the same reason.
+      console.log(
+        `[matcher] chain=${ctx.chainId} matchOffers lender=${Number(lenderId)} borrower=${Number(borrowerId)} reverted on-chain tx=${hash}`,
+      );
+      return false;
+    }
+  } catch (err) {
+    // Timeout (tx dropped from mempool or RPC slow) — assume in-flight
+    // and back off this lender for the tick.
+    console.log(
+      `[matcher] chain=${ctx.chainId} matchOffers lender=${Number(lenderId)} borrower=${Number(borrowerId)} receipt wait failed tx=${hash}: ${String(err).slice(0, 200)}`,
+    );
+    return false;
+  }
+
+  console.log(
+    `[matcher] chain=${ctx.chainId} matched lender=${Number(lenderId)} borrower=${Number(borrowerId)} tx=${hash} amount=${preview.matchAmount.toString()} rateBps=${Number(preview.matchRateBps)} lenderRemaining=${preview.lenderRemainingPostMatch.toString()}`,
+  );
+  return true;
 }
 
 /** One pass over a chain's order book. */
