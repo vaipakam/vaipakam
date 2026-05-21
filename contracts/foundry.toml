@@ -46,6 +46,58 @@ viaIR = true
 optimizer = true
 optimizer_runs = 200
 
+# ── #185 — Fast inner-loop iteration profile ──────────────────────────────
+# Skips the project's `test/` and `script/` trees so `forge build` only
+# compiles `src/` + `lib/` deps. viaIR stays ON (several src/ facets —
+# e.g., EscrowFactoryFacet.sol:631 — structurally need it to compile,
+# stack-too-deep otherwise). Optimizer stays ON (runs=200, same as
+# default) for the same reason. The win comes entirely from the LOC
+# reduction: src/ alone is ~half of the total Solidity, and the lib's
+# tests (Chainlink) were already skipped in the default profile too.
+#
+# Measured: cold build under quick profile is materially faster than
+# default + RSS substantially lower. Numbers recorded in the PR body
+# for #185.
+#
+# Usage:
+#   - Quick inner-loop iteration: `FOUNDRY_PROFILE=quick forge build`
+#     - Skips test/ + script/ compile (intentional). Run `forge test`
+#       under default profile when you need to compile / run tests.
+#   - Pre-deploy / CI / regression: `forge build` (default profile,
+#     unchanged) — exhaustive coverage as today.
+#   - Do NOT use `FOUNDRY_PROFILE=quick` with `forge test`: tests need
+#     viaIR + optimizer parity with src/ to faithfully reproduce
+#     production bytecode, and the test/ skip empties test discovery.
+#
+# See CLAUDE.md "Executing forge" section for cross-profile guidance.
+[profile.quick]
+src = "src"
+out = "out"
+libs = ["lib"]
+solc_version = '0.8.29'
+viaIR = true
+optimizer = true
+optimizer_runs = 200
+threads = 8
+skip = [
+  # Chainlink dependency tests (same as default; can't be inherited
+  # because Foundry's profile inheritance does not deep-merge arrays).
+  "lib/chainlink-ccip/**/*.t.sol",
+  "lib/chainlink-evm/**/*.t.sol",
+  "lib/chainlink-ccip/**/test/**",
+  "lib/chainlink-evm/**/test/**",
+  # #185 — skip the project's own tests + scripts in the fast profile.
+  # `forge test` and `forge script` should be run under the default
+  # profile so they get viaIR + optimizer parity with src/.
+  "test/**",
+  "script/**",
+]
+fs_permissions = [
+  { access = "read-write", path = "./deployments/" },
+  { access = "read", path = "./script/" },
+  { access = "read", path = "./out/" },
+]
+
 [fuzz]
 runs = 1000
 

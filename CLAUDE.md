@@ -619,6 +619,39 @@ Rules:
 - When ever running forge build, forge script or forge test, run them in high priority
 - [Run forge build / forge test in high priority](feedback_forge_high_priority.md) — prefix every forge build/test/script with `nice -n -10 ionice -c 2 -n 0`; viaIR runs are 5–15 min and 8 GB RSS, low priority causes 2–3× slowdowns under parallel desktop load
 
+### Two `foundry.toml` profiles (Issue #185)
+
+Two profiles live in `contracts/foundry.toml`:
+
+- **`default`** — full coverage. Compiles `src/` + `test/` + `script/`,
+  viaIR + optimizer (runs=200). Used by CI gates (`contracts-fast`,
+  `contracts-full`, `Build docs`, `Slither`, `Gas snapshot diff`),
+  `predeploy-check.sh`, and every regression / mainnet-deploy path.
+  Cold compile: 14-19 min, ~8 GB RSS.
+- **`quick`** — fast inner-loop iteration. Compiles `src/` + `lib/`
+  only (skips project `test/` and `script/`); viaIR + optimizer still
+  ON (some src/ facets, e.g. `EscrowFactoryFacet.sol:631`,
+  structurally need viaIR to compile). Cold compile: ~44 s, ~677 MB
+  RSS. Warm-cache + incremental: <1 s.
+
+**When to use which:**
+
+- Iterating on a contract change, want to know "does it compile?":
+  `FOUNDRY_PROFILE=quick forge build` — ~44 s cold, <1 s warm.
+- Running tests, scripts, regression, predeploy-check, gas snapshot:
+  `forge build` / `forge test` / `forge script` — default profile,
+  unchanged.
+- Pre-PR sanity check (compile + targeted tests): default profile.
+- CI is unchanged — every gate runs under default.
+
+**Do NOT use `FOUNDRY_PROFILE=quick` with `forge test`** — tests need
+viaIR + optimizer parity with src/ to faithfully reproduce production
+bytecode, AND the quick profile's `test/**` skip would empty test
+discovery.
+
+The high-priority `nice -n -10 ionice` prefix still applies to both
+profiles — it's about scheduling priority, not the build itself.
+
 ## Task tracking — @vaipakam-labs GitHub Project is the live tracker
 
 The single live tracker for in-flight and queued work is the GitHub
