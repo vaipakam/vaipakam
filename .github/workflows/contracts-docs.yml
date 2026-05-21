@@ -111,7 +111,18 @@ jobs:
           EOF
 
       - name: Configure GitHub Pages
+        # `enablement: true` auto-creates the Pages site with
+        # `build_type=workflow` on first run if it doesn't already
+        # exist. Without it, the action returns
+        # `Get Pages site failed ... Error: Not Found` whenever Pages
+        # has never been enabled on the repo — which was the failure
+        # mode every push-to-main hit pre-#177 (the existing repo
+        # didn't have a Pages site at all, see GET /pages → 404).
+        # The workflow already declares the necessary `pages: write`
+        # permission a few lines above; `enablement` exercises it.
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+        with:
+          enablement: true
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
