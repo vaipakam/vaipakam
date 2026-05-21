@@ -15,7 +15,9 @@
 #       │                                     saves cache for the
 #       │                                     informational tier
 #       │                                     below to restore
-#       ├── contracts-full (informational; full forge test regression)
+#       ├── contracts-full (REQUIRED on contracts-touching PRs;
+#       │                   skipped-as-success on docs-only PRs; full
+#       │                   forge test regression)
 #       ├── gas-snapshot   (informational; `forge snapshot --check`)
 #       └── slither        (informational; Solidity static analysis,
 #                           reads slither.config.json filter_paths)
@@ -48,9 +50,13 @@
 #   contracts-full    `bash contracts/script/predeploy-check.sh --full` —
 #                     the full 2,012-test regression. Same script the
 #                     mainnet runbook invokes at preflight step [1b].
-#                     ~10-15 min. INFORMATIONAL on PRs — runs alongside
-#                     contracts-fast, surfaces results on the PR, but
-#                     deliberately NOT in the required-status-checks rule.
+#                     ~10-15 min. CONDITIONALLY REQUIRED — listed in
+#                     the Protect main required-status-checks rule so
+#                     it gates merge whenever it runs. The job's
+#                     `if: needs.detect-changes.outputs.contracts == 'true'`
+#                     guard means it's only required on contracts-
+#                     touching PRs; docs-only PRs see it skipped, and
+#                     branch protection treats `if:`-skipped as SUCCESS.
 #
 #   workspaces        pnpm workspace typechecks (apps/keeper, apps/indexer
 #                     — incl. the indexer's event-coverage script,
@@ -62,9 +68,16 @@
 #                     small follow-up PR.
 #
 # For the `Protect main` ruleset's required-status-checks rule, wire
-# `contracts-fast` and `workspaces` — `contracts-full` deliberately stays
-# off the rule so a 10-15 min full-regression run doesn't gate routine
-# PRs. The release/* / `v*` tag-gated `mainnet-gate.yml` follow-up
+# `contracts-fast`, `contracts-full`, `workspaces`, and `detect-changes`.
+# `contracts-full` is conditionally required via the path-filter skip
+# pattern: it's listed as required, but its `if:` guard skips it on
+# docs-only PRs — and branch protection treats `if:`-skipped checks as
+# SUCCESS, so docs-only PRs still merge fast. Contracts-touching PRs
+# must wait for the full regression to complete on the FINAL commit
+# before merge — closing the gap where a subtle regression could land
+# on main between PR-time and the next mainnet-gate run.
+#
+# The release/* / `v*` tag-gated `mainnet-gate.yml` follow-up
 # (tracked as 74.C) re-runs `predeploy-check.sh --full` as a hard gate
 # before any cutover. Keep these job names stable, or update the
 # ruleset in lockstep.
@@ -301,7 +314,8 @@ jobs:
   #                   ~5-15 min cold)                ← required gate
   #     ↓ (cache saved at job end → next job restores)
   #   contracts-full (warm-restore + full regression, ~5-10 min)
-  #                                                  ← informational
+  #                                                  ← conditionally
+  #                                                    required
   #
   #   contracts-fast  — `predeploy-check.sh` without `--full`. Runs the
   #                     deploy-sanity suite (`test/deploy/*` — 12 tests
@@ -310,31 +324,33 @@ jobs:
   #                     + shell-script lint. Catches the deploy-blocker
   #                     regression classes (#66 / #71 / #72 / #75 + #69).
   #                     Wired into Protect main's required_status_checks
-  #                     rule (74.B) — it is the gating contract check.
+  #                     rule — the FAST gating contract check.
   #
   #   contracts-full  — `predeploy-check.sh --full`. Runs the full
   #                     regression (2,012 tests, no invariants). Matches
   #                     what `deploy-mainnet.sh --full` invokes at
-  #                     preflight. INFORMATIONAL on PRs — surfaces results
-  #                     on the PR but NOT in the required-status-checks
-  #                     rule. Trade-off acknowledged: a subtle regression
-  #                     that only the full suite catches could land on
-  #                     main between merge and the next mainnet-gate run.
-  #                     Mitigations:
-  #                       1. The full job still runs and shows red on the
-  #                          PR — anyone watching CI can hold the merge or
-  #                          revert post-merge.
-  #                       2. `mainnet-gate.yml` runs --full as a hard gate
-  #                          on release/* branches and v* tags (74.C) —
-  #                          the last line of defence before any cutover.
+  #                     preflight. CONDITIONALLY REQUIRED on PRs via the
+  #                     path-filter skip pattern: listed in the Protect
+  #                     main required_status_checks rule, but its
+  #                     `if: needs.detect-changes.outputs.contracts ==
+  #                     'true'` guard skips it on docs-only PRs.
+  #                     Branch protection treats `if:`-skipped checks as
+  #                     SUCCESS for required status, so docs-only PRs
+  #                     still merge fast; contracts-touching PRs must
+  #                     wait for it.
+  #
+  #                     `mainnet-gate.yml` re-runs --full as a separate
+  #                     hard gate on release/* branches and v* tags —
+  #                     the last line of defence before any cutover.
   #
   # Why serial (not parallel)? Parallel would mean TWO cold-cache forge
   # builds on a typical fresh PR — wasteful. The serial design reuses
   # contracts-fast's just-saved cache for contracts-full's restore,
   # halving the cold-cache compute footprint. Critical-path latency to
-  # merge-ready is UNCHANGED (contracts-fast is the gate either way).
-  # The only cost is contracts-full's wall-clock visibility on the PR
-  # arrives ~5-10 min later — informational only, not gating.
+  # merge-ready grows by ~5-10 min on contracts-touching PRs (was
+  # `contracts-fast` only, now `max(contracts-fast, contracts-full)`)
+  # — the deliberate trade-off for ensuring the full regression ran on
+  # the FINAL commit before merge.
   #
   # Cache-save / restore mechanics: `actions/cache` saves at job END
   # (post-action hook fires when the job finishes). A subsequent job in
@@ -472,7 +488,7 @@ jobs:
   # (tracked as a 74.C follow-up) will re-run this as a hard gate before
   # any cutover.
   contracts-full:
-    name: contracts-full (forge + predeploy-check --full)  [informational]
+    name: contracts-full (forge + predeploy-check --full)
     # `needs: [detect-changes, contracts-fast]` makes this job wait for
     # contracts-fast to finish. The benefit is the cache: contracts-fast
     # saves the freshly-built `out/` + `cache/` at its job end; this job

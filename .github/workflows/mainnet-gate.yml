@@ -1,11 +1,17 @@
 # Mainnet gate — hard-gate workflow that runs the FULL forge regression
 # as a required check before any release-track commit can ship to mainnet.
 #
-# Why this exists: the routine PR CI (ci.yml) intentionally runs only the
-# deploy-sanity suite as a required check (`contracts-fast` job) — paying
-# 10-15 min on every PR for the full 2,012-test regression was over-
-# blocking small / docs-only changes. The full regression still runs on
-# every PR as `contracts-full` but informational, not blocking.
+# Why this exists: the routine PR CI (ci.yml) runs both the deploy-sanity
+# suite (`contracts-fast`) AND the full 2,012-test regression
+# (`contracts-full`) as required checks on every CONTRACTS-touching PR.
+# But docs-only PRs see contracts-full skipped (path-filter false), and
+# the release-track flow ALSO needs the full-regression guarantee on the
+# exact commit being tagged for cutover.
+#
+# This workflow re-runs the full regression as the final
+# defence on release-track commits, providing audit-trail symmetry with
+# what `deploy-mainnet.sh` invokes at preflight step [1b] and catching the
+# rare case where a force-push between PR merge and tag changes the tree.
 #
 # This workflow is the safety net at the line that matters: before a
 # release-track commit hits any deployable branch / tag, the full
