@@ -47,6 +47,7 @@ import {HelperTest} from "./HelperTest.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
+import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -129,6 +130,13 @@ contract SetupTest is Test {
     OfferCreateFacet offerCreateFacet;
     OfferAcceptFacet offerAcceptFacet;
     OfferCancelFacet offerCancelFacet;
+    // OfferMatchFacet — Range Orders Phase 1 matching surface (#46).
+    // Production diamond cuts it (DiamondFacetNames §4 + DeployDiamond
+    // step 5e); SetupTest's test diamond previously omitted it, which
+    // was a latent drift between test and prod. Fix landed alongside
+    // BorrowerPartialFillTest (#173) so matchOffers / previewMatch
+    // become reachable from every test that inherits SetupTest.
+    OfferMatchFacet offerMatchFacet;
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
     VaipakamNFTFacet nftFacet;
@@ -191,6 +199,7 @@ contract SetupTest is Test {
         offerCreateFacet = new OfferCreateFacet();
         offerAcceptFacet = new OfferAcceptFacet();
         offerCancelFacet = new OfferCancelFacet();
+        offerMatchFacet = new OfferMatchFacet();
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
         nftFacet = new VaipakamNFTFacet();
@@ -217,7 +226,7 @@ contract SetupTest is Test {
         escrowImpl = new VaipakamEscrowImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](23);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](24);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -337,6 +346,18 @@ contract SetupTest is Test {
             facetAddress: address(riskMatchLiquidationFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRiskMatchLiquidationFacetSelectors()
+        });
+        // OfferMatchFacet — Range Orders Phase 1 matching surface
+        // (`matchOffers` + `previewMatch`). The production deploy cuts
+        // it (DeployDiamond.s.sol step 5e + DiamondFacetNames §4); this
+        // entry closes the test-vs-prod drift for #173's coverage work.
+        // No existing test calls these selectors today, so adding the
+        // cut is a strict superset — every existing test sees the same
+        // pre-#173 diamond shape plus two new view/external selectors.
+        cuts[23] = IDiamondCut.FacetCut({
+            facetAddress: address(offerMatchFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferMatchFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
