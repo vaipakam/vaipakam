@@ -95,16 +95,36 @@ follows the same pattern:
 
 - **Borrower's GTC default ships `amountMax = 0`** (storage default;
   SSTORE skipped, mirroring the #169 `collateralAmountMax` optimisation).
-- **Match-time read applies the fallback**:
+- **Match-time read applies the fallback using the SAME effective
+  init-LTV cap that `LoanFacet._checkInitialLtvAndHf` consults at
+  admission** — i.e., `cap = min(asset loanInitMaxLtvBps,
+  effectiveTierMaxInitLtvBps(tier))`, the existing pattern from
+  `LibOfferMatch.previewMatch`'s synthetic-init-gate block:
   ```
-  effBorrowerAmountMax = B.amountMax == 0
-      ? (LibRiskMath.maxLendingForCollateral(effBorrowerCollMax(B),
-                                             B.lendingAsset,
-                                             B.collateralAsset)
-         * effLoanInitMaxLtvBps(B.collateralAsset))
-        / BASIS_POINTS
-      : B.amountMax;
+  uint8 effTier = OracleFacet(address(this))
+                      .getEffectiveLiquidityTier(B.collateralAsset);
+  uint256 maxLtv  = s.assetRiskParams[B.collateralAsset].loanInitMaxLtvBps;
+  uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(effTier));
+  uint256 cap     = maxLtv < tierCap ? maxLtv : tierCap;
+
+  uint256 effBorrowerAmountMax = B.amountMax == 0
+      ? LibRiskMath.maxLendingForLtvCap(
+            effBorrowerCollMax(B),
+            B.lendingAsset,
+            B.collateralAsset,
+            cap                              // single cap applied INSIDE the helper
+        )
+      : B.amountMax;                          // advanced override
   ```
+- The pseudocode references `LibRiskMath.maxLendingForLtvCap` —
+  **a new sibling of the existing `minCollateralForLtvCap`** that
+  #102's implementation will add. The existing
+  `LibRiskMath.maxLendingForCollateral` uses tier LIQUIDATION LTV
+  (e.g., 80%, the post-creation safety threshold), NOT the init-LTV
+  cap (e.g., 75%, the admission threshold). Reusing it would advertise
+  borrower capacity above what admission allows, causing avoidable
+  failed matches — exactly the failure mode Codex round-1 surfaced
+  on this ADR's first draft.
 - Advanced-mode borrowers can ship an explicit tighter `amountMax`
   override; the contract honours it.
 - `_emitOfferCreatedDetails` applies the same `0 ⇒ derived` collapse
@@ -384,24 +404,40 @@ Frontend writes:
 - `collateralAmount = 0` (or 1 wei to satisfy invariants if any)
 - `collateralAmountMax = 2 ether` (pre-escrowed)
 
-Match-time computation:
+Match-time computation (assuming pair is in Tier 1 with `effective
+init-LTV cap = min(75% asset, 75% tier) = 75%`):
 - `effLenderAmountMax = 10_000` USDC
-- `effBorrowerAmountMax = maxLendingForCollateral(2 ETH) × 7500 / 10_000`
-  ≈ $3_750 (at $2,500/ETH × 75% LTV).
+- `effBorrowerAmountMax = maxLendingForLtvCap(2 ETH, USDC, WETH, 7500)`
+  ≈ $3_750 (at $2,500/ETH × 75% effective init-LTV cap; the helper
+  internally does `collateralUSD × cap / BASIS_POINTS / pricePrincipal`).
 - Amount overlap: `[max(1, 500), min(10_000, 3_750)] = [500, 3_750]`.
   Match at midpoint = $2_125.
 - Rate overlap: `[max(400, 0), min(10_000, 800)] = [400, 800]`. Match at
   midpoint = 600 bps (6%).
 - `reqFromLender = 1 ETH × 2_125 / 10_000` ≈ 0.21 ETH.
 - `picked = max(reqFromLender = 0.21, B.collateralAmount = 0)` = 0.21 ETH.
-- Excess refund: `2 ETH - 0.21 ETH = 1.79 ETH` returned to borrower.
+- Excess refund: `2 ETH - 0.21 ETH = 1.79 ETH` returned to borrower
+  via `OfferMatchFacet.matchOffers`'s excess-refund hook.
 
 Loan minted with principal $2_125 at 6% APR, collateral 0.21 ETH locked.
-Lender's `amountFilled = 2_125`; offer stays open with $7_875 remaining
-(partial-fill enabled per `cfg.partialFillEnabled`). Borrower's offer
-closes via the single-fill rule until #102 lands.
+Lender's `amountFilled = 2_125`; lender's offer stays open with $7_875
+remaining (partial-fill enabled per `cfg.partialFillEnabled`).
+Borrower's offer closes via the Phase 1 single-fill rule until #102 lands.
 
-Post-#102, the borrower's `amountFilled = 2_125` and the offer stays
-open with remaining capacity `[500 - 2_125, $3_750 - 2_125]` →
-`max(0, -1625) = 0` floor exhausted → close via dust-close (matches
-the existing lender-side pattern at `OfferMatchFacet.matchOffers`).
+**Post-#102**, the borrower's offer becomes multi-fill on the same
+shape. The dust-close rule from the lender side (close when remaining
+capacity falls below the per-match minimum) extends symmetrically:
+
+- After this first match — `B.amountFilled = 2_125`; remaining
+  capacity = `effBorrowerAmountMax - amountFilled = 3_750 - 2_125 =
+  1_625`. That remaining capacity is **greater than** the borrower's
+  per-match minimum `B.amount = 500`, so the offer **stays open** with
+  `1_625` capacity available for a subsequent lender match. Same for
+  collateral: `B.collateralAmountFilled = 0.21 ETH`; remaining
+  collateral capacity = `B.collateralAmountMax - filled = 1.79 ETH`,
+  still above zero.
+- A hypothetical second match consuming the remaining `1_625` would
+  drive `remaining → 0`, which is `< B.amount = 500`, triggering the
+  dust-close auto-flip (`B.accepted = true`, refund any residual
+  collateral, emit `OfferClosed`). Same lifecycle as
+  `OfferMatchFacet.matchOffers` already does for the lender side.

@@ -1566,15 +1566,35 @@ orange ≤ protocol max, red > protocol max — would revert at
 
 Mirrors the lender-side collateral single-value pattern (§16.2):
 borrower's GTC default ships `amountMax = 0`; the match path applies
-the fallback
+the fallback using the SAME effective init-LTV cap that
+`LoanFacet._checkInitialLtvAndHf` consults at admission —
+`cap = min(asset loanInitMaxLtvBps, effectiveTierMaxInitLtvBps(tier))`,
+the existing pattern from `LibOfferMatch.previewMatch`'s synthetic-
+init-gate block:
 
 ```
-effBorrowerAmountMax = B.amountMax == 0
-    ? (maxLendingForCollateral(effBorrowerCollMax(B))
-       × loanInitMaxLtvBps(B.collateralAsset))
-      / BASIS_POINTS
-    : B.amountMax;   // advanced override
+uint8 effTier = OracleFacet(address(this))
+                    .getEffectiveLiquidityTier(B.collateralAsset);
+uint256 maxLtv  = s.assetRiskParams[B.collateralAsset].loanInitMaxLtvBps;
+uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(effTier));
+uint256 cap     = maxLtv < tierCap ? maxLtv : tierCap;
+
+uint256 effBorrowerAmountMax = B.amountMax == 0
+    ? LibRiskMath.maxLendingForLtvCap(
+          effBorrowerCollMax(B),
+          B.lendingAsset,
+          B.collateralAsset,
+          cap                             // single cap applied INSIDE the helper
+      )
+    : B.amountMax;                         // advanced override
 ```
+
+The pseudocode references `LibRiskMath.maxLendingForLtvCap` — **a new
+sibling of the existing `minCollateralForLtvCap`** that #102's
+implementation will add. The existing `LibRiskMath.maxLendingForCollateral`
+uses tier LIQUIDATION LTV (the post-creation safety threshold), NOT
+the init-LTV cap — reusing it would advertise borrower capacity above
+what admission allows. See ADR-0010 §3 for the full rationale.
 
 Same `0 ⇒ derived` collapse applies in `_emitOfferCreatedDetails` so
 the `OfferCreatedDetails` event payload always carries the LOGICAL

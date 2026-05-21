@@ -77,3 +77,29 @@ git-archaeology cost ADRs exist to eliminate (per `docs/adr/README.md`'s
   `loanInitMaxLtvBps` on the Offer struct.
 - Does not relax the `amount > 0` contract invariant or remove the
   1-wei placeholder — deferred to the storage repack audit (#20).
+
+### Round-1 Codex corrections (folded in before merge)
+
+Codex round-1 surfaced three P2s in the first draft of ADR-0010 — all
+real, all corrected in the same PR:
+
+1. **Double-LTV-cap in the borrower `amountMax` derivation** —
+   `maxLendingForCollateral` already incorporates an LTV cap
+   internally; the original pseudocode multiplied by
+   `loanInitMaxLtvBps / BASIS_POINTS` again. Corrected to reference a
+   new `LibRiskMath.maxLendingForLtvCap(cap)` helper (a sibling of
+   the existing `minCollateralForLtvCap`) that #102 will add — single
+   cap applied inside the helper.
+2. **Tier-capped vs. init-only LTV** — `LibRiskMath.maxLendingForCollateral`
+   uses tier LIQUIDATION LTV (post-creation safety threshold), not the
+   init-LTV cap admission consults (`min(loanInitMaxLtvBps, tierCap)`).
+   Reusing it would advertise borrower capacity above what admission
+   allows. ADR now specifies the new `maxLendingForLtvCap` helper +
+   the cap derivation pattern that mirrors `previewMatch`'s existing
+   synthetic-init-gate block.
+3. **Worked example dust-close math** — the example incorrectly said
+   the borrower's offer "stays open" then "closes via dust-close"
+   after the same fill. Corrected: at first fill, remaining `1_625 >
+   floor 500` → STAYS OPEN; a hypothetical second fill that drains
+   remaining below `500` would trigger dust-close per the symmetric
+   extension of the lender-side pattern.
