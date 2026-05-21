@@ -30,7 +30,7 @@ function makeLoan(overrides: Partial<LoanSummary>): LoanSummary {
     lenderTokenId: 0n,
     borrowerTokenId: 0n,
     allowsPartialRepay: false,
-    liquidationLtvBpsAtInit: 7500n,
+    liquidationLtvBpsAtInit: 7500,
     ...overrides,
   };
 }
@@ -59,7 +59,7 @@ describe('groupLoansByOffer', () => {
     expect(group?.totalPrincipal).toBe(3500n);
   });
 
-  it('computes WEIGHTED-AVG rate, not plain mean (the card's "My take")', () => {
+  it('computes WEIGHTED-AVG rate, not plain mean (per card My-take block)', () => {
     // $1k at 10% APR (1000 bps) + $99k at 5% APR (500 bps)
     // Plain mean would be 7.5% — WRONG.
     // Weighted = (1000*1000 + 99000*500) / (1000 + 99000)
