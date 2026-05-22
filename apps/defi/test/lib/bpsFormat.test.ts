@@ -118,4 +118,25 @@ describe('formatBps', () => {
       /^5\.0500 %$/,
     );
   });
+
+  it('falls back to default precision when NaN is supplied (Math.trunc(NaN)===NaN gotcha)', () => {
+    // Codex round-3 P2: the Math.max/min clamp doesn't catch NaN.
+    // Now guarded via Number.isFinite — falls back to the documented
+    // default precision of 2.
+    expect(() =>
+      formatBps(505, { ...EN, precision: Number.NaN }),
+    ).not.toThrow();
+    expect(formatBps(505, { ...EN, precision: Number.NaN }).display).toMatch(
+      /^5\.05 %$/,
+    );
+  });
+
+  it('falls back to default precision when Infinity is supplied', () => {
+    expect(() =>
+      formatBps(505, { ...EN, precision: Number.POSITIVE_INFINITY }),
+    ).not.toThrow();
+    expect(
+      formatBps(505, { ...EN, precision: Number.POSITIVE_INFINITY }).display,
+    ).toMatch(/^5\.05 %$/);
+  });
 });

@@ -134,12 +134,16 @@ export function formatBps(
   // The `%` glyph and the `bps` qualifier stay literal — see the JSDoc
   // on FormatBpsOptions.locale for the rationale.
   //
-  // Codex round-2 P3 — Intl.NumberFormat throws RangeError when
-  // `minimumFractionDigits` / `maximumFractionDigits` is outside
-  // `[0, 100]`. Clamp `precision` defensively so a caller passing
-  // `-1` (e.g. via a stale stored preference) doesn't crash the
-  // render path. Default 2 is preserved for the typical case.
-  const safePrecision = Math.max(0, Math.min(100, Math.trunc(precision)));
+  // Codex round-2 P3 + round-3 P2 — Intl.NumberFormat throws
+  // RangeError when `minimumFractionDigits` / `maximumFractionDigits`
+  // is outside `[0, 100]` OR is NaN. The clamp via `Math.max` /
+  // `Math.min` does NOT catch NaN (`Math.trunc(NaN) === NaN`;
+  // `Math.min(100, NaN) === NaN`); fall back to the documented
+  // default 2 explicitly for non-finite inputs. Default 2 is also
+  // preserved when the caller passes no opts at all.
+  const safePrecision = Number.isFinite(precision)
+    ? Math.max(0, Math.min(100, Math.trunc(precision)))
+    : 2;
   const numberFmt = new Intl.NumberFormat(locale, {
     minimumFractionDigits: safePrecision,
     maximumFractionDigits: safePrecision,
