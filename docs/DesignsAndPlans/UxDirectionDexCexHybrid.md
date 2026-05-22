@@ -417,8 +417,15 @@ so review can prioritise:
   CEX-position-close confirm shape on the LoanDetails surface itself
   (Tier B.1, B.2, B.5, B.6); the per-action sub-pages (repay /
   preclose / refinance / early-withdraw / add-collateral /
-  partial-withdraw) each get their own sub-card below so the
-  traceability from checklist row to execution ticket is 1:1.
+  partial-withdraw) each get their own sub-card below. Standalone
+  pages — `Refinance.tsx`, `BorrowerPreclose.tsx`,
+  `LenderEarlyWithdrawal.tsx` — get strict 1:1 cards (5b / 5c / 5d).
+  Two paired-flow exceptions, deliberately bundled because each
+  pair shares a single panel slot + the same preview component:
+  `AddCollateral` + `PartialWithdraw` (sub-card 5e) and
+  `KeeperSettings` + `Alerts` (sub-card 12). The pairing is the
+  smaller deviation than splitting a shared-component implementation
+  across two cards.
 - Sub-card 5a: in-page `Repay` flow (full + partial) — CEX-position-
   close-shape modal; full vs. partial chosen by chip (Tier B.5).
 - Sub-card 5b: `Refinance.tsx` — pre-filled limit-ticket-shape form;
@@ -507,7 +514,10 @@ considered and rejected:
   vocabulary debate.
 
 **Negative / Trade-offs:**
-- ~11 sub-cards of UI work to land the full vision. Each can ship
+- ~12 sub-cards of UI work to land the full vision (the canonical
+  card numbers are 1, 2, 3, 4, 5, 5a–5e, 6, 7, 8, 9, 10, 11, 12 —
+  the 5a–5e per-action splits of the LoanDetails parent count as
+  their own tickets for execution-tracking purposes). Each can ship
   independently behind a feature flag (the protocol already uses
   kill-switch flags for backend work; the same pattern applies to
   rolled-out UI revamps).
