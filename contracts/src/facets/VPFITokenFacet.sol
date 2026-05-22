@@ -17,7 +17,7 @@ import {IVPFIToken} from "../interfaces/IVPFIToken.sol";
  *      on this chain depends on where the Diamond is deployed:
  *        - Canonical (Base mainnet / Base Sepolia testnet): the token is
  *          `VPFIToken` (ERC20Capped + minter + pause), sibling to
- *          `VPFIOFTAdapter` which bridges it via LayerZero OFT V2.
+ *          `VPFIMirrorToken` which bridges it via Chainlink CCIP CCT (Cross-Chain Token).
  *        - Mirror (Polygon / Arbitrum / Optimism / Ethereum mainnet +
  *          Sepolia testnet): the token is `VPFIMirror`, a pure OFT
  *          without a cap or a mint surface — supply arrives exclusively
@@ -90,7 +90,7 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
     /// @dev ADMIN_ROLE-only. Flips `isCanonicalVPFIChain` in Diamond storage.
     ///      Must be set to TRUE exactly once across the whole mesh — on the
     ///      Base (mainnet) / Base Sepolia (testnet) deploy where VPFIToken
-    ///      and VPFIOFTAdapter live. Leaving this false on the other four
+    ///      and VPFIMirrorToken live. Leaving this false on the other four
     ///      Diamond deploys (Polygon/Arbitrum/Optimism/Ethereum mainnet and
     ///      Sepolia testnet) is what prevents those Diamonds from minting
     ///      VPFI locally — they can only receive bridged supply via the LZ
