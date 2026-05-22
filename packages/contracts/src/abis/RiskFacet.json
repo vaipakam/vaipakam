@@ -635,36 +635,6 @@
   },
   {
     "type": "error",
-    "name": "VaultAlreadyBanned",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultBannedDueToSanctionedSource",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultDepositFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultResolutionFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultTransferFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultWithdrawFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "HealthFactorCalculationFailed",
     "inputs": []
   },
@@ -1357,11 +1327,6 @@
   },
   {
     "type": "error",
-    "name": "VPFIVaultBalanceInsufficient",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "VPFIGlobalCapExceeded",
     "inputs": []
   },
@@ -1383,6 +1348,41 @@
   {
     "type": "error",
     "name": "VPFITokenNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIVaultBalanceInsufficient",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultAlreadyBanned",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultBannedDueToSanctionedSource",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultDepositFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultResolutionFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultTransferFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultWithdrawFailed",
     "inputs": []
   },
   {

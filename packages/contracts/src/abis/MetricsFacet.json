@@ -285,29 +285,6 @@
   },
   {
     "type": "function",
-    "name": "getVaultStats",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "totalNFTsInVault",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "activeRentalsCount",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "totalRentalVolumeNumeraire",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getGlobalCounts",
     "inputs": [],
     "outputs": [
@@ -1549,6 +1526,29 @@
       },
       {
         "name": "activeLoanCount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getVaultStats",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "totalNFTsInVault",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "activeRentalsCount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "totalRentalVolumeNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       }
