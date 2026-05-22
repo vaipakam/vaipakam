@@ -2,11 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {Test} from "forge-std/Test.sol";
-import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
-import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
-import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
-import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
+import {SetupTest} from "./SetupTest.t.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
@@ -26,7 +22,6 @@ import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
-import {HelperTest} from "./HelperTest.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 
 /**
@@ -41,53 +36,29 @@ import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
  *      role (initializeAccessControl grants the deployer all roles), so
  *      role-gated entries still reach the `whenNotPaused` check first per
  *      modifier ordering.
+ *
+ *      #168 Track A — folded onto `SetupTest` to drop the duplicated
+ *      diamond-cut bytecode from this test's compile unit. `SetupTest`
+ *      cuts 28 facets in its cut[] list (a strict superset of the 18
+ *      the original setUp cut, but still 9 facets short of the 36
+ *      production facets `DiamondFacetNames.cutFacetNames()` lists —
+ *      see #229) + does `initializeAccessControl` + the first
+ *      `unpause`; this test just re-pauses inside its own `setUp` to
+ *      exercise the gated semantics. Track A's same PR extended
+ *      SetupTest from 24 → 28 facets so the preclose / refinance /
+ *      early-withdrawal / partial-withdrawal selectors this file
+ *      exercises actually route through the test diamond — the
+ *      narrowest test-vs-prod drift fix needed to make this fold work.
  */
-contract PauseGatingTest is Test {
-    VaipakamDiamond diamond;
-
+contract PauseGatingTest is SetupTest {
     function setUp() public {
-        DiamondCutFacet cutFacet = new DiamondCutFacet();
-        diamond = new VaipakamDiamond(address(this), address(cutFacet));
-        HelperTest helper = new HelperTest();
-
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](18);
-        cuts[0] = _cut(address(new AccessControlFacet()), helper.getAccessControlFacetSelectors());
-        cuts[1] = _cut(address(new AdminFacet()), helper.getAdminFacetSelectors());
-        cuts[2] = _cut(address(new OfferCreateFacet()), helper.getOfferCreateFacetSelectors());
-        cuts[17] = _cut(address(new OfferAcceptFacet()), helper.getOfferAcceptFacetSelectors());
-        cuts[15] = _cut(address(new OfferCancelFacet()), helper.getOfferCancelFacetSelectors());
-        cuts[3] = _cut(address(new LoanFacet()), helper.getLoanFacetSelectors());
-        cuts[4] = _cut(address(new RepayFacet()), helper.getRepayFacetSelectors());
-        cuts[5] = _cut(address(new PrecloseFacet()), helper.getPrecloseFacetSelectors());
-        cuts[6] = _cut(address(new RefinanceFacet()), helper.getRefinanceFacetSelectors());
-        cuts[7] = _cut(address(new EarlyWithdrawalFacet()), helper.getEarlyWithdrawalFacetSelectors());
-        cuts[8] = _cut(address(new PartialWithdrawalFacet()), helper.getPartialWithdrawalFacetSelectors());
-        cuts[9] = _cut(address(new AddCollateralFacet()), helper.getAddCollateralFacetSelectors());
-        cuts[10] = _cut(address(new ClaimFacet()), helper.getClaimFacetSelectors());
-        cuts[11] = _cut(address(new RiskFacet()), helper.getRiskFacetSelectors());
-        cuts[12] = _cut(address(new DefaultedFacet()), helper.getDefaultedFacetSelectors());
-        cuts[13] = _cut(address(new ProfileFacet()), helper.getProfileFacetSelectors());
-        cuts[14] = _cut(address(new TreasuryFacet()), helper.getTreasuryFacetSelectors());
-
-        cuts[16] = _cut(address(new RiskMatchLiquidationFacet()), helper.getRiskMatchLiquidationFacetSelectors());
-        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
-
-        AccessControlFacet(address(diamond)).initializeAccessControl();
-        AdminFacet(address(diamond)).unpause();
+        setupHelper();
+        // `SetupTest.setupHelper()` unpauses the diamond as part of its
+        // happy-path init (`whenNotPaused` paths in every other test
+        // would otherwise revert). Re-pause here so every assertion
+        // below exercises the `EnforcedPause` branch.
         AdminFacet(address(diamond)).pause();
         assertTrue(AdminFacet(address(diamond)).paused());
-    }
-
-    function _cut(address facet, bytes4[] memory selectors)
-        internal
-        pure
-        returns (IDiamondCut.FacetCut memory)
-    {
-        return IDiamondCut.FacetCut({
-            facetAddress: facet,
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: selectors
-        });
     }
 
     // ── OfferFacet ──────────────────────────────────────────────────────────
