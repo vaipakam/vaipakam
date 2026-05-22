@@ -333,7 +333,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "newEscrowVpfiBalance",
+        "name": "newVaultVpfiBalance",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1214,17 +1214,17 @@
   },
   {
     "type": "error",
-    "name": "EscrowAlreadyBanned",
+    "name": "VaultAlreadyBanned",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "EscrowBannedDueToSanctionedSource",
+    "name": "VaultBannedDueToSanctionedSource",
     "inputs": []
   },
   {
     "type": "event",
-    "name": "EscrowBannedFromRecoveryAttempt",
+    "name": "VaultBannedFromRecoveryAttempt",
     "inputs": [
       {
         "name": "user",
@@ -1255,12 +1255,12 @@
   },
   {
     "type": "error",
-    "name": "EscrowDepositFailed",
+    "name": "VaultDepositFailed",
     "inputs": []
   },
   {
     "type": "event",
-    "name": "EscrowImplementationUpgraded",
+    "name": "VaultImplementationUpgraded",
     "inputs": [
       {
         "name": "oldImplementation",
@@ -1285,7 +1285,7 @@
   },
   {
     "type": "event",
-    "name": "EscrowRentalUpdated",
+    "name": "VaultRentalUpdated",
     "inputs": [
       {
         "name": "lender",
@@ -1340,22 +1340,22 @@
   },
   {
     "type": "error",
-    "name": "EscrowResolutionFailed",
+    "name": "VaultResolutionFailed",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "EscrowTransferFailed",
+    "name": "VaultTransferFailed",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "EscrowUpgradeRequired",
+    "name": "VaultUpgradeRequired",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "EscrowWithdrawFailed",
+    "name": "VaultWithdrawFailed",
     "inputs": []
   },
   {
@@ -1504,7 +1504,7 @@
   },
   {
     "type": "error",
-    "name": "GetUserEscrowFailed",
+    "name": "GetUserVaultFailed",
     "inputs": [
       {
         "name": "reason",
@@ -3242,7 +3242,7 @@
   },
   {
     "type": "error",
-    "name": "NoEscrow",
+    "name": "NoVault",
     "inputs": []
   },
   {
@@ -4879,7 +4879,7 @@
   },
   {
     "type": "error",
-    "name": "RecoveryUserHasNoEscrow",
+    "name": "RecoveryUserHasNoVault",
     "inputs": []
   },
   {
@@ -5921,7 +5921,7 @@
   },
   {
     "type": "event",
-    "name": "UserEscrowCreated",
+    "name": "UserVaultCreated",
     "inputs": [
       {
         "name": "user",
@@ -5940,7 +5940,7 @@
   },
   {
     "type": "error",
-    "name": "UserHasNoEscrow",
+    "name": "UserHasNoVault",
     "inputs": []
   },
   {
@@ -6033,7 +6033,7 @@
   },
   {
     "type": "event",
-    "name": "VPFIDepositedToEscrow",
+    "name": "VPFIDepositedToVault",
     "inputs": [
       {
         "name": "user",
@@ -6048,7 +6048,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "newEscrowBalance",
+        "name": "newVaultBalance",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -6108,7 +6108,7 @@
   },
   {
     "type": "error",
-    "name": "VPFIEscrowBalanceInsufficient",
+    "name": "VPFIVaultBalanceInsufficient",
     "inputs": []
   },
   {
@@ -6182,7 +6182,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "newEscrowBalance",
+        "name": "newVaultBalance",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -6282,7 +6282,7 @@
   },
   {
     "type": "event",
-    "name": "VPFIWithdrawnFromEscrow",
+    "name": "VPFIWithdrawnFromVault",
     "inputs": [
       {
         "name": "user",
@@ -6297,7 +6297,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "newEscrowBalance",
+        "name": "newVaultBalance",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -7635,7 +7635,7 @@
   },
   {
     "type": "function",
-    "name": "depositVPFIToEscrowWithPermit",
+    "name": "depositVPFIToVaultWithPermit",
     "inputs": [
       {
         "name": "amount",
@@ -7687,7 +7687,7 @@
   },
   {
     "type": "function",
-    "name": "depositVPFIToEscrow",
+    "name": "depositVPFIToVault",
     "inputs": [
       {
         "name": "amount",
@@ -7795,7 +7795,7 @@
   },
   {
     "type": "function",
-    "name": "escrowApproveNFT721",
+    "name": "vaultApproveNFT721",
     "inputs": [
       {
         "name": "user",
@@ -7818,7 +7818,7 @@
   },
   {
     "type": "function",
-    "name": "escrowBannedSource",
+    "name": "vaultBannedSource",
     "inputs": [
       {
         "name": "user",
@@ -7837,7 +7837,7 @@
   },
   {
     "type": "function",
-    "name": "escrowDepositERC1155",
+    "name": "vaultDepositERC1155",
     "inputs": [
       {
         "name": "user",
@@ -7865,7 +7865,7 @@
   },
   {
     "type": "function",
-    "name": "escrowDepositERC20From",
+    "name": "vaultDepositERC20From",
     "inputs": [
       {
         "name": "payer",
@@ -7893,7 +7893,7 @@
   },
   {
     "type": "function",
-    "name": "escrowDepositERC20",
+    "name": "vaultDepositERC20",
     "inputs": [
       {
         "name": "user",
@@ -7916,7 +7916,7 @@
   },
   {
     "type": "function",
-    "name": "escrowDepositERC721",
+    "name": "vaultDepositERC721",
     "inputs": [
       {
         "name": "user",
@@ -7939,7 +7939,7 @@
   },
   {
     "type": "function",
-    "name": "escrowGetNFTQuantity",
+    "name": "vaultGetNFTQuantity",
     "inputs": [
       {
         "name": "user",
@@ -7968,7 +7968,7 @@
   },
   {
     "type": "function",
-    "name": "escrowGetNFTUserExpires",
+    "name": "vaultGetNFTUserExpires",
     "inputs": [
       {
         "name": "user",
@@ -7997,7 +7997,7 @@
   },
   {
     "type": "function",
-    "name": "escrowGetNFTUserOf",
+    "name": "vaultGetNFTUserOf",
     "inputs": [
       {
         "name": "user",
@@ -8026,7 +8026,7 @@
   },
   {
     "type": "function",
-    "name": "escrowSetNFTUser1155",
+    "name": "vaultSetNFTUser1155",
     "inputs": [
       {
         "name": "user",
@@ -8064,7 +8064,7 @@
   },
   {
     "type": "function",
-    "name": "escrowSetNFTUser",
+    "name": "vaultSetNFTUser",
     "inputs": [
       {
         "name": "user",
@@ -8097,7 +8097,7 @@
   },
   {
     "type": "function",
-    "name": "escrowWithdrawERC1155",
+    "name": "vaultWithdrawERC1155",
     "inputs": [
       {
         "name": "user",
@@ -8130,7 +8130,7 @@
   },
   {
     "type": "function",
-    "name": "escrowWithdrawERC20",
+    "name": "vaultWithdrawERC20",
     "inputs": [
       {
         "name": "user",
@@ -8158,7 +8158,7 @@
   },
   {
     "type": "function",
-    "name": "escrowWithdrawERC721",
+    "name": "vaultWithdrawERC721",
     "inputs": [
       {
         "name": "user",
@@ -8932,11 +8932,11 @@
   },
   {
     "type": "function",
-    "name": "getEscrowStats",
+    "name": "getVaultStats",
     "inputs": [],
     "outputs": [
       {
-        "name": "totalNFTsInEscrow",
+        "name": "totalNFTsInVault",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -8955,7 +8955,7 @@
   },
   {
     "type": "function",
-    "name": "getEscrowVersionInfo",
+    "name": "getVaultVersionInfo",
     "inputs": [
       {
         "name": "user",
@@ -10820,7 +10820,7 @@
   },
   {
     "type": "function",
-    "name": "getOrCreateUserEscrow",
+    "name": "getOrCreateUserVault",
     "inputs": [
       {
         "name": "user",
@@ -11178,7 +11178,7 @@
   },
   {
     "type": "function",
-    "name": "getProtocolTrackedEscrowBalance",
+    "name": "getProtocolTrackedVaultBalance",
     "inputs": [
       {
         "name": "user",
@@ -11625,7 +11625,7 @@
   },
   {
     "type": "function",
-    "name": "getTotalNFTsInEscrowByCollection",
+    "name": "getTotalNFTsInVaultByCollection",
     "inputs": [
       {
         "name": "collection",
@@ -12739,7 +12739,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "escrowVpfiBalance",
+            "name": "vaultVpfiBalance",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -12795,7 +12795,7 @@
   },
   {
     "type": "function",
-    "name": "getUserEscrowAddress",
+    "name": "getUserVaultAddress",
     "inputs": [
       {
         "name": "user",
@@ -12814,7 +12814,7 @@
   },
   {
     "type": "function",
-    "name": "getUserEscrow",
+    "name": "getUserVault",
     "inputs": [
       {
         "name": "user",
@@ -12925,7 +12925,7 @@
   },
   {
     "type": "function",
-    "name": "getUserNFTsInEscrow",
+    "name": "getUserNFTsInVault",
     "inputs": [
       {
         "name": "user",
@@ -13337,7 +13337,7 @@
         "internalType": "uint8"
       },
       {
-        "name": "escrowBal",
+        "name": "vaultBal",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -13471,11 +13471,11 @@
   },
   {
     "type": "function",
-    "name": "getVaipakamEscrowImplementationAddress",
+    "name": "getVaipakamVaultImplementationAddress",
     "inputs": [],
     "outputs": [
       {
-        "name": "vaipakamEscrowTemplate",
+        "name": "vaipakamVaultTemplate",
         "type": "address",
         "internalType": "address"
       }
@@ -13572,7 +13572,7 @@
   },
   {
     "type": "function",
-    "name": "initializeEscrowImplementation",
+    "name": "initializeVaultImplementation",
     "inputs": [],
     "outputs": [],
     "stateMutability": "nonpayable"
@@ -14812,7 +14812,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "borrowerEscrowBal",
+        "name": "borrowerVaultBal",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -14846,7 +14846,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "borrowerEscrowBal",
+        "name": "borrowerVaultBal",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -14899,7 +14899,7 @@
   },
   {
     "type": "function",
-    "name": "recordEscrowDepositERC20",
+    "name": "recordVaultDepositERC20",
     "inputs": [
       {
         "name": "user",
@@ -15889,7 +15889,7 @@
   },
   {
     "type": "function",
-    "name": "setMandatoryEscrowUpgrade",
+    "name": "setMandatoryVaultUpgrade",
     "inputs": [
       {
         "name": "version",
@@ -17232,7 +17232,7 @@
   },
   {
     "type": "function",
-    "name": "upgradeEscrowImplementation",
+    "name": "upgradeVaultImplementation",
     "inputs": [
       {
         "name": "newImplementation",
@@ -17263,7 +17263,7 @@
   },
   {
     "type": "function",
-    "name": "upgradeUserEscrow",
+    "name": "upgradeUserVault",
     "inputs": [
       {
         "name": "user",
@@ -17315,7 +17315,7 @@
   },
   {
     "type": "function",
-    "name": "withdrawVPFIFromEscrow",
+    "name": "withdrawVPFIFromVault",
     "inputs": [
       {
         "name": "amount",

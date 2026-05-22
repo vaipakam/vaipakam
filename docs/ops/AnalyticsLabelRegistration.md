@@ -7,7 +7,7 @@ chain deploy where Vaipakam is operating with real value.
 
 Companion docs:
 
-- [`EscrowStuckRecoveryDesign.md`](../DesignsAndPlans/EscrowStuckRecoveryDesign.md)
+- [`VaultStuckRecoveryDesign.md`](../DesignsAndPlans/VaultStuckRecoveryDesign.md)
   — explains why the labeling matters in the threat model.
 - [`DeploymentRunbook.md`](DeploymentRunbook.md) — the broader deploy
   procedure this fits inside.
@@ -18,8 +18,8 @@ Companion docs:
 
 Vaipakam uses a **Vaipakam Vault proxy** pattern. Every user that
 interacts with the protocol gets their own ERC1967 proxy deployed by
-`EscrowFactoryFacet.getOrCreateUserEscrow`. The proxy delegates to a
-shared `VaipakamEscrowImplementation`.
+`VaultFactoryFacet.getOrCreateUserVault`. The proxy delegates to a
+shared `VaipakamVaultImplementation`.
 
 Two implications:
 
@@ -31,7 +31,7 @@ Two implications:
    they're labeled.
 
 The recovery design includes a **proof-of-non-spend** property: the
-counter math (`protocolTrackedEscrowBalance`) guarantees that
+counter math (`protocolTrackedVaultBalance`) guarantees that
 unsolicited dust never participates in protocol-side outflows. But
 this property is invisible to a generic taint-tracking tool — it has
 no idea the address belongs to Vaipakam. Without labels, an honest
@@ -73,7 +73,7 @@ a major DeFi protocol / Uniswap rely on for their proxy-based deployments.
 
 So our Etherscan strategy is:
 
-- **One** public-tag submission for the `VaipakamEscrowImplementation`
+- **One** public-tag submission for the `VaipakamVaultImplementation`
 - **One** public-tag submission for the `VaipakamDiamond`
 - Verified contract source for both
 - Rest is automatic — every spawned proxy gets the impl link visible
@@ -96,13 +96,13 @@ Complete these BEFORE reaching out to any firm:
 - [ ] Verified on Sourcify (`sourcify.dev/server/verify`) — many
       tools fall back to Sourcify when Etherscan verification isn't
       available.
-- [ ] Public docs page live at e.g. `vaipakam.com/protocol/escrow.md`
+- [ ] Public docs page live at e.g. `vaipakam.com/protocol/vault.md`
       explaining: per-user proxy pattern; counter-based accounting;
       proof-of-non-spend property; recovery flow semantics.
 - [ ] Sample of 5–10 already-deployed vault proxy addresses (the
       analytics firms ask for examples to confirm the pattern).
 - [ ] Factory function signature documented:
-      `EscrowFactoryFacet.getOrCreateUserEscrow(address user) external returns (address proxy)`
+      `VaultFactoryFacet.getOrCreateUserVault(address user) external returns (address proxy)`
       and the deterministic deployment salt / pattern.
 
 ---
@@ -171,24 +171,24 @@ data-team contact is appropriate).
 ### 5a. Email template
 
 ```
-Subject: Vaipakam — per-user escrow proxy label registration
+Subject: Vaipakam — per-user vault proxy label registration
 
 Hi Chainalysis Data Team,
 
 We're requesting a protocol label for Vaipakam, a P2P lending
-protocol with a per-user escrow proxy architecture. We'd like the
-escrow proxies to be classifiable in your address-classification
+protocol with a per-user vault proxy architecture. We'd like the
+vault proxies to be classifiable in your address-classification
 database so taint-tracking tools (Reactor / KYT / SDK) can apply
 protocol-aware accounting.
 
 Protocol summary:
 - EIP-2535 Diamond contract: 0x[diamond_address] (chain: <chain>)
-- Per-user escrows are ERC1967 proxies deployed by
-  `EscrowFactoryFacet.getOrCreateUserEscrow(user)` and delegate to
+- Per-user vaults are ERC1967 proxies deployed by
+  `VaultFactoryFacet.getOrCreateUserVault(user)` and delegate to
   a shared implementation at 0x[impl_address].
-- Each escrow custodies one user's collateral / lending tokens /
+- Each vault custodies one user's collateral / lending tokens /
   staked VPFI. No commingling.
-- The protocol maintains a per-(user, token) `protocolTrackedEscrowBalance`
+- The protocol maintains a per-(user, token) `protocolTrackedVaultBalance`
   counter that is incremented only on protocol-mediated deposits
   and decremented only on protocol-mediated withdrawals. The
   counter is the load-bearing accounting boundary: protocol
@@ -198,7 +198,7 @@ Protocol summary:
   delta.
 
 We'd like the proxy address pattern labeled
-"Vaipakam: Per-User Escrow". This would let your indexers
+"Vaipakam: Per-User Vault". This would let your indexers
 recognize that:
 
   1. Tainted dust arriving at one of these proxies is bounded —
@@ -206,7 +206,7 @@ recognize that:
   2. The user's protocol-side outflows trace back through the
      Diamond, not through the dust path.
 
-Sample escrow proxy addresses (verifiable via the factory):
+Sample vault proxy addresses (verifiable via the factory):
 - 0x[sample_1]
 - 0x[sample_2]
 - 0x[sample_3]
@@ -215,9 +215,9 @@ Sample escrow proxy addresses (verifiable via the factory):
 
 Public documentation:
 - Protocol overview: https://vaipakam.com/protocol/
-- Escrow architecture: https://vaipakam.com/protocol/escrow.md
+- Vault architecture: https://vaipakam.com/protocol/vault.md
 - Recovery design (explaining the proof-of-non-spend property):
-  https://github.com/[org]/vaipakam/blob/main/docs/DesignsAndPlans/EscrowStuckRecoveryDesign.md
+  https://github.com/[org]/vaipakam/blob/main/docs/DesignsAndPlans/VaultStuckRecoveryDesign.md
 
 Verified source on Etherscan:
 - Diamond: https://etherscan.io/address/0x[diamond_address]#code
@@ -366,7 +366,7 @@ notes.
 
 ## 13. References
 
-- [`EscrowStuckRecoveryDesign.md`](../DesignsAndPlans/EscrowStuckRecoveryDesign.md)
+- [`VaultStuckRecoveryDesign.md`](../DesignsAndPlans/VaultStuckRecoveryDesign.md)
   — explains the protocol-aware accounting that labels make
   externally-visible.
 - [EIP-1967 proxy slot spec](https://eips.ethereum.org/EIPS/eip-1967)

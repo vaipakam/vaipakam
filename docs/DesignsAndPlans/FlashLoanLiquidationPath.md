@@ -10,7 +10,7 @@ already-shipped split-route swaps and partial liquidations).
 Vaipakam's existing liquidation path (`RiskFacet.triggerLiquidation`,
 `triggerLiquidationSplit`, `triggerPartialLiquidation`) is
 **atomic-swap-by-protocol**: the diamond withdraws collateral from
-the borrower's escrow, swaps via a registered adapter (0x / 1inch /
+the borrower's vault, swaps via a registered adapter (0x / 1inch /
 Uniswap V3 / Balancer), pays the dynamic incentive bonus from
 proceeds, and distributes the rest. The liquidator supplies a
 ranked adapter try-list + gas; they need no working capital.
@@ -160,12 +160,12 @@ Execution:
    `safeTransferFrom` (the liquidator must have approved the
    diamond, OR have just received the funds via a flash-loan
    that calls `triggerLiquidationDiscounted` in the same tx).
-2. Route the principal-asset to the lender's escrow + treasury per
+2. Route the principal-asset to the lender's vault + treasury per
    the existing fee split.
-3. Withdraw `collateralToSeize` from the borrower's escrow.
+3. Withdraw `collateralToSeize` from the borrower's vault.
 4. Transfer to `recipient`.
 5. Borrower's `collateralAmount` reduced to `borrowerSurplus`;
-   surplus stays in the borrower's escrow (no claim queued — the
+   surplus stays in the borrower's vault (no claim queued — the
    borrower withdraws it themselves later).
 6. Transition loan to `Defaulted`.
 7. Trigger NFT status updates (same as the atomic path).

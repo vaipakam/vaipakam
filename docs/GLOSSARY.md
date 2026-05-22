@@ -141,10 +141,10 @@ contract. `FacetSizeLimitTest` (Issue #66) enforces it at
 **EIP-2535 (Diamond Standard)** — the multi-facet proxy standard.
 See ADR-0001.
 
-**Escrow (per-user)** — a `ERC1967Proxy` over `VaipakamEscrow
-Implementation`, deployed lazily by `EscrowFactoryFacet` the first
+**Vault (per-user)** — a `ERC1967Proxy` over `VaipakamVault
+Implementation`, deployed lazily by `VaultFactoryFacet` the first
 time a user interacts with the protocol. Each user's collateral
-lives in their own isolated escrow — no commingling. See ADR-0008.
+lives in their own isolated vault — no commingling. See ADR-0008.
 
 ## F
 
@@ -410,6 +410,17 @@ is the canonical mainnet handover pattern (see `CLAUDE.md` §
 
 **Vaipakam** — Tamil for "Bank". The project name.
 
+**Vault (formerly Escrow)** — the per-user UUPS proxy that holds a single
+user's assets (ERC-20 / ERC-721 / ERC-1155). Deployed by `VaultFactoryFacet`
+(renamed from `EscrowFactoryFacet` in #227 pre-mainnet); shares a common
+upgradable `VaipakamVaultImplementation` owned by the Diamond. The legal
+connotations of "escrow" (regulated fiduciary holder under multiple
+jurisdictions) didn't fit a permissionless DeFi protocol — Yearn, Curve,
+Morpho, and Aave all use "Vault" as the DeFi-native term, with no
+equivalent regulatory baggage. The on-chain semantics are unchanged: still
+a per-user isolated proxy with no commingling. See ADR-0008
+(`docs/adr/0008-per-user-vault-factory.md`).
+
 **Viaduct (viaIR)** — Solidity 0.8.29's intermediate-representation
 compilation pipeline (`viaIR = true`). Adopted protocol-wide for
 optimizer determinism. Cost: 5-15 min builds, 8 GB RSS — hence the
@@ -417,8 +428,8 @@ optimizer determinism. Cost: 5-15 min builds, 8 GB RSS — hence the
 
 **VPFI** — the protocol token. ERC-20 on the canonical chain (Base);
 `VPFIMirrorToken` proxy on mirror chains. Wired for fee discounts,
-escrow-based staking, and locally-claimable interaction rewards.
+vault-based staking, and locally-claimable interaction rewards.
 
 **VPFI tier (1/2/3/4)** — discrete fee-discount tier derived from
-the user's VPFI escrow balance × `time-weighted accumulator`.
+the user's VPFI vault balance × `time-weighted accumulator`.
 Higher tier = larger LIF rebate at proper-close terminal.

@@ -3,7 +3,7 @@
 Covers the two upgrade surfaces in the Vaipakam protocol:
 
 1. **Diamond facet cuts** — add/replace/remove function selectors on the Diamond.
-2. **UUPS escrow upgrades** — replace the implementation behind every user's `ERC1967Proxy` escrow.
+2. **UUPS vault upgrades** — replace the implementation behind every user's `ERC1967Proxy` vault.
 
 Plus pre-flight checks that apply to both.
 
@@ -11,10 +11,10 @@ Plus pre-flight checks that apply to both.
 
 ## Invariant: storage layout is append-only
 
-Both the Diamond (via `LibVaipakam.Storage`) and the escrow implementation use shared storage. The only safe modifications:
+Both the Diamond (via `LibVaipakam.Storage`) and the vault implementation use shared storage. The only safe modifications:
 
 - ✅ **Append** new fields at the end of `LibVaipakam.Storage` struct.
-- ✅ **Append** new fields at the end of `VaipakamEscrowImplementation`'s state.
+- ✅ **Append** new fields at the end of `VaipakamVaultImplementation`'s state.
 - ✅ **Reuse** a reserved/deprecated field only if its runtime effect was already removed AND the field is explicitly marked reusable in comments.
 
 Never safe:
@@ -74,35 +74,35 @@ Both lists MUST stay in sync. Any new external function added to either facet re
 
 ---
 
-## UUPS escrow upgrades
+## UUPS vault upgrades
 
 ### What a UUPS upgrade can do
-`VaipakamEscrowImplementation` is a UUPS upgradeable. The implementation address is stored in the Diamond's `LibVaipakam.Storage`. `EscrowFactoryFacet.upgradeEscrowImplementation(newImpl)` replaces the address for **newly-created** escrows.
+`VaipakamVaultImplementation` is a UUPS upgradeable. The implementation address is stored in the Diamond's `LibVaipakam.Storage`. `VaultFactoryFacet.upgradeVaultImplementation(newImpl)` replaces the address for **newly-created** vaults.
 
 Existing users only upgrade when:
-- `setMandatoryEscrowUpgrade(true)` is set (forces upgrade on next interaction), OR
-- The user calls `upgradeUserEscrow()` themselves.
+- `setMandatoryVaultUpgrade(true)` is set (forces upgrade on next interaction), OR
+- The user calls `upgradeUserVault()` themselves.
 
 ### Hazards
 | Hazard | Mitigation |
 |---|---|
-| New impl's `_authorizeUpgrade` reverts for every caller (brick) | **Test on a forked mainnet** with the real escrow-admin role. OZ's `openzeppelin-foundry-upgrades` plugin does this automatically. |
-| Storage layout change | Same append-only rule. Diff `forge inspect VaipakamEscrowImplementation storage-layout` vs. last release. |
+| New impl's `_authorizeUpgrade` reverts for every caller (brick) | **Test on a forked mainnet** with the real vault-admin role. OZ's `openzeppelin-foundry-upgrades` plugin does this automatically. |
+| Storage layout change | Same append-only rule. Diff `forge inspect VaipakamVaultImplementation storage-layout` vs. last release. |
 | Reinitializer not wired | Every new version must either (a) have no new initializable state, or (b) expose a `reinitialize(N)` behind the same role. |
 | Mandatory-upgrade flag flipped during high activity | Users mid-flow will pay extra gas to upgrade; coordinate with frontend to show a banner first. |
 
 ### Procedure (per upgrade)
-1. Draft the new `VaipakamEscrowImplementation` — only **append** state.
+1. Draft the new `VaipakamVaultImplementation` — only **append** state.
 2. Run the OpenZeppelin upgrade-safety checks (`validateUpgrade` from `Upgrades.sol`).
 3. Deploy the new implementation to the target chain (not behind a proxy — just the impl).
-4. `ESCROW_ADMIN_ROLE` (timelock) queues `upgradeEscrowImplementation(newImpl)`.
+4. `VAULT_ADMIN_ROLE` (timelock) queues `upgradeVaultImplementation(newImpl)`.
 5. After timelock delay, execute.
-6. Verify on a **new** escrow created post-upgrade:
+6. Verify on a **new** vault created post-upgrade:
    ```solidity
-   getOrCreateUserEscrow(testUser)
-   getEscrowVersionInfo(testUser)   // should reflect new version
+   getOrCreateUserVault(testUser)
+   getVaultVersionInfo(testUser)   // should reflect new version
    ```
-7. For existing users: decide whether to set `setMandatoryEscrowUpgrade(true)`. Typical answer: **no**, unless the change fixes a security issue. Lazy migration preserves user gas.
+7. For existing users: decide whether to set `setMandatoryVaultUpgrade(true)`. Typical answer: **no**, unless the change fixes a security issue. Lazy migration preserves user gas.
 
 ---
 

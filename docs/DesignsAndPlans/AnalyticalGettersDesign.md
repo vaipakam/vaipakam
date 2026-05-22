@@ -70,9 +70,9 @@ lazy-loaded below-fold or on tab-switch.
 
 ```solidity
 struct DashboardScalars {
-    // Reward / escrow side — bounded, always returned in full.
+    // Reward / vault side — bounded, always returned in full.
     uint256 stakingRewardsPending;
-    uint256 escrowVpfiBalance;
+    uint256 vaultVpfiBalance;
     uint8   vpfiTier;
     uint256 interactionRewardsPending;
     bool    interactionFinalizedPrefix;
@@ -357,7 +357,7 @@ servable in **one call per refetch cycle** wherever possible.
 |---|---|---|---|
 | **Dashboard** (per-user) | 1 indexer fetch + 2 multicalls (LTV batch + HF batch) | **Bundlable to 1 call** | Spec'd in §3.1 — `LoanWithRisk[]` returns loan + ltvBps + healthFactor inline |
 | **Activity** (per-user feed) | 1 indexer fetch | **Already one call** | None |
-| **EscrowAssets** (per-user) | 1 indexer fetch (lender + borrower in parallel) | **Already one call** | None |
+| **VaultAssets** (per-user) | 1 indexer fetch (lender + borrower in parallel) | **Already one call** | None |
 | **PublicDashboard** (protocol stats) | 5 sequential HTTP indexer calls (cool-tier 180 s refresh) | **Bundlable to 1 call** | New `MetricsFacet.getPublicDashboardSnapshot()` returning the 5 sub-results in one struct. Defer — 180 s cadence on slow-moving aggregates makes the spread acceptable |
 | **OfferBook** | 1 indexer fetch (200 / page) + chunked `eth_getLogs` catch-up | **CANNOT compress further** | None — see below |
 

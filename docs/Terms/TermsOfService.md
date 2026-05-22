@@ -55,7 +55,7 @@ per-loan or per-offer at any time while the position is active. You
 remain responsible for any action a keeper you authorized takes.
 
 **Stuck-token recovery.** Vaipakam offers a recovery flow for tokens
-accidentally transferred into your isolated escrow that the protocol
+accidentally transferred into your isolated vault that the protocol
 does not track. To use it, you sign an EIP-712 attestation declaring
 the source of the stuck tokens. That attestation is your representation
 that you know where the funds came from. The protocol does not

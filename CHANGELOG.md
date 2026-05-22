@@ -25,7 +25,7 @@ Every entry calls out, at minimum:
   replaced facet with changed function selectors counts as both
   "removed" (for the dropped selectors) and "added" (for the new ones).
 - **Storage** — new fields on `LibVaipakam.Storage` or on individual
-  upgradeable contracts (`VaipakamEscrowImplementation`). Includes the
+  upgradeable contracts (`VaipakamVaultImplementation`). Includes the
   `__gap` slot count consumed, if any.
 - **Roles** — role identifiers added, retired, or re-pointed (admin
   role-admin changes).
@@ -83,14 +83,14 @@ Every entry calls out, at minimum:
   only getter over the time-weighted reward-per-token accumulator.
   Added to support the `VPFIStakingRewardMonotonicityInvariant`;
   cheap transparency for off-chain dashboards.
-- **`VaipakamEscrowImplementation` `uint256[50] __gap`** — reserved
+- **`VaipakamVaultImplementation` `uint256[50] __gap`** — reserved
   tail slots for future UUPS storage additions. Consumes no state
   today; each future field must decrement the array length by the
   number of slots it uses.
-- **`EscrowImplementationUpgraded` now includes `newVersion`** —
-  third indexed field on the event, mirrors `s.currentEscrowVersion`
+- **`VaultImplementationUpgraded` now includes `newVersion`** —
+  third indexed field on the event, mirrors `s.currentVaultVersion`
   post-bump so indexers can correlate later per-user
-  `upgradeUserEscrow` calls without a follow-up read.
+  `upgradeUserVault` calls without a follow-up read.
 - **`ConfigFacet`** — runtime-tunable protocol config facet (fees,
   liquidation knobs, risk thresholds, VPFI tier table). All setters
   ADMIN_ROLE-gated via Timelock.
@@ -148,12 +148,12 @@ Every entry calls out, at minimum:
 
 ### Storage
 
-- `VaipakamEscrowImplementation`: appended `uint256[50] private __gap`
+- `VaipakamVaultImplementation`: appended `uint256[50] private __gap`
   at the tail. No existing storage slot positions shift.
 
 ### Events
 
-- `EscrowImplementationUpgraded` — added `uint256 indexed newVersion`
+- `VaultImplementationUpgraded` — added `uint256 indexed newVersion`
   as a third indexed topic. **Breaking for indexers**: anyone
   subscribed to the old 2-arg signature must update their ABI.
 - `EmergencyRoleRevoked` — new event on `AccessControlFacet`, paired

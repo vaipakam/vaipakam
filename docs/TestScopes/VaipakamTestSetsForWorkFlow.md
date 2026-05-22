@@ -1,6 +1,6 @@
 # Vaipakam Lending Platform Test Workflows
 
-This document provides detailed Phase 1 test workflows for the Vaipakam decentralized P2P lending, borrowing and NFT rental platform. These scenarios cover ERC20 lending, NFT lending/renting, illiquid collateral, lender early withdrawal, and borrower preclose. They follow the README as the source of truth: Phase 1 loans are single-network flows; governance, staking, cross-chain bridging, and VNGK rewards are Phase 2; ERC721 and ERC1155 rental NFTs are escrow-custodied; borrowers receive only temporary user rights; preclose flows must preserve principal/lending asset type, payment/prepay asset type, and collateral asset type; and lender early-withdrawal plus refinance flows apply only to active ERC20 loans.
+This document provides detailed Phase 1 test workflows for the Vaipakam decentralized P2P lending, borrowing and NFT rental platform. These scenarios cover ERC20 lending, NFT lending/renting, illiquid collateral, lender early withdrawal, and borrower preclose. They follow the README as the source of truth: Phase 1 loans are single-network flows; governance, staking, cross-chain bridging, and VNGK rewards are Phase 2; ERC721 and ERC1155 rental NFTs are vault-custodied; borrowers receive only temporary user rights; preclose flows must preserve principal/lending asset type, payment/prepay asset type, and collateral asset type; and lender early-withdrawal plus refinance flows apply only to active ERC20 loans.
 
 ---
 
@@ -39,10 +39,10 @@ This scenario involves a lender offering ERC20 tokens (e.g., USDC) to lend, with
 1. **Setup**:
    - Deploy mock ERC20 tokens: USDC (lender asset) and WETH (borrower collateral).
    - Mint 10,000 USDC to the lender and 5 WETH to the borrower.
-   - Deploy Vaipakam contracts (e.g., `VaipakamCreateAndCancelOffer`, `VaipakamAcceptOfferAndInitiateLoan`, `VaipakamRepayLoan`, `VaipakamEscrow`).
+   - Deploy Vaipakam contracts (e.g., `VaipakamCreateAndCancelOffer`, `VaipakamAcceptOfferAndInitiateLoan`, `VaipakamRepayLoan`, `VaipakamVault`).
 
 2. **Offer Creation**:
-   - As the lender, approve 1,000 USDC to the escrow contract.
+   - As the lender, approve 1,000 USDC to the vault contract.
    - Create a lending offer with:
      - Lender asset: 1,000 USDC.
      - Borrower collateral: 1 WETH.
@@ -50,16 +50,16 @@ This scenario involves a lender offering ERC20 tokens (e.g., USDC) to lend, with
    - Record the offer ID.
 
 3. **Loan Initiation**:
-   - As the borrower, approve 1 WETH to the escrow contract.
+   - As the borrower, approve 1 WETH to the vault contract.
    - Accept the offer using the offer ID.
    - Verify:
      - Loan status is `Active`.
      - 1,000 USDC is transferred to the borrower.
-     - 1 WETH is locked in escrow.
+     - 1 WETH is locked in vault.
 
 4. **Repayment**:
    - Warp time forward 15 days (within the 30-day duration).
-   - As the borrower, approve 1,050 USDC (principal + interest) to the escrow.
+   - As the borrower, approve 1,050 USDC (principal + interest) to the vault.
    - Call `repayLoan` with the loan ID.
    - Verify:
      - Loan status changes to `Repaid`.
@@ -117,7 +117,7 @@ This scenario involves a lender offering an NFT for rent, with the borrower prov
    - Deploy Vaipakam contracts.
 
 2. **Offer Creation**:
-   - As the lender, approve ERC-721 token ID 1 to the escrow contract.
+   - As the lender, approve ERC-721 token ID 1 to the vault contract.
    - Create a lending offer with:
      - Lender asset: ERC-721 token ID 1.
      - Borrower collateral: 1,500 USDC (rental fee + buffer).
@@ -125,13 +125,13 @@ This scenario involves a lender offering an NFT for rent, with the borrower prov
    - Record the offer ID.
 
 3. **Loan Initiation**:
-   - As the borrower, approve 1,500 USDC to the escrow contract.
+   - As the borrower, approve 1,500 USDC to the vault contract.
    - Accept the offer using the offer ID.
    - Verify:
      - Loan status is `Active`.
-     - ERC-721 token ID 1 remains in the lender’s Vaipakam Escrow.
+     - ERC-721 token ID 1 remains in the lender’s Vaipakam Vault.
      - Borrower receives only temporary ERC-4907 `user` rights.
-     - 1,500 USDC is locked in escrow.
+     - 1,500 USDC is locked in vault.
 
 4. **Return**:
    - Warp time forward 15 days (within duration).
@@ -139,12 +139,12 @@ This scenario involves a lender offering an NFT for rent, with the borrower prov
    - Verify:
      - Loan status changes to `Repaid`.
      - Borrower user rights are revoked.
-     - ERC-721 token ID 1 is claimable/returnable to the lender from escrow.
+     - ERC-721 token ID 1 is claimable/returnable to the lender from vault.
      - 300 USDC (rental fee) is transferred to the lender.
      - 1,200 USDC (buffer) is returned to the borrower.
 
 5. **Assertions**:
-   - NFT owner/custodian before lender claim: lender’s Vaipakam Escrow.
+   - NFT owner/custodian before lender claim: lender’s Vaipakam Vault.
    - NFT owner after lender claim: Lender.
    - Lender’s USDC balance: 300 USDC.
    - Borrower’s USDC balance: 9,700 USDC (10,000 - 1,500 + 1,200).
@@ -160,7 +160,7 @@ This scenario involves a lender offering an NFT for rent, with the borrower prov
    - Mint 10,000 USDC to the borrower.
 
 2. **Offer Creation**:
-   - As the lender, approve all ERC-1155 tokens to the escrow contract.
+   - As the lender, approve all ERC-1155 tokens to the vault contract.
    - Create a lending offer with:
      - Lender asset: 5 tokens of ERC-1155 ID 1.
      - Borrower collateral: 1,500 USDC (based on 5 tokens).
@@ -168,13 +168,13 @@ This scenario involves a lender offering an NFT for rent, with the borrower prov
    - Record the offer ID.
 
 3. **Loan Initiation**:
-   - As the borrower, approve 1,500 USDC to the escrow.
+   - As the borrower, approve 1,500 USDC to the vault.
    - Accept the offer.
    - Verify:
      - Loan status is `Active`.
-     - 5 ERC-1155 tokens (ID 1) remain in the lender’s Vaipakam Escrow.
+     - 5 ERC-1155 tokens (ID 1) remain in the lender’s Vaipakam Vault.
      - Borrower receives only temporary user rights.
-     - 1,500 USDC is locked in escrow.
+     - 1,500 USDC is locked in vault.
 
 4. **Return**:
    - Warp time forward 15 days.
@@ -182,7 +182,7 @@ This scenario involves a lender offering an NFT for rent, with the borrower prov
    - Verify:
      - Loan status changes to `Repaid`.
      - Borrower user rights are revoked.
-     - 5 ERC-1155 tokens are claimable/returnable to the lender from escrow.
+     - 5 ERC-1155 tokens are claimable/returnable to the lender from vault.
      - 1,500 USDC is transferred to the lender (no buffer in this case).
 
 5. **Assertions**:
@@ -208,7 +208,7 @@ This scenario tests lending where the borrower provides illiquid collateral (e.g
    - Mint 10,000 USDC to the lender.
 
 2. **Offer Creation**:
-   - As the lender, approve 1,000 USDC to the escrow.
+   - As the lender, approve 1,000 USDC to the vault.
    - Create a lending offer with:
      - Lender asset: 1,000 USDC.
      - Borrower collateral: 1,500 USDC7674 (illiquid).
@@ -216,12 +216,12 @@ This scenario tests lending where the borrower provides illiquid collateral (e.g
    - Record the offer ID.
 
 3. **Loan Initiation**:
-   - As the borrower, approve 1,500 USDC7674 to the escrow.
+   - As the borrower, approve 1,500 USDC7674 to the vault.
    - Accept the offer.
    - Verify:
      - Loan status is `Active`.
      - 1,000 USDC is transferred to the borrower.
-     - 1,500 USDC7674 is locked in escrow.
+     - 1,500 USDC7674 is locked in vault.
 
 4. **Default**:
    - Warp time forward 31 days.
@@ -246,7 +246,7 @@ This scenario tests lending where the borrower provides illiquid collateral (e.g
    - Deploy an ERC-721 mock and mint token ID 2 to the borrower and token ID 1 to the lender.
 
 2. **Offer Creation**:
-   - As the lender, approve ERC-721 token ID 1 to the escrow.
+   - As the lender, approve ERC-721 token ID 1 to the vault.
    - Create a lending offer with:
      - Lender asset: ERC-721 token ID 1.
      - Borrower collateral: ERC-721 token ID 2 (illiquid).
@@ -254,13 +254,13 @@ This scenario tests lending where the borrower provides illiquid collateral (e.g
    - Record the offer ID.
 
 3. **Loan Initiation**:
-   - As the borrower, approve ERC-721 token ID 2 to the escrow.
+   - As the borrower, approve ERC-721 token ID 2 to the vault.
    - Accept the offer.
    - Verify:
      - Loan status is `Active`.
-     - ERC-721 token ID 1 remains in the lender’s Vaipakam Escrow.
+     - ERC-721 token ID 1 remains in the lender’s Vaipakam Vault.
      - Borrower receives only temporary user rights.
-     - ERC-721 token ID 2 is locked in escrow.
+     - ERC-721 token ID 2 is locked in vault.
 
 4. **Default**:
    - Warp time forward 31 days.
@@ -291,7 +291,7 @@ This scenario covers lender early withdrawal for active ERC20 loans only. Per th
    - Record the initial loan ID.
 
 2. **New Lender Offer Creation**:
-   - As the new lender, approve 1,000 USDC to the escrow contract.
+   - As the new lender, approve 1,000 USDC to the vault contract.
    - Create a compatible lender offer:
      - Lender asset: 1,000 USDC.
      - Borrower collateral: 1 WETH.
@@ -357,7 +357,7 @@ This scenario covers borrower preclose. Per the README, Option 2 accepts an exis
    - Record the initial loan ID.
 
 2. **New Borrower Offer Creation**:
-   - As the new borrower, approve 1 WETH to the escrow contract.
+   - As the new borrower, approve 1 WETH to the vault contract.
    - Create a compatible borrower offer:
      - Lender asset: 1,000 USDC.
      - Borrower collateral: 1 WETH.
@@ -368,7 +368,7 @@ This scenario covers borrower preclose. Per the README, Option 2 accepts an exis
    - Verify:
      - The live loan borrower changes to the new borrower.
      - The original borrower’s collateral (1 WETH) is released.
-     - The new borrower’s collateral (1 WETH) is locked in escrow.
+     - The new borrower’s collateral (1 WETH) is locked in vault.
 
 4. **Assertions**:
    - Original/live loan status remains `Active`.
@@ -398,7 +398,7 @@ This scenario covers borrower preclose. Per the README, Option 2 accepts an exis
      - A new offsetting loan is created with the original borrower as lender.
      - The original borrower’s old loan is completed/closed only after the offset completion step preserves the original lender’s full claimable value.
      - The original borrower’s collateral (1 WETH) is released after offset completion.
-     - The new borrower’s collateral (1 WETH) is locked in escrow.
+     - The new borrower’s collateral (1 WETH) is locked in vault.
 
 4. **Assertions**:
    - New offsetting loan status is `Active`.

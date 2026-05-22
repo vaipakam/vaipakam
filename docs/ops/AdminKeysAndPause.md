@@ -22,7 +22,7 @@ Roles defined in `LibAccessControl.sol`:
 | `KYC_ADMIN_ROLE` | `keccak256("KYC_ADMIN_ROLE")` | Deployer on init | `ProfileFacet.updateKYCStatus/updateKYCTier/updateKYCThresholds/setKeeperAccess/setLoanKeeperAccess` |
 | `ORACLE_ADMIN_ROLE` | `keccak256("ORACLE_ADMIN_ROLE")` | Deployer on init | `OracleAdminFacet.setChainlinkRegistry/setUsdChainlinkDenominator/setEthChainlinkDenominator/setWethContract/setUniswapV3Factory/setStableTokenFeed/setSequencerUptimeFeed/setFeedOverride/setTellorOracle/setApi3ServerV1/setDIAOracleV2/setSecondaryOracleMaxDeviationBps/setSecondaryOracleMaxStaleness` |
 | `RISK_ADMIN_ROLE` | `keccak256("RISK_ADMIN_ROLE")` | Deployer on init | `RiskFacet.updateRiskParams` |
-| `ESCROW_ADMIN_ROLE` | `keccak256("ESCROW_ADMIN_ROLE")` | Deployer on init | `EscrowFactoryFacet.upgradeEscrowImplementation/setMandatoryEscrowUpgrade` |
+| `VAULT_ADMIN_ROLE` | `keccak256("VAULT_ADMIN_ROLE")` | Deployer on init | `VaultFactoryFacet.upgradeVaultImplementation/setMandatoryVaultUpgrade` |
 
 `DEFAULT_ADMIN_ROLE` is the admin of every other role (see `LibAccessControl.initialize`).
 
@@ -35,7 +35,7 @@ Roles defined in `LibAccessControl.sol`:
 | Entity | Purpose | Signer threshold |
 |---|---|---|
 | **Governance multisig** | Holds `DEFAULT_ADMIN_ROLE`. Only actor that can grant/revoke roles. Actions **always** go through the timelock. | 4-of-7, geographically separated |
-| **Admin timelock** (OZ `TimelockController`) | Holds `ADMIN_ROLE`, `ORACLE_ADMIN_ROLE`, `RISK_ADMIN_ROLE`, `ESCROW_ADMIN_ROLE`. Queues all admin-impacting changes with a delay. | Proposer: governance multisig. Executor: open (after delay). |
+| **Admin timelock** (OZ `TimelockController`) | Holds `ADMIN_ROLE`, `ORACLE_ADMIN_ROLE`, `RISK_ADMIN_ROLE`, `VAULT_ADMIN_ROLE`. Queues all admin-impacting changes with a delay. | Proposer: governance multisig. Executor: open (after delay). |
 | **Ops hot-key multisig** | Holds `PAUSER_ROLE` and `KYC_ADMIN_ROLE`. Same-hour response surface: pause/unpause, per-asset reserve pause (`pauseAsset` / `unpauseAsset`), KYC tier bumps. No other role. | 2-of-5, fast-response on-call signers |
 | **Deployer hot key** | Used for initial deploy + role transfer. **Revoked** within 24h. | 1 EOA, rotated per deploy |
 
@@ -54,7 +54,7 @@ Roles defined in `LibAccessControl.sol`:
 - Grant roles.
 - Change treasury, oracles, risk params, reward config.
 - Finalize or force-finalize reward days.
-- Upgrade facets or escrow implementation.
+- Upgrade facets or vault implementation.
 
 Pausing is a **brake**, not a wrench. Anything structural requires governance → timelock.
 
@@ -90,7 +90,7 @@ User flows: `createOffer`, `acceptOffer`, `initiateLoan`, `repayLoan`, `repayPar
 - `AccessControlFacet.grantRole / revokeRole / renounceRole`
 - `DiamondCutFacet.diamondCut`
 - `OracleAdminFacet.*`
-- `EscrowFactoryFacet.upgradeEscrowImplementation / setMandatoryEscrowUpgrade`
+- `VaultFactoryFacet.upgradeVaultImplementation / setMandatoryVaultUpgrade`
 - `AdminFacet.pause / unpause / paused`
 - Every pure/view function
 - LayerZero message ingress to `RewardReporterFacet.onRewardBroadcastReceived` and `RewardAggregatorFacet.onChainReportReceived` — so in-flight messages don't fail-and-retry forever (they still have their own auth gates).
@@ -117,7 +117,7 @@ TimelockController.scheduleBatch(
     grantRole(ADMIN_ROLE, TIMELOCK),
     grantRole(ORACLE_ADMIN_ROLE, TIMELOCK),
     grantRole(RISK_ADMIN_ROLE, TIMELOCK),
-    grantRole(ESCROW_ADMIN_ROLE, TIMELOCK)
+    grantRole(VAULT_ADMIN_ROLE, TIMELOCK)
   ],
   ...
 )
@@ -132,7 +132,7 @@ From GOV_MULTISIG:
 # 4. After 48h timelock delay, execute the batch from step 2.
 
 # 5. From deployer hot key: renounce every role
-For each role in [DEFAULT_ADMIN, ADMIN, PAUSER, KYC_ADMIN, ORACLE_ADMIN, RISK_ADMIN, ESCROW_ADMIN]:
+For each role in [DEFAULT_ADMIN, ADMIN, PAUSER, KYC_ADMIN, ORACLE_ADMIN, RISK_ADMIN, VAULT_ADMIN]:
   AccessControlFacet.renounceRole(role, DEPLOYER)
 
 # 6. Verify

@@ -127,7 +127,7 @@ Once `finalizeDay` has been called for `dayId`, **late reports are rejected on-c
 ## 3. Emergency pause
 
 ### Trigger criteria (pause **immediately**, decide later)
-- External exploit evidence (funds leaving user escrows, unexpected `LoanInitiated` events).
+- External exploit evidence (funds leaving user vaults, unexpected `LoanInitiated` events).
 - Oracle anomaly: price deviation > 20% vs. centralized reference, or a feed reports `answer == 0` / stale.
 - Critical bug report from audit channel / bounty.
 - Any `DayForceFinalized` that was **not** pre-authorized in ops chat.
@@ -150,7 +150,7 @@ This halts every `whenNotPaused` facet entry. What remains callable while paused
 - `AccessControlFacet.grantRole / revokeRole / renounceRole`
 - `DiamondCutFacet.diamondCut`
 - `OracleAdminFacet.*` (so a bad feed can be swapped without unpause)
-- `EscrowFactoryFacet.upgradeEscrowImplementation`
+- `VaultFactoryFacet.upgradeVaultImplementation`
 - Every `whenNotPaused`-less getter
 
 See `PauseGatingTest` for the canonical list.
@@ -282,7 +282,7 @@ kill-switch
   visible in `internalMatcher.submit.failed` log lines but
   doesn't risk protocol funds — the tx rolled back atomically.
   Common causes: lost a race to another matcher, kill-switch
-  flipped between simulate + execute, escrow balance drifted.
+  flipped between simulate + execute, vault balance drifted.
   Investigation only; no action.
 - **Spurious bot revenue.** The 1% per-leg incentive is bounded
   by the per-leg matched notional. A spike in `InternalMatchExecuted`
@@ -299,7 +299,7 @@ kill-switch
 
 - Loans transitioning to `LoanStatus.InternalMatched` while
   having non-zero `principal` — bug in the lifecycle transition.
-- Borrower's escrow balance + collateralAmount drifting after a
+- Borrower's vault balance + collateralAmount drifting after a
   match — bug in the cross-vault transfer.
 - Matcher receiving > the cap'd `internalMatchIncentivePerLegBps`
   in a single match — bug in the incentive math.

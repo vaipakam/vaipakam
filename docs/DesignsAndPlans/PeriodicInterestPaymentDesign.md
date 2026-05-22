@@ -348,7 +348,7 @@ settlerBonus   = realizedOut × settlerBonusBps  / 10_000
 treasuryShare  = realizedOut × treasuryShareBps / 10_000
 lenderProceeds = realizedOut - settlerBonus - treasuryShare
 
-pay lenderProceeds → lender's escrow (treated identically to repayPartial interest)
+pay lenderProceeds → lender's vault (treated identically to repayPartial interest)
 pay settlerBonus   → settler
 pay treasuryShare  → treasury
 

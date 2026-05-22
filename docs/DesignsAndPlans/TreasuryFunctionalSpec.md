@@ -43,7 +43,7 @@ out and `treasuryBalances` is not populated. **The convert function and
 the payroll streams require Diamond-as-treasury mode** — they act only
 on funds inside the Diamond.
 
-The T-051 chokepoint counter (`protocolTrackedEscrowBalance`) keeps
+The T-051 chokepoint counter (`protocolTrackedVaultBalance`) keeps
 protocol-tracked balances distinct from unsolicited dust; the convert
 function reads `treasuryBalances` (clean), never raw `balanceOf`.
 

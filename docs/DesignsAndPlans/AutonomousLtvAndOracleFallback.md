@@ -282,8 +282,8 @@ on swap failure (all adapters reverted OR slippage > 6% ceiling):
 - **Optional follow-up swap**: existing `ClaimFacet.claimAsLenderWithRetry`
   lets the lender attempt to convert collateral to principal at their
   own slippage tolerance. Reusable on the new path with no changes.
-- **Borrower surplus immediately claimable**: lands in borrower's escrow
-  via `LibVaipakam.recordEscrowDeposit`, claimable through normal
+- **Borrower surplus immediately claimable**: lands in borrower's vault
+  via `LibVaipakam.recordVaultDeposit`, claimable through normal
   withdrawal flow.
 - **Oracle staleness** — the existing `OracleFacet.getAssetPrice` already
   enforces freshness (4h for blue chips, 2h ETH/USD, 24h for stable

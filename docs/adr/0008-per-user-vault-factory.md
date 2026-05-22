@@ -1,7 +1,21 @@
-# ADR-0008: Per-user UUPS escrow via factory, not a commingled vault
+# ADR-0008: Per-user UUPS vault via factory, not a commingled vault
 
 **Status:** Accepted
 **Date:** 2025 (original choice; ADR backfilled 2026-05-20)
+
+> **2026-05-22 rename note (#227):** This ADR originally used the term
+> "escrow" throughout — the factory was `EscrowFactoryFacet`, the
+> implementation was `VaipakamEscrowImplementation`, etc. Pre-mainnet,
+> every Escrow* identifier was renamed to Vault* (file content + path).
+> Reason: "escrow" carries regulated-fiduciary-holder connotations under
+> several jurisdictions that didn't fit a permissionless DeFi protocol;
+> "vault" is the established DeFi-native term (Yearn / Curve / Morpho /
+> Aave all use it). The on-chain semantics described below are unchanged
+> — the rename is purely a naming clarification. Storage layouts shifted
+> via the ERC-7201 namespace change `vaipakam.userEscrow*` →
+> `vaipakam.userVault*`, but pre-mainnet there were no deposits, so the
+> shift is a no-op for users. See `docs/GLOSSARY.md` entry "Vault
+> (formerly Escrow)" for the user-facing summary.
 
 ## Context
 
@@ -25,30 +39,30 @@ other user's storage.
 
 Vaipakam's risk surface argues for isolation:
 
-- **ERC721 / ERC1155 NFT escrow** — a buggy or hostile NFT contract
+- **ERC721 / ERC1155 NFT vault** — a buggy or hostile NFT contract
   could (on transfer) attack the receiver. In a commingled vault,
   the receiver IS the vault holding everyone's collateral. In a
-  per-user contract, the receiver is one user's escrow holding only
+  per-user contract, the receiver is one user's vault holding only
   their own collateral.
 - **Per-asset hooks** (ERC1363 / ERC777 transfer hooks) — same
-  attack surface. A hook running inside a per-user escrow can only
+  attack surface. A hook running inside a per-user vault can only
   touch that user's storage.
-- **Custom escrow logic for NFT rental** (per-day deductions,
+- **Custom vault logic for NFT rental** (per-day deductions,
   ERC4907 user-rights handling) — a per-user contract can carry
   user-specific state without bloating the shared vault.
 
 The cost is upgrade machinery: per-user contracts need to be
-upgradeable in lock-step (you can't release a fix to "the escrow"
+upgradeable in lock-step (you can't release a fix to "the vault"
 if each user has their own copy of the implementation).
 
 ## Decision
 
-Adopt a **per-user UUPS escrow via factory**.
+Adopt a **per-user UUPS vault via factory**.
 
-- **`VaipakamEscrowImplementation.sol`** — the UUPS-upgradeable
+- **`VaipakamVaultImplementation.sol`** — the UUPS-upgradeable
   implementation. Holds the per-user logic (collateral receive,
   release, NFT rental hooks, position state).
-- **`EscrowFactoryFacet`** — a Diamond facet that lazily deploys
+- **`VaultFactoryFacet`** — a Diamond facet that lazily deploys
   one `ERC1967Proxy` per user the first time the user interacts
   with the protocol. The proxy points at the shared implementation
   contract. The mapping `user → proxy` is stored on the Diamond.
@@ -57,7 +71,7 @@ Adopt a **per-user UUPS escrow via factory**.
   address. Every per-user proxy reads the new implementation on
   the next call (no per-user migration).
 - **Cross-facet access** — facets that need to interact with a
-  user's escrow (`OfferAcceptFacet`, `RepayFacet`, etc.) call
+  user's vault (`OfferAcceptFacet`, `RepayFacet`, etc.) call
   through the user's proxy via `address(this).call(...)` or via
   `IERC20.safeTransferFrom` (when ERC20).
 
@@ -66,7 +80,7 @@ Adopt a **per-user UUPS escrow via factory**.
 **Positive**
 
 - **Physical asset isolation**. A bug, malicious token, or
-  malicious NFT touching one user's escrow cannot reach another
+  malicious NFT touching one user's vault cannot reach another
   user's collateral — there's no shared storage to corrupt.
 - **Per-user customisation possible** without polluting a shared
   vault — NFT rental's per-day-deduction state, ERC4907 user-
@@ -74,7 +88,7 @@ Adopt a **per-user UUPS escrow via factory**.
   all carry per-user state without inflating a global accounting
   surface.
 - **Upgrade is lock-step**: one UUPS upgrade transaction switches
-  every user's escrow to the new logic atomically. No per-user
+  every user's vault to the new logic atomically. No per-user
   migration; no "half the users on v1, half on v2" state.
 
 **Negative / accepted costs**
@@ -95,14 +109,14 @@ Adopt a **per-user UUPS escrow via factory**.
 
 **Risks the decision creates**
 
-- A bug in `VaipakamEscrowImplementation` affects every user
+- A bug in `VaipakamVaultImplementation` affects every user
   simultaneously (no isolation at the *logic* layer; only at the
   *state* layer). Mitigation: this is true of any shared-logic
   pattern; mitigated by the upgrade path (UUPS) and the standard
   test + audit coverage that the implementation gets.
 - The per-user proxy address is a non-trivial-to-derive
   identifier. Cross-protocol integrations have to query the
-  factory to get a user's escrow address. Documented; not a
+  factory to get a user's vault address. Documented; not a
   practical issue at protocol scale.
 
 ## Alternatives considered
@@ -113,16 +127,16 @@ NFT-rental subsystem alone would force a lot of per-user
 accounting that fits poorly into a global vault model.
 
 **Alternative B — `CREATE2`-deterministic addresses without proxy
-deployment** (the user's escrow address is computable but no proxy
+deployment** (the user's vault address is computable but no proxy
 exists until needed): Considered. Rejected because the cross-facet
-call pattern (`address(this).call(...)` into the escrow) needs the
-escrow to actually exist as a contract — `CREATE2` predicting an
+call pattern (`address(this).call(...)` into the vault) needs the
+vault to actually exist as a contract — `CREATE2` predicting an
 address that hasn't been deployed yet doesn't give us callable
 code.
 
-**Alternative C — One escrow contract per user, NON-upgradeable**:
+**Alternative C — One vault contract per user, NON-upgradeable**:
 Rejected. The protocol expects to evolve. A non-upgradeable
-per-user contract would mean per-user migration if escrow logic
+per-user contract would mean per-user migration if vault logic
 ever changed.
 
 **Alternative D — Transparent proxy (vs UUPS) per user**: The
@@ -134,8 +148,8 @@ gas cost on the hot path is lower (one fewer SLOAD per call).
 ## References
 
 - Source:
-  [`contracts/src/VaipakamEscrowImplementation.sol`](../../contracts/src/VaipakamEscrowImplementation.sol),
-  [`contracts/src/facets/EscrowFactoryFacet.sol`](../../contracts/src/facets/EscrowFactoryFacet.sol)
+  [`contracts/src/VaipakamVaultImplementation.sol`](../../contracts/src/VaipakamVaultImplementation.sol),
+  [`contracts/src/facets/VaultFactoryFacet.sol`](../../contracts/src/facets/VaultFactoryFacet.sol)
 - Spec: [`apps/www/src/content/whitepaper/Whitepaper.en.md`](../../apps/www/src/content/whitepaper/Whitepaper.en.md) §3.3 (Vaipakam Vaults)
-- Related: ADR-0001 (Diamond pattern — escrow factory uses a Diamond
+- Related: ADR-0001 (Diamond pattern — vault factory uses a Diamond
   facet, but the per-user proxies are separate UUPS contracts)

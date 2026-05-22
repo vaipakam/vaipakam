@@ -29,7 +29,7 @@ Two private channels — pick either:
 We aim to acknowledge within 24h and provide a remediation ETA within 72h. In-scope:
 
 - any facet under [`contracts/src/facets/`](contracts/src/facets/)
-- the escrow implementation and Diamond proxy under [`contracts/src/`](contracts/src/)
+- the vault implementation and Diamond proxy under [`contracts/src/`](contracts/src/)
 - the swap adapters under [`contracts/src/adapters/`](contracts/src/adapters/) (Phase 7a `LibSwap` failover)
 - the **Chainlink CCIP** cross-chain surface under [`contracts/src/crosschain/`](contracts/src/crosschain/) (`CcipMessenger`, `VPFIMirrorToken`, `VpfiBuyAdapter`, `VpfiBuyReceiver`, `VaipakamRewardMessenger`, `VpfiPoolRateGovernor`, the stock CCIP `LockReleaseTokenPool` / `BurnMintTokenPool` instances)
 - the cross-chain reward mesh (`RewardReporterFacet`, `RewardAggregatorFacet`, `VaipakamRewardMessenger`)
@@ -307,7 +307,7 @@ The Tenderly alert stack ([`ops/tenderly/`](ops/tenderly/)) polls `invalidTransi
 
 ## Admin surface and timelock
 
-All facet-level admin setters (`OracleAdminFacet.*`, `AdminFacet.*`, `EscrowFactoryFacet` upgrade controls, `RiskFacet.updateRiskParams`, role grants) are gated by named roles on [`LibAccessControl`](contracts/src/libraries/LibAccessControl.sol). Post-handover, the slow-admin roles (`ADMIN_ROLE`, `ORACLE_ADMIN_ROLE`, `RISK_ADMIN_ROLE`, `ESCROW_ADMIN_ROLE`) are held exclusively by a [`TimelockController`](contracts/script/DeployTimelock.s.sol) with a **48h minimum delay**.
+All facet-level admin setters (`OracleAdminFacet.*`, `AdminFacet.*`, `VaultFactoryFacet` upgrade controls, `RiskFacet.updateRiskParams`, role grants) are gated by named roles on [`LibAccessControl`](contracts/src/libraries/LibAccessControl.sol). Post-handover, the slow-admin roles (`ADMIN_ROLE`, `ORACLE_ADMIN_ROLE`, `RISK_ADMIN_ROLE`, `VAULT_ADMIN_ROLE`) are held exclusively by a [`TimelockController`](contracts/script/DeployTimelock.s.sol) with a **48h minimum delay**.
 
 The intentional exceptions, both on the Ops Safe (Guardian) hot multi-sig:
 
@@ -333,7 +333,7 @@ This repository has been reviewed internally. External audit status is tracked i
 - `OracleAdminFacet` per-feed override semantics (`setFeedOverride` cannot loosen, only tighten)
 - Phase 7b.1 multi-clone V3 liquidity OR-logic (`OracleLiquidityORTest` is the spec)
 - Phase 7a `LibSwap` swap-failover, including caller insulation on `minOutputAmount` and adapter approval scoping
-- Per-user escrow proxy deployment, mandatory upgrade gating, and the storage append-only invariant
+- Per-user vault proxy deployment, mandatory upgrade gating, and the storage append-only invariant
 - LayerZero OApp surface: peer authentication, DVN configuration readback, replay protection, and the cross-chain reward mesh finalisation
 - `VPFIBuyAdapter` rate limits and the `VPFIOFTAdapter` global cap enforcement on bridged supply
 - Phase 5 borrower LIF custody (`LibVPFIDiscount.settleBorrowerLifProper` / `forfeitBorrowerLif`) — the held VPFI must never leak through any terminal path

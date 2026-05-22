@@ -256,7 +256,7 @@ prefix cover the realistic consumer needs.
 |---|---|---|
 | `state-change/loan-mutation` | Any storage mutation on `s.loans[loanId]` | `OfferAccepted`, `LoanInitiated`, `LoanInitiatedDetails`, `LoanRepaid`, `PartialRepaid`, `LoanFallbackPending`, `LoanDefaulted`, `LoanLiquidated`, `LoanSettled`, `LoanSold`, `LoanObligationTransferred`, `CollateralAdded` |
 | `state-change/offer-mutation` | Storage mutation on `s.offers[offerId]` | `OfferCreated`, `OfferCreatedDetails`, `OfferCancelled`, `OfferCanceledDetails`, `OfferMatched`, `OfferClosed` |
-| `state-change/escrow-mutation` | Storage mutation on user-escrow state (VPFI balance, escrow proxy lifecycle) | `VPFIPurchasedWithETH`, `VPFIDepositedToEscrow`, `VPFIWithdrawnFromEscrow`, `EscrowDeployed`, `EscrowUpgraded` |
+| `state-change/vault-mutation` | Storage mutation on user-vault state (VPFI balance, vault proxy lifecycle) | `VPFIPurchasedWithETH`, `VPFIDepositedToVault`, `VPFIWithdrawnFromVault`, `VaultDeployed`, `VaultUpgraded` |
 | `state-change/nft-mutation` | Position-NFT lifecycle (mint / Transfer / status / burn) | `Transfer` (ERC-721), `NFTStatusUpdate`, `NFTMinted`, `NFTBurned` |
 | `state-change/treasury-mutation` | Treasury balance mutations | `TreasuryFeeAccrued`, `TreasuryClaimed` |
 | `state-change/claim-mutation` | Lender / borrower claim flag flips | `LenderFundsClaimed`, `BorrowerFundsClaimed` |
@@ -373,7 +373,7 @@ unique signatures**. Grouped by audit category:
 | Reward — claim events (`*Claimed`) | 4 | **state-change** | Extend on gaps |
 | Reward — cross-chain transport (`BroadcastSent` / `BroadcastReceived` / `ChainContributionZeroed` etc.) | 10 | **informational** (no consumer-cache impact; ops-side only) | Stay lean |
 | Activity-feed events (claim / sale / lifecycle markers) | 10 | Mixed — most are state-change for the affected entity | Extend on gaps |
-| Cross-chain VPFI buy — outcome events (`BuyResolvedSuccess`, `BuyRefunded`, `BuyTimedOutRefunded`) | 4 | **state-change** for the buyer's escrow row | Extend on gaps |
+| Cross-chain VPFI buy — outcome events (`BuyResolvedSuccess`, `BuyRefunded`, `BuyTimedOutRefunded`) | 4 | **state-change** for the buyer's vault row | Extend on gaps |
 | Cross-chain VPFI buy — flow events (`BuyRequested`, `BuyOptionsSet`) | 5 | **informational** | Stay lean |
 | LayerZero plumbing (peer / DVN / endpoint config) | 12 | **informational** | Stay lean |
 | Admin / role / pause / TOS | 22 | **informational** | Stay lean |
@@ -382,7 +382,7 @@ unique signatures**. Grouped by audit category:
 | Oracle / price / liquidity setters | 14 | **informational** (governance config; rare changes) | Stay lean |
 | Asset-config / governance-config (BPS, caps, thresholds) | 16 | **informational** | Stay lean |
 | Sanctions / KYC / country-pair (governance-side) | 5 | **informational** (KYC off in retail) | Stay lean |
-| Misc (escrow lifecycle, periodic interest, refinance, preclose) | 22 | Mixed — escrow + refinance + preclose mutations are state-change; periodic-interest scheduling is informational | Mixed |
+| Misc (vault lifecycle, periodic interest, refinance, preclose) | 22 | Mixed — vault + refinance + preclose mutations are state-change; periodic-interest scheduling is informational | Mixed |
 
 Approximate splits across the 187: **~50 state-change**,
 **~137 informational**. The state-change set is what
@@ -466,7 +466,7 @@ state without a follow-up view.
 ### 3.3 `OfferCanceled(uint256 indexed offerId, address indexed creator)` + `OfferCanceledDetails(...)`
 
 **Storage mutations:** `s.offers[offerId].status` set to
-Cancelled; refund to creator's escrow (separate Transfer event).
+Cancelled; refund to creator's vault (separate Transfer event).
 
 **Today:** the `Details` companion already carries a 12-field
 self-sufficient payload (added in the partial-fill range-orders
@@ -755,24 +755,24 @@ indexers).
 
 ### 3.18 `VPFIPurchasedWithETH(address indexed buyer, uint256 ethSpent, uint256 vpfiBought)`
 
-**Storage mutations:** VPFI minted to buyer's escrow; ETH
+**Storage mutations:** VPFI minted to buyer's vault; ETH
 forwarded to treasury / VPFI buy receiver.
 
 **Today:** carries 3 fields.
 
-**Gap (1 field):** post-buy escrow VPFI balance for the user
+**Gap (1 field):** post-buy vault VPFI balance for the user
 (useful for UI's "your VPFI balance is now X" feedback).
 
-**Decision:** **Extend** with newEscrowBalance. ~6.8 k gas.
+**Decision:** **Extend** with newVaultBalance. ~6.8 k gas.
 User-facing hot path.
 
-### 3.19 `VPFIDepositedToEscrow(address indexed user, uint256 amount)` + `VPFIWithdrawnFromEscrow(address indexed user, uint256 amount)`
+### 3.19 `VPFIDepositedToVault(address indexed user, uint256 amount)` + `VPFIWithdrawnFromVault(address indexed user, uint256 amount)`
 
-**Storage mutations:** escrow balance changes.
+**Storage mutations:** vault balance changes.
 
-**Gap:** post-mutation escrow balance.
+**Gap:** post-mutation vault balance.
 
-**Decision:** **Extend** with new escrow balance. ~6.8 k gas
+**Decision:** **Extend** with new vault balance. ~6.8 k gas
 each.
 
 ### 3.20 `BorrowerLifRebateClaimed(uint256 indexed loanId, address indexed borrower, uint256 vpfiAmount)`
@@ -782,7 +782,7 @@ flipped; VPFI transferred to borrower.
 
 **Today:** 3 fields.
 
-**Gap:** post-claim borrower escrow VPFI balance.
+**Gap:** post-claim borrower vault VPFI balance.
 
 **Decision:** **Extend** ~6.8 k gas.
 

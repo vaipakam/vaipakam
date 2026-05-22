@@ -316,9 +316,9 @@ if (offerType == Borrower) {
 The custody pull at create-time (per `OfferFacet._creatorPullAmount`)
 uses **`amountMax` for lender offers** and **`collateralAmount` for
 borrower offers** — same as today's flow, just substituting the
-range's worst-case for the formerly-fixed amount. Lenders escrow the
+range's worst-case for the formerly-fixed amount. Lenders vault the
 maximum they might lend; on match the unused portion stays in their
-escrow.
+vault.
 
 ### 5.2 New `OfferFacet.matchOffers(lenderId, borrowerId)`
 
@@ -349,10 +349,10 @@ function matchOffers(uint256 lenderId, uint256 borrowerId)
   // (collateralAmount) is fully consumed in this one match, and any
   // delta vs. reqCollat stays at reqCollat (lender only requires
   // pro-rated; borrower posted more, the excess refunds to the
-  // borrower's escrow on this match — symmetric to the lender's
+  // borrower's vault on this match — symmetric to the lender's
   // amountMax refund pattern below).
   if (B.collateralAmount > reqCollat) {
-    LibFacet.crossFacetCall(escrowDepositERC20(B.creator, collat, B.collateralAmount - reqCollat));
+    LibFacet.crossFacetCall(vaultDepositERC20(B.creator, collat, B.collateralAmount - reqCollat));
   }
   // Initiate the loan via existing LoanFacet path. HF >= 1.5 fires here.
   loanId = LoanFacet.initiateLoan(... lenderId, borrowerId, amount, rateBps, reqCollat ...);
@@ -360,9 +360,9 @@ function matchOffers(uint256 lenderId, uint256 borrowerId)
   L.amountFilled += amount;
   if (L.amountMax - L.amountFilled < L.amountMin) {
     // Dust remainder can't satisfy lender's per-match minimum —
-    // close offer + refund dust back to lender's escrow.
+    // close offer + refund dust back to lender's vault.
     if (L.amountMax > L.amountFilled) {
-      LibFacet.crossFacetCall(escrowDepositERC20(L.creator, asset, L.amountMax - L.amountFilled));
+      LibFacet.crossFacetCall(vaultDepositERC20(L.creator, asset, L.amountMax - L.amountFilled));
     }
     L.accepted = true;
   }
@@ -374,15 +374,15 @@ function matchOffers(uint256 lenderId, uint256 borrowerId)
 
 **Custody flow with partial fills:**
 
-- Lender pre-escrowed `amountMax` at create. Each match pulls
-  `amount` from that escrowed pool and routes to the borrower's
-  escrow (existing `LoanFacet.initiateLoan` flow). Remaining
-  `amountMax − amountFilled` stays in lender's escrow custody until
+- Lender pre-vaulted `amountMax` at create. Each match pulls
+  `amount` from that vaulted pool and routes to the borrower's
+  vault (existing `LoanFacet.initiateLoan` flow). Remaining
+  `amountMax − amountFilled` stays in lender's vault custody until
   either another match consumes more, or the offer closes (dust
   refund or explicit cancel).
-- Borrower pre-escrowed `collateralAmount` at create. The match
+- Borrower pre-vaulted `collateralAmount` at create. The match
   consumes `reqCollat` (pro-rated against lender's `amountMax`); any
-  excess refunds back to the borrower's escrow at match time.
+  excess refunds back to the borrower's vault at match time.
   Borrower offers are single-fill in Phase 1 (§10.1), so the
   borrower's offer always closes after one match.
 
@@ -477,7 +477,7 @@ preview shows:
 - The offer's range
 - The matched terms under the midpoint rule
 - The resulting HF
-- The lender-side amount that would refund back to escrow (their
+- The lender-side amount that would refund back to vault (their
   `amountMax − matched amount` delta)
 
 This is informational; the user has already consented to the range
@@ -688,7 +688,7 @@ perMatchHigh    = lenderRemaining              // shrinks as fills accumulate
 If `lenderRemaining < amountMin`, the offer is "fully filled in
 practice" — the leftover dust is too small to satisfy the lender's
 own per-match minimum. The match write closes the offer and
-refunds the dust to the lender's escrow (§5.2 `matchOffers`).
+refunds the dust to the lender's vault (§5.2 `matchOffers`).
 
 The lender's `amountMin` does NOT shrink with fills. A lender that
 posts `amountMin = 1k, amountMax = 10k` is saying "I'll do 1-10k
@@ -714,7 +714,7 @@ The borrower's `collateralAmount` is still a single value — what
 they're posting upfront. The match validity check requires
 `borrower.collateralAmount >= reqCollateral(match)`. Excess
 (borrower posted more than the per-match requirement) refunds back
-to the borrower's escrow at match time (single-fill borrower side
+to the borrower's vault at match time (single-fill borrower side
 means the entire borrower-posted collateral is consumed exactly at
 match — the match consumes `reqCollateral` and refunds
 `borrower.collateralAmount - reqCollateral`).
@@ -769,11 +769,11 @@ unchanged.
 
 - **No prior fills (`amountFilled == 0`):** today's behaviour —
   delete storage slot, refund full `amountMax` (lender) or full
-  `collateralAmount` (borrower) to the creator's escrow.
+  `collateralAmount` (borrower) to the creator's vault.
 - **Partial fills exist (`amountFilled > 0`, lender side):** the N
   existing loans live on (they're independent contracts now).
   Refund only the unfilled portion (`amountMax - amountFilled`)
-  to the lender's escrow. Mark `accepted = true` so the offer
+  to the lender's vault. Mark `accepted = true` so the offer
   doesn't show on the open book; **storage slot stays** because
   the offer's terms are referenced by the position NFTs' metadata
   (`getOffer(offerId)` is still callable until the last loan
@@ -825,14 +825,14 @@ Match 3 — borrower offer C (amountMin=2k, amountMax=4k, rate 400-500):
   → lender holds 3 NFTs
   → amountFilled = 9.5k
   → remaining = 0.5k < amountMin (1k) → DUST CLOSE
-     refund 0.5k back to lender's escrow
+     refund 0.5k back to lender's vault
      mark offer.accepted = true
      emit OfferClosed(offerId, reason="dust")
 ```
 
 Lender's wallet at end: 3 lender position NFTs, one per loan, each
 with its own counterparty + start time + concrete amount. Lender's
-escrow: refunded 0.5k dust. Offer storage slot retained (still
+vault: refunded 0.5k dust. Offer storage slot retained (still
 referenced by the 3 position NFTs' metadata) but `accepted = true`
 so it's off the open book.
 
@@ -1012,7 +1012,7 @@ contracts work begins.
 - `OfferFacet.matchOffers(lenderId, borrowerId)` new write —
   including lender-side partial-fill semantics (§5.2 + §10):
   pro-rated collateral derivation, `amountFilled` increment,
-  dust-close auto-flip, dust refund to lender's escrow
+  dust-close auto-flip, dust refund to lender's vault
 - `OfferFacet.previewMatch(lenderId, borrowerId)` new view —
   uses `amountMax - amountFilled` for lender's remaining capacity
 - `OfferFacet.acceptOffer` refactored to wrapper around matching logic
@@ -1190,14 +1190,14 @@ two; budget ~1 week of audit response time alongside Phase 1.
 - ✓ `cancelOffer` after warp 5 min + 1 sec succeeds.
 
 **Refund:**
-- ✓ Lender escrowed `amountMax`; match at `amount < amountMax`
-  reduces lender's escrow custody by `amount` and leaves
+- ✓ Lender vaulted `amountMax`; match at `amount < amountMax`
+  reduces lender's vault custody by `amount` and leaves
   `amountMax − amount` for future matches.
-- ✓ Borrower escrowed `collateralAmount`; match at
+- ✓ Borrower vaulted `collateralAmount`; match at
   `reqCollat < collateralAmount` refunds the delta to borrower
-  escrow.
+  vault.
 - ✓ Final match (dust close) refunds `amountMax - amountFilled`
-  delta back to lender's escrow.
+  delta back to lender's vault.
 
 **Partial fills (lender side):**
 - ✓ Three-match scenario per §10.7 worked example — verify
@@ -1208,13 +1208,13 @@ two; budget ~1 week of audit response time alongside Phase 1.
 - ✓ Per-match `reqCollateral` correctly pro-rated against
   `lender.collateralAmount × matchAmount / lender.amountMax`.
 - ✓ Borrower's `collateralAmount > reqCollateral` excess refunds
-  to borrower escrow at match time.
+  to borrower vault at match time.
 - ✓ Lender position NFTs: each partial match mints a fresh
   `lenderTokenId` to the lender's wallet, all independently
   transferable.
 - ✓ Cancel partial-filled offer (`amountFilled > 0`):
   - existing loans live on (each ID still in storage)
-  - refunds only `amountMax - amountFilled` to lender's escrow
+  - refunds only `amountMax - amountFilled` to lender's vault
   - flips `accepted = true`
   - storage slot retained (not deleted)
 - ✓ Cancel cooldown: applies only when `amountFilled == 0`.
@@ -1482,9 +1482,9 @@ as before. And the pre-#164 storage fallback (`collateralAmountMax ==
 live storage with pre-#164 offers can't accidentally trap collateral
 or render those offers unmatchable.
 
-### 16.4a Cancel-side refund mirrors the create-side pre-escrow
+### 16.4a Cancel-side refund mirrors the create-side pre-vault
 
-`OfferCreateFacet._pullCreatorAssetsClassic` pre-escrows the upper
+`OfferCreateFacet._pullCreatorAssetsClassic` pre-vaults the upper
 bound (`effCollateralAmountMax`, post auto-collapse) for borrower
 ERC-20 offers. The matching cancel path
 (`OfferCancelFacet.cancelOffer` borrower-side ERC-20 branch) MUST
@@ -1492,11 +1492,11 @@ refund `collateralAmountMax`, not `collateralAmount` — otherwise the
 `max - min` tail of a ranged borrower offer would be trapped after
 cancellation. Same `0 ⇒ collateralAmount` storage fallback applies.
 Round-1 Codex review caught this; the corrected shape is now the
-load-bearing invariant: **borrower-side ERC-20 escrow movements
+load-bearing invariant: **borrower-side ERC-20 vault movements
 (deposit / match-consume / match-refund / cancel-refund) all anchor
 on `effCollateralAmountMax`, not `collateralAmount`.**
 
-### 16.5 Pre-escrow widens
+### 16.5 Pre-vault widens
 
 `OfferCreateFacet._pullCreatorAssetsClassic` (and the Permit2
 sibling) now pulls `effCollateralAmountMax` (the auto-collapsed upper
@@ -1546,11 +1546,11 @@ Lenders and borrowers think in role-asymmetric headlines:
 
 | Side | Headline number | What the contract stores |
 |---|---|---|
-| Lender | *"Lend up to X"* | `amountMax = X` (pre-escrowed); `amount = 1 wei` (placeholder) |
+| Lender | *"Lend up to X"* | `amountMax = X` (pre-vaulted); `amount = 1 wei` (placeholder) |
 | Lender | *"Require at least Z collateral"* | `collateralAmount = Z` (single-value per #164 lender invariant) |
 | Lender | *"At min P% APR"* | `interestRateBps = P×100`; `interestRateBpsMax = 10_000` (= `MAX_INTEREST_BPS`) |
 | Borrower | *"Borrow at least Y"* | `amount = Y`; `amountMax = 0` (derived at match) |
-| Borrower | *"Lock up to W collateral"* | `collateralAmountMax = W` (pre-escrowed); `collateralAmount = 0 (or 1 wei)` |
+| Borrower | *"Lock up to W collateral"* | `collateralAmountMax = W` (pre-vaulted); `collateralAmount = 0 (or 1 wei)` |
 | Borrower | *"At max Q% APR"* | `interestRateBps = 0`; `interestRateBpsMax = Q×100` |
 
 ### 17.2 LTV / HF are derived guidance only
@@ -1627,7 +1627,7 @@ match against a borrower offer; #102 lifts that rule **end-to-end**:
   B.amount`), refunds residual collateral on dust-close. The
   per-match collateral refund hook (#164's behaviour) is GATED on
   `!partialFillEnabled` — when partial-fill is on, the borrower's
-  pre-escrowed collateral stays in custody across matches and is
+  pre-vaulted collateral stays in custody across matches and is
   only refunded on dust-close.
 - A new `LibRiskMath.maxLendingForLtvCap(collateral, principal,
   collat, capBps)` helper sits next to `minCollateralForLtvCap` to

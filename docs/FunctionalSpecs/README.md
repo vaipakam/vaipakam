@@ -109,7 +109,7 @@ epic; see below). One doc per functional domain:
   internal-match liquidation, the flash-loan liquidation path
 - Risk, Oracle & Liquidity — health factor / LTV, price feeds, liquidity
   classification, depth-tiered LTV
-- Escrow — per-user escrow proxies, stuck-escrow recovery
+- Vault — per-user vault proxies, stuck-vault recovery
 - Position NFTs — offer / loan position NFTs and their metadata
 - VPFI Token, Discounts, Staking & Rewards — fee discounts, staking
   rewards, interaction rewards

@@ -1,4 +1,4 @@
-# Escrow Stuck-Token Recovery — Design Spec
+# Vault Stuck-Token Recovery — Design Spec
 
 Status: **Locked design — ready for implementation.**
 
@@ -9,7 +9,7 @@ post-deploy labeling sequence.
 Companion docs:
 - [`AnalyticsLabelRegistration.md`](../ops/AnalyticsLabelRegistration.md) —
   post-launch labeling steps so analytics firms recognize Vaipakam
-  per-user escrow proxies.
+  per-user vault proxies.
 - [Receiver-hook hardening — 2026-05-03 release notes](../ReleaseNotes/ReleaseNotes-2026-05-03.md)
   — the NFT side of the same defence-in-depth picture (already shipped).
 
@@ -17,9 +17,9 @@ Companion docs:
 
 ## 1. Threat model
 
-The Vaipakam escrow design is permissionless on the inbound side for
+The Vaipakam vault design is permissionless on the inbound side for
 ERC-20: anyone holding an ERC-20 token can call `transfer` /
-`transferFrom` directly to a user's escrow proxy address, and the EVM
+`transferFrom` directly to a user's vault proxy address, and the EVM
 gives the recipient zero opportunity to reject. (NFTs are fully gated
 by the receiver-hook hardening landed in 2026-05-03; this document
 addresses ONLY the ERC-20 case the EVM cannot block at receive time.)
@@ -28,20 +28,20 @@ Three scenarios drive the design:
 
 1. **Taint poisoning.** A griefer sends dust from a Chainalysis-listed
    wallet (or any reputation-tarnished address) to a high-value user's
-   escrow. The escrow's on-chain history now includes a transfer from
+   vault. The vault's on-chain history now includes a transfer from
    a sanctioned source. Generic taint-tracking tools may flag the
-   escrow regardless of whether the dust ever moves. Precedent: the
+   vault regardless of whether the dust ever moves. Precedent: the
    August 2022 Tornado Cash dust-attack on ~600 high-profile wallets.
 
-2. **Self-mistake.** A user copies their escrow address from a block
+2. **Self-mistake.** A user copies their vault address from a block
    explorer (or an out-of-band channel) and sends ERC-20 funds to it
    directly — perhaps from their own wallet, perhaps from a CEX
-   withdrawal. The funds land in escrow without protocol bookkeeping.
+   withdrawal. The funds land in vault without protocol bookkeeping.
    Under the current code there is no path back out for these tokens.
 
 3. **Unsolicited drift.** A token contract behaves unexpectedly — a
    rebase pushes balance up, a fee-on-transfer drops it down. The
-   escrow's `balanceOf` diverges from the protocol-tracked balance.
+   vault's `balanceOf` diverges from the protocol-tracked balance.
 
 The design must:
 - Provide a recovery path for #2 (legitimate stuck funds).
@@ -60,18 +60,18 @@ verbatim unless a security finding forces a revision.
 
 ### 2.1 Recovery cap — counter-bounded
 
-Every per-user escrow proxy maintains a per-token running counter:
+Every per-user vault proxy maintains a per-token running counter:
 
 ```
-protocolTrackedEscrowBalance[user][token]
-  +=  every escrowDepositERC20 amount
-  -=  every escrowWithdrawERC20 amount
+protocolTrackedVaultBalance[user][token]
+  +=  every vaultDepositERC20 amount
+  -=  every vaultWithdrawERC20 amount
 ```
 
 The recovery cap is:
 
 ```
-unsolicited = max(0, IERC20(token).balanceOf(proxy) - protocolTrackedEscrowBalance[user][token])
+unsolicited = max(0, IERC20(token).balanceOf(proxy) - protocolTrackedVaultBalance[user][token])
 require(amount <= unsolicited)
 ```
 
@@ -83,8 +83,8 @@ safety property; everything else is policy.
 
 ### 2.2 Single-sig recovery; no source-side signature
 
-The recovery flow is initiated by the escrow owner (the EOA whose
-address is recorded in `userVaipakamEscrows[user]`). The transaction
+The recovery flow is initiated by the vault owner (the EOA whose
+address is recorded in `userVaipakamVaults[user]`). The transaction
 itself authenticates `msg.sender`. There is **no second signature**
 from the source wallet — the contract has no on-chain way to verify
 that a declared source actually originated the unsolicited transfer
@@ -100,26 +100,26 @@ The asymmetry-of-consequences makes this safe:
 - Honest user with taint poisoning → reads warning → does not
   initiate recovery → dust sits inert; protocol functions normally.
 - Sanctioned-fund launderer → either declares actual sanctioned
-  source (escrow gets banned, self-incrimination) OR lies and
+  source (vault gets banned, self-incrimination) OR lies and
   declares a clean source (recovery succeeds, but funds go to their
   already-Tier-1-cleared EOA, which they could have moved to without
   Vaipakam — net-zero benefit).
 
 ### 2.3 Three terminal states
 
-| State | Action | Tokens | Escrow status |
+| State | Action | Tokens | Vault status |
 |---|---|---|---|
 | Recover-clean | User declares source → sanctions oracle clears it | Move to user EOA | Operates normally |
-| Recover-sanctioned | User declares source → sanctions oracle flags it | Stay in escrow | **Locked-and-banned** (existing sanctions Tier-1/Tier-2 semantics; auto-unlocks if address de-listed) |
-| Disown / ignore | User explicitly disowns OR takes no action | Stay in escrow | Operates normally (Locked-but-active) |
+| Recover-sanctioned | User declares source → sanctions oracle flags it | Stay in vault | **Locked-and-banned** (existing sanctions Tier-1/Tier-2 semantics; auto-unlocks if address de-listed) |
+| Disown / ignore | User explicitly disowns OR takes no action | Stay in vault | Operates normally (Locked-but-active) |
 
 "Forfeit" in earlier discussion = the **Disown / ignore** row. The
 **Recover-sanctioned** row triggers the existing sanctioned-address
-banning semantics on the escrow itself, not just the dust.
+banning semantics on the vault itself, not just the dust.
 
-### 2.4 Recipient locked to escrow owner's EOA
+### 2.4 Recipient locked to vault owner's EOA
 
-Recovery transfers go ONLY to `msg.sender` (the escrow owner). The
+Recovery transfers go ONLY to `msg.sender` (the vault owner). The
 contract never accepts a recipient parameter. This makes admin abuse,
 malware-coerced approvals, and most coordination attacks structurally
 impossible to redirect funds.
@@ -174,30 +174,30 @@ Cheap to add (just an event); valuable for compliance posture.
 
 ### 2.8 VPFI integration
 
-`depositVPFIToEscrow` ([VPFIDiscountFacet.sol:394](../../contracts/src/facets/VPFIDiscountFacet.sol#L394))
-currently does direct `IERC20.safeTransferFrom(user, escrow, amount)`,
-bypassing `escrowDepositERC20`. **Refactor to route through
-`escrowDepositERC20`** so the counter ticks correctly for VPFI stakes.
+`depositVPFIToVault` ([VPFIDiscountFacet.sol:394](../../contracts/src/facets/VPFIDiscountFacet.sol#L394))
+currently does direct `IERC20.safeTransferFrom(user, vault, amount)`,
+bypassing `vaultDepositERC20`. **Refactor to route through
+`vaultDepositERC20`** so the counter ticks correctly for VPFI stakes.
 
 The withdraw side
 ([VPFIDiscountFacet.sol:525](../../contracts/src/facets/VPFIDiscountFacet.sol#L525))
-already calls `escrowWithdrawERC20` — symmetric.
+already calls `vaultWithdrawERC20` — symmetric.
 
 Staking rewards distribution
 ([StakingRewardsFacet.sol:80](../../contracts/src/facets/StakingRewardsFacet.sol#L80))
 sends VPFI directly to user's EOA via `safeTransfer(msg.sender, paid)`
-— never touches escrow, doesn't pollute the counter. **No change.**
+— never touches vault, doesn't pollute the counter. **No change.**
 
 ### 2.9 Staking-checkpoint refactor
 
 `LibStakingRewards.updateUser` and `LibVPFIDiscount.rollupUserDiscount`
-currently read `IERC20(vpfi).balanceOf(escrow)`. With the counter in
-place, they should read **`min(balanceOf, protocolTrackedEscrowBalance[user][vpfi])`**
+currently read `IERC20(vpfi).balanceOf(vault)`. With the counter in
+place, they should read **`min(balanceOf, protocolTrackedVaultBalance[user][vpfi])`**
 so unsolicited VPFI dust does NOT earn yield and does NOT inflate the
 discount tier. This kills the "stake by direct transfer" loophole and
 the "tainted dust earns yield" loophole simultaneously.
 
-VPFI-as-collateral does land in `tracked` (via `escrowDepositERC20`)
+VPFI-as-collateral does land in `tracked` (via `vaultDepositERC20`)
 and so DOES earn yield while sitting locked under a loan — this is by
 design (token economics decision: collateral earning yield is a user
 benefit).
@@ -211,10 +211,10 @@ proceeds. No special-case mapping or governance mechanism needed.
 
 ### 2.11 Forfeit semantics
 
-Tokens that stay in escrow under the **Disown / ignore** or **Recover-
-sanctioned** outcomes never move to treasury. They sit in the escrow.
+Tokens that stay in vault under the **Disown / ignore** or **Recover-
+sanctioned** outcomes never move to treasury. They sit in the vault.
 If a sanctions list is later updated to remove the flagged address,
-the **Locked-and-banned** escrow auto-unlocks and the user regains
+the **Locked-and-banned** vault auto-unlocks and the user regains
 access (consistent with existing sanctioned-address semantics
 elsewhere in the protocol).
 
@@ -245,11 +245,11 @@ In `LibVaipakam.Storage`:
 
 ```solidity
 /// @dev Per-(user, token) running counter of ERC-20 amount deposited
-///      via `escrowDepositERC20` minus amount withdrawn via
-///      `escrowWithdrawERC20`. The recovery flow uses this as the
+///      via `vaultDepositERC20` minus amount withdrawn via
+///      `vaultWithdrawERC20`. The recovery flow uses this as the
 ///      load-bearing safety bound: recovery cap =
-///      max(0, balanceOf(proxy) - protocolTrackedEscrowBalance[user][token]).
-mapping(address => mapping(address => uint256)) protocolTrackedEscrowBalance;
+///      max(0, balanceOf(proxy) - protocolTrackedVaultBalance[user][token]).
+mapping(address => mapping(address => uint256)) protocolTrackedVaultBalance;
 
 /// @dev Per-user nonce for EIP-712 recovery acknowledgments.
 ///      Replay-protects each signature; incremented on use.
@@ -274,8 +274,8 @@ function recoverStuckERC20(
 ) external
 ```
 
-Located on `EscrowFactoryFacet` (same facet as `escrowDepositERC20` /
-`escrowWithdrawERC20` for code locality).
+Located on `VaultFactoryFacet` (same facet as `vaultDepositERC20` /
+`vaultWithdrawERC20` for code locality).
 
 Flow:
 
@@ -285,21 +285,21 @@ Flow:
 3. Recover signer from `signature` over the EIP-712 payload (see §5).
    Require `signer == msg.sender`.
 4. Bump `s.recoveryNonce[msg.sender]`.
-5. Resolve `proxy = s.userVaipakamEscrows[msg.sender]`. Revert
-   `UserHasNoEscrow()` if zero.
+5. Resolve `proxy = s.userVaipakamVaults[msg.sender]`. Revert
+   `UserHasNoVault()` if zero.
 6. Compute `unsolicited = max(0, IERC20(token).balanceOf(proxy) -
-   s.protocolTrackedEscrowBalance[msg.sender][token])`.
+   s.protocolTrackedVaultBalance[msg.sender][token])`.
 7. Require `amount > 0` and `amount <= unsolicited`.
 8. Sanctions oracle check on `declaredSource`. If sanctioned:
-   - Set `s.escrowBanned[msg.sender] = true` (or invoke whatever the
+   - Set `s.vaultBanned[msg.sender] = true` (or invoke whatever the
      existing sanctions-banning primitive is — match the pattern used
      by `_assertNotSanctioned`).
-   - Emit `EscrowBannedFromRecoveryAttempt(user, token, declaredSource, amount)`.
-   - Revert `EscrowBannedDueToSanctionedSource()`.
-   - Tokens stay in escrow.
+   - Emit `VaultBannedFromRecoveryAttempt(user, token, declaredSource, amount)`.
+   - Revert `VaultBannedDueToSanctionedSource()`.
+   - Tokens stay in vault.
 9. If clean:
    - Cross-facet call to the proxy's `withdrawERC20(token, msg.sender, amount)`.
-     Recipient is `msg.sender` (the escrow owner) — hardcoded.
+     Recipient is `msg.sender` (the vault owner) — hardcoded.
    - Emit `StuckERC20Recovered(user, token, declaredSource, amount, signatureHash)`.
 
 ### 4.2 `disown`
@@ -309,26 +309,26 @@ function disown(address token) external
 ```
 
 1. Sanctions check on `msg.sender`.
-2. Resolve `proxy = s.userVaipakamEscrows[msg.sender]`. Revert
-   `UserHasNoEscrow()` if zero.
+2. Resolve `proxy = s.userVaipakamVaults[msg.sender]`. Revert
+   `UserHasNoVault()` if zero.
 3. Read `observedAmount = max(0, IERC20(token).balanceOf(proxy) -
-   s.protocolTrackedEscrowBalance[msg.sender][token])`.
+   s.protocolTrackedVaultBalance[msg.sender][token])`.
 4. Emit `TokenDisowned(msg.sender, token, observedAmount, block.number)`.
 5. No state changes beyond the event.
 
-### 4.3 `escrowDepositERC20` / `escrowWithdrawERC20` — counter increments
+### 4.3 `vaultDepositERC20` / `vaultWithdrawERC20` — counter increments
 
 Add two lines each:
 
 ```solidity
-function escrowDepositERC20(address user, address token, uint256 amount) external onlyDiamondInternal {
+function vaultDepositERC20(address user, address token, uint256 amount) external onlyDiamondInternal {
     // ... existing body ...
-    s.protocolTrackedEscrowBalance[user][token] += amount;
+    s.protocolTrackedVaultBalance[user][token] += amount;
 }
 
-function escrowWithdrawERC20(address user, address token, address recipient, uint256 amount) external onlyDiamondInternal {
+function vaultWithdrawERC20(address user, address token, address recipient, uint256 amount) external onlyDiamondInternal {
     // ... existing body ...
-    s.protocolTrackedEscrowBalance[user][token] -= amount;
+    s.protocolTrackedVaultBalance[user][token] -= amount;
 }
 ```
 
@@ -336,51 +336,51 @@ function escrowWithdrawERC20(address user, address token, address recipient, uin
 (it would mean a withdraw was attempted for more than was tracked,
 indicating an accounting bug elsewhere).
 
-### 4.4 `depositVPFIToEscrow` refactor
+### 4.4 `depositVPFIToVault` refactor
 
 Replace the direct `safeTransferFrom` with a call into
-`escrowDepositERC20`:
+`vaultDepositERC20`:
 
 ```solidity
-function depositVPFIToEscrow(uint256 amount) external nonReentrant whenNotPaused {
+function depositVPFIToVault(uint256 amount) external nonReentrant whenNotPaused {
     LibVaipakam._assertNotSanctioned(msg.sender);
-    (address vpfi, address escrow) = _prepareDeposit(amount);
+    (address vpfi, address vault) = _prepareDeposit(amount);
 
-    // Pull VPFI from user to escrow via the escrow factory's
-    // bookkeeping path so the protocolTrackedEscrowBalance counter
+    // Pull VPFI from user to vault via the vault factory's
+    // bookkeeping path so the protocolTrackedVaultBalance counter
     // tracks staked VPFI correctly. Replaces the prior direct
     // safeTransferFrom which bypassed the counter.
     IERC20(vpfi).safeTransferFrom(msg.sender, address(this), amount);
-    IERC20(vpfi).safeIncreaseAllowance(escrow, amount);
-    EscrowFactoryFacet(address(this)).escrowDepositERC20(msg.sender, vpfi, amount);
+    IERC20(vpfi).safeIncreaseAllowance(vault, amount);
+    VaultFactoryFacet(address(this)).vaultDepositERC20(msg.sender, vpfi, amount);
 
-    emit VPFIDepositedToEscrow(msg.sender, amount);
+    emit VPFIDepositedToVault(msg.sender, amount);
 }
 ```
 
 Note: this requires the proxy's `depositERC20` to pull from
 `address(this)` (the Diamond), which it does today —
-`escrowDepositERC20` calls `proxy.depositERC20(token, amount)` which
+`vaultDepositERC20` calls `proxy.depositERC20(token, amount)` which
 runs `safeTransferFrom(msg.sender, address(this), amount)` from the
 proxy's context where `msg.sender == diamond`. So pulling tokens to
 the Diamond first then forwarding is the correct sequence.
 
-The Permit2 variant (`depositVPFIToEscrowWithPermit`) needs the same
+The Permit2 variant (`depositVPFIToVaultWithPermit`) needs the same
 restructuring — pull via Permit2 to the Diamond first, then forward
-to escrow via `escrowDepositERC20`.
+to vault via `vaultDepositERC20`.
 
 ### 4.5 `LibStakingRewards.updateUser` + `LibVPFIDiscount.rollupUserDiscount` — `min` clamp
 
-Both functions currently read `IERC20(vpfi).balanceOf(escrow)`. Change
+Both functions currently read `IERC20(vpfi).balanceOf(vault)`. Change
 to read:
 
 ```solidity
-uint256 escrowBal = IERC20(vpfi).balanceOf(escrow);
-uint256 tracked = s.protocolTrackedEscrowBalance[user][vpfi];
-uint256 yieldBearingBalance = escrowBal < tracked ? escrowBal : tracked;
+uint256 vaultBal = IERC20(vpfi).balanceOf(vault);
+uint256 tracked = s.protocolTrackedVaultBalance[user][vpfi];
+uint256 yieldBearingBalance = vaultBal < tracked ? vaultBal : tracked;
 ```
 
-Use `yieldBearingBalance` instead of the raw `escrowBal` for accrual
+Use `yieldBearingBalance` instead of the raw `vaultBal` for accrual
 math. Unsolicited dust (above tracked) gets ignored; underflow
 (balance below tracked, e.g. from FOT/rebase) clamps to balance so we
 never over-accrue.
@@ -412,7 +412,7 @@ struct RecoveryAcknowledgment {
 
 > "I am declaring that the source address belongs to a wallet I
 > control or authorized. If the source is later determined to be on
-> the sanctions list, my escrow will be locked under the protocol's
+> the sanctions list, my vault will be locked under the protocol's
 > sanctions policy until the address is de-listed. I have read and
 > understood the Advanced User Guide section on stuck-token
 > recovery."
@@ -441,7 +441,7 @@ same release.
 [Header]
 Stuck-token recovery
 Use this page only if you sent ERC-20 tokens directly to your
-escrow address. Read the Advanced User Guide section before
+vault address. Read the Advanced User Guide section before
 proceeding.
 
 [Form]
@@ -469,7 +469,7 @@ You are declaring:
   Amount:   150.00 USDC
 
 ⚠️ If the declared source address is on the sanctions list, your
-   escrow will be locked under our sanctions policy. The lock will
+   vault will be locked under our sanctions policy. The lock will
    automatically lift if the address is removed from the list.
 
 ⚠️ Do not declare a source you do not own. Tokens received from
@@ -492,7 +492,7 @@ Asset Viewer shows ONLY protocol-managed tokens with their tracked
 balances. Below the position list:
 
 > Only tokens managed by the Vaipakam protocol are shown here. Do not
-> send any tokens directly to your escrow address — they may not be
+> send any tokens directly to your vault address — they may not be
 > recoverable.
 
 No "stuck tokens" section. No `[Recover]` buttons. No expandable
@@ -508,9 +508,9 @@ Standard FOT (e.g. SAFEMOON-style): user transfers 100, receiver
 gets 95. With our counter:
 
 ```
-escrowDepositERC20(user, FOT, 100):
+vaultDepositERC20(user, FOT, 100):
   counter += 100
-  actual transfer credits escrow with 95
+  actual transfer credits vault with 95
   → balance(95) - tracked(100) = -5  // would underflow in unsolicited calc
 ```
 
@@ -545,11 +545,11 @@ Recovery denied. The user's protocol-tracked balance (100) exceeds
 the actual balance (98) — a separate problem visible in protocol
 withdrawals, but the recovery flow is correctly inert here.
 
-### 7.4 User has no escrow
+### 7.4 User has no vault
 
-If `s.userVaipakamEscrows[msg.sender] == address(0)`, both
-`recoverStuckERC20` and `disown` revert `UserHasNoEscrow()`. There's
-nothing to recover from a non-existent escrow.
+If `s.userVaipakamVaults[msg.sender] == address(0)`, both
+`recoverStuckERC20` and `disown` revert `UserHasNoVault()`. There's
+nothing to recover from a non-existent vault.
 
 ### 7.5 Sanctions oracle unreachable
 
@@ -559,10 +559,10 @@ the source as **flagged** (fail-safe). Reverts the recovery with
 recovers, rather than executing recovery on a potentially-flagged
 source under unknown conditions.
 
-### 7.6 Escrow already banned
+### 7.6 Vault already banned
 
-If `s.escrowBanned[msg.sender] == true`, `recoverStuckERC20` reverts
-with the standard banned-escrow error. `disown` is allowed (a banned
+If `s.vaultBanned[msg.sender] == true`, `recoverStuckERC20` reverts
+with the standard banned-vault error. `disown` is allowed (a banned
 user may still want to assert non-ownership for compliance). Decide
 during implementation whether `disown` honours the ban — leaning
 towards "allow disown even when banned, since it's purely
@@ -572,7 +572,7 @@ informational."
 
 ## 8. Tests
 
-New `EscrowStuckRecoveryTest.t.sol`:
+New `VaultStuckRecoveryTest.t.sol`:
 
 | Test | Asserts |
 |---|---|
@@ -580,12 +580,12 @@ New `EscrowStuckRecoveryTest.t.sol`:
 | `testRecoverHappyPathCEXHotWallet` | CEX-style address (not in mock sanctions list) → recovery succeeds |
 | `testRecoverRevertsAmountExceedsUnsolicited` | `amount > balance - tracked` → revert |
 | `testRecoverRevertsZeroAmount` | `amount == 0` → revert |
-| `testRecoverRevertsNoEscrow` | User without escrow → `UserHasNoEscrow` |
-| `testRecoverWithSanctionedSourceBansEscrow` | Sanctioned source → escrow banned, tokens stay, revert |
+| `testRecoverRevertsNoVault` | User without vault → `UserHasNoVault` |
+| `testRecoverWithSanctionedSourceBansVault` | Sanctioned source → vault banned, tokens stay, revert |
 | `testRecoverRevertsExpiredDeadline` | Deadline in past → revert |
 | `testRecoverRevertsBadSignature` | Signature signer ≠ msg.sender → revert |
 | `testRecoverRevertsReplay` | Same nonce reused → revert (nonce already consumed) |
-| `testRecoverRevertsAfterEscrowBanned` | Banned escrow → recovery reverts |
+| `testRecoverRevertsAfterVaultBanned` | Banned vault → recovery reverts |
 | `testRecoverFloorsFOTUnderflow` | FOT token deposits with counter > balance → unsolicited == 0 → recovery reverts amount-too-high |
 | `testRecoverWorksAfterRebaseUp` | Rebase increased balance → recovery of the delta succeeds |
 | `testRecoverHardcodedRecipient` | Frontend cannot pass a different recipient — function signature has no recipient param; test by directly crafting calldata to verify ABI rejection |
@@ -593,11 +593,11 @@ New `EscrowStuckRecoveryTest.t.sol`:
 | `testDisownEmitsEvent` | Disown of stuck token → event emitted with correct (user, token, amount, blockNumber) |
 | `testDisownChangesNoState` | Pre/post storage snapshot identical except for the event |
 | `testCounterTracksDepositsAndWithdrawals` | After multiple deposit/withdraw cycles, counter == sum(deposits) − sum(withdrawals) |
-| `testStakingDepositCountsTowardCounter` | After `depositVPFIToEscrow`, counter increments correctly |
-| `testStakingCheckpointReadsMin` | Direct VPFI transfer (bypassing protocol) → escrow balance > tracked → staking yield computed on tracked, not balance |
+| `testStakingDepositCountsTowardCounter` | After `depositVPFIToVault`, counter increments correctly |
+| `testStakingCheckpointReadsMin` | Direct VPFI transfer (bypassing protocol) → vault balance > tracked → staking yield computed on tracked, not balance |
 
-Plus regression: every existing test that touches `escrowDepositERC20`
-or `escrowWithdrawERC20` should continue to pass — the counter
+Plus regression: every existing test that touches `vaultDepositERC20`
+or `vaultWithdrawERC20` should continue to pass — the counter
 operations are invisible to them since the math is correct.
 
 ---
@@ -606,22 +606,22 @@ operations are invisible to them since the math is correct.
 
 | PR | Scope | Tests |
 |---|---|---|
-| PR-1 | Storage additions (`protocolTrackedEscrowBalance`, `recoveryNonce`) + counter increments in `escrowDepositERC20` / `escrowWithdrawERC20` | Counter consistency tests; full regression must remain green |
-| PR-2 | `depositVPFIToEscrow` + Permit2 variant refactor through `escrowDepositERC20`; `LibStakingRewards.updateUser` + `LibVPFIDiscount.rollupUserDiscount` `min` clamp | Staking-checkpoint min-clamp tests; existing VPFI tests still pass |
-| PR-3 | `recoverStuckERC20` + `disown` + EIP-712 verifier + new errors / events | New `EscrowStuckRecoveryTest.t.sol` suite |
-| PR-4 | Frontend `/recover` page + Asset Viewer warning copy + Advanced User Guide section + escrow-address redaction | Manual UAT on Sepolia |
+| PR-1 | Storage additions (`protocolTrackedVaultBalance`, `recoveryNonce`) + counter increments in `vaultDepositERC20` / `vaultWithdrawERC20` | Counter consistency tests; full regression must remain green |
+| PR-2 | `depositVPFIToVault` + Permit2 variant refactor through `vaultDepositERC20`; `LibStakingRewards.updateUser` + `LibVPFIDiscount.rollupUserDiscount` `min` clamp | Staking-checkpoint min-clamp tests; existing VPFI tests still pass |
+| PR-3 | `recoverStuckERC20` + `disown` + EIP-712 verifier + new errors / events | New `VaultStuckRecoveryTest.t.sol` suite |
+| PR-4 | Frontend `/recover` page + Asset Viewer warning copy + Advanced User Guide section + vault-address redaction | Manual UAT on Sepolia |
 | PR-5 | Post-deploy: analytics-firm label registration (see [`AnalyticsLabelRegistration.md`](../ops/AnalyticsLabelRegistration.md)) | Operational sign-off |
 
 ---
 
 ## 10. Open questions
 
-1. **`disown` while banned**: should `disown` revert if the escrow is
+1. **`disown` while banned**: should `disown` revert if the vault is
    banned, or should it stay allowed (informational, useful for
    compliance even when banned)? Leaning **allow even when banned**,
    but flagging for implementer judgement.
-2. **Permit2 variant gas overhead**: `depositVPFIToEscrowWithPermit`
-   refactor adds an internal cross-facet hop (`escrowDepositERC20`)
+2. **Permit2 variant gas overhead**: `depositVPFIToVaultWithPermit`
+   refactor adds an internal cross-facet hop (`vaultDepositERC20`)
    on top of the Permit2 pull. Estimate gas delta during PR-2;
    acceptable if < ~30k overhead.
 3. **EIP-712 for `disown`**: low value (action is non-financial);

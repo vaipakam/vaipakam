@@ -2,11 +2,11 @@
 
 ## 1. Objective
 
-Allow borrowers to purchase VPFI directly from the protocol at a fixed early-stage rate and later move it into their personal escrow on their chosen lending chain. During loan acceptance, if the borrower has sufficient VPFI in escrow, the lending asset is liquid, and the user's platform-level consent is enabled, the borrower pays the full `0.1%` `Loan Initiation Fee` equivalent in VPFI up front. That VPFI is held by the protocol for the life of the loan. On a proper close, the borrower earns a time-weighted VPFI rebate based on how long they actually held each discount tier during the loan window; the unrewarded remainder goes to Treasury. On default or HF-based liquidation, the held VPFI is forfeited to Treasury with no rebate.
+Allow borrowers to purchase VPFI directly from the protocol at a fixed early-stage rate and later move it into their personal vault on their chosen lending chain. During loan acceptance, if the borrower has sufficient VPFI in vault, the lending asset is liquid, and the user's platform-level consent is enabled, the borrower pays the full `0.1%` `Loan Initiation Fee` equivalent in VPFI up front. That VPFI is held by the protocol for the life of the loan. On a proper close, the borrower earns a time-weighted VPFI rebate based on how long they actually held each discount tier during the loan window; the unrewarded remainder goes to Treasury. On default or HF-based liquidation, the held VPFI is forfeited to Treasury with no rebate.
 
-Under the current tokenomics model, the borrower-side `Loan Initiation Fee` discount is tiered based on the borrower's escrowed VPFI balance on the relevant lending chain:
+Under the current tokenomics model, the borrower-side `Loan Initiation Fee` discount is tiered based on the borrower's vaulted VPFI balance on the relevant lending chain:
 
-| Tier   | Escrowed VPFI Balance      | Discount | Borrower Effective Initiation Fee |
+| Tier   | Vaulted VPFI Balance      | Discount | Borrower Effective Initiation Fee |
 | ------ | -------------------------- | -------: | --------------------------------: |
 | Tier 1 | `>= 100` and `< 1,000`     |    `10%` |                           `0.09%` |
 | Tier 2 | `>= 1,000` and `< 5,000`   |    `15%` |                          `0.085%` |
@@ -19,33 +19,33 @@ This creates strong on-chain utility for VPFI, simplifies early acquisition, and
 
 - Fixed conversion rate: `1 VPFI = 0.001 ETH` (configurable later by admin).
 - Fixed conversion rate for the early fixed-rate purchase program: `1 VPFI = 0.001 ETH` (configurable later by admin).
-- VPFI held in escrow is treated as a special non-collateral asset for lending calculations. It does not count toward collateral value or liquidation calculations.
-- Any VPFI held in the user's escrow is also considered staked for the escrow-based staking model described in `docs/TokenomicsTechSpec.md`.
-- The discount is opt-in through a single platform-level user setting that allows escrowed VPFI to be used for fee discounts.
+- VPFI held in vault is treated as a special non-collateral asset for lending calculations. It does not count toward collateral value or liquidation calculations.
+- Any VPFI held in the user's vault is also considered staked for the vault-based staking model described in `docs/TokenomicsTechSpec.md`.
+- The discount is opt-in through a single platform-level user setting that allows vaulted VPFI to be used for fee discounts.
 - In the frontend, that shared fee-discount consent should live in the connected app on `Dashboard`, not as a separate offer-level, loan-level, or `Buy VPFI`-page-only control.
 - Offer-level or loan-level consent is not required once that shared platform-level setting is enabled.
 - The discount applies only to liquid assets, determined by the existing `RiskFacet` / `OracleFacet` logic.
 - For illiquid assets, the normal `0.1%` `Loan Initiation Fee` is charged in the loan asset with no discount.
-- The borrower discount is tiered by escrowed VPFI balance on the relevant lending chain rather than being a single flat percentage.
+- The borrower discount is tiered by vaulted VPFI balance on the relevant lending chain rather than being a single flat percentage.
 - Under Phase 5, the tier table defines the rebate rate earned over time, not a reduced up-front fee. The full LIF is charged up front in VPFI when the VPFI path is used.
 - VPFI purchase should be available from the borrower's preferred supported chain through a single user-facing `Buy VPFI` flow.
-- Purchased VPFI should be delivered to the borrower's wallet on the same chain where the borrower chose to buy, not transferred automatically into escrow.
+- Purchased VPFI should be delivered to the borrower's wallet on the same chain where the borrower chose to buy, not transferred automatically into vault.
 - If cross-chain routing, canonical-chain settlement, or bridge infrastructure is needed under the hood, that complexity should be abstracted by the purchase flow rather than requiring the user to manually switch chains before buying.
 - If the purchase path settles through a Base-chain receiver, VPFI must be minted or released only after that receiver has actually received ETH. The minted/released VPFI amount must be based on actual received ETH, not a quoted or requested amount.
-- After purchase, the borrower must explicitly initiate the transfer or deposit of VPFI from wallet to personal escrow, with the system facilitating that step in the UI.
-- All existing Phase 1 lending, escrow, and treasury flows remain unchanged.
-- The mechanism reuses the existing `EscrowFactory`, `Loan`, `VPFITokenFacet`, and `TreasuryFacet` logic.
+- After purchase, the borrower must explicitly initiate the transfer or deposit of VPFI from wallet to personal vault, with the system facilitating that step in the UI.
+- All existing Phase 1 lending, vault, and treasury flows remain unchanged.
+- The mechanism reuses the existing `VaultFactory`, `Loan`, `VPFITokenFacet`, and `TreasuryFacet` logic.
 
 ## 3. User Flow
 
 1. Borrower opens a dedicated `Buy VPFI` page from their preferred supported chain.
 2. Borrower sends ETH to the protocol to buy VPFI at the fixed rate.
 3. The purchased VPFI is delivered to the borrower's wallet on that same preferred chain.
-4. The borrower explicitly transfers or deposits VPFI from wallet to personal escrow on that chain, with the system guiding and facilitating that action. Where supported, the escrow deposit may use Uniswap Permit2 at `0x000000000022D473030F116dDEE9F6B43aC78BA3` so the user signs once and the deposit executes in a single transaction; wallets that do not support the Permit2 path must fall back to the classic approve-plus-deposit flow.
+4. The borrower explicitly transfers or deposits VPFI from wallet to personal vault on that chain, with the system guiding and facilitating that action. Where supported, the vault deposit may use Uniswap Permit2 at `0x000000000022D473030F116dDEE9F6B43aC78BA3` so the user signs once and the deposit executes in a single transaction; wallets that do not support the Permit2 path must fall back to the classic approve-plus-deposit flow.
 5. Borrower creates or accepts a loan offer.
 6. At the moment of loan acceptance:
    - the system first checks whether the lending asset is marked as liquid
-   - if liquid, the user's platform-level VPFI-discount consent is active, and sufficient VPFI exists in the borrower's escrow, the system sends `100%` of the requested lending asset to the borrower and deducts the full `0.1%` `Loan Initiation Fee` equivalent in VPFI from escrow into protocol custody
+   - if liquid, the user's platform-level VPFI-discount consent is active, and sufficient VPFI exists in the borrower's vault, the system sends `100%` of the requested lending asset to the borrower and deducts the full `0.1%` `Loan Initiation Fee` equivalent in VPFI from vault into protocol custody
    - if the asset is illiquid or insufficient VPFI is present, the normal `0.1%` `Loan Initiation Fee` is charged in the loan asset
 7. When the loan closes properly through normal repayment, borrower preclose, or refinance, the protocol computes the borrower's time-weighted average discount across the loan window and credits the borrower a VPFI rebate.
 8. The borrower receives the rebate alongside the normal borrower claim. On default or HF-based liquidation, no rebate is credited.
@@ -53,9 +53,9 @@ This creates strong on-chain utility for VPFI, simplifies early acquisition, and
 ## 4. Smart Contract Instructions
 
 - Add logic to allow users to buy VPFI with ETH at the fixed rate from their preferred supported chain.
-- Ensure the fixed-rate purchase delivers VPFI to the buyer's wallet on the same chain where the user chose to buy, not directly into escrow.
+- Ensure the fixed-rate purchase delivers VPFI to the buyer's wallet on the same chain where the user chose to buy, not directly into vault.
 - If the implementation routes the purchase through canonical-chain liquidity, treasury, or OFT infrastructure, the user-facing flow should still remain a preferred-chain purchase flow rather than a manual chain-switch flow.
-- Support a Permit2-assisted `depositVPFIToEscrowWithPermit` style path alongside the classic escrow-deposit path. The Permit2 route should use the canonical Permit2 address, validate the VPFI asset, amount, 30-minute deadline, high-entropy nonce, and recipient scope before pulling tokens, and the classic approve-plus-deposit path must remain available.
+- Support a Permit2-assisted `depositVPFIToVaultWithPermit` style path alongside the classic vault-deposit path. The Permit2 route should use the canonical Permit2 address, validate the VPFI asset, amount, 30-minute deadline, high-entropy nonce, and recipient scope before pulling tokens, and the classic approve-plus-deposit path must remain available.
 - Add global and per-wallet limits on the fixed-rate purchase to prevent abuse.
   - Required initial values under the current tokenomics model:
     - total cap of `2,300,000 VPFI`
@@ -68,10 +68,10 @@ This creates strong on-chain utility for VPFI, simplifies early acquisition, and
   - if liquid, convert the loan amount to ETH equivalent using the Chainlink price feed
   - calculate the full `0.1%` `Loan Initiation Fee`
   - convert that full ETH-equivalent fee amount into the exact number of VPFI required at the fixed rate
-  - check the borrower's escrow balance and, if sufficient, deduct the required VPFI into protocol custody for later rebate / treasury settlement
-- Keep loan-funding semantics unchanged apart from the fee source: when the VPFI path succeeds, 100% of the requested lending asset is sent to the borrower and the fee is satisfied entirely in VPFI from escrow.
-- Extend the escrow implementation to recognise VPFI as a supported token type for fee deduction, without treating it as collateral.
-- Ensure escrow-held VPFI remains compatible with the unified escrow-based staking model and reward accounting.
+  - check the borrower's vault balance and, if sufficient, deduct the required VPFI into protocol custody for later rebate / treasury settlement
+- Keep loan-funding semantics unchanged apart from the fee source: when the VPFI path succeeds, 100% of the requested lending asset is sent to the borrower and the fee is satisfied entirely in VPFI from vault.
+- Extend the vault implementation to recognise VPFI as a supported token type for fee deduction, without treating it as collateral.
+- Ensure vault-held VPFI remains compatible with the unified vault-based staking model and reward accounting.
 - Add a function in `TreasuryFacet` to receive and record the incoming VPFI fee.
 
 ## 5. Storage Requirements
@@ -81,7 +81,7 @@ This creates strong on-chain utility for VPFI, simplifies early acquisition, and
   - Initial values:
     - `2,300,000 VPFI` total
     - per-wallet cap configurable by admin
-- Store or derive the borrower fee-discount tier from the escrowed VPFI balance on the relevant lending chain.
+- Store or derive the borrower fee-discount tier from the vaulted VPFI balance on the relevant lending chain.
 - Each loan using the VPFI LIF path must snapshot the borrower's discount-accrual state at loan acceptance.
 - Track the VPFI held for the loan while it is live and the VPFI rebate claimable after proper settlement, keyed by loan ID.
 - All storage changes must follow the existing append-only library pattern to maintain Diamond compatibility.
@@ -108,8 +108,8 @@ This creates strong on-chain utility for VPFI, simplifies early acquisition, and
   - use the Chainlink price feed to convert the loan amount into its ETH equivalent
   - calculate the full `0.1%` `Loan Initiation Fee`
   - convert that full ETH amount into the exact number of VPFI required using the fixed rate: `1 VPFI = 0.001 ETH`
-- If the borrower's escrow holds at least this amount of VPFI, deduct it into protocol custody and apply the VPFI fee path.
-- When this path succeeds, the borrower receives `100%` of the requested lending asset and pays the full up-front fee in VPFI from escrow.
+- If the borrower's vault holds at least this amount of VPFI, deduct it into protocol custody and apply the VPFI fee path.
+- When this path succeeds, the borrower receives `100%` of the requested lending asset and pays the full up-front fee in VPFI from vault.
 - On proper close, compute `rebate = held VPFI * time-weighted average discount bps / 10000`.
 - The borrower rebate is claimable by the borrower-side Vaipakam NFT holder with the ordinary borrower claim; the remainder is Treasury's share.
 - On default or HF-based liquidation, `rebate = 0` and the full held VPFI goes to Treasury.
@@ -138,15 +138,15 @@ This creates strong on-chain utility for VPFI, simplifies early acquisition, and
 - Add a dedicated `Buy VPFI` page that works from the user's preferred supported chain.
 - Do not require the user to manually switch to the canonical chain in order to buy VPFI.
 - If bridge or canonical-chain infrastructure is used behind the scenes, keep it abstracted from the primary user flow.
-- Clearly guide the user to transfer or deposit VPFI from wallet into escrow on the relevant chain, and facilitate that transfer as an explicit user action rather than doing it automatically.
-- Surface the shared platform-level fee-discount consent control in the connected app `Dashboard`, so users can enable or disable escrowed-VPFI fee usage independently of the purchase flow.
+- Clearly guide the user to transfer or deposit VPFI from wallet into vault on the relevant chain, and facilitate that transfer as an explicit user action rather than doing it automatically.
+- Surface the shared platform-level fee-discount consent control in the connected app `Dashboard`, so users can enable or disable vaulted-VPFI fee usage independently of the purchase flow.
 - Add clear entry points from the `Create Offer` and `Loan Details` pages to this dedicated purchase page.
 - Show the exact amount of ETH required and the resulting VPFI that will be purchased.
-- For the wallet-to-escrow deposit step, prefer the Permit2 single-signature path when available and fall back cleanly to classic token approval when unavailable. The user-facing review should make clear that Permit2 is an optional convenience path and does not replace the user's token-level approval controls.
-- Transaction review for buying VPFI, depositing VPFI to escrow, and accepting a loan through the VPFI path should include the standard transaction-preview surface where available, while failing soft if the preview service is unreachable.
-- Display the borrower's current VPFI balance in escrow, the active discount tier implied by that balance, and whether they qualify for a discount, only for liquid assets.
-- Explain clearly that escrow-held VPFI also counts as staked under the unified escrow-staking model.
-- Provide user-friendly messaging explaining the fixed rate, the bridge step, the escrow-funding step, the tiered discount table, that a single platform-level VPFI-discount consent setting governs fee-discount usage, that this setting is managed from `Dashboard`, and that the VPFI path results in full lending-asset delivery to the borrower, full up-front VPFI LIF custody, and a time-weighted VPFI rebate on proper close.
+- For the wallet-to-vault deposit step, prefer the Permit2 single-signature path when available and fall back cleanly to classic token approval when unavailable. The user-facing review should make clear that Permit2 is an optional convenience path and does not replace the user's token-level approval controls.
+- Transaction review for buying VPFI, depositing VPFI to vault, and accepting a loan through the VPFI path should include the standard transaction-preview surface where available, while failing soft if the preview service is unreachable.
+- Display the borrower's current VPFI balance in vault, the active discount tier implied by that balance, and whether they qualify for a discount, only for liquid assets.
+- Explain clearly that vault-held VPFI also counts as staked under the unified vault-staking model.
+- Provide user-friendly messaging explaining the fixed rate, the bridge step, the vault-funding step, the tiered discount table, that a single platform-level VPFI-discount consent setting governs fee-discount usage, that this setting is managed from `Dashboard`, and that the VPFI path results in full lending-asset delivery to the borrower, full up-front VPFI LIF custody, and a time-weighted VPFI rebate on proper close.
 - The `Offer Book` accept-review modal should explain that the borrower pays the full `0.1%` LIF up front in VPFI and earns the discount over the loan lifetime as a rebate.
 - The `Create Offer` borrower-tip copy should frame the benefit as earning up to a `24%` VPFI rebate rather than paying a reduced up-front fee.
 - The `Claim Center` should show a rebate line whenever a borrower claim includes a pending VPFI rebate.
@@ -154,11 +154,11 @@ This creates strong on-chain utility for VPFI, simplifies early acquisition, and
 ## 10. Acceptance Criteria
 
 - Borrowers can successfully purchase VPFI with ETH from the dedicated preferred-chain purchase page and receive it in wallet on that same chain.
-- Borrowers can then explicitly move or deposit that VPFI from wallet into their personal escrow on that same chain.
+- Borrowers can then explicitly move or deposit that VPFI from wallet into their personal vault on that same chain.
 - During loan acceptance, the system automatically checks liquidity status via the existing `RiskFacet` / `OracleFacet` logic, verifies the user's platform-level VPFI-discount consent, snapshots the user's discount-accrual state, uses the Chainlink price feed for ETH conversion, and when eligible deducts the exact VPFI amount corresponding to the full `0.1%` `Loan Initiation Fee` while sending `100%` of the requested lending asset to the borrower.
 - Properly closed loans credit the borrower a time-weighted VPFI rebate; defaulted or HF-liquidated loans forfeit the held VPFI to Treasury.
 - All global and per-wallet caps are enforced.
 - The entire flow is atomic, gas-efficient, and fully transparent via events.
 - Full test coverage and NatSpec compliance is achieved.
 
-This specification is complete and incorporates the requirement that the VPFI fee path applies only to liquid assets, uses Chainlink price feeds for ETH conversion, applies the time-weighted borrower `Loan Initiation Fee` rebate model defined in `docs/TokenomicsTechSpec.md`, treats escrow-held VPFI as both fee-utility balance and staking balance, and routes VPFI acquisition through a dedicated preferred-chain purchase page that delivers VPFI into the user's wallet first and then supports an explicit user-initiated wallet-to-escrow deposit step for staking / discount usage.
+This specification is complete and incorporates the requirement that the VPFI fee path applies only to liquid assets, uses Chainlink price feeds for ETH conversion, applies the time-weighted borrower `Loan Initiation Fee` rebate model defined in `docs/TokenomicsTechSpec.md`, treats vault-held VPFI as both fee-utility balance and staking balance, and routes VPFI acquisition through a dedicated preferred-chain purchase page that delivers VPFI into the user's wallet first and then supports an explicit user-initiated wallet-to-vault deposit step for staking / discount usage.

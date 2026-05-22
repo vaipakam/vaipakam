@@ -29,7 +29,7 @@ so the surface feels familiar). The ADR catalogues:
   target-state row naming exactly which Tier-A borrows and Tier-B
   retentions apply, and what concretely changes per page. The
   shared routing shell (`AppLayout.tsx`), admin / utility pages
-  (`AdminDashboard`, `EscrowAssets`, `EscrowRecover`, `NftVerifier`,
+  (`AdminDashboard`, `VaultAssets`, `VaultRecover`, `NftVerifier`,
   `DataRights`, `PublicDashboard`) are gathered in an explicit
   out-of-scope row — chrome and operator surfaces don't need the
   retail-DEX visual idioms this ADR scopes.

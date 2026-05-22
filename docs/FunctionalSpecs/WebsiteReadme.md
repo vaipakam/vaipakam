@@ -51,7 +51,7 @@ Public-navigation requirements:
 - the public `Buy VPFI` link from the home page and footer must resolve to `/buy-vpfi`, which is a no-wallet marketing / education route for VPFI
 - the actual buy, deposit / stake, withdraw / unstake, and staking-reward claim controls live inside the connected app at `/app/buy-vpfi`; public CTAs should open that app route when the user chooses to transact
 - public navigation should stay informational and should not carry wallet UI, wallet-connected banners, or a VPFI action dropdown unless a later design intentionally restores it
-- the public marketing surface should remain chain-free and wallet-free: no wallet context, active-chain state, per-user escrow lookups, on-chain diagnostics, or address-book helpers should be loaded by marketing pages
+- the public marketing surface should remain chain-free and wallet-free: no wallet context, active-chain state, per-user vault lookups, on-chain diagnostics, or address-book helpers should be loaded by marketing pages
 - any marketing-page `Verify on chain` affordance should route users to the connected app's public transparency surface instead of performing chain reads inside the marketing app
 - connected-app public-read shells such as `Analytics`, `NFT Verifier`, and `Protocol Console` should keep their top bar focused on app-context navigation. They should not mirror marketing-section dropdowns such as `Learn`; a single `Docs` / whitepaper-style link is acceptable when it points users back to canonical public documentation.
 - protocol-console public documentation should live under the marketing apex at `https://vaipakam.com/protocol-console/docs`; the connected-app protocol console remains the interactive wallet / read surface. The old connected-app documentation URL should redirect through the shared external-redirect pattern rather than keeping a duplicate docs tree.
@@ -136,7 +136,7 @@ This section will later define:
 
 - dashboard
 - dashboard consolidation of user-owned state: active loans, active offers, fee-discount consent, VPFI discount tier, staking-rewards mirror, and claimable terminal-state shortcuts
-- VPFI token transparency, escrow-staking, and fee-discount surfaces in Phase 1, with broader governance UI reserved for Phase 2
+- VPFI token transparency, vault-staking, and fee-discount surfaces in Phase 1, with broader governance UI reserved for Phase 2
 - multi-network connected-app behavior for the separate Phase 1 Diamond deployments on `Base`, `Polygon`, `Arbitrum`, `Optimism`, and `Ethereum mainnet`
 - create offer flows
 - accept offer flows
@@ -149,7 +149,7 @@ Current connected-app surface expectations:
 
 - `Dashboard` is the user's "your stuff" surface: it should include active loans with Role / Status filters, pagination, sortable columns, a most-recent-first default sort, the user's offers across active / filled / cancelled states, the shared VPFI fee-discount consent, a VPFI rewards summary, and a green `Claim` CTA for terminal loans with unclaimed funds
 - when a single offer has produced multiple loans through range matching or partial fills, Dashboard should show an offer-grouped summary before the ordinary loan table. The grouped card should show total filled principal, weighted-average rate, minimum active-child Health Factor, collateral grouped by asset, child status counts, a parent-offer link, and an expandable list of the child loans. Offers with only one child loan should not be duplicated in the grouped section.
-- Dashboard should not include a shallow `Your Escrow` / `Your Vault address` card when it only repeats the redacted vault address and explorer link; the dedicated `Your Vaipakam Vault` page is the canonical surface for vault address, asset balances, deposits, withdrawals, dust filtering, and protocol-tracked balance display
+- Dashboard should not include a shallow `Your Vault` / `Your Vault address` card when it only repeats the redacted vault address and explorer link; the dedicated `Your Vaipakam Vault` page is the canonical surface for vault address, asset balances, deposits, withdrawals, dust filtering, and protocol-tracked balance display
 - Dashboard's `Your Loans` table should prefer a single bundled read that returns all rows for the connected wallet already tagged by lender / borrower side, so the table first-paints as one complete payload rather than stair-stepping through one call per loan
 - Dashboard copy that summarizes lender versus borrower exposure should describe the side where the connected user has more capital, not always frame the headline as lender stake
 - Dashboard's active-loans section should expose a manual refresh action for connected wallets that refreshes indexed loans, wallet loan rows, claimability hints, and the user's offers together, while showing shared adaptive rescan cooldown chrome
@@ -171,7 +171,7 @@ Current connected-app surface expectations:
 - when depth-tiered LTV is enabled, Create Offer and accept-review risk previews should show the collateral's on-chain tier, effective tier after the keeper confidence floor, applicable tier max-init-LTV, whether that value came from a fresh peer-derived cache or a library fallback default, cache age, and whether the requested principal exceeds the active tier cap. While the master switch is disabled, the UI should continue to present the existing conservative LTV / Health Factor rules and may show tier data only as non-binding diagnostics.
 - the primary Create Offer duration control should be a bucketed picker using the standard buckets `7 / 14 / 30 / 60 / 90 / 180 / 365 days`, defaulting to `30 days`; defensive validation should still reject out-of-range or non-bucket values if the form is hydrated from an external source
 - Range Orders should default to the same one-input-per-role experience in Basic and Advanced modes, with advanced panels focused on risk detail, collateral availability, and explicit review copy rather than exposing raw protocol field names. When a chain has not enabled the canonical limit-order surface, the form should fall back to the single-value offer experience and explain that range matching is not active on that chain.
-- Offer Book and accept-review surfaces should resolve ranged offers by role. A borrower accepting a lender's ranged offer should see the lender's maximum principal and floor rate as the direct-accept terms; a lender accepting a borrower's ranged offer should see the borrower's minimum principal and ceiling rate. If the borrower pre-escrowed more collateral than the direct-accept loan locks, the review should show that unused collateral will return to the borrower.
+- Offer Book and accept-review surfaces should resolve ranged offers by role. A borrower accepting a lender's ranged offer should see the lender's maximum principal and floor rate as the direct-accept terms; a lender accepting a borrower's ranged offer should see the borrower's minimum principal and ceiling rate. If the borrower pre-vaulted more collateral than the direct-accept loan locks, the review should show that unused collateral will return to the borrower.
 - Periodic-interest cadence controls should appear only when `periodicInterestEnabled` is true, the user is in Advanced mode, both lending and collateral legs are liquid ERC-20s, and the principal value satisfies the configured finer-cadence threshold where required. When those requirements are not met, the cadence section should be absent rather than shown as a disabled dropdown.
 - The cadence dropdown should support `None`, `Monthly`, `Quarterly`, `Semi-annual`, and `Annual`; loans longer than one year should surface the mandatory annual-minimum rule when applicable. Offer acceptance should show a prominent cadence callout explaining the missed-checkpoint consequence before the user submits.
 - `Loan Details` should be wallet-gated inside `/app`; after connection it should show the live loan state, role-gated actions, a chronological on-chain timeline, claimable-state action bar, and precise event breakdowns for settlement splits, fallback collateral allocations, partial repayments, swap retries, and VPFI rebates
@@ -182,10 +182,10 @@ Current connected-app surface expectations:
 - Claim Center and Loan Details should surface fallback-pending internal-match rescue when it is available. The user should see that a lender claim may first attempt a fresh safe route or a protocol-internal match before falling back to in-kind collateral, and any successful rescue should be reflected in the timeline and claim lanes.
 - borrower-side Dashboard and Loan Details rows should show an amber near-match warning when current LTV approaches the loan's snapshotted internal-match liquidation threshold but has not crossed it yet. The warning should link to repayment and add-collateral actions rather than presenting itself as an immediate liquidation state.
 - public `/buy-vpfi` is the marketing / education surface for VPFI; connected `/app/buy-vpfi` is the wallet-gated home for buying, staking / depositing, unstaking / withdrawing, staking-rewards claims, and chain-level VPFI transparency
-- user-facing connected-app copy should call the personal escrow experience `Vaipakam Vaults` generally and `Your Vaipakam Vault` for the connected user's own balance surfaces. Solidity / TypeScript identifiers, code-fenced names, diagnostics, and existing route paths may continue to use `escrow`.
-- the existing `/app/escrow` route may remain stable, but its visible sidebar / page label should be `Your Vaipakam Vault`
+- user-facing connected-app copy should call the personal vault experience `Vaipakam Vaults` generally and `Your Vaipakam Vault` for the connected user's own balance surfaces. Solidity / TypeScript identifiers, code-fenced names, diagnostics, and existing route paths may continue to use `vault`.
+- the existing `/app/vault` route may remain stable, but its visible sidebar / page label should be `Your Vaipakam Vault`
 - Asset Viewer and vault balance surfaces should display the protocol-managed balance clamp `min(raw token balance, protocol-tracked balance)` so unsolicited direct transfers are hidden from ordinary balance, staking, and discount views
-- Vault token discovery should be history-driven rather than based on a hardcoded deployment-token list: wallet-related indexed loans and offers should provide the ERC-20 token set, while live `balanceOf` and `protocolTrackedEscrowBalance` reads remain direct RPC checks for each discovered token
+- Vault token discovery should be history-driven rather than based on a hardcoded deployment-token list: wallet-related indexed loans and offers should provide the ERC-20 token set, while live `balanceOf` and `protocolTrackedVaultBalance` reads remain direct RPC checks for each discovered token
 - Vault balance rows with a clamped balance of zero should be hidden; tiny display dust below `1e-11` token units may be hidden behind a user toggle that defaults on, with header copy showing how many rows are hidden and low-decimal tokens exempted where the threshold would hide meaningful stablecoin units
 - Vault rows should show token icons when available, fall back without layout jitter when unavailable, and use the shared asset-link behavior so token symbols open CoinGecko when indexed or the active chain explorer otherwise
 - in the connected-app sidebar, `Claim Center` should sit with the core lending actions before `Buy VPFI`, while token-purchase and advanced utility destinations remain secondary to loan management
@@ -291,7 +291,7 @@ Borrower VPFI discount UX:
 - the Offer Book accept-review modal should explain the up-front VPFI payment plus time-weighted rebate model before the user accepts a loan through the VPFI path
 - borrower-facing shortcut copy may say `earn up to a 24% VPFI rebate`, but should not describe the up-front fee itself as reduced
 - the Claim Center should show a visible VPFI rebate line when a borrower claim includes a pending rebate
-- VPFI escrow deposit from `/app/buy-vpfi` or related app surfaces may use Permit2 when supported, with fallback to the classic approve-plus-deposit flow
+- VPFI vault deposit from `/app/buy-vpfi` or related app surfaces may use Permit2 when supported, with fallback to the classic approve-plus-deposit flow
 
 Alerts and notification preferences:
 
@@ -349,7 +349,7 @@ Stuck-token recovery UX:
 - the UI should clearly state that the declared source must be the wallet or contract the user believes sent the unsolicited tokens and that recovery is sent only to the connected user's own EOA
 - before signing, the user must pass a deliberate confirmation modal that includes the standing warning and requires typing `CONFIRM`
 - the wallet signature should use the on-chain recovery domain / nonce / acknowledgement reads (`recoveryDomainSeparator`, `recoveryNonce(user)`, and `recoveryAckTextHash`) so the app signs the same EIP-712 statement the contract verifies
-- receipt parsing should distinguish `StuckERC20Recovered` from `EscrowBannedFromRecoveryAttempt`; a ban outcome is a completed transaction with a blocked recovery, not a generic failed receipt
+- receipt parsing should distinguish `StuckERC20Recovered` from `VaultBannedFromRecoveryAttempt`; a ban outcome is a completed transaction with a blocked recovery, not a generic failed receipt
 - if sanctions-oracle checks are unavailable or revert, the app should surface a fail-safe blocked state and avoid retry loops that imply the user can bypass the check
 - `disown(token)` may be offered only as an advanced declaration that emits an event; the UI must not imply that it moves tokens or changes accounting
 - Asset Viewer may show that unsolicited balance exists through a restrained hint, but it should not expose a direct recovery button inline
@@ -379,7 +379,7 @@ Unstaking VPFI:
 - users should still be allowed to unstake while they have active loans, but the UI must clearly warn them about the immediate reduction in discount tier and staking rewards
 - if the user has enabled the shared `Use VPFI for fee discount` consent flag, the UI should warn that unstaking may reduce or disable future fee discounts
 - after unstaking, the UI may offer the supported VPFI cross-chain transfer surface if the user wants to move that VPFI to another chain
-- if the user has zero VPFI in escrow, the unstake action should be hidden or disabled with a helpful message
+- if the user has zero VPFI in vault, the unstake action should be hidden or disabled with a helpful message
 - if active loans currently rely on Vault-held VPFI for fee-discount eligibility, the unstake flow should show a clear warning before confirmation
 - if the user switches chains, `/app/buy-vpfi` should refresh and show the Vaipakam Vault balance, staking rewards, and unstake availability for the newly connected chain
 - unstaking should be implemented as a local chain action only; no cross-chain messaging should be required for the unstake itself
@@ -739,7 +739,7 @@ Core dashboard principles:
 
 Phase 1 scope:
 
-- use only aggregated metrics derived from the existing protocol facets such as `LoanFacet`, `OfferFacet`, `TreasuryFacet`, `EscrowFactoryFacet`, `ProfileFacet`, `OracleFacet`, and `RiskFacet`
+- use only aggregated metrics derived from the existing protocol facets such as `LoanFacet`, `OfferFacet`, `TreasuryFacet`, `VaultFactoryFacet`, `ProfileFacet`, `OracleFacet`, and `RiskFacet`
 - do not require governance dashboards or off-chain warehousing in Phase 1
 - high-level cross-chain aggregation is in scope for the public analytics dashboard, but it should remain lightweight and read-only
 - prefer lightweight view functions added to an existing facet if direct aggregation from current views/events is too expensive or awkward
@@ -758,7 +758,7 @@ Required top-level metrics:
 - the very top summary row should show protocol-wide combined metrics aggregated from all supported chains at a high level
 - this combined top section is intended only for headline totals and should not replace the per-chain drill-down below
 - `Total Value Locked (TVL)` in the active numeraire, including visible `24h` and `7d` change percentages
-- TVL breakdown covering ERC-20 collateral, NFT collateral, and escrow balances where meaningful
+- TVL breakdown covering ERC-20 collateral, NFT collateral, and vault balances where meaningful
 - active loans, shown as both count and total value
 - currently active offers and lifetime offer totals at the combined all-chains level in the global header
 - total volume lent in the active numeraire, lifetime
@@ -780,7 +780,7 @@ Required charts and visualizations:
 - daily loan volume and interest earned, shown as a combined bar-plus-line chart or similarly readable equivalent
 - active versus completed loans, shown through a composition such as pie plus trend indicator
 - asset distribution covering the main lending assets and collateral categories
-- NFT rental utilization, showing active rentals versus total NFTs currently in escrow
+- NFT rental utilization, showing active rentals versus total NFTs currently in vault
 
 Advanced-mode detail sections:
 

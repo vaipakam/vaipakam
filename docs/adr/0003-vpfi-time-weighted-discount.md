@@ -45,7 +45,7 @@ forwarded to treasury on default / liquidation.
 Specifically:
 
 1. **`LibVPFIDiscount.rollupUserDiscount`** re-stamps the discount
-   BPS at the *post-mutation* escrow VPFI balance on every change
+   BPS at the *post-mutation* vault VPFI balance on every change
    (deposit, withdraw, buy, terminal flows). This makes an unstake
    take effect immediately for every open loan's running average —
    the high-tier window only lasts as long as the high-tier balance
@@ -54,7 +54,7 @@ Specifically:
 2. **Borrower LIF — Phase 5 four-stage flow:**
    - **At `OfferFacet.acceptOffer` on the VPFI path**: borrower
      pays the FULL 0.1% LIF equivalent in VPFI (not tier-discounted)
-     from their escrow into **Diamond custody** (not treasury).
+     from their vault into **Diamond custody** (not treasury).
      Amount recorded in `s.borrowerLifRebate[loanId].vpfiHeld`.
    - **At proper settlement** (`RepayFacet` terminal,
      `PrecloseFacet` direct + offset, `RefinanceFacet`):

@@ -50,9 +50,9 @@ This is a **decentralized P2P lending platform** using the **EIP-2535 Diamond St
 
 Cross-facet calls use `address(this).call(abi.encodeWithSelector(...))` — this goes through the Diamond's fallback and routes to the target facet.
 
-### Per-User Escrow
+### Per-User Vault
 
-`VaipakamEscrowImplementation.sol` is a UUPS upgradeable implementation. `EscrowFactoryFacet` deploys one `ERC1967Proxy` per user (clone factory pattern). Each user's assets (ERC20/ERC721/ERC1155) are held in their own isolated escrow — no commingling.
+`VaipakamVaultImplementation.sol` is a UUPS upgradeable implementation. `VaultFactoryFacet` deploys one `ERC1967Proxy` per user (clone factory pattern). Each user's assets (ERC20/ERC721/ERC1155) are held in their own isolated vault — no commingling.
 
 ### Core Facets & Loan Lifecycle
 
@@ -65,7 +65,7 @@ Cross-facet calls use `address(this).call(abi.encodeWithSelector(...))` — this
 | **DefaultedFacet**     | Time-based defaults (grace period expired)                                  |
 | **RiskFacet**          | LTV/Health Factor calculation, HF-based liquidation via 0x swap             |
 | **OracleFacet**        | Chainlink price feeds, v3-style concentrated-liquidity AMM liquidity checks |
-| **EscrowFactoryFacet** | Per-user UUPS escrow proxy deployment                                       |
+| **VaultFactoryFacet** | Per-user UUPS vault proxy deployment                                       |
 | **VaipakamNFTFacet**   | Mint/update/burn position NFTs (ERC721, on-chain metadata)                  |
 | **ProfileFacet**       | User country (sanctions), KYC verification                                  |
 | **AdminFacet**         | Treasury, 0x proxy, allowance target config                                 |
@@ -488,7 +488,7 @@ yield-fee treasury haircut at settlement; the borrower discount is
 delivered as a VPFI **rebate** paid out alongside `claimAsBorrower`.
 
 **Time-weighted accumulator (`LibVPFIDiscount.rollupUserDiscount`)**:
-re-stamps the BPS at the **post-mutation** escrow VPFI balance on
+re-stamps the BPS at the **post-mutation** vault VPFI balance on
 every change, so an unstake takes effect immediately for every open
 loan's average. Pre-Phase-5 code stamped at pre-mutation balance,
 which let a user keep a high-tier stamp after dropping to tier 0
@@ -500,7 +500,7 @@ pass the live balance.
 
 1. At `OfferFacet.acceptOffer` on the VPFI path: borrower pays the
    FULL 0.1% LIF equivalent in VPFI (not tier-discounted) from their
-   escrow into **Diamond custody** (not treasury). Amount recorded
+   vault into **Diamond custody** (not treasury). Amount recorded
    in `s.borrowerLifRebate[loanId].vpfiHeld`.
 2. At proper settlement (`RepayFacet` terminal, `PrecloseFacet`
    direct + offset, `RefinanceFacet`):
@@ -544,7 +544,7 @@ on the retail deploy once the oracle's address is known on-chain. While
 unset (`address(0)`), `LibVaipakam.isSanctionedAddress(...)` returns
 `false` for every address (intentional fail-open during the deploy
 window). Once set, the Tier-1 entry points
-(`createOffer`, `acceptOffer`, `getOrCreateUserEscrow`, VPFI
+(`createOffer`, `acceptOffer`, `getOrCreateUserVault`, VPFI
 deposit/buy/withdraw, `triggerLiquidation`, EarlyWithdrawal,
 PrecloseFacet, RefinanceFacet, ClaimFacet) revert
 `SanctionedAddress(who)` for flagged callers, while Tier-2 close-out
@@ -630,7 +630,7 @@ Two profiles live in `contracts/foundry.toml`:
   Cold compile: 14-19 min, ~8 GB RSS.
 - **`quick`** — fast inner-loop iteration. Compiles `src/` + `lib/`
   only (skips project `test/` and `script/`); viaIR + optimizer still
-  ON (some src/ facets, e.g. `EscrowFactoryFacet.sol:631`,
+  ON (some src/ facets, e.g. `VaultFactoryFacet.sol:631`,
   structurally need viaIR to compile). Cold compile: ~44 s, ~677 MB
   RSS. Warm-cache + incremental: <1 s.
 

@@ -47,7 +47,7 @@ Specifically:
 3. **Sanctions screening is REQUIRED.** On a retail deploy
    `ProfileFacet.setSanctionsOracle(<chainalysis-oracle>)` MUST be
    called once the oracle's address is known. Tier-1 entry points
-   (`createOffer`, `acceptOffer`, escrow create, VPFI deposit /
+   (`createOffer`, `acceptOffer`, vault create, VPFI deposit /
    buy / withdraw, `triggerLiquidation`, EarlyWithdrawal, Preclose,
    Refinance, Claim) revert `SanctionedAddress(who)` for flagged
    callers. Tier-2 close-out paths (`repayLoan`, `markDefaulted`,

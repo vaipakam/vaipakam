@@ -13,7 +13,7 @@ before reviewing code.
 
 - All facets under [`contracts/src/facets/`](../contracts/src/facets/).
 - Shared storage and constants: [`libraries/LibVaipakam.sol`](../contracts/src/libraries/LibVaipakam.sol).
-- Per-user escrow: [`VaipakamEscrowImplementation.sol`](../contracts/src/VaipakamEscrowImplementation.sol).
+- Per-user vault: [`VaipakamVaultImplementation.sol`](../contracts/src/VaipakamVaultImplementation.sol).
 - Diamond router: [`VaipakamDiamond.sol`](../contracts/src/VaipakamDiamond.sol).
 - Fallback/cure path (recent change): `RiskFacet`, `DefaultedFacet`,
   `ClaimFacet`, `AddCollateralFacet`, `RepayFacet`.
@@ -57,8 +57,8 @@ before reviewing code.
   `address(this).call(abi.encodeWithSelector(...))` so it re-enters the
   Diamond fallback. `DiamondReentrancyGuard` protects the outer call;
   inner calls share the same guard slot.
-- **Per-user escrow**: `EscrowFactoryFacet` deploys one ERC1967 proxy per
-  user (UUPS, `VaipakamEscrowImplementation`). User assets live there —
+- **Per-user vault**: `VaultFactoryFacet` deploys one ERC1967 proxy per
+  user (UUPS, `VaipakamVaultImplementation`). User assets live there —
   the Diamond only holds funds transiently during swaps/fallbacks.
 
 ---
@@ -72,10 +72,10 @@ before reviewing code.
 | KYC verifier | Role-gated address | `ProfileFacet.verifyKYC` — gates loans above `KYC_THRESHOLD_USD` |
 
 Key assumption: **the admin multisig can halt the protocol via `pause()`
-but cannot rewrite user claims or move user escrow funds.** Auditors
+but cannot rewrite user claims or move user vault funds.** Auditors
 should verify that no facet function gives admin direct control over
 `lenderClaims[...]`, `borrowerClaims[...]`, `fallbackSnapshot[...]`, or
-per-user escrow proxies.
+per-user vault proxies.
 
 No timelock. Rationale (deliberate, documented): a failed-liquidation
 lender position decays if collateral keeps falling, so a timelock on
@@ -94,7 +94,7 @@ protection.
    - Borrower may cure until the lender claims: `addCollateral` reactivates
      to `Active` when post-topup HF ≥ `MIN_HEALTH_FACTOR` (1.5e18);
      `repayLoan` full repay transitions to `Repaid` and returns
-     Diamond-held collateral to borrower escrow.
+     Diamond-held collateral to borrower vault.
    - `ClaimFacet.claimAsLender` runs the one-shot 0x retry and then
      terminally transitions `FallbackPending → Defaulted`.
    - `ClaimFacet.claimAsBorrower` is blocked during `FallbackPending` so
@@ -104,10 +104,10 @@ protection.
      collateral *and* lender claims against it); snapshot is deleted in
      both cure paths and the lender-claim path.
 
-2. **Per-user escrow isolation**.
+2. **Per-user vault isolation**.
    - Each user's ERC20/721/1155 holdings live in their own UUPS proxy.
-     Confirm no cross-user reach: `escrowWithdrawERC20` must only be
-     callable by the Diamond against the user's own escrow, and the
+     Confirm no cross-user reach: `vaultWithdrawERC20` must only be
+     callable by the Diamond against the user's own vault, and the
      implementation cannot be upgraded by anyone except the Diamond
      (UUPS `_authorizeUpgrade` gate).
 

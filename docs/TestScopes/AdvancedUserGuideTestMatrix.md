@@ -99,10 +99,10 @@ them. The fix (added `[5b]` master-flag flip step to
 
 | Advanced Guide § | Positive | Partial midpoint | Negative | Status |
 |---|---|---|---|---|
-| **§ Dashboard > Your Vaipakam Vault** | (read-only state surface) | P-A: leave non-zero ERC-20 + ERC-721 + ERC-1155 holdings in user's escrow so the table renders all three asset types | n/a | partial-only |
+| **§ Dashboard > Your Vaipakam Vault** | (read-only state surface) | P-A: leave non-zero ERC-20 + ERC-721 + ERC-1155 holdings in user's vault so the table renders all three asset types | n/a | partial-only |
 | **§ Dashboard > Your Loans** | (read-only state surface) | P-B: leave 1 active + 1 repaid-claimable + 1 defaulted loan visible to the same user | n/a | partial-only |
-| **§ Dashboard > VPFI on this chain** | (read-only state surface) | P-C: user holds VPFI in wallet + escrow so the "balance / staked / tier" badges are non-trivial | n/a | partial-only |
-| **§ Dashboard > Fee-discount consent** | N10: opt-in via `setVPFIDiscountConsent(true)`, user takes a loan, settles, claims rebate | P-D: user has `vpfiDiscountConsent=true` + non-zero escrow VPFI but no active loan yet | NEG-1: try opting in while a loan is mid-cycle and verify discount applies only to NEW loans | ✓ landed 2026-05-04 |
+| **§ Dashboard > VPFI on this chain** | (read-only state surface) | P-C: user holds VPFI in wallet + vault so the "balance / staked / tier" badges are non-trivial | n/a | partial-only |
+| **§ Dashboard > Fee-discount consent** | N10: opt-in via `setVPFIDiscountConsent(true)`, user takes a loan, settles, claims rebate | P-D: user has `vpfiDiscountConsent=true` + non-zero vault VPFI but no active loan yet | NEG-1: try opting in while a loan is mid-cycle and verify discount applies only to NEW loans | ✓ landed 2026-05-04 |
 | **§ Dashboard > Your VPFI rewards** | (claims path covered under § Rewards below) | P-E: user has accrued staking + interaction rewards but hasn't claimed | n/a | partial-only |
 | **§ Offer Book > Filters / Lender Offers / Borrower Offers** | (read-only — covered by SeedAnvilOffers + scenarios that create offers) | P-F: leave 5+ active lender offers and 5+ active borrower offers across multiple assets so the filter UI exercises | n/a | partial-only |
 | **§ Offer Book > Your Active Offers** | (already covered in existing flows) | P-G: leave 1 fully-filled lender offer (closed), 1 partial-filled lender offer (open with `amountFilled > 0`), 1 cancelled offer | n/a | partial-only |
@@ -117,7 +117,7 @@ them. The fix (added `[5b]` master-flag flip step to
 | **§ Buy VPFI > Buying VPFI / Step 1-3** | **OUT OF SCOPE for Anvil** — cross-chain LZ flow, needs LZ endpoint mocks. Document as separate fixture or fork-test. | n/a | n/a | deferred (LZ infra) |
 | **§ Buy VPFI > Your VPFI Discount Status** | (read-only — depends on § Fee-discount consent) | P-J: user has VPFI staked at each tier boundary (Tier 0/1/2/3) so the badge colour-codes exercise | n/a | ✓ landed 2026-05-04 |
 | **§ Rewards > Claim Rewards** | N13 (NEW): user accrues staking rewards for ≥1 day, claims via `RewardReporterFacet` | P-K: user has unclaimed staking + interaction rewards visible | NEG-17: claim before rewards accrue reverts | ✓ landed 2026-05-04 |
-| **§ Rewards > Withdraw Staked VPFI** | N14 (NEW): user calls `withdrawVPFIFromEscrow(amount)` with sufficient unstaked balance | P-L: user has VPFI partially withdrawn (some still staked, some withdrawn) | NEG-18: withdraw more than staked reverts | ✓ landed 2026-05-04 |
+| **§ Rewards > Withdraw Staked VPFI** | N14 (NEW): user calls `withdrawVPFIFromVault(amount)` with sufficient unstaked balance | P-L: user has VPFI partially withdrawn (some still staked, some withdrawn) | NEG-18: withdraw more than staked reverts | ✓ landed 2026-05-04 |
 | **§ Loan Details > Actions > Repay** | covered (every scenario repays) | P-M: loan with accrued interest (mid-term, partway through duration) so the live "owed" calc is non-trivial | NEG-19: repay past `gracePeriod` reverts `RepaymentPastGracePeriod` | ✓ positive landed 2026-05-04; NEGs in `forge test` units |
 | **§ Loan Details > Actions > Partial repay** | N3 (already passing) | P-N: loan with one partial-repay applied, principal reduced, still active | NEG-20: partial repay when `allowsPartialRepay=false` reverts `PartialRepayNotAllowed`. NEG-21: partial below `minPartialBps` reverts `InsufficientPartialAmount`. | ✓ positive landed 2026-05-04; NEGs in `forge test` units |
 | **§ Loan Details > Actions > Add collateral** | Sepolia-4 (already passing) | P-O: loan with 2x collateral added mid-flight | NEG-22: add collateral on a defaulted loan reverts | ✓ positive landed 2026-05-04; NEGs in `forge test` units |
@@ -132,8 +132,8 @@ them. The fix (added `[5b]` master-flag flip step to
 | **§ Preclose > Transfer Obligation (Option 2)** | N5 (already passing) | P-R: existing loan + Ben's takeover offer posted but Alice hasn't called transferObligation yet | NEG-28: takeover offer with `collateralAmount < loan.collateralAmount` reverts `InsufficientCollateral`. NEG-29: takeover offer with `durationDays > remainingDays` reverts `InvalidOfferTerms`. | ✓ positive landed 2026-05-04; NEGs in `forge test` units |
 | **§ Preclose > Offset (Option 3)** | N6 (in flight — `completeOffsetInternal` fix building) | P-S: Alice's offset offer posted, NFT locked, Charlie hasn't accepted yet | NEG-30: cancel the offset offer (release the borrower-NFT lock) and verify lock cleared | ✓ landed 2026-05-04 (N6 + completeOffsetInternal cross-facet entry) |
 | **§ Early Withdrawal (Lender)** | Sepolia-8 (already passing — sellLoanViaBuyOffer path) + N15 (NEW): the `createLoanSaleOffer + completeLoanSale` auto-link path (currently broken — same bug as completeOffset; fix mirrors `completeOffsetInternal`) | P-T: lender has posted a sale offer, link mapping `saleOfferToLoanId` populated, no buyer yet | NEG-31: sale offer where `interestRateBps` decreases reverts (lender-disadvantageous) | partial: N15 (sellLoanViaBuyOffer) landed 2026-05-04. createLoanSaleOffer auto-link path SKIPPED — pre-existing bugs (P-T rationale) |
-| **§ Stuck-Token Recovery > Recovery flow** | N7 (already passing) | P-U: user's escrow holds a stray ERC-20 (not in `protocolTrackedEscrowBalance`), recovery untriggered | NEG-32: bad EIP-712 signature reverts. NEG-33: `declaredSource == user` reverts. NEG-34: replay with stale nonce reverts. NEG-35: deadline passed reverts. | ✓ positive landed 2026-05-04; NEGs in `forge test` units |
-| **§ Stuck-Token Recovery > Sanctioned-source ban** | N8 (NEW): random sanctioned address sends tokens to user's escrow; user signs recovery; oracle returns true → `escrowBannedSource[user]` set, recovery does NOT execute, ban event emitted | P-V: user is in banned state (`escrowBannedSource[user] != address(0)`) and oracle still flags the source | NEG-36: lender escrow operations from a banned user revert SanctionedAddress (Tier-1) but `repayLoan` / claim still work (Tier-2) | ✓ positive landed 2026-05-04; NEGs in `forge test` units |
+| **§ Stuck-Token Recovery > Recovery flow** | N7 (already passing) | P-U: user's vault holds a stray ERC-20 (not in `protocolTrackedVaultBalance`), recovery untriggered | NEG-32: bad EIP-712 signature reverts. NEG-33: `declaredSource == user` reverts. NEG-34: replay with stale nonce reverts. NEG-35: deadline passed reverts. | ✓ positive landed 2026-05-04; NEGs in `forge test` units |
+| **§ Stuck-Token Recovery > Sanctioned-source ban** | N8 (NEW): random sanctioned address sends tokens to user's vault; user signs recovery; oracle returns true → `vaultBannedSource[user]` set, recovery does NOT execute, ban event emitted | P-V: user is in banned state (`vaultBannedSource[user] != address(0)`) and oracle still flags the source | NEG-36: lender vault operations from a banned user revert SanctionedAddress (Tier-1) but `repayLoan` / claim still work (Tier-2) | ✓ positive landed 2026-05-04; NEGs in `forge test` units |
 | **§ Stuck-Token Recovery > Disowning** | N9 (NEW): user calls `disown(token)` on tokens they don't want | P-W: user has called disown on one stray asset (event emitted) | NEG-37: disown on a token with zero balance — verify behaviour (event-only, no revert) | ✓ positive landed 2026-05-04; NEGs in `forge test` units |
 
 ## Protocol flows NOT in the Advanced User Guide
@@ -160,7 +160,7 @@ The Advanced Guide deliberately omits bot/keeper-driven, MEV-defensive, admin-on
 | **Cross-chain VPFI buy adapter mode** | OUT OF SCOPE — needs LZ multi-chain setup | n/a | covered by `VPFIBuyAdapterPaymentTokenTest.t.sol` unit tests | VPFIBuyAdapter.sol |
 | **Reward OApp delivery** | OUT OF SCOPE — needs LZ multi-chain setup | n/a | covered by `RewardOAppDeliveryTest.t.sol` | VaipakamRewardOApp.sol |
 | **DVN policy enforcement** | OUT OF SCOPE — admin script (ConfigureLZConfig) | n/a | covered by `LZConfig.t.sol` | ConfigureLZConfig.s.sol |
-| **Storage chokepoint counter parity (T-051)** | implicit in every flow that ticks `protocolTrackedEscrowBalance` | n/a | NEG-CT1: directly transfer ERC-20 to a user's escrow proxy + try to use the counter-tracked path → underflow reverts (this is exactly the bug we found in SepoliaPositiveFlows scenarios 3/10/11; covered by Option A patch) | T-051 design |
+| **Storage chokepoint counter parity (T-051)** | implicit in every flow that ticks `protocolTrackedVaultBalance` | n/a | NEG-CT1: directly transfer ERC-20 to a user's vault proxy + try to use the counter-tracked path → underflow reverts (this is exactly the bug we found in SepoliaPositiveFlows scenarios 3/10/11; covered by Option A patch) | T-051 design |
 
 ## Every external entry-point coverage check
 
@@ -181,7 +181,7 @@ RefinanceFacet.refinanceLoan
 RepayFacet.repayLoan / repayPartial / autoDeductDaily
 RiskFacet.triggerLiquidation
 TreasuryFacet.mintVPFI / withdrawTreasury / rotateTreasury
-VPFIDiscountFacet.depositVPFIToEscrow / withdrawVPFIFromEscrow / setVPFIDiscountConsent
+VPFIDiscountFacet.depositVPFIToVault / withdrawVPFIFromVault / setVPFIDiscountConsent
 ```
 
 Cross-reference each against the matrix rows above. Anything missing gets added with a new N## or P-## or NEG-## ID.

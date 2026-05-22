@@ -29,7 +29,7 @@ Three deploy scripts after the 2026-05-10 modernization sweep
 | `lz-config` | `--confirm-dvn-policy-reviewed` | Runs `ConfigureLZConfig.s.sol`. Requires DVN policy env vars (DVN_REQUIRED_1/2/3 + DVN_OPTIONAL_1/2 + CONFIRMATIONS + REMOTE_EIDS + OAPP + SEND_LIB + RECV_LIB). |
 | `swap-adapters` | — | Phase 7a aggregator adapters via `DeploySwapAdapters.s.sol`. Requires `INITIAL_SETTLERS` env var (current 0x Settler set). |
 | `configure` | — | `DiamondConfigSpell.s.sol` — composes ConfigureOracle + ConfigureRewardReporter + ConfigureVPFIBuy + ConfigureNFTImageURIs into one operator-action. Requires per-chain Chainlink feed addresses + WETH. |
-| `handover` | `--confirm-i-have-multisig-ready` | `Handover.s.sol` — rotates DEFAULT_ADMIN_ROLE → governance Safe (direct), ADMIN/KYC/ORACLE/RISK/ESCROW/UNPAUSER → Timelock, PAUSER → Pauser Safe (direct), ERC-173 → Timelock, OApp ownership → governance Safe (Ownable2Step first leg). ADMIN renounces every role. **Multisig-bytecode preflight runs first**: refuses if any of the three Safe addresses has zero bytecode on the target chain. Operator must drive `acceptOwnership()` on each OApp via the Safe UI to complete the second leg. |
+| `handover` | `--confirm-i-have-multisig-ready` | `Handover.s.sol` — rotates DEFAULT_ADMIN_ROLE → governance Safe (direct), ADMIN/KYC/ORACLE/RISK/VAULT/UNPAUSER → Timelock, PAUSER → Pauser Safe (direct), ERC-173 → Timelock, OApp ownership → governance Safe (Ownable2Step first leg). ADMIN renounces every role. **Multisig-bytecode preflight runs first**: refuses if any of the three Safe addresses has zero bytecode on the target chain. Operator must drive `acceptOwnership()` on each OApp via the Safe UI to complete the second leg. |
 | `abi-sync` | — | Runs the export scripts: `exportFrontendAbis.sh` + `exportFrontendDeployments.sh` + `exportSubgraphAbis.sh` + `exportTenderlyAlerts.sh` + `exportLzWatcherVars.sh` + (sibling repo present) `exportAbis.sh` for the keeper-bot. |
 | `cf-defi` / `cf-www` | — | Build + `wrangler deploy` apps/defi (the dApp) / apps/www (marketing). |
 | `cf-keeper` / `cf-indexer` / `cf-agent` | — | wrangler deploy of each Worker. The indexer phase also runs D1 migrations against `vaipakam-archive`. Each verifies the chain-specific `RPC_<CHAIN>` secret is set on the Worker (hard-fail if missing). |
@@ -542,7 +542,7 @@ The schema each script populates (no manual editing needed since the
 |---|---|
 | `chainId`, `chainSlug`, `deployedAt`, `deployBlock` | `DeployDiamond` |
 | `lzEid`, `lzEndpoint` | `DeployDiamond` (eid) + each OApp deploy script (endpoint) |
-| `diamond`, `escrowImpl`, `treasury`, `admin` | `DeployDiamond` |
+| `diamond`, `vaultImpl`, `treasury`, `admin` | `DeployDiamond` |
 | `facets.<name>` (×30) | `DeployDiamond` |
 | `vpfiToken`, `vpfiTokenImpl`, `vpfiOftAdapter`, `vpfiOftAdapterImpl`, `isCanonicalVPFI=true` | `DeployVPFICanonical` |
 | `vpfiMirror`, `vpfiMirrorImpl`, `isCanonicalVPFI=false` | `DeployVPFIMirror` |
@@ -716,7 +716,7 @@ If any check fails → **do not broadcast**.
 - `OwnershipFacet.owner()` == `ADMIN_ADDRESS` (handover complete).
 - `AccessControlFacet.hasRole(DEFAULT_ADMIN_ROLE, ADMIN_ADDRESS)` == `true` and the deployer holds zero roles.
 - `AdminFacet.getTreasury()` == `TREASURY_ADDRESS`.
-- `EscrowFactoryFacet.getVaipakamEscrowImplementationAddress()` != `0x0`.
+- `VaultFactoryFacet.getVaipakamVaultImplementationAddress()` != `0x0`.
 - `RewardReporterFacet.getRewardReporterConfig()` returns zeros for `rewardOApp`/`localEid`/`baseEid` — wiring happens in §3.
 
 **Authority-state matrix after the deploy + handover sequence.** Different

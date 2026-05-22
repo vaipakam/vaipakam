@@ -6,7 +6,7 @@ Scope: a Base Sepolia fresh deployment wipes the old `BASE_SEPOLIA_DIAMOND_ADDRE
 
 All commands run from `contracts/`.
 
-> **Admin handover ordering.** Steps 1–11 run from the `PRIVATE_KEY` EOA because it needs `ADMIN_ROLE` / `ORACLE_ADMIN_ROLE` / `ESCROW_ADMIN_ROLE` to land every `Configure*.s.sol`. Step 11.5 (*Hand over admin to timelock*) is **one-way** — after it runs, every `Configure*` invocation must be scheduled through the `TimelockController` (48h delay). Always land the full config sweep and run smoke tests under the EOA first; hand over last.
+> **Admin handover ordering.** Steps 1–11 run from the `PRIVATE_KEY` EOA because it needs `ADMIN_ROLE` / `ORACLE_ADMIN_ROLE` / `VAULT_ADMIN_ROLE` to land every `Configure*.s.sol`. Step 11.5 (*Hand over admin to timelock*) is **one-way** — after it runs, every `Configure*` invocation must be scheduled through the `TimelockController` (48h delay). Always land the full config sweep and run smoke tests under the EOA first; hand over last.
 
 > **Address propagation.** As of the Track-B refactor, every `Deploy*.s.sol`
 > writes its outputs to `deployments/base-sepolia/addresses.json` and every
@@ -221,7 +221,7 @@ Populate `.env`: `VPFI_BUY_WEI_PER_VPFI=1000000000000000`, `VPFI_BUY_GLOBAL_CAP=
 
 The fixed-rate buy path follows `docs/TokenomicsTechSpec.md` §8 / §8a:
 buyers pay ETH, VPFI is delivered to the buyer's wallet, and any
-wallet-to-escrow deposit is a separate explicit action. Do not run the
+wallet-to-vault deposit is a separate explicit action. Do not run the
 buy smoke test until §7 has configured `LOCAL_EID=40245`; direct buys
 bucket the per-wallet cap under the Diamond's `localEid`.
 
@@ -420,7 +420,7 @@ cast send $BASE_SEPOLIA_DIAMOND_ADDRESS "closeDay()" \
 
 ## 11.5. Hand over admin to timelock (one-way)
 
-Only run after smoke tests (§11) pass. After this step, every admin setter — `OracleAdminFacet.*`, `AdminFacet.setTreasury`, `EscrowAdminFacet.*`, role grants, `OwnershipFacet.transferOwnership` — must be scheduled through the `TimelockController` with a minimum 48h delay.
+Only run after smoke tests (§11) pass. After this step, every admin setter — `OracleAdminFacet.*`, `AdminFacet.setTreasury`, `VaultAdminFacet.*`, role grants, `OwnershipFacet.transferOwnership` — must be scheduled through the `TimelockController` with a minimum 48h delay.
 
 Populate `.env`: `TIMELOCK_PROPOSER` (ops multi-sig address), `TIMELOCK_EXECUTOR=0x0000000000000000000000000000000000000000` (open execution after delay), `TIMELOCK_MIN_DELAY=172800` (48h).
 

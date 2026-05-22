@@ -62,7 +62,7 @@ receipt-polling loop in `DeployDiamond`. Subsequent steps (§2 onward)
 must drop `--slow`.
 
 The script writes `chainId`, `chainSlug`, `lzEid`, `deployBlock`,
-`diamond`, `escrowImpl`, `treasury`, `admin`, and all 30 facet
+`diamond`, `vaultImpl`, `treasury`, `admin`, and all 30 facet
 addresses to `deployments/bnb-testnet/addresses.json`. After this:
 
 ```bash
