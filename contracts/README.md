@@ -334,13 +334,22 @@ reward channels, per-lane rate limits, and register the token pool
 with the local `TokenAdminRegistry`.
 
 ```bash
-# env (per chain pair you're wiring)
-export DIAMOND_ADDRESS=<local diamond>
+# env (per chain — one ConfigureCcip pass per chain, NOT per pair)
+export ADMIN_PRIVATE_KEY=<owner key>
 export CCIP_TOKEN_ADMIN_REGISTRY=<local TokenAdminRegistry>
-export LOCAL_CHAIN_SELECTOR=<local CCIP selector>
-export REMOTE_CHAIN_SELECTOR=<remote CCIP selector>
-export REMOTE_MESSENGER=<remote CcipMessenger proxy>
-export REMOTE_POOL=<remote token pool>
+export CCIP_REGISTRY_MODULE_OWNER_CUSTOM=<local RegistryModuleOwnerCustom>
+# Comma-separated EVM chain ids of every REMOTE chain you're wiring
+# from this local chain — pass the full set; ConfigureCcip iterates
+# over them internally to build the lane / channel / broadcast lists
+export CCIP_LANE_CHAIN_IDS=<remote-chain-id-1,remote-chain-id-2,...>
+
+# mirror chains only
+export BASE_CHAIN_ID=<EVM chain id of canonical Base>
+
+# optional
+export CCIP_GUARDIAN=<guardian-eoa-or-safe>
+export CCIP_RATE_CAPACITY=<token-bucket capacity>      # default 50_000 VPFI
+export CCIP_RATE_REFILL=<token-bucket refill VPFI/s>   # default ~5.8
 
 forge script script/ConfigureCcip.s.sol:ConfigureCcip \
   --rpc-url $LOCAL_RPC --broadcast
@@ -372,9 +381,16 @@ configures:
   this. Admin is the deploy multisig at this stage; rotates to the
   timelock at the handover step.
 
-Run `ConfigureCcip` once per (local, remote) chain pair; the wiring
-is symmetric so each ordered pair `(A → B)` and `(B → A)` gets one
-run.
+Run `ConfigureCcip` **once per chain**, passing the FULL set of
+remote chain ids in `CCIP_LANE_CHAIN_IDS`. The script iterates the
+remotes internally to build the per-lane TokenPool wiring, the
+channel-peer table, and (on the canonical chain) the
+`setBroadcastDestinations(mirrors)` list — that last call REPLACES
+the destination list, so a pair-by-pair execution would leave only
+the last mirror configured and silently stop reward broadcasts to
+the earlier mirrors. The wiring graph is still symmetric — every
+chain ends up with the same set of peers on the other side — but
+the script unit is per-chain, not per-pair.
 
 **Anvil rehearsal**: the wiring is exercised end-to-end by the
 Foundry test `contracts/test/CcipDeploymentRehearsalTest.t.sol`,
