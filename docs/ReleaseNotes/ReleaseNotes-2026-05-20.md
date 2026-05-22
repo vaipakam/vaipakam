@@ -473,6 +473,22 @@ the deploy-sanity step could complete. Two amendments fold in here:
 Closes #74 (the rest of the arc; the CI workflow itself landed in
 PR #84).
 
+---
+
+**Second wave — same day, follow-on hygiene.** After the deploy-gate
+arc shipped, a tail of ten threads followed the same day: CI build
+serialisation (one cold forge compile per PR), the closing wave of
+Slither / Code-Scanning HIGH-severity sweeps (#109 + #148 phases 2
++ 4), the `vaipakam-archive` D1 topology doc (#149), workspace
+transitive-dep security pins + the ws-1.1.4 follow-up on the
+lz-watcher (#135 × 3), the Dependabot scope-narrow inside
+`contracts/lib/*` (#153), the consolidated operator handbook
+`docs/internal/ProjectProcedures.md`, the deletion of the dead
+`alpha/` archive, and the drop of the aspirational `deploy-workers.yml`
++ 3 GitHub Environments that were never used. Same theme — close
+the security backlog cleanly so the canonical-limit-order work that
+starts tomorrow opens onto a clean repo.
+
 ## Thread — Serialize contracts CI jobs to halve cold-cache build cost (PR #<n>)
 
 The CI workflow that landed in #84 + #86 ran `contracts-fast` and
@@ -514,3 +530,399 @@ regression itself (~5-15 min observed) plus runner variability.
 
 Closes #74 (the optional CI-hygiene optimisation; the required-check
 gate landed earlier in this arc).
+
+## Thread — Slither HIGH-severity sweep (PR #<n>)
+
+Closed every open HIGH-severity Code Scanning finding from the
+informational Slither workflow. None of the 16 alerts was a real bug —
+each was confirmed a false positive given Vaipakam's intentional
+architecture — and the audit-prep deliverable was specifically to
+document that classification inline so a human auditor can re-verify
+the reasoning at the call site in seconds rather than re-deriving it
+from scratch.
+
+The sweep took two forms. First, a new `contracts/slither.config.json`
+sets a `filter_paths` regex covering every vendored library the project
+ships unmodified (`openzeppelin-contracts-upgradeable`, the two
+Chainlink trees, `chainlink-local`, `diamond-3-hardhat`, `forge-std`),
+plus `exclude_dependencies: true`. This closes the three findings whose
+analysis surface was code we don't author: OpenZeppelin's
+`TimelockController` constructor, `Math.mulDiv`, and `Base64._encode`.
+Re-analyzing audited library bytecode would have us "fix" code that the
+library's own audit already cleared. The Slither workflow was updated
+to pass the config via `slither-config: contracts/slither.config.json`.
+
+The remaining thirteen findings sit in Vaipakam-authored code and were
+each suppressed with a `// slither-disable-next-line <detector>` line
+**carrying a one-paragraph rationale comment** explaining why the
+flagged pattern is intentional and what would break if it were
+"fixed." The suppressions cluster into five buckets: the
+`safeTransferFrom(payer, ...)` pull pattern used by every keeper-relay
+path (the canonical Aave/Compound/Permit2 shape; the upstream
+`IERC20.approve(diamond, ≥amount)` is the consent gate); native-ETH
+forwards to admin-set state-variable recipients (`messenger`,
+`treasury`, both rotated only via owner-only setters that, per the
+mainnet-deploy gates, end up multisig→timelock-controlled); the
+`broadcastGlobal` fan-out loop's per-iteration `sendMessage` (bounded
+by a cumulative `spent` counter and `msg.value` pre-check, so the
+`msg-value-loop` heuristic is over-conservative); the
+`retryStuckDelivery` owner-only `nonReentrant` path that writes state
+after an external call (the textbook safe pattern Slither's
+single-modifier dataflow cannot see); and the `_buildDescription` /
+`_buildAttributes` token-URI builders whose `abi.encodePacked` output
+is human-readable JSON for marketplace display (never hashed, never
+used as a key, so the encode-packed-collision detector doesn't apply).
+Closes #109.
+
+## Thread — ops/lz-watcher ws security pin (follow-up to #135)
+
+Closed the last open Dependabot alert from the issue #135 audit-prep
+sweep — `ws < 8.20.1` (GHSA-58qx-3vcg-4xpx, uninitialized-memory
+disclosure) — by adding an `overrides` clause to
+`ops/lz-watcher/package.json` pinning `ws` to `^8.20.1`.
+
+The same advisory was fixed for the pnpm workspace in PR #137 via
+`pnpm.overrides`, but `ops/lz-watcher` is intentionally outside that
+workspace (the workspace yaml notes it's "a Cloudflare Worker but
+deliberately separate for trust-boundary reasons" — internal ops
+Telegram surface, distinct from the public-facing keeper Worker).
+That separation means the pnpm-tree fix didn't reach it, so this
+follow-up applies the equivalent fix in lz-watcher's own npm tree.
+
+After `npm install` resolves the override, both vulnerable ws paths
+(viem → ws 8.18.3 and miniflare → ws 8.18.0) consolidate to a single
+ws@8.20.1; `npm audit` reports 0 vulnerabilities. `tsc --noEmit`
+typechecks clean.
+
+With this PR merged and the Dependabot rescan of the alpha
+deletions in #143 settled, the open-alert count for the repo drops
+to **zero** — the audit-prep deliverable for issue #135 is fully
+closed.
+
+## Thread — Delete the dead alpha/ archive (PR #<n>)
+
+Removed the `alpha/` archive — the v1 React/Vite frontend and the
+first-generation Cloudflare-Worker HF watcher that pre-dated the
+Stage 3 source-tree refactor — whose `package-lock.json` files had
+been the source of seven open Dependabot security alerts. The
+deletion had been scheduled in `pnpm-workspace.yaml`'s archive
+block ("Scheduled for full removal once the new architecture has
+been live for a few weeks without a fallback being needed (single
+`rm -rf alpha/` commit)"); this PR is that commit.
+
+The live successors are `apps/defi` (in place of `alpha/frontend`)
+and `apps/keeper`/`apps/indexer`/`apps/agent` (the Stage-3 Worker
+split that subsumed `alpha/hf-watcher`). The Cloudflare Workers
+that the archive sources last built — `vaipakam-alpha` and
+`vaipakam-hf-watcher` — are operator-managed and have to be
+undeployed via the Cloudflare dashboard separately; that's a runtime
+action, not a repo change. If a fallback is ever needed,
+`git checkout <this-commit>~ -- alpha` restores the tree byte-for-
+byte from history.
+
+The `pnpm-workspace.yaml` comment block that documented the archive
+was replaced with a one-paragraph pointer to this commit so the
+workspace layout doc stays self-describing.
+
+Closes 7 Dependabot alerts (6 on `alpha/frontend/package-lock.json`,
+1 on `alpha/hf-watcher/package-lock.json`).
+
+What this PR does **NOT** touch:
+
+- `ops/lz-watcher/` stays — it is **active production tooling**, a
+  5-minute-cron Cloudflare Worker that watches the LayerZero V2 surface
+  for DVN-count drift, OFT mint/burn imbalance, and oversized VPFI flow
+  (alerts to the internal ops Telegram channel). Its single Dependabot
+  alert (`ws < 8.20.1`) is the same advisory the workspace overrides in
+  PR #137 closed for the pnpm tree — it will be addressed in a separate
+  pass that extends the override or the Dependabot scope to that Worker.
+- `ops/{subgraph,tenderly}/` stay — both are operationally live.
+
+Closes part of #135 (Phase 4 of 4 — alpha only; the lz-watcher alert
+is the one remaining open after this lands, tracked as a follow-up).
+
+## Thread — Workspace transitive-dependency security pins (PR #<n>)
+
+Closed 17 open Dependabot HIGH/MEDIUM CVE alerts on the root
+`pnpm-lock.yaml` by adding three `pnpm.overrides` entries to the
+workspace root `package.json`. Each pin is the minimum patched
+version the upstream advisories require; the override route was
+needed because every flagged package is a *transitive* dependency
+that no direct upgrade in `apps/*` or `packages/*` would reach.
+
+The three pins. **`axios ^1.15.2`** closes 15 of the 17 alerts —
+the package is pulled in three different ways (the Push Protocol
+SDK in `apps/agent` + `apps/keeper`, and the Coinbase CDP SDK via
+the wagmi → connectkit chain in `apps/defi`) and the same set of
+nine CVE advisories (CRLF injection, prototype-pollution gadgets,
+NO_PROXY bypasses, etc.) applies in all paths. **`ws@^8.0.0 →
+^8.20.1`** closes a single uninitialized-memory-disclosure
+advisory (GHSA-58qx-3vcg-4xpx) in the ethers → `ws` path; the
+selector form keeps the legacy `ws@7.x` paths used by other code
+untouched. **`brace-expansion@^5.0.0 → ^5.0.6`** closes a
+ReDoS-style range-DoS advisory in the v5 line; the v1 path
+(`brace-expansion@1.1.14` pulled by `eslint → minimatch`) is
+outside the vulnerable range and stays put — again by selector
+scoping.
+
+The fix is structural, not bytecode-affecting: nothing in
+`contracts/` was touched, and all six TypeScript workspaces
+(`@vaipakam/defi`, `agent`, `keeper`, `indexer`, `ui`, `www`)
+typecheck clean against the resolved lockfile. The remaining 349
+Dependabot alerts on the repo split into two non-fixable
+populations that Phase 3 of issue #135 handles separately:
+343 alerts in vendored Solidity submodules under
+`contracts/lib/*` (the JS/Go tooling embedded in those repos is
+never compiled or run as part of the Vaipakam build, so the
+advisories don't reach Vaipakam-deployed code) and 6 alerts in
+the deprecated `alpha/frontend/` (its sunset is tracked
+separately).
+
+Closes part of #135 (Phase 2 — root workspace).
+
+## Thread — Close the 6 surviving HIGH-severity Code Scanning alerts (PR #<n>)
+
+Closed the six HIGH-severity Code Scanning alerts that were still open
+after PR #136's Slither sweep — two Slither HIGHs and four CodeQL HIGHs.
+This is Phase 2 of issue #148 (Code Scanning queue triage).
+
+### Slither (2 HIGHs)
+
+Both alerts were `msg-value-loop` on `VaipakamRewardMessenger.broadcastGlobal`.
+PR #136 had placed a `// slither-disable-next-line` directive on the
+inner `sendMessage{value: fee}` statement, which silenced the
+per-statement match but not the function-level one Slither also raises
+when `msg.value` is read inside any for-loop. Replaced the next-line
+directive with a `// slither-disable-start msg-value-loop` /
+`// slither-disable-end msg-value-loop` block wrapping the whole
+function, keeping the existing rationale comment in place so the
+audit trail is preserved at the call site. The pattern is intentional
+(bounded fan-out, cumulative `spent` counter + `msg.value` pre-check),
+and the per-statement suppression for `arbitrary-send-eth` /
+`msg-value-loop` stays inside the loop body for redundancy.
+
+### CodeQL (4 HIGHs)
+
+All four flagged vendored OpenZeppelin Certora verification tooling
+under `contracts/lib/openzeppelin-contracts-upgradeable/certora/` —
+exactly the same false-positive class the Slither
+`filter_paths` already excluded. Added a CodeQL equivalent: a new
+`.github/codeql/codeql-config.yml` with `paths-ignore: contracts/lib/**`,
+wired into `.github/workflows/codeql.yml` via the `config-file` input
+on the `init` step. After this lands the four CodeQL alerts auto-close
+on the next CodeQL run.
+
+After this PR merges, the Code Scanning HIGH-severity count drops from
+6 to 0; the remaining triage work (Phases 3-5 — 187 Slither MEDIUMs,
+215 Slither LOWs, 154 uncategorised Slither informational findings,
+6 CodeQL MEDIUMs) continues under #148.
+
+## Thread — Close the 3 highest-value Slither alerts in-source + bulk-dismiss ~110 lower-risk findings (PR #<n>)
+
+Continuation of issue #148's Code Scanning queue triage. Phase 2 (PR
+#150) closed the 6 surviving HIGH-severity alerts. Phase 3 (a bulk
+gh-api pass) dismissed 381 alerts across 6 rule classes. Phase 4 —
+this PR — handles the remaining 164 by tier.
+
+The three highest-value findings are security-relevant signals the
+rule-class shape couldn't blanket-dismiss; they get **in-source**
+`// slither-disable-start/end` directives so the audit trail lives at
+the call site, not in the GitHub Code Scanning UI alone.
+
+- `pyth-unchecked-publishtime` + `pyth-unchecked-confidence` on
+  `OracleFacet._validatePythCrossCheck`. Slither's detector matches
+  `getPriceUnsafe(` and walks only the next ~5 statements looking for
+  `.publishTime` / `.conf` reads. Our checks sit ~20 lines lower
+  because we snapshot the Pyth Price struct first (defensive copy
+  out of the try/catch frame). Both gates are load-bearing — the
+  publishTime gate is the staleness check (`block.timestamp >
+  snap.publishTime + maxStale`), the confidence gate enforces
+  `confBps > confMax`. Both are tested in OracleCrossCheckTest. The
+  paired `slither-disable-start/end` block wraps the function with a
+  rationale comment so the next reviewer sees the intent at the
+  call site.
+
+- `chainlink-feed-registry` on `OracleFacet._registryFeed`.
+  Slither's detector warns the Feed Registry is only deployed on
+  Ethereum Mainnet — true, and handled by design: the
+  `LibVaipakam.Storage.chainlnkRegistry` slot is `address(0)` on
+  every non-mainnet chain (see the storage-slot comment at
+  `LibVaipakam.sol:1629`). Every caller of `_registryFeed` first
+  guards with `if (registry != address(0))`, so on L2s the registry
+  branch is never reached. The single-line suppression with the
+  rationale block above it documents that this is an optional
+  fast-path, not a requirement.
+
+Beyond those three, the bulk pass dismisses every alert in seven
+lower-risk rule classes — divide-before-multiply (17),
+unused-return (30), unused-state (21), incorrect-equality (17),
+reentrancy-events (17), reentrancy-benign (5),
+missing-inheritance (5), redundant-statements (7) — each with a
+rule-class rationale comment so an auditor can re-verify any of
+them in seconds. Spot-checked three per class against the actual
+source before classifying; none of the sampled sites exhibit the
+underlying bug pattern Slither's heuristic was originally written
+for.
+
+What this PR explicitly does NOT touch (deferred to a follow-up
+per-site review pass under #148 Phase 5): `missing-zero-check`
+(21), `write-after-write` (2), `dead-code` (5), `assembly` (14).
+Those rule classes need real reads of the affected functions, not
+blanket dismissal — `missing-zero-check` in particular has been the
+source of real DeFi bugs in other projects and we'd rather over-
+verify than over-dismiss.
+
+After this PR lands the Code Scanning queue drops from 164 open
+Slither alerts to roughly 42, all in the four deferred classes
+above. Refs #148.
+
+## Thread — Document the shared `vaipakam-archive` D1 topology (PR #<n>)
+
+Closed issue #149 by making the existing D1 topology explicit in the
+per-Worker READMEs, the staging-state doc, and `CLAUDE.md`. The
+investigation that gated this card found that the "missing migrations"
+gap the card originally flagged does not actually exist:
+
+The three plain Workers (`apps/indexer`, `apps/keeper`, `apps/agent`)
+all bind to a **single shared D1 database** — `vaipakam-archive`,
+database_id `3cffebf5-b652-4da7-953c-9e1d143ad2fe`, the staging
+database the Cloudflare staging deploy uses (see
+`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md` §3 for the
+staging-vs-primary split). Every table any of the three Workers
+reads or writes — keeper writes
+`user_thresholds`/`notify_state`/`telegram_links`/`liquidity_confidence`/`oracle_snapshot_state`
+and reads `loans`/`offers`; agent writes
+`user_thresholds`/`notify_state`/`telegram_links`/`loans`/`diag_errors`/`diag_legal_holds`/`diag_legal_hold_audit`
+— is already covered by the existing `apps/indexer/migrations/`
+directory. The schema is fully tracked; the gap was purely
+documentation.
+
+This PR records the topology in three places. Each per-Worker README
+gets a new "D1 — shared `vaipakam-archive`" subsection explaining the
+binding, the tables that Worker touches, and the rule that schema
+changes land in `apps/indexer/migrations/` even when they're for
+tables the indexer itself doesn't write. The `CLAUDE.md`
+"Cloudflare D1 schema discipline" section codifies the
+"every schema change is a migration file under `apps/indexer/`" rule
+so the convention survives contributor turnover. The staging-state doc
+replaces its stale "migrations not yet applied — will run from
+`apps/agent/`" note with the current reality (single shared D1,
+indexer-owned migrations).
+
+`ops/lz-watcher`'s separate `vaipakam-lz-alerts-db` D1 is also called
+out — that one stays separate by design (trust-boundary isolation for
+internal ops alerts).
+
+## Thread — Suppress Dependabot scans inside vendored `contracts/lib/*` (PR #<n>)
+
+Closed a Dependabot policy gap that `CLAUDE.md` already documented but
+the config didn't actually enforce. Within a single day five
+Dependabot PRs (#138 / #139 / #140 / #141 / #142) landed against
+`contracts/lib/diamond-3-hardhat/` — exactly the vendored Solidity
+submodule path the existing "Dependabot — off-chain only" header
+comment named as *not covered, on purpose*.
+
+The root cause is a documented Dependabot quirk: the `directory:`
+field on a `npm` updates block scopes **version-update** PRs only.
+Vulnerability-driven **security-update** PRs walk every
+`package-lock.json` / `pnpm-lock.yaml` in the repo regardless of that
+config. So a root-only `directory: "/"` block silences version-update
+PRs against the vendored trees, but the moment a CVE surfaces in any
+transitive dep buried in those subtrees, Dependabot raises a PR
+against the vendored manifest anyway.
+
+The fix this PR lands is a single `package-ecosystem: "npm"` block
+with `directories: ["/contracts/lib/**"]`,
+`ignore: [{ dependency-name: "*" }]`, and
+`open-pull-requests-limit: 0`. The glob form catches every manifest
+under the wildcard recursively — across the 13 nested
+`package.json` files that exist today under `contracts/lib/`
+(diamond-3-hardhat, forge-std, the openzeppelin-contracts-upgradeable
+tree including its own nested `lib/openzeppelin-contracts/` and
+`scripts/solhint-custom/` submodules, the chainlink-ccip
+`chains/evm/` JS tooling, and the chainlink-evm
+`/` + `contracts/` pair) — without us having to enumerate each
+path and stay current as submodules bump. The `ignore` + zero-PR
+limit pair disables BOTH the version-update and the
+security-update scanners for every matched manifest. The header
+comment now explains the security-vs-version scanner distinction
+inline so the next contributor doesn't trip on the same trap.
+
+After this lands the five offending Dependabot PRs (#138–#142) are
+closed individually with a pointer to issue #153. Closes #153.
+
+## Thread — `docs/internal/ProjectProcedures.md` — consolidated operator handbook (PR #<n>)
+
+Adds a single human-readable operator handbook at
+`docs/internal/ProjectProcedures.md` that captures every git / PR / CI
+/ project-board / release-notes convention currently in force. The
+content has accumulated across `CLAUDE.md`, agent memories, and ad-hoc
+session conversations; this file is the canonical reference for it.
+
+The new doc and `CLAUDE.md` are deliberately complementary, not
+redundant:
+
+- `CLAUDE.md` is **AI-instruction-shaped** — "do this when working".
+  Lives at the repo root so the agent picks it up automatically.
+- `docs/internal/ProjectProcedures.md` is **reference-shaped** — "this
+  is how we work here". Sectioned for top-to-bottom reading or
+  spot-lookup. Includes runnable checklists for "opening a PR",
+  "picking up a card", "post-merge sweep", and the eight `Protect
+  main` gates.
+
+Twelve sections: repository topology, git procedures, PR workflow,
+post-merge sweep, project board (`@vaipakam-labs`) discipline,
+release notes + FunctionalSpecs, CI + branch protection, issues +
+labels, tooling reference, pre-audit hardening current-state summary,
+living-doc rules, and project-specific conventions worth knowing
+(the "weird from outside but deliberate" rules + the gotchas).
+
+The doc explicitly distinguishes what lives in the repo (procedures
+that need to survive across machines / contributors / time) from
+what lives only in agent memory (tool-side conventions like the
+polling-launch hygiene or the graphify Solidity patch re-application
+flow). Without that boundary, a future contributor sees ambient
+discipline that isn't actually written down.
+
+No code change. Pure docs.
+
+## Thread — Drop aspirational deploy-workers.yml + 3 GitHub Environments (PR #<n>)
+
+Removed `.github/workflows/deploy-workers.yml` and the three unused
+GitHub Environments (`mainnet`, `testnet`, `dev`). The workflow was
+designed to run `wrangler deploy` from CI on every push to `main`, but
+it never had the Cloudflare credentials it needed (`CLOUDFLARE_API_TOKEN`,
+`CLOUDFLARE_ACCOUNT_ID` — neither set at the repo level nor inside any
+environment). The result was that every PR touching `apps/defi/` or
+`ops/hf-watcher/` quietly failed the deploy job, and every other PR
+"succeeded" only because the path-filter short-circuited the job
+before it could attempt the broken deploy.
+
+The real deploy path is `wrangler` on the operator's local machine —
+authenticated by an interactive `wrangler login` whose credentials
+live in the operator's browser session, never in a shared service.
+Adding a long-lived Cloudflare API token to GitHub purely to enable
+CI deploys we don't actually use would have introduced security debt
+(a leaked PAT is a deploy-to-our-domain attack vector) without
+delivering any operational benefit.
+
+What this changes:
+
+- `.github/workflows/deploy-workers.yml` deleted.
+- The 5 `apps/*/README.md` files that documented `pnpm deploy` as
+  "via `.github/workflows/deploy-workers.yml`" now say
+  *"wrangler deploy; uses `wrangler login` on the operator's machine"* —
+  matching how deploys actually happen today.
+- `docs/internal/CloudflareStagingState.md` drops the
+  `deploy-workers.yml matrix` row from its "Pending — author action"
+  list, since that item no longer corresponds to planned work.
+- The three GitHub Environments (`mainnet` / `testnet` / `dev`) are
+  deleted via the API. Nothing referenced them, and the
+  `required_reviewers` rule on `mainnet` was guarding a workflow that
+  no longer exists.
+
+If CI-driven deploys are ever needed, the cleaner path is to author a
+fresh workflow then with OIDC-based short-lived authentication (the
+shape supported by major cloud providers; Cloudflare's OIDC story
+should mature over the next year), rather than carrying a long-lived
+Cloudflare PAT in the repo.
