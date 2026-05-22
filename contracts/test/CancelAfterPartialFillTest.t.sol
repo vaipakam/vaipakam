@@ -6,6 +6,7 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -206,12 +207,35 @@ contract CancelAfterPartialFillTest is SetupTest {
 
         // First (and only) partial match — consumes 5_000 of the
         // lender's 10_000 pool.
-        OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId, borrowerOfferId);
+        uint256 loanId =
+            OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId, borrowerOfferId);
 
         LibVaipakam.Offer memory L =
             OfferCancelFacet(address(diamond)).getOffer(lenderOfferId);
         assertEq(L.amountFilled, 5_000, "post-match: lender filled by 5k");
         assertFalse(L.accepted, "lender stays OPEN with 5k remaining");
+
+        // Snapshot the live loan's principal/collateral/status BEFORE the
+        // cancel so we can prove the cancel does NOT mutate the matched
+        // loan's accounting. Without this snapshot the test only proves
+        // the lender's wallet refund is correct — a regression that
+        // computed the refund correctly but ALSO mistakenly debited the
+        // loan's principal would slip past.
+        //
+        // The exact prorating math (loan.collateralAmount =
+        // lender.collateralRequired × matched/amountMax = 500 × 5k/10k
+        // = 250 here) is exercised by matchOffers' own dedicated tests
+        // — this test asserts only the cancel-invariance shape: take
+        // the snapshot, do the cancel, snapshot equals.
+        LibVaipakam.Loan memory loanBefore =
+            LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(loanBefore.principal, 5_000, "pre-cancel: loan principal = 5k");
+        assertGt(loanBefore.collateralAmount, 0, "pre-cancel: loan has collateral locked");
+        assertEq(
+            uint8(loanBefore.status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "pre-cancel: loan Active"
+        );
 
         // Lender cancels. Cooldown is bypassed because amountFilled > 0
         // (per OfferCancelFacet line ~110-118).
@@ -236,6 +260,22 @@ contract CancelAfterPartialFillTest is SetupTest {
             OfferCancelFacet(address(diamond)).getOffer(lenderOfferId);
         assertTrue(LPost.accepted, "cancelled-after-partial offer: accepted=true");
         assertEq(LPost.amountFilled, 5_000, "amountFilled snapshot preserved");
+
+        // Loan-invariant assertion (P2.3 Codex round-1 #189): the cancel
+        // must touch the lender's residual escrow and NOTHING ELSE.
+        // The live loan's principal, collateral, and status are
+        // identical to their pre-cancel snapshot.
+        LibVaipakam.Loan memory loanAfter =
+            LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(loanAfter.principal, loanBefore.principal, "loan principal untouched");
+        assertEq(
+            loanAfter.collateralAmount,
+            loanBefore.collateralAmount,
+            "loan collateral untouched"
+        );
+        assertEq(uint8(loanAfter.status), uint8(loanBefore.status), "loan still Active");
+        assertEq(loanAfter.lender, lender, "loan lender unchanged");
+        assertEq(loanAfter.borrower, borrower, "loan borrower unchanged");
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -287,13 +327,31 @@ contract CancelAfterPartialFillTest is SetupTest {
             rateMax: 600,
             collateralRequired: 500
         });
-        OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId, borrowerOfferId);
+        uint256 loanId =
+            OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId, borrowerOfferId);
 
         LibVaipakam.Offer memory B =
             OfferCancelFacet(address(diamond)).getOffer(borrowerOfferId);
         assertEq(B.amountFilled, 5_000, "post-match: borrower amountFilled = 5k");
         assertEq(B.collateralAmountFilled, 500, "post-match: 500 collateral locked");
         assertFalse(B.accepted, "borrower stays OPEN with capacity remaining");
+
+        // Snapshot the live loan's collateral/principal/status BEFORE
+        // the cancel — see the lender-side test for the rationale.
+        // Specifically for the borrower path this proves the cancel
+        // does NOT unlock the 500-collateral backing the loan; the
+        // Codex P0 fix from #102 round-1 is exactly the bug where it
+        // DID get unlocked, so the loan-side assertion is the
+        // direct regression oracle for that fix.
+        LibVaipakam.Loan memory loanBefore =
+            LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(loanBefore.principal, 5_000, "pre-cancel: loan principal = 5k");
+        assertEq(loanBefore.collateralAmount, 500, "pre-cancel: loan collateral = 500");
+        assertEq(
+            uint8(loanBefore.status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "pre-cancel: loan Active"
+        );
 
         // Borrower cancels. Refund = collateralAmountMax -
         // collateralAmountFilled = 5_000 - 500 = 4_500. The 500
@@ -309,6 +367,25 @@ contract CancelAfterPartialFillTest is SetupTest {
             borrowerWalletBefore - 500,
             "post-cancel: borrower net out 500 (the locked portion)"
         );
+
+        // Loan-invariant assertion (P2.4 Codex round-1 #189): the live
+        // loan's locked collateral, principal, and status are identical
+        // to their pre-cancel snapshot. This is the direct regression
+        // oracle for the Codex P0 fix from #102 round-1 — a refactor
+        // that mistakenly unlocked the 500 collateral on cancel would
+        // be caught here even if the wallet delta math happened to
+        // line up.
+        LibVaipakam.Loan memory loanAfter =
+            LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(
+            loanAfter.collateralAmount,
+            loanBefore.collateralAmount,
+            "loan collateral untouched (the 500 still backs the loan)"
+        );
+        assertEq(loanAfter.principal, loanBefore.principal, "loan principal untouched");
+        assertEq(uint8(loanAfter.status), uint8(loanBefore.status), "loan still Active");
+        assertEq(loanAfter.lender, lender, "loan lender unchanged");
+        assertEq(loanAfter.borrower, borrower, "loan borrower unchanged");
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -333,6 +410,26 @@ contract CancelAfterPartialFillTest is SetupTest {
         // cooldown is MIN_OFFER_CANCEL_DELAY seconds (5 minutes
         // typically). We deliberately DON'T warp here — the partial-
         // fill bypass should fire even at block.timestamp ≈ createdAt.
+
+        // Control case (P2.1 Codex round-1 #189): post an unmatched
+        // lender offer FIRST and assert that an immediate cancel
+        // reverts with `CancelCooldownActive`. This proves the
+        // cooldown is actually wired and would catch a regression
+        // that broke the partial-fill bypass on the next assertion
+        // by simply turning the cooldown off globally.
+        uint256 unmatchedOfferId = _postLenderOffer({
+            creator: lender2,
+            amount: 1_000,
+            amountMax: 10_000,
+            rateMin: 500,
+            rateMax: 600,
+            collateralRequired: 500
+        });
+        vm.prank(lender2);
+        vm.expectRevert(OfferCancelFacet.CancelCooldownActive.selector);
+        OfferCancelFacet(address(diamond)).cancelOffer(unmatchedOfferId);
+
+        // Partial-filled offer — same shape, but a match lands.
         uint256 lenderOfferId = _postLenderOffer({
             creator: lender,
             amount: 1_000,
@@ -355,7 +452,9 @@ contract CancelAfterPartialFillTest is SetupTest {
         // Cancel immediately — no warp, partial-fill bypass active.
         vm.prank(lender);
         OfferCancelFacet(address(diamond)).cancelOffer(lenderOfferId);
-        // Reach here ⇒ no `CancelCooldownActive` revert. ✓
+        // Reach here ⇒ no `CancelCooldownActive` revert. The bypass
+        // path is genuinely the one that fired (the control above
+        // proved cooldown is active for amountFilled == 0).
     }
 
     // ─────────────────────────────────────────────────────────────────

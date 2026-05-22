@@ -40,8 +40,14 @@ exercises the refund formula directly via assertions on the wallet
 balance delta + the loan's collateral / principal staying intact.
 
 Coverage extends symmetrically across BOTH lender and borrower sides
-of the partial-fill cancel surface. NFT-collateral and NFT-rental
-offers can't reach the partial-fill state (single-fill semantic
-under the structural invariants), so they're not exercised here;
-the `OfferCancelFacet` code paths for those shapes are still
-indirectly covered by other test files.
+of the partial-fill cancel surface. The four scenarios exercise the
+ERC20-on-both-legs shape — the same shape that drives the bulk of
+matchOffers traffic and the shape the #102 round-1 P0 fix targeted.
+NFT-collateral and NFT-rental loan shapes are not exercised in this
+file; the `OfferCancelFacet` code paths for those shapes are still
+indirectly covered by other test files. (A dedicated harness for
+NFT-shape partial-fill cancellation, if those configurations end up
+in the partial-fill regime under the final invariants, would be a
+separate follow-up — `OfferCreateFacet` does not currently enforce
+an ERC20-only guard on ranged `amountMax`, so the structural
+invariants alone don't rule that combination out.)
