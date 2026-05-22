@@ -1160,11 +1160,20 @@ contract OfferAcceptFacet is
             : offer.interestRateBps;
         preview.collateralAmount = offer.collateralAmount;
 
-        // Collateral residual refund — borrower offers with a range
-        // pre-vault `collateralAmountMax`; the unused excess refunds to
-        // the borrower at accept (see `_payCollateralResidualRefundIfBorrowerOffer`).
+        // Collateral residual refund — only fires for borrower offers
+        // on the ERC-20 lending + ERC-20 collateral direct-accept path
+        // (see `_refundBorrowerCollateralResidualIfNeeded` for the exact
+        // gating, including the PR #187 Codex P2 NFT-lending carve-out
+        // which prevents an unfunded refund from underflowing the
+        // protocolTrackedVaultBalance counter). Projecting a residual
+        // for any borrower offer with `collateralAmountMax > collateralAmount`
+        // would drift from execution when the lending leg is NFT (the
+        // create-time excess deposit never fired) or when the collateral
+        // leg is non-ERC-20.
         if (
             !_isLender
+                && _isERC20
+                && offer.collateralAssetType == LibVaipakam.AssetType.ERC20
                 && offer.collateralAmountMax > offer.collateralAmount
         ) {
             preview.collateralResidualRefund =
@@ -1173,14 +1182,32 @@ contract OfferAcceptFacet is
 
         // LIF estimate. ERC-20 path only — NFT rental offers don't
         // charge LIF (the `tryApplyBorrowerLif` chain is guarded behind
-        // `offer.assetType == ERC20` in `_acceptOffer`). The VPFI
-        // discount probe via `LibVPFIDiscount.quote` mirrors the
-        // precondition `tryApplyBorrowerLif` itself checks before
-        // pulling VPFI: tier ≥ 1, consent flipped, vault holds ≥ the
-        // FULL LIF-equivalent VPFI, and the borrower-side oracle route
-        // resolves. The borrower address depends on the offer side
-        // (lender offer → acceptor; borrower offer → creator), same
-        // as the loan-init resolution.
+        // `offer.assetType == ERC20` in `_acceptOffer`).
+        //
+        // Mirrors the FULL precondition `tryApplyBorrowerLif` itself
+        // checks before pulling VPFI, in execution order:
+        //   1. borrower has consent flipped
+        //   2. lending asset is liquid (oracle classification)
+        //   3. `quote(...).canQuote` — borrower's vault VPFI balance
+        //      resolves a tier ≥ 1 + the LIF-equivalent VPFI rate
+        //      can be computed (`_feeAssetWeiToVPFI` succeeds)
+        //   4. borrower's vault exists (`userVaipakamVaults[borrower] != 0`)
+        //   5. vault holds ≥ `vpfiRequired` (the full LIF-equivalent VPFI)
+        //
+        // Codex round-1 P1 (#196): an earlier draft of this function
+        // treated `canQuote` alone as equivalent to "discount will
+        // apply" and dropped `vpfiRequired` on the floor. That diverged
+        // from execution on the path where the borrower has tier 1+
+        // bookkeeping (oracle resolves) but the actual vault holds
+        // LESS than the FULL LIF-equivalent — `quote` returned true,
+        // `tryApplyBorrowerLif` returned false on the balance check,
+        // so execution actually charged LIF in the principal asset
+        // while the preview projected zero. The vault-balance check
+        // below closes that gap.
+        //
+        // The borrower address depends on the offer side (lender offer
+        // → acceptor; borrower offer → creator), same as the loan-init
+        // resolution.
         if (_isERC20) {
             address _borrower = _isLender ? acceptor : offer.creator;
             bool _vpfiDiscountApplies;
@@ -1190,12 +1217,23 @@ contract OfferAcceptFacet is
                         offer.lendingAsset
                     ) == LibVaipakam.LiquidityStatus.Liquid
             ) {
-                (bool _canQuote, , ) = LibVPFIDiscount.quote(
-                    offer.lendingAsset,
-                    preview.effectivePrincipal,
-                    _borrower
-                );
-                _vpfiDiscountApplies = _canQuote;
+                (bool _canQuote, uint256 _vpfiRequired, ) =
+                    LibVPFIDiscount.quote(
+                        offer.lendingAsset,
+                        preview.effectivePrincipal,
+                        _borrower
+                    );
+                if (_canQuote) {
+                    address _borrowerVault =
+                        s.userVaipakamVaults[_borrower];
+                    if (
+                        _borrowerVault != address(0)
+                            && IERC20(s.vpfiToken).balanceOf(_borrowerVault)
+                                >= _vpfiRequired
+                    ) {
+                        _vpfiDiscountApplies = true;
+                    }
+                }
             }
             if (!_vpfiDiscountApplies) {
                 preview.lifEstimate =
