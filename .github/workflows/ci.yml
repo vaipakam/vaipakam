@@ -625,11 +625,17 @@ jobs:
         # convention for snapshot generation; invariant tests run a
         # randomised harness whose gas is non-deterministic.
         #
-        # `--no-match-test '(_Sanctions_...|test...CountriesNotCompatible|test...BlocksSanctionedCountries)'`
-        # skips five early-revert tests that report `(gas: 0)`. forge's
-        # tolerance math divides by the expected gas; when that's zero
-        # any consumed value triggers a false "Diff" failure. The regex
-        # must match the same set used at snapshot generation time.
+        # `--no-match-test '(_Sanctions_...|test...CountriesNotCompatible|test...BlocksSanctionedCountries|test_borrowerAmountMaxZeroDerivation)'`
+        # skips early-revert / vm.skip tests that report `(gas: 0)`.
+        # forge's tolerance math divides by the expected gas; when
+        # that's zero any consumed value (even another zero) triggers
+        # a false "Diff" failure. The regex must match the same set
+        # used at snapshot generation time.
+        #
+        # `test_borrowerAmountMaxZeroDerivation` is the #173 permanent
+        # `vm.skip(true, ...)` documenting the deleted derivation path
+        # from #183 — also reports gas: 0, also needs to be off the
+        # tolerance-check list.
         #
         # NOTE: local development prefixes forge with
         # `nice -n -10 ionice -c 2 -n 0` for priority on a shared
@@ -638,7 +644,7 @@ jobs:
         run: |
           forge snapshot --check --tolerance 5 \
             --no-match-path "test/invariants/*" \
-            --no-match-test '(_Sanctions_(AcceptOffer|SellLoan|TransferObligation)_Blocked|testSellLoanRevertsCountriesNotCompatible|testAcceptOfferBlocksSanctionedCountries)'
+            --no-match-test '(_Sanctions_(AcceptOffer|SellLoan|TransferObligation)_Blocked|testSellLoanRevertsCountriesNotCompatible|testAcceptOfferBlocksSanctionedCountries|test_borrowerAmountMaxZeroDerivation)'
 
       - name: Diff hint on failure
         # When the check fails (gas regression), drop a one-line
@@ -661,7 +667,7 @@ jobs:
             echo "   \`\`\`bash"
             echo "   cd contracts && nice -n -10 ionice -c 2 -n 0 forge snapshot \\"
             echo "     --no-match-path \"test/invariants/*\" \\"
-            echo "     --no-match-test '(_Sanctions_(AcceptOffer|SellLoan|TransferObligation)_Blocked|testSellLoanRevertsCountriesNotCompatible|testAcceptOfferBlocksSanctionedCountries)'"
+            echo "     --no-match-test '(_Sanctions_(AcceptOffer|SellLoan|TransferObligation)_Blocked|testSellLoanRevertsCountriesNotCompatible|testAcceptOfferBlocksSanctionedCountries|test_borrowerAmountMaxZeroDerivation)'"
             echo "   git add contracts/.gas-snapshot"
             echo "   \`\`\`"
             echo ""
