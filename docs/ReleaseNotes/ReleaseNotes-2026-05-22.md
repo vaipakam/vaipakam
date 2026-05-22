@@ -138,7 +138,7 @@ Implementation rides on this doc — separate PR after the design lands.
 
 ## Canonical Limit-Order Phase 2 — implementation (Issue #183)
 
-Implements the ratified design from PR #184 / [#183 design doc](../../DesignsAndPlans/CanonicalLimitOrderPhase2Design.md). Closes the `_acceptOffer` direct-accept deferral from PR #175 (the Codex P1×5 round-1 finding that forced a transitional revert) and removes the dead borrower `amountMax = 0` derivation path that #173's `test_borrowerAmountMaxZeroDerivation` SKIP was guarding.
+Implements the ratified design from PR #184 / [#183 design doc](../DesignsAndPlans/CanonicalLimitOrderPhase2Design.md). Closes the `_acceptOffer` direct-accept deferral from PR #175 (the Codex P1×5 round-1 finding that forced a transitional revert) and removes the dead borrower `amountMax = 0` derivation path that #173's `test_borrowerAmountMaxZeroDerivation` SKIP was guarding.
 
 ### Contracts
 
