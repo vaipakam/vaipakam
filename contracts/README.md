@@ -2,24 +2,11 @@
 
 Decentralized P2P lending protocol using the EIP-2535 Diamond Standard, with
 per-user UUPS escrow proxies, NFT-collateralized loans, Chainlink-priced
-risk, and a **Chainlink CCIP** cross-chain layer carrying the VPFI governance
-token (T-068 migrated this from LayerZero to CCIP — April 2026).
+risk, and a **Chainlink CCIP** cross-chain layer carrying the VPFI
+governance token across the supported chains.
 
 Language: Solidity `0.8.29` (`via_ir = true`, optimizer 200 runs).
 Toolchain: Foundry.
-
-> **Note (2026-05 — known doc drift).** The cross-chain architecture
-> sections below still describe the pre-T-068 LayerZero OFT V2 surface.
-> The protocol now runs on **Chainlink CCIP** — `contracts/src/crosschain/`
-> (`CcipMessenger`, `VPFIMirrorToken`, the buy adapter / receiver pair,
-> `VaipakamRewardMessenger`, `VpfiPoolRateGovernor`, plus the stock CCIP
-> `LockReleaseTokenPool` / `BurnMintTokenPool`). See
-> [ADR-0004](../docs/adr/0004-ccip-over-layerzero.md) for the migration
-> rationale and
-> [LayerZeroToChainlinkCcipMigration.md](../docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md)
-> for the spec. The body of this README is tracked for a separate
-> rewrite PR (out of scope for the #100 README-polish arc — full
-> rewrite, deserves its own PR).
 
 ---
 
@@ -107,10 +94,25 @@ contracts/
       VPFITokenFacet.sol             # Bind canonical/mirror VPFI to diamond
     token/
       VPFIToken.sol                  # Canonical ERC20Capped (Base only)
-      VPFIMirror.sol                 # Pure OFT V2 on mirror chains
-      VPFIOFTAdapter.sol             # Canonical-side OFT adapter (Base)
+      VaipakamVestingWallet.sol      # Per-recipient vesting wallet
+    crosschain/                      # Provider-agnostic cross-chain layer
+      ICrossChainMessenger.sol       # Provider-neutral port; domain code
+                                     #   depends only on this interface
+      CcipMessenger.sol              # CCIP-aware adapter (the one
+                                     #   transport-layer contract)
+      GuardianPausable.sol           # Two-role emergency pause base
+      VPFIMirrorToken.sol            # VPFI mirror on non-canonical chains
+                                     #   (stock CCIP CCT shape)
+      VpfiPoolRateGovernor.sol       # Bounds-checked rate-limit admin for
+                                     #   the CCIP token pools (ET-008)
+      VpfiBuyAdapter.sol             # Cross-chain fixed-rate VPFI buy
+                                     #   adapter (mirror side)
+      VpfiBuyReceiver.sol            # Cross-chain buy receiver (Base side)
+      IVpfiBuyCcipMessages.sol       # Buy-flow CCIP message shape
+      VaipakamRewardMessenger.sol    # Cross-chain reward accounting
     libraries/                       # LibVaipakam, LibFacet, Lib* helpers
-    interfaces/                      # IVaipakamErrors, IVPFIToken, etc.
+    interfaces/                      # IVaipakamErrors, IVPFIToken,
+                                     #   IRewardMessenger, etc.
   script/                            # Forge deploy/ops scripts
   test/                              # Unit + invariant tests, mocks, helpers
   foundry.toml
@@ -122,8 +124,14 @@ contracts/
 ## VPFI Cross-Chain Topology
 
 Phase 1 ships VPFI as an **independent-diamond, shared-token** design:
-one diamond per chain, one governance token mesh linked over LayerZero
-OFT V2.
+one diamond per chain, one governance token mesh linked over Chainlink
+CCIP. VPFI is registered as a CCIP **Cross-Chain Token (CCT)** — on
+Base it's the canonical `VPFIToken` paired with a stock
+`LockReleaseTokenPool`; on every mirror chain it's `VPFIMirrorToken`
+paired with a stock `BurnMintTokenPool`. The token pools are the only
+authority allowed to mint / burn / release supply on their respective
+sides; CCIP's `TokenAdminRegistry` is the single source of truth for
+the pool registration.
 
 ```
    ┌────────────────────────────────────────────────────────────┐
@@ -132,40 +140,61 @@ OFT V2.
    │                     Base Sepolia 84532)                    │
    │                                                            │
    │   VPFIToken (ERC20Capped 230M, cap-enforced, pauseable)    │
-   │   VPFIOFTAdapter ◀────┐                                    │
-   │        │              │  setPeer(eid, mirror)              │
-   │   VaipakamDiamond     │  isCanonicalVPFIChain = true       │
-   └────────┼──────────────┘                                    │
-            │                                                   │
-            │ LayerZero V2 messages (DVN-verified)              │
-            ▼                                                   │
-   ┌─────────────────────────┐    ┌─────────────────────────┐   │
-   │  MIRROR CHAIN (e.g.     │    │  MIRROR CHAIN (e.g.     │   │
-   │  Ethereum / Polygon /   │    │  Arbitrum / Optimism)   │   │
-   │  Sepolia / Amoy)        │    │                         │   │
-   │                         │    │                         │   │
-   │  VPFIMirror (pure OFT,  │    │  VPFIMirror             │   │
-   │    no cap, no mint API) │    │                         │   │
-   │  VaipakamDiamond        │    │  VaipakamDiamond        │   │
-   │  isCanonicalVPFIChain   │    │  isCanonicalVPFIChain   │   │
-   │    = false              │    │    = false              │   │
-   └─────────────────────────┘    └─────────────────────────┘   │
+   │       ▲                                                    │
+   │       │ lock / release                                     │
+   │   LockReleaseTokenPool (stock CCIP)                        │
+   │   VaipakamDiamond  ─── isCanonicalVPFIChain = true         │
+   └────────┼───────────────────────────────────────────────────┘
+            │
+            │ Chainlink CCIP messages
+            │  (committing DON + executing DON +
+            │   independent Risk Management Network)
+            ▼
+   ┌─────────────────────────┐    ┌─────────────────────────┐
+   │  MIRROR CHAIN (e.g.     │    │  MIRROR CHAIN (e.g.     │
+   │  Ethereum / Polygon /   │    │  Arbitrum / Optimism /  │
+   │  BNB Chain)             │    │  Sepolia / Amoy)        │
+   │                         │    │                         │
+   │  VPFIMirrorToken        │    │  VPFIMirrorToken        │
+   │     ▲ mint / burn       │    │     ▲ mint / burn       │
+   │  BurnMintTokenPool      │    │  BurnMintTokenPool      │
+   │  VaipakamDiamond        │    │  VaipakamDiamond        │
+   │  isCanonicalVPFIChain   │    │  isCanonicalVPFIChain   │
+   │    = false              │    │    = false              │
+   └─────────────────────────┘    └─────────────────────────┘
 ```
 
 Key properties:
 
 - **Global cap lives on Base.** `VPFIToken.TOTAL_SUPPLY_CAP = 230M`.
-  Because the canonical adapter LOCKS outgoing VPFI (never burns), every
-  mirrored VPFI is backed 1:1 by a locked VPFI in the adapter. The cap
-  therefore bounds the entire mesh, not just Base.
-- **Mirrors cannot mint locally.** `VPFIMirror` is a pure OFT — the only
-  supply entry point is `_credit` from an authenticated LayerZero message
-  from an authorized peer. `TreasuryFacet.mintVPFI` is additionally gated
-  on `isCanonicalVPFIChain`, which is flipped true exactly once (on Base)
+  The Base `LockReleaseTokenPool` LOCKS outgoing VPFI (never burns), so
+  every mirror-side VPFI is backed 1:1 by a locked VPFI in the canonical
+  pool. The cap therefore bounds the entire mesh, not just Base.
+- **Mirrors cannot mint locally.** `VPFIMirrorToken` only exposes mint /
+  burn to its registered `BurnMintTokenPool`; the pool only mints on
+  receipt of a CCIP-delivered, RMN-verified message routed through the
+  canonical lane. `TreasuryFacet.mintVPFI` is additionally gated on
+  `isCanonicalVPFIChain`, which is flipped true exactly once (on Base)
   by `VPFITokenFacet.setCanonicalVPFIChain`.
-- **Ownership model.** Every proxy's owner is expected to be a Gnosis Safe
-  behind a timelock. `Ownable2StepUpgradeable` guards rotation with an
-  accept step so fat-finger transfers don't brick the mesh.
+- **One transport-aware contract.** Domain code in `facets/` depends only
+  on the provider-neutral `ICrossChainMessenger` port. The CCIP-aware
+  glue lives entirely in `crosschain/CcipMessenger.sol`. Migrating to a
+  different transport in the future would touch one file plus the
+  registry pointer; no facet would change.
+- **Per-lane rate limits.** Every token-pool lane carries a CCIP rate
+  limit (capacity + refill rate) administered via
+  `VpfiPoolRateGovernor`, which bounds-checks every setter (`ET-008`)
+  and refuses to disable a live lane's limit.
+- **Pause levers on every runtime-path contract.** `CcipMessenger`,
+  `VPFIMirrorToken`, `VaipakamRewardMessenger`, `VpfiBuyAdapter`, and
+  `VpfiBuyReceiver` all extend `GuardianPausable`: guardian-or-owner
+  `pause()`, owner-only `unpause()`, applied on both send and receive
+  paths. `VpfiPoolRateGovernor` is the rate-limit admin only — it has
+  no send/receive path of its own and its setters are already
+  owner-gated, so it doesn't extend the pause base.
+- **Ownership model.** Every proxy's owner is expected to be a Gnosis
+  Safe behind a timelock. `Ownable2StepUpgradeable` guards rotation
+  with an accept step so fat-finger transfers don't brick the mesh.
 
 ---
 
@@ -173,21 +202,41 @@ Key properties:
 
 ### Environment variables
 
-Shared across scripts:
+Required by `DeployCrosschain.s.sol`:
 
-| Var                   | Used by                                         | Notes                                                    |
-|-----------------------|-------------------------------------------------|----------------------------------------------------------|
-| `PRIVATE_KEY`         | all scripts                                     | Broadcaster key                                          |
-| `ADMIN_ADDRESS`       | `DeployDiamond`                                 | Receives `ADMIN_ROLE` on the diamond                     |
-| `TREASURY_ADDRESS`    | `DeployDiamond`                                 | Initial treasury recipient                               |
-| `DIAMOND_ADDRESS`     | `DeployVPFICanonical`, `DeployVPFIMirror`       | Per-chain diamond proxy                                  |
-| `VPFI_OWNER`          | `DeployVPFICanonical`, `DeployVPFIMirror`       | Timelock/multi-sig owning the token / mirror / adapter   |
-| `VPFI_TREASURY`       | `DeployVPFICanonical`                           | Recipient of the 23M (10%) initial mint                  |
-| `VPFI_INITIAL_MINTER` | `DeployVPFICanonical`                           | First `minter` — typically the treasury safe             |
-| `LZ_ENDPOINT`         | `DeployVPFICanonical`, `DeployVPFIMirror`       | LayerZero EndpointV2 on the target chain                 |
-| `LOCAL_OAPP`          | `WireVPFIPeers`                                 | Local adapter OR mirror proxy                            |
-| `REMOTE_EID`          | `WireVPFIPeers`                                 | LayerZero endpoint id of the remote chain                |
-| `REMOTE_PEER`         | `WireVPFIPeers`                                 | Remote adapter/mirror address (cast to bytes32 in-script)|
+| Var                   | Notes                                                                                  |
+|-----------------------|----------------------------------------------------------------------------------------|
+| `DEPLOYER_PRIVATE_KEY`| Broadcaster key                                                                        |
+| `ADMIN_ADDRESS`       | Owner of every deployed proxy                                                          |
+| `CCIP_ROUTER`         | Chainlink CCIP `Router` on this chain (immutable on `CcipMessenger`)                  |
+| `CCIP_RMN_PROXY`      | Chainlink CCIP `RMNProxy` on this chain (passed to the token-pool constructor)         |
+| `BASE_CHAIN_ID`       | Mirror chains only — EVM chain id of canonical Base for reward + buy flow targeting   |
+| `TREASURY_ADDRESS`    | Mirror chains only — local treasury for the buy adapter                                |
+| `VPFI_BUY_PAYMENT_TOKEN`  | Optional, mirror chains — `0x0` for native gas (default); bridged WETH address on chains where native gas isn't ETH-priced (BNB / Polygon mainnet — see CLAUDE.md "VPFIBuyAdapter payment-token mode") |
+| `VPFI_BUY_REFUND_TIMEOUT` | Optional, mirror chains — seconds before a stuck cross-chain buy can be refunded (default 900)                              |
+| `CCIP_DEST_GAS_LIMIT` | Optional — cross-chain callback gas, default 400_000                                   |
+
+`DeployCrosschain` reads the diamond and (on canonical chains) the
+`VPFIToken` proxy addresses from the per-chain
+`deployments/<chain>/addresses.json` written by earlier deploy steps;
+they are NOT passed via env.
+
+Required by `ConfigureCcip.s.sol`:
+
+| Var                                | Notes                                                                                |
+|------------------------------------|--------------------------------------------------------------------------------------|
+| `ADMIN_PRIVATE_KEY`                | The admin key (owner of every deployed proxy + the TokenPool's pending owner)        |
+| `CCIP_TOKEN_ADMIN_REGISTRY`        | Chainlink `TokenAdminRegistry` on this chain                                          |
+| `CCIP_REGISTRY_MODULE_OWNER_CUSTOM`| Chainlink `RegistryModuleOwnerCustom` on this chain (the CCT owner-based registrar)  |
+| `CCIP_LANE_CHAIN_IDS`              | Comma-separated EVM chain ids of every REMOTE chain to wire a TokenPool lane to       |
+| `BASE_CHAIN_ID`                    | Mirror chains only — the hub the buy / reward channels peer with                      |
+| `CCIP_GUARDIAN`                    | Optional — guardian set by `_setGuardians` ONLY on `CcipMessenger`, `VaipakamRewardMessenger`, and the local buy contract (`VpfiBuyAdapter` on mirrors, `VpfiBuyReceiver` on Base). **Not set on `VPFIMirrorToken`** — even though it extends `GuardianPausable`. Operator must `setGuardian` on the mirror token manually if they want the same guardian on it. Default unset → step skipped. |
+| `CCIP_RATE_CAPACITY`               | Optional — per-lane token-bucket capacity (default 50,000 VPFI, design §10)           |
+| `CCIP_RATE_REFILL`                 | Optional — per-lane refill rate, VPFI/s (default 5.8 VPFI/s, design §10)              |
+
+`ConfigureCcip` reads every deployed-contract address from the
+per-chain artifacts `DeployCrosschain` wrote; only the env above is
+operator-supplied.
 
 ### Step 1 — Deploy a diamond on each chain
 
@@ -199,99 +248,161 @@ forge script script/DeployDiamond.s.sol:DeployDiamond \
   --broadcast --verify
 ```
 
-`DeployDiamond` deploys all 23 facets, the `VaipakamDiamond`, and cuts every
-facet in one broadcast. Logs the diamond proxy address — save it into the
-per-chain `DIAMOND_ADDRESS` env for the next step.
+`DeployDiamond` deploys every facet, the `VaipakamDiamond` proxy, and
+cuts every facet in one broadcast. It writes the diamond proxy address
+to `deployments/<chain>/addresses.json` — the same artifact every
+subsequent script reads from. Canonical-chain `VPFIToken` deployment
+is operator-driven, lives in the per-chain deploy procedure as a
+prerequisite step before `DeployCrosschain` runs, and is recorded in
+the same artifact (`vpfiToken` field). `DeployDiamond` itself does not
+deploy `VPFIToken`.
 
-### Step 2 — Canonical VPFI deploy (Base only)
+### Step 2 — Deploy the cross-chain layer
 
-Runs **once across the whole mesh**, only on Base mainnet or Base Sepolia:
+Run on every chain — Base + every mirror. The single
+`DeployCrosschain.s.sol` script forks on a canonical-vs-mirror flag
+(`block.chainid ∈ {8453, 84532}` ⇒ canonical) so the same broadcast
+deploys the right contracts for each chain.
 
 ```bash
-# env
-export DIAMOND_ADDRESS=<base diamond>
-export VPFI_OWNER=<timelock-safe>
-export VPFI_TREASURY=<treasury-safe>
-export VPFI_INITIAL_MINTER=<treasury-safe>   # rotate to diamond later
-export LZ_ENDPOINT=<base LZ EndpointV2>
+# every chain
+export DEPLOYER_PRIVATE_KEY=<broadcaster>
+export ADMIN_ADDRESS=<owner of every proxy>
+export CCIP_ROUTER=<local CCIP Router>
+export CCIP_RMN_PROXY=<local CCIP RMNProxy>
 
-forge script script/DeployVPFICanonical.s.sol:DeployVPFICanonical \
-  --rpc-url $BASE_RPC \
+# mirror-chain-only env additions
+export BASE_CHAIN_ID=<EVM chain id of canonical Base>
+export TREASURY_ADDRESS=<local treasury for the buy adapter>
+
+forge script script/DeployCrosschain.s.sol:DeployCrosschain \
+  --rpc-url $RPC_URL \
   --broadcast --verify
 ```
 
-What this does in a single broadcast:
+What this does in one broadcast — chain-dependent:
 
-1. Deploy `VPFIToken` impl + `ERC1967Proxy`, calling `initialize(owner,
-   treasury, initialMinter)` which mints the 23M initial supply to
-   `VPFI_TREASURY`.
-2. Deploy `VPFIOFTAdapter` impl + `ERC1967Proxy` bound to the token proxy
-   and the Base LayerZero endpoint.
-3. `VPFITokenFacet.setVPFIToken(vpfi)` — register the token on the diamond.
-4. `VPFITokenFacet.setCanonicalVPFIChain(true)` — enable
-   `TreasuryFacet.mintVPFI` on this chain (and nowhere else).
+**On every chain (canonical or mirror):**
 
-### Step 3 — Mirror deploy (each non-canonical chain)
+1. Deploy `CcipMessenger` impl + `ERC1967Proxy` — the one CCIP-aware
+   contract that fronts every send / receive path (router is immutable
+   on the impl).
+2. Deploy the VPFI CCIP `TokenPool` (LockRelease on canonical,
+   BurnMint on mirrors) and transfer pending ownership to `ADMIN_ADDRESS`
+   (the pool is `Ownable2Step`; the handover is accepted in step 3).
+3. Deploy `VpfiPoolRateGovernor` impl + `ERC1967Proxy` initialized with
+   the pool address — the bounds-checked rate-limit admin.
+4. Deploy `VaipakamRewardMessenger` impl + `ERC1967Proxy` initialized
+   with the messenger, diamond, canonical flag, `BASE_CHAIN_ID` (zero
+   on canonical), and the destination gas limit.
 
-Run **once per mirror chain**, after that chain's diamond is live:
+**On the canonical chain (Base) only:**
+
+- The token pool is the stock CCIP `LockReleaseTokenPool` bound to the
+  pre-existing canonical `VPFIToken` (read from
+  `deployments/<chain>/addresses.json`; deploy the token in the
+  operator step that precedes this script).
+- Deploy `VpfiBuyReceiver` impl + `ERC1967Proxy` — the receiver side
+  of the cross-chain fixed-rate VPFI buy flow.
+
+**On a mirror chain only:**
+
+- Deploy `VPFIMirrorToken` impl + `ERC1967Proxy` (`initialize(admin)`)
+  — the local mirror VPFI ERC20. Token-pool wiring on the mirror token
+  itself (`setTokenPool`) happens in `ConfigureCcip`, not here.
+- The token pool is the stock CCIP `BurnMintTokenPool` bound to the
+  fresh mirror token.
+- Deploy `VpfiBuyAdapter` impl + `ERC1967Proxy` — the sender side of
+  the cross-chain VPFI buy flow.
+
+`VPFITokenFacet.setVPFIToken(...)` and
+`VPFITokenFacet.setCanonicalVPFIChain(true)` are operator actions
+done outside this script (the canonical Base configuration runbook
+calls them once `DeployCrosschain` has settled and the addresses
+are recorded). `DeployCrosschain` itself does NOT touch the
+diamond's token-binding state.
+
+Addresses use regular `new ERC1967Proxy(...)` deployment — non-
+deterministic. The per-chain `deployments/<chain>/addresses.json`
+is the canonical record of every deployed address.
+
+### Step 3 — Configure CCIP lanes + token pools
+
+After Step 2 has run on every chain, run `ConfigureCcip.s.sol` to
+register chain-selector maps, remote-messenger peers, the buy +
+reward channels, per-lane rate limits, and register the token pool
+with the local `TokenAdminRegistry`.
 
 ```bash
-# env
-export DIAMOND_ADDRESS=<local diamond>
-export VPFI_OWNER=<local timelock-safe>
-export LZ_ENDPOINT=<local LZ EndpointV2>
+# env (per chain — one ConfigureCcip pass per chain, NOT per pair)
+export ADMIN_PRIVATE_KEY=<owner key>
+export CCIP_TOKEN_ADMIN_REGISTRY=<local TokenAdminRegistry>
+export CCIP_REGISTRY_MODULE_OWNER_CUSTOM=<local RegistryModuleOwnerCustom>
+# Comma-separated EVM chain ids of every REMOTE chain you're wiring
+# from this local chain — pass the full set; ConfigureCcip iterates
+# over them internally to build the lane / channel / broadcast lists
+export CCIP_LANE_CHAIN_IDS=<remote-chain-id-1,remote-chain-id-2,...>
 
-forge script script/DeployVPFIMirror.s.sol:DeployVPFIMirror \
-  --rpc-url $LOCAL_RPC \
-  --broadcast --verify
+# mirror chains only
+export BASE_CHAIN_ID=<EVM chain id of canonical Base>
+
+# optional
+export CCIP_GUARDIAN=<guardian-eoa-or-safe>
+export CCIP_RATE_CAPACITY=<token-bucket capacity>      # default 50_000 VPFI
+export CCIP_RATE_REFILL=<token-bucket refill VPFI/s>   # default ~5.8
+
+forge script script/ConfigureCcip.s.sol:ConfigureCcip \
+  --rpc-url $LOCAL_RPC --broadcast
 ```
 
-What this does:
+The script is idempotent and `ADMIN`-broadcast. For each chain it
+configures:
 
-1. Deploy `VPFIMirror` impl + `ERC1967Proxy`, calling `initialize(owner)`.
-2. `VPFITokenFacet.setVPFIToken(mirror)` — register on the local diamond.
-3. **Leaves `isCanonicalVPFIChain = false`.** The mint gate in
-   `TreasuryFacet.mintVPFI` therefore reverts with `NotCanonicalVPFIChain`
-   on this chain.
+- `CcipMessenger`: `setChainSelector`, `setRemoteMessenger`,
+  `registerChannel` for the `vpfi-buy` + `vpfi-reward` flows,
+  `setChannelPeer`, `setGuardian`.
+- `VPFIMirrorToken.setTokenPool(burnMintPool)` on mirrors (the mirror
+  token only accepts mint / burn from its registered pool).
+- `VpfiPoolRateGovernor.setLaneRateLimits` per lane — Phase 1 starting
+  values: capacity 50,000 VPFI, refill ≈5.8 VPFI/s. The governor
+  refuses to disable a lane's limit and bounds every value (ET-008).
+- `VaipakamRewardMessenger.setBroadcastDestinations([mirror chain ids])`
+  — Base only; the canonical messenger broadcasts the finalized daily
+  global denominator to every mirror.
+- Register each token pool with CCIP `TokenAdminRegistry` via
+  `RegistryModuleOwnerCustom` — **only if the broadcasting admin is
+  the token's `owner()`**. `_registerCct` pre-checks
+  `IOwner(localToken).owner() == admin` and **skips with a console
+  message** when ownership has already moved off the broadcaster
+  (e.g., canonical `VPFIToken` ownership on the governance timelock
+  / multisig). In that case the token owner runs
+  `registerAdminViaOwner` → `acceptAdminRole` → `setPool` as a
+  separate, owner-broadcast transaction. The cutover runbook covers
+  this. Admin is the deploy multisig at this stage; rotates to the
+  timelock at the handover step.
 
-### Step 4 — Wire the OFT peer mesh
+Run `ConfigureCcip` **once per chain**, passing the FULL set of
+remote chain ids in `CCIP_LANE_CHAIN_IDS`. The script iterates the
+remotes internally to build the per-lane TokenPool wiring, the
+channel-peer table, and (on the canonical chain) the
+`setBroadcastDestinations(mirrors)` list — that last call REPLACES
+the destination list, so a pair-by-pair execution would leave only
+the last mirror configured and silently stop reward broadcasts to
+the earlier mirrors. The wiring graph is still symmetric — every
+chain ends up with the same set of peers on the other side — but
+the script unit is per-chain, not per-pair.
 
-OFT V2 peers are symmetric: for each ordered pair `(A → B)` and `(B → A)`
-the owner wallet must call `setPeer` on the local OApp pointing at the
-remote one.
+**Anvil rehearsal**: the wiring is exercised end-to-end by the
+Foundry test `contracts/test/CcipDeploymentRehearsalTest.t.sol`,
+which stands up two logical chains via `chainlink-local`'s
+`CCIPLocalSimulator` and drives all three flows (VPFI CCT transfer,
+the buy-flow two-step release, and the reward REPORT / BROADCAST
+round-trip). The test pre-deploys CCIP `Router` + a local
+`TokenAdminRegistry` in-harness, so the CCT pool-registration path
+is exercised the same way it will be on testnet / mainnet. Run it
+with `forge test --match-path 'test/CcipDeploymentRehearsalTest.t.sol'`.
 
-For each chain pair, run `WireVPFIPeers` on both sides with values swapped.
-Example: connect Base Sepolia adapter to Polygon Amoy mirror.
-
-```bash
-# On Base Sepolia (owner runs with the adapter's owner key)
-LOCAL_OAPP=<base-sepolia adapter proxy> \
-REMOTE_EID=<amoy eid> \
-REMOTE_PEER=<amoy mirror proxy> \
-forge script script/WireVPFIPeers.s.sol:WireVPFIPeers \
-  --rpc-url $BASE_SEPOLIA_RPC --broadcast
-
-# On Polygon Amoy (owner runs with the mirror's owner key)
-LOCAL_OAPP=<amoy mirror proxy> \
-REMOTE_EID=<base-sepolia eid> \
-REMOTE_PEER=<base-sepolia adapter proxy> \
-forge script script/WireVPFIPeers.s.sol:WireVPFIPeers \
-  --rpc-url $AMOY_RPC --broadcast
-```
-
-Run both directions for every pair in the mesh (`adapter ↔ each mirror`,
-plus `mirror ↔ each other mirror` if mirror-to-mirror direct sends are
-desired; otherwise mirrors can route through the canonical adapter).
-
-**Owner-only extras** (outside the scripts, via the owner wallet / Safe):
-
-- Register DVNs and the executor (OApp `setConfig`).
-- Set enforced options so all outbound sends pay enough gas on the
-  destination side.
-- Set a delegate (`OAppCore.setDelegate`) if operational control should
-  differ from ownership.
-
-### Step 5 — Rotate `minter` to the diamond
+### Step 4 — Rotate `minter` to the diamond
 
 Once the canonical deploy has settled and the treasury has its 23M, the
 owner rotates mint authority from the treasury safe onto the Base
@@ -330,34 +441,55 @@ and the `GuardianPausable` pause levers are documented in the
 Full design:
 [`docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md`](../docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md).
 
-## OFT Bridging Flow
+## VPFI Cross-Chain Token (CCT) Bridging Flow
+
+The user-facing entry point on every chain is the CCIP `Router.ccipSend`
+call (typically reached via the CCT-aware aggregator UI). Locally the
+`crosschain/` contracts only configure pools + register tokens with the
+`TokenAdminRegistry` — the lock / burn / release / mint accounting
+itself is the stock CCIP token-pool path.
 
 **Outbound (Base → mirror chain)**
 
-1. User approves the canonical `VPFIOFTAdapter` for `N` VPFI.
-2. User calls `adapter.send(SendParam, MessagingFee, refundAddress)`.
-3. Adapter `safeTransferFrom`s `N` VPFI from the user into the adapter
-   (locks it).
-4. LayerZero endpoint emits a packet addressed to the peer mirror on the
-   destination chain.
-5. DVNs verify, executor delivers.
-6. Destination `VPFIMirror._credit` mints `N` VPFI to the recipient.
+1. User approves the canonical `LockReleaseTokenPool` for `N` VPFI on
+   Base via the CCIP UI / SDK.
+2. User calls `Router.ccipSend(destChainSelector, message)` with `N`
+   VPFI in the `tokenAmounts` payload.
+3. CCIP lifts `N` VPFI from the user into the canonical token pool —
+   the pool LOCKS them (does not burn).
+4. CCIP commits the message via the committing DON; the Risk Management
+   Network re-verifies on its independent codebase; the executing DON
+   delivers the message on the destination side.
+5. The destination `BurnMintTokenPool` MINTS `N` VPFIMirrorToken to the
+   recipient (since `VPFIMirrorToken` only allows mint by its
+   registered pool).
 
 **Inbound (mirror chain → Base)**
 
-1. User calls `mirror.send(...)` on the source mirror with `N` VPFI.
-2. Mirror burns `N` locally.
-3. LayerZero delivers the packet to the Base adapter.
-4. Adapter `_credit`s `N` VPFI by unlocking (transferring) from its
-   holdings to the recipient.
+1. User approves the local `BurnMintTokenPool` for `N` VPFIMirrorToken.
+2. User calls `Router.ccipSend(baseChainSelector, message)`.
+3. The mirror pool BURNS `N` VPFIMirrorToken locally.
+4. CCIP commits + RMN-verifies + delivers on Base.
+5. The canonical `LockReleaseTokenPool` RELEASES `N` VPFI from its
+   locked holdings to the recipient.
 
 Mesh-wide supply invariant at any instant:
 
 ```
 mirror_totalSupply[chain_1] + mirror_totalSupply[chain_2] + ... +
-    canonical_balance_of(adapter) ==
+    canonical_balance_of(lockReleasePool) ==
     canonical_totalSupply  <=  TOTAL_SUPPLY_CAP (230M)
 ```
+
+In-flight CCIP messages count as "locked on source / not yet minted on
+destination", so the invariant holds across the message-pending window.
+
+**Failure model**: a paused contract's inbound CCIP message reverts;
+CCIP records it as a failed message, manually re-executable once the
+contract is unpaused. Nothing is lost — the lock / burn on the sender
+side remains, the destination mint executes on retry. Same shape for
+the buy-flow and reward-flow channels which are routed through
+`CcipMessenger` on top of the same Router.
 
 ---
 
@@ -390,10 +522,11 @@ VPFI tokenomics constants (in `VPFIToken.sol`):
 
 | Script                             | Purpose                                                         |
 |------------------------------------|-----------------------------------------------------------------|
-| `DeployDiamond.s.sol`              | Deploy diamond + 23 facets, run the initial cut                 |
-| `DeployVPFICanonical.s.sol`        | Base-only: VPFIToken + adapter + bind to diamond                |
-| `DeployVPFIMirror.s.sol`           | Mirror chain: VPFIMirror + bind to local diamond                |
-| `WireVPFIPeers.s.sol`              | Owner-side OApp `setPeer` for one (local, remote) pair          |
+| `DeployDiamond.s.sol`              | Deploy diamond + every facet, run the initial cut               |
+| `DeployCrosschain.s.sol`           | Deploy the cross-chain layer for this chain (CcipMessenger + token-side contracts + buy adapter/receiver + reward messenger + rate governor) — auto-forks on canonical-vs-mirror by `block.chainid` |
+| `ConfigureCcip.s.sol`              | Wire chain selectors, remote messengers, channels, per-lane rate limits, and `TokenAdminRegistry` pool registration |
+| `ConfigureRewardReporter.s.sol`    | Bind the reward messenger to the diamond + register the canonical chain id |
+| `ConfigureVPFIBuy.s.sol`           | Diamond-side cross-chain VPFI buy params (rate, caps, payment token mode) |
 | `RedeployFacets.s.sol`             | Redeploy specific facets and cut them in (surgical upgrade)     |
 | `ReplaceStaleFacets.s.sol`         | Replace facets whose selectors have drifted                     |
 | `UpgradeOracleFacet.s.sol`         | Swap the OracleFacet implementation                             |
