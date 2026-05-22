@@ -161,7 +161,7 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
 
         // Canonical-chain gate: only the Base (mainnet) / Base Sepolia
         // (testnet) Diamond can mint. On every other chain in the mesh
-        // supply arrives exclusively via the LayerZero OFT V2 peer bridge
+        // supply arrives exclusively via the Chainlink CCIP CCT (Cross-Chain Token) peer bridge
         // from the canonical adapter, so minting locally would break the
         // 230M global-cap invariant.
         if (!s.isCanonicalVPFIChain) revert NotCanonicalVPFIChain();

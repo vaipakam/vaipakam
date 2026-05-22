@@ -6,7 +6,7 @@ import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessCont
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
-import {IRewardOApp} from "../interfaces/IRewardOApp.sol";
+import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 
 /**
@@ -23,7 +23,7 @@ import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
  *                  Numeraire18 pair directly into the aggregator sub-storage
  *                  keyed by `block.chainid`; no cross-chain message is
  *                  needed because Base is its own aggregator.
- *        - Mirror: {closeDay} forwards the pair via `IRewardOApp.sendChainReport`
+ *        - Mirror: {closeDay} forwards the pair via `IRewardMessenger.sendChainReport`
  *                  to the Base-side reward messenger, paying the CCIP
  *                  native fee out of `msg.value`. The messenger delivers
  *                  into `RewardAggregatorFacet.onChainReportReceived` on Base.
@@ -51,7 +51,7 @@ contract RewardReporterFacet is
 
     /// @notice Emitted when the local chain reports its day-`D` interest
     ///         totals — directly to aggregator storage on Base, or via
-    ///         the OApp on a mirror.
+    ///         the messenger on a mirror.
     /// @param dayId                 Interaction day being reported.
     /// @param sourceChainId         EVM chain id of the source (local) chain.
     /// @param lenderNumeraire18           Local lender USD-18 interest on `dayId`.
@@ -103,7 +103,7 @@ contract RewardReporterFacet is
      *          and increments `chainDailyReportCount[dayId]`. No
      *          cross-chain fee required; any `msg.value` is refunded.
      *        - Mirror: forwards the pair via
-     *          {IRewardOApp.sendChainReport}. `msg.value` MUST cover the
+     *          {IRewardMessenger.sendChainReport}. `msg.value` MUST cover the
      *          CCIP native fee; the messenger refunds leftover to the caller.
      *
      *      Reverts:
@@ -171,7 +171,7 @@ contract RewardReporterFacet is
             );
 
             // Forward full msg.value; messenger refunds the caller directly.
-            IRewardOApp(oApp).sendChainReport{value: msg.value}(
+            IRewardMessenger(oApp).sendChainReport{value: msg.value}(
                 dayId,
                 lenderNumeraire18,
                 borrowerNumeraire18,
@@ -209,7 +209,7 @@ contract RewardReporterFacet is
     // ─── Mirror-side trusted broadcast ingress ──────────────────────────────
 
     /**
-     * @notice Trusted ingress: the OApp delivers Base's finalized global
+     * @notice Trusted ingress: the messenger delivers Base's finalized global
      *         denominator for `dayId` and this function stamps it into
      *         `knownGlobal{Lender,Borrower}InterestNumeraire18` so local
      *         {LibInteractionRewards.claimForUserWindow} can use it.
@@ -221,7 +221,7 @@ contract RewardReporterFacet is
      *      Works on Base too: {RewardAggregatorFacet.finalizeDay} funnels
      *      Base's own finalization through the same storage slot (via a
      *      direct write, not this function), so Base-side claims read
-     *      the identical denominator without needing a LayerZero packet.
+     *      the identical denominator without needing a CCIP message.
      * @param dayId                 Day being broadcast.
      * @param globalLenderNumeraire18     Finalized global lender denominator.
      * @param globalBorrowerNumeraire18   Finalized global borrower denominator.
@@ -237,7 +237,7 @@ contract RewardReporterFacet is
         }
 
         if (s.knownGlobalSet[dayId]) {
-            // Idempotent re-delivery is fine — LayerZero retries can
+            // Idempotent re-delivery is fine — CCIP retries can
             // duplicate a packet. Divergent values must never overwrite.
             if (
                 s.knownGlobalLenderInterestNumeraire18[dayId] != globalLenderNumeraire18 ||
@@ -261,11 +261,11 @@ contract RewardReporterFacet is
 
     // ─── Admin ──────────────────────────────────────────────────────────────
 
-    /// @notice Register (or rotate) the LayerZero OApp authorized to
+    /// @notice Register (or rotate) the cross-chain messenger authorized to
     ///         deliver cross-chain reward messages on this Diamond.
     /// @dev ADMIN_ROLE-gated. Passing `address(0)` disables the OApp
     ///      ingress until a new one is wired.
-    /// @param oApp VaipakamRewardOApp proxy address on this chain.
+    /// @param oApp VaipakamRewardMessenger proxy address on this chain.
     function setRewardOApp(
         address oApp
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {

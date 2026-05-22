@@ -32,19 +32,23 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *      transfers including mints, providing an emergency brake.
  *
  *      Cross-chain role in the Phase 1 mesh: this contract lives on the
- *      canonical chain only. Its sibling `VPFIOFTAdapter` (also on the
- *      canonical chain) wraps balances here and bridges them via
- *      LayerZero OFT V2 to per-chain `VPFIMirror` OFTs on every other
- *      Diamond deploy (Polygon / Arbitrum / Optimism / Ethereum mainnet,
- *      plus Sepolia testnet). Because the adapter locks rather than burns
- *      on outbound sends, the 230M cap enforced on this contract is the
- *      global cap across the whole mesh — one locked VPFI = one minted
- *      mirror VPFI somewhere else.
+ *      canonical chain only. The Chainlink CCIP `LockReleaseTokenPool`
+ *      wired to this token (registered in the CCIP `TokenAdminRegistry`)
+ *      locks balances here on outbound bridges and releases them on
+ *      inbound. Mirror chains hold `VPFIMirrorToken` paired with a stock
+ *      `BurnMintTokenPool` — outbound mirror sends burn supply and the
+ *      Base pool releases the locked canonical VPFI to the receiver.
+ *      Because the canonical pool locks rather than burns on outbound
+ *      sends, the 230M cap enforced on this contract is the global cap
+ *      across the whole mesh — one locked VPFI = one minted mirror VPFI
+ *      somewhere else. Pre-T-068 the same role was played by the deleted
+ *      `VPFIOFTAdapter` LayerZero adapter; see
+ *      `docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md`.
  *
  *      This implementation is UUPS-upgradeable and uses namespaced
  *      (ERC-7201) storage from OpenZeppelin v5, so future upgrades
- *      (e.g. enforced-options tweaks surfaced through the adapter) are
- *      storage-safe without requiring reserved gaps.
+ *      (e.g. CCIP pool wiring tweaks) are storage-safe without requiring
+ *      reserved gaps.
  */
 contract VPFIToken is
     Initializable,

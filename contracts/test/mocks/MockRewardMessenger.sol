@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {IRewardOApp} from "../../src/interfaces/IRewardOApp.sol";
+import {IRewardMessenger} from "../../src/interfaces/IRewardMessenger.sol";
 import {RewardAggregatorFacet} from "../../src/facets/RewardAggregatorFacet.sol";
 import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
 
-/// @title MockRewardOApp
-/// @notice Test double for the production LayerZero OApp. Lets tests
-///         exercise the trusted-ingress paths on `RewardAggregatorFacet`
-///         and `RewardReporterFacet` without spinning up a full LZ
-///         endpoint stack.
+/// @title MockRewardMessenger
+/// @notice Test double for the production CCIP-backed reward messenger
+///         (`VaipakamRewardMessenger`). Lets tests exercise the
+///         trusted-ingress paths on `RewardAggregatorFacet` and
+///         `RewardReporterFacet` without spinning up a full CCIP
+///         router / OffRamp stack.
 /// @dev Two operating modes per test:
 ///        1. Diamond.rewardOApp() == address(this). Then the facet allows
 ///           this contract to deliver messages via {deliverChainReport}
@@ -20,7 +21,11 @@ import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
 ///           respectively. We record the last payload so tests can assert
 ///           on it instead of trying to simulate a round-trip across the
 ///           mesh.
-contract MockRewardOApp is IRewardOApp {
+///
+///         Renamed from `MockRewardOApp` in #181 to match the
+///         transport-neutral `IRewardMessenger` interface name; the
+///         transport has been Chainlink CCIP since T-068 (April 2026).
+contract MockRewardMessenger is IRewardMessenger {
     address public diamond;
 
     // ─── Last-call spies for sendChainReport ──────────────────────────────
@@ -60,7 +65,7 @@ contract MockRewardOApp is IRewardOApp {
         revertOnBroadcast = v;
     }
 
-    // ─── IRewardOApp — sender-side (called by Diamond) ────────────────────
+    // ─── IRewardMessenger — sender-side (called by Diamond) ───────────────
 
     function sendChainReport(
         uint256 dayId,
@@ -68,8 +73,8 @@ contract MockRewardOApp is IRewardOApp {
         uint256 borrowerNumeraire18,
         address payable refundAddress
     ) external payable override {
-        require(msg.sender == diamond, "MockOApp: only diamond");
-        if (revertOnSend) revert("MockOApp: send revert");
+        require(msg.sender == diamond, "MockMessenger: only diamond");
+        if (revertOnSend) revert("MockMessenger: send revert");
         lastSendDay = dayId;
         lastSendLenderNumeraire18 = lenderNumeraire18;
         lastSendBorrowerNumeraire18 = borrowerNumeraire18;
@@ -84,8 +89,8 @@ contract MockRewardOApp is IRewardOApp {
         uint256 globalBorrowerNumeraire18,
         address payable refundAddress
     ) external payable override {
-        require(msg.sender == diamond, "MockOApp: only diamond");
-        if (revertOnBroadcast) revert("MockOApp: broadcast revert");
+        require(msg.sender == diamond, "MockMessenger: only diamond");
+        if (revertOnBroadcast) revert("MockMessenger: broadcast revert");
         lastBroadcastDay = dayId;
         lastBroadcastLenderNumeraire18 = globalLenderNumeraire18;
         lastBroadcastBorrowerNumeraire18 = globalBorrowerNumeraire18;
@@ -110,7 +115,7 @@ contract MockRewardOApp is IRewardOApp {
         return quoteNative;
     }
 
-    // ─── Receive-side: simulate a LZ delivery landing on the Diamond ─────
+    // ─── Receive-side: simulate a CCIP delivery landing on the Diamond ────
 
     /// @notice Simulate a mirror's report landing on the Base aggregator.
     /// @dev Test prank: the mock calls the Diamond's aggregator as itself

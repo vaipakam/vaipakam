@@ -24,14 +24,14 @@ import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
  *        1. `buyVPFIWithETH()` — fixed-rate purchase that credits VPFI to
  *           the buyer's WALLET. This function is the canonical-chain leg
  *           only; users on mirror chains reach it transparently via the
- *           `VPFIBuyAdapter` → `VPFIBuyReceiver` LayerZero round-trip (the
+ *           `VPFIBuyAdapter` → `VPFIBuyReceiver` CCIP round-trip (the
  *           adapter is a separate contract, not part of the Diamond). Per
  *           spec, escrow funding is a separate explicit user step on every
  *           chain regardless of how the buy was routed.
  *        2. `depositVPFIToEscrow(amount)` — explicit wallet → escrow move.
  *           Required on every chain: on canonical (Base) immediately after
  *           buying, or on non-canonical chains once the OFT return leg
- *           (or a manual bridge via the LayerZero OFT widget) lands VPFI
+ *           (or a manual bridge via the CCIP CCT bridge UI) lands VPFI
  *           in the user's wallet.
  *        3. `withdrawVPFIFromEscrow(amount)` — counterpart of (2). Unstakes
  *           escrow VPFI back to the caller's wallet and checkpoints staking
@@ -59,7 +59,7 @@ import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
  *          callable. User-facing, however, the spec exposes a
  *          preferred-chain buy page: mirror-chain users reach this
  *          function transparently through the
- *          `VPFIBuyAdapter` → `VPFIBuyReceiver` LayerZero round-trip and
+ *          `VPFIBuyAdapter` → `VPFIBuyReceiver` CCIP round-trip and
  *          receive VPFI back in their wallet on the chain they started
  *          from. No manual chain-switch or bridge step is required of
  *          the user before calling `depositVPFIToEscrow`.
@@ -424,7 +424,7 @@ contract VPFIDiscountFacet is
     /**
      * @notice Move VPFI from the caller's wallet into the caller's escrow.
      * @dev Intended for users who bridged VPFI to a non-canonical chain via
-     *      LayerZero and now want to deposit it into their local escrow to
+     *      Chainlink CCIP (CCT bridge) and now want to deposit it into their local escrow to
      *      qualify for the discount on that chain. Works on every chain,
      *      including the canonical one. Caller must have approved this
      *      diamond for `amount` on the registered VPFI token.
@@ -1011,7 +1011,7 @@ contract VPFIDiscountFacet is
 
     /// @notice Quote the VPFI out for a given wei amount at the current
     ///         fixed rate — used by mirror-chain adapters to render a
-    ///         preview before sending the LayerZero message.
+    ///         preview before sending the CCIP message.
     /// @dev Returns 0 if the buy path is disabled, the rate is unset,
     ///      or the amount rounds to zero VPFI. Does not consult caps —
     ///      caps are enforced atomically on Base inside

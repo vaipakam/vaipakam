@@ -9,15 +9,16 @@ import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
-import {MockRewardOApp} from "./mocks/MockRewardOApp.sol";
+import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 
 /// @title CrossChainRewardPlumbingTest
 /// @notice Production-readiness coverage for the cross-chain interaction-
 ///         reward mesh (docs/TokenomicsTechSpec.md §4a). Exercises every
 ///         revert path and state transition on RewardReporterFacet +
-///         RewardAggregatorFacet, using {MockRewardOApp} as the trusted
-///         ingress peer instead of a live LayerZero endpoint.
+///         RewardAggregatorFacet, using {MockRewardMessenger} as the
+///         trusted ingress peer instead of a live Chainlink CCIP
+///         router / OffRamp stack.
 ///
 ///         Coverage layout:
 ///           - Admin surface (setters + role gate + event wiring)
@@ -31,8 +32,8 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 ///             + divergent-payload revert)
 ///           - `isDayReadyToFinalize` return codes
 ///           - Canonical-flag forks (Base path refunds msg.value, mirror
-///             path forwards to OApp, aggregator-only funcs revert on
-///             non-canonical)
+///             path forwards to the messenger, aggregator-only funcs
+///             revert on non-canonical)
 ///           - Full E2E: mirror closeDay → Base ingress → finalize →
 ///             broadcast → mirror ingress → `InteractionRewardsFacet`
 ///             claim works
@@ -40,7 +41,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
     RewardReporterFacet internal reporter;
     RewardAggregatorFacet internal aggregator;
     InteractionRewardsFacet internal interaction;
-    MockRewardOApp internal oApp;
+    MockRewardMessenger internal oApp;
 
     address internal alice;
     address internal bob;
@@ -78,7 +79,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
-        oApp = new MockRewardOApp(address(diamond));
+        oApp = new MockRewardMessenger(address(diamond));
 
         alice = makeAddr("alice");
         bob = makeAddr("bob");
@@ -769,7 +770,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _configureCanonical();
         oApp.deliverChainReport(CHAIN_ARB, 1, 1e18, 1e18);
 
-        MockRewardOApp newOApp = new MockRewardOApp(address(diamond));
+        MockRewardMessenger newOApp = new MockRewardMessenger(address(diamond));
         _rep().setRewardOApp(address(newOApp));
 
         // Old mock can no longer deliver.
@@ -787,7 +788,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
     function testCrossChainEndToEndClaimPath() public {
         // Test as canonical: Base owns its own closeDay + finalization, and
-        // the MockRewardOApp stand-in delivers Arb/OP reports into Base and
+        // the MockRewardMessenger stand-in delivers Arb/OP reports into Base and
         // then broadcasts back into this same Diamond's mirror-side ingress
         // for symmetry (we pretend Base is also a mirror for itself, just
         // for the broadcast-land assertion).

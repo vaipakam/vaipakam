@@ -1776,14 +1776,14 @@ library LibVaipakam {
         // chain (Eth/Polygon/Arbitrum/Optimism mainnet + Sepolia testnet) it
         // points at the VPFIMirror OFT proxy — same name/symbol/decimals,
         // no cap, no independent mint surface (supply flows in/out via the
-        // LayerZero peer mesh, not via diamond-initiated mints).
+        // Chainlink CCIP CCT pool, not via diamond-initiated mints).
         address vpfiToken;
-        // True on the chain that hosts the canonical VPFIToken + OFT adapter
+        // True on the chain that hosts the canonical VPFIToken + CCT pool
         // (Base mainnet / Base Sepolia). On every other chain this stays
         // FALSE, which is what TreasuryFacet.mintVPFI checks to reject mint
         // calls on mirror chains — only the canonical chain can mint new
         // VPFI into circulation, mirrors receive VPFI exclusively via the
-        // OFT V2 peer mesh. Defaults to false at diamond init; flipped to
+        // CCIP CCT pool. Defaults to false at diamond init; flipped to
         // true by VPFITokenFacet.setCanonicalVPFIChain(true) exactly once
         // during the canonical deploy.
         bool isCanonicalVPFIChain;
@@ -1929,9 +1929,11 @@ library LibVaipakam {
         //     prefers `knownGlobal*InterestNumeraire18[D]` over the local total
         //     as the formula denominator
         //
-        // Trust model: LayerZero packets flow through the dedicated
-        // VaipakamRewardOApp contract addressed by `rewardOApp`. Only
-        // that address may invoke the trusted ingress handlers
+        // Trust model: CCIP messages flow through the dedicated
+        // VaipakamRewardMessenger contract addressed by `rewardOApp`
+        // (storage slot name retained for layout stability; see the
+        // legacy-name comment below). Only that address may invoke
+        // the trusted ingress handlers
         // (RewardAggregatorFacet.onChainReportReceived on Base,
         // RewardReporterFacet.onRewardBroadcastReceived on mirrors).
 
@@ -1948,9 +1950,13 @@ library LibVaipakam {
         /// @dev EVM chain id of the canonical (Base) reward chain.
         ///      Mirrors send chain reports here; zero on Base itself.
         uint32 baseChainId;
-        /// @dev Authorized LayerZero OApp address on this chain. Only
+        /// @dev Authorized cross-chain messenger address on this chain
+        ///      (`VaipakamRewardMessenger`, CCIP-backed post-T-068). Only
         ///      this address may call the trusted ingress handlers
         ///      (aggregator receive on Base, broadcast receive on mirrors).
+        ///      The slot is named `rewardOApp` for storage-layout stability
+        ///      — pre-T-068 the same address pointed at a LayerZero OApp;
+        ///      renaming the field would have been an ABI/layout break.
         address rewardOApp;
         /// @dev Seconds past the first chain report for day `D` after
         ///      which `finalizeDay(D)` may be called even if not every
@@ -1966,7 +1972,7 @@ library LibVaipakam {
         /// @dev Per-chain per-day "already reported" guard. Set when the
         ///      local Diamond successfully ships its day-`D` report (on
         ///      Base: writes directly to aggregator storage; on mirrors:
-        ///      queues the OApp send).
+        ///      queues the cross-chain messenger send).
         mapping(uint256 => uint64) chainReportSentAt;
         // ── Aggregator side (Base only) ────────────────────────────────
         /// @dev Base-only: lender-side local Numeraire18 interest reported by
@@ -2017,10 +2023,11 @@ library LibVaipakam {
         // Purchase Program, cross-chain extension) ─────────────────────────
         // Base is the SOLE seller of the fixed-rate VPFI. Non-Base chains
         // get a "bridged buy" UX via VPFIBuyAdapter: user pays native ETH
-        // on Arb/Op/Eth, the adapter forwards a LayerZero message to
+        // on Arb/Op/Eth, the adapter forwards a CCIP message to
         // VPFIBuyReceiver on Base, this Diamond on Base validates caps +
         // reserves exactly as in {buyVPFIWithETH}, transfers VPFI to the
-        // receiver, and the receiver bridges it back via VPFIOFTAdapter.
+        // receiver, and the receiver bridges it back via the Chainlink
+        // CCIP CCT pool wired to the canonical `VPFIToken`.
         //
         // `bridgedBuyReceiver` is the sole address allowed to call
         // {processBridgedBuy} — identical trust pattern to `rewardOApp`.

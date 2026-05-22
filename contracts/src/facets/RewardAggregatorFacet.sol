@@ -6,7 +6,7 @@ import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessCont
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
-import {IRewardOApp} from "../interfaces/IRewardOApp.sol";
+import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
 
 /**
  * @title RewardAggregatorFacet
@@ -26,7 +26,7 @@ import {IRewardOApp} from "../interfaces/IRewardOApp.sol";
  *      Message lifecycle for day `D`:
  *        1. Mirror Diamonds call {RewardReporterFacet.closeDay} on day
  *           `D+1` onward, forwarding `(lenderNumeraire18, borrowerNumeraire18)` via
- *           LayerZero.
+ *           Chainlink CCIP.
  *        2. On arrival, the Base OApp calls {onChainReportReceived}
  *           which records the pair under the source chainId, increments
  *           `chainDailyReportCount[D]`, and stamps `dailyFirstReportAt[D]`.
@@ -40,7 +40,7 @@ import {IRewardOApp} from "../interfaces/IRewardOApp.sol";
  *        4. {broadcastGlobal} is a separate permissionless payable
  *           call that ships the finalized pair to every mirror via the
  *           OApp. Split out so finalization stays cheap and broadcast
- *           fees can be replayed if a LayerZero leg fails.
+ *           fees can be replayed if a cross-chain leg fails.
  *
  *      Late reports (same `D`, landing after finalization) are rejected
  *      with `ReportAfterFinalization` so downstream claim math cannot
@@ -63,7 +63,7 @@ contract RewardAggregatorFacet is
     ///         aggregator. Useful for monitoring (per-chain coverage)
     ///         and for replaying missed broadcasts after a LZ outage.
     /// @param dayId                 Day being reported.
-    /// @param sourceChainId             LayerZero chainId of the mirror that reported.
+    /// @param sourceChainId             chainId of the mirror that reported.
     /// @param lenderNumeraire18           Reported lender USD-18 for that chain.
     /// @param borrowerNumeraire18         Reported borrower USD-18 for that chain.
     /// @param reportCount           Running count of expected chainIds
@@ -163,7 +163,7 @@ contract RewardAggregatorFacet is
      *      Also serves as Base's own write path when {RewardReporterFacet.closeDay}
      *      runs on the canonical chain — that facet writes directly via
      *      shared storage, so it does NOT go through this method.
-     * @param sourceChainId      LayerZero chainId of the reporting mirror.
+     * @param sourceChainId      chainId of the reporting mirror.
      * @param dayId          Day being reported.
      * @param lenderNumeraire18    Mirror's local lender USD-18 for `dayId`.
      * @param borrowerNumeraire18  Mirror's local borrower USD-18 for `dayId`.
@@ -357,7 +357,7 @@ contract RewardAggregatorFacet is
      *         for `dayId` to every mirror via the registered OApp.
      * @dev Payable, permissionless. `msg.value` must cover the sum of
      *      per-destination LZ native fees — quote first via
-     *      {IRewardOApp.quoteBroadcastGlobal}. Leftover refunds to the
+     *      {IRewardMessenger.quoteBroadcastGlobal}. Leftover refunds to the
      *      caller.
      *
      *      Separated from {finalizeDay} so finalization stays cheap and
@@ -373,7 +373,7 @@ contract RewardAggregatorFacet is
         address oApp = s.rewardOApp;
         if (oApp == address(0)) revert RewardOAppNotSet();
 
-        IRewardOApp(oApp).broadcastGlobal{value: msg.value}(
+        IRewardMessenger(oApp).broadcastGlobal{value: msg.value}(
             dayId,
             s.dailyGlobalLenderInterestNumeraire18[dayId],
             s.dailyGlobalBorrowerInterestNumeraire18[dayId],

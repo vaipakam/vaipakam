@@ -11,15 +11,14 @@ import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/Pau
  * @notice Two-role emergency-pause pattern for Vaipakam's cross-chain
  *         contracts.
  *
- *         This is the provider-neutral successor to `LZGuardianPausable`
- *         (T-068 — the LayerZero → Chainlink CCIP migration). The pause
- *         semantics are a cross-chain concern, not a LayerZero one — the
- *         CCIP adapter needs the very same detect-to-freeze lever — so the
- *         pattern is lifted out of the `LZ`-named base into a neutral one.
- *         The legacy `LZGuardianPausable` stays in place for the five
- *         LayerZero contracts until Phase 5 of the migration deletes them
- *         wholesale; the two bases never share a deployment, and their
- *         ERC-7201 namespaces differ, so they coexist without collision.
+ *         This is the provider-neutral pause base for every cross-chain
+ *         contract in `contracts/src/crosschain/` (the CCIP messenger,
+ *         the VPFI mirror token, the pool rate governor, the buy
+ *         adapter/receiver, the reward messenger). Pause semantics are a
+ *         cross-chain concern, not a transport-layer one — naming the base
+ *         after the transport (as the deleted pre-T-068 `LZGuardianPausable`
+ *         did) tied an emergency lever to a vendor that the protocol no
+ *         longer uses. The neutral base survives transport swaps unchanged.
  *
  *         Owner (timelock-gated multi-sig) can:
  *           - rotate the guardian,

@@ -18,7 +18,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  *      Cross-chain semantics: this interface describes the CANONICAL
  *      token. On mirror chains (Polygon / Arbitrum / Optimism / Ethereum
  *      mainnet + Sepolia testnet) the token is `VPFIMirror`, a pure
- *      LayerZero OFT V2 which implements only the IERC20 subset — no
+ *      Chainlink CCIP CCT (Cross-Chain Token) which implements only the IERC20 subset — no
  *      `mint()` / `minter()` / `TOTAL_SUPPLY_CAP()` surface, because
  *      supply on mirror chains flows in exclusively via the OFT peer
  *      bridge. Callers needing cross-chain-safe reads should go through
