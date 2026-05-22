@@ -29,9 +29,17 @@ interface SerializedOffer {
   offerType: number;
   lendingAsset: string;
   amount: string;
+  /** #183 — optional; older snapshots written before the canonical
+   *  Phase 2 mapping didn't include the `*Max` fields. Reads fall
+   *  back to the floor field when absent (see `readOfferSnapshot`). */
+  amountMax?: string;
   interestRateBps: string;
+  /** #183 — same pattern as `amountMax`. */
+  interestRateBpsMax?: string;
   collateralAsset: string;
   collateralAmount: string;
+  /** #183 — same pattern as `amountMax`. */
+  collateralAmountMax?: string;
   durationDays: string;
   principalLiquidity: number;
   collateralLiquidity: number;
@@ -131,9 +139,23 @@ export function readOfferSnapshot(
       offerType: p.offerType,
       lendingAsset: p.lendingAsset,
       amount: BigInt(p.amount),
+      // #183 — fall back to the floor field when the localStorage
+      // snapshot predates Phase 2 (pre-canonical-mapping clients
+      // never wrote `*Max` fields into the snapshot). The hydrated
+      // OfferData is only used for static cancelled-offer cells;
+      // the floor-field fallback renders correctly there.
+      amountMax: 'amountMax' in p && p.amountMax != null
+        ? BigInt(p.amountMax)
+        : BigInt(p.amount),
       interestRateBps: BigInt(p.interestRateBps),
+      interestRateBpsMax: 'interestRateBpsMax' in p && p.interestRateBpsMax != null
+        ? BigInt(p.interestRateBpsMax)
+        : BigInt(p.interestRateBps),
       collateralAsset: p.collateralAsset,
       collateralAmount: BigInt(p.collateralAmount),
+      collateralAmountMax: 'collateralAmountMax' in p && p.collateralAmountMax != null
+        ? BigInt(p.collateralAmountMax)
+        : BigInt(p.collateralAmount),
       durationDays: BigInt(p.durationDays),
       principalLiquidity: p.principalLiquidity,
       collateralLiquidity: p.collateralLiquidity,

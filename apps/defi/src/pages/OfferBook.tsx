@@ -97,9 +97,26 @@ export interface OfferData {
   offerType: number;
   lendingAsset: string;
   amount: bigint;
+  /** #183 (Canonical Limit-Order Phase 2) — the lender's max-provide
+   *  ceiling (lender side: headline), or for borrower offers the
+   *  derived upper bound. Direct-accept on a lender offer locks the
+   *  loan principal at this value. See
+   *  `docs/DesignsAndPlans/CanonicalLimitOrderPhase2Design.md` §2.2. */
+  amountMax: bigint;
   interestRateBps: bigint;
+  /** #183 — the borrower's max-rate ceiling (borrower side: headline),
+   *  or for lender offers the protocol upper-sanity cap
+   *  (`MAX_INTEREST_BPS`). Direct-accept on a borrower offer locks the
+   *  loan rate at this value. */
+  interestRateBpsMax: bigint;
   collateralAsset: string;
   collateralAmount: bigint;
+  /** #183 — the borrower's max-collateral commit (borrower side:
+   *  headline; ranged in design §2.2 but Phase 2 frontend ships
+   *  `collateralAmountMax == collateralAmount` until a range UI lands).
+   *  Lender offers stay structurally single-value
+   *  (`collateralAmount == collateralAmountMax`). */
+  collateralAmountMax: bigint;
   durationDays: bigint;
   principalLiquidity: number;
   collateralLiquidity: number;
@@ -178,9 +195,19 @@ export type RawOffer = {
   offerType: bigint | number;
   lendingAsset: string;
   amount: bigint;
+  /** #183 — present on every offer post Phase 2 (the create-time
+   *  auto-collapse was dropped). Indexer / on-chain `getOffer` reads
+   *  surface it natively. Marked optional so legacy raw shapes that
+   *  predate the indexer ABI bump still narrow correctly; the
+   *  `toOfferData` mapper falls back to `amount` when absent. */
+  amountMax?: bigint;
   interestRateBps: bigint;
+  /** #183 — same pattern as `amountMax` above. */
+  interestRateBpsMax?: bigint;
   collateralAsset: string;
   collateralAmount: bigint;
+  /** #183 — same pattern as `amountMax` above. */
+  collateralAmountMax?: bigint;
   durationDays: bigint;
   principalLiquidity: bigint | number;
   collateralLiquidity: bigint | number;
@@ -198,9 +225,16 @@ export function toOfferData(r: RawOffer): OfferData {
     offerType: Number(r.offerType),
     lendingAsset: r.lendingAsset,
     amount: r.amount,
+    // #183 — fall back to the floor field when the raw shape doesn't
+    // carry the max (legacy ABI / pre-indexer-bump rows). Under
+    // Phase 2 the on-chain shape always carries a non-zero max, so
+    // the fallback only matters for transitional reads.
+    amountMax: r.amountMax ?? r.amount,
     interestRateBps: r.interestRateBps,
+    interestRateBpsMax: r.interestRateBpsMax ?? r.interestRateBps,
     collateralAsset: r.collateralAsset,
     collateralAmount: r.collateralAmount,
+    collateralAmountMax: r.collateralAmountMax ?? r.collateralAmount,
     durationDays: r.durationDays,
     principalLiquidity: Number(r.principalLiquidity),
     collateralLiquidity: Number(r.collateralLiquidity),
@@ -2049,13 +2083,35 @@ export function OfferTable({ title, subtitle, offers, anchorRateBps, address, ac
             <tbody>
               {offers.map((offer) => {
                 const isOwn = address?.toLowerCase() === offer.creator.toLowerCase();
+                // #183 (Canonical Limit-Order Phase 2) — role-aware
+                // display reads. The on-chain canonical mapping per
+                // CanonicalLimitOrderPhase2Design §3:
+                //   - Lender headline (principal): `amountMax` (max
+                //     provide; what direct-accept locks).
+                //   - Lender headline (rate): `interestRateBps` (their
+                //     floor / DEX limit; what direct-accept locks).
+                //   - Borrower headline (principal): `amount` (min
+                //     need / floor).
+                //   - Borrower headline (rate): `interestRateBpsMax`
+                //     (their ceiling / DEX limit).
+                // Pre-#183 the table read `offer.amount` and
+                // `offer.interestRateBps` for both roles which was
+                // correct under PR #175's single-value workaround but
+                // wrong under the canonical mapping — for a lender
+                // offer, `offer.amount` is now the
+                // `minPartialFillAmount` (10% of `amountMax`), not the
+                // headline.
+                const isLender = offer.offerType === 0;
+                const displayAmount = isLender ? offer.amountMax : offer.amount;
+                const displayRate = isLender ? offer.interestRateBps : offer.interestRateBpsMax;
+
                 // Signed delta: positive => offer rate is above the market
                 // anchor (more expensive borrow / more lucrative lend);
                 // negative => below market. Direction matters for browsing,
                 // so the column shows `+0.50%` or `-0.50%` rather than the
                 // direction-stripped `±0.50%` we used to render via absDelta.
                 const signedDelta = anchorRateBps !== null
-                  ? offer.interestRateBps - anchorRateBps
+                  ? displayRate - anchorRateBps
                   : null;
                 return (
                   <tr key={offer.id.toString()}>
@@ -2073,14 +2129,14 @@ export function OfferTable({ title, subtitle, offers, anchorRateBps, address, ac
                       <PrincipalCell
                         assetType={offer.assetType}
                         asset={offer.lendingAsset}
-                        amount={offer.amount}
+                        amount={displayAmount}
                         tokenId={offer.tokenId}
                         chainId={chainId}
                         compact
                       />
                     </td>
                     <td>
-                      {bpsToPercent(offer.interestRateBps)}
+                      {bpsToPercent(displayRate)}
                       {signedDelta !== null && signedDelta !== 0n && (
                         <span
                           style={{

@@ -244,21 +244,33 @@ export function useMyOffers(
         // Reconstruct an OfferData from the rich event payload — every
         // field the table needs is in the args bag.
         try {
+          const amountField = typeof ev.args.amount === 'string' ? BigInt(ev.args.amount) : 0n;
+          const rateField = typeof ev.args.interestRateBps === 'string'
+            ? BigInt(ev.args.interestRateBps)
+            : 0n;
+          const collateralField = typeof ev.args.collateralAmount === 'string'
+            ? BigInt(ev.args.collateralAmount)
+            : 0n;
           const offer: OfferData = {
             id: BigInt(offerId),
             creator: address,
             offerType: typeof ev.args.offerType === 'string' ? Number(ev.args.offerType) : 0,
             lendingAsset: typeof ev.args.lendingAsset === 'string' ? ev.args.lendingAsset : ZERO_ADDR,
-            amount: typeof ev.args.amount === 'string' ? BigInt(ev.args.amount) : 0n,
-            interestRateBps: typeof ev.args.interestRateBps === 'string'
-              ? BigInt(ev.args.interestRateBps)
-              : 0n,
+            amount: amountField,
+            // #183 — OfferCanceledDetails event payload predates the
+            // Phase 2 storage layout and doesn't carry the `*Max`
+            // fields. For cancelled-offer reconstruction the cells
+            // render as static historical info, so falling back to the
+            // floor field is harmless; if the indexer later starts
+            // emitting the max fields on cancel events, swap to those.
+            amountMax: amountField,
+            interestRateBps: rateField,
+            interestRateBpsMax: rateField,
             collateralAsset: typeof ev.args.collateralAsset === 'string'
               ? ev.args.collateralAsset
               : ZERO_ADDR,
-            collateralAmount: typeof ev.args.collateralAmount === 'string'
-              ? BigInt(ev.args.collateralAmount)
-              : 0n,
+            collateralAmount: collateralField,
+            collateralAmountMax: collateralField,
             durationDays: typeof ev.args.durationDays === 'string'
               ? BigInt(ev.args.durationDays)
               : 0n,
@@ -301,9 +313,15 @@ export function useMyOffers(
             offerType: meta.offerType,
             lendingAsset: ZERO_ADDR,
             amount: 0n,
+            // #183 — identity-only stub for a cancelled offer with no
+            // event payload AND no localStorage snapshot. All values
+            // are placeholder zeros; the UI renders `—` cells.
+            amountMax: 0n,
             interestRateBps: 0n,
+            interestRateBpsMax: 0n,
             collateralAsset: ZERO_ADDR,
             collateralAmount: 0n,
+            collateralAmountMax: 0n,
             durationDays: 0n,
             principalLiquidity: 0,
             collateralLiquidity: 0,

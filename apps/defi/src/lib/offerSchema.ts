@@ -293,13 +293,33 @@ export interface OfferPayloadDecimals {
  *   - single-value payloads (the safe contract shape — both
  *     match paths land at the same loan terms)
  *
- * Phase 2 of #165 will revisit the full ADR-0010 §17.1 mapping —
- * either by gating legacy `acceptOffer` on a flag at the contract
- * level (preventing the underpayment class structurally), or by
- * adding explicit min/max range inputs for users that want true
- * range orders. Until then, the Phase-1 surface is "role-asymmetric
- * labels over single-value semantics" — fully audit-safe and
- * preserves both accept paths' invariants.
+ * Phase 2 of #165 (now landed as #183 / PR #184) ships the role-aware
+ * `_acceptOffer` reads + drops the create-time auto-collapse. The
+ * frontend now ships **canonical role-asymmetric values**:
+ *
+ *   - Lender posts "I'll lend up to X" → `amountMax = X`,
+ *     `amount = max(1, X × 10 / 100)` (the minPartialFillAmount default
+ *     per design §2.3).
+ *   - Lender posts "rate ≥ Y%" → `interestRateBps = Y`,
+ *     `interestRateBpsMax = MAX_INTEREST_BPS` (no upper limit).
+ *   - Lender collateral stays single-value (`collateralAmount ==
+ *     collateralAmountMax`) — see #164 design "Lender side stays
+ *     single-value because the lender's collateralAmount IS their
+ *     derived requirement".
+ *   - Borrower posts "need at least X" → `amount = X`. `amountMax`
+ *     ships equal to `amount` for Phase 2 (single-value direct-accept
+ *     locks at the borrower's floor; range borrower offers will lift
+ *     this when the frontend exposes range inputs).
+ *   - Borrower posts "rate ≤ Y%" → `interestRateBpsMax = Y`,
+ *     `interestRateBps = 0` (no lower limit — borrower accepts any
+ *     rate below their ceiling).
+ *   - Borrower collateral: `collateralAmount = X`, `collateralAmountMax
+ *     = X` (single-value; Phase 2 frontend doesn't yet expose the max
+ *     commit range — borrowers post a single value).
+ *
+ * The `_acceptOffer` role-aware reads (LoanFacet §3 of the design)
+ * give the loan the right terms whichever side direct-accepts. The
+ * canonical mapping is now safe.
  */
 export function toCreateOfferPayload(
   s: OfferFormState,
@@ -316,13 +336,38 @@ export function toCreateOfferPayload(
     ? parseUnits(s.amount, lendingDecimals)
     : BigInt(s.amount);
 
+  const rateBps = s.interestRate === ''
+    ? 0
+    : Math.round(parseFloat(s.interestRate) * 100);
+
+  // #183 — canonical role-aware mapping. See doc-block above for the
+  // full mapping table. `MAX_INTEREST_BPS` mirrors
+  // `LibVaipakam.MAX_INTEREST_BPS` (10_000 = 100% APR) — the protocol's
+  // upper-sanity cap on rates. Hard-coded here for now; if the contract
+  // ever raises it, this constant follows.
+  const MAX_INTEREST_BPS = 10_000;
+
+  const isLender = s.offerType === 'lender';
+
+  // For lender ERC-20 offers, `minPartialFillAmount` defaults to 10%
+  // of `lendingAmount` per design §2.3. Floor at 1 wei so the `> 0`
+  // invariant holds even for tiny offers. NFT-lending offers (rentals)
+  // ship `amount == amountMax` (single-value — the daily rental fee).
+  const lenderMinPartial = s.assetType === 'erc20'
+    ? (lendingAmount / 10n > 0n ? lendingAmount / 10n : 1n)
+    : lendingAmount;
+
   return {
-    offerType: s.offerType === 'lender' ? 0 : 1,
+    offerType: isLender ? 0 : 1,
     lendingAsset: s.lendingAsset,
-    amount: lendingAmount,
-    interestRateBps: s.interestRate === ''
-      ? 0
-      : Math.round(parseFloat(s.interestRate) * 100),
+    // Storage `amount` field:
+    //   - Lender: `minPartialFillAmount` (= 10% default, floored at 1 wei).
+    //   - Borrower: the floor headline (what `_acceptOffer` reads on direct-accept).
+    amount: isLender ? lenderMinPartial : lendingAmount,
+    // Storage `interestRateBps` field:
+    //   - Lender: their rate input — the floor / limit (DEX taker-favoring).
+    //   - Borrower: 0 — no lower limit on what they'd pay.
+    interestRateBps: isLender ? rateBps : 0,
     collateralAsset: s.collateralAsset || ZERO_ADDRESS,
     collateralAmount: collateralWei,
     durationDays: parseInt(s.durationDays, 10),
@@ -335,15 +380,20 @@ export function toCreateOfferPayload(
     collateralTokenId: BigInt(s.collateralTokenId || '0'),
     collateralQuantity: BigInt(s.collateralQuantity || '0'),
     allowsPartialRepay: s.allowsPartialRepay,
-    // Phase 1 ships single-value payloads. The contract reads
-    // `*Max == 0` as "treat as single-value at the floor", so both
-    // the legacy `acceptOffer` direct path and `matchOffers`
-    // collapse to the same single match point. Phase 2 will
-    // re-introduce explicit range inputs (and decide whether to
-    // gate `acceptOffer` on range-shaped offers at the contract).
-    amountMax: 0n,
-    interestRateBpsMax: 0,
-    collateralAmountMax: 0n,
+    // Storage `amountMax` field:
+    //   - Lender: their headline `lendingAmount` (max provide).
+    //   - Borrower: equals `amount` for Phase 2 frontend (single-
+    //     value direct-accept). Future range-borrower UI will raise
+    //     this past `amount`.
+    amountMax: isLender ? lendingAmount : lendingAmount,
+    // Storage `interestRateBpsMax` field:
+    //   - Lender: MAX_INTEREST_BPS (no upper limit on rates they'd accept).
+    //   - Borrower: their rate input — the ceiling / limit.
+    interestRateBpsMax: isLender ? MAX_INTEREST_BPS : rateBps,
+    // Storage `collateralAmountMax` field: single-value on both sides
+    // for Phase 2 (lender by structural invariant per #164; borrower
+    // until the frontend exposes a max-commit range).
+    collateralAmountMax: collateralWei,
     periodicInterestCadence: s.periodicInterestCadence,
   };
 }
