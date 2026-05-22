@@ -27,10 +27,11 @@ its own focused PR — its bespoke setUp wires up enough special-purpose
 test state that the safe fold needs its own session.
 
 Folding `PauseGatingTest` surfaced a second, more interesting drift:
-`SetupTest`'s diamond was cutting 24 facets, while production cuts 36
-(35 facets enumerated in `DiamondFacetNames.cutFacetNames()` plus
-`DiamondCutFacet` installed via the diamond constructor). The four
-facets the fold *needed* — `PrecloseFacet`, `RefinanceFacet`,
+`SetupTest`'s diamond was cutting 24 facets in its cut[] list, while
+production cuts 36 (per `DiamondFacetNames.cutFacetNames()`, which
+returns `string[36]`), plus `DiamondCutFacet` installed via the
+diamond constructor identically in both production and tests. The
+four facets the fold *needed* — `PrecloseFacet`, `RefinanceFacet`,
 `EarlyWithdrawalFacet`, `PartialWithdrawalFacet` — were exactly the
 ones every loan-mutation-past-creation test had to roll its own setUp
 for. This release narrows that drift (24 → 28) using the same
@@ -47,9 +48,10 @@ drift was the load-bearing change for the fold — without it the
 PauseGating fold would have hidden the same test-vs-prod blind spot
 it was trying to remove.
 
-The remaining 9-facet gap between `SetupTest` (28 routed) and
-production (35 routed, 36 with the constructor's `DiamondCutFacet`) is
-the same class of drift — `DiamondLoupeFacet`, `OwnershipFacet`,
+The remaining 9-facet gap between `SetupTest` (28 cut[] entries: 27
+production-overlap + 1 test-only `TestMutatorFacet`) and production
+(36 cut[] entries, plus `DiamondCutFacet` in both via the constructor)
+is the same class of drift — `DiamondLoupeFacet`, `OwnershipFacet`,
 `OracleAdminFacet`, `LegalFacet`, `VPFIDiscountFacet`,
 `InteractionRewardsFacet`, `RewardAggregatorFacet`,
 `RewardReporterFacet`, `StakingRewardsFacet` are all still unrouted

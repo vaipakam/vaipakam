@@ -39,8 +39,9 @@ import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
  *
  *      #168 Track A — folded onto `SetupTest` to drop the duplicated
  *      diamond-cut bytecode from this test's compile unit. `SetupTest`
- *      cuts 28 facets (a strict superset of the 18 the original setUp
- *      cut, but still 9 facets short of the 35 production routes —
+ *      cuts 28 facets in its cut[] list (a strict superset of the 18
+ *      the original setUp cut, but still 9 facets short of the 36
+ *      production facets `DiamondFacetNames.cutFacetNames()` lists —
  *      see #229) + does `initializeAccessControl` + the first
  *      `unpause`; this test just re-pauses inside its own `setUp` to
  *      exercise the gated semantics. Track A's same PR extended

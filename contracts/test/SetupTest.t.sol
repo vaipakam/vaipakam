@@ -260,9 +260,12 @@ contract SetupTest is Test {
         // 9-test silent FunctionDoesNotExist regression.
         //
         // NOTE — SetupTest is NOT yet a strict superset of production.
-        // DiamondFacetNames.cutFacetNames() enumerates 35 production
-        // facets (plus DiamondCutFacet via constructor = 36); SetupTest
-        // currently routes 27 of them (+ TestMutatorFacet, test-only).
+        // DiamondFacetNames.cutFacetNames() returns string[36] — 36
+        // production facets cut via the diamond's cut[] list (plus
+        // DiamondCutFacet installed via the constructor, identically
+        // in both production and SetupTest, bringing the production
+        // route count to 37). SetupTest's cut[] has 28 entries: 27
+        // production-overlap facets + TestMutatorFacet (test-only).
         // The 9 facets still unrouted in SetupTest — DiamondLoupeFacet,
         // OwnershipFacet, OracleAdminFacet, LegalFacet,
         // VPFIDiscountFacet, InteractionRewardsFacet,
