@@ -24,13 +24,22 @@ so the surface feels familiar). The ADR catalogues:
   loan settlement / preclose / refinance, liquidation auction / dust
   close, early-withdrawal haircut, internal-liquidation match (if
   shipped), NFT rental prepay + buffer, claim.
-- **Page-by-page checklist** — every `apps/defi/src/pages/*.tsx`
-  surface gets a current-state-to-target-state row naming exactly
-  which Tier-A borrows and Tier-B retentions apply, and what concretely
-  changes per page.
-- **Sub-cards to file** — 11 implementation cards grouped by user
+- **Page-by-page checklist** — every retail-user-facing
+  `apps/defi/src/pages/*.tsx` surface gets a current-state-to-
+  target-state row naming exactly which Tier-A borrows and Tier-B
+  retentions apply, and what concretely changes per page. The
+  shared routing shell (`AppLayout.tsx`), admin / utility pages
+  (`AdminDashboard`, `EscrowAssets`, `EscrowRecover`, `NftVerifier`,
+  `DataRights`, `PublicDashboard`) are gathered in an explicit
+  out-of-scope row — chrome and operator surfaces don't need the
+  retail-DEX visual idioms this ADR scopes.
+- **Sub-cards to file** — implementation cards grouped by user
   journey (order-entry / active-loan / post-loan / cross-cutting /
-  conditional / adjacent), each scoped to a single per-page rework.
+  conditional / adjacent). One card per significant per-page
+  rework, so checklist rows trace 1:1 to execution tickets —
+  including dedicated cards for `Refinance.tsx`,
+  `BorrowerPreclose.tsx`, and `LenderEarlyWithdrawal.tsx` rather
+  than rolling them under the LoanDetails parent.
   These cards land in the same wave as this ADR merge so each rework
   has a single source of truth for "what's the target state".
 - **Out of scope** — the rejected vocabulary borrows ("margin ratio"

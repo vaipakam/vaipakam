@@ -246,16 +246,20 @@ state-mutating confirm; same colour band, same inline checkbox, same
 
 | Source | Shape | Vaipakam mapping |
 |---|---|---|
-| Uniswap "Slippage too high, increase tolerance?" inline yellow callout (non-blocking modal) | Inline notification with one-click action | When the user crosses the `KYC_THRESHOLD_USD` mid-flow |
+| Uniswap "Slippage too high, increase tolerance?" inline yellow callout (non-blocking modal) | Inline notification with one-click action | When the user crosses one of the tiered numeraire thresholds (`LibVaipakam.getKycTier0Threshold()` / `getKycTier1Threshold()`) mid-flow on the industrial-deploy fork |
 
-**Current state:** KYC-tier crossing surfaces as a blocking error.
+**Current state — industrial-deploy fork only:** KYC-tier crossing
+surfaces as a blocking error on the industrial-deploy fork (the only
+deploy where the runtime KYC gate is enabled). On the retail deploy
+the KYC enforcement is runtime-disabled (`s.kycEnforcementEnabled =
+false` per CLAUDE.md's "Retail-deploy policy"); the callout shape
+here is not exercised because no KYC check fires.
 
-**Target state:** Inline yellow callout: "This loan size needs Tier-2
-KYC. [Verify] to continue." Same shape as a DEX slippage-too-high
-nudge, never a full-page modal. (Note: this is the FORM of the
-notification only — the KYC enforcement itself stays runtime-disabled
-on retail per CLAUDE.md's "Retail-deploy policy" section. The callout
-shape is needed for the industrial-deploy fork where KYC IS enforced.)
+**Target state — industrial-deploy fork only:** Inline yellow
+callout: "This loan size needs Tier-2 KYC. [Verify] to continue."
+Same shape as a DEX slippage-too-high nudge, never a full-page modal.
+This Tier-A entry is captured for the industrial deploy; the retail
+deploy keeps the runtime gate off and never renders the callout.
 
 ---
 
@@ -383,7 +387,7 @@ follow-up issue that will track the work. ETA estimates are rough.
 | **`BuyVPFI.tsx`** | Direct-buy + cross-chain buy flow | A.5, A.8, A.11 | — | DEX-swap-shape on the direct-buy leg; slippage chip; clear "Receive on chain X" disclosure on cross-chain | Issue TBD |
 | **`Alerts.tsx`** | HF / liquidation / settlement alerts config | — | B.1 | Same HF colour bands used in B.1 — alert threshold UI references the same band rendering | Issue TBD |
 | **`KeeperSettings.tsx`** | Per-keeper approvals + per-action authorisation | A.6 | — | Tabular shape; explicit on/off chips per (keeper, action); same as a CEX API-key permissions matrix | Issue TBD |
-| **Admin / utility pages (`AdminDashboard`, `EscrowAssets`, `EscrowRecover`, `NftVerifier`, `DataRights`, `PublicDashboard`)** | Operator / utility shape | A.6, A.8 | — | Out of scope for this UX direction pass — admin and utility surfaces don't need the retail-DEX visual idioms. Standardise BPS + gas idioms only. | Out of scope |
+| **Admin / utility / chrome pages (`AppLayout`, `AdminDashboard`, `EscrowAssets`, `EscrowRecover`, `NftVerifier`, `DataRights`, `PublicDashboard`)** | Routing shell + operator + utility shape | A.6, A.8 | — | Out of scope for this UX direction pass. `AppLayout` is the shared routing shell (nav / chrome); chrome reworks are a separate concern from the per-page rework this ADR scopes. Admin + utility surfaces don't need the retail-DEX visual idioms. Standardise BPS + gas idioms only across the row. | Out of scope |
 
 The sub-cards are deliberately left as "Issue TBD" in this PR. They'll
 be filed as a batch in the same wave that this ADR PR merges, so the
@@ -410,9 +414,26 @@ so review can prioritise:
 - Sub-card 4: `Dashboard.tsx` Aave-style "Your Position" panel + HF
   colour bands (Tier B.1, B.4).
 - Sub-card 5: `LoanDetails.tsx` rework — HF panel + grace countdown +
-  CEX-position-close confirm shape across repay / preclose / refinance
-  / early-withdraw / add-collateral / partial-withdraw (Tier B.1, B.2,
-  B.4, B.5, B.7).
+  CEX-position-close confirm shape on the LoanDetails surface itself
+  (Tier B.1, B.2, B.5, B.6); the per-action sub-pages (repay /
+  preclose / refinance / early-withdraw / add-collateral /
+  partial-withdraw) each get their own sub-card below so the
+  traceability from checklist row to execution ticket is 1:1.
+- Sub-card 5a: in-page `Repay` flow (full + partial) — CEX-position-
+  close-shape modal; full vs. partial chosen by chip (Tier B.5).
+- Sub-card 5b: `Refinance.tsx` — pre-filled limit-ticket-shape form;
+  HF preview with colour band; consistent RiskCallout (Tier A.1,
+  A.12, B.5).
+- Sub-card 5c: `BorrowerPreclose.tsx` — mutual / direct / offset
+  preclose CEX-position-close-shape modal per path (Tier A.11,
+  A.12, B.5).
+- Sub-card 5d: `LenderEarlyWithdrawal.tsx` — haircut % rendered like
+  DEX slippage impact (colour band + warning copy); confirm-modal
+  shape from B.3 (Tier A.11, A.12, B.7).
+- Sub-card 5e: in-page `AddCollateral` + `PartialWithdraw` flows —
+  Aave-style "Top up" / "Withdraw" CTAs on the Your Position panel;
+  HF-after preview (Tier B.4). Two flows in one card because they
+  share the same panel slot and the same HF-preview component.
 
 **Post-loan journey:**
 - Sub-card 6: `ClaimCenter.tsx` claim shape (Tier B.10).
@@ -428,13 +449,18 @@ so review can prioritise:
 - Sub-card 9: `SanctionsBanner` and the conditional callout shape for
   KYC-tier-crossing + country-pair-deny (Tier A.13). The KYC + country
   gates stay runtime-disabled on retail per CLAUDE.md; the component
-  shape exists for the industrial-deploy fork.
+  shape exists for the industrial-deploy fork only.
 
 **Adjacent surfaces:**
 - Sub-card 10: `BuyVPFI.tsx` DEX-swap shape + cross-chain disclosure
   (Tier A.5, A.8, A.11).
 - Sub-card 11: `Activity.tsx` + `Allowances.tsx` DEX-history /
   approvals-manager shape (Tier A.6, A.9).
+- Sub-card 12: `KeeperSettings.tsx` + `Alerts.tsx` — tabular
+  on/off-chip permissions matrix for keeper settings (CEX API-key-
+  permissions idiom); HF colour-band threshold UI for alerts that
+  reuses B.1's component (Tier A.6 + B.1). One card because both
+  are settings surfaces a typical user touches together.
 
 Each sub-card carries a one-paragraph reference back to the relevant
 sections of this ADR, the matching DEX / CEX surfaces it's modelled
