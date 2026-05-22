@@ -72,9 +72,9 @@ contract PeriodicInterestSettleTest is SetupTest {
                 collateralTokenId: 0,
                 collateralQuantity: 0,
                 allowsPartialRepay: true,
-                amountMax: 0,
-                interestRateBpsMax: 0,
-                collateralAmountMax: 0,
+                amountMax: 1000 ether,
+                interestRateBpsMax: 1200,
+                collateralAmountMax: 5000 ether,
                 periodicInterestCadence: MONTHLY
             })
         );
@@ -154,9 +154,9 @@ contract PeriodicInterestSettleTest is SetupTest {
                 collateralTokenId: 0,
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
-                amountMax: 0,
-                interestRateBpsMax: 0,
-                collateralAmountMax: 0,
+                amountMax: 100 ether,
+                interestRateBpsMax: 500,
+                collateralAmountMax: 500 ether,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
@@ -241,9 +241,9 @@ contract PeriodicInterestSettleTest is SetupTest {
                 collateralTokenId: 0,
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
-                amountMax: 0,
-                interestRateBpsMax: 0,
-                collateralAmountMax: 0,
+                amountMax: 100 ether,
+                interestRateBpsMax: 500,
+                collateralAmountMax: 500 ether,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );

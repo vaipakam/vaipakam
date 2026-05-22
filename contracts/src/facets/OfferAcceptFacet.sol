@@ -329,6 +329,54 @@ contract OfferAcceptFacet is
             });
     }
 
+    /// @dev #183 (PR #184 Codex round-1 P1.2) — direct-accept residual-
+    ///      collateral refund for borrower offers.
+    ///
+    ///      When a lender direct-accepts a borrower offer where
+    ///      `collateralAmountMax > collateralAmount`, the borrower's
+    ///      pre-escrowed excess (`collateralAmountMax - collateralAmount`)
+    ///      would otherwise be stranded — the offer terminates with
+    ///      `accepted = true` here but matchOffers' dust-close refund
+    ///      branch doesn't fire on the direct-accept path. Symmetric
+    ///      with the legacy single-fill fallback that lives in
+    ///      `OfferMatchFacet.matchOffers` lines 252-277 for the
+    ///      `partialFillEnabled = OFF` case.
+    ///
+    ///      Extracted into a private helper because adding the inline
+    ///      block to `_acceptOffer` pushed compilation over viaIR's
+    ///      stack-too-deep budget by 3 slots. Storage references are
+    ///      essentially pointers (1 slot each), so the helper's calling
+    ///      frame stays lean.
+    ///
+    ///      ERC-20 collateral only — NFT collateral is whole-or-nothing
+    ///      (`collateralAmount == collateralAmountMax` always for
+    ///      ERC721/ERC1155 by OfferCreateFacet's
+    ///      `LenderCollateralRangeNotAllowed` style invariants).
+    ///
+    ///      No-op on the matchOffers path (`matchOverride.active`) —
+    ///      that path runs its own refund + dust-close accounting in
+    ///      `OfferMatchFacet.matchOffers`.
+    function _refundBorrowerCollateralResidualIfNeeded(
+        LibVaipakam.Offer storage offer,
+        LibVaipakam.Storage storage s
+    ) private {
+        if (s.matchOverride.active) return;
+        if (offer.offerType != LibVaipakam.OfferType.Borrower) return;
+        if (offer.collateralAssetType != LibVaipakam.AssetType.ERC20) return;
+        if (offer.collateralAmountMax <= offer.collateralAmount) return;
+        uint256 collRefund = offer.collateralAmountMax - offer.collateralAmount;
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                offer.creator,           // pull from borrower's escrow
+                offer.collateralAsset,
+                offer.creator,           // refund to borrower's wallet
+                collRefund
+            ),
+            EscrowWithdrawFailed.selector
+        );
+    }
+
     /// @dev NFT-rental prepay pull. Extracted from `_acceptOffer` to
     ///      keep that function's local count under viaIR's
     ///      stack-too-deep budget after the OfferFacet split.
@@ -811,40 +859,13 @@ contract OfferAcceptFacet is
             && offer.offerType == LibVaipakam.OfferType.Borrower
             && s.protocolCfg.partialFillEnabled;
         if (!deferAcceptFlip) {
-            // #183 (Canonical Limit-Order Phase 2) — direct-accept
-            // residual-collateral refund for borrower offers (PR #184
-            // Codex round-1 P1.2). When a lender direct-accepts a
-            // borrower offer where `collateralAmountMax >
-            // collateralAmount`, the borrower's pre-escrowed excess
-            // (`collateralAmountMax - collateralAmount`) would
-            // otherwise be stranded — the offer terminates here
-            // (`accepted = true` below) but matchOffers' dust-close
-            // refund branch doesn't fire on this path. Symmetric
-            // with the legacy single-fill fallback that lives in
-            // `OfferMatchFacet.matchOffers` lines 252-277 for the
-            // partialFillEnabled = OFF case. ERC-20 collateral only:
-            // NFT collateral is whole-or-nothing (collateralAmountMax
-            // == collateralAmount always for ERC721/ERC1155 by the
-            // OfferCreateFacet `LenderCollateralRangeNotAllowed`-style
-            // structural invariants).
-            if (
-                !s.matchOverride.active
-                && offer.offerType == LibVaipakam.OfferType.Borrower
-                && offer.collateralAssetType == LibVaipakam.AssetType.ERC20
-                && offer.collateralAmountMax > offer.collateralAmount
-            ) {
-                uint256 collRefund = offer.collateralAmountMax - offer.collateralAmount;
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        EscrowFactoryFacet.escrowWithdrawERC20.selector,
-                        offer.creator,           // pull from borrower's escrow
-                        offer.collateralAsset,
-                        offer.creator,           // refund to borrower's wallet
-                        collRefund
-                    ),
-                    EscrowWithdrawFailed.selector
-                );
-            }
+            // #183 (PR #184 Codex round-1 P1.2) — direct-accept
+            // residual-collateral refund for borrower offers. Extracted
+            // to `_refundBorrowerCollateralResidualIfNeeded` to keep
+            // `_acceptOffer`'s local count under viaIR's stack-too-deep
+            // budget — adding the inline block here pushed compilation
+            // over by 3 slots.
+            _refundBorrowerCollateralResidualIfNeeded(offer, s);
             offer.accepted = true;
             // Codex round-1 P1 — `LibMetricsHooks.onOfferAccepted`
             // mutates `activeOfferIdsList` + `assetPairActiveOfferIds`

@@ -294,9 +294,9 @@ contract WorkflowComplianceAndRejection is Test {
                 collateralTokenId: 0,
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
-                amountMax: 0,
-                interestRateBpsMax: 0,
-                collateralAmountMax: 0,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: 500,
+                collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
@@ -349,8 +349,8 @@ contract WorkflowComplianceAndRejection is Test {
                 collateralTokenId: 0,
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
-                amountMax: 0,
-                interestRateBpsMax: 0,
+                amountMax: 1 ether,
+                interestRateBpsMax: 500,
                 collateralAmountMax: 0,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
@@ -390,9 +390,9 @@ contract WorkflowComplianceAndRejection is Test {
                 collateralTokenId: 0,
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
-                amountMax: 0,
-                interestRateBpsMax: 0,
-                collateralAmountMax: 0,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: 500,
+                collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
@@ -428,9 +428,9 @@ contract WorkflowComplianceAndRejection is Test {
                 collateralTokenId: 0,
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
-                amountMax: 0,
-                interestRateBpsMax: 0,
-                collateralAmountMax: 0,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: 500,
+                collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
@@ -467,9 +467,9 @@ contract WorkflowComplianceAndRejection is Test {
                 collateralTokenId: 0,
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
-                amountMax: 0,
-                interestRateBpsMax: 0,
-                collateralAmountMax: 0,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: 500,
+                collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
@@ -519,9 +519,9 @@ contract WorkflowComplianceAndRejection is Test {
                 collateralTokenId: 0,
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
-                amountMax: 0,
-                interestRateBpsMax: 0,
-                collateralAmountMax: 0,
+                amountMax: 100 ether,
+                interestRateBpsMax: 500,
+                collateralAmountMax: 180 ether,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
@@ -566,9 +566,9 @@ contract WorkflowComplianceAndRejection is Test {
                 collateralTokenId: 0,
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
-                amountMax: 0,
-                interestRateBpsMax: 0,
-                collateralAmountMax: 0,
+                amountMax: 10000 ether,
+                interestRateBpsMax: 500,
+                collateralAmountMax: 18000 ether,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
@@ -605,9 +605,9 @@ contract WorkflowComplianceAndRejection is Test {
                 collateralTokenId: 0,
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
-                amountMax: 0,
-                interestRateBpsMax: 0,
-                collateralAmountMax: 0,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: 500,
+                collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
@@ -648,9 +648,9 @@ contract WorkflowComplianceAndRejection is Test {
                 collateralTokenId: 0,
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
-                amountMax: 0,
-                interestRateBpsMax: 0,
-                collateralAmountMax: 0,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: 400,
+                collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );

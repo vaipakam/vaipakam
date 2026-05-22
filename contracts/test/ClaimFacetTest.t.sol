@@ -261,9 +261,9 @@ contract ClaimFacetTest is Test {
                 collateralTokenId: 0,
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
-                amountMax: 0,
-                interestRateBpsMax: 0,
-                collateralAmountMax: 0,
+                amountMax: principalAmount,
+                interestRateBpsMax: 500,
+                collateralAmountMax: collateralAmount,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );

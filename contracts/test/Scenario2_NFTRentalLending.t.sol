@@ -272,9 +272,9 @@ contract Scenario2_NFTRentalLending is Test {
                 collateralTokenId: 0,
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
-                amountMax: 0,
+                amountMax: DAILY_FEE,
                 interestRateBpsMax: 0,
-                collateralAmountMax: 0,
+                collateralAmountMax: TOTAL_PREPAY,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );

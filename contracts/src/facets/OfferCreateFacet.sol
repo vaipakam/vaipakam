@@ -221,9 +221,6 @@ contract OfferCreateFacet is
     /// borrower's derived ceiling). The Phase 1 auto-collapse fallback
     /// is gone — callers shipping 0 here get fail-loud.
     error AmountMaxMustBePositive();
-    /// `params.interestRateBpsMax == 0`. Symmetric strict requirement
-    /// on the rate ceiling.
-    error InterestRateMaxMustBePositive();
     /// `params.collateralAmountMax == 0`. Strict requirement on the
     /// collateral upper bound.
     error CollateralAmountMaxMustBePositive();
@@ -1030,7 +1027,17 @@ contract OfferCreateFacet is
         if (params.amount == 0) revert AmountMustBePositive();
         if (params.amountMax == 0) revert AmountMaxMustBePositive();
         if (params.amountMax < params.amount) revert InvalidAmountRange();
-        if (params.interestRateBpsMax == 0) revert InterestRateMaxMustBePositive();
+        // #183 — the rate invariant deliberately ALLOWS zero on both
+        // ends (`interestRateBps = interestRateBpsMax = 0`). This is a
+        // legitimate shape: NFT rental offers don't carry an APR (the
+        // economic payment flows through `amount × durationDays` prepay
+        // + buffer, not interest accrual), and no-interest ERC20 loans
+        // are also valid. The `> 0` strictness we apply to amount +
+        // collateral catches silent-zero bugs there because a zero
+        // principal or collateral is structurally meaningless, whereas
+        // a zero rate is structurally meaningful. The only rate
+        // checks that stay load-bearing are the range ordering and the
+        // upper-sanity ceiling (`<= MAX_INTEREST_BPS`).
         if (params.interestRateBpsMax < params.interestRateBps) revert InvalidRateRange();
         if (params.interestRateBpsMax > LibVaipakam.MAX_INTEREST_BPS) {
             revert InterestRateAboveCeiling();
@@ -1071,8 +1078,36 @@ contract OfferCreateFacet is
         //    The `rangeCollateralEnabled` create-time kill-switch is
         //    removed (every Phase 2 borrower offer would be blocked
         //    under OFF since collateral is canonically ranged).
-        if (params.collateralAmount == 0) revert CollateralMustBePositive();
-        if (params.collateralAmountMax == 0) revert CollateralAmountMaxMustBePositive();
+        // #183 — `collateralAmount > 0` and `collateralAmountMax > 0`
+        // enforced ONLY for true ERC-20 LOANS (both legs ERC-20) AND
+        // not the lender-sale-vehicle / no-collateral pattern. Three
+        // cases get a pass:
+        //   1. NFT collateral (ERC721 / ERC1155) — the lock is the
+        //      `collateralTokenId` / `(tokenId, quantity)` pair, not
+        //      an "amount"; `collateralAmount` is structurally unused.
+        //   2. NFT-rental offers (`assetType` is ERC721 / ERC1155) —
+        //      the rental fee (`amount × durationDays`) IS the
+        //      economic commitment; collateral is optional.
+        //   3. Lender sale-vehicle / no-collateral lender offers
+        //      shipped as `collateralAmount == 0 == collateralAmountMax`
+        //      (BOTH zero, explicit). The actual collateral on these
+        //      flows comes from a linked loan via
+        //      `s.saleOfferToLoanId[offerId]` (read inline at accept
+        //      time, see OfferAcceptFacet `_calculateTransactionValueNumeraire`
+        //      and the EarlyWithdrawal sale-completion path). Mixed
+        //      shapes (one zero, the other positive) still revert.
+        // ERC-20 lending against ERC-20 collateral with at least one
+        // non-zero collateral field is the only shape where the auto-
+        // collapse fallback could mask a real silent-zero bug, so
+        // that's the only shape we strictly enforce.
+        if (
+            params.assetType == LibVaipakam.AssetType.ERC20
+            && params.collateralAssetType == LibVaipakam.AssetType.ERC20
+            && !(params.collateralAmount == 0 && params.collateralAmountMax == 0)
+        ) {
+            if (params.collateralAmount == 0) revert CollateralMustBePositive();
+            if (params.collateralAmountMax == 0) revert CollateralAmountMaxMustBePositive();
+        }
         if (params.collateralAmountMax < params.collateralAmount) {
             revert InvalidCollateralAmountRange();
         }
