@@ -133,9 +133,16 @@ export function formatBps(
   // handles digit shaping + decimal separator + grouping in one call.
   // The `%` glyph and the `bps` qualifier stay literal — see the JSDoc
   // on FormatBpsOptions.locale for the rationale.
+  //
+  // Codex round-2 P3 — Intl.NumberFormat throws RangeError when
+  // `minimumFractionDigits` / `maximumFractionDigits` is outside
+  // `[0, 100]`. Clamp `precision` defensively so a caller passing
+  // `-1` (e.g. via a stale stored preference) doesn't crash the
+  // render path. Default 2 is preserved for the typical case.
+  const safePrecision = Math.max(0, Math.min(100, Math.trunc(precision)));
   const numberFmt = new Intl.NumberFormat(locale, {
-    minimumFractionDigits: precision,
-    maximumFractionDigits: precision,
+    minimumFractionDigits: safePrecision,
+    maximumFractionDigits: safePrecision,
   });
   const display = `${numberFmt.format(percent)} %`;
 

@@ -9,7 +9,15 @@ import { BpsValue } from '../../src/components/app/BpsValue';
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string) => key,
-    i18n: { language: 'en', changeLanguage: () => Promise.resolve() },
+    // Mirror the runtime shape — i18next exposes both `language` (the
+    // requested tag) and `resolvedLanguage` (the sanitised tag). The
+    // component prefers `resolvedLanguage` so a tampered stored
+    // `language` doesn't crash Intl.
+    i18n: {
+      language: 'en',
+      resolvedLanguage: 'en',
+      changeLanguage: () => Promise.resolve(),
+    },
   }),
 }));
 

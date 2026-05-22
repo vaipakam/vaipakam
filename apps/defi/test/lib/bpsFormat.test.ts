@@ -96,4 +96,26 @@ describe('formatBps', () => {
     expect(r.display).toMatch(/^5,05 %$/);
     expect(r.tooltip).toMatch(/^5,05 % \(505 bps\)$/);
   });
+
+  it('clamps precision below 0 to 0 (does not throw RangeError)', () => {
+    // Codex round-2 P3: Intl throws RangeError if min/max
+    // FractionDigits is outside [0, 100]. The defensive clamp turns
+    // -1 into 0 → display is the integer percent.
+    expect(() => formatBps(505, { ...EN, precision: -1 })).not.toThrow();
+    expect(formatBps(505, { ...EN, precision: -1 }).display).toMatch(
+      /^5 %$/,
+    );
+  });
+
+  it('clamps precision above 100 to 100 (does not throw RangeError)', () => {
+    expect(() => formatBps(505, { ...EN, precision: 999 })).not.toThrow();
+  });
+
+  it('truncates fractional precision to an integer (4.5 -> 4)', () => {
+    // Intl rejects non-integer FractionDigits; truncate defensively.
+    expect(() => formatBps(505, { ...EN, precision: 4.5 })).not.toThrow();
+    expect(formatBps(505, { ...EN, precision: 4.5 }).display).toMatch(
+      /^5\.0500 %$/,
+    );
+  });
 });

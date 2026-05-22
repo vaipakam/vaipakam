@@ -51,11 +51,20 @@ export const BpsValue: FC<BpsValueProps> = ({
   // Pull the active i18n locale so percent / digit formatting tracks
   // the user's language. Codex round-1 P2 caught the pre-locale shape
   // would have shown English punctuation in every locale.
+  //
+  // Use `i18n.resolvedLanguage` instead of `i18n.language` (Codex
+  // round-2 P2): raw `language` may carry a malformed value from a
+  // tampered / stale localStorage write (e.g. `foo_bar`), which would
+  // crash `Intl.NumberFormat(locale, ...)` with `RangeError`.
+  // `resolvedLanguage` is the sanitised fallback the i18n config
+  // produces — used elsewhere in the app for the same reason — so a
+  // bad stored language degrades to the configured default instead
+  // of white-screening the page.
   const { i18n } = useTranslation();
   const { display, tooltip } = formatBps(bps, {
     precision,
     withBpsHint,
-    locale: i18n.language,
+    locale: i18n.resolvedLanguage ?? i18n.language,
   });
   return (
     <span
