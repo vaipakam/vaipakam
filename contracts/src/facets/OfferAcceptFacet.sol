@@ -362,6 +362,18 @@ contract OfferAcceptFacet is
     ) private {
         if (s.matchOverride.active) return;
         if (offer.offerType != LibVaipakam.OfferType.Borrower) return;
+        // PR #187 Codex P2 — also gate on ERC-20 LENDING leg. Borrower
+        // NFT rental offers (lendingAsset = NFT) escrow prepay-only at
+        // create time, not collateral. Even if such an offer is created
+        // with `collateralAssetType = ERC20` and
+        // `collateralAmountMax > collateralAmount`, the borrower never
+        // deposited the excess — the refund call would either underflow
+        // the escrow's protocolTrackedEscrowBalance counter or
+        // succeed at withdrawing assets the borrower didn't pre-fund
+        // (corrupting another user's escrow). Restrict to ERC-20
+        // lending offers where the create-time collateral deposit
+        // path actually fires.
+        if (offer.assetType != LibVaipakam.AssetType.ERC20) return;
         if (offer.collateralAssetType != LibVaipakam.AssetType.ERC20) return;
         if (offer.collateralAmountMax <= offer.collateralAmount) return;
         uint256 collRefund = offer.collateralAmountMax - offer.collateralAmount;
@@ -508,22 +520,29 @@ contract OfferAcceptFacet is
         }
 
         // #183 (Canonical Limit-Order Phase 2) — effective principal
-        // for the loan being initiated. Three sources in precedence:
+        // for the loan being initiated. Precedence:
         //   1. matchOffers in flight → matcher-computed midpoint
         //      stamped in `s.matchOverride.amount`.
-        //   2. Direct-accept on a Lender offer → lender's headline
-        //      max (`offer.amountMax` — what they're providing).
-        //   3. Direct-accept on a Borrower offer → borrower's headline
-        //      floor (`offer.amount` — their min need).
+        //   2. ERC-20 direct-accept on a Lender offer → lender's
+        //      headline max (`offer.amountMax` — what they're providing).
+        //   3. ERC-20 direct-accept on a Borrower offer → borrower's
+        //      headline floor (`offer.amount` — their min need).
+        //   4. NFT rental (assetType ≠ ERC20) → `offer.amount` (daily
+        //      rental fee, not a principal headline). PR #187 Codex
+        //      P1 — NFT rentals are structurally single-value;
+        //      reading `amountMax` here would corrupt the prepay
+        //      math in `_pullRentalPrepay` (which computes
+        //      `amount × durationDays`). The role-aware mapping
+        //      applies only to ERC-20 lending offers.
         // Used by KYC (must gate on real value at risk), the LIF math,
         // the principal transfer, and the OfferAccepted event payload.
-        // Single source of truth prevents the field-semantic drift
-        // PR #175's Codex P1 finding warned about. Computed BEFORE the
-        // KYC check because KYC value-numeraire depends on it.
+        bool _isERC20 = offer.assetType == LibVaipakam.AssetType.ERC20;
         uint256 effectivePrincipal = s.matchOverride.active
             ? s.matchOverride.amount
-            : (offer.offerType == LibVaipakam.OfferType.Lender
-                ? offer.amountMax
+            : (_isERC20
+                ? (offer.offerType == LibVaipakam.OfferType.Lender
+                    ? offer.amountMax
+                    : offer.amount)
                 : offer.amount);
 
         // Tiered KYC check based on transaction value (per README Section 16)

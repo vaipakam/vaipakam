@@ -430,6 +430,20 @@ contract EarlyWithdrawalFacet is
         params.collateralAssetType = loan.collateralAssetType;
         params.collateralTokenId = loan.collateralTokenId;
         params.collateralQuantity = loan.collateralQuantity;
+        // #183 (PR #187 Codex P1) — Phase 2 OfferCreateFacet rejects
+        // `amountMax == 0` / `interestRateBpsMax == 0`
+        // (and `collateralAmountMax == 0` for ERC20+ERC20 non-sale-
+        // vehicle offers). Internal builders must ship explicit values
+        // matching the floors to preserve single-value semantics
+        // byte-identically. The sale vehicle's
+        // `collateralAmountMax = 0` mirrors `collateralAmount = 0` —
+        // the OfferCreateFacet sale-vehicle exception (BOTH zero is
+        // allowed) preserves the existing behaviour where collateral
+        // for the resulting loan comes from the linked live loan, not
+        // from a new commitment.
+        params.amountMax = loan.principal;
+        params.interestRateBpsMax = interestRateBps;
+        params.collateralAmountMax = 0;
         // Phase 6: keeper enables are per-keeper via
         // `offerKeeperEnabled[offerId][keeper]`. The outgoing lender (sale-
         // offer creator) can enable specific keepers on this sale offer

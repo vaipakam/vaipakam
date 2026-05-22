@@ -251,26 +251,38 @@ export function useMyOffers(
           const collateralField = typeof ev.args.collateralAmount === 'string'
             ? BigInt(ev.args.collateralAmount)
             : 0n;
+          // PR #187 Codex P2 — `OfferCanceledDetails` event emits the
+          // canonical Phase 2 max fields. Prefer those when present
+          // (post-Phase-2 deploys), falling back to the floor field
+          // when absent (pre-Phase-2 indexers that haven't replayed
+          // the new ABI shape yet, or replayed-from-archive rows).
+          // Without this, the role-aware table reads (lender Principal
+          // = amountMax; borrower Rate = interestRateBpsMax) would
+          // mis-report cancelled lender offers as the 10% minPartialFill
+          // floor instead of the headline ceiling.
+          const amountMaxField = typeof ev.args.amountMax === 'string'
+            ? BigInt(ev.args.amountMax)
+            : amountField;
+          const rateMaxField = typeof ev.args.interestRateBpsMax === 'string'
+            ? BigInt(ev.args.interestRateBpsMax)
+            : rateField;
+          const collateralMaxField = typeof ev.args.collateralAmountMax === 'string'
+            ? BigInt(ev.args.collateralAmountMax)
+            : collateralField;
           const offer: OfferData = {
             id: BigInt(offerId),
             creator: address,
             offerType: typeof ev.args.offerType === 'string' ? Number(ev.args.offerType) : 0,
             lendingAsset: typeof ev.args.lendingAsset === 'string' ? ev.args.lendingAsset : ZERO_ADDR,
             amount: amountField,
-            // #183 — OfferCanceledDetails event payload predates the
-            // Phase 2 storage layout and doesn't carry the `*Max`
-            // fields. For cancelled-offer reconstruction the cells
-            // render as static historical info, so falling back to the
-            // floor field is harmless; if the indexer later starts
-            // emitting the max fields on cancel events, swap to those.
-            amountMax: amountField,
+            amountMax: amountMaxField,
             interestRateBps: rateField,
-            interestRateBpsMax: rateField,
+            interestRateBpsMax: rateMaxField,
             collateralAsset: typeof ev.args.collateralAsset === 'string'
               ? ev.args.collateralAsset
               : ZERO_ADDR,
             collateralAmount: collateralField,
-            collateralAmountMax: collateralField,
+            collateralAmountMax: collateralMaxField,
             durationDays: typeof ev.args.durationDays === 'string'
               ? BigInt(ev.args.durationDays)
               : 0n,

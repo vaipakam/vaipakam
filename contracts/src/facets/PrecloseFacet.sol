@@ -922,6 +922,16 @@ contract PrecloseFacet is
         params.collateralAssetType = loan.collateralAssetType;
         params.collateralTokenId = loan.collateralTokenId;
         params.collateralQuantity = loan.collateralQuantity;
+        // #183 (PR #187 Codex P1) — Phase 2 OfferCreateFacet rejects
+        // `amountMax == 0` / `interestRateBpsMax == 0` (and
+        // `collateralAmountMax == 0` for ERC20+ERC20 non-sale-vehicle
+        // offers). The offset vehicle is a Lender single-value offer
+        // matching the original loan's principal + collateral
+        // exactly, so the explicit max fields mirror their floors and
+        // preserve single-value semantics byte-identically.
+        params.amountMax = loan.principal;
+        params.interestRateBpsMax = interestRateBps;
+        params.collateralAmountMax = collateralAmount;
         // Phase 6: keeper enables are per-keeper via
         // `offerKeeperEnabled[offerId][keeper]`. The borrower (offset-offer
         // creator) can enable specific keepers on this offset offer via

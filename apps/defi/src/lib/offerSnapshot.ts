@@ -91,9 +91,19 @@ export function writeOfferSnapshot(
     offerType: offer.offerType,
     lendingAsset: offer.lendingAsset,
     amount: offer.amount.toString(),
+    // PR #187 Codex P2 — persist the Phase 2 `*Max` fields so
+    // re-hydration doesn't fall back to floor values. Without this,
+    // snapshots written by a Phase 2 frontend would round-trip
+    // through `readOfferSnapshot`'s floor-fallback even though the
+    // writer had the canonical values in hand. The reader's
+    // floor-fallback stays as a safety net for snapshots written by
+    // older frontend builds that didn't ship these fields.
+    amountMax: offer.amountMax.toString(),
     interestRateBps: offer.interestRateBps.toString(),
+    interestRateBpsMax: offer.interestRateBpsMax.toString(),
     collateralAsset: offer.collateralAsset,
     collateralAmount: offer.collateralAmount.toString(),
+    collateralAmountMax: offer.collateralAmountMax.toString(),
     durationDays: offer.durationDays.toString(),
     principalLiquidity: offer.principalLiquidity,
     collateralLiquidity: offer.collateralLiquidity,
