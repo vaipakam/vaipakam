@@ -55,8 +55,8 @@ const KIND_LABELS: Record<ActivityEventKind, string> = {
   StakingRewardsClaimed: 'VPFI staking rewards claimed',
   InteractionRewardsClaimed: 'Platform-interaction rewards claimed',
   VPFIPurchasedWithETH: 'VPFI bought with ETH',
-  VPFIDepositedToEscrow: 'VPFI staked to vault',
-  VPFIWithdrawnFromEscrow: 'VPFI unstaked from vault',
+  VPFIDepositedToVault: 'VPFI staked to vault',
+  VPFIWithdrawnFromVault: 'VPFI unstaked from vault',
 };
 
 // Kind-kind → primary row accent colour class. Mirrors status accents from the
@@ -84,8 +84,8 @@ const KIND_ACCENT: Record<ActivityEventKind, string> = {
   StakingRewardsClaimed: 'success',
   InteractionRewardsClaimed: 'success',
   VPFIPurchasedWithETH: 'success',
-  VPFIDepositedToEscrow: 'success',
-  VPFIWithdrawnFromEscrow: 'info',
+  VPFIDepositedToVault: 'success',
+  VPFIWithdrawnFromVault: 'info',
 };
 
 interface TxGroup {
@@ -132,8 +132,8 @@ const KIND_PRIORITY: ActivityEventKind[] = [
   'LenderFundsClaimed',
   'BorrowerFundsClaimed',
   'VPFIPurchasedWithETH',
-  'VPFIDepositedToEscrow',
-  'VPFIWithdrawnFromEscrow',
+  'VPFIDepositedToVault',
+  'VPFIWithdrawnFromVault',
   'OfferCreated',
   'OfferCanceled',
 ];

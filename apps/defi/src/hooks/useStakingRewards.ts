@@ -7,7 +7,7 @@ import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '@vaipakam/contracts/abis';
 interface StakingRewardsSnapshot {
   /** Pending VPFI claimable right now for the wallet (18-decimal wei). */
   pending: bigint;
-  /** Wallet's current escrow-VPFI balance counted toward accrual. */
+  /** Wallet's current vault-VPFI balance counted toward accrual. */
   staked: bigint;
   /** Annual percentage rate paid on staked VPFI, in basis points (e.g. 500 = 5%). */
   aprBps: bigint;

@@ -5,7 +5,7 @@ import type { UseLiveWatermarkOptions } from './useLiveWatermark';
  *
  *   - **hot** — live market surfaces (OfferBook). 5 s probe, 30 s on
  *     idle, pause after 15 min walked-away.
- *   - **warm** — personal-position surfaces (Dashboard, EscrowAssets,
+ *   - **warm** — personal-position surfaces (Dashboard, VaultAssets,
  *     OfferDetails, Activity). 20 s probe, 60 s on idle, pause after
  *     15 min walked-away. Slower than hot because the relevant state
  *     mostly changes via the user's own actions (already captured by

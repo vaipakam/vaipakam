@@ -49,7 +49,7 @@ function readInitialCollapsed(): boolean {
 import DiagnosticsDrawer from "../components/app/DiagnosticsDrawer";
 import { AppUpdateBanner } from "../components/app/AppUpdateBanner";
 import { AppLegalFooter } from "../components/AppLegalFooter";
-import { EscrowUpgradeBanner } from "../components/app/EscrowUpgradeBanner";
+import { VaultUpgradeBanner } from "../components/app/VaultUpgradeBanner";
 import { UnsupportedChainBanner } from "../components/app/UnsupportedChainBanner";
 import { LegalGate } from "../components/app/LegalGate";
 import { ChainSwitcher } from "../components/app/ChainSwitcher";
@@ -113,9 +113,9 @@ const BASIC_NAV = [
     end: false,
   },
   {
-    to: "/escrow",
+    to: "/vault",
     icon: <Vault size={20} />,
-    labelKey: "appNav.escrow",
+    labelKey: "appNav.vault",
     end: false,
   },
   {
@@ -550,7 +550,7 @@ export default function AppLayout() {
         )}
 
         <UnsupportedChainBanner />
-        <EscrowUpgradeBanner />
+        <VaultUpgradeBanner />
 
         {/* Page content — wrapped in LegalGate so the first-connect
             ToS acceptance check fires before any app page renders. The

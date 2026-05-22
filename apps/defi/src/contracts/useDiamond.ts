@@ -92,7 +92,7 @@ function abiFunctionEntry(abi: Abi, name: string) {
  * Each method also exposes `.staticCall(args...)` which forces an
  * `eth_call` read regardless of the function's mutability — mirroring
  * ethers' `contract.fn.staticCall(...)` escape hatch used for nonpayable
- * lazy-deploy helpers (e.g. `getUserEscrow`).
+ * lazy-deploy helpers (e.g. `getUserVault`).
  *
  * The value type is `any` because dispatch is name-driven — individual
  * call sites retain their own cast to the concrete return shape.

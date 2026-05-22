@@ -26,7 +26,7 @@ const STALE_MS = 30_000;
  */
 export interface DashboardSnapshot {
   stakingRewardsPending: bigint;
-  escrowVpfiBalance: bigint;
+  vaultVpfiBalance: bigint;
   vpfiTier: number;
   interactionRewardsPending: bigint;
   vpfiDiscountConsented: boolean;
@@ -77,7 +77,7 @@ export function useDashboardSnapshot(user: Address | null) {
         diamond as unknown as {
           getUserDashboardSnapshot: (u: Address) => Promise<{
             stakingRewardsPending: bigint;
-            escrowVpfiBalance: bigint;
+            vaultVpfiBalance: bigint;
             vpfiTier: number;
             interactionRewardsPending: bigint;
             vpfiDiscountConsented: boolean;
@@ -93,7 +93,7 @@ export function useDashboardSnapshot(user: Address | null) {
 
       const next: DashboardSnapshot = {
         stakingRewardsPending: BigInt(raw.stakingRewardsPending ?? 0),
-        escrowVpfiBalance: BigInt(raw.escrowVpfiBalance ?? 0),
+        vaultVpfiBalance: BigInt(raw.vaultVpfiBalance ?? 0),
         vpfiTier: Number(raw.vpfiTier ?? 0),
         interactionRewardsPending: BigInt(raw.interactionRewardsPending ?? 0),
         vpfiDiscountConsented: Boolean(raw.vpfiDiscountConsented),

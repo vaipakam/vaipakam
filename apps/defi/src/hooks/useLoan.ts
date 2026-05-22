@@ -9,7 +9,7 @@ import { beginStep } from '../lib/journeyLog';
  * claim and repayment rights follow the NFT, not the original participants.
  *
  * Strategic flows (Preclose Option 3 offset, EarlyWithdrawal sale) now lock
- * the position NFT in place rather than depositing it into escrow, so
+ * the position NFT in place rather than depositing it into vault, so
  * `ownerOf` resolves directly to the initiating user throughout the flow.
  */
 export function useLoan(loanId: string | undefined) {

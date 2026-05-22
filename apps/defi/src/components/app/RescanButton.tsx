@@ -1,7 +1,7 @@
 /**
  * Shared "Refresh / Rescan" button — one source of truth for the
  * affordance that previously had a hand-rolled, slightly-drifting copy
- * on the Dashboard, EscrowAssets ("Your Vaipakam Vault"), OfferBook and
+ * on the Dashboard, VaultAssets ("Your Vaipakam Vault"), OfferBook and
  * Activity pages.
  *
  * Wraps a `useRescanCooldown` result: clicking calls `cooldown.trigger()`
@@ -16,7 +16,7 @@
  * the `data-rescan-status` attribute the `.rescan-btn` styles read.
  *
  * `disabled` is an *extra* condition ANDed with the cooldown's own
- * (e.g. "no escrow deployed yet", "a load is already in flight").
+ * (e.g. "no vault deployed yet", "a load is already in flight").
  */
 import { type CSSProperties } from 'react';
 import { Check, RefreshCw } from 'lucide-react';

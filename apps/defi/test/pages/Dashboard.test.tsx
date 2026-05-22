@@ -5,11 +5,11 @@ import { renderWithProviders } from '../utils';
 
 const LOAN_INITIATED_TOPIC0 = keccakId('LoanInitiated(uint256,uint256,address,address)');
 
-const getUserEscrowFn: any = vi.fn();
-// Dashboard now reads escrow via .staticCall to avoid a wallet-sign prompt.
-getUserEscrowFn.staticCall = getUserEscrowFn;
+const getUserVaultFn: any = vi.fn();
+// Dashboard now reads vault via .staticCall to avoid a wallet-sign prompt.
+getUserVaultFn.staticCall = getUserVaultFn;
 const diamondMock: any = {
-  getUserEscrow: getUserEscrowFn,
+  getUserVault: getUserVaultFn,
   getLoanDetails: vi.fn(),
   ownerOf: vi.fn(),
   // Event-indexed loan list consumed by `useLogIndex`. `logIndex` now filters
@@ -71,7 +71,7 @@ function mkLoan(over: any = {}) {
 describe('Dashboard', () => {
   beforeEach(() => {
     walletMock.address = null;
-    diamondMock.getUserEscrow.mockReset();
+    diamondMock.getUserVault.mockReset();
     diamondMock.getLoanDetails.mockReset();
     diamondMock.ownerOf.mockReset();
   });
@@ -83,7 +83,7 @@ describe('Dashboard', () => {
 
   it('renders loans where user is the current NFT holder', async () => {
     walletMock.address = '0xHOLDER';
-    diamondMock.getUserEscrow.mockResolvedValue('0xESCROW');
+    diamondMock.getUserVault.mockResolvedValue('0xVAULT');
     diamondMock.getLoanDetails.mockImplementation(async (id: bigint) => {
       if (id === 1n) return mkLoan({ id: 1n });
       throw new Error('stop');
@@ -95,21 +95,21 @@ describe('Dashboard', () => {
     await waitFor(() => expect(screen.getByText(/Your Loans/i)).toBeInTheDocument());
     await waitFor(() => expect(screen.getAllByText(/#1/).length).toBeGreaterThan(0));
     expect(screen.getAllByText(/Lender/).length).toBeGreaterThan(0);
-    expect(screen.getByText(/0xESCROW/i)).toBeInTheDocument();
+    expect(screen.getByText(/0xVAULT/i)).toBeInTheDocument();
   });
 
   it('renders empty state when user holds no position NFTs', async () => {
     walletMock.address = '0xNOBODY';
-    diamondMock.getUserEscrow.mockResolvedValue('0x0000000000000000000000000000000000000000');
+    diamondMock.getUserVault.mockResolvedValue('0x0000000000000000000000000000000000000000');
     diamondMock.getLoanDetails.mockResolvedValueOnce(mkLoan()).mockRejectedValue(new Error('done'));
     diamondMock.ownerOf.mockResolvedValue('0xSOMEONE');
     renderWithProviders(<Dashboard />);
     await waitFor(() => expect(screen.getByText(/No Loans Yet/i)).toBeInTheDocument());
   });
 
-  it('swallows getUserEscrow errors and still renders', async () => {
+  it('swallows getUserVault errors and still renders', async () => {
     walletMock.address = '0xX';
-    diamondMock.getUserEscrow.mockRejectedValue(new Error('nope'));
+    diamondMock.getUserVault.mockRejectedValue(new Error('nope'));
     diamondMock.getLoanDetails.mockRejectedValue(new Error('stop'));
     renderWithProviders(<Dashboard />);
     await waitFor(() => expect(screen.getByText(/No Loans Yet/i)).toBeInTheDocument());

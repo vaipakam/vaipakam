@@ -16,8 +16,8 @@ import NftVerifier from './pages/NftVerifier';
 import KeeperSettings from './pages/KeeperSettings';
 import Alerts from './pages/Alerts';
 import Allowances from './pages/Allowances';
-import EscrowAssets from './pages/EscrowAssets';
-import EscrowRecover from './pages/EscrowRecover';
+import VaultAssets from './pages/VaultAssets';
+import VaultRecover from './pages/VaultRecover';
 import DataRights from './pages/DataRights';
 import BuyVPFI from './pages/BuyVPFI';
 import Activity from './pages/Activity';
@@ -155,13 +155,13 @@ function pageRoutes(): ReactElement {
         <Route path="keepers" element={<KeeperSettings />} />
         <Route path="alerts" element={<Alerts />} />
         <Route path="allowances" element={<Allowances />} />
-        <Route path="escrow" element={<EscrowAssets />} />
+        <Route path="vault" element={<VaultAssets />} />
         {/* T-054 PR-4 — stuck-token recovery. INTENTIONALLY HIDDEN
             from main nav. Reachable only via the deep link in the
             Advanced User Guide. The page itself injects
             `<meta name="robots" content="noindex,nofollow">` so the
             URL doesn't get indexed by search engines. */}
-        <Route path="recover" element={<EscrowRecover />} />
+        <Route path="recover" element={<VaultRecover />} />
         <Route path="data-rights" element={<DataRights />} />
         <Route path="buy-vpfi" element={<BuyVPFI />} />
       </Route>

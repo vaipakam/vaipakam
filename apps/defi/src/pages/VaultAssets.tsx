@@ -7,7 +7,7 @@ import { DataSyncStatus } from '../components/app/DataSyncStatus';
 import { parseAbi, type Address } from 'viem';
 import { useWallet } from '../context/WalletContext';
 import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
-import { useUserEscrowAddress } from '../hooks/useUserEscrowAddress';
+import { useUserVaultAddress } from '../hooks/useUserVaultAddress';
 import { useIndexedLoansForWallet } from '../hooks/useIndexedLoans';
 import { fetchOffersByCreator, type IndexedOffer } from '../lib/indexerClient';
 import { useLiveWatermark } from '../hooks/useLiveWatermark';
@@ -25,11 +25,11 @@ const ERC20_BALANCE_ABI = parseAbi([
   'function balanceOf(address) view returns (uint256)',
 ]);
 
-// EscrowFactoryFacet view that returns the per-(user, token) protocol-
+// VaultFactoryFacet view that returns the per-(user, token) protocol-
 // tracked counter. Used together with the ERC-20 balanceOf to compute
 // `min(balanceOf, tracked)` — see T-051 / T-054 design notes.
-const ESCROW_FACTORY_TRACKED_ABI = parseAbi([
-  'function getProtocolTrackedEscrowBalance(address user, address token) view returns (uint256)',
+const VAULT_FACTORY_TRACKED_ABI = parseAbi([
+  'function getProtocolTrackedVaultBalance(address user, address token) view returns (uint256)',
 ]);
 
 interface TokenRow {
@@ -71,14 +71,14 @@ function isDustBalance(balance: bigint, decimals: number): boolean {
  *  Vaipakam is asset-agnostic — the platform doesn't curate which
  *  ERC-20s users may transact in. Any address the user has used as a
  *  lending or collateral asset on a real loan / offer is a token whose
- *  escrow balance the Vault should be able to show. There is no
+ *  vault balance the Vault should be able to show. There is no
  *  static "approved tokens" list, no allowlist, no chain-shape table
  *  to keep in sync. The previous static list (`knownProtocolTokens`,
  *  reading from the deployments record's `vpfiToken` / `weth` /
  *  `mockERC20A` / `mockERC20B` fields) was dropped after it caused a
  *  display bug: each flow-test run deploys fresh `new ERC20Mock(...)`
  *  contracts whose addresses are never written back into
- *  `addresses.json`, so a wallet with a 1,000-mUSDC escrow balance
+ *  `addresses.json`, so a wallet with a 1,000-mUSDC vault balance
  *  rendered as zero because the Vault page never knew "mUSDC" was a
  *  token to render.
  *
@@ -103,21 +103,21 @@ function isDustBalance(balance: bigint, decimals: number): boolean {
  *
  *  Per-token balance + tracked-counter reads ARE direct RPC reads —
  *  those values must be live (a stale balance would mislead the
- *  user). The `min(balanceOf, protocolTrackedEscrowBalance)` gate
+ *  user). The `min(balanceOf, protocolTrackedVaultBalance)` gate
  *  is preserved per-token, so an untracked balance still shows zero.
  *  The change here is which tokens get checked, not the trust model.
  */
 
 /**
- * T-051 — Escrow Assets page.
+ * T-051 — Vault Assets page.
  *
- * Displays the connected user's per-user escrow proxy address
+ * Displays the connected user's per-user vault proxy address
  * (redacted, non-selectable) and the balance of every protocol-managed
  * token currently in custody on this chain. Intentionally narrow in
  * scope: it shows ONLY tokens the Vaipakam protocol routes through the
- * escrow, NOT raw `balanceOf` of arbitrary assets the user may have
- * sent directly to the escrow address. Per the locked design in
- * `docs/DesignsAndPlans/EscrowStuckRecoveryDesign.md`:
+ * vault, NOT raw `balanceOf` of arbitrary assets the user may have
+ * sent directly to the vault address. Per the locked design in
+ * `docs/DesignsAndPlans/VaultStuckRecoveryDesign.md`:
  *
  *   - Default UI shows only protocol-managed tokens.
  *   - A single warning line informs users not to send tokens directly.
@@ -125,23 +125,23 @@ function isDustBalance(balance: bigint, decimals: number): boolean {
  *     recovery flow is reachable only via the Advanced User Guide
  *     deep-link by design — naive users who got dusted should not
  *     accidentally find a button that risks self-sanctioning their
- *     escrow.
+ *     vault.
  *
  * Phase-1 limitation: until T-054 PR-1 lands the
- * `protocolTrackedEscrowBalance[user][token]` counter, this page
- * shows the raw on-chain `balanceOf(escrow, token)` for each known
+ * `protocolTrackedVaultBalance[user][token]` counter, this page
+ * shows the raw on-chain `balanceOf(vault, token)` for each known
  * protocol token. With current usage patterns (tokens arrive ONLY via
- * `escrowDepositERC20`-mediated flows for protocol-tracked categories
+ * `vaultDepositERC20`-mediated flows for protocol-tracked categories
  * + direct `safeTransferFrom` from the Diamond on offer/accept),
  * raw-balance ≈ tracked-balance. Once the counter ships, swap the
  * read to `min(balanceOf, tracked)`.
  */
-export default function EscrowAssets() {
+export default function VaultAssets() {
   const { t } = useTranslation();
   const { address, activeChain, isCorrectChain } = useWallet();
   const publicClient = useDiamondPublicClient();
   const chain = useReadChain();
-  const escrow = useUserEscrowAddress(address);
+  const vault = useUserVaultAddress(address);
   const blockExplorer =
     (activeChain && isCorrectChain ? activeChain.blockExplorer : null) ??
     DEFAULT_CHAIN.blockExplorer;
@@ -219,7 +219,7 @@ export default function EscrowAssets() {
   // Single toggle that controls BOTH the zero-display filter AND the
   // dust-display filter together. Default OFF (show every row,
   // including zero / dust / untracked) so the user sees what's
-  // actually in their escrow without the page silently swallowing
+  // actually in their vault without the page silently swallowing
   // anything. Click to flip ON — hides every "uninteresting"
   // balance: rows where `min(balanceOf, tracked) === 0n` (untracked
   // tokens, which display as 0 by the trust-model gate) AND rows
@@ -315,11 +315,11 @@ export default function EscrowAssets() {
   }, [tokens]);
 
   // Fetch each token's protocol-tracked balance against the user's
-  // escrow proxy. Done in a single Promise.all so the "still loading"
+  // vault proxy. Done in a single Promise.all so the "still loading"
   // window is bounded by the slowest read; per-token failures fall
   // back to `0n` rather than killing the whole page.
   //
-  // Display rule: `min(balanceOf, protocolTrackedEscrowBalance)`. The
+  // Display rule: `min(balanceOf, protocolTrackedVaultBalance)`. The
   // counter (introduced under T-051) tracks every protocol-mediated
   // deposit / withdrawal — anything sitting in the proxy that's not
   // counted is unsolicited dust (taint, accidental direct sends).
@@ -333,7 +333,7 @@ export default function EscrowAssets() {
   // cutover; on a fresh mainnet deploy the counter starts ticking
   // from day 1 so this case doesn't occur.
   useEffect(() => {
-    if (!escrow || !publicClient || !diamondAddress || tokens.length === 0) return;
+    if (!vault || !publicClient || !diamondAddress || tokens.length === 0) return;
     let cancelled = false;
     setLoading(true);
     setErr(null);
@@ -346,12 +346,12 @@ export default function EscrowAssets() {
               address: tk.address as Address,
               abi: ERC20_BALANCE_ABI,
               functionName: 'balanceOf',
-              args: [escrow as Address],
+              args: [vault as Address],
             }) as Promise<bigint>,
             publicClient.readContract({
               address: diamondAddress,
-              abi: ESCROW_FACTORY_TRACKED_ABI,
-              functionName: 'getProtocolTrackedEscrowBalance',
+              abi: VAULT_FACTORY_TRACKED_ABI,
+              functionName: 'getProtocolTrackedVaultBalance',
               args: [userAddr, tk.address as Address],
             }) as Promise<bigint>,
             // Pull decimals so the zero-vs-dust filter can pick the
@@ -391,19 +391,19 @@ export default function EscrowAssets() {
     return () => {
       cancelled = true;
     };
-  }, [escrow, publicClient, tokens, reloadCounter]);
+  }, [vault, publicClient, tokens, reloadCounter]);
 
   // Pre-warm the symbol/decimals cache for every discovered token so
   // the symbol-sort comparator (`peekTokenMeta`) hits warm entries
   // synchronously instead of falling back to "address" sentinel
   // values. Idempotent + dedup'd inside `prewarmTokenMeta`.
-  const escrowAssetsClient = publicClient;
+  const vaultAssetsClient = publicClient;
   useEffect(() => {
     prewarmTokenMeta(
       tokens.map((tk) => tk.address),
-      escrowAssetsClient ?? null,
+      vaultAssetsClient ?? null,
     );
-  }, [tokens, escrowAssetsClient]);
+  }, [tokens, vaultAssetsClient]);
 
   // Visible rows: drop zero-balance rows always; drop dust rows when
   // the toggle is on. Loading rows (`balance === null`) stay visible
@@ -484,16 +484,16 @@ export default function EscrowAssets() {
   if (!address) {
     return (
       <div className="page-container">
-        <h1>{t('escrowAssets.pageTitle')}</h1>
-        <p>{t('escrowAssets.connectBody')}</p>
+        <h1>{t('vaultAssets.pageTitle')}</h1>
+        <p>{t('vaultAssets.connectBody')}</p>
       </div>
     );
   }
   if (!isCorrectChain) {
     return (
       <div className="page-container">
-        <h1>{t('escrowAssets.pageTitle')}</h1>
-        <p>{t('escrowAssets.switchChainBody')}</p>
+        <h1>{t('vaultAssets.pageTitle')}</h1>
+        <p>{t('vaultAssets.switchChainBody')}</p>
       </div>
     );
   }
@@ -502,22 +502,22 @@ export default function EscrowAssets() {
     <div className="page-container">
       <h1 style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <Vault size={22} style={{ verticalAlign: '-4px', marginRight: 8 }} />
-        {t('escrowAssets.pageTitle')}
-        <CardInfo id="escrow-assets.overview" />
+        {t('vaultAssets.pageTitle')}
+        <CardInfo id="vault-assets.overview" />
       </h1>
-      <p style={{ maxWidth: 720 }}>{t('escrowAssets.pageSubtitle')}</p>
+      <p style={{ maxWidth: 720 }}>{t('vaultAssets.pageSubtitle')}</p>
 
-      {/* Escrow address card — redacted display, no-copy, links to
+      {/* Vault address card — redacted display, no-copy, links to
           block explorer in a new tab so users can verify on-chain
           holdings independently. The explicit `userSelect: none` plus
           `onCopy` preventDefault block the trivial copy paths;
           DOM-inspection bypass is intentionally out of scope. */}
       <div className="card" style={{ marginBottom: 16 }}>
-        <div className="card-title">{t('escrowAssets.addressCardTitle')}</div>
-        {escrow ? (
+        <div className="card-title">{t('vaultAssets.addressCardTitle')}</div>
+        {vault ? (
           <>
             <a
-              href={`${blockExplorer}/address/${escrow}`}
+              href={`${blockExplorer}/address/${vault}`}
               target="_blank"
               rel="noreferrer noopener"
               onCopy={(e) => e.preventDefault()}
@@ -531,9 +531,9 @@ export default function EscrowAssets() {
                 fontFamily: 'monospace',
                 fontSize: '0.95rem',
               }}
-              aria-label={t('escrowAssets.viewOnExplorer')}
+              aria-label={t('vaultAssets.viewOnExplorer')}
             >
-              {escrow.slice(0, 6)}…{escrow.slice(-4)}
+              {vault.slice(0, 6)}…{vault.slice(-4)}
               <ExternalLink size={14} />
             </a>
             <p
@@ -543,12 +543,12 @@ export default function EscrowAssets() {
                 color: 'var(--text-secondary)',
               }}
             >
-              {t('escrowAssets.addressCaption')}
+              {t('vaultAssets.addressCaption')}
             </p>
           </>
         ) : (
           <p style={{ color: 'var(--text-secondary)' }}>
-            {t('escrowAssets.noEscrowYet')}
+            {t('vaultAssets.noVaultYet')}
           </p>
         )}
       </div>
@@ -565,8 +565,8 @@ export default function EscrowAssets() {
           }}
         >
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-            {t('escrowAssets.holdingsTitle')}
-            <CardInfo id="escrow-assets.holdings" />
+            {t('vaultAssets.holdingsTitle')}
+            <CardInfo id="vault-assets.holdings" />
           </span>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             {/* Unified low-balance toggle — controls BOTH the zero
@@ -579,7 +579,7 @@ export default function EscrowAssets() {
                 value regardless of toggle state — untracked tokens
                 show 0 even when visible — but the row itself is
                 shown so the user can verify "is something in the
-                escrow that the protocol isn't tracking?" and act on
+                vault that the protocol isn't tracking?" and act on
                 it (re-deposit via the chokepoint to bump the
                 counter). Always rendered so the toggle is
                 discoverable even when the current dataset has
@@ -590,27 +590,27 @@ export default function EscrowAssets() {
               onClick={() => setHideLowBalances((v) => !v)}
               title={
                 hideLowBalances
-                  ? t('escrowAssets.lowShowAll', {
+                  ? t('vaultAssets.lowShowAll', {
                       defaultValue:
                         'Show all balances including zero / untracked / dust',
                     })
-                  : t('escrowAssets.lowHide', {
+                  : t('vaultAssets.lowHide', {
                       defaultValue:
                         'Hide zero / untracked / dust balances (anything below 1×10⁻¹¹ in display units)',
                     })
               }
             >
               {hideLowBalances
-                ? t('escrowAssets.lowToggleShow', {
+                ? t('vaultAssets.lowToggleShow', {
                     defaultValue: 'Show all ({{n}} hidden)',
                     n: hiddenLowCount,
                   })
-                : t('escrowAssets.lowToggleHide', {
+                : t('vaultAssets.lowToggleHide', {
                     defaultValue: 'Hide low balances',
                   })}
             </button>
             {/* Visibility hint when nothing to render — informs users
-                why a wallet they expect to have escrow balances is
+                why a wallet they expect to have vault balances is
                 showing an empty table. The Three causes — never
                 deposited on this chain, all balances filtered as
                 zero / dust, token discovery hasn't yet populated —
@@ -642,13 +642,13 @@ export default function EscrowAssets() {
           </div>
         )}
 
-        {!escrow ? (
+        {!vault ? (
           <p style={{ color: 'var(--text-secondary)' }}>
-            {t('escrowAssets.noEscrowYet')}
+            {t('vaultAssets.noVaultYet')}
           </p>
         ) : tokens.length === 0 ? (
           <p style={{ color: 'var(--text-secondary)' }}>
-            {t('escrowAssets.noProtocolTokensOnChain', {
+            {t('vaultAssets.noProtocolTokensOnChain', {
               defaultValue:
                 'No tokens to show. Tokens appear here once you create or accept an offer; come back after your first interaction.',
             })}
@@ -659,11 +659,11 @@ export default function EscrowAssets() {
           // remind the user the toggle is reachable in the header.
           <p style={{ color: 'var(--text-secondary)' }}>
             {hideLowBalances && hiddenLowCount > 0
-              ? t('escrowAssets.allFilteredAsLow', {
+              ? t('vaultAssets.allFilteredAsLow', {
                   defaultValue:
                     'All your discovered balances are zero / untracked / dust. Click "Show all" in the header to inspect them.',
                 })
-              : t('escrowAssets.allZero', {
+              : t('vaultAssets.allZero', {
                   defaultValue:
                     'No protocol-tracked balances on this chain. Re-deposit via the staking flow to make a balance visible.',
                 })}
@@ -698,7 +698,7 @@ export default function EscrowAssets() {
                         : 'none'
                     }
                   >
-                    <span>{t('escrowAssets.colToken')}</span>
+                    <span>{t('vaultAssets.colToken')}</span>
                     {sortBy === 'symbol' ? (
                       sortDir === 'asc' ? (
                         <ChevronUp size={12} />
@@ -727,7 +727,7 @@ export default function EscrowAssets() {
                         : 'none'
                     }
                   >
-                    <span>{t('escrowAssets.colBalance')}</span>
+                    <span>{t('vaultAssets.colBalance')}</span>
                     {sortBy === 'balance' ? (
                       sortDir === 'asc' ? (
                         <ChevronUp size={12} />
@@ -791,10 +791,10 @@ export default function EscrowAssets() {
             rescan affordance. Same shape as the Dashboard footer so
             the user learns the pattern once: status reads on the
             left, action sits on the right edge. Always rendered when
-            an escrow exists so the user can trigger a manual refresh
+            an vault exists so the user can trigger a manual refresh
             even when the table is in one of the empty-state branches
             above. */}
-        {escrow && (
+        {vault && (
           <div
             style={{
               display: 'flex',
@@ -809,14 +809,14 @@ export default function EscrowAssets() {
             <RescanButton
               cooldown={rescanCooldown}
               onRescan={() => setReloadCounter((n) => n + 1)}
-              disabled={!escrow}
+              disabled={!vault}
             />
           </div>
         )}
       </div>
 
       {/* Direct-send warning — load-bearing for the "don't send
-          tokens directly to your escrow" UX gate. The recovery page
+          tokens directly to your vault" UX gate. The recovery page
           is intentionally NOT linked from here. Users who need the
           recovery flow find it via the Advanced User Guide. */}
       <p
@@ -837,7 +837,7 @@ export default function EscrowAssets() {
           size={16}
           style={{ flexShrink: 0, marginTop: 2, color: 'var(--warning, #c80)' }}
         />
-        <span>{t('escrowAssets.doNotSendWarning')}</span>
+        <span>{t('vaultAssets.doNotSendWarning')}</span>
       </p>
     </div>
   );

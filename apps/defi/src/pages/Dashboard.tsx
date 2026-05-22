@@ -346,7 +346,7 @@ export default function Dashboard() {
 
       {/* Aspirational rewards summary — combined view of pending +
           lifetime-claimed across both reward streams (staking yield
-          on escrow VPFI; platform-interaction rebate). Each row deep-
+          on vault VPFI; platform-interaction rebate). Each row deep-
           links to the full claim card on its native page so the user
           can act with one click. Replaces the old inline-variant
           StakingRewardsClaim mirror — that variant only ever lived
