@@ -368,14 +368,15 @@ Run `ConfigureCcip` once per (local, remote) chain pair; the wiring
 is symmetric so each ordered pair `(A → B)` and `(B → A)` gets one
 run.
 
-**Anvil rehearsal**: the same scripts can be exercised end-to-end on
-a local anvil via `script/RehearseCcipAnvil.s.sol`, which stands up
-two logical chains via `chainlink-local`'s `CCIPLocalSimulator` and
-drives all three flows (VPFI CCT transfer, the buy-flow two-step
-release, and the reward REPORT / BROADCAST round-trip). The
-rehearsal pre-deploys CCIP `Router` + a local `TokenAdminRegistry`
-in-harness, so the CCT pool-registration path is exercised the same
-way it will be on testnet / mainnet.
+**Anvil rehearsal**: the wiring is exercised end-to-end by the
+Foundry test `contracts/test/CcipDeploymentRehearsalTest.t.sol`,
+which stands up two logical chains via `chainlink-local`'s
+`CCIPLocalSimulator` and drives all three flows (VPFI CCT transfer,
+the buy-flow two-step release, and the reward REPORT / BROADCAST
+round-trip). The test pre-deploys CCIP `Router` + a local
+`TokenAdminRegistry` in-harness, so the CCT pool-registration path
+is exercised the same way it will be on testnet / mainnet. Run it
+with `forge test --match-path 'test/CcipDeploymentRehearsalTest.t.sol'`.
 
 ### Step 4 — Rotate `minter` to the diamond
 
@@ -502,7 +503,6 @@ VPFI tokenomics constants (in `VPFIToken.sol`):
 | `ConfigureCcip.s.sol`              | Wire chain selectors, remote messengers, channels, per-lane rate limits, and `TokenAdminRegistry` pool registration |
 | `ConfigureRewardReporter.s.sol`    | Bind the reward messenger to the diamond + register the canonical chain id |
 | `ConfigureVPFIBuy.s.sol`           | Diamond-side cross-chain VPFI buy params (rate, caps, payment token mode) |
-| `RehearseCcipAnvil.s.sol`          | End-to-end anvil rehearsal: VPFI CCT transfer + buy flow + reward round-trip via `CCIPLocalSimulator` |
 | `RedeployFacets.s.sol`             | Redeploy specific facets and cut them in (surgical upgrade)     |
 | `ReplaceStaleFacets.s.sol`         | Replace facets whose selectors have drifted                     |
 | `UpgradeOracleFacet.s.sol`         | Swap the OracleFacet implementation                             |
