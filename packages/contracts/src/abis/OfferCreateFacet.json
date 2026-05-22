@@ -560,6 +560,16 @@
   },
   {
     "type": "error",
+    "name": "AmountMaxMustBePositive",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AmountMustBePositive",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "AssetPaused",
     "inputs": [
       {
@@ -629,6 +639,16 @@
   {
     "type": "error",
     "name": "ChainDayAlreadyReported",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CollateralAmountMaxMustBePositive",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CollateralMustBePositive",
     "inputs": []
   },
   {
