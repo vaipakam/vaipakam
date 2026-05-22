@@ -1,36 +1,32 @@
-## WIP banner on the public NatSpec docs site (Issue #181)
+## WIP banner on the public NatSpec docs site — shipped and retired (Issue #181)
 
-`https://vaipakam.github.io/vaipakam/` went live in #177 — but the
-auto-generated NatSpec mdbook still describes the **pre-T-068
+When `https://vaipakam.github.io/vaipakam/` first went live (#177),
+the auto-generated NatSpec mdbook still described the **pre-T-068
 LayerZero architecture** in several places. The CCIP migration
-(T-068, April 2026) was supposed to scrub those references; the
-NatSpec scrub didn't get its own pass. Ten files in `contracts/src/`
-carry residual LayerZero comments, and the file
-`contracts/src/interfaces/IRewardOApp.sol` is still imported by two
-facets — that's real code drift (#181 tracks the full scrub).
+(T-068, April 2026) had scrubbed the deployed contracts but the
+NatSpec comments hadn't been swept yet — auditors / integrators
+landing on the docs site could honestly try to follow wording that
+no longer matched the code.
 
-While #181 is open, the live docs site can mislead auditors /
-integrators landing on it. This change adds a **sticky, high-
-contrast "WORK IN PROGRESS" banner** to every page of the generated
-site — including the home page, every facet, every function. The
-banner names the issue, points at the current cross-chain authority
-(ADR-0004 + the CCIP migration plan), and stays pinned during
-scroll so it can't be missed.
+This release shipped a temporary **sticky, high-contrast "WORK IN
+PROGRESS" banner** on every page of the generated site — home page,
+every facet, every function — to flag the discrepancy while the
+scrub was in flight. The banner named the issue, pointed at the
+current cross-chain authority (ADR-0004 + the CCIP migration plan),
+and stayed pinned during scroll so it couldn't be missed.
 
-Implementation lives entirely in `contracts-docs.yml` (no contract
-or doc-source changes):
+The scrub then landed in PR #190 (issue #181 closed). With the
+discrepancy gone, the same release cycle retired the banner: the
+post-build step in `.github/workflows/contracts-docs.yml` now only
+writes the `CONTEXT.md` breadcrumb at the site root pointing at the
+protocol-level docs (the ADR set, glossary, functional specs,
+operator handbook). No banner is injected.
 
-- `forge doc --build` runs unchanged.
-- The post-build step now (a) writes the existing `CONTEXT.md`
-  breadcrumb, (b) sed-injects the banner `<div>` right after every
-  `<body>` tag in `contracts/docs/book/**/*.html`, (c) sanity-checks
-  the home page for the banner string and fails the workflow if
-  injection didn't take.
+The next docs build re-publishes the site without the banner.
 
-Banner styling is inline (no separate CSS file to manage) so the
-mdbook theme switcher (light / dark / ayu) can't defeat it.
-
-When #181 closes, the entire banner block in
-`.github/workflows/contracts-docs.yml` gets removed in the same PR
-— the workflow file is the single source of truth for the banner's
-lifecycle.
+Implementation lived entirely in `contracts-docs.yml` (no contract
+or doc-source changes for either the add or the remove). Banner
+styling had been inline so the mdbook theme switcher (light / dark
+/ ayu) couldn't defeat it; the inline approach also meant the
+removal was a single workflow-step edit, no stylesheet cleanup
+needed.
