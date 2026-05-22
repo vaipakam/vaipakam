@@ -11,6 +11,20 @@
 
 ---
 
+- [ ] **T-086** `yetToPromote`: Is it possible to allow borrower to auction their NFT while their NFT is in the Escrow / Vault (when it is a collateral for a loan), so that borrower can sell that NFT and repay the loan, he may auction it in any 3rd party apps like opensea etc, but when it is sold, the amount first need to come to Vaiapakam vaults (escrow) and then amount will be first provided to lender and then for any charges and the remaining would go to borrower. if the sell price (or sold amount) is less then the amount that need to be given to lender + charges (if nay), then the sell should not be allowed and when defualted, the NFT will be transfered to lender after grace period as usual. is that possible? what do you say? whats your take? is there a better approach? what will happen if we provide operator access to borrower when it is in Vaipakam Vaults, all the above conditions would be satisfied or we need to build a better Vault (or escrow) for it to happen. what do you say? whats your take? is there a better approach? also need to check if vaipakam itself would be able to auction it in 3rd pary websites like opensea during grace period and seel if it covers principle + interest + any other charges (like liquidation fee, etc.,) and the remaining would be provided to borrower. if the sell price (or sold amount) doen't cover the required amount then the NFT itself would be transffered to lender afetr grace period? is that possibel? these scenarios need to be handeled for both ERC721 NFT and ERC1155 NFT. should we allowe user to do it or only we have to do it, whats the standard procedure? do we need to get consent from borrower for autioning during grace period while offer acceptance (and offer creation itself)? file a card to work on it.
+
+---
+
+- [ ] **T-084** `yetToPromote`: Provide separate `NFT Rental` toggel in the settings in top bar, so that all NFT rental related wordings would be available in the pages
+
+also in the normal page (when NFT rental toggel is disabled), provide a samll toggel for NFT Collateral in offer creation page near collateral field
+
+Pages are just to facilitate the process, but actuall contracts are already in place I hope. right?
+
+what do you say? whats your take? is there a better approach?
+
+---
+
 - [ ] **T-083**: Implement `webhook` for all state changes in on-chain to reflect in webpage (all current flow will become a fallback), the most import task to make things faster in webpage. what do you say? whats your take? is there a better approach?
 
 ---
