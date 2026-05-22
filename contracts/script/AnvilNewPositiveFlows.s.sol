@@ -18,7 +18,7 @@ import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
@@ -48,7 +48,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *                 `refinanceLoan(L1, newOfferId)` to swap lenders).
  *                 Maps to Advanced Guide § Refinance.
  *           N7  — Stuck-token recovery happy path (random ERC20 sent
- *                 to user's escrow, user signs the EIP-712
+ *                 to user's vault, user signs the EIP-712
  *                 RecoveryAcknowledgment, calls `recoverStuckERC20`
  *                 with declaredSource ≠ self ≠ sanctioned, asset
  *                 returns to user).
@@ -381,10 +381,10 @@ contract AnvilNewPositiveFlows is Script {
 
     // ─── N7: Stuck-Token Recovery (happy path) ────────────────────────────
 
-    /// @dev A random USDC transfer lands directly on Alice's escrow
+    /// @dev A random USDC transfer lands directly on Alice's vault
     ///      proxy (e.g., someone confused a contract address for a
     ///      wallet). The funds aren't accounted for in
-    ///      `protocolTrackedEscrowBalance` because they didn't flow
+    ///      `protocolTrackedVaultBalance` because they didn't flow
     ///      through the chokepoint, so they're "stuck" — the loan /
     ///      offer paths can't move them. Alice notices via the Asset
     ///      Viewer page and uses the Recovery flow:
@@ -394,7 +394,7 @@ contract AnvilNewPositiveFlows is Script {
     ///        3. Call `recoverStuckERC20(token, declaredSource, amount,
     ///           deadline, signature)` with `declaredSource ≠ herself`
     ///           and not on the sanctions oracle.
-    ///        4. Tokens transfer from her escrow back to her wallet.
+    ///        4. Tokens transfer from her vault back to her wallet.
     ///
     ///      End-state: Alice's wallet balance increases by the stray
     ///      amount; recovery nonce increments; no ban activates
@@ -403,34 +403,34 @@ contract AnvilNewPositiveFlows is Script {
         console.log("");
         console.log("=== N7: Stuck-Token Recovery happy path ===");
 
-        // Alice (borrower) needs an escrow already created for the
+        // Alice (borrower) needs an vault already created for the
         // stray transfer to have a target. createOffer is the simplest
         // way — she can cancel afterward to clean up. Faster: deposit
         // a token via a no-op deposit. Even faster: just call
-        // `getOrCreateUserEscrow` from the Diamond's perspective.
+        // `getOrCreateUserVault` from the Diamond's perspective.
         // We use a thin createOffer + cancelOffer dance to ensure the
-        // escrow proxy exists and Alice is a known user.
+        // vault proxy exists and Alice is a known user.
         // Faster path actually used: lender or any other actor calls
-        // getOrCreateUserEscrow on Alice's behalf via cross-facet ...
+        // getOrCreateUserVault on Alice's behalf via cross-facet ...
         // but that's diamond-internal. So we use `createOffer` for
-        // Alice (we just need her escrow to exist).
+        // Alice (we just need her vault to exist).
         //
-        // Actually `getOrCreateUserEscrow` is publicly callable per
+        // Actually `getOrCreateUserVault` is publicly callable per
         // the deploy-script selector list — Alice can call it
-        // directly to provision her escrow.
+        // directly to provision her vault.
         vm.startBroadcast(borrowerKey);
-        address aliceEscrow = EscrowFactoryFacet(diamond).getOrCreateUserEscrow(borrower);
+        address aliceVault = VaultFactoryFacet(diamond).getOrCreateUserVault(borrower);
         vm.stopBroadcast();
-        console.log("Alice escrow:", aliceEscrow);
+        console.log("Alice vault:", aliceVault);
 
         // The stray sender — we use `newBorrower` to play the role of
-        // the third party who accidentally transferred to Alice's escrow.
+        // the third party who accidentally transferred to Alice's vault.
         // declaredSource in Alice's recovery sig must match this address.
         uint256 strayAmount = 50e6; // 50 USDC stuck
         vm.startBroadcast(newBorrowerKey);
-        usdc.transfer(aliceEscrow, strayAmount);
+        usdc.transfer(aliceVault, strayAmount);
         vm.stopBroadcast();
-        console.log("Stray USDC transferred to Alice's escrow:", strayAmount);
+        console.log("Stray USDC transferred to Alice's vault:", strayAmount);
 
         // Build the EIP-712 digest and sign. Recovery typehash:
         //   RecoveryAcknowledgment(address user, address token,
@@ -440,9 +440,9 @@ contract AnvilNewPositiveFlows is Script {
         bytes32 recTypehash = keccak256(
             "RecoveryAcknowledgment(address user,address token,address declaredSource,uint256 amount,uint256 nonce,uint256 deadline,bytes32 ackTextHash)"
         );
-        bytes32 domainSep = EscrowFactoryFacet(diamond).recoveryDomainSeparator();
-        bytes32 ackText = EscrowFactoryFacet(diamond).recoveryAckTextHash();
-        uint256 nonce = EscrowFactoryFacet(diamond).recoveryNonce(borrower);
+        bytes32 domainSep = VaultFactoryFacet(diamond).recoveryDomainSeparator();
+        bytes32 ackText = VaultFactoryFacet(diamond).recoveryAckTextHash();
+        uint256 nonce = VaultFactoryFacet(diamond).recoveryNonce(borrower);
         uint256 deadline = block.timestamp + 1 hours;
 
         bytes32 structHash = keccak256(
@@ -465,7 +465,7 @@ contract AnvilNewPositiveFlows is Script {
         uint256 walletBefore = usdc.balanceOf(borrower);
 
         vm.startBroadcast(borrowerKey);
-        EscrowFactoryFacet(diamond).recoverStuckERC20(
+        VaultFactoryFacet(diamond).recoverStuckERC20(
             address(usdc),
             newBorrower,
             strayAmount,
@@ -481,7 +481,7 @@ contract AnvilNewPositiveFlows is Script {
         );
 
         // Nonce should have incremented.
-        uint256 nonceAfter = EscrowFactoryFacet(diamond).recoveryNonce(borrower);
+        uint256 nonceAfter = VaultFactoryFacet(diamond).recoveryNonce(borrower);
         require(nonceAfter == nonce + 1, "N7: recovery nonce did not increment");
 
         console.log("Recovered to wallet (delta):", strayAmount);
@@ -493,15 +493,15 @@ contract AnvilNewPositiveFlows is Script {
 
     /// @dev Same EIP-712 + recoverStuckERC20 path as N7, but the
     ///      `declaredSource` is on the sanctions oracle. Per T-054
-    ///      design (`docs/DesignsAndPlans/EscrowStuckRecoveryDesign.md`):
+    ///      design (`docs/DesignsAndPlans/VaultStuckRecoveryDesign.md`):
     ///        - oracle.isSanctioned(declaredSource) returns true
     ///        - recoverStuckERC20 does NOT execute (tokens stay)
-    ///        - escrowBannedSource[user] is set to declaredSource
-    ///        - EscrowBannedFromRecoveryAttempt event is emitted
+    ///        - vaultBannedSource[user] is set to declaredSource
+    ///        - VaultBannedFromRecoveryAttempt event is emitted
     ///        - subsequent recovery attempts revert until oracle un-flags
     ///
     ///      Scenario uses `newLender` as the user this time (clean
-    ///      escrow); `newBorrower` (already used in N7 as the stray
+    ///      vault); `newBorrower` (already used in N7 as the stray
     ///      sender — clean address) is flagged on the oracle.
     function _scenarioN8_recoverySanctionedBan() internal {
         console.log("");
@@ -511,22 +511,22 @@ contract AnvilNewPositiveFlows is Script {
         uint256 userKey = newLenderKey;
         address strayer = address(0xBADC0DE);  // dedicated dummy stray sender we flag
 
-        // Provision user's escrow.
+        // Provision user's vault.
         vm.startBroadcast(userKey);
-        address userEscrow = EscrowFactoryFacet(diamond).getOrCreateUserEscrow(user);
+        address userVault = VaultFactoryFacet(diamond).getOrCreateUserVault(user);
         vm.stopBroadcast();
 
         // Stray transfer from `strayer`. We don't have a key for the
         // dummy 0xBADC0DE address. Mint mock USDC directly into the
-        // user's escrow via the deployer (ERC20Mock allows public
+        // user's vault via the deployer (ERC20Mock allows public
         // mint). The source-of-funds is what gets attested to in the
         // EIP-712 sig, not the actual transfer path — what matters for
-        // the test is that the escrow has tokens NOT recorded in the
-        // protocolTrackedEscrowBalance counter.
+        // the test is that the vault has tokens NOT recorded in the
+        // protocolTrackedVaultBalance counter.
         vm.startBroadcast(deployerKey);
-        usdc.mint(userEscrow, 25e6);
+        usdc.mint(userVault, 25e6);
         vm.stopBroadcast();
-        console.log("Stray USDC parked in escrow:", uint256(25e6));
+        console.log("Stray USDC parked in vault:", uint256(25e6));
 
         // Flag the strayer on the sanctions oracle.
         vm.startBroadcast(deployerKey);  // sanctions deployed by deployer in setup
@@ -538,9 +538,9 @@ contract AnvilNewPositiveFlows is Script {
         bytes32 recTypehash = keccak256(
             "RecoveryAcknowledgment(address user,address token,address declaredSource,uint256 amount,uint256 nonce,uint256 deadline,bytes32 ackTextHash)"
         );
-        bytes32 domainSep = EscrowFactoryFacet(diamond).recoveryDomainSeparator();
-        bytes32 ackText = EscrowFactoryFacet(diamond).recoveryAckTextHash();
-        uint256 nonce = EscrowFactoryFacet(diamond).recoveryNonce(user);
+        bytes32 domainSep = VaultFactoryFacet(diamond).recoveryDomainSeparator();
+        bytes32 ackText = VaultFactoryFacet(diamond).recoveryAckTextHash();
+        uint256 nonce = VaultFactoryFacet(diamond).recoveryNonce(user);
         uint256 deadline = block.timestamp + 1 hours;
         bytes32 structHash = keccak256(
             abi.encode(
@@ -559,10 +559,10 @@ contract AnvilNewPositiveFlows is Script {
         bytes memory sig = abi.encodePacked(r, s, v);
 
         uint256 walletBefore = usdc.balanceOf(user);
-        uint256 escrowBefore = usdc.balanceOf(userEscrow);
+        uint256 vaultBefore = usdc.balanceOf(userVault);
 
         vm.startBroadcast(userKey);
-        EscrowFactoryFacet(diamond).recoverStuckERC20(
+        VaultFactoryFacet(diamond).recoverStuckERC20(
             address(usdc),
             strayer,
             25e6,
@@ -571,22 +571,22 @@ contract AnvilNewPositiveFlows is Script {
         );
         vm.stopBroadcast();
 
-        // Verify ban activated, tokens stayed in escrow, no transfer.
+        // Verify ban activated, tokens stayed in vault, no transfer.
         require(
             usdc.balanceOf(user) == walletBefore,
             "N8: user wallet balance should be unchanged after sanctioned-ban"
         );
         require(
-            usdc.balanceOf(userEscrow) == escrowBefore,
-            "N8: escrow balance should be unchanged after sanctioned-ban"
+            usdc.balanceOf(userVault) == vaultBefore,
+            "N8: vault balance should be unchanged after sanctioned-ban"
         );
-        address ban = EscrowFactoryFacet(diamond).escrowBannedSource(user);
-        require(ban == strayer, "N8: escrowBannedSource should record the sanctioned source");
+        address ban = VaultFactoryFacet(diamond).vaultBannedSource(user);
+        require(ban == strayer, "N8: vaultBannedSource should record the sanctioned source");
 
         // Nonce DOES increment on the sanctioned-ban path (per T-054
         // design — the call records state and burns the nonce so the
         // sig can't be replayed).
-        uint256 nonceAfter = EscrowFactoryFacet(diamond).recoveryNonce(user);
+        uint256 nonceAfter = VaultFactoryFacet(diamond).recoveryNonce(user);
         require(nonceAfter == nonce + 1, "N8: nonce should increment on ban path");
 
         console.log("Banned source recorded:", ban);
@@ -612,7 +612,7 @@ contract AnvilNewPositiveFlows is Script {
 
     // ─── N9: Disown Unsolicited Tokens ────────────────────────────────────
 
-    /// @dev User's escrow received tokens they don't want to claim
+    /// @dev User's vault received tokens they don't want to claim
     ///      (event-only audit trail, no state mutation beyond the
     ///      event). Per Advanced Guide § Disowning unsolicited tokens.
     ///      Tier-2 entry point — sanctioned users can still disown
@@ -621,12 +621,12 @@ contract AnvilNewPositiveFlows is Script {
         console.log("");
         console.log("=== N9: Disown unsolicited tokens ===");
 
-        // borrower's escrow already has the recovered amount from N7
+        // borrower's vault already has the recovered amount from N7
         // (recovery moved it to wallet); use newBorrower for a clean
-        // disown event. They have no escrow yet — disown takes a token
-        // address only, so doesn't need an existing escrow.
+        // disown event. They have no vault yet — disown takes a token
+        // address only, so doesn't need an existing vault.
         vm.startBroadcast(newBorrowerKey);
-        EscrowFactoryFacet(diamond).disown(address(usdc));
+        VaultFactoryFacet(diamond).disown(address(usdc));
         vm.stopBroadcast();
 
         // disown is event-only — no on-chain state to verify beyond the
@@ -640,7 +640,7 @@ contract AnvilNewPositiveFlows is Script {
 
     /// @dev Retail policy (per project memory + ProfileFacet
     ///      `_assertNotSanctioned` placement): Tier-1 entry points
-    ///      (createOffer, acceptOffer, getOrCreateUserEscrow,
+    ///      (createOffer, acceptOffer, getOrCreateUserVault,
     ///      recoverStuckERC20, etc.) revert SanctionedAddress for
     ///      flagged callers. Tier-2 close-out paths (repayLoan,
     ///      claimAsBorrower, markDefaulted) STAY OPEN so the
@@ -1146,7 +1146,7 @@ contract AnvilNewPositiveFlows is Script {
     ///           Inside `_acceptOffer` the auto-link triggers
     ///           `completeOffset(L1)` which:
     ///             - Settles L1 (status -> Repaid)
-    ///             - Releases Alice's collateral to her escrow
+    ///             - Releases Alice's collateral to her vault
     ///             - Charlie's loan against Alice as lender goes Active
     ///
     ///      Roles:
@@ -1178,12 +1178,12 @@ contract AnvilNewPositiveFlows is Script {
 
         // Alice calls offsetWithNewOffer. She pays accrued + shortfall
         // to Liam (~0 at t≈0 with same rate/duration); deposits new
-        // principal into her escrow; the diamond mints a Lender offer
+        // principal into her vault; the diamond mints a Lender offer
         // on her behalf and links it to L1.
         vm.startBroadcast(AliceKey);
         // Approve generously: offsetWithNewOffer pulls from Alice's
         // wallet THREE times — (1) treasuryFee on accrued, (2)
-        // principal+interest to old lender via escrowDepositERC20From,
+        // principal+interest to old lender via vaultDepositERC20From,
         // (3) new principal for the offer createOfferInternal pulls.
         // Total ≈ 2 × LOAN_AMOUNT + small accrued; we approve 3× for
         // headroom.
@@ -1235,13 +1235,13 @@ contract AnvilNewPositiveFlows is Script {
     ///           rate + ETH price reference asset = WETH).
     ///        2. Mint 5,000 VPFI to borrower (Tier-3 territory).
     ///        3. Borrower approves diamond, deposits 2,000 VPFI to
-    ///           escrow (Tier-2: 15% rebate band) via
-    ///           `depositVPFIToEscrow`, then opts in via
+    ///           vault (Tier-2: 15% rebate band) via
+    ///           `depositVPFIToVault`, then opts in via
     ///           `setVPFIDiscountConsent(true)`.
     ///        4. Lender + borrower take a normal loan. `_acceptOffer`
     ///           calls `LibVPFIDiscount.tryApplyBorrowerLif` which
     ///           deducts the 0.1% LIF in VPFI from the borrower's
-    ///           escrow into Diamond custody (recorded on
+    ///           vault into Diamond custody (recorded on
     ///           `borrowerLifRebate[loanId].vpfiHeld`).
     ///        5. Borrower repays. `settleBorrowerLifProper` splits
     ///           `vpfiHeld` time-weighted: rebate to borrower,
@@ -1306,11 +1306,11 @@ contract AnvilNewPositiveFlows is Script {
         console.log("Diamond VPFI configured: token + buy rate + ETH ref asset");
 
         // Step 3: borrower deposits 2,000 VPFI (Tier-2, 15% band) and
-        // opts in. Use `depositVPFIToEscrow` (the Phase 5 chokepoint
-        // that ticks `protocolTrackedEscrowBalance` for VPFI).
+        // opts in. Use `depositVPFIToVault` (the Phase 5 chokepoint
+        // that ticks `protocolTrackedVaultBalance` for VPFI).
         vm.startBroadcast(borrowerKey);
         vpfi.approve(diamond, 2_000e18);
-        VPFIDiscountFacet(diamond).depositVPFIToEscrow(2_000e18);
+        VPFIDiscountFacet(diamond).depositVPFIToVault(2_000e18);
         VPFIDiscountFacet(diamond).setVPFIDiscountConsent(true);
         vm.stopBroadcast();
         console.log("Borrower deposited 2,000 VPFI + opted in to discount path");
@@ -1394,9 +1394,9 @@ contract AnvilNewPositiveFlows is Script {
 
     // ─── N13: Staking Rewards Claim ─────────────────────────────────────
 
-    /// @dev Verifies the implicit-staking accrual on escrow-held VPFI.
+    /// @dev Verifies the implicit-staking accrual on vault-held VPFI.
     ///      Pre-state: N10 left ~2,000 VPFI (Tier-2) sitting in
-    ///      `borrower`'s escrow. Time on Anvil during `--broadcast`
+    ///      `borrower`'s vault. Time on Anvil during `--broadcast`
     ///      cannot be advanced from inside the script (`vm.warp`
     ///      mutates only simulation EVM state; `vm.rpc(\"evm_increaseTime\")`
     ///      trips Foundry's response parser per the SepoliaPositiveFlows
@@ -1454,16 +1454,16 @@ contract AnvilNewPositiveFlows is Script {
         console.log(">>> N13 PASSED <<<");
     }
 
-    // ─── N14: Unstake VPFI (withdraw from escrow) ───────────────────────
+    // ─── N14: Unstake VPFI (withdraw from vault) ───────────────────────
 
-    /// @dev After N13 claims rewards, the borrower's stake (escrow VPFI)
-    ///      remains. Unstake by calling `withdrawVPFIFromEscrow`. Verify
+    /// @dev After N13 claims rewards, the borrower's stake (vault VPFI)
+    ///      remains. Unstake by calling `withdrawVPFIFromVault`. Verify
     ///      the wallet grows by the unstaked amount and the staked
     ///      counter falls to zero. This also exercises T-051's
-    ///      `protocolTrackedEscrowBalance` decrement on the VPFI side.
+    ///      `protocolTrackedVaultBalance` decrement on the VPFI side.
     function _scenarioN14_unstakeVPFI() internal {
         console.log("");
-        console.log("=== N14: Unstake VPFI from escrow ===");
+        console.log("=== N14: Unstake VPFI from vault ===");
 
         uint256 stakedBefore = StakingRewardsFacet(diamond).getUserStakedVPFI(borrower);
         require(stakedBefore > 0, "N14: borrower should have stake before unstake");
@@ -1471,7 +1471,7 @@ contract AnvilNewPositiveFlows is Script {
 
         // Withdraw a fixed amount strictly smaller than the deposit
         // (1,000 VPFI of the 2,000 deposited in N10). The exact-balance
-        // approach (`withdrawVPFIFromEscrow(stakedBefore)`) bakes the
+        // approach (`withdrawVPFIFromVault(stakedBefore)`) bakes the
         // simulation-time balance into the tx args; if the broadcast-
         // time balance diverges by even 1 wei due to ordering or
         // checkpoint nuance, the withdraw reverts. Withdrawing a
@@ -1481,7 +1481,7 @@ contract AnvilNewPositiveFlows is Script {
         require(unstakeAmt <= stakedBefore, "N14: precondition - stake should be >= unstake amount");
 
         vm.startBroadcast(borrowerKey);
-        VPFIDiscountFacet(diamond).withdrawVPFIFromEscrow(unstakeAmt);
+        VPFIDiscountFacet(diamond).withdrawVPFIFromVault(unstakeAmt);
         vm.stopBroadcast();
 
         uint256 walletAfter = vpfi.balanceOf(borrower);
@@ -1551,7 +1551,7 @@ contract AnvilNewPositiveFlows is Script {
         // Note: do NOT cancel here. Range Orders Phase 1 enforces a
         // 5-min cancel cooldown when partialFillEnabled is on, and the
         // bootstrap turns it on. The leftover offer is harmless —
-        // newLender has 100k USDC and only 1k went into escrow.
+        // newLender has 100k USDC and only 1k went into vault.
 
         console.log(">>> N18 PASSED <<<");
     }

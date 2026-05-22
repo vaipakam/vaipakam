@@ -181,7 +181,7 @@ contract VpfiBuyAdapter is
     event DailyWindowReset(uint256 newWindowStart);
 
     /// @notice Purchase receipt — emitted synchronously on {buy}.
-    /// @custom:event-category state-change/escrow-mutation
+    /// @custom:event-category state-change/vault-mutation
     event BuyRequested(
         uint64 indexed requestId,
         address indexed buyer,
@@ -193,7 +193,7 @@ contract VpfiBuyAdapter is
 
     /// @notice A buy settled — VPFI delivered to the buyer, payment
     ///         released to treasury.
-    /// @custom:event-category state-change/escrow-mutation
+    /// @custom:event-category state-change/vault-mutation
     event BuyResolvedSuccess(
         uint64 indexed requestId,
         address indexed buyer,
@@ -202,7 +202,7 @@ contract VpfiBuyAdapter is
     );
 
     /// @notice Base rejected the buy — `amountIn` refunded to the buyer.
-    /// @custom:event-category state-change/escrow-mutation
+    /// @custom:event-category state-change/vault-mutation
     event BuyRefunded(
         uint64 indexed requestId,
         address indexed buyer,
@@ -212,7 +212,7 @@ contract VpfiBuyAdapter is
 
     /// @notice A stale PENDING buy was settled by refund after the
     ///         timeout elapsed without a response.
-    /// @custom:event-category state-change/escrow-mutation
+    /// @custom:event-category state-change/vault-mutation
     event BuyTimedOutRefunded(
         uint64 indexed requestId,
         address indexed buyer,
@@ -236,7 +236,7 @@ contract VpfiBuyAdapter is
     );
 
     /// @notice Owner recovered VPFI parked by {UnsolicitedDelivery}.
-    /// @custom:event-category state-change/escrow-mutation
+    /// @custom:event-category state-change/vault-mutation
     event StuckVPFIRecovered(
         uint64 indexed requestId,
         address indexed recipient,

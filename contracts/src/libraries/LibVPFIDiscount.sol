@@ -9,7 +9,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
-import {EscrowFactoryFacet} from "../facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 
 /**
  * @title LibVPFIDiscount
@@ -18,11 +18,11 @@ import {EscrowFactoryFacet} from "../facets/EscrowFactoryFacet.sol";
  *         (docs/TokenomicsTechSpec.md §6):
  *           - Borrower Loan Initiation Fee discount (normal 0.1%)
  *           - Lender Yield Fee discount             (normal 1%)
- *         Both paths share the same tier-by-escrow-balance gate and the
+ *         Both paths share the same tier-by-vault-balance gate and the
  *         same platform-level consent flag `s.vpfiDiscountConsent[user]`.
  * @dev Tier semantics (`LibVaipakam` constants):
  *
- *        Tier | Escrow VPFI range              | Discount
+ *        Tier | Vault VPFI range              | Discount
  *          0  | x < 100                        |   0%  (no discount)
  *          1  | 100    ≤ x < 1,000             |  10%
  *          2  | 1,000  ≤ x < 5,000             |  15%
@@ -32,9 +32,9 @@ import {EscrowFactoryFacet} from "../facets/EscrowFactoryFacet.sol";
  *      Tier resolution is a pure VPFI balance check — no Chainlink
  *      dependency — so the tier gate is deterministic and cheap.
  *
- *      The tier-adjusted fee is still paid IN VPFI out of the user's escrow
+ *      The tier-adjusted fee is still paid IN VPFI out of the user's vault
  *      (spec: "the system should automatically deduct the required VPFI
- *      amount from escrow to Treasury"). That conversion still uses
+ *      amount from vault to Treasury"). That conversion still uses
  *      Chainlink USD feeds:
  *
  *        normalFeeInAsset      = feeBase × normalFeeBps / BASIS_POINTS
@@ -57,22 +57,22 @@ library LibVPFIDiscount {
     // ─── Tier helpers ────────────────────────────────────────────────────────
 
     /**
-     * @notice Resolve the VPFI discount tier for a given escrow balance.
+     * @notice Resolve the VPFI discount tier for a given vault balance.
      * @dev `view`, not `pure`: tier thresholds are now admin-configurable
      *      through {ConfigFacet} and resolved via
      *      {LibVaipakam.cfgVpfiTierThresholds}. Defaults (100 / 1k / 5k /
      *      20k) apply when no override is set. The T3/T4 split remains
      *      strict: exactly the T4 threshold is T3, not T4.
-     * @param escrowBal The user's escrow VPFI balance (18 decimals).
+     * @param vaultBal The user's vault VPFI balance (18 decimals).
      * @return tier 0..4 — 0 means no discount.
      */
-    function tierOf(uint256 escrowBal) internal view returns (uint8 tier) {
+    function tierOf(uint256 vaultBal) internal view returns (uint8 tier) {
         (uint256 t1, uint256 t2, uint256 t3, uint256 t4Excl) =
             LibVaipakam.cfgVpfiTierThresholds();
-        if (escrowBal > t4Excl) return 4;
-        if (escrowBal >= t3) return 3;
-        if (escrowBal >= t2) return 2;
-        if (escrowBal >= t1) return 1;
+        if (vaultBal > t4Excl) return 4;
+        if (vaultBal >= t3) return 3;
+        if (vaultBal >= t2) return 2;
+        if (vaultBal >= t1) return 1;
         return 0;
     }
 
@@ -91,29 +91,29 @@ library LibVPFIDiscount {
     }
 
     /**
-     * @notice Read `user`'s escrow VPFI balance through the diamond's
-     *         storage + VPFI token. Returns 0 when escrow doesn't exist or
+     * @notice Read `user`'s vault VPFI balance through the diamond's
+     *         storage + VPFI token. Returns 0 when vault doesn't exist or
      *         VPFI isn't registered on this chain.
-     * @param user Address whose escrow balance to read.
-     * @return bal Escrow VPFI balance (18 decimals), or 0 if unavailable.
+     * @param user Address whose vault balance to read.
+     * @return bal Vault VPFI balance (18 decimals), or 0 if unavailable.
      */
-    function escrowVPFIBalance(address user) internal view returns (uint256 bal) {
+    function vaultVPFIBalance(address user) internal view returns (uint256 bal) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.vpfiToken == address(0)) return 0;
-        address escrow = s.userVaipakamEscrows[user];
-        if (escrow == address(0)) return 0;
-        return IERC20(s.vpfiToken).balanceOf(escrow);
+        address vault = s.userVaipakamVaults[user];
+        if (vault == address(0)) return 0;
+        return IERC20(s.vpfiToken).balanceOf(vault);
     }
 
     /// @notice Returns the protocol-tracked VPFI balance for `user`,
     ///         used to clamp the yield-bearing balance against
-    ///         unsolicited dust. Mirrors {escrowVPFIBalance}'s
-    ///         defensive zero-returns when VPFI / escrow are
+    ///         unsolicited dust. Mirrors {vaultVPFIBalance}'s
+    ///         defensive zero-returns when VPFI / vault are
     ///         unset.
     function trackedVPFIBalance(address user) internal view returns (uint256) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.vpfiToken == address(0)) return 0;
-        return s.protocolTrackedEscrowBalance[user][s.vpfiToken];
+        return s.protocolTrackedVaultBalance[user][s.vpfiToken];
     }
 
     /// @notice Pure clamp helper — returns
@@ -141,7 +141,7 @@ library LibVPFIDiscount {
      * @notice Close the current period on `user`'s VPFI discount accumulator
      *         and re-stamp the BPS against the **post-mutation** balance.
      *
-     * @dev Load-bearing ordering invariant: call this at every escrow-VPFI
+     * @dev Load-bearing ordering invariant: call this at every vault-VPFI
      *      balance mutation, passing the balance that will be in effect
      *      after the mutation. The closing period is attributed to the
      *      stamp left by the PRIOR rollup — whatever tier was in effect
@@ -162,7 +162,7 @@ library LibVPFIDiscount {
      *      BPS matching the supplied `balPostMutation`.
      *
      * @param user            Address whose discount state is being rolled up.
-     * @param balPostMutation Escrow VPFI balance that will be in effect for
+     * @param balPostMutation Vault VPFI balance that will be in effect for
      *                        the next period. For snapshot-only callers,
      *                        the live balance.
      */
@@ -268,7 +268,7 @@ library LibVPFIDiscount {
      * @return canQuote      True iff the borrower is eligible for the VPFI
      *                       path (tier ≥ 1) and the oracle route resolves.
      * @return vpfiRequired  VPFI (18 dec) equivalent of the FULL LIF; the
-     *                       amount actually pulled from borrower escrow at
+     *                       amount actually pulled from borrower vault at
      *                       init on the VPFI path.
      * @return tier          Resolved tier 1..4 (0 on canQuote == false).
      *                       Surfaces the rebate scale the borrower is
@@ -286,7 +286,7 @@ library LibVPFIDiscount {
     {
         if (principal == 0 || borrower == address(0)) return (false, 0, 0);
 
-        uint256 bal = escrowVPFIBalance(borrower);
+        uint256 bal = vaultVPFIBalance(borrower);
         tier = tierOf(bal);
         if (tier == 0) return (false, 0, 0);
 
@@ -317,7 +317,7 @@ library LibVPFIDiscount {
      * @param interestAmount The lender's pre-split interest in principal-
      *                       asset wei.
      * @return canQuote      True iff a non-zero discount is available.
-     * @return vpfiRequired  VPFI (18 dec) the lender must hold in escrow
+     * @return vpfiRequired  VPFI (18 dec) the lender must hold in vault
      *                       to take the discount.
      * @return avgBps        The time-weighted average discount BPS that
      *                       applied across the loan (0 when canQuote=false).
@@ -349,7 +349,7 @@ library LibVPFIDiscount {
 
     /**
      * @notice Attempt to pay the borrower's FULL Loan Initiation Fee in
-     *         VPFI out of the borrower's escrow into Diamond custody
+     *         VPFI out of the borrower's vault into Diamond custody
      *         (Phase 5 / §5.2b).
      *
      * @dev Phase 5 semantics: pays the FULL 0.1% LIF equivalent (not
@@ -358,7 +358,7 @@ library LibVPFIDiscount {
      *      {settleBorrowerLifProper}. Tier ≥ 1 gate prevents tier-0 users
      *      from paying VPFI with no expected rebate.
      *
-     *      Silent fallback on any failure (tier-0, oracle gap, escrow
+     *      Silent fallback on any failure (tier-0, oracle gap, vault
      *      short, sub-call reverts) — caller falls through to the normal
      *      lending-asset fee path. On success the VPFI lands in the
      *      Diamond; caller MUST record the amount against the loan via
@@ -371,7 +371,7 @@ library LibVPFIDiscount {
      * @param principal      The offer principal.
      * @param borrower       The borrower funding the LIF in VPFI.
      * @return applied       True iff VPFI was successfully deducted.
-     * @return vpfiDeducted  VPFI amount moved from borrower escrow to
+     * @return vpfiDeducted  VPFI amount moved from borrower vault to
      *                       Diamond custody — caller records as vpfiHeld.
      */
     function tryApplyBorrowerLif(
@@ -388,31 +388,31 @@ library LibVPFIDiscount {
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vpfi = s.vpfiToken;
-        address borrowerEscrow = s.userVaipakamEscrows[borrower];
-        if (borrowerEscrow == address(0)) return (false, 0);
+        address borrowerVault = s.userVaipakamVaults[borrower];
+        if (borrowerVault == address(0)) return (false, 0);
 
-        uint256 escrowBal = IERC20(vpfi).balanceOf(borrowerEscrow);
-        if (escrowBal < vpfiRequired) return (false, 0);
+        uint256 vaultBal = IERC20(vpfi).balanceOf(borrowerVault);
+        if (vaultBal < vpfiRequired) return (false, 0);
 
         // T-054 PR-2 — clamp checkpoint balance against the tracked
         // counter so unsolicited dust isn't counted as stake.
-        uint256 prevTracked = s.protocolTrackedEscrowBalance[borrower][vpfi];
+        uint256 prevTracked = s.protocolTrackedVaultBalance[borrower][vpfi];
         uint256 newStakedBal = clampToTracked(
-            escrowBal - vpfiRequired,
+            vaultBal - vpfiRequired,
             prevTracked - vpfiRequired
         );
 
-        // Staking checkpoint BEFORE the balance leaves escrow so the
+        // Staking checkpoint BEFORE the balance leaves vault so the
         // accrual captures the pre-deduction staked amount.
         LibStakingRewards.updateUser(borrower, newStakedBal);
 
-        // Withdraw VPFI from borrower's escrow into Diamond custody (the
+        // Withdraw VPFI from borrower's vault into Diamond custody (the
         // Diamond holds it until settlement splits it between rebate and
         // treasury). The withdraw reverts on insufficient balance /
-        // escrow misconfiguration; silent-fallback via the call wrapper.
+        // vault misconfiguration; silent-fallback via the call wrapper.
         (bool ok, ) = address(this).call(
             abi.encodeWithSelector(
-                EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                VaultFactoryFacet.vaultWithdrawERC20.selector,
                 borrower,
                 vpfi,
                 address(this),
@@ -476,9 +476,9 @@ library LibVPFIDiscount {
         // T-054 PR-2 — clamp against tracked so dust doesn't shift
         // the tier on the snapshot read.
         uint256 borrowerBal = IERC20(vpfi).balanceOf(
-            s.userVaipakamEscrows[loan.borrower]
+            s.userVaipakamVaults[loan.borrower]
         );
-        uint256 borrowerTracked = s.protocolTrackedEscrowBalance[loan.borrower][vpfi];
+        uint256 borrowerTracked = s.protocolTrackedVaultBalance[loan.borrower][vpfi];
         rollupUserDiscount(loan.borrower, clampToTracked(borrowerBal, borrowerTracked));
 
         uint256 avgBps = borrowerTimeWeightedDiscountBps(loan);
@@ -548,13 +548,13 @@ library LibVPFIDiscount {
 
     /**
      * @notice Attempt to pay the lender's time-weighted Yield-Fee discount
-     *         in VPFI out of the lender's escrow into the treasury.
+     *         in VPFI out of the lender's vault into the treasury.
      *
      * @dev On success, the lender keeps 100% of `interestAmount` in the
      *      lending asset (no full-rate treasury haircut) and the
      *      time-weighted-discounted treasury share is satisfied entirely
-     *      in VPFI from the lender's escrow. Silent fallback on any
-     *      failure — quote unavailable, escrow underfunded, oracle gap,
+     *      in VPFI from the lender's vault. Silent fallback on any
+     *      failure — quote unavailable, vault underfunded, oracle gap,
      *      zero-duration loan.
      *
      *      Caller must have verified `s.vpfiDiscountConsent[lender]`
@@ -563,7 +563,7 @@ library LibVPFIDiscount {
      *      Ordering invariant: this function performs the lender's
      *      discount rollup BEFORE computing the quote and BEFORE
      *      checkpointing the staking accrual, so the closed period is
-     *      attributed to the pre-mutation escrow balance. Read-only
+     *      attributed to the pre-mutation vault balance. Read-only
      *      callers that need the quote should not invoke this mutating
      *      entrypoint; they can read the per-loan snapshot + user
      *      accumulator themselves and call {lenderTimeWeightedDiscountBps}.
@@ -576,7 +576,7 @@ library LibVPFIDiscount {
      * @param interestAmount Pre-split interest in `loan.principalAsset`
      *                       wei that the yield fee is computed against.
      * @return applied       True iff VPFI was successfully deducted.
-     * @return vpfiDeducted  VPFI moved from lender escrow to treasury.
+     * @return vpfiDeducted  VPFI moved from lender vault to treasury.
      */
     function tryApplyYieldFee(
         LibVaipakam.Loan storage loan,
@@ -585,8 +585,8 @@ library LibVPFIDiscount {
         address lender = loan.lender;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vpfi = s.vpfiToken;
-        address lenderEscrow = s.userVaipakamEscrows[lender];
-        if (lenderEscrow == address(0) || vpfi == address(0)) return (false, 0);
+        address lenderVault = s.userVaipakamVaults[lender];
+        if (lenderVault == address(0) || vpfi == address(0)) return (false, 0);
 
         // 1. Roll up the lender's discount accumulator to "now" so the
         //    window-averaged BPS reflects every period right up to this
@@ -597,22 +597,22 @@ library LibVPFIDiscount {
         //    wrong stamp.
         //    T-054 PR-2 — clamp against tracked so dust doesn't shift
         //    the tier on the snapshot read.
-        uint256 escrowBal = IERC20(vpfi).balanceOf(lenderEscrow);
-        uint256 prevTracked = s.protocolTrackedEscrowBalance[lender][vpfi];
-        rollupUserDiscount(lender, clampToTracked(escrowBal, prevTracked));
+        uint256 vaultBal = IERC20(vpfi).balanceOf(lenderVault);
+        uint256 prevTracked = s.protocolTrackedVaultBalance[lender][vpfi];
+        rollupUserDiscount(lender, clampToTracked(vaultBal, prevTracked));
 
         // 2. Quote against the now-current accumulator + the loan's
         //    init snapshot. This returns the time-weighted avg discount
         //    for the window, not a live tier lookup.
         (bool canQuote, uint256 vpfiRequired, ) = quoteYieldFee(loan, interestAmount);
         if (!canQuote) return (false, 0);
-        if (escrowBal < vpfiRequired) return (false, 0);
+        if (vaultBal < vpfiRequired) return (false, 0);
 
         // 3. Checkpoint staking accrual at the post-mutation balance.
-        //    Mirrors the pattern at every other escrow-mutation site.
+        //    Mirrors the pattern at every other vault-mutation site.
         //    Clamped against tracked-after-withdraw.
         uint256 newStakedBal = clampToTracked(
-            escrowBal - vpfiRequired,
+            vaultBal - vpfiRequired,
             prevTracked - vpfiRequired
         );
         LibStakingRewards.updateUser(lender, newStakedBal);
@@ -620,7 +620,7 @@ library LibVPFIDiscount {
         address treasury = LibFacet.getTreasury();
         (bool ok, ) = address(this).call(
             abi.encodeWithSelector(
-                EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                VaultFactoryFacet.vaultWithdrawERC20.selector,
                 lender,
                 vpfi,
                 treasury,

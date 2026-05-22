@@ -33,7 +33,7 @@ library LibSettlement {
         uint256 lateFee;        // lateness penalty, applied before split
         uint256 treasuryShare;  // treasury cut of interest + lateFee
         uint256 lenderShare;    // lender cut of interest + lateFee
-        uint256 lenderDue;      // principal + lenderShare (sent to lender escrow)
+        uint256 lenderDue;      // principal + lenderShare (sent to lender vault)
     }
 
     /**

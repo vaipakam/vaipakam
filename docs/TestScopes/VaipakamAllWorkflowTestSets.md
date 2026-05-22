@@ -7,7 +7,7 @@ This document is the README-aligned test-set catalog for all Vaipakam workflow p
 - `/README.md` is the source of truth.
 - Phase 1 tests run on single-network assumptions.
 - Governance, staking, VNGK reward distribution, and cross-chain lending are Phase 2 test scopes unless explicitly stubbed as documentation-only tests.
-- ERC721 and ERC1155 rental NFTs must remain escrow-custodied during active rentals.
+- ERC721 and ERC1155 rental NFTs must remain vault-custodied during active rentals.
 - Borrowers must receive only temporary user rights for NFT rentals.
 - Borrower preclose tests must enforce same principal/lending asset type, same payment/prepay asset type, and same collateral asset type.
 - Borrower preclose Option 3, lender early-withdrawal, and refinance tests must reject NFT rentals and other non-ERC20 positions in Phase 1.
@@ -16,9 +16,9 @@ This document is the README-aligned test-set catalog for all Vaipakam workflow p
 
 - Deploy mock ERC20 principal asset, collateral asset, illiquid ERC20 asset, and prepay asset.
 - Deploy mock ERC721 and ERC1155 rental assets that support temporary user rights.
-- Deploy Vaipakam diamond/facets, Vaipakam NFT, escrow factory, escrow implementation, oracle/risk configuration, treasury, and admin controls.
+- Deploy Vaipakam diamond/facets, Vaipakam NFT, vault factory, vault implementation, oracle/risk configuration, treasury, and admin controls.
 - Create users for lender, borrower, new lender, new borrower, liquidator, treasury, admin, sanctioned user, and KYC-threshold user.
-- Create user escrows through the protocol.
+- Create user vaults through the protocol.
 - Configure risk params for liquid ERC20 assets.
 - Configure illiquid ERC20 or oracle-missing assets.
 - Configure KYC/country profile data for compliant and blocked users.
@@ -27,7 +27,7 @@ This document is the README-aligned test-set catalog for all Vaipakam workflow p
 
 ### ERC20 Lender Offer
 
-Objective: verify a lender can create an ERC20 lender offer and escrow principal.
+Objective: verify a lender can create an ERC20 lender offer and vault principal.
 
 Steps:
 
@@ -35,19 +35,19 @@ Steps:
 2. Approve the protocol.
 3. Create lender offer with ERC20 principal, ERC20 collateral, amount, rate, and duration.
 4. Verify offer fields.
-5. Verify principal is escrowed.
+5. Verify principal is vaulted.
 6. Verify Vaipakam offer NFT is minted to lender with offer-created status.
 
 Assertions:
 
 - Offer type is lender.
 - Offer is not accepted.
-- Escrow balance increased by principal amount.
+- Vault balance increased by principal amount.
 - Offer NFT owner is lender.
 
 ### ERC20 Borrower Offer
 
-Objective: verify a borrower can create an ERC20 borrower offer and escrow collateral.
+Objective: verify a borrower can create an ERC20 borrower offer and vault collateral.
 
 Steps:
 
@@ -55,31 +55,31 @@ Steps:
 2. Approve the protocol.
 3. Create borrower offer with ERC20 principal, ERC20 collateral, amount, rate, duration, and collateral amount.
 4. Verify offer fields.
-5. Verify collateral is escrowed.
+5. Verify collateral is vaulted.
 6. Verify Vaipakam offer NFT is minted to borrower.
 
 Assertions:
 
 - Offer type is borrower.
 - Collateral asset and amount match input.
-- Escrow balance increased by collateral amount.
+- Vault balance increased by collateral amount.
 - Offer NFT owner is borrower.
 
 ### NFT Rental Lender Offer
 
-Objective: verify an NFT owner can create an NFT rental lender offer with escrow custody.
+Objective: verify an NFT owner can create an NFT rental lender offer with vault custody.
 
 Steps:
 
 1. Mint ERC721 or ERC1155 to lender.
 2. Approve transfer to the protocol.
 3. Create lender offer with NFT asset, token ID, quantity if ERC1155, daily rental fee, duration, and prepay asset.
-4. Verify the NFT is transferred into lender escrow.
+4. Verify the NFT is transferred into lender vault.
 5. Verify offer NFT is minted.
 
 Assertions:
 
-- Underlying NFT custodian is lender escrow.
+- Underlying NFT custodian is lender vault.
 - Borrower has no ownership or custody.
 - Offer prepay asset is set.
 - Offer NFT owner is lender.
@@ -94,26 +94,26 @@ Steps:
 2. Approve the protocol.
 3. Create borrower offer for NFT rental terms.
 4. Verify total prepay equals rental fee times duration plus 5 percent buffer.
-5. Verify total prepay is escrowed.
+5. Verify total prepay is vaulted.
 6. Verify offer NFT is minted to borrower.
 
 Assertions:
 
 - Offer type is borrower.
-- Escrowed prepay amount equals expected total.
+- Vaulted prepay amount equals expected total.
 - Borrower owns offer NFT.
 
 ## Offer Management Tests
 
 ### Offer Cancellation
 
-Objective: verify an unaccepted offer can be cancelled and escrowed assets are returned.
+Objective: verify an unaccepted offer can be cancelled and vaulted assets are returned.
 
 Steps:
 
 1. Create ERC20 lender offer, ERC20 borrower offer, NFT rental lender offer, and NFT rental borrower offer.
 2. Cancel each offer as its creator before acceptance.
-3. Verify escrowed ERC20 funds, collateral, rental NFT, or prepayment are returned to the creator.
+3. Verify vaulted ERC20 funds, collateral, rental NFT, or prepayment are returned to the creator.
 4. Verify offer status and offer NFT status.
 5. Attempt to cancel an already accepted offer.
 
@@ -137,7 +137,7 @@ Steps:
 3. Borrower accepts offer.
 4. Verify loan is active.
 5. Verify principal transferred to borrower.
-6. Verify borrower collateral escrowed.
+6. Verify borrower collateral vaulted.
 7. Verify lender and borrower Vaipakam NFTs.
 
 Assertions:
@@ -158,7 +158,7 @@ Steps:
 3. Lender accepts offer.
 4. Verify loan is active.
 5. Verify principal transferred to borrower.
-6. Verify existing borrower collateral remains escrowed.
+6. Verify existing borrower collateral remains vaulted.
 
 Assertions:
 
@@ -183,7 +183,7 @@ Steps:
 Assertions:
 
 - Each partial acceptance creates an independent loan record.
-- Escrow accounting prevents over-acceptance.
+- Vault accounting prevents over-acceptance.
 - Claims, collateral, lender NFTs, and borrower NFTs remain isolated per loan.
 - Over-acceptance reverts.
 
@@ -193,7 +193,7 @@ Objective: verify borrower accepts an NFT rental lender offer.
 
 Steps:
 
-1. Create NFT rental lender offer with escrowed ERC721 or ERC1155.
+1. Create NFT rental lender offer with vaulted ERC721 or ERC1155.
 2. Borrower approves prepay asset.
 3. Borrower accepts offer.
 4. Verify prepay and buffer are locked.
@@ -201,7 +201,7 @@ Steps:
 
 Assertions:
 
-- Underlying NFT remains in lender escrow.
+- Underlying NFT remains in lender vault.
 - Borrower is temporary user until expected expiry.
 - Borrower has no ownership/custody.
 - Loan prepay and buffer fields are set.
@@ -215,12 +215,12 @@ Steps:
 1. Borrower creates NFT rental borrower offer with ERC20 prepayment locked.
 2. Lender approves matching ERC721 or ERC1155.
 3. Lender accepts offer.
-4. Verify lender NFT is transferred to lender escrow.
+4. Verify lender NFT is transferred to lender vault.
 5. Verify borrower temporary user rights are assigned.
 
 Assertions:
 
-- Underlying NFT custodian is lender escrow.
+- Underlying NFT custodian is lender vault.
 - Borrower is temporary user.
 - Loan is active.
 - Prepay and buffer accounting match offer.
@@ -260,7 +260,7 @@ Steps:
 3. Verify user rights are revoked.
 4. Verify lender rental fee claim exists.
 5. Verify borrower refund/buffer claim exists.
-6. Lender claims rental fee and escrowed NFT.
+6. Lender claims rental fee and vaulted NFT.
 7. Borrower claims refund.
 
 Assertions:
@@ -281,7 +281,7 @@ Steps:
 4. Verify lender and treasury allocations.
 5. Repeat until duration reaches zero.
 6. Verify claimable/closed state is created.
-7. Verify lender can reclaim escrowed NFT through lender claim path.
+7. Verify lender can reclaim vaulted NFT through lender claim path.
 
 Assertions:
 
@@ -341,7 +341,7 @@ Steps:
 4. Verify user rights are revoked.
 5. Verify rental fees/prepayment allocated to lender.
 6. Verify buffer routed to treasury.
-7. Verify escrowed NFT is claimable/returnable to lender.
+7. Verify vaulted NFT is claimable/returnable to lender.
 
 Assertions:
 
@@ -369,7 +369,7 @@ Assertions:
 
 - Loan becomes repaid/claimable.
 - Lender and borrower can claim with Vaipakam NFTs.
-- NFT rentals keep the underlying NFT escrow-custodied until lender claim.
+- NFT rentals keep the underlying NFT vault-custodied until lender claim.
 
 ### Option 2: Accept Existing Borrower Offer
 
@@ -563,7 +563,7 @@ Steps:
 Assertions:
 
 - Loan remains active.
-- Escrow receives added collateral.
+- Vault receives added collateral.
 
 ### Withdraw Excess Collateral
 
@@ -583,19 +583,19 @@ Assertions:
 - Unsafe withdrawal reverts.
 - Health factor never falls below required threshold.
 
-## Escrow Upgrade Tests
+## Vault Upgrade Tests
 
 ### Mandatory Upgrade Gate
 
-Objective: verify old mandatory escrow versions are blocked until user upgrade.
+Objective: verify old mandatory vault versions are blocked until user upgrade.
 
 Steps:
 
-1. Create user escrow on old implementation version.
+1. Create user vault on old implementation version.
 2. Admin marks a newer implementation version as mandatory.
 3. User attempts protected interaction.
 4. Verify interaction is blocked.
-5. User upgrades their escrow through the user-triggered path.
+5. User upgrades their vault through the user-triggered path.
 6. Retry protected interaction.
 
 Assertions:

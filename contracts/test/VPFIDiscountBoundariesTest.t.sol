@@ -72,8 +72,8 @@ contract VPFIDiscountBoundariesTest is SetupTest {
         return VPFIDiscountFacet(address(diamond));
     }
 
-    function _resetEscrowTo(uint256 target) internal {
-        uint256 current = _currentEscrowBalance();
+    function _resetVaultTo(uint256 target) internal {
+        uint256 current = _currentVaultBalance();
         if (target > current) {
             _deposit(alice, target - current);
         } else if (target < current) {
@@ -81,7 +81,7 @@ contract VPFIDiscountBoundariesTest is SetupTest {
         }
     }
 
-    function _currentEscrowBalance() internal view returns (uint256 bal) {
+    function _currentVaultBalance() internal view returns (uint256 bal) {
         (, bal, ) = _facet().getVPFIDiscountTier(alice);
     }
 
@@ -89,14 +89,14 @@ contract VPFIDiscountBoundariesTest is SetupTest {
         if (amt == 0) return;
         vm.startPrank(user);
         vpfi.approve(address(diamond), amt);
-        _facet().depositVPFIToEscrow(amt);
+        _facet().depositVPFIToVault(amt);
         vm.stopPrank();
     }
 
     function _withdraw(address user, uint256 amt) internal {
         if (amt == 0) return;
         vm.prank(user);
-        _facet().withdrawVPFIFromEscrow(amt);
+        _facet().withdrawVPFIFromVault(amt);
     }
 
     function _assertTier(
@@ -105,12 +105,12 @@ contract VPFIDiscountBoundariesTest is SetupTest {
         uint256 expectedBps,
         string memory tag
     ) internal {
-        _resetEscrowTo(bal);
-        (uint8 tier, uint256 escrowBal, uint256 discountBps) = _facet()
+        _resetVaultTo(bal);
+        (uint8 tier, uint256 vaultBal, uint256 discountBps) = _facet()
             .getVPFIDiscountTier(alice);
         assertEq(uint256(tier), uint256(expectedTier), tag);
         assertEq(discountBps, expectedBps, tag);
-        assertEq(escrowBal, bal, tag);
+        assertEq(vaultBal, bal, tag);
     }
 
     // ─── T0 boundary ─────────────────────────────────────────────────────────
@@ -170,19 +170,19 @@ contract VPFIDiscountBoundariesTest is SetupTest {
 
     function testDiscountBpsMonotonicAcrossTiers() public {
         // Walk through one sample per tier; bps must be non-decreasing.
-        _resetEscrowTo(0);
+        _resetVaultTo(0);
         (, , uint256 d0) = _facet().getVPFIDiscountTier(alice);
 
-        _resetEscrowTo(100 ether);
+        _resetVaultTo(100 ether);
         (, , uint256 d1) = _facet().getVPFIDiscountTier(alice);
 
-        _resetEscrowTo(1_000 ether);
+        _resetVaultTo(1_000 ether);
         (, , uint256 d2) = _facet().getVPFIDiscountTier(alice);
 
-        _resetEscrowTo(5_000 ether);
+        _resetVaultTo(5_000 ether);
         (, , uint256 d3) = _facet().getVPFIDiscountTier(alice);
 
-        _resetEscrowTo(20_001 ether);
+        _resetVaultTo(20_001 ether);
         (, , uint256 d4) = _facet().getVPFIDiscountTier(alice);
 
         assertLt(d0, d1, "T0 < T1");
@@ -218,7 +218,7 @@ contract VPFIDiscountBoundariesTest is SetupTest {
 
     function testTierViewIndependentOfConsent() public {
         // Tier math is a pure balance lookup — consent state must not move it.
-        _resetEscrowTo(5_000 ether);
+        _resetVaultTo(5_000 ether);
         (uint8 tierOff, , uint256 bpsOff) = _facet().getVPFIDiscountTier(alice);
         assertEq(uint256(tierOff), 3);
         assertEq(bpsOff, 2000);
@@ -233,8 +233,8 @@ contract VPFIDiscountBoundariesTest is SetupTest {
 
     // ─── Post-withdrawal tier demotion ──────────────────────────────────────
 
-    function testTierDemotesAfterEscrowWithdrawal() public {
-        _resetEscrowTo(5_000 ether);
+    function testTierDemotesAfterVaultWithdrawal() public {
+        _resetVaultTo(5_000 ether);
         (uint8 before_, , ) = _facet().getVPFIDiscountTier(alice);
         assertEq(uint256(before_), 3);
 
@@ -243,7 +243,7 @@ contract VPFIDiscountBoundariesTest is SetupTest {
         (uint8 after_, uint256 bal, uint256 bps) = _facet()
             .getVPFIDiscountTier(alice);
         assertEq(uint256(after_), 0, "demoted to T0");
-        assertEq(bal, 99 ether, "escrow residual");
+        assertEq(bal, 99 ether, "vault residual");
         assertEq(bps, 0, "T0 has no discount");
     }
 }

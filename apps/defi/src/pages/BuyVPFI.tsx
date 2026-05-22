@@ -38,7 +38,7 @@ import {
   useVPFIDiscount,
   useVPFIDiscountTier,
   useVPFIDiscountConsent,
-  useEscrowVPFIBalance,
+  useVaultVPFIBalance,
   useVpfiTierTable,
   ethWeiToVpfi,
   formatVpfiUnits,
@@ -66,8 +66,8 @@ import "./Dashboard.css";
  * - `idle`              - Input stage; the user has not submitted anything yet.
  * - `buying`            - A canonical-chain `buyVPFIWithETH` tx is pending.
  * - `approving-deposit` - ERC20 `approve` tx to the diamond is pending.
- * - `depositing`        - `depositVPFIToEscrow` tx is pending.
- * - `unstaking`         - A `withdrawVPFIFromEscrow` tx is pending.
+ * - `depositing`        - `depositVPFIToVault` tx is pending.
+ * - `unstaking`         - A `withdrawVPFIFromVault` tx is pending.
  * - `success`           - The last tx confirmed; banner is shown.
  */
 type Step =
@@ -273,7 +273,7 @@ function FlowBanner({ step, txHash, blockExplorer, onReset }: FlowBannerProps) {
 }
 
 /**
- * Two-step user flow for acquiring VPFI and funding the escrow that unlocks
+ * Two-step user flow for acquiring VPFI and funding the vault that unlocks
  * the borrower fee discount:
  *
  *   1. **Buy** VPFI at the protocol's fixed ETH rate from the user's
@@ -282,9 +282,9 @@ function FlowBanner({ step, txHash, blockExplorer, onReset }: FlowBannerProps) {
  *      Diamond directly; on every other supported chain the buy routes
  *      through `VpfiBuyAdapter` over CCIP and VPFI lands back in the
  *      user's wallet on the same chain they're connected to.
- *   2. **Deposit** VPFI into the user's personal escrow on the *lending*
+ *   2. **Deposit** VPFI into the user's personal vault on the *lending*
  *      chain. Always an explicit user action — the protocol never auto-funds
- *      escrow after a buy.
+ *      vault after a buy.
  *
  * Per-step pending states are surfaced via the {@link Step} state machine so
  * the button labels and disable logic stay consistent across the flow.
@@ -338,8 +338,8 @@ export default function BuyVPFI() {
   // into i18n strings via `{{apr}}` so copy never falsely advertises
   // 5% when governance has changed the rate via `setStakingApr`.
   const { aprPct } = useStakingApr();
-  const { balance: escrowBal, reload: reloadEscrow } =
-    useEscrowVPFIBalance(address);
+  const { balance: vaultBal, reload: reloadVault } =
+    useVaultVPFIBalance(address);
   const { mode } = useMode();
   const isAdvanced = mode === 'advanced';
   // Discount-tier + consent reads back the connected wallet's current
@@ -397,10 +397,10 @@ export default function BuyVPFI() {
   useEffect(() => {
     if (bridge.state.status === "landed") {
       reloadUserVpfi();
-      reloadEscrow();
+      reloadVault();
       void reloadEthBalance();
     }
-  }, [bridge.state.status, reloadUserVpfi, reloadEscrow, reloadEthBalance]);
+  }, [bridge.state.status, reloadUserVpfi, reloadVault, reloadEthBalance]);
   // `walletVpfi === null` means the snapshot hasn't loaded yet — distinct
   // from a resolved balance of 0. Downstream UI uses the null to show "—"
   // instead of a phantom zero while the fetch is in flight.
@@ -454,7 +454,7 @@ export default function BuyVPFI() {
         messageId: bridge.state.messageId,
         source: "balance",
       });
-      void reloadEscrow();
+      void reloadVault();
       void reloadEthBalance();
       // Stop the pending / countdown status strip now that we've
       // confirmed arrival via balance — otherwise the "VPFI is on its
@@ -472,7 +472,7 @@ export default function BuyVPFI() {
     bridgedExpectation,
     balanceDetectedLanding,
     bridge,
-    reloadEscrow,
+    reloadVault,
     reloadEthBalance,
   ]);
 
@@ -546,7 +546,7 @@ export default function BuyVPFI() {
       await Promise.all([
         reloadConfig(),
         reloadUserVpfi(),
-        reloadEscrow(),
+        reloadVault(),
         reloadEthBalance(),
       ]);
     } catch (err) {
@@ -619,7 +619,7 @@ export default function BuyVPFI() {
     setStep("approving-deposit");
     const s = beginStep({
       area: "vpfi-buy",
-      flow: "depositVPFIToEscrow",
+      flow: "depositVPFIToVault",
       step: "submit",
     });
     try {
@@ -648,13 +648,13 @@ export default function BuyVPFI() {
           });
           const tx = await (
             diamond as unknown as {
-              depositVPFIToEscrowWithPermit: (
+              depositVPFIToVaultWithPermit: (
                 amount: bigint,
                 permit: unknown,
                 signature: Hex,
               ) => Promise<{ hash: string; wait: () => Promise<unknown> }>;
             }
-          ).depositVPFIToEscrowWithPermit(depositWei, permit, signature);
+          ).depositVPFIToVaultWithPermit(depositWei, permit, signature);
           setTxHash(tx.hash);
           await tx.wait();
           setStep("success");
@@ -662,7 +662,7 @@ export default function BuyVPFI() {
           setDepositInput("");
           await Promise.all([
             reloadUserVpfi(),
-            reloadEscrow(),
+            reloadVault(),
             reloadEthBalance(),
           ]);
           return;
@@ -702,17 +702,17 @@ export default function BuyVPFI() {
       setStep("depositing");
       const tx = await (
         diamond as unknown as {
-          depositVPFIToEscrow: (
+          depositVPFIToVault: (
             amount: bigint,
           ) => Promise<{ hash: string; wait: () => Promise<unknown> }>;
         }
-      ).depositVPFIToEscrow(depositWei);
+      ).depositVPFIToVault(depositWei);
       setTxHash(tx.hash);
       await tx.wait();
       setStep("success");
       s.success({ note: `deposited ${depositWei}` });
       setDepositInput("");
-      await Promise.all([reloadUserVpfi(), reloadEscrow(), reloadEthBalance()]);
+      await Promise.all([reloadUserVpfi(), reloadVault(), reloadEthBalance()]);
     } catch (err) {
       setError(decodeContractError(err, "Deposit failed"));
       setStep("idle");
@@ -749,8 +749,8 @@ export default function BuyVPFI() {
       setError("Unstake amount must be greater than zero.");
       return;
     }
-    if (escrowBal != null && unstakeWei > escrowBal) {
-      setError("Unstake amount exceeds your escrow balance.");
+    if (vaultBal != null && unstakeWei > vaultBal) {
+      setError("Unstake amount exceeds your vault balance.");
       return;
     }
 
@@ -758,23 +758,23 @@ export default function BuyVPFI() {
     setStep("unstaking");
     const s = beginStep({
       area: "vpfi-buy",
-      flow: "withdrawVPFIFromEscrow",
+      flow: "withdrawVPFIFromVault",
       step: "submit",
     });
     try {
       const tx = await (
         diamond as unknown as {
-          withdrawVPFIFromEscrow: (
+          withdrawVPFIFromVault: (
             amount: bigint,
           ) => Promise<{ hash: string; wait: () => Promise<unknown> }>;
         }
-      ).withdrawVPFIFromEscrow(unstakeWei);
+      ).withdrawVPFIFromVault(unstakeWei);
       setTxHash(tx.hash);
       await tx.wait();
       setStep("success");
       s.success({ note: `unstaked ${unstakeWei}` });
       setUnstakeInput("");
-      await Promise.all([reloadUserVpfi(), reloadEscrow(), reloadEthBalance()]);
+      await Promise.all([reloadUserVpfi(), reloadVault(), reloadEthBalance()]);
     } catch (err) {
       setError(decodeContractError(err, "Unstake failed"));
       setStep("idle");
@@ -969,7 +969,7 @@ export default function BuyVPFI() {
       />
 
       {/* Discount status card moved to the Dashboard so users see
-          their tier / escrow VPFI / consent status on landing without
+          their tier / vault VPFI / consent status on landing without
           navigating to the public Buy VPFI page. The component itself
           is exported below and consumed by Dashboard. */}
 
@@ -1017,12 +1017,12 @@ export default function BuyVPFI() {
           their purchase against the next tier threshold without
           context-switching. Renders only when a wallet is connected
           — for disconnected users the page already explains buying;
-          showing "Inactive · below Tier 1" with a 0 escrow balance
+          showing "Inactive · below Tier 1" with a 0 vault balance
           would read as a problem rather than a not-yet state. */}
       {address && (
         <DiscountStatusCard
           tier={discountTier?.tier ?? 0}
-          escrowVpfi={escrowBal}
+          vaultVpfi={vaultBal}
           discountBps={discountTier?.discountBps ?? 0}
           consentEnabled={consentEnabled}
         />
@@ -1115,7 +1115,7 @@ export default function BuyVPFI() {
         )}
       </div>
 
-      {/* Step 2 — deposit to escrow on the lending chain (always explicit).
+      {/* Step 2 — deposit to vault on the lending chain (always explicit).
            `id="step-2"` matches the VPFI dropdown's Stake item. */}
       <div id="step-2" className="card" style={{ marginBottom: 20 }}>
         <StepHeader
@@ -1160,9 +1160,9 @@ export default function BuyVPFI() {
             <div className="stat-label">Wallet VPFI balance</div>
           </div>
           <Stat
-            label={`Escrow VPFI balance (${activeChain?.name ?? readChain.name})`}
+            label={`Vault VPFI balance (${activeChain?.name ?? readChain.name})`}
             value={
-              escrowBal == null ? "—" : formatAmount(formatVpfiUnits(escrowBal))
+              vaultBal == null ? "—" : formatAmount(formatVpfiUnits(vaultBal))
             }
           />
         </div>
@@ -1184,10 +1184,10 @@ export default function BuyVPFI() {
             onDeposit={handleDeposit}
             previewTx={(() => {
               // Phase 8b.2 preview: encode the classic-path
-              // `depositVPFIToEscrow(amount)` calldata. Even when the
+              // `depositVPFIToVault(amount)` calldata. Even when the
               // submit handler picks the Permit2 single-sig variant,
               // the underlying state change Blockaid scans (VPFI from
-              // wallet → escrow) is identical, and the classic path
+              // wallet → vault) is identical, and the classic path
               // does not require a yet-to-be-signed permit / signature
               // pair to render meaningful preview output.
               const raw = (depositInput ?? "").trim();
@@ -1203,7 +1203,7 @@ export default function BuyVPFI() {
                 to: activeChain.diamondAddress as Address,
                 data: encodeFunctionData({
                   abi: DIAMOND_ABI,
-                  functionName: "depositVPFIToEscrow",
+                  functionName: "depositVPFIToVault",
                   args: [amountWei],
                 }) as Hex,
                 value: 0n,
@@ -1226,10 +1226,10 @@ export default function BuyVPFI() {
         variant="card"
       />
 
-      {/* Unstake — pull VPFI back out of escrow into the wallet. Pairs with
+      {/* Unstake — pull VPFI back out of vault into the wallet. Pairs with
           Step 2 (Deposit): same token, same chain, opposite direction.
-          No approve leg because the Diamond owns the escrow and debits
-          itself on `withdrawVPFIFromEscrow`. Reducing the escrow balance
+          No approve leg because the Diamond owns the vault and debits
+          itself on `withdrawVPFIFromVault`. Reducing the vault balance
           may drop the borrower's discount tier — surface that in the
           explainer instead of blocking the action. */}
       {tokenRegistered && (
@@ -1243,7 +1243,7 @@ export default function BuyVPFI() {
           <UnstakeCard
             value={unstakeInput}
             onChange={setUnstakeInput}
-            escrowBalance={escrowBal}
+            vaultBalance={vaultBal}
             pending={step === "unstaking"}
             step={step}
             onUnstake={handleUnstake}
@@ -1251,14 +1251,14 @@ export default function BuyVPFI() {
         </div>
       )}
 
-      {/* VPFI transparency panel — wallet/escrow balances, on-chain
+      {/* VPFI transparency panel — wallet/vault balances, on-chain
           token+minter+treasury addresses, and the user's recent VPFI
           transfer history (paginated, 10 rows per page). Lifted from the
           Dashboard so it sits near the buy/deposit/unstake controls. */}
       <VPFIPanel
         vpfi={vpfiSnapshot}
         userVpfi={userVpfi}
-        escrowVpfiWei={escrowBal}
+        vaultVpfiWei={vaultBal}
         networkName={activeChain?.name ?? readChain.name}
         networkChainId={activeChain?.chainId ?? readChain.chainId}
         blockExplorer={activeChain?.blockExplorer ?? readChain.blockExplorer}
@@ -1350,8 +1350,8 @@ function Stat({ label, value }: StatProps) {
 interface DiscountStatusCardProps {
   /** Current on-chain tier 0..4 for the connected wallet. */
   tier: number;
-  /** Escrow VPFI balance (18-dec) on the active chain; null = not loaded yet. */
-  escrowVpfi: bigint | null;
+  /** Vault VPFI balance (18-dec) on the active chain; null = not loaded yet. */
+  vaultVpfi: bigint | null;
   /** Discount bps associated with the current tier (e.g. 1000 = 10%). */
   discountBps: number;
   /** Platform-level consent flag; null while loading, false = opted out. */
@@ -1362,15 +1362,15 @@ interface DiscountStatusCardProps {
  * Surfaces the borrower's active VPFI fee-discount status directly on the Buy
  * page so the user can see, before buying, (a) the tier they sit in today,
  * (b) what the next tier requires, (c) whether the platform-level consent
- * switch is on, and (d) that escrow-held VPFI doubles as staked (5% APR).
+ * switch is on, and (d) that vault-held VPFI doubles as staked (5% APR).
  *
  * Spec: TokenomicsTechSpec.md §6 (tier table, consent, liquid assets only)
- * and §8a (escrow = staked). Consent is read-only here — the toggle itself
+ * and §8a (vault = staked). Consent is read-only here — the toggle itself
  * lives on the Dashboard per spec.
  */
 export function DiscountStatusCard({
   tier,
-  escrowVpfi,
+  vaultVpfi,
   discountBps,
   consentEnabled,
 }: DiscountStatusCardProps) {
@@ -1383,9 +1383,9 @@ export function DiscountStatusCard({
   // `getVpfiTierDiscountBps` so governance changes flow through to the
   // displayed thresholds and discounts without a frontend redeploy.
   const tierTable = useVpfiTierTable();
-  const escrowUnits = formatVpfiUnits(escrowVpfi);
+  const vaultUnits = formatVpfiUnits(vaultVpfi);
   const nextTier = tierTable.find((tt) => tt.tier === tier + 1) ?? null;
-  const gapToNext = nextTier ? Math.max(0, nextTier.minVpfi - escrowUnits) : 0;
+  const gapToNext = nextTier ? Math.max(0, nextTier.minVpfi - vaultUnits) : 0;
   const currentTierRow =
     tier > 0 ? (tierTable.find((tt) => tt.tier === tier) ?? null) : null;
 
@@ -1429,12 +1429,12 @@ export function DiscountStatusCard({
           </div>
         </div>
         <div>
-          <div className="stat-label">{t('buyVpfiCards.escrowVpfi')} </div>
+          <div className="stat-label">{t('buyVpfiCards.vaultVpfi')} </div>
           <div style={{ fontSize: 22, fontWeight: 600 }}>
-            {escrowVpfi == null ? "—" : escrowUnits.toFixed(4)}
+            {vaultVpfi == null ? "—" : vaultUnits.toFixed(4)}
           </div>
           <div className="stat-label" style={{ fontSize: 11 }}>
-            {t('buyVpfiCards.escrowCountsAsStaked', { apr: aprPct })}
+            {t('buyVpfiCards.vaultCountsAsStaked', { apr: aprPct })}
           </div>
         </div>
         <div>
@@ -1518,7 +1518,7 @@ export function DiscountStatusCard({
             <tr style={{ textAlign: "left", color: "var(--text-secondary)" }}>
               <th style={{ padding: "6px 8px", fontWeight: 500 }}>{t('buyVpfiCards.tierColTier')}</th>
               <th style={{ padding: "6px 8px", fontWeight: 500 }}>
-                {t('buyVpfiCards.tierColEscrow')}
+                {t('buyVpfiCards.tierColVault')}
               </th>
               <th style={{ padding: "6px 8px", fontWeight: 500 }}>{t('buyVpfiCards.tierColDiscount')}</th>
             </tr>
@@ -1616,7 +1616,7 @@ function BuyCard({
     return (
       <p className="stat-label">
         The fixed-rate buy is currently paused by the admin. Already-owned VPFI
-        can still be deposited to escrow and used for the loan discount.
+        can still be deposited to vault and used for the loan discount.
       </p>
     );
   }
@@ -1899,7 +1899,7 @@ function BridgedBuyCard({
     return (
       <p className="stat-label">
         The fixed-rate buy is currently paused. Already-owned VPFI can still be
-        deposited to escrow and used for the loan discount.
+        deposited to vault and used for the loan discount.
       </p>
     );
   }
@@ -2461,7 +2461,7 @@ interface DepositCardProps {
 }
 
 /**
- * Deposit card: ERC20 approve + `depositVPFIToEscrow`. Rendered only after
+ * Deposit card: ERC20 approve + `depositVPFIToVault`. Rendered only after
  * the diamond has `vpfiToken` set — the outer component gates on that.
  */
 function DepositCard({
@@ -2483,7 +2483,7 @@ function DepositCard({
   const inputInvalid = !Number.isFinite(parsedInput) || parsedInput <= 0;
   const exceedsBalance = !inputInvalid && parsedInput > walletBalance;
   const disableReason = inputEmpty
-    ? "Enter amount of VPFI to transfer to Escrow"
+    ? "Enter amount of VPFI to transfer to Vault"
     : inputInvalid
       ? "Enter a valid VPFI amount"
       : exceedsBalance
@@ -2524,7 +2524,7 @@ function DepositCard({
       {/* Two-step progress indicator. Activates once the user clicks
           Deposit, so the "why am I seeing two MetaMask prompts?" question
           answers itself visually — Step 1 approves the Diamond to pull VPFI
-          from the wallet, Step 2 moves the approved amount into escrow. */}
+          from the wallet, Step 2 moves the approved amount into vault. */}
       <DepositStepTrail step={step} />
 
       {/* Two-prompt explainer. Shown whenever a deposit could trigger the
@@ -2557,7 +2557,7 @@ function DepositCard({
             pull VPFI from your wallet. Expect{" "}
             <strong>two MetaMask prompts</strong> — one to approve the exact
             amount you're about to deposit, then one to move it into your
-            escrow. If a previous approval still covers this amount, the
+            vault. If a previous approval still covers this amount, the
             approval step is skipped.
           </p>
         </div>
@@ -2596,7 +2596,7 @@ function DepositCard({
           ? t('buyVpfi.approvingVpfi')
           : step === "depositing"
             ? t('buyVpfi.depositing')
-            : t('buyVpfi.depositToEscrow')}
+            : t('buyVpfi.depositToVault')}
       </button>
     </div>
   );
@@ -2607,9 +2607,9 @@ interface UnstakeCardProps {
   value: string;
   /** Setter for the unstake amount input. */
   onChange: (v: string) => void;
-  /** Current escrow VPFI balance (18-dec); null while loading. */
-  escrowBalance: bigint | null;
-  /** True while the `withdrawVPFIFromEscrow` tx is pending. */
+  /** Current vault VPFI balance (18-dec); null while loading. */
+  vaultBalance: bigint | null;
+  /** True while the `withdrawVPFIFromVault` tx is pending. */
   pending: boolean;
   /** Current outer-flow step — drives the button label. */
   step: Step;
@@ -2618,16 +2618,16 @@ interface UnstakeCardProps {
 }
 
 /**
- * Unstake card — pulls VPFI out of the per-user escrow back to the user's
- * wallet via `withdrawVPFIFromEscrow`. No ERC20 approval is required (the
- * Diamond already controls the escrow), so it's a single tx unlike the
+ * Unstake card — pulls VPFI out of the per-user vault back to the user's
+ * wallet via `withdrawVPFIFromVault`. No ERC20 approval is required (the
+ * Diamond already controls the vault), so it's a single tx unlike the
  * deposit flow. Intentionally mirrors {@link DepositCard}'s layout so the
  * two read as a symmetric pair.
  */
 function UnstakeCard({
   value,
   onChange,
-  escrowBalance,
+  vaultBalance,
   pending,
   step,
   onUnstake,
@@ -2635,21 +2635,21 @@ function UnstakeCard({
   const { t } = useTranslation();
   // Live staking APR for the unstake-warning copy. Single read.
   const { aprPct } = useStakingApr();
-  const escrowBalanceUnits = formatVpfiUnits(escrowBalance);
+  const vaultBalanceUnits = formatVpfiUnits(vaultBalance);
   const rawInput = value.trim();
   const inputEmpty = rawInput === "";
   const parsedInput = rawInput === "" ? NaN : Number(rawInput);
   const inputInvalid = !Number.isFinite(parsedInput) || parsedInput <= 0;
-  const exceedsBalance = !inputInvalid && parsedInput > escrowBalanceUnits;
-  const balanceZero = escrowBalance == null || escrowBalance === 0n;
+  const exceedsBalance = !inputInvalid && parsedInput > vaultBalanceUnits;
+  const balanceZero = vaultBalance == null || vaultBalance === 0n;
   const disableReason = balanceZero
-    ? "Your escrow VPFI balance is 0 — deposit VPFI first."
+    ? "Your vault VPFI balance is 0 — deposit VPFI first."
     : inputEmpty
-      ? "Enter amount of VPFI to unstake from Escrow"
+      ? "Enter amount of VPFI to unstake from Vault"
       : inputInvalid
         ? "Enter a valid VPFI amount"
         : exceedsBalance
-          ? `Amount exceeds your escrow VPFI balance (${formatAmount(escrowBalanceUnits)} VPFI)`
+          ? `Amount exceeds your vault VPFI balance (${formatAmount(vaultBalanceUnits)} VPFI)`
           : null;
 
   return (
@@ -2668,10 +2668,10 @@ function UnstakeCard({
         <button
           type="button"
           className="btn btn-ghost btn-sm"
-          onClick={() => onChange(escrowBalanceUnits.toString())}
+          onClick={() => onChange(vaultBalanceUnits.toString())}
           disabled={balanceZero || pending}
         >
-          {t('buyVpfiCards.useMaxVpfi', { amount: formatAmount(escrowBalanceUnits) })}
+          {t('buyVpfiCards.useMaxVpfi', { amount: formatAmount(vaultBalanceUnits) })}
         </button>
       </div>
       <input
@@ -2690,7 +2690,7 @@ function UnstakeCard({
           className="stat-label"
           style={{ margin: "-4px 0 8px", color: "var(--accent-red, #ef4444)" }}
         >
-          {t('buyVpfiCards.exceedsEscrowBalance', { balance: formatAmount(escrowBalanceUnits) })}
+          {t('buyVpfiCards.exceedsVaultBalance', { balance: formatAmount(vaultBalanceUnits) })}
         </p>
       )}
 
@@ -2777,7 +2777,7 @@ function DepositStepTrail({ step }: { step: Step }) {
       />
       <DepositStep
         label="Deposit"
-        sublabel="into your escrow"
+        sublabel="into your vault"
         status={depositActive ? "active" : approveDone ? "active" : "pending"}
       />
     </div>

@@ -42,7 +42,7 @@ contract Handler is Test {
     uint256[] public loanIds;
 
     // Ghost bookkeeping — monotonically increasing flow counters.
-    // Deposits: tokens moved from actors into diamond/escrow scope.
+    // Deposits: tokens moved from actors into diamond/vault scope.
     // Withdrawals: tokens moved out of that scope back to actors.
     mapping(address => uint256) public ghostDeposits;   // asset => cumulative in
     mapping(address => uint256) public ghostWithdrawals; // asset => cumulative out
@@ -189,7 +189,7 @@ contract Handler is Test {
         try OfferAcceptFacet(diamond).acceptOffer(offerId, true) returns (uint256 loanId) {
             loanIds.push(loanId);
             ghostDeposits[weth] += o.collateralAmount;
-            ghostWithdrawals[usdc] += o.amount; // principal leaves escrow to borrower wallet
+            ghostWithdrawals[usdc] += o.amount; // principal leaves vault to borrower wallet
             _popOfferAt(lenderOfferIds, idx);
         } catch {}
     }
@@ -213,7 +213,7 @@ contract Handler is Test {
         try OfferAcceptFacet(diamond).acceptOffer(offerId, true) returns (uint256 loanId) {
             loanIds.push(loanId);
             ghostDeposits[usdc] += o.amount;
-            ghostWithdrawals[usdc] += o.amount; // principal flows lender→borrower through escrow
+            ghostWithdrawals[usdc] += o.amount; // principal flows lender→borrower through vault
             _popOfferAt(borrowerOfferIds, idx);
         } catch {}
     }
@@ -230,7 +230,7 @@ contract Handler is Test {
 
         vm.prank(L.borrower);
         try RepayFacet(diamond).repayLoan(loanId) {
-            // repayment funds flow borrower→lender through escrow + collateral
+            // repayment funds flow borrower→lender through vault + collateral
             // released to borrower. We don't track exact amounts here — the
             // funds-conservation invariant reads balances directly.
         } catch {}

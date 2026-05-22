@@ -33,7 +33,7 @@ import { DEFAULT_CHAIN } from '../contracts/config';
  *   4. Sign EIP-712 acknowledgment via wallet.
  *   5. Submit tx; wait for receipt; parse outcome from event log:
  *        StuckERC20Recovered → success path
- *        EscrowBannedFromRecoveryAttempt → ban-as-outcome path
+ *        VaultBannedFromRecoveryAttempt → ban-as-outcome path
  *
  * The on-chain function `recoverStuckERC20` does NOT revert on the
  * sanctioned-source path — it returns successfully so the ban-state
@@ -47,10 +47,10 @@ const RECOVERY_ABI = parseAbi([
   'function recoveryDomainSeparator() view returns (bytes32)',
   'function recoveryAckTextHash() view returns (bytes32)',
   'function recoveryNonce(address user) view returns (uint256)',
-  'function getProtocolTrackedEscrowBalance(address user, address token) view returns (uint256)',
-  'function getUserEscrowAddress(address user) view returns (address)',
+  'function getProtocolTrackedVaultBalance(address user, address token) view returns (uint256)',
+  'function getUserVaultAddress(address user) view returns (address)',
   'event StuckERC20Recovered(address indexed user, address indexed token, address indexed declaredSource, uint256 amount, uint256 nonce)',
-  'event EscrowBannedFromRecoveryAttempt(address indexed user, address indexed token, address indexed declaredSource, uint256 amount)',
+  'event VaultBannedFromRecoveryAttempt(address indexed user, address indexed token, address indexed declaredSource, uint256 amount)',
 ]);
 
 const ERC20_BALANCE_ABI = parseAbi([
@@ -60,7 +60,7 @@ const ERC20_BALANCE_ABI = parseAbi([
 ]);
 
 // EIP-712 typed-data shape — must match the on-chain RECOVERY_TYPEHASH
-// in EscrowFactoryFacet exactly, OR the recovered signer won't equal
+// in VaultFactoryFacet exactly, OR the recovered signer won't equal
 // msg.sender and the contract reverts RecoverySignatureInvalid.
 const RECOVERY_TYPES = {
   RecoveryAcknowledgment: [
@@ -85,7 +85,7 @@ type Status =
 
 const RECOVERY_DEADLINE_SECONDS = 30 * 60; // 30 min
 
-export default function EscrowRecover() {
+export default function VaultRecover() {
   const { t } = useTranslation();
   const { address, chainId, isCorrectChain } = useWallet();
   const publicClient = useDiamondPublicClient();
@@ -163,14 +163,14 @@ export default function EscrowRecover() {
         setTokenSymbol(sym);
         setTokenDecimals(Number(dec));
 
-        // Compute unsolicited = max(0, balanceOf(escrow) - tracked).
-        const escrow = (await publicClient.readContract({
+        // Compute unsolicited = max(0, balanceOf(vault) - tracked).
+        const vault = (await publicClient.readContract({
           address: diamondAddress,
           abi: RECOVERY_ABI,
-          functionName: 'getUserEscrowAddress',
+          functionName: 'getUserVaultAddress',
           args: [address as Address],
         })) as Address;
-        if (escrow === '0x0000000000000000000000000000000000000000') {
+        if (vault === '0x0000000000000000000000000000000000000000') {
           setUnsolicited(0n);
           return;
         }
@@ -179,12 +179,12 @@ export default function EscrowRecover() {
             address: tokenInput as Address,
             abi: ERC20_BALANCE_ABI,
             functionName: 'balanceOf',
-            args: [escrow],
+            args: [vault],
           }) as Promise<bigint>,
           publicClient.readContract({
             address: diamondAddress,
             abi: RECOVERY_ABI,
-            functionName: 'getProtocolTrackedEscrowBalance',
+            functionName: 'getProtocolTrackedVaultBalance',
             args: [address as Address, tokenInput as Address],
           }) as Promise<bigint>,
         ]);
@@ -205,16 +205,16 @@ export default function EscrowRecover() {
   if (!address) {
     return (
       <div className="page-container">
-        <h1>{t('escrowRecover.pageTitle')}</h1>
-        <p>{t('escrowRecover.connectBody')}</p>
+        <h1>{t('vaultRecover.pageTitle')}</h1>
+        <p>{t('vaultRecover.connectBody')}</p>
       </div>
     );
   }
   if (!isCorrectChain) {
     return (
       <div className="page-container">
-        <h1>{t('escrowRecover.pageTitle')}</h1>
-        <p>{t('escrowRecover.switchChainBody')}</p>
+        <h1>{t('vaultRecover.pageTitle')}</h1>
+        <p>{t('vaultRecover.switchChainBody')}</p>
       </div>
     );
   }
@@ -231,7 +231,7 @@ export default function EscrowRecover() {
   if (status.kind === 'success') {
     return (
       <div className="page-container">
-        <h1>{t('escrowRecover.pageTitle')}</h1>
+        <h1>{t('vaultRecover.pageTitle')}</h1>
         <div
           className="card"
           role="status"
@@ -245,9 +245,9 @@ export default function EscrowRecover() {
         >
           <CheckCircle2 size={24} style={{ flexShrink: 0 }} />
           <div>
-            <strong>{t('escrowRecover.successTitle')}</strong>
+            <strong>{t('vaultRecover.successTitle')}</strong>
             <p style={{ marginTop: 4 }}>
-              {t('escrowRecover.successBody', {
+              {t('vaultRecover.successBody', {
                 amount: formatAmount(status.amount, tokenDecimals),
                 symbol: status.symbol,
               })}
@@ -258,7 +258,7 @@ export default function EscrowRecover() {
                 target="_blank"
                 rel="noreferrer noopener"
               >
-                {t('escrowRecover.viewTx')}
+                {t('vaultRecover.viewTx')}
               </a>
             </p>
           </div>
@@ -270,7 +270,7 @@ export default function EscrowRecover() {
   if (status.kind === 'banned') {
     return (
       <div className="page-container">
-        <h1>{t('escrowRecover.pageTitle')}</h1>
+        <h1>{t('vaultRecover.pageTitle')}</h1>
         <div
           className="card"
           role="alert"
@@ -284,20 +284,20 @@ export default function EscrowRecover() {
         >
           <Lock size={24} style={{ flexShrink: 0 }} />
           <div>
-            <strong>{t('escrowRecover.bannedTitle')}</strong>
+            <strong>{t('vaultRecover.bannedTitle')}</strong>
             <p style={{ marginTop: 4 }}>
-              {t('escrowRecover.bannedBody', {
+              {t('vaultRecover.bannedBody', {
                 source: status.declaredSource,
               })}
             </p>
-            <p style={{ marginTop: 4 }}>{t('escrowRecover.bannedAutoUnlock')}</p>
+            <p style={{ marginTop: 4 }}>{t('vaultRecover.bannedAutoUnlock')}</p>
             <p style={{ marginTop: 8, fontSize: '0.85rem' }}>
               <a
                 href={`${chain.blockExplorer ?? DEFAULT_CHAIN.blockExplorer}/tx/${status.txHash}`}
                 target="_blank"
                 rel="noreferrer noopener"
               >
-                {t('escrowRecover.viewTx')}
+                {t('vaultRecover.viewTx')}
               </a>
             </p>
           </div>
@@ -310,20 +310,20 @@ export default function EscrowRecover() {
     <div className="page-container">
       <h1 style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <ShieldAlert size={22} />
-        {t('escrowRecover.pageTitle')}
+        {t('vaultRecover.pageTitle')}
       </h1>
-      <p style={{ maxWidth: 720 }}>{t('escrowRecover.pageSubtitle')}</p>
+      <p style={{ maxWidth: 720 }}>{t('vaultRecover.pageSubtitle')}</p>
 
       {/* Form */}
       <div className="card" style={{ marginTop: 16 }}>
-        <div className="card-title">{t('escrowRecover.formTitle')}</div>
+        <div className="card-title">{t('vaultRecover.formTitle')}</div>
 
         <div style={{ marginBottom: 12 }}>
           <label
             htmlFor="rec-token"
             style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}
           >
-            {t('escrowRecover.tokenLabel')}
+            {t('vaultRecover.tokenLabel')}
           </label>
           <input
             id="rec-token"
@@ -344,7 +344,7 @@ export default function EscrowRecover() {
               {unsolicited !== null && (
                 <>
                   {' · '}
-                  {t('escrowRecover.maxRecoverable', {
+                  {t('vaultRecover.maxRecoverable', {
                     amount: formatAmount(unsolicited, tokenDecimals),
                   })}
                 </>
@@ -358,7 +358,7 @@ export default function EscrowRecover() {
             htmlFor="rec-source"
             style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}
           >
-            {t('escrowRecover.sourceLabel')}
+            {t('vaultRecover.sourceLabel')}
           </label>
           <input
             id="rec-source"
@@ -369,7 +369,7 @@ export default function EscrowRecover() {
             style={{ width: '100%', padding: 8, fontFamily: 'monospace' }}
           />
           <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-            {t('escrowRecover.sourceHint')}
+            {t('vaultRecover.sourceHint')}
           </p>
         </div>
 
@@ -378,7 +378,7 @@ export default function EscrowRecover() {
             htmlFor="rec-amount"
             style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}
           >
-            {t('escrowRecover.amountLabel')}
+            {t('vaultRecover.amountLabel')}
           </label>
           <input
             id="rec-amount"
@@ -399,7 +399,7 @@ export default function EscrowRecover() {
             setStatus({ kind: 'reviewing' });
           }}
         >
-          {t('escrowRecover.reviewBtn')}
+          {t('vaultRecover.reviewBtn')}
         </button>
       </div>
 
@@ -418,11 +418,11 @@ export default function EscrowRecover() {
       >
         <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: 2 }} />
         <div>
-          <strong>{t('escrowRecover.warningTitle')}</strong>
+          <strong>{t('vaultRecover.warningTitle')}</strong>
           <ul style={{ marginTop: 4, paddingLeft: 18 }}>
-            <li>{t('escrowRecover.warning1')}</li>
-            <li>{t('escrowRecover.warning2')}</li>
-            <li>{t('escrowRecover.warning3')}</li>
+            <li>{t('vaultRecover.warning1')}</li>
+            <li>{t('vaultRecover.warning2')}</li>
+            <li>{t('vaultRecover.warning3')}</li>
           </ul>
         </div>
       </div>
@@ -445,7 +445,7 @@ export default function EscrowRecover() {
               if (!walletClient) {
                 setStatus({
                   kind: 'error',
-                  message: t('escrowRecover.errWalletUnavailable'),
+                  message: t('vaultRecover.errWalletUnavailable'),
                 });
                 return;
               }
@@ -512,7 +512,7 @@ export default function EscrowRecover() {
               // landed. Both events live on the diamond.
               let outcome: Status = {
                 kind: 'error',
-                message: t('escrowRecover.errOutcomeMissing'),
+                message: t('vaultRecover.errOutcomeMissing'),
               };
               for (const log of receipt.logs) {
                 if (log.address.toLowerCase() !== diamondAddress.toLowerCase()) continue;
@@ -531,7 +531,7 @@ export default function EscrowRecover() {
                     };
                     break;
                   }
-                  if (decoded.eventName === 'EscrowBannedFromRecoveryAttempt') {
+                  if (decoded.eventName === 'VaultBannedFromRecoveryAttempt') {
                     outcome = {
                       kind: 'banned',
                       txHash,
@@ -565,7 +565,7 @@ export default function EscrowRecover() {
             color: 'var(--danger, #900)',
           }}
         >
-          <strong>{t('escrowRecover.errTitle')}</strong>
+          <strong>{t('vaultRecover.errTitle')}</strong>
           <p style={{ marginTop: 4, fontFamily: 'monospace', fontSize: '0.85rem' }}>
             {status.message}
           </p>
@@ -575,7 +575,7 @@ export default function EscrowRecover() {
             style={{ marginTop: 8 }}
             onClick={() => setStatus({ kind: 'idle' })}
           >
-            {t('escrowRecover.retry')}
+            {t('vaultRecover.retry')}
           </button>
         </div>
       )}
@@ -634,13 +634,13 @@ function ReviewModal({
           padding: 20,
         }}
       >
-        <div className="card-title">{t('escrowRecover.modalTitle')}</div>
+        <div className="card-title">{t('vaultRecover.modalTitle')}</div>
 
         <table style={{ width: '100%', marginBottom: 16 }}>
           <tbody>
             <tr>
               <td style={{ paddingRight: 8, color: 'var(--text-secondary)' }}>
-                {t('escrowRecover.modalToken')}
+                {t('vaultRecover.modalToken')}
               </td>
               <td style={{ fontFamily: 'monospace' }}>
                 {tokenSymbol} ({token.slice(0, 6)}…{token.slice(-4)})
@@ -648,7 +648,7 @@ function ReviewModal({
             </tr>
             <tr>
               <td style={{ paddingRight: 8, color: 'var(--text-secondary)' }}>
-                {t('escrowRecover.modalSource')}
+                {t('vaultRecover.modalSource')}
               </td>
               <td style={{ fontFamily: 'monospace' }}>
                 {source.slice(0, 6)}…{source.slice(-4)}
@@ -656,7 +656,7 @@ function ReviewModal({
             </tr>
             <tr>
               <td style={{ paddingRight: 8, color: 'var(--text-secondary)' }}>
-                {t('escrowRecover.modalAmount')}
+                {t('vaultRecover.modalAmount')}
               </td>
               <td style={{ fontFamily: 'monospace' }}>
                 {formatAmount(amount, tokenDecimals)} {tokenSymbol}
@@ -675,16 +675,16 @@ function ReviewModal({
             fontSize: '0.9rem',
           }}
         >
-          <strong>⚠️ {t('escrowRecover.modalWarningHeader')}</strong>
-          <p style={{ marginTop: 4 }}>{t('escrowRecover.modalWarningSanctions')}</p>
-          <p style={{ marginTop: 4 }}>{t('escrowRecover.modalWarningOwnership')}</p>
+          <strong>⚠️ {t('vaultRecover.modalWarningHeader')}</strong>
+          <p style={{ marginTop: 4 }}>{t('vaultRecover.modalWarningSanctions')}</p>
+          <p style={{ marginTop: 4 }}>{t('vaultRecover.modalWarningOwnership')}</p>
         </div>
 
         <label
           htmlFor="rec-confirm"
           style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}
         >
-          {t('escrowRecover.modalConfirmPrompt')}
+          {t('vaultRecover.modalConfirmPrompt')}
         </label>
         <input
           id="rec-confirm"
@@ -703,7 +703,7 @@ function ReviewModal({
             onClick={onCancel}
             disabled={inFlight}
           >
-            {t('escrowRecover.cancel')}
+            {t('vaultRecover.cancel')}
           </button>
           <button
             type="button"
@@ -712,10 +712,10 @@ function ReviewModal({
             onClick={onSign}
           >
             {status.kind === 'signing'
-              ? t('escrowRecover.signingState')
+              ? t('vaultRecover.signingState')
               : status.kind === 'submitting'
-                ? t('escrowRecover.submittingState')
-                : t('escrowRecover.signBtn')}
+                ? t('vaultRecover.submittingState')
+                : t('vaultRecover.signBtn')}
           </button>
         </div>
       </div>

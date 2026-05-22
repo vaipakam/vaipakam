@@ -57,8 +57,8 @@ export default function Hero() {
             </div>
             <div className="hero-stat-divider" />
             <div className="hero-stat">
-              <span className="hero-stat-value">{t('hero.statEscrowValue')}</span>
-              <span className="hero-stat-label">{t('hero.statEscrowLabel')}</span>
+              <span className="hero-stat-value">{t('hero.statVaultValue')}</span>
+              <span className="hero-stat-label">{t('hero.statVaultLabel')}</span>
             </div>
           </div>
         </div>

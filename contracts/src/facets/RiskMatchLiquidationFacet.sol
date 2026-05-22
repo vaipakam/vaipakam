@@ -8,7 +8,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
-import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {MetricsFacet} from "./MetricsFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 
@@ -44,7 +44,7 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     ///      (`msg.sender == address(this)`, i.e., another facet inside
     ///      the Diamond reached us via `address(this).call(...)`).
     ///      External callers via the Diamond's fallback have
-    ///      `msg.sender == EOA`. Same pattern `EscrowFactoryFacet` uses
+    ///      `msg.sender == EOA`. Same pattern `VaultFactoryFacet` uses
     ///      for its cross-facet-only entry-points.
     error OnlyDiamondInternal();
     modifier onlyDiamondInternal() {
@@ -212,7 +212,7 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // §7 of InternalLiquidationLedger.md: each leg moves
         // `min(debt, opposingCollateral)` of the receiving lender's
         // asset, configured % withheld for `msg.sender` (the matcher),
-        // remainder to the lender's escrow. Loans whose principal hits
+        // remainder to the lender's vault. Loans whose principal hits
         // zero transition to `LoanStatus.InternalMatched`; partial
         // residuals stay `Active`. PR5.5 extends the 2-way body to
         // 3-loan cycles A→B→C→A — three independent min-match legs.
@@ -319,17 +319,17 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     ///
     ///      EC-007 — the paying-leg's collateral lives in one of two
     ///      places depending on the loan's status:
-    ///        - `Active` leg → collateral is in the borrower's escrow;
-    ///          withdraw via `escrowWithdrawERC20`.
+    ///        - `Active` leg → collateral is in the borrower's vault;
+    ///          withdraw via `vaultWithdrawERC20`.
     ///        - `FallbackPending` leg → collateral was already pulled
     ///          into the Diamond's own balance during the failed
     ///          at-fallback swap; transfer directly with
     ///          `IERC20.safeTransfer` from `address(this)`.
     ///      `fromDiamondCustody` selects the path. This replaced the
-    ///      EC-003 Phase 1 "rehydrate the borrower's escrow first"
+    ///      EC-003 Phase 1 "rehydrate the borrower's vault first"
     ///      approach, which scattered a partial-match residual into
-    ///      the borrower's escrow and broke the lender's later claim
-    ///      (the claim path withdraws from the LENDER's escrow).
+    ///      the borrower's vault and broke the lender's later claim
+    ///      (the claim path withdraws from the LENDER's vault).
     ///      Settling FallbackPending legs straight from Diamond
     ///      custody keeps the residual in the Diamond, where the
     ///      snapshot-driven claim distribution expects it.
@@ -352,17 +352,17 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     ) private {
         if (moved == 0) return;
         uint256 lenderShare = moved - incentive;
-        address lenderEscrow = EscrowFactoryFacet(address(this))
-            .getOrCreateUserEscrow(receivingLender);
+        address lenderVault = VaultFactoryFacet(address(this))
+            .getOrCreateUserVault(receivingLender);
         if (lenderShare > 0) {
             if (fromDiamondCustody) {
-                IERC20(asset).safeTransfer(lenderEscrow, lenderShare);
+                IERC20(asset).safeTransfer(lenderVault, lenderShare);
             } else {
-                EscrowFactoryFacet(address(this)).escrowWithdrawERC20(
-                    payingBorrower, asset, lenderEscrow, lenderShare
+                VaultFactoryFacet(address(this)).vaultWithdrawERC20(
+                    payingBorrower, asset, lenderVault, lenderShare
                 );
             }
-            EscrowFactoryFacet(address(this)).recordEscrowDepositERC20(
+            VaultFactoryFacet(address(this)).recordVaultDepositERC20(
                 receivingLender, asset, lenderShare
             );
         }
@@ -373,7 +373,7 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
             if (fromDiamondCustody) {
                 IERC20(asset).safeTransfer(matcher, incentive);
             } else {
-                EscrowFactoryFacet(address(this)).escrowWithdrawERC20(
+                VaultFactoryFacet(address(this)).vaultWithdrawERC20(
                     payingBorrower, asset, matcher, incentive
                 );
             }
@@ -397,7 +397,7 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
 
         // EC-007 — the paying leg's collateral is in the Diamond's
         // custody when that leg is FallbackPending (pulled there during
-        // the failed at-fallback swap), or in the borrower's escrow when
+        // the failed at-fallback swap), or in the borrower's vault when
         // it's Active. `_settleLeg` routes accordingly. Statuses read
         // here are pre-match — they're only mutated below.
         bool aFromDiamond = la.status == LibVaipakam.LoanStatus.FallbackPending;
@@ -500,7 +500,7 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     ///           was made whole in principal asset via `_settleLeg`; the
     ///           residual collateral still sits in the Diamond's custody
     ///           (EC-007 — no rehydration), so push it to the borrower's
-    ///           escrow. Treasury's at-fallback entitlement is forfeited
+    ///           vault. Treasury's at-fallback entitlement is forfeited
     ///           (same as Active → InternalMatched — no treasury cut on an
     ///           internal-match rescue). Clear claim records + neutralise
     ///           the snapshot.
@@ -512,7 +512,7 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     ///           proportionally to the surviving collateral. A later
     ///           match OR claim resolves the residual via the standard
     ///           snapshot-driven path (`_distributeFallbackCollateral`,
-    ///           Diamond → escrows) — exactly as a fresh, smaller
+    ///           Diamond → vaults) — exactly as a fresh, smaller
     ///           FallbackPending loan would.
     function _settleFallbackOrTransitionPostMatch(
         LibVaipakam.Loan storage loan,
@@ -540,16 +540,16 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                 // Full rescue. Lender was made whole in principal asset
                 // via `_settleLeg`. The residual collateral
                 // (`loan.collateralAmount`) is still in the Diamond's
-                // custody — push it to the borrower's escrow so they can
+                // custody — push it to the borrower's vault so they can
                 // withdraw it via the standard Settled-path claim flow.
                 // Treasury's at-fallback cut is forfeited.
                 if (loan.collateralAmount > 0) {
-                    address borrowerEscrow = EscrowFactoryFacet(address(this))
-                        .getOrCreateUserEscrow(loan.borrower);
+                    address borrowerVault = VaultFactoryFacet(address(this))
+                        .getOrCreateUserVault(loan.borrower);
                     IERC20(loan.collateralAsset).safeTransfer(
-                        borrowerEscrow, loan.collateralAmount
+                        borrowerVault, loan.collateralAmount
                     );
-                    LibVaipakam.recordEscrowDeposit(
+                    LibVaipakam.recordVaultDeposit(
                         loan.borrower, loan.collateralAsset, loan.collateralAmount
                     );
                 }

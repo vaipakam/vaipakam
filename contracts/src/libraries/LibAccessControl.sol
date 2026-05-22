@@ -36,7 +36,7 @@ library LibAccessControl {
     bytes32 internal constant KYC_ADMIN_ROLE = keccak256("KYC_ADMIN_ROLE");
     bytes32 internal constant ORACLE_ADMIN_ROLE = keccak256("ORACLE_ADMIN_ROLE");
     bytes32 internal constant RISK_ADMIN_ROLE = keccak256("RISK_ADMIN_ROLE");
-    bytes32 internal constant ESCROW_ADMIN_ROLE = keccak256("ESCROW_ADMIN_ROLE");
+    bytes32 internal constant VAULT_ADMIN_ROLE = keccak256("VAULT_ADMIN_ROLE");
     /// @dev Off-chain anomaly-watcher role (Phase 1 follow-up). Granted
     ///      to the Cloudflare Worker / cron EOA that monitors the
     ///      protocol for incident-class anomaly signals (treasury
@@ -53,7 +53,7 @@ library LibAccessControl {
     ///      off-chain hf-watcher Worker so it can call
     ///      `LoanFacet.markNotifBilled(loanId, isLenderSide)` on the
     ///      first PaidPush-tier notification fired for a loan-side.
-    ///      That call debits the user's VPFI escrow by
+    ///      That call debits the user's VPFI vault by
     ///      `cfgNotificationFee()`-equivalent → treasury directly
     ///      (no Diamond custody — see `LibNotificationFee`).
     ///      Distinct from `WATCHER_ROLE` because the operations have
@@ -177,7 +177,7 @@ library LibAccessControl {
         grantRole(KYC_ADMIN_ROLE, owner);
         grantRole(ORACLE_ADMIN_ROLE, owner);
         grantRole(RISK_ADMIN_ROLE, owner);
-        grantRole(ESCROW_ADMIN_ROLE, owner);
+        grantRole(VAULT_ADMIN_ROLE, owner);
         // WATCHER_ROLE was previously declared but never granted at init —
         // see Findings 00010. Without this grant `AdminFacet.autoPause`
         // (the always-armed safety net documented in CLAUDE.md) is
@@ -208,7 +208,7 @@ library LibAccessControl {
         setRoleAdmin(KYC_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
         setRoleAdmin(ORACLE_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
         setRoleAdmin(RISK_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
-        setRoleAdmin(ESCROW_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
+        setRoleAdmin(VAULT_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
         setRoleAdmin(WATCHER_ROLE, DEFAULT_ADMIN_ROLE);
         setRoleAdmin(NOTIF_BILLER_ROLE, DEFAULT_ADMIN_ROLE);
         setRoleAdmin(KEEPER_ROLE, DEFAULT_ADMIN_ROLE);
@@ -238,7 +238,7 @@ library LibAccessControl {
         roles[4] = KYC_ADMIN_ROLE;
         roles[5] = ORACLE_ADMIN_ROLE;
         roles[6] = RISK_ADMIN_ROLE;
-        roles[7] = ESCROW_ADMIN_ROLE;
+        roles[7] = VAULT_ADMIN_ROLE;
         roles[8] = WATCHER_ROLE;
         roles[9] = NOTIF_BILLER_ROLE;
         roles[10] = KEEPER_ROLE;

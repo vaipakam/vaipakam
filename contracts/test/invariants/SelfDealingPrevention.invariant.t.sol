@@ -13,7 +13,7 @@ import {Handler} from "./Handler.sol";
  *         same loan. A self-deal collapses the risk transfer the protocol
  *         is built to provide: the "lender" and "borrower" sides of the
  *         same ledger entry cancel out, the collateral round-trips through
- *         their own escrow, and protocol fees become a tax the caller pays
+ *         their own vault, and protocol fees become a tax the caller pays
  *         on nothing. Worse, a self-deal combined with a time-based
  *         default path lets the caller extract a liquidation bonus funded
  *         by the treasury without ever taking real price risk.

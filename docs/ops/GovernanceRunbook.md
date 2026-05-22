@@ -82,7 +82,7 @@ forge script script/TransferAdminToTimelock.s.sol \
 ```
 
 Transfers Diamond `owner`, `DEFAULT_ADMIN_ROLE`, `ADMIN_ROLE`,
-`ORACLE_ADMIN_ROLE`, `RISK_ADMIN_ROLE`, `ESCROW_ADMIN_ROLE` to the
+`ORACLE_ADMIN_ROLE`, `RISK_ADMIN_ROLE`, `VAULT_ADMIN_ROLE` to the
 Timelock; renounces them on the deployer. `PAUSER_ROLE` and
 `KYC_ADMIN_ROLE` stay on the Guardian / KYC ops Safes.
 
@@ -706,7 +706,7 @@ enforces the gate (`CONFIRM_TGE_FUNDING=YES`).
 - The protocol's existing `s.treasury` field, configurable via
   `AdminFacet.setTreasury`, defaults to the Diamond itself for
   this design.
-- T-051's `protocolTrackedEscrowBalance` counter (per-user) +
+- T-051's `protocolTrackedVaultBalance` counter (per-user) +
   `treasuryBalances` (per-token treasury accrual) are the two
   ledgers that keep operating-fee accounting separate from
   unsolicited dust at the Diamond level.

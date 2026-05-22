@@ -10,7 +10,7 @@ import {LibVaipakam} from "./LibVaipakam.sol";
  *         across Repay, Preclose, Refinance, PartialWithdrawal, Risk, and
  *         Defaulted facets.
  * @dev Pure / view helpers only — callers are responsible for state writes
- *      (transfers, escrow routing, claim bookkeeping). Keeping the math in
+ *      (transfers, vault routing, claim bookkeeping). Keeping the math in
  *      one place means one rounding model, one off-by-one surface, and one
  *      place to audit when the interest / fee policy changes.
  */

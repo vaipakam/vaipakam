@@ -12,12 +12,12 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
-import {VaipakamEscrowImplementation} from "../src/VaipakamEscrowImplementation.sol";
+import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
@@ -62,7 +62,7 @@ contract MockRentableNFT721Test is ERC721 {
 /**
  * @title WorkflowComplianceAndRejection
  * @notice Tests compliance (sanctions/KYC), ERC20-only rejection for NFT rentals,
- *         option 3 wait-to-maturity, and escrow upgrade workflows.
+ *         option 3 wait-to-maturity, and vault upgrade workflows.
  */
 contract WorkflowComplianceAndRejection is Test {
     VaipakamDiamond diamond;
@@ -83,7 +83,7 @@ contract WorkflowComplianceAndRejection is Test {
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
     VaipakamNFTFacet nftFacet;
-    EscrowFactoryFacet escrowFacet;
+    VaultFactoryFacet vaultFacet;
     LoanFacet loanFacet;
     RiskFacet riskFacet;
     RepayFacet repayFacet;
@@ -149,7 +149,7 @@ contract WorkflowComplianceAndRejection is Test {
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
         nftFacet = new VaipakamNFTFacet();
-        escrowFacet = new EscrowFactoryFacet();
+        vaultFacet = new VaultFactoryFacet();
         loanFacet = new LoanFacet();
         riskFacet = new RiskFacet();
         repayFacet = new RepayFacet();
@@ -174,7 +174,7 @@ contract WorkflowComplianceAndRejection is Test {
         cuts[1]  = IDiamondCut.FacetCut({facetAddress: address(profileFacet),        action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
         cuts[2]  = IDiamondCut.FacetCut({facetAddress: address(oracleFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});
         cuts[3]  = IDiamondCut.FacetCut({facetAddress: address(nftFacet),            action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaipakamNFTFacetSelectors()});
-        cuts[4]  = IDiamondCut.FacetCut({facetAddress: address(escrowFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getEscrowFactoryFacetSelectors()});
+        cuts[4]  = IDiamondCut.FacetCut({facetAddress: address(vaultFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaultFactoryFacetSelectors()});
         cuts[5]  = IDiamondCut.FacetCut({facetAddress: address(loanFacet),           action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getLoanFacetSelectors()});
         cuts[6]  = IDiamondCut.FacetCut({facetAddress: address(riskFacet),           action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskFacetSelectors()});
         cuts[7]  = IDiamondCut.FacetCut({facetAddress: address(repayFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRepayFacetSelectors()});
@@ -194,7 +194,7 @@ contract WorkflowComplianceAndRejection is Test {
         AdminFacet(address(diamond)).unpause();
 
         // Initialize diamond services
-        EscrowFactoryFacet(address(diamond)).initializeEscrowImplementation();
+        VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
         VaipakamNFTFacet(address(diamond)).initializeNFT();
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(makeAddr("zeroEx"));
@@ -257,19 +257,19 @@ contract WorkflowComplianceAndRejection is Test {
             abi.encode(6666)
         );
 
-        // Create escrows and approve them
-        address lenderEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender);
-        address borrowerEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(borrower);
-        address sanctionedEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(sanctionedUser);
-        address newLenderEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(newLender);
+        // Create vaults and approve them
+        address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
+        address sanctionedVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(sanctionedUser);
+        address newLenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(newLender);
 
-        vm.prank(lender);    ERC20(address(mockUSDC)).approve(lenderEscrow, type(uint256).max);
-        vm.prank(borrower);  ERC20(address(mockUSDC)).approve(borrowerEscrow, type(uint256).max);
-        vm.prank(sanctionedUser); ERC20(address(mockUSDC)).approve(sanctionedEscrow, type(uint256).max);
-        vm.prank(newLender); ERC20(address(mockUSDC)).approve(newLenderEscrow, type(uint256).max);
-        vm.prank(borrower);  ERC20(address(mockWETH)).approve(borrowerEscrow, type(uint256).max);
-        vm.prank(sanctionedUser); ERC20(address(mockWETH)).approve(sanctionedEscrow, type(uint256).max);
-        vm.prank(newLender); ERC20(address(mockWETH)).approve(newLenderEscrow, type(uint256).max);
+        vm.prank(lender);    ERC20(address(mockUSDC)).approve(lenderVault, type(uint256).max);
+        vm.prank(borrower);  ERC20(address(mockUSDC)).approve(borrowerVault, type(uint256).max);
+        vm.prank(sanctionedUser); ERC20(address(mockUSDC)).approve(sanctionedVault, type(uint256).max);
+        vm.prank(newLender); ERC20(address(mockUSDC)).approve(newLenderVault, type(uint256).max);
+        vm.prank(borrower);  ERC20(address(mockWETH)).approve(borrowerVault, type(uint256).max);
+        vm.prank(sanctionedUser); ERC20(address(mockWETH)).approve(sanctionedVault, type(uint256).max);
+        vm.prank(newLender); ERC20(address(mockWETH)).approve(newLenderVault, type(uint256).max);
 
         // Mint tokens to diamond for internal transfers
         mockUSDC.mint(address(diamond), 100000 ether);
@@ -309,9 +309,9 @@ contract WorkflowComplianceAndRejection is Test {
         vm.prank(lender);
         mockNFT.approve(address(diamond), 1);
 
-        // Approve NFT to lender's escrow
+        // Approve NFT to lender's vault
         vm.prank(lender);
-        mockNFT.setApprovalForAll(lenderEscrow, true);
+        mockNFT.setApprovalForAll(lenderVault, true);
 
         // Mock decimals on NFT address (needed for price calculation)
         vm.mockCall(
@@ -320,10 +320,10 @@ contract WorkflowComplianceAndRejection is Test {
             abi.encode(uint8(18))
         );
 
-        // Mock escrowSetNFTUser to succeed
+        // Mock vaultSetNFTUser to succeed
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowSetNFTUser.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector),
             abi.encode(true)
         );
 
@@ -495,9 +495,9 @@ contract WorkflowComplianceAndRejection is Test {
         vm.prank(noKycUser); ProfileFacet(address(diamond)).setUserCountry("US");
         // Tier0 is default - no updateKYCTier call needed
 
-        address noKycEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(noKycUser);
-        vm.prank(noKycUser); ERC20(address(mockUSDC)).approve(noKycEscrow, type(uint256).max);
-        vm.prank(noKycUser); ERC20(address(mockWETH)).approve(noKycEscrow, type(uint256).max);
+        address noKycVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(noKycUser);
+        vm.prank(noKycUser); ERC20(address(mockUSDC)).approve(noKycVault, type(uint256).max);
+        vm.prank(noKycUser); ERC20(address(mockWETH)).approve(noKycVault, type(uint256).max);
 
         // Create a small offer: 100 USDC (= $100 at $1 price, well below $1000 threshold)
         vm.prank(lender);
@@ -543,8 +543,8 @@ contract WorkflowComplianceAndRejection is Test {
         vm.prank(noKycUser); ProfileFacet(address(diamond)).setUserCountry("US");
         // Tier0 is default
 
-        address noKycEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(noKycUser);
-        vm.prank(noKycUser); ERC20(address(mockUSDC)).approve(noKycEscrow, type(uint256).max);
+        address noKycVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(noKycUser);
+        vm.prank(noKycUser); ERC20(address(mockUSDC)).approve(noKycVault, type(uint256).max);
 
         // Create a large offer: 10000 USDC (= $10000 at $1 price, requires Tier2)
         vm.prank(lender);
@@ -673,7 +673,7 @@ contract WorkflowComplianceAndRejection is Test {
         // Mock cross-facet calls for repayLoan
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
             abi.encode(true)
         );
         vm.mockCall(
@@ -695,7 +695,7 @@ contract WorkflowComplianceAndRejection is Test {
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid), "Loan should be Repaid");
 
-        // Lender claims: mock the NFT ownerOf check and escrow withdrawal
+        // Lender claims: mock the NFT ownerOf check and vault withdrawal
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(bytes4(keccak256("ownerOf(uint256)")), loan.lenderTokenId),
@@ -709,33 +709,33 @@ contract WorkflowComplianceAndRejection is Test {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Escrow Upgrade Test
+    // Vault Upgrade Test
     // ═══════════════════════════════════════════════════════════════════════
 
-    /// @notice Verify escrow mandatory upgrade: set mandatory version, user blocked, then upgrade resumes interaction
-    function test_EscrowUpgrade_MandatoryBlocking() public {
-        // Step 1: Deploy a new escrow implementation to bump version
-        VaipakamEscrowImplementation newImpl = new VaipakamEscrowImplementation();
+    /// @notice Verify vault mandatory upgrade: set mandatory version, user blocked, then upgrade resumes interaction
+    function test_VaultUpgrade_MandatoryBlocking() public {
+        // Step 1: Deploy a new vault implementation to bump version
+        VaipakamVaultImplementation newImpl = new VaipakamVaultImplementation();
 
-        // Step 2: Owner upgrades the escrow implementation (bumps currentEscrowVersion to 2)
+        // Step 2: Owner upgrades the vault implementation (bumps currentVaultVersion to 2)
         vm.prank(owner);
-        EscrowFactoryFacet(address(diamond)).upgradeEscrowImplementation(address(newImpl));
+        VaultFactoryFacet(address(diamond)).upgradeVaultImplementation(address(newImpl));
 
         // Step 3: Owner sets mandatory version to 1 (current version after upgrade).
-        // Escrows created before upgrade have version 0, so 0 < 1 triggers the block.
+        // Vaults created before upgrade have version 0, so 0 < 1 triggers the block.
         vm.prank(owner);
-        EscrowFactoryFacet(address(diamond)).setMandatoryEscrowUpgrade(1);
+        VaultFactoryFacet(address(diamond)).setMandatoryVaultUpgrade(1);
 
-        // Step 4: lender's escrow was created at version 0. Calling getOrCreateUserEscrow
-        // should revert with EscrowUpgradeRequired because version 0 < mandatory 1.
-        vm.expectRevert(EscrowFactoryFacet.EscrowUpgradeRequired.selector);
-        EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender);
+        // Step 4: lender's vault was created at version 0. Calling getOrCreateUserVault
+        // should revert with VaultUpgradeRequired because version 0 < mandatory 1.
+        vm.expectRevert(VaultFactoryFacet.VaultUpgradeRequired.selector);
+        VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
 
-        // Step 5: User upgrades their escrow via upgradeUserEscrow.
+        // Step 5: User upgrades their vault via upgradeUserVault.
         // The UUPS upgradeToAndCall on the proxy requires mocking since we cannot
         // perform a real UUPS upgrade in this test environment.
         // Read lender's proxy address directly from storage to mock the call on it.
-        address lenderProxy = _getLenderEscrowDirect();
+        address lenderProxy = _getLenderVaultDirect();
 
         // Mock any call to the proxy's upgradeToAndCall to succeed
         vm.mockCall(
@@ -746,12 +746,12 @@ contract WorkflowComplianceAndRejection is Test {
             ""
         );
 
-        EscrowFactoryFacet(address(diamond)).upgradeUserEscrow(lender);
+        VaultFactoryFacet(address(diamond)).upgradeUserVault(lender);
 
         // Clear any stale mocks that might interfere
         vm.clearMockedCalls();
 
-        // Re-mock oracle calls needed for getOrCreateUserEscrow (it may check liquidity/price)
+        // Re-mock oracle calls needed for getOrCreateUserVault (it may check liquidity/price)
         mockLiquidity(address(mockUSDC), LibVaipakam.LiquidityStatus.Liquid);
         mockPrice(address(mockUSDC), 1e8, 8);
         mockLiquidity(address(mockWETH), LibVaipakam.LiquidityStatus.Liquid);
@@ -768,21 +768,21 @@ contract WorkflowComplianceAndRejection is Test {
             abi.encode(6666)
         );
 
-        // Step 6: After upgrade, getOrCreateUserEscrow should succeed
-        address escrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender);
-        assertTrue(escrow != address(0), "Escrow should be accessible after upgrade");
+        // Step 6: After upgrade, getOrCreateUserVault should succeed
+        address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        assertTrue(vault != address(0), "Vault should be accessible after upgrade");
     }
 
-    /// @dev Helper to get lender's escrow address directly from storage,
-    ///      bypassing the production `getOrCreateUserEscrow` path's
+    /// @dev Helper to get lender's vault address directly from storage,
+    ///      bypassing the production `getOrCreateUserVault` path's
     ///      mandatory-version check (which would revert in the
     ///      upgrade-required scenario this test exercises). Routes
-    ///      through `TestMutatorFacet.getUserVaipakamEscrowRaw` so the
+    ///      through `TestMutatorFacet.getUserVaipakamVaultRaw` so the
     ///      lookup uses the named-field storage path (layout-resilient
     ///      vs the previous hardcoded `vm.load` at slot offset 1, which
     ///      broke when the Storage struct shifted under T-048's PAD
     ///      additions).
-    function _getLenderEscrowDirect() internal view returns (address) {
-        return TestMutatorFacet(address(diamond)).getUserVaipakamEscrowRaw(lender);
+    function _getLenderVaultDirect() internal view returns (address) {
+        return TestMutatorFacet(address(diamond)).getUserVaipakamVaultRaw(lender);
     }
 }

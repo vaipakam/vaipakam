@@ -6,7 +6,7 @@ import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -64,10 +64,10 @@ contract InternalMatchAutoDispatchTest is SetupTest {
         l.liquidationLtvBpsAtInit = 8_500;
         TestMutatorFacet(address(diamond)).scaffoldActiveLoan(id, l);
 
-        address bEscrow = EscrowFactoryFacet(address(diamond))
-            .getOrCreateUserEscrow(borrower_);
-        ERC20Mock(collateral).mint(bEscrow, collateralAmt);
-        TestMutatorFacet(address(diamond)).setProtocolTrackedEscrowBalanceRaw(
+        address bVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(borrower_);
+        ERC20Mock(collateral).mint(bVault, collateralAmt);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(
             borrower_, collateral, collateralAmt
         );
     }
@@ -129,13 +129,13 @@ contract InternalMatchAutoDispatchTest is SetupTest {
         _mockLtv(LOAN_A, 9_000);
         _mockLtv(LOAN_B, 9_000);
 
-        address aLenderEscrow = EscrowFactoryFacet(address(diamond))
-            .getOrCreateUserEscrow(lender);
-        address bLenderEscrow = EscrowFactoryFacet(address(diamond))
-            .getOrCreateUserEscrow(lenderB);
+        address aLenderVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(lender);
+        address bLenderVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(lenderB);
 
-        uint256 aLenderXBefore = IERC20(mockERC20).balanceOf(aLenderEscrow);
-        uint256 bLenderYBefore = IERC20(mockCollateralERC20).balanceOf(bLenderEscrow);
+        uint256 aLenderXBefore = IERC20(mockERC20).balanceOf(aLenderVault);
+        uint256 bLenderYBefore = IERC20(mockCollateralERC20).balanceOf(bLenderVault);
 
         // Cross-facet pattern — simulate `matcher` calling Diamond,
         // which delegates to RiskFacet's gated entry. `msg.sender` of
@@ -153,8 +153,8 @@ contract InternalMatchAutoDispatchTest is SetupTest {
         assertEq(bAfter.principal, 0);
 
         // Lender payouts: 990 each leg (1000 - 1% matcher fee).
-        assertEq(IERC20(mockERC20).balanceOf(aLenderEscrow) - aLenderXBefore, 990);
-        assertEq(IERC20(mockCollateralERC20).balanceOf(bLenderEscrow) - bLenderYBefore, 990);
+        assertEq(IERC20(mockERC20).balanceOf(aLenderVault) - aLenderXBefore, 990);
+        assertEq(IERC20(mockCollateralERC20).balanceOf(bLenderVault) - bLenderYBefore, 990);
         // Matcher bonus (1% per leg) goes to the `matcher` threaded
         // into `attemptInternalMatchAutoDispatch` — NOT `msg.sender`,
         // which inside the `onlyDiamondInternal` cross-facet call is

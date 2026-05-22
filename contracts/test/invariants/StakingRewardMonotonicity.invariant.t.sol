@@ -7,8 +7,8 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {DiamondCutFacet} from "../../src/facets/DiamondCutFacet.sol";
 import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {AdminFacet} from "../../src/facets/AdminFacet.sol";
-import {EscrowFactoryFacet} from "../../src/facets/EscrowFactoryFacet.sol";
-import {VaipakamEscrowImplementation} from "../../src/VaipakamEscrowImplementation.sol";
+import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
+import {VaipakamVaultImplementation} from "../../src/VaipakamVaultImplementation.sol";
 import {ProfileFacet} from "../../src/facets/ProfileFacet.sol";
 import {VPFITokenFacet} from "../../src/facets/VPFITokenFacet.sol";
 import {VPFIDiscountFacet} from "../../src/facets/VPFIDiscountFacet.sol";
@@ -60,7 +60,7 @@ contract StakingRewardMonotonicityInvariant is Test {
 
         AccessControlFacet ac = new AccessControlFacet();
         AdminFacet admin = new AdminFacet();
-        EscrowFactoryFacet escrowFacet = new EscrowFactoryFacet();
+        VaultFactoryFacet vaultFacet = new VaultFactoryFacet();
         ProfileFacet profile = new ProfileFacet();
         VPFITokenFacet vpfiFacet = new VPFITokenFacet();
         VPFIDiscountFacet discount = new VPFIDiscountFacet();
@@ -79,9 +79,9 @@ contract StakingRewardMonotonicityInvariant is Test {
             functionSelectors: helper.getAdminFacetSelectors()
         });
         cuts[2] = IDiamondCut.FacetCut({
-            facetAddress: address(escrowFacet),
+            facetAddress: address(vaultFacet),
             action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helper.getEscrowFactoryFacetSelectors()
+            functionSelectors: helper.getVaultFactoryFacetSelectors()
         });
         cuts[3] = IDiamondCut.FacetCut({
             facetAddress: address(profile),
@@ -114,9 +114,9 @@ contract StakingRewardMonotonicityInvariant is Test {
         AdminFacet(address(diamond)).unpause();
         AdminFacet(address(diamond)).setTreasury(address(diamond));
 
-        VaipakamEscrowImplementation escrowImpl = new VaipakamEscrowImplementation();
-        EscrowFactoryFacet(address(diamond)).initializeEscrowImplementation();
-        escrowImpl;
+        VaipakamVaultImplementation vaultImpl = new VaipakamVaultImplementation();
+        VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
+        vaultImpl;
 
         VPFIToken impl = new VPFIToken();
         bytes memory initData = abi.encodeCall(
@@ -241,7 +241,7 @@ contract StakingMonotonicityHandler is Test {
         }
         vm.startPrank(user);
         vpfi.approve(diamond, amount);
-        try VPFIDiscountFacet(diamond).depositVPFIToEscrow(amount) {
+        try VPFIDiscountFacet(diamond).depositVPFIToVault(amount) {
             deposits++;
         } catch {}
         vm.stopPrank();
@@ -258,7 +258,7 @@ contract StakingMonotonicityHandler is Test {
         }
         amount = bound(amount, 1, staked);
         vm.prank(user);
-        try VPFIDiscountFacet(diamond).withdrawVPFIFromEscrow(amount) {
+        try VPFIDiscountFacet(diamond).withdrawVPFIFromVault(amount) {
             withdrawals++;
         } catch {}
         _captureRptAndPending();

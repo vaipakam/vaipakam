@@ -14,7 +14,7 @@ import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -58,12 +58,12 @@ contract VPFIDiscountFacetTest is SetupTest {
         address indexed buyer,
         uint256 vpfiAmount,
         uint256 ethAmount,
-        uint256 newEscrowBalance
+        uint256 newVaultBalance
     );
-    event VPFIDepositedToEscrow(
+    event VPFIDepositedToVault(
         address indexed user,
         uint256 amount,
-        uint256 newEscrowBalance
+        uint256 newVaultBalance
     );
     event VPFIDiscountApplied(
         uint256 indexed loanId,
@@ -144,8 +144,8 @@ contract VPFIDiscountFacetTest is SetupTest {
         return VPFIDiscountFacet(address(diamond));
     }
 
-    function _buyerEscrow(address user) internal returns (address) {
-        return EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(user);
+    function _buyerVault(address user) internal returns (address) {
+        return VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user);
     }
 
     // ─── buyVPFIWithETH ──────────────────────────────────────────────────────
@@ -155,8 +155,8 @@ contract VPFIDiscountFacetTest is SetupTest {
         uint256 expectedVpfi = (sendValue * 1e18) / RATE_WEI_PER_VPFI;
 
         vm.expectEmit(true, false, false, true, address(diamond));
-        // Same-chain buy delivers VPFI to wallet (not escrow), so escrow balance is unchanged at 0.
-        emit VPFIPurchasedWithETH(buyer, expectedVpfi, sendValue, /* newEscrowBalance */ 0);
+        // Same-chain buy delivers VPFI to wallet (not vault), so vault balance is unchanged at 0.
+        emit VPFIPurchasedWithETH(buyer, expectedVpfi, sendValue, /* newVaultBalance */ 0);
 
         uint256 buyerBalBefore = vpfiToken.balanceOf(buyer);
 
@@ -164,17 +164,17 @@ contract VPFIDiscountFacetTest is SetupTest {
         _facet().buyVPFIWithETH{value: sendValue}();
 
         // Per spec: VPFI is credited to the buyer's wallet, NOT auto-deposited
-        // into escrow. Funding escrow is a separate explicit user action.
+        // into vault. Funding vault is a separate explicit user action.
         assertEq(
             vpfiToken.balanceOf(buyer) - buyerBalBefore,
             expectedVpfi,
             "buyer wallet credited"
         );
-        // Escrow proxy was not created implicitly either.
+        // Vault proxy was not created implicitly either.
         assertEq(
-            vpfiToken.balanceOf(_buyerEscrow(buyer)),
+            vpfiToken.balanceOf(_buyerVault(buyer)),
             0,
-            "escrow untouched on buy"
+            "vault untouched on buy"
         );
         assertEq(treasuryRecipient.balance, sendValue, "treasury received ETH");
         assertEq(_facet().getVPFISoldTo(buyer), expectedVpfi, "per-wallet tally");
@@ -330,47 +330,47 @@ contract VPFIDiscountFacetTest is SetupTest {
         _facet().buyVPFIWithETH{value: 1 ether}();
     }
 
-    // ─── depositVPFIToEscrow ─────────────────────────────────────────────────
+    // ─── depositVPFIToVault ─────────────────────────────────────────────────
 
-    function testDepositVPFIToEscrowHappyPath() public {
+    function testDepositVPFIToVaultHappyPath() public {
         uint256 amount = 100 ether;
         vm.prank(borrower);
         vpfiToken.approve(address(diamond), amount);
 
         vm.expectEmit(true, false, false, true, address(diamond));
-        // Fresh borrower → post-deposit escrow balance == amount.
-        emit VPFIDepositedToEscrow(borrower, amount, /* newEscrowBalance */ amount);
+        // Fresh borrower → post-deposit vault balance == amount.
+        emit VPFIDepositedToVault(borrower, amount, /* newVaultBalance */ amount);
 
         vm.prank(borrower);
-        _facet().depositVPFIToEscrow(amount);
+        _facet().depositVPFIToVault(amount);
 
-        address escrow = _buyerEscrow(borrower);
-        assertEq(vpfiToken.balanceOf(escrow), amount);
+        address vault = _buyerVault(borrower);
+        assertEq(vpfiToken.balanceOf(vault), amount);
     }
 
-    function testDepositVPFIToEscrowRevertsOnZero() public {
+    function testDepositVPFIToVaultRevertsOnZero() public {
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.InvalidAmount.selector);
-        _facet().depositVPFIToEscrow(0);
+        _facet().depositVPFIToVault(0);
     }
 
     // ─── quoteVPFIDiscount ───────────────────────────────────────────────────
 
     function testQuoteVPFIDiscountForLenderOfferWithKnownBorrower() public {
         // For a Lender offer the borrower is unknown at the base view — use
-        // the acceptor-aware {quoteVPFIDiscountFor}. Pre-fund borrower escrow
+        // the acceptor-aware {quoteVPFIDiscountFor}. Pre-fund borrower vault
         // to tier 1 (>= 100 VPFI) so the tier gate does not short-circuit.
         uint256 offerId = _createLenderERC20Offer(10_000 ether);
-        address borrowerEscrow = _buyerEscrow(borrower);
-        vpfiToken.transfer(borrowerEscrow, 500 ether);
+        address borrowerVault = _buyerVault(borrower);
+        vpfiToken.transfer(borrowerVault, 500 ether);
         vm.prank(address(diamond));
-        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(borrower, address(vpfiToken), 500 ether); // tier 1
+        VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(borrower, address(vpfiToken), 500 ether); // tier 1
 
         (bool eligible, uint256 vpfi, uint256 bal, uint8 tier) = _facet()
             .quoteVPFIDiscountFor(offerId, borrower);
         assertTrue(eligible, "eligible");
         assertGt(vpfi, 0, "vpfi required non-zero");
-        assertEq(bal, 500 ether, "surfaces borrower escrow VPFI balance");
+        assertEq(bal, 500 ether, "surfaces borrower vault VPFI balance");
         assertEq(tier, 1, "tier 1");
 
         // Base view surfaces (false, 0, 0, 0) for Lender offers because the
@@ -385,10 +385,10 @@ contract VPFIDiscountFacetTest is SetupTest {
     function testQuoteVPFIDiscountIneligibleWhenRateNotSet() public {
         _facet().setVPFIBuyRate(0);
         uint256 offerId = _createLenderERC20Offer(10_000 ether);
-        address borrowerEscrow = _buyerEscrow(borrower);
-        vpfiToken.transfer(borrowerEscrow, 500 ether);
+        address borrowerVault = _buyerVault(borrower);
+        vpfiToken.transfer(borrowerVault, 500 ether);
         vm.prank(address(diamond));
-        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(borrower, address(vpfiToken), 500 ether); // tier 1
+        VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(borrower, address(vpfiToken), 500 ether); // tier 1
 
         (bool eligible, , , ) = _facet().quoteVPFIDiscountFor(offerId, borrower);
         assertFalse(eligible);
@@ -400,7 +400,7 @@ contract VPFIDiscountFacetTest is SetupTest {
     }
 
     function testQuoteVPFIDiscountIneligibleWhenBorrowerInTier0() public {
-        // Borrower holds 0 VPFI in escrow → tier 0, quote returns
+        // Borrower holds 0 VPFI in vault → tier 0, quote returns
         // (false, 0, 0, 0) without reverting. Uses acceptor-aware view since
         // base view returns false-for-known-borrower only on Borrower offers.
         uint256 offerId = _createLenderERC20Offer(10_000 ether);
@@ -413,9 +413,9 @@ contract VPFIDiscountFacetTest is SetupTest {
     }
 
     function testGetVPFIDiscountTier() public {
-        address escrow = _buyerEscrow(borrower);
+        address vault = _buyerVault(borrower);
 
-        // Tier 0 — empty escrow.
+        // Tier 0 — empty vault.
         (uint8 t0, uint256 bal0, uint256 bps0) = _facet().getVPFIDiscountTier(
             borrower
         );
@@ -424,20 +424,20 @@ contract VPFIDiscountFacetTest is SetupTest {
         assertEq(bps0, 0);
 
         // Tier 1: >= 100 and < 1,000 → 10%.
-        vpfiToken.transfer(escrow, 500 ether);
+        vpfiToken.transfer(vault, 500 ether);
         (uint8 t1, , uint256 bps1) = _facet().getVPFIDiscountTier(borrower);
         assertEq(t1, 1);
         assertEq(bps1, 1000);
 
         // Tier 2: >= 1,000 and < 5,000 → 15%. Bump to 2k.
-        vpfiToken.transfer(escrow, 1_500 ether);
+        vpfiToken.transfer(vault, 1_500 ether);
         (uint8 t2, , uint256 bps2) = _facet().getVPFIDiscountTier(borrower);
         assertEq(t2, 2);
         assertEq(bps2, 1500);
 
         // Tier 3 boundary: 20,000 inclusive. Currently at 2k → top up
         // to exactly 20,000.
-        vpfiToken.transfer(escrow, 18_000 ether);
+        vpfiToken.transfer(vault, 18_000 ether);
         (uint8 t3, uint256 bal3, uint256 bps3) = _facet().getVPFIDiscountTier(
             borrower
         );
@@ -446,7 +446,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         assertEq(bps3, 2000);
 
         // Tier 4: strictly > 20,000. Add 1 wei.
-        vpfiToken.transfer(escrow, 1);
+        vpfiToken.transfer(vault, 1);
         (uint8 t4, , uint256 bps4) = _facet().getVPFIDiscountTier(borrower);
         assertEq(t4, 4);
         assertEq(bps4, 2400);
@@ -458,16 +458,16 @@ contract VPFIDiscountFacetTest is SetupTest {
         uint256 principal = 10_000 ether;
         uint256 offerId = _createLenderERC20Offer(principal);
 
-        // Seed borrower escrow to tier 1 so the tier gate unlocks, then quote.
+        // Seed borrower vault to tier 1 so the tier gate unlocks, then quote.
         // Phase 5: quote returns the FULL 0.1% LIF equivalent in VPFI
         // (no tier discount at init). Tier is still surfaced to show
         // what time-weighted rebate the borrower is positioned to earn.
-        address borrowerEscrow = _buyerEscrow(borrower);
-        address lenderEscrow = EscrowFactoryFacet(address(diamond))
-            .getOrCreateUserEscrow(lender);
-        vpfiToken.transfer(borrowerEscrow, 500 ether);
+        address borrowerVault = _buyerVault(borrower);
+        address lenderVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(lender);
+        vpfiToken.transfer(borrowerVault, 500 ether);
         vm.prank(address(diamond));
-        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(borrower, address(vpfiToken), 500 ether); // tier 1
+        VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(borrower, address(vpfiToken), 500 ether); // tier 1
 
         (bool eligible, uint256 vpfiRequired, , uint8 tier) = _facet()
             .quoteVPFIDiscountFor(offerId, borrower);
@@ -475,19 +475,19 @@ contract VPFIDiscountFacetTest is SetupTest {
         assertEq(tier, 1);
         assertGt(vpfiRequired, 0);
 
-        // Top up so the escrow has the tier-1 seed + enough to cover the
+        // Top up so the vault has the tier-1 seed + enough to cover the
         // FULL VPFI-denominated LIF (not a discounted slice).
-        vpfiToken.transfer(borrowerEscrow, vpfiRequired * 2);
+        vpfiToken.transfer(borrowerVault, vpfiRequired * 2);
         vm.prank(address(diamond));
-        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(borrower, address(vpfiToken), vpfiRequired * 2);
+        VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(borrower, address(vpfiToken), vpfiRequired * 2);
 
         uint256 treasuryVpfiBefore = vpfiToken.balanceOf(treasuryRecipient);
         uint256 treasuryErc20Before = IERC20(mockERC20).balanceOf(
             treasuryRecipient
         );
-        uint256 escrowVpfiBefore = vpfiToken.balanceOf(borrowerEscrow);
-        uint256 lenderEscrowBalBefore = IERC20(mockERC20).balanceOf(
-            lenderEscrow
+        uint256 vaultVpfiBefore = vpfiToken.balanceOf(borrowerVault);
+        uint256 lenderVaultBalBefore = IERC20(mockERC20).balanceOf(
+            lenderVault
         );
         uint256 diamondVpfiBefore = vpfiToken.balanceOf(address(diamond));
 
@@ -501,13 +501,13 @@ contract VPFIDiscountFacetTest is SetupTest {
             true
         );
 
-        // Lender escrow is drained by exactly the full principal — no fee
+        // Lender vault is drained by exactly the full principal — no fee
         // skimmed before delivery.
         assertEq(
-            lenderEscrowBalBefore -
-                IERC20(mockERC20).balanceOf(lenderEscrow),
+            lenderVaultBalBefore -
+                IERC20(mockERC20).balanceOf(lenderVault),
             principal,
-            "lender escrow debited by principal only"
+            "lender vault debited by principal only"
         );
         // Treasury did NOT receive any lending-asset fee (VPFI path takes
         // the fee in VPFI from borrower instead of lender-side haircut).
@@ -516,13 +516,13 @@ contract VPFIDiscountFacetTest is SetupTest {
             treasuryErc20Before,
             "treasury ERC20 fee untouched on VPFI path"
         );
-        // Phase 5: VPFI moves borrower escrow → Diamond custody, NOT
+        // Phase 5: VPFI moves borrower vault → Diamond custody, NOT
         // treasury directly. Treasury credit happens at settlement when
         // the held amount splits between borrower rebate + treasury.
         assertEq(
-            escrowVpfiBefore - vpfiToken.balanceOf(borrowerEscrow),
+            vaultVpfiBefore - vpfiToken.balanceOf(borrowerVault),
             vpfiRequired,
-            "borrower escrow debited VPFI"
+            "borrower vault debited VPFI"
         );
         assertEq(
             vpfiToken.balanceOf(address(diamond)) - diamondVpfiBefore,
@@ -548,7 +548,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         uint256 offerId = _createLenderERC20Offer(principal);
 
         // Borrower opts in to platform consent but holds ZERO VPFI in
-        // escrow — tryApply must return (false, 0) and the lender-paid fee
+        // vault — tryApply must return (false, 0) and the lender-paid fee
         // path fires.
         vm.prank(borrower);
         _facet().setVPFIDiscountConsent(true);
@@ -596,10 +596,10 @@ contract VPFIDiscountFacetTest is SetupTest {
         uint256 principal = 10_000 ether;
         uint256 offerId = _createLenderERC20Offer(principal);
 
-        address borrowerEscrow = _buyerEscrow(borrower);
-        vpfiToken.transfer(borrowerEscrow, 5_000 ether);
+        address borrowerVault = _buyerVault(borrower);
+        vpfiToken.transfer(borrowerVault, 5_000 ether);
         vm.prank(address(diamond));
-        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(borrower, address(vpfiToken), 5_000 ether); // plenty
+        VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(borrower, address(vpfiToken), 5_000 ether); // plenty
 
         // Borrower opts in; discount still skipped because asset is illiquid.
         vm.prank(borrower);
@@ -639,23 +639,23 @@ contract VPFIDiscountFacetTest is SetupTest {
 
     // ─── Lender Yield Fee Discount (Tokenomics §6) ───────────────────────────
 
-    /// @notice Happy path: lender has consent + funded escrow → on full
+    /// @notice Happy path: lender has consent + funded vault → on full
     ///         repayment the 1% treasury cut is paid in VPFI from the
-    ///         lender's escrow, and the lender keeps 100% of interest in
+    ///         lender's vault, and the lender keeps 100% of interest in
     ///         the lending asset.
     function testRepayAppliesLenderYieldFeeDiscount() public {
         uint256 principal = 10_000 ether;
 
-        // Lender funds escrow via the sanctioned deposit path BEFORE the
+        // Lender funds vault via the sanctioned deposit path BEFORE the
         // offer is accepted — this is the only path that wires the lender
         // into `rollupUserDiscount`, which stamps their current tier so
-        // it applies for the full loan window. Raw `transfer(escrow, …)`
+        // it applies for the full loan window. Raw `transfer(vault, …)`
         // bypasses the rollup entirely and (correctly) yields a zero
         // time-weighted average at settlement.
         vpfiToken.transfer(lender, 5_000 ether);
         vm.startPrank(lender);
         vpfiToken.approve(address(diamond), 5_000 ether);
-        _facet().depositVPFIToEscrow(5_000 ether);
+        _facet().depositVPFIToVault(5_000 ether);
         _facet().setVPFIDiscountConsent(true);
         vm.stopPrank();
 
@@ -665,8 +665,8 @@ contract VPFIDiscountFacetTest is SetupTest {
         _approveAndAcceptForLoan(offerId, principal);
         uint256 loanId = 1;
 
-        address lenderEscrow = EscrowFactoryFacet(address(diamond))
-            .getOrCreateUserEscrow(lender);
+        address lenderVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(lender);
 
         // Advance past the full loan duration so interest fully accrues.
         vm.warp(block.timestamp + 30 days);
@@ -684,8 +684,8 @@ contract VPFIDiscountFacetTest is SetupTest {
             treasuryRecipient
         );
         uint256 treasuryVpfiBefore = vpfiToken.balanceOf(treasuryRecipient);
-        uint256 lenderEscrowBefore = IERC20(mockERC20).balanceOf(lenderEscrow);
-        uint256 lenderVpfiBefore = vpfiToken.balanceOf(lenderEscrow);
+        uint256 lenderVaultBefore = IERC20(mockERC20).balanceOf(lenderVault);
+        uint256 lenderVpfiBefore = vpfiToken.balanceOf(lenderVault);
 
         vm.prank(borrower);
         RepayFacet(address(diamond)).repayLoan(loanId);
@@ -696,30 +696,30 @@ contract VPFIDiscountFacetTest is SetupTest {
             treasuryERC20Before,
             "treasury ERC20 untouched on lender discount path"
         );
-        // Treasury DID receive VPFI (exact amount matches escrow debit).
+        // Treasury DID receive VPFI (exact amount matches vault debit).
         uint256 treasuryVpfiDelta = vpfiToken.balanceOf(treasuryRecipient) -
             treasuryVpfiBefore;
         uint256 lenderVpfiDelta = lenderVpfiBefore -
-            vpfiToken.balanceOf(lenderEscrow);
+            vpfiToken.balanceOf(lenderVault);
         assertGt(treasuryVpfiDelta, 0, "treasury got VPFI");
         assertEq(
             treasuryVpfiDelta,
             lenderVpfiDelta,
-            "VPFI conserved: lender escrow delta == treasury delta"
+            "VPFI conserved: lender vault delta == treasury delta"
         );
-        // Lender escrow received principal + full interest (no haircut).
-        uint256 lenderEscrowDelta = IERC20(mockERC20).balanceOf(lenderEscrow) -
-            lenderEscrowBefore;
+        // Lender vault received principal + full interest (no haircut).
+        uint256 lenderVaultDelta = IERC20(mockERC20).balanceOf(lenderVault) -
+            lenderVaultBefore;
         assertGe(
-            lenderEscrowDelta,
+            lenderVaultDelta,
             principal,
-            "lender escrow at least principal"
+            "lender vault at least principal"
         );
     }
 
-    /// @notice Fallback: lender has consent but ZERO VPFI in escrow → the
+    /// @notice Fallback: lender has consent but ZERO VPFI in vault → the
     ///         normal 1% split fires. Treasury receives the ERC-20 cut and
-    ///         the lender escrow receives principal + 99% of interest.
+    ///         the lender vault receives principal + 99% of interest.
     function testRepayFallsBackWhenLenderHasNoVPFI() public {
         uint256 principal = 10_000 ether;
         uint256 offerId = _createLenderERC20Offer(principal);
@@ -727,7 +727,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         _approveAndAcceptForLoan(offerId, principal);
         uint256 loanId = 1;
 
-        // Lender opts in, but holds ZERO VPFI in escrow.
+        // Lender opts in, but holds ZERO VPFI in vault.
         vm.prank(lender);
         _facet().setVPFIDiscountConsent(true);
 
@@ -771,7 +771,7 @@ contract VPFIDiscountFacetTest is SetupTest {
 
     // ─── Phase 5 — Borrower LIF time-weighted rebate ─────────────────────────
 
-    /// @notice Long-hold happy path: borrower funds escrow via the sanctioned
+    /// @notice Long-hold happy path: borrower funds vault via the sanctioned
     ///         deposit (which wires the discount rollup so the stamp is live
     ///         for the whole loan window), accepts via the VPFI path, holds
     ///         through the full loan duration, repays properly. The rebate
@@ -785,7 +785,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         vpfiToken.transfer(borrower, 5_000 ether);
         vm.startPrank(borrower);
         vpfiToken.approve(address(diamond), 5_000 ether);
-        _facet().depositVPFIToEscrow(500 ether); // tier 1 (≥ 100 < 1000)
+        _facet().depositVPFIToVault(500 ether); // tier 1 (≥ 100 < 1000)
         _facet().setVPFIDiscountConsent(true);
         vm.stopPrank();
 
@@ -796,9 +796,9 @@ contract VPFIDiscountFacetTest is SetupTest {
             offerId,
             borrower
         );
-        vpfiToken.transfer(_buyerEscrow(borrower), vpfiRequired * 2);
+        vpfiToken.transfer(_buyerVault(borrower), vpfiRequired * 2);
         vm.prank(address(diamond));
-        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(borrower, address(vpfiToken), vpfiRequired * 2);
+        VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(borrower, address(vpfiToken), vpfiRequired * 2);
 
         // Also fund borrower collateral for acceptOffer.
         ERC20Mock(mockCollateralERC20).mint(borrower, principal);
@@ -874,7 +874,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         vpfiToken.transfer(borrower, 5_000 ether);
         vm.startPrank(borrower);
         vpfiToken.approve(address(diamond), 5_000 ether);
-        _facet().depositVPFIToEscrow(500 ether); // tier 1
+        _facet().depositVPFIToVault(500 ether); // tier 1
         _facet().setVPFIDiscountConsent(true);
         vm.stopPrank();
 
@@ -884,10 +884,10 @@ contract VPFIDiscountFacetTest is SetupTest {
             offerId,
             borrower
         );
-        // Top up so the escrow can cover the LIF itself.
-        vpfiToken.transfer(_buyerEscrow(borrower), vpfiRequired * 2);
+        // Top up so the vault can cover the LIF itself.
+        vpfiToken.transfer(_buyerVault(borrower), vpfiRequired * 2);
         vm.prank(address(diamond));
-        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(borrower, address(vpfiToken), vpfiRequired * 2);
+        VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(borrower, address(vpfiToken), vpfiRequired * 2);
 
         ERC20Mock(mockCollateralERC20).mint(borrower, principal);
         vm.prank(borrower);
@@ -899,9 +899,9 @@ contract VPFIDiscountFacetTest is SetupTest {
         // Immediately unstake the lot — stamp-refresh fix should set the
         // post-withdraw stamp at tier 0, so the whole loan period accrues
         // at tier-0 BPS (0).
-        uint256 withdrawable = vpfiToken.balanceOf(_buyerEscrow(borrower));
+        uint256 withdrawable = vpfiToken.balanceOf(_buyerVault(borrower));
         vm.prank(borrower);
-        _facet().withdrawVPFIFromEscrow(withdrawable);
+        _facet().withdrawVPFIFromVault(withdrawable);
 
         // Full term at tier 0.
         vm.warp(block.timestamp + 30 days);
@@ -936,7 +936,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         vpfiToken.transfer(borrower, 5_000 ether);
         vm.startPrank(borrower);
         vpfiToken.approve(address(diamond), 5_000 ether);
-        _facet().depositVPFIToEscrow(500 ether); // tier 1
+        _facet().depositVPFIToVault(500 ether); // tier 1
         _facet().setVPFIDiscountConsent(true);
         vm.stopPrank();
 
@@ -949,9 +949,9 @@ contract VPFIDiscountFacetTest is SetupTest {
             offerId,
             borrower
         );
-        vpfiToken.transfer(_buyerEscrow(borrower), vpfiRequired * 2);
+        vpfiToken.transfer(_buyerVault(borrower), vpfiRequired * 2);
         vm.prank(address(diamond));
-        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(borrower, address(vpfiToken), vpfiRequired * 2);
+        VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(borrower, address(vpfiToken), vpfiRequired * 2);
 
         ERC20Mock(mockCollateralERC20).mint(borrower, principal);
         vm.prank(borrower);

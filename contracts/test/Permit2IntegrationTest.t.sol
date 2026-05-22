@@ -10,7 +10,7 @@ import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ISignatureTransfer, LibPermit2} from "../src/libraries/LibPermit2.sol";
@@ -28,7 +28,7 @@ import {MockPermit2} from "./mocks/MockPermit2.sol";
  * @dev Uses `vm.etch` to install a mock at the canonical Permit2
  *      address `0x000000000022D473030F116dDEE9F6B43aC78BA3`; the mock
  *      captures the call args and performs a plain `safeTransferFrom`
- *      so downstream assertions (escrow balances, offer state) match
+ *      so downstream assertions (vault balances, offer state) match
  *      what real Permit2 would produce. Full signature-flow coverage
  *      (EIP-712 digest, nonce burn, deadline revert) belongs in a
  *      separate fork test against real Permit2.
@@ -49,7 +49,7 @@ contract Permit2IntegrationTest is SetupTest {
         vm.etch(CANONICAL_PERMIT2, address(permit2Mock).code);
 
         // Wire VPFIDiscountFacet onto the diamond so the VPFI permit
-        // test can reach `depositVPFIToEscrowWithPermit`.
+        // test can reach `depositVPFIToVaultWithPermit`.
         vpfiDiscountFacet = new VPFIDiscountFacet();
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = IDiamondCut.FacetCut({
@@ -94,35 +94,35 @@ contract Permit2IntegrationTest is SetupTest {
         IERC20(address(vpfi)).approve(CANONICAL_PERMIT2, type(uint256).max);
     }
 
-    // ─── depositVPFIToEscrowWithPermit ───────────────────────────────────────
+    // ─── depositVPFIToVaultWithPermit ───────────────────────────────────────
 
-    function testDepositVPFIToEscrowWithPermitRoutesThroughPermit2() public {
+    function testDepositVPFIToVaultWithPermitRoutesThroughPermit2() public {
         uint256 amount = 500 ether;
         ISignatureTransfer.PermitTransferFrom memory permit =
             _buildPermit(address(vpfi), amount);
 
         uint256 borrowerBalBefore = vpfi.balanceOf(borrower);
-        address escrow = EscrowFactoryFacet(address(diamond))
-            .getOrCreateUserEscrow(borrower);
-        uint256 escrowBalBefore = vpfi.balanceOf(escrow);
+        address vault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(borrower);
+        uint256 vaultBalBefore = vpfi.balanceOf(vault);
 
         vm.prank(borrower);
-        VPFIDiscountFacet(address(diamond)).depositVPFIToEscrowWithPermit(
+        VPFIDiscountFacet(address(diamond)).depositVPFIToVaultWithPermit(
             amount,
             permit,
             "" // mock skips signature verification
         );
 
-        // Token moved wallet → escrow via Permit2.
+        // Token moved wallet → vault via Permit2.
         assertEq(
             vpfi.balanceOf(borrower),
             borrowerBalBefore - amount,
             "borrower VPFI debited"
         );
         assertEq(
-            vpfi.balanceOf(escrow),
-            escrowBalBefore + amount,
-            "escrow VPFI credited"
+            vpfi.balanceOf(vault),
+            vaultBalBefore + amount,
+            "vault VPFI credited"
         );
 
         // Mock recorded exactly one Permit2 call with the right args.
@@ -138,9 +138,9 @@ contract Permit2IntegrationTest is SetupTest {
         ISignatureTransfer.PermitTransferFrom memory permit =
             _buildPermit(mockERC20, principal);
 
-        address lenderEscrow = EscrowFactoryFacet(address(diamond))
-            .getOrCreateUserEscrow(lender);
-        uint256 escrowBalBefore = IERC20(mockERC20).balanceOf(lenderEscrow);
+        address lenderVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(lender);
+        uint256 vaultBalBefore = IERC20(mockERC20).balanceOf(lenderVault);
 
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOfferWithPermit(
@@ -151,9 +151,9 @@ contract Permit2IntegrationTest is SetupTest {
 
         assertGt(offerId, 0, "offer created");
         assertEq(
-            IERC20(mockERC20).balanceOf(lenderEscrow),
-            escrowBalBefore + principal,
-            "lender escrow credited principal"
+            IERC20(mockERC20).balanceOf(lenderVault),
+            vaultBalBefore + principal,
+            "lender vault credited principal"
         );
         assertEq(MockPermit2(CANONICAL_PERMIT2).callCount(), 1);
     }
@@ -177,10 +177,10 @@ contract Permit2IntegrationTest is SetupTest {
         ISignatureTransfer.PermitTransferFrom memory permit =
             _buildPermit(mockCollateralERC20, principal);
 
-        address borrowerEscrow = EscrowFactoryFacet(address(diamond))
-            .getOrCreateUserEscrow(borrower);
+        address borrowerVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(borrower);
         uint256 collateralBalBefore = IERC20(mockCollateralERC20).balanceOf(
-            borrowerEscrow
+            borrowerVault
         );
 
         vm.prank(borrower);
@@ -191,12 +191,12 @@ contract Permit2IntegrationTest is SetupTest {
             ""
         );
 
-        // Borrower's collateral pulled via Permit2 into their escrow.
+        // Borrower's collateral pulled via Permit2 into their vault.
         assertEq(
-            IERC20(mockCollateralERC20).balanceOf(borrowerEscrow) -
+            IERC20(mockCollateralERC20).balanceOf(borrowerVault) -
                 collateralBalBefore,
             principal,
-            "collateral routed to borrower escrow"
+            "collateral routed to borrower vault"
         );
         // Two Permit2 calls total would mean both collateral + prepay
         // fired; ERC20 loans don't prepay, so expect exactly one.
@@ -222,7 +222,7 @@ contract Permit2IntegrationTest is SetupTest {
                 mockERC20
             )
         );
-        VPFIDiscountFacet(address(diamond)).depositVPFIToEscrowWithPermit(
+        VPFIDiscountFacet(address(diamond)).depositVPFIToVaultWithPermit(
             500 ether,
             wrongPermit,
             ""

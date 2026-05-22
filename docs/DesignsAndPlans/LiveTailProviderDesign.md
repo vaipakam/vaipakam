@@ -150,7 +150,7 @@ const ROUTE_CADENCE_MS: Record<string, number> = {
   '/app/loans/:id': 5_000,      // Loan detail watches one loan
   '/app/activity': 15_000,
   '/app/claim-center': 10_000,
-  '/app/escrow': 30_000,
+  '/app/vault': 30_000,
   '/app/analytics': 60_000,     // Analytics tolerates more lag
   '/app/admin': 30_000,
   // Default for unmatched routes

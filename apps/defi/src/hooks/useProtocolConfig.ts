@@ -51,7 +51,7 @@ export interface ProtocolConfig {
   /** Safety buffer on NFT rental prepayment (default 5%). */
   rentalBufferBps: number;
   rentalBufferPct: number;
-  /** Annualized staking reward on escrow-held VPFI (default 5%). */
+  /** Annualized staking reward on vault-held VPFI (default 5%). */
   vpfiStakingAprBps: number;
   vpfiStakingAprPct: number;
   /** VPFI tier thresholds (token wei, 18-dec): T1 entry, T2 entry, T3 entry, T4 cutoff. */

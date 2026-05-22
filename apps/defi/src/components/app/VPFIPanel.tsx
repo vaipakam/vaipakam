@@ -13,10 +13,10 @@ import { Pager } from './Pager';
 interface VPFIPanelProps {
   vpfi: ReturnType<typeof useVPFIToken>['snapshot'];
   userVpfi: ReturnType<typeof useUserVPFI>['snapshot'];
-  /** 18-dec VPFI currently locked in the user's protocol escrow on the
-   *  active chain. `null` when the escrow hasn't been deployed yet or
+  /** 18-dec VPFI currently locked in the user's protocol vault on the
+   *  active chain. `null` when the vault hasn't been deployed yet or
    *  the balance fetch is still in flight — rendered as "—". */
-  escrowVpfiWei: bigint | null;
+  vaultVpfiWei: bigint | null;
   networkName: string;
   networkChainId: number;
   blockExplorer: string;
@@ -65,7 +65,7 @@ function formatVpfi(n: number): string {
 export function VPFIPanel({
   vpfi,
   userVpfi,
-  escrowVpfiWei,
+  vaultVpfiWei,
   networkName,
   networkChainId,
   blockExplorer,
@@ -79,10 +79,10 @@ export function VPFIPanel({
   const tokenAddr = vpfi?.token ?? null;
   const minterAddr = vpfi?.minter ?? null;
   const balance = userVpfi?.balance ?? 0;
-  const escrowVpfiUnits = escrowVpfiWei == null ? 0 : formatVpfiUnits(escrowVpfiWei);
+  const vaultVpfiUnits = vaultVpfiWei == null ? 0 : formatVpfiUnits(vaultVpfiWei);
   const totalSupply = vpfi?.totalSupply ?? 0;
   const effectiveShareOfCirculating =
-    totalSupply > 0 ? (balance + escrowVpfiUnits) / totalSupply : 0;
+    totalSupply > 0 ? (balance + vaultVpfiUnits) / totalSupply : 0;
   const recentMints = userVpfi?.recentMints ?? [];
   const recentTransfers = userVpfi?.recentTransfers ?? [];
   const treasury = userVpfi?.treasury ?? null;

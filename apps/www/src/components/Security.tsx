@@ -35,8 +35,8 @@ function buildItems(t: TFunction): SecurityCard[] {
     },
     {
       icon: <Server size={22} />,
-      title: t('security.escrowTitle'),
-      description: t('security.escrowDesc'),
+      title: t('security.vaultTitle'),
+      description: t('security.vaultDesc'),
     },
     {
       icon: <Eye size={22} />,

@@ -16,7 +16,7 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
-import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
@@ -28,7 +28,7 @@ import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
  *         lender with better terms.
  * @dev Part of the Diamond Standard (EIP-2535). Reentrancy-guarded, pausable.
  *      ERC-20 loans only (NFT rental refinance not supported — would require
- *      NFT custody transfer between escrows).
+ *      NFT custody transfer between vaults).
  *
  *      Two-step flow:
  *        1. Borrower creates a Borrower Offer; a new lender accepts it
@@ -188,8 +188,8 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // Treasury fee on interest portion (1% of interest + shortfall).
         // Lender Yield Fee discount (Tokenomics §6): when the old lender has
         // platform-level VPFI-discount consent AND holds >= the required VPFI
-        // in escrow, the treasury cut is paid in VPFI from the old lender's
-        // escrow and the old lender keeps 100% of interestPortion in the
+        // in vault, the treasury cut is paid in VPFI from the old lender's
+        // vault and the old lender keeps 100% of interestPortion in the
         // lending asset. tryApplyYieldFee silently falls back on any
         // precondition failure.
         uint256 interestPortion = oldInterest + shortfall;
@@ -214,7 +214,7 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // the Diamond holding the asset between transfers. The
         // borrower's prior `approve()` to the Diamond covers the
         // total; two `safeTransferFrom` calls (one to treasury, one
-        // to the old lender's escrow) replace the prior pull-and-
+        // to the old lender's vault) replace the prior pull-and-
         // split pattern. Treasury share skipped entirely if the
         // VPFI-discount path satisfied it.
         if (treasuryFee > 0) {
@@ -226,19 +226,19 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             LibFacet.recordTreasuryAccrual(oldLoan.principalAsset, treasuryFee);
         }
 
-        // Route lender's share to old lender's escrow via the cross-
-        // payer chokepoint so the protocolTrackedEscrowBalance
-        // counter ticks under the old lender (the escrow owner)
+        // Route lender's share to old lender's vault via the cross-
+        // payer chokepoint so the protocolTrackedVaultBalance
+        // counter ticks under the old lender (the vault owner)
         // while the borrower remains the payer.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EscrowFactoryFacet.escrowDepositERC20From.selector,
+                VaultFactoryFacet.vaultDepositERC20From.selector,
                 msg.sender,         // payer — borrower
-                oldLoan.lender,     // user — old lender's escrow
+                oldLoan.lender,     // user — old lender's vault
                 oldLoan.principalAsset,
                 lenderDue
             ),
-            EscrowDepositFailed.selector
+            VaultDepositFailed.selector
         );
 
         // Record lender's claimable. heldForLender handled by ClaimFacet.
@@ -252,44 +252,44 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         });
 
         // ── Release old collateral ────────────────────────────────────────
-        // The borrower's escrow currently holds the old collateral deposited
+        // The borrower's vault currently holds the old collateral deposited
         // when the original loan was opened. We must refund it back to the borrower.
         if (oldLoan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
             uint256 oldCol = oldLoan.collateralAmount;
             if (oldCol > 0) {
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
-                        EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                        VaultFactoryFacet.vaultWithdrawERC20.selector,
                         msg.sender,
                         oldLoan.collateralAsset,
                         msg.sender,
                         oldCol
                     ),
-                    EscrowWithdrawFailed.selector
+                    VaultWithdrawFailed.selector
                 );
             }
         } else if (oldLoan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowWithdrawERC721.selector,
+                    VaultFactoryFacet.vaultWithdrawERC721.selector,
                     msg.sender,
                     oldLoan.collateralAsset,
                     oldLoan.collateralTokenId,
                     msg.sender
                 ),
-                EscrowWithdrawFailed.selector
+                VaultWithdrawFailed.selector
             );
         } else if (oldLoan.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowWithdrawERC1155.selector,
+                    VaultFactoryFacet.vaultWithdrawERC1155.selector,
                     msg.sender,
                     oldLoan.collateralAsset,
                     oldLoan.collateralTokenId,
                     oldLoan.collateralQuantity,
                     msg.sender
                 ),
-                EscrowWithdrawFailed.selector
+                VaultWithdrawFailed.selector
             );
         }
 

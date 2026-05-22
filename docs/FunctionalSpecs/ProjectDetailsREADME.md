@@ -111,7 +111,7 @@ Vaipakam is a decentralized peer-to-peer (P2P) lending and borrowing platform bu
       - [1a. Protocol Configuration and Constants](#1a-protocol-configuration-and-constants)
       - [2. Treasury and Revenue Metrics](#2-treasury-and-revenue-metrics)
       - [3. Lending and Offer Metrics](#3-lending-and-offer-metrics)
-      - [4. NFT and Escrow Metrics](#4-nft-and-escrow-metrics)
+      - [4. NFT and Vault Metrics](#4-nft-and-vault-metrics)
       - [5. Oracle and Risk Metrics](#5-oracle-and-risk-metrics)
       - [6. User-Specific Metrics](#6-user-specific-metrics)
       - [7. Compliance and Transparency Helpers](#7-compliance-and-transparency-helpers)
@@ -146,15 +146,15 @@ Vaipakam is a decentralized peer-to-peer (P2P) lending and borrowing platform bu
 
 - **ERC-20 Tokens:** Any ERC-20 token (e.g., USDC, ETH, WBTC) on Base, Polygon, Arbitrum, Optimism, or Ethereum mainnet.
 - **Rentable ERC-721/1155 NFTs:** Unique NFTs that are ERC-4907 compliant (like NFTs from Warena and Axie Infinity) which can be rented (NFTs in which `setUser` and `userOf` functions can be called) with lender-specified daily rental charges.
-  - For ERC-721 tokens, the token is transferred into the Vaipakam Escrow contract during the rental period. This gives the Vaipakam admin/escrow controller escrow-controlled owner/custody access so it can assign, revoke, or reassign only ERC-4907 `user` rights while keeping the borrower limited to temporary `user` access. The borrower never receives custody or ownership of the ERC-721 token itself.
-  - For ERC-1155 tokens, the tokens will be held in the Vaipakam Escrow contract during the rental period. The Vaipakam admin/escrow controller assigns ERC-4907-style user rights to the borrower while the token remains escrow-controlled, so a borrower preclose or transfer changes only the temporary user assignment and not the underlying custody model.
-- For third-party integrations, Vaipakam Escrow should act as the stable ERC-4907-style wrapper / adapter for escrowed rental positions. External apps may query the escrow contract with the underlying NFT contract address and token ID to retrieve the current user, user expiry, and, for ERC-1155 rentals, the active aggregate rented quantity for that same token ID within that same ERC-1155 NFT contract under the queried escrow. If more than one active rental exists for the same ERC-1155 contract and token ID within that escrow, the reported expiry should be the minimum (earliest) active rental expiry for that aggregated position. This means integrations should not assume the underlying NFT contract itself exposes a uniform rental interface for both ERC-721 and ERC-1155 in the same way; the escrow contract is the intended integration surface for rental-state reads.
+  - For ERC-721 tokens, the token is transferred into the Vaipakam Vault contract during the rental period. This gives the Vaipakam admin/vault controller vault-controlled owner/custody access so it can assign, revoke, or reassign only ERC-4907 `user` rights while keeping the borrower limited to temporary `user` access. The borrower never receives custody or ownership of the ERC-721 token itself.
+  - For ERC-1155 tokens, the tokens will be held in the Vaipakam Vault contract during the rental period. The Vaipakam admin/vault controller assigns ERC-4907-style user rights to the borrower while the token remains vault-controlled, so a borrower preclose or transfer changes only the temporary user assignment and not the underlying custody model.
+- For third-party integrations, Vaipakam Vault should act as the stable ERC-4907-style wrapper / adapter for vaulted rental positions. External apps may query the vault contract with the underlying NFT contract address and token ID to retrieve the current user, user expiry, and, for ERC-1155 rentals, the active aggregate rented quantity for that same token ID within that same ERC-1155 NFT contract under the queried vault. If more than one active rental exists for the same ERC-1155 contract and token ID within that vault, the reported expiry should be the minimum (earliest) active rental expiry for that aggregated position. This means integrations should not assume the underlying NFT contract itself exposes a uniform rental interface for both ERC-721 and ERC-1155 in the same way; the vault contract is the intended integration surface for rental-state reads.
 
 **Collateral Assets:**
 
 - Any ERC-20 tokens or ERC-721/1155 NFTs for ERC-20 Lending.
 - Only ERC-20 tokens for NFT Lending/Renting.
-  - Rationale: NFT lending in Phase 1 is a rental-style transaction, not a custody transfer to the borrower. The rented NFT remains inside Vaipakam Escrow for the full rental period, and the borrower receives only temporary ERC-4907-style user rights. Because the NFT itself remains escrow-controlled and can be returned to the lender directly at rental closure or default, an additional NFT collateral layer is not required for NFT renting.
+  - Rationale: NFT lending in Phase 1 is a rental-style transaction, not a custody transfer to the borrower. The rented NFT remains inside Vaipakam Vault for the full rental period, and the borrower receives only temporary ERC-4907-style user rights. Because the NFT itself remains vault-controlled and can be returned to the lender directly at rental closure or default, an additional NFT collateral layer is not required for NFT renting.
 
 **Supported Networks (Phase 1):**
 
@@ -243,13 +243,13 @@ The platform distinguishes between liquid and illiquid assets, which affects how
   6.  **Same-Asset Guard:** At offer creation, the lending asset and collateral asset must not be the same asset. This invariant is enforced directly rather than by relying on reference-asset hacks.
 - **Handling of Illiquid Assets on Default:**
   - **ERC-20 Lending with Illiquid Collateral:** If the borrower defaults, the entire illiquid ERC-20 collateral is transferred to the lender. There is no auction or DEX-based liquidation process for these assets.
-  - **NFT Lending/Renting:** If the borrower defaults (e.g., fails to close the rental, before expiry), then prepaid (total rental fees + 5% buffer) ERC-20 collateral provided by the borrower is transferred to the NFT owner (lender). The original ERC-721 or ERC-1155 NFT held in Vaipakam Escrow is returned to the owner and the full buffer (5% extra) will be sent to treasury.
+  - **NFT Lending/Renting:** If the borrower defaults (e.g., fails to close the rental, before expiry), then prepaid (total rental fees + 5% buffer) ERC-20 collateral provided by the borrower is transferred to the NFT owner (lender). The original ERC-721 or ERC-1155 NFT held in Vaipakam Vault is returned to the owner and the full buffer (5% extra) will be sent to treasury.
 - **Frontend Warnings for Illiquid Assets:**
   - A clear, static combined warning message will be displayed in the frontend whenever a user creates or accepts an offer. For illiquid assets, that same message must make clear that on default the lender takes the full collateral in-kind rather than through a traditional liquidation process.
   - This illiquid path does not use a separate optional toggle or a second consent. It is covered by the same single mandatory combined warning-and-consent acknowledgement used for offer creation and offer acceptance.
 - **Prepayment for NFT Renting:**
   - For NFT renting, the borrower must lock ERC-20 tokens as collateral. This collateral will cover the total rental amount plus a 5% buffer. This entire amount is considered a prepayment. The 5% buffer is refunded to the borrower upon successful and timely rental closure of the NFT and payment of all rental fees.
-  - No separate NFT collateral is required for NFT renting in Phase 1. The escrow-controlled custody model already protects return-of-asset risk, while the ERC-20 prepayment and buffer cover the rental-payment obligation.
+  - No separate NFT collateral is required for NFT renting in Phase 1. The vault-controlled custody model already protects return-of-asset risk, while the ERC-20 prepayment and buffer cover the rental-payment obligation.
 
 ## 2. Loan Durations and Flexibility
 
@@ -280,8 +280,8 @@ The platform distinguishes between liquid and illiquid assets, which affects how
   - Deposit the lending asset into the Vaipakam smart contract when creating the offer.
 - **For Rentable NFTs (ERC-721/1155):**
   - Specify the NFT (e.g., Axie #1234), daily rental fee (e.g., 10 USDC/day), the ERC-20 token for rental payment and collateral (e.g., USDC), and rental duration (e.g., 7 days).
-  - For ERC-721 NFTs: Deposit the NFT into the Vaipakam Escrow contract when creating the offer so Vaipakam has escrow-controlled owner/custody access for user-right assignment.
-  - For ERC-1155 NFTs: Deposit the NFT into the Vaipakam Escrow contract when creating the offer.
+  - For ERC-721 NFTs: Deposit the NFT into the Vaipakam Vault contract when creating the offer so Vaipakam has vault-controlled owner/custody access for user-right assignment.
+  - For ERC-1155 NFTs: Deposit the NFT into the Vaipakam Vault contract when creating the offer.
 
 ### Borrowers:
 
@@ -297,7 +297,7 @@ The platform distinguishes between liquid and illiquid assets, which affects how
 ### Process:
 
 - Offers are created through a React-based web interface.
-- For common ERC-20 flows, the app may offer a Uniswap Permit2 single-signature path instead of the classic approve-then-action path. Supported actions include creating an offer, accepting an offer, and depositing VPFI to escrow. Wallets or users that do not use Permit2 should fall back to the explicit approval flow without changing protocol semantics.
+- For common ERC-20 flows, the app may offer a Uniswap Permit2 single-signature path instead of the classic approve-then-action path. Supported actions include creating an offer, accepting an offer, and depositing VPFI to vault. Wallets or users that do not use Permit2 should fall back to the explicit approval flow without changing protocol semantics.
 - Permit2 should use Uniswap's canonical EVM deployment at `0x000000000022D473030F116dDEE9F6B43aC78BA3`. Permit signatures should be EIP-712 signatures with a 30-minute expiry, high-entropy nonces, and exact asset / amount / spender scope. Permit2 must live alongside the legacy allowance path; it must not silently replace token-level approvals for users who choose the classic flow.
 - All offer details are recorded on-chain for transparency and immutability.
 - Wherever the frontend lets a borrower create an offer or accept an offer for ERC-20 borrowing, it must communicate the `Loan Initiation Fee` in plain language before submission. The disclosure should make clear that the fee is charged in the lending asset at loan initiation and is deducted before net proceeds reach the borrower.
@@ -393,8 +393,8 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
   - Keeper approval must not by itself grant claim authority, withdrawal authority, or asset-ownership rights. Claims may be executed only by the current owner of the relevant Vaipakam NFT unless a future protocol phase introduces a separate, explicit NFT-owner claim-delegation model.
   - If Vaipakam position NFTs later support ERC-4907-style `userOf`, that rented `userOf` address should be treated only as a keeper-level operational delegate for the same narrow keeper-enabled function set already allowed by the protocol. The rented `userOf` address must not become a substitute owner, must not receive claim rights, must not receive payout-routing authority, and must not receive general strategic control over the position.
   - Under that model, `ownerOf` remains the economic owner and strategic controller of the Vaipakam position NFT, while `userOf` remains a temporary execution delegate with only keeper-scoped operational rights.
-  - The project is not planning to move Vaipakam position NFTs into protocol escrow during borrower preclose, borrower refinance, or lender early-withdrawal flows, and is not planning to natively lock transfers for those flows through `_beforeTokenTransfer`.
-  - Instead, completion authority for strategic flows should be enforced by function-level role and state checks against the currently entitled Vaipakam NFT owner, rather than by first moving the NFT into protocol escrow or by relying on a native transfer hook lock.
+  - The project is not planning to move Vaipakam position NFTs into protocol vault during borrower preclose, borrower refinance, or lender early-withdrawal flows, and is not planning to natively lock transfers for those flows through `_beforeTokenTransfer`.
+  - Instead, completion authority for strategic flows should be enforced by function-level role and state checks against the currently entitled Vaipakam NFT owner, rather than by first moving the NFT into protocol vault or by relying on a native transfer hook lock.
   - Ownership-sensitive logic for Vaipakam position authority should rely on the current `ownerOf(tokenId)` result for the relevant lender-side or borrower-side Vaipakam NFT unless a future protocol phase explicitly defines a different ownership-delegation model.
   - In other words, the protocol should use a function-by-function role-authority model over a single loan-wide shared-keeper model, so opt-in does not become broad public execution by accident and does not unnecessarily force one side to approve the other side's automation.
   - Liquidation remains the exception: any address may trigger liquidation whenever the protocol liquidation conditions are met, for both basic users and advanced users. Liquidation must not depend on keeper whitelists.
@@ -417,7 +417,7 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
     - `transferObligationViaOffer`
     - `refinanceLoan`
     - `createLoanSaleOffer`
-    - all admin, treasury, NFT-ownership, escrow-upgrade, pause, oracle-admin, and role-management functions must remain role-gated / owner-gated rather than keeper-executable
+    - all admin, treasury, NFT-ownership, vault-upgrade, pause, oracle-admin, and role-management functions must remain role-gated / owner-gated rather than keeper-executable
   - **Keeper-optional state-changing functions (Phase 1):**
     - `completeLoanSale`
     - `completeOffset`
@@ -454,7 +454,7 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
       - frontend and docs must clearly disclose whether a function is permissionless, party-only, or keeper-optional
       - logs and audit trails should make it clear which external address executed the action and under which consent path it was allowed
 - **Collateral for NFT Renting:** The collateral for NFT renting is a prepayment of total rental fees + a 5% buffer, denominated in ERC-20 tokens.
-  - This is intentionally different from ERC-20 lending. For NFT renting, the rented NFT itself stays in escrow custody and is returned by the protocol at rental closure/default, so the borrower does not need to post separate NFT collateral on top of the ERC-20 prepayment model.
+  - This is intentionally different from ERC-20 lending. For NFT renting, the rented NFT itself stays in vault custody and is returned by the protocol at rental closure/default, so the borrower does not need to post separate NFT collateral on top of the ERC-20 prepayment model.
 
 ## 4. Offer Book Display
 
@@ -480,7 +480,7 @@ Range Orders let users express lender and borrower intent as canonical limit ord
 
 - **Canonical User Inputs:** Lenders enter the maximum principal they are willing to lend, the minimum acceptable rate, and the collateral they require. Borrowers enter the minimum principal they want, the maximum rate they will accept, and the collateral they are willing to lock. The product should explain these as role-specific limits rather than exposing raw floor / ceiling storage fields.
 - **Explicit Bounds:** Each offer must carry a positive lower and upper principal bound where the upper bound is at least the lower bound. Single-value offers are represented by equal bounds rather than by an implicit blank upper bound. Borrower collateral ranges must likewise be explicit when the borrower is willing to lock more than the floor collateral.
-- **Range Offer Bounds:** Lender range offers must escrow enough lending asset for the upper amount bound and must satisfy the Health Factor floor at the worst-case fill. Borrower range offers must not request more principal than their posted collateral can support under the same risk math.
+- **Range Offer Bounds:** Lender range offers must vault enough lending asset for the upper amount bound and must satisfy the Health Factor floor at the worst-case fill. Borrower range offers must not request more principal than their posted collateral can support under the same risk math.
 - **Bot-Facing Preview:** Matching bots should use the read-only match preview to filter candidate lender / borrower pairs before submitting a transaction. Preview should enforce asset continuity, duration compatibility, range overlap, midpoint term calculation, and a synthetic Health Factor check.
 - **Permissionless Match Execution:** `matchOffers` is intentionally open to any caller when enabled. It is analogous to liquidation in that the caller cannot steal funds or set arbitrary terms; it can only execute a match allowed by two live offers and the protocol's deterministic matching rules.
 - **Matcher Economics:** The caller of `matchOffers` receives the configured matcher share of the Loan Initiation Fee. The default is `1%` of the LIF treasury flow, but governance may tune this through live protocol configuration (`lifMatcherFeeBps`) within the documented safety cap (`MAX_FEE_BPS = 5000`, or 50%). Frontend and bot surfaces should read the live value from `getProtocolConfigBundle()` rather than assuming the default.
@@ -500,16 +500,16 @@ Range Orders let users express lender and borrower intent as canonical limit ord
 ### Smart Contract Actions:
 
 - **Collateral Locking:**
-  - For ERC-20 Loans: The borrower’s collateral is locked in an escrow contract.
+  - For ERC-20 Loans: The borrower’s collateral is locked in an vault contract.
   - For NFT Renting: The borrower’s prepayment (total rental fees + 5% buffer in ERC-20 tokens) is confirmed as locked.
 - **Asset Transfer/NFT User Assignment:**
-  - For ERC-20 Loans: Before the lending asset is delivered to the borrower, the protocol deducts a `Loan Initiation Fee` equal to `0.1%` of the lending-asset amount and routes that fee to treasury. The remaining net lending amount is then transferred from the lender or lender's locked funds (in the Escrow) to the borrower.
+  - For ERC-20 Loans: Before the lending asset is delivered to the borrower, the protocol deducts a `Loan Initiation Fee` equal to `0.1%` of the lending-asset amount and routes that fee to treasury. The remaining net lending amount is then transferred from the lender or lender's locked funds (in the Vault) to the borrower.
     - For direct acceptance of ranged ERC-20 offers, the accepted principal and rate must be resolved from the role of the offer creator rather than from whichever raw field happens to be smallest. This prevents a ranged order's safety floor from becoming the loan's unintended economic value.
     - For loans initiated through a permissionless Range Orders match, the deterministic matched amount, midpoint rate, required collateral, actual counterparty, and matcher address are used instead of raw caller context. This prevents the bot / relayer from being treated as the lender or borrower while still paying that caller the configured matcher share of the LIF flow.
-    - If a borrower pre-escrowed more collateral than a direct-accept loan actually locks, the unused collateral must be returned as part of the acceptance flow. Match-based fills continue to retain only the collateral needed for live child loans and refund the unfilled remainder at close or cancellation.
+    - If a borrower pre-vaulted more collateral than a direct-accept loan actually locks, the unused collateral must be returned as part of the acceptance flow. Match-based fills continue to retain only the collateral needed for live child loans and refund the unfilled remainder at close or cancellation.
   - For NFT Renting:
-    - For ERC-721: The NFT is held in the Vaipakam Escrow contract. The Escrow contract calls `setUser` on the NFT contract to assign the borrower as the 'user' of the NFT for the agreed rental duration.
-    - For ERC-1155: The NFT is already in the Vaipakam Escrow contract. The Escrow contract calls `setUser` on the NFT contract to assign the borrower as the 'user' of the specified quantity of tokens for the agreed rental duration.
+    - For ERC-721: The NFT is held in the Vaipakam Vault contract. The Vault contract calls `setUser` on the NFT contract to assign the borrower as the 'user' of the NFT for the agreed rental duration.
+    - For ERC-1155: The NFT is already in the Vaipakam Vault contract. The Vault contract calls `setUser` on the NFT contract to assign the borrower as the 'user' of the specified quantity of tokens for the agreed rental duration.
 - **Record Keeping:** All loan details (principal, interest rate/rental fee, duration, collateral details, parties involved, start/end dates, liquidity status of assets) are recorded on-chain.
 - **NFT Updates & Minting:**
   - The original "Vaipakam NFT" (of the party who have created the offer and whose offer was accepted) is updated to "Loan Initiated" status.
@@ -545,7 +545,7 @@ Range Orders let users express lender and borrower intent as canonical limit ord
 - Borrower's Obligation: Ensure the NFT can be 'returned' (user status revoked by the platform) and all rental fees are paid.
 - Rental Fee Payment: Rental fees are automatically deducted from the borrower's initial prepayment.
 - If borrower closes rental term for NFT on time:
-  - The Vaipakam Escrow contract revokes the borrower's 'user' status for the NFT.
+  - The Vaipakam Vault contract revokes the borrower's 'user' status for the NFT.
   - The 5% buffer from the prepayment is returned to the borrower.
   - The accumulated rental fees (minus treasury fee) are made available for the lender to claim.
 - Late fees apply if the NFT 'rental closure' (user status revocation) is delayed beyond the agreed duration.
@@ -682,7 +682,7 @@ Watcher and notification support:
 - **Oracle-Unavailable Fallback Branch:** The collateral-equivalent fair-value split requires fresh prices for both collateral and principal from the multi-source oracle quorum. If either side lacks a fresh quorum price when the failed-swap fallback is settling, the fallback must not leave the distressed loan pinned in `Active`; it should settle through the full-collateral-to-lender branch used for illiquid collateral and emit `LiquidationFallbackOracleUnavailable` or equivalent dedicated telemetry. `OracleFacet.tryGetAssetPrice` should expose a no-revert availability read so settlement code can choose between the fair-value split and the oracle-unavailable branch without catching a revert from the ordinary price reader.
 - **Partial Liquidation:** For active, in-term loans that are only mildly underwater, a keeper may liquidate a bounded fraction of collateral instead of closing the whole position. The proceeds are applied interest-first and then principal, the loan remains `Active`, maturity is preserved, and the interest clock restarts on the reduced principal from the partial-liquidation timestamp. The call must strictly improve Health Factor and restore it to at least `1.0`; otherwise it reverts and the keeper must choose a larger fraction or fall back to full liquidation.
 - **Partial Liquidation Bounds and Sizing:** Governance controls the minimum and maximum partial fraction within bounded ranges. The keeper should compute the smallest feasible fraction that restores Health Factor above the configured target buffer, using the collateral asset's liquidation threshold from `getAssetRiskProfile`, the on-chain Health Factor formula, the protocol's effective liquidation deductions, and an extra swap-slippage safety margin. The launch bounds are `2%` minimum and `75%` maximum, with the common eligibility band defaulting to `[0.95, 1.0)`. If the computed fraction is outside bounds, the read needed for the calculation fails, the loan is after maturity, or the partial would close all remaining principal, the keeper should fall back to the prior safe path: fixed-fraction partial only where still valid, split-route, or ordinary full liquidation. Full liquidation remains preferred once the computed fraction is effectively closing the loan because it produces the terminal event and refunds borrower surplus explicitly.
-- **Partial Liquidation Atomicity:** Partial liquidation has no soft fallback. If every supplied adapter leg fails or the post-mutation Health Factor gate cannot be satisfied, the transaction reverts and the borrower escrow remains untouched. Repeated partial liquidations are allowed only when each call independently passes the same in-term, fraction, output, and Health Factor gates, and each successful call must emit a non-terminal event for indexers.
+- **Partial Liquidation Atomicity:** Partial liquidation has no soft fallback. If every supplied adapter leg fails or the post-mutation Health Factor gate cannot be satisfied, the transaction reverts and the borrower vault remains untouched. Repeated partial liquidations are allowed only when each call independently passes the same in-term, fraction, output, and Health Factor gates, and each successful call must emit a non-terminal event for indexers.
 - **Proceeds Distribution:**
   - Lender is repaid.
   - Treasury receives the `2%` liquidation-handling charge on successful liquidation.
@@ -699,8 +699,8 @@ Watcher and notification support:
 
 - **Collateral Forfeiture:** The borrower’s full ERC-20 prepayment (which includes total rental fees + 5% buffer) is transferred to the NFT owner (lender), after deducting applicable treasury fees from the rental portion.
 - **NFT Return:**
-  - For ERC-721: The borrower's 'user' status is revoked by the platform. The NFT remains in Vaipakam Escrow until it is returned to the lender through the normal rental/default settlement flow.
-  - For ERC-1155: The NFT held in the Vaipakam Escrow is returned to the lender. The borrower's 'user' status is revoked.
+  - For ERC-721: The borrower's 'user' status is revoked by the platform. The NFT remains in Vaipakam Vault until it is returned to the lender through the normal rental/default settlement flow.
+  - For ERC-1155: The NFT held in the Vaipakam Vault is returned to the lender. The borrower's 'user' status is revoked.
 
 ### NFT Status Updates on Default/Liquidation
 
@@ -716,7 +716,7 @@ Watcher and notification support:
 
 - Bob rents a CryptoPunk for 7 days (total rental fee 70 USDC, prepayment 73.5 USDC including buffer).
 - Bob fails to 'return' the NFT or there's an issue with fee settlement by the end of the grace period.
-- The full 70 USDC rental is claimed by Alice (the lender), minus treasury fees on the 70 USDC rental portion. Alice's CryptoPunk 'user' status for Bob is revoked, and the escrowed NFT can be returned to Alice under the rental settlement rules, extra buffere amount will also go to treasury.
+- The full 70 USDC rental is claimed by Alice (the lender), minus treasury fees on the 70 USDC rental portion. Alice's CryptoPunk 'user' status for Bob is revoked, and the vaulted NFT can be returned to Alice under the rental settlement rules, extra buffere amount will also go to treasury.
 
 ## 8. Preclosing by Borrower (Early Repayment Options)
 
@@ -735,7 +735,7 @@ Borrowers may close or transfer their obligations before the originally schedule
 - All claimable funds created during preclose must follow the same claim model used elsewhere in the protocol:
   - lender-side value becomes claimable by the lender against the lender’s Vaipakam NFT
   - borrower-side returned collateral or refunds become claimable by the borrower against the borrower’s Vaipakam NFT
-- If the loan is an NFT rental, preclose changes user rights rather than transferring the underlying NFT to the borrower. For both ERC-721 and ERC-1155 rentals, the NFT must be held in the appropriate Vaipakam Escrow for that active rental position, with the Vaipakam admin/escrow controller as the escrow custodian/owner while escrowed. During preclose transfer, the platform revokes the original borrower’s temporary user rights and assigns temporary user rights to the new borrower only.
+- If the loan is an NFT rental, preclose changes user rights rather than transferring the underlying NFT to the borrower. For both ERC-721 and ERC-1155 rentals, the NFT must be held in the appropriate Vaipakam Vault for that active rental position, with the Vaipakam admin/vault controller as the vault custodian/owner while vaulted. During preclose transfer, the platform revokes the original borrower’s temporary user rights and assigns temporary user rights to the new borrower only.
 - The relevant Vaipakam NFTs must be updated to reflect the new state of the position.
 - Before the borrower signs any preclose transaction, the frontend should show a path-specific interest implication warning: direct close requires full-term interest, transfer requires accrued interest plus any protected-rate shortfall, and offset requires accrued interest plus any rate shortfall and fresh principal collateral for the offsetting offer.
 
@@ -778,8 +778,8 @@ The borrower may close the loan early by repaying the full outstanding principal
 - The lender becomes entitled to the rental fees due under the applicable early-close rule.
 - The borrower becomes entitled to any refundable unused prepayment and the buffer amount, subject to platform rules.
 - The borrower’s NFT `user` right is revoked.
-- For ERC-721 rentals, the NFT itself remains in the appropriate Vaipakam Escrow under admin/escrow-controller custody; only the borrower’s ERC-4907 `user` access is removed.
-- For ERC-1155 rentals, the NFT remains controlled by the appropriate Vaipakam Escrow under admin/escrow-controller custody; only the borrower’s temporary user right is removed.
+- For ERC-721 rentals, the NFT itself remains in the appropriate Vaipakam Vault under admin/vault-controller custody; only the borrower’s ERC-4907 `user` access is removed.
+- For ERC-1155 rentals, the NFT remains controlled by the appropriate Vaipakam Vault under admin/vault-controller custody; only the borrower’s temporary user right is removed.
 
 #### NFT and Status Updates
 
@@ -852,7 +852,7 @@ Where:
    - Alice’s borrower NFT is closed or burned
    - a new borrower NFT is minted for Ben
    - Liam’s lender NFT is updated to reflect the new borrower relationship
-8. If the transferred obligation is an NFT rental, the platform keeps or moves the ERC-721/1155 NFT into the appropriate Vaipakam Escrow for the continuing rental position, with the Vaipakam admin/escrow controller retaining escrow custody/owner control. Alice’s temporary user rights are revoked, and equivalent user rights are assigned to Ben for the remaining permitted rental term. Ben receives only ERC-4907-style user rights and never receives custody or ownership of the NFT itself.
+8. If the transferred obligation is an NFT rental, the platform keeps or moves the ERC-721/1155 NFT into the appropriate Vaipakam Vault for the continuing rental position, with the Vaipakam admin/vault controller retaining vault custody/owner control. Alice’s temporary user rights are revoked, and equivalent user rights are assigned to Ben for the remaining permitted rental term. Ben receives only ERC-4907-style user rights and never receives custody or ownership of the NFT itself.
 
 #### Funds Flow
 
@@ -891,7 +891,7 @@ This option allows Alice to stop being Liam’s borrower by becoming a lender in
 - The amount of the principal/lending asset, payment/prepay asset, and collateral asset may vary if otherwise permitted by the flow, but the asset types themselves must not change.
 - The duration of the offsetting position must not exceed the remaining term of Alice’s original loan and must favor Liam, the original lender, unless Alice fully compensates any resulting shortfall.
 - The lending amount and collateral amount used in the offsetting offer may vary, but they must also favor Liam, the original lender. If the selected offer amounts reduce Liam's protection or economics, Alice must provide the compensating top-up needed to keep Liam whole.
-- All normal offer-creation, offer-acceptance, sanctions, KYC, asset, escrow, and matching checks apply to the offsetting offer flow.
+- All normal offer-creation, offer-acceptance, sanctions, KYC, asset, vault, and matching checks apply to the offsetting offer flow.
 
 #### Economic Protection for the Original Lender
 
@@ -1082,7 +1082,7 @@ This option is implemented through standard offer flows rather than through a se
 For this option to be implementation-ready, the following must be explicit:
 
 - how the borrower-offer path is being used for lender early withdrawal
-- who escrows or locks funds during offer creation
+- who vaults or locks funds during offer creation
 - what exact amount the buyer pays when accepting
 - whether the buyer must fund principal only or principal plus another negotiated amount
 - how accrued interest forfeiture is handled
@@ -1135,7 +1135,7 @@ For clarity and implementation consistency, every preclose or early-withdrawal o
 - initiator
 - counterparties
 - required preconditions
-- escrow movements
+- vault movements
 - exact value owed to treasury
 - exact lender claimable amount created
 - exact borrower claimable amount created
@@ -1186,35 +1186,35 @@ VPFI token deployment begins in Phase 1 through the token contract and minting p
 ### Treasury and Revenue Sharing
 
 - **Treasury Collection:** Treasury continues to collect protocol fees according to the live protocol rules, including the `0.1%` `Loan Initiation Fee` on ERC-20 loans, the `Yield Fee` on accrued interest / rental-fee earnings, the `1%` late-fee intake, and any other explicitly documented treasury charges such as liquidation-handling or fallback treasury entitlements.
-- **Lender Yield Fee Discount:** Lenders who maintain sufficient VPFI in their user escrow on the respective lending chain are eligible for the tiered `Yield Fee` discount schedule defined by the tokenomics spec.
+- **Lender Yield Fee Discount:** Lenders who maintain sufficient VPFI in their user vault on the respective lending chain are eligible for the tiered `Yield Fee` discount schedule defined by the tokenomics spec.
   - The lender discount is measured as a time-weighted average over the life of the loan, not from only the VPFI balance present at the final claim moment.
-  - Escrow-held VPFI automatically counts as staked under the unified escrow-based staking model.
+  - Vault-held VPFI automatically counts as staked under the unified vault-based staking model.
   - The active tier schedule is:
-    | Tier | Escrowed VPFI Balance | Discount | Lender Effective Yield Fee |
+    | Tier | Vaulted VPFI Balance | Discount | Lender Effective Yield Fee |
     | ------ | -------------------------- | -------: | -------------------------: |
     | Tier 1 | `>= 100` and `< 1,000` | `10%` | `0.9%` |
     | Tier 2 | `>= 1,000` and `< 5,000` | `15%` | `0.85%` |
     | Tier 3 | `>= 5,000` and `<= 20,000` | `20%` | `0.8%` |
     | Tier 4 | `> 20,000` | `24%` | `0.76%` |
 
-  - The lender must explicitly opt in through a single platform-level user setting that consents to using escrowed VPFI for protocol fee discounts.
+  - The lender must explicitly opt in through a single platform-level user setting that consents to using vaulted VPFI for protocol fee discounts.
   - In the frontend, this common fee-discount consent should be managed from the app-level user area, surfaced on the `Dashboard`, rather than being anchored to an individual offer, loan, or VPFI-purchase step.
   - This consent should be a common user preference rather than an offer-level or loan-level toggle.
-  - Only when that platform-level consent is active and sufficient VPFI is available in escrow should the system automatically deduct the discounted fee amount in VPFI from escrow and transfer it to treasury.
+  - Only when that platform-level consent is active and sufficient VPFI is available in vault should the system automatically deduct the discounted fee amount in VPFI from vault and transfer it to treasury.
 
-- **Borrower Loan Initiation Fee Discount:** Borrowers who maintain sufficient VPFI in their user escrow on the respective lending chain are eligible for the tiered borrower-side `Loan Initiation Fee` discount schedule defined by the tokenomics spec.
-  - Escrow-held VPFI also counts as staked under the unified escrow-based staking model.
+- **Borrower Loan Initiation Fee Discount:** Borrowers who maintain sufficient VPFI in their user vault on the respective lending chain are eligible for the tiered borrower-side `Loan Initiation Fee` discount schedule defined by the tokenomics spec.
+  - Vault-held VPFI also counts as staked under the unified vault-based staking model.
   - The active tier schedule is:
-    | Tier | Escrowed VPFI Balance | Discount | Borrower Effective Initiation Fee |
+    | Tier | Vaulted VPFI Balance | Discount | Borrower Effective Initiation Fee |
     | ------ | -------------------------- | -------: | --------------------------------: |
     | Tier 1 | `>= 100` and `< 1,000` | `10%` | `0.09%` |
     | Tier 2 | `>= 1,000` and `< 5,000` | `15%` | `0.085%` |
     | Tier 3 | `>= 5,000` and `<= 20,000` | `20%` | `0.08%` |
     | Tier 4 | `> 20,000` | `24%` | `0.076%` |
 
-  - The borrower must explicitly opt in through that same single platform-level user setting consenting to the use of escrowed VPFI for protocol fee discounts.
+  - The borrower must explicitly opt in through that same single platform-level user setting consenting to the use of vaulted VPFI for protocol fee discounts.
   - Offer-level or loan-level consent is not required for the borrower discount once the platform-level setting has been enabled.
-  - Only when that platform-level consent is active, the lending asset is liquid, and sufficient VPFI is available should the system deduct the full `0.1%` fee equivalent in VPFI from the borrower's escrow.
+  - Only when that platform-level consent is active, the lending asset is liquid, and sufficient VPFI is available should the system deduct the full `0.1%` fee equivalent in VPFI from the borrower's vault.
   - The deducted VPFI is held in protocol custody for the life of the loan rather than sent immediately to Treasury.
   - On proper close through normal repayment, borrower preclose, or refinance, the borrower earns a time-weighted rebate based on the discount tiers actually held during the loan window. The rebate is paid in VPFI alongside the ordinary borrower claim.
   - On default or HF-based liquidation, the rebate is forfeited and the full held VPFI becomes Treasury's share.
@@ -1225,16 +1225,16 @@ VPFI token deployment begins in Phase 1 through the token contract and minting p
   - wallet-bearing buy, deposit / stake, withdraw / unstake, and staking-reward claim controls should live inside the connected app at `/app/buy-vpfi`
   - public CTAs should route users into `/app/buy-vpfi` when they choose to transact, while the public site itself remains informational and wallet-free
   - the user should not be required to manually switch to the canonical chain before buying
-  - purchased VPFI should be delivered to the borrower's wallet on that same preferred chain, not auto-deposited into escrow
+  - purchased VPFI should be delivered to the borrower's wallet on that same preferred chain, not auto-deposited into vault
   - if canonical-chain or bridge infrastructure is used under the hood, that complexity should be abstracted from the user-facing purchase flow
   - if the purchase path settles through a Base-chain receiver, VPFI must be minted or released only after that receiver actually receives ETH, and the amount delivered must be based on actual received ETH rather than a quoted amount
-  - moving VPFI from wallet to user escrow should remain an explicit user-initiated action, with the connected app facilitating that step after purchase
-  - that escrow action should be presented as `Deposit / Stake VPFI`, because escrow-held VPFI earns the staking APR as well as counting toward local fee-discount tiers
-  - staking is open to any VPFI holder; an existing loan is not required, and the user's escrow can be created on first deposit
+  - moving VPFI from wallet to user vault should remain an explicit user-initiated action, with the connected app facilitating that step after purchase
+  - that vault action should be presented as `Deposit / Stake VPFI`, because vault-held VPFI earns the staking APR as well as counting toward local fee-discount tiers
+  - staking is open to any VPFI holder; an existing loan is not required, and the user's vault can be created on first deposit
   - the Phase 1 `30,000 VPFI` wallet cap is a per-chain cap, not one shared global wallet cap across every chain
-  - VPFI moved into user escrow on a given chain should count toward fee-discount eligibility only for loans initiated on that same chain
-  - the shared platform-level consent for using escrowed VPFI toward `Yield Fee` and `Loan Initiation Fee` discounts should be shown in the app on `Dashboard`, so users can manage the setting independently of the `Buy VPFI` flow
-- **Escrow-Based Staking:** Any VPFI held in a user's escrow on a lending chain should be treated as staked for tokenomics purposes and should accrue the escrow-based `5% APR` staking rewards defined in the tokenomics spec. That escrow balance also counts toward tiered fee discounts only for loans initiated on that same chain.
+  - VPFI moved into user vault on a given chain should count toward fee-discount eligibility only for loans initiated on that same chain
+  - the shared platform-level consent for using vaulted VPFI toward `Yield Fee` and `Loan Initiation Fee` discounts should be shown in the app on `Dashboard`, so users can manage the setting independently of the `Buy VPFI` flow
+- **Vault-Based Staking:** Any VPFI held in a user's vault on a lending chain should be treated as staked for tokenomics purposes and should accrue the vault-based `5% APR` staking rewards defined in the tokenomics spec. That vault balance also counts toward tiered fee discounts only for loans initiated on that same chain.
 - **Reward Claim Surfaces:** Staking rewards should be claimed from the `Buy VPFI` staking card, platform-interaction rewards should be claimed from `Claim Center`, and `Dashboard` may summarize both streams without becoming the canonical claim route for either one.
 - **VPFI Received From Protocol-Fee Flows:** VPFI received through protocol-fee utility paths should be handled as:
   - `38%` converted into ETH through the configured on-chain swap-aggregator proxy
@@ -1276,7 +1276,7 @@ The VPFI governance token will be distributed to align incentives and encourage 
     - users still claim locally on their active lending chain; cross-chain messaging is used only to synchronize the global denominator and related reward funding, not to make the loan lifecycle cross-chain
     - once the `69,000,000` VPFI interaction-reward pool is exhausted, this category stops emitting
   - **Staking Rewards:** `24%` (`55,200,000`)
-    - distributed through escrow-based staking reward accounting using a pull model; no separate staking contract is required
+    - distributed through vault-based staking reward accounting using a pull model; no separate staking contract is required
     - aligned to the same `5%` terminal inflation profile used in the later interaction-reward schedule
 - **Distribution Mechanism:** Rewards follow a pull model through explicit claim functions such as `claimInteractionRewards()` and `claimStakingRewards()`. Initial minted and reserved allocations should be held through secure multi-sig, timelock, and vesting-wallet structures where appropriate.
 - **Representative Vesting / Release Rules:**
@@ -1322,7 +1322,7 @@ Effective communication is key for user experience and risk management. Vaipakam
 - **Health-Factor Alert Subscriptions:** Borrowers can subscribe to per-loan HF threshold alerts, such as `HF below 1.20`, for liquid loans they own. The watcher reprices subscribed loans on a timed sweep and sends an alert only when the configured threshold is newly crossed.
 - **HF Alert Channels:** Telegram alerts are delivered through the official Vaipakam bot linked to the wallet. Push Protocol is supported as a decentralized opt-in channel; the send path may remain staged until the production Push channel is registered.
 - **Paid Push Event Notifications:** Beyond compulsory HF-threshold alerts, users may opt into paid Push notifications for loan lifecycle events. Supported event categories should include claim available, loan settled / defaulted, cross-chain VPFI buy received, offer matched into a loan, loan maturity approaching, and partial repayment received. New subscribers should default these event toggles on while allowing individual opt-out.
-- **Notification Fee Model:** Telegram alerts remain free. Push delivery may charge a flat numeraire-denominated fee, governance-tunable through protocol config, deducted in VPFI from the relevant user's escrow on the first paid Push notification per loan side. Billing must be idempotent per `(loanId, side)`, should transfer directly from user escrow to treasury, and should not introduce a Diamond custody window because notification fees have no rebate or terminal split. The notification-fee conversion should use the active `ETH/<numeraire>` oracle-layer price and the fixed Phase 1 VPFI-per-ETH rate; it must not carry a separate per-fee oracle slot.
+- **Notification Fee Model:** Telegram alerts remain free. Push delivery may charge a flat numeraire-denominated fee, governance-tunable through protocol config, deducted in VPFI from the relevant user's vault on the first paid Push notification per loan side. Billing must be idempotent per `(loanId, side)`, should transfer directly from user vault to treasury, and should not introduce a Diamond custody window because notification fees have no rebate or terminal split. The notification-fee conversion should use the active `ETH/<numeraire>` oracle-layer price and the fixed Phase 1 VPFI-per-ETH rate; it must not carry a separate per-fee oracle slot.
 - **Notification Billing Role:** The off-chain notification worker should call a narrowly scoped on-chain billing entry point using a dedicated notification-biller role rather than reusing watcher / pause authority. This keeps false-billing risk separate from auto-pause risk and allows either role to be rotated independently.
 - **Autonomous Liquidation Watcher:** Operators may enable a keeper mode on the same watcher so it submits permissionless `triggerLiquidation` transactions when subscribed loans cross HF `1.0`. This mode is disabled by default and requires explicit worker secrets plus a funded keeper EOA per target chain.
 - **Public Keeper-Bot Reference:** Vaipakam should maintain a standalone keeper-bot reference implementation for third-party operators. The bot should be able to page through active loans, read Health Factor, quote 0x / 1inch / UniV3 / Balancer routes, rank them, and submit permissionless liquidations from the operator's own EOA.
@@ -1367,7 +1367,7 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
 - **Liquidation Price View:** For liquid active loans, Loan Details should show the collateral-asset price at which HF reaches `1.0`, both as an absolute price and a percentage move from current price. This view should stay hidden for illiquid loans where no oracle-based liquidation price exists.
 - **Near Internal-Match Warning:** Borrower-side dashboard and Loan Details rows should show a clear warning when the current LTV is close to, but still below, the loan's snapshotted internal-match liquidation threshold. The warning should be informational only until the threshold is actually crossed, and it should explain that the borrower can repay or add collateral to avoid entering the internal-match race window.
 - **Approval Management:** Profile should include an Approvals surface listing ERC-20, ERC-721, and ERC-1155 allowances granted to the Vaipakam Diamond, grouped by principal-eligible, collateral-eligible, and prepay-eligible assets, with one-click revoke actions.
-- **VPFI Token Management:** In Phase 1, this is split across public education and connected app execution: public `/buy-vpfi` explains VPFI and links into the app, while `/app/buy-vpfi` hosts wallet-to-escrow funding guidance, staking / unstaking, staking-rewards claim surfaces, borrower discount eligibility views where exposed, and chain-level token transparency. The shared fee-discount consent control remains surfaced in `Dashboard`.
+- **VPFI Token Management:** In Phase 1, this is split across public education and connected app execution: public `/buy-vpfi` explains VPFI and links into the app, while `/app/buy-vpfi` hosts wallet-to-vault funding guidance, staking / unstaking, staking-rewards claim surfaces, borrower discount eligibility views where exposed, and chain-level token transparency. The shared fee-discount consent control remains surfaced in `Dashboard`.
 - **Dashboard Table Polish:** The user's loan table should show both principal and collateral columns using the same asset / NFT renderer, so users can review collateral without opening every loan detail page.
 - **Claim Center Navigation:** Claim Center rows should deep-link each `Loan #N` label to the matching Loan Details page so users can review full timeline and risk context before claiming.
 - **Copyable Address UX:** Redacted addresses on loan parties, offer creator rows, keeper lists, timeline participant rows, and analytics asset-distribution rows should expose a copy affordance for the full address without crowding explorer-link surfaces.
@@ -1413,11 +1413,11 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
   - `VaipakamOfferManagement.sol`: Handles creation, cancellation, and matching of lender/borrower offers.
   - `OfferMatchFacet` or equivalent matching facet: Hosts bot-facing Range Orders preview / match entrypoints when needed to keep the offer-management facet under the EIP-170 runtime bytecode ceiling. Range Orders pushed ordinary offer management past the real-chain bytecode limit, so matching and ordinary create / accept / cancel logic should remain split where necessary for deployability.
   - `VaipakamLoanManagement.sol`: Manages active loans, repayments, defaults, and liquidations.
-  - `VaipakamEscrow.sol`: Holds collateral, ERC-721/1155 rental NFTs, and funds during various stages.
+  - `VaipakamVault.sol`: Holds collateral, ERC-721/1155 rental NFTs, and funds during various stages.
   - `VaipakamNFT.sol`: The ERC-721 contract responsible for minting and managing Vaipakam NFTs.
   - `VaipakamGovernance.sol` (Phase 2): Manages proposals and voting.
   - `VaipakamTreasury.sol`: Collects and manages platform fees.
-  - `StakingRewardsFacet` / VPFI tokenomics facets (Phase 1): Manage escrow-based VPFI staking rewards and reward claims without a separate staking contract.
+  - `StakingRewardsFacet` / VPFI tokenomics facets (Phase 1): Manage vault-based VPFI staking rewards and reward claims without a separate staking contract.
   - `ConfigFacet`: Exposes mutable governance configuration and compile-time protocol constants that the frontend uses for live copy, tier tables, thresholds, and tooltips.
   - `OracleAdminFacet`: Exposes oracle-admin setters and getters, including Pyth cross-check, secondary-oracle, PAD, and direct-feed override configuration used by protocol-console tooling.
   - `RewardReporterFacet`: Exposes cross-chain reward reporting and grace-window configuration used by tokenomics accounting and protocol-console tooling.
@@ -1431,12 +1431,12 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
   - **Born-Paused Deploy Safety:** Fresh Diamond deployments should be initialized in a paused state so no user-facing `whenNotPaused` entry point can execute while a split multi-cut deployment is still only partially wired. Deployment automation should explicitly unpause only after every facet cut, initializer, post-cut selector / facet-count assertion, and verify phase required for that environment has succeeded. Mainnet operators may intentionally leave the protocol paused after deploy for multi-party review and unpause through the documented Safe / Timelock ceremony.
   - **Diamond Size Discipline:** Large functional surfaces may be split across multiple facets when needed to keep each deployed facet within the EVM runtime-size limit. Such splits should preserve user-facing behavior, events, errors, and external integration expectations while changing only where the behavior is hosted inside the Diamond.
   - **Selector Coverage Discipline:** A function that exists on a facet is not considered live until the Diamond routes to it. Deployment guardrails should compare the compiled facet surface to the deployed Diamond routing table and fail when any public function is missing, duplicated through a selector collision, or owned by the wrong facet.
-  - **Escrow Upgrade Policy:** User escrows must not continue to be usable on outdated mandatory versions. If an escrow implementation upgrade is classified as required, user interactions through an older escrow version must be blocked by the protocol until that escrow is upgraded. Escrow upgrades are not intended to be pushed automatically to every existing user escrow because that would create significant network-fee overhead. Instead, the frontend must detect outdated escrows and require the user to submit their own escrow-upgrade transaction before any further protected interaction is allowed. For non-critical upgrades, the frontend may still prompt users to upgrade, but blocking behavior should only be enforced when the upgrade is marked mandatory.
-  - **Protocol-Tracked Vault Balances:** For every user/token pair, `protocolTrackedEscrowBalance[user][token]` is the protocol-managed balance mirror. All production ERC-20 deposit paths must flow through `EscrowFactoryFacet.escrowDepositERC20`, `escrowDepositERC20From`, or `recordEscrowDepositERC20`, and normal withdrawals / protocol fee deductions must decrement that tracked balance alongside the token movement. Direct unsolicited transfers into a user vault can increase raw token `balanceOf` but must not increase the protocol-tracked counter.
-  - **Tracked-Balance Display and Utility Rule:** User-facing Asset Viewer and balance surfaces should display `min(IERC20.balanceOf(userEscrow, token), protocolTrackedEscrowBalance[user][token])` for protocol-managed ERC-20 assets so unsolicited dust is hidden. Staking rewards, VPFI discount tiers, and other protocol utility decisions must also use the tracked clamp rather than trusting raw vault balance alone.
-  - **Stuck ERC-20 Recovery:** `recoverStuckERC20(token, declaredSource, amount, deadline, signature)` may recover only `max(0, balanceOf(userEscrow, token) - protocolTrackedEscrowBalance[user][token])` and sends recovered tokens only to the user's own EOA. The flow requires an EIP-712 acknowledgement, nonce, deadline, and canonical warning hash. `disown(token)` is an event-only declaration and must not mutate balances or protocol accounting.
+  - **Vault Upgrade Policy:** User vaults must not continue to be usable on outdated mandatory versions. If an vault implementation upgrade is classified as required, user interactions through an older vault version must be blocked by the protocol until that vault is upgraded. Vault upgrades are not intended to be pushed automatically to every existing user vault because that would create significant network-fee overhead. Instead, the frontend must detect outdated vaults and require the user to submit their own vault-upgrade transaction before any further protected interaction is allowed. For non-critical upgrades, the frontend may still prompt users to upgrade, but blocking behavior should only be enforced when the upgrade is marked mandatory.
+  - **Protocol-Tracked Vault Balances:** For every user/token pair, `protocolTrackedVaultBalance[user][token]` is the protocol-managed balance mirror. All production ERC-20 deposit paths must flow through `VaultFactoryFacet.vaultDepositERC20`, `vaultDepositERC20From`, or `recordVaultDepositERC20`, and normal withdrawals / protocol fee deductions must decrement that tracked balance alongside the token movement. Direct unsolicited transfers into a user vault can increase raw token `balanceOf` but must not increase the protocol-tracked counter.
+  - **Tracked-Balance Display and Utility Rule:** User-facing Asset Viewer and balance surfaces should display `min(IERC20.balanceOf(userVault, token), protocolTrackedVaultBalance[user][token])` for protocol-managed ERC-20 assets so unsolicited dust is hidden. Staking rewards, VPFI discount tiers, and other protocol utility decisions must also use the tracked clamp rather than trusting raw vault balance alone.
+  - **Stuck ERC-20 Recovery:** `recoverStuckERC20(token, declaredSource, amount, deadline, signature)` may recover only `max(0, balanceOf(userVault, token) - protocolTrackedVaultBalance[user][token])` and sends recovered tokens only to the user's own EOA. The flow requires an EIP-712 acknowledgement, nonce, deadline, and canonical warning hash. `disown(token)` is an event-only declaration and must not mutate balances or protocol accounting.
   - **Sanctions-Aware Stuck-Token Recovery:** Stuck-token recovery checks the user-declared source address through the configured sanctions oracle. Clean source checks allow recovery, flagged source checks leave tokens in the vault, record the banned source marker, and emit the ban event while returning successfully; oracle unset / unavailable / reverting states fail safe by reverting. A recorded banned source should unlock automatically when the source is no longer flagged by the current oracle.
-  - **Direct Transfer Custody Policy:** Principal, repayment, refinance, preclose, and lender-sale settlement flows should avoid transient `wallet -> Diamond -> escrow` or `escrow -> Diamond -> escrow` hops when the same result can be achieved with a direct `transferFrom` or escrow withdrawal to the final recipient. The Diamond should hold user assets only for intentionally staged protocol custody such as borrower VPFI LIF custody and liquidation swap output routing; ordinary repayment / settlement assets should move directly to the counterparty escrow or treasury with accounting updated alongside the direct transfer.
+  - **Direct Transfer Custody Policy:** Principal, repayment, refinance, preclose, and lender-sale settlement flows should avoid transient `wallet -> Diamond -> vault` or `vault -> Diamond -> vault` hops when the same result can be achieved with a direct `transferFrom` or vault withdrawal to the final recipient. The Diamond should hold user assets only for intentionally staged protocol custody such as borrower VPFI LIF custody and liquidation swap output routing; ordinary repayment / settlement assets should move directly to the counterparty vault or treasury with accounting updated alongside the direct transfer.
   - **Swap Adapter Allowance Boundary:** Keeper-driven swap adapters must distinguish the ERC-20 allowance target from the swap-call destination. The allowance target should be immutable per adapter deployment, while the callable swap destinations should be owner-managed allowlist entries. The adapter should approve only the immutable allowance target, reject unallowlisted destinations, and refuse to remove the final destination entry so operators cannot accidentally brick a live adapter. This supports 0x's AllowanceHolder / Settler split while still constraining 1inch-style routes where the same upstream address may currently serve both roles.
   - **External Dependency Modularity:** Safety-critical external dependencies should remain swappable at the lowest practical layer. Oracle providers, sanctions providers, swap aggregators, and off-chain risk-data sources should be configurable or isolated behind narrow provider modules where possible. Deep-integrated dependencies such as the chosen cross-chain messaging stack and hosting platform should have explicit resilience or migration plans rather than being treated as ordinary configuration.
   - **Testnet Swap Venue Policy:** Mainnet swap adapters must use canonical upstream venues and allowance targets. Testnets that lack a canonical 0x AllowanceHolder or real DEX liquidity may deploy chain-guarded mock 0x plumbing for configuration and interface rehearsal, but keeper liquidation swap adapters should remain parked behind the governance / Timelock ceremony until a meaningful venue and liquidity path exists.
@@ -1444,7 +1444,7 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
   - **Reentrancy Guards:** Applied to all functions involving external calls or asset transfers.
   - **Access Control:** Granular roles (e.g., `LOAN_MANAGER_ROLE`, `OFFER_MANAGER_ROLE`, `TREASURY_ADMIN_ROLE`) managed via OpenZeppelin's AccessControl. Roles will be assigned initially by the contract deployer/owner, with plans to transition control to governance in Phase 2 where appropriate.
   - **Asymmetric Pause / Unpause Roles:** `PAUSER_ROLE` is the fast incident lever for global and per-asset pause actions. Unpause authority must be separated into `UNPAUSER_ROLE`, held behind the Timelock after handover, so a compromised or mistaken fast-pauser cannot undo a freeze without the configured review delay. `autoPause()` / watcher-triggered pause paths remain write-only incident levers; recovery flows must route through the unpauser surface.
-  - **Production Governance Handover:** Privileged production surfaces should be split by blast radius. Governance Safe holds `DEFAULT_ADMIN_ROLE` directly, Timelock holds delayed-action roles such as `ADMIN_ROLE`, `KYC_ADMIN_ROLE`, oracle / risk / escrow admin roles, `UNPAUSER_ROLE`, and ERC-173 Diamond ownership, and the Pauser / Guardian Safe holds `PAUSER_ROLE` directly for fast incident response. The deployer/admin must renounce every privileged role after the grants and ownership transfers are confirmed.
+  - **Production Governance Handover:** Privileged production surfaces should be split by blast radius. Governance Safe holds `DEFAULT_ADMIN_ROLE` directly, Timelock holds delayed-action roles such as `ADMIN_ROLE`, `KYC_ADMIN_ROLE`, oracle / risk / vault admin roles, `UNPAUSER_ROLE`, and ERC-173 Diamond ownership, and the Pauser / Guardian Safe holds `PAUSER_ROLE` directly for fast incident response. The deployer/admin must renounce every privileged role after the grants and ownership transfers are confirmed.
   - **Atomic Admin Transfer:** `AccessControlFacet.transferAdmin(newAdmin)` should provide a single-transaction role and ERC-173 ownership handoff for the initial deployer/admin. It should grant all grantable roles to the new admin, transfer contract ownership, then revoke the caller's roles in reverse order so `DEFAULT_ADMIN_ROLE` is relinquished last. The function must be `DEFAULT_ADMIN_ROLE` gated and reject zero-address or self-transfer targets. Any later split of `PAUSER_ROLE`, `KYC_ADMIN_ROLE`, or other ops roles to dedicated Safes should happen after this atomic handoff through the normal governance / timelock role-management path.
   - **Bounded Governance Knobs:** Mutable numeric configuration surfaces must have explicit min / max ranges and use a shared typed range error. This includes reward grace windows, interaction caps, staking APR, liquidation and LTV risk parameters, reserve factor, KYC tier thresholds, oracle staleness, oracle deviation bounds, periodic-interest principal threshold, and periodic / maturity pre-notify lead time. Admin runbooks should list each knob, owner role, default, and permitted range.
     - `setRewardGraceSeconds`: 5 minutes to 30 days.
@@ -1482,7 +1482,7 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
 - **Languages:** The frontend supports 10 app locales: English, Spanish, French, German, Japanese, Simplified Chinese, Korean, Hindi, Tamil, and Arabic. Locale-aware public routes, hreflang metadata, sitemap entries, number/date/duration formatting, and Arabic RTL layout should remain part of the launch surface. Legal and long-form guide content may show an English-only notice until the locale-matched source text exists.
 - **Cross-Subdomain Preferences:** Theme and language preferences should sync across Vaipakam subdomains through parent-domain functionality cookies (`vaipakam_theme` and `vaipakam_lang`). The cookie value should override stale origin-scoped localStorage on initialization, and the shared helper should live in the workspace library so the marketing surface and connected app cannot drift.
 - **Marketing SEO Stage A:** The marketing app should generate `robots.txt` and a locale-aware sitemap at build time, and each public route should set localized title, description, canonical, and `hreflang` alternate metadata. Canonical URLs should use `https://vaipakam.com` rather than `window.location.origin` so `www` or legacy-host visits cannot split search ranking signals.
-- **Marketing/App Boundary:** The marketing app should not carry wallet, active-chain, escrow, diagnostics, or address-book modules. Chain verification and transparency links from the marketing surface should hand users to the connected app's public transparency route.
+- **Marketing/App Boundary:** The marketing app should not carry wallet, active-chain, vault, diagnostics, or address-book modules. Chain verification and transparency links from the marketing surface should hand users to the connected app's public transparency route.
 - **User Guide Locales:** Basic and Advanced user-guide markdown should be maintained for all 10 supported locales with card-link anchors preserved verbatim, so every in-app `(i)` card-title link opens the matching localized guide section.
 - **API Standards:** Frontend will interact with smart contracts using standardized data formats (e.g., JSON-like structs or arrays returned by view functions).
 - **Pre-Sign Transaction Preview:** Before a user signs a supported transaction, the app should simulate the pending transaction directly against the active chain and show an advisory preview state: simulated OK, would revert with a readable reason when available, or preview unavailable. This preview is a gas-safety aid, not a security-vendor verdict, and must never block signing by itself. Third-party risk scanners may still be used for token, NFT, address, approval, or counterparty risk surfaces, but ordinary Vaipakam transaction preview should not require a vendor proxy or API key.
@@ -1495,7 +1495,7 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
 - **App-Chain-Pinned Public Client:** Diamond reads should use a shared public-client wrapper pinned to the app-selected chain id, not bare `usePublicClient()` from wagmi, because the wallet chain and app read chain can diverge during switch flows. Lint or review rules should reject new direct wagmi `usePublicClient` imports outside the wrapper, with documented carve-outs only for intentionally cross-chain utilities that receive an explicit chain id.
 - **Chain-Scoped Frontend Caches:** App-level caches for active offers, dashboard loans, dashboard offers, claimables, and protocol configuration must include `chainId` in their cache key. A wallet chain switch should naturally miss the old cache and refetch for the new chain without requiring a manual refresh click.
 - **Shared Chain Indexer:** The public worker may maintain a D1-backed chain index for offers, loans, activity, and claimability hints. It should scan the full allow-listed Diamond event set once per cron tick per configured chain, persist one cursor per chain / Diamond source, and expose read APIs for active offers, active loans, wallet-filtered loans, activity, claimables, and offer stats. Browser hooks should report whether data came from the indexer or fallback path. History belongs in D1, while current ownership-sensitive state should still be read from the chain where appropriate; for example, lender / borrower loan lists and claimability discovery may live-filter with `ownerOf(tokenId)` so transferred Vaipakam position NFTs are reflected immediately. The event scan should be shared across domains on each tick so adding a new indexed domain does not multiply RPC scans, and one cursor per chain / Diamond source should advance atomically with the persisted rows.
-- **Per-User Index Consumption:** User-keyed read paths should consume maintained per-user indexes rather than walking global active sets and filtering for matches. Dashboard loans, dashboard offers, loan summaries, and escrowed-NFT views should scale with the user's own result count. Test mutators and fixture helpers should maintain these indexes the same way production write hooks do so analytics getters are exercised under both ordinary and test paths.
+- **Per-User Index Consumption:** User-keyed read paths should consume maintained per-user indexes rather than walking global active sets and filtering for matches. Dashboard loans, dashboard offers, loan summaries, and vaulted-NFT views should scale with the user's own result count. Test mutators and fixture helpers should maintain these indexes the same way production write hooks do so analytics getters are exercised under both ordinary and test paths.
 - **API Origin:** Frontend and worker consumers should use a generic API-origin configuration such as `VITE_API_ORIGIN` once the Worker serves more than HF alerts. Legacy hostnames like `alerts.vaipakam.com` should not remain in code, env examples, built bundles, runbooks, or sibling bot repositories after the API domain cutover.
 - **Indexer Stub Discipline:** Offer and loan event handlers should try to fetch canonical `getOfferDetails` / full `getLoanDetails` data inline before inserting D1 rows. If an RPC failure forces a placeholder insert, the row must be marked with an explicit `is_stub` flag and targeted by a stub-only refresh predicate until canonical data lands. Active non-stub rows should not be re-read on every cron tick merely to detect ordinary status or partial-fill changes.
 - **Event-Driven Offer Updates:** Range Orders partial-fill and close state should update from emitted events where the payload carries enough data. `OfferMatched` should update filled amount from post-match remaining capacity without a read round-trip, and `OfferClosed` should map close reasons into the indexer's status model in a single update.
@@ -1593,13 +1593,13 @@ Loan and offer analytics helpers should include:
 
 These functions help public dashboards, market pages, listing views, and research tools inspect protocol activity without forcing expensive full-history scans for every page load.
 
-#### 4. NFT and Escrow Metrics
+#### 4. NFT and Vault Metrics
 
-For ERC-4907-style rentals and escrow analytics, the protocol should expose:
+For ERC-4907-style rentals and vault analytics, the protocol should expose:
 
-- escrow-wide NFT counts, active rental counts, and total rental volume in the active numeraire
+- vault-wide NFT counts, active rental counts, and total rental volume in the active numeraire
 - NFT rental detail reads by token identifier
-- collection-level escrow counts for public collection transparency
+- collection-level vault counts for public collection transparency
 - protocol-tracked ERC-20 vault balances for a user and token, so user-facing balances can ignore unsolicited dust
 - stuck-token recovery metadata required to verify the user's recovery acknowledgement and replay protection
 
@@ -1636,7 +1636,7 @@ For portfolio tracking and wallet integrations, the protocol should expose:
 - user-level collateral, borrowed amount, claimable amount, Health Factor, and active-loan count
 - active-loan and active-offer identifiers for a user
 - loan and offer positions currently controlled by the user's Vaipakam position NFTs, including the relevant token identifiers
-- NFT identifiers currently held in escrow for the user
+- NFT identifiers currently held in vault for the user
 
 `getUserPositionLoans` and `getUserPositionOffers` should enumerate the connected user's current Vaipakam position NFTs and resolve them through loan / offer reverse maps. They are the preferred on-chain fallback for secondary-market recipients because they scale with the user's NFT count rather than with global protocol loan or offer counts.
 
@@ -1758,15 +1758,15 @@ flow list in the Phase-1 gap audit (see CHANGELOG `[Unreleased]`).
 - [contracts/test/AccessControlTransferAdminTest.t.sol](contracts/test/AccessControlTransferAdminTest.t.sol) — atomic admin / role / ERC-173 ownership transfer and lockout of the former admin.
 - [contracts/test/TreasuryFacetTest.t.sol](contracts/test/TreasuryFacetTest.t.sol) — claimTreasuryFees.
 - [contracts/test/TreasuryMintVPFITest.t.sol](contracts/test/TreasuryMintVPFITest.t.sol) — VPFI mint for treasury-funded flows.
-- [contracts/test/EscrowFactoryFacetTest.t.sol](contracts/test/EscrowFactoryFacetTest.t.sol) — per-user escrow proxy creation, mandatory upgrade gating, versioned upgrade event.
-- [contracts/test/EscrowRecoveryTest.t.sol](contracts/test/EscrowRecoveryTest.t.sol) — protocol-tracked ERC-20 balances, unsolicited dust clamp, EIP-712 stuck-token recovery, disown event, and sanctions-source outcomes.
+- [contracts/test/VaultFactoryFacetTest.t.sol](contracts/test/VaultFactoryFacetTest.t.sol) — per-user vault proxy creation, mandatory upgrade gating, versioned upgrade event.
+- [contracts/test/VaultRecoveryTest.t.sol](contracts/test/VaultRecoveryTest.t.sol) — protocol-tracked ERC-20 balances, unsolicited dust clamp, EIP-712 stuck-token recovery, disown event, and sanctions-source outcomes.
 - [contracts/test/VaipakamNFTFacetTest.t.sol](contracts/test/VaipakamNFTFacetTest.t.sol) — position NFT mint / update / burn lifecycle.
 - [contracts/test/MetricsFacetTest.t.sol](contracts/test/MetricsFacetTest.t.sol) — read-only analytics getters.
 - [contracts/test/AccessControlFacetTest.t.sol](contracts/test/AccessControlFacetTest.t.sol) — role grants / revocations / emergency revoke.
 - [contracts/test/AdminFacetTest.t.sol](contracts/test/AdminFacetTest.t.sol) / [PerAssetPauseTest.t.sol](contracts/test/PerAssetPauseTest.t.sol) — per-asset pause ON → blocks, OFF → unblocks.
 - pause tests should cover the asymmetric role split: `PAUSER_ROLE` can pause but cannot unpause, `UNPAUSER_ROLE` can unpause but cannot act as the fast pauser unless separately granted, and per-asset unpause follows the same separation as global unpause.
 - [contracts/test/PauseGatingTest.t.sol](contracts/test/PauseGatingTest.t.sol) — whenNotPaused modifier coverage across 15+ facet entrypoints.
-- [contracts/test/VPFIDiscountFacetTest.t.sol](contracts/test/VPFIDiscountFacetTest.t.sol) / [VPFIDiscountBoundariesTest.t.sol](contracts/test/VPFIDiscountBoundariesTest.t.sol) — tier table, escrow deposit / withdraw, fee discount application.
+- [contracts/test/VPFIDiscountFacetTest.t.sol](contracts/test/VPFIDiscountFacetTest.t.sol) / [VPFIDiscountBoundariesTest.t.sol](contracts/test/VPFIDiscountBoundariesTest.t.sol) — tier table, vault deposit / withdraw, fee discount application.
 - VPFI token tests should cover canonical + cross-chain mirror mechanics, including rate limits, allowed lanes, and source-chain identity checks.
 - [contracts/test/VPFIBuyAdapterRateLimitsTest.t.sol](contracts/test/VPFIBuyAdapterRateLimitsTest.t.sol) — buy-adapter default caps, setter round-trip, and tuple getter parity with per-field getters.
 - [contracts/test/StakingAndInteractionRewardsTest.t.sol](contracts/test/StakingAndInteractionRewardsTest.t.sol) / [StakingRewardsCoverageTest.t.sol](contracts/test/StakingRewardsCoverageTest.t.sol) / [InteractionRewardsCoverageTest.t.sol](contracts/test/InteractionRewardsCoverageTest.t.sol) / [InteractionRewardCapTest.t.sol](contracts/test/InteractionRewardCapTest.t.sol) — 5% APR accrual, interaction rewards emission schedule, pool-cap truncation.
@@ -1792,7 +1792,7 @@ flow list in the Phase-1 gap audit (see CHANGELOG `[Unreleased]`).
 - [contracts/test/invariants/OfferLoanLinkage.invariant.t.sol](contracts/test/invariants/OfferLoanLinkage.invariant.t.sol) — every loan points to an accepted offer.
 - [contracts/test/invariants/StakingRewardMonotonicity.invariant.t.sol](contracts/test/invariants/StakingRewardMonotonicity.invariant.t.sol) — rewardPerTokenStored never decreases; per-user earned grows until claim.
 - [contracts/test/invariants/DefaultTiming.invariant.t.sol](contracts/test/invariants/DefaultTiming.invariant.t.sol) — defaults only trigger after grace-period window.
-- [contracts/test/invariants/FundsConservation.invariant.t.sol](contracts/test/invariants/FundsConservation.invariant.t.sol) / [EscrowSolvency.invariant.t.sol](contracts/test/invariants/EscrowSolvency.invariant.t.sol) — no phantom funds, escrow balances conserved.
+- [contracts/test/invariants/FundsConservation.invariant.t.sol](contracts/test/invariants/FundsConservation.invariant.t.sol) / [VaultSolvency.invariant.t.sol](contracts/test/invariants/VaultSolvency.invariant.t.sol) — no phantom funds, vault balances conserved.
 - [contracts/test/invariants/LoanStatusMonotonicity.invariant.t.sol](contracts/test/invariants/LoanStatusMonotonicity.invariant.t.sol) — loan status only moves forward.
 - [contracts/test/invariants/ClaimExclusivity.invariant.t.sol](contracts/test/invariants/ClaimExclusivity.invariant.t.sol) — each party claims at most once per loan.
 - [contracts/test/invariants/CollateralMonotonicity.invariant.t.sol](contracts/test/invariants/CollateralMonotonicity.invariant.t.sol) — collateral balance only grows during loan life (addCollateral-only).
@@ -1803,7 +1803,7 @@ flow list in the Phase-1 gap audit (see CHANGELOG `[Unreleased]`).
 - [contracts/test/invariants/MetricsCountersParity.invariant.t.sol](contracts/test/invariants/MetricsCountersParity.invariant.t.sol) — MetricsFacet counters match raw storage.
 - [contracts/test/invariants/NFTCountParity.invariant.t.sol](contracts/test/invariants/NFTCountParity.invariant.t.sol) / [NFTOwnerAuthority.invariant.t.sol](contracts/test/invariants/NFTOwnerAuthority.invariant.t.sol) — position-NFT count + authority correctness.
 - [contracts/test/invariants/OfferAcceptanceIntegrity.invariant.t.sol](contracts/test/invariants/OfferAcceptanceIntegrity.invariant.t.sol) — accepted offers become loans; canceled offers never accept.
-- [contracts/test/invariants/EscrowUniqueness.invariant.t.sol](contracts/test/invariants/EscrowUniqueness.invariant.t.sol) — one escrow per user, no dupes.
+- [contracts/test/invariants/VaultUniqueness.invariant.t.sol](contracts/test/invariants/VaultUniqueness.invariant.t.sol) — one vault per user, no dupes.
 - [contracts/test/invariants/SelfDealingPrevention.invariant.t.sol](contracts/test/invariants/SelfDealingPrevention.invariant.t.sol) — no lender == borrower loans.
 
 Mainnet-cutover checklist: every `contracts/test/Scenario*.t.sol` + every
@@ -1864,7 +1864,7 @@ A web-based tool, integrated as a dedicated page within the Vaipakam frontend, t
 - **NFT Details Display:**
   - Input: Contract Address and Token ID of a Vaipakam NFT.
   - Output: Displays all associated on-chain metadata (e.g., offer ID, loan ID, involved assets, collateral details, interest rate/rental fee, duration, current status - "Offer Created," "Loan Active," "Repaid," "Defaulted," etc.).
-  - Live metadata traits such as loan state, locked-in-escrow amount, claimable-now amount, borrower VPFI rebate pending, and created-at timestamp should be surfaced when present and hidden gracefully for older metadata shapes.
+  - Live metadata traits such as loan state, locked-in-vault amount, claimable-now amount, borrower VPFI rebate pending, and created-at timestamp should be surfaced when present and hidden gracefully for older metadata shapes.
 - **Authenticity Validation:** Verifies if the NFT was indeed minted by the official VaipakamNFT contract.
 - **Status Verification:** Shows the current, real-time status of the underlying offer or loan as recorded on the blockchain.
 
@@ -1895,7 +1895,7 @@ Vaipakam is committed to operating in a compliant manner within the evolving reg
     - **NFT Renting:** The _total rental value_ (daily rate \* duration, converted through the same Chainlink-led numeraire path) determines the transaction value.
     - The platform stores KYC tier thresholds in active-numeraire units and compares them directly against active-numeraire asset values returned by `OracleFacet.getAssetPrice`.
 - **Implementation Timing:** Real KYC/AML enforcement is not part of the effective Phase 1 launch behavior. Phase 1 keeps KYC checks in pass-through mode under the Phase 1 flag, while later governance or admin decisions may choose to activate the retained KYC framework.
-- **Address-Level Sanctions Screening:** Where a supported on-chain sanctions oracle is configured for the active chain, the protocol should screen retail entry points as well as any future industrial deployment. Tier-1 actions that create fresh state for the caller, accept deposits, route new value, or pay protocol incentives to the caller must revert for a flagged wallet. This includes escrow creation, offer creation / acceptance, VPFI buy / deposit / withdraw flows, liquidation initiation, loan-sale / obligation-transfer / refinance entry points, and claims by the flagged recipient.
+- **Address-Level Sanctions Screening:** Where a supported on-chain sanctions oracle is configured for the active chain, the protocol should screen retail entry points as well as any future industrial deployment. Tier-1 actions that create fresh state for the caller, accept deposits, route new value, or pay protocol incentives to the caller must revert for a flagged wallet. This includes vault creation, offer creation / acceptance, VPFI buy / deposit / withdraw flows, liquidation initiation, loan-sale / obligation-transfer / refinance entry points, and claims by the flagged recipient.
 - **Sanctions Wind-Down Carve-Out:** Debt-closing and safety paths required to protect an unflagged counterparty should remain available even when the target borrower is flagged. Repayment, time-based default, and HF-based liquidation against a flagged borrower are wind-down / recovery paths; they must not let the flagged actor receive fresh protocol value, but they should allow existing lender security interests to be made whole. If the lender or other recipient is flagged, their own claim path may still be blocked because the protocol would otherwise transfer value to a sanctioned wallet.
 - **Sanctions UX:** The frontend should surface sanctions messages only when the connected wallet or a relevant counterparty is flagged. Copy should clearly distinguish blocked actions, permitted close-out paths, and external recourse through the sanctions-data provider; clean wallets should not see general-purpose sanctions warnings on marketing or legal pages beyond the Terms prohibited-use clause.
 - **Sanctions Oracle Availability:** Sanctions oracle configuration is per chain and optional. Chains without a configured oracle should behave as no-op for this check. Oracle read failures should fail open rather than bricking all protocol actions during a vendor outage.
@@ -1979,8 +1979,8 @@ The Diamond Standard (EIP-2535) need to be followed for smart contract developem
 
 - **Phase 1:** country-pair restrictions are **disabled at the protocol level** — any two users may transact regardless of the countries stored on their profiles. `LibVaipakam.canTradeBetween` always returns `true` in Phase 1. The `allowedTrades` many-to-many mapping and its governance setter `setTradeAllowance` are preserved so that pair-based sanctions can be re-activated in a Phase 2 upgrade without a storage migration.
   - The design rationale is retained here for future reactivation: a sanctions regime cannot be modeled as "country X is globally sanctioned"; it must be pairwise — for each (countryA, countryB) tuple, record whether trade is permitted between them. The existing many-to-many `allowedTrades` mapping supports this.
-- No common escrow account and only seperate Escrow account for each users (via clone factory for gas efficiency) would implemented which will then be managed by Vaipakam App. This is to avoid commingling of funds.
-- Existing user escrows should not be silently mass-upgraded by the protocol because that would create unnecessary network-fee overhead. Instead, when an escrow upgrade is marked as mandatory, interactions using older escrow versions must be blocked and the frontend must require the user to upgrade their own escrow before continuing. If an upgrade is not critical, the frontend may leave the upgrade optional and simply prompt the user.
+- No common vault account and only seperate Vault account for each users (via clone factory for gas efficiency) would implemented which will then be managed by Vaipakam App. This is to avoid commingling of funds.
+- Existing user vaults should not be silently mass-upgraded by the protocol because that would create unnecessary network-fee overhead. Instead, when an vault upgrade is marked as mandatory, interactions using older vault versions must be blocked and the frontend must require the user to upgrade their own vault before continuing. If an upgrade is not critical, the frontend may leave the upgrade optional and simply prompt the user.
 - Use Reentrancygaurd and pausable from Openzeppelin wherever needed.
 
 ## Other Notes:

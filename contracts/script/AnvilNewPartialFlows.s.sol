@@ -15,7 +15,7 @@ import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {MockChainlinkRegistry, MockChainlinkFeed} from "./mocks/MockChainlinkRegistry.sol";
@@ -49,7 +49,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *           P-P  Keeper enabled with INIT_PRECLOSE on an active loan
  *           P-Q  Borrower-side refinance offer posted, no acceptance
  *           P-T  Lender posted createLoanSaleOffer, no buyer yet
- *           P-U  Stray ERC-20 parked in user escrow, recovery NOT
+ *           P-U  Stray ERC-20 parked in user vault, recovery NOT
  *                triggered (recovery flow visible in UI)
  *           P-H  1 lender-claimable + 1 borrower-claimable side-by-
  *                side (loan repaid, neither side has claimed)
@@ -99,7 +99,7 @@ contract AnvilNewPartialFlows is Script {
         _scenarioPP_keeperEnabledOnActiveLoan();
         _scenarioPQ_refinanceOfferPosted();
         _scenarioPT_loanSaleOfferPosted();
-        _scenarioPU_strayTokenInEscrow();
+        _scenarioPU_strayTokenInVault();
         _scenarioPH_dualClaimableSideBySide();
 
         console.log("");
@@ -443,36 +443,36 @@ contract AnvilNewPartialFlows is Script {
         console.log(">>> P-T SKIPPED <<<");
     }
 
-    // ─── P-U: Stray ERC-20 in escrow, recovery untriggered ──────────────
+    // ─── P-U: Stray ERC-20 in vault, recovery untriggered ──────────────
 
-    /// @dev Mint USDC directly to user's escrow proxy, leaving the
+    /// @dev Mint USDC directly to user's vault proxy, leaving the
     ///      protocol-tracked counter unchanged. Recovery is NOT
     ///      triggered — the UI Stuck-Token Recovery surface should
     ///      detect the mismatch and prompt the user.
-    function _scenarioPU_strayTokenInEscrow() internal {
+    function _scenarioPU_strayTokenInVault() internal {
         console.log("");
-        console.log("=== P-U: Stray ERC-20 in escrow, recovery untriggered ===");
+        console.log("=== P-U: Stray ERC-20 in vault, recovery untriggered ===");
 
         // Use a fresh user (newBorrower) so this stray balance is
-        // observable in isolation. User must have an escrow proxy
-        // before we can park stray tokens in it; getOrCreateUserEscrow
+        // observable in isolation. User must have an vault proxy
+        // before we can park stray tokens in it; getOrCreateUserVault
         // is idempotent.
         address user = newBorrower;
         vm.startBroadcast(newBorrowerKey);
-        address userEscrow = EscrowFactoryFacet(diamond).getOrCreateUserEscrow(user);
+        address userVault = VaultFactoryFacet(diamond).getOrCreateUserVault(user);
         vm.stopBroadcast();
 
-        // Park stray USDC directly in the escrow (bypasses protocol-
+        // Park stray USDC directly in the vault (bypasses protocol-
         // tracked counter — this is the stuck-token recovery scenario).
         vm.startBroadcast(deployerKey);
-        usdc.mint(userEscrow, 50e6);
+        usdc.mint(userVault, 50e6);
         vm.stopBroadcast();
 
-        uint256 stray = usdc.balanceOf(userEscrow);
-        uint256 tracked = EscrowFactoryFacet(diamond).getProtocolTrackedEscrowBalance(
+        uint256 stray = usdc.balanceOf(userVault);
+        uint256 tracked = VaultFactoryFacet(diamond).getProtocolTrackedVaultBalance(
             user, address(usdc)
         );
-        console.log("Stray balance in escrow:", stray);
+        console.log("Stray balance in vault:", stray);
         console.log("Tracked balance:", tracked);
         require(
             stray > tracked,

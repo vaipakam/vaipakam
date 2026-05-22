@@ -12,8 +12,8 @@ Vaipakam is a decentralized peer-to-peer (P2P) lending and borrowing platform bu
 
 - **ERC-20 Tokens:** Any ERC-20 token (e.g., USDC, ETH, WBTC) on Ethereum, Polygon, or Arbitrum.
 - **Rentable ERC-721/1155 NFTs:** Unique NFTs that are ERC-4907 compliant (like NFTs from Warena and Axie Infinity) which can be rented (NFTs in which `setUser` and `userOf` functions can be called) with lender-specified daily rental charges.
-  - For ERC-721 tokens, the token is transferred into the Vaipakam Escrow contract during the rental period. This gives the Vaipakam admin/escrow controller escrow-controlled owner/custody access so it can assign, revoke, or reassign only ERC-4907 `user` rights while keeping the borrower limited to temporary `user` access. The borrower never receives custody or ownership of the ERC-721 token itself.
-  - For ERC-1155 tokens, the tokens will be held in the Vaipakam Escrow contract during the rental period. The Vaipakam admin/escrow controller assigns ERC-4907-style user rights to the borrower while the token remains escrow-controlled, so a borrower preclose or transfer changes only the temporary user assignment and not the underlying custody model.
+  - For ERC-721 tokens, the token is transferred into the Vaipakam Vault contract during the rental period. This gives the Vaipakam admin/vault controller vault-controlled owner/custody access so it can assign, revoke, or reassign only ERC-4907 `user` rights while keeping the borrower limited to temporary `user` access. The borrower never receives custody or ownership of the ERC-721 token itself.
+  - For ERC-1155 tokens, the tokens will be held in the Vaipakam Vault contract during the rental period. The Vaipakam admin/vault controller assigns ERC-4907-style user rights to the borrower while the token remains vault-controlled, so a borrower preclose or transfer changes only the temporary user assignment and not the underlying custody model.
 
 **Collateral Assets:**
 
@@ -59,7 +59,7 @@ The platform distinguishes between liquid and illiquid assets, which affects how
   5.  **API Unavailability:** If external APIs required by the frontend for initial assessment are unavailable, or if on-chain checks face temporary issues in accessing necessary validation data (e.g., registry lookups for Chainlink), the asset will default to being treated as "Illiquid" to ensure safety. In such cases, full collateral transfer terms on default will apply, and the user must consent. No manual overrides are permitted to classify an asset as liquid if checks fail or indicate illiquidity.
 - **Handling of Illiquid Assets on Default:**
   - **ERC-20 Lending with Illiquid Collateral:** If the borrower defaults, the entire illiquid ERC-20 collateral is transferred to the lender. There is no auction or DEX-based liquidation process for these assets.
-  - **NFT Lending/Renting:** If the borrower defaults (e.g., fails to close the rental, before expiry), then prepaid (total rental fees + 5% buffer) ERC-20 collateral provided by the borrower is transferred to the NFT owner (lender). The original ERC-721 or ERC-1155 NFT held in Vaipakam Escrow is returned to the owner and the full buffer (5% extra) will be sent to treasury.
+  - **NFT Lending/Renting:** If the borrower defaults (e.g., fails to close the rental, before expiry), then prepaid (total rental fees + 5% buffer) ERC-20 collateral provided by the borrower is transferred to the NFT owner (lender). The original ERC-721 or ERC-1155 NFT held in Vaipakam Vault is returned to the owner and the full buffer (5% extra) will be sent to treasury.
 - **Frontend Warnings for Illiquid Assets:**
   - A clear, static warning message will be displayed in the frontend whenever a user selects or provides an asset that is determined to be illiquid (either by frontend assessment, because it's an NFT, or by on-chain verification). This warning will explicitly state that in case of default, the entire collateral will be transferred to the lender without a traditional liquidation process.
 - **Prepayment for NFT Renting:**
@@ -88,8 +88,8 @@ The platform distinguishes between liquid and illiquid assets, which affects how
   - Deposit the lending asset into the Vaipakam smart contract when creating the offer.
 - **For Rentable NFTs (ERC-721/1155):**
   - Specify the NFT (e.g., Axie #1234), daily rental fee (e.g., 10 USDC/day), the ERC-20 token for rental payment and collateral (e.g., USDC), and rental duration (e.g., 7 days).
-  - For ERC-721 NFTs: Deposit the NFT into the Vaipakam Escrow contract when creating the offer so Vaipakam has escrow-controlled owner/custody access for user-right assignment.
-  - For ERC-1155 NFTs: Deposit the NFT into the Vaipakam Escrow contract when creating the offer.
+  - For ERC-721 NFTs: Deposit the NFT into the Vaipakam Vault contract when creating the offer so Vaipakam has vault-controlled owner/custody access for user-right assignment.
+  - For ERC-1155 NFTs: Deposit the NFT into the Vaipakam Vault contract when creating the offer.
 
 ### Borrowers:
 
@@ -168,13 +168,13 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
 ### Smart Contract Actions:
 
 - **Collateral Locking:**
-  - For ERC-20 Loans: The borrower’s collateral is locked in an escrow contract.
+  - For ERC-20 Loans: The borrower’s collateral is locked in an vault contract.
   - For NFT Renting: The borrower’s prepayment (total rental fees + 5% buffer in ERC-20 tokens) is confirmed as locked.
 - **Asset Transfer/NFT User Assignment:**
-  - For ERC-20 Loans: The principal loan amount is transferred from the lender or lender's locked funds (in the Escrow) to the borrower.
+  - For ERC-20 Loans: The principal loan amount is transferred from the lender or lender's locked funds (in the Vault) to the borrower.
   - For NFT Renting:
-    - For ERC-721: The NFT is held in the Vaipakam Escrow contract. The Escrow contract calls `setUser` on the NFT contract to assign the borrower as the 'user' of the NFT for the agreed rental duration.
-    - For ERC-1155: The NFT is already in the Vaipakam Escrow contract. The Escrow contract calls `setUser` on the NFT contract to assign the borrower as the 'user' of the specified quantity of tokens for the agreed rental duration.
+    - For ERC-721: The NFT is held in the Vaipakam Vault contract. The Vault contract calls `setUser` on the NFT contract to assign the borrower as the 'user' of the NFT for the agreed rental duration.
+    - For ERC-1155: The NFT is already in the Vaipakam Vault contract. The Vault contract calls `setUser` on the NFT contract to assign the borrower as the 'user' of the specified quantity of tokens for the agreed rental duration.
 - **Record Keeping:** All loan details (principal, interest rate/rental fee, duration, collateral details, parties involved, start/end dates, liquidity status of assets) are recorded on-chain.
 - **NFT Updates & Minting:**
   - The original "Vaipakam NFT" (of the party who have created the offer and whose offer was accepted) is updated to "Loan Initiated" status.
@@ -206,7 +206,7 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
 - Borrower's Obligation: Ensure the NFT can be 'returned' (user status revoked by the platform) and all rental fees are paid.
 - Rental Fee Payment: Rental fees are automatically deducted from the borrower's initial prepayment.
 - If borrower closes rental term for NFT on time:
-  - The Vaipakam Escrow contract revokes the borrower's 'user' status for the NFT.
+  - The Vaipakam Vault contract revokes the borrower's 'user' status for the NFT.
   - The 5% buffer from the prepayment is returned to the borrower.
 - The accumulated rental fees (minus the `Yield Fee`) are made available for the lender to claim.
 - Late fees apply if the NFT 'rental closure' (user status revocation) is delayed beyond the agreed duration.
@@ -282,8 +282,8 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
 
 - **Collateral Forfeiture:** The borrower’s full ERC-20 prepayment (which includes total rental fees + 5% buffer) is transferred to the NFT owner (lender), after deducting the applicable `Yield Fee` from the rental portion.
 - **NFT Return:**
-  - For ERC-721: The borrower's 'user' status is revoked by the platform. The NFT remains in Vaipakam Escrow until it is returned to the lender through the normal rental/default settlement flow.
-  - For ERC-1155: The NFT held in the Vaipakam Escrow is returned to the lender. The borrower's 'user' status is revoked.
+  - For ERC-721: The borrower's 'user' status is revoked by the platform. The NFT remains in Vaipakam Vault until it is returned to the lender through the normal rental/default settlement flow.
+  - For ERC-1155: The NFT held in the Vaipakam Vault is returned to the lender. The borrower's 'user' status is revoked.
 
 ### NFT Status Updates on Default/Liquidation
 
@@ -299,7 +299,7 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
 
 - Bob rents a CryptoPunk for 7 days (total rental fee 70 USDC, prepayment 73.5 USDC including buffer).
 - Bob fails to 'return' the NFT or there's an issue with fee settlement by the end of the grace period.
-- The full 73.5 USDC prepayment is claimed by Alice (the lender), minus the `Yield Fee` on the 70 USDC rental portion. Alice's CryptoPunk 'user' status for Bob is revoked, and the escrowed NFT can be returned to Alice under the rental settlement rules.
+- The full 73.5 USDC prepayment is claimed by Alice (the lender), minus the `Yield Fee` on the 70 USDC rental portion. Alice's CryptoPunk 'user' status for Bob is revoked, and the vaulted NFT can be returned to Alice under the rental settlement rules.
 
 ## 8. Preclosing by Borrower (Early Repayment Options) (step by step more details are provided at end)
 
@@ -326,7 +326,7 @@ The original borrower can transfer their loan obligation to a new borrower. In P
   - **Interest Rate & Income Protection for Lender (Liam):**
     - The interest rate for the new borrower (Ben) can differ from Alice's original rate.
     - Alice (original borrower) _must cover any shortfall_ in the total interest Lender Liam would receive by the end of the original loan term.
-    - Shortfall Calculation: `(Original Interest Amount for Remaining Term) - (New Interest Amount for Remaining Term based on Ben's rate)`. Alice pays this shortfall to an escrow, which is eventually routed to Liam.
+    - Shortfall Calculation: `(Original Interest Amount for Remaining Term) - (New Interest Amount for Remaining Term based on Ben's rate)`. Alice pays this shortfall to an vault, which is eventually routed to Liam.
     - Alice must also pay all interest accrued on her loan up to the date of transfer. This accrued interest is also routed to Liam after the `Yield Fee`.
   - **Loan Term Duration:** The new loan term for Ben must end on or before the original loan's maturity date.
 - **Smart Contract Actions:**
@@ -335,7 +335,7 @@ The original borrower can transfer their loan obligation to a new borrower. In P
   - Alice pays any accrued interest and the calculated interest shortfall.
   - The loan obligation (principal repayment to Liam) is transferred from Alice to Ben.
   - Vaipakam NFTs are updated: Alice's Borrower NFT is closed. A new Borrower NFT is minted for Ben. Liam's Lender NFT is updated to reflect Ben as the borrower.
-- **Funds Flow:** Any payments from Alice (accrued interest, shortfall) are held in an escrow (`heldForLender` field associated with Liam's loan) and become part of Liam's claimable amount at loan maturity or if Ben repays early.
+- **Funds Flow:** Any payments from Alice (accrued interest, shortfall) are held in an vault (`heldForLender` field associated with Liam's loan) and become part of Liam's claimable amount at loan maturity or if Ben repays early.
 
 ### Option 3: Offset with a New Lender Offer (Original Borrower Becomes a Lender)
 
@@ -351,7 +351,7 @@ The original borrower can effectively preclose their loan by taking a new lender
 - **Clarification:** This borrower preclose mechanism is achieved by the original borrower taking a new lender-side position through an offsetting offer flow. It should not be described as refinancing the original loan.
 - **Interest Handling for Original Lender (Liam):**
   - Alice must ensure Liam receives the full interest he was expecting.
-  - If the interest Alice would earn from her new Lender Offer (if accepted and repaid) over the remaining term is _less than_ the remaining interest owed to Liam, Alice must pay this difference to an escrow for Liam at the time her new Lender Offer is accepted.
+  - If the interest Alice would earn from her new Lender Offer (if accepted and repaid) over the remaining term is _less than_ the remaining interest owed to Liam, Alice must pay this difference to an vault for Liam at the time her new Lender Offer is accepted.
   - Alice also pays all interest accrued on her loan to Liam up to this point.
   - **Example:** Alice's loan from Liam: $10,000 USDC principal, 5% interest, 6 months remaining (expected $250 interest for Liam). Alice creates a new Lender Offer (with her $10,000 USDC) at 3% for 6 months (would earn $150 interest). Alice must pay Liam the $100 difference ($250 - $150) plus any interest accrued to date on her original loan.
 - **Outcome when the Offsetting Offer is Matched:**
@@ -512,7 +512,7 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
 - **Core Contracts (Examples):**
   - `VaipakamOfferManagement.sol`: Handles creation, cancellation, and matching of lender/borrower offers.
   - `VaipakamLoanManagement.sol`: Manages active loans, repayments, defaults, and liquidations.
-  - `VaipakamEscrow.sol`: Holds collateral, ERC-721/1155 rental NFTs, and funds during various stages.
+  - `VaipakamVault.sol`: Holds collateral, ERC-721/1155 rental NFTs, and funds during various stages.
   - `VaipakamNFT.sol`: The ERC-721 contract responsible for minting and managing Vaipakam NFTs.
   - `VaipakamGovernance.sol` (Phase 2): Manages proposals and voting.
   - `VaipakamTreasury.sol`: Collects and manages platform fees.
@@ -522,7 +522,7 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
 - **Security Considerations:**
   - **Audits:** Smart contracts will undergo thorough security audits by reputable third-party firms before mainnet deployment on each network.
   - **Upgradeable Proxies:** Utilize UUPS (Universal Upgradeable Proxy Standard) proxies for core contracts to allow for future upgrades and bug fixes without disrupting ongoing operations or requiring data migration. Governance-controlled upgrades are planned for Phase 2; Phase 1 upgrades are controlled by the initial admin/multi-sig model described in the security policy.
-  - **Escrow Upgrade Policy:** User escrows must not continue to be usable on outdated mandatory versions. If an escrow implementation upgrade is classified as required, user interactions through an older escrow version must be blocked by the protocol until that escrow is upgraded. Escrow upgrades are not intended to be pushed automatically to every existing user escrow because that would create significant network-fee overhead. Instead, the frontend must detect outdated escrows and require the user to submit their own escrow-upgrade transaction before any further protected interaction is allowed. For non-critical upgrades, the frontend may still prompt users to upgrade, but blocking behavior should only be enforced when the upgrade is marked mandatory.
+  - **Vault Upgrade Policy:** User vaults must not continue to be usable on outdated mandatory versions. If an vault implementation upgrade is classified as required, user interactions through an older vault version must be blocked by the protocol until that vault is upgraded. Vault upgrades are not intended to be pushed automatically to every existing user vault because that would create significant network-fee overhead. Instead, the frontend must detect outdated vaults and require the user to submit their own vault-upgrade transaction before any further protected interaction is allowed. For non-critical upgrades, the frontend may still prompt users to upgrade, but blocking behavior should only be enforced when the upgrade is marked mandatory.
   - **Reentrancy Guards:** Applied to all functions involving external calls or asset transfers.
   - **Access Control:** Granular roles (e.g., `LOAN_MANAGER_ROLE`, `OFFER_MANAGER_ROLE`, `TREASURY_ADMIN_ROLE`) managed via OpenZeppelin's AccessControl. Roles will be assigned initially by the contract deployer/owner, with plans to transition control to governance in Phase 2 where appropriate.
   - **Batch Processing:** Support for batch processing of certain operations where feasible to optimize gas costs. Staking reward batch processing is Phase 2 scope.
@@ -690,8 +690,8 @@ The Diamond Standard (EIP-2535) need to be followed for smart contract developem
 
 - The offers from users will be listed to only those users who are in the respective countries that can trade between themselves. This is done as there can be sactions between the countries.
   - For trading sanctions, we just can't have a status saying some country is sanctioned, we need to know, which countries have got sanctioned or whitelisted to that particular country. we can't single out a country saying that it got sanctioned and no other country can trade with it. so we need to have a many to many type of mapping to check whether we can show the offer or to allow the offer acceptance (or loan initiation).
-- No common escrow account and only seperate Escrow account for each users (via clone factory for gas efficiency) would implemented which will then be managed by Vaipakam App. This is to avoid commingling of funds.
-- Existing user escrows should not be silently mass-upgraded by the protocol because that would create unnecessary network-fee overhead. Instead, when an escrow upgrade is marked as mandatory, interactions using older escrow versions must be blocked and the frontend must require the user to upgrade their own escrow before continuing. If an upgrade is not critical, the frontend may leave the upgrade optional and simply prompt the user.
+- No common vault account and only seperate Vault account for each users (via clone factory for gas efficiency) would implemented which will then be managed by Vaipakam App. This is to avoid commingling of funds.
+- Existing user vaults should not be silently mass-upgraded by the protocol because that would create unnecessary network-fee overhead. Instead, when an vault upgrade is marked as mandatory, interactions using older vault versions must be blocked and the frontend must require the user to upgrade their own vault before continuing. If an upgrade is not critical, the frontend may leave the upgrade optional and simply prompt the user.
 - Use Reentrancygaurd and pausable from Openzeppelin wherever needed.
 
 ## Other Notes:
@@ -730,7 +730,7 @@ Borrowers may close or transfer their obligations before the originally schedule
 - All claimable funds created during preclose must follow the same claim model used elsewhere in the protocol:
   - lender-side value becomes claimable by the lender against the lender’s Vaipakam NFT
   - borrower-side returned collateral or refunds become claimable by the borrower against the borrower’s Vaipakam NFT
-- If the loan is an NFT rental, preclose changes user rights rather than transferring the underlying NFT to the borrower. For both ERC-721 and ERC-1155 rentals, the NFT must be held in the appropriate Vaipakam Escrow for that active rental position, with the Vaipakam admin/escrow controller as the escrow custodian/owner while escrowed. During preclose transfer, the platform revokes the original borrower’s temporary user rights and assigns temporary user rights to the new borrower only.
+- If the loan is an NFT rental, preclose changes user rights rather than transferring the underlying NFT to the borrower. For both ERC-721 and ERC-1155 rentals, the NFT must be held in the appropriate Vaipakam Vault for that active rental position, with the Vaipakam admin/vault controller as the vault custodian/owner while vaulted. During preclose transfer, the platform revokes the original borrower’s temporary user rights and assigns temporary user rights to the new borrower only.
 - The relevant Vaipakam NFTs must be updated to reflect the new state of the position.
 
 ### Option 1: Standard Early Repayment
@@ -772,8 +772,8 @@ The borrower may close the loan early by repaying the full outstanding principal
 - The lender becomes entitled to the rental fees due under the applicable early-close rule.
 - The borrower becomes entitled to any refundable unused prepayment and the buffer amount, subject to platform rules.
 - The borrower’s NFT `user` right is revoked.
-- For ERC-721 rentals, the NFT itself remains in the appropriate Vaipakam Escrow under admin/escrow-controller custody; only the borrower’s ERC-4907 `user` access is removed.
-- For ERC-1155 rentals, the NFT remains controlled by the appropriate Vaipakam Escrow under admin/escrow-controller custody; only the borrower’s temporary user right is removed.
+- For ERC-721 rentals, the NFT itself remains in the appropriate Vaipakam Vault under admin/vault-controller custody; only the borrower’s ERC-4907 `user` access is removed.
+- For ERC-1155 rentals, the NFT remains controlled by the appropriate Vaipakam Vault under admin/vault-controller custody; only the borrower’s temporary user right is removed.
 
 #### NFT and Status Updates
 
@@ -846,7 +846,7 @@ Where:
    - Alice’s borrower NFT is closed or burned
    - a new borrower NFT is minted for Ben
    - Liam’s lender NFT is updated to reflect the new borrower relationship
-8. If the transferred obligation is an NFT rental, the platform keeps or moves the ERC-721/1155 NFT into the appropriate Vaipakam Escrow for the continuing rental position, with the Vaipakam admin/escrow controller retaining escrow custody/owner control. Alice’s temporary user rights are revoked, and equivalent user rights are assigned to Ben for the remaining permitted rental term. Ben receives only ERC-4907-style user rights and never receives custody or ownership of the NFT itself.
+8. If the transferred obligation is an NFT rental, the platform keeps or moves the ERC-721/1155 NFT into the appropriate Vaipakam Vault for the continuing rental position, with the Vaipakam admin/vault controller retaining vault custody/owner control. Alice’s temporary user rights are revoked, and equivalent user rights are assigned to Ben for the remaining permitted rental term. Ben receives only ERC-4907-style user rights and never receives custody or ownership of the NFT itself.
 
 #### Funds Flow
 
@@ -885,7 +885,7 @@ This option allows Alice to stop being Liam’s borrower by becoming a lender in
 - The amount of the principal/lending asset, payment/prepay asset, and collateral asset may vary if otherwise permitted by the flow, but the asset types themselves must not change.
 - The duration of the offsetting position must not exceed the remaining term of Alice’s original loan and must favor Liam, the original lender, unless Alice fully compensates any resulting shortfall.
 - The lending amount and collateral amount used in the offsetting offer may vary, but they must also favor Liam, the original lender. If the selected offer amounts reduce Liam's protection or economics, Alice must provide the compensating top-up needed to keep Liam whole.
-- All normal offer-creation, offer-acceptance, sanctions, KYC, asset, escrow, and matching checks apply to the offsetting offer flow.
+- All normal offer-creation, offer-acceptance, sanctions, KYC, asset, vault, and matching checks apply to the offsetting offer flow.
 
 #### Economic Protection for the Original Lender
 
@@ -1061,7 +1061,7 @@ This option is implemented through standard offer flows rather than through a se
 For this option to be implementation-ready, the following must be explicit:
 
 - how the borrower-offer path is being used for lender early withdrawal
-- who escrows or locks funds during offer creation
+- who vaults or locks funds during offer creation
 - what exact amount the buyer pays when accepting
 - whether the buyer must fund principal only or principal plus another negotiated amount
 - how accrued interest forfeiture is handled
@@ -1115,7 +1115,7 @@ For clarity and implementation consistency, every preclose or early-withdrawal o
 - initiator
 - counterparties
 - required preconditions
-- escrow movements
+- vault movements
 - exact value owed to treasury
 - exact lender claimable amount created
 - exact borrower claimable amount created

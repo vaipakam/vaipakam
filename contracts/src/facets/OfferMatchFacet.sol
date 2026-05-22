@@ -9,7 +9,7 @@ import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
-import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 
 /**
  * @title OfferMatchFacet
@@ -21,7 +21,7 @@ import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
  *             so bots filter candidate pairs without paying for
  *             reverting txs.
  *           - `matchOffers(L, B)` — permissionless write that
- *             executes the match: pulls escrowed assets, mints the
+ *             executes the match: pulls vaulted assets, mints the
  *             position NFTs, initiates the loan, refunds excess
  *             collateral, dust-closes the lender offer when its
  *             remaining range capacity drops below the per-match
@@ -34,7 +34,7 @@ import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
  *      semantically distinct from create / accept / cancel.
  *
  *      Cross-facet reuse: `matchOffers` reuses the heavy LIF +
- *      escrow + NFT-mint + loan-init plumbing already in
+ *      vault + NFT-mint + loan-init plumbing already in
  *      `OfferFacet._acceptOffer` by calling
  *      `OfferFacet.acceptOfferInternal(...)` through the diamond
  *      fallback. The internal entry point gates on
@@ -91,7 +91,7 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     error CollateralBelowRequired();
     error DurationMismatch();
     error MatchHFTooLow();
-    error EscrowWithdrawFailed();
+    error VaultWithdrawFailed();
 
     /// @notice Range Orders Phase 1 — bot-facing preview of a candidate
     ///         (lender, borrower) match. Pure view; runs the validity
@@ -126,7 +126,7 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         `matchOverride` slot with midpoint terms + counterparty
     ///         + matcher addresses, calls into
     ///         `OfferFacet.acceptOfferInternal` (cross-facet) reusing
-    ///         the existing escrow + LIF + NFT + LoanFacet plumbing,
+    ///         the existing vault + LIF + NFT + LoanFacet plumbing,
     ///         then increments the lender offer's `amountFilled` and
     ///         auto-closes on dust.
     ///         The borrower offer is single-fill in Phase 1 (per
@@ -203,7 +203,7 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             ),
             // Surface a clear typed revert on cross-facet failure;
             // the inner revert reason still bubbles via the helper.
-            EscrowWithdrawFailed.selector
+            VaultWithdrawFailed.selector
         );
         loanId = abi.decode(ret, (uint256));
 
@@ -216,17 +216,17 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // ── Borrower-side excess-collateral refund (Range Orders
         // Phase 1, symmetric with the lender-side dust-close below).
         //
-        // OfferCreateFacet pre-escrows the borrower's collateral
+        // OfferCreateFacet pre-vaults the borrower's collateral
         // UPPER bound at create-time (`offer.collateralAmountMax`,
         // post auto-collapse). The match locked `mr.reqCollateral`
         // — which is `clamp(reqFromLender, [B.collateralAmount,
         // B.collateralAmountMax])` per #164's clamp-up semantics.
         // The unused tail `B.collateralAmountMax - mr.reqCollateral`
         // is refunded to the borrower's wallet immediately so the
-        // invariant "escrow only holds collateral committed to an
+        // invariant "vault only holds collateral committed to an
         // active offer or live loan" stays clean. Since borrower
         // offers are single-fill in Phase 1, the tail can never be
-        // reused by another match — leaving it in escrow would trap
+        // reused by another match — leaving it in vault would trap
         // the funds. On a legacy single-value borrower offer
         // (auto-collapsed `collateralAmountMax == collateralAmount`)
         // this code path lands at the same numbers as the pre-#164
@@ -242,7 +242,7 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // when `partialFillEnabled` is off), the entire excess
         // `collateralAmountMax - mr.reqCollateral` is refunded on the
         // first (and only) match — that's the existing #164 behaviour.
-        // Under partial-fill (#102), the borrower's pre-escrowed
+        // Under partial-fill (#102), the borrower's pre-vaulted
         // collateral STAYS in custody across matches; only the residual
         // is refunded on dust-close at the bottom of this function.
         // Distinguish via the same flag `OfferAcceptFacet._acceptOffer`
@@ -262,13 +262,13 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
                     uint256 excess = borrowerPulled - mr.reqCollateral;
                     LibFacet.crossFacetCall(
                         abi.encodeWithSelector(
-                            EscrowFactoryFacet.escrowWithdrawERC20.selector,
-                            B.creator,           // pull from borrower's escrow
+                            VaultFactoryFacet.vaultWithdrawERC20.selector,
+                            B.creator,           // pull from borrower's vault
                             B.collateralAsset,
                             B.creator,           // refund to borrower's wallet
                             excess
                         ),
-                        EscrowWithdrawFailed.selector
+                        VaultWithdrawFailed.selector
                     );
                 }
             }
@@ -291,7 +291,7 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         if (lenderRemaining < L.amount) {
             if (lenderRemaining > 0) {
                 // Dust refund: pull the unfilled remainder back to the
-                // lender's wallet. createOffer pre-escrowed amountMax;
+                // lender's wallet. createOffer pre-vaulted amountMax;
                 // _acceptOffer already pulled `mr.matchAmount` for the
                 // borrower's principal, leaving `lenderRemaining` still
                 // in custody. Lender ERC-20 only — NFT / ERC1155 lender
@@ -299,13 +299,13 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
                 // branch is unreachable for them in practice.
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
-                        EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                        VaultFactoryFacet.vaultWithdrawERC20.selector,
                         L.creator,
                         L.lendingAsset,
                         L.creator,
                         lenderRemaining
                     ),
-                    EscrowWithdrawFailed.selector
+                    VaultWithdrawFailed.selector
                 );
             }
             L.accepted = true;
@@ -353,13 +353,13 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
                         uint256 collRefund = borrowerCollPulled - Bm.collateralAmountFilled;
                         LibFacet.crossFacetCall(
                             abi.encodeWithSelector(
-                                EscrowFactoryFacet.escrowWithdrawERC20.selector,
-                                Bm.creator,           // pull from borrower's escrow
+                                VaultFactoryFacet.vaultWithdrawERC20.selector,
+                                Bm.creator,           // pull from borrower's vault
                                 Bm.collateralAsset,
                                 Bm.creator,           // refund to borrower's wallet
                                 collRefund
                             ),
-                            EscrowWithdrawFailed.selector
+                            VaultWithdrawFailed.selector
                         );
                     }
                 }

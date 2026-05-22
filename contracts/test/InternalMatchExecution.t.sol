@@ -7,7 +7,7 @@ import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -49,7 +49,7 @@ contract InternalMatchExecutionTest is SetupTest {
 
     /// @dev Seed a loan struct via TestMutatorFacet bypassing
     ///      `initiateLoan`'s HF≥1.5 gate. Also funds the borrower
-    ///      escrow with the collateral so execution-time withdraws
+    ///      vault with the collateral so execution-time withdraws
     ///      succeed.
     function _seedLoan(
         uint256 id,
@@ -76,15 +76,15 @@ contract InternalMatchExecutionTest is SetupTest {
         // LibLifecycle.transition's list-remove succeeds on terminal.
         TestMutatorFacet(address(diamond)).scaffoldActiveLoan(id, l);
 
-        address bEscrow = EscrowFactoryFacet(address(diamond))
-            .getOrCreateUserEscrow(borrower_);
-        ERC20Mock(collateral).mint(bEscrow, collateralAmt);
-        // Mirror the protocol-tracked escrow counter — without this,
-        // the execution body's escrowWithdrawERC20 hits an underflow
-        // when it decrements `protocolTrackedEscrowBalance`. Direct
+        address bVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(borrower_);
+        ERC20Mock(collateral).mint(bVault, collateralAmt);
+        // Mirror the protocol-tracked vault counter — without this,
+        // the execution body's vaultWithdrawERC20 hits an underflow
+        // when it decrements `protocolTrackedVaultBalance`. Direct
         // storage write via TestMutatorFacet since the production
-        // `recordEscrowDepositERC20` is onlyDiamondInternal.
-        TestMutatorFacet(address(diamond)).setProtocolTrackedEscrowBalanceRaw(
+        // `recordVaultDepositERC20` is onlyDiamondInternal.
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(
             borrower_, collateral, collateralAmt
         );
     }
@@ -133,21 +133,21 @@ contract InternalMatchExecutionTest is SetupTest {
         _mockLtv(LOAN_A, 9_000);
         _mockLtv(LOAN_B, 9_000);
 
-        address aLenderEscrow = EscrowFactoryFacet(address(diamond))
-            .getOrCreateUserEscrow(lender);
-        address bLenderEscrow = EscrowFactoryFacet(address(diamond))
-            .getOrCreateUserEscrow(lenderB);
+        address aLenderVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(lender);
+        address bLenderVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(lenderB);
 
-        uint256 aLenderXBefore = IERC20(mockERC20).balanceOf(aLenderEscrow);
-        uint256 bLenderYBefore = IERC20(mockCollateralERC20).balanceOf(bLenderEscrow);
+        uint256 aLenderXBefore = IERC20(mockERC20).balanceOf(aLenderVault);
+        uint256 bLenderYBefore = IERC20(mockCollateralERC20).balanceOf(bLenderVault);
 
         vm.prank(matcher);
         RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
 
         // Moved amounts: 1000 each leg. Bot share: 10 each leg
         // (1% of 1000). Lender share: 990 each.
-        assertEq(IERC20(mockERC20).balanceOf(aLenderEscrow) - aLenderXBefore, 990);
-        assertEq(IERC20(mockCollateralERC20).balanceOf(bLenderEscrow) - bLenderYBefore, 990);
+        assertEq(IERC20(mockERC20).balanceOf(aLenderVault) - aLenderXBefore, 990);
+        assertEq(IERC20(mockCollateralERC20).balanceOf(bLenderVault) - bLenderYBefore, 990);
         assertEq(IERC20(mockERC20).balanceOf(matcher), 10);
         assertEq(IERC20(mockCollateralERC20).balanceOf(matcher), 10);
 
@@ -275,9 +275,9 @@ contract InternalMatchExecutionTest is SetupTest {
         assertEq(IERC20(mockY).balanceOf(matcher), 10, "Z-leg 1%");
     }
 
-    function test_atomicity_revertsCleanlyOnEscrowFailure() public {
-        // Borrower B's escrow has only 5_000 of the 8_000 the loan
-        // struct claims. First escrow withdraw should revert; A's
+    function test_atomicity_revertsCleanlyOnVaultFailure() public {
+        // Borrower B's vault has only 5_000 of the 8_000 the loan
+        // struct claims. First vault withdraw should revert; A's
         // state must NOT be partially mutated.
         _seedLoan(LOAN_A, lender, borrower, mockERC20, 10_000, mockCollateralERC20, 5);
         LibVaipakam.Loan memory lb;
@@ -293,10 +293,10 @@ contract InternalMatchExecutionTest is SetupTest {
         lb.collateralLiquidity = LibVaipakam.LiquidityStatus.Liquid;
         lb.liquidationLtvBpsAtInit = 8_500;
         TestMutatorFacet(address(diamond)).scaffoldActiveLoan(LOAN_B, lb);
-        // But only 5_000 actually present in the escrow:
-        address bEscrow = EscrowFactoryFacet(address(diamond))
-            .getOrCreateUserEscrow(borrowerB);
-        ERC20Mock(mockERC20).mint(bEscrow, 5_000);
+        // But only 5_000 actually present in the vault:
+        address bVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(borrowerB);
+        ERC20Mock(mockERC20).mint(bVault, 5_000);
         _mockLtv(LOAN_A, 9_000);
         _mockLtv(LOAN_B, 9_000);
 
@@ -314,7 +314,7 @@ contract InternalMatchExecutionTest is SetupTest {
     /// @dev Move a loan that was scaffolded as Active into FallbackPending
     ///      with realistic snap fields. Mirrors the at-fallback state:
     ///      collateral is in the Diamond's own balance (not the borrower's
-    ///      escrow), `protocolTrackedEscrowBalance` is zero, and the
+    ///      vault), `protocolTrackedVaultBalance` is zero, and the
     ///      snapshot's lender / treasury / borrower entitlements sum to
     ///      the full collateralAmount.
     function _moveToFallbackPending(
@@ -326,15 +326,15 @@ contract InternalMatchExecutionTest is SetupTest {
         uint256 treasuryEntitlement,
         bool oracleAvailable
     ) internal {
-        // 1. Pull the seeded collateral out of the borrower's escrow into
+        // 1. Pull the seeded collateral out of the borrower's vault into
         //    the Diamond — mirrors the failed at-fallback swap's withdraw.
-        address bEscrow = EscrowFactoryFacet(address(diamond))
-            .getOrCreateUserEscrow(borrower_);
-        // We minted `collateralAmt` into bEscrow during _seedLoan; pull it
+        address bVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(borrower_);
+        // We minted `collateralAmt` into bVault during _seedLoan; pull it
         // to the diamond and zero the protocol-tracked counter.
-        vm.prank(bEscrow);
+        vm.prank(bVault);
         IERC20(collateral).transfer(address(diamond), collateralAmt);
-        TestMutatorFacet(address(diamond)).setProtocolTrackedEscrowBalanceRaw(
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(
             borrower_, collateral, 0
         );
 
@@ -376,18 +376,18 @@ contract InternalMatchExecutionTest is SetupTest {
         _moveToFallbackPending(LOAN_A, borrower, mockCollateralERC20, 1000, 850, 20, true);
         _mockLtv(LOAN_B, 9_000);
 
-        address aLenderEscrow = EscrowFactoryFacet(address(diamond))
-            .getOrCreateUserEscrow(lender);
-        address bLenderEscrow = EscrowFactoryFacet(address(diamond))
-            .getOrCreateUserEscrow(lenderB);
+        address aLenderVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(lender);
+        address bLenderVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(lenderB);
 
         vm.prank(matcher);
         RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
 
         // A's lender received 990 X (1000 - 1% matcher fee).
-        assertEq(IERC20(mockERC20).balanceOf(aLenderEscrow), 990, "A lender principal-asset payout");
+        assertEq(IERC20(mockERC20).balanceOf(aLenderVault), 990, "A lender principal-asset payout");
         // B's lender received 990 Y (1000 - 1%).
-        assertEq(IERC20(mockCollateralERC20).balanceOf(bLenderEscrow), 990, "B lender payout");
+        assertEq(IERC20(mockCollateralERC20).balanceOf(bLenderVault), 990, "B lender payout");
 
         LibVaipakam.Loan memory aAfter = _getLoan(LOAN_A);
         LibVaipakam.Loan memory bAfter = _getLoan(LOAN_B);
@@ -445,7 +445,7 @@ contract InternalMatchExecutionTest is SetupTest {
     function test_fallbackPending_partialRescue_residualInDiamond() public {
         // EC-007 core fix: after a partial match of a FallbackPending
         // leg, the residual collateral must stay in the DIAMOND's
-        // custody (not be rehydrated into the borrower's escrow). The
+        // custody (not be rehydrated into the borrower's vault). The
         // snapshot stays `active` and continues to describe it, so a
         // later claim distributes it correctly.
         _seedLoan(LOAN_A, lender, borrower, mockERC20, 10_000, mockCollateralERC20, 10_000);
@@ -455,8 +455,8 @@ contract InternalMatchExecutionTest is SetupTest {
 
         uint256 diamondCollatBefore =
             IERC20(mockCollateralERC20).balanceOf(address(diamond));
-        address aBorrowerEscrow = EscrowFactoryFacet(address(diamond))
-            .getOrCreateUserEscrow(borrower);
+        address aBorrowerVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(borrower);
 
         vm.prank(matcher);
         RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
@@ -464,16 +464,16 @@ contract InternalMatchExecutionTest is SetupTest {
         LibVaipakam.Loan memory aAfter = _getLoan(LOAN_A);
         // 3_000 of A's collateral was paid to B's lender; 7_000 residual.
         assertEq(aAfter.collateralAmount, 7_000, "A residual collateral");
-        // The residual lives in the DIAMOND, not the borrower's escrow.
+        // The residual lives in the DIAMOND, not the borrower's vault.
         assertEq(
             IERC20(mockCollateralERC20).balanceOf(address(diamond)),
             diamondCollatBefore - 3_000,
             "residual stays in Diamond custody"
         );
         assertEq(
-            IERC20(mockCollateralERC20).balanceOf(aBorrowerEscrow),
+            IERC20(mockCollateralERC20).balanceOf(aBorrowerVault),
             0,
-            "residual NOT rehydrated into borrower escrow"
+            "residual NOT rehydrated into borrower vault"
         );
         assertEq(uint8(aAfter.status), uint8(LibVaipakam.LoanStatus.FallbackPending));
     }
@@ -512,8 +512,8 @@ contract InternalMatchExecutionTest is SetupTest {
         // A partial match leaves a FallbackPending residual in the
         // Diamond's custody; the lender must then be able to
         // `claimAsLender` it. The pre-fix rehydration scattered the
-        // residual into the BORROWER's escrow, so the lender's
-        // escrow-sourced claim withdraw reverted — the lender could
+        // residual into the BORROWER's vault, so the lender's
+        // vault-sourced claim withdraw reverted — the lender could
         // never collect a partially-rescued residual.
         _seedLoan(LOAN_A, lender, borrower, mockERC20, 10_000, mockCollateralERC20, 10_000);
         _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 3_000, mockERC20, 3_000);
@@ -521,7 +521,7 @@ contract InternalMatchExecutionTest is SetupTest {
         _mockLtv(LOAN_B, 9_000);
         // Fallback-time claim record is collateral-asset denominated.
         // The partial match scales `.amount`; `.asset` must be pre-set
-        // so the later escrow withdraw targets the right token.
+        // so the later vault withdraw targets the right token.
         TestMutatorFacet(address(diamond)).setLenderClaimAssetRaw(LOAN_A, mockCollateralERC20);
 
         // Partial match — A: 10_000 → 7_000 residual, stays
@@ -538,7 +538,7 @@ contract InternalMatchExecutionTest is SetupTest {
         // The lender claims. No opposing candidate remains (B is now
         // InternalMatched), so the claim-time auto-dispatch finds
         // nothing and the (scaled) residual is distributed via
-        // `_distributeFallbackCollateral` (Diamond → escrows), then the
+        // `_distributeFallbackCollateral` (Diamond → vaults), then the
         // lender's claim record withdraws it to `msg.sender`.
         _mockLenderNFT(LOAN_A, lender);
         uint256 lenderBalBefore = IERC20(mockCollateralERC20).balanceOf(lender);
@@ -572,8 +572,8 @@ contract InternalMatchExecutionTest is SetupTest {
         _moveToFallbackPending(LOAN_A, borrower, mockCollateralERC20, 1000, 850, 20, true);
         _mockLtv(LOAN_B, 9_000);
 
-        address aLenderEscrow = EscrowFactoryFacet(address(diamond))
-            .getOrCreateUserEscrow(lender);
+        address aLenderVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(lender);
 
         // The LENDER (position-NFT owner) claims with no candidate
         // hand-picked — the claim-time auto-dispatch finds LOAN_B and
@@ -598,7 +598,7 @@ contract InternalMatchExecutionTest is SetupTest {
             "B matched"
         );
         assertEq(
-            IERC20(mockERC20).balanceOf(aLenderEscrow),
+            IERC20(mockERC20).balanceOf(aLenderVault),
             990,
             "A lender paid in principal asset by the match"
         );
@@ -702,8 +702,8 @@ contract InternalMatchExecutionTest is SetupTest {
         assertEq(uint8(aAfter.status), uint8(LibVaipakam.LoanStatus.InternalMatched));
         // Sanity: lender received their principal-asset payout, not the
         // collateral-unit claim that the snapshot originally pointed at.
-        address aLenderEscrow = EscrowFactoryFacet(address(diamond))
-            .getOrCreateUserEscrow(lender);
-        assertEq(IERC20(mockERC20).balanceOf(aLenderEscrow), 990);
+        address aLenderVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(lender);
+        assertEq(IERC20(mockERC20).balanceOf(aLenderVault), 990);
     }
 }

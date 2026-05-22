@@ -172,36 +172,6 @@
   },
   {
     "type": "error",
-    "name": "EscrowAlreadyBanned",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "EscrowBannedDueToSanctionedSource",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "EscrowDepositFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "EscrowResolutionFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "EscrowTransferFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "EscrowWithdrawFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "HealthFactorCalculationFailed",
     "inputs": []
   },
@@ -622,7 +592,7 @@
   },
   {
     "type": "error",
-    "name": "RecoveryUserHasNoEscrow",
+    "name": "RecoveryUserHasNoVault",
     "inputs": []
   },
   {
@@ -740,11 +710,6 @@
   },
   {
     "type": "error",
-    "name": "VPFIEscrowBalanceInsufficient",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "VPFIGlobalCapExceeded",
     "inputs": []
   },
@@ -766,6 +731,41 @@
   {
     "type": "error",
     "name": "VPFITokenNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIVaultBalanceInsufficient",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultAlreadyBanned",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultBannedDueToSanctionedSource",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultDepositFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultResolutionFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultTransferFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultWithdrawFailed",
     "inputs": []
   }
 ]

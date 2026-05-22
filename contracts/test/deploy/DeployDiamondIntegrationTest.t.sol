@@ -8,7 +8,7 @@ import {DiamondLoupeFacet} from "../../src/facets/DiamondLoupeFacet.sol";
 import {AdminFacet} from "../../src/facets/AdminFacet.sol";
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
 import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
-import {EscrowFactoryFacet} from "../../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
 import {LibAccessControl} from "../../src/libraries/LibAccessControl.sol";
 
 /**
@@ -45,7 +45,7 @@ import {LibAccessControl} from "../../src/libraries/LibAccessControl.sol";
  *            the loupe to confirm: facet count matches the cuts array
  *            length, every facet address is non-zero, the diamond is
  *            unpaused, ownership and roles are on the configured admin
- *            (post-handover), and the escrow implementation is
+ *            (post-handover), and the vault implementation is
  *            initialized.
  *
  *         Three reasons this is in `test/deploy/` and not `test/`:
@@ -271,15 +271,15 @@ contract DeployDiamondIntegrationTest is Test, DiamondFacetNames {
         );
     }
 
-    /// @notice Escrow implementation was deployed by Step 5c (factory's
-    ///         `initializeEscrowImplementation`) and surfaces a non-zero
+    /// @notice Vault implementation was deployed by Step 5c (factory's
+    ///         `initializeVaultImplementation`) and surfaces a non-zero
     ///         template address with code.
-    function test_DeployedDiamond_EscrowImplInitialized() public {
+    function test_DeployedDiamond_VaultImplInitialized() public {
         (address diamond,,) = _deploy(true);
-        address impl = EscrowFactoryFacet(diamond)
-            .getVaipakamEscrowImplementationAddress();
-        assertTrue(impl != address(0), "escrow impl not initialized");
-        assertGt(impl.code.length, 0, "escrow impl has no code");
+        address impl = VaultFactoryFacet(diamond)
+            .getVaipakamVaultImplementationAddress();
+        assertTrue(impl != address(0), "vault impl not initialized");
+        assertGt(impl.code.length, 0, "vault impl has no code");
     }
 
     // ─── 5. Skip-artifacts gate is purely opt-in ──────────────────────

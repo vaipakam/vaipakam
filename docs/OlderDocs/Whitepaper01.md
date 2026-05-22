@@ -6,11 +6,11 @@
 
 ## Abstract
 
-Vaipakam is a decentralized peer-to-peer protocol for chain-local ERC-20 lending, borrowing, and escrow-mediated NFT rentals across Ethereum-compatible networks. It is built around separate Diamond deployments per supported network, isolated per-user escrows, tokenized lender-side and borrower-side claim rights, active-network liquidity classification, structured abnormal-market fallback settlement, and a VPFI utility layer for fee discounts, escrow-based staking, and locally claimable rewards. Unlike pooled lending systems, Vaipakam preserves bilateral term-setting and individualized asset choice. Unlike NFT rental systems that depend entirely on collection-native rental support, Vaipakam uses escrow as the stable custody and user-rights surface. This document presents the design in a form suitable for technical discussion, audit preparation, and academic refinement.
+Vaipakam is a decentralized peer-to-peer protocol for chain-local ERC-20 lending, borrowing, and vault-mediated NFT rentals across Ethereum-compatible networks. It is built around separate Diamond deployments per supported network, isolated per-user vaults, tokenized lender-side and borrower-side claim rights, active-network liquidity classification, structured abnormal-market fallback settlement, and a VPFI utility layer for fee discounts, vault-based staking, and locally claimable rewards. Unlike pooled lending systems, Vaipakam preserves bilateral term-setting and individualized asset choice. Unlike NFT rental systems that depend entirely on collection-native rental support, Vaipakam uses vault as the stable custody and user-rights surface. This document presents the design in a form suitable for technical discussion, audit preparation, and academic refinement.
 
 ## Keywords
 
-Decentralized finance, peer-to-peer lending, NFT rental, Diamond Standard, escrow architecture, liquidation fallback, position NFTs, cross-chain protocol token, on-chain risk management, chain-local credit.
+Decentralized finance, peer-to-peer lending, NFT rental, Diamond Standard, vault architecture, liquidation fallback, position NFTs, cross-chain protocol token, on-chain risk management, chain-local credit.
 
 ## 1. Introduction
 
@@ -29,7 +29,7 @@ The resulting system aims to combine:
 
 - bilateral sovereignty over terms
 - strong on-chain enforcement
-- isolated custody through per-user escrow
+- isolated custody through per-user vault
 - explicit lender-side and borrower-side rights through position NFTs
 - liquidity-aware handling of collateral and defaults
 - a protocol-token layer that augments, rather than replaces, the core credit marketplace
@@ -65,7 +65,7 @@ There is no cross-chain loan state machine.
 VPFI is the only protocol layer intended to be cross-chain. It is used for:
 
 - borrower-side and lender-side fee discounts
-- escrow-based staking rewards
+- vault-based staking rewards
 - platform interaction rewards
 - token transparency and treasury recycling
 
@@ -75,8 +75,8 @@ VPFI is the only protocol layer intended to be cross-chain. It is used for:
 Vaipakam is designed to:
 
 1. preserve bilateral negotiation instead of pooled credit abstraction
-2. support both fungible lending and escrow-mediated NFT rentals
-3. isolate user custody through dedicated escrow
+2. support both fungible lending and vault-mediated NFT rentals
+3. isolate user custody through dedicated vault
 4. distinguish liquid assets from illiquid assets using active-network checks only
 5. keep claim rights explicit, transferable, and NFT-bound
 6. treat frontend risk disclosure as part of protocol safety
@@ -97,11 +97,11 @@ Implications:
 
 The Diamond model is especially useful here because Vaipakam’s lifecycle spans offers, loans, claims, treasury accounting, NFT rights, keeper controls, token utility, and analytics views.
 
-### 4.2 Per-User Escrow
+### 4.2 Per-User Vault
 
-Per-user escrow is central to the protocol’s safety model.
+Per-user vault is central to the protocol’s safety model.
 
-Escrow responsibilities include:
+Vault responsibilities include:
 
 - holding ERC-20 collateral
 - holding NFT collateral
@@ -136,11 +136,11 @@ For ERC-20 borrowing, the baseline initiation path charges a `0.1%` `Loan Initia
 
 ### 5.2 NFT Rentals
 
-NFT renting is modeled as escrow-controlled temporary usage rather than custody transfer.
+NFT renting is modeled as vault-controlled temporary usage rather than custody transfer.
 
 The lender:
 
-- escrows the NFT
+- vaults the NFT
 
 The borrower:
 
@@ -148,7 +148,7 @@ The borrower:
 - posts a `5%` buffer
 - receives temporary usage rights
 
-The NFT itself remains inside escrow. That design is why Vaipakam does not require separate NFT collateral for the rental product.
+The NFT itself remains inside vault. That design is why Vaipakam does not require separate NFT collateral for the rental product.
 
 ## 6. Asset Classification and Risk
 
@@ -198,7 +198,7 @@ When an offer is accepted:
 
 - the acceptor contributes their required assets or approvals
 - the acceptor must provide the same mandatory combined fallback consent
-- escrow transitions occur
+- vault transitions occur
 - the loan becomes active
 - position NFTs are minted or updated accordingly
 
@@ -296,13 +296,13 @@ VPFI is used to discount:
 - the `Yield Fee` for lenders
 - the `Loan Initiation Fee` for borrowers
 
-Discounts are determined from escrowed VPFI on the relevant lending chain.
+Discounts are determined from vaulted VPFI on the relevant lending chain.
 
 ### 12.3 Tier Model
 
 Current tiers:
 
-| Tier | Escrowed VPFI on that chain | Discount |
+| Tier | Vaulted VPFI on that chain | Discount |
 | --- | ---: | ---: |
 | 1 | `>= 100` and `< 1,000` | `10%` |
 | 2 | `>= 1,000` and `< 5,000` | `15%` |
@@ -313,8 +313,8 @@ Core rules:
 
 - balances are chain-local
 - tiers are chain-local
-- escrowed VPFI on one chain counts only for loans initiated on that same chain
-- one shared platform-level consent controls whether escrowed VPFI may be used for fee discounts
+- vaulted VPFI on one chain counts only for loans initiated on that same chain
+- one shared platform-level consent controls whether vaulted VPFI may be used for fee discounts
 
 ### 12.4 Fixed-Rate Purchase Program
 
@@ -328,15 +328,15 @@ The intended user-facing flow is:
 
 1. buy from the preferred supported chain
 2. receive VPFI in wallet on that same chain
-3. explicitly deposit into personal escrow
+3. explicitly deposit into personal vault
 
 The page should abstract away any canonical-chain routing or bridge plumbing required behind the scenes.
 
-## 13. Escrow-Based Staking and Rewards
+## 13. Vault-Based Staking and Rewards
 
 ### 13.1 Staking Rewards
 
-Any VPFI held in user escrow is treated as staked on that chain.
+Any VPFI held in user vault is treated as staked on that chain.
 
 - staking APR: `5%`
 - no separate staking vault required
@@ -477,7 +477,7 @@ Vaipakam chooses clear chain-local loan logic over a more ambitious cross-chain 
 Vaipakam is best understood as a bilateral credit and rental marketplace rather than a pool-based money market. Its essential design choices are:
 
 - explicit bilateral offers
-- per-user isolated escrow
+- per-user isolated vault
 - NFT-bound claim rights
 - active-network liquidity classification
 - permissionless liquidation with structured abnormal-market fallback

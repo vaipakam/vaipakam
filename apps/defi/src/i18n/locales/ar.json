@@ -107,7 +107,7 @@
     "keepers": "Keepers",
     "governanceGroupLabel": "الحوكمة",
     "protocolConsole": "وحدة تحكم البروتوكول",
-    "escrow": "مخزن Vaipakam الخاص بك"
+    "vault": "مخزن Vaipakam الخاص بك"
   },
   "dataRights": {
     "title": "حقوق بياناتك (GDPR / UK GDPR / CCPA)",
@@ -404,7 +404,7 @@
     "buying": "جارٍ الشراء…",
     "approving": "جارٍ الاعتماد…",
     "approvingVpfi": "جارٍ اعتماد VPFI…",
-    "depositToEscrow": "إيداع في Vault",
+    "depositToVault": "إيداع في Vault",
     "depositing": "جارٍ الإيداع…",
     "unstakeToWallet": "سحب إلى المحفظة",
     "unstaking": "جارٍ السحب…",
@@ -412,7 +412,7 @@
     "depositFailed": "فشل الإيداع",
     "unstakeFailed": "فشل السحب",
     "buyTimedOut": "انتهت مهلة الشراء — تمت إعادة الأموال",
-    "escrowBalanceZero": "رصيد VPFI في Vault الخاص بك هو 0 — أودع VPFI أولاً."
+    "vaultBalanceZero": "رصيد VPFI في Vault الخاص بك هو 0 — أودع VPFI أولاً."
   },
   "claimCenter": {
     "connectTitle": "اربط محفظتك",
@@ -836,8 +836,8 @@
     "statP2pLabel": "إقراض مباشر",
     "statNftValue": "NFT",
     "statNftLabel": "تتبّع المراكز",
-    "statEscrowValue": "1:1",
-    "statEscrowLabel": "حساب ضمان معزول",
+    "statVaultValue": "1:1",
+    "statVaultLabel": "حساب ضمان معزول",
     "demoLendTitle": "إقراض 1,000 USDC",
     "demoLendMeta": "5% APR · 30 يوماً · ضمان ETH",
     "demoLendStatus": "نشط",
@@ -856,8 +856,8 @@
     "p2pDesc": "إنشاء أو قبول عروض على رموز ERC-20 بشروط مخصّصة — معدل الفائدة ونوع الضمان ومدة القرض. دون أي مجمّعات وسيطة.",
     "nftTitle": "تأجير NFT (ERC-4907)",
     "nftDesc": "تأجير NFT من نوع ERC-721 وERC-1155 بسعر يومي. يحصل المقترض على حقوق الاستخدام، بينما يبقى NFT بأمان داخل حساب الضمان.",
-    "escrowTitle": "حساب ضمان معزول لكل مستخدم",
-    "escrowDesc": "يحصل كل مستخدم على وكيل حساب ضمان UUPS قابل للترقية خاص به. لا اختلاط للأموال — تبقى الأصول معزولة دائمًا.",
+    "vaultTitle": "حساب ضمان معزول لكل مستخدم",
+    "vaultDesc": "يحصل كل مستخدم على وكيل حساب ضمان UUPS قابل للترقية خاص به. لا اختلاط للأموال — تبقى الأصول معزولة دائمًا.",
     "nftPositionTitle": "تتبّع المراكز عبر NFT",
     "nftPositionDesc": "كل عرض وكل قرض يُصدر NFT خاصًا من Vaipakam مزوّدًا ببيانات وصفية على السلسلة. يمكن إثبات الملكية والمطالبة بالأموال وتتبّع الحالة على أي سوق.",
     "liquidityTitle": "أصول سائلة وأصول غير سائلة",
@@ -901,8 +901,8 @@
     "subtitle": "من بنية العقود الذكية إلى آليات التصفية، يضع كل قرار تصميمي أمان الأصول في المقدّمة. تشير كل بطاقة أدناه إلى الأثر الفعلي على السلسلة الذي يدعمها — يمكن التحقق من المعيار بشكل مستقل.",
     "diamondTitle": "Diamond Standard (EIP-2535)",
     "diamondDesc": "بنية وكيل معيارية. تتيح ترقية كل facet على حدة دون تعطيل البروتوكول. تُوجَّه جميع الاستدعاءات عبر نقطة دخول واحدة لـ Diamond.",
-    "escrowTitle": "حساب ضمان معزول لكل مستخدم",
-    "escrowDesc": "يحصل كل مستخدم على وكيل حساب ضمان UUPS مخصّص. لا اختلاط للأموال. تحجب الترقيات الإلزامية لحساب الضمان أي تفاعل حتى يتم تنفيذ الترقية.",
+    "vaultTitle": "حساب ضمان معزول لكل مستخدم",
+    "vaultDesc": "يحصل كل مستخدم على وكيل حساب ضمان UUPS مخصّص. لا اختلاط للأموال. تحجب الترقيات الإلزامية لحساب الضمان أي تفاعل حتى يتم تنفيذ الترقية.",
     "transparencyTitle": "شفافية على السلسلة",
     "transparencyDesc": "تُسجَّل كل العروض والقروض وتغيّرات الحالة على السلسلة. تعمل NFT الخاصة بـ Vaipakam كإثبات قابل للتحقق لملكية المركز.",
     "slippageTitle": "أمان الانزلاق السعري والتصفية",
@@ -989,9 +989,9 @@
         "li1": "<s>قروض ERC-20:</s> المبلغ الأصلي أيّ ERC-20 (USDC، ETH، WBTC، إلخ.)؛ ويمكن أن يكون الضمان أيّ ERC-20 أو أيّ NFT.",
         "li2": "<s>تأجير NFT:</s> الـ NFT المؤجَّر هو المبلغ الأصلي؛ والضمان عبارة عن ERC-20. دعم ERC-4907 الأصلي على الـ NFT اختياري — يكشف غلاف حساب الضمان لكل مستخدم على أي حال واجهة موحّدة <c>userOf</c> / <c>userExpires</c> / <c>userQuantity</c>."
       },
-      "escrow": {
+      "vault": {
         "q": "كيف يعمل حساب الضمان لكل مستخدم؟",
-        "a1": "يحصل كل مستخدم على وكيل ضمان UUPS قابل للترقية خاص به، يجري نشره عند أول استخدام بواسطة <c>EscrowFactoryFacet</c> (نمط clone-factory). لا تُخلَط الأصول مع أصول أي شخص آخر إطلاقًا.",
+        "a1": "يحصل كل مستخدم على وكيل ضمان UUPS قابل للترقية خاص به، يجري نشره عند أول استخدام بواسطة <c>VaultFactoryFacet</c> (نمط clone-factory). لا تُخلَط الأصول مع أصول أي شخص آخر إطلاقًا.",
         "a2": "ينسّق Diamond حركة الأصول بين حسابات الضمان، إلا أن حقوق المطالبة مرتبطة بـ NFT المركز الخاص بـ Vaipakam — لذا تكون حضانة الضمان مقيّدة بدقة بحالة المركز على السلسلة."
       },
       "default": {
@@ -1065,12 +1065,12 @@
         "q": "كيف يعمل خصم VPFI؟",
         "a1": "يضع VPFI المحتفَظ به داخل حساب الضمان في Vaipakam حامله تلقائيًا في طبقة خصم. تغطّي موافقة واحدة على مستوى المنصّة شِقّي المقترض (البدء) والمقرض (العائد) معًا، ويُخصَم الرسم بعد التخفيض تلقائيًا بـ VPFI من حساب الضمان — في مسار الخصم يتلقى المقترض المبلغ الأصلي بالكامل، ويحتفظ المقرض بكامل الفوائد.",
         "tableTier": "الطبقة",
-        "tableEscrow": "VPFI في الضمان",
+        "tableVault": "VPFI في الضمان",
         "tableDiscount": "الخصم",
         "tableInitiation": "بدء فعلي",
         "tableYield": "رسم عائد فعلي",
-        "row3Escrow": "≥ 5,000، ≤ 20,000",
-        "row4Escrow": "> 20,000"
+        "row3Vault": "≥ 5,000، ≤ 20,000",
+        "row4Vault": "> 20,000"
       },
       "vpfi-rewards": {
         "q": "كيف يمكنني كسب مكافآت VPFI؟",
@@ -1121,10 +1121,10 @@
     "sanctionsMatchBody": "يدرج أوراكل العقوبات على السلسلة (Chainalysis) هذا العنوان حالياً. سيتم التراجع عن أي معاملة لإنشاء عرض أو قبوله على مستوى البروتوكول. في حال كان التطابق غير صحيح، يُرجى التواصل مع دعم Chainalysis — لا يحتفظ Vaipakam بقائمة عقوبات خاصة به.",
     "sanctionsLabelWallet": "المحفظة المتصلة",
     "sanctionsLabelOfferCreator": "منشئ العرض",
-    "escrowUpgradeBody": "يلزم ترقية الضمان — الضمان على الإصدار v{{userVersion}}، والحد الأدنى الإلزامي v{{mandatoryVersion}} (الأحدث v{{currentVersion}}). سيتم التراجع عن تدفقات Diamond حتى الترقية.",
-    "escrowUpgrading": "جارٍ الترقية…",
-    "escrowUpgradeButton": "ترقية الضمان",
-    "escrowTxPrefix": "tx",
+    "vaultUpgradeBody": "يلزم ترقية الضمان — الضمان على الإصدار v{{userVersion}}، والحد الأدنى الإلزامي v{{mandatoryVersion}} (الأحدث v{{currentVersion}}). سيتم التراجع عن تدفقات Diamond حتى الترقية.",
+    "vaultUpgrading": "جارٍ الترقية…",
+    "vaultUpgradeButton": "ترقية الضمان",
+    "vaultTxPrefix": "tx",
     "unsupportedDiamondPending": "Diamond للمرحلة 1 معلّق",
     "unsupportedNetwork": "شبكة غير مدعومة",
     "unsupportedBody": "{{state}} (chainId {{chainId}}). يعمل Vaipakam كـ Diamond مستقل على كل شبكة مدعومة — نشط حالياً على: {{liveList}}.",
@@ -1262,8 +1262,8 @@
     "mirrorTip": "سلسلة المرآة — VPFI على هذه السلسلة هو تمثيل 1:1 للعرض الكانوني. يُنتج OFT الرموز هنا عند وصول تحويل عبر الجسر ويحرقها عند مغادرة التحويل، فيكون رصيد المرآة دائماً مدعوماً بإقفالات السلسلة الكانونية.",
     "notRegistered": "VPFI غير مسجّل بعد لدى Diamond على {{chain}}. بمجرد استدعاء المسؤول لـ setVPFIToken، ستظهر الأرصدة والأنشطة هنا.",
     "walletBalance": "رصيد VPFI في المحفظة",
-    "escrowBalance": "رصيد VPFI في الضمان",
-    "escrowTooltip": "VPFI المرهون حالياً في الضمان لكل مستخدم على هذه السلسلة. يُحتسب ضمن Tier خصم رسوم المقترض.",
+    "vaultBalance": "رصيد VPFI في الضمان",
+    "vaultTooltip": "VPFI المرهون حالياً في الضمان لكل مستخدم على هذه السلسلة. يُحتسب ضمن Tier خصم رسوم المقترض.",
     "shareCirculating": "حصة من المتداول",
     "shareTooltip": "الملكية الفعلية لمعروض VPFI على هذه السلسلة — رصيد المحفظة بالإضافة إلى الرصيد المحجوز في Vault، مقسومًا على المتداول. يظل VPFI في Vault مملوكًا للمستخدم؛ فهو فقط محجوز لخصم المستوى / {{apr}}% APR.",
     "circulatingThisChain": "متداول (هذه السلسلة)",
@@ -1273,14 +1273,14 @@
     "treasuryMintDestination": "الخزينة (وجهة السك)",
     "yourActivity": "نشاط VPFI",
     "noActivity": "لا توجد بعد أي تحويلات VPFI تخص هذه المحفظة على {{chain}}. ستصل التوزيعات الموجهة للمستخدم (المكافآت، staking) في مرحلة لاحقة من النشر.",
-    "escrowCountsAsStaked": "VPFI في Vault يعد staked ({{apr}}% APR)"
+    "vaultCountsAsStaked": "VPFI في Vault يعد staked ({{apr}}% APR)"
   },
   "buyVpfiCards": {
     "discountStatusTitle": "حالة خصم VPFI",
     "currentTier": "Tier الحالي",
     "noDiscountYet": "لا يوجد خصم بعد",
-    "escrowVpfi": "VPFI في الضمان",
-    "escrowCountsAsStaked": "VPFI في الضمان يُعدّ مرهوناً ({{apr}}% APR)",
+    "vaultVpfi": "VPFI في الضمان",
+    "vaultCountsAsStaked": "VPFI في الضمان يُعدّ مرهوناً ({{apr}}% APR)",
     "statusLabel": "الحالة",
     "inactiveOff": "غير نشط · موافقة الخصم متوقفة",
     "inactiveBelowTier1": "غير نشط · أقل من Tier 1 ({{tier1Min}} VPFI في الضمان)",
@@ -1291,7 +1291,7 @@
     "enableSharedConsent": "تفعيل موافقة الخصم المشتركة في <dashboardLink>لوحة التحكم</dashboardLink>.",
     "depositMore": "إيداع {{amount}} VPFI إضافية في الضمان للوصول إلى Tier {{tier}} ({{discount}}).",
     "tierColTier": "Tier",
-    "tierColEscrow": "VPFI في الضمان",
+    "tierColVault": "VPFI في الضمان",
     "tierColDiscount": "الخصم",
     "tierN": "Tier {{tier}}",
     "tier1": "Tier 1",
@@ -1319,13 +1319,13 @@
     "gasReserveTooltip": "يُحتجَز احتياطي gas صغير ({{reserve}} ETH) من رصيد المحفظة حتى يمكن بثّ معاملة الشراء.",
     "capExceeded": "هذا المبلغ يتجاوز الحد المتبقي. يُرجى تقليل مدخل ETH وإعادة المحاولة.",
     "exceedsBalance": "المبلغ يتجاوز رصيد ETH في المحفظة البالغ {{balance}} ETH (يُحتفَظ باحتياطي gas صغير).",
-    "exceedsEscrowBalance": "المبلغ يتجاوز رصيد VPFI في الضمان البالغ {{balance}} VPFI.",
+    "exceedsVaultBalance": "المبلغ يتجاوز رصيد VPFI في الضمان البالغ {{balance}} VPFI.",
     "buyButton": "شراء VPFI",
     "depositTitle": "إيداع VPFI في الضمان",
     "depositSubtitle": "مطلوب على كل سلسلة — بما في ذلك الكانونية.",
     "depositSpecNote": "وفقاً للمواصفات، يُعدّ نقل VPFI إلى الضمان دائماً إجراءً صريحاً من المستخدم. لا يقوم البروتوكول أبداً بتمويل الضمان تلقائياً بعد عملية شراء أو جسر.",
     "walletVpfiBalance": "رصيد VPFI في المحفظة",
-    "escrowVpfiBalance": "رصيد VPFI في الضمان ({{chain}})",
+    "vaultVpfiBalance": "رصيد VPFI في الضمان ({{chain}})",
     "depositAmount": "كمية VPFI للإيداع",
     "useMaxVpfi": "استخدام الأقصى ({{amount}} VPFI)",
     "depositButton": "الإيداع في الضمان",
@@ -1632,13 +1632,13 @@
       "calloutBody": "By accepting you agree that the borrower must pay each period's accrued interest by the period close. If the borrower misses the period beyond the configured grace window, anyone can trigger a settler that sells just enough collateral to cover the shortfall — possibly affecting the loan's health factor and triggering further liquidation."
     }
   },
-  "escrowAssets": {
+  "vaultAssets": {
     "pageTitle": "مخزن Vaipakam الخاص بك",
     "pageSubtitle": "الرموز التي يحتفظ بها البروتوكول نيابةً عنك. لكل مستخدم وكيل احتجاز معزول خاص به — تتدفق الإيداعات والسحوبات دائمًا عبر Vaipakam Diamond.",
     "addressCardTitle": "عنوان مخزن Vaipakam",
     "addressCaption": "تخزين بروتوكولي داخلي — تدخل الأموال وتخرج عبر البروتوكول فقط.",
     "viewOnExplorer": "عرض الحساب المُحتجَز في مستكشف الكتل",
-    "noEscrowYet": "ليس لديك حساب مُحتجَز بعد. سيتم إنشاء واحد تلقائيًا في المرة الأولى التي تُنشئ فيها عرضًا أو تقبله.",
+    "noVaultYet": "ليس لديك حساب مُحتجَز بعد. سيتم إنشاء واحد تلقائيًا في المرة الأولى التي تُنشئ فيها عرضًا أو تقبله.",
     "holdingsTitle": "الموجودات",
     "lowToggleShow": "عرض الكل ({{n}} مخفية)",
     "lowToggleHide": "إخفاء الأرصدة المنخفضة",
@@ -1656,7 +1656,7 @@
     "connectBody": "صِل محفظتك لعرض موجودات مخزن Vaipakam الخاص بك.",
     "switchChainBody": "بدّل محفظتك إلى سلسلة مدعومة من Vaipakam لعرض موجودات مخزن Vaipakam الخاص بك."
   },
-  "escrowRecover": {
+  "vaultRecover": {
     "pageTitle": "استعادة الرموز العالقة",
     "pageSubtitle": "استعد رموز ERC-20 التي وصلت إلى وكيل احتجازك خارج تدفق إيداع البروتوكول. اقرأ قسم دليل المستخدم المتقدم أولاً — إعلان مصدر غير صحيح قد يقفل حسابك المحتجز.",
     "formTitle": "إعلان الاستعادة",

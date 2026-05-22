@@ -17,7 +17,7 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
-import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
 
 /**
@@ -214,13 +214,13 @@ contract EarlyWithdrawalFacet is
         // then fan out to Liam / treasury / Noah's heldForLender.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                VaultFactoryFacet.vaultWithdrawERC20.selector,
                 buyOffer.creator, // Noah
                 loan.principalAsset,
                 address(this),
                 loan.principal
             ),
-            EscrowWithdrawFailed.selector
+            VaultWithdrawFailed.selector
         );
 
         uint256 toLiam = loan.principal - liamCost;
@@ -243,17 +243,17 @@ contract EarlyWithdrawalFacet is
         if (excess > 0) {
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                    VaultFactoryFacet.vaultWithdrawERC20.selector,
                     buyOffer.creator,
                     loan.principalAsset,
                     buyOffer.creator, // Refund back to Noah
                     excess
                 ),
-                EscrowWithdrawFailed.selector
+                VaultWithdrawFailed.selector
             );
         }
 
-        // Migrate only the pre-existing heldForLender from old lender's escrow to new lender's.
+        // Migrate only the pre-existing heldForLender from old lender's vault to new lender's.
         // priorHeld was snapshotted before any shortfall deposits in this transaction.
         if (priorHeld > 0) {
             address payAsset = loan.assetType == LibVaipakam.AssetType.ERC20
@@ -261,19 +261,19 @@ contract EarlyWithdrawalFacet is
                 : loan.prepayAsset;
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                    VaultFactoryFacet.vaultWithdrawERC20.selector,
                     msg.sender, // old lender
                     payAsset,
                     address(this),
                     priorHeld
                 ),
-                EscrowWithdrawFailed.selector
+                VaultWithdrawFailed.selector
             );
-            address newEscrow = LibFacet.getOrCreateEscrow(buyOffer.creator);
-            IERC20(payAsset).safeTransfer(newEscrow, priorHeld);
-            // T-051 — Diamond-side transfer to new lender's escrow
-            // ticks the protocolTrackedEscrowBalance counter.
-            LibVaipakam.recordEscrowDeposit(buyOffer.creator, payAsset, priorHeld);
+            address newVault = LibFacet.getOrCreateVault(buyOffer.creator);
+            IERC20(payAsset).safeTransfer(newVault, priorHeld);
+            // T-051 — Diamond-side transfer to new lender's vault
+            // ticks the protocolTrackedVaultBalance counter.
+            LibVaipakam.recordVaultDeposit(buyOffer.creator, payAsset, priorHeld);
         }
 
         // Migrate lender position: burn old NFT + mint new LoanInitiated NFT
@@ -575,10 +575,10 @@ contract EarlyWithdrawalFacet is
 
         // NOTE: Principal transfer already happened in acceptOffer().
         // For Borrower-type offers, acceptOffer() withdraws principal from
-        // Noah's (lender) escrow and sends it to Liam (borrower=offer.creator).
+        // Noah's (lender) vault and sends it to Liam (borrower=offer.creator).
         // No second transfer needed here.
 
-        // Migrate only pre-existing heldForLender from old lender's escrow to new lender's
+        // Migrate only pre-existing heldForLender from old lender's vault to new lender's
         {
             if (priorHeldSale > 0) {
                 address payAsset = loan.assetType == LibVaipakam.AssetType.ERC20
@@ -586,19 +586,19 @@ contract EarlyWithdrawalFacet is
                     : loan.prepayAsset;
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
-                        EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                        VaultFactoryFacet.vaultWithdrawERC20.selector,
                         originalLender,
                         payAsset,
                         address(this),
                         priorHeldSale
                     ),
-                    EscrowWithdrawFailed.selector
+                    VaultWithdrawFailed.selector
                 );
-                address newEscrow = LibFacet.getOrCreateEscrow(newLender);
-                IERC20(payAsset).safeTransfer(newEscrow, priorHeldSale);
+                address newVault = LibFacet.getOrCreateVault(newLender);
+                IERC20(payAsset).safeTransfer(newVault, priorHeldSale);
                 // T-051 — Diamond-side transfer to new lender's
-                // escrow ticks the counter.
-                LibVaipakam.recordEscrowDeposit(newLender, payAsset, priorHeldSale);
+                // vault ticks the counter.
+                LibVaipakam.recordVaultDeposit(newLender, payAsset, priorHeldSale);
             }
         }
 
@@ -629,19 +629,19 @@ contract EarlyWithdrawalFacet is
         );
 
         // Release Liam's collateral that was locked when creating the
-        // borrower-style sale offer. Liam locked collateral into his escrow
+        // borrower-style sale offer. Liam locked collateral into his vault
         // via createOffer(Borrower, ...) — return it to him.
         if (tempLoan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
             if (tempLoan.collateralAmount > 0) {
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
-                        EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                        VaultFactoryFacet.vaultWithdrawERC20.selector,
                         originalLender,
                         tempLoan.collateralAsset,
                         originalLender,
                         tempLoan.collateralAmount
                     ),
-                    EscrowWithdrawFailed.selector
+                    VaultWithdrawFailed.selector
                 );
             }
         } else if (
@@ -649,27 +649,27 @@ contract EarlyWithdrawalFacet is
         ) {
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowWithdrawERC721.selector,
+                    VaultFactoryFacet.vaultWithdrawERC721.selector,
                     originalLender,
                     tempLoan.collateralAsset,
                     tempLoan.collateralTokenId,
                     originalLender
                 ),
-                EscrowWithdrawFailed.selector
+                VaultWithdrawFailed.selector
             );
         } else if (
             tempLoan.collateralAssetType == LibVaipakam.AssetType.ERC1155
         ) {
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowWithdrawERC1155.selector,
+                    VaultFactoryFacet.vaultWithdrawERC1155.selector,
                     originalLender,
                     tempLoan.collateralAsset,
                     tempLoan.collateralTokenId,
                     tempLoan.collateralQuantity,
                     originalLender
                 ),
-                EscrowWithdrawFailed.selector
+                VaultWithdrawFailed.selector
             );
         }
 

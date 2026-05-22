@@ -7,7 +7,7 @@ This document is a README-aligned catalog of Vaipakam workflow paths. It is inte
 - The source of truth is `/README.md`.
 - Phase 1 loans are single-network flows.
 - Cross-chain lending, VNGK governance, staking, and VNGK reward distribution are Phase 2.
-- ERC721 and ERC1155 rental NFTs are escrow-custodied during active rental positions. Borrowers receive only temporary user rights and never receive custody or ownership of the underlying NFT.
+- ERC721 and ERC1155 rental NFTs are vault-custodied during active rental positions. Borrowers receive only temporary user rights and never receive custody or ownership of the underlying NFT.
 - Borrower preclose flows must preserve the same principal/lending asset type, payment/prepay asset type, and collateral asset type as the original loan.
 - Phase 1 borrower preclose Option 3, lender early-withdrawal, and refinance flows apply only to active ERC20 loans. NFT rental loans and other non-ERC20 loan/rental positions must be rejected from those flows.
 
@@ -17,8 +17,8 @@ This document is a README-aligned catalog of Vaipakam workflow paths. It is inte
 | --- | --- | --- |
 | Offer creation | ERC20 lender offer | Supported |
 | Offer creation | ERC20 borrower offer | Supported |
-| Offer creation | NFT rental lender offer | Supported with ERC721/ERC1155 escrow custody |
-| Offer creation | NFT rental borrower offer | Supported with ERC20 prepayment and lender NFT escrow on acceptance |
+| Offer creation | NFT rental lender offer | Supported with ERC721/ERC1155 vault custody |
+| Offer creation | NFT rental borrower offer | Supported with ERC20 prepayment and lender NFT vault on acceptance |
 | Offer management | Offer cancellation | Supported while offer is not accepted |
 | Loan initiation | ERC20 loan | Supported |
 | Loan initiation | Partial lending / borrowing | Supported where offer terms allow partial acceptance |
@@ -38,7 +38,7 @@ This document is a README-aligned catalog of Vaipakam workflow paths. It is inte
 | Refinance | Borrower-offer-led refinance | Supported for active ERC20 loans only |
 | Collateral management | Add collateral | Supported |
 | Collateral management | Partial collateral withdrawal | Supported when health factor remains safe |
-| Escrow upgrades | Mandatory user-triggered upgrade | Supported by policy |
+| Vault upgrades | Mandatory user-triggered upgrade | Supported by policy |
 | Governance | VNGK proposals and voting | Phase 2 |
 | Staking | VNGK staking and revenue sharing | Phase 2 |
 | Cross-chain lending | Bridged loan flows | Phase 2 |
@@ -85,30 +85,30 @@ Lender-side and borrower-side claims are gated by ownership of the relevant Vaip
 ### ERC20 Lender Offer
 
 1. Lender selects principal/lending ERC20 asset, amount, interest rate, duration, collateral asset, and collateral amount.
-2. Lender escrows the principal amount.
+2. Lender vaults the principal amount.
 3. Platform mints a Vaipakam offer NFT for the lender.
 4. Borrower can accept the offer by locking compatible collateral.
 
 ### ERC20 Borrower Offer
 
 1. Borrower selects desired principal/lending ERC20 asset, amount, interest rate, duration, collateral asset, and collateral amount.
-2. Borrower escrows the collateral.
+2. Borrower vaults the collateral.
 3. Platform mints a Vaipakam offer NFT for the borrower.
 4. Lender can accept the offer by funding the principal.
 
 ### NFT Rental Lender Offer
 
 1. Lender selects the rentable ERC721 or ERC1155 asset, token ID, quantity if ERC1155, daily rental fee, duration, and ERC20 prepay asset.
-2. Lender escrows the ERC721 or ERC1155 token in the lender's Vaipakam Escrow.
+2. Lender vaults the ERC721 or ERC1155 token in the lender's Vaipakam Vault.
 3. Platform mints a Vaipakam offer NFT for the lender.
 4. Borrower can accept by locking ERC20 prepayment equal to rental fees plus the 5 percent buffer.
 
 ### NFT Rental Borrower Offer
 
 1. Borrower selects desired NFT rental terms, maximum daily fee, duration, and ERC20 prepay asset.
-2. Borrower escrows ERC20 prepayment equal to rental fees plus the 5 percent buffer.
+2. Borrower vaults ERC20 prepayment equal to rental fees plus the 5 percent buffer.
 3. Platform mints a Vaipakam offer NFT for the borrower.
-4. Lender can accept by escrowing the matching ERC721 or ERC1155 rental NFT.
+4. Lender can accept by vaulting the matching ERC721 or ERC1155 rental NFT.
 5. Borrower receives only temporary user rights.
 
 ## Offer Management Paths
@@ -116,7 +116,7 @@ Lender-side and borrower-side claims are gated by ownership of the relevant Vaip
 ### Offer Cancellation
 
 1. Offer creator cancels an unaccepted offer.
-2. Escrowed principal, collateral, NFT rental asset, or prepayment is returned to the offer creator according to offer type.
+2. Vaulted principal, collateral, NFT rental asset, or prepayment is returned to the offer creator according to offer type.
 3. Offer status is updated to cancelled.
 4. Offer position NFT is updated or burned according to the protocol status model.
 5. Accepted offers cannot be cancelled.
@@ -127,7 +127,7 @@ Lender-side and borrower-side claims are gated by ownership of the relevant Vaip
 
 1. A compatible ERC20 lender or borrower offer is accepted.
 2. Principal is transferred to the borrower.
-3. Borrower collateral is locked in the borrower's escrow.
+3. Borrower collateral is locked in the borrower's vault.
 4. Loan status becomes active.
 5. Vaipakam NFTs are minted or updated for both lender and borrower.
 
@@ -137,14 +137,14 @@ Lender-side and borrower-side claims are gated by ownership of the relevant Vaip
 2. Protocol validates that the partial amount is permitted by the offer rules.
 3. Principal, collateral, duration, rate, and risk checks are calculated for the accepted partial amount.
 4. One accepted offer may create more than one related loan if the offer has remaining available amount.
-5. Escrow accounting must prevent over-acceptance and must keep each loan's collateral and claim accounting independent.
+5. Vault accounting must prevent over-acceptance and must keep each loan's collateral and claim accounting independent.
 
 ### NFT Rental Initiation
 
 1. A compatible NFT rental offer is accepted.
-2. Rental NFT remains escrow-custodied in the lender's Vaipakam Escrow.
+2. Rental NFT remains vault-custodied in the lender's Vaipakam Vault.
 3. Borrower ERC20 prepayment and buffer are locked.
-4. Escrow assigns temporary user rights to the borrower until expiry.
+4. Vault assigns temporary user rights to the borrower until expiry.
 5. Loan status becomes active.
 6. Vaipakam NFTs are minted or updated for lender and borrower.
 
@@ -166,7 +166,7 @@ Lender-side and borrower-side claims are gated by ownership of the relevant Vaip
 2. Rental user rights are revoked.
 3. Rental fees are allocated to the lender after the `Yield Fee`.
 4. Borrower receives refundable unused prepayment and buffer according to the README rules.
-5. Escrowed ERC721 or ERC1155 is returned to the lender through the lender NFT-gated claim path.
+5. Vaulted ERC721 or ERC1155 is returned to the lender through the lender NFT-gated claim path.
 6. Vaipakam NFTs move to claimable/closed state and are burned after final claim.
 
 ### NFT Daily Deduction
@@ -175,7 +175,7 @@ Lender-side and borrower-side claims are gated by ownership of the relevant Vaip
 2. The daily rental fee is deducted from borrower prepayment.
 3. Lender share and treasury share are allocated.
 4. Remaining rental duration and user-right expiry are updated.
-5. When the duration reaches zero, the rental moves to claimable/closed state and the lender can reclaim the escrowed NFT through the lender claim path.
+5. When the duration reaches zero, the rental moves to claimable/closed state and the lender can reclaim the vaulted NFT through the lender claim path.
 
 ## Default And Liquidation Paths
 
@@ -202,7 +202,7 @@ Lender-side and borrower-side claims are gated by ownership of the relevant Vaip
 2. Borrower user rights are revoked.
 3. Rental prepayment is allocated to the lender, with the `Yield Fee` on rental earnings.
 4. The 5 percent buffer is routed to treasury.
-5. Escrowed ERC721 or ERC1155 is returned to the lender through the lender NFT-gated claim/default settlement path.
+5. Vaulted ERC721 or ERC1155 is returned to the lender through the lender NFT-gated claim/default settlement path.
 6. No borrower refund is expected on default unless the README later defines one.
 
 ## Borrower Preclose Paths
@@ -214,18 +214,18 @@ Lender-side and borrower-side claims are gated by ownership of the relevant Vaip
 3. Treasury fee is deducted from lender earnings.
 4. Lender receives a claimable amount.
 5. Borrower receives claimable collateral or refund.
-6. For NFT rentals, user rights are revoked and the escrowed NFT remains with or is returned to the lender through the rental settlement path.
+6. For NFT rentals, user rights are revoked and the vaulted NFT remains with or is returned to the lender through the rental settlement path.
 
 ### Option 2: Accept Existing Borrower Offer
 
 1. Original borrower selects an existing compatible borrower offer.
 2. Offer must preserve principal/lending asset type, payment/prepay asset type, and collateral asset type.
 3. New borrower terms must favor the original lender or the original borrower must fully compensate any shortfall.
-4. New borrower collateral or prepayment must already be escrowed through offer creation.
+4. New borrower collateral or prepayment must already be vaulted through offer creation.
 5. Original borrower pays accrued interest and any shortfall.
 6. Original borrower collateral or refund becomes claimable.
 7. Live loan borrower is updated to the new borrower.
-8. For NFT rentals, original borrower user rights are revoked and equivalent user rights are assigned to the new borrower. The underlying NFT remains escrow-custodied.
+8. For NFT rentals, original borrower user rights are revoked and equivalent user rights are assigned to the new borrower. The underlying NFT remains vault-custodied.
 9. Vaipakam borrower NFT is burned/replaced and lender NFT is updated.
 
 ### Option 3: Create New Lender Offer Offset
@@ -304,12 +304,12 @@ Phase 1 refinance is ERC20-only. NFT rentals and other non-ERC20 positions are n
 3. If safe, collateral is released.
 4. If unsafe, withdrawal is rejected.
 
-## Escrow Upgrade Path
+## Vault Upgrade Path
 
-1. Admin marks an escrow implementation version as mandatory when required.
-2. Protocol blocks protected interactions for users on older mandatory escrow versions.
-3. Frontend detects the user's outdated escrow.
-4. User submits their own escrow-upgrade transaction.
+1. Admin marks an vault implementation version as mandatory when required.
+2. Protocol blocks protected interactions for users on older mandatory vault versions.
+3. Frontend detects the user's outdated vault.
+4. User submits their own vault-upgrade transaction.
 5. After upgrade, protected interactions resume.
 6. Non-critical upgrades may be shown as optional prompts instead of hard blocks.
 

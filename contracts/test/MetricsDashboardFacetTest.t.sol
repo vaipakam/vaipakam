@@ -77,7 +77,7 @@ contract MetricsDashboardFacetTest is SetupTest {
         assertEq(snap.lenderClaimableCount, 0);
         assertEq(snap.borrowerClaimableCount, 0);
         assertEq(snap.stakingRewardsPending, 0);
-        assertEq(snap.escrowVpfiBalance, 0);
+        assertEq(snap.vaultVpfiBalance, 0);
         assertEq(snap.vpfiTier, 0);
     }
 

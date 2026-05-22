@@ -14,7 +14,7 @@ import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
  *      EOA (per .env's `ADMIN_ADDRESS`) holds:
  *        - DEFAULT_ADMIN_ROLE (root admin gating every other role)
  *        - ADMIN_ROLE / PAUSER_ROLE / KYC_ADMIN_ROLE /
- *          ORACLE_ADMIN_ROLE / RISK_ADMIN_ROLE / ESCROW_ADMIN_ROLE
+ *          ORACLE_ADMIN_ROLE / RISK_ADMIN_ROLE / VAULT_ADMIN_ROLE
  *        - WATCHER_ROLE + NOTIF_BILLER_ROLE + KEEPER_ROLE (kept on
  *          ADMIN; the off-chain-bot roles get rotated to per-bot EOAs
  *          separately via the keeper-authorization flow, NOT in this
@@ -41,7 +41,7 @@ import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
  *        1. DEFAULT_ADMIN_ROLE → DEFAULT_ADMIN_ADDRESS  (governance Safe,
  *           direct — rotates roles without Timelock delay during
  *           bringup, can re-architect roles later if needed)
- *        2. ADMIN_ROLE / KYC / ORACLE / RISK / ESCROW → Timelock
+ *        2. ADMIN_ROLE / KYC / ORACLE / RISK / VAULT → Timelock
  *           (delayed-action surface; routine config edits time-locked)
  *        3. PAUSER_ROLE → PAUSER_ADDRESS  (Pauser Safe, direct —
  *           pause is a fast incident lever, Timelock delay is
@@ -135,7 +135,7 @@ contract Handover is Script {
         r[2] = LibAccessControl.KYC_ADMIN_ROLE;
         r[3] = LibAccessControl.ORACLE_ADMIN_ROLE;
         r[4] = LibAccessControl.RISK_ADMIN_ROLE;
-        r[5] = LibAccessControl.ESCROW_ADMIN_ROLE;
+        r[5] = LibAccessControl.VAULT_ADMIN_ROLE;
     }
 
     function run() external {
@@ -205,7 +205,7 @@ contract Handover is Script {
         for (uint256 i = 0; i < tlRoles.length; i++) {
             IAccessControl(diamond).grantRole(tlRoles[i], timelock);
         }
-        console.log("Granted ADMIN/KYC/ORACLE/RISK/ESCROW to Timelock");
+        console.log("Granted ADMIN/KYC/ORACLE/RISK/VAULT to Timelock");
 
         // 3c. Grant PAUSER_ROLE to the pauser Safe (direct, NO Timelock).
         IAccessControl(diamond).grantRole(LibAccessControl.PAUSER_ROLE, pauserSafe);

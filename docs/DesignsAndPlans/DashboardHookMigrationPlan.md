@@ -157,7 +157,7 @@ clean review.
 ## 6. What this plan does NOT do
 
 - Touch `PublicDashboard` or any non-user surface.
-- Migrate Activity / EscrowAssets / OfferBook (different hooks,
+- Migrate Activity / VaultAssets / OfferBook (different hooks,
   different scope).
 - Wire `useHistoricalAssetPrice` into the historical-TVL chart
   (separate refactor — see §A.4 ship-now note).

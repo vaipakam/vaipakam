@@ -59,7 +59,7 @@ export function StakingRewardsClaim({ address, chainId, blockExplorer, variant =
   // user the program exists and how to start earning. The zero-state
   // gate previously hid the card on first visits, which made the
   // staking program effectively invisible until the user already
-  // had escrow VPFI for some other reason.
+  // had vault VPFI for some other reason.
 
   const handleClaim = async () => {
     if (pending === 0n) return;

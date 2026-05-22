@@ -13,15 +13,15 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
  * @title StakingRewardsFacet
  * @author Vaipakam Developer Team
  * @notice Phase-1 VPFI staking rewards (docs/TokenomicsTechSpec.md §7).
- *         Escrow-held VPFI is implicitly staked: any VPFI sitting in a
- *         user's personal escrow earns 5% APR from the 55.2M pool with
+ *         Vault-held VPFI is implicitly staked: any VPFI sitting in a
+ *         user's personal vault earns 5% APR from the 55.2M pool with
  *         no separate stake/unstake tx. The bookkeeping is a
  *         reward-per-token time-weighted accrual in {LibStakingRewards}; this
  *         facet exposes the claim entrypoint and the transparency views.
  *
- * @dev Accrual hooks are wired into every VPFI-escrow balance mutation:
- *        - {VPFIDiscountFacet.depositVPFIToEscrow}
- *        - {VPFIDiscountFacet.withdrawVPFIFromEscrow}
+ * @dev Accrual hooks are wired into every VPFI-vault balance mutation:
+ *        - {VPFIDiscountFacet.depositVPFIToVault}
+ *        - {VPFIDiscountFacet.withdrawVPFIFromVault}
  *        - {LibVPFIDiscount.tryApply} (borrower fee discount deduction)
  *        - {LibVPFIDiscount.tryApplyYieldFee} (lender fee discount)
  *
@@ -43,7 +43,7 @@ contract StakingRewardsFacet is
     using SafeERC20 for IERC20;
 
     /// @notice Emitted when a staker claims accrued VPFI rewards.
-    /// @param user   The claimer and escrow owner.
+    /// @param user   The claimer and vault owner.
     /// @param amount VPFI wei transferred from diamond to user's wallet.
     /// @custom:event-category state-change/reward-claim
     event StakingRewardsClaimed(address indexed user, uint256 amount);
@@ -96,17 +96,17 @@ contract StakingRewardsFacet is
         return LibStakingRewards.pendingOf(user);
     }
 
-    /// @notice `user`'s current staked (escrow-held) VPFI as tracked by the
-    ///         accrual bookkeeping. Mirrors the escrow balance after every
+    /// @notice `user`'s current staked (vault-held) VPFI as tracked by the
+    ///         accrual bookkeeping. Mirrors the vault balance after every
     ///         deposit / discount deduction / withdrawal hook.
     /// @param user Staker to query.
-    /// @return     VPFI wei currently held in `user`'s escrow and earning rewards.
+    /// @return     VPFI wei currently held in `user`'s vault and earning rewards.
     function getUserStakedVPFI(address user) external view returns (uint256) {
         return LibVaipakam.storageSlot().userStakedVPFI[user];
     }
 
     /// @notice Sum of staked VPFI across all users.
-    /// @return Total escrow-held VPFI wei earning staking rewards.
+    /// @return Total vault-held VPFI wei earning staking rewards.
     function getTotalStakedVPFI() external view returns (uint256) {
         return LibVaipakam.storageSlot().totalStakedVPFI;
     }
@@ -123,7 +123,7 @@ contract StakingRewardsFacet is
         return LibVaipakam.storageSlot().stakingPoolPaidOut;
     }
 
-    /// @notice Annual percentage rate (bps) paid on escrow-held VPFI.
+    /// @notice Annual percentage rate (bps) paid on vault-held VPFI.
     /// @dev Reflects the admin override in effect — see
     ///      {ConfigFacet.setStakingApr}. Defaults to 500 (5%) when unset.
     /// @return APR in basis points (500 = 5.00%).
@@ -132,7 +132,7 @@ contract StakingRewardsFacet is
     }
 
     /// @notice Monotone reward-per-token accumulator, scaled
-    ///         by 1e18. Advances every time a user's escrow VPFI balance
+    ///         by 1e18. Advances every time a user's vault VPFI balance
     ///         mutates (deposit / discount / withdraw) via the
     ///         {LibStakingRewards.updateUser} checkpoint. Pure transparency —
     ///         exposes the internal counter so integrators and invariant
@@ -147,7 +147,7 @@ contract StakingRewardsFacet is
     /// @return cap         55.2M VPFI hard cap.
     /// @return paidOut     Cumulative VPFI claimed so far.
     /// @return remaining   `cap - paidOut`.
-    /// @return totalStaked Current total escrow-held VPFI across all users.
+    /// @return totalStaked Current total vault-held VPFI across all users.
     /// @return aprBps      Annual reward rate in basis points (500 = 5%).
     function getStakingSnapshot()
         external

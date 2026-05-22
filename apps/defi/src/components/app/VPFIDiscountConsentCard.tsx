@@ -24,8 +24,8 @@ function bpsAsPctStr(bps: number | bigint): string {
  *   - lender Yield Fee
  *
  * When `consent === true` the protocol may deduct VPFI from the user's
- * personal escrow at settlement to pay the discounted fee share. Discount
- * size scales with the escrow-held VPFI balance per the Phase-1 tier table:
+ * personal vault at settlement to pay the discounted fee share. Discount
+ * size scales with the vault-held VPFI balance per the Phase-1 tier table:
  *
  *   - T0 (&lt; 100 VPFI)     →  0% discount
  *   - T1 (≥ 100)             → 10% discount

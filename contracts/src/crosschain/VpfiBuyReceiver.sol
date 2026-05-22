@@ -117,7 +117,7 @@ contract VpfiBuyReceiver is
     event ReconciliationWatchdogToggled(bool enabled);
 
     /// @notice A BUY_REQUEST was processed and the VPFI delivery dispatched.
-    /// @custom:event-category state-change/escrow-mutation
+    /// @custom:event-category state-change/vault-mutation
     event BridgedBuyProcessed(
         uint64 indexed requestId,
         uint256 indexed sourceChainId,
@@ -150,7 +150,7 @@ contract VpfiBuyReceiver is
     );
 
     /// @notice Owner re-dispatched a previously stuck leg-2 delivery.
-    /// @custom:event-category state-change/escrow-mutation
+    /// @custom:event-category state-change/vault-mutation
     event StuckDeliveryRetried(
         uint64 indexed requestId,
         uint256 indexed sourceChainId,

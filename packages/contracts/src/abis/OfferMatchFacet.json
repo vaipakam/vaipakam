@@ -187,11 +187,6 @@
   },
   {
     "type": "error",
-    "name": "EscrowWithdrawFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "FunctionDisabled",
     "inputs": [
       {
@@ -250,6 +245,11 @@
   {
     "type": "error",
     "name": "ReentrancyGuardReentrantCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultWithdrawFailed",
     "inputs": []
   }
 ]

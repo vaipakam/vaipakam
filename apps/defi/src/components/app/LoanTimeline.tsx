@@ -69,8 +69,8 @@ const KIND_LABEL_KEY: Record<ActivityEventKind, string> = {
   StakingRewardsClaimed: 'loanTimeline.stakingRewardsClaimed',
   InteractionRewardsClaimed: 'loanTimeline.interactionRewardsClaimed',
   VPFIPurchasedWithETH: 'loanTimeline.vpfiPurchased',
-  VPFIDepositedToEscrow: 'loanTimeline.vpfiDeposited',
-  VPFIWithdrawnFromEscrow: 'loanTimeline.vpfiWithdrawn',
+  VPFIDepositedToVault: 'loanTimeline.vpfiDeposited',
+  VPFIWithdrawnFromVault: 'loanTimeline.vpfiWithdrawn',
 };
 
 /** Per-kind icon tint. Matches the Activity-page severity scheme. */
@@ -97,8 +97,8 @@ const KIND_ACCENT: Record<ActivityEventKind, 'success' | 'failure' | 'info' | 'w
   StakingRewardsClaimed: 'success',
   InteractionRewardsClaimed: 'success',
   VPFIPurchasedWithETH: 'success',
-  VPFIDepositedToEscrow: 'success',
-  VPFIWithdrawnFromEscrow: 'info',
+  VPFIDepositedToVault: 'success',
+  VPFIWithdrawnFromVault: 'info',
 };
 
 function iconForKind(kind: ActivityEventKind) {

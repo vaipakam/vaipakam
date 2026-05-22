@@ -22,7 +22,7 @@ import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
  *      Storage is accessed via a specific slot to avoid collisions.
  *      Includes enums for asset types, liquidity, offer types, and loan statuses.
  *      Structs for Offers and Loans store key details.
- *      The Storage struct holds mappings and counters for offers, loans, escrows, and asset liquidity.
+ *      The Storage struct holds mappings and counters for offers, loans, vaults, and asset liquidity.
  *      No functions beyond storage access; all logic in facets.
  *      Expand for future phases (e.g., cross-chain, governance).
  *
@@ -498,13 +498,13 @@ library LibVaipakam {
     int256 constant ORACLE_USD_PEG_1E8 = 1e8; // $1 scaled to 8 decimals
 
     // ─── VPFI Discount Tier Table (docs/TokenomicsTechSpec.md §6) ────────
-    // Tiered fee discount gated purely by the user's escrow VPFI balance.
+    // Tiered fee discount gated purely by the user's vault VPFI balance.
     // A single platform-level consent flag (vpfiDiscountConsent) governs
     // both borrower Loan Initiation Fee and lender Yield Fee discounts.
     // Tier resolution is a pure balance check — no Chainlink dependency —
     // so the tier gate is deterministic and cheap to compute.
     //
-    // Tier | Escrow VPFI range       | Discount | Lender Yield | Borrower Init
+    // Tier | Vault VPFI range       | Discount | Lender Yield | Borrower Init
     //   0  | < 100                   |     0%   |       1%     |        0.1%
     //   1  | 100 ≤ x < 1,000         |    10%   |     0.9%     |       0.09%
     //   2  | 1,000 ≤ x < 5,000       |    15%   |    0.85%     |      0.085%
@@ -538,7 +538,7 @@ library LibVaipakam {
     // Reward base for interaction daily pool — multiplied by the
     // schedule's annualRate and `dt / 365` to size each day's emission.
     uint256 constant VPFI_INITIAL_MINT = 23_000_000 * 1e18;
-    // APR paid on escrow-held VPFI (spec §7). In BPS, applied as
+    // APR paid on vault-held VPFI (spec §7). In BPS, applied as
     //   increment_1e18 = APR_BPS * 1e18 * dt / (BASIS_POINTS * SECONDS_PER_YEAR)
     uint256 constant VPFI_STAKING_APR_BPS = 500; // 5%
     // Max days walked in a single claimInteractionRewards() call — bounds
@@ -775,14 +775,14 @@ library LibVaipakam {
         // Flat per-loan-side notification fee, denominated in the
         // ACTIVE NUMERAIRE (1e18 scaled — USD by post-deploy default;
         // whatever governance has rotated to otherwise). Charged in
-        // VPFI from the user's escrow at the moment the off-chain
+        // VPFI from the user's vault at the moment the off-chain
         // hf-watcher fires the FIRST notification on a PaidPush-tier
         // subscription for that loan-side. Zero (default) means use
         // the library constant `NOTIFICATION_FEE_DEFAULT` (2.0
         // numeraire-units); set via `ConfigFacet.setNotificationFee`.
         // Bounded `[MIN_NOTIFICATION_FEE_FLOOR, MAX_NOTIFICATION_FEE_CEIL]`
         // at the setter so a misfire can't lock users out OR drain
-        // their escrows. The fee → VPFI math is anchored end-to-end
+        // their vaults. The fee → VPFI math is anchored end-to-end
         // in the active numeraire: `getAssetPrice(WETH)` returns
         // ETH/numeraire post-B1, multiplied by the fixed
         // `VPFI_PER_ETH_FIXED_PHASE1` peg gives a synthetic
@@ -1268,7 +1268,7 @@ library LibVaipakam {
         // from the lender's current accumulator and dividing by loan
         // duration yields the time-weighted average discount BPS — the
         // rate the lender actually earned over the loan's full lifetime.
-        // Defeats last-minute escrow top-ups that used to steal the full
+        // Defeats last-minute vault top-ups that used to steal the full
         // tier-4 discount for a loan the lender was mostly at tier-1 on.
         uint256 lenderDiscountAccAtInit;
         // Slot 22 — Borrower-side mirror of the lender snapshot above
@@ -1300,7 +1300,7 @@ library LibVaipakam {
         // `NOTIF_BILLER_ROLE` — held by the off-chain hf-watcher) the
         // first time a paid-tier (Push-Protocol) notification fires
         // for the corresponding side of this loan. Once set, the user's
-        // VPFI escrow has already been debited the
+        // VPFI vault has already been debited the
         // `cfgNotificationFee()`-equivalent amount in VPFI,
         // routed directly to treasury (no Diamond custody — see
         // `LibNotificationFee.bill` for the routing). Idempotent: the
@@ -1493,7 +1493,7 @@ library LibVaipakam {
     /**
      * @notice Per-user VPFI discount accumulator. Drives the time-weighted
      *         lender yield-fee discount (docs/GovernanceConfigDesign.md §5.2a).
-     *         Updated on every escrow-VPFI balance mutation and at every
+     *         Updated on every vault-VPFI balance mutation and at every
      *         offer-accept / yield-fee settlement. Ordering invariant: the
      *         accompanying `rollupUserDiscount(user, postMutationBalance)`
      *         call runs at the mutation site; the closing period carries
@@ -1522,7 +1522,7 @@ library LibVaipakam {
      *
      * @dev Lifecycle:
      *        init (VPFI path):      vpfiHeld = full LIF-equivalent VPFI
-     *                               pulled from borrower escrow to the
+     *                               pulled from borrower vault to the
      *                               Diamond; rebateAmount = 0
      *        proper settlement:     rebateAmount = vpfiHeld × avgBps / BPS
      *                               (Diamond sends treasury share to
@@ -1543,7 +1543,7 @@ library LibVaipakam {
 
     /**
      * @notice Main storage struct for Vaipakam.
-     * @dev Holds all global data: offers, loans, IDs, escrows, asset configs.
+     * @dev Holds all global data: offers, loans, IDs, vaults, asset configs.
      *      Accessed via storageSlot function.
      *
      *      APPEND-ONLY POST-LAUNCH: after the first mainnet deployment, fields
@@ -1551,7 +1551,7 @@ library LibVaipakam {
      *      or change the type of an existing field. Never remove a field — if
      *      a field becomes unused, mark it `// DEPRECATED` and leave the slot
      *      reserved (see `liquidAssets` for the precedent). Violating this
-     *      rule corrupts every live loan, offer, and user escrow in storage.
+     *      rule corrupts every live loan, offer, and user vault in storage.
      *      Pre-launch: free to reorder at will.
      *
      *      ── Storage invariants (must hold across every tx boundary) ────────
@@ -1600,7 +1600,7 @@ library LibVaipakam {
         uint256 nextOfferId;
         uint256 nextLoanId;
         uint256 nextTokenId; // For Vaipakam NFTs
-        address vaipakamEscrowTemplate; // Shared UUPS implementation
+        address vaipakamVaultTemplate; // Shared UUPS implementation
         address treasury; // Configurable treasury address
         address zeroExProxy; // 0x proxy for liquidations
         address allowanceTarget; // allowance target for 0x proxy protocol
@@ -1675,7 +1675,7 @@ library LibVaipakam {
         mapping(uint256 => uint256) loanToSaleOfferId;
         mapping(uint256 => Offer) offers;
         mapping(uint256 => Loan) loans;
-        mapping(address => address) userVaipakamEscrows; // Per-user proxy addresses
+        mapping(address => address) userVaipakamVaults; // Per-user proxy addresses
         mapping(address => RiskParams) assetRiskParams;
         mapping(address => uint256) treasuryBalances;
         // AnalyticalGettersDesign §3.2 / D5 — per-asset, per-UTC-day
@@ -1716,9 +1716,9 @@ library LibVaipakam {
         mapping(uint256 => uint256) saleOfferToLoanId; // saleOfferId => loanId for lender sale completion
         mapping(uint256 => uint256) offerIdToLoanId; // offerId => loanId (set at loan initiation)
         mapping(uint256 => uint256) loanToOffsetOfferId; // loanId => offset offerId (borrower preclose Option 3)
-        uint256 currentEscrowVersion; // incremented on each implementation upgrade
-        uint256 mandatoryEscrowVersion; // minimum version required; 0 = no mandatory upgrade
-        mapping(address => uint256) escrowVersion; // user => version when their proxy was last upgraded
+        uint256 currentVaultVersion; // incremented on each implementation upgrade
+        uint256 mandatoryVaultVersion; // minimum version required; 0 = no mandatory upgrade
+        mapping(address => uint256) vaultVersion; // user => version when their proxy was last upgraded
         uint256 kycTier0ThresholdNumeraire; // Tier0 max (default 1_000 * 1e18)
         uint256 kycTier1ThresholdNumeraire; // Tier1 max (default 10_000 * 1e18)
         mapping(address => bool) keeperAccessEnabled; // User-level master switch — quick "pause all keepers for me" (default: false)
@@ -1835,31 +1835,31 @@ library LibVaipakam {
         // (docs/TokenomicsTechSpec.md §8a) the per-wallet cap is now
         // enforced per origin chain.
         mapping(address => uint256) vpfiFixedRateSoldTo_LEGACY_DO_NOT_USE;
-        // Platform-level opt-in to use escrowed VPFI for protocol fee
+        // Platform-level opt-in to use vaulted VPFI for protocol fee
         // discounts. One common consent governs both the borrower Loan
         // Initiation Fee discount and the lender Yield Fee discount. Per
         // spec (docs/TokenomicsTechSpec.md §6 and §9, README §"Treasury and
         // Revenue Sharing"): offer-level or loan-level toggles are not
         // required once this flag is true. When false, all fee flows revert
         // to the default non-discounted path; when true, the discount is
-        // applied automatically whenever the escrow holds enough VPFI and
+        // applied automatically whenever the vault holds enough VPFI and
         // the asset leg is eligible (liquidity + oracle availability).
         mapping(address => bool) vpfiDiscountConsent;
         // ─── VPFI Staking Rewards (spec §7) ─────────────────────────────
-        // Escrow-held VPFI is automatically "staked" and earns 5% APR from
+        // Vault-held VPFI is automatically "staked" and earns 5% APR from
         // VPFI_STAKING_POOL_CAP. reward-per-token time-weighted accrual —
-        // every VPFI escrow balance mutation (deposit, discount deduction,
-        // withdrawVPFIFromEscrow) MUST call LibStakingRewards.updateUser
-        // BEFORE mutating the escrow balance, passing the user's current
+        // every VPFI vault balance mutation (deposit, discount deduction,
+        // withdrawVPFIFromVault) MUST call LibStakingRewards.updateUser
+        // BEFORE mutating the vault balance, passing the user's current
         // staked balance as the checkpoint input.
         //
         // rewardPerTokenStored is VPFI-per-staked-VPFI scaled by 1e18.
         // totalStakedVPFI is the sum of every user's `userStakedVPFI`.
         // stakingPoolPaidOut is monotone — claims are capped so this
         // never exceeds VPFI_STAKING_POOL_CAP. userStakedVPFI mirrors the
-        // user's actual escrow VPFI balance; it is authoritative for the
+        // user's actual vault VPFI balance; it is authoritative for the
         // accrual math and decouples the reward bookkeeping from any
-        // escrow-side balance read.
+        // vault-side balance read.
         uint256 stakingRewardPerTokenStored;
         uint256 stakingLastUpdateTime;
         uint256 totalStakedVPFI;
@@ -2101,7 +2101,7 @@ library LibVaipakam {
         //   • same for activeOfferIdsListPos.
         //   • userSeen[u] == true ⇒ u contributed to uniqueUserCount exactly
         //     once (idempotent _markUserSeen).
-        //   • nftsInEscrowByCollection[c] == #{active loan legs valued in c
+        //   • nftsInVaultByCollection[c] == #{active loan legs valued in c
         //     where the leg asset type is not ERC20}.
         //   • loanIdByPositionTokenId[tokenId] points at the loan id whose
         //     lender- or borrower-position NFT has this tokenId; 0 if no
@@ -2123,7 +2123,7 @@ library LibVaipakam {
         /// @dev Σ interestRateBps across every loan ever initiated.
         ///      Divided by totalLoansEverCreated to yield averageAPR.
         uint256 interestRateBpsSum;
-        /// @dev T-032 — cumulative VPFI debited from user escrows and
+        /// @dev T-032 — cumulative VPFI debited from user vaults and
         ///      routed to treasury via `LoanFacet.markNotifBilled`.
         ///      Never decremented; the operator monitors this for
         ///      anomaly detection (a compromised NOTIF_BILLER_ROLE
@@ -2143,7 +2143,7 @@ library LibVaipakam {
         ///      leg increments the principal collection; NFT collateral
         ///      leg increments the collateral collection. Both can
         ///      increment the same collection when the legs share it.
-        mapping(address => uint256) nftsInEscrowByCollection;
+        mapping(address => uint256) nftsInVaultByCollection;
         /// @dev Reverse map from Vaipakam position NFT id → loan id.
         ///      Populated at loan initiation for both lender and borrower
         ///      position NFTs. Stays set after the loan settles so
@@ -2502,22 +2502,22 @@ library LibVaipakam {
         // acknowledgment. Incremented on every successful
         // `recoverStuckERC20` call so a previously-signed payload
         // can't be re-submitted. See
-        // `docs/DesignsAndPlans/EscrowStuckRecoveryDesign.md` §5.
+        // `docs/DesignsAndPlans/VaultStuckRecoveryDesign.md` §5.
         mapping(address => uint256) recoveryNonce;
-        // Per-user "this escrow declared a sanctioned source via the
+        // Per-user "this vault declared a sanctioned source via the
         // recovery flow" mapping. When set to a non-zero address, the
         // sanctions check delegates to that source's CURRENT oracle
         // status — so the ban auto-unlocks if the address is later
         // de-listed without any on-chain action by us. Zero ⇒ no
         // recovery-induced ban.
-        mapping(address => address) escrowBannedSource;
-        // ── Escrow protocol-tracked balance counter (T-051 / T-054) ──
+        mapping(address => address) vaultBannedSource;
+        // ── Vault protocol-tracked balance counter (T-051 / T-054) ──
         // Per-(user, token) running counter of ERC-20 amount the
         // protocol has deposited into / withdrawn from the user's
-        // escrow proxy. Incremented by `EscrowFactoryFacet.escrowDepositERC20`
-        // (and the counter-only sibling `recordEscrowDepositERC20`,
+        // vault proxy. Incremented by `VaultFactoryFacet.vaultDepositERC20`
+        // (and the counter-only sibling `recordVaultDepositERC20`,
         // used after Permit2 pulls); decremented by
-        // `escrowWithdrawERC20`. Every protocol-side ERC-20 deposit
+        // `vaultWithdrawERC20`. Every protocol-side ERC-20 deposit
         // is required to flow through one of those entry points so
         // the counter stays correct.
         //
@@ -2525,7 +2525,7 @@ library LibVaipakam {
         //
         //   1. The Asset Viewer / external integrations that want to
         //      display only protocol-managed balances. They render
-        //      `min(balanceOf(escrow, token), protocolTrackedEscrowBalance[user][token])`
+        //      `min(balanceOf(vault, token), protocolTrackedVaultBalance[user][token])`
         //      so unsolicited dust someone pushed in directly via
         //      `IERC20.transfer` is structurally hidden from the UI.
         //
@@ -2545,7 +2545,7 @@ library LibVaipakam {
         // matching deposit — that's an accounting bug somewhere upstream
         // and we want it to revert loudly rather than silently rolling
         // negative.
-        mapping(address => mapping(address => uint256)) protocolTrackedEscrowBalance;
+        mapping(address => mapping(address => uint256)) protocolTrackedVaultBalance;
         // ── Depth-tiered LTV (Piece B) — Predominantly Available Assets ─
         // Per-chain list of the "predominantly available" quote tokens
         // the liquidity check probes an asset's pools against — the
@@ -2795,7 +2795,7 @@ library LibVaipakam {
         // uses this in place of msg.sender for sanctions/country/KYC
         // checks + the borrower-resolution branch + the borrower
         // collateral pull (which is SKIPPED when override active
-        // because the borrower already escrowed at borrower-offer
+        // because the borrower already vaulted at borrower-offer
         // create time).
         address counterparty;
         // matcher: receives the 1% LIF kickback. Same as msg.sender on
@@ -4402,7 +4402,7 @@ library LibVaipakam {
     /// with `ProfileFacet.SanctionedAddress(who)`). Any entry point
     /// that creates new state or routes funds TO the caller:
     ///   - `OfferFacet.createOffer` / `acceptOffer` (creator + acceptor checks)
-    ///   - `EscrowFactoryFacet.getOrCreateUserEscrow` (no escrow ever
+    ///   - `VaultFactoryFacet.getOrCreateUserVault` (no vault ever
     ///     exists for a sanctioned wallet)
     ///   - `ClaimFacet.claimAsLender` / `claimAsBorrower` (funds OUT)
     ///   - `VPFIDiscountFacet.buyVPFI` (token purchase)
@@ -4433,17 +4433,17 @@ library LibVaipakam {
     /// interest is the pattern OFAC General Licenses authorize for
     /// "wind-down of contracts entered into prior to designation".
     /// The sanctioned party's residual interest (collateral surplus
-    /// after debt + bonus) stays frozen in their own escrow — Tier-1
+    /// after debt + bonus) stays frozen in their own vault — Tier-1
     /// blocks `claimAsBorrower`, so no value flows to the sanctioned
     /// wallet. Lender (unsanctioned) receives principal+interest;
     /// liquidator (must be unsanctioned, Tier-1 blocks the bonus)
     /// receives the 3% bonus. Sanctioned residue is held but not
     /// transferred to any other address.
     ///
-    /// ─── What about funds frozen in a sanctioned wallet's escrow? ───
+    /// ─── What about funds frozen in a sanctioned wallet's vault? ───
     ///
     /// The protocol does not seize, redirect, or release these funds.
-    /// They remain in the sanctioned wallet's own escrow and become
+    /// They remain in the sanctioned wallet's own vault and become
     /// claimable again if the oracle delists the address. This is
     /// the same behaviour as Circle's USDC blocklist — frozen, not
     /// seized. The frontend communicates this to a sanctioned wallet
@@ -4460,7 +4460,7 @@ library LibVaipakam {
         // them as sanctioned for as long as that source IS still
         // sanctioned. Source-tracked rather than persistent so the
         // ban auto-unlocks if the underlying address is de-listed.
-        address bannedSource = storageSlot().escrowBannedSource[who];
+        address bannedSource = storageSlot().vaultBannedSource[who];
         if (bannedSource != address(0)) {
             try ISanctionsList(oracle).isSanctioned(bannedSource) returns (bool sourceFlagged) {
                 if (sourceFlagged) return true;
@@ -4503,34 +4503,34 @@ library LibVaipakam {
     }
 
     /// @notice Internal accountant for protocol-deposited ERC-20
-    ///         tokens in a user's escrow. Increments the per-(user,
+    ///         tokens in a user's vault. Increments the per-(user,
     ///         token) counter that the Asset Viewer and the future
     ///         stuck-token recovery flow read.
     /// @dev    Library-internal helper called from
-    ///         `EscrowFactoryFacet.escrowDepositERC20` and
-    ///         `recordEscrowDepositERC20` (the counter-only sibling
+    ///         `VaultFactoryFacet.vaultDepositERC20` and
+    ///         `recordVaultDepositERC20` (the counter-only sibling
     ///         used after Permit2 pulls). Solidity 0.8+ checked
     ///         arithmetic protects against overflow.
-    function recordEscrowDeposit(
+    function recordVaultDeposit(
         address user,
         address token,
         uint256 amount
     ) internal {
-        storageSlot().protocolTrackedEscrowBalance[user][token] += amount;
+        storageSlot().protocolTrackedVaultBalance[user][token] += amount;
     }
 
     /// @notice Internal accountant for protocol-withdrawn ERC-20
-    ///         tokens from a user's escrow.
-    /// @dev    Called from `EscrowFactoryFacet.escrowWithdrawERC20`.
+    ///         tokens from a user's vault.
+    /// @dev    Called from `VaultFactoryFacet.vaultWithdrawERC20`.
     ///         Underflow reverts — a decrement greater than the
     ///         tracked balance means a withdraw fired without a
     ///         matching deposit somewhere, which is an accounting
     ///         bug upstream that we want to surface loudly.
-    function recordEscrowWithdraw(
+    function recordVaultWithdraw(
         address user,
         address token,
         uint256 amount
     ) internal {
-        storageSlot().protocolTrackedEscrowBalance[user][token] -= amount;
+        storageSlot().protocolTrackedVaultBalance[user][token] -= amount;
     }
 }

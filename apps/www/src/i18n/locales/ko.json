@@ -100,7 +100,7 @@
     "keepers": "키퍼",
     "governanceGroupLabel": "거버넌스",
     "protocolConsole": "프로토콜 콘솔",
-    "escrow": "내 Vaipakam Vault"
+    "vault": "내 Vaipakam Vault"
   },
   "dataRights": {
     "title": "데이터 권리 (GDPR / UK GDPR / CCPA)",
@@ -387,7 +387,7 @@
     "buying": "구매 중…",
     "approving": "승인 중…",
     "approvingVpfi": "VPFI 승인 중…",
-    "depositToEscrow": "Vault에 예치",
+    "depositToVault": "Vault에 예치",
     "depositing": "예치 중…",
     "unstakeToWallet": "지갑으로 인출",
     "unstaking": "인출 중…",
@@ -395,7 +395,7 @@
     "depositFailed": "예치 실패",
     "unstakeFailed": "인출 실패",
     "buyTimedOut": "구매 시간 초과 — 자금 반환됨",
-    "escrowBalanceZero": "Vault VPFI 잔액이 0입니다 — 먼저 VPFI를 예치하세요."
+    "vaultBalanceZero": "Vault VPFI 잔액이 0입니다 — 먼저 VPFI를 예치하세요."
   },
   "claimCenter": {
     "connectTitle": "지갑을 연결하세요",
@@ -819,8 +819,8 @@
     "statP2pLabel": "직접 대출",
     "statNftValue": "NFT",
     "statNftLabel": "포지션 추적",
-    "statEscrowValue": "1:1",
-    "statEscrowLabel": "분리형 Vault",
+    "statVaultValue": "1:1",
+    "statVaultLabel": "분리형 Vault",
     "demoLendTitle": "1,000 USDC 대출",
     "demoLendMeta": "5% APR · 30일 · ETH 담보",
     "demoLendStatus": "활성",
@@ -839,8 +839,8 @@
     "p2pDesc": "ERC-20 토큰에 대해 금리, 담보 유형, 대출 기간 등 사용자 지정 조건으로 오퍼를 생성하거나 수락합니다. 중간 풀이 존재하지 않습니다.",
     "nftTitle": "NFT 임대(ERC-4907)",
     "nftDesc": "ERC-721 및 ERC-1155 NFT를 일일 요금으로 임대합니다. NFT는 안전하게 Vault에 보관된 상태로 차입자가 사용 권한을 얻습니다.",
-    "escrowTitle": "사용자별 분리형 Vault",
-    "escrowDesc": "모든 사용자에게 전용 UUPS 업그레이드 가능 Vault 프록시가 제공됩니다. 자금이 혼합되지 않으며, 자산은 항상 분리되어 보관됩니다.",
+    "vaultTitle": "사용자별 분리형 Vault",
+    "vaultDesc": "모든 사용자에게 전용 UUPS 업그레이드 가능 Vault 프록시가 제공됩니다. 자금이 혼합되지 않으며, 자산은 항상 분리되어 보관됩니다.",
     "nftPositionTitle": "NFT 기반 포지션 추적",
     "nftPositionDesc": "모든 오퍼와 대출은 온체인 메타데이터를 갖춘 고유한 Vaipakam NFT를 발행합니다. 어떤 마켓플레이스에서도 소유권 증명, 자금 청구, 상태 추적이 가능합니다.",
     "liquidityTitle": "유동·비유동 자산",
@@ -884,8 +884,8 @@
     "subtitle": "스마트 컨트랙트 아키텍처부터 청산 메커니즘까지, 모든 설계 결정은 자산의 안전을 최우선으로 합니다. 아래 각 카드는 이를 뒷받침하는 온체인 산출물에 연결되어 있어 표준을 직접 검증할 수 있습니다.",
     "diamondTitle": "Diamond Standard(EIP-2535)",
     "diamondDesc": "모듈러 프록시 아키텍처입니다. 프로토콜을 중단하지 않고 개별 facet을 업그레이드할 수 있으며, 모든 호출은 단일 Diamond 진입점을 통해 라우팅됩니다.",
-    "escrowTitle": "사용자별 분리형 Vault",
-    "escrowDesc": "모든 사용자에게 전용 UUPS 프록시 Vault가 제공되며 자금은 혼합되지 않습니다. 필수 Vault 업그레이드 시 사용자가 업그레이드를 완료할 때까지 상호작용이 차단됩니다.",
+    "vaultTitle": "사용자별 분리형 Vault",
+    "vaultDesc": "모든 사용자에게 전용 UUPS 프록시 Vault가 제공되며 자금은 혼합되지 않습니다. 필수 Vault 업그레이드 시 사용자가 업그레이드를 완료할 때까지 상호작용이 차단됩니다.",
     "transparencyTitle": "온체인 투명성",
     "transparencyDesc": "모든 오퍼, 대출, 상태 변경이 온체인에 기록됩니다. Vaipakam NFT는 포지션 소유권의 검증 가능한 증명 역할을 합니다.",
     "slippageTitle": "슬리피지·청산 안전성",
@@ -972,9 +972,9 @@
         "li1": "<s>ERC-20 대출:</s> 원금은 임의의 ERC-20(USDC, ETH, WBTC 등)이며, 담보는 임의의 ERC-20 또는 임의의 NFT일 수 있습니다.",
         "li2": "<s>NFT 임대:</s> 임대 대상 NFT가 원금이 되고 담보는 ERC-20입니다. NFT의 ERC-4907 네이티브 지원은 선택 사항이며, 사용자별 Vault 래퍼가 어떤 경우에도 통일된 <c>userOf</c> / <c>userExpires</c> / <c>userQuantity</c> 인터페이스를 노출합니다."
       },
-      "escrow": {
+      "vault": {
         "q": "사용자별 Vault는 어떻게 동작하나요?",
-        "a1": "각 사용자는 자신만의 UUPS 업그레이드 가능 프록시 Vault를 가지며, 첫 사용 시 <c>EscrowFactoryFacet</c>(클론 팩토리 패턴)에 의해 배포됩니다. 자산이 다른 사람의 자산과 섞이는 일은 없습니다.",
+        "a1": "각 사용자는 자신만의 UUPS 업그레이드 가능 프록시 Vault를 가지며, 첫 사용 시 <c>VaultFactoryFacet</c>(클론 팩토리 패턴)에 의해 배포됩니다. 자산이 다른 사람의 자산과 섞이는 일은 없습니다.",
         "a2": "Diamond는 Vault 간 자산 이동을 조정하지만, 청구 권한은 Vaipakam 포지션 NFT에 묶여 있습니다. 따라서 Vault의 보관은 온체인 포지션 상태에 의해 엄격히 제한됩니다."
       },
       "default": {
@@ -1048,12 +1048,12 @@
         "q": "VPFI 할인은 어떻게 동작하나요?",
         "a1": "Vaipakam Vault에 보유한 VPFI는 보유자를 자동으로 할인 등급에 배치합니다. 한 번의 플랫폼 수준 동의로 차입자 측(개시 수수료)과 대여자 측(이자 수수료) 양쪽이 모두 적용되며, 할인된 수수료는 Vault의 VPFI에서 자동 차감됩니다. 할인 경로에서는 차입자가 원금 전액을 받고, 대여자는 이자 전액을 그대로 보유합니다.",
         "tableTier": "등급",
-        "tableEscrow": "Vault 내 VPFI",
+        "tableVault": "Vault 내 VPFI",
         "tableDiscount": "할인",
         "tableInitiation": "실효 개시 수수료",
         "tableYield": "실효 이자 수수료",
-        "row3Escrow": "≥ 5,000, ≤ 20,000",
-        "row4Escrow": "> 20,000"
+        "row3Vault": "≥ 5,000, ≤ 20,000",
+        "row4Vault": "> 20,000"
       },
       "vpfi-rewards": {
         "q": "VPFI 보상은 어떻게 받을 수 있나요?",
@@ -1104,10 +1104,10 @@
     "sanctionsMatchBody": "온체인 제재 오라클(Chainalysis)은 현재 이 주소를 등재하고 있습니다. 오퍼 생성 또는 오퍼 수락 트랜잭션은 프로토콜 계층에서 되돌려집니다. 잘못된 일치인 경우 Chainalysis 지원에 문의하십시오 — Vaipakam은 자체 제재 목록을 유지하지 않습니다.",
     "sanctionsLabelWallet": "연결된 지갑",
     "sanctionsLabelOfferCreator": "오퍼 생성자",
-    "escrowUpgradeBody": "Vault 업그레이드 필요 — Vault는 v{{userVersion}}이며, 필수 최소 버전은 v{{mandatoryVersion}}(최신 v{{currentVersion}})입니다. 업그레이드 전까지 Diamond 흐름은 되돌려집니다.",
-    "escrowUpgrading": "업그레이드 중…",
-    "escrowUpgradeButton": "Vault 업그레이드",
-    "escrowTxPrefix": "tx",
+    "vaultUpgradeBody": "Vault 업그레이드 필요 — Vault는 v{{userVersion}}이며, 필수 최소 버전은 v{{mandatoryVersion}}(최신 v{{currentVersion}})입니다. 업그레이드 전까지 Diamond 흐름은 되돌려집니다.",
+    "vaultUpgrading": "업그레이드 중…",
+    "vaultUpgradeButton": "Vault 업그레이드",
+    "vaultTxPrefix": "tx",
     "unsupportedDiamondPending": "Phase 1 Diamond 대기 중",
     "unsupportedNetwork": "지원되지 않는 네트워크",
     "unsupportedBody": "{{state}} (chainId {{chainId}}). Vaipakam은 지원되는 각 네트워크에서 별도의 Diamond로 운영됩니다 — 현재 운영 중: {{liveList}}.",
@@ -1245,8 +1245,8 @@
     "mirrorTip": "미러 체인 — 이 체인의 VPFI는 정규 공급의 1:1 표현입니다. 브리지 전송이 도착하면 OFT가 여기에서 토큰을 발행하고 전송이 떠나면 소각하므로, 미러 잔액은 항상 정규 체인 잠금에 의해 뒷받침됩니다.",
     "notRegistered": "VPFI는 아직 {{chain}}의 Diamond에 등록되지 않았습니다. 관리자가 setVPFIToken을 호출하면 잔액과 활동이 여기에 표시됩니다.",
     "walletBalance": "지갑 VPFI 잔액",
-    "escrowBalance": "Vault VPFI 잔액",
-    "escrowTooltip": "이 체인의 사용자별 Vault에 현재 스테이킹된 VPFI. 차입자 수수료 할인 Tier에 산입됩니다.",
+    "vaultBalance": "Vault VPFI 잔액",
+    "vaultTooltip": "이 체인의 사용자별 Vault에 현재 스테이킹된 VPFI. 차입자 수수료 할인 Tier에 산입됩니다.",
     "shareCirculating": "유통 비중",
     "shareTooltip": "이 체인의 VPFI 공급에 대한 유효 소유권 — 지갑 잔액과 Vault 잠금 잔액을 순환량으로 나눈 값. Vault VPFI는 여전히 사용자 소유이며, 티어 할인 / {{apr}}% APR을 위해 잠겨 있을 뿐입니다.",
     "circulatingThisChain": "유통량(이 체인)",
@@ -1256,14 +1256,14 @@
     "treasuryMintDestination": "트레저리(발행 대상)",
     "yourActivity": "VPFI 활동",
     "noActivity": "아직 {{chain}}에서 이 지갑과 관련된 VPFI 전송이 없습니다. 사용자 대상 분배(보상, 스테이킹)는 이후 단계에서 도입됩니다.",
-    "escrowCountsAsStaked": "Vault VPFI는 스테이킹된 것으로 간주됩니다 ({{apr}}% APR)"
+    "vaultCountsAsStaked": "Vault VPFI는 스테이킹된 것으로 간주됩니다 ({{apr}}% APR)"
   },
   "buyVpfiCards": {
     "discountStatusTitle": "VPFI 할인 상태",
     "currentTier": "현재 Tier",
     "noDiscountYet": "아직 할인 없음",
-    "escrowVpfi": "Vault VPFI",
-    "escrowCountsAsStaked": "Vault VPFI는 스테이킹으로 산입됩니다({{apr}}% APR)",
+    "vaultVpfi": "Vault VPFI",
+    "vaultCountsAsStaked": "Vault VPFI는 스테이킹으로 산입됩니다({{apr}}% APR)",
     "statusLabel": "상태",
     "inactiveOff": "비활성 · 할인 동의 OFF",
     "inactiveBelowTier1": "비활성 · Tier 1 미만(Vault {{tier1Min}} VPFI)",
@@ -1274,7 +1274,7 @@
     "enableSharedConsent": "<dashboardLink>Dashboard</dashboardLink>에서 공유 할인 동의를 활성화하세요.",
     "depositMore": "Tier {{tier}}({{discount}})에 도달하려면 Vault에 {{amount}} VPFI를 추가로 입금하십시오.",
     "tierColTier": "Tier",
-    "tierColEscrow": "Vault VPFI",
+    "tierColVault": "Vault VPFI",
     "tierColDiscount": "할인",
     "tierN": "Tier {{tier}}",
     "tier1": "Tier 1",
@@ -1302,13 +1302,13 @@
     "gasReserveTooltip": "구매 트랜잭션이 전송될 수 있도록 지갑 잔액에서 소량의 가스 적립금({{reserve}} ETH)을 보류합니다.",
     "capExceeded": "이 금액은 남은 한도를 초과합니다. ETH 입력을 줄이고 다시 시도하십시오.",
     "exceedsBalance": "금액이 지갑 ETH 잔액 {{balance}} ETH를 초과합니다(소량의 가스 적립금이 보류됩니다).",
-    "exceedsEscrowBalance": "금액이 Vault VPFI 잔액 {{balance}} VPFI를 초과합니다.",
+    "exceedsVaultBalance": "금액이 Vault VPFI 잔액 {{balance}} VPFI를 초과합니다.",
     "buyButton": "VPFI 구매",
     "depositTitle": "Vault에 VPFI 입금",
     "depositSubtitle": "모든 체인에서 필요 — 정규 체인 포함.",
     "depositSpecNote": "사양에 따라 VPFI를 Vault로 이전하는 것은 항상 사용자의 명시적 작업입니다. 프로토콜은 구매 또는 브리지 후 Vault를 자동으로 충전하지 않습니다.",
     "walletVpfiBalance": "지갑 VPFI 잔액",
-    "escrowVpfiBalance": "Vault VPFI 잔액({{chain}})",
+    "vaultVpfiBalance": "Vault VPFI 잔액({{chain}})",
     "depositAmount": "입금할 VPFI 양",
     "useMaxVpfi": "최대({{amount}} VPFI) 사용",
     "depositButton": "Vault에 입금",
@@ -1635,13 +1635,13 @@
       "calloutBody": "By accepting you agree that the borrower must pay each period's accrued interest by the period close. If the borrower misses the period beyond the configured grace window, anyone can trigger a settler that sells just enough collateral to cover the shortfall — possibly affecting the loan's health factor and triggering further liquidation."
     }
   },
-  "escrowAssets": {
+  "vaultAssets": {
     "pageTitle": "내 Vaipakam Vault",
     "pageSubtitle": "프로토콜이 사용자를 대신해 보관하는 토큰입니다. 각 사용자는 별도의 격리된 Vault 프록시를 보유하며, 예치와 인출은 항상 Vaipakam Diamond을 통해 이뤄집니다.",
     "addressCardTitle": "Vault 주소",
     "addressCaption": "프로토콜 내부 보관소 — 자금은 프로토콜을 통해서만 들어오고 나갑니다.",
     "viewOnExplorer": "블록 익스플로러에서 Vault 보기",
-    "noEscrowYet": "아직 Vault가 없습니다. 처음으로 오퍼를 생성하거나 수락할 때 자동으로 생성됩니다.",
+    "noVaultYet": "아직 Vault가 없습니다. 처음으로 오퍼를 생성하거나 수락할 때 자동으로 생성됩니다.",
     "holdingsTitle": "보유 자산",
     "lowToggleShow": "모두 표시 ({{n}}개 숨김)",
     "lowToggleHide": "낮은 잔액 숨기기",
@@ -1659,7 +1659,7 @@
     "connectBody": "Vault 보유 자산을 확인하려면 지갑을 연결하세요.",
     "switchChainBody": "Vault 보유 자산을 확인하려면 지갑을 Vaipakam 지원 체인으로 전환하세요."
   },
-  "escrowRecover": {
+  "vaultRecover": {
     "pageTitle": "고립된 토큰 복구",
     "pageSubtitle": "프로토콜 입금 흐름 외부에서 Vault 프록시에 도착한 ERC-20 토큰을 복구합니다. 먼저 고급 사용자 가이드 섹션을 읽어주세요 — 잘못된 소스를 선언하면 프로토콜의 제재 정책에 따라 Vault가 잠길 수 있습니다.",
     "formTitle": "복구 선언",

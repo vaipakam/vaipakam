@@ -283,7 +283,7 @@ export default function Alerts() {
           // T-032 — same per-event opt-ins as the threshold-save
           // path. See `save()` above for context. Push activation
           // implies the user accepts the per-loan-side notification
-          // fee (charged in VPFI from escrow on the FIRST paid
+          // fee (charged in VPFI from vault on the FIRST paid
           // event fired) — that economic gate is on-chain via
           // `LoanFacet.markNotifBilled` and independent of which
           // event categories are toggled here.
@@ -645,7 +645,7 @@ export default function Alerts() {
           {/* T-032 — Push fee disclosure. Required by the operator's
               cost-pass-through model: the protocol's Push channel pays
               gas to broadcast each notification, so we recoup it from
-              the user's VPFI escrow on the FIRST paid event per loan-
+              the user's VPFI vault on the FIRST paid event per loan-
               side. Telegram is free; this fee is exclusive to Push.
               The displayed fee is governance-tunable
               (`cfgNotificationFee`, in numeraire-units) — we currently render the

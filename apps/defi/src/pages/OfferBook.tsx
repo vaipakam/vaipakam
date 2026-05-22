@@ -154,7 +154,7 @@ interface DiscountPreview {
   consentEnabled: boolean;
   eligible: boolean;
   vpfiRequired: bigint;
-  escrowVpfi: bigint;
+  vaultVpfi: bigint;
   willFire: boolean;
   tier: number;
 }
@@ -872,7 +872,7 @@ export default function OfferBook() {
 
   // Load VPFI-discount preview when the modal opens against a Lender offer
   // (acceptor becomes the borrower — they control the platform consent flag
-  // and must hold the required VPFI in their escrow). Silent on any error so
+  // and must hold the required VPFI in their vault). Silent on any error so
   // the modal still renders with the default fee row.
   useEffect(() => {
     if (!pendingOffer || !address) return;
@@ -887,40 +887,40 @@ export default function OfferBook() {
           id: bigint,
           borrower: string,
         ) => Promise<[boolean, bigint, bigint, bigint]>;
-        getUserEscrow: { staticCall: (user: string) => Promise<string> };
+        getUserVault: { staticCall: (user: string) => Promise<string> };
         getVPFIToken: () => Promise<string>;
         getVPFIBalanceOf: (a: string) => Promise<bigint>;
       };
       try {
-        const [consentEnabled, quote, escrow, token] = await Promise.all([
+        const [consentEnabled, quote, vault, token] = await Promise.all([
           d.getVPFIDiscountConsent(address),
           d.quoteVPFIDiscountFor(pendingOffer.id, address),
-          d.getUserEscrow.staticCall(address),
+          d.getUserVault.staticCall(address),
           d.getVPFIToken(),
         ]);
-        const [eligible, vpfiRequired, escrowFromQuote, tierBig] = quote;
+        const [eligible, vpfiRequired, vaultFromQuote, tierBig] = quote;
         const tier = Number(tierBig);
-        let escrowVpfi = escrowFromQuote;
+        let vaultVpfi = vaultFromQuote;
         if (
-          escrow &&
-          escrow !== ZERO_ADDR &&
+          vault &&
+          vault !== ZERO_ADDR &&
           token &&
           token !== ZERO_ADDR
         ) {
           try {
-            escrowVpfi = await d.getVPFIBalanceOf(escrow);
+            vaultVpfi = await d.getVPFIBalanceOf(vault);
           } catch {
             // fall back to quote-side balance on read failure
           }
         }
         const willFire =
-          consentEnabled && eligible && escrowVpfi >= vpfiRequired && vpfiRequired > 0n;
+          consentEnabled && eligible && vaultVpfi >= vpfiRequired && vpfiRequired > 0n;
         if (!cancelled) {
           setDiscountPreview({
             consentEnabled,
             eligible,
             vpfiRequired,
-            escrowVpfi,
+            vaultVpfi,
             willFire,
             tier,
           });
@@ -944,7 +944,7 @@ export default function OfferBook() {
     // acceptOffer(id, acceptorRiskAndTermsConsent) — fallback consent is
     // mandatory on every offer (liquid or illiquid). When the caller has
     // platform VPFI-discount consent enabled AND holds sufficient VPFI in
-    // escrow (see DiscountPreview), the contract swaps the 0.1%
+    // vault (see DiscountPreview), the contract swaps the 0.1%
     // lending-asset fee for a tiered VPFI deduction (0.09% / 0.085% /
     // 0.08% / 0.076% by tier) — no extra arg.
     void submitAccept(id, true);
@@ -1650,7 +1650,7 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
                       <span className="mono">{Number(discountPreview!.vpfiRequired) / 1e18}</span>{' '}
                       VPFI{' '}
                       <span style={{ opacity: 0.6 }}>
-                        (full {baseFeePctLabel} equivalent paid from your escrow into protocol custody — tier-{tier} rebate up to {tierDiscountPct(tier, protocolConfig)} earned time-weighted, claimable at proper loan close)
+                        (full {baseFeePctLabel} equivalent paid from your vault into protocol custody — tier-{tier} rebate up to {tierDiscountPct(tier, protocolConfig)} earned time-weighted, claimable at proper loan close)
                       </span>
                     </>
                   ) : (
@@ -1700,8 +1700,8 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
 
         {/* VPFI discount preview — only when the acceptor becomes the borrower
             (Lender offer) on an ERC-20 + liquid loan, since the platform
-            consent + VPFI-in-escrow check that governs the tiered discount
-            (0.09% / 0.085% / 0.08% / 0.076% by escrow tier) is driven by the
+            consent + VPFI-in-vault check that governs the tiered discount
+            (0.09% / 0.085% / 0.08% / 0.076% by vault tier) is driven by the
             borrower side. */}
         {isERC20 && offer.offerType === 0 && offer.principalLiquidity === 0 && discountPreview && (
           <div
@@ -1746,7 +1746,7 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
                 <>
                   <strong>Tier-{discountPreview.tier} VPFI path pending vault balance.</strong>{' '}
                   Consent is enabled but your vault holds{' '}
-                  <span className="mono">{Number(discountPreview.escrowVpfi) / 1e18}</span> VPFI —
+                  <span className="mono">{Number(discountPreview.vaultVpfi) / 1e18}</span> VPFI —
                   paying the {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} LIF up front in VPFI (up to {tierDiscountPct(discountPreview.tier, protocolConfig)} rebate at proper close) needs{' '}
                   <span className="mono">{Number(discountPreview.vpfiRequired) / 1e18}</span> VPFI.
                   Top up on{' '}

@@ -100,7 +100,7 @@
     "keepers": "கீப்பர்கள்",
     "governanceGroupLabel": "நிர்வாகம்",
     "protocolConsole": "நெறிமுறை கன்சோல்",
-    "escrow": "உங்கள் Vaipakam Vault"
+    "vault": "உங்கள் Vaipakam Vault"
   },
   "dataRights": {
     "title": "உங்கள் தரவு உரிமைகள் (GDPR / UK GDPR / CCPA)",
@@ -387,7 +387,7 @@
     "buying": "வாங்கப்படுகிறது…",
     "approving": "ஒப்புதல் வழங்கப்படுகிறது…",
     "approvingVpfi": "VPFI ஒப்புதல் வழங்கப்படுகிறது…",
-    "depositToEscrow": "Vault இல் வைப்பு செய்",
+    "depositToVault": "Vault இல் வைப்பு செய்",
     "depositing": "வைப்பு செய்யப்படுகிறது…",
     "unstakeToWallet": "வாலெட்டுக்கு வெளியேற்று",
     "unstaking": "வெளியேற்றப்படுகிறது…",
@@ -395,7 +395,7 @@
     "depositFailed": "வைப்பு தோல்வி",
     "unstakeFailed": "வெளியேற்றம் தோல்வி",
     "buyTimedOut": "வாங்குதல் நேரம் முடிந்தது — நிதி திருப்பி அனுப்பப்பட்டது",
-    "escrowBalanceZero": "உங்கள் Vault VPFI இருப்பு 0 — முதலில் VPFI வைப்பு செய்யவும்."
+    "vaultBalanceZero": "உங்கள் Vault VPFI இருப்பு 0 — முதலில் VPFI வைப்பு செய்யவும்."
   },
   "claimCenter": {
     "connectTitle": "உங்கள் வாலெட்டை இணைக்கவும்",
@@ -819,8 +819,8 @@
     "statP2pLabel": "நேரடி கடன் வழங்கல்",
     "statNftValue": "NFT",
     "statNftLabel": "நிலை கண்காணிப்பு",
-    "statEscrowValue": "1:1",
-    "statEscrowLabel": "Vaipakam Vaults",
+    "statVaultValue": "1:1",
+    "statVaultLabel": "Vaipakam Vaults",
     "demoLendTitle": "1,000 USDC கடன் வழங்கு",
     "demoLendMeta": "5% APR · 30 நாட்கள் · ETH பிணையம்",
     "demoLendStatus": "செயலில்",
@@ -839,8 +839,8 @@
     "p2pDesc": "ERC-20 டோக்கன்களுக்கு வட்டி விகிதம், பிணைய வகை மற்றும் கடன் காலம் போன்ற தனிப்பயன் விதிமுறைகளுடன் வாய்ப்புகளை உருவாக்கலாம் அல்லது ஏற்கலாம். இடையில் எந்தத் தொகுப்பும் இல்லை.",
     "nftTitle": "NFT வாடகை (ERC-4907)",
     "nftDesc": "ERC-721 மற்றும் ERC-1155 NFT-களை தினசரி கட்டண முறையில் வாடகைக்கு வழங்கலாம். NFT பாதுகாப்பாக Vaultவில் இருக்கையில், கடன் வாங்குபவர் பயன்பாட்டு உரிமைகளைப் பெறுகிறார்.",
-    "escrowTitle": "ஒவ்வொரு பயனருக்கும் Vaipakam Vaults",
-    "escrowDesc": "ஒவ்வொரு பயனருக்கும் சொந்த UUPS மேம்படுத்தக்கூடிய Vault ப்ராக்ஸி கிடைக்கிறது. நிதி கலப்பு இல்லை — சொத்துக்கள் எப்போதும் தனித்தனியாக இருக்கும்.",
+    "vaultTitle": "ஒவ்வொரு பயனருக்கும் Vaipakam Vaults",
+    "vaultDesc": "ஒவ்வொரு பயனருக்கும் சொந்த UUPS மேம்படுத்தக்கூடிய Vault ப்ராக்ஸி கிடைக்கிறது. நிதி கலப்பு இல்லை — சொத்துக்கள் எப்போதும் தனித்தனியாக இருக்கும்.",
     "nftPositionTitle": "NFT மூலம் நிலை கண்காணிப்பு",
     "nftPositionDesc": "ஒவ்வொரு வாய்ப்பு மற்றும் கடனுக்கும் ஆன்-செயின் மெட்டாடேட்டா கொண்ட தனித்துவமான Vaipakam NFT வழங்கப்படுகிறது. எந்த மார்க்கெட்பிளேசிலும் உரிமையை நிரூபிக்க, நிதியைக் கோர மற்றும் நிலையைப் பின்தொடர முடியும்.",
     "liquidityTitle": "திரவ vs லிக்விடிட்டி குறைந்த சொத்துக்கள்",
@@ -884,8 +884,8 @@
     "subtitle": "ஸ்மார்ட் கான்ட்ராக்ட் கட்டமைப்பு முதல் லிக்விடேஷன் இயக்கம் வரை, ஒவ்வொரு வடிவமைப்பு முடிவும் சொத்துக்களின் பாதுகாப்பை மையமாகக் கருதுகிறது. கீழே உள்ள ஒவ்வொரு கார்டும் அதன் ஆதாரமான ஆன்-செயின் கூறுக்கு இணைக்கப்பட்டுள்ளது — தரத்தைச் சுயமாகச் சரிபார்க்கலாம்.",
     "diamondTitle": "Diamond Standard (EIP-2535)",
     "diamondDesc": "மாடுலர் ப்ராக்ஸி கட்டமைப்பு. புரோட்டோகால்யை இடையூறு செய்யாமல் தனித்தனி facets-ஐ மேம்படுத்தலாம். அனைத்து அழைப்புகளும் ஒரே Diamond நுழைவுப் புள்ளி வழியாகவே வருகின்றன.",
-    "escrowTitle": "ஒவ்வொரு பயனருக்கும் Vaipakam Vaults",
-    "escrowDesc": "ஒவ்வொரு பயனருக்கும் தனிப்பட்ட UUPS ப்ராக்ஸி Vault வழங்கப்படுகிறது. நிதி கலப்பு இல்லை. கட்டாய Vault மேம்பாடுகள் பயனர் மேம்படுத்தும் வரை தொடர்புகளை தடுக்கின்றன.",
+    "vaultTitle": "ஒவ்வொரு பயனருக்கும் Vaipakam Vaults",
+    "vaultDesc": "ஒவ்வொரு பயனருக்கும் தனிப்பட்ட UUPS ப்ராக்ஸி Vault வழங்கப்படுகிறது. நிதி கலப்பு இல்லை. கட்டாய Vault மேம்பாடுகள் பயனர் மேம்படுத்தும் வரை தொடர்புகளை தடுக்கின்றன.",
     "transparencyTitle": "ஆன்-செயின் வெளிப்படைத்தன்மை",
     "transparencyDesc": "ஒவ்வொரு வாய்ப்பு, கடன் மற்றும் நிலை மாற்றமும் ஆன்-செயினில் பதிவு செய்யப்படுகிறது. Vaipakam NFT-கள் நிலை உரிமையின் சரிபார்க்கக்கூடிய சான்றாகச் செயல்படுகின்றன.",
     "slippageTitle": "ஸ்லிப்பேஜ் மற்றும் லிக்விடேஷன் பாதுகாப்பு",
@@ -972,9 +972,9 @@
         "li1": "<s>ERC-20 கடன்கள்:</s> அசல் எந்தவொரு ERC-20-ம் ஆகலாம் (USDC, ETH, WBTC முதலியன); பிணையம் எந்தவொரு ERC-20-ம் அல்லது எந்தவொரு NFT-ம் ஆகலாம்.",
         "li2": "<s>NFT வாடகை:</s> வாடகைக்கு விடப்பட்ட NFT-ஏ அசல்; பிணையம் ERC-20. NFT-இல் ERC-4907-இன் சொந்த ஆதரவு விருப்பம் சார்ந்தது — ஒவ்வொரு பயனருக்கும் சொந்தமான Vault ரேப்பர் இவை எதுவாயினும் ஒரே மாதிரியான <c>userOf</c> / <c>userExpires</c> / <c>userQuantity</c> இடைமுகத்தை வழங்குகிறது."
       },
-      "escrow": {
+      "vault": {
         "q": "ஒவ்வொரு பயனருக்கான Vault எவ்வாறு செயல்படுகிறது?",
-        "a1": "ஒவ்வொரு பயனருக்கும் சொந்தமான UUPS மேம்படுத்தத்தக்க ப்ராக்ஸி Vault உள்ளது, இது முதலில் பயன்படுத்தும்போது <c>EscrowFactoryFacet</c>-ஆல் (clone-factory பாணி) வரிசைப்படுத்தப்படுகிறது. சொத்துகள் வேறு யாருடைய சொத்துகளுடனும் சேர்க்கப்படுவதே இல்லை.",
+        "a1": "ஒவ்வொரு பயனருக்கும் சொந்தமான UUPS மேம்படுத்தத்தக்க ப்ராக்ஸி Vault உள்ளது, இது முதலில் பயன்படுத்தும்போது <c>VaultFactoryFacet</c>-ஆல் (clone-factory பாணி) வரிசைப்படுத்தப்படுகிறது. சொத்துகள் வேறு யாருடைய சொத்துகளுடனும் சேர்க்கப்படுவதே இல்லை.",
         "a2": "Diamond Vaultக்களுக்கு இடையிலான இயக்கங்களை ஒருங்கிணைக்கிறது, ஆனால் கோரும் உரிமைகள் Vaipakam நிலை NFT-உடன் இணைக்கப்பட்டுள்ளன — எனவே Vault காப்பு ஆன்-செயின் நிலை நிலையால் கண்டிப்பாக கட்டுப்படுகிறது."
       },
       "default": {
@@ -1048,12 +1048,12 @@
         "q": "VPFI தள்ளுபடி எப்படி வேலை செய்கிறது?",
         "a1": "Vaipakam Vaultவில் வைக்கப்பட்ட VPFI வைத்திருப்பவரை தானியங்கியாக ஒரு தள்ளுபடி அடுக்கில் வைக்கிறது. ஒற்றை தள-மட்ட ஒப்புதல் கடன் வாங்குபவர் (தொடக்கம்) மற்றும் கடன் வழங்குபவர் (பலன்) ஆகிய இரு கால்களையும் உள்ளடக்கியது, தள்ளுபடி பெற்ற கட்டணம் VPFI-இல் Vaultவிலிருந்து தானாகவே கழிக்கப்படுகிறது — தள்ளுபடி பாதையில் கடன் வாங்குபவர் முழு மூலதனத்தைப் பெறுகிறார், கடன் வழங்குபவர் முழு வட்டியை வைத்துக் கொள்கிறார்.",
         "tableTier": "அடுக்கு",
-        "tableEscrow": "Vaultவில் VPFI",
+        "tableVault": "Vaultவில் VPFI",
         "tableDiscount": "தள்ளுபடி",
         "tableInitiation": "உண்மையான தொடக்கம்",
         "tableYield": "உண்மையான பலன் கட்டணம்",
-        "row3Escrow": "≥ 5,000, ≤ 20,000",
-        "row4Escrow": "> 20,000"
+        "row3Vault": "≥ 5,000, ≤ 20,000",
+        "row4Vault": "> 20,000"
       },
       "vpfi-rewards": {
         "q": "VPFI வெகுமதிகளை எப்படிப் பெற முடியும்?",
@@ -1104,10 +1104,10 @@
     "sanctionsMatchBody": "ஆன்-செயின் தடை oracle (Chainalysis) தற்போது இந்த முகவரியைப் பட்டியலிடுகிறது. எந்த ஒரு வாய்ப்பு-உருவாக்கம் அல்லது வாய்ப்பு-ஏற்பு பரிவர்த்தனையும் புரோட்டோகால் அடுக்கில் ரிவர்ட் ஆகும். தவறான பொருத்தம் என்றால், Chainalysis ஆதரவைத் தொடர்பு கொள்ளவும் — Vaipakam தனது சொந்த தடைப் பட்டியலை பராமரிக்காது.",
     "sanctionsLabelWallet": "இணைக்கப்பட்ட வாலட்",
     "sanctionsLabelOfferCreator": "வாய்ப்பு உருவாக்கியவர்",
-    "escrowUpgradeBody": "Vault மேம்பாடு தேவை — Vault v{{userVersion}} இல் உள்ளது, கட்டாய குறைந்தபட்சம் v{{mandatoryVersion}} (சமீபத்திய v{{currentVersion}}). மேம்பாடு வரை Diamond செயல்முறைகள் ரிவர்ட் ஆகும்.",
-    "escrowUpgrading": "மேம்படுத்துகிறது…",
-    "escrowUpgradeButton": "Vaultவை மேம்படுத்து",
-    "escrowTxPrefix": "tx",
+    "vaultUpgradeBody": "Vault மேம்பாடு தேவை — Vault v{{userVersion}} இல் உள்ளது, கட்டாய குறைந்தபட்சம் v{{mandatoryVersion}} (சமீபத்திய v{{currentVersion}}). மேம்பாடு வரை Diamond செயல்முறைகள் ரிவர்ட் ஆகும்.",
+    "vaultUpgrading": "மேம்படுத்துகிறது…",
+    "vaultUpgradeButton": "Vaultவை மேம்படுத்து",
+    "vaultTxPrefix": "tx",
     "unsupportedDiamondPending": "Phase 1 Diamond நிலுவையில்",
     "unsupportedNetwork": "ஆதரிக்கப்படாத நெட்வொர்க்",
     "unsupportedBody": "{{state}} (chainId {{chainId}}). Vaipakam ஒவ்வொரு ஆதரிக்கப்படும் நெட்வொர்க்கிலும் தனி Diamond ஆக இயங்குகிறது — தற்போது செயலில்: {{liveList}}.",
@@ -1245,8 +1245,8 @@
     "mirrorTip": "மிரர் செயின் — இந்த செயினில் VPFI என்பது நியதி வழங்கலின் 1:1 பிரதிநிதித்துவம். பாலம் பரிமாற்றம் வரும்போது OFT இங்கே டோக்கன்களை mint செய்கிறது மற்றும் பரிமாற்றம் வெளியேறும் போது அவற்றை எரிக்கிறது, எனவே மிரர் இருப்பு எப்போதும் நியதி-செயின் பூட்டுதல்களால் ஆதரிக்கப்படுகிறது.",
     "notRegistered": "VPFI இன்னும் {{chain}} இல் Diamond உடன் பதிவு செய்யப்படவில்லை. நிர்வாகி setVPFIToken ஐ அழைத்தவுடன், இருப்புகள் மற்றும் செயல்பாடு இங்கே தோன்றும்.",
     "walletBalance": "வாலட் VPFI இருப்பு",
-    "escrowBalance": "Vault VPFI இருப்பு",
-    "escrowTooltip": "இந்த செயினில் ஒவ்வொரு பயனர் Vaultவில் தற்போது staking செய்யப்பட்ட VPFI. கடன் வாங்குபவர் கட்டண தள்ளுபடி Tier இல் கணக்கிடப்படுகிறது.",
+    "vaultBalance": "Vault VPFI இருப்பு",
+    "vaultTooltip": "இந்த செயினில் ஒவ்வொரு பயனர் Vaultவில் தற்போது staking செய்யப்பட்ட VPFI. கடன் வாங்குபவர் கட்டண தள்ளுபடி Tier இல் கணக்கிடப்படுகிறது.",
     "shareCirculating": "புழக்கத்தில் உள்ள பங்கு",
     "shareTooltip": "இந்த chain-இன் VPFI supply-இல் செயல்திறன் சார்ந்த உரிமை — wallet balance மற்றும் vault-இல் lock செய்யப்பட்ட balance, circulating-ஆல் வகுக்கப்பட்டது. Vault VPFI இன்னும் user-உக்கு சொந்தம்; அது tier discount / {{apr}}% APR-க்கு lock செய்யப்பட்டுள்ளது.",
     "circulatingThisChain": "புழக்கத்தில் (இந்த செயின்)",
@@ -1256,14 +1256,14 @@
     "treasuryMintDestination": "treasuryம் (mint இலக்கு)",
     "yourActivity": "உங்கள் VPFI செயல்பாடு",
     "noActivity": "{{chain}} இல் இந்த வாலட்டைத் தொடும் VPFI பரிமாற்றங்கள் இன்னும் இல்லை. பயனர் சார்ந்த விநியோகங்கள் (வெகுமதிகள், staking) பிற்காலம் வெளியீட்டு கட்டத்தில் வரும்.",
-    "escrowCountsAsStaked": "Vault VPFI staked-ஆக கணக்கிடப்படுகிறது ({{apr}}% APR)"
+    "vaultCountsAsStaked": "Vault VPFI staked-ஆக கணக்கிடப்படுகிறது ({{apr}}% APR)"
   },
   "buyVpfiCards": {
     "discountStatusTitle": "உங்கள் VPFI தள்ளுபடி நிலை",
     "currentTier": "தற்போதைய Tier",
     "noDiscountYet": "இன்னும் தள்ளுபடி இல்லை",
-    "escrowVpfi": "Vault VPFI",
-    "escrowCountsAsStaked": "Vault VPFI staked ஆக கணக்கிடப்படுகிறது ({{apr}}% APR)",
+    "vaultVpfi": "Vault VPFI",
+    "vaultCountsAsStaked": "Vault VPFI staked ஆக கணக்கிடப்படுகிறது ({{apr}}% APR)",
     "statusLabel": "நிலை",
     "inactiveOff": "செயலற்ற · தள்ளுபடி ஒப்புதல் OFF",
     "inactiveBelowTier1": "செயலற்ற · Tier 1க்கு கீழே (Vaultவில் {{tier1Min}} VPFI)",
@@ -1274,7 +1274,7 @@
     "enableSharedConsent": "<dashboardLink>Dashboard</dashboardLink>-ல் பகிரப்பட்ட தள்ளுபடி ஒப்புதலை இயக்கவும்.",
     "depositMore": "Tier {{tier}} ({{discount}})ஐ அடைய Vaultவில் இன்னும் {{amount}} VPFI ஐ வைப்பு செய்யவும்.",
     "tierColTier": "Tier",
-    "tierColEscrow": "Vault VPFI",
+    "tierColVault": "Vault VPFI",
     "tierColDiscount": "தள்ளுபடி",
     "tierN": "Tier {{tier}}",
     "tier1": "Tier 1",
@@ -1302,13 +1302,13 @@
     "gasReserveTooltip": "வாங்கும் tx இன்னும் ஒளிபரப்பப்பட முடியும் என்பதற்காக வாலட் இருப்பில் இருந்து சிறிய gas கையிருப்பு ({{reserve}} ETH) வைக்கப்படுகிறது.",
     "capExceeded": "இந்த தொகை மீதமுள்ள உச்சவரம்பை மீறுகிறது. ETH உள்ளீட்டைக் குறைத்து மீண்டும் முயற்சிக்கவும்.",
     "exceedsBalance": "தொகை வாலட் ETH இருப்பு {{balance}} ETH ஐ மீறுகிறது (சிறிய gas கையிருப்பு ஒதுக்கப்பட்டுள்ளது).",
-    "exceedsEscrowBalance": "தொகை Vault VPFI இருப்பு {{balance}} VPFI ஐ மீறுகிறது.",
+    "exceedsVaultBalance": "தொகை Vault VPFI இருப்பு {{balance}} VPFI ஐ மீறுகிறது.",
     "buyButton": "VPFI வாங்கு",
     "depositTitle": "VPFI ஐ Vaultவில் வைப்பு செய்",
     "depositSubtitle": "ஒவ்வொரு செயினிலும் தேவை — நியதி உட்பட.",
     "depositSpecNote": "விவரக்குறிப்புப்படி, VPFI ஐ Vaultவில் மாற்றுவது எப்போதும் வெளிப்படையான பயனர் செயலாகும். வாங்கல் அல்லது பாலத்திற்குப் பிறகு புரோட்டோகால் Vaultவை தானாகவே நிதியளிக்காது.",
     "walletVpfiBalance": "வாலட் VPFI இருப்பு",
-    "escrowVpfiBalance": "Vault VPFI இருப்பு ({{chain}})",
+    "vaultVpfiBalance": "Vault VPFI இருப்பு ({{chain}})",
     "depositAmount": "வைப்பு செய்ய VPFI அளவு",
     "useMaxVpfi": "அதிகபட்சம் ({{amount}} VPFI) பயன்படுத்து",
     "depositButton": "Vaultவில் வைப்பு செய்",
@@ -1635,13 +1635,13 @@
       "calloutBody": "By accepting you agree that the borrower must pay each period's accrued interest by the period close. If the borrower misses the period beyond the configured grace window, anyone can trigger a settler that sells just enough collateral to cover the shortfall — possibly affecting the loan's health factor and triggering further liquidation."
     }
   },
-  "escrowAssets": {
+  "vaultAssets": {
     "pageTitle": "உங்கள் Vaipakam Vault",
     "pageSubtitle": "உங்கள் சார்பில் நெறிமுறை வைத்திருக்கும் டோக்கன்கள். ஒவ்வொரு பயனருக்கும் தனிப்பட்ட Vault ப்ராக்ஸி உள்ளது — டெபாசிட்களும் வாபஸ் பெறுவதும் எப்போதும் Vaipakam Diamond வழியாகவே நடக்கிறது.",
     "addressCardTitle": "Vault முகவரி",
     "addressCaption": "உள் நெறிமுறை சேமிப்பகம் — நிதி நெறிமுறை வழியாக மட்டுமே உள் வந்து வெளியேறுகிறது.",
     "viewOnExplorer": "பிளாக் எக்ஸ்ப்ளோரரில் Vaultவைப் பார்க்கவும்",
-    "noEscrowYet": "உங்களுக்கு இன்னும் Vault இல்லை. நீங்கள் முதலில் ஒரு ஆஃபர் உருவாக்கும் அல்லது ஏற்கும்போது தானாகவே உருவாக்கப்படும்.",
+    "noVaultYet": "உங்களுக்கு இன்னும் Vault இல்லை. நீங்கள் முதலில் ஒரு ஆஃபர் உருவாக்கும் அல்லது ஏற்கும்போது தானாகவே உருவாக்கப்படும்.",
     "holdingsTitle": "வைப்புகள்",
     "lowToggleShow": "அனைத்தையும் காட்டு ({{n}} மறைக்கப்பட்டது)",
     "lowToggleHide": "குறைந்த இருப்புகளை மறை",
@@ -1659,7 +1659,7 @@
     "connectBody": "உங்கள் Vaipakam Vault வைப்புகளைப் பார்க்க உங்கள் வாலெட்டை இணைக்கவும்.",
     "switchChainBody": "உங்கள் Vaipakam Vault வைப்புகளைப் பார்க்க உங்கள் வாலெட்டை Vaipakam-ஆதரவு செயினுக்கு மாற்றவும்."
   },
-  "escrowRecover": {
+  "vaultRecover": {
     "pageTitle": "சிக்கிய டோக்கன் மீட்பு",
     "pageSubtitle": "உங்கள் Vaipakam Vault ப்ராக்ஸியில் நெறிமுறை வைப்புத் தொடரின் வெளியே வந்துள்ள ERC-20 டோக்கன்களை மீட்டெடுக்கவும். முன்னேற்றப்பட்ட பயனர் வழிகாட்டியை முதலில் படிக்கவும் — தவறான மூலத்தை அறிவிப்பது உங்கள் Vaipakam Vaultவை நெறிமுறை தடை கொள்கையின் கீழ் பூட்டலாம்.",
     "formTitle": "மீட்பு அறிவிப்பு",

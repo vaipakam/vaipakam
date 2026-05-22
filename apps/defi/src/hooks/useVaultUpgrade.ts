@@ -4,29 +4,29 @@ import { decodeContractError } from '@vaipakam/lib/decodeContractError';
 import { beginStep } from '../lib/journeyLog';
 
 /**
- * Detects and drives the mandatory-upgrade flow for a user's per-user escrow.
+ * Detects and drives the mandatory-upgrade flow for a user's per-user vault.
  *
- * Per README §"Escrow Upgrades" (lines 960, 1100), a governance call to
- * `setMandatoryEscrowUpgrade` can raise the required floor above a user's
- * current version. Until they upgrade, `getOrCreateUserEscrow` reverts
- * `EscrowUpgradeRequired()`, which blocks every diamond flow that touches
- * their escrow (offer creation, loan initiation, repay, claim, etc.).
+ * Per README §"Vault Upgrades" (lines 960, 1100), a governance call to
+ * `setMandatoryVaultUpgrade` can raise the required floor above a user's
+ * current version. Until they upgrade, `getOrCreateUserVault` reverts
+ * `VaultUpgradeRequired()`, which blocks every diamond flow that touches
+ * their vault (offer creation, loan initiation, repay, claim, etc.).
  *
- * The contract exposes `getEscrowVersionInfo(user)` so the frontend can
+ * The contract exposes `getVaultVersionInfo(user)` so the frontend can
  * render the banner + action before the user hits a revert, and
- * `upgradeUserEscrow(user)` is callable by anyone — typically the user.
+ * `upgradeUserVault(user)` is callable by anyone — typically the user.
  */
-export interface EscrowVersionInfo {
+export interface VaultVersionInfo {
   userVersion: bigint;
   currentVersion: bigint;
   mandatoryVersion: bigint;
   upgradeRequired: boolean;
 }
 
-export function useEscrowUpgrade(address: string | null | undefined) {
+export function useVaultUpgrade(address: string | null | undefined) {
   const diamondRead = useReadyDiamond();
   const diamond = useDiamondContract();
-  const [info, setInfo] = useState<EscrowVersionInfo | null>(null);
+  const [info, setInfo] = useState<VaultVersionInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [upgrading, setUpgrading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +46,7 @@ export function useEscrowUpgrade(address: string | null | undefined) {
     setLoading(true);
     setError(null);
     try {
-      const res = await diamondRead.getEscrowVersionInfo(address);
+      const res = await diamondRead.getVaultVersionInfo(address);
       setInfo({
         userVersion: res[0] as bigint,
         currentVersion: res[1] as bigint,
@@ -56,7 +56,7 @@ export function useEscrowUpgrade(address: string | null | undefined) {
     } catch (err) {
       // View fn would only revert if the facet selector is missing — not
       // fatal for the rest of the app, but worth surfacing.
-      setError(err instanceof Error ? err.message : 'Failed to read escrow version');
+      setError(err instanceof Error ? err.message : 'Failed to read vault version');
       setInfo(null);
     } finally {
       setLoading(false);
@@ -70,15 +70,15 @@ export function useEscrowUpgrade(address: string | null | undefined) {
     setError(null);
     setTxHash(null);
     setUpgrading(true);
-    const s = beginStep({ area: 'escrow-upgrade', flow: 'upgradeUserEscrow', step: 'submit-tx', wallet: address });
+    const s = beginStep({ area: 'vault-upgrade', flow: 'upgradeUserVault', step: 'submit-tx', wallet: address });
     try {
-      const tx = await diamond.upgradeUserEscrow(address);
+      const tx = await diamond.upgradeUserVault(address);
       setTxHash(tx.hash);
       await tx.wait();
       await load();
       s.success({ note: `tx ${tx.hash}` });
     } catch (err) {
-      setError(decodeContractError(err, 'Escrow upgrade failed'));
+      setError(decodeContractError(err, 'Vault upgrade failed'));
       s.failure(err);
     } finally {
       setUpgrading(false);

@@ -221,22 +221,22 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().interactionCapVpfiPerEth = value;
     }
 
-    /// @notice Write `protocolTrackedEscrowBalance[user][token]`
+    /// @notice Write `protocolTrackedVaultBalance[user][token]`
     ///         directly. PR5 of internal-match work — execution-body
-    ///         tests `scaffoldActiveLoan` + `ERC20Mock.mint(escrow,
+    ///         tests `scaffoldActiveLoan` + `ERC20Mock.mint(vault,
     ///         …)` to set up loans without going through the
     ///         `initiateLoan` HF gate, but that bypasses the
-    ///         counter that `escrowDepositERC20` would otherwise
+    ///         counter that `vaultDepositERC20` would otherwise
     ///         tick up. Without a matching counter write, the
-    ///         later `escrowWithdrawERC20` underflows when it
+    ///         later `vaultWithdrawERC20` underflows when it
     ///         decrements an untracked balance. This helper closes
     ///         that gap purely for tests.
-    function setProtocolTrackedEscrowBalanceRaw(
+    function setProtocolTrackedVaultBalanceRaw(
         address user,
         address token,
         uint256 amount
     ) external {
-        LibVaipakam.storageSlot().protocolTrackedEscrowBalance[user][token] = amount;
+        LibVaipakam.storageSlot().protocolTrackedVaultBalance[user][token] = amount;
     }
 
     /// @notice Write all three per-tier liquidation-LTV slots in
@@ -364,11 +364,11 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().offsetOfferToLoanId[offerId] = loanId;
     }
 
-    /// @notice Write `s.escrowVersion[user] = version` directly.
-    ///         Used by `EscrowFactoryFacetTest` to simulate a user
+    /// @notice Write `s.vaultVersion[user] = version` directly.
+    ///         Used by `VaultFactoryFacetTest` to simulate a user
     ///         whose proxy is already at a specific version.
-    function setEscrowVersionRaw(address user, uint256 version) external {
-        LibVaipakam.storageSlot().escrowVersion[user] = version;
+    function setVaultVersionRaw(address user, uint256 version) external {
+        LibVaipakam.storageSlot().vaultVersion[user] = version;
     }
 
     /// @notice Write `s.assetRiskParams[asset].minPartialBps = bps`
@@ -379,14 +379,14 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().assetRiskParams[asset].minPartialBps = bps;
     }
 
-    /// @notice Read `s.userVaipakamEscrows[user]` directly. Used by
+    /// @notice Read `s.userVaipakamVaults[user]` directly. Used by
     ///         `WorkflowComplianceAndRejection` test to look up a
-    ///         user's escrow proxy address bypassing the
-    ///         `getOrCreateUserEscrow` path's mandatory-version
+    ///         user's vault proxy address bypassing the
+    ///         `getOrCreateUserVault` path's mandatory-version
     ///         check (which would revert in the upgrade-required
     ///         scenario the test exercises).
-    function getUserVaipakamEscrowRaw(address user) external view returns (address) {
-        return LibVaipakam.storageSlot().userVaipakamEscrows[user];
+    function getUserVaipakamVaultRaw(address user) external view returns (address) {
+        return LibVaipakam.storageSlot().userVaipakamVaults[user];
     }
 
     /// @notice Test-only: expose raw staking accrual storage fields so tests

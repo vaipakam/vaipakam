@@ -153,7 +153,7 @@ export default function BorrowerPreclose() {
     });
     try {
       // Alice pays accrued interest + shortfall + treasury fee to Liam. The new
-      // borrower's collateral is already locked in his escrow from offer
+      // borrower's collateral is already locked in his vault from offer
       // creation, so we only need to authorize the principal-asset pull.
       await ensureAllowance(MaxUint256);
       const tx = await diamond.transferObligationViaOffer(loan.id, offerId);

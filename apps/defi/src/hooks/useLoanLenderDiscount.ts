@@ -26,7 +26,7 @@ export interface LoanLenderDiscount {
   /** Time-weighted average discount BPS the lender has earned so far. */
   effectiveAvgBps: number;
   /** Currently-stamped BPS — what the next period accrues at until the
-   *  lender's next escrow-VPFI mutation triggers a rollup. */
+   *  lender's next vault-VPFI mutation triggers a rollup. */
   stampedBpsAtPreviousRollup: number;
   /** Seconds elapsed since loan start. */
   windowSeconds: number;

@@ -85,7 +85,7 @@ const LOAN_OBLIGATION_TRANSFERRED_TOPIC0 = id(
   'LoanObligationTransferred(uint256,address,address,uint256)',
 );
 // VPFI token activities surfaced on the Activity page so users can see
-// their fixed-rate buys and their escrow deposits/unstakes alongside
+// their fixed-rate buys and their vault deposits/unstakes alongside
 // lending events. All three carry the user address as the first indexed
 // topic; non-indexed amounts live in `data`. Signatures pinned to the
 // VPFIDiscountFacet ABI.
@@ -93,10 +93,10 @@ const VPFI_PURCHASED_TOPIC0 = id(
   'VPFIPurchasedWithETH(address,uint256,uint256)',
 );
 const VPFI_DEPOSITED_TOPIC0 = id(
-  'VPFIDepositedToEscrow(address,uint256)',
+  'VPFIDepositedToVault(address,uint256)',
 );
 const VPFI_WITHDRAWN_TOPIC0 = id(
-  'VPFIWithdrawnFromEscrow(address,uint256)',
+  'VPFIWithdrawnFromVault(address,uint256)',
 );
 // Loan-lifecycle breakdown events powering the Loan Details timeline.
 // `LoanSettlementBreakdown` records the proper-close split (principal
@@ -184,8 +184,8 @@ export type ActivityEventKind =
   | 'StakingRewardsClaimed'
   | 'InteractionRewardsClaimed'
   | 'VPFIPurchasedWithETH'
-  | 'VPFIDepositedToEscrow'
-  | 'VPFIWithdrawnFromEscrow';
+  | 'VPFIDepositedToVault'
+  | 'VPFIWithdrawnFromVault';
 
 export interface ActivityEvent {
   kind: ActivityEventKind;
@@ -1084,7 +1084,7 @@ async function runScan(
           ethAmount,
         });
       } else if (topic0 === VPFI_DEPOSITED_TOPIC0) {
-        // VPFIDepositedToEscrow(user indexed, amount)
+        // VPFIDepositedToVault(user indexed, amount)
         if (topics.length < 2) continue;
         const user = ('0x' + topics[1].slice(26)).toLowerCase();
         let amount = '0';
@@ -1094,9 +1094,9 @@ async function runScan(
         } catch {
           // malformed — keep default
         }
-        addEvent('VPFIDepositedToEscrow', [user], { user, amount });
+        addEvent('VPFIDepositedToVault', [user], { user, amount });
       } else if (topic0 === VPFI_WITHDRAWN_TOPIC0) {
-        // VPFIWithdrawnFromEscrow(user indexed, amount)
+        // VPFIWithdrawnFromVault(user indexed, amount)
         if (topics.length < 2) continue;
         const user = ('0x' + topics[1].slice(26)).toLowerCase();
         let amount = '0';
@@ -1106,7 +1106,7 @@ async function runScan(
         } catch {
           // malformed — keep default
         }
-        addEvent('VPFIWithdrawnFromEscrow', [user], { user, amount });
+        addEvent('VPFIWithdrawnFromVault', [user], { user, amount });
       } else if (topic0 === LOAN_SETTLEMENT_BREAKDOWN_TOPIC0) {
         // LoanSettlementBreakdown(loanId indexed, principal, interest,
         // lateFee, treasuryShare, lenderShare). Source-of-truth for the

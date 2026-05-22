@@ -12,7 +12,7 @@ import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
@@ -98,7 +98,7 @@ contract PositiveFlowsGapFillers is Test {
 
         AccessControlFacet(address(diamond)).initializeAccessControl();
         AdminFacet(address(diamond)).unpause();
-        EscrowFactoryFacet(address(diamond)).initializeEscrowImplementation();
+        VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
         VaipakamNFTFacet(address(diamond)).initializeNFT();
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(makeAddr("zeroEx"));
@@ -365,7 +365,7 @@ contract PositiveFlowsGapFillers is Test {
         ProfileFacet profileFacet = new ProfileFacet();
         OracleFacet oracleFacet = new OracleFacet();
         VaipakamNFTFacet nftFacet = new VaipakamNFTFacet();
-        EscrowFactoryFacet escrowFacet = new EscrowFactoryFacet();
+        VaultFactoryFacet vaultFacet = new VaultFactoryFacet();
         LoanFacet loanFacet = new LoanFacet();
         RiskFacet riskFacet = new RiskFacet();
         RepayFacet repayFacet = new RepayFacet();
@@ -402,9 +402,9 @@ contract PositiveFlowsGapFillers is Test {
             functionSelectors: helperTest.getVaipakamNFTFacetSelectors()
         });
         cuts[4] = IDiamondCut.FacetCut({
-            facetAddress: address(escrowFacet),
+            facetAddress: address(vaultFacet),
             action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getEscrowFactoryFacetSelectors()
+            functionSelectors: helperTest.getVaultFactoryFacetSelectors()
         });
         cuts[5] = IDiamondCut.FacetCut({
             facetAddress: address(loanFacet),
@@ -500,12 +500,12 @@ contract PositiveFlowsGapFillers is Test {
         ProfileFacet(address(diamond)).setUserCountry("US");
         ProfileFacet(address(diamond)).updateKYCTier(user, LibVaipakam.KYCTier.Tier2);
 
-        address escrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(user);
+        address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user);
         vm.startPrank(user);
         ERC20(mockUSDC).approve(address(diamond), type(uint256).max);
         ERC20(mockWETH).approve(address(diamond), type(uint256).max);
-        ERC20(mockUSDC).approve(escrow, type(uint256).max);
-        ERC20(mockWETH).approve(escrow, type(uint256).max);
+        ERC20(mockUSDC).approve(vault, type(uint256).max);
+        ERC20(mockWETH).approve(vault, type(uint256).max);
         vm.stopPrank();
     }
 }

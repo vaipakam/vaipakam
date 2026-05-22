@@ -23,7 +23,7 @@ export const GLOSSARY_KEEP_VERBATIM = [
   'VPFI',
   'Diamond',
   'Facet',
-  'Escrow', // Capitalised when referring to the per-user proxy contract
+  'Vault', // Capitalised when referring to the per-user proxy contract
   'OFT',
   'LIF', // Loan Initiation Fee acronym
 
@@ -82,7 +82,7 @@ export const GLOSSARY_KEEP_VERBATIM = [
   'RiskFacet',
   'DefaultedFacet',
   'OracleFacet',
-  'EscrowFactoryFacet',
+  'VaultFactoryFacet',
   'VaipakamNFTFacet',
   'ProfileFacet',
   'AdminFacet',
@@ -115,8 +115,8 @@ export const GLOSSARY_STYLE_NOTES = `
 - Treat "wallet" as a normal common noun — translate it to the
   natural local equivalent (e.g. "billetera", "ウォレット", "지갑",
   "வாலெட்", "वॉलेट") rather than transliterating "wallet" phonetically.
-- "Escrow" (capitalised, as a proper noun referring to a Vaipakam
-  contract) stays verbatim. "escrow" (lowercase, as a generic
+- "Vault" (capitalised, as a proper noun referring to a Vaipakam
+  contract) stays verbatim. "vault" (lowercase, as a generic
   financial concept) may be translated to the standard local
   financial-term equivalent if one exists.
 - "Health Factor" (the full phrase) may be translated; "HF" (the

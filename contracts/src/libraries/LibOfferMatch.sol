@@ -4,7 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {LibRiskMath} from "./LibRiskMath.sol";
-import {EscrowFactoryFacet} from "../facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 import {RiskFacet} from "../facets/RiskFacet.sol";
 
@@ -25,7 +25,7 @@ import {RiskFacet} from "../facets/RiskFacet.sol";
  *             returns a structured `MatchResult` so bots can filter
  *             candidate pairs without submitting reverting txs.
  *           - `splitLifToMatcher` helper: splits a fee amount 99/1 and
- *             routes the matcher's slice from the lender's escrow to
+ *             routes the matcher's slice from the lender's vault to
  *             the matcher address. Treasury receives the 99% slice via
  *             the caller's existing path. Used by `_acceptOffer` on the
  *             lender-asset path.
@@ -105,7 +105,7 @@ library LibOfferMatch {
     }
 
     /// @notice Pull the matcher's 1% slice of `totalFee` from the
-    ///         lender's escrow and forward it to `matcher`. Caller
+    ///         lender's vault and forward it to `matcher`. Caller
     ///         is responsible for forwarding the remaining
     ///         `(totalFee - matcherCut)` to treasury through its
     ///         existing path. Returns the matcher's actual slice so
@@ -124,7 +124,7 @@ library LibOfferMatch {
         if (matcherCut == 0) return 0;
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                VaultFactoryFacet.vaultWithdrawERC20.selector,
                 lender,
                 asset,
                 matcher,

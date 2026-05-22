@@ -60,10 +60,10 @@ export default defineConfig({
         // against a real RPC provider with historical logs.
         'src/lib/logIndex.ts',
         'src/hooks/useLogIndex.ts',
-        // On-chain escrow / lock interaction hooks — thin wrappers over
+        // On-chain vault / lock interaction hooks — thin wrappers over
         // Diamond reads; integration-tested via Foundry, not vitest.
-        'src/hooks/useEscrowRental.ts',
-        'src/hooks/useEscrowUpgrade.ts',
+        'src/hooks/useVaultRental.ts',
+        'src/hooks/useVaultUpgrade.ts',
         'src/hooks/usePositionLock.ts',
         // Pure render of usePositionLock output; no logic.
         'src/components/app/TransferLockWarning.tsx',

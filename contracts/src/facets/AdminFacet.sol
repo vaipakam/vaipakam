@@ -422,7 +422,7 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
     ///         `whenNotPaused` will revert LibPausable.EnforcedPause until
     ///         {unpause} is called.
     /// @dev PAUSER_ROLE-only. Emits LibPausable.Paused. Admin / role-mgmt /
-    ///      diamond-cut / oracle-admin / escrow-upgrade paths intentionally
+    ///      diamond-cut / oracle-admin / vault-upgrade paths intentionally
     ///      remain callable while paused — see PauseGatingTest for the full
     ///      gated surface.
     function pause() external onlyRole(LibAccessControl.PAUSER_ROLE) {

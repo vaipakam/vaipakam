@@ -12,7 +12,7 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "./OracleFacet.sol";
-import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 
 /**
  * @title PartialWithdrawalFacet
@@ -22,7 +22,7 @@ import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
  *      Calculates max withdrawable to maintain min HF (e.g., 150%) and max LTV (e.g., per asset loanInitMaxLtvBps).
  *      Enhanced: Integrated HF validation post-withdrawal (>= min HF) alongside LTV check.
  *      Disallows for illiquid assets ($0 value per specs).
- *      Custom errors, events, ReentrancyGuard. Cross-facet calls for oracle/risk/escrow.
+ *      Custom errors, events, ReentrancyGuard. Cross-facet calls for oracle/risk/vault.
  *      Callable only by borrower. Updates loan.collateralAmount.
  *      Expand for Phase 2 (e.g., multi-collateral, governance-configurable threshold).
  */
@@ -55,7 +55,7 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
 
     /**
      * @notice Allows borrower to withdraw partial collateral from an active loan.
-     * @dev Checks liquidity (must be liquid), simulates post-HF >= min and post-LTV <= max, withdraws from escrow, updates loan.collateralAmount.
+     * @dev Checks liquidity (must be liquid), simulates post-HF >= min and post-LTV <= max, withdraws from vault, updates loan.collateralAmount.
      *      Reverts if illiquid, low HF, or high LTV post-withdrawal.
      *      Emits PartialCollateralWithdrawn.
      * @param loanId The active loan ID.
@@ -99,16 +99,16 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         uint256 loanInitMaxLtvBps = s.assetRiskParams[loan.collateralAsset].loanInitMaxLtvBps;
         if (simulatedLTV > loanInitMaxLtvBps) revert LTVExceeded();
 
-        // Withdraw from escrow to borrower
+        // Withdraw from vault to borrower
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                VaultFactoryFacet.vaultWithdrawERC20.selector,
                 msg.sender,
                 loan.collateralAsset,
                 msg.sender,
                 amount
             ),
-            EscrowWithdrawFailed.selector
+            VaultWithdrawFailed.selector
         );
 
         // Update loan collateral

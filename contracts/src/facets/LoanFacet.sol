@@ -605,14 +605,14 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     }
 
     /// @dev Anchor the lender's time-weighted VPFI-discount window. Force-
-    ///      rollup their accumulator at the current escrow balance, then
+    ///      rollup their accumulator at the current vault balance, then
     ///      freeze the post-rollup counter value onto the Loan — every
     ///      subsequent yield-fee settlement subtracts this anchor to get
     ///      the average discount over just this loan's lifetime.
     ///      Docs §5.2a.
     function _snapshotLenderDiscount(LibVaipakam.Loan storage loan) private {
         address lender = loan.lender;
-        uint256 lenderBal = LibVPFIDiscount.escrowVPFIBalance(lender);
+        uint256 lenderBal = LibVPFIDiscount.vaultVPFIBalance(lender);
         LibVPFIDiscount.rollupUserDiscount(lender, lenderBal);
         loan.lenderDiscountAccAtInit = LibVaipakam
             .storageSlot()
@@ -630,7 +630,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     ///      window measured here is purely "from now on".
     function _snapshotBorrowerDiscount(LibVaipakam.Loan storage loan) private {
         address borrower = loan.borrower;
-        uint256 borrowerBal = LibVPFIDiscount.escrowVPFIBalance(borrower);
+        uint256 borrowerBal = LibVPFIDiscount.vaultVPFIBalance(borrower);
         LibVPFIDiscount.rollupUserDiscount(borrower, borrowerBal);
         loan.borrowerDiscountAccAtInit = LibVaipakam
             .storageSlot()
@@ -845,14 +845,14 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
      * @notice T-032 — record the FIRST PaidPush-tier notification for a
      *         loan-side and immediately bill the corresponding party
      *         `cfgNotificationFee()`-equivalent in VPFI from their
-     *         escrow → treasury (one transfer, no Diamond custody).
+     *         vault → treasury (one transfer, no Diamond custody).
      * @dev    Idempotent: subsequent calls on an already-billed side
      *         no-op. Reverts on:
      *           - caller missing `NOTIF_BILLER_ROLE`
      *           - loanId past `nextLoanId` or never-initialized
      *             (InvalidLoanStatus)
      *           - oracle stale / WETH unset / VPFI not configured
-     *           - payer's escrow has insufficient VPFI (the watcher's
+     *           - payer's vault has insufficient VPFI (the watcher's
      *             expected behaviour is to LOG this revert and skip
      *             the notification — the user's billed flag stays
      *             false until they top up VPFI)

@@ -33,7 +33,7 @@ import {AnvilNewPartialFlows} from "./AnvilNewPartialFlows.s.sol";
  *           P-O  Loan with collateral doubled mid-flight.
  *           P-P  Keeper enabled with INIT_PRECLOSE on an active loan.
  *           P-Q  Borrower-side refinance offer posted, no acceptance.
- *           P-R  Stray ERC-20 token sitting in user escrow (recovery
+ *           P-R  Stray ERC-20 token sitting in user vault (recovery
  *                preview state).
  *           P-S  Dual claimable — same wallet has both lender + borrower
  *                claims pending side-by-side.

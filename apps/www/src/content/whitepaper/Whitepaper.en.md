@@ -197,7 +197,7 @@ Admin and config:
 NFT and vault:
 
 - **VaipakamNFTFacet** — position NFT mint / update / burn (ERC-721, on-chain metadata)
-- **EscrowFactoryFacet** — per-user UUPS vault proxy deployment, mandatory upgrade gating
+- **VaultFactoryFacet** — per-user UUPS vault proxy deployment, mandatory upgrade gating
 - **ProfileFacet** — keeper opt-in surface
 
 Strategic flows:
@@ -214,8 +214,8 @@ Auxiliary:
 
 ### 3.3 Vaipakam Vaults
 
-`VaipakamEscrowImplementation.sol` is a UUPS-upgradeable contract.
-`EscrowFactoryFacet` deploys one `ERC1967Proxy` per user. Each user's
+`VaipakamVaultImplementation.sol` is a UUPS-upgradeable contract.
+`VaultFactoryFacet` deploys one `ERC1967Proxy` per user. Each user's
 ERC-20, ERC-721, and ERC-1155 assets are held in their own isolated
 vault — no commingling. Cross-facet calls into vault use the canonical
 `address(this).call(abi.encodeWithSelector(...))` pattern, which routes
@@ -343,7 +343,7 @@ Either side may create an offer:
   acceptable APR, offered collateral, duration. The borrower's collateral
   is locked at creation.
 - **NFT rental offer** — analogous, with daily rental fee, duration, and
-  the ERC-20 used for prepayment. The NFT is escrowed at creation.
+  the ERC-20 used for prepayment. The NFT is vaulted at creation.
 
 Loan durations: configurable from 1 day to 365 days. Grace periods auto-
 assigned by tier:
@@ -781,7 +781,7 @@ structural hazard.
 ### 9.1 Custody Model
 
 For rentable ERC-721 / ERC-1155 NFTs (ERC-4907 compliant), the protocol
-vaults the asset in `VaipakamEscrow` and assigns `ERC-4907`-style
+vaults the asset in `VaipakamVault` and assigns `ERC-4907`-style
 **user rights** to the borrower for the agreed duration. The borrower
 never receives custody or ownership of the underlying NFT.
 
@@ -934,9 +934,9 @@ emergency brake.
 ### 11.3 Fee Discount Tiers
 
 Both lender and borrower discounts use the same chain-local tier table,
-keyed on **escrowed VPFI balance on the relevant lending chain**:
+keyed on **vaulted VPFI balance on the relevant lending chain**:
 
-| Tier | Escrowed VPFI                                                            | Discount                          |
+| Tier | Vaulted VPFI                                                            | Discount                          |
 | ---- | ------------------------------------------------------------------------ | --------------------------------- |
 | 1    | ≥ `{liveValue:tier1Min}` and < `{liveValue:tier2Min}`                    | `{liveValue:tier1DiscountBps}`%   |
 | 2    | ≥ `{liveValue:tier2Min}` and < `{liveValue:tier3Min}`                    | `{liveValue:tier2DiscountBps}`%   |
@@ -1284,7 +1284,7 @@ never grants claim rights.
   `DEFAULT_ADMIN_ROLE`. Only actor that can grant/revoke roles. Actions
   always go through the timelock.
 - **Admin Timelock (`TimelockController`).** Holds `ADMIN_ROLE`,
-  `ORACLE_ADMIN_ROLE`, `RISK_ADMIN_ROLE`, `ESCROW_ADMIN_ROLE`. 48-hour
+  `ORACLE_ADMIN_ROLE`, `RISK_ADMIN_ROLE`, `VAULT_ADMIN_ROLE`. 48-hour
   default delay (24-hour minimum after stabilization). Proposer:
   Governance Safe. Executor: open after delay.
 - **Ops Safe / Guardian (2-of-5, fast-response on-call).** Holds
@@ -1305,7 +1305,7 @@ mutation.
 - `AccessControlFacet.grantRole / revokeRole / renounceRole`
 - `DiamondCutFacet.diamondCut`
 - `OracleAdminFacet.*`
-- `EscrowFactoryFacet.upgradeEscrowImplementation / setMandatoryEscrowUpgrade`
+- `VaultFactoryFacet.upgradeVaultImplementation / setMandatoryVaultUpgrade`
 - `AdminFacet.pause / unpause / paused`
 - All view functions
 - LayerZero message ingress to reward OApps (in-flight messages have
@@ -1336,7 +1336,7 @@ Executed within 24 hours of a fresh deploy:
 
 1. Grant new Governance Safe `DEFAULT_ADMIN_ROLE`
 2. From Governance Safe: `TimelockController.scheduleBatch` granting
-   ADMIN/ORACLE/RISK/ESCROW roles to the Timelock
+   ADMIN/ORACLE/RISK/VAULT roles to the Timelock
 3. From Governance Safe: directly grant `PAUSER_ROLE`
    to the Ops Safe (no timelock)
 4. After 48h delay, execute the batch from step 2
@@ -1481,7 +1481,7 @@ The Foundry test suite has 91 test files covering:
 - **7 VPFI tests** (Discount / Boundaries / Token / OFTRoundTrip / SupplyCap invariant / TreasuryMint)
 - **10 reward tests** (Interaction / Coverage / Cap / Staking / Cross-chain plumbing / OApp delivery + 4 invariants)
 - **10 governance tests** (AccessControl / Admin / Config / GovernanceConfig / Handover / LZConfig / LZGuardian / PerAssetPause / PauseGating / DeployerZeroRoles)
-- **20+ invariant suites** (FundsConservation / EscrowSolvency / FallbackSettlement / ClaimExclusivity / NFTOwnerAuthority / VPFISupplyCap / etc.)
+- **20+ invariant suites** (FundsConservation / VaultSolvency / FallbackSettlement / ClaimExclusivity / NFTOwnerAuthority / VPFISupplyCap / etc.)
 - **8 end-to-end scenario suites** (Scenario1 through Scenario8 + FallbackClaimRace + PositiveFlowsGapFillers)
 - **2 Permit2 fork tests** (local mock + real Permit2 against mainnet fork)
 - **6 introspection tests** (Metrics / Enumeration / Loupe + 3 parity invariants)

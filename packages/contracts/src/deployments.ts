@@ -1,6 +1,6 @@
 /**
  * Per-chain deployment artifacts — Diamond proxy addresses, facet
- * addresses, escrow implementation, LayerZero endpoint + adapter
+ * addresses, vault implementation, LayerZero endpoint + adapter
  * addresses, VPFI token + mirror, reward OApp, mock-token addresses
  * for testnets, etc.
  *
@@ -11,7 +11,7 @@
  * keyed by `chainId`.
  *
  * Replaces the dozens of `VITE_<CHAIN>_DIAMOND_ADDRESS` /
- * `VITE_<CHAIN>_ESCROW_IMPL` / `VITE_<CHAIN>_*_FACET_ADDRESS` env
+ * `VITE_<CHAIN>_VAULT_IMPL` / `VITE_<CHAIN>_*_FACET_ADDRESS` env
  * vars that previously lived in `.env.local`. After a redeploy the
  * operator runs the export script and the frontend bundle picks up
  * the new addresses on the next `vite build` — no manual env edits.
@@ -43,7 +43,7 @@ export interface DeploymentFacets {
   diamondCutFacet?: HexAddress;
   diamondLoupeFacet?: HexAddress;
   earlyWithdrawalFacet?: HexAddress;
-  escrowFactoryFacet?: HexAddress;
+  vaultFactoryFacet?: HexAddress;
   interactionRewardsFacet?: HexAddress;
   legalFacet?: HexAddress;
   loanFacet?: HexAddress;
@@ -85,7 +85,7 @@ export interface Deployment {
   chainSlug: string;
   diamond: HexAddress;
   deployBlock: number;
-  escrowImpl: HexAddress;
+  vaultImpl: HexAddress;
   treasury: HexAddress;
   admin: HexAddress;
   facets: DeploymentFacets;

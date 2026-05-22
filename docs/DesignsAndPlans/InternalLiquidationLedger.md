@@ -457,16 +457,16 @@ Execution (atomic):
 1. Compute matched notional: `min(loanA.principal, loanB.principal)`
    in each leg's denominator. Asymmetric — see §7.
 2. Pull `matchedA` of `loanA.collateralAsset` from
-   `loanA.borrower`'s escrow → transfer to `loanB.lender`.
+   `loanA.borrower`'s vault → transfer to `loanB.lender`.
 3. Pull `matchedB` of `loanB.collateralAsset` from
-   `loanB.borrower`'s escrow → transfer to `loanA.lender`.
+   `loanB.borrower`'s vault → transfer to `loanA.lender`.
 4. Pay bot incentive (§8).
 5. Mark both loans terminal: new `LoanStatus.InternalMatched`
    (or reuse `Liquidated` with a flag — design decision in §10).
 6. Emit `InternalMatchExecuted(loanIdA, loanIdB, matcher,
    matchedANotional, matchedBNotional, incentivePaid)`.
 
-If either escrow pull fails → revert entire tx. Standard
+If either vault pull fails → revert entire tx. Standard
 Diamond reentrancy guard.
 
 ### 6.4 External liquidation gate adjustment

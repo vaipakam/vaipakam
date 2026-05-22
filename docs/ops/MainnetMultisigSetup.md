@@ -41,14 +41,14 @@ running it on a mainnet Diamond.
 After a normal deploy, the deployer EOA holds:
 
 - `DEFAULT_ADMIN_ROLE` + 10 sub-roles (`ADMIN_ROLE`, `ORACLE_ADMIN_ROLE`,
-  `RISK_ADMIN_ROLE`, `ESCROW_ADMIN_ROLE`, `PAUSER_ROLE`,
+  `RISK_ADMIN_ROLE`, `VAULT_ADMIN_ROLE`, `PAUSER_ROLE`,
   `KYC_ADMIN_ROLE`, etc.) — see [AccessControlFacet.sol](../../contracts/src/facets/AccessControlFacet.sol)
 - ERC-173 ownership (LibDiamond owner) — controls `diamondCut` (facet
-  swaps) and the implementation slot for the per-user escrow proxies
+  swaps) and the implementation slot for the per-user vault proxies
 
 A leaked deployer key on this surface is a turnkey takeover: rotate
 treasury, replace 0x proxy with an attacker-controlled drainer,
-upgrade the escrow implementation to one that reads private keys.
+upgrade the vault implementation to one that reads private keys.
 The fix is two layers:
 
 1. **Multisig** (Safe) — N-of-M threshold so no single key can act
@@ -327,7 +327,7 @@ DIAMOND=$(jq -r .diamond deployments/ethereum/addresses.json)
 DEFAULT_ADMIN=0x0000000000000000000000000000000000000000000000000000000000000000
 
 for role in DEFAULT_ADMIN_ROLE ADMIN_ROLE ORACLE_ADMIN_ROLE \
-            RISK_ADMIN_ROLE ESCROW_ADMIN_ROLE PAUSER_ROLE \
+            RISK_ADMIN_ROLE VAULT_ADMIN_ROLE PAUSER_ROLE \
             KYC_ADMIN_ROLE; do
   HASH=$([ "$role" = DEFAULT_ADMIN_ROLE ] && echo $DEFAULT_ADMIN || cast keccak "$role")
   echo "=== $role ==="
@@ -346,7 +346,7 @@ Expected end-state:
 | ADMIN_ROLE | ✓ | — | — | — |
 | ORACLE_ADMIN_ROLE | ✓ | — | — | — |
 | RISK_ADMIN_ROLE | ✓ | — | — | — |
-| ESCROW_ADMIN_ROLE | ✓ | — | — | — |
+| VAULT_ADMIN_ROLE | ✓ | — | — | — |
 | PAUSER_ROLE | — | — | ✓ | — |
 | KYC_ADMIN_ROLE | — | — | ✓ | — |
 | ERC-173 owner | ✓ | — | — | — |

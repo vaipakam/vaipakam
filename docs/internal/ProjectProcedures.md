@@ -139,7 +139,7 @@ This handbook mirrors it; if the two diverge, AGENTS.md wins.
 | `normal` | Routine implementation review — confirms PR matches issue / card / acceptance criteria; checks correctness, integration, missing tests / docs / config. |
 | `adversarial` | Failure-mode + abuse-case sweep — malicious inputs, auth bypass, replay, race conditions, fund-loss paths, stuck-state scenarios. |
 | `full` | Both `normal` and `adversarial`. **Default for any card in "In review" status unless the work is clearly low-risk.** |
-| `full security-critical` | High-risk changes — contracts that move funds or change accounting; liquidation / settlement / escrow / treasury / oracle / cross-chain logic; auth / admin / keeper / worker / API / privacy / compliance / secret-management / irreversible-migration changes. |
+| `full security-critical` | High-risk changes — contracts that move funds or change accounting; liquidation / settlement / vault / treasury / oracle / cross-chain logic; auth / admin / keeper / worker / API / privacy / compliance / secret-management / irreversible-migration changes. |
 | (no trigger) | Skip Codex only on truly trivial changes — typo fix, comment-only edit. Rare. |
 
 **Caption convention (permanent):** when a trigger uses a profile

@@ -10,7 +10,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 
 /**
@@ -185,7 +185,7 @@ contract CancelAfterPartialFillTest is SetupTest {
             collateralRequired: 500
         });
         // createOffer pulled the full amountMax (10_000) from lender's
-        // wallet into their escrow as pre-funded pool.
+        // wallet into their vault as pre-funded pool.
         assertEq(
             ERC20(mockERC20).balanceOf(lender),
             lenderWalletBefore - 10_000,
@@ -246,7 +246,7 @@ contract CancelAfterPartialFillTest is SetupTest {
         // amountFilled = 10_000 - 5_000 = 5_000` back. Net wallet
         // delta from pre-create: -10_000 (create) + 5_000 (cancel
         // refund) = -5_000. The other 5_000 is sitting in the
-        // borrower's escrow as the loan's principal.
+        // borrower's vault as the loan's principal.
         assertEq(
             ERC20(mockERC20).balanceOf(lender),
             lenderWalletBefore - 5_000,
@@ -262,7 +262,7 @@ contract CancelAfterPartialFillTest is SetupTest {
         assertEq(LPost.amountFilled, 5_000, "amountFilled snapshot preserved");
 
         // Loan-invariant assertion (P2.3 Codex round-1 #189): the cancel
-        // must touch the lender's residual escrow and NOTHING ELSE.
+        // must touch the lender's residual vault and NOTHING ELSE.
         // The live loan's principal, collateral, and status are
         // identical to their pre-cancel snapshot.
         LibVaipakam.Loan memory loanAfter =
@@ -286,7 +286,7 @@ contract CancelAfterPartialFillTest is SetupTest {
     ///         range `[500, 5_000]`. One match consumes 5k principal + 500
     ///         collateral. Borrower cancels. Assert (a) borrower's wallet
     ///         receives only `5_000 - 500 = 4_500` collateral (NOT the
-    ///         full 5_000 they pre-escrowed), (b) the live loan's 500
+    ///         full 5_000 they pre-vaulted), (b) the live loan's 500
     ///         collateral backing is untouched, (c) cancel cooldown
     ///         bypassed.
     ///
@@ -310,7 +310,7 @@ contract CancelAfterPartialFillTest is SetupTest {
             collateralMax: 5_000
         });
         // createOffer pulled the full collateralAmountMax (5_000) from
-        // borrower's wallet into their escrow.
+        // borrower's wallet into their vault.
         assertEq(
             ERC20(mockCollateralERC20).balanceOf(borrower),
             borrowerWalletBefore - 5_000,
@@ -355,13 +355,13 @@ contract CancelAfterPartialFillTest is SetupTest {
 
         // Borrower cancels. Refund = collateralAmountMax -
         // collateralAmountFilled = 5_000 - 500 = 4_500. The 500
-        // backing the live loan stays in escrow.
+        // backing the live loan stays in vault.
         vm.prank(borrower);
         OfferCancelFacet(address(diamond)).cancelOffer(borrowerOfferId);
 
         // Net borrower wallet delta from pre-create:
         //   -5_000 (create deposit) + 4_500 (cancel refund) = -500
-        // The 500 sitting in escrow is the live loan's collateral.
+        // The 500 sitting in vault is the live loan's collateral.
         assertEq(
             ERC20(mockCollateralERC20).balanceOf(borrower),
             borrowerWalletBefore - 500,

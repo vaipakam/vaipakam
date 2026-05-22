@@ -30,7 +30,7 @@ Without an explicit mapping, every consumer (frontend, indexer,
 keeper-bot, future SDK) has to re-derive which contract field carries
 which user-meaning per role. The risk of drift is real and audit-
 relevant — a frontend that flips the lender's "amount" semantic and
-ships `amount = X` instead of `amountMax = X` would pre-escrow `1 wei`
+ships `amount = X` instead of `amountMax = X` would pre-vault `1 wei`
 instead of `X` and the lender would silently get matched at a tiny
 size.
 
@@ -58,11 +58,11 @@ translation layer, leaving the contract's storage layout unchanged.
 
 | Field | Lender's UI input (GTC default) | Lender's contract write | Borrower's UI input (GTC default) | Borrower's contract write |
 |---|---|---|---|---|
-| **Lending amount** | "Lend up to **X**" | `amount = 1 wei`, `amountMax = X` (pre-escrows X) | "Borrow at least **Y**" | `amount = Y`, `amountMax = 0` (derived at match-time) |
-| **Collateral amount** | "Require at least **Z**" | `collateralAmount = Z` (single-value per #164 lender invariant) | "Lock up to **W**" | `collateralAmount = 0 (or 1 wei)`, `collateralAmountMax = W` (pre-escrows W) |
+| **Lending amount** | "Lend up to **X**" | `amount = 1 wei`, `amountMax = X` (pre-vaults X) | "Borrow at least **Y**" | `amount = Y`, `amountMax = 0` (derived at match-time) |
+| **Collateral amount** | "Require at least **Z**" | `collateralAmount = Z` (single-value per #164 lender invariant) | "Lock up to **W**" | `collateralAmount = 0 (or 1 wei)`, `collateralAmountMax = W` (pre-vaults W) |
 | **Rate** | "At min **P%**" | `interestRateBps = P×100`, `interestRateBpsMax = 10_000` (= `MAX_INTEREST_BPS`, the protocol cap) | "At max **Q%**" | `interestRateBps = 0`, `interestRateBpsMax = Q×100` |
 
-The pattern: **the side that pre-escrows the asset declares the ceiling
+The pattern: **the side that pre-vaults the asset declares the ceiling
 explicitly; the other side's ceiling is conceptually unbounded and
 derived at match-time from the counterparty's offer + the protocol's
 risk parameters**.
@@ -133,13 +133,13 @@ follows the same pattern:
   `collateralAmountMax`.
 
 This brings the four "axes × sides" storage into clean symmetry —
-each side has ONE field carrying a literal ceiling (the pre-escrowed
+each side has ONE field carrying a literal ceiling (the pre-vaulted
 one) and ONE field whose ceiling is derived at match-time:
 
-| Side | Pre-escrowed (must store literally) | Guardrail (storage default `0`, derived at match) |
+| Side | Pre-vaulted (must store literally) | Guardrail (storage default `0`, derived at match) |
 |---|---|---|
-| Lender | `amountMax` (the principal pre-escrowed) | `collateralAmountMax` (= `collateralAmount`; lender single-value per #164) |
-| Borrower | `collateralAmountMax` (the collateral pre-escrowed) | `amountMax` (derived from `collateralAmountMax × loanInitMaxLtvBps`) |
+| Lender | `amountMax` (the principal pre-vaulted) | `collateralAmountMax` (= `collateralAmount`; lender single-value per #164) |
+| Borrower | `collateralAmountMax` (the collateral pre-vaulted) | `amountMax` (derived from `collateralAmountMax × loanInitMaxLtvBps`) |
 
 ### 4. `loanInitMaxLtvBps` stays live-at-match (NOT snapshotted on Offer)
 
@@ -231,7 +231,7 @@ borrower offer minting N loans needs N slots).
   (indexer, keeper-bot, SDK) reads the contract's literal storage and
   applies the same fallback rules (`amountMax == 0 ⇒ derived`,
   `collateralAmountMax == 0 ⇒ collateralAmount`).
-- **Symmetric storage shape.** Each side has one pre-escrowed field
+- **Symmetric storage shape.** Each side has one pre-vaulted field
   and one derived field. Audit clarity.
 - **Offers stay responsive to autonomous LTV refinements.** Live
   `loanInitMaxLtvBps` means an offer aged across a governance /
@@ -330,9 +330,9 @@ Rejected because:
   intentional over-requirement above the protocol minimum.
   Derivation would silently set the floor to the protocol's most-
   permissive setting, masking the lender's intent.
-- Asymmetric with the pre-escrowed-field pattern: lenders express
+- Asymmetric with the pre-vaulted-field pattern: lenders express
   positive collateral demand (their floor); borrowers express
-  positive collateral commitment (their ceiling). Both pre-escrow
+  positive collateral commitment (their ceiling). Both pre-vault
   the field on their side that matters, and the "other" field is
   derived. The user-meaning split is intentional.
 
@@ -402,7 +402,7 @@ Frontend writes:
 - `interestRateBps = 0`
 - `interestRateBpsMax = 800` (8%)
 - `collateralAmount = 0` (or 1 wei to satisfy invariants if any)
-- `collateralAmountMax = 2 ether` (pre-escrowed)
+- `collateralAmountMax = 2 ether` (pre-vaulted)
 
 Match-time computation (assuming pair is in Tier 1 with `effective
 init-LTV cap = min(75% asset, 75% tier) = 75%`):

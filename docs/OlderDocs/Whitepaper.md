@@ -4,7 +4,7 @@
 
 ## Abstract
 
-Vaipakam is a decentralized peer-to-peer protocol for overcollateralized ERC-20 lending, borrowing, and escrow-mediated NFT rentals across Ethereum-compatible networks. It is built around separate Diamond deployments on `Ethereum mainnet`, `Base`, `Polygon`, `Arbitrum` and `Optimism` with each loan, offer, collateral position, repayment, claim, refinance, and liquidation remaining local to a single chain. The protocol combines bilateral offer negotiation, per-user escrow isolation, tokenized lender and borrower position rights, strict liquidity-aware risk logic, and an integrated VPFI utility layer for fee discounts, escrow-based staking, and locally claimable rewards. This whitepaper describes the architecture, lifecycle flows, liquidation and fallback rules, VPFI token utility, frontend safety model, and compliance posture.
+Vaipakam is a decentralized peer-to-peer protocol for overcollateralized ERC-20 lending, borrowing, and vault-mediated NFT rentals across Ethereum-compatible networks. It is built around separate Diamond deployments on `Ethereum mainnet`, `Base`, `Polygon`, `Arbitrum` and `Optimism` with each loan, offer, collateral position, repayment, claim, refinance, and liquidation remaining local to a single chain. The protocol combines bilateral offer negotiation, per-user vault isolation, tokenized lender and borrower position rights, strict liquidity-aware risk logic, and an integrated VPFI utility layer for fee discounts, vault-based staking, and locally claimable rewards. This whitepaper describes the architecture, lifecycle flows, liquidation and fallback rules, VPFI token utility, frontend safety model, and compliance posture.
 
 ## 1. Introduction
 
@@ -13,12 +13,12 @@ Most large DeFi credit systems optimize for pooled liquidity, standardized asset
 Vaipakam focuses on:
 
 - bilateral ERC-20 lending and borrowing
-- escrow-mediated ERC-721 and ERC-1155 rentals
-- per-user isolated escrow accounts
+- vault-mediated ERC-721 and ERC-1155 rentals
+- per-user isolated vault accounts
 - liquidity-aware asset classification
 - permissionless liquidation for liquid collateral
 - structured fallback settlement when liquidation cannot execute safely
-- VPFI-based fee discounts, escrow staking, and reward claiming
+- VPFI-based fee discounts, vault staking, and reward claiming
 - public transparency surfaces such as analytics, NFT verification, claims, rewards, and activity tracking
 
 The protocol is non-custodial. Users negotiate terms directly through on-chain offers, while Vaipakam enforces custody, repayment, default, liquidation, and claim rights through smart contracts.
@@ -39,10 +39,10 @@ Vaipakam should be understood as a chain-local credit marketplace with a cross-c
 Vaipakam includes:
 
 - ERC-20 lending and borrowing
-- NFT renting using escrow-controlled custody plus ERC-4907-style user-right assignment
+- NFT renting using vault-controlled custody plus ERC-4907-style user-right assignment
 - lender-side and borrower-side position NFTs
 - borrower preclose, lender early withdrawal, refinance, claim center, NFT verifier, public analytics, rewards, and in-app activity
-- VPFI fixed-rate purchase, escrow deposit, fee discounts, staking rewards, and interaction rewards
+- VPFI fixed-rate purchase, vault deposit, fee discounts, staking rewards, and interaction rewards
 
 ## 3. System Architecture
 
@@ -57,19 +57,19 @@ This architecture supports:
 - isolated feature development without state migration
 - a single protocol address per chain for user-facing integration
 
-### 3.2 Per-User Escrow
+### 3.2 Per-User Vault
 
-Every user interacts through a dedicated escrow account rather than a pooled treasury-style vault.
+Every user interacts through a dedicated vault account rather than a pooled treasury-style vault.
 
-Escrow design goals:
+Vault design goals:
 
 - no commingling of user funds
 - clear custody boundaries
 - support for ERC-20 collateral and prepayment assets
-- support for escrow-controlled NFT rentals
+- support for vault-controlled NFT rentals
 - support for non-collateral VPFI balances used for fee utility and staking
 
-Escrow upgrades are not intended to be silently forced in bulk. If a mandatory upgrade is introduced, user interactions should block until the user upgrades their own escrow.
+Vault upgrades are not intended to be silently forced in bulk. If a mandatory upgrade is introduced, user interactions should block until the user upgrades their own vault.
 
 ### 3.3 Position NFTs
 
@@ -98,19 +98,19 @@ Borrower-side ERC-20 loan initiation also carries a protocol `Loan Initiation Fe
 
 In a rental flow:
 
-- the lender escrows the NFT
+- the lender vaults the NFT
 - the borrower prepays the rental obligation in ERC-20
 - the borrower also posts a `5%` buffer above prepaid rental value
 - the borrower receives temporary usage rights, not custody
-- the escrow remains the owner / control surface for the rented NFT
+- the vault remains the owner / control surface for the rented NFT
 
-Vaipakam does not require separate NFT collateral for NFT rentals because custody remains escrow-controlled throughout the rental lifecycle.
+Vaipakam does not require separate NFT collateral for NFT rentals because custody remains vault-controlled throughout the rental lifecycle.
 
 ### 4.3 ERC-1155 Rental Read Semantics
 
-For ERC-1155 integrations, the escrow is the intended rental-state read surface. Third-party apps should be able to query:
+For ERC-1155 integrations, the vault is the intended rental-state read surface. Third-party apps should be able to query:
 
-- active rented quantity for a given `(contract, tokenId)` in that escrow
+- active rented quantity for a given `(contract, tokenId)` in that vault
 - the minimum active expiry among those rented units
 
 This conservative model prevents external integrations from overstating duration or usability.
@@ -167,7 +167,7 @@ When an offer is accepted:
 
 - counterparties are resolved
 - the acceptor must also provide the same mandatory combined fallback consent
-- assets are escrowed or rights are assigned
+- assets are vaulted or rights are assigned
 - the loan is initialized
 - position NFTs are updated or minted
 
@@ -254,7 +254,7 @@ Protocol fees include:
 
 Both lender and borrower may receive discounted fee treatment when:
 
-- they hold sufficient VPFI in escrow on the relevant lending chain
+- they hold sufficient VPFI in vault on the relevant lending chain
 - their platform-level VPFI discount consent is enabled
 - the fee path is otherwise eligible under the documented protocol rules
 
@@ -262,7 +262,7 @@ Both lender and borrower may receive discounted fee treatment when:
 
 Current VPFI tiers are:
 
-| Tier | Escrowed VPFI on that chain | Discount |
+| Tier | Vaulted VPFI on that chain | Discount |
 | ---- | --------------------------: | -------: |
 | 1    |      `>= 100` and `< 1,000` |    `10%` |
 | 2    |    `>= 1,000` and `< 5,000` |    `15%` |
@@ -272,7 +272,7 @@ Current VPFI tiers are:
 Important constraints:
 
 - tiers are chain-local
-- escrowed / staked VPFI on one chain counts only for loans initiated on that same chain
+- vaulted / staked VPFI on one chain counts only for loans initiated on that same chain
 - the user manages one platform-level consent in `Dashboard`; there is no separate per-offer or per-loan VPFI discount toggle
 
 ### 9.4 Buy VPFI Flow
@@ -287,21 +287,21 @@ User-facing flow:
 
 1. the user buys from their preferred supported chain
 2. purchased VPFI lands in the user’s wallet on that same chain
-3. the user explicitly deposits VPFI from wallet into personal escrow
+3. the user explicitly deposits VPFI from wallet into personal vault
 
 The page must not require a manual switch to the canonical chain. Any canonical-chain or bridge complexity is abstracted away from the user-facing purchase flow.
 
-## 10. Escrow-Based Staking and Rewards
+## 10. Vault-Based Staking and Rewards
 
 ### 10.1 Staking Rewards
 
-Any VPFI held in user escrow on a lending chain is treated as staked.
+Any VPFI held in user vault on a lending chain is treated as staked.
 
 - staking APR: `5%`
 - reward model: pull-based
 - claim path: local to the user’s current lending chain
 
-Unstaking is modeled as moving VPFI out of escrow back to the wallet on that same chain.
+Unstaking is modeled as moving VPFI out of vault back to the wallet on that same chain.
 
 ### 10.2 Platform Interaction Rewards
 
@@ -380,7 +380,7 @@ The product surface also includes:
 
 Protocol security relies on:
 
-- isolated per-user escrow
+- isolated per-user vault
 - global diamond-level reentrancy protection
 - pausable emergency controls
 - explicit role-gated admin actions
@@ -404,7 +404,7 @@ The codebase may retain KYC and sanctions scaffolding, but it is not intended to
 
 ## 13. Conclusion
 
-Vaipakam is a bilateral, chain-local credit and rental protocol with explicit rights, isolated escrow, and a utility layer built around VPFI. Its defining properties are not pooled capital efficiency or abstract credit aggregation, but negotiated terms, transparent state transitions, strict liquidity-aware handling of collateral, and clear user-facing risk consent. ERC-20 loans, NFT rentals, tokenized claim rights, fixed-rate VPFI access, escrow-based staking, locally claimable rewards, and public analytics together form the complete product surface.
+Vaipakam is a bilateral, chain-local credit and rental protocol with explicit rights, isolated vault, and a utility layer built around VPFI. Its defining properties are not pooled capital efficiency or abstract credit aggregation, but negotiated terms, transparent state transitions, strict liquidity-aware handling of collateral, and clear user-facing risk consent. ERC-20 loans, NFT rentals, tokenized claim rights, fixed-rate VPFI access, vault-based staking, locally claimable rewards, and public analytics together form the complete product surface.
 
 ## References
 

@@ -216,14 +216,14 @@ export function useVPFIDiscount(chainOverride?: ChainConfig | null) {
 export interface VPFIDiscountQuote {
   /** True iff the diamond could produce a full quote for this offer. */
   eligible: boolean;
-  /** VPFI (18-dec) the borrower must hold in escrow for the discount. */
+  /** VPFI (18-dec) the borrower must hold in vault for the discount. */
   vpfiRequired: bigint;
   /**
-   * Known-borrower escrow VPFI balance. Only meaningful for borrower-side
+   * Known-borrower vault VPFI balance. Only meaningful for borrower-side
    * offers (creator is the borrower). Zero for lender-side offers — the
    * borrower isn't known until acceptance.
    */
-  borrowerEscrowBal: bigint;
+  borrowerVaultBal: bigint;
   /** Resolved tier 0..4. 0 means no discount / quote unavailable. */
   tier: number;
 }
@@ -259,18 +259,18 @@ export function useVPFIDiscountQuote(
         functionName: useAcceptor ? 'quoteVPFIDiscountFor' : 'quoteVPFIDiscount',
         args: useAcceptor ? [offerId, borrower as Address] : [offerId],
       })) as readonly [boolean, bigint, bigint, bigint];
-      const [eligible, vpfiRequired, borrowerEscrowBal, tier] = result;
+      const [eligible, vpfiRequired, borrowerVaultBal, tier] = result;
       setQuote({
         eligible,
         vpfiRequired,
-        borrowerEscrowBal,
+        borrowerVaultBal,
         tier: Number(tier),
       });
     } catch {
       setQuote({
         eligible: false,
         vpfiRequired: 0n,
-        borrowerEscrowBal: 0n,
+        borrowerVaultBal: 0n,
         tier: 0,
       });
     } finally {
@@ -288,15 +288,15 @@ export function useVPFIDiscountQuote(
 export interface VPFIDiscountTier {
   /** 0..4. 0 means no discount. */
   tier: number;
-  /** User's current VPFI escrow balance (18-dec). */
-  escrowBal: bigint;
+  /** User's current VPFI vault balance (18-dec). */
+  vaultBal: bigint;
   /** Discount basis points (e.g. 1000 = 10% off the normal fee). */
   discountBps: number;
 }
 
 /**
  * Discount tier for `user` — reads `VPFIDiscountFacet.getVPFIDiscountTier`.
- * Pure VPFI-escrow-balance lookup, no oracle dependency. Returns tier 0 when
+ * Pure VPFI-vault-balance lookup, no oracle dependency. Returns tier 0 when
  * no wallet is connected.
  */
 export function useVPFIDiscountTier(user: string | null) {
@@ -308,7 +308,7 @@ export function useVPFIDiscountTier(user: string | null) {
 
   const load = useCallback(async () => {
     if (!user) {
-      setData({ tier: 0, escrowBal: 0n, discountBps: 0 });
+      setData({ tier: 0, vaultBal: 0n, discountBps: 0 });
       return;
     }
     setLoading(true);
@@ -319,14 +319,14 @@ export function useVPFIDiscountTier(user: string | null) {
         functionName: 'getVPFIDiscountTier',
         args: [user as Address],
       })) as readonly [bigint, bigint, bigint];
-      const [tier, escrowBal, discountBps] = result;
+      const [tier, vaultBal, discountBps] = result;
       setData({
         tier: Number(tier),
-        escrowBal,
+        vaultBal,
         discountBps: Number(discountBps),
       });
     } catch {
-      setData({ tier: 0, escrowBal: 0n, discountBps: 0 });
+      setData({ tier: 0, vaultBal: 0n, discountBps: 0 });
     } finally {
       setLoading(false);
     }
@@ -414,7 +414,7 @@ export function useVpfiTierTable(): ReadonlyArray<VpfiTierRow> {
 }
 
 /**
- * Platform-level consent flag for using escrowed VPFI on fee discounts.
+ * Platform-level consent flag for using vaulted VPFI on fee discounts.
  * Reads `getVPFIDiscountConsent(user)` for display, mutates via
  * `setVPFIDiscountConsent(bool)` — caller supplies a write-capable ethers
  * contract (kept that way until the write-path migration lands; the hook
@@ -534,11 +534,11 @@ export function ethWeiToVpfi(
 
 /**
  * Convenience: returns the VPFI balance the connected wallet currently holds
- * in its escrow on the active chain. `null` when no wallet, no escrow, or
+ * in its vault on the active chain. `null` when no wallet, no vault, or
  * the VPFI token isn't registered. Not cached — callers should gate reads
  * themselves if they need to poll.
  */
-export function useEscrowVPFIBalance(user: string | null) {
+export function useVaultVPFIBalance(user: string | null) {
   const publicClient = useDiamondPublicClient();
   const chain = useReadChain();
   const diamondAddress = (chain.diamondAddress ?? ZERO_ADDRESS) as Address;
@@ -552,11 +552,11 @@ export function useEscrowVPFIBalance(user: string | null) {
     }
     setLoading(true);
     try {
-      const [escrow, token] = await Promise.all([
+      const [vault, token] = await Promise.all([
         publicClient.readContract({
           address: diamondAddress,
           abi: DIAMOND_ABI,
-          functionName: 'getUserEscrow',
+          functionName: 'getUserVault',
           args: [user as Address],
         }) as Promise<string>,
         publicClient.readContract({
@@ -565,7 +565,7 @@ export function useEscrowVPFIBalance(user: string | null) {
           functionName: 'getVPFIToken',
         }) as Promise<string>,
       ]);
-      if (!escrow || escrow === ZERO_ADDRESS || !token || token === ZERO_ADDRESS) {
+      if (!vault || vault === ZERO_ADDRESS || !token || token === ZERO_ADDRESS) {
         setBalance(0n);
         return;
       }
@@ -573,7 +573,7 @@ export function useEscrowVPFIBalance(user: string | null) {
         address: diamondAddress,
         abi: DIAMOND_ABI,
         functionName: 'getVPFIBalanceOf',
-        args: [escrow as Address],
+        args: [vault as Address],
       })) as bigint;
       setBalance(raw);
     } catch {

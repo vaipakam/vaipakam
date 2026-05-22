@@ -35,7 +35,7 @@ abstract contract DiamondFacetNames {
             "DefaultedFacet",
             "DiamondLoupeFacet",
             "EarlyWithdrawalFacet",
-            "EscrowFactoryFacet",
+            "VaultFactoryFacet",
             "InteractionRewardsFacet",
             "LegalFacet",
             "LoanFacet",

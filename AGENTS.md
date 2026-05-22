@@ -51,7 +51,7 @@ Expected flow:
 Use this for high-risk changes where the extra review cost is justified:
 
 - contracts that move funds or change accounting;
-- liquidation, settlement, escrow, treasury, oracle, or cross-chain logic;
+- liquidation, settlement, vault, treasury, oracle, or cross-chain logic;
 - auth, admin, keeper, worker, API, privacy, compliance, secret-management, or
   irreversible migration changes.
 

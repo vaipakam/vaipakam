@@ -14,397 +14,6 @@
   },
   {
     "type": "function",
-    "name": "escrowApproveNFT721",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "nftContract",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "escrowBannedSource",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "escrowDepositERC1155",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "nftContract",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "escrowDepositERC20",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "escrowDepositERC20From",
-    "inputs": [
-      {
-        "name": "payer",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "escrowDepositERC721",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "nftContract",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "escrowGetNFTQuantity",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "nftContract",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "escrowGetNFTUserExpires",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "nftContract",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "escrowGetNFTUserOf",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "nftContract",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "escrowSetNFTUser",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "nftContract",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "renter",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "expires",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "escrowSetNFTUser1155",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "nftContract",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "renter",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "expires",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "quantity",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "escrowWithdrawERC1155",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "nftContract",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "recipient",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "escrowWithdrawERC20",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "recipient",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "escrowWithdrawERC721",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "nftContract",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "recipient",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "getDiamondAddress",
     "inputs": [],
     "outputs": [
@@ -418,7 +27,101 @@
   },
   {
     "type": "function",
-    "name": "getEscrowVersionInfo",
+    "name": "getOfferAmount",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getOrCreateUserVault",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "proxy",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getProtocolTrackedVaultBalance",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getUserVaultAddress",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "proxy",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getVaipakamVaultImplementationAddress",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "vaipakamVaultTemplate",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getVaultVersionInfo",
     "inputs": [
       {
         "name": "user",
@@ -452,108 +155,14 @@
   },
   {
     "type": "function",
-    "name": "getOfferAmount",
-    "inputs": [
-      {
-        "name": "offerId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getOrCreateUserEscrow",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "proxy",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "getProtocolTrackedEscrowBalance",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getUserEscrowAddress",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "proxy",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getVaipakamEscrowImplementationAddress",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "vaipakamEscrowTemplate",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "initializeEscrowImplementation",
+    "name": "initializeVaultImplementation",
     "inputs": [],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
     "type": "function",
-    "name": "recordEscrowDepositERC20",
+    "name": "recordVaultDepositERC20",
     "inputs": [
       {
         "name": "user",
@@ -654,7 +263,7 @@
   },
   {
     "type": "function",
-    "name": "setMandatoryEscrowUpgrade",
+    "name": "setMandatoryVaultUpgrade",
     "inputs": [
       {
         "name": "version",
@@ -667,7 +276,20 @@
   },
   {
     "type": "function",
-    "name": "upgradeEscrowImplementation",
+    "name": "upgradeUserVault",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "upgradeVaultImplementation",
     "inputs": [
       {
         "name": "newImplementation",
@@ -680,10 +302,332 @@
   },
   {
     "type": "function",
-    "name": "upgradeUserEscrow",
+    "name": "vaultApproveNFT721",
     "inputs": [
       {
         "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "nftContract",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "vaultBannedSource",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "vaultDepositERC1155",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "nftContract",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "vaultDepositERC20",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "vaultDepositERC20From",
+    "inputs": [
+      {
+        "name": "payer",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "vaultDepositERC721",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "nftContract",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "vaultGetNFTQuantity",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "nftContract",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "vaultGetNFTUserExpires",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "nftContract",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "vaultGetNFTUserOf",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "nftContract",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "vaultSetNFTUser",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "nftContract",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "renter",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "expires",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "vaultSetNFTUser1155",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "nftContract",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "renter",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "expires",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "quantity",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "vaultWithdrawERC1155",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "nftContract",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recipient",
         "type": "address",
         "internalType": "address"
       }
@@ -692,115 +636,60 @@
     "stateMutability": "nonpayable"
   },
   {
-    "type": "event",
-    "name": "EscrowBannedFromRecoveryAttempt",
+    "type": "function",
+    "name": "vaultWithdrawERC20",
     "inputs": [
       {
         "name": "user",
         "type": "address",
-        "indexed": true,
         "internalType": "address"
       },
       {
         "name": "token",
         "type": "address",
-        "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "declaredSource",
+        "name": "recipient",
         "type": "address",
-        "indexed": true,
         "internalType": "address"
       },
       {
         "name": "amount",
         "type": "uint256",
-        "indexed": false,
         "internalType": "uint256"
       }
     ],
-    "anonymous": false
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
-    "type": "event",
-    "name": "EscrowImplementationUpgraded",
+    "type": "function",
+    "name": "vaultWithdrawERC721",
     "inputs": [
       {
-        "name": "oldImplementation",
+        "name": "user",
         "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "newImplementation",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "newVersion",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "EscrowRentalUpdated",
-    "inputs": [
-      {
-        "name": "lender",
-        "type": "address",
-        "indexed": true,
         "internalType": "address"
       },
       {
         "name": "nftContract",
         "type": "address",
-        "indexed": true,
         "internalType": "address"
       },
       {
         "name": "tokenId",
         "type": "uint256",
-        "indexed": true,
         "internalType": "uint256"
       },
       {
-        "name": "user",
+        "name": "recipient",
         "type": "address",
-        "indexed": false,
         "internalType": "address"
-      },
-      {
-        "name": "expires",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      },
-      {
-        "name": "quantity",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "activeTotalQuantity",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "minActiveExpires",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
       }
     ],
-    "anonymous": false
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "event",
@@ -903,7 +792,7 @@
   },
   {
     "type": "event",
-    "name": "UserEscrowCreated",
+    "name": "UserVaultCreated",
     "inputs": [
       {
         "name": "user",
@@ -916,6 +805,117 @@
         "type": "address",
         "indexed": false,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VaultBannedFromRecoveryAttempt",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "declaredSource",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VaultImplementationUpgraded",
+    "inputs": [
+      {
+        "name": "oldImplementation",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newImplementation",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newVersion",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VaultRentalUpdated",
+    "inputs": [
+      {
+        "name": "lender",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "nftContract",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "user",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "expires",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "quantity",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "activeTotalQuantity",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "minActiveExpires",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
       }
     ],
     "anonymous": false
@@ -1076,41 +1076,6 @@
         "internalType": "bytes32"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "EscrowAlreadyBanned",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "EscrowBannedDueToSanctionedSource",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "EscrowDepositFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "EscrowResolutionFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "EscrowTransferFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "EscrowUpgradeRequired",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "EscrowWithdrawFailed",
-    "inputs": []
   },
   {
     "type": "error",
@@ -1291,17 +1256,17 @@
   },
   {
     "type": "error",
-    "name": "NoEscrow",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "NoInteractionRewardsToClaim",
     "inputs": []
   },
   {
     "type": "error",
     "name": "NoStakingRewardsToClaim",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoVault",
     "inputs": []
   },
   {
@@ -1529,7 +1494,7 @@
   },
   {
     "type": "error",
-    "name": "RecoveryUserHasNoEscrow",
+    "name": "RecoveryUserHasNoVault",
     "inputs": []
   },
   {
@@ -1637,7 +1602,7 @@
   },
   {
     "type": "error",
-    "name": "UserHasNoEscrow",
+    "name": "UserHasNoVault",
     "inputs": []
   },
   {
@@ -1653,11 +1618,6 @@
   {
     "type": "error",
     "name": "VPFIBuyRateNotSet",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VPFIEscrowBalanceInsufficient",
     "inputs": []
   },
   {
@@ -1683,6 +1643,46 @@
   {
     "type": "error",
     "name": "VPFITokenNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIVaultBalanceInsufficient",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultAlreadyBanned",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultBannedDueToSanctionedSource",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultDepositFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultResolutionFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultTransferFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultUpgradeRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultWithdrawFailed",
     "inputs": []
   }
 ]

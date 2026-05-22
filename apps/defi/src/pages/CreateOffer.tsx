@@ -440,7 +440,7 @@ export default function CreateOffer() {
       });
 
       // OfferFacet.createOffer() locks the creator's side (lender principal
-      // or borrower collateral/prepay) into their escrow at creation time, so
+      // or borrower collateral/prepay) into their vault at creation time, so
       // both sides must pre-approve on the Diamond regardless of offerType.
       // Multi-network: approve the Diamond on the wallet's active chain —
       // falling back to DEFAULT_CHAIN would mis-target approvals for users
@@ -487,7 +487,7 @@ export default function CreateOffer() {
         }
       };
 
-      // Range Orders Phase 1 — lender pre-escrows the upper bound of
+      // Range Orders Phase 1 — lender pre-vaults the upper bound of
       // the amount range so partial fills can draw from the same
       // pool. `payload.amountMax` is 0 in single-value / collapsed
       // mode, in which case we fall back to `payload.amount` (the
@@ -1304,7 +1304,7 @@ export default function CreateOffer() {
                   label. Lender's "Require at least Z" sets the floor
                   (`collateralAmount`, single-value per #164 lender
                   invariant); borrower's "Lock up to W" sets the ceiling
-                  (`collateralAmountMax`, pre-escrowed). The payload
+                  (`collateralAmountMax`, pre-vaulted). The payload
                   translation routes accordingly. */}
               <label className="form-label">
                 {form.offerType === 'lender'

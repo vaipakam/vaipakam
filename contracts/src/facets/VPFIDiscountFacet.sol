@@ -13,7 +13,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {LibPermit2, ISignatureTransfer} from "../libraries/LibPermit2.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
-import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 
 /**
  * @title VPFIDiscountFacet
@@ -26,22 +26,22 @@ import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
  *           only; users on mirror chains reach it transparently via the
  *           `VPFIBuyAdapter` → `VPFIBuyReceiver` CCIP round-trip (the
  *           adapter is a separate contract, not part of the Diamond). Per
- *           spec, escrow funding is a separate explicit user step on every
+ *           spec, vault funding is a separate explicit user step on every
  *           chain regardless of how the buy was routed.
- *        2. `depositVPFIToEscrow(amount)` — explicit wallet → escrow move.
+ *        2. `depositVPFIToVault(amount)` — explicit wallet → vault move.
  *           Required on every chain: on canonical (Base) immediately after
  *           buying, or on non-canonical chains once the OFT return leg
  *           (or a manual bridge via the CCIP CCT bridge UI) lands VPFI
  *           in the user's wallet.
- *        3. `withdrawVPFIFromEscrow(amount)` — counterpart of (2). Unstakes
- *           escrow VPFI back to the caller's wallet and checkpoints staking
+ *        3. `withdrawVPFIFromVault(amount)` — counterpart of (2). Unstakes
+ *           vault VPFI back to the caller's wallet and checkpoints staking
  *           accrual before the balance change.
  *        4. `quoteVPFIDiscount(offerId)` / `quoteVPFIDiscountFor(id, user)`
  *           — views used by the frontend to show the VPFI that will be
  *           deducted at accept time.
  *        5. `setVPFIDiscountConsent(bool)` / `getVPFIDiscountConsent(user)`
  *           — the single platform-level user setting that governs whether
- *           escrowed VPFI may be spent on protocol-fee discounts. This same
+ *           vaulted VPFI may be spent on protocol-fee discounts. This same
  *           flag governs BOTH the borrower Loan Initiation Fee discount
  *           (consumed in OfferFacet._acceptOffer) and the lender Yield
  *           Fee discount. No per-offer or per-call opt-in exists.
@@ -62,9 +62,9 @@ import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
  *          `VPFIBuyAdapter` → `VPFIBuyReceiver` CCIP round-trip and
  *          receive VPFI back in their wallet on the chain they started
  *          from. No manual chain-switch or bridge step is required of
- *          the user before calling `depositVPFIToEscrow`.
- *        - The DISCOUNT itself (escrow VPFI → treasury at acceptance) works
- *          on every chain, gated purely on borrower escrow VPFI balance.
+ *          the user before calling `depositVPFIToVault`.
+ *        - The DISCOUNT itself (vault VPFI → treasury at acceptance) works
+ *          on every chain, gated purely on borrower vault VPFI balance.
  *
  *      Reserve model: the diamond SELLS VPFI from its own balance (no
  *      mint-on-demand). Ops must fund the diamond during canonical deploy
@@ -73,7 +73,7 @@ import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
  *      exceeds the effective global cap ({LibVaipakam.cfgVpfiFixedGlobalCap};
  *      default 2.3M VPFI per docs/TokenomicsTechSpec.md §8).
  *
- *      Security: `buyVPFIWithETH` and `depositVPFIToEscrow` are
+ *      Security: `buyVPFIWithETH` and `depositVPFIToVault` are
  *      reentrancy-guarded and pausable. The discount path in OfferFacet
  *      inherits that facet's guards.
  */
@@ -92,20 +92,20 @@ contract VPFIDiscountFacet is
     /// @param buyer             The purchaser (VPFI is delivered to their wallet).
     /// @param vpfiAmount        The VPFI amount credited to the buyer's wallet.
     /// @param ethAmount         The ETH amount accepted (equals `msg.value`).
-    /// @param newEscrowBalance  Buyer's escrow VPFI balance immediately after
+    /// @param newVaultBalance  Buyer's vault VPFI balance immediately after
     ///        the buy. Note: same-chain buys deliver VPFI to the buyer's
-    ///        WALLET (not their escrow), so this value reflects the existing
-    ///        escrow balance unchanged. Cross-chain bridged buys
+    ///        WALLET (not their vault), so this value reflects the existing
+    ///        vault balance unchanged. Cross-chain bridged buys
     ///        ({VPFIBridgedBuyProcessed}) are emitted from
     ///        {VPFIBuyReceiver} on Base separately.
     ///        EventSourcingAudit §3.18 — frontend updates the
     ///        "your VPFI balance is now X" UI directly from the event.
-    /// @custom:event-category state-change/escrow-mutation
+    /// @custom:event-category state-change/vault-mutation
     event VPFIPurchasedWithETH(
         address indexed buyer,
         uint256 vpfiAmount,
         uint256 ethAmount,
-        uint256 newEscrowBalance
+        uint256 newVaultBalance
     );
 
     /// @notice Emitted when a bridged buy lands on Base — mirrors the
@@ -117,7 +117,7 @@ contract VPFIDiscountFacet is
     /// @param originChainId EVM chain id of the buyer's origin chain.
     /// @param vpfiAmount   VPFI credited to the buyer (via the CCIP bridge back).
     /// @param ethAmountPaid Native ETH the buyer paid on the origin chain.
-    /// @custom:event-category state-change/escrow-mutation
+    /// @custom:event-category state-change/vault-mutation
     event VPFIBridgedBuyProcessed(
         address indexed buyer,
         uint32 indexed originChainId,
@@ -134,32 +134,32 @@ contract VPFIDiscountFacet is
     );
 
     /// @notice Emitted when a holder moves VPFI from their wallet into their
-    ///         escrow — typically after bridging from Base.
-    /// @param user             The depositor (and escrow owner).
-    /// @param amount           VPFI amount moved from wallet to escrow.
-    /// @param newEscrowBalance User's escrow VPFI balance after the deposit.
+    ///         vault — typically after bridging from Base.
+    /// @param user             The depositor (and vault owner).
+    /// @param amount           VPFI amount moved from wallet to vault.
+    /// @param newVaultBalance User's vault VPFI balance after the deposit.
     ///        EventSourcingAudit §3.19 — saves consumers a follow-up
     ///        view-call to render the staking UI.
-    /// @custom:event-category state-change/escrow-mutation
-    event VPFIDepositedToEscrow(
+    /// @custom:event-category state-change/vault-mutation
+    event VPFIDepositedToVault(
         address indexed user,
         uint256 amount,
-        uint256 newEscrowBalance
+        uint256 newVaultBalance
     );
 
     /// @notice Emitted when a staker unstakes — VPFI moves from the user's
-    ///         escrow back to their wallet. Dropping below a tier threshold
+    ///         vault back to their wallet. Dropping below a tier threshold
     ///         here implicitly lowers the fee-discount tier on subsequent
     ///         acceptance / repayment events.
-    /// @param user             The withdrawer (and escrow owner).
-    /// @param amount           VPFI amount moved from escrow to wallet.
-    /// @param newEscrowBalance User's escrow VPFI balance after the
+    /// @param user             The withdrawer (and vault owner).
+    /// @param amount           VPFI amount moved from vault to wallet.
+    /// @param newVaultBalance User's vault VPFI balance after the
     ///        withdrawal. EventSourcingAudit §3.19.
-    /// @custom:event-category state-change/escrow-mutation
-    event VPFIWithdrawnFromEscrow(
+    /// @custom:event-category state-change/vault-mutation
+    event VPFIWithdrawnFromVault(
         address indexed user,
         uint256 amount,
-        uint256 newEscrowBalance
+        uint256 newVaultBalance
     );
 
     /// @notice Emitted when the discount is successfully applied at loan
@@ -169,7 +169,7 @@ contract VPFIDiscountFacet is
     /// @param loanId       The newly-initiated loan id.
     /// @param borrower     The borrower who paid the discounted fee in VPFI.
     /// @param lendingAsset The loan's principal asset.
-    /// @param vpfiDeducted VPFI moved from borrower's escrow to treasury.
+    /// @param vpfiDeducted VPFI moved from borrower's vault to treasury.
     /// @custom:event-category informational/settlement
     event VPFIDiscountApplied(
         uint256 indexed loanId,
@@ -189,12 +189,12 @@ contract VPFIDiscountFacet is
     );
 
     /// @notice Emitted when a user toggles the shared platform-level consent
-    ///         to use escrowed VPFI for protocol fee discounts. A single
+    ///         to use vaulted VPFI for protocol fee discounts. A single
     ///         consent governs both the borrower Loan Initiation Fee
     ///         discount and the lender Yield Fee discount (spec: README
     ///         §"Treasury and Revenue Sharing", TokenomicsTechSpec §6).
     /// @param user    The user whose consent changed.
-    /// @param enabled New consent state — true means escrow VPFI may be used.
+    /// @param enabled New consent state — true means vault VPFI may be used.
     /// @custom:event-category informational/config
     event VPFIDiscountConsentChanged(address indexed user, bool enabled);
 
@@ -206,7 +206,7 @@ contract VPFIDiscountFacet is
     /// @param loanId       The loan being settled.
     /// @param lender       The lender who paid the discounted yield fee in VPFI.
     /// @param lendingAsset The loan's principal asset.
-    /// @param vpfiDeducted VPFI moved from lender's escrow to treasury.
+    /// @param vpfiDeducted VPFI moved from lender's vault to treasury.
     /// @custom:event-category informational/settlement
     event VPFIYieldFeeDiscountApplied(
         uint256 indexed loanId,
@@ -220,14 +220,14 @@ contract VPFIDiscountFacet is
     /**
      * @notice Buy VPFI with ETH at the fixed admin-configured rate.
      *         Purchased VPFI is delivered to the buyer's WALLET — funding
-     *         escrow is a separate, explicit user action (see
-     *         {depositVPFIToEscrow}).
+     *         vault is a separate, explicit user action (see
+     *         {depositVPFIToVault}).
      * @dev Canonical-chain only — reverts `NotCanonicalVPFIChain` on mirrors.
      *      Per spec (docs/TokenomicsTechSpec.md §8a): "VPFI
      *      purchase on Base delivers tokens to the user's wallet, not
-     *      directly to escrow; bridging is only needed when the borrower
+     *      directly to vault; bridging is only needed when the borrower
      *      wants to use VPFI on a non-canonical lending chain; on every
-     *      chain — including the canonical one — moving VPFI into escrow
+     *      chain — including the canonical one — moving VPFI into vault
      *      is an explicit user-initiated action."
      *
      *      Reverts `VPFIBuyDisabled` when the admin kill-switch is off,
@@ -266,8 +266,8 @@ contract VPFIDiscountFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vpfi = s.vpfiToken;
 
-        // Deliver VPFI to the buyer's WALLET. Moving it into escrow is a
-        // separate explicit step (depositVPFIToEscrow) — same flow applies
+        // Deliver VPFI to the buyer's WALLET. Moving it into vault is a
+        // separate explicit step (depositVPFIToVault) — same flow applies
         // whether or not the buyer later bridges to a non-canonical chain.
         IERC20(vpfi).safeTransfer(msg.sender, vpfiOut);
 
@@ -278,7 +278,7 @@ contract VPFIDiscountFacet is
             msg.sender,
             vpfiOut,
             msg.value,
-            LibVPFIDiscount.escrowVPFIBalance(msg.sender)
+            LibVPFIDiscount.vaultVPFIBalance(msg.sender)
         );
     }
 
@@ -422,49 +422,49 @@ contract VPFIDiscountFacet is
     }
 
     /**
-     * @notice Move VPFI from the caller's wallet into the caller's escrow.
+     * @notice Move VPFI from the caller's wallet into the caller's vault.
      * @dev Intended for users who bridged VPFI to a non-canonical chain via
-     *      Chainlink CCIP (CCT bridge) and now want to deposit it into their local escrow to
+     *      Chainlink CCIP (CCT bridge) and now want to deposit it into their local vault to
      *      qualify for the discount on that chain. Works on every chain,
      *      including the canonical one. Caller must have approved this
      *      diamond for `amount` on the registered VPFI token.
      *
      *      Reverts `VPFITokenNotSet` when the diamond has no VPFI bound,
-     *      `InvalidAmount` on zero amount. Emits {VPFIDepositedToEscrow}.
+     *      `InvalidAmount` on zero amount. Emits {VPFIDepositedToVault}.
      * @param amount VPFI wei amount to deposit (18 decimals).
      */
-    function depositVPFIToEscrow(uint256 amount)
+    function depositVPFIToVault(uint256 amount)
         external
         nonReentrant
         whenNotPaused
     {
         // Tier-1 sanctions gate. Don't let a sanctioned wallet
-        // accumulate VPFI in their own escrow.
+        // accumulate VPFI in their own vault.
         LibVaipakam._assertNotSanctioned(msg.sender);
         (address vpfi, ) = _prepareDeposit(amount);
         // Route through the protocol's chokepoint so the
-        // protocolTrackedEscrowBalance counter ticks for the staked
-        // VPFI. The chokepoint resolves the user's escrow
+        // protocolTrackedVaultBalance counter ticks for the staked
+        // VPFI. The chokepoint resolves the user's vault
         // internally — `_prepareDeposit` still creates it (via
-        // `getOrCreateUserEscrow`) so the staking-checkpoint /
+        // `getOrCreateUserVault`) so the staking-checkpoint /
         // discount-accumulator can rollup against the post-mutation
         // balance, but we no longer need the address back here.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EscrowFactoryFacet.escrowDepositERC20.selector,
+                VaultFactoryFacet.vaultDepositERC20.selector,
                 msg.sender,
                 vpfi,
                 amount
             ),
-            EscrowDepositFailed.selector
+            VaultDepositFailed.selector
         );
-        emit VPFIDepositedToEscrow(msg.sender, amount, LibVPFIDiscount.escrowVPFIBalance(msg.sender));
+        emit VPFIDepositedToVault(msg.sender, amount, LibVPFIDiscount.vaultVPFIBalance(msg.sender));
     }
 
     /**
-     * @notice Permit2 variant of {depositVPFIToEscrow} (Phase 8b.1).
+     * @notice Permit2 variant of {depositVPFIToVault} (Phase 8b.1).
      *
-     * @dev Pulls VPFI from the caller's wallet to their escrow via
+     * @dev Pulls VPFI from the caller's wallet to their vault via
      *      Uniswap's Permit2 in a single transaction — no separate
      *      `approve` tx required. The caller signs an EIP-712
      *      `PermitTransferFrom` typed-data payload off-chain (frontend
@@ -472,7 +472,7 @@ contract VPFIDiscountFacet is
      *      signature alongside the deposit call here.
      *
      *      Staking + discount-accrual side-effects mirror
-     *      {depositVPFIToEscrow} — both paths share `_prepareDeposit`.
+     *      {depositVPFIToVault} — both paths share `_prepareDeposit`.
      *
      *      `permit.permitted.token` MUST equal the VPFI token address;
      *      the binding check is enforced by Permit2 itself (the token
@@ -484,63 +484,63 @@ contract VPFIDiscountFacet is
      * @param permit    `PermitTransferFrom` struct the user signed.
      * @param signature 65-byte ECDSA signature over the EIP-712 digest.
      */
-    function depositVPFIToEscrowWithPermit(
+    function depositVPFIToVaultWithPermit(
         uint256 amount,
         ISignatureTransfer.PermitTransferFrom calldata permit,
         bytes calldata signature
     ) external nonReentrant whenNotPaused {
-        // Tier-1 sanctions gate (mirrors `depositVPFIToEscrow`).
+        // Tier-1 sanctions gate (mirrors `depositVPFIToVault`).
         LibVaipakam._assertNotSanctioned(msg.sender);
-        (address vpfi, address escrow) = _prepareDeposit(amount);
+        (address vpfi, address vault) = _prepareDeposit(amount);
         // Bind the Permit2 pull to the registered VPFI token. Without
         // this check a permit signed for a different ERC-20 would be
         // honoured by Permit2 while {_prepareDeposit} has already
         // re-stamped the VPFI discount accumulator and staking
         // checkpoint at the post-mutation balance — the on-chain VPFI
         // balance would not actually move and accounting would drift.
-        LibPermit2.pull(msg.sender, escrow, vpfi, amount, permit, signature);
-        // Permit2 already moved VPFI to the user's escrow; record the
-        // deposit in the protocolTrackedEscrowBalance counter so the
+        LibPermit2.pull(msg.sender, vault, vpfi, amount, permit, signature);
+        // Permit2 already moved VPFI to the user's vault; record the
+        // deposit in the protocolTrackedVaultBalance counter so the
         // staking checkpoint's `min(balanceOf, tracked)` reads the
         // staked balance correctly and the future stuck-recovery
         // path's cap math stays consistent.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EscrowFactoryFacet.recordEscrowDepositERC20.selector,
+                VaultFactoryFacet.recordVaultDepositERC20.selector,
                 msg.sender,
                 vpfi,
                 amount
             ),
-            EscrowDepositFailed.selector
+            VaultDepositFailed.selector
         );
-        emit VPFIDepositedToEscrow(msg.sender, amount, LibVPFIDiscount.escrowVPFIBalance(msg.sender));
+        emit VPFIDepositedToVault(msg.sender, amount, LibVPFIDiscount.vaultVPFIBalance(msg.sender));
     }
 
     /// @dev Shared pre-pull setup — validates amount, resolves the VPFI
-    ///      token address and the caller's escrow, rolls up the
+    ///      token address and the caller's vault, rolls up the
     ///      discount accumulator + staking checkpoint at the
     ///      post-mutation balance. Returns the resolved
-    ///      `(vpfi, escrow)` so the caller can do the actual transfer
+    ///      `(vpfi, vault)` so the caller can do the actual transfer
     ///      via whichever path (safeTransferFrom vs Permit2) fits.
     function _prepareDeposit(uint256 amount)
         private
-        returns (address vpfi, address escrow)
+        returns (address vpfi, address vault)
     {
         if (amount == 0) revert InvalidAmount();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         vpfi = s.vpfiToken;
         if (vpfi == address(0)) revert VPFITokenNotSet();
-        escrow = EscrowFactoryFacet(address(this)).getOrCreateUserEscrow(
+        vault = VaultFactoryFacet(address(this)).getOrCreateUserVault(
             msg.sender
         );
-        uint256 prevBal = IERC20(vpfi).balanceOf(escrow);
+        uint256 prevBal = IERC20(vpfi).balanceOf(vault);
         // T-054 PR-2 — clamp the rollup / checkpoint balance against
         // the protocol-tracked counter so unsolicited dust pushed in
         // via direct `IERC20.transfer` does NOT inflate the user's
         // staking yield or VPFI discount tier. Post-mutation values
         // computed from current storage + the amount about to be
         // deposited via the chokepoint.
-        uint256 prevTracked = s.protocolTrackedEscrowBalance[msg.sender][vpfi];
+        uint256 prevTracked = s.protocolTrackedVaultBalance[msg.sender][vpfi];
         uint256 newStakedBal = LibVPFIDiscount.clampToTracked(
             prevBal + amount,
             prevTracked + amount
@@ -556,9 +556,9 @@ contract VPFIDiscountFacet is
     }
 
     /**
-     * @notice Move VPFI from the caller's escrow back to their wallet.
-     * @dev The counterpart to {depositVPFIToEscrow} — lets a staker unstake
-     *      by reducing their escrow VPFI balance. Staking accrual is
+     * @notice Move VPFI from the caller's vault back to their wallet.
+     * @dev The counterpart to {depositVPFIToVault} — lets a staker unstake
+     *      by reducing their vault VPFI balance. Staking accrual is
      *      checkpointed BEFORE the balance change so the withdrawn amount
      *      stops earning immediately.
      *
@@ -572,13 +572,13 @@ contract VPFIDiscountFacet is
      *
      *      Reverts `VPFITokenNotSet` when the token is unregistered,
      *      `InvalidAmount` on zero, and
-     *      `VPFIEscrowBalanceInsufficient` when the caller's escrow
+     *      `VPFIVaultBalanceInsufficient` when the caller's vault
      *      doesn't hold `amount`. Pausable + reentrancy-guarded.
      *
-     *      Emits {VPFIWithdrawnFromEscrow}.
+     *      Emits {VPFIWithdrawnFromVault}.
      * @param amount VPFI wei amount to withdraw (18 decimals).
      */
-    function withdrawVPFIFromEscrow(uint256 amount)
+    function withdrawVPFIFromVault(uint256 amount)
         external
         nonReentrant
         whenNotPaused
@@ -590,16 +590,16 @@ contract VPFIDiscountFacet is
         address vpfi = s.vpfiToken;
         if (vpfi == address(0)) revert VPFITokenNotSet();
 
-        address escrow = s.userVaipakamEscrows[msg.sender];
-        if (escrow == address(0)) revert VPFIEscrowBalanceInsufficient();
-        uint256 prevBal = IERC20(vpfi).balanceOf(escrow);
-        if (prevBal < amount) revert VPFIEscrowBalanceInsufficient();
+        address vault = s.userVaipakamVaults[msg.sender];
+        if (vault == address(0)) revert VPFIVaultBalanceInsufficient();
+        uint256 prevBal = IERC20(vpfi).balanceOf(vault);
+        if (prevBal < amount) revert VPFIVaultBalanceInsufficient();
 
         // T-054 PR-2 — clamp the post-withdraw balance against the
         // protocol-tracked counter (less the same withdraw amount).
-        // Excludes any unsolicited dust still sitting in the escrow
+        // Excludes any unsolicited dust still sitting in the vault
         // from the post-mutation yield-bearing balance.
-        uint256 prevTracked = s.protocolTrackedEscrowBalance[msg.sender][vpfi];
+        uint256 prevTracked = s.protocolTrackedVaultBalance[msg.sender][vpfi];
         uint256 newStakedBal = LibVPFIDiscount.clampToTracked(
             prevBal - amount,
             prevTracked - amount
@@ -613,18 +613,18 @@ contract VPFIDiscountFacet is
         // Staking checkpoint on the OLD balance before the pull.
         LibStakingRewards.updateUser(msg.sender, newStakedBal);
 
-        EscrowFactoryFacet(address(this)).escrowWithdrawERC20(
+        VaultFactoryFacet(address(this)).vaultWithdrawERC20(
             msg.sender,
             vpfi,
             msg.sender,
             amount
         );
 
-        emit VPFIWithdrawnFromEscrow(msg.sender, amount, LibVPFIDiscount.escrowVPFIBalance(msg.sender));
+        emit VPFIWithdrawnFromVault(msg.sender, amount, LibVPFIDiscount.vaultVPFIBalance(msg.sender));
     }
 
     /**
-     * @notice Set the caller's platform-level consent to use escrowed VPFI
+     * @notice Set the caller's platform-level consent to use vaulted VPFI
      *         for protocol fee discounts. A single consent governs both
      *         the borrower Loan Initiation Fee discount and the lender
      *         Yield Fee discount — no offer-level or loan-level toggle is
@@ -633,8 +633,8 @@ contract VPFIDiscountFacet is
      *      Revenue Sharing"): "the [borrower / lender] must explicitly
      *      consent through a single platform-level user setting... Only
      *      when that platform-level consent is active and sufficient VPFI
-     *      is available in escrow will the system automatically deduct
-     *      the discounted fee amount in VPFI from escrow and transfer it
+     *      is available in vault will the system automatically deduct
+     *      the discounted fee amount in VPFI from vault and transfer it
      *      to Treasury."
      *
      *      Pausable + non-reentrant so an operator pause fully disables
@@ -658,7 +658,7 @@ contract VPFIDiscountFacet is
     /**
      * @notice Returns `user`'s platform-level VPFI fee-discount consent.
      *         When true, the protocol automatically applies the borrower
-     *         and lender discounts whenever the escrow holds enough VPFI
+     *         and lender discounts whenever the vault holds enough VPFI
      *         and the asset leg is eligible.
      * @param user The address whose consent to read.
      * @return enabled Consent state.
@@ -717,7 +717,7 @@ contract VPFIDiscountFacet is
      *
      *      For LENDER offers the acceptor (the future borrower) is unknown
      *      at quote time; this view returns `eligible == false` because the
-     *      tier depends on the acceptor's escrow balance. Frontend should
+     *      tier depends on the acceptor's vault balance. Frontend should
      *      call {quoteVPFIDiscountFor} with the connected wallet address
      *      instead.
      *
@@ -727,8 +727,8 @@ contract VPFIDiscountFacet is
      *      without re-running liquidity checks.
      * @param offerId Offer to quote against.
      * @return eligible          True iff the full quote succeeded.
-     * @return vpfiRequired      VPFI (18 dec) borrower must hold in escrow.
-     * @return borrowerEscrowBal Borrower's current escrow VPFI balance.
+     * @return vpfiRequired      VPFI (18 dec) borrower must hold in vault.
+     * @return borrowerVaultBal Borrower's current vault VPFI balance.
      * @return tier              Resolved tier 1..4 (0 when ineligible).
      */
     function quoteVPFIDiscount(uint256 offerId)
@@ -737,7 +737,7 @@ contract VPFIDiscountFacet is
         returns (
             bool eligible,
             uint256 vpfiRequired,
-            uint256 borrowerEscrowBal,
+            uint256 borrowerVaultBal,
             uint8 tier
         )
     {
@@ -750,7 +750,7 @@ contract VPFIDiscountFacet is
             return (false, 0, 0, 0);
         }
 
-        // Tier depends on the borrower's escrow balance. For a Borrower offer
+        // Tier depends on the borrower's vault balance. For a Borrower offer
         // the creator is the borrower; for a Lender offer the borrower is the
         // acceptor (unknown here). Surface a negative quote in the Lender
         // case — the frontend knows to call {quoteVPFIDiscountFor}.
@@ -766,9 +766,9 @@ contract VPFIDiscountFacet is
         );
 
         uint256 bal;
-        address escrow = s.userVaipakamEscrows[knownBorrower];
-        if (escrow != address(0) && s.vpfiToken != address(0)) {
-            bal = IERC20(s.vpfiToken).balanceOf(escrow);
+        address vault = s.userVaipakamVaults[knownBorrower];
+        if (vault != address(0) && s.vpfiToken != address(0)) {
+            bal = IERC20(s.vpfiToken).balanceOf(vault);
         }
 
         if (!canQuote) return (false, 0, bal, 0);
@@ -784,8 +784,8 @@ contract VPFIDiscountFacet is
      * @param offerId  Offer to quote against.
      * @param borrower Address to resolve the tier against.
      * @return eligible          True iff the full quote succeeded.
-     * @return vpfiRequired      VPFI (18 dec) `borrower` must hold in escrow.
-     * @return borrowerEscrowBal `borrower`'s current escrow VPFI balance.
+     * @return vpfiRequired      VPFI (18 dec) `borrower` must hold in vault.
+     * @return borrowerVaultBal `borrower`'s current vault VPFI balance.
      * @return tier              Resolved tier 1..4 (0 when ineligible).
      */
     function quoteVPFIDiscountFor(uint256 offerId, address borrower)
@@ -794,7 +794,7 @@ contract VPFIDiscountFacet is
         returns (
             bool eligible,
             uint256 vpfiRequired,
-            uint256 borrowerEscrowBal,
+            uint256 borrowerVaultBal,
             uint8 tier
         )
     {
@@ -815,9 +815,9 @@ contract VPFIDiscountFacet is
         );
 
         uint256 bal;
-        address escrow = s.userVaipakamEscrows[borrower];
-        if (escrow != address(0) && s.vpfiToken != address(0)) {
-            bal = IERC20(s.vpfiToken).balanceOf(escrow);
+        address vault = s.userVaipakamVaults[borrower];
+        if (vault != address(0) && s.vpfiToken != address(0)) {
+            bal = IERC20(s.vpfiToken).balanceOf(vault);
         }
 
         if (!canQuote) return (false, 0, bal, 0);
@@ -826,19 +826,19 @@ contract VPFIDiscountFacet is
 
     /**
      * @notice Resolve `user`'s current VPFI discount tier purely from their
-     *         escrow balance. Cheap, pure, no oracle dependency.
+     *         vault balance. Cheap, pure, no oracle dependency.
      * @param user Address whose tier to resolve.
      * @return tier        0..4 (0 means no discount).
-     * @return escrowBal   `user`'s current escrow VPFI balance.
+     * @return vaultBal   `user`'s current vault VPFI balance.
      * @return discountBps Discount applied to the normal fee for this tier.
      */
     function getVPFIDiscountTier(address user)
         external
         view
-        returns (uint8 tier, uint256 escrowBal, uint256 discountBps)
+        returns (uint8 tier, uint256 vaultBal, uint256 discountBps)
     {
-        escrowBal = LibVPFIDiscount.escrowVPFIBalance(user);
-        tier = LibVPFIDiscount.tierOf(escrowBal);
+        vaultBal = LibVPFIDiscount.vaultVPFIBalance(user);
+        tier = LibVPFIDiscount.tierOf(vaultBal);
         discountBps = LibVPFIDiscount.discountBpsForTier(tier);
     }
 
@@ -1060,7 +1060,7 @@ contract VPFIDiscountFacet is
     /// @param loanId       Newly-initiated loan id.
     /// @param borrower     Borrower who paid the discounted fee in VPFI.
     /// @param lendingAsset Loan's principal asset.
-    /// @param vpfiDeducted VPFI moved from borrower escrow to treasury.
+    /// @param vpfiDeducted VPFI moved from borrower vault to treasury.
     function emitDiscountApplied(
         uint256 loanId,
         address borrower,
@@ -1068,7 +1068,7 @@ contract VPFIDiscountFacet is
         uint256 vpfiDeducted
     ) external {
         // Restrict to the diamond's own cross-facet path — same policy as
-        // EscrowFactoryFacet.onlyDiamondInternal (msg.sender == diamond).
+        // VaultFactoryFacet.onlyDiamondInternal (msg.sender == diamond).
         if (msg.sender != address(this)) revert UnauthorizedCrossFacetCall();
         emit VPFIDiscountApplied(loanId, borrower, lendingAsset, vpfiDeducted);
     }
@@ -1080,7 +1080,7 @@ contract VPFIDiscountFacet is
     /// @param loanId       Loan being settled.
     /// @param lender       Lender who paid the discounted yield fee in VPFI.
     /// @param lendingAsset Loan's principal asset.
-    /// @param vpfiDeducted VPFI moved from lender escrow to treasury.
+    /// @param vpfiDeducted VPFI moved from lender vault to treasury.
     function emitYieldFeeDiscountApplied(
         uint256 loanId,
         address lender,

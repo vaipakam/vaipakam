@@ -1,22 +1,22 @@
 import { AlertTriangle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useWallet } from '../../context/WalletContext';
-import { useEscrowUpgrade } from '../../hooks/useEscrowUpgrade';
+import { useVaultUpgrade } from '../../hooks/useVaultUpgrade';
 
 /**
- * Surfaces the README-required forced-upgrade flow (see README §"Escrow
- * Upgrades", lines 960 & 1100). When governance raises the mandatory escrow
- * version above a user's current version, `getOrCreateUserEscrow` reverts
- * `EscrowUpgradeRequired()`, which would otherwise block every diamond flow
- * that touches the user's escrow (offer creation, accept, repay, claim, ...).
+ * Surfaces the README-required forced-upgrade flow (see README §"Vault
+ * Upgrades", lines 960 & 1100). When governance raises the mandatory vault
+ * version above a user's current version, `getOrCreateUserVault` reverts
+ * `VaultUpgradeRequired()`, which would otherwise block every diamond flow
+ * that touches the user's vault (offer creation, accept, repay, claim, ...).
  *
  * Rendering this banner at the layout level gives the user a direct,
  * actionable CTA before they hit a revert on any page.
  */
-export function EscrowUpgradeBanner() {
+export function VaultUpgradeBanner() {
   const { t } = useTranslation();
   const { address, isCorrectChain } = useWallet();
-  const { info, upgrading, error, txHash, upgrade } = useEscrowUpgrade(
+  const { info, upgrading, error, txHash, upgrade } = useVaultUpgrade(
     isCorrectChain ? address : null,
   );
 
@@ -40,7 +40,7 @@ export function EscrowUpgradeBanner() {
       <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <AlertTriangle size={16} />
         <span>
-          {t('banners.escrowUpgradeBody', {
+          {t('banners.vaultUpgradeBody', {
             userVersion: info.userVersion.toString(),
             mandatoryVersion: info.mandatoryVersion.toString(),
             currentVersion: info.currentVersion.toString(),
@@ -51,7 +51,7 @@ export function EscrowUpgradeBanner() {
         {error && <span style={{ fontSize: '0.78rem' }}>{error}</span>}
         {txHash && !upgrading && (
           <span style={{ fontSize: '0.78rem' }} className="mono">
-            {t('banners.escrowTxPrefix')} {txHash.slice(0, 10)}…
+            {t('banners.vaultTxPrefix')} {txHash.slice(0, 10)}…
           </span>
         )}
         <button
@@ -60,7 +60,7 @@ export function EscrowUpgradeBanner() {
           onClick={upgrade}
           disabled={upgrading}
         >
-          {upgrading ? t('banners.escrowUpgrading') : t('banners.escrowUpgradeButton')}
+          {upgrading ? t('banners.vaultUpgrading') : t('banners.vaultUpgradeButton')}
         </button>
       </span>
     </div>

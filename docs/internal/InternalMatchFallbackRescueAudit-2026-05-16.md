@@ -73,25 +73,25 @@ without `_assertOraclePriceable` passing for both its assets.
 ## 3. Collateral custody — status-aware settlement (EC-007)
 
 **The wrinkle**: at FallbackPending time the loan's collateral has
-already been withdrawn from the borrower's escrow into the Diamond's
+already been withdrawn from the borrower's vault into the Diamond's
 own balance (it was pulled for the failed at-fallback swap). An
 `Active` loan's collateral, by contrast, is still in the borrower's
-escrow.
+vault.
 
 **The original EC-003 Phase 1 approach** rehydrated — pushed the
-FallbackPending collateral back into the borrower's escrow so the
-existing `_settleLeg` `escrowWithdrawERC20` path worked. That
+FallbackPending collateral back into the borrower's vault so the
+existing `_settleLeg` `vaultWithdrawERC20` path worked. That
 approach had a latent bug: after a *partial* match the residual was
-scattered into the borrower's escrow, but the lender's later claim
-(`claimAsLender` → `escrowWithdrawERC20(loan.lender, ...)`)
-withdraws from the *lender's* escrow — which is empty. The lender
+scattered into the borrower's vault, but the lender's later claim
+(`claimAsLender` → `vaultWithdrawERC20(loan.lender, ...)`)
+withdraws from the *lender's* vault — which is empty. The lender
 could not claim a partial-match residual.
 
 **The EC-007 fix**: `_settleLeg` is status-aware (`fromDiamondCustody`
 parameter). A FallbackPending paying-leg settles directly from the
 Diamond's custody with `IERC20.safeTransfer`; an Active paying-leg
-withdraws from the borrower's escrow as before. **No rehydration** —
-`_rehydrateFallbackEscrowIfNeeded` was removed entirely.
+withdraws from the borrower's vault as before. **No rehydration** —
+`_rehydrateFallbackVaultIfNeeded` was removed entirely.
 
 **Custody invariant**: a FallbackPending loan's collateral lives in
 the Diamond's custody for the entire FallbackPending span — through
@@ -100,9 +100,9 @@ the matched portion out of the Diamond; the residual stays. The
 `fallbackSnapshot` stays `active` and continues to describe the
 residual. A later match settles the residual the same way; a later
 claim distributes it via `_distributeFallbackCollateral` (Diamond →
-escrows) — exactly the path a fresh, smaller FallbackPending loan
+vaults) — exactly the path a fresh, smaller FallbackPending loan
 would take. On a FULL match the residual collateral is pushed to
-the borrower's escrow and `snap.active` is cleared as the loan
+the borrower's vault and `snap.active` is cleared as the loan
 transitions to `InternalMatched`.
 
 **Audit check**: confirm no path leaves a FallbackPending loan's
@@ -136,7 +136,7 @@ values.
 The residual collateral remains in the Diamond's custody (EC-007 —
 no rehydration), so the snapshot stays `active` and a later match
 or claim resolves it via `_distributeFallbackCollateral`
-(Diamond → escrows).
+(Diamond → vaults).
 
 **Invariant**: after a partial match, the three collateral fields
 still sum to `loan.collateralAmount`. Integer division truncates
@@ -260,8 +260,8 @@ Full regression: `forge test --no-match-path "test/invariants/*"`
 
 The original EC-003 Phase 1 rehydration approach had a latent bug:
 after a *partial* FallbackPending match, the residual collateral was
-scattered into the borrower's escrow, but `claimAsLender` withdraws
-from the *lender's* escrow — so the lender could not claim the
+scattered into the borrower's vault, but `claimAsLender` withdraws
+from the *lender's* vault — so the lender could not claim the
 residual. EC-007 fixed this by making `_settleLeg` status-aware
 (settle FallbackPending legs directly from Diamond custody) and
 removing the rehydration step entirely (§3). The residual now stays
@@ -298,7 +298,7 @@ gate).
 
 Verified by five tests in `InternalMatchExecution.t.sol`:
 `test_fallbackPending_partialRescue_residualInDiamond` (residual
-stays in Diamond, not the borrower's escrow),
+stays in Diamond, not the borrower's vault),
 `test_fallbackPending_partialRescue_thenSecondMatch` (a
 partially-matched FallbackPending loan stays matchable),
 `test_fallbackPending_partialRescue_thenClaim_lenderGetsResidual`

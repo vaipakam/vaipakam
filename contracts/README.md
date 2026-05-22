@@ -1,7 +1,7 @@
 # Vaipakam Contracts
 
 Decentralized P2P lending protocol using the EIP-2535 Diamond Standard, with
-per-user UUPS escrow proxies, NFT-collateralized loans, Chainlink-priced
+per-user UUPS vault proxies, NFT-collateralized loans, Chainlink-priced
 risk, and a **Chainlink CCIP** cross-chain layer carrying the VPFI
 governance token across the supported chains.
 
@@ -47,8 +47,8 @@ Facets share storage at the deterministic slot
 Cross-facet calls go through `address(this).call(...)` so they route back
 through the diamond's dispatch and reach the correct facet.
 
-Each user has an isolated UUPS escrow proxy (`ERC1967Proxy` over
-`VaipakamEscrowImplementation`), deployed on-demand by `EscrowFactoryFacet`.
+Each user has an isolated UUPS vault proxy (`ERC1967Proxy` over
+`VaipakamVaultImplementation`), deployed on-demand by `VaultFactoryFacet`.
 Collateral — ERC-20, ERC-721, ERC-1155 — never commingles.
 
 Two liquidation paths:
@@ -67,7 +67,7 @@ Two liquidation paths:
 contracts/
   src/
     VaipakamDiamond.sol              # Diamond proxy entry point
-    VaipakamEscrowImplementation.sol # Per-user UUPS escrow logic
+    VaipakamVaultImplementation.sol # Per-user UUPS vault logic
     facets/                          # 23 facets routed by the diamond
       DiamondCutFacet.sol            # EIP-2535 diamond surgery
       DiamondLoupeFacet.sol          # EIP-2535 introspection
@@ -77,7 +77,7 @@ contracts/
       ProfileFacet.sol               # Country/KYC state
       OracleFacet.sol                # Chainlink + v3-style concentrated-liquidity AMM liquidity
       VaipakamNFTFacet.sol           # Position NFTs (ERC721)
-      EscrowFactoryFacet.sol         # Per-user escrow proxy factory
+      VaultFactoryFacet.sol         # Per-user vault proxy factory
       OfferFacet.sol                 # Create/accept/cancel offers
       LoanFacet.sol                  # Loan initiation, HF/LTV gates
       RepayFacet.sol                 # Full/partial repay, late fees

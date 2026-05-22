@@ -9,10 +9,10 @@ Vaipakam's core protocol surface is broad: lending offers, borrowing
 offers, accept / match flows, loan lifecycle (init, repay, preclose,
 refinance, default, claim, liquidate, early-withdraw, partial-fill),
 NFT rental, oracle reads, depth probes, risk math, treasury, admin
-governance, sanctions screening, escrow factory, position NFTs, range
+governance, sanctions screening, vault factory, position NFTs, range
 matching, VPFI fee discount, VPFI buy adapter / receiver, cross-chain
 reward messenger. Every one of these surfaces shares state with at
-least one other (loan state, escrow assignments, protocol config,
+least one other (loan state, vault assignments, protocol config,
 asset registries, risk parameters).
 
 Three constraints framed the architecture choice:
@@ -21,13 +21,13 @@ Three constraints framed the architecture choice:
    contract. The combined surface above significantly exceeds this in
    any "one big contract" implementation.
 2. **Storage cohesion** — every subsystem reads (and most write) a
-   shared core: open loans, user escrows, oracle prices, admin
+   shared core: open loans, user vaults, oracle prices, admin
    policy. Splitting into independent contracts that each carry
    private storage would force cross-contract calls just to read
    state, with every read incurring an external CALL.
 3. **Upgrade granularity** — the protocol expects to evolve. Some
    subsystems (oracle stack, swap aggregator routing, risk math)
-   change more often than others (Diamond core, NFT escrow). A
+   change more often than others (Diamond core, NFT vault). A
    single monolithic upgrade path forces every change to redeploy
    the whole protocol.
 
@@ -44,7 +44,7 @@ Cross-facet calls use `address(this).call(abi.encodeWithSelector(...))`
 — this routes back through the Diamond's `fallback()` and reaches the
 target facet without leaving the Diamond's address space.
 
-Per-user escrow uses a separate (non-Diamond) UUPS pattern (see
+Per-user vault uses a separate (non-Diamond) UUPS pattern (see
 ADR-0008) — the per-user isolation requirement is orthogonal to the
 core surface's shared-storage requirement.
 
@@ -92,12 +92,12 @@ core surface's shared-storage requirement.
 EIP-170. Even with aggressive optimisation (`viaIR = true`, 200
 optimizer runs), the combined surface exceeded the 24 KB limit by
 a wide margin once the full feature set (offers + risk + oracle +
-escrow + VPFI + cross-chain + sanctions) was in place.
+vault + VPFI + cross-chain + sanctions) was in place.
 
 **Alternative B — Subsystem contracts with private storage, calling
 each other**: Rejected because every read of shared state would
 become an external CALL with the associated gas cost and
-re-entrancy surface. The per-loan, per-offer, per-escrow read
+re-entrancy surface. The per-loan, per-offer, per-vault read
 patterns make this prohibitive.
 
 **Alternative C — Transparent / UUPS proxy with a single
@@ -117,4 +117,4 @@ layout). Diamond's shared-storage pattern is strictly better here.
 - Deploy-sanity: [`contracts/test/deploy/FacetSizeLimitTest.t.sol`](../../contracts/test/deploy/FacetSizeLimitTest.t.sol),
   [`contracts/test/deploy/SelectorCoverageTest.t.sol`](../../contracts/test/deploy/SelectorCoverageTest.t.sol)
 - Spec: [`apps/www/src/content/whitepaper/Whitepaper.en.md`](../../apps/www/src/content/whitepaper/Whitepaper.en.md) §3.1 (Diamond Pattern)
-- Related: ADR-0008 (per-user escrow factory)
+- Related: ADR-0008 (per-user vault factory)

@@ -60,7 +60,7 @@ library LibERC721 {
         string contractImageURI;
         address royaltyReceiver;
         uint96 royaltyBps;
-        // Native transfer lock (replaces escrow-custody during strategic
+        // Native transfer lock (replaces vault-custody during strategic
         // flows). A non-None reason blocks transferFrom/safeTransferFrom/
         // approve on the locked tokenId.
         mapping(uint256 => LockReason) locks;

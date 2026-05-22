@@ -13,10 +13,10 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
-import {VaipakamEscrowImplementation} from "../src/VaipakamEscrowImplementation.sol";
+import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
@@ -60,7 +60,7 @@ contract ClaimFacetTest is Test {
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
     VaipakamNFTFacet nftFacet;
-    EscrowFactoryFacet escrowFacet;
+    VaultFactoryFacet vaultFacet;
     LoanFacet loanFacet;
     DefaultedFacet defaultFacet;
     RiskFacet riskFacet;
@@ -71,7 +71,7 @@ contract ClaimFacetTest is Test {
     AccessControlFacet accessControlFacet;
     TestMutatorFacet testMutatorFacet;
     HelperTest helperTest;
-    VaipakamEscrowImplementation escrowImpl;
+    VaipakamVaultImplementation vaultImpl;
 
     function _setLoanAssetType(uint256 loanId, LibVaipakam.AssetType at) internal {
         LibVaipakam.Loan memory ld = LoanFacet(address(diamond)).getLoanDetails(loanId);
@@ -124,7 +124,7 @@ contract ClaimFacetTest is Test {
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
         nftFacet = new VaipakamNFTFacet();
-        escrowFacet = new EscrowFactoryFacet();
+        vaultFacet = new VaultFactoryFacet();
         loanFacet = new LoanFacet();
         defaultFacet = new DefaultedFacet();
         riskFacet = new RiskFacet();
@@ -135,7 +135,7 @@ contract ClaimFacetTest is Test {
         accessControlFacet = new AccessControlFacet();
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
-        escrowImpl = new VaipakamEscrowImplementation();
+        vaultImpl = new VaipakamVaultImplementation();
 
         // Cut all facets
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](16);
@@ -148,7 +148,7 @@ contract ClaimFacetTest is Test {
         cuts[1] = IDiamondCut.FacetCut({facetAddress: address(profileFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
         cuts[2] = IDiamondCut.FacetCut({facetAddress: address(oracleFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});
         cuts[3] = IDiamondCut.FacetCut({facetAddress: address(nftFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaipakamNFTFacetSelectors()});
-        cuts[4] = IDiamondCut.FacetCut({facetAddress: address(escrowFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getEscrowFactoryFacetSelectors()});
+        cuts[4] = IDiamondCut.FacetCut({facetAddress: address(vaultFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaultFactoryFacetSelectors()});
         cuts[5] = IDiamondCut.FacetCut({facetAddress: address(loanFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getLoanFacetSelectors()});
         cuts[6] = IDiamondCut.FacetCut({facetAddress: address(riskFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskFacetSelectors()});
         cuts[7] = IDiamondCut.FacetCut({facetAddress: address(repayFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRepayFacetSelectors()});
@@ -166,7 +166,7 @@ contract ClaimFacetTest is Test {
         AdminFacet(address(diamond)).unpause();
 
         // Init admin state
-        EscrowFactoryFacet(address(diamond)).initializeEscrowImplementation();
+        VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(mockZeroExProxy);
         AdminFacet(address(diamond)).setallowanceTarget(mockZeroExProxy);
@@ -221,19 +221,19 @@ contract ClaimFacetTest is Test {
         RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 300, 1000);
         TestMutatorFacet(address(diamond)).setTierLiquidationLtvBpsAllRaw(8500, 8500, 8500);
 
-        // Escrow approvals
+        // Vault approvals
         vm.prank(lender);
-        ERC20(mockERC20).approve(EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender), type(uint256).max);
+        ERC20(mockERC20).approve(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender), type(uint256).max);
         vm.prank(borrower);
-        ERC20(mockERC20).approve(EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(borrower), type(uint256).max);
+        ERC20(mockERC20).approve(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower), type(uint256).max);
         vm.prank(lender);
-        ERC20(mockCollateralERC20).approve(EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender), type(uint256).max);
+        ERC20(mockCollateralERC20).approve(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender), type(uint256).max);
         vm.prank(borrower);
-        ERC20(mockCollateralERC20).approve(EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(borrower), type(uint256).max);
+        ERC20(mockCollateralERC20).approve(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower), type(uint256).max);
         vm.prank(borrower);
-        ERC20(mockIlliquidERC20).approve(EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(borrower), type(uint256).max);
+        ERC20(mockIlliquidERC20).approve(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower), type(uint256).max);
         vm.prank(lender);
-        IERC721(mockNFT721).setApprovalForAll(EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender), true);
+        IERC721(mockNFT721).setApprovalForAll(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender), true);
     }
 
     /// @dev Creates a lender offer and borrower accepts it to initiate a loan.
@@ -514,15 +514,15 @@ contract ClaimFacetTest is Test {
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Settled));
     }
 
-    /// @dev Tests cross-facet call failure in claimAsLender (escrow withdraw fails).
+    /// @dev Tests cross-facet call failure in claimAsLender (vault withdraw fails).
     function testClaimAsLenderCrossFacetFails() public {
         uint256 loanId = _createAndAcceptERC20Loan(1000 ether, 1500 ether, 30);
         _repayLoan(loanId);
 
-        // Mock escrowWithdrawERC20 to fail
+        // Mock vaultWithdrawERC20 to fail
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
             "mock revert"
         );
         vm.prank(lender);
@@ -531,15 +531,15 @@ contract ClaimFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev Tests cross-facet call failure in claimAsBorrower (escrow withdraw fails).
+    /// @dev Tests cross-facet call failure in claimAsBorrower (vault withdraw fails).
     function testClaimAsBorrowerCrossFacetFails() public {
         uint256 loanId = _createAndAcceptERC20Loan(1000 ether, 1500 ether, 30);
         _repayLoan(loanId);
 
-        // Mock escrowWithdrawERC20 to fail
+        // Mock vaultWithdrawERC20 to fail
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
             "mock revert"
         );
         vm.prank(borrower);
@@ -570,7 +570,7 @@ contract ClaimFacetTest is Test {
         uint256 loanId = _createAndAcceptERC20Loan(1000 ether, 1500 ether, 30);
         _repayLoan(loanId);
 
-        // Allow escrow withdraw but fail burnNFT
+        // Allow vault withdraw but fail burnNFT
         vm.mockCallRevert(
             address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector),
@@ -587,7 +587,7 @@ contract ClaimFacetTest is Test {
         uint256 loanId = _createAndAcceptERC20Loan(1000 ether, 1500 ether, 30);
         _repayLoan(loanId);
 
-        // Allow escrow withdraw but fail burnNFT
+        // Allow vault withdraw but fail burnNFT
         vm.mockCallRevert(
             address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector),
@@ -622,14 +622,14 @@ contract ClaimFacetTest is Test {
         // Set heldForLender[loanId] > 0 via vm.store
         TestMutatorFacet(address(diamond)).setHeldForLenderRaw(loanId, 50 ether);
 
-        // Mint enough to lender's escrow for the held amount.
+        // Mint enough to lender's vault for the held amount.
         // T-051 — back the direct mint with a counter record so the
-        // subsequent claim's escrowWithdrawERC20 doesn't underflow
-        // protocolTrackedEscrowBalance.
-        address lenderEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender);
-        ERC20Mock(mockERC20).mint(lenderEscrow, 50 ether);
+        // subsequent claim's vaultWithdrawERC20 doesn't underflow
+        // protocolTrackedVaultBalance.
+        address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        ERC20Mock(mockERC20).mint(lenderVault, 50 ether);
         vm.prank(address(diamond));
-        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(lender, mockERC20, 50 ether);
+        VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(lender, mockERC20, 50 ether);
 
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
@@ -646,15 +646,15 @@ contract ClaimFacetTest is Test {
         // Set heldForLender > 0
         TestMutatorFacet(address(diamond)).setHeldForLenderRaw(loanId, 50 ether);
 
-        // Mock first escrow withdraw to succeed (claim.amount), second to fail (held)
-        // Since we can't easily differentiate, mock all escrow withdrawals to fail after
+        // Mock first vault withdraw to succeed (claim.amount), second to fail (held)
+        // Since we can't easily differentiate, mock all vault withdrawals to fail after
         // the first claim transfer. Use a different approach: set claim.amount = 0 so
         // only held path is taken, then mock it to fail.
         TestMutatorFacet(address(diamond)).setLenderClaimAmountRaw(loanId, 0);
 
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
             "mock fail"
         );
 
@@ -675,10 +675,10 @@ contract ClaimFacetTest is Test {
         TestMutatorFacet(address(diamond)).setHeldForLenderRaw(loanId, 50 ether);
 
         // T-051 — pair the direct mint with a counter record.
-        address lenderEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender);
-        ERC20Mock(mockERC20).mint(lenderEscrow, 50 ether);
+        address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        ERC20Mock(mockERC20).mint(lenderVault, 50 ether);
         vm.prank(address(diamond));
-        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(lender, mockERC20, 50 ether);
+        VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(lender, mockERC20, 50 ether);
 
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
@@ -695,8 +695,8 @@ contract ClaimFacetTest is Test {
         // Override loan assetType to ERC721 to trigger ERC721 return branch
         _setLoanAssetType(loanId, LibVaipakam.AssetType.ERC721);
 
-        // Mock the escrow withdraw ERC721 to succeed
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC721.selector), abi.encode(true));
+        // Mock the vault withdraw ERC721 to succeed
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC721.selector), abi.encode(true));
 
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
@@ -714,7 +714,7 @@ contract ClaimFacetTest is Test {
         // Override loan assetType to ERC1155
         _setLoanAssetType(loanId, LibVaipakam.AssetType.ERC1155);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC1155.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector), abi.encode(true));
 
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
@@ -731,7 +731,7 @@ contract ClaimFacetTest is Test {
 
         _setLoanAssetType(loanId, LibVaipakam.AssetType.ERC721);
 
-        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC721.selector), "fail");
+        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC721.selector), "fail");
 
         vm.prank(lender);
         vm.expectRevert(bytes("fail"));
@@ -746,7 +746,7 @@ contract ClaimFacetTest is Test {
 
         _setLoanAssetType(loanId, LibVaipakam.AssetType.ERC1155);
 
-        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC1155.selector), "fail");
+        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector), "fail");
 
         vm.prank(lender);
         vm.expectRevert(bytes("fail"));
@@ -764,8 +764,8 @@ contract ClaimFacetTest is Test {
         // Override lenderClaims[loanId].assetType to ERC721 (=1) via vm.store
         TestMutatorFacet(address(diamond)).setLenderClaimNFTFieldsRaw(loanId, LibVaipakam.AssetType.ERC721, 42, 0);
 
-        // Mock escrowWithdrawERC721 to succeed (for the ERC721 claim transfer)
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC721.selector), abi.encode(true));
+        // Mock vaultWithdrawERC721 to succeed (for the ERC721 claim transfer)
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC721.selector), abi.encode(true));
 
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
@@ -782,7 +782,7 @@ contract ClaimFacetTest is Test {
 
         TestMutatorFacet(address(diamond)).setLenderClaimNFTFieldsRaw(loanId, LibVaipakam.AssetType.ERC1155, 42, 10);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC1155.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector), abi.encode(true));
 
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
@@ -799,7 +799,7 @@ contract ClaimFacetTest is Test {
 
         TestMutatorFacet(address(diamond)).setBorrowerClaimNFTFieldsRaw(loanId, LibVaipakam.AssetType.ERC721, 42, 0);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC721.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC721.selector), abi.encode(true));
 
         vm.prank(borrower);
         ClaimFacet(address(diamond)).claimAsBorrower(loanId);
@@ -816,7 +816,7 @@ contract ClaimFacetTest is Test {
 
         TestMutatorFacet(address(diamond)).setBorrowerClaimNFTFieldsRaw(loanId, LibVaipakam.AssetType.ERC1155, 42, 10);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC1155.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector), abi.encode(true));
 
         vm.prank(borrower);
         ClaimFacet(address(diamond)).claimAsBorrower(loanId);
@@ -833,7 +833,7 @@ contract ClaimFacetTest is Test {
 
         TestMutatorFacet(address(diamond)).setLenderClaimNFTFieldsRaw(loanId, LibVaipakam.AssetType.ERC721, 42, 0);
 
-        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC721.selector), "nft fail");
+        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC721.selector), "nft fail");
 
         vm.prank(lender);
         vm.expectRevert(bytes("nft fail"));
@@ -848,7 +848,7 @@ contract ClaimFacetTest is Test {
 
         TestMutatorFacet(address(diamond)).setBorrowerClaimNFTFieldsRaw(loanId, LibVaipakam.AssetType.ERC1155, 42, 10);
 
-        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC1155.selector), "nft fail");
+        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector), "nft fail");
 
         vm.prank(borrower);
         vm.expectRevert(bytes("nft fail"));
@@ -922,8 +922,8 @@ contract ClaimFacetTest is Test {
             10
         );
 
-        // Mock escrowWithdrawERC1155 to fail
-        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC1155.selector), "nft fail");
+        // Mock vaultWithdrawERC1155 to fail
+        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector), "nft fail");
 
         vm.prank(lender);
         vm.expectRevert(bytes("nft fail"));
@@ -939,8 +939,8 @@ contract ClaimFacetTest is Test {
         // Override borrowerClaims[loanId].assetType to ERC721 (=1) via vm.store
         TestMutatorFacet(address(diamond)).setBorrowerClaimNFTFieldsRaw(loanId, LibVaipakam.AssetType.ERC721, 42, 0);
 
-        // Mock escrowWithdrawERC721 to fail
-        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC721.selector), "nft fail");
+        // Mock vaultWithdrawERC721 to fail
+        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC721.selector), "nft fail");
 
         vm.prank(borrower);
         vm.expectRevert(bytes("nft fail"));

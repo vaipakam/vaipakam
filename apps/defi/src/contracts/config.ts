@@ -52,7 +52,7 @@ function nullIfZero(addr: string | undefined): string | null {
  * **What still lives in `.env.local`**: per-chain RPC URLs (the operator's
  * Alchemy/drpc endpoint with API key), WalletConnect project ID, the
  * default chain ID, and a few feature flags. Everything else — Diamond
- * address, escrow impl, facet addresses, LZ adapter addresses — comes
+ * address, vault impl, facet addresses, LZ adapter addresses — comes
  * from the consolidated deployments JSON.
  */
 
@@ -123,7 +123,7 @@ function buildChainConfig(meta: ChainMeta): ChainConfig {
     vpfiBuyAdapter: dep?.vpfiBuyAdapter ?? null,
     vpfiBuyPaymentToken: nullIfZero(dep?.vpfiBuyPaymentToken),
     metricsFacetAddress: dep?.facets?.metricsFacet ?? null,
-    escrowImplAddress: dep?.escrowImpl ?? null,
+    vaultImplAddress: dep?.vaultImpl ?? null,
     riskFacetAddress: dep?.facets?.riskFacet ?? null,
     profileFacetAddress: dep?.facets?.profileFacet ?? null,
     nativeGasSymbol: meta.nativeGasSymbol,
@@ -441,7 +441,7 @@ for (const c of [
   c.vpfiBuyAdapter = normalizeAddress(c.vpfiBuyAdapter);
   c.vpfiBuyPaymentToken = normalizeAddress(c.vpfiBuyPaymentToken);
   c.metricsFacetAddress = normalizeAddress(c.metricsFacetAddress);
-  c.escrowImplAddress = normalizeAddress(c.escrowImplAddress);
+  c.vaultImplAddress = normalizeAddress(c.vaultImplAddress);
   c.riskFacetAddress = normalizeAddress(c.riskFacetAddress);
   c.profileFacetAddress = normalizeAddress(c.profileFacetAddress);
 }

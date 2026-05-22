@@ -70,10 +70,10 @@
     "sanctionsMatchBody": "The on-chain sanctions oracle (Chainalysis) currently lists this address. Any offer-creation or offer-acceptance transaction will revert at the protocol layer. If this is a mis-match, contact Chainalysis support — Vaipakam does not maintain its own sanctions list.",
     "sanctionsLabelWallet": "Connected wallet",
     "sanctionsLabelOfferCreator": "Offer creator",
-    "escrowUpgradeBody": "Vault upgrade required — the vault is at v{{userVersion}}, mandatory floor is v{{mandatoryVersion}} (latest v{{currentVersion}}). Diamond flows will revert until upgrade.",
-    "escrowUpgrading": "Upgrading…",
-    "escrowUpgradeButton": "Upgrade Vault",
-    "escrowTxPrefix": "tx",
+    "vaultUpgradeBody": "Vault upgrade required — the vault is at v{{userVersion}}, mandatory floor is v{{mandatoryVersion}} (latest v{{currentVersion}}). Diamond flows will revert until upgrade.",
+    "vaultUpgrading": "Upgrading…",
+    "vaultUpgradeButton": "Upgrade Vault",
+    "vaultTxPrefix": "tx",
     "unsupportedDiamondPending": "Phase 1 Diamond pending",
     "unsupportedNetwork": "Unsupported network",
     "unsupportedBody": "{{state}} (chainId {{chainId}}). Vaipakam runs as a separate Diamond on each supported network — currently live on: {{liveList}}.",
@@ -271,8 +271,8 @@
     "mirrorTip": "Mirror chain — VPFI on this chain is a 1:1 representation of the canonical supply. The OFT mints tokens here when a bridge transfer arrives and burns them when a transfer leaves, so the mirror balance is always backed by canonical-chain locks.",
     "notRegistered": "VPFI is not yet registered with the Diamond on {{chain}}. Once the admin calls setVPFIToken, balances and activity will appear here.",
     "walletBalance": "Wallet VPFI balance",
-    "escrowBalance": "Vault VPFI balance",
-    "escrowTooltip": "VPFI currently staked in the Vaipakam Vault on this chain. Counts toward the borrower fee discount tier.",
+    "vaultBalance": "Vault VPFI balance",
+    "vaultTooltip": "VPFI currently staked in the Vaipakam Vault on this chain. Counts toward the borrower fee discount tier.",
     "shareCirculating": "Share of circulating",
     "shareTooltip": "Effective ownership of this chain's VPFI supply — wallet balance plus vault-locked balance, divided by circulating. Vault VPFI is still owned by the user; it's just locked for tier discount / {{apr}}% APR.",
     "circulatingThisChain": "Circulating (this chain)",
@@ -282,14 +282,14 @@
     "treasuryMintDestination": "Treasury (mint destination)",
     "yourActivity": "Your VPFI activity",
     "noActivity": "No VPFI transfers touch this wallet on {{chain}} yet. User-facing distributions (rewards, staking) arrive in a later rollout phase.",
-    "escrowCountsAsStaked": "Vault VPFI counts as staked ({{apr}}% APR)"
+    "vaultCountsAsStaked": "Vault VPFI counts as staked ({{apr}}% APR)"
   },
   "buyVpfiCards": {
     "discountStatusTitle": "Your VPFI discount status",
     "currentTier": "Current tier",
     "noDiscountYet": "No discount yet",
-    "escrowVpfi": "Vault VPFI",
-    "escrowCountsAsStaked": "Vault VPFI counts as staked ({{apr}}% APR)",
+    "vaultVpfi": "Vault VPFI",
+    "vaultCountsAsStaked": "Vault VPFI counts as staked ({{apr}}% APR)",
     "statusLabel": "Status",
     "inactiveOff": "Inactive · discount consent OFF",
     "inactiveBelowTier1": "Inactive · below Tier 1 ({{tier1Min}} VPFI in the vault)",
@@ -300,7 +300,7 @@
     "enableSharedConsent": "Enable the shared discount consent on the <dashboardLink>Dashboard</dashboardLink>.",
     "depositMore": "Deposit {{amount}} more VPFI into vault to reach Tier {{tier}} ({{discount}}).",
     "tierColTier": "Tier",
-    "tierColEscrow": "Vault VPFI",
+    "tierColVault": "Vault VPFI",
     "tierColDiscount": "Discount",
     "tierN": "Tier {{tier}}",
     "tier1": "Tier 1",
@@ -328,13 +328,13 @@
     "gasReserveTooltip": "A small gas reserve ({{reserve}} ETH) is held back from the wallet balance so the buy tx can still be broadcast.",
     "capExceeded": "This amount exceeds the remaining cap. Reduce the ETH input and try again.",
     "exceedsBalance": "Amount exceeds the wallet ETH balance of {{balance}} ETH (a small gas reserve is kept aside).",
-    "exceedsEscrowBalance": "Amount exceeds the vault VPFI balance of {{balance}} VPFI.",
+    "exceedsVaultBalance": "Amount exceeds the vault VPFI balance of {{balance}} VPFI.",
     "buyButton": "Buy VPFI",
     "depositTitle": "Deposit VPFI into vault",
     "depositSubtitle": "Required on every chain — including the canonical one.",
     "depositSpecNote": "By spec, transferring VPFI into vault is always an explicit user action. The protocol never auto-funds the vault after a buy or bridge.",
     "walletVpfiBalance": "Wallet VPFI balance",
-    "escrowVpfiBalance": "Vault VPFI balance ({{chain}})",
+    "vaultVpfiBalance": "Vault VPFI balance ({{chain}})",
     "depositAmount": "VPFI amount to deposit",
     "useMaxVpfi": "Use max ({{amount}} VPFI)",
     "depositButton": "Deposit into Vault",
@@ -586,7 +586,7 @@
     "keepers": "Keepers",
     "governanceGroupLabel": "Governance",
     "protocolConsole": "Protocol Console",
-    "escrow": "Your Vaipakam Vault"
+    "vault": "Your Vaipakam Vault"
   },
   "dataRights": {
     "title": "Your data rights (GDPR / UK GDPR / CCPA)",
@@ -901,7 +901,7 @@
     "buying": "Buying…",
     "approving": "Approving…",
     "approvingVpfi": "Approving VPFI…",
-    "depositToEscrow": "Deposit to vault",
+    "depositToVault": "Deposit to vault",
     "depositing": "Depositing…",
     "unstakeToWallet": "Unstake to wallet",
     "unstaking": "Unstaking…",
@@ -909,7 +909,7 @@
     "depositFailed": "Deposit failed",
     "unstakeFailed": "Unstake failed",
     "buyTimedOut": "Buy timed out — funds returned",
-    "escrowBalanceZero": "Your Vaipakam Vault VPFI balance is 0 — deposit VPFI first."
+    "vaultBalanceZero": "Your Vaipakam Vault VPFI balance is 0 — deposit VPFI first."
   },
   "claimCenter": {
     "connectTitle": "Connect Your Wallet",
@@ -1348,8 +1348,8 @@
     "statP2pLabel": "Direct Lending",
     "statNftValue": "NFT",
     "statNftLabel": "Position Tracking",
-    "statEscrowValue": "1:1",
-    "statEscrowLabel": "Vaipakam Vaults",
+    "statVaultValue": "1:1",
+    "statVaultLabel": "Vaipakam Vaults",
     "demoLendTitle": "Lend 1,000 USDC",
     "demoLendMeta": "5% APR · 30 days · ETH collateral",
     "demoLendStatus": "Active",
@@ -1368,8 +1368,8 @@
     "p2pDesc": "Create or accept offers for ERC-20 tokens with custom terms — interest rate, collateral type, and loan duration. No intermediary pools.",
     "nftTitle": "NFT Rentals (ERC-4907)",
     "nftDesc": "Rent out ERC-721 and ERC-1155 NFTs with daily pricing. Borrowers get user rights while the NFT stays safely in the vault.",
-    "escrowTitle": "Vaipakam Vaults",
-    "escrowDesc": "Every user gets their own UUPS upgradeable vault proxy. No fund commingling — assets are always isolated.",
+    "vaultTitle": "Vaipakam Vaults",
+    "vaultDesc": "Every user gets their own UUPS upgradeable vault proxy. No fund commingling — assets are always isolated.",
     "nftPositionTitle": "NFT Position Tracking",
     "nftPositionDesc": "Every offer and loan mints a unique Vaipakam NFT with on-chain metadata. Prove ownership, claim funds, and track status on any marketplace.",
     "liquidityTitle": "Liquid vs Illiquid Assets",
@@ -1413,8 +1413,8 @@
     "subtitle": "From smart contract architecture to liquidation mechanics, every design decision prioritizes the safety of assets. Each card below links to the on-chain artifact backing the claim — verify the standard yourself.",
     "diamondTitle": "Diamond Standard (EIP-2535)",
     "diamondDesc": "Modular proxy architecture. Upgrade individual facets without disrupting the protocol. All calls route through a single diamond entry point.",
-    "escrowTitle": "Vaipakam Vaults",
-    "escrowDesc": "Each user gets a dedicated UUPS proxy vault. No commingling of funds. Mandatory vault upgrades block interactions until the user upgrades.",
+    "vaultTitle": "Vaipakam Vaults",
+    "vaultDesc": "Each user gets a dedicated UUPS proxy vault. No commingling of funds. Mandatory vault upgrades block interactions until the user upgrades.",
     "transparencyTitle": "On-Chain Transparency",
     "transparencyDesc": "Every offer, loan, and status change is recorded on-chain. Vaipakam NFTs serve as verifiable proof of position ownership.",
     "slippageTitle": "Slippage & Liquidation Safety",
@@ -1501,9 +1501,9 @@
         "li1": "<s>ERC-20 loans:</s> principal is any ERC-20 (USDC, ETH, WBTC, etc.); collateral can be any ERC-20 or any NFT.",
         "li2": "<s>NFT rentals:</s> the rented NFT is the principal; collateral is an ERC-20. Native ERC-4907 on the NFT is optional — the Vaipakam Vault wrapper exposes a uniform <c>userOf</c> / <c>userExpires</c> / <c>userQuantity</c> surface regardless."
       },
-      "escrow": {
+      "vault": {
         "q": "How does the Vaipakam Vault work?",
-        "a1": "Every user gets their own UUPS upgradeable proxy vault, deployed on first use by the <c>EscrowFactoryFacet</c> (clone-factory pattern). Assets are never commingled with anyone else's.",
+        "a1": "Every user gets their own UUPS upgradeable proxy vault, deployed on first use by the <c>VaultFactoryFacet</c> (clone-factory pattern). Assets are never commingled with anyone else's.",
         "a2": "The Diamond orchestrates moves across vaults, but claim rights are tied to the Vaipakam position NFT — so vault custody is strictly constrained by on-chain position state."
       },
       "default": {
@@ -1577,12 +1577,12 @@
         "q": "How does the VPFI discount work?",
         "a1": "VPFI held in the Vaipakam Vaults automatically places the holder in a discount tier. One platform-level consent covers both the borrower (initiation) and lender (yield) legs, and the discounted fee is auto-deducted in VPFI from the vault — the borrower then receives the full principal and the lender keeps the full interest on the discount path.",
         "tableTier": "Tier",
-        "tableEscrow": "VPFI in the vault",
+        "tableVault": "VPFI in the vault",
         "tableDiscount": "Discount",
         "tableInitiation": "Effective initiation",
         "tableYield": "Effective yield fee",
-        "row3Escrow": "≥ 5,000, ≤ 20,000",
-        "row4Escrow": "> 20,000"
+        "row3Vault": "≥ 5,000, ≤ 20,000",
+        "row4Vault": "> 20,000"
       },
       "vpfi-rewards": {
         "q": "How can I earn VPFI rewards?",
@@ -1614,7 +1614,7 @@
       },
       "integrator-rental": {
         "q": "How do I read rental state for a Vaipakam-rented NFT?",
-        "a1": "Query the lender's <s>Vaipakam Vaults wrapper</s> — not the underlying NFT — through the Diamond. For ERC-1155 rentals with multiple concurrent renters on the same <c>(nftContract, tokenId)</c>, <c2>escrowGetNFTQuantity</c2> returns the <em>active aggregate</em> quantity and <c3>escrowGetNFTUserExpires</c3> returns the minimum active expiry.",
+        "a1": "Query the lender's <s>Vaipakam Vaults wrapper</s> — not the underlying NFT — through the Diamond. For ERC-1155 rentals with multiple concurrent renters on the same <c>(nftContract, tokenId)</c>, <c2>vaultGetNFTQuantity</c2> returns the <em>active aggregate</em> quantity and <c3>vaultGetNFTUserExpires</c3> returns the minimum active expiry.",
         "a2": "The wrapper maintains authoritative rental state even when the underlying NFT does <s>not</s> implement ERC-4907, so integrators get a uniform surface across every rented asset."
       },
       "integrator-subgraph": {
@@ -1657,13 +1657,13 @@
       "whitepaper": "Whitepaper"
     }
   },
-  "escrowAssets": {
+  "vaultAssets": {
     "pageTitle": "Your Vaipakam Vault",
     "pageSubtitle": "Tokens held by the protocol on your behalf. Each user has their own isolated vault proxy — deposits and withdrawals always flow through the Vaipakam Diamond.",
     "addressCardTitle": "Vault Address",
     "addressCaption": "Internal protocol storage — funds enter and exit via the protocol only.",
     "viewOnExplorer": "View vault on block explorer",
-    "noEscrowYet": "You don't have a vault yet. One will be created automatically the first time you create or accept an offer.",
+    "noVaultYet": "You don't have a vault yet. One will be created automatically the first time you create or accept an offer.",
     "holdingsTitle": "Holdings",
     "lowToggleShow": "Show all ({{n}} hidden)",
     "lowToggleHide": "Hide low balances",
@@ -1681,7 +1681,7 @@
     "connectBody": "Connect your wallet to view your vault holdings.",
     "switchChainBody": "Switch your wallet to a Vaipakam-supported chain to view your vault holdings."
   },
-  "escrowRecover": {
+  "vaultRecover": {
     "pageTitle": "Stuck-token recovery",
     "pageSubtitle": "Recover ERC-20 tokens that landed in your vault proxy outside the protocol deposit flow. Read the Advanced User Guide section first — declaring an incorrect source can lock your vault under the protocol's sanctions policy.",
     "formTitle": "Recovery declaration",

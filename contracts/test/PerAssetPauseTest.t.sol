@@ -240,7 +240,7 @@ contract PerAssetPauseTest is Test {
         p.amount = 1;
         p.lendingAsset = ASSET_A;
         p.collateralAsset = ASSET_B;
-        // Gate is no longer tripped; downstream reverts (oracle / escrow)
+        // Gate is no longer tripped; downstream reverts (oracle / vault)
         // are expected and acceptable — we only assert the AssetPaused
         // revert is gone.
         vm.expectRevert();

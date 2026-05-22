@@ -284,7 +284,7 @@ This is structurally different from automated revenue routing.
   etc. all flow to `treasuryBalances[asset]`.
 - **The T-051 chokepoint counter** separates protocol-tracked
   accruals (in `treasuryBalances` and per-user
-  `protocolTrackedEscrowBalance`) from raw `balanceOf(diamond)`
+  `protocolTrackedVaultBalance`) from raw `balanceOf(diamond)`
   which can include unsolicited dust from direct transfers. The
   conversion math reads `treasuryBalances[token]` (clean), not
   raw balance (potentially polluted).
@@ -292,7 +292,7 @@ This is structurally different from automated revenue routing.
 ### 4.2 Aggregated conversion
 
 A new admin-callable function on a TreasuryFacet (or extending
-EscrowFactoryFacet, depending on size):
+VaultFactoryFacet, depending on size):
 
 ```solidity
 function convertTreasuryAsset(
@@ -553,7 +553,7 @@ The following need explicit decisions before implementation:
 - **GovernanceRunbook.md** "Treasury and founder distribution
   policy" section — operational summary.
 - **T-051** in
-  [`docs/DesignsAndPlans/EscrowStuckRecoveryDesign.md`](EscrowStuckRecoveryDesign.md)
+  [`docs/DesignsAndPlans/VaultStuckRecoveryDesign.md`](VaultStuckRecoveryDesign.md)
   — the chokepoint counter that lets the Diamond safely double as
   treasury.
 - **Phase 7a swap-failover infrastructure** (LibSwap + 0x / 1inch

@@ -167,7 +167,7 @@ const FAQS: FaqEntry[] = [
     id: "basics-custody",
     category: "basics",
     searchText:
-      "custody non-custodial escrow holding safe safety smart contract audited trust open source uups isolated",
+      "custody non-custodial vault holding safe safety smart contract audited trust open source uups isolated",
     renderA: () => (
       <>
         <p>
@@ -226,19 +226,19 @@ const FAQS: FaqEntry[] = [
     ),
   },
   {
-    id: "escrow",
+    id: "vault",
     category: "users",
-    searchText: "escrow uups proxy clone factory isolated commingled vault",
+    searchText: "vault uups proxy clone factory isolated commingled vault",
     renderA: () => (
       <>
         <p>
           <Trans
-            i18nKey="faq.entries.escrow.a1"
+            i18nKey="faq.entries.vault.a1"
             components={{ c: <code /> }}
           />
         </p>
         <p>
-          <Trans i18nKey="faq.entries.escrow.a2" />
+          <Trans i18nKey="faq.entries.vault.a2" />
         </p>
       </>
     ),
@@ -573,7 +573,7 @@ const FAQS: FaqEntry[] = [
     id: "vpfi-discount",
     category: "economics",
     searchText:
-      "vpfi discount tier escrow borrower lender initiation yield fee basis points",
+      "vpfi discount tier vault borrower lender initiation yield fee basis points",
     renderA: (t) => {
       return (
         <>
@@ -584,7 +584,7 @@ const FAQS: FaqEntry[] = [
             <thead>
               <tr>
                 <th>{t("faq.entries.vpfi-discount.tableTier")}</th>
-                <th>{t("faq.entries.vpfi-discount.tableEscrow")}</th>
+                <th>{t("faq.entries.vpfi-discount.tableVault")}</th>
                 <th>{t("faq.entries.vpfi-discount.tableDiscount")}</th>
                 <th>{t("faq.entries.vpfi-discount.tableInitiation")}</th>
                 <th>{t("faq.entries.vpfi-discount.tableYield")}</th>
@@ -607,14 +607,14 @@ const FAQS: FaqEntry[] = [
               </tr>
               <tr>
                 <td>3</td>
-                <td>{t("faq.entries.vpfi-discount.row3Escrow")}</td>
+                <td>{t("faq.entries.vpfi-discount.row3Vault")}</td>
                 <td>20%</td>
                 <td>0.080%</td>
                 <td>0.80%</td>
               </tr>
               <tr>
                 <td>4</td>
-                <td>{t("faq.entries.vpfi-discount.row4Escrow")}</td>
+                <td>{t("faq.entries.vpfi-discount.row4Vault")}</td>
                 <td>24%</td>
                 <td>0.076%</td>
                 <td>0.76%</td>
@@ -629,7 +629,7 @@ const FAQS: FaqEntry[] = [
     id: "vpfi-rewards",
     category: "economics",
     searchText:
-      "rewards staking interactions apr escrow yield cap per-user interaction earning",
+      "rewards staking interactions apr vault yield cap per-user interaction earning",
     renderA: () => (
       <>
         <p>
@@ -749,7 +749,7 @@ const FAQS: FaqEntry[] = [
     id: "integrator-rental",
     category: "integrators",
     searchText:
-      "integrator erc4907 erc-4907 rental user expires quantity wrapper escrow subgraph event listener",
+      "integrator erc4907 erc-4907 rental user expires quantity wrapper vault subgraph event listener",
     renderA: () => (
       <>
         <p>
@@ -766,12 +766,12 @@ const FAQS: FaqEntry[] = [
         </p>
         <pre className="faq-code">
           <code>{`// Pull state on demand
-escrowGetNFTUserOf(lender, nftContract, tokenId)        returns (address)
-escrowGetNFTUserExpires(lender, nftContract, tokenId)   returns (uint64)
-escrowGetNFTQuantity(lender, nftContract, tokenId)      returns (uint256)
+vaultGetNFTUserOf(lender, nftContract, tokenId)        returns (address)
+vaultGetNFTUserExpires(lender, nftContract, tokenId)   returns (uint64)
+vaultGetNFTQuantity(lender, nftContract, tokenId)      returns (uint256)
 
 // Push-style updates: subscribe on the Diamond
-event EscrowRentalUpdated(
+event VaultRentalUpdated(
   address indexed lender,
   address indexed nftContract,
   uint256 indexed tokenId,

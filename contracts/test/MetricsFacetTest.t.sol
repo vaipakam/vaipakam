@@ -351,14 +351,14 @@ contract MetricsFacetTest is SetupTest {
         assertEq(MetricsFacet(address(diamond)).getRevenueStats(30), 0);
     }
 
-    // ── NFT / Escrow ───────────────────────────────────────────────────────
+    // ── NFT / Vault ───────────────────────────────────────────────────────
 
-    function testEscrowStatsCountsNFTLegs() public {
+    function testVaultStatsCountsNFTLegs() public {
         _seedNFTRentalLoan(1, lender, borrower, 11, 12);
         TestMutatorFacet(address(diamond)).setNextLoanId(2);
 
         (uint256 total, uint256 active, uint256 volUSD) =
-            MetricsFacet(address(diamond)).getEscrowStats();
+            MetricsFacet(address(diamond)).getVaultStats();
         assertEq(total, 1);
         assertEq(active, 1);
         assertEq(volUSD, 50 ether);
@@ -381,15 +381,15 @@ contract MetricsFacetTest is SetupTest {
         assertEq(empty.id, 0);
     }
 
-    function testTotalNFTsInEscrowByCollection_matchesPrincipal() public {
+    function testTotalNFTsInVaultByCollection_matchesPrincipal() public {
         _seedNFTRentalLoan(1, lender, borrower, 11, 12);
         TestMutatorFacet(address(diamond)).setNextLoanId(2);
         assertEq(
-            MetricsFacet(address(diamond)).getTotalNFTsInEscrowByCollection(mockNFT721),
+            MetricsFacet(address(diamond)).getTotalNFTsInVaultByCollection(mockNFT721),
             1
         );
         assertEq(
-            MetricsFacet(address(diamond)).getTotalNFTsInEscrowByCollection(mockERC20),
+            MetricsFacet(address(diamond)).getTotalNFTsInVaultByCollection(mockERC20),
             0
         );
     }
@@ -441,15 +441,15 @@ contract MetricsFacetTest is SetupTest {
         assertEq(lender2Offers[0], 2);
     }
 
-    function testUserNFTsInEscrow() public {
+    function testUserNFTsInVault() public {
         _seedNFTRentalLoan(1, lender, borrower, 11, 12);
         TestMutatorFacet(address(diamond)).setNextLoanId(2);
         uint256[] memory bTok =
-            MetricsFacet(address(diamond)).getUserNFTsInEscrow(borrower);
+            MetricsFacet(address(diamond)).getUserNFTsInVault(borrower);
         assertEq(bTok.length, 1);
         assertEq(bTok[0], 12);
         uint256[] memory lTok =
-            MetricsFacet(address(diamond)).getUserNFTsInEscrow(lender);
+            MetricsFacet(address(diamond)).getUserNFTsInVault(lender);
         assertEq(lTok.length, 1);
         assertEq(lTok[0], 11);
     }

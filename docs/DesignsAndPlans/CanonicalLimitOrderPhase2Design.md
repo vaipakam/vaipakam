@@ -293,7 +293,7 @@ matches every limit-order DEX/CEX.
 | Acceptor side | Reads | Collateral locked |
 |---|---|---|
 | Borrower accepts lender offer | `offer.collateralAmount` | Lender's single-value required collateral |
-| Lender accepts borrower offer | `offer.collateralAmount` (the derived floor) | The borrower's pre-escrowed floor (matches the `amount` principal) |
+| Lender accepts borrower offer | `offer.collateralAmount` (the derived floor) | The borrower's pre-vaulted floor (matches the `amount` principal) |
 
 Note both reads use `collateralAmount`, not `collateralAmountMax`.
 For the lender path that's the lender's single value. For the

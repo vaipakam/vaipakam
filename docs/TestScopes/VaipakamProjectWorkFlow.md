@@ -102,8 +102,8 @@ This scenario involves a lender offering an NFT for rent, with the borrower prov
 
 #### Overview
 
-- **NFT Location:** The ERC-721 NFT is transferred into the lender’s Vaipakam Escrow during the rental period.
-- **Access Control:** The borrower receives only temporary ERC-4907 `user` rights. Vaipakam Escrow remains the custodian/owner while the NFT is rented, and the borrower never receives custody or ownership of the NFT.
+- **NFT Location:** The ERC-721 NFT is transferred into the lender’s Vaipakam Vault during the rental period.
+- **Access Control:** The borrower receives only temporary ERC-4907 `user` rights. Vaipakam Vault remains the custodian/owner while the NFT is rented, and the borrower never receives custody or ownership of the NFT.
 - **Collateral/Prepayment:** The borrower locks ERC20 prepayment equal to rental fees plus the 5% buffer. The buffer is returned on successful rental closure and forfeited to treasury on default.
 
 #### Proper Return of NFT (ERC-721)
@@ -113,12 +113,12 @@ This scenario involves a lender offering an NFT for rent, with the borrower prov
      - Daily rental fee: 10 USDC/day
      - Rental duration: 7 days
      - Collateral type: USDC
-   - The lender approves the ERC-721 token and the NFT is transferred into the lender’s Vaipakam Escrow when the offer is created.
+   - The lender approves the ERC-721 token and the NFT is transferred into the lender’s Vaipakam Vault when the offer is created.
    - The platform mints an "Offer NFT" for the lender with status "Offer Created."
 
 2. **Borrower Accepts the Offer**
    - The borrower locks ERC20 prepayment: 70 USDC (rental fees) + 3.5 USDC (5% buffer) = 73.5 USDC.
-   - The NFT remains in Vaipakam Escrow, and the smart contract calls `setUser` to assign the borrower as the NFT’s user for 7 days.
+   - The NFT remains in Vaipakam Vault, and the smart contract calls `setUser` to assign the borrower as the NFT’s user for 7 days.
    - The platform mints an "Acceptor NFT" for the borrower with status "Loan Initiated."
 
 3. **Borrower Returns the NFT**
@@ -126,7 +126,7 @@ This scenario involves a lender offering an NFT for rent, with the borrower prov
    - The smart contract revokes the borrower’s user status via `setUser` and updates the rental to a claimable/closed state.
 
 4. **Lender Claims Fees**
-   - The lender presents their Vaipakam Lender NFT to claim 69.3 USDC (70 USDC minus the `Yield Fee`) and reclaim the escrowed ERC-721 NFT.
+   - The lender presents their Vaipakam Lender NFT to claim 69.3 USDC (70 USDC minus the `Yield Fee`) and reclaim the vaulted ERC-721 NFT.
    - The borrower receives the 3.5 USDC buffer back.
    - Both NFTs are updated to "Closed."
 
@@ -136,7 +136,7 @@ This scenario involves a lender offering an NFT for rent, with the borrower prov
    - The borrower does not return the NFT within the rental period.
    - The loan is marked as "Defaulted" after the grace period.
    - The lender claims the rental fees/prepayment according to default rules, and the 5% buffer is routed to treasury.
-   - The escrowed ERC-721 NFT is returned to the lender through the Vaipakam NFT-gated claim/default settlement flow.
+   - The vaulted ERC-721 NFT is returned to the lender through the Vaipakam NFT-gated claim/default settlement flow.
    - The smart contract revokes the borrower’s user status via `setUser` and updates the status to "Returned."
 
 ---
@@ -145,9 +145,9 @@ This scenario involves a lender offering an NFT for rent, with the borrower prov
 
 #### Overview
 
-- **NFT Location:** The ERC-1155 NFT is transferred to the Vaipakam Escrow during the rental period.
+- **NFT Location:** The ERC-1155 NFT is transferred to the Vaipakam Vault during the rental period.
 - **Access Control:** The borrower is assigned as the "user" for a specific quantity of tokens using `setUser`.
-- **Prepayment:** The borrower locks ERC20 prepayment equal to rental fees plus the 5% buffer. The NFT remains escrow-custodied and is returned to the lender through the Vaipakam NFT-gated claim/default settlement flow.
+- **Prepayment:** The borrower locks ERC20 prepayment equal to rental fees plus the 5% buffer. The NFT remains vault-custodied and is returned to the lender through the Vaipakam NFT-gated claim/default settlement flow.
 
 #### Proper Return of NFT (ERC-1155)
 
@@ -156,7 +156,7 @@ This scenario involves a lender offering an NFT for rent, with the borrower prov
      - Daily rental fee: 10 USDC/day per token
      - Rental duration: 7 days
      - Payment/prepay asset: USDC
-   - The lender transfers 10 tokens to the Vaipakam Escrow.
+   - The lender transfers 10 tokens to the Vaipakam Vault.
    - The platform mints an "Offer NFT" for the lender with status "Offer Created."
 
 2. **Borrower Accepts the Offer**
@@ -171,7 +171,7 @@ This scenario involves a lender offering an NFT for rent, with the borrower prov
 4. **Lender Claims Fees and NFT**
    - The lender presents their Offer NFT to claim 693 USDC (700 USDC minus the `Yield Fee`).
    - The borrower receives the 35 USDC buffer back.
-   - The 10 ERC-1155 tokens are transferred back to the lender from the Escrow.
+   - The 10 ERC-1155 tokens are transferred back to the lender from the Vault.
    - Both NFTs are updated to "Closed."
 
 #### Borrower Fails to Return NFT (ERC-1155)
@@ -180,7 +180,7 @@ This scenario involves a lender offering an NFT for rent, with the borrower prov
    - The borrower does not return the NFT within the rental period.
    - The loan is marked as "Defaulted" after the grace period.
    - The lender claims the rental fees/prepayment according to default rules, and the 5% buffer is routed to treasury.
-   - The 10 ERC-1155 tokens are returned to the lender from escrow through the Vaipakam NFT-gated claim/default settlement flow.
+   - The 10 ERC-1155 tokens are returned to the lender from vault through the Vaipakam NFT-gated claim/default settlement flow.
 
 ---
 
@@ -264,7 +264,7 @@ This scenario addresses lending where collateral is illiquid (e.g., low-liquidit
 1. **Lender Creates Offer for NFT Lending**
    - The lender offers an NFT (e.g., Axie #1234) for rent at 10 USDC/day, requiring an illiquid NFT as collateral.
    - The frontend warns about illiquidity.
-   - The lender deposits the ERC-721 or ERC-1155 rental NFT into the lender’s Vaipakam Escrow.
+   - The lender deposits the ERC-721 or ERC-1155 rental NFT into the lender’s Vaipakam Vault.
 
 2. **Borrower Accepts the Offer**
    - For Phase 1 NFT rentals, the borrower locks ERC20 prepayment rather than taking custody of the rental NFT. NFT-as-collateral edge cases are treated as illiquid and should follow the README’s illiquid-asset consent rules.
@@ -319,12 +319,12 @@ This scenario involves a lender exiting an active loan early. In Phase 1, lender
    - If Alice’s accrued interest (e.g., $2 USDC after 15 days) is less than the shortfall, she pays the difference ($1.64 - $2 = -$0.36, so no additional payment; excess interest goes to treasury).
 
 3. **Smart Contract Actions**
-   - Charlie’s compatible lender offer already has the required principal funds escrowed.
+   - Charlie’s compatible lender offer already has the required principal funds vaulted.
    - The smart contract transfers 1000 USDC (Alice’s principal) to Alice.
    - Alice’s accrued interest (e.g., $2 USDC) is sent to the treasury.
    - The loan position is transferred to Charlie, updating the Lender NFT to reflect Charlie as the new lender with status "Loan Initiated."
    - Bob’s repayment obligation remains unchanged, but future payments go to Charlie.
-   - Any lender shortfall/top-up is held in escrow and is claimable by Charlie through the Vaipakam Lender NFT when the live loan resolves.
+   - Any lender shortfall/top-up is held in vault and is claimable by Charlie through the Vaipakam Lender NFT when the live loan resolves.
 
 4. **Notifications**
    - Alice receives a notification confirming the sale and principal recovery.
@@ -334,7 +334,7 @@ This scenario involves a lender exiting an active loan early. In Phase 1, lender
 5. **Loan Closure (Normal Repayment by Borrower)**
    - Bob repays 1050 USDC (principal + interest) to the smart contract before the 30-day duration ends.
    - The smart contract allocates the `Yield Fee`, equal to 1% of the interest (0.5 USDC), to the treasury.
-   - Charlie presents the Lender NFT to claim 1049.5 USDC from the escrow.
+   - Charlie presents the Lender NFT to claim 1049.5 USDC from the vault.
    - Bob’s 0.5 WETH collateral is released.
    - Both Borrower and Lender NFTs are updated to status "Closed."
 
@@ -364,7 +364,7 @@ This scenario involves a lender exiting an active loan early. In Phase 1, lender
 4. **Smart Contract Actions**
    - The loan position is transferred to Charlie, updating the Lender NFT to reflect Charlie as the new lender with status "Loan Initiated."
    - Bob’s repayment obligation remains unchanged, but future payments go to Charlie.
-   - Any lender shortfall/top-up is held in escrow and claimable by Charlie through the Vaipakam Lender NFT when the live loan resolves.
+   - Any lender shortfall/top-up is held in vault and claimable by Charlie through the Vaipakam Lender NFT when the live loan resolves.
    - The platform mints an Acceptor NFT for Charlie with status "Loan Initiated."
 
 5. **Notifications**
@@ -397,7 +397,7 @@ This scenario involves borrower-side preclose. In Phase 1, Option 2 is loan tran
    - The loan obligation is transferred to Eve, updating the Borrower NFT to reflect Eve as the new borrower with status "Loan Initiated."
    - The live loan borrower changes to Eve. No new principal is sent out again from the original lender; Eve assumes the continuing repayment obligation under the transferred live loan.
    - Alice’s repayment (principal + interest) is now owed by Eve.
-   - Funds are held in escrow (tracked by `heldForLender`) until Alice claims them at loan closure by presenting the Lender NFT.
+   - Funds are held in vault (tracked by `heldForLender`) until Alice claims them at loan closure by presenting the Lender NFT.
 
 4. **Notifications**
    - Bob receives a notification confirming the loan transfer and collateral release.
@@ -407,7 +407,7 @@ This scenario involves borrower-side preclose. In Phase 1, Option 2 is loan tran
 5. **Loan Closure (Normal Repayment by New Borrower)**
    - Eve repays 1050 USDC (principal + interest, adjusted for the original 5% rate) to the smart contract before the 30-day duration ends.
    - The smart contract allocates the `Yield Fee`, equal to 1% of the interest (0.5 USDC), to the treasury.
-   - Alice presents the Lender NFT to claim 1049.5 USDC from the escrow.
+   - Alice presents the Lender NFT to claim 1049.5 USDC from the vault.
    - Eve’s 0.6 WETH collateral is released.
    - Both Borrower and Lender NFTs are updated to status "Closed."
 
@@ -437,7 +437,7 @@ This scenario involves borrower-side preclose. In Phase 1, Option 2 is loan tran
    - Bob’s original borrower position with Alice is closed or moved to settlement state.
    - Bob becomes lender in the new offsetting loan to Eve. Alice’s old lender-side value is preserved through the offset settlement claim path.
    - The platform mints an Acceptor NFT for Eve with status "Loan Initiated."
-   - Funds are held in escrow (tracked by `heldForLender`) until Alice claims them at loan closure by presenting the Lender NFT.
+   - Funds are held in vault (tracked by `heldForLender`) until Alice claims them at loan closure by presenting the Lender NFT.
 
 5. **Notifications**
    - Same as Sub Scenario 8a.

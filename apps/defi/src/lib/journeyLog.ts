@@ -40,7 +40,7 @@ export type JourneyArea =
   | 'config'
   | 'rewards'
   | 'staking'
-  | 'escrow-upgrade'
+  | 'vault-upgrade'
   | 'allowance'
   | 'alerts'
   | 'app-crash'; // ErrorBoundary — uncaught render-time exception

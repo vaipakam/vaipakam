@@ -3,19 +3,19 @@ pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
 import {InvariantBase} from "./InvariantBase.sol";
-import {EscrowFactoryFacet} from "../../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
 import {Handler} from "./Handler.sol";
 
 /**
- * @title EscrowUniquenessInvariant
- * @notice Every onboarded user has exactly one per-user escrow proxy for
- *         the entire lifetime of the protocol. The EscrowFactoryFacet
- *         treats the user => escrow mapping as write-once; once a proxy
- *         is deployed via `getOrCreateUserEscrow`, subsequent lookups
+ * @title VaultUniquenessInvariant
+ * @notice Every onboarded user has exactly one per-user vault proxy for
+ *         the entire lifetime of the protocol. The VaultFactoryFacet
+ *         treats the user => vault mapping as write-once; once a proxy
+ *         is deployed via `getOrCreateUserVault`, subsequent lookups
  *         must return the same address and no code path is permitted to
  *         mint a second proxy for the same wallet.
  *
- *         A second escrow for the same user would silently split their
+ *         A second vault for the same user would silently split their
  *         custody pool: some assets in the old proxy, some in the new,
  *         and the diamond can only ever reference one of them at a time.
  *         That's a direct silent-drain path — assets in the "other"
@@ -23,19 +23,19 @@ import {Handler} from "./Handler.sol";
  *         still sitting in the custody perimeter.
  *
  *         Two properties are asserted, for all six fuzz actors:
- *           1. `getUserEscrowAddress(user)` is non-zero (onboarding
+ *           1. `getUserVaultAddress(user)` is non-zero (onboarding
  *              ran during InvariantBase.deploy).
- *           2. Repeated calls to `getUserEscrowAddress(user)` return the
+ *           2. Repeated calls to `getUserVaultAddress(user)` return the
  *              identical address — i.e. no action in the fuzz sequence
  *              has swapped the bound proxy out from under the user.
  */
-contract EscrowUniquenessInvariant is Test {
+contract VaultUniquenessInvariant is Test {
     InvariantBase internal base;
     Handler internal handler;
 
-    // Snapshot of each actor's escrow address captured immediately after
+    // Snapshot of each actor's vault address captured immediately after
     // onboarding. Subsequent lookups must match exactly.
-    mapping(address => address) internal initialEscrow;
+    mapping(address => address) internal initialVault;
     address[] internal actors;
 
     function setUp() public {
@@ -43,29 +43,29 @@ contract EscrowUniquenessInvariant is Test {
         base.deploy();
         handler = new Handler(base);
 
-        EscrowFactoryFacet f = EscrowFactoryFacet(address(base.diamond()));
+        VaultFactoryFacet f = VaultFactoryFacet(address(base.diamond()));
         for (uint256 i = 0; i < 3; i++) {
             address lender = base.lenderAt(i);
             address borrower = base.borrowerAt(i);
             actors.push(lender);
             actors.push(borrower);
-            initialEscrow[lender] = f.getUserEscrowAddress(lender);
-            initialEscrow[borrower] = f.getUserEscrowAddress(borrower);
+            initialVault[lender] = f.getUserVaultAddress(lender);
+            initialVault[borrower] = f.getUserVaultAddress(borrower);
         }
 
         targetContract(address(handler));
     }
 
-    function invariant_EscrowAddressStable() public view {
-        EscrowFactoryFacet f = EscrowFactoryFacet(address(base.diamond()));
+    function invariant_VaultAddressStable() public view {
+        VaultFactoryFacet f = VaultFactoryFacet(address(base.diamond()));
         for (uint256 i = 0; i < actors.length; i++) {
             address user = actors[i];
-            address current = f.getUserEscrowAddress(user);
-            assertTrue(current != address(0), "user escrow vanished");
+            address current = f.getUserVaultAddress(user);
+            assertTrue(current != address(0), "user vault vanished");
             assertEq(
                 current,
-                initialEscrow[user],
-                "user escrow address changed: second proxy deployed"
+                initialVault[user],
+                "user vault address changed: second proxy deployed"
             );
         }
     }

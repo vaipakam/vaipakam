@@ -19,7 +19,7 @@ contract AccessControlFacet is DiamondAccessControl {
      * @dev Must be called once during diamond deployment (e.g., in DiamondInit).
      *      Guarded by `LibDiamond.enforceIsContractOwner`, so only the Diamond
      *      owner can invoke it. Grants the caller DEFAULT_ADMIN, ADMIN, PAUSER,
-     *      KYC_ADMIN, ORACLE_ADMIN, RISK_ADMIN, and ESCROW_ADMIN, and wires
+     *      KYC_ADMIN, ORACLE_ADMIN, RISK_ADMIN, and VAULT_ADMIN, and wires
      *      DEFAULT_ADMIN_ROLE as the admin for every other role.
      *
      *      NOTE: not idempotent — re-calling after ownership has transferred
@@ -280,10 +280,10 @@ contract AccessControlFacet is DiamondAccessControl {
         return LibAccessControl.RISK_ADMIN_ROLE;
     }
 
-    /// @notice Authorised to manage the escrow implementation template and
-    ///         mandatory upgrade version via EscrowFactoryFacet.
-    /// @return The ESCROW_ADMIN_ROLE identifier.
-    function ESCROW_ADMIN_ROLE() external pure returns (bytes32) {
-        return LibAccessControl.ESCROW_ADMIN_ROLE;
+    /// @notice Authorised to manage the vault implementation template and
+    ///         mandatory upgrade version via VaultFactoryFacet.
+    /// @return The VAULT_ADMIN_ROLE identifier.
+    function VAULT_ADMIN_ROLE() external pure returns (bytes32) {
+        return LibAccessControl.VAULT_ADMIN_ROLE;
     }
 }

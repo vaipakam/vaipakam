@@ -51,7 +51,7 @@ two claims this verified audit **corrects**:
 | 3 | Pyth | numeraire cross-check (T-033) | `OracleAdminFacet.setPythOracle:412` (0 disables), `setPythCrossCheckFeedId:424`, `setPythMaxStalenessSeconds:436` | 🟢 |
 | 4 | Secondary oracle quorum — Tellor, API3, DIA | price-redundancy quorum | `OracleAdminFacet.setTellorOracle:321`, `setApi3ServerV1:338`, `setDIAOracleV2:355` | 🟢 per provider \* |
 | 5 | LayerZero | cross-chain OFT / messaging | `token/VPFIOFTAdapter.sol`, `token/VPFIMirror.sol`, `interfaces/IRewardOApp.sol`; facets `RewardAggregatorFacet`, `RewardReporterFacet`, `VPFITokenFacet`, `VPFIDiscountFacet`, `TreasuryFacet` | 🔴 |
-| 6 | Permit2 | gasless approvals (try-fallback) | centralized in `libraries/LibPermit2.sol`; used by `OfferFacet`, `EscrowFactoryFacet`, `VPFIDiscountFacet`, `keeper/FlashLoanLiquidator` | 🟡 |
+| 6 | Permit2 | gasless approvals (try-fallback) | centralized in `libraries/LibPermit2.sol`; used by `OfferFacet`, `VaultFactoryFacet`, `VPFIDiscountFacet`, `keeper/FlashLoanLiquidator` | 🟡 |
 | 7 | Sanctions oracle (Chainalysis-style) | wallet sanctions screening | `ProfileFacet.setSanctionsOracle:635` → `LibVaipakam.setSanctionsOracle` (0 = fail-open) | 🟢 |
 | 8 | Aave / Compound peer-LTV reads | peer-rate aggregation | `libraries/LibPeerLTV.sol`; interfaces `IAavePoolDataProvider.sol` (Aave), `IComet.sol` (Compound) | 🟡 |
 
@@ -71,7 +71,7 @@ requires code — a new interface + read path.
 | 14 | Farcaster | public Frames | `apps/agent/src/frames.ts` | 🟡 |
 | 15 | Google Analytics | consent-gated frontend analytics | `apps/defi/src/lib/consent.ts` | 🟡 |
 | 16 | WalletConnect / wagmi | wallet connection | `apps/defi/src/context/WalletContext.tsx` | 🟡 |
-| 17 | DeFiLlama / CoinGecko | Tier-3 liquidity / price advisory | `apps/defi` — `BuyVPFI`, `CreateOffer`, `EscrowAssets`, `lib/chainPlatforms` | 🟡 |
+| 17 | DeFiLlama / CoinGecko | Tier-3 liquidity / price advisory | `apps/defi` — `BuyVPFI`, `CreateOffer`, `VaultAssets`, `lib/chainPlatforms` | 🟡 |
 | 18 | The Graph subgraph | drift / supplementary indexing | `ops/subgraph/` | 🟡 |
 | 19 | Tenderly | alert presets | `ops/tenderly/` | 🟡 |
 | 20 | Cloudflare — Workers / D1 / R2 / Pages | the entire off-chain host | `apps/*/wrangler.jsonc`; 5 Workers + Pages | 🔴 |

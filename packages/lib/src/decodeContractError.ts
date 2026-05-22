@@ -149,23 +149,23 @@ const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
   // ── Treasury ──────────────────────────────────────────────────────────
   '0x1f2a2005': 'No treasury balance to claim for this asset.',
 
-  // ── Escrow / NFT infrastructure ───────────────────────────────────────
+  // ── Vault / NFT infrastructure ───────────────────────────────────────
   '0xb70f4664':
     'Position NFT mint failed — please retry. If it persists, contact support.',
   '0x6154d8fb': 'Position NFT burn failed — please retry.',
   '0xddb59ac0': 'NFT status update failed — please retry.',
   '0x4605c598': 'NFT transfer failed — please retry.',
-  '0x667ecf9d': 'Escrow withdraw failed — please retry.',
-  '0x650f4007': 'Escrow resolution failed — please retry.',
-  '0x601d5b92': 'Escrow transfer failed — please retry.',
+  '0x503f0d38': 'Vault withdraw failed — please retry.',
+  '0xeec96fd9': 'Vault resolution failed — please retry.',
+  '0x34272bc8': 'Vault transfer failed — please retry.',
   '0x0e373cf8': 'Treasury transfer failed — please retry.',
   '0xb1fb1c95': 'NFT renter update failed — please retry.',
   '0xf367ddf6': 'Loan initiation failed — please retry.',
   '0xd52f4d8a': 'Offer creation failed — please retry.',
   '0x892d90b7': 'Offer acceptance failed — please retry.',
-  '0xa9dea49f': 'Lender escrow resolution failed — please retry.',
-  '0xe3afb2e8':
-    'Could not resolve your user escrow. Try reconnecting your wallet or contact support.',
+  '0xa9dea49f': 'Lender vault resolution failed — please retry.',
+  '0x03b8265d':
+    'Could not resolve your user vault. Try reconnecting your wallet or contact support.',
   '0x3f6cc768': 'Invalid NFT token ID.',
   '0xc24e5557': 'This position NFT has already been burned.',
   '0xe0e54ced': 'Invalid royalty configuration.',
@@ -335,21 +335,21 @@ const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   // ── Treasury (TreasuryFacet) ──────────────────────────────────────────
   '0x1f2a2005': 'ZeroAmount()',
 
-  // ── Escrow / NFT infrastructure (IVaipakamErrors + facets) ────────────
+  // ── Vault / NFT infrastructure (IVaipakamErrors + facets) ────────────
   '0xb70f4664': 'NFTMintFailed()',
   '0x6154d8fb': 'NFTBurnFailed()',
   '0xddb59ac0': 'NFTStatusUpdateFailed()',
   '0x4605c598': 'NFTTransferFailed()',
-  '0x667ecf9d': 'EscrowWithdrawFailed()',
-  '0x650f4007': 'EscrowResolutionFailed()',
-  '0x601d5b92': 'EscrowTransferFailed()',
+  '0x503f0d38': 'VaultWithdrawFailed()',
+  '0xeec96fd9': 'VaultResolutionFailed()',
+  '0x34272bc8': 'VaultTransferFailed()',
   '0x0e373cf8': 'TreasuryTransferFailed()',
   '0xb1fb1c95': 'NFTRenterUpdateFailed()',
   '0xf367ddf6': 'LoanInitiationFailed()',
   '0xd52f4d8a': 'OfferCreationFailed()',
   '0x892d90b7': 'OfferAcceptFailed()',
   '0xa9dea49f': 'LenderResolutionFailed()',
-  '0xe3afb2e8': 'GetUserEscrowFailed(string)',
+  '0x03b8265d': 'GetUserVaultFailed(string)',
   '0x3f6cc768': 'InvalidTokenId()',
   '0xc24e5557': 'NFTAlreadyBurned()',
   '0xe0e54ced': 'InvalidRoyalty()',
