@@ -516,6 +516,19 @@ Range Orders let users express lender and borrower intent as canonical limit ord
   - A new "Vaipakam NFT" is minted for the offer acceptor, with "Loan Initiated" status.
   - "Vaipakam NFT" will have respective roles of the users (either as lender or borrower) with it.
 
+### Self-trade prevention
+
+No single address may occupy both sides of a loan at initiation. The protocol rejects any acceptance whose resulting loan would have the same address as both lender and borrower:
+
+- A user cannot directly accept their own lender or borrower offer from the same wallet.
+- A bot (or any third-party submitter) cannot match a lender offer and a borrower offer that were both posted by the same wallet — the resulting loan would collapse the two sides onto one address.
+
+The acceptance reverts with a typed error that names the colliding address. Off-chain matchers can detect the condition at preview time (before submitting the transaction) via the `previewMatch` API, which surfaces a structured `SelfTrade` classifier for the case.
+
+The policy closes three risks: (1) a user paying themselves the matcher kickback portion of the Loan Initiation Fee, (2) a user pumping their share of the cross-chain reward denominator with manufactured activity, and (3) the protocol's active-loan analytics being polluted by positions a single user already owns. Legitimate position-rebalancing flows go through the dedicated Preclose and Refinance entry points, which are unaffected.
+
+The check applies to all direct-accept and matchOffers paths; multi-account self-dealing (a user with two wallets posting offers from each) is out of reach for a contract-side gate and is not addressed by this invariant.
+
 ### Example:
 
 **ERC-20 Loan Initiation:**

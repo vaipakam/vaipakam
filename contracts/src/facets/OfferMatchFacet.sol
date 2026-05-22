@@ -175,6 +175,19 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             if (mr.errorCode == LibOfferMatch.MatchError.HFTooLow) {
                 revert MatchHFTooLow();
             }
+            // #194 — same-creator on both sides surfaces through the
+            // `previewMatch` classifier here BEFORE the cross-facet
+            // call reaches `_acceptOffer`'s load-bearing
+            // `SelfTradeForbidden` revert. Re-raise the same typed
+            // error from this facet so a matcher submitting via
+            // `matchOffers` sees the SAME revert ABI the direct-accept
+            // path returns. Argument is the colliding creator address
+            // (lender offer creator == borrower offer creator).
+            if (mr.errorCode == LibOfferMatch.MatchError.SelfTrade) {
+                revert OfferAcceptFacet.SelfTradeForbidden(
+                    s.offers[lenderOfferId].creator
+                );
+            }
             revert InvalidOfferType();
         }
 

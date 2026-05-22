@@ -49,7 +49,8 @@ library LibOfferMatch {
         OfferAccepted,            // either offer already terminal
         WrongOfferType,           // L isn't Lender or B isn't Borrower
         HFTooLow,                 // (depthTieredLtvEnabled off) synthetic HF at matched amount + collateral < 1.5e18
-        LtvAboveTier              // (depthTieredLtvEnabled on) synthetic init-LTV at matched amount + collateral > the effective tier cap (or collateral is Tier 0 / no-borrow)
+        LtvAboveTier,             // (depthTieredLtvEnabled on) synthetic init-LTV at matched amount + collateral > the effective tier cap (or collateral is Tier 0 / no-borrow)
+        SelfTrade                 // #194 — both offers carry the same `creator`. The actual revert lives in `_acceptOffer` (`SelfTradeForbidden(party)`); this variant lets bots short-circuit at preview time.
     }
 
     /// @notice Structured return from `previewMatch`. Bots check
@@ -207,6 +208,17 @@ library LibOfferMatch {
 
         if (L.accepted || B.accepted) {
             r.errorCode = MatchError.OfferAccepted;
+            return r;
+        }
+
+        // #194 — self-trade short-circuit. Matching two offers from the
+        // same creator would land both lender and borrower on a single
+        // address; `_acceptOffer` reverts `SelfTradeForbidden(party)`
+        // when that happens (the load-bearing gate). Surfacing it here
+        // as a typed `MatchError` saves bots an `acceptOfferInternal`
+        // submission + revert + gas burn for an obviously-bad pair.
+        if (L.creator == B.creator) {
+            r.errorCode = MatchError.SelfTrade;
             return r;
         }
 

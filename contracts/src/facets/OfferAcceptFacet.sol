@@ -153,6 +153,13 @@ contract OfferAcceptFacet is
     error InvalidOffer();
     error InvalidAssetType();
     error OfferAlreadyAccepted();
+    /// @notice Reverts when a single address would land on both sides of
+    ///         the loan — same-wallet direct-accept of one's own offer
+    ///         OR a matchOffers between two offers from the same creator.
+    ///         See #194 + the ADR in
+    ///         `docs/DesignsAndPlans/SelfTradePreventionADR.md`.
+    /// @param party The collapsed address (lender == borrower).
+    error SelfTradeForbidden(address party);
     // NotOfferCreator inherited from IVaipakamErrors
     // Create-side errors (InvalidOfferType, OfferDurationExceedsCap, the
     // Range Orders Phase 1 errors, GetUserVaultFailed) live on
@@ -570,6 +577,25 @@ contract OfferAcceptFacet is
             lenderVault = LibUserVault.getOrCreate(lender);
             borrowerVault = LibUserVault.getOrCreate(borrower);
         }
+
+        // #194 — self-trade prevention. A user filling their own
+        // counter-side offer (whether by direct-accept, or by a bot
+        // matching their lender + borrower offers via matchOffers)
+        // would: (a) collect the 1% LIF matcher kickback on their own
+        // 0.1% fee — net cost is the 99% treasury share but it's free
+        // yield on a low-gas chain, (b) pump their share of the daily
+        // cross-chain reward denominator with a fake interaction,
+        // (c) pollute the indexer's active-loan list with a position
+        // they already owned. The check sits AFTER role resolution
+        // (so `lender` / `borrower` are concrete) and BEFORE any
+        // state mutation, with the address arg surfacing which side
+        // collapsed for the revert decoder. Mirrors the
+        // `MatchError.SelfTrade` early classifier in
+        // `LibOfferMatch.previewMatch` so bots see the error before
+        // submitting; the load-bearing revert is here (every match
+        // routes through `_acceptOffer` via `acceptOfferInternal`).
+        if (lender == borrower) revert SelfTradeForbidden(lender);
+
         // `effectivePrincipal` was computed earlier (before KYC) so the
         // value is available for KYC, LIF math, principal transfer, and
         // the OfferAccepted event payload below. See #183.
