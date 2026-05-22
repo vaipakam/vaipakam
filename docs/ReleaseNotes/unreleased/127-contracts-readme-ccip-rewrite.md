@@ -36,22 +36,40 @@ What changed in `contracts/README.md`:
   `ICrossChainMessenger`), the per-lane rate-limit policy via
   `VpfiPoolRateGovernor`, and the `GuardianPausable` pause base.
 - **Deployment Guide / env variables** — `LZ_ENDPOINT`,
-  `LOCAL_OAPP`, `REMOTE_EID`, `REMOTE_PEER` are gone. Replaced
-  with `CCIP_ROUTER`, `CCIP_RMN_PROXY`, `CCIP_LINK_TOKEN`,
-  `CCIP_TOKEN_ADMIN_REGISTRY`, `LOCAL_CHAIN_SELECTOR`,
-  `REMOTE_CHAIN_SELECTOR`, `REMOTE_MESSENGER`, `REMOTE_POOL`.
+  `LOCAL_OAPP`, `REMOTE_EID`, `REMOTE_PEER` are gone. The env-var
+  table now groups required keys per script with the values each
+  script actually reads (verified against `DeployCrosschain.s.sol`
+  and `ConfigureCcip.s.sol`):
+    - `DeployCrosschain` requires `DEPLOYER_PRIVATE_KEY`,
+      `ADMIN_ADDRESS`, `CCIP_ROUTER`, `CCIP_RMN_PROXY`; mirror
+      chains additionally need `BASE_CHAIN_ID` + `TREASURY_ADDRESS`;
+      optional `VPFI_BUY_PAYMENT_TOKEN` / `VPFI_BUY_REFUND_TIMEOUT` /
+      `CCIP_DEST_GAS_LIMIT`. Reads the diamond + canonical
+      `VPFIToken` from the per-chain `deployments/<chain>/addresses.json`
+      artifact, NOT from env.
+    - `ConfigureCcip` requires `ADMIN_PRIVATE_KEY`,
+      `CCIP_TOKEN_ADMIN_REGISTRY`, `CCIP_REGISTRY_MODULE_OWNER_CUSTOM`,
+      `CCIP_LANE_CHAIN_IDS`; mirror chains additionally need
+      `BASE_CHAIN_ID`; optional `CCIP_GUARDIAN` / `CCIP_RATE_CAPACITY`
+      / `CCIP_RATE_REFILL`. Reads every deployed-contract address
+      from the artifact `DeployCrosschain` wrote.
 - **Step 2** (formerly "Canonical VPFI deploy", "Mirror deploy",
   "Wire the OFT peer mesh" as three separate steps) is now a
   single "Deploy the cross-chain layer" step that points at
   `DeployCrosschain.s.sol`. The script auto-forks on
   canonical-vs-mirror by `block.chainid`, so the same broadcast
   deploys the right contracts on every chain — the canonical
-  chain gets `VPFIToken` + `LockReleaseTokenPool` +
-  `VpfiBuyReceiver`; every mirror gets `VPFIMirrorToken` +
-  `BurnMintTokenPool` + `VpfiBuyAdapter`; every chain gets
-  `CcipMessenger`, `VpfiPoolRateGovernor`, and
-  `VaipakamRewardMessenger`. Deterministic addresses via
-  `LibCreate2Deploy`.
+  chain pool is `LockReleaseTokenPool` over the pre-existing
+  canonical `VPFIToken` (read from the deployments artifact),
+  plus `VpfiBuyReceiver`; every mirror gets a fresh
+  `VPFIMirrorToken` + `BurnMintTokenPool` + `VpfiBuyAdapter`;
+  every chain gets `CcipMessenger`, `VpfiPoolRateGovernor`, and
+  `VaipakamRewardMessenger`. Addresses use regular
+  `new ERC1967Proxy(...)` deployment — non-deterministic. The
+  per-chain `deployments/<chain>/addresses.json` is the canonical
+  record of every deployed address.
+  `VPFITokenFacet.setVPFIToken(...)` and `setCanonicalVPFIChain(...)`
+  are operator actions outside this script.
 - **Step 3** (formerly Step 4, "Wire the OFT peer mesh") is now
   "Configure CCIP lanes + token pools" and points at
   `ConfigureCcip.s.sol`. The script wires chain selectors,
@@ -59,8 +77,10 @@ What changed in `contracts/README.md`:
   channels, per-lane rate limits via `VpfiPoolRateGovernor`,
   the `setBroadcastDestinations` list on the canonical reward
   messenger, and the `TokenAdminRegistry` pool registration. An
-  anvil-rehearsal note points at `RehearseCcipAnvil.s.sol` for
-  the local end-to-end pre-flight.
+  anvil-rehearsal note points at the Foundry test
+  `contracts/test/CcipDeploymentRehearsalTest.t.sol` for the local
+  end-to-end pre-flight (run via `forge test --match-path
+  'test/CcipDeploymentRehearsalTest.t.sol'`).
 - **Step 4** (formerly Step 5) "Rotate `minter` to the diamond"
   is renumbered; the procedure is unchanged.
 - **OFT Bridging Flow** → **VPFI Cross-Chain Token (CCT) Bridging
@@ -75,8 +95,11 @@ What changed in `contracts/README.md`:
   `DeployVPFIMirror.s.sol`, `WireVPFIPeers.s.sol` are removed
   (the underlying scripts were deleted in T-068's Phase 5).
   Added: `DeployCrosschain`, `ConfigureCcip`,
-  `ConfigureRewardReporter`, `ConfigureVPFIBuy`,
-  `RehearseCcipAnvil`.
+  `ConfigureRewardReporter`, `ConfigureVPFIBuy`. The anvil
+  rehearsal is the Foundry test
+  `contracts/test/CcipDeploymentRehearsalTest.t.sol` rather than
+  a script, so it's referenced from Step 3's prose only — not
+  added to the Script Reference table.
 - **Cross-Chain Security (CCIP)** section is unchanged — it was
   already CCIP-accurate. The historical contrast with LayerZero
   (the DVN-footgun explanation, the April 2026 ~$292M Kelp
