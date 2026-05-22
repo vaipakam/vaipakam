@@ -39,15 +39,15 @@ import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
  *
  *      #168 Track A — folded onto `SetupTest` to drop the duplicated
  *      diamond-cut bytecode from this test's compile unit. `SetupTest`
- *      cuts a 28-facet superset of the 18 facets the original setUp
- *      cut + does `initializeAccessControl` + the first `unpause`;
- *      this test just re-pauses inside its own `setUp` to exercise
- *      the gated semantics (per SetupTest's own setupHelper comment
- *      that explicitly carves out this file as the expected pattern).
- *      Track A's same PR extended SetupTest from 24 → 28 facets so the
- *      preclose / refinance / early-withdrawal / partial-withdrawal
- *      selectors this file exercises actually route through the test
- *      diamond (test-vs-prod drift closed alongside the fold).
+ *      cuts 28 facets (a strict superset of the 18 the original setUp
+ *      cut, but still 9 facets short of the 35 production routes —
+ *      see #229) + does `initializeAccessControl` + the first
+ *      `unpause`; this test just re-pauses inside its own `setUp` to
+ *      exercise the gated semantics. Track A's same PR extended
+ *      SetupTest from 24 → 28 facets so the preclose / refinance /
+ *      early-withdrawal / partial-withdrawal selectors this file
+ *      exercises actually route through the test diamond — the
+ *      narrowest test-vs-prod drift fix needed to make this fold work.
  */
 contract PauseGatingTest is SetupTest {
     function setUp() public {

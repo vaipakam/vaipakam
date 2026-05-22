@@ -75,17 +75,18 @@ import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
 import {MockZeroExLegacyAdapter} from "./mocks/MockZeroExLegacyAdapter.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
-// #168 Track A — close the second test-vs-prod drift surface. The
+// #168 Track A — narrow (not yet close) the test-vs-prod drift. The
 // production diamond cuts these four facets
 // (DiamondFacetNames.cutFacetNames() + DeployDiamond.s.sol §5), but
 // SetupTest historically omitted them. The drift forced every test
 // that mutates a loan past creation (preclose / refinance / partial
 // withdrawal / lender early-withdrawal) to roll its own bespoke
 // `setUp`, which is exactly the duplication Track A is folding away.
-// Same strict-superset pattern as the OfferMatchFacet addition for
+// Same strict-additive pattern as the OfferMatchFacet addition for
 // #173 (see the comment above the OfferMatchFacet cut below): no
 // existing SetupTest consumer routes these selectors today, so adding
 // the cuts can only add reachable surface — it can't break anything.
+// The remaining 9-facet production gap is tracked as #229.
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
@@ -251,12 +252,24 @@ contract SetupTest is Test {
         // Deploy escrow impl
         escrowImpl = new VaipakamEscrowImplementation();
 
-        // Cut facets into diamond. Slot count tracks
-        // DiamondFacetNames.cutFacetNames() to keep the test diamond a
-        // true superset of production. #168 Track A extended the array
+        // Cut facets into diamond. #168 Track A extended the array
         // from 24 → 28 to add the PrecloseFacet / RefinanceFacet /
         // EarlyWithdrawalFacet / PartialWithdrawalFacet quartet that
-        // production cuts but SetupTest had been silently omitting.
+        // production cuts but SetupTest had been silently omitting —
+        // exactly the drift class that surfaced #228's PauseGating
+        // 9-test silent FunctionDoesNotExist regression.
+        //
+        // NOTE — SetupTest is NOT yet a strict superset of production.
+        // DiamondFacetNames.cutFacetNames() enumerates 35 production
+        // facets (plus DiamondCutFacet via constructor = 36); SetupTest
+        // currently routes 27 of them (+ TestMutatorFacet, test-only).
+        // The 9 facets still unrouted in SetupTest — DiamondLoupeFacet,
+        // OwnershipFacet, OracleAdminFacet, LegalFacet,
+        // VPFIDiscountFacet, InteractionRewardsFacet,
+        // RewardAggregatorFacet, RewardReporterFacet,
+        // StakingRewardsFacet — are tracked as #229. Closing the
+        // remaining drift is out of scope for the test-scaffolding
+        // fold PR that landed this quartet.
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](28);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),

@@ -27,23 +27,37 @@ its own focused PR — its bespoke setUp wires up enough special-purpose
 test state that the safe fold needs its own session.
 
 Folding `PauseGatingTest` surfaced a second, more interesting drift:
-`SetupTest`'s diamond was cutting 24 facets, while production cuts 28
-(per `DiamondFacetNames.cutFacetNames()` + `DeployDiamond.s.sol`). The
-missing four — `PrecloseFacet`, `RefinanceFacet`,
+`SetupTest`'s diamond was cutting 24 facets, while production cuts 36
+(35 facets enumerated in `DiamondFacetNames.cutFacetNames()` plus
+`DiamondCutFacet` installed via the diamond constructor). The four
+facets the fold *needed* — `PrecloseFacet`, `RefinanceFacet`,
 `EarlyWithdrawalFacet`, `PartialWithdrawalFacet` — were exactly the
 ones every loan-mutation-past-creation test had to roll its own setUp
-for. This release closes that drift the same way the #173 work closed
-the `OfferMatchFacet` drift: `SetupTest` is now a strict superset of
-the production facet set, every existing consumer keeps the same
+for. This release narrows that drift (24 → 28) using the same
+strict-additive pattern the #173 work used to close the
+`OfferMatchFacet` drift: every existing consumer keeps the same
 diamond shape plus four newly-routed facets, and the pause-gating
 regression guard's 9 previously-unreachable test cases
 (`test_pause_precloseDirect`, `transferObligationViaOffer`,
 `offsetWithNewOffer`, `completeOffset`, `refinanceLoan`,
 `sellLoanViaBuyOffer`, `createLoanSaleOffer`, `completeLoanSale`,
 `partialWithdrawCollateral`) now actually exercise the
-`whenNotPaused` modifier they claim to guard. Closing the drift is the
-load-bearing change — without it the fold would have hidden the same
-test-vs-prod blind spot it was trying to remove.
+`whenNotPaused` modifier they claim to guard. Closing this *specific*
+drift was the load-bearing change for the fold — without it the
+PauseGating fold would have hidden the same test-vs-prod blind spot
+it was trying to remove.
+
+The remaining 9-facet gap between `SetupTest` (28 routed) and
+production (35 routed, 36 with the constructor's `DiamondCutFacet`) is
+the same class of drift — `DiamondLoupeFacet`, `OwnershipFacet`,
+`OracleAdminFacet`, `LegalFacet`, `VPFIDiscountFacet`,
+`InteractionRewardsFacet`, `RewardAggregatorFacet`,
+`RewardReporterFacet`, `StakingRewardsFacet` are all still unrouted
+in the test diamond. Closing that gap is tracked as a separate
+focused refactor in issue #229; doing it inside this PR would inflate
+the scope from "fold two tests" to "rebuild SetupTest", and several of
+those facets need post-init wiring (CCIP messenger mocks, channel
+registration, role grants) that warrants its own verification pass.
 
 Test results: every existing SetupTest consumer (34+ files, 2031 test
 cases) stays green; PauseGatingTest 31/31 passing; KYC integration 6/6
