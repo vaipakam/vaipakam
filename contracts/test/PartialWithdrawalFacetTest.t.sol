@@ -192,9 +192,9 @@ contract PartialWithdrawalFacetTest is Test {
                 collateralTokenId: 0,
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
-                amountMax: 0,
-                interestRateBpsMax: 0,
-                collateralAmountMax: 0,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: 500,
+                collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );

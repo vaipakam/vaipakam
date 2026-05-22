@@ -244,21 +244,45 @@ export function useMyOffers(
         // Reconstruct an OfferData from the rich event payload — every
         // field the table needs is in the args bag.
         try {
+          const amountField = typeof ev.args.amount === 'string' ? BigInt(ev.args.amount) : 0n;
+          const rateField = typeof ev.args.interestRateBps === 'string'
+            ? BigInt(ev.args.interestRateBps)
+            : 0n;
+          const collateralField = typeof ev.args.collateralAmount === 'string'
+            ? BigInt(ev.args.collateralAmount)
+            : 0n;
+          // PR #187 Codex P2 — `OfferCanceledDetails` event emits the
+          // canonical Phase 2 max fields. Prefer those when present
+          // (post-Phase-2 deploys), falling back to the floor field
+          // when absent (pre-Phase-2 indexers that haven't replayed
+          // the new ABI shape yet, or replayed-from-archive rows).
+          // Without this, the role-aware table reads (lender Principal
+          // = amountMax; borrower Rate = interestRateBpsMax) would
+          // mis-report cancelled lender offers as the 10% minPartialFill
+          // floor instead of the headline ceiling.
+          const amountMaxField = typeof ev.args.amountMax === 'string'
+            ? BigInt(ev.args.amountMax)
+            : amountField;
+          const rateMaxField = typeof ev.args.interestRateBpsMax === 'string'
+            ? BigInt(ev.args.interestRateBpsMax)
+            : rateField;
+          const collateralMaxField = typeof ev.args.collateralAmountMax === 'string'
+            ? BigInt(ev.args.collateralAmountMax)
+            : collateralField;
           const offer: OfferData = {
             id: BigInt(offerId),
             creator: address,
             offerType: typeof ev.args.offerType === 'string' ? Number(ev.args.offerType) : 0,
             lendingAsset: typeof ev.args.lendingAsset === 'string' ? ev.args.lendingAsset : ZERO_ADDR,
-            amount: typeof ev.args.amount === 'string' ? BigInt(ev.args.amount) : 0n,
-            interestRateBps: typeof ev.args.interestRateBps === 'string'
-              ? BigInt(ev.args.interestRateBps)
-              : 0n,
+            amount: amountField,
+            amountMax: amountMaxField,
+            interestRateBps: rateField,
+            interestRateBpsMax: rateMaxField,
             collateralAsset: typeof ev.args.collateralAsset === 'string'
               ? ev.args.collateralAsset
               : ZERO_ADDR,
-            collateralAmount: typeof ev.args.collateralAmount === 'string'
-              ? BigInt(ev.args.collateralAmount)
-              : 0n,
+            collateralAmount: collateralField,
+            collateralAmountMax: collateralMaxField,
             durationDays: typeof ev.args.durationDays === 'string'
               ? BigInt(ev.args.durationDays)
               : 0n,
@@ -301,9 +325,15 @@ export function useMyOffers(
             offerType: meta.offerType,
             lendingAsset: ZERO_ADDR,
             amount: 0n,
+            // #183 — identity-only stub for a cancelled offer with no
+            // event payload AND no localStorage snapshot. All values
+            // are placeholder zeros; the UI renders `—` cells.
+            amountMax: 0n,
             interestRateBps: 0n,
+            interestRateBpsMax: 0n,
             collateralAsset: ZERO_ADDR,
             collateralAmount: 0n,
+            collateralAmountMax: 0n,
             durationDays: 0n,
             principalLiquidity: 0,
             collateralLiquidity: 0,

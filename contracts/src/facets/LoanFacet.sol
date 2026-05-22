@@ -667,8 +667,36 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             loan.collateralAmount = mo.collateralAmount;
             loan.matcher = mo.matcher;
         } else {
-            loan.interestRateBps = offer.interestRateBps;
-            loan.principal = offer.amount;
+            // #183 (Canonical Limit-Order Phase 2) — role-aware reads
+            // for direct-accept on ERC-20 lending offers. Lender offers
+            // post their headline in `amountMax` (max provide) and
+            // `interestRateBps` (their floor / DEX limit); borrower
+            // offers post in `amount` (min need) and
+            // `interestRateBpsMax` (their ceiling / DEX limit).
+            // Direct-accept locks the loan at those values.
+            //
+            // **NFT rental exception** (PR #187 Codex P1) — NFT lender
+            // offers (`assetType == ERC721/ERC1155`) carry `amount` as
+            // the DAILY RENTAL FEE, not a principal headline. The
+            // `_pullRentalPrepay` helper and `_applyRentalPrepayIfNFT`
+            // both compute `amount × durationDays` from `offer.amount`,
+            // and rental accrual / deduction in RepayFacet runs off
+            // `loan.principal`. Using `offer.amountMax` here would
+            // corrupt rental accounting if a future create-offer path
+            // ever set `amountMax != amount` for an NFT offer. NFT
+            // rentals stay structurally single-value, so reading
+            // `amount` for both fields keeps the role-aware mapping
+            // safe for the ERC-20 case while preserving NFT semantics.
+            // See docs/DesignsAndPlans/CanonicalLimitOrderPhase2Design.md
+            // §3 for the ERC-20 convention.
+            bool isERC20 = offer.assetType == LibVaipakam.AssetType.ERC20;
+            bool isLender = offer.offerType == LibVaipakam.OfferType.Lender;
+            loan.principal = isERC20
+                ? (isLender ? offer.amountMax : offer.amount)
+                : offer.amount;
+            loan.interestRateBps = isERC20
+                ? (isLender ? offer.interestRateBps : offer.interestRateBpsMax)
+                : offer.interestRateBps;
             loan.collateralAmount = offer.collateralAmount;
             // matcher stamped by the legacy `_acceptOffer` post-init
             // hook (already in PR3-A).

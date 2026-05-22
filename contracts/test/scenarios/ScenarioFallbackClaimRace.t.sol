@@ -73,9 +73,9 @@ contract ScenarioFallbackClaimRaceTest is Test {
             collateralTokenId: 0,
             collateralQuantity: 0,
             allowsPartialRepay: true,
-            amountMax: 0,
-            interestRateBpsMax: 0,
-            collateralAmountMax: 0,
+            amountMax: amount,
+            interestRateBpsMax: rateBps,
+            collateralAmountMax: collateralAmount,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
         });
         vm.prank(lender);

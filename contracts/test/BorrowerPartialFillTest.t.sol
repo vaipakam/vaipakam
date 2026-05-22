@@ -477,34 +477,36 @@ contract BorrowerPartialFillTest is SetupTest {
     // Scenario 5 — Borrower amountMax = 0 derivation
     // ─────────────────────────────────────────────────────────────────
 
-    /// @notice The derivation path (`B.amountMax == 0 → derive from
-    ///         collateralAmountMax × init-LTV cap`) is currently
-    ///         **forward-looking dormant code** — `OfferCreateFacet`
-    ///         always auto-collapses `params.amountMax == 0 →
-    ///         params.amount` before SSTORE (see
-    ///         `_writeOfferPrincipalFields` line ~1000), so storage
-    ///         never holds 0 in practice. The derivation in
-    ///         `LibOfferMatch._effBorrowerAmountMax` is preparation
-    ///         for **#165 Phase 2**, which restores the canonical
-    ///         GTC default (lender max ceiling, borrower min floor
-    ///         — borrower `amountMax = 0` stays 0 in storage so the
-    ///         matcher derives the live ceiling at match-time).
-    ///         Until Phase 2 lands, this path can't be reached
-    ///         through `createOffer` and a test that drives it
-    ///         end-to-end would either fail (because of auto-
-    ///         collapse) or have to write storage directly via
-    ///         `vm.store` (bypassing every production gate the
-    ///         derivation is meant to ride on top of). Both options
-    ///         are misleading test coverage.
+    /// @notice **Permanent skip post-#183** (Canonical Limit-Order
+    ///         Phase 2 — design doc §5). The borrower `amountMax = 0`
+    ///         GTC derivation path was REJECTED as a design direction.
+    ///         Phase 2 chose the alternate path: storage always holds
+    ///         explicit non-zero values (the new
+    ///         `AmountMaxMustBePositive` invariant enforces this at
+    ///         create time), and the borrower's effective ceiling is
+    ///         computed by the FRONTEND at offer-create time (oracle
+    ///         × tier-LTV) rather than on-chain at match time.
     ///
-    ///         Once #165 Phase 2 ships, this skip gets removed and
-    ///         the test exercises the full live path. The math
-    ///         itself is unit-covered via `LibRiskMath`'s tests; the
-    ///         missing piece here is the end-to-end wiring.
+    ///         Concrete changes that lock this in:
+    ///         - `OfferCreateFacet._writeOfferPrincipalFields` rejects
+    ///           `params.amountMax == 0` with `AmountMaxMustBePositive`.
+    ///         - `LibOfferMatch._effBorrowerAmountMax` was DELETED
+    ///           (the derivation that was the test's target).
+    ///         - `OfferMatchFacet.matchOffers` post-block reads
+    ///           `Bm.amountMax` directly — no GTC sentinel path.
+    ///
+    ///         The test stays as a future-proofing assertion that the
+    ///         derivation path remains deleted. If a future PR re-adds
+    ///         on-chain derivation (e.g., a Phase 3 rethink), this
+    ///         test should be updated to assert the new path's
+    ///         behaviour rather than just skip.
+    ///
+    ///         See `docs/DesignsAndPlans/CanonicalLimitOrderPhase2Design.md`
+    ///         §5 (the dropped derivation) for the full rationale.
     function test_borrowerAmountMaxZeroDerivation() public {
         vm.skip(
             true,
-            "Skipped: #165 Phase 2 prereq. amountMax = 0 auto-collapses at create, so the storage path the derivation reads never has 0. See test docstring."
+            "Permanent skip: #183 deleted the derivation path. Storage now always holds amountMax > 0 (enforced via AmountMaxMustBePositive); frontend derives the ceiling client-side. See test docstring + design doc Section 5."
         );
     }
 
