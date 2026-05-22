@@ -1645,8 +1645,8 @@ function pluckActivityRefs(
         loanId: Number(args.loanId as bigint),
         offerId: null,
       };
-    case 'VPFIDepositedToEscrow':
-    case 'VPFIWithdrawnFromEscrow':
+    case 'VPFIDepositedToVault':
+    case 'VPFIWithdrawnFromVault':
       return {
         actor: (args.user as string)?.toLowerCase() ?? null,
         loanId: null,

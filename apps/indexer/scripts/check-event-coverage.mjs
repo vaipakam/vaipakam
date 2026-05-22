@@ -19,7 +19,7 @@
  * `EVENT_ABI` had wrong arg counts on `LoanRepaid` / `LoanDefaulted`
  * (→ wrong topic0 → never decoded → every loan stuck `active`).
  *
- * Other `state-change/*` categories (escrow / nft / treasury / claim /
+ * Other `state-change/*` categories (vault / nft / treasury / claim /
  * reward) are NOT enforced here — the indexer schema doesn't model
  * those entities. They're still DECODED (the EVENT_ABI is derived from
  * the full compiled Diamond ABI) and recorded into `activity_events`
