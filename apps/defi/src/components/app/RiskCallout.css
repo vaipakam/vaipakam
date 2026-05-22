@@ -1,0 +1,71 @@
+/*
+ * RiskCallout — the canonical state-mutating-confirm risk-disclosure
+ * shape. See `RiskCallout.tsx` for the full rationale + the consumer
+ * migration recipe.
+ *
+ * Visual reference: the Uniswap "Slippage too high, increase tolerance"
+ * inline-warning idiom — a coloured left band (yellow / orange) over a
+ * faint tint of the same hue, body text at normal contrast, the consent
+ * checkbox pinned to the bottom of the band.
+ *
+ * Theming: the colours hook into the app's CSS-variable layer
+ * (`--warning`, `--warning-tint`) so dark / light theme switches stay
+ * coherent. If those variables aren't set on the consumer tree, the
+ * fallback values render a sensible DEX-style amber on a faint
+ * background.
+ */
+
+.risk-callout {
+  position: relative;
+  margin: 12px 0;
+  padding: 16px 20px 16px 24px;
+  border-left: 4px solid var(--warning, #f59e0b);
+  background: var(--warning-tint, rgba(245, 158, 11, 0.06));
+  border-radius: 8px;
+  /* Soft drop-shadow to lift the band off the modal background — keeps
+     the inline-warning idiom (not card-modal) without disappearing on
+     dark theme. */
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
+}
+
+/* Visually hidden but present in DOM for the aria-labelledby pairing. */
+.risk-callout-sr-heading {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* The consent row pinned to the bottom of the band — flex so the
+   checkbox and the (translation-variable-length) label align cleanly
+   at the top regardless of how the label wraps. */
+.risk-callout-consent {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 16px;
+  cursor: pointer;
+  /* Slight font weight bump so the consent text reads as the
+     band's "I agree" call rather than blending into the disclosure body. */
+  font-weight: 500;
+}
+
+.risk-callout-consent input[type='checkbox'] {
+  margin-top: 3px;
+  cursor: pointer;
+  /* Block the parent label's text-cursor from leaking into the input. */
+  flex: 0 0 auto;
+}
+
+.risk-callout-consent input[type='checkbox']:disabled {
+  cursor: not-allowed;
+}
+
+.risk-callout-consent input[type='checkbox']:disabled + span {
+  opacity: 0.65;
+}
