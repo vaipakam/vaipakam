@@ -657,7 +657,7 @@ Canonical-address rule:
 CCIP hardening requirements:
 
 - Chainlink CCIP is the intended Phase 1 cross-chain provider. The platform must rely on CCIP's uniform security model rather than a per-integrator verifier-policy configuration surface.
-- domain contracts should depend on a provider-neutral cross-chain messenger abstraction; provider-specific behavior should be isolated to the approved messenger adapter so a future provider migration does not leak through the loan, reward, or tokenomics surfaces
+- domain-level reward and tokenomics wording should describe the business action as reporting chain interest, broadcasting a global denominator, or moving VPFI between supported chains. Provider-specific behavior should stay isolated to the approved CCIP messenger adapter, and public or generated documentation should not describe the current system with retired LayerZero / OApp terminology.
 - the messenger must maintain allowlists for supported remote chains, remote messengers, and channel peers, and must reject inbound or outbound messages outside those allowlists
 - chain selector and channel-handler configuration must stay one-to-one. A governance or operator action that would make one local chain map to multiple remote identities, or one channel map to multiple handlers, must be rejected rather than silently replacing state.
 - cross-chain token transfers must have bounded, governance-tunable rate limits per lane. Defaults must not be unlimited, and rate limits must not be disabled entirely.
