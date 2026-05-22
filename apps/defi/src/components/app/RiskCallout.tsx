@@ -1,4 +1,5 @@
 import { useId, type ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import { RiskDisclosures, RiskConsentLabel } from './RiskDisclosures';
 import './RiskCallout.css';
 
@@ -60,15 +61,27 @@ export interface RiskCalloutProps {
  * />
  * ```
  *
- * Per the ADR, the four current consumers of `RiskDisclosures` —
- * `CreateOffer`, `OfferBook`, `BorrowerPreclose`, `LenderEarlyWithdrawal`
- * — migrate to `RiskCallout` in their respective per-page rework
- * cards (#204 / #205 / #211 / #212). The two future consumers
- * (`OfferDetails` confirm modal #206, `Refinance` page #210,
- * `BuyVPFI` page #218) consume it from first ship. This card
- * (#215) is the cross-cutting unblocker — it ships the component
- * alone, with no consumer migrations, so each consuming sub-card
- * lands its own minimal diff.
+ * Per the ADR, six consuming sub-cards depend on this one:
+ *
+ * - `#204` — `CreateOffer.tsx` (currently uses RiskDisclosures + the
+ *   duplicated checkbox-row pattern; migrates to RiskCallout).
+ * - `#206` — `OfferDetails.tsx` confirm modal (new consumer; ships
+ *   with RiskCallout from first paint).
+ * - `#210` — `Refinance.tsx` (new consumer; ships with RiskCallout).
+ * - `#211` — `BorrowerPreclose.tsx` (currently uses the duplicated
+ *   pattern; migrates to RiskCallout).
+ * - `#212` — `LenderEarlyWithdrawal.tsx` (currently uses the
+ *   duplicated pattern; migrates to RiskCallout).
+ * - `#218` — `BuyVPFI.tsx` (new consumer; ships with RiskCallout).
+ *
+ * `OfferBook.tsx` (which also currently uses `RiskDisclosures`) is
+ * NOT a consumer of `RiskCallout` — `OfferBook` is a listing surface,
+ * not a state-mutating confirm path; its disclosures stay rendered
+ * via `RiskDisclosures` directly and are out of this card's scope.
+ *
+ * This card (#215) is the cross-cutting unblocker — it ships the
+ * component alone, with no consumer migrations, so each consuming
+ * sub-card lands its own minimal diff.
  *
  * Accessibility:
  * - The colour band carries `role="region"` + `aria-labelledby` so
@@ -90,9 +103,15 @@ export function RiskCallout({
   disabled = false,
   extra,
 }: RiskCalloutProps) {
+  const { t } = useTranslation();
+
   // Stable id pair so the label's `htmlFor` and the checkbox's `id`
   // match without collision when multiple callouts mount in one tree.
-  // `useId` was added in React 18 specifically for this case.
+  // `useId` was added in React 18 specifically for this case. Note —
+  // React's `useId` returns strings containing colons (e.g. `:r0:`);
+  // tests that look the id up via `querySelector` MUST use the
+  // attribute-selector form `[id="..."]` or `document.getElementById`,
+  // not the `#id` selector which interprets `:` as a pseudo-class.
   const checkboxId = useId();
   const headingId = useId();
 
@@ -106,16 +125,30 @@ export function RiskCallout({
         Visually-hidden heading — present in the DOM so the region's
         aria-labelledby has a target, but not rendered as visible
         text (the visible heading lives inside RiskDisclosures itself).
+        Localised via the existing `riskDisclosures.title` i18n key so
+        non-English locales don't get an English landmark in an
+        otherwise-localised region.
       */}
       <span id={headingId} className="risk-callout-sr-heading">
-        Risk disclosures and consent
+        {t('riskDisclosures.title')}
       </span>
 
       <RiskDisclosures />
 
       {extra}
 
-      <label htmlFor={checkboxId} className="risk-callout-consent">
+      {/*
+        Consent row — the input is a SIBLING of the label (not nested),
+        paired via `htmlFor` / `id`. This shape avoids nesting one
+        interactive control (the checkbox) inside another (the `<a>`
+        Terms link that lives inside `<RiskConsentLabel>`), which
+        browsers + assistive tech handle inconsistently. The label
+        click still toggles the checkbox via the standard `htmlFor`
+        pairing; the Terms link's `e.stopPropagation()` (set in
+        `RiskDisclosures.tsx`) prevents a click on the link from also
+        toggling consent.
+      */}
+      <div className="risk-callout-consent">
         <input
           id={checkboxId}
           type="checkbox"
@@ -124,10 +157,10 @@ export function RiskCallout({
           aria-required="true"
           onChange={(e) => onConsentChange(e.target.checked)}
         />
-        <span>
+        <label htmlFor={checkboxId}>
           <RiskConsentLabel />
-        </span>
-      </label>
+        </label>
+      </div>
     </div>
   );
 }

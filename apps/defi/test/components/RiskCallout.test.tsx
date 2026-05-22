@@ -94,8 +94,15 @@ describe('RiskCallout', () => {
     // aria-labelledby must point at a non-empty id.
     const labelledBy = region.getAttribute('aria-labelledby');
     expect(labelledBy).toBeTruthy();
-    const heading = container.querySelector(`#${labelledBy}`);
+    // Codex round-1 P1: `useId` returns ids with colons (e.g. `:r0:`),
+    // which `querySelector('#:r0:')` interprets as a pseudo-class
+    // marker and throws DOMException. Use the attribute-selector form
+    // which treats the value as a literal string.
+    const heading = container.querySelector(`[id="${labelledBy}"]`);
     expect(heading).toBeInTheDocument();
+    // The heading is sourced from the `riskDisclosures.title` i18n key;
+    // the test mocks `useTranslation` to return the key string unchanged.
+    expect(heading).toHaveTextContent('riskDisclosures.title');
   });
 
   it('renders an extra slot between the disclosures body and the consent row', () => {
