@@ -87,7 +87,7 @@ contract StakingRewardsCoverageTest is SetupTest, IVaipakamErrors {
     function _deposit(address user, uint256 amt) internal {
         vm.startPrank(user);
         vpfi.approve(address(diamond), amt);
-        VPFIDiscountFacet(address(diamond)).depositVPFIToEscrow(amt);
+        VPFIDiscountFacet(address(diamond)).depositVPFIToVault(amt);
         vm.stopPrank();
     }
 
@@ -198,7 +198,7 @@ contract StakingRewardsCoverageTest is SetupTest, IVaipakamErrors {
         assertEq(_staking().getTotalStakedVPFI(), 17_000 ether);
 
         vm.prank(alice);
-        VPFIDiscountFacet(address(diamond)).withdrawVPFIFromEscrow(4_000 ether);
+        VPFIDiscountFacet(address(diamond)).withdrawVPFIFromVault(4_000 ether);
         assertEq(_staking().getTotalStakedVPFI(), 13_000 ether);
 
         assertEq(_staking().getUserStakedVPFI(alice), 6_000 ether);

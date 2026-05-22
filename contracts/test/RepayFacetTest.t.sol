@@ -9,7 +9,7 @@ import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -18,7 +18,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
-import {VaipakamEscrowImplementation} from "../src/VaipakamEscrowImplementation.sol";
+import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
  // Mock ERC20
@@ -37,10 +37,10 @@ import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
-import {VaipakamEscrowImplementation} from "../src/VaipakamEscrowImplementation.sol";
+import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
@@ -93,7 +93,7 @@ contract RepayFacetTest is Test {
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
     VaipakamNFTFacet nftFacet;
-    EscrowFactoryFacet escrowFacet;
+    VaultFactoryFacet vaultFacet;
     LoanFacet loanFacet;
     HelperTest helperTest;
     RiskFacet riskFacet; // Added
@@ -102,8 +102,8 @@ contract RepayFacetTest is Test {
     AccessControlFacet accessControlFacet;
     TestMutatorFacet testMutatorFacet;
 
-    // Escrow impl
-    VaipakamEscrowImplementation escrowImpl;
+    // Vault impl
+    VaipakamVaultImplementation vaultImpl;
 
     function setUp() public {
         owner = address(this);
@@ -126,7 +126,7 @@ contract RepayFacetTest is Test {
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
         nftFacet = new VaipakamNFTFacet();
-        escrowFacet = new EscrowFactoryFacet();
+        vaultFacet = new VaultFactoryFacet();
         loanFacet = new LoanFacet();
         riskFacet = new RiskFacet();
         helperTest = new HelperTest();
@@ -135,8 +135,8 @@ contract RepayFacetTest is Test {
         accessControlFacet = new AccessControlFacet();
         testMutatorFacet = new TestMutatorFacet();
 
-        // Deploy escrow impl
-        escrowImpl = new VaipakamEscrowImplementation();
+        // Deploy vault impl
+        vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](14);
@@ -166,9 +166,9 @@ contract RepayFacetTest is Test {
             functionSelectors: helperTest.getVaipakamNFTFacetSelectors()
         });
         cuts[4] = IDiamondCut.FacetCut({
-            facetAddress: address(escrowFacet),
+            facetAddress: address(vaultFacet),
             action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getEscrowFactoryFacetSelectors()
+            functionSelectors: helperTest.getVaultFactoryFacetSelectors()
         });
         cuts[5] = IDiamondCut.FacetCut({
             facetAddress: address(loanFacet),
@@ -207,9 +207,9 @@ contract RepayFacetTest is Test {
         AccessControlFacet(address(diamond)).initializeAccessControl();
         AdminFacet(address(diamond)).unpause();
 
-        // Init escrow factory with impl
+        // Init vault factory with impl
         vm.prank(owner);
-        EscrowFactoryFacet(address(diamond)).initializeEscrowImplementation();
+        VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         // vm.prank(address(diamond));
         // LibVaipakam.setTreasury(owner);
@@ -647,11 +647,11 @@ contract RepayFacetTest is Test {
     ///      and `repayPartial` reads from the loan.
     function testRepayPartialSucceedsWhenBorrowerOfferAllowed() public {
         // Borrower offer ⇒ borrower posts collateral at create (pulled
-        // into borrower escrow), then lender funds principal at accept
-        // (pulled from lender escrow). The standard setUp() approves the
+        // into borrower vault), then lender funds principal at accept
+        // (pulled from lender vault). The standard setUp() approves the
         // diamond on lender's wallet but never pre-deposits into the
-        // lender's escrow; for a borrower-offer-accept the lender's
-        // escrow needs ≥ principal + LIF treasury fee, so fund it via
+        // lender's vault; for a borrower-offer-accept the lender's
+        // vault needs ≥ principal + LIF treasury fee, so fund it via
         // deal() against the proxy address.
         vm.prank(borrower);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
@@ -679,13 +679,13 @@ contract RepayFacetTest is Test {
             })
         );
 
-        address lenderEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender);
-        deal(mockERC20, lenderEscrow, 2000); // covers 1 wei LIF + 1000 principal pull
+        address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        deal(mockERC20, lenderVault, 2000); // covers 1 wei LIF + 1000 principal pull
         // T-051 — back the direct deal with a counter record so the
-        // subsequent escrowWithdrawERC20 inside acceptOffer doesn't
+        // subsequent vaultWithdrawERC20 inside acceptOffer doesn't
         // underflow the counter.
         vm.prank(address(diamond));
-        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(lender, mockERC20, 2000);
+        VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(lender, mockERC20, 2000);
 
         vm.prank(lender);
         uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
@@ -694,10 +694,10 @@ contract RepayFacetTest is Test {
         assertTrue(loan.allowsPartialRepay, "snapshot should reflect borrower's request");
 
         // Repay 200 of 1000 principal; expected post-state principal = 800.
-        // Borrower received the principal at accept; fund their escrow
+        // Borrower received the principal at accept; fund their vault
         // for the partial pull.
-        address borrowerEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(borrower);
-        deal(mockERC20, borrowerEscrow, 1000);
+        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
+        deal(mockERC20, borrowerVault, 1000);
         vm.prank(borrower);
         RepayFacet(address(diamond)).repayPartial(loanId, 200);
         loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
@@ -765,14 +765,14 @@ contract RepayFacetTest is Test {
         RepayFacet(address(diamond)).repayLoan(2);
     }
 
-    /// @dev Tests cross-facet call failure for the escrow chokepoint
-    ///      in repayLoan (ERC20 path). T-051 — escrow resolution
-    ///      moved inside `escrowDepositERC20From`; mock that selector.
+    /// @dev Tests cross-facet call failure for the vault chokepoint
+    ///      in repayLoan (ERC20 path). T-051 — vault resolution
+    ///      moved inside `vaultDepositERC20From`; mock that selector.
     function testRepayLoanCrossFacetCallFailed() public {
         helperOfferLoan();
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowDepositERC20From.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultDepositERC20From.selector),
             "mock revert"
         );
         vm.prank(borrower);
@@ -818,10 +818,10 @@ contract RepayFacetTest is Test {
         helperOfferLoan();
         vm.warp(block.timestamp + 1 days);
 
-        // Make treasury escrow withdraw fail
+        // Make treasury vault withdraw fail
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
             "mock revert"
         );
         vm.prank(borrower);
@@ -835,18 +835,18 @@ contract RepayFacetTest is Test {
         helperOfferLoan();
         vm.warp(block.timestamp + 1 days);
 
-        address borrowerEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(borrower);
+        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
         // Allow first call to succeed (treasury share) but second to fail (lender share)
         // We'll mock the second call (lenderShare withdrawal) to fail by counting:
-        // Instead, mock escrowWithdrawERC20 to succeed once then fail. Use mockCallRevert for specific args is complex.
+        // Instead, mock vaultWithdrawERC20 to succeed once then fail. Use mockCallRevert for specific args is complex.
         // Alternative: make treasury call revert after treasury is paid. Tricky.
-        // Simpler: mock getOrCreateUserEscrow to fail for lender in NFT path (called after lender share withdrawal).
-        // Actually after lenderShare withdrawal succeeds, we call getOrCreateUserEscrow → let that fail.
+        // Simpler: mock getOrCreateUserVault to fail for lender in NFT path (called after lender share withdrawal).
+        // Actually after lenderShare withdrawal succeeds, we call getOrCreateUserVault → let that fail.
         // But first we need treasury withdraw and lender withdraw to succeed.
-        // Best approach: test the lender escrow getOrCreate failure in NFT path.
+        // Best approach: test the lender vault getOrCreate failure in NFT path.
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.getOrCreateUserEscrow.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.getOrCreateUserVault.selector),
             "mock revert"
         );
         vm.prank(borrower);
@@ -933,7 +933,7 @@ contract RepayFacetTest is Test {
         helperOfferLoan();
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
             "mock revert"
         );
         vm.prank(borrower);
@@ -947,10 +947,10 @@ contract RepayFacetTest is Test {
         helperOfferLoan();
         vm.warp(block.timestamp + 1 days);
 
-        // Mock escrowSetNFTUser to fail (called during NFT reset renter step)
+        // Mock vaultSetNFTUser to fail (called during NFT reset renter step)
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowSetNFTUser.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector),
             "mock revert"
         );
         vm.prank(borrower);
@@ -982,7 +982,7 @@ contract RepayFacetTest is Test {
         vm.warp(block.timestamp + 1 days);
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
             "mock revert"
         );
         vm.expectRevert(bytes("mock revert"));
@@ -993,11 +993,11 @@ contract RepayFacetTest is Test {
     /// @dev Tests repayPartial NFT with NFT update expires failing.
     function testRepayPartialNFTUpdateExpiresFails() public {
         helperOfferLoan();
-        // First need the lender/treasury withdrawals to succeed, then escrowSetNFTUser to fail.
-        // We'll mock escrowSetNFTUser to revert specifically.
+        // First need the lender/treasury withdrawals to succeed, then vaultSetNFTUser to fail.
+        // We'll mock vaultSetNFTUser to revert specifically.
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowSetNFTUser.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector),
             "mock revert"
         );
         vm.prank(borrower);
@@ -1053,7 +1053,7 @@ contract RepayFacetTest is Test {
 
     /// @dev Tests repayLoan reverts if non-borrower tries to repay an NFT rental loan.
     ///      NFT rental repayment must remain borrower-only because fees are deducted
-    ///      from the borrower's escrowed prepayment.
+    ///      from the borrower's vaulted prepayment.
     function testRepayLoanRevertsIfNotBorrowerForNFT() public {
         helperOfferLoan();
         // loanId 2 is the NFT loan; different user tries to repay
@@ -1070,15 +1070,15 @@ contract RepayFacetTest is Test {
     }
 
     /// @dev Tests repayLoan NFT path CrossFacetCallFailed("Lender share withdrawal failed").
-    ///      First escrowWithdrawERC20 (treasury share) succeeds; second (lender share) fails.
+    ///      First vaultWithdrawERC20 (treasury share) succeeds; second (lender share) fails.
     ///      Treasury and lender both refer to different addresses to distinguish calls.
     function testRepayNFTLoanLenderShareWithdrawalFails() public {
         helperOfferLoan();
         vm.warp(block.timestamp + 1 days);
 
         address treasuryAddr = address(diamond); // treasury = diamond
-        // First call: treasury share → borrower escrow withdraws to treasury (address(diamond))
-        // Second call: lender share → borrower escrow withdraws to address(this)/diamond for escrow deposit
+        // First call: treasury share → borrower vault withdraws to treasury (address(diamond))
+        // Second call: lender share → borrower vault withdraws to address(this)/diamond for vault deposit
         // Both have to=address(diamond) in the first and to=address(this) in the second.
         // treasury == address(diamond) == address(this) for the calls...
         // Let me distinguish by amount. NFT loan: amount=10, duration=30, elapsed=1 day.
@@ -1090,13 +1090,13 @@ contract RepayFacetTest is Test {
         // Mock treasury call (amount=0) to succeed
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector, borrower, mockERC20, treasuryAddr, uint256(0)),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector, borrower, mockERC20, treasuryAddr, uint256(0)),
             abi.encode(true)
         );
         // Mock lender share call (amount=10) to fail
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector, borrower, mockERC20, address(diamond), uint256(10)),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector, borrower, mockERC20, address(diamond), uint256(10)),
             "lender fail"
         );
         vm.prank(borrower);
@@ -1162,26 +1162,26 @@ contract RepayFacetTest is Test {
     }
 
     /// @dev Tests repayPartial NFT "Treasury share failed" path.
-    ///      First escrowWithdrawERC20 (lender share) succeeds; second (treasury share) fails.
+    ///      First vaultWithdrawERC20 (lender share) succeeds; second (treasury share) fails.
     function testRepayPartialNFTTreasuryShareFails() public {
         helperOfferLoan();
         // NFT loan loanId=2; first call is lender share, second is treasury share.
         // We need lender share to succeed but treasury share to fail.
-        // Get borrower's escrow address used in the call args:
-        address borrowerEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(borrower);
+        // Get borrower's vault address used in the call args:
+        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
         // We mock by counting: first call succeeds (lender share to lender addr), second reverts.
         // Can differentiate by the `to` parameter: lender vs treasury.
         // lender address is lender, treasury is address(diamond).
         // Mock lender share call to succeed specifically (to=lender)
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector, borrower, mockERC20, lender),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector, borrower, mockERC20, lender),
             abi.encode(true)
         );
         // Mock treasury share call to fail (to=address(diamond)/treasury)
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector, borrower, mockERC20, address(diamond)),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector, borrower, mockERC20, address(diamond)),
             "treasury fail"
         );
         vm.prank(borrower);
@@ -1191,13 +1191,13 @@ contract RepayFacetTest is Test {
     }
 
     /// @dev Tests repayPartial NFT "Update expires failed" path.
-    ///      Lender and treasury share succeed; escrowSetNFTUser fails.
+    ///      Lender and treasury share succeed; vaultSetNFTUser fails.
     function testRepayPartialNFTUpdateExpiresFails2() public {
         helperOfferLoan();
-        // Mock escrowSetNFTUser to fail
+        // Mock vaultSetNFTUser to fail
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowSetNFTUser.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector),
             "expires fail"
         );
         vm.prank(borrower);
@@ -1219,7 +1219,7 @@ contract RepayFacetTest is Test {
     }
 
     /// @dev Tests autoDeductDaily "Treasury deduct failed" path.
-    ///      First escrowWithdrawERC20 (lender share) succeeds; second (treasury share) fails.
+    ///      First vaultWithdrawERC20 (lender share) succeeds; second (treasury share) fails.
     function testAutoDeductDailyTreasuryDeductFails() public {
         helperOfferLoan();
         vm.warp(block.timestamp + 1 days);
@@ -1228,13 +1228,13 @@ contract RepayFacetTest is Test {
         // First call: lender share (to=lender) → succeed
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector, borrowerAddr, mockERC20, lender),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector, borrowerAddr, mockERC20, lender),
             abi.encode(true)
         );
         // Second call: treasury share (to=address(diamond)) → fail
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector, borrowerAddr, mockERC20, address(diamond)),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector, borrowerAddr, mockERC20, address(diamond)),
             "treasury fail"
         );
         vm.expectRevert(bytes("treasury fail"));
@@ -1242,15 +1242,15 @@ contract RepayFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev Tests autoDeductDaily "Update expires failed" when escrowSetNFTUser fails.
+    /// @dev Tests autoDeductDaily "Update expires failed" when vaultSetNFTUser fails.
     function testAutoDeductDailyUpdateExpiresFails() public {
         helperOfferLoan();
         vm.warp(block.timestamp + 1 days);
 
-        // Mock escrowSetNFTUser to fail
+        // Mock vaultSetNFTUser to fail
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowSetNFTUser.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector),
             "expires fail"
         );
         vm.expectRevert(bytes("expires fail"));

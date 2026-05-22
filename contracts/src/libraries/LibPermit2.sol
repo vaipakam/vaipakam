@@ -23,7 +23,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *        3. This helper forwards the signature to Permit2, which pulls
  *           the token from the user's wallet and delivers it to the
  *           `to` address specified in `transferDetails` (the user's
- *           per-user Vaipakam escrow proxy for offer-create and
+ *           per-user Vaipakam vault proxy for offer-create and
  *           VPFI-deposit paths; the Diamond itself for fee/LIF paths).
  *
  *      Signature semantics (Permit2 enforces, not this wrapper):
@@ -107,7 +107,7 @@ library LibPermit2 {
      *        - nonce slot has not been burned
      *
      * @param owner         Signer of the permit (asset source).
-     * @param to            Destination address (escrow proxy or Diamond).
+     * @param to            Destination address (vault proxy or Diamond).
      * @param expectedToken Asset the protocol entry point expects to pull.
      *                      MUST equal `permit.permitted.token`.
      * @param amount        Amount to pull — must be ≤ signed amount.

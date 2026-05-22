@@ -25,7 +25,7 @@ import {Vm} from "forge-std/Vm.sol";
  *           "chainId": 84532,
  *           "deployedAt": "2026-04-26T00:00:00Z",
  *           "diamond": "0x…",
- *           "escrowImpl": "0x…",
+ *           "vaultImpl": "0x…",
  *           "timelock": "0x…",
  *           "vpfiToken": "0x…",
  *           "vpfiOftAdapter": "0x…",
@@ -126,7 +126,7 @@ library Deployments {
     // ── Typed reads ────────────────────────────────────────────────────────
 
     function readDiamond()         internal view returns (address) { return _readAddr(".diamond",         "DIAMOND_ADDRESS"); }
-    function readEscrowImpl()      internal view returns (address) { return _readAddr(".escrowImpl",      "ESCROW_IMPL_ADDRESS"); }
+    function readVaultImpl()      internal view returns (address) { return _readAddr(".vaultImpl",      "VAULT_IMPL_ADDRESS"); }
     function readTimelock()        internal view returns (address) { return _readAddr(".timelock",        "TIMELOCK_ADDRESS"); }
     function readVPFIToken()       internal view returns (address) { return _readAddr(".vpfiToken",       "VPFI_TOKEN_ADDRESS"); }
     function readVPFIBuyAdapter()  internal view returns (address) { return _readAddr(".vpfiBuyAdapter",  "VPFI_BUY_ADAPTER_ADDRESS"); }
@@ -204,7 +204,7 @@ library Deployments {
     // sense; the runbook invokes deploys in a fixed order.
 
     function writeDiamond(address a)         internal { _writeAddr(".diamond",         a); }
-    function writeEscrowImpl(address a)      internal { _writeAddr(".escrowImpl",      a); }
+    function writeVaultImpl(address a)      internal { _writeAddr(".vaultImpl",      a); }
     function writeTimelock(address a)        internal { _writeAddr(".timelock",        a); }
     function writeVPFIToken(address a)       internal { _writeAddr(".vpfiToken",       a); }
     function writeVPFITokenImpl(address a)   internal { _writeAddr(".vpfiTokenImpl",   a); }

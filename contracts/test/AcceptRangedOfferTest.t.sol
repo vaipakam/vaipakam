@@ -174,7 +174,7 @@ contract AcceptRangedOfferTest is SetupTest {
     // ═════════════════════════════════════════════════════════════════
 
     /// @notice Lender posts `[amount=1k, amountMax=10k, rate=300, rateMax=800,
-    ///         collateral=500]`. createOffer pre-escrows the FULL `amountMax`
+    ///         collateral=500]`. createOffer pre-vaults the FULL `amountMax`
     ///         (10k). Borrower calls acceptOffer with consent. Asserts the
     ///         role-aware reads:
     ///           - loan.principal       == amountMax  (10_000)
@@ -182,7 +182,7 @@ contract AcceptRangedOfferTest is SetupTest {
     ///                                     floor — most favourable to
     ///                                     borrower)
     ///           - loan.collateralAmount == 500
-    ///         + the lender's escrow is fully drained of the 10k
+    ///         + the lender's vault is fully drained of the 10k
     ///         + the borrower receives 10k principal (less LIF in VPFI
     ///           if applicable; LIF math sits on `effectivePrincipal`,
     ///           which is the role-aware read — wallet credit equals
@@ -192,7 +192,7 @@ contract AcceptRangedOfferTest is SetupTest {
     ///         + offer.accepted = true; offer.amountFilled = amountMax
     ///           (direct-accept is single-fill — entire offer consumed).
     function test_lenderRangedOffer_borrowerAccepts_principalAndRateRoleAware() public {
-        uint256 lenderEscrowBalBefore = ERC20(mockERC20).balanceOf(lender);
+        uint256 lenderVaultBalBefore = ERC20(mockERC20).balanceOf(lender);
         uint256 borrowerWalletBefore  = ERC20(mockERC20).balanceOf(borrower);
 
         uint256 offerId = _postLenderOffer({
@@ -206,7 +206,7 @@ contract AcceptRangedOfferTest is SetupTest {
         // createOffer pulled the FULL amountMax (10k) from lender's wallet.
         assertEq(
             ERC20(mockERC20).balanceOf(lender),
-            lenderEscrowBalBefore - 10_000,
+            lenderVaultBalBefore - 10_000,
             "post-create: lender wallet down by amountMax (10k pre-funded)"
         );
 
@@ -266,7 +266,7 @@ contract AcceptRangedOfferTest is SetupTest {
 
     /// @notice Borrower posts `[amount=1k, amountMax=10k, rate=300,
     ///         rateMax=800, collateralAmount=500, collateralAmountMax=500]`.
-    ///         createOffer pre-escrows the FULL collateralAmountMax (500).
+    ///         createOffer pre-vaults the FULL collateralAmountMax (500).
     ///         Lender calls acceptOffer with consent. Asserts the
     ///         role-aware reads:
     ///           - loan.principal       == amount (1_000, borrower's floor —
@@ -278,7 +278,7 @@ contract AcceptRangedOfferTest is SetupTest {
     ///                                     rate borrower will pay = most
     ///                                     favourable to lender)
     ///           - loan.collateralAmount == 500
-    ///         + lender's escrow deposits the 1k principal (debited
+    ///         + lender's vault deposits the 1k principal (debited
     ///           from lender's wallet via the borrower-side acceptOffer
     ///           pull described in `_acceptOffer` lines 577-617).
     ///         + borrower's wallet receives the 1k principal.
@@ -320,7 +320,7 @@ contract AcceptRangedOfferTest is SetupTest {
         assertEq(loan.borrower, borrower, "loan borrower = offer creator");
 
         // Lender's wallet — debited by the 1k principal that was pulled
-        // into the lender's escrow at acceptOffer time and then sent
+        // into the lender's vault at acceptOffer time and then sent
         // through the loan plumbing to the borrower.
         assertEq(
             ERC20(mockERC20).balanceOf(lender),
@@ -348,7 +348,7 @@ contract AcceptRangedOfferTest is SetupTest {
     // ═════════════════════════════════════════════════════════════════
 
     /// @notice Borrower posts `[amount=1k, amountMax=10k, collateralAmount=500,
-    ///         collateralAmountMax=5_000]`. createOffer pre-escrows the
+    ///         collateralAmountMax=5_000]`. createOffer pre-vaults the
     ///         FULL collateralAmountMax (5_000). Lender accepts — direct-
     ///         accept locks only `collateralAmount = 500` on the loan.
     ///         `_refundBorrowerCollateralResidualIfNeeded` must fire and
@@ -393,7 +393,7 @@ contract AcceptRangedOfferTest is SetupTest {
         assertEq(loan.collateralAmount, 500, "loan locks only the floor");
 
         // Borrower's net wallet delta: -5_000 (create) + 4_500 (residual
-        // refund on direct-accept) = -500. The 500 sits in escrow as the
+        // refund on direct-accept) = -500. The 500 sits in vault as the
         // loan's locked collateral.
         assertEq(
             ERC20(mockCollateralERC20).balanceOf(borrower),
@@ -409,7 +409,7 @@ contract AcceptRangedOfferTest is SetupTest {
     /// @notice Borrower posts `collateralAmount == collateralAmountMax`.
     ///         Lender accepts. `_refundBorrowerCollateralResidualIfNeeded`
     ///         must short-circuit (line 378 — `collateralAmountMax <=
-    ///         collateralAmount`) and NOT attempt an escrow withdraw.
+    ///         collateralAmount`) and NOT attempt an vault withdraw.
     function test_borrowerSingleValueCollateral_lenderAccepts_noResidual() public {
         uint256 borrowerCollatBefore =
             ERC20(mockCollateralERC20).balanceOf(borrower);

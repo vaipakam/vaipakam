@@ -6,7 +6,7 @@ import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {IZeroExProxy} from "../src/interfaces/IZeroExProxy.sol";
 import {LibFallback} from "../src/libraries/LibFallback.sol";
@@ -50,12 +50,12 @@ contract LiquidationMinOutputInvariantTest is RiskFacetTest {
             abi.encode(HF_SCALE - 1)
         );
 
-        // Let the cross-facet escrow withdraw no-op so we don't need to
-        // round-trip through the per-user escrow proxy for this test.
+        // Let the cross-facet vault withdraw no-op so we don't need to
+        // round-trip through the per-user vault proxy for this test.
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(
-                EscrowFactoryFacet.escrowWithdrawERC20.selector
+                VaultFactoryFacet.vaultWithdrawERC20.selector
             ),
             abi.encode(true)
         );
@@ -139,7 +139,7 @@ contract LiquidationMinOutputInvariantTest is RiskFacetTest {
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(
-                EscrowFactoryFacet.escrowWithdrawERC20.selector
+                VaultFactoryFacet.vaultWithdrawERC20.selector
             ),
             abi.encode(true)
         );

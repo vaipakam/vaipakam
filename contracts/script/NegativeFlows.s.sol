@@ -40,7 +40,7 @@ import {AnvilNegativeFlows} from "./AnvilNegativeFlows.s.sol";
  *                  reverts.
  *           NEG-9  Sanctions Tier-1 — sanctioned address attempting
  *                  any state-creating call (createOffer, acceptOffer,
- *                  getOrCreateUserEscrow, VPFI deposit/buy/withdraw)
+ *                  getOrCreateUserVault, VPFI deposit/buy/withdraw)
  *                  reverts; Tier-2 close-out paths (repayLoan,
  *                  markDefaulted) stay open so the unflagged
  *                  counterparty can be made whole.

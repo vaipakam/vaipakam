@@ -15,7 +15,7 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
@@ -105,7 +105,7 @@ contract DeployDiamond is Script {
         OracleFacet oracleFacet = new OracleFacet();
         OracleAdminFacet oracleAdminFacet = new OracleAdminFacet();
         VaipakamNFTFacet nftFacet = new VaipakamNFTFacet();
-        EscrowFactoryFacet escrowFactoryFacet = new EscrowFactoryFacet();
+        VaultFactoryFacet vaultFactoryFacet = new VaultFactoryFacet();
         OfferCreateFacet offerCreateFacet = new OfferCreateFacet();
         OfferAcceptFacet offerAcceptFacet = new OfferAcceptFacet();
         // Range Orders Phase 1 EIP-170 split: matchOffers + previewMatch
@@ -174,7 +174,7 @@ contract DeployDiamond is Script {
         cuts[5] = _buildCut(address(oracleFacet), _getOracleSelectors());
         cuts[6] = _buildCut(address(oracleAdminFacet), _getOracleAdminSelectors());
         cuts[7] = _buildCut(address(nftFacet), _getNFTSelectors());
-        cuts[8] = _buildCut(address(escrowFactoryFacet), _getEscrowFactorySelectors());
+        cuts[8] = _buildCut(address(vaultFactoryFacet), _getVaultFactorySelectors());
         cuts[9] = _buildCut(address(offerCreateFacet), _getOfferCreateSelectors());
         cuts[10] = _buildCut(address(loanFacet), _getLoanSelectors());
         cuts[11] = _buildCut(address(repayFacet), _getRepaySelectors());
@@ -311,9 +311,9 @@ contract DeployDiamond is Script {
         AdminFacet(diamond).setTreasury(treasury);
         console.log("Treasury set:", treasury);
 
-        // 5c. Initialize escrow implementation (deploys template)
-        EscrowFactoryFacet(diamond).initializeEscrowImplementation();
-        console.log("Escrow implementation initialized.");
+        // 5c. Initialize vault implementation (deploys template)
+        VaultFactoryFacet(diamond).initializeVaultImplementation();
+        console.log("Vault implementation initialized.");
 
         // 5d. Initialize NFT metadata
         VaipakamNFTFacet(diamond).initializeNFT();
@@ -405,7 +405,7 @@ contract DeployDiamond is Script {
         vm.stopBroadcast();
 
         // ── Step 7: Persist deployment artifact ─────────────────────────
-        // Write the Diamond + escrow-impl addresses to
+        // Write the Diamond + vault-impl addresses to
         // `deployments/<chain-slug>/addresses.json`. Every subsequent
         // script (Configure*, Wire*, Upgrade*, seeders, smoke tests)
         // reads from this file via `Deployments.readDiamond()` etc.
@@ -459,8 +459,8 @@ contract DeployDiamond is Script {
         //                  chains and falls through to block.number
         //                  elsewhere. Do NOT pass block.number directly
         //                  from this script.
-        //   - escrowImpl:  per-user UUPS escrow template the factory
-        //                  clones; surfaced via `getVaipakamEscrowImplementationAddress()`
+        //   - vaultImpl:  per-user UUPS vault template the factory
+        //                  clones; surfaced via `getVaipakamVaultImplementationAddress()`
         //   - weth/treasury/admin: shared addresses every operator UI
         //                  cross-references against the .env they hold
         //
@@ -469,9 +469,9 @@ contract DeployDiamond is Script {
         Deployments.writeChainSlug();
         Deployments.writeLzEid(Deployments.lzEidForChain());
         Deployments.writeDeployBlock();
-        Deployments.writeEscrowImpl(
-            EscrowFactoryFacet(diamond)
-                .getVaipakamEscrowImplementationAddress()
+        Deployments.writeVaultImpl(
+            VaultFactoryFacet(diamond)
+                .getVaipakamVaultImplementationAddress()
         );
         Deployments.writeTreasury(treasury);
         Deployments.writeAdmin(admin);
@@ -492,7 +492,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("oracleFacet",             address(oracleFacet));
         Deployments.writeFacet("oracleAdminFacet",        address(oracleAdminFacet));
         Deployments.writeFacet("vaipakamNFTFacet",        address(nftFacet));
-        Deployments.writeFacet("escrowFactoryFacet",      address(escrowFactoryFacet));
+        Deployments.writeFacet("vaultFactoryFacet",      address(vaultFactoryFacet));
         Deployments.writeFacet("offerCreateFacet",        address(offerCreateFacet));
         Deployments.writeFacet("offerAcceptFacet",        address(offerAcceptFacet));
         Deployments.writeFacet("offerMatchFacet",         address(offerMatchFacet));
@@ -540,7 +540,7 @@ contract DeployDiamond is Script {
         console.log("OracleFacet:          ", address(oracleFacet));
         console.log("OracleAdminFacet:     ", address(oracleAdminFacet));
         console.log("VaipakamNFTFacet:     ", address(nftFacet));
-        console.log("EscrowFactoryFacet:   ", address(escrowFactoryFacet));
+        console.log("VaultFactoryFacet:   ", address(vaultFactoryFacet));
         console.log("OfferCreateFacet:     ", address(offerCreateFacet));
         console.log("OfferAcceptFacet:     ", address(offerAcceptFacet));
         console.log("OfferMatchFacet:      ", address(offerMatchFacet));
@@ -620,7 +620,7 @@ contract DeployDiamond is Script {
         s[9] = AccessControlFacet.KYC_ADMIN_ROLE.selector;
         s[10] = AccessControlFacet.ORACLE_ADMIN_ROLE.selector;
         s[11] = AccessControlFacet.RISK_ADMIN_ROLE.selector;
-        s[12] = AccessControlFacet.ESCROW_ADMIN_ROLE.selector;
+        s[12] = AccessControlFacet.VAULT_ADMIN_ROLE.selector;
         // Hot-path role-revoke for incident response. Distinct from
         // the timelocked `revokeRole` so a Pauser (or other emergency
         // role-holder) can pull a compromised key without waiting
@@ -842,45 +842,45 @@ contract DeployDiamond is Script {
         s[28] = VaipakamNFTFacet.getImageURIFor.selector;
     }
 
-    function _getEscrowFactorySelectors() internal pure returns (bytes4[] memory s) {
+    function _getVaultFactorySelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](31);
-        s[0] = EscrowFactoryFacet.initializeEscrowImplementation.selector;
-        s[1] = EscrowFactoryFacet.getOrCreateUserEscrow.selector;
-        s[2] = EscrowFactoryFacet.upgradeEscrowImplementation.selector;
-        s[3] = EscrowFactoryFacet.escrowDepositERC20.selector;
-        s[4] = EscrowFactoryFacet.escrowWithdrawERC20.selector;
-        s[5] = EscrowFactoryFacet.escrowDepositERC721.selector;
-        s[6] = EscrowFactoryFacet.escrowWithdrawERC721.selector;
-        s[7] = EscrowFactoryFacet.escrowDepositERC1155.selector;
-        s[8] = EscrowFactoryFacet.escrowWithdrawERC1155.selector;
-        s[9] = EscrowFactoryFacet.escrowApproveNFT721.selector;
-        s[10] = EscrowFactoryFacet.escrowSetNFTUser.selector;
-        s[11] = EscrowFactoryFacet.escrowGetNFTUserOf.selector;
-        s[12] = EscrowFactoryFacet.escrowGetNFTUserExpires.selector;
-        s[13] = EscrowFactoryFacet.getOfferAmount.selector;
-        s[14] = EscrowFactoryFacet.getVaipakamEscrowImplementationAddress.selector;
-        s[15] = EscrowFactoryFacet.getDiamondAddress.selector;
-        s[16] = EscrowFactoryFacet.setMandatoryEscrowUpgrade.selector;
-        s[17] = EscrowFactoryFacet.upgradeUserEscrow.selector;
-        s[18] = EscrowFactoryFacet.getUserEscrowAddress.selector;
-        s[19] = EscrowFactoryFacet.getEscrowVersionInfo.selector;
-        s[20] = EscrowFactoryFacet.escrowSetNFTUser1155.selector;
-        s[21] = EscrowFactoryFacet.escrowGetNFTQuantity.selector;
+        s[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
+        s[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
+        s[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
+        s[3] = VaultFactoryFacet.vaultDepositERC20.selector;
+        s[4] = VaultFactoryFacet.vaultWithdrawERC20.selector;
+        s[5] = VaultFactoryFacet.vaultDepositERC721.selector;
+        s[6] = VaultFactoryFacet.vaultWithdrawERC721.selector;
+        s[7] = VaultFactoryFacet.vaultDepositERC1155.selector;
+        s[8] = VaultFactoryFacet.vaultWithdrawERC1155.selector;
+        s[9] = VaultFactoryFacet.vaultApproveNFT721.selector;
+        s[10] = VaultFactoryFacet.vaultSetNFTUser.selector;
+        s[11] = VaultFactoryFacet.vaultGetNFTUserOf.selector;
+        s[12] = VaultFactoryFacet.vaultGetNFTUserExpires.selector;
+        s[13] = VaultFactoryFacet.getOfferAmount.selector;
+        s[14] = VaultFactoryFacet.getVaipakamVaultImplementationAddress.selector;
+        s[15] = VaultFactoryFacet.getDiamondAddress.selector;
+        s[16] = VaultFactoryFacet.setMandatoryVaultUpgrade.selector;
+        s[17] = VaultFactoryFacet.upgradeUserVault.selector;
+        s[18] = VaultFactoryFacet.getUserVaultAddress.selector;
+        s[19] = VaultFactoryFacet.getVaultVersionInfo.selector;
+        s[20] = VaultFactoryFacet.vaultSetNFTUser1155.selector;
+        s[21] = VaultFactoryFacet.vaultGetNFTQuantity.selector;
         // T-051 / T-054 — chokepoint deposit + counter-only companions.
-        // `escrowDepositERC20From` is the third-party-payer variant
+        // `vaultDepositERC20From` is the third-party-payer variant
         // RepayFacet uses to pull repayment funds from the borrower
-        // into the lender's escrow; without this selector cut, every
+        // into the lender's vault; without this selector cut, every
         // ERC-20 loan repayment reverts with FunctionDoesNotExist.
-        s[22] = EscrowFactoryFacet.escrowDepositERC20From.selector;
-        s[23] = EscrowFactoryFacet.recordEscrowDepositERC20.selector;
-        s[24] = EscrowFactoryFacet.getProtocolTrackedEscrowBalance.selector;
+        s[22] = VaultFactoryFacet.vaultDepositERC20From.selector;
+        s[23] = VaultFactoryFacet.recordVaultDepositERC20.selector;
+        s[24] = VaultFactoryFacet.getProtocolTrackedVaultBalance.selector;
         // T-054 PR-3 — stuck-token recovery EIP-712 surface.
-        s[25] = EscrowFactoryFacet.recoverStuckERC20.selector;
-        s[26] = EscrowFactoryFacet.disown.selector;
-        s[27] = EscrowFactoryFacet.recoveryDomainSeparator.selector;
-        s[28] = EscrowFactoryFacet.recoveryAckTextHash.selector;
-        s[29] = EscrowFactoryFacet.recoveryNonce.selector;
-        s[30] = EscrowFactoryFacet.escrowBannedSource.selector;
+        s[25] = VaultFactoryFacet.recoverStuckERC20.selector;
+        s[26] = VaultFactoryFacet.disown.selector;
+        s[27] = VaultFactoryFacet.recoveryDomainSeparator.selector;
+        s[28] = VaultFactoryFacet.recoveryAckTextHash.selector;
+        s[29] = VaultFactoryFacet.recoveryNonce.selector;
+        s[30] = VaultFactoryFacet.vaultBannedSource.selector;
     }
 
     /// @dev Issue #67 — `OfferFacet` was split into `OfferCreateFacet`
@@ -890,7 +890,7 @@ contract DeployDiamond is Script {
     function _getOfferCreateSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](4);
         s[0] = OfferCreateFacet.createOffer.selector;
-        s[1] = OfferCreateFacet.getUserEscrow.selector;
+        s[1] = OfferCreateFacet.getUserVault.selector;
         // Phase 8b.1 Permit2 addition.
         s[2] = OfferCreateFacet.createOfferWithPermit.selector;
         // Cross-facet entry used by `PrecloseFacet.offsetWithNewOffer`
@@ -1104,7 +1104,7 @@ contract DeployDiamond is Script {
     function _getVPFIDiscountSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](23);
         s[0] = VPFIDiscountFacet.buyVPFIWithETH.selector;
-        s[1] = VPFIDiscountFacet.depositVPFIToEscrow.selector;
+        s[1] = VPFIDiscountFacet.depositVPFIToVault.selector;
         s[2] = VPFIDiscountFacet.quoteVPFIDiscount.selector;
         s[3] = VPFIDiscountFacet.getVPFIBuyConfig.selector;
         s[4] = VPFIDiscountFacet.getVPFISoldTo.selector;
@@ -1118,14 +1118,14 @@ contract DeployDiamond is Script {
         s[12] = VPFIDiscountFacet.emitYieldFeeDiscountApplied.selector;
         s[13] = VPFIDiscountFacet.quoteVPFIDiscountFor.selector;
         s[14] = VPFIDiscountFacet.getVPFIDiscountTier.selector;
-        s[15] = VPFIDiscountFacet.withdrawVPFIFromEscrow.selector;
+        s[15] = VPFIDiscountFacet.withdrawVPFIFromVault.selector;
         s[16] = VPFIDiscountFacet.setBridgedBuyReceiver.selector;
         s[17] = VPFIDiscountFacet.getBridgedBuyReceiver.selector;
         s[18] = VPFIDiscountFacet.processBridgedBuy.selector;
         s[19] = VPFIDiscountFacet.quoteFixedRateBuy.selector;
         s[20] = VPFIDiscountFacet.getUserVpfiDiscountState.selector;
         // Phase 8b.1 Permit2 addition.
-        s[21] = VPFIDiscountFacet.depositVPFIToEscrowWithPermit.selector;
+        s[21] = VPFIDiscountFacet.depositVPFIToVaultWithPermit.selector;
         // #00010 fix — per-(buyer, originChainId) wallet-cap reader. The
         // canonical Diamond debits the cap bucket keyed by origin
         // chain; the frontend reads via this getter so direct buys
@@ -1368,13 +1368,13 @@ contract DeployDiamond is Script {
         s[8] = MetricsFacet.getActiveLoansPaginated.selector;
         s[9] = MetricsFacet.getActiveOffersByAsset.selector;
         s[10] = MetricsFacet.getLoanSummary.selector;
-        s[11] = MetricsFacet.getEscrowStats.selector;
+        s[11] = MetricsFacet.getVaultStats.selector;
         s[12] = MetricsFacet.getNFTRentalDetails.selector;
-        s[13] = MetricsFacet.getTotalNFTsInEscrowByCollection.selector;
+        s[13] = MetricsFacet.getTotalNFTsInVaultByCollection.selector;
         s[14] = MetricsFacet.getUserSummary.selector;
         s[15] = MetricsFacet.getUserActiveLoans.selector;
         s[16] = MetricsFacet.getUserActiveOffers.selector;
-        s[17] = MetricsFacet.getUserNFTsInEscrow.selector;
+        s[17] = MetricsFacet.getUserNFTsInVault.selector;
         s[18] = MetricsFacet.getProtocolHealth.selector;
         s[19] = MetricsFacet.getBlockTimestamp.selector;
         // Reverse-index enumeration (no event-scan dependency).

@@ -12,7 +12,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
@@ -49,7 +49,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
     VaipakamNFTFacet nftFacet;
-    EscrowFactoryFacet escrowFacet;
+    VaultFactoryFacet vaultFacet;
     LoanFacet loanFacet;
     RiskFacet riskFacet;
     RepayFacet repayFacet;
@@ -99,7 +99,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         profileFacet      = new ProfileFacet();
         oracleFacet       = new OracleFacet();
         nftFacet          = new VaipakamNFTFacet();
-        escrowFacet       = new EscrowFactoryFacet();
+        vaultFacet       = new VaultFactoryFacet();
         loanFacet         = new LoanFacet();
         riskFacet         = new RiskFacet();
         repayFacet        = new RepayFacet();
@@ -121,7 +121,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         cuts[1]  = IDiamondCut.FacetCut({facetAddress: address(profileFacet),       action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
         cuts[2]  = IDiamondCut.FacetCut({facetAddress: address(oracleFacet),        action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});
         cuts[3]  = IDiamondCut.FacetCut({facetAddress: address(nftFacet),           action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaipakamNFTFacetSelectors()});
-        cuts[4]  = IDiamondCut.FacetCut({facetAddress: address(escrowFacet),        action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getEscrowFactoryFacetSelectors()});
+        cuts[4]  = IDiamondCut.FacetCut({facetAddress: address(vaultFacet),        action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaultFactoryFacetSelectors()});
         cuts[5]  = IDiamondCut.FacetCut({facetAddress: address(loanFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getLoanFacetSelectors()});
         cuts[6]  = IDiamondCut.FacetCut({facetAddress: address(riskFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskFacetSelectors()});
         cuts[7]  = IDiamondCut.FacetCut({facetAddress: address(repayFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRepayFacetSelectors()});
@@ -138,7 +138,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
 
         // Initialize diamond admin state
         vm.prank(owner);
-        EscrowFactoryFacet(address(diamond)).initializeEscrowImplementation();
+        VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(makeAddr("zeroEx"));
         AdminFacet(address(diamond)).setallowanceTarget(makeAddr("zeroEx"));
@@ -175,14 +175,14 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(uint256(2e18)));
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5000)));
 
-        // Create escrows and approve tokens to escrows
-        address lenderEscrow  = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender);
-        address borrowerEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(borrower);
+        // Create vaults and approve tokens to vaults
+        address lenderVault  = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
 
-        vm.prank(lender);  ERC20(mockUSDC).approve(lenderEscrow, type(uint256).max);
-        vm.prank(lender);  ERC20(mockWETH).approve(lenderEscrow, type(uint256).max);
-        vm.prank(borrower); ERC20(mockUSDC).approve(borrowerEscrow, type(uint256).max);
-        vm.prank(borrower); ERC20(mockWETH).approve(borrowerEscrow, type(uint256).max);
+        vm.prank(lender);  ERC20(mockUSDC).approve(lenderVault, type(uint256).max);
+        vm.prank(lender);  ERC20(mockWETH).approve(lenderVault, type(uint256).max);
+        vm.prank(borrower); ERC20(mockUSDC).approve(borrowerVault, type(uint256).max);
+        vm.prank(borrower); ERC20(mockWETH).approve(borrowerVault, type(uint256).max);
     }
 
     // ─── Scenario 1a: Happy Path — Create Offer, Accept, Repay, Both Claim ───

@@ -65,18 +65,18 @@ library LibMetricsHooks {
         _markUserSeen(s, loan.lender);
         _markUserSeen(s, loan.borrower);
 
-        // Per-collection NFT escrow counts (active legs only).
+        // Per-collection NFT vault counts (active legs only).
         if (
             loan.assetType != LibVaipakam.AssetType.ERC20 &&
             loan.principalAsset != address(0)
         ) {
-            s.nftsInEscrowByCollection[loan.principalAsset] += 1;
+            s.nftsInVaultByCollection[loan.principalAsset] += 1;
         }
         if (
             loan.collateralAssetType != LibVaipakam.AssetType.ERC20 &&
             loan.collateralAsset != address(0)
         ) {
-            s.nftsInEscrowByCollection[loan.collateralAsset] += 1;
+            s.nftsInVaultByCollection[loan.collateralAsset] += 1;
         }
 
         // Position NFT → loan id reverse mapping (O(1) NFT-rental lookup).
@@ -123,16 +123,16 @@ library LibMetricsHooks {
             if (
                 loan.assetType != LibVaipakam.AssetType.ERC20 &&
                 loan.principalAsset != address(0) &&
-                s.nftsInEscrowByCollection[loan.principalAsset] > 0
+                s.nftsInVaultByCollection[loan.principalAsset] > 0
             ) {
-                s.nftsInEscrowByCollection[loan.principalAsset] -= 1;
+                s.nftsInVaultByCollection[loan.principalAsset] -= 1;
             }
             if (
                 loan.collateralAssetType != LibVaipakam.AssetType.ERC20 &&
                 loan.collateralAsset != address(0) &&
-                s.nftsInEscrowByCollection[loan.collateralAsset] > 0
+                s.nftsInVaultByCollection[loan.collateralAsset] > 0
             ) {
-                s.nftsInEscrowByCollection[loan.collateralAsset] -= 1;
+                s.nftsInVaultByCollection[loan.collateralAsset] -= 1;
             }
         }
 

@@ -9,7 +9,7 @@ import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
@@ -33,7 +33,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 /**
  * @title PrecloseFacetTest
  * @notice Tests PrecloseFacet: precloseDirect, transferObligationViaOffer, offsetWithNewOffer.
- *         Uses vm.mockCall for cross-facet oracle/escrow/NFT calls.
+ *         Uses vm.mockCall for cross-facet oracle/vault/NFT calls.
  */
 contract PrecloseFacetTest is Test {
     VaipakamDiamond diamond;
@@ -52,7 +52,7 @@ contract PrecloseFacetTest is Test {
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
     VaipakamNFTFacet nftFacet;
-    EscrowFactoryFacet escrowFacet;
+    VaultFactoryFacet vaultFacet;
     LoanFacet loanFacet;
     RiskFacet riskFacet;
     RepayFacet repayFacet;
@@ -143,7 +143,7 @@ contract PrecloseFacetTest is Test {
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
         nftFacet = new VaipakamNFTFacet();
-        escrowFacet = new EscrowFactoryFacet();
+        vaultFacet = new VaultFactoryFacet();
         loanFacet = new LoanFacet();
         riskFacet = new RiskFacet();
         repayFacet = new RepayFacet();
@@ -166,7 +166,7 @@ contract PrecloseFacetTest is Test {
         cuts[1]  = IDiamondCut.FacetCut({facetAddress: address(profileFacet),        action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
         cuts[2]  = IDiamondCut.FacetCut({facetAddress: address(oracleFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});
         cuts[3]  = IDiamondCut.FacetCut({facetAddress: address(nftFacet),            action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaipakamNFTFacetSelectors()});
-        cuts[4]  = IDiamondCut.FacetCut({facetAddress: address(escrowFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getEscrowFactoryFacetSelectors()});
+        cuts[4]  = IDiamondCut.FacetCut({facetAddress: address(vaultFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaultFactoryFacetSelectors()});
         cuts[5]  = IDiamondCut.FacetCut({facetAddress: address(loanFacet),           action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getLoanFacetSelectors()});
         cuts[6]  = IDiamondCut.FacetCut({facetAddress: address(riskFacet),           action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskFacetSelectors()});
         cuts[7]  = IDiamondCut.FacetCut({facetAddress: address(repayFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRepayFacetSelectors()});
@@ -183,7 +183,7 @@ contract PrecloseFacetTest is Test {
 
         AccessControlFacet(address(diamond)).initializeAccessControl();
         AdminFacet(address(diamond)).unpause();
-        EscrowFactoryFacet(address(diamond)).initializeEscrowImplementation();
+        VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
         VaipakamNFTFacet(address(diamond)).initializeNFT();
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(mockZeroExProxy);
@@ -225,16 +225,16 @@ contract PrecloseFacetTest is Test {
         mockLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Liquid);
         mockPrice(mockCollateralERC20, 1e8, 8);
 
-        // Create escrows and approve
-        address lenderEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender);
-        address borrowerEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(borrower);
-        address newBorrowerEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(newBorrower);
-        vm.prank(lender);   ERC20(mockERC20).approve(lenderEscrow, type(uint256).max);
-        vm.prank(borrower); ERC20(mockERC20).approve(borrowerEscrow, type(uint256).max);
-        vm.prank(newBorrower); ERC20(mockERC20).approve(newBorrowerEscrow, type(uint256).max);
-        vm.prank(lender);   ERC20(mockCollateralERC20).approve(lenderEscrow, type(uint256).max);
-        vm.prank(borrower); ERC20(mockCollateralERC20).approve(borrowerEscrow, type(uint256).max);
-        vm.prank(newBorrower); ERC20(mockCollateralERC20).approve(newBorrowerEscrow, type(uint256).max);
+        // Create vaults and approve
+        address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
+        address newBorrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(newBorrower);
+        vm.prank(lender);   ERC20(mockERC20).approve(lenderVault, type(uint256).max);
+        vm.prank(borrower); ERC20(mockERC20).approve(borrowerVault, type(uint256).max);
+        vm.prank(newBorrower); ERC20(mockERC20).approve(newBorrowerVault, type(uint256).max);
+        vm.prank(lender);   ERC20(mockCollateralERC20).approve(lenderVault, type(uint256).max);
+        vm.prank(borrower); ERC20(mockCollateralERC20).approve(borrowerVault, type(uint256).max);
+        vm.prank(newBorrower); ERC20(mockCollateralERC20).approve(newBorrowerVault, type(uint256).max);
 
         // Create active loan: lender creates offer, borrower accepts
         vm.prank(lender);
@@ -294,8 +294,8 @@ contract PrecloseFacetTest is Test {
     // ─── precloseDirect success ───────────────────────────────────────────────
 
     function testPreclosedDirectSuccess() public {
-        // Mock escrowWithdrawERC20 (collateral release to borrower)
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
+        // Mock vaultWithdrawERC20 (collateral release to borrower)
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
         // Mock burnNFT and updateNFTStatus cross-facet calls
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
@@ -352,8 +352,8 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower); ERC20(otherToken).approve(address(diamond), type(uint256).max);
         mockLiquidity(otherToken, LibVaipakam.LiquidityStatus.Liquid);
         mockPrice(otherToken, 1e8, 8);
-        address nbEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(newBorrower);
-        vm.prank(newBorrower); ERC20(otherToken).approve(nbEscrow, type(uint256).max);
+        address nbVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(newBorrower);
+        vm.prank(newBorrower); ERC20(otherToken).approve(nbVault, type(uint256).max);
         vm.prank(owner); RiskFacet(address(diamond)).updateRiskParams(otherToken, 8000, 300, 1000);
 
         vm.prank(newBorrower);
@@ -546,7 +546,7 @@ contract PrecloseFacetTest is Test {
         );
 
         // Mock cross-facet calls
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
@@ -596,7 +596,7 @@ contract PrecloseFacetTest is Test {
             })
         );
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
@@ -637,7 +637,7 @@ contract PrecloseFacetTest is Test {
             })
         );
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
@@ -681,7 +681,7 @@ contract PrecloseFacetTest is Test {
             })
         );
 
-        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), "fail");
+        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), "fail");
 
         vm.prank(borrower);
         vm.expectRevert(bytes("fail"));
@@ -844,8 +844,8 @@ contract PrecloseFacetTest is Test {
         _setLoanAsNFTRental(activeLoanId, fullRental, (fullRental * 500) / 10000);
 
         // Mock cross-facet calls
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowSetNFTUser.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
         vm.prank(borrower);
@@ -884,8 +884,8 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower); ERC20(otherToken).approve(address(diamond), type(uint256).max);
         mockLiquidity(otherToken, LibVaipakam.LiquidityStatus.Liquid);
         mockPrice(otherToken, 1e8, 8);
-        address nbEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(newBorrower);
-        vm.prank(newBorrower); ERC20(otherToken).approve(nbEscrow, type(uint256).max);
+        address nbVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(newBorrower);
+        vm.prank(newBorrower); ERC20(otherToken).approve(nbVault, type(uint256).max);
         vm.prank(owner); RiskFacet(address(diamond)).updateRiskParams(otherToken, 8000, 300, 1000);
 
         vm.prank(newBorrower);
@@ -948,7 +948,7 @@ contract PrecloseFacetTest is Test {
             })
         );
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
         vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "burn fail");
 
@@ -985,7 +985,7 @@ contract PrecloseFacetTest is Test {
             })
         );
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "mint fail");
@@ -1010,7 +1010,7 @@ contract PrecloseFacetTest is Test {
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
 
         // Mock cross-facet calls
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
@@ -1056,8 +1056,8 @@ contract PrecloseFacetTest is Test {
             })
         );
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC721.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC721.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
@@ -1102,8 +1102,8 @@ contract PrecloseFacetTest is Test {
             })
         );
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC1155.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
@@ -1151,8 +1151,8 @@ contract PrecloseFacetTest is Test {
             })
         );
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowSetNFTUser.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
@@ -1181,7 +1181,7 @@ contract PrecloseFacetTest is Test {
 
         // Mock cross-facet calls
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowSetNFTUser.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
 
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).completeOffset(activeLoanId);
@@ -1239,8 +1239,8 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower); ERC20(otherToken).approve(address(diamond), type(uint256).max);
         mockLiquidity(otherToken, LibVaipakam.LiquidityStatus.Liquid);
         mockPrice(otherToken, 1e8, 8);
-        address nbEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(newBorrower);
-        vm.prank(newBorrower); ERC20(otherToken).approve(nbEscrow, type(uint256).max);
+        address nbVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(newBorrower);
+        vm.prank(newBorrower); ERC20(otherToken).approve(nbVault, type(uint256).max);
         vm.prank(owner); RiskFacet(address(diamond)).updateRiskParams(otherToken, 8000, 300, 1000);
 
         vm.prank(newBorrower);
@@ -1304,7 +1304,7 @@ contract PrecloseFacetTest is Test {
             })
         );
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
@@ -1347,7 +1347,7 @@ contract PrecloseFacetTest is Test {
             })
         );
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
         // First burnNFT call (burn old borrower NFT) succeeds
         // Second burnNFT call (burn offer NFT) fails
@@ -1385,8 +1385,8 @@ contract PrecloseFacetTest is Test {
         uint256 fullRental = PRINCIPAL * 30;
         _setLoanAsNFTRental(activeLoanId, fullRental, (fullRental * 500) / 10000);
 
-        // Mock treasury fee escrowWithdrawERC20 to fail (first cross-facet call in NFT preclose)
-        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), "treasury fail");
+        // Mock treasury fee vaultWithdrawERC20 to fail (first cross-facet call in NFT preclose)
+        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), "treasury fail");
 
         vm.prank(borrower);
         vm.expectRevert(bytes("treasury fail"));
@@ -1482,8 +1482,8 @@ contract PrecloseFacetTest is Test {
             TestMutatorFacet(address(diamond)).setLoan(activeLoanId, lo);
         }
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowSetNFTUser.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
         deal(mockERC20, address(diamond), 1000);
@@ -1509,7 +1509,7 @@ contract PrecloseFacetTest is Test {
 
         // Mock cross-facet calls
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowSetNFTUser.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
 
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).completeOffset(activeLoanId);
@@ -1566,9 +1566,9 @@ contract PrecloseFacetTest is Test {
         ProfileFacet(address(diamond)).updateKYCTier(lender, LibVaipakam.KYCTier.Tier2);
     }
 
-    /// @dev Covers _getOrCreateEscrow failure (line 709) via transferObligationViaOffer
-    ///      when getOrCreateUserEscrow cross-facet call fails.
-    function testTransferObligationGetEscrowFails() public {
+    /// @dev Covers _getOrCreateVault failure (line 709) via transferObligationViaOffer
+    ///      when getOrCreateUserVault cross-facet call fails.
+    function testTransferObligationGetVaultFails() public {
         // Warp time so accrued interest > 0, forcing lenderShare > 0
         vm.warp(block.timestamp + 10 days);
 
@@ -1598,12 +1598,12 @@ contract PrecloseFacetTest is Test {
             })
         );
 
-        // T-051 — escrow resolution moved inside the chokepoint;
+        // T-051 — vault resolution moved inside the chokepoint;
         // mock the chokepoint selector instead.
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowDepositERC20From.selector),
-            "escrow fail"
+            abi.encodeWithSelector(VaultFactoryFacet.vaultDepositERC20From.selector),
+            "vault fail"
         );
 
         vm.prank(borrower);
@@ -1612,20 +1612,20 @@ contract PrecloseFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev Covers precloseDirect _getOrCreateEscrow failure (line 709) in ERC20 path.
-    ///      When getOrCreateUserEscrow fails for the lender during precloseDirect.
-    function testPrecloseDirectGetLenderEscrowFails() public {
+    /// @dev Covers precloseDirect _getOrCreateVault failure (line 709) in ERC20 path.
+    ///      When getOrCreateUserVault fails for the lender during precloseDirect.
+    function testPrecloseDirectGetLenderVaultFails() public {
         // T-051 — the lender-side chokepoint deposit is now via
-        // `escrowDepositERC20From`. Mocking that selector to revert
+        // `vaultDepositERC20From`. Mocking that selector to revert
         // exercises the same failure-propagation path: if the
-        // protocol's escrow plumbing fails, precloseDirect must
-        // bubble the revert up. The escrow resolution that used to
+        // protocol's vault plumbing fails, precloseDirect must
+        // bubble the revert up. The vault resolution that used to
         // be a separate cross-facet call now lives inside the
         // chokepoint.
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowDepositERC20From.selector),
-            "escrow fail"
+            abi.encodeWithSelector(VaultFactoryFacet.vaultDepositERC20From.selector),
+            "vault fail"
         );
 
         vm.prank(borrower);
@@ -1664,7 +1664,7 @@ contract PrecloseFacetTest is Test {
         ProfileFacet(address(diamond)).setLoanKeeperEnabled(activeLoanId, keeper, true);
 
         // precloseDirect proceeds past the auth gate and subsequently
-        // reverts somewhere deeper (escrow / balance math) because this
+        // reverts somewhere deeper (vault / balance math) because this
         // test harness doesn't wire the full settlement path. The auth
         // check passing is what we care about here — any non-
         // KeeperAccessRequired revert confirms we got past the gate.

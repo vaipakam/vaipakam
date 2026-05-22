@@ -17,7 +17,7 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
-import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "./RiskMatchLiquidationFacet.sol";
@@ -166,8 +166,8 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
      * @notice Triggers default for a loan past grace period (permissionless).
      * @dev If liquid collateral: Calls triggerLiquidation (0x swap).
      *      If illiquid: Transfers full collateral to lender.
-     *      Enhanced for NFTs: Transfers prepay (amount * durationDays) to lender, buffer (5%) to treasury from borrower escrow.
-     *      Resets renter via escrowSetNFTUser(address(0), 0).
+     *      Enhanced for NFTs: Transfers prepay (amount * durationDays) to lender, buffer (5%) to treasury from borrower vault.
+     *      Resets renter via vaultSetNFTUser(address(0), 0).
      *      Updates loan to Defaulted, burns NFTs.
      *      Emits LoanDefaulted.
      * @param loanId The loan ID to default.
@@ -272,16 +272,16 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 // but time-based defaults are independent — the README treats non-repayment
                 // after grace as a separate default trigger regardless of collateral health.
 
-                // Withdraw collateral from borrower's escrow
+                // Withdraw collateral from borrower's vault
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
-                        EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                        VaultFactoryFacet.vaultWithdrawERC20.selector,
                         loan.borrower,
                         loan.collateralAsset,
                         address(this),
                         loan.collateralAmount
                     ),
-                    EscrowWithdrawFailed.selector
+                    VaultWithdrawFailed.selector
                 );
 
                 // README §3 lines 140–141 + §7 line 263: compute the oracle-
@@ -373,13 +373,13 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                     IERC20(loan.principalAsset).safeTransfer(treasury, toTreasury);
                 }
 
-                // Deposit lender proceeds into lender's escrow for claim
-                address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
+                // Deposit lender proceeds into lender's vault for claim
+                address lenderVault = LibFacet.getOrCreateVault(loan.lender);
                 if (lenderProceeds > 0) {
-                    IERC20(loan.principalAsset).safeTransfer(lenderEscrow, lenderProceeds);
-                    // T-051 — Diamond-side transfer to escrow ticks
-                    // the protocolTrackedEscrowBalance counter.
-                    LibVaipakam.recordEscrowDeposit(loan.lender, loan.principalAsset, lenderProceeds);
+                    IERC20(loan.principalAsset).safeTransfer(lenderVault, lenderProceeds);
+                    // T-051 — Diamond-side transfer to vault ticks
+                    // the protocolTrackedVaultBalance counter.
+                    LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, lenderProceeds);
                 }
 
                 s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
@@ -393,9 +393,9 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
 
                 // Borrower surplus
                 if (borrowerSurplus > 0) {
-                    address borrowerEscrow = LibFacet.getOrCreateEscrow(loan.borrower);
-                    IERC20(loan.principalAsset).safeTransfer(borrowerEscrow, borrowerSurplus);
-                    LibVaipakam.recordEscrowDeposit(loan.borrower, loan.principalAsset, borrowerSurplus);
+                    address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
+                    IERC20(loan.principalAsset).safeTransfer(borrowerVault, borrowerSurplus);
+                    LibVaipakam.recordVaultDeposit(loan.borrower, loan.principalAsset, borrowerSurplus);
                 }
                 s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
                     asset: loan.principalAsset,
@@ -411,47 +411,47 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                     (liquidity == LibVaipakam.LiquidityStatus.Illiquid &&
                         loan.riskAndTermsConsentFromBoth))
             ) {
-                // Illiquid or value collapsed: Move collateral from borrower's escrow to lender's escrow
-                // so ClaimFacet.claimAsLender can withdraw from lender's escrow consistently.
-                address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
+                // Illiquid or value collapsed: Move collateral from borrower's vault to lender's vault
+                // so ClaimFacet.claimAsLender can withdraw from lender's vault consistently.
+                address lenderVault = LibFacet.getOrCreateVault(loan.lender);
 
                 if (loan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
                     LibFacet.crossFacetCall(
                         abi.encodeWithSelector(
-                            EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                            VaultFactoryFacet.vaultWithdrawERC20.selector,
                             loan.borrower,
                             loan.collateralAsset,
                             address(this),
                             loan.collateralAmount
                         ),
-                        EscrowWithdrawFailed.selector
+                        VaultWithdrawFailed.selector
                     );
-                    IERC20(loan.collateralAsset).safeTransfer(lenderEscrow, loan.collateralAmount);
-                    // T-051 — Diamond-side transfer to lender's escrow
-                    // ticks the protocolTrackedEscrowBalance counter.
-                    LibVaipakam.recordEscrowDeposit(loan.lender, loan.collateralAsset, loan.collateralAmount);
+                    IERC20(loan.collateralAsset).safeTransfer(lenderVault, loan.collateralAmount);
+                    // T-051 — Diamond-side transfer to lender's vault
+                    // ticks the protocolTrackedVaultBalance counter.
+                    LibVaipakam.recordVaultDeposit(loan.lender, loan.collateralAsset, loan.collateralAmount);
                 } else if (loan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
                     LibFacet.crossFacetCall(
                         abi.encodeWithSelector(
-                            EscrowFactoryFacet.escrowWithdrawERC721.selector,
+                            VaultFactoryFacet.vaultWithdrawERC721.selector,
                             loan.borrower,
                             loan.collateralAsset,
                             loan.collateralTokenId,
-                            lenderEscrow
+                            lenderVault
                         ),
-                        EscrowWithdrawFailed.selector
+                        VaultWithdrawFailed.selector
                     );
                 } else if (loan.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
                     LibFacet.crossFacetCall(
                         abi.encodeWithSelector(
-                            EscrowFactoryFacet.escrowWithdrawERC1155.selector,
+                            VaultFactoryFacet.vaultWithdrawERC1155.selector,
                             loan.borrower,
                             loan.collateralAsset,
                             loan.collateralTokenId,
                             loan.collateralQuantity,
-                            lenderEscrow
+                            lenderVault
                         ),
-                        EscrowWithdrawFailed.selector
+                        VaultWithdrawFailed.selector
                     );
                 }
 
@@ -479,7 +479,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             // Reset renter
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowSetNFTUser.selector,
+                    VaultFactoryFacet.vaultSetNFTUser.selector,
                     loan.lender,
                     loan.principalAsset,
                     loan.tokenId,
@@ -489,13 +489,13 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 NFTRenterUpdateFailed.selector
             );
 
-            // NFT stays in escrow — returned to lender via ClaimFacet.claimAsLender
+            // NFT stays in vault — returned to lender via ClaimFacet.claimAsLender
             // (NFT-gated: lender must own the Vaipakam position NFT to claim).
 
             // Buffer to treasury immediately (no claim needed for treasury)
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                    VaultFactoryFacet.vaultWithdrawERC20.selector,
                     loan.borrower,
                     loan.prepayAsset,
                     treasury,
@@ -509,16 +509,16 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 loan.prepayAmount
             );
 
-            // Withdraw full prepay from borrower escrow
+            // Withdraw full prepay from borrower vault
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                    VaultFactoryFacet.vaultWithdrawERC20.selector,
                     loan.borrower,
                     loan.prepayAsset,
                     address(this),
                     loan.prepayAmount
                 ),
-                EscrowWithdrawFailed.selector
+                VaultWithdrawFailed.selector
             );
 
             // Treasury fee from rental portion
@@ -526,11 +526,11 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             LibFacet.recordTreasuryAccrual(loan.prepayAsset, treasuryFee);
 
             // Lender gets remainder
-            address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
-            IERC20(loan.prepayAsset).safeTransfer(lenderEscrow, prepayToLender);
-            // T-051 — Diamond-side transfer to lender's escrow ticks
-            // the protocolTrackedEscrowBalance counter.
-            LibVaipakam.recordEscrowDeposit(loan.lender, loan.prepayAsset, prepayToLender);
+            address lenderVault = LibFacet.getOrCreateVault(loan.lender);
+            IERC20(loan.prepayAsset).safeTransfer(lenderVault, prepayToLender);
+            // T-051 — Diamond-side transfer to lender's vault ticks
+            // the protocolTrackedVaultBalance counter.
+            LibVaipakam.recordVaultDeposit(loan.lender, loan.prepayAsset, prepayToLender);
 
             // Record lender's claimable prepay fees. heldForLender handled by ClaimFacet.
             s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({

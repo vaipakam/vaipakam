@@ -21,7 +21,7 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
-import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
 
@@ -39,7 +39,7 @@ import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
  *                             remaining rental days (NFT).
  *        {autoDeductDaily}  — permissionless daily deduction for NFT
  *                             rentals (deducts one day's fee from the
- *                             borrower's escrowed prepay).
+ *                             borrower's vaulted prepay).
  *
  *      Interest model (per-loan flag `useFullTermInterest`):
  *        true  → full-term interest regardless of elapsed time.
@@ -57,7 +57,7 @@ import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
  *
  *      FallbackPending cure: {repayLoan} accepts the FallbackPending
  *      status, pushes the diamond-held collateral back into the
- *      borrower's escrow, and transitions to Repaid.
+ *      borrower's vault, and transitions to Repaid.
  */
 contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors {
     using SafeERC20 for IERC20;
@@ -92,7 +92,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     ///         status-specific event so indexers can reconstruct the exact
     ///         amounts routed to treasury vs. lender without re-reading storage.
     /// @dev Invariant: `treasuryShare + lenderShare == interest + lateFee`.
-    ///      `principal` is the amount returned to the lender's escrow as claimable.
+    ///      `principal` is the amount returned to the lender's vault as claimable.
     /// @custom:event-category informational/settlement
     event LoanSettlementBreakdown(
         uint256 indexed loanId,
@@ -165,9 +165,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     /// @param periodEndAt Timestamp of the period boundary that closed.
     /// @param shortfall The interest shortfall that triggered the sale.
     /// @param collateralSold Amount of collateral asset withdrawn from
-    ///        the borrower's escrow and offered to the swap try-list.
+    ///        the borrower's vault and offered to the swap try-list.
     /// @param lenderProceeds Principal-asset amount credited to the
-    ///        lender's escrow as the period's interest payment.
+    ///        lender's vault as the period's interest payment.
     /// @param settlerBonus Principal-asset amount paid to `msg.sender`
     ///        as the slippage-driven incentive.
     /// @param treasuryShare Principal-asset amount paid to treasury as
@@ -235,7 +235,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
      *      Distributes fees: 99% lender, 1% treasury.
      *      Releases collateral/resets renter, burns NFTs, sets status Repaid.
      *      Reverts if past grace. For NFT rentals, reverts if not borrower
-     *      (rental fees are deducted from borrower's escrowed prepayment).
+     *      (rental fees are deducted from borrower's vaulted prepayment).
      *      For ERC-20 loans, any address may repay on the borrower's behalf
      *      EXCEPT the loan's lender or the current owner of the lender-side
      *      Vaipakam NFT — repaying your own loan is economically degenerate
@@ -251,7 +251,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         LibVaipakam.Loan storage loan = s.loans[loanId];
         // FallbackPending is accepted: a full repay cures the failed
         // liquidation, clears the snapshot, and returns diamond-held collateral
-        // to the borrower escrow before the normal Repaid flow runs.
+        // to the borrower vault before the normal Repaid flow runs.
         if (
             loan.status != LibVaipakam.LoanStatus.Active &&
             loan.status != LibVaipakam.LoanStatus.FallbackPending
@@ -268,7 +268,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // which intentionally require borrower (= renter) repayment to
         // settle the rental period — the lender-side check has no meaning
         // there since rental fees are deducted from a borrower-funded
-        // prepay escrow regardless of caller.
+        // prepay vault regardless of caller.
         if (loan.assetType == LibVaipakam.AssetType.ERC20) {
             if (msg.sender == loan.lender) revert LenderCannotRepayOwnLoan();
             if (
@@ -299,8 +299,8 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
 
             // Lender Yield Fee discount (Tokenomics §6): when the lender has
             // platform-level VPFI-discount consent AND holds >= the required
-            // VPFI in escrow, the 1% treasury cut is paid in VPFI from the
-            // lender's escrow and the lender keeps 100% of interest+lateFee
+            // VPFI in vault, the 1% treasury cut is paid in VPFI from the
+            // lender's vault and the lender keeps 100% of interest+lateFee
             // in the lending asset. tryApplyYieldFee returns (false, 0) on
             // any precondition failure — we then fall through to the normal
             // ERC-20 split.
@@ -330,24 +330,24 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 LibFacet.recordTreasuryAccrual(loan.principalAsset, plan.treasuryShare);
             }
 
-            // T-037 — Lender's due: borrower → lender's escrow in ONE
+            // T-037 — Lender's due: borrower → lender's vault in ONE
             // transfer. The Diamond carries the borrower's allowance
             // (granted by the prior `approve()`) so the chokepoint's
             // cross-payer variant pushes the asset from the borrower's
-            // wallet into the lender's escrow without ever residing
-            // on the Diamond. Routing through `escrowDepositERC20From`
-            // ensures the protocolTrackedEscrowBalance counter ticks
-            // up under the LENDER (the owner of the receiving escrow,
+            // wallet into the lender's vault without ever residing
+            // on the Diamond. Routing through `vaultDepositERC20From`
+            // ensures the protocolTrackedVaultBalance counter ticks
+            // up under the LENDER (the owner of the receiving vault,
             // not the borrower who's the payer).
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowDepositERC20From.selector,
+                    VaultFactoryFacet.vaultDepositERC20From.selector,
                     msg.sender,        // payer — borrower
-                    loan.lender,       // user — lender, owns the receiving escrow
+                    loan.lender,       // user — lender, owns the receiving vault
                     loan.principalAsset,
                     plan.lenderDue
                 ),
-                EscrowDepositFailed.selector
+                VaultDepositFailed.selector
             );
 
             // Record lender's claimable (principal + interest). heldForLender handled by ClaimFacet.
@@ -360,7 +360,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 claimed: false
             });
 
-            // Record borrower's claimable (collateral stays in borrower's escrow)
+            // Record borrower's claimable (collateral stays in borrower's vault)
             s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
                 asset: loan.collateralAsset,
                 amount: loan.collateralAmount,
@@ -405,7 +405,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 /* lenderForfeit */ false
             );
         } else {
-            // NFT rental: only borrower can repay (fees come from borrower's escrowed prepayment)
+            // NFT rental: only borrower can repay (fees come from borrower's vaulted prepayment)
             LibAuth.requireBorrower(loan);
             // Deduct accrued from prepay, excluding days already
             // deducted by autoDeductDaily. lastDeductTime advances by ONE_DAY
@@ -435,10 +435,10 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 totalDue
             );
 
-            // Treasury share: immediate from borrower's escrow
+            // Treasury share: immediate from borrower's vault
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                    VaultFactoryFacet.vaultWithdrawERC20.selector,
                     msg.sender,
                     loan.prepayAsset,
                     treasury,
@@ -448,23 +448,23 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             );
             LibFacet.recordTreasuryAccrual(loan.prepayAsset, treasuryShare);
 
-            // Lender's rental share: withdraw from borrower's escrow → Diamond → lender's escrow
+            // Lender's rental share: withdraw from borrower's vault → Diamond → lender's vault
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                    VaultFactoryFacet.vaultWithdrawERC20.selector,
                     msg.sender,
                     loan.prepayAsset,
                     address(this),
                     lenderShare
                 ),
-                EscrowWithdrawFailed.selector
+                VaultWithdrawFailed.selector
             );
-            address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
-            IERC20(loan.prepayAsset).safeTransfer(lenderEscrow, lenderShare);
-            // T-051 — Diamond-side transfer to lender's escrow ticks
-            // the protocolTrackedEscrowBalance counter so the
-            // subsequent claim's escrowWithdrawERC20 doesn't underflow.
-            LibVaipakam.recordEscrowDeposit(loan.lender, loan.prepayAsset, lenderShare);
+            address lenderVault = LibFacet.getOrCreateVault(loan.lender);
+            IERC20(loan.prepayAsset).safeTransfer(lenderVault, lenderShare);
+            // T-051 — Diamond-side transfer to lender's vault ticks
+            // the protocolTrackedVaultBalance counter so the
+            // subsequent claim's vaultWithdrawERC20 doesn't underflow.
+            LibVaipakam.recordVaultDeposit(loan.lender, loan.prepayAsset, lenderShare);
 
             // Record lender's claimable rental fees. heldForLender handled by ClaimFacet.
             s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
@@ -476,7 +476,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 claimed: false
             });
 
-            // Borrower's refund (unused prepay + buffer) stays in their escrow
+            // Borrower's refund (unused prepay + buffer) stays in their vault
             uint256 refund = loan.prepayAmount - totalDue + loan.bufferAmount;
             s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
                 asset: loan.prepayAsset,
@@ -490,7 +490,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // Reset renter immediately (operational — rental is over)
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowSetNFTUser.selector,
+                    VaultFactoryFacet.vaultSetNFTUser.selector,
                     loan.lender,
                     loan.principalAsset,
                     loan.tokenId,
@@ -499,7 +499,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 ),
                 NFTRenterUpdateFailed.selector
             );
-            // Note: ERC721 stays in lender's wallet; ERC1155 stays in lender's escrow.
+            // Note: ERC721 stays in lender's wallet; ERC1155 stays in lender's vault.
             // No NFT movement needed at repay time.
 
             // Phase-2 reward accrual close (docs/TokenomicsTechSpec.md §4).
@@ -545,8 +545,8 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         LibVPFIDiscount.settleBorrowerLifProper(loan);
 
         // Fallback cure: collateral was moved to the Diamond during the failed
-        // swap attempt. Push it into the borrower escrow so the borrowerClaim
-        // record written above (points at borrower escrow) is satisfiable,
+        // swap attempt. Push it into the borrower vault so the borrowerClaim
+        // record written above (points at borrower vault) is satisfiable,
         // then wipe the snapshot so the lender cannot double-dip.
         if (curingFallback) {
             LibVaipakam.FallbackSnapshot storage snap = s.fallbackSnapshot[loanId];
@@ -554,11 +554,11 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 snap.treasuryCollateral +
                 snap.borrowerCollateral;
             if (held > 0) {
-                address borrowerEscrow = LibFacet.getOrCreateEscrow(loan.borrower);
-                IERC20(loan.collateralAsset).safeTransfer(borrowerEscrow, held);
-                // T-051 — Diamond-side transfer to escrow ticks the
-                // protocolTrackedEscrowBalance counter.
-                LibVaipakam.recordEscrowDeposit(loan.borrower, loan.collateralAsset, held);
+                address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
+                IERC20(loan.collateralAsset).safeTransfer(borrowerVault, held);
+                // T-051 — Diamond-side transfer to vault ticks the
+                // protocolTrackedVaultBalance counter.
+                LibVaipakam.recordVaultDeposit(loan.borrower, loan.collateralAsset, held);
             }
             delete s.fallbackSnapshot[loanId];
         }
@@ -704,18 +704,18 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // Deduct from prepay (prepayAsset, not collateralAsset)
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                    VaultFactoryFacet.vaultWithdrawERC20.selector,
                     msg.sender,
                     loan.prepayAsset,
                     loan.lender,
                     lenderShare
                 ),
-                EscrowWithdrawFailed.selector
+                VaultWithdrawFailed.selector
             );
 
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                    VaultFactoryFacet.vaultWithdrawERC20.selector,
                     msg.sender,
                     loan.prepayAsset,
                     treasury,
@@ -736,7 +736,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             );
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowSetNFTUser.selector,
+                    VaultFactoryFacet.vaultSetNFTUser.selector,
                     loan.lender,
                     loan.principalAsset,
                     loan.tokenId,
@@ -798,18 +798,18 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
 
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                VaultFactoryFacet.vaultWithdrawERC20.selector,
                 loan.borrower,
                 loan.prepayAsset,
                 loan.lender,
                 lenderShare
             ),
-            EscrowWithdrawFailed.selector
+            VaultWithdrawFailed.selector
         );
 
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                VaultFactoryFacet.vaultWithdrawERC20.selector,
                 loan.borrower,
                 loan.prepayAsset,
                 treasury,
@@ -831,7 +831,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         );
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EscrowFactoryFacet.escrowSetNFTUser.selector,
+                VaultFactoryFacet.vaultSetNFTUser.selector,
                 loan.lender,
                 loan.principalAsset,
                 loan.tokenId,
@@ -845,7 +845,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         if (loan.durationDays == 0) {
             // All rental fees have been deducted. Remaining prepay is just the buffer.
             // Lender gets the full rental (already deducted daily via this function).
-            // The lender's claim for accumulated daily deductions is already in escrow.
+            // The lender's claim for accumulated daily deductions is already in vault.
             // Record a zero-amount lender claim so ClaimFacet can still return the NFT.
             s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
                 asset: loan.prepayAsset,
@@ -856,7 +856,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 claimed: false
             });
 
-            // Borrower gets buffer refund (stays in borrower's escrow)
+            // Borrower gets buffer refund (stays in borrower's vault)
             s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
                 asset: loan.prepayAsset,
                 amount: loan.bufferAmount,
@@ -881,7 +881,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // Reset renter (non-critical — renter may have already expired)
             (bool ok, ) = address(this).call(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowSetNFTUser.selector,
+                    VaultFactoryFacet.vaultSetNFTUser.selector,
                     loan.lender,
                     loan.principalAsset,
                     loan.tokenId,
@@ -1168,13 +1168,13 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // liquidation withdraw shape).
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                VaultFactoryFacet.vaultWithdrawERC20.selector,
                 loan.borrower,
                 loan.collateralAsset,
                 address(this),
                 toSell
             ),
-            EscrowWithdrawFailed.selector
+            VaultWithdrawFailed.selector
         );
 
         uint256 expectedProceeds = LibFallback.expectedSwapOutput(
@@ -1227,7 +1227,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         uint256 lenderProceeds = proceeds - bonus - handlingFee;
 
         // Pay out: settler bonus → msg.sender, treasury → treasury,
-        // lender → lender's escrow (bookkeeping mirrors PartialRepaid
+        // lender → lender's vault (bookkeeping mirrors PartialRepaid
         // accounting on the lender side).
         if (bonus > 0) {
             IERC20(loan.principalAsset).safeTransfer(msg.sender, bonus);

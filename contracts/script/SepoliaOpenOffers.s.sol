@@ -20,9 +20,9 @@ import {Deployments} from "./lib/Deployments.sol";
  * @notice Seeds the deployed Sepolia Diamond with a spread of OPEN offers so
  *         the OfferBook has browsable inventory after earlier positive-flow
  *         runs consumed everything. Zero accepts: every offer stays open
- *         (lender offers sit with lending funds escrowed via the Diamond's
+ *         (lender offers sit with lending funds vaulted via the Diamond's
  *         transferFrom approval; borrower offers sit with collateral locked
- *         in the borrower's per-user escrow).
+ *         in the borrower's per-user vault).
  *
  *         Accounts mirror SepoliaActiveLoan — lender creates lender offers,
  *         borrower creates borrower offers, admin signs role-gated config.
@@ -93,7 +93,7 @@ contract SepoliaOpenOffers is Script {
         console.log("mUSDC:", address(usdc));
         console.log("mWETH:", address(weth));
 
-        // Mint enough headroom for every lender offer's escrowed principal +
+        // Mint enough headroom for every lender offer's vaulted principal +
         // every borrower offer's locked collateral, with room to spare so the
         // operator can re-run without topping up.
         usdc.mint(lender, 50_000e6);
@@ -152,14 +152,14 @@ contract SepoliaOpenOffers is Script {
         ];
 
         console.log("");
-        console.log("--- Lender offers (principal escrowed via approval) ---");
+        console.log("--- Lender offers (principal vaulted via approval) ---");
         for (uint256 i = 0; i < lenderTiers.length; i++) {
             uint256 id = _createLenderOffer(lenderTiers[i]);
             console.log("Lender offer", i + 1, " id:", id);
         }
 
         console.log("");
-        console.log("--- Borrower offers (collateral locked in escrow) ---");
+        console.log("--- Borrower offers (collateral locked in vault) ---");
         for (uint256 i = 0; i < borrowerTiers.length; i++) {
             uint256 id = _createBorrowerOffer(borrowerTiers[i]);
             console.log("Borrower offer", i + 1, " id:", id);
@@ -205,7 +205,7 @@ contract SepoliaOpenOffers is Script {
     function _createBorrowerOffer(OfferTier memory t) internal returns (uint256 offerId) {
         vm.startBroadcast(borrowerKey);
         // Borrower offers lock collateral immediately — the Diamond pulls WETH
-        // into the borrower's per-user escrow at createOffer so the commitment
+        // into the borrower's per-user vault at createOffer so the commitment
         // is real by the time a lender browses the book.
         weth.approve(diamond, t.collateral);
         offerId = OfferCreateFacet(diamond).createOffer(LibVaipakam.CreateOfferParams({

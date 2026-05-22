@@ -14,10 +14,10 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
-import {VaipakamEscrowImplementation} from "../src/VaipakamEscrowImplementation.sol";
+import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
@@ -70,7 +70,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
     VaipakamNFTFacet nftFacet;
-    EscrowFactoryFacet escrowFacet;
+    VaultFactoryFacet vaultFacet;
     LoanFacet loanFacet;
     DefaultedFacet defaultFacet;
     RiskFacet riskFacet;
@@ -80,10 +80,10 @@ contract Scenario2b_ERC1155RentalLending is Test {
     AddCollateralFacet addCollateralFacet;
     AccessControlFacet accessControlFacet;
     HelperTest helperTest;
-    VaipakamEscrowImplementation escrowImpl;
+    VaipakamVaultImplementation vaultImpl;
 
-    address lenderEscrow;
-    address borrowerEscrow;
+    address lenderVault;
+    address borrowerVault;
 
     function mockOracleLiquidity(address asset, LibVaipakam.LiquidityStatus status) internal {
         vm.mockCall(
@@ -124,7 +124,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
         nftFacet = new VaipakamNFTFacet();
-        escrowFacet = new EscrowFactoryFacet();
+        vaultFacet = new VaultFactoryFacet();
         loanFacet = new LoanFacet();
         defaultFacet = new DefaultedFacet();
         riskFacet = new RiskFacet();
@@ -134,7 +134,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
         addCollateralFacet = new AddCollateralFacet();
         accessControlFacet = new AccessControlFacet();
         helperTest = new HelperTest();
-        escrowImpl = new VaipakamEscrowImplementation();
+        vaultImpl = new VaipakamVaultImplementation();
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](16);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
@@ -146,7 +146,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
         cuts[1] = IDiamondCut.FacetCut({facetAddress: address(profileFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
         cuts[2] = IDiamondCut.FacetCut({facetAddress: address(oracleFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});
         cuts[3] = IDiamondCut.FacetCut({facetAddress: address(nftFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaipakamNFTFacetSelectors()});
-        cuts[4] = IDiamondCut.FacetCut({facetAddress: address(escrowFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getEscrowFactoryFacetSelectors()});
+        cuts[4] = IDiamondCut.FacetCut({facetAddress: address(vaultFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaultFactoryFacetSelectors()});
         cuts[5] = IDiamondCut.FacetCut({facetAddress: address(loanFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getLoanFacetSelectors()});
         cuts[6] = IDiamondCut.FacetCut({facetAddress: address(riskFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskFacetSelectors()});
         cuts[7] = IDiamondCut.FacetCut({facetAddress: address(repayFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRepayFacetSelectors()});
@@ -161,7 +161,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
         AccessControlFacet(address(diamond)).initializeAccessControl();
         AdminFacet(address(diamond)).unpause();
 
-        EscrowFactoryFacet(address(diamond)).initializeEscrowImplementation();
+        VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
         VaipakamNFTFacet(address(diamond)).initializeNFT();
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(mockZeroExProxy);
@@ -213,17 +213,17 @@ contract Scenario2b_ERC1155RentalLending is Test {
         vm.prank(owner);
         RiskFacet(address(diamond)).updateRiskParams(mockUSDC, 8000, 300, 1000);
 
-        lenderEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender);
-        borrowerEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(borrower);
+        lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
 
         vm.prank(borrower);
-        ERC20(mockUSDC).approve(borrowerEscrow, type(uint256).max);
+        ERC20(mockUSDC).approve(borrowerVault, type(uint256).max);
         vm.prank(lender);
-        ERC20(mockUSDC).approve(lenderEscrow, type(uint256).max);
+        ERC20(mockUSDC).approve(lenderVault, type(uint256).max);
         vm.prank(lender);
         IERC1155(mockNFT1155).setApprovalForAll(address(diamond), true);
         vm.prank(lender);
-        IERC1155(mockNFT1155).setApprovalForAll(lenderEscrow, true);
+        IERC1155(mockNFT1155).setApprovalForAll(lenderVault, true);
     }
 
     /// @dev Creates the lender's ERC1155 rental offer and has the borrower accept.
@@ -261,7 +261,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
 
     /**
      * @notice Scenario 2b — ERC1155 Rental Full Lifecycle (Happy Path)
-     *         1. Lender creates offer (5 of id 1) → escrow holds the tokens
+     *         1. Lender creates offer (5 of id 1) → vault holds the tokens
      *         2. Borrower accepts → prepay locked, user rights set
      *         3. Warp 7 days, borrower repays
      *         4. Lender claims → rental fees minus treasury, ERC1155 returned
@@ -292,11 +292,11 @@ contract Scenario2b_ERC1155RentalLending is Test {
         assertEq(loan.quantity, QUANTITY, "quantity should be 5");
         assertEq(loan.principalAsset, address(mockNFT1155), "principal asset should be the ERC1155");
 
-        // Bundle still sits in lender's escrow while the rental is live.
+        // Bundle still sits in lender's vault while the rental is live.
         assertEq(
-            IERC1155(mockNFT1155).balanceOf(lenderEscrow, TOKEN_ID),
+            IERC1155(mockNFT1155).balanceOf(lenderVault, TOKEN_ID),
             QUANTITY,
-            "Escrow retains ERC1155 while rental is live"
+            "Vault retains ERC1155 while rental is live"
         );
         assertEq(
             IERC1155(mockNFT1155).balanceOf(borrower, TOKEN_ID),
@@ -330,16 +330,16 @@ contract Scenario2b_ERC1155RentalLending is Test {
             lenderUSDCBefore + expectedLenderShare,
             "lender USDC balance mismatch after claim"
         );
-        // ERC1155 returned from escrow to lender
+        // ERC1155 returned from vault to lender
         assertEq(
             IERC1155(mockNFT1155).balanceOf(lender, TOKEN_ID),
             10, // back to full bundle
             "ERC1155 bundle returned to lender on claim"
         );
         assertEq(
-            IERC1155(mockNFT1155).balanceOf(lenderEscrow, TOKEN_ID),
+            IERC1155(mockNFT1155).balanceOf(lenderVault, TOKEN_ID),
             0,
-            "Escrow drained after claim"
+            "Vault drained after claim"
         );
 
         (address borrowerClaimAsset, uint256 borrowerClaimAmount, bool borrowerClaimed) =
@@ -377,11 +377,11 @@ contract Scenario2b_ERC1155RentalLending is Test {
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Active), "loan Active");
 
-        // Bundle parked in lender's escrow while rental is live.
+        // Bundle parked in lender's vault while rental is live.
         assertEq(
-            IERC1155(mockNFT1155).balanceOf(lenderEscrow, TOKEN_ID),
+            IERC1155(mockNFT1155).balanceOf(lenderVault, TOKEN_ID),
             QUANTITY,
-            "escrow holds rental bundle"
+            "vault holds rental bundle"
         );
 
         uint256 endTime = loan.startTime + DURATION_DAYS * 1 days;

@@ -12,7 +12,7 @@ import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {MockChainlinkRegistry, MockChainlinkFeed} from "./mocks/MockChainlinkRegistry.sol";
@@ -248,9 +248,9 @@ contract BaseSepoliaPartialFlows is Script {
         vm.stopBroadcast();
         // Lender accepts. Post-Option-A `_acceptOffer` pulls the
         // principal from the lender's wallet via the
-        // `escrowDepositERC20` chokepoint, so an approve is enough —
-        // the legacy direct-transfer-to-escrow workaround would
-        // underflow the `protocolTrackedEscrowBalance` counter.
+        // `vaultDepositERC20` chokepoint, so an approve is enough —
+        // the legacy direct-transfer-to-vault workaround would
+        // underflow the `protocolTrackedVaultBalance` counter.
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
         uint256 loanE = OfferAcceptFacet(diamond).acceptOffer(offerE, true);

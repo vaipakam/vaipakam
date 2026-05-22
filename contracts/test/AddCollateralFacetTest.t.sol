@@ -14,10 +14,10 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
-import {VaipakamEscrowImplementation} from "../src/VaipakamEscrowImplementation.sol";
+import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
@@ -61,7 +61,7 @@ contract AddCollateralFacetTest is Test {
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
     VaipakamNFTFacet nftFacet;
-    EscrowFactoryFacet escrowFacet;
+    VaultFactoryFacet vaultFacet;
     LoanFacet loanFacet;
     DefaultedFacet defaultFacet;
     RiskFacet riskFacet;
@@ -71,7 +71,7 @@ contract AddCollateralFacetTest is Test {
     AddCollateralFacet addCollateralFacet;
     AccessControlFacet accessControlFacet;
     HelperTest helperTest;
-    VaipakamEscrowImplementation escrowImpl;
+    VaipakamVaultImplementation vaultImpl;
 
     function mockOracleLiquidity(address asset, LibVaipakam.LiquidityStatus status) internal {
         vm.mockCall(
@@ -119,7 +119,7 @@ contract AddCollateralFacetTest is Test {
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
         nftFacet = new VaipakamNFTFacet();
-        escrowFacet = new EscrowFactoryFacet();
+        vaultFacet = new VaultFactoryFacet();
         loanFacet = new LoanFacet();
         defaultFacet = new DefaultedFacet();
         riskFacet = new RiskFacet();
@@ -129,7 +129,7 @@ contract AddCollateralFacetTest is Test {
         addCollateralFacet = new AddCollateralFacet();
         accessControlFacet = new AccessControlFacet();
         helperTest = new HelperTest();
-        escrowImpl = new VaipakamEscrowImplementation();
+        vaultImpl = new VaipakamVaultImplementation();
 
         // Cut all facets
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](16);
@@ -142,7 +142,7 @@ contract AddCollateralFacetTest is Test {
         cuts[1] = IDiamondCut.FacetCut({facetAddress: address(profileFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
         cuts[2] = IDiamondCut.FacetCut({facetAddress: address(oracleFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});
         cuts[3] = IDiamondCut.FacetCut({facetAddress: address(nftFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaipakamNFTFacetSelectors()});
-        cuts[4] = IDiamondCut.FacetCut({facetAddress: address(escrowFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getEscrowFactoryFacetSelectors()});
+        cuts[4] = IDiamondCut.FacetCut({facetAddress: address(vaultFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaultFactoryFacetSelectors()});
         cuts[5] = IDiamondCut.FacetCut({facetAddress: address(loanFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getLoanFacetSelectors()});
         cuts[6] = IDiamondCut.FacetCut({facetAddress: address(riskFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskFacetSelectors()});
         cuts[7] = IDiamondCut.FacetCut({facetAddress: address(repayFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRepayFacetSelectors()});
@@ -160,7 +160,7 @@ contract AddCollateralFacetTest is Test {
         AdminFacet(address(diamond)).unpause();
 
         // Init admin state
-        EscrowFactoryFacet(address(diamond)).initializeEscrowImplementation();
+        VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(mockZeroExProxy);
         AdminFacet(address(diamond)).setallowanceTarget(mockZeroExProxy);
@@ -217,19 +217,19 @@ contract AddCollateralFacetTest is Test {
         // is mocked at the diamond level (line 200), so the loan-init HF
         // check never hits real math against `loan.liquidationLtvBpsAtInit`.
 
-        // Escrow approvals
+        // Vault approvals
         vm.prank(lender);
-        ERC20(mockERC20).approve(EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender), type(uint256).max);
+        ERC20(mockERC20).approve(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender), type(uint256).max);
         vm.prank(borrower);
-        ERC20(mockERC20).approve(EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(borrower), type(uint256).max);
+        ERC20(mockERC20).approve(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower), type(uint256).max);
         vm.prank(lender);
-        ERC20(mockCollateralERC20).approve(EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender), type(uint256).max);
+        ERC20(mockCollateralERC20).approve(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender), type(uint256).max);
         vm.prank(borrower);
-        ERC20(mockCollateralERC20).approve(EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(borrower), type(uint256).max);
+        ERC20(mockCollateralERC20).approve(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower), type(uint256).max);
         vm.prank(borrower);
-        ERC20(mockIlliquidERC20).approve(EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(borrower), type(uint256).max);
+        ERC20(mockIlliquidERC20).approve(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower), type(uint256).max);
         vm.prank(lender);
-        IERC721(mockNFT721).setApprovalForAll(EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender), true);
+        IERC721(mockNFT721).setApprovalForAll(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender), true);
     }
 
     /// @dev Creates a lender offer and borrower accepts it to initiate a liquid ERC20 loan.
@@ -313,18 +313,18 @@ contract AddCollateralFacetTest is Test {
         assertEq(loanAfter.collateralAmount, loanBefore.collateralAmount + addAmount);
     }
 
-    function testAddCollateralMovesTokensIntoEscrow() public {
+    function testAddCollateralMovesTokensIntoVault() public {
         uint256 loanId = _createActiveLiquidLoan();
 
-        address borrowerEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(borrower);
-        uint256 escrowBalBefore = IERC20(mockCollateralERC20).balanceOf(borrowerEscrow);
+        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
+        uint256 vaultBalBefore = IERC20(mockCollateralERC20).balanceOf(borrowerVault);
         uint256 borrowerBalBefore = IERC20(mockCollateralERC20).balanceOf(borrower);
         uint256 addAmount = 200 ether;
 
         vm.prank(borrower);
         AddCollateralFacet(address(diamond)).addCollateral(loanId, addAmount);
 
-        assertEq(IERC20(mockCollateralERC20).balanceOf(borrowerEscrow) - escrowBalBefore, addAmount);
+        assertEq(IERC20(mockCollateralERC20).balanceOf(borrowerVault) - vaultBalBefore, addAmount);
         assertEq(borrowerBalBefore - IERC20(mockCollateralERC20).balanceOf(borrower), addAmount);
     }
 
@@ -375,17 +375,17 @@ contract AddCollateralFacetTest is Test {
 
     // ─── Additional branch coverage tests ────────────────────────────────────
 
-    /// @dev Covers line 101: `if (!success) revert CrossFacetCallFailed("Get borrower escrow failed")`.
-    function testAddCollateralGetEscrowFails() public {
+    /// @dev Covers line 101: `if (!success) revert CrossFacetCallFailed("Get borrower vault failed")`.
+    function testAddCollateralGetVaultFails() public {
         uint256 loanId = _createActiveLiquidLoan();
-        // Mock getOrCreateUserEscrow to revert → CrossFacetCallFailed
+        // Mock getOrCreateUserVault to revert → CrossFacetCallFailed
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.getOrCreateUserEscrow.selector),
-            "escrow fail"
+            abi.encodeWithSelector(VaultFactoryFacet.getOrCreateUserVault.selector),
+            "vault fail"
         );
         vm.prank(borrower);
-        vm.expectRevert(bytes("escrow fail"));
+        vm.expectRevert(bytes("vault fail"));
         AddCollateralFacet(address(diamond)).addCollateral(loanId, 100 ether);
         vm.clearMockedCalls();
     }

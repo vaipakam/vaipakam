@@ -56,16 +56,16 @@ contract MetricsDashboardFacet {
     ///         layer.
     /// @param stakingRewardsPending     VPFI claimable from
     ///        {StakingRewardsFacet.previewStakingRewards}.
-    /// @param escrowVpfiBalance         User's escrow VPFI (stake +
+    /// @param vaultVpfiBalance         User's vault VPFI (stake +
     ///        rebate held + fees-not-yet-spent). Drives the discount
     ///        tier indicator.
     /// @param vpfiTier                  Discount tier (0–4) derived
-    ///        from `escrowVpfiBalance` against the configured tier
+    ///        from `vaultVpfiBalance` against the configured tier
     ///        thresholds.
     /// @param interactionRewardsPending Cross-chain finalized VPFI
     ///        claimable from {InteractionRewardsFacet}.
     /// @param vpfiDiscountConsented     `s.vpfiDiscountConsent[user]`
-    ///        — whether escrowed VPFI may be spent on protocol-fee
+    ///        — whether vaulted VPFI may be spent on protocol-fee
     ///        discounts.
     /// @param lenderLoanCount           Active loans where user is lender.
     /// @param borrowerLoanCount         Active loans where user is borrower.
@@ -76,7 +76,7 @@ contract MetricsDashboardFacet {
     /// @param borrowerClaimableCount    Pending borrower claims for user.
     struct DashboardScalars {
         uint256 stakingRewardsPending;
-        uint256 escrowVpfiBalance;
+        uint256 vaultVpfiBalance;
         uint8 vpfiTier;
         uint256 interactionRewardsPending;
         bool vpfiDiscountConsented;
@@ -130,7 +130,7 @@ contract MetricsDashboardFacet {
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
-        // Reward + escrow scalars — pulled via cross-facet view so
+        // Reward + vault scalars — pulled via cross-facet view so
         // each subsystem stays the source of truth for its own
         // calculations.
         try StakingRewardsFacet(address(this)).previewStakingRewards(user) returns (uint256 pending) {
@@ -144,8 +144,8 @@ contract MetricsDashboardFacet {
             snap.interactionRewardsPending = pending;
         } catch {}
 
-        snap.escrowVpfiBalance = LibVPFIDiscount.escrowVPFIBalance(user);
-        snap.vpfiTier = _tierFor(snap.escrowVpfiBalance);
+        snap.vaultVpfiBalance = LibVPFIDiscount.vaultVPFIBalance(user);
+        snap.vpfiTier = _tierFor(snap.vaultVpfiBalance);
         snap.vpfiDiscountConsented = s.vpfiDiscountConsent[user];
 
         // Per-side counts — the same lists the paginated companions
@@ -415,7 +415,7 @@ contract MetricsDashboardFacet {
 
     // ─── Internal helpers ────────────────────────────────────────────────
 
-    /// @dev Resolves a user's discount tier (0–4) from their escrow
+    /// @dev Resolves a user's discount tier (0–4) from their vault
     ///      VPFI balance. Mirrors the inline check in
     ///      `LibVPFIDiscount` — kept local rather than a library
     ///      helper to keep the read path on this facet self-contained.

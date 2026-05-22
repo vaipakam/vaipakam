@@ -14,7 +14,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
-import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 
 /**
  * @title AddCollateralFacet
@@ -25,8 +25,8 @@ import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
  *      when their collateral value is declining (Phase 1 Addition per README Section "Allow Borrower to Add Collateral").
  *      Only supports ERC-20 liquid collateral (same type as the existing loan collateral).
  *      Adding collateral always improves Health Factor and reduces LTV, so no minimum threshold is enforced.
- *      Transfers additional collateral directly into borrower's escrow proxy and updates loan.collateralAmount.
- *      Custom errors, events, ReentrancyGuard, Pausable. Cross-facet calls for escrow and risk calculations.
+ *      Transfers additional collateral directly into borrower's vault proxy and updates loan.collateralAmount.
+ *      Custom errors, events, ReentrancyGuard, Pausable. Cross-facet calls for vault and risk calculations.
  *      Callable only by the borrower of the loan. Expand for Phase 2 (e.g., multi-collateral types).
  */
 contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors {
@@ -37,7 +37,7 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     /// @notice Emitted when a FallbackPending loan is cured by a collateral
     ///         top-up that restores HF above MIN_HEALTH_FACTOR. The previously
     ///         held diamond-side collateral has been moved back to the
-    ///         borrower's escrow and the snapshot cleared; the loan is Active.
+    ///         borrower's vault and the snapshot cleared; the loan is Active.
     /// @custom:event-category state-change/loan-mutation
     event LoanCuredFromFallback(
         uint256 indexed loanId,
@@ -74,7 +74,7 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
      *      Option 3 offset, EarlyWithdrawal sale) the NFT never leaves its
      *      owner, so a plain ownerOf check is sufficient.
      *      Only liquid collateral loans are supported.
-     *      Transfers `amount` of the existing collateral asset from the caller into the borrower's escrow.
+     *      Transfers `amount` of the existing collateral asset from the caller into the borrower's vault.
      *      Updates loan.collateralAmount. Emits CollateralAdded with new HF and LTV.
      *      Does not enforce a minimum HF check (adding collateral always improves position).
      *      Reverts if loan is not active, caller is not the borrower-NFT owner,
@@ -111,24 +111,24 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         if (collateralLiquidity != LibVaipakam.LiquidityStatus.Liquid)
             revert IlliquidAsset();
 
-        // Resolve the borrower's escrow proxy — needed below by
+        // Resolve the borrower's vault proxy — needed below by
         // `_cureFallback` for the FallbackPending → Active branch.
         // The chokepoint deposit also auto-creates if missing, but we
         // need the address here regardless so resolve it explicitly.
-        address borrowerEscrow = LibFacet.getOrCreateEscrow(msg.sender);
+        address borrowerVault = LibFacet.getOrCreateVault(msg.sender);
 
-        // Transfer collateral from borrower into their escrow proxy
+        // Transfer collateral from borrower into their vault proxy
         // via the protocol's chokepoint so the
-        // protocolTrackedEscrowBalance counter ticks up. Replaces
+        // protocolTrackedVaultBalance counter ticks up. Replaces
         // the prior direct safeTransferFrom.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EscrowFactoryFacet.escrowDepositERC20.selector,
+                VaultFactoryFacet.vaultDepositERC20.selector,
                 msg.sender,
                 loan.collateralAsset,
                 amount
             ),
-            EscrowDepositFailed.selector
+            VaultDepositFailed.selector
         );
 
         // Update loan collateral amount
@@ -170,20 +170,20 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             newHF >= LibVaipakam.MIN_HEALTH_FACTOR &&
             newLTV <= s.assetRiskParams[loan.collateralAsset].loanInitMaxLtvBps
         ) {
-            _cureFallback(loanId, loan, borrowerEscrow);
+            _cureFallback(loanId, loan, borrowerVault);
             emit LoanCuredFromFallback(loanId, msg.sender, loan.collateralAmount, newHF);
         }
     }
 
     /// @dev Restores a FallbackPending loan to Active. The diamond-side
     ///      collateral (recorded in fallbackSnapshot) is pushed back into the
-    ///      borrower escrow, the snapshot is cleared, claim records are wiped
+    ///      borrower vault, the snapshot is cleared, claim records are wiped
     ///      so neither side can pull against a stale split, and the NFTs are
     ///      relabeled to "Loan Initiated".
     function _cureFallback(
         uint256 loanId,
         LibVaipakam.Loan storage loan,
-        address borrowerEscrow
+        address borrowerVault
     ) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.FallbackSnapshot storage snap = s.fallbackSnapshot[loanId];
@@ -192,7 +192,7 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             snap.treasuryCollateral +
             snap.borrowerCollateral;
         if (held > 0) {
-            IERC20(loan.collateralAsset).safeTransfer(borrowerEscrow, held);
+            IERC20(loan.collateralAsset).safeTransfer(borrowerVault, held);
         }
 
         delete s.fallbackSnapshot[loanId];

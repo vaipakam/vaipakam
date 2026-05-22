@@ -12,10 +12,10 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
-import {VaipakamEscrowImplementation} from "../src/VaipakamEscrowImplementation.sol";
+import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
@@ -37,10 +37,10 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
  // For cutting
-import {VaipakamEscrowImplementation} from "../src/VaipakamEscrowImplementation.sol";
+import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
- // For escrow impl
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+ // For vault impl
 import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {HelperTest} from "./HelperTest.sol";
@@ -52,10 +52,10 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
-import {VaipakamEscrowImplementation} from "../src/VaipakamEscrowImplementation.sol";
+import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
@@ -156,7 +156,7 @@ contract SetupTest is Test {
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
     VaipakamNFTFacet nftFacet;
-    EscrowFactoryFacet escrowFacet;
+    VaultFactoryFacet vaultFacet;
     LoanFacet loanFacet;
     DefaultedFacet defaultFacet;
     RiskFacet riskFacet; // Added
@@ -181,8 +181,8 @@ contract SetupTest is Test {
     RefinanceFacet refinanceFacet;
     HelperTest helperTest;
 
-    // Escrow impl
-    VaipakamEscrowImplementation escrowImpl;
+    // Vault impl
+    VaipakamVaultImplementation vaultImpl;
 
     function setupHelper() public {
         owner = address(this);
@@ -225,7 +225,7 @@ contract SetupTest is Test {
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
         nftFacet = new VaipakamNFTFacet();
-        escrowFacet = new EscrowFactoryFacet();
+        vaultFacet = new VaultFactoryFacet();
         loanFacet = new LoanFacet();
         defaultFacet = new DefaultedFacet();
         riskFacet = new RiskFacet();
@@ -249,8 +249,8 @@ contract SetupTest is Test {
         refinanceFacet = new RefinanceFacet();
         helperTest = new HelperTest();
 
-        // Deploy escrow impl
-        escrowImpl = new VaipakamEscrowImplementation();
+        // Deploy vault impl
+        vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond. #168 Track A extended the array
         // from 24 → 28 to add the PrecloseFacet / RefinanceFacet /
@@ -300,9 +300,9 @@ contract SetupTest is Test {
             functionSelectors: helperTest.getVaipakamNFTFacetSelectors()
         });
         cuts[4] = IDiamondCut.FacetCut({
-            facetAddress: address(escrowFacet),
+            facetAddress: address(vaultFacet),
             action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getEscrowFactoryFacetSelectors()
+            functionSelectors: helperTest.getVaultFactoryFacetSelectors()
         });
         cuts[5] = IDiamondCut.FacetCut({
             facetAddress: address(loanFacet),
@@ -437,8 +437,8 @@ contract SetupTest is Test {
         // Initialize AccessControl roles (must be first — all admin calls require roles)
         AccessControlFacet(address(diamond)).initializeAccessControl();
 
-        // Init escrow factory with impl
-        EscrowFactoryFacet(address(diamond)).initializeEscrowImplementation();
+        // Init vault factory with impl
+        VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
         VaipakamNFTFacet(address(diamond)).initializeNFT();
         AdminFacet(address(diamond)).setTreasury(address(diamond));
 
@@ -473,7 +473,7 @@ contract SetupTest is Test {
             address(mockZeroExProxy)
         );
         AdminFacet(address(diamond)).addSwapAdapter(address(legacyShim));
-        // address(escrowImpl)
+        // address(vaultImpl)
 
         // Mock balances
         // deal(mockERC20, lender, 1e18);
@@ -650,46 +650,46 @@ contract SetupTest is Test {
             abi.encode(1e8, 8) // Even if illiquid, for calc
         );
 
-        // Approve escrows
+        // Approve vaults
         vm.prank(lender);
         ERC20(mockERC20).approve(
-            EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender),
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender),
             type(uint256).max
         );
         vm.prank(borrower);
         ERC20(mockERC20).approve(
-            EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(
                 borrower
             ),
             type(uint256).max
         );
         vm.prank(lender);
         ERC20(mockCollateralERC20).approve(
-            EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender),
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender),
             type(uint256).max
         );
         vm.prank(borrower);
         ERC20(mockCollateralERC20).approve(
-            EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(
                 borrower
             ),
             type(uint256).max
         );
         vm.prank(lender);
         ERC20(mockIlliquidERC20).approve(
-            EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender),
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender),
             type(uint256).max
         );
         vm.prank(borrower);
         ERC20(mockIlliquidERC20).approve(
-            EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(
                 borrower
             ),
             type(uint256).max
         );
         vm.prank(lender);
         IERC721(mockNFT721).setApprovalForAll(
-            EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender),
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender),
             true
         );
     }

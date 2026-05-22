@@ -60,7 +60,7 @@ const INHERITED_EVENT_OVERRIDES = {
   // OZ Ownable / IERC173
   'OwnershipTransferred(address,address)': 'informational/admin',
   // OZ ERC1967 / UUPS
-  'Upgraded(address)': 'state-change/escrow-mutation',
+  'Upgraded(address)': 'state-change/vault-mutation',
   'AdminChanged(address,address)': 'informational/admin',
   'BeaconUpgraded(address)': 'informational/admin',
   // OZ Initializable
@@ -78,9 +78,9 @@ const INHERITED_EVENT_OVERRIDES = {
   'MsgInspectorSet(address)': 'informational/lz-plumbing',
   'PreCrimeSet(address)': 'informational/lz-plumbing',
   // LayerZero V2 OFT (Sent / Received are token-flow events; treat as
-  // escrow mutations since they reflect cross-chain VPFI moves).
-  'OFTSent(bytes32,uint32,address,uint256,uint256)': 'state-change/escrow-mutation',
-  'OFTReceived(bytes32,uint32,address,uint256)': 'state-change/escrow-mutation',
+  // vault mutations since they reflect cross-chain VPFI moves).
+  'OFTSent(bytes32,uint32,address,uint256,uint256)': 'state-change/vault-mutation',
+  'OFTReceived(bytes32,uint32,address,uint256)': 'state-change/vault-mutation',
 };
 
 const ALLOWED_CATEGORIES = new Set([
@@ -88,7 +88,7 @@ const ALLOWED_CATEGORIES = new Set([
   // the cache layer MUST merge into the row keyed by (chainId, primaryKey).
   'state-change/loan-mutation',
   'state-change/offer-mutation',
-  'state-change/escrow-mutation',
+  'state-change/vault-mutation',
   'state-change/nft-mutation',
   'state-change/treasury-mutation',
   'state-change/claim-mutation',

@@ -19,7 +19,7 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
  // For NFT updates/burns
-import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {MetricsFacet} from "./MetricsFacet.sol";
  // For transfers
 import {ProfileFacet} from "./ProfileFacet.sol";
@@ -552,13 +552,13 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // Withdraw collateral to Diamond for swap
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                VaultFactoryFacet.vaultWithdrawERC20.selector,
                 loan.borrower,
                 loan.collateralAsset,
                 address(this),
                 loan.collateralAmount
             ),
-            EscrowWithdrawFailed.selector
+            VaultWithdrawFailed.selector
         );
 
         // Compute expected proceeds from oracle prices and the slippage floor
@@ -695,13 +695,13 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             LibFacet.recordTreasuryAccrual(loan.principalAsset, toTreasury);
         }
 
-        // Lender's proceeds deposited into lender's escrow for claim
-        address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
+        // Lender's proceeds deposited into lender's vault for claim
+        address lenderVault = LibFacet.getOrCreateVault(loan.lender);
         if (lenderProceeds > 0) {
-            IERC20(loan.principalAsset).safeTransfer(lenderEscrow, lenderProceeds);
-            // T-051 — Diamond-side transfer to escrow ticks the
-            // protocolTrackedEscrowBalance counter.
-            LibVaipakam.recordEscrowDeposit(loan.lender, loan.principalAsset, lenderProceeds);
+            IERC20(loan.principalAsset).safeTransfer(lenderVault, lenderProceeds);
+            // T-051 — Diamond-side transfer to vault ticks the
+            // protocolTrackedVaultBalance counter.
+            LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, lenderProceeds);
         }
 
         // Record lender's claimable proceeds. heldForLender handled by ClaimFacet.
@@ -716,9 +716,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
 
         // Borrower surplus: any proceeds remaining after bonus + treasury + lender debt
         if (borrowerSurplus > 0) {
-            address borrowerEscrow = LibFacet.getOrCreateEscrow(loan.borrower);
-            IERC20(loan.principalAsset).safeTransfer(borrowerEscrow, borrowerSurplus);
-            LibVaipakam.recordEscrowDeposit(loan.borrower, loan.principalAsset, borrowerSurplus);
+            address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
+            IERC20(loan.principalAsset).safeTransfer(borrowerVault, borrowerSurplus);
+            LibVaipakam.recordVaultDeposit(loan.borrower, loan.principalAsset, borrowerSurplus);
         }
         s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
             asset: loan.principalAsset,
@@ -833,13 +833,13 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // Withdraw collateral to Diamond for the split swap.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                VaultFactoryFacet.vaultWithdrawERC20.selector,
                 loan.borrower,
                 loan.collateralAsset,
                 address(this),
                 loan.collateralAmount
             ),
-            EscrowWithdrawFailed.selector
+            VaultWithdrawFailed.selector
         );
 
         // Oracle-derived total minOutputAmount — same formula as the
@@ -933,10 +933,10 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             IERC20(loan.principalAsset).safeTransfer(treasury, toTreasury);
             LibFacet.recordTreasuryAccrual(loan.principalAsset, toTreasury);
         }
-        address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
+        address lenderVault = LibFacet.getOrCreateVault(loan.lender);
         if (lenderProceeds > 0) {
-            IERC20(loan.principalAsset).safeTransfer(lenderEscrow, lenderProceeds);
-            LibVaipakam.recordEscrowDeposit(loan.lender, loan.principalAsset, lenderProceeds);
+            IERC20(loan.principalAsset).safeTransfer(lenderVault, lenderProceeds);
+            LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, lenderProceeds);
         }
         s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
             asset: loan.principalAsset,
@@ -947,9 +947,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             claimed: false
         });
         if (borrowerSurplus > 0) {
-            address borrowerEscrow = LibFacet.getOrCreateEscrow(loan.borrower);
-            IERC20(loan.principalAsset).safeTransfer(borrowerEscrow, borrowerSurplus);
-            LibVaipakam.recordEscrowDeposit(loan.borrower, loan.principalAsset, borrowerSurplus);
+            address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
+            IERC20(loan.principalAsset).safeTransfer(borrowerVault, borrowerSurplus);
+            LibVaipakam.recordVaultDeposit(loan.borrower, loan.principalAsset, borrowerSurplus);
         }
         s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
             asset: loan.principalAsset,
@@ -1033,7 +1033,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
      *         state without corrupting the {ClaimFacet} / NFT-state
      *         invariants. On any internal failure (all adapters revert,
      *         HF didn't improve, principal fully repaid) the entire tx
-     *         reverts and the slice stays in the borrower's escrow.
+     *         reverts and the slice stays in the borrower's vault.
      *
      *         Maturity preservation: the loan's `endTime` is unchanged.
      *         Implementation rewires `startTime = block.timestamp` AND
@@ -1114,19 +1114,19 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             revert InvalidPartialFraction(fractionBps, cap);
         }
 
-        // Withdraw only the slice from the borrower's escrow. If the
+        // Withdraw only the slice from the borrower's vault. If the
         // swap reverts downstream, the wrapping `revert` here unwinds
         // the withdraw too (single tx, all storage rolled back) — no
         // manual refund needed.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                VaultFactoryFacet.vaultWithdrawERC20.selector,
                 loan.borrower,
                 loan.collateralAsset,
                 address(this),
                 swappedCollateral
             ),
-            EscrowWithdrawFailed.selector
+            VaultWithdrawFailed.selector
         );
 
         // Oracle-derived expected proceeds + slippage floor, scoped to
@@ -1234,15 +1234,15 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             LibFacet.recordTreasuryAccrual(loan.principalAsset, toTreasury);
         }
 
-        // Lender's share goes directly to their escrow. We deliberately
+        // Lender's share goes directly to their vault. We deliberately
         // do NOT write `s.lenderClaims[loanId]` — claims are reserved
         // for terminal events (the lender NFT is still Active, the
         // claim flow runs at proper close / full liquidation / default).
         uint256 lenderProceeds = afterFees - treasuryInterestFee;
         if (lenderProceeds > 0) {
-            address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
-            IERC20(loan.principalAsset).safeTransfer(lenderEscrow, lenderProceeds);
-            LibVaipakam.recordEscrowDeposit(loan.lender, loan.principalAsset, lenderProceeds);
+            address lenderVault = LibFacet.getOrCreateVault(loan.lender);
+            IERC20(loan.principalAsset).safeTransfer(lenderVault, lenderProceeds);
+            LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, lenderProceeds);
         }
 
         // Mutate the loan: reduce collateral + principal, restart the
@@ -1325,13 +1325,13 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
      *             path. NO `liquidationHandlingFee` (the discount IS
      *             the liquidator's payment; no protocol-side bonus
      *             needed).
-     *           - diamond → lender escrow: principal + remaining
+     *           - diamond → lender vault: principal + remaining
      *             interest + late fee (full lender entitlement).
-     *           - borrower escrow → recipient: `collateralSeized`
+     *           - borrower vault → recipient: `collateralSeized`
      *             collateral-asset.
-     *           - borrower escrow keeps: `borrowerSurplus`
+     *           - borrower vault keeps: `borrowerSurplus`
      *             collateral-asset (never withdrawn — already in their
-     *             escrow, available via standard escrow withdrawal).
+     *             vault, available via standard vault withdrawal).
      *
      *         Loan transitions Active → Defaulted. VPFI LIF forfeits
      *         (HF liquidation is not a proper close).
@@ -1498,11 +1498,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             LibFacet.recordTreasuryAccrual(loan.principalAsset, treasuryInterestFee);
         }
 
-        // Lender's proceeds to their escrow.
-        address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
+        // Lender's proceeds to their vault.
+        address lenderVault = LibFacet.getOrCreateVault(loan.lender);
         if (lenderProceeds > 0) {
-            IERC20(loan.principalAsset).safeTransfer(lenderEscrow, lenderProceeds);
-            LibVaipakam.recordEscrowDeposit(loan.lender, loan.principalAsset, lenderProceeds);
+            IERC20(loan.principalAsset).safeTransfer(lenderVault, lenderProceeds);
+            LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, lenderProceeds);
         }
 
         // Record lender claim metadata for NFT-state tracking.
@@ -1515,27 +1515,27 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             claimed: false
         });
 
-        // Withdraw `collateralSeized` from borrower escrow directly to
+        // Withdraw `collateralSeized` from borrower vault directly to
         // `recipient`. The remaining `borrowerSurplus` stays in the
-        // borrower's escrow as a regular balance — the borrower
-        // retrieves it via standard escrow withdrawal, no claim
+        // borrower's vault as a regular balance — the borrower
+        // retrieves it via standard vault withdrawal, no claim
         // ceremony required.
         if (collateralSeized > 0) {
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                    VaultFactoryFacet.vaultWithdrawERC20.selector,
                     loan.borrower,
                     loan.collateralAsset,
                     recipient,
                     collateralSeized
                 ),
-                EscrowWithdrawFailed.selector
+                VaultWithdrawFailed.selector
             );
         }
 
         // Record borrower claim metadata — but the surplus is in
         // COLLATERAL units (not principal), and is already in the
-        // borrower's escrow. The `ClaimInfo` row records what the
+        // borrower's vault. The `ClaimInfo` row records what the
         // discount-path settlement left them with for off-chain
         // accounting + the lender / borrower NFT metadata. `claimed`
         // is set true when the surplus is zero (nothing to claim).
@@ -1639,14 +1639,14 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     //     bool success;
     //     (success, ) = address(this).call(
     //         abi.encodeWithSelector(
-    //             EscrowFactoryFacet.escrowWithdrawERC20.selector,
+    //             VaultFactoryFacet.vaultWithdrawERC20.selector,
     //             loan.borrower,
     //             loan.collateralAsset,
     //             address(this),
     //             loan.collateralAmount
     //         )
     //     );
-    //     if (!success) revert EscrowWithdrawFailed();
+    //     if (!success) revert VaultWithdrawFailed();
 
     //     IERC20(loan.collateralAsset).approve(
     //         zeroExProxy,
@@ -1757,7 +1757,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
 
         // Record claims in collateral units. ClaimFacet will either rewrite
         // these to principal-asset amounts on a successful retry, or push
-        // the collateral to lender/treasury/borrower escrows per this split
+        // the collateral to lender/treasury/borrower vaults per this split
         // if the retry fails (or the borrower claims first).
         s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
             asset: loan.collateralAsset,

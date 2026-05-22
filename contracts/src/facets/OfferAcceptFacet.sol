@@ -18,13 +18,13 @@ import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "./OracleFacet.sol";
-import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {LoanFacet} from "./LoanFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {EarlyWithdrawalFacet} from "./EarlyWithdrawalFacet.sol";
 import {PrecloseFacet} from "./PrecloseFacet.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
-import {LibUserEscrow} from "../libraries/LibUserEscrow.sol";
+import {LibUserVault} from "../libraries/LibUserVault.sol";
 
 /**
  * @title OfferAcceptFacet
@@ -155,8 +155,8 @@ contract OfferAcceptFacet is
     error OfferAlreadyAccepted();
     // NotOfferCreator inherited from IVaipakamErrors
     // Create-side errors (InvalidOfferType, OfferDurationExceedsCap, the
-    // Range Orders Phase 1 errors, GetUserEscrowFailed) live on
-    // `OfferCreateFacet` / `LibUserEscrow` post-split (Issue #67).
+    // Range Orders Phase 1 errors, GetUserVaultFailed) live on
+    // `OfferCreateFacet` / `LibUserVault` post-split (Issue #67).
 
     // `CancelCooldownActive` moved to `OfferCancelFacet` along with
     // `cancelOffer` (Range Orders Phase 1 OfferFacet split for
@@ -171,13 +171,13 @@ contract OfferAcceptFacet is
      *      numeraire-quoted value.
      *
      *      Asset flow:
-     *        - ERC-20 loan: lender escrow → borrower principal transfer;
+     *        - ERC-20 loan: lender vault → borrower principal transfer;
      *          borrower-side collateral (ERC-20/721/1155) locked into borrower
-     *          escrow.
+     *          vault.
      *        - NFT rental (Lender-offer): borrower prepay (principal fee ×
-     *          days + `RENTAL_BUFFER_BPS` buffer) pulled into borrower escrow;
-     *          rental user set on lender escrow.
-     *        - NFT rental (Borrower-offer): lender's NFT escrowed, rental
+     *          days + `RENTAL_BUFFER_BPS` buffer) pulled into borrower vault;
+     *          rental user set on lender vault.
+     *        - NFT rental (Borrower-offer): lender's NFT vaulted, rental
      *          user set.
      *      Delegates loan creation to {LoanFacet.initiateLoan} (LTV/HF gates
      *      apply there). Atomically auto-completes any linked
@@ -185,7 +185,7 @@ contract OfferAcceptFacet is
      *
      *      Reverts: InvalidOffer, OfferAlreadyAccepted, CountriesNotCompatible,
      *      RiskAndTermsConsentRequired, KYCRequired,
-     *      EscrowWithdrawFailed, NFTRenterUpdateFailed, LoanInitiationFailed,
+     *      VaultWithdrawFailed, NFTRenterUpdateFailed, LoanInitiationFailed,
      *      OfferAcceptFailed. Emits OfferAccepted.
      * @param offerId The offer ID to accept.
      * @param acceptorRiskAndTermsConsent Acceptor's mandatory consent to the
@@ -227,8 +227,8 @@ contract OfferAcceptFacet is
     ///
     ///         Permit2 is intentionally not exposed here — the
     ///         matching path doesn't pull acceptor-side ERC-20 (the
-    ///         borrower's collateral is already escrowed at offer-
-    ///         create time, and the lender principal flows escrow-
+    ///         borrower's collateral is already vaulted at offer-
+    ///         create time, and the lender principal flows vault-
     ///         internal). matchOffers always passes `usePermit=false`.
     /// @param offerId                 The borrower offer the matching
     ///                                core processes (see the docstring
@@ -266,7 +266,7 @@ contract OfferAcceptFacet is
      *
      *      Only applies when the acceptor side actually pulls ERC-20.
      *      Borrower-offer accepts (lender as acceptor with ERC-20
-     *      principal) go through the lender's escrow-internal flow and
+     *      principal) go through the lender's vault-internal flow and
      *      don't need Permit2 on the acceptor side — call the classic
      *      {acceptOffer} in that case. Reverts {InvalidAssetType} when
      *      no acceptor ERC-20 pull applies.
@@ -290,7 +290,7 @@ contract OfferAcceptFacet is
         if (offer.creator == address(0)) revert InvalidOffer();
         if (offer.offerType != LibVaipakam.OfferType.Lender) {
             // Borrower-offer accept: acceptor is the lender; their
-            // principal flow goes escrow-internal. No acceptor pull to
+            // principal flow goes vault-internal. No acceptor pull to
             // Permit2-ify here.
             revert InvalidAssetType();
         }
@@ -334,7 +334,7 @@ contract OfferAcceptFacet is
     ///
     ///      When a lender direct-accepts a borrower offer where
     ///      `collateralAmountMax > collateralAmount`, the borrower's
-    ///      pre-escrowed excess (`collateralAmountMax - collateralAmount`)
+    ///      pre-vaulted excess (`collateralAmountMax - collateralAmount`)
     ///      would otherwise be stranded — the offer terminates with
     ///      `accepted = true` here but matchOffers' dust-close refund
     ///      branch doesn't fire on the direct-accept path. Symmetric
@@ -363,14 +363,14 @@ contract OfferAcceptFacet is
         if (s.matchOverride.active) return;
         if (offer.offerType != LibVaipakam.OfferType.Borrower) return;
         // PR #187 Codex P2 — also gate on ERC-20 LENDING leg. Borrower
-        // NFT rental offers (lendingAsset = NFT) escrow prepay-only at
+        // NFT rental offers (lendingAsset = NFT) vault prepay-only at
         // create time, not collateral. Even if such an offer is created
         // with `collateralAssetType = ERC20` and
         // `collateralAmountMax > collateralAmount`, the borrower never
         // deposited the excess — the refund call would either underflow
-        // the escrow's protocolTrackedEscrowBalance counter or
+        // the vault's protocolTrackedVaultBalance counter or
         // succeed at withdrawing assets the borrower didn't pre-fund
-        // (corrupting another user's escrow). Restrict to ERC-20
+        // (corrupting another user's vault). Restrict to ERC-20
         // lending offers where the create-time collateral deposit
         // path actually fires.
         if (offer.assetType != LibVaipakam.AssetType.ERC20) return;
@@ -379,13 +379,13 @@ contract OfferAcceptFacet is
         uint256 collRefund = offer.collateralAmountMax - offer.collateralAmount;
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EscrowFactoryFacet.escrowWithdrawERC20.selector,
-                offer.creator,           // pull from borrower's escrow
+                VaultFactoryFacet.vaultWithdrawERC20.selector,
+                offer.creator,           // pull from borrower's vault
                 offer.collateralAsset,
                 offer.creator,           // refund to borrower's wallet
                 collRefund
             ),
-            EscrowWithdrawFailed.selector
+            VaultWithdrawFailed.selector
         );
     }
 
@@ -395,11 +395,11 @@ contract OfferAcceptFacet is
     ///      Called only when the lender offer's `assetType` is
     ///      ERC721 / ERC1155 (NFT rental) — borrower prepays the
     ///      full term's rental fee + buffer in `prepayAsset` (a
-    ///      stablecoin) into their own escrow.
+    ///      stablecoin) into their own vault.
     function _pullRentalPrepay(
         LibVaipakam.Offer storage offer,
         address borrower,
-        address borrowerEscrow,
+        address borrowerVault,
         bool usePermit,
         ISignatureTransfer.PermitTransferFrom memory permit,
         bytes memory signature
@@ -411,7 +411,7 @@ contract OfferAcceptFacet is
         if (usePermit) {
             LibPermit2.pull(
                 borrower,
-                borrowerEscrow,
+                borrowerVault,
                 offer.prepayAsset,
                 totalPrepay,
                 permit,
@@ -419,25 +419,25 @@ contract OfferAcceptFacet is
             );
             // Permit2 handled the funds movement directly; counter-only
             // sibling records the deposit so the protocolTracked-
-            // EscrowBalance counter stays in sync.
+            // VaultBalance counter stays in sync.
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.recordEscrowDepositERC20.selector,
+                    VaultFactoryFacet.recordVaultDepositERC20.selector,
                     borrower,
                     offer.prepayAsset,
                     totalPrepay
                 ),
-                EscrowDepositFailed.selector
+                VaultDepositFailed.selector
             );
         } else {
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowDepositERC20.selector,
+                    VaultFactoryFacet.vaultDepositERC20.selector,
                     borrower,
                     offer.prepayAsset,
                     totalPrepay
                 ),
-                EscrowDepositFailed.selector
+                VaultDepositFailed.selector
             );
         }
     }
@@ -489,7 +489,7 @@ contract OfferAcceptFacet is
 
         // Per-asset pause: block accepts if either leg has been paused
         // since the offer was created. The offer creator can still cancel
-        // and reclaim escrowed assets — cancelOffer is an exit path.
+        // and reclaim vaulted assets — cancelOffer is an exit path.
         LibFacet.requireAssetNotPaused(offer.lendingAsset);
         LibFacet.requireAssetNotPaused(offer.collateralAsset);
 
@@ -554,21 +554,21 @@ contract OfferAcceptFacet is
             revert KYCRequired();
         }
 
-        address lenderEscrow;
-        address borrowerEscrow;
+        address lenderVault;
+        address borrowerVault;
         address lender;
         address borrower;
 
         if (offer.offerType == LibVaipakam.OfferType.Lender) {
             lender = offer.creator;
             borrower = acceptor;
-            lenderEscrow = LibUserEscrow.getOrCreate(lender);
-            borrowerEscrow = LibUserEscrow.getOrCreate(borrower);
+            lenderVault = LibUserVault.getOrCreate(lender);
+            borrowerVault = LibUserVault.getOrCreate(borrower);
         } else {
             lender = acceptor;
             borrower = offer.creator;
-            lenderEscrow = LibUserEscrow.getOrCreate(lender);
-            borrowerEscrow = LibUserEscrow.getOrCreate(borrower);
+            lenderVault = LibUserVault.getOrCreate(lender);
+            borrowerVault = LibUserVault.getOrCreate(borrower);
         }
         // `effectivePrincipal` was computed earlier (before KYC) so the
         // value is available for KYC, LIF math, principal transfer, and
@@ -579,15 +579,15 @@ contract OfferAcceptFacet is
             // NOT pre-funded principal at any earlier step (only Lender
             // offers do that, at `createOffer` time via
             // `_pullCreatorAssetsClassic`). Pull `offer.amount` from the
-            // lender's wallet into the lender's escrow now, through the
-            // standard `escrowDepositERC20` chokepoint so the
-            // `protocolTrackedEscrowBalance` counter ticks. Without this,
-            // the subsequent `escrowWithdrawERC20(lender, …)` calls
+            // lender's wallet into the lender's vault now, through the
+            // standard `vaultDepositERC20` chokepoint so the
+            // `protocolTrackedVaultBalance` counter ticks. Without this,
+            // the subsequent `vaultWithdrawERC20(lender, …)` calls
             // below underflow the counter (Solidity 0.8 `-=` panic).
             //
             // Skip the pull on the matching path
             // (`matchOverride.active`): there the lender funded their
-            // SIDE via a Lender offer's `amountMax` pre-escrow at
+            // SIDE via a Lender offer's `amountMax` pre-vault at
             // create time, and the matched principal is debited from
             // that pool (with `amountFilled` accounting in
             // `LibOfferMatch.executeMatch`). Pulling again from the
@@ -595,8 +595,8 @@ contract OfferAcceptFacet is
             // approved.
             //
             // Why no public self-deposit chokepoint instead: a
-            // standalone `escrowDepositERC20Self(token, amount)` would
-            // let any address park funds in escrow with the counter
+            // standalone `vaultDepositERC20Self(token, amount)` would
+            // let any address park funds in vault with the counter
             // ticking but with no protocol-flow context, opening a
             // VPFI-staking-tier-snapshot griefing surface. Keeping the
             // pull bound to `acceptOffer` ensures every counter
@@ -610,17 +610,17 @@ contract OfferAcceptFacet is
             ) {
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
-                        EscrowFactoryFacet.escrowDepositERC20.selector,
+                        VaultFactoryFacet.vaultDepositERC20.selector,
                         lender,
                         offer.lendingAsset,
                         offer.amount
                     ),
-                    EscrowDepositFailed.selector
+                    VaultDepositFailed.selector
                 );
             }
 
             // Default path: deduct the 0.1% Loan Initiation Fee from the
-            // lender's escrow BEFORE the net is delivered to the borrower
+            // lender's vault BEFORE the net is delivered to the borrower
             // (README §6 lines 280, 332). Borrower still owes the full
             // `offer.amount` back — the fee is paid out of the lender's
             // funded principal, not added on top of the debt.
@@ -628,10 +628,10 @@ contract OfferAcceptFacet is
             // VPFI path (Phase 5 / §5.2b): activates when the borrower has
             // enabled the platform-level VPFI-discount consent setting
             // (s.vpfiDiscountConsent[borrower]), the lending asset is
-            // liquid, AND the borrower's escrow holds ≥ the FULL 0.1%
+            // liquid, AND the borrower's vault holds ≥ the FULL 0.1%
             // LIF equivalent in VPFI. On success:
             //   - Borrower pays the FULL 0.1% LIF equivalent in VPFI from
-            //     escrow into Diamond custody (via
+            //     vault into Diamond custody (via
             //     LibVPFIDiscount.tryApplyBorrowerLif). No tier discount
             //     at init — the discount is realized as a time-weighted
             //     rebate on proper settlement (see ClaimFacet and
@@ -676,7 +676,7 @@ contract OfferAcceptFacet is
                     uint256 treasuryCut = initiationFee - matcherCut;
                     LibFacet.crossFacetCall(
                         abi.encodeWithSelector(
-                            EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                            VaultFactoryFacet.vaultWithdrawERC20.selector,
                             lender,
                             offer.lendingAsset,
                             LibFacet.getTreasury(),
@@ -691,7 +691,7 @@ contract OfferAcceptFacet is
                     if (matcherCut > 0) {
                         LibFacet.crossFacetCall(
                             abi.encodeWithSelector(
-                                EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                                VaultFactoryFacet.vaultWithdrawERC20.selector,
                                 lender,
                                 offer.lendingAsset,
                                 // Read matcher inline from storage to
@@ -702,7 +702,7 @@ contract OfferAcceptFacet is
                                     : msg.sender,
                                 matcherCut
                             ),
-                            EscrowWithdrawFailed.selector
+                            VaultWithdrawFailed.selector
                         );
                     }
                 }
@@ -712,13 +712,13 @@ contract OfferAcceptFacet is
             // discount path fired; principal − fee otherwise).
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                    VaultFactoryFacet.vaultWithdrawERC20.selector,
                     lender,
                     offer.lendingAsset,
                     borrower,
                     netToBorrower
                 ),
-                EscrowWithdrawFailed.selector
+                VaultWithdrawFailed.selector
             );
         } else {
             if (offer.offerType == LibVaipakam.OfferType.Lender) {
@@ -729,25 +729,25 @@ contract OfferAcceptFacet is
                 _pullRentalPrepay(
                     offer,
                     borrower,
-                    borrowerEscrow,
+                    borrowerVault,
                     usePermit,
                     permit,
                     signature
                 );
             } else {
-                // Borrower-type NFT offer accepted by lender: escrow the lender's NFT.
-                // The lender (msg.sender/acceptor) must custody the NFT in their escrow
+                // Borrower-type NFT offer accepted by lender: vault the lender's NFT.
+                // The lender (msg.sender/acceptor) must custody the NFT in their vault
                 // for the rental duration, matching the Lender-offer model.
                 if (offer.assetType == LibVaipakam.AssetType.ERC721) {
                     IERC721(offer.lendingAsset).safeTransferFrom(
                         lender,
-                        lenderEscrow,
+                        lenderVault,
                         offer.tokenId
                     );
                 } else if (offer.assetType == LibVaipakam.AssetType.ERC1155) {
                     IERC1155(offer.lendingAsset).safeTransferFrom(
                         lender,
-                        lenderEscrow,
+                        lenderVault,
                         offer.tokenId,
                         offer.quantity,
                         ""
@@ -758,7 +758,7 @@ contract OfferAcceptFacet is
             // Set renter (borrower as user)
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowSetNFTUser.selector,
+                    VaultFactoryFacet.vaultSetNFTUser.selector,
                     lender,
                     offer.lendingAsset,
                     offer.tokenId,
@@ -769,7 +769,7 @@ contract OfferAcceptFacet is
             );
         }
 
-        // Lock collateral from borrower (already in escrow for Borrower offers)
+        // Lock collateral from borrower (already in vault for Borrower offers)
         if (offer.offerType == LibVaipakam.OfferType.Lender) {
             if (offer.assetType == LibVaipakam.AssetType.ERC20) {
                 // ERC-20 lending: lock collateral based on collateral asset type
@@ -777,45 +777,45 @@ contract OfferAcceptFacet is
                     if (usePermit) {
                         LibPermit2.pull(
                             borrower,
-                            borrowerEscrow,
+                            borrowerVault,
                             offer.collateralAsset,
                             offer.collateralAmount,
                             permit,
                             signature
                         );
                         // Permit2 already moved funds; counter-only
-                        // record so the protocolTrackedEscrowBalance
+                        // record so the protocolTrackedVaultBalance
                         // tally stays in sync.
                         LibFacet.crossFacetCall(
                             abi.encodeWithSelector(
-                                EscrowFactoryFacet.recordEscrowDepositERC20.selector,
+                                VaultFactoryFacet.recordVaultDepositERC20.selector,
                                 borrower,
                                 offer.collateralAsset,
                                 offer.collateralAmount
                             ),
-                            EscrowDepositFailed.selector
+                            VaultDepositFailed.selector
                         );
                     } else {
                         LibFacet.crossFacetCall(
                             abi.encodeWithSelector(
-                                EscrowFactoryFacet.escrowDepositERC20.selector,
+                                VaultFactoryFacet.vaultDepositERC20.selector,
                                 borrower,
                                 offer.collateralAsset,
                                 offer.collateralAmount
                             ),
-                            EscrowDepositFailed.selector
+                            VaultDepositFailed.selector
                         );
                     }
                 } else if (offer.collateralAssetType == LibVaipakam.AssetType.ERC721) {
                     IERC721(offer.collateralAsset).safeTransferFrom(
                         borrower,
-                        borrowerEscrow,
+                        borrowerVault,
                         offer.collateralTokenId
                     );
                 } else if (offer.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
                     IERC1155(offer.collateralAsset).safeTransferFrom(
                         borrower,
-                        borrowerEscrow,
+                        borrowerVault,
                         offer.collateralTokenId,
                         offer.collateralQuantity,
                         ""

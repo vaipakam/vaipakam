@@ -38,7 +38,7 @@ import {AnvilNewPositiveFlows} from "./AnvilNewPositiveFlows.s.sol";
  *           - Refinance — cross-lender swap via borrower offer.
  *           - Preclose 2/3 — direct + offset.
  *           - Stuck-token recovery happy path + sanctioned-source ban.
- *           - Disown (escrow ownership transfer).
+ *           - Disown (vault ownership transfer).
  *           - Sanctions Tier-1 vs Tier-2 gating semantics.
  *           - Keeper per-action authorization.
  *           - VPFI staking + discount accumulator + claim rebate +
@@ -61,7 +61,7 @@ import {AnvilNewPositiveFlows} from "./AnvilNewPositiveFlows.s.sol";
  *         working market), Phase B after (new features assume a
  *         healthy diamond). Both halves use distinct scenario
  *         participants where possible; where they overlap, Phase B
- *         re-bootstraps the participant's allowances + escrow before
+ *         re-bootstraps the participant's allowances + vault before
  *         exercising the new surface, so prior end-state from Phase A
  *         doesn't poison Phase B's assertions.
  *

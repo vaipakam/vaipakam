@@ -10,7 +10,7 @@ interface IERC4907 is IERC165 {
     /// @notice Emitted when the `user` of an NFT or the `expires` of the `user`
     ///  is changed. The zero address for user indicates that there is no user
     ///  address.
-    /// @custom:event-category state-change/escrow-mutation
+    /// @custom:event-category state-change/vault-mutation
     event UpdateUser(
         uint256 indexed tokenId,
         address indexed user,

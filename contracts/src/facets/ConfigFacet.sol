@@ -569,7 +569,7 @@ contract ConfigFacet is DiamondAccessControl {
     /**
      * @notice Update the per-loan-side notification fee, denominated
      *         in NUMERAIRE-units (1e18 scaled). Charged in VPFI from
-     *         the user's escrow on the FIRST PaidPush-tier notification
+     *         the user's vault on the FIRST PaidPush-tier notification
      *         fired by the off-chain hf-watcher.
      * @dev ADMIN_ROLE-only. Bounded inside
      *      `[MIN_NOTIFICATION_FEE_FLOOR, MAX_NOTIFICATION_FEE_CEIL]`
@@ -685,7 +685,7 @@ contract ConfigFacet is DiamondAccessControl {
     }
 
     /**
-     * @notice Update the VPFI escrow staking APR.
+     * @notice Update the VPFI vault staking APR.
      * @param aprBps Annual rate in BPS (default 500 ≡ 5%). Passing `0`
      *        resets to the default.
      * @dev ADMIN_ROLE-only. Capped at 100% APR to guard against typos.

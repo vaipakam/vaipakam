@@ -13,7 +13,7 @@ import {LibRiskMath} from "../src/libraries/LibRiskMath.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 
 /**
@@ -30,7 +30,7 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
  *             `[1k, 10k]` with collateral max 2 ETH; lender at 5k
  *             matches; assert B.amountFilled == 5k,
  *             B.collateralAmountFilled == picked, B.accepted == false,
- *             collateral STILL in escrow.
+ *             collateral STILL in vault.
  *           - **Multi-fill consuming one borrower offer** — three
  *             sequential lender matches drain the borrower offer; the
  *             third triggers dust-close; assert B.accepted == true,
@@ -214,7 +214,7 @@ contract BorrowerPartialFillTest is SetupTest {
     ///         offer should stay OPEN (not accepted), with
     ///         `amountFilled = 5_000` and `collateralAmountFilled`
     ///         equal to the clamped collateral pick. The borrower's
-    ///         residual collateral stays in escrow (no refund this
+    ///         residual collateral stays in vault (no refund this
     ///         match — only on dust-close).
     function test_happyPathPartialFill() public {
         uint256 borrowerOfferId = _postBorrowerOffer({
@@ -234,12 +234,12 @@ contract BorrowerPartialFillTest is SetupTest {
             collateralRequired: 1_500
         });
 
-        // Snapshot the borrower's escrow collateral balance pre-match
+        // Snapshot the borrower's vault collateral balance pre-match
         // — partial-fill should NOT refund here (only dust-close
         // refunds), so the post-match balance must equal pre-match.
-        address borrowerEscrow =
-            EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(borrower);
-        uint256 escrowCollPre = ERC20(mockCollateralERC20).balanceOf(borrowerEscrow);
+        address borrowerVault =
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
+        uint256 vaultCollPre = ERC20(mockCollateralERC20).balanceOf(borrowerVault);
 
         // Match — kickback paid to `address(this)` as the matcher.
         OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId, borrowerOfferId);
@@ -258,19 +258,19 @@ contract BorrowerPartialFillTest is SetupTest {
         );
         assertFalse(B.accepted, "borrower offer stays OPEN post-partial-fill");
 
-        // Escrow balance: under partial-fill, the borrower's
-        // pre-deposited `collateralAmountMax` STAYS in escrow custody
+        // Vault balance: under partial-fill, the borrower's
+        // pre-deposited `collateralAmountMax` STAYS in vault custody
         // across matches (the collateral becomes loan collateral
-        // accounted to the new Loan, but the ERC20 balance the escrow
+        // accounted to the new Loan, but the ERC20 balance the vault
         // physically holds doesn't change tick-to-tick). Only the
         // dust-close branch refunds residual collateral to the
         // borrower's wallet — the multi-fill scenario below covers
         // that transition.
-        uint256 escrowCollPost = ERC20(mockCollateralERC20).balanceOf(borrowerEscrow);
+        uint256 vaultCollPost = ERC20(mockCollateralERC20).balanceOf(borrowerVault);
         assertEq(
-            escrowCollPost,
-            escrowCollPre,
-            "partial-fill keeps all collateral in escrow custody"
+            vaultCollPost,
+            vaultCollPre,
+            "partial-fill keeps all collateral in vault custody"
         );
     }
 

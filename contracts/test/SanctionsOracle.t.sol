@@ -5,7 +5,7 @@ import {RiskFacetTest} from "./RiskFacetTest.t.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
@@ -180,16 +180,16 @@ contract SanctionsOracleTest is RiskFacetTest {
     // OfferCreateFacet.createOffer / acceptOffer were already gated; tests for
     // those live above. This block covers the additional Tier-1 sites
     // added per the post-audit hardening pass:
-    //   - EscrowFactoryFacet.getOrCreateUserEscrow
+    //   - VaultFactoryFacet.getOrCreateUserVault
     //   - ClaimFacet.claimAsLender / claimAsBorrower
-    //   - VPFIDiscountFacet.buyVPFIWithETH / depositVPFIToEscrow /
-    //     withdrawVPFIFromEscrow
+    //   - VPFIDiscountFacet.buyVPFIWithETH / depositVPFIToVault /
+    //     withdrawVPFIFromVault
     //   - RiskFacet.triggerLiquidation (msg.sender = liquidator)
     // Plus a positive end-to-end test that exercises the Tier-2 ALLOW
     // carve-out: a sanctioned BORROWER can still call repay so the
     // unsanctioned lender is made whole.
 
-    function test_getOrCreateUserEscrow_RevertsWhenSanctioned() public {
+    function test_getOrCreateUserVault_RevertsWhenSanctioned() public {
         MockSanctionsList m = _installSanctions();
         m.setFlagged(sanctionedWallet, true);
 
@@ -199,7 +199,7 @@ contract SanctionsOracleTest is RiskFacetTest {
                 sanctionedWallet
             )
         );
-        EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(
+        VaultFactoryFacet(address(diamond)).getOrCreateUserVault(
             sanctionedWallet
         );
     }
@@ -239,12 +239,12 @@ contract SanctionsOracleTest is RiskFacetTest {
     }
 
     // NOTE: `test_buyVPFI_RevertsWhenSanctioned` +
-    // `test_withdrawVPFIFromEscrow_RevertsWhenSanctioned` are NOT
+    // `test_withdrawVPFIFromVault_RevertsWhenSanctioned` are NOT
     // here because `SetupTest` doesn't cut the VPFIDiscountFacet
     // selectors into the test diamond — calls to those routes return
     // `FunctionDoesNotExist`, not the sanctions revert. The contract
-    // gates on `buyVPFIWithETH` / `depositVPFIToEscrow*` /
-    // `withdrawVPFIFromEscrow` are still in place (see
+    // gates on `buyVPFIWithETH` / `depositVPFIToVault*` /
+    // `withdrawVPFIFromVault` are still in place (see
     // `VPFIDiscountFacet.sol` for the `_assertNotSanctioned` calls);
     // their regression coverage belongs in `VPFIDiscountFacetTest.t.sol`
     // alongside the rest of that facet's test fixture. Tracked for the
@@ -394,7 +394,7 @@ contract SanctionsOracleTest is RiskFacetTest {
         );
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
             abi.encode(true)
         );
         deal(mockCollateralERC20, address(diamond), 1800 ether);

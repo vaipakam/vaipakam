@@ -14,7 +14,7 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibNotificationFee} from "../src/libraries/LibNotificationFee.sol";
@@ -35,7 +35,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
  *     `AccessControlUnauthorizedAccount`.
  *   - Loan-existence guard: loanId 0 + loanId > nextLoanId revert
  *     with `InvalidLoanStatus`.
- *   - Insufficient VPFI in payer escrow: bill reverts (escrow
+ *   - Insufficient VPFI in payer vault: bill reverts (vault
  *     withdraw fails — error propagates as a clean revert).
  *   - Oracle math: at ETH=$2000, $2 fee ⇒ 1 VPFI charged
  *     (verifies the Phase 1 fixed-rate formula).
@@ -45,7 +45,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
  *     short-circuit the borrower's side.
  *   - Treasury accrual + counter increment.
  *   - No Diamond custody invariant: Diamond's VPFI balance
- *     unchanged across the bill (asset routes user-escrow → treasury
+ *     unchanged across the bill (asset routes user-vault → treasury
  *     directly).
  */
 contract NotificationFeeTest is SetupTest {
@@ -90,7 +90,7 @@ contract NotificationFeeTest is SetupTest {
         vpfiToken = VPFIToken(address(proxy));
         VPFITokenFacet(address(diamond)).setVPFIToken(address(vpfiToken));
 
-        // Cut VPFIDiscountFacet — needed for `depositVPFIToEscrow`.
+        // Cut VPFIDiscountFacet — needed for `depositVPFIToVault`.
         vpfiDiscountFacet = new VPFIDiscountFacet();
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = IDiamondCut.FacetCut({
@@ -124,16 +124,16 @@ contract NotificationFeeTest is SetupTest {
         vpfiToken.transfer(lender, 100e18);
         vpfiToken.transfer(borrower, 100e18);
 
-        // Both lender and borrower deposit VPFI into their escrows so
+        // Both lender and borrower deposit VPFI into their vaults so
         // `markNotifBilled` has something to pull.
         vm.startPrank(lender);
         vpfiToken.approve(address(diamond), type(uint256).max);
-        VPFIDiscountFacet(address(diamond)).depositVPFIToEscrow(50e18);
+        VPFIDiscountFacet(address(diamond)).depositVPFIToVault(50e18);
         vm.stopPrank();
 
         vm.startPrank(borrower);
         vpfiToken.approve(address(diamond), type(uint256).max);
-        VPFIDiscountFacet(address(diamond)).depositVPFIToEscrow(50e18);
+        VPFIDiscountFacet(address(diamond)).depositVPFIToVault(50e18);
         vm.stopPrank();
     }
 
@@ -160,23 +160,23 @@ contract NotificationFeeTest is SetupTest {
 
     // ─── Happy-path bills ────────────────────────────────────────────────
 
-    function test_markNotifBilled_LenderSide_DebitsEscrowToTreasury() public {
+    function test_markNotifBilled_LenderSide_DebitsVaultToTreasury() public {
         _scaffoldLoan(1);
-        address lenderEscrow = EscrowFactoryFacet(address(diamond))
-            .getOrCreateUserEscrow(lender);
+        address lenderVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(lender);
 
-        uint256 escrowBefore = vpfiToken.balanceOf(lenderEscrow);
+        uint256 vaultBefore = vpfiToken.balanceOf(lenderVault);
         uint256 treasuryBefore = vpfiToken.balanceOf(treasuryRecipient);
         uint256 diamondBefore = vpfiToken.balanceOf(address(diamond));
 
         vm.prank(billerBot);
         LoanFacet(address(diamond)).markNotifBilled(1, true);
 
-        // Escrow lost EXPECTED_VPFI_AMOUNT.
+        // Vault lost EXPECTED_VPFI_AMOUNT.
         assertEq(
-            escrowBefore - vpfiToken.balanceOf(lenderEscrow),
+            vaultBefore - vpfiToken.balanceOf(lenderVault),
             EXPECTED_VPFI_AMOUNT,
-            "lender escrow debited"
+            "lender vault debited"
         );
         // Treasury gained EXPECTED_VPFI_AMOUNT.
         assertEq(
@@ -197,21 +197,21 @@ contract NotificationFeeTest is SetupTest {
         assertFalse(loan.borrowerNotifBilled, "borrower flag NOT set");
     }
 
-    function test_markNotifBilled_BorrowerSide_DebitsEscrowToTreasury() public {
+    function test_markNotifBilled_BorrowerSide_DebitsVaultToTreasury() public {
         _scaffoldLoan(1);
-        address borrowerEscrow = EscrowFactoryFacet(address(diamond))
-            .getOrCreateUserEscrow(borrower);
+        address borrowerVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(borrower);
 
-        uint256 escrowBefore = vpfiToken.balanceOf(borrowerEscrow);
+        uint256 vaultBefore = vpfiToken.balanceOf(borrowerVault);
         uint256 treasuryBefore = vpfiToken.balanceOf(treasuryRecipient);
 
         vm.prank(billerBot);
         LoanFacet(address(diamond)).markNotifBilled(1, false);
 
         assertEq(
-            escrowBefore - vpfiToken.balanceOf(borrowerEscrow),
+            vaultBefore - vpfiToken.balanceOf(borrowerVault),
             EXPECTED_VPFI_AMOUNT,
-            "borrower escrow debited"
+            "borrower vault debited"
         );
         assertEq(
             vpfiToken.balanceOf(treasuryRecipient) - treasuryBefore,
@@ -228,21 +228,21 @@ contract NotificationFeeTest is SetupTest {
 
     function test_markNotifBilled_IsIdempotentOnSecondCall() public {
         _scaffoldLoan(1);
-        address lenderEscrow = EscrowFactoryFacet(address(diamond))
-            .getOrCreateUserEscrow(lender);
+        address lenderVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(lender);
 
-        // First bill — debits escrow.
+        // First bill — debits vault.
         vm.prank(billerBot);
         LoanFacet(address(diamond)).markNotifBilled(1, true);
-        uint256 escrowAfterFirst = vpfiToken.balanceOf(lenderEscrow);
+        uint256 vaultAfterFirst = vpfiToken.balanceOf(lenderVault);
 
         // Second bill — silent no-op.
         vm.prank(billerBot);
         LoanFacet(address(diamond)).markNotifBilled(1, true);
 
         assertEq(
-            vpfiToken.balanceOf(lenderEscrow),
-            escrowAfterFirst,
+            vpfiToken.balanceOf(lenderVault),
+            vaultAfterFirst,
             "second call did not double-debit"
         );
     }
@@ -275,16 +275,16 @@ contract NotificationFeeTest is SetupTest {
 
     // ─── Insufficient VPFI ───────────────────────────────────────────────
 
-    function test_markNotifBilled_RevertsWhenPayerEscrowEmpty() public {
+    function test_markNotifBilled_RevertsWhenPayerVaultEmpty() public {
         _scaffoldLoan(1);
 
-        // Empty the lender's VPFI escrow.
-        address lenderEscrow = EscrowFactoryFacet(address(diamond))
-            .getOrCreateUserEscrow(lender);
-        uint256 lenderEscrowBalance = vpfiToken.balanceOf(lenderEscrow);
+        // Empty the lender's VPFI vault.
+        address lenderVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(lender);
+        uint256 lenderVaultBalance = vpfiToken.balanceOf(lenderVault);
         vm.prank(lender);
-        VPFIDiscountFacet(address(diamond)).withdrawVPFIFromEscrow(
-            lenderEscrowBalance
+        VPFIDiscountFacet(address(diamond)).withdrawVPFIFromVault(
+            lenderVaultBalance
         );
 
         vm.prank(billerBot);
@@ -306,15 +306,15 @@ contract NotificationFeeTest is SetupTest {
             abi.encode(uint256(4000e8), uint8(8))
         );
 
-        address lenderEscrow = EscrowFactoryFacet(address(diamond))
-            .getOrCreateUserEscrow(lender);
-        uint256 escrowBefore = vpfiToken.balanceOf(lenderEscrow);
+        address lenderVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(lender);
+        uint256 vaultBefore = vpfiToken.balanceOf(lenderVault);
 
         vm.prank(billerBot);
         LoanFacet(address(diamond)).markNotifBilled(1, true);
 
         assertEq(
-            escrowBefore - vpfiToken.balanceOf(lenderEscrow),
+            vaultBefore - vpfiToken.balanceOf(lenderVault),
             5e17, // 0.5 VPFI
             "fee scales inversely with ETH price"
         );

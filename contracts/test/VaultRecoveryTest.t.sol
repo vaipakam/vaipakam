@@ -5,7 +5,7 @@ import {Test, Vm} from "forge-std/Test.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
@@ -17,23 +17,23 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 
 /**
- * @title EscrowRecoveryTest
+ * @title VaultRecoveryTest
  * @notice Tests T-054 PR-3 — stuck-ERC20 recovery flow:
- *         {EscrowFactoryFacet.recoverStuckERC20} +
- *         {EscrowFactoryFacet.disown}.
+ *         {VaultFactoryFacet.recoverStuckERC20} +
+ *         {VaultFactoryFacet.disown}.
  *
- *         Recovery cap = `max(0, balanceOf - protocolTrackedEscrowBalance)`.
+ *         Recovery cap = `max(0, balanceOf - protocolTrackedVaultBalance)`.
  *         The arithmetic forbids draining beyond the truly-unsolicited
  *         delta — that's the load-bearing safety property of this
  *         flow. Other checks (EIP-712 sig, deadline, sanctions on
  *         declaredSource) reinforce but do NOT replace the cap.
  */
-contract EscrowRecoveryTest is Test {
+contract VaultRecoveryTest is Test {
     VaipakamDiamond diamond;
     address owner;
 
     DiamondCutFacet cutFacet;
-    EscrowFactoryFacet escrowFacet;
+    VaultFactoryFacet vaultFacet;
     AdminFacet adminFacet;
     ProfileFacet profileFacet;
     AccessControlFacet accessControlFacet;
@@ -67,7 +67,7 @@ contract EscrowRecoveryTest is Test {
 
         cutFacet = new DiamondCutFacet();
         diamond = new VaipakamDiamond(owner, address(cutFacet));
-        escrowFacet = new EscrowFactoryFacet();
+        vaultFacet = new VaultFactoryFacet();
         adminFacet = new AdminFacet();
         profileFacet = new ProfileFacet();
         accessControlFacet = new AccessControlFacet();
@@ -75,9 +75,9 @@ contract EscrowRecoveryTest is Test {
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](4);
         cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(escrowFacet),
+            facetAddress: address(vaultFacet),
             action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getEscrowFactoryFacetSelectorsExtended()
+            functionSelectors: helperTest.getVaultFactoryFacetSelectorsExtended()
         });
         cuts[1] = IDiamondCut.FacetCut({
             facetAddress: address(adminFacet),
@@ -98,7 +98,7 @@ contract EscrowRecoveryTest is Test {
 
         AccessControlFacet(address(diamond)).initializeAccessControl();
         AdminFacet(address(diamond)).unpause();
-        EscrowFactoryFacet(address(diamond)).initializeEscrowImplementation();
+        VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
 
         // Wire the sanctions oracle. Recovery requires a configured
         // oracle (fail-safe revert otherwise).
@@ -122,14 +122,14 @@ contract EscrowRecoveryTest is Test {
         uint256 nonce,
         uint256 deadline
     ) internal view returns (bytes32) {
-        bytes32 ackTextHash = EscrowFactoryFacet(address(diamond)).recoveryAckTextHash();
+        bytes32 ackTextHash = VaultFactoryFacet(address(diamond)).recoveryAckTextHash();
         bytes32 typeHash = keccak256(
             "RecoveryAcknowledgment(address user,address token,address declaredSource,uint256 amount,uint256 nonce,uint256 deadline,bytes32 ackTextHash)"
         );
         bytes32 structHash = keccak256(
             abi.encode(typeHash, u, token, source, amount, nonce, deadline, ackTextHash)
         );
-        bytes32 ds = EscrowFactoryFacet(address(diamond)).recoveryDomainSeparator();
+        bytes32 ds = VaultFactoryFacet(address(diamond)).recoveryDomainSeparator();
         return keccak256(abi.encodePacked("\x19\x01", ds, structHash));
     }
 
@@ -146,13 +146,13 @@ contract EscrowRecoveryTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
-    /// @dev Direct-send dust to a user's escrow without going through
+    /// @dev Direct-send dust to a user's vault without going through
     ///      the chokepoint. Simulates an unsolicited
-    ///      `IERC20.transfer(escrow, …)` from a third party / the user
+    ///      `IERC20.transfer(vault, …)` from a third party / the user
     ///      themselves bypassing the protocol.
     function _seedUnsolicited(address u, uint256 amount) internal {
-        address escrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(u);
-        ERC20Mock(mockERC20).mint(escrow, amount);
+        address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(u);
+        ERC20Mock(mockERC20).mint(vault, amount);
     }
 
     // ─── Happy path ──────────────────────────────────────────────────────────
@@ -162,12 +162,12 @@ contract EscrowRecoveryTest is Test {
         sanctionsList.setFlagged(declaredSource, false); // clean
 
         uint256 deadline = block.timestamp + 1 hours;
-        uint256 nonce0 = EscrowFactoryFacet(address(diamond)).recoveryNonce(user);
+        uint256 nonce0 = VaultFactoryFacet(address(diamond)).recoveryNonce(user);
         bytes memory sig = _sign(mockERC20, declaredSource, 50 ether, nonce0, deadline);
 
         uint256 userBefore = ERC20(mockERC20).balanceOf(user);
         vm.prank(user);
-        EscrowFactoryFacet(address(diamond)).recoverStuckERC20(
+        VaultFactoryFacet(address(diamond)).recoverStuckERC20(
             mockERC20, declaredSource, 50 ether, deadline, sig
         );
 
@@ -178,26 +178,26 @@ contract EscrowRecoveryTest is Test {
             "user EOA balance += amount"
         );
 
-        // Escrow drained of unsolicited.
-        address escrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(user);
-        assertEq(ERC20(mockERC20).balanceOf(escrow), 0);
+        // Vault drained of unsolicited.
+        address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user);
+        assertEq(ERC20(mockERC20).balanceOf(vault), 0);
 
         // Counter unchanged (recovery is for un-tracked balance).
         assertEq(
-            EscrowFactoryFacet(address(diamond))
-                .getProtocolTrackedEscrowBalance(user, mockERC20),
+            VaultFactoryFacet(address(diamond))
+                .getProtocolTrackedVaultBalance(user, mockERC20),
             0
         );
 
         // Nonce bumped.
         assertEq(
-            EscrowFactoryFacet(address(diamond)).recoveryNonce(user),
+            VaultFactoryFacet(address(diamond)).recoveryNonce(user),
             nonce0 + 1
         );
 
         // No ban recorded.
         assertEq(
-            EscrowFactoryFacet(address(diamond)).escrowBannedSource(user),
+            VaultFactoryFacet(address(diamond)).vaultBannedSource(user),
             address(0)
         );
     }
@@ -206,17 +206,17 @@ contract EscrowRecoveryTest is Test {
         _seedUnsolicited(user, 100 ether);
         sanctionsList.setFlagged(declaredSource, false);
         uint256 deadline = block.timestamp + 1 hours;
-        uint256 nonce0 = EscrowFactoryFacet(address(diamond)).recoveryNonce(user);
+        uint256 nonce0 = VaultFactoryFacet(address(diamond)).recoveryNonce(user);
         bytes memory sig = _sign(mockERC20, declaredSource, 30 ether, nonce0, deadline);
 
         vm.prank(user);
-        EscrowFactoryFacet(address(diamond)).recoverStuckERC20(
+        VaultFactoryFacet(address(diamond)).recoverStuckERC20(
             mockERC20, declaredSource, 30 ether, deadline, sig
         );
 
-        // Remaining 70 ether stays in escrow.
-        address escrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(user);
-        assertEq(ERC20(mockERC20).balanceOf(escrow), 70 ether);
+        // Remaining 70 ether stays in vault.
+        address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user);
+        assertEq(ERC20(mockERC20).balanceOf(vault), 70 ether);
     }
 
     // ─── Cap math (load-bearing safety property) ─────────────────────────────
@@ -225,12 +225,12 @@ contract EscrowRecoveryTest is Test {
         _seedUnsolicited(user, 50 ether);
         sanctionsList.setFlagged(declaredSource, false);
         uint256 deadline = block.timestamp + 1 hours;
-        uint256 nonce0 = EscrowFactoryFacet(address(diamond)).recoveryNonce(user);
+        uint256 nonce0 = VaultFactoryFacet(address(diamond)).recoveryNonce(user);
         // Try to recover MORE than the unsolicited delta.
         bytes memory sig = _sign(mockERC20, declaredSource, 51 ether, nonce0, deadline);
         vm.prank(user);
         vm.expectRevert(IVaipakamErrors.RecoveryAmountExceedsUnsolicited.selector);
-        EscrowFactoryFacet(address(diamond)).recoverStuckERC20(
+        VaultFactoryFacet(address(diamond)).recoverStuckERC20(
             mockERC20, declaredSource, 51 ether, deadline, sig
         );
     }
@@ -241,7 +241,7 @@ contract EscrowRecoveryTest is Test {
     function testRecoverCannotTouchProtocolTracked() public {
         // Seed counter so tracked > 0.
         vm.prank(address(diamond));
-        EscrowFactoryFacet(address(diamond)).escrowDepositERC20(
+        VaultFactoryFacet(address(diamond)).vaultDepositERC20(
             user,
             mockERC20,
             500 ether
@@ -249,28 +249,28 @@ contract EscrowRecoveryTest is Test {
         // No unsolicited dust on top — `balanceOf == tracked == 500 ether`.
         sanctionsList.setFlagged(declaredSource, false);
         uint256 deadline = block.timestamp + 1 hours;
-        uint256 nonce0 = EscrowFactoryFacet(address(diamond)).recoveryNonce(user);
+        uint256 nonce0 = VaultFactoryFacet(address(diamond)).recoveryNonce(user);
         bytes memory sig = _sign(mockERC20, declaredSource, 1 ether, nonce0, deadline);
         vm.prank(user);
         vm.expectRevert(IVaipakamErrors.RecoveryAmountExceedsUnsolicited.selector);
-        EscrowFactoryFacet(address(diamond)).recoverStuckERC20(
+        VaultFactoryFacet(address(diamond)).recoverStuckERC20(
             mockERC20, declaredSource, 1 ether, deadline, sig
         );
     }
 
-    // ─── Sanctioned source → escrow ban ──────────────────────────────────────
+    // ─── Sanctioned source → vault ban ──────────────────────────────────────
 
-    function testRecoverWithSanctionedSourceBansEscrow() public {
+    function testRecoverWithSanctionedSourceBansVault() public {
         _seedUnsolicited(user, 50 ether);
-        // Snapshot the escrow address BEFORE the ban applies. The
-        // post-ban `getOrCreateUserEscrow` is Tier-1 sanctions-gated
+        // Snapshot the vault address BEFORE the ban applies. The
+        // post-ban `getOrCreateUserVault` is Tier-1 sanctions-gated
         // and would revert. `_seedUnsolicited` already created the
         // proxy.
-        address escrow = EscrowFactoryFacet(address(diamond)).getUserEscrowAddress(user);
+        address vault = VaultFactoryFacet(address(diamond)).getUserVaultAddress(user);
         sanctionsList.setFlagged(declaredSource, true); // FLAGGED
 
         uint256 deadline = block.timestamp + 1 hours;
-        uint256 nonce0 = EscrowFactoryFacet(address(diamond)).recoveryNonce(user);
+        uint256 nonce0 = VaultFactoryFacet(address(diamond)).recoveryNonce(user);
         bytes memory sig = _sign(mockERC20, declaredSource, 50 ether, nonce0, deadline);
 
         // The transaction SUCCEEDS at the EVM level — but with the
@@ -279,44 +279,44 @@ contract EscrowRecoveryTest is Test {
         // the point. Frontend reads the event to surface "banned"
         // to the user.
         vm.expectEmit(true, true, true, true);
-        emit EscrowFactoryFacet.EscrowBannedFromRecoveryAttempt(
+        emit VaultFactoryFacet.VaultBannedFromRecoveryAttempt(
             user,
             mockERC20,
             declaredSource,
             50 ether
         );
         vm.prank(user);
-        EscrowFactoryFacet(address(diamond)).recoverStuckERC20(
+        VaultFactoryFacet(address(diamond)).recoverStuckERC20(
             mockERC20, declaredSource, 50 ether, deadline, sig
         );
 
-        // Tokens stayed in escrow (no movement).
-        assertEq(ERC20(mockERC20).balanceOf(escrow), 50 ether);
+        // Tokens stayed in vault (no movement).
+        assertEq(ERC20(mockERC20).balanceOf(vault), 50 ether);
 
         // Ban recorded with the source address.
         assertEq(
-            EscrowFactoryFacet(address(diamond)).escrowBannedSource(user),
+            VaultFactoryFacet(address(diamond)).vaultBannedSource(user),
             declaredSource
         );
 
         // Nonce bumped so the same signature can't be replayed.
-        assertEq(EscrowFactoryFacet(address(diamond)).recoveryNonce(user), nonce0 + 1);
+        assertEq(VaultFactoryFacet(address(diamond)).recoveryNonce(user), nonce0 + 1);
 
         // User is now treated as sanctioned for Tier-1 entry points.
         assertTrue(ProfileFacet(address(diamond)).isSanctionedAddress(user));
     }
 
-    function testBannedEscrowAutoUnlocksWhenSourceDelisted() public {
+    function testBannedVaultAutoUnlocksWhenSourceDelisted() public {
         _seedUnsolicited(user, 50 ether);
 
         // Step 1: declare a sanctioned source → ban applied (tx
         // succeeds with no revert).
         sanctionsList.setFlagged(declaredSource, true);
         uint256 deadline = block.timestamp + 1 hours;
-        uint256 nonce0 = EscrowFactoryFacet(address(diamond)).recoveryNonce(user);
+        uint256 nonce0 = VaultFactoryFacet(address(diamond)).recoveryNonce(user);
         bytes memory sig = _sign(mockERC20, declaredSource, 50 ether, nonce0, deadline);
         vm.prank(user);
-        EscrowFactoryFacet(address(diamond)).recoverStuckERC20(
+        VaultFactoryFacet(address(diamond)).recoverStuckERC20(
             mockERC20, declaredSource, 50 ether, deadline, sig
         );
         assertTrue(ProfileFacet(address(diamond)).isSanctionedAddress(user), "banned post-recovery-attempt");
@@ -335,11 +335,11 @@ contract EscrowRecoveryTest is Test {
             mockERC20,
             declaredSource,
             10 ether,
-            EscrowFactoryFacet(address(diamond)).recoveryNonce(user),
+            VaultFactoryFacet(address(diamond)).recoveryNonce(user),
             deadline
         );
         vm.prank(user);
-        EscrowFactoryFacet(address(diamond)).recoverStuckERC20(
+        VaultFactoryFacet(address(diamond)).recoverStuckERC20(
             mockERC20, declaredSource, 10 ether, deadline, firstSig
         );
 
@@ -351,14 +351,14 @@ contract EscrowRecoveryTest is Test {
             mockERC20,
             cleanSource,
             10 ether,
-            EscrowFactoryFacet(address(diamond)).recoveryNonce(user),
+            VaultFactoryFacet(address(diamond)).recoveryNonce(user),
             deadline
         );
         vm.prank(user);
         // The exact revert is `SanctionedAddress(user)` from
         // `_assertNotSanctioned`. We just check it reverts.
         vm.expectRevert();
-        EscrowFactoryFacet(address(diamond)).recoverStuckERC20(
+        VaultFactoryFacet(address(diamond)).recoverStuckERC20(
             mockERC20, cleanSource, 10 ether, deadline, sig2
         );
     }
@@ -369,19 +369,19 @@ contract EscrowRecoveryTest is Test {
         _seedUnsolicited(user, 50 ether);
         sanctionsList.setFlagged(declaredSource, false);
         uint256 deadline = block.timestamp + 1 hours;
-        uint256 nonce0 = EscrowFactoryFacet(address(diamond)).recoveryNonce(user);
+        uint256 nonce0 = VaultFactoryFacet(address(diamond)).recoveryNonce(user);
         bytes memory sig = _sign(mockERC20, declaredSource, 25 ether, nonce0, deadline);
 
         // First call succeeds.
         vm.prank(user);
-        EscrowFactoryFacet(address(diamond)).recoverStuckERC20(
+        VaultFactoryFacet(address(diamond)).recoverStuckERC20(
             mockERC20, declaredSource, 25 ether, deadline, sig
         );
 
         // Replay with the SAME signature (now stale nonce).
         vm.prank(user);
         vm.expectRevert(IVaipakamErrors.RecoverySignatureInvalid.selector);
-        EscrowFactoryFacet(address(diamond)).recoverStuckERC20(
+        VaultFactoryFacet(address(diamond)).recoverStuckERC20(
             mockERC20, declaredSource, 25 ether, deadline, sig
         );
     }
@@ -390,14 +390,14 @@ contract EscrowRecoveryTest is Test {
         _seedUnsolicited(user, 50 ether);
         sanctionsList.setFlagged(declaredSource, false);
         uint256 deadline = block.timestamp + 1 hours;
-        uint256 nonce0 = EscrowFactoryFacet(address(diamond)).recoveryNonce(user);
+        uint256 nonce0 = VaultFactoryFacet(address(diamond)).recoveryNonce(user);
         bytes memory sig = _sign(mockERC20, declaredSource, 25 ether, nonce0, deadline);
 
         // Warp past deadline.
         vm.warp(deadline + 1);
         vm.prank(user);
         vm.expectRevert(IVaipakamErrors.RecoveryDeadlineExpired.selector);
-        EscrowFactoryFacet(address(diamond)).recoverStuckERC20(
+        VaultFactoryFacet(address(diamond)).recoverStuckERC20(
             mockERC20, declaredSource, 25 ether, deadline, sig
         );
     }
@@ -406,7 +406,7 @@ contract EscrowRecoveryTest is Test {
         _seedUnsolicited(user, 50 ether);
         sanctionsList.setFlagged(declaredSource, false);
         uint256 deadline = block.timestamp + 1 hours;
-        uint256 nonce0 = EscrowFactoryFacet(address(diamond)).recoveryNonce(user);
+        uint256 nonce0 = VaultFactoryFacet(address(diamond)).recoveryNonce(user);
 
         // Sign with the wrong key.
         bytes32 d = _digest(user, mockERC20, declaredSource, 25 ether, nonce0, deadline);
@@ -415,7 +415,7 @@ contract EscrowRecoveryTest is Test {
 
         vm.prank(user);
         vm.expectRevert(IVaipakamErrors.RecoverySignatureInvalid.selector);
-        EscrowFactoryFacet(address(diamond)).recoverStuckERC20(
+        VaultFactoryFacet(address(diamond)).recoverStuckERC20(
             mockERC20, declaredSource, 25 ether, deadline, badSig
         );
     }
@@ -423,30 +423,30 @@ contract EscrowRecoveryTest is Test {
     function testRecoverRevertsOnZeroAmount() public {
         sanctionsList.setFlagged(declaredSource, false);
         uint256 deadline = block.timestamp + 1 hours;
-        uint256 nonce0 = EscrowFactoryFacet(address(diamond)).recoveryNonce(user);
+        uint256 nonce0 = VaultFactoryFacet(address(diamond)).recoveryNonce(user);
         bytes memory sig = _sign(mockERC20, declaredSource, 0, nonce0, deadline);
         vm.prank(user);
         vm.expectRevert(IVaipakamErrors.RecoveryAmountZero.selector);
-        EscrowFactoryFacet(address(diamond)).recoverStuckERC20(
+        VaultFactoryFacet(address(diamond)).recoverStuckERC20(
             mockERC20, declaredSource, 0, deadline, sig
         );
     }
 
-    function testRecoverRevertsWhenUserHasNoEscrow() public {
-        // user2 never created an escrow, never deposited.
+    function testRecoverRevertsWhenUserHasNoVault() public {
+        // user2 never created an vault, never deposited.
         sanctionsList.setFlagged(declaredSource, false);
         uint256 deadline = block.timestamp + 1 hours;
         // Sign with user's key — but call from user2 → signer mismatch.
         // We need to sign with user2's key; but user2 has no key in
-        // this test. Use a fresh key + address to test the no-escrow
+        // this test. Use a fresh key + address to test the no-vault
         // path.
         uint256 freshKey = uint256(0xCAFE);
         address fresh = vm.addr(freshKey);
-        uint256 nonce0 = EscrowFactoryFacet(address(diamond)).recoveryNonce(fresh);
+        uint256 nonce0 = VaultFactoryFacet(address(diamond)).recoveryNonce(fresh);
         bytes32 d = keccak256(
             abi.encodePacked(
                 "\x19\x01",
-                EscrowFactoryFacet(address(diamond)).recoveryDomainSeparator(),
+                VaultFactoryFacet(address(diamond)).recoveryDomainSeparator(),
                 keccak256(
                     abi.encode(
                         keccak256(
@@ -458,7 +458,7 @@ contract EscrowRecoveryTest is Test {
                         uint256(1 ether),
                         nonce0,
                         deadline,
-                        EscrowFactoryFacet(address(diamond)).recoveryAckTextHash()
+                        VaultFactoryFacet(address(diamond)).recoveryAckTextHash()
                     )
                 )
             )
@@ -466,8 +466,8 @@ contract EscrowRecoveryTest is Test {
         (uint8 v, bytes32 r, bytes32 ss) = vm.sign(freshKey, d);
         bytes memory sig = abi.encodePacked(r, ss, v);
         vm.prank(fresh);
-        vm.expectRevert(IVaipakamErrors.RecoveryUserHasNoEscrow.selector);
-        EscrowFactoryFacet(address(diamond)).recoverStuckERC20(
+        vm.expectRevert(IVaipakamErrors.RecoveryUserHasNoVault.selector);
+        VaultFactoryFacet(address(diamond)).recoverStuckERC20(
             mockERC20, declaredSource, 1 ether, deadline, sig
         );
     }
@@ -478,11 +478,11 @@ contract EscrowRecoveryTest is Test {
         ProfileFacet(address(diamond)).setSanctionsOracle(address(0));
 
         uint256 deadline = block.timestamp + 1 hours;
-        uint256 nonce0 = EscrowFactoryFacet(address(diamond)).recoveryNonce(user);
+        uint256 nonce0 = VaultFactoryFacet(address(diamond)).recoveryNonce(user);
         bytes memory sig = _sign(mockERC20, declaredSource, 25 ether, nonce0, deadline);
         vm.prank(user);
         vm.expectRevert(IVaipakamErrors.SanctionsOracleUnavailable.selector);
-        EscrowFactoryFacet(address(diamond)).recoverStuckERC20(
+        VaultFactoryFacet(address(diamond)).recoverStuckERC20(
             mockERC20, declaredSource, 25 ether, deadline, sig
         );
     }
@@ -492,11 +492,11 @@ contract EscrowRecoveryTest is Test {
         sanctionsList.setRevertOnRead(true); // simulate outage
 
         uint256 deadline = block.timestamp + 1 hours;
-        uint256 nonce0 = EscrowFactoryFacet(address(diamond)).recoveryNonce(user);
+        uint256 nonce0 = VaultFactoryFacet(address(diamond)).recoveryNonce(user);
         bytes memory sig = _sign(mockERC20, declaredSource, 25 ether, nonce0, deadline);
         vm.prank(user);
         vm.expectRevert(IVaipakamErrors.SanctionsOracleUnavailable.selector);
-        EscrowFactoryFacet(address(diamond)).recoverStuckERC20(
+        VaultFactoryFacet(address(diamond)).recoverStuckERC20(
             mockERC20, declaredSource, 25 ether, deadline, sig
         );
     }
@@ -507,42 +507,42 @@ contract EscrowRecoveryTest is Test {
         _seedUnsolicited(user, 75 ether);
 
         vm.expectEmit(true, true, false, true);
-        emit EscrowFactoryFacet.TokenDisowned(user, mockERC20, 75 ether, block.number);
+        emit VaultFactoryFacet.TokenDisowned(user, mockERC20, 75 ether, block.number);
         vm.prank(user);
-        EscrowFactoryFacet(address(diamond)).disown(mockERC20);
+        VaultFactoryFacet(address(diamond)).disown(mockERC20);
 
-        // No state change: tokens stay in escrow.
-        address escrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(user);
-        assertEq(ERC20(mockERC20).balanceOf(escrow), 75 ether);
+        // No state change: tokens stay in vault.
+        address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user);
+        assertEq(ERC20(mockERC20).balanceOf(vault), 75 ether);
 
         // Counter untouched.
         assertEq(
-            EscrowFactoryFacet(address(diamond))
-                .getProtocolTrackedEscrowBalance(user, mockERC20),
+            VaultFactoryFacet(address(diamond))
+                .getProtocolTrackedVaultBalance(user, mockERC20),
             0
         );
     }
 
-    function testDisownRevertsWhenNoEscrow() public {
+    function testDisownRevertsWhenNoVault() public {
         uint256 freshKey = uint256(0xDEAD);
         address fresh = vm.addr(freshKey);
         vm.prank(fresh);
-        vm.expectRevert(IVaipakamErrors.RecoveryUserHasNoEscrow.selector);
-        EscrowFactoryFacet(address(diamond)).disown(mockERC20);
+        vm.expectRevert(IVaipakamErrors.RecoveryUserHasNoVault.selector);
+        VaultFactoryFacet(address(diamond)).disown(mockERC20);
     }
 
     function testDisownReportsZeroWhenNoUnsolicited() public {
         // User has tracked balance but no dust → observedAmount = 0.
         vm.prank(address(diamond));
-        EscrowFactoryFacet(address(diamond)).escrowDepositERC20(
+        VaultFactoryFacet(address(diamond)).vaultDepositERC20(
             user,
             mockERC20,
             10 ether
         );
 
         vm.expectEmit(true, true, false, true);
-        emit EscrowFactoryFacet.TokenDisowned(user, mockERC20, 0, block.number);
+        emit VaultFactoryFacet.TokenDisowned(user, mockERC20, 0, block.number);
         vm.prank(user);
-        EscrowFactoryFacet(address(diamond)).disown(mockERC20);
+        VaultFactoryFacet(address(diamond)).disown(mockERC20);
     }
 }

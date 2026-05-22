@@ -7,13 +7,13 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibRevert} from "./LibRevert.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
-import {EscrowFactoryFacet} from "../facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 
 /// @title LibFacet
 /// @notice Shared facet-level helpers previously duplicated across
 ///         PrecloseFacet and EarlyWithdrawalFacet. Consolidating them here
-///         reduces bytecode and keeps treasury / escrow / cross-facet-call
+///         reduces bytecode and keeps treasury / vault / cross-facet-call
 ///         behavior in lockstep between the two settlement paths.
 library LibFacet {
     using SafeERC20 for IERC20;
@@ -54,7 +54,7 @@ library LibFacet {
     /// @dev Canonical treasury-accrual sink. Use at every fee site — whether
     ///      the caller pushes via `safeTransfer(treasury, x)`,
     ///      `safeTransferFrom(payer, treasury, x)`, or routes through an
-    ///      escrow's `escrowWithdrawERC20(..., treasury, x)`. This keeps the
+    ///      vault's `vaultWithdrawERC20(..., treasury, x)`. This keeps the
     ///      `treasuryBalances` invariant self-consistent with
     ///      `TreasuryFacet.claimTreasuryFees` (treasuryBalances = unclaimed
     ///      IOU held at the Diamond) and funnels the analytics log via
@@ -116,20 +116,20 @@ library LibFacet {
         return (amount * price) / (10 ** decimals);
     }
 
-    /// @dev Resolves (and lazily deploys) the per-user escrow proxy.
-    ///      Wraps the diamond's own `getOrCreateUserEscrow` selector so
+    /// @dev Resolves (and lazily deploys) the per-user vault proxy.
+    ///      Wraps the diamond's own `getOrCreateUserVault` selector so
     ///      failure data is bubbled via LibRevert.
-    function getOrCreateEscrow(address user) internal returns (address) {
+    function getOrCreateVault(address user) internal returns (address) {
         (bool success, bytes memory data) = address(this).call(
             abi.encodeWithSelector(
-                EscrowFactoryFacet.getOrCreateUserEscrow.selector,
+                VaultFactoryFacet.getOrCreateUserVault.selector,
                 user
             )
         );
         LibRevert.bubbleOnFailureTyped(
             success,
             data,
-            IVaipakamErrors.EscrowResolutionFailed.selector
+            IVaipakamErrors.VaultResolutionFailed.selector
         );
         return abi.decode(data, (address));
     }
@@ -153,7 +153,7 @@ library LibFacet {
         return ret;
     }
 
-    /// @dev Deposits `amount` of `asset` into the new lender's escrow and
+    /// @dev Deposits `amount` of `asset` into the new lender's vault and
     ///      records it in `heldForLender`. No-op on zero.
     function depositForNewLender(
         address asset,
@@ -162,8 +162,8 @@ library LibFacet {
         uint256 loanId
     ) internal {
         if (amount == 0) return;
-        address escrow = getOrCreateEscrow(newLender);
-        IERC20(asset).safeTransfer(escrow, amount);
+        address vault = getOrCreateVault(newLender);
+        IERC20(asset).safeTransfer(vault, amount);
         LibVaipakam.storageSlot().heldForLender[loanId] += amount;
     }
 
@@ -198,13 +198,13 @@ library LibFacet {
 
     /// @dev T-037 — `safeTransferFrom`-based variant of
     ///      {depositForNewLender}: pulls `amount` directly from `payer`
-    ///      into the new lender's escrow, skipping the Diamond. Same
+    ///      into the new lender's vault, skipping the Diamond. Same
     ///      `heldForLender` accounting as the Diamond-resident variant.
     ///      No-op on zero.
     ///
     ///      Routed through the cross-payer chokepoint so the
-    ///      protocolTrackedEscrowBalance counter ticks under
-    ///      `newLender` (the escrow owner). Replaces the prior direct
+    ///      protocolTrackedVaultBalance counter ticks under
+    ///      `newLender` (the vault owner). Replaces the prior direct
     ///      `safeTransferFrom`.
     function depositFromPayerForLender(
         address asset,
@@ -216,13 +216,13 @@ library LibFacet {
         if (amount == 0) return;
         crossFacetCall(
             abi.encodeWithSelector(
-                EscrowFactoryFacet.escrowDepositERC20From.selector,
+                VaultFactoryFacet.vaultDepositERC20From.selector,
                 payer,
                 newLender,
                 asset,
                 amount
             ),
-            IVaipakamErrors.EscrowDepositFailed.selector
+            IVaipakamErrors.VaultDepositFailed.selector
         );
         LibVaipakam.storageSlot().heldForLender[loanId] += amount;
     }

@@ -13,12 +13,12 @@ import {Handler} from "./Handler.sol";
  *         repayment, default, and claim. Total token supply of mock USDC
  *         and WETH must stay fixed at the initial mint — any deviation
  *         would imply silent creation or loss of funds somewhere in the
- *         diamond / escrow path.
+ *         diamond / vault path.
  *
  *         We do not try to pin per-address balances (interest, fees, and
  *         liquidation bonuses move them around). Instead we rely on total
  *         supply conservation, which is sufficient to catch the failure
- *         modes this suite cares about (ghost mints, escrowed-and-forgotten
+ *         modes this suite cares about (ghost mints, vaulted-and-forgotten
  *         balances that leak out of the actor set, etc).
  */
 contract FundsConservationInvariant is Test {
@@ -58,7 +58,7 @@ contract FundsConservationInvariant is Test {
     }
 
     /// @notice Sum of balances across the closed system (actors + diamond +
-    ///         their escrows) equals the initial mint. Any drift means
+    ///         their vaults) equals the initial mint. Any drift means
     ///         tokens escaped the tracked perimeter.
     function invariant_UsdcClosedSystem() public view {
         uint256 total = _sumBalances(base.mockUSDC());
@@ -79,7 +79,7 @@ contract FundsConservationInvariant is Test {
             total += t.balanceOf(lender);
             total += t.balanceOf(borrower);
         }
-        // totalSupply covers whatever is held in per-user escrows even if we
+        // totalSupply covers whatever is held in per-user vaults even if we
         // do not enumerate them explicitly.
         uint256 outsideTrackedActors = t.totalSupply() - total;
         total += outsideTrackedActors;

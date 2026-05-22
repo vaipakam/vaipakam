@@ -657,21 +657,21 @@ contract MetricsFacet {
         averageLTV = ltvCount == 0 ? 0 : ltvSum / ltvCount;
     }
 
-    // ─── 4. NFT & Escrow Metrics ────────────────────────────────────────────
+    // ─── 4. NFT & Vault Metrics ────────────────────────────────────────────
 
     /**
-     * @notice NFT/escrow activity summary. Iterates the active-loan list
+     * @notice NFT/vault activity summary. Iterates the active-loan list
      *         (bounded by `activeLoansCount`). A "rental" here is any
      *         active loan whose principal (lending) asset is an NFT.
      *         `totalRentalVolumeNumeraire` is the current-term
      *         numeraire-quoted price of each active rental's principal where
      *         the `prepayAsset` has a live feed.
      */
-    function getEscrowStats()
+    function getVaultStats()
         external
         view
         returns (
-            uint256 totalNFTsInEscrow,
+            uint256 totalNFTsInVault,
             uint256 activeRentalsCount,
             uint256 totalRentalVolumeNumeraire
         )
@@ -686,10 +686,10 @@ contract MetricsFacet {
                 if (l.prepayAsset != address(0) && l.prepayAmount > 0) {
                     totalRentalVolumeNumeraire += _priceAmount(l.prepayAsset, l.prepayAmount);
                 }
-                totalNFTsInEscrow += 1;
+                totalNFTsInVault += 1;
             }
             if (l.collateralAssetType != LibVaipakam.AssetType.ERC20) {
-                totalNFTsInEscrow += 1;
+                totalNFTsInVault += 1;
             }
         }
     }
@@ -712,9 +712,9 @@ contract MetricsFacet {
     }
 
     /// @notice Count of active loan legs whose contract matches `collection`.
-    ///         Counter-backed via `nftsInEscrowByCollection` — O(1).
-    function getTotalNFTsInEscrowByCollection(address collection) external view returns (uint256) {
-        return LibVaipakam.storageSlot().nftsInEscrowByCollection[collection];
+    ///         Counter-backed via `nftsInVaultByCollection` — O(1).
+    function getTotalNFTsInVaultByCollection(address collection) external view returns (uint256) {
+        return LibVaipakam.storageSlot().nftsInVaultByCollection[collection];
     }
 
     // ─── 6. User-Specific Metrics ───────────────────────────────────────────
@@ -826,9 +826,9 @@ contract MetricsFacet {
      * @notice Token IDs of Vaipakam position NFTs representing NFT-asset legs
      *         that currently belong to `user`.
      * @dev O(activeLoansCount) — iterates the active-loan list. Does not
-     *      reach into per-user escrow proxies.
+     *      reach into per-user vault proxies.
      */
-    function getUserNFTsInEscrow(address user) external view returns (uint256[] memory tokenIds) {
+    function getUserNFTsInVault(address user) external view returns (uint256[] memory tokenIds) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // Walk the user's lifetime loan index, filter to active +
         // NFT-leg. O(user's loan count).
@@ -1338,7 +1338,7 @@ contract MetricsFacet {
 
     /// @notice Live snapshot of everything an NFT-holder needs to know about
     ///         the position represented by a Vaipakam position NFT — the
-    ///         loan's current state, what's locked in escrow against it,
+    ///         loan's current state, what's locked in vault against it,
     ///         and what (if anything) is claimable right now.
     /// @dev    Pure view. Consumed by:
     ///           1. `VaipakamNFTFacet.tokenURI` for marketplace metadata
@@ -1369,8 +1369,8 @@ contract MetricsFacet {
         uint8 collateralDecimals;
         uint256 collateralAmount;
         LibVaipakam.AssetType collateralAssetType;
-        // Live escrow + claim state.
-        uint256 collateralLockedNow;     // collateral still in borrower escrow against this loan; 0 once claimed/forfeit
+        // Live vault + claim state.
+        uint256 collateralLockedNow;     // collateral still in borrower vault against this loan; 0 once claimed/forfeit
         address claimableAsset;          // asset the holder receives at terminal (0x0 if none)
         uint256 claimableAmount;
         bool    isClaimable;             // !claim.claimed && something to claim
@@ -1456,7 +1456,7 @@ contract MetricsFacet {
             // marketplace card.
             s.isClaimable = claim.asset != address(0) && !claim.claimed;
 
-            // Borrower-side: live escrow custody + pending VPFI rebate.
+            // Borrower-side: live vault custody + pending VPFI rebate.
             if (!s.isLender) {
                 LibVaipakam.BorrowerLifRebate storage r =
                     vs.borrowerLifRebate[s.loanId];
@@ -1464,11 +1464,11 @@ contract MetricsFacet {
                 s.vpfiRebatePending = r.rebateAmount;
             }
 
-            // Locked-collateral signal: still in escrow against this loan
+            // Locked-collateral signal: still in vault against this loan
             // until terminal + claimed/forfeit. Conservative: shows
             // `loan.collateralAmount` while loan is Active or
             // FallbackPending; zero once the loan is in any terminal
-            // state (the actual escrow accounting at terminal is
+            // state (the actual vault accounting at terminal is
             // governed by the swap / claim path and not directly
             // reflected by a single mapping read).
             if (

@@ -84,7 +84,7 @@ contract DeployerZeroRolesTest is Test {
         ALL_ROLES.push(LibAccessControl.KYC_ADMIN_ROLE);
         ALL_ROLES.push(LibAccessControl.ORACLE_ADMIN_ROLE);
         ALL_ROLES.push(LibAccessControl.RISK_ADMIN_ROLE);
-        ALL_ROLES.push(LibAccessControl.ESCROW_ADMIN_ROLE);
+        ALL_ROLES.push(LibAccessControl.VAULT_ADMIN_ROLE);
         ALL_ROLES.push(LibAccessControl.WATCHER_ROLE);
         ALL_ROLES.push(LibAccessControl.NOTIF_BILLER_ROLE);
         ALL_ROLES.push(LibAccessControl.KEEPER_ROLE);
@@ -130,7 +130,7 @@ contract DeployerZeroRolesTest is Test {
         ac.grantRole(LibAccessControl.KYC_ADMIN_ROLE, adminTimelock);
         ac.grantRole(LibAccessControl.ORACLE_ADMIN_ROLE, adminTimelock);
         ac.grantRole(LibAccessControl.RISK_ADMIN_ROLE, adminTimelock);
-        ac.grantRole(LibAccessControl.ESCROW_ADMIN_ROLE, adminTimelock);
+        ac.grantRole(LibAccessControl.VAULT_ADMIN_ROLE, adminTimelock);
         ac.grantRole(LibAccessControl.WATCHER_ROLE, watcherBot);
         ac.grantRole(LibAccessControl.NOTIF_BILLER_ROLE, notifBillerBot);
         ac.grantRole(LibAccessControl.KEEPER_ROLE, keeperBot);
@@ -138,7 +138,7 @@ contract DeployerZeroRolesTest is Test {
         ac.renounceRole(LibAccessControl.KEEPER_ROLE, deployer);
         ac.renounceRole(LibAccessControl.NOTIF_BILLER_ROLE, deployer);
         ac.renounceRole(LibAccessControl.WATCHER_ROLE, deployer);
-        ac.renounceRole(LibAccessControl.ESCROW_ADMIN_ROLE, deployer);
+        ac.renounceRole(LibAccessControl.VAULT_ADMIN_ROLE, deployer);
         ac.renounceRole(LibAccessControl.RISK_ADMIN_ROLE, deployer);
         ac.renounceRole(LibAccessControl.ORACLE_ADMIN_ROLE, deployer);
         ac.renounceRole(LibAccessControl.KYC_ADMIN_ROLE, deployer);
@@ -178,7 +178,7 @@ contract DeployerZeroRolesTest is Test {
         assertTrue(ac.hasRole(LibAccessControl.KYC_ADMIN_ROLE, adminTimelock));
         assertTrue(ac.hasRole(LibAccessControl.ORACLE_ADMIN_ROLE, adminTimelock));
         assertTrue(ac.hasRole(LibAccessControl.RISK_ADMIN_ROLE, adminTimelock));
-        assertTrue(ac.hasRole(LibAccessControl.ESCROW_ADMIN_ROLE, adminTimelock));
+        assertTrue(ac.hasRole(LibAccessControl.VAULT_ADMIN_ROLE, adminTimelock));
         assertTrue(ac.hasRole(LibAccessControl.WATCHER_ROLE, watcherBot));
         assertTrue(ac.hasRole(LibAccessControl.NOTIF_BILLER_ROLE, notifBillerBot));
     }
@@ -233,7 +233,7 @@ contract DeployerZeroRolesTest is Test {
         AccessControlFacet ac = AccessControlFacet(address(diamond));
         assertFalse(ac.hasRole(LibAccessControl.DEFAULT_ADMIN_ROLE, pauserMultisig));
         assertFalse(ac.hasRole(LibAccessControl.ADMIN_ROLE, pauserMultisig));
-        assertFalse(ac.hasRole(LibAccessControl.ESCROW_ADMIN_ROLE, pauserMultisig));
+        assertFalse(ac.hasRole(LibAccessControl.VAULT_ADMIN_ROLE, pauserMultisig));
     }
 
     /// @notice Timelock must NOT hold DEFAULT_ADMIN — only governance

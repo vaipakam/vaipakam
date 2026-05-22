@@ -1,4 +1,4 @@
-// src/VaipakamEscrowImplementation.sol
+// src/VaipakamVaultImplementation.sol
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
@@ -13,22 +13,22 @@ import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IERC4907} from "./interfaces/IERC4907.sol";
-import {EscrowFactoryFacet} from "./facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "./facets/VaultFactoryFacet.sol";
 
 /**
- * @title VaipakamEscrowImplementation
+ * @title VaipakamVaultImplementation
  * @author Vaipakam Developer Team
- * @notice This is the upgradable implementation for per-user escrow contracts in the Vaipakam platform.
+ * @notice This is the upgradable implementation for per-user vault contracts in the Vaipakam platform.
  * @dev This contract uses UUPS for upgradeability and Ownable for access control (owned by the Diamond).
  *      It handles ERC20 deposits/withdrawals and NFT (ERC721/1155) deposits/withdrawals.
  *      Supports ERC-4907 for rentable NFTs: setUser, userOf, userExpires (calls on external NFT contracts).
  *      Implements IERC721Receiver and IERC1155Receiver for safe transfers.
- *      For ERC721 rentals: Escrow calls setUser without necessarily holding the NFT (assumes operator approval).
+ *      For ERC721 rentals: Vault calls setUser without necessarily holding the NFT (assumes operator approval).
  *      For ERC1155: Holds tokens, calls setUser if the contract supports IERC4907 (try-catch to handle non-support).
  *      Custom errors for gas efficiency. No reentrancy as asset ops are atomic.
  *      Initialize sets owner to Diamond. Expand for Phase 2 (e.g., multi-asset batches).
  */
-contract VaipakamEscrowImplementation is
+contract VaipakamVaultImplementation is
     UUPSUpgradeable,
     OwnableUpgradeable,
     ERC165Upgradeable,
@@ -39,8 +39,8 @@ contract VaipakamEscrowImplementation is
     address private DIAMOND;
     address private IMPLEMENTATION_ADDRESS;
 
-    /// @dev Escrow-side rental wrapper state. Authoritative for this platform:
-    ///      external integrators SHOULD query the escrow (via the factory
+    /// @dev Vault-side rental wrapper state. Authoritative for this platform:
+    ///      external integrators SHOULD query the vault (via the factory
     ///      wrappers) rather than the underlying NFT, since not all rented
     ///      NFTs implement IERC4907. One (nftContract, tokenId) slot holds a
     ///      list of concurrent rentals so ERC-1155 can expose the active
@@ -68,9 +68,9 @@ contract VaipakamEscrowImplementation is
     ///      when packed into a {RentalEntry}. Replaces
     ///      `"quantity overflow"`.
     error QuantityOverflow();
-    /// @dev An NFT (ERC-721 / ERC-1155) was pushed into this escrow via a
+    /// @dev An NFT (ERC-721 / ERC-1155) was pushed into this vault via a
     ///      `safeTransferFrom` whose operator was neither the Diamond nor
-    ///      this escrow itself. Direct user-initiated transfers are
+    ///      this vault itself. Direct user-initiated transfers are
     ///      rejected because every protocol-tracked deposit is mediated by
     ///      the Diamond — anything else would arrive without a matching
     ///      ledger entry and could only be recovered by an admin sweep.
@@ -89,7 +89,7 @@ contract VaipakamEscrowImplementation is
     }
 
     /**
-     * @notice Initializes the escrow implementation.
+     * @notice Initializes the vault implementation.
      * @dev Sets the owner to the Diamond proxy. Called on deployment.
      *      Uses initializer modifier to prevent re-init.
      */
@@ -104,7 +104,7 @@ contract VaipakamEscrowImplementation is
     }
 
     /**
-     * @notice Deposits ERC-20 tokens into this escrow.
+     * @notice Deposits ERC-20 tokens into this vault.
      * @dev Safe transfer from caller. Callable by owner (Diamond/facets).
      * @param token The ERC-20 token address.
      * @param amount The amount to deposit.
@@ -114,18 +114,18 @@ contract VaipakamEscrowImplementation is
     }
 
     // /**
-    //  * @notice Gets a user's escrow proxy.
-    //  * @dev View function to get user's escrow proxy address.
+    //  * @notice Gets a user's vault proxy.
+    //  * @dev View function to get user's vault proxy address.
     //  * @param user The user address.
-    //  * @return proxy The user's escrow proxy address.
+    //  * @return proxy The user's vault proxy address.
     //  */
-    // function getUserEscrow(address user) public returns (address proxy) {
+    // function getUserVault(address user) public returns (address proxy) {
     //     LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-    //     proxy = s.userVaipakamEscrows[user];
+    //     proxy = s.userVaipakamVaults[user];
     // }
 
     /**
-     * @notice Withdraws ERC-20 tokens from this escrow to a recipient.
+     * @notice Withdraws ERC-20 tokens from this vault to a recipient.
      * @dev Safe transfer. Callable by owner (Diamond/facets).
      * @param token The ERC-20 token address.
      * @param recipient The recipient address.
@@ -140,7 +140,7 @@ contract VaipakamEscrowImplementation is
     }
 
     /**
-     * @notice Deposits an ERC-721 NFT into this escrow.
+     * @notice Deposits an ERC-721 NFT into this vault.
      * @dev Safe transfer from caller. Callable by owner.
      * @param nftContract The NFT contract address.
      * @param tokenId The token ID.
@@ -157,7 +157,7 @@ contract VaipakamEscrowImplementation is
     }
 
     /**
-     * @notice Withdraws an ERC-721 NFT from this escrow to a recipient.
+     * @notice Withdraws an ERC-721 NFT from this vault to a recipient.
      * @dev Safe transfer. Callable by owner.
      * @param nftContract The NFT contract address.
      * @param tokenId The token ID.
@@ -176,7 +176,7 @@ contract VaipakamEscrowImplementation is
     }
 
     /**
-     * @notice Deposits ERC-1155 tokens into this escrow.
+     * @notice Deposits ERC-1155 tokens into this vault.
      * @dev Safe transfer from caller. Callable by owner.
      * @param nftContract The NFT contract address.
      * @param tokenId The token ID.
@@ -197,7 +197,7 @@ contract VaipakamEscrowImplementation is
     }
 
     /**
-     * @notice Withdraws ERC-1155 tokens from this escrow to a recipient.
+     * @notice Withdraws ERC-1155 tokens from this vault to a recipient.
      * @dev Safe transfer. Callable by owner.
      * @param nftContract The NFT contract address.
      * @param tokenId The token ID.
@@ -220,7 +220,7 @@ contract VaipakamEscrowImplementation is
     }
 
     /**
-     * @notice Approves this escrow as operator for an ERC-721 NFT (for rentals without holding).
+     * @notice Approves this vault as operator for an ERC-721 NFT (for rentals without holding).
      * @dev Calls IERC721.approve. Callable by owner (facets for lender offers).
      * @param nftContract The NFT contract address.
      * @param tokenId The token ID.
@@ -234,7 +234,7 @@ contract VaipakamEscrowImplementation is
 
     /**
      * @notice Gets an offer amount from LibVaipakam via Diamond call.
-     * @dev Example to read shared storage from escrow context.
+     * @dev Example to read shared storage from vault context.
      * @param offerId The offer ID.
      * @return amount The offer amount.
      */
@@ -243,7 +243,7 @@ contract VaipakamEscrowImplementation is
     ) external view returns (uint256 amount) {
         (bool success, bytes memory result) = DIAMOND.staticcall(
             abi.encodeWithSelector(
-                EscrowFactoryFacet.getOfferAmount.selector,
+                VaultFactoryFacet.getOfferAmount.selector,
                 offerId
             )
         );
@@ -260,7 +260,7 @@ contract VaipakamEscrowImplementation is
      * @dev Calls IERC4907.setUser on the external NFT contract.
      *      Uses try-catch to handle non-supporting contracts (reverts if fail).
      *      For ERC721: Assumes prior approval as operator.
-     *      For ERC1155: Assumes held in escrow.
+     *      For ERC1155: Assumes held in vault.
      *      Callable by owner (facets for loan acceptance).
      * @param nftContract The NFT contract address.
      * @param tokenId The token ID.
@@ -296,7 +296,7 @@ contract VaipakamEscrowImplementation is
 
     /**
      * @notice Records an ERC-1155 rental alongside any other active rentals
-     *         already held in this escrow for the same (nftContract, tokenId).
+     *         already held in this vault for the same (nftContract, tokenId).
      * @dev Aggregate-capable variant of {setUser} used for partial-quantity
      *      ERC-1155 rentals. If `user` already has an entry, its row is
      *      replaced; otherwise a new row is appended. Passing `quantity == 0`
@@ -497,7 +497,7 @@ contract VaipakamEscrowImplementation is
     ///      Each future storage var added to this contract must decrement
     ///      the array length by the number of slots it consumes so the
     ///      overall layout footprint stays constant. Without this gap,
-    ///      a Phase-2 feature that introduces new escrow state would
+    ///      a Phase-2 feature that introduces new vault state would
     ///      collide with storage slots already in use on per-user
     ///      ERC1967 proxies deployed during Phase 1. 50 slots ≈ room
     ///      for ~50 uint256-sized fields (or proportionally fewer

@@ -8,7 +8,7 @@ import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
@@ -123,18 +123,18 @@ contract HelperTest {
         // T-048 — layout-resilient treasury IOU writer used by
         // TreasuryFacetTest.
         selectors[51] = TestMutatorFacet.setTreasuryBalanceRaw.selector;
-        // Layout-resilient sale/offset/escrow-version/min-partial
+        // Layout-resilient sale/offset/vault-version/min-partial
         // mutators used by the LoanFacet, RefinanceFacet, OfferFacet,
-        // EscrowFactoryFacet and RepayFacet test suites — replaces
+        // VaultFactoryFacet and RepayFacet test suites — replaces
         // the previous `vm.store` + hardcoded slot offset pattern.
         selectors[52] = TestMutatorFacet.setSaleOfferToLoanIdRaw.selector;
         selectors[53] = TestMutatorFacet.setOffsetOfferToLoanIdRaw.selector;
-        selectors[54] = TestMutatorFacet.setEscrowVersionRaw.selector;
+        selectors[54] = TestMutatorFacet.setVaultVersionRaw.selector;
         selectors[55] = TestMutatorFacet.setMinPartialBpsRaw.selector;
-        // Layout-resilient read of `s.userVaipakamEscrows[user]` for
-        // tests that need a user's escrow address bypassing the
+        // Layout-resilient read of `s.userVaipakamVaults[user]` for
+        // tests that need a user's vault address bypassing the
         // mandatory-version check on the production getter.
-        selectors[56] = TestMutatorFacet.getUserVaipakamEscrowRaw.selector;
+        selectors[56] = TestMutatorFacet.getUserVaipakamVaultRaw.selector;
         // FlashLoanLiquidationPath.md — flip the discount-path master
         // kill-switch in fixtures that don't cut ConfigFacet.
         selectors[57] = TestMutatorFacet.setDiscountPathEnabledRaw.selector;
@@ -151,10 +151,10 @@ contract HelperTest {
         // to a single value (e.g. 8500) and preserve legacy HF math
         // that assumed an 85% per-asset threshold.
         selectors[59] = TestMutatorFacet.setTierLiquidationLtvBpsAllRaw.selector;
-        // PR5 — direct write to `protocolTrackedEscrowBalance` so
+        // PR5 — direct write to `protocolTrackedVaultBalance` so
         // execution-body tests can scaffold loans without running
         // the `initiateLoan` flow.
-        selectors[60] = TestMutatorFacet.setProtocolTrackedEscrowBalanceRaw.selector;
+        selectors[60] = TestMutatorFacet.setProtocolTrackedVaultBalanceRaw.selector;
         // EC-003 Phase 1 — direct write to `fallbackSnapshot[loanId]`
         // so FallbackPending fixtures can scaffold the snap (lender /
         // treasury / borrower entitlements + active flag) without
@@ -177,7 +177,7 @@ contract HelperTest {
     {
         selectors = new bytes4[](4);
         selectors[0] = OfferCreateFacet.createOffer.selector;
-        selectors[1] = OfferCreateFacet.getUserEscrow.selector;
+        selectors[1] = OfferCreateFacet.getUserVault.selector;
         // Phase 8b.1 Permit2 addition.
         selectors[2] = OfferCreateFacet.createOfferWithPermit.selector;
         // Cross-facet entry consumed by PrecloseFacet.offsetWithNewOffer
@@ -380,46 +380,46 @@ contract HelperTest {
         return selectors;
     }
 
-    function getEscrowFactoryFacetSelectors()
+    function getVaultFactoryFacetSelectors()
         public
         pure
         returns (bytes4[] memory selectors)
     {
         selectors = new bytes4[](28);
-        selectors[0] = EscrowFactoryFacet
-            .initializeEscrowImplementation
+        selectors[0] = VaultFactoryFacet
+            .initializeVaultImplementation
             .selector;
-        selectors[1] = EscrowFactoryFacet.getOrCreateUserEscrow.selector;
-        selectors[2] = EscrowFactoryFacet.upgradeEscrowImplementation.selector;
-        selectors[3] = EscrowFactoryFacet.escrowDepositERC20.selector;
-        selectors[4] = EscrowFactoryFacet.escrowWithdrawERC20.selector;
-        selectors[5] = EscrowFactoryFacet.escrowDepositERC721.selector;
-        selectors[6] = EscrowFactoryFacet.escrowWithdrawERC721.selector;
-        selectors[7] = EscrowFactoryFacet.escrowDepositERC1155.selector;
-        selectors[8] = EscrowFactoryFacet.escrowWithdrawERC1155.selector;
-        selectors[9] = EscrowFactoryFacet.escrowApproveNFT721.selector;
-        selectors[10] = EscrowFactoryFacet.escrowSetNFTUser.selector;
-        selectors[11] = EscrowFactoryFacet.escrowGetNFTUserOf.selector;
-        selectors[12] = EscrowFactoryFacet.escrowGetNFTUserExpires.selector;
-        selectors[13] = EscrowFactoryFacet.getOfferAmount.selector;
-        selectors[14] = EscrowFactoryFacet
-            .getVaipakamEscrowImplementationAddress
+        selectors[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
+        selectors[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
+        selectors[3] = VaultFactoryFacet.vaultDepositERC20.selector;
+        selectors[4] = VaultFactoryFacet.vaultWithdrawERC20.selector;
+        selectors[5] = VaultFactoryFacet.vaultDepositERC721.selector;
+        selectors[6] = VaultFactoryFacet.vaultWithdrawERC721.selector;
+        selectors[7] = VaultFactoryFacet.vaultDepositERC1155.selector;
+        selectors[8] = VaultFactoryFacet.vaultWithdrawERC1155.selector;
+        selectors[9] = VaultFactoryFacet.vaultApproveNFT721.selector;
+        selectors[10] = VaultFactoryFacet.vaultSetNFTUser.selector;
+        selectors[11] = VaultFactoryFacet.vaultGetNFTUserOf.selector;
+        selectors[12] = VaultFactoryFacet.vaultGetNFTUserExpires.selector;
+        selectors[13] = VaultFactoryFacet.getOfferAmount.selector;
+        selectors[14] = VaultFactoryFacet
+            .getVaipakamVaultImplementationAddress
             .selector;
-        selectors[15] = EscrowFactoryFacet.setMandatoryEscrowUpgrade.selector;
-        selectors[16] = EscrowFactoryFacet.upgradeUserEscrow.selector;
-        selectors[17] = EscrowFactoryFacet.escrowGetNFTQuantity.selector;
-        selectors[18] = EscrowFactoryFacet.getUserEscrowAddress.selector;
+        selectors[15] = VaultFactoryFacet.setMandatoryVaultUpgrade.selector;
+        selectors[16] = VaultFactoryFacet.upgradeUserVault.selector;
+        selectors[17] = VaultFactoryFacet.vaultGetNFTQuantity.selector;
+        selectors[18] = VaultFactoryFacet.getUserVaultAddress.selector;
         // T-051 / T-054 — counter chokepoint companions.
-        selectors[19] = EscrowFactoryFacet.escrowDepositERC20From.selector;
-        selectors[20] = EscrowFactoryFacet.recordEscrowDepositERC20.selector;
-        selectors[21] = EscrowFactoryFacet.getProtocolTrackedEscrowBalance.selector;
+        selectors[19] = VaultFactoryFacet.vaultDepositERC20From.selector;
+        selectors[20] = VaultFactoryFacet.recordVaultDepositERC20.selector;
+        selectors[21] = VaultFactoryFacet.getProtocolTrackedVaultBalance.selector;
         // T-054 PR-3 — stuck-token recovery.
-        selectors[22] = EscrowFactoryFacet.recoverStuckERC20.selector;
-        selectors[23] = EscrowFactoryFacet.disown.selector;
-        selectors[24] = EscrowFactoryFacet.recoveryDomainSeparator.selector;
-        selectors[25] = EscrowFactoryFacet.recoveryAckTextHash.selector;
-        selectors[26] = EscrowFactoryFacet.recoveryNonce.selector;
-        selectors[27] = EscrowFactoryFacet.escrowBannedSource.selector;
+        selectors[22] = VaultFactoryFacet.recoverStuckERC20.selector;
+        selectors[23] = VaultFactoryFacet.disown.selector;
+        selectors[24] = VaultFactoryFacet.recoveryDomainSeparator.selector;
+        selectors[25] = VaultFactoryFacet.recoveryAckTextHash.selector;
+        selectors[26] = VaultFactoryFacet.recoveryNonce.selector;
+        selectors[27] = VaultFactoryFacet.vaultBannedSource.selector;
         return selectors;
     }
 
@@ -682,13 +682,13 @@ contract HelperTest {
         selectors[8] = MetricsFacet.getActiveLoansPaginated.selector;
         selectors[9] = MetricsFacet.getActiveOffersByAsset.selector;
         selectors[10] = MetricsFacet.getLoanSummary.selector;
-        selectors[11] = MetricsFacet.getEscrowStats.selector;
+        selectors[11] = MetricsFacet.getVaultStats.selector;
         selectors[12] = MetricsFacet.getNFTRentalDetails.selector;
-        selectors[13] = MetricsFacet.getTotalNFTsInEscrowByCollection.selector;
+        selectors[13] = MetricsFacet.getTotalNFTsInVaultByCollection.selector;
         selectors[14] = MetricsFacet.getUserSummary.selector;
         selectors[15] = MetricsFacet.getUserActiveLoans.selector;
         selectors[16] = MetricsFacet.getUserActiveOffers.selector;
-        selectors[17] = MetricsFacet.getUserNFTsInEscrow.selector;
+        selectors[17] = MetricsFacet.getUserNFTsInVault.selector;
         selectors[18] = MetricsFacet.getProtocolHealth.selector;
         selectors[19] = MetricsFacet.getBlockTimestamp.selector;
         // Reverse-index enumeration (no event-scan dependency)
@@ -774,7 +774,7 @@ contract HelperTest {
     {
         selectors = new bytes4[](19);
         selectors[0] = VPFIDiscountFacet.buyVPFIWithETH.selector;
-        selectors[1] = VPFIDiscountFacet.depositVPFIToEscrow.selector;
+        selectors[1] = VPFIDiscountFacet.depositVPFIToVault.selector;
         selectors[2] = VPFIDiscountFacet.quoteVPFIDiscount.selector;
         selectors[3] = VPFIDiscountFacet.getVPFIBuyConfig.selector;
         selectors[4] = VPFIDiscountFacet.getVPFISoldTo.selector;
@@ -788,11 +788,11 @@ contract HelperTest {
         selectors[12] = VPFIDiscountFacet.emitYieldFeeDiscountApplied.selector;
         selectors[13] = VPFIDiscountFacet.quoteVPFIDiscountFor.selector;
         selectors[14] = VPFIDiscountFacet.getVPFIDiscountTier.selector;
-        selectors[15] = VPFIDiscountFacet.withdrawVPFIFromEscrow.selector;
+        selectors[15] = VPFIDiscountFacet.withdrawVPFIFromVault.selector;
         selectors[16] = VPFIDiscountFacet.getUserVpfiDiscountState.selector;
         // Phase 8b.1 Permit2 addition — signature-transfer variant of
-        // {depositVPFIToEscrow}.
-        selectors[17] = VPFIDiscountFacet.depositVPFIToEscrowWithPermit.selector;
+        // {depositVPFIToVault}.
+        selectors[17] = VPFIDiscountFacet.depositVPFIToVaultWithPermit.selector;
         // Per-(buyer, originChainId) wallet-cap query. The Phase 1 30K
         // per-wallet cap applies independently per origin chain
         // (docs/TokenomicsTechSpec.md §8a); this selector lets
@@ -1025,44 +1025,44 @@ contract HelperTest {
         return selectors;
     }
 
-    function getEscrowFactoryFacetSelectorsExtended()
+    function getVaultFactoryFacetSelectorsExtended()
         public
         pure
         returns (bytes4[] memory selectors)
     {
         selectors = new bytes4[](30);
-        selectors[0] = EscrowFactoryFacet.initializeEscrowImplementation.selector;
-        selectors[1] = EscrowFactoryFacet.getOrCreateUserEscrow.selector;
-        selectors[2] = EscrowFactoryFacet.upgradeEscrowImplementation.selector;
-        selectors[3] = EscrowFactoryFacet.escrowDepositERC20.selector;
-        selectors[4] = EscrowFactoryFacet.escrowWithdrawERC20.selector;
-        selectors[5] = EscrowFactoryFacet.escrowDepositERC721.selector;
-        selectors[6] = EscrowFactoryFacet.escrowWithdrawERC721.selector;
-        selectors[7] = EscrowFactoryFacet.escrowDepositERC1155.selector;
-        selectors[8] = EscrowFactoryFacet.escrowWithdrawERC1155.selector;
-        selectors[9] = EscrowFactoryFacet.escrowApproveNFT721.selector;
-        selectors[10] = EscrowFactoryFacet.escrowSetNFTUser.selector;
-        selectors[11] = EscrowFactoryFacet.escrowGetNFTUserOf.selector;
-        selectors[12] = EscrowFactoryFacet.escrowGetNFTUserExpires.selector;
-        selectors[13] = EscrowFactoryFacet.getOfferAmount.selector;
-        selectors[14] = EscrowFactoryFacet.getVaipakamEscrowImplementationAddress.selector;
-        selectors[15] = EscrowFactoryFacet.getDiamondAddress.selector;
-        selectors[16] = EscrowFactoryFacet.setMandatoryEscrowUpgrade.selector;
-        selectors[17] = EscrowFactoryFacet.upgradeUserEscrow.selector;
-        selectors[18] = EscrowFactoryFacet.escrowGetNFTQuantity.selector;
-        selectors[19] = EscrowFactoryFacet.escrowSetNFTUser1155.selector;
-        selectors[20] = EscrowFactoryFacet.getUserEscrowAddress.selector;
+        selectors[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
+        selectors[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
+        selectors[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
+        selectors[3] = VaultFactoryFacet.vaultDepositERC20.selector;
+        selectors[4] = VaultFactoryFacet.vaultWithdrawERC20.selector;
+        selectors[5] = VaultFactoryFacet.vaultDepositERC721.selector;
+        selectors[6] = VaultFactoryFacet.vaultWithdrawERC721.selector;
+        selectors[7] = VaultFactoryFacet.vaultDepositERC1155.selector;
+        selectors[8] = VaultFactoryFacet.vaultWithdrawERC1155.selector;
+        selectors[9] = VaultFactoryFacet.vaultApproveNFT721.selector;
+        selectors[10] = VaultFactoryFacet.vaultSetNFTUser.selector;
+        selectors[11] = VaultFactoryFacet.vaultGetNFTUserOf.selector;
+        selectors[12] = VaultFactoryFacet.vaultGetNFTUserExpires.selector;
+        selectors[13] = VaultFactoryFacet.getOfferAmount.selector;
+        selectors[14] = VaultFactoryFacet.getVaipakamVaultImplementationAddress.selector;
+        selectors[15] = VaultFactoryFacet.getDiamondAddress.selector;
+        selectors[16] = VaultFactoryFacet.setMandatoryVaultUpgrade.selector;
+        selectors[17] = VaultFactoryFacet.upgradeUserVault.selector;
+        selectors[18] = VaultFactoryFacet.vaultGetNFTQuantity.selector;
+        selectors[19] = VaultFactoryFacet.vaultSetNFTUser1155.selector;
+        selectors[20] = VaultFactoryFacet.getUserVaultAddress.selector;
         // T-051 / T-054 — counter chokepoint companions.
-        selectors[21] = EscrowFactoryFacet.escrowDepositERC20From.selector;
-        selectors[22] = EscrowFactoryFacet.recordEscrowDepositERC20.selector;
-        selectors[23] = EscrowFactoryFacet.getProtocolTrackedEscrowBalance.selector;
+        selectors[21] = VaultFactoryFacet.vaultDepositERC20From.selector;
+        selectors[22] = VaultFactoryFacet.recordVaultDepositERC20.selector;
+        selectors[23] = VaultFactoryFacet.getProtocolTrackedVaultBalance.selector;
         // T-054 PR-3 — stuck-token recovery.
-        selectors[24] = EscrowFactoryFacet.recoverStuckERC20.selector;
-        selectors[25] = EscrowFactoryFacet.disown.selector;
-        selectors[26] = EscrowFactoryFacet.recoveryDomainSeparator.selector;
-        selectors[27] = EscrowFactoryFacet.recoveryAckTextHash.selector;
-        selectors[28] = EscrowFactoryFacet.recoveryNonce.selector;
-        selectors[29] = EscrowFactoryFacet.escrowBannedSource.selector;
+        selectors[24] = VaultFactoryFacet.recoverStuckERC20.selector;
+        selectors[25] = VaultFactoryFacet.disown.selector;
+        selectors[26] = VaultFactoryFacet.recoveryDomainSeparator.selector;
+        selectors[27] = VaultFactoryFacet.recoveryAckTextHash.selector;
+        selectors[28] = VaultFactoryFacet.recoveryNonce.selector;
+        selectors[29] = VaultFactoryFacet.vaultBannedSource.selector;
         return selectors;
     }
 }

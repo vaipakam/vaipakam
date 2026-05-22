@@ -4,18 +4,18 @@ pragma solidity ^0.8.29;
 import {Test} from "forge-std/Test.sol";
 import {InvariantBase} from "./InvariantBase.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
-import {EscrowFactoryFacet} from "../../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {Handler} from "./Handler.sol";
 
 /**
- * @title EscrowSolvencyInvariant
+ * @title VaultSolvencyInvariant
  * @notice The protocol must always hold enough of each collateral asset to
  *         cover every Active loan's collateral commitment. If the sum of
  *         per-loan committed collateral (for loans still Active) ever
  *         exceeds the total of that asset sitting in the diamond + user
- *         escrows, something has drained custody — an audit-grade bug.
+ *         vaults, something has drained custody — an audit-grade bug.
  *
  *         We scope to ERC-20 assets only (the handler only exercises those),
  *         and we only consider Active loans: Repaid/Defaulted/Settled loans
@@ -23,7 +23,7 @@ import {Handler} from "./Handler.sol";
  *         claim or fallback flow, so they should not add to the required
  *         side of the inequality.
  */
-contract EscrowSolvencyInvariant is Test {
+contract VaultSolvencyInvariant is Test {
     InvariantBase internal base;
     Handler internal handler;
 
@@ -36,25 +36,25 @@ contract EscrowSolvencyInvariant is Test {
 
     /// @notice For every Active loan, the collateral it committed must still
     ///         be held somewhere within the protocol's custody perimeter
-    ///         (diamond + per-user escrows). Sums per asset to survive
+    ///         (diamond + per-user vaults). Sums per asset to survive
     ///         loans that commit collateral in different tokens.
-    function invariant_EscrowCoversActiveCollateral() public view {
+    function invariant_VaultCoversActiveCollateral() public view {
         uint256 wethCommitted = _sumActiveCollateral(base.mockWETH());
-        uint256 wethHeld = _escrowPerimeterBalance(base.mockWETH());
+        uint256 wethHeld = _vaultPerimeterBalance(base.mockWETH());
         assertGe(
             wethHeld,
             wethCommitted,
-            "WETH held < committed: escrow drained below collateral commitment"
+            "WETH held < committed: vault drained below collateral commitment"
         );
 
-        // USDC is the principal asset but can also land back in escrow as
+        // USDC is the principal asset but can also land back in vault as
         // repayment proceeds pending claim. The same inequality still holds.
         uint256 usdcCommitted = _sumActiveCollateral(base.mockUSDC());
-        uint256 usdcHeld = _escrowPerimeterBalance(base.mockUSDC());
+        uint256 usdcHeld = _vaultPerimeterBalance(base.mockUSDC());
         assertGe(
             usdcHeld,
             usdcCommitted,
-            "USDC held < committed: escrow drained below collateral commitment"
+            "USDC held < committed: vault drained below collateral commitment"
         );
     }
 
@@ -73,21 +73,21 @@ contract EscrowSolvencyInvariant is Test {
     }
 
     /// @dev Sum `asset` balance across the diamond itself and every user
-    ///      escrow we can enumerate (the three lenders + three borrowers).
+    ///      vault we can enumerate (the three lenders + three borrowers).
     ///      Protocol custody is entirely inside this perimeter — any
     ///      shortfall here versus committed collateral is a bug.
-    function _escrowPerimeterBalance(address asset) internal view returns (uint256 total) {
+    function _vaultPerimeterBalance(address asset) internal view returns (uint256 total) {
         ERC20Mock t = ERC20Mock(asset);
         total += t.balanceOf(address(base.diamond()));
         for (uint256 i = 0; i < 3; i++) {
-            total += _escrowBalanceOf(base.lenderAt(i), asset, t);
-            total += _escrowBalanceOf(base.borrowerAt(i), asset, t);
+            total += _vaultBalanceOf(base.lenderAt(i), asset, t);
+            total += _vaultBalanceOf(base.borrowerAt(i), asset, t);
         }
     }
 
-    function _escrowBalanceOf(address user, address /*asset*/, ERC20Mock t) internal view returns (uint256) {
-        address escrow = EscrowFactoryFacet(address(base.diamond())).getUserEscrowAddress(user);
-        if (escrow == address(0)) return 0;
-        return t.balanceOf(escrow);
+    function _vaultBalanceOf(address user, address /*asset*/, ERC20Mock t) internal view returns (uint256) {
+        address vault = VaultFactoryFacet(address(base.diamond())).getUserVaultAddress(user);
+        if (vault == address(0)) return 0;
+        return t.balanceOf(vault);
     }
 }

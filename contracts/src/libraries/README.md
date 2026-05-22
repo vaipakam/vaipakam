@@ -103,7 +103,7 @@ empty of Vaipakam state, so nothing is at risk.
 5. Fields that become logically unused must be kept in place and marked with
    a `// DEPRECATED` comment. The precedent is `LibVaipakam.Storage.liquidAssets`.
 
-Violating any of these corrupts every offer, loan, user escrow, role, NFT,
+Violating any of these corrupts every offer, loan, user vault, role, NFT,
 and pause state in storage.
 
 Upgrade review checklist:
@@ -117,17 +117,17 @@ Upgrade review checklist:
 
 ## Library inventory
 
-- **`LibVaipakam.sol`** — Main protocol storage: offers, loans, escrows, risk
+- **`LibVaipakam.sol`** — Main protocol storage: offers, loans, vaults, risk
   params, KYC, country whitelists, treasury. Accessed by every non-trivial
   facet.
 - **`LibERC721.sol`** — Position-NFT storage: owners, balances, approvals,
   statuses, image URIs, royalties. Backs `VaipakamNFTFacet`.
 - **`LibAccessControl.sol`** — Role-based access (admin, pauser, KYC admin,
-  oracle admin, risk admin, escrow admin). Backs `AccessControlFacet` and the
+  oracle admin, risk admin, vault admin). Backs `AccessControlFacet` and the
   `onlyRole` modifier on every admin function.
 - **`LibReentrancyGuard.sol`** — Cross-facet reentrancy guard. The
   `DiamondReentrancyGuard.nonReentrant` modifier is mixed into every facet
-  with external callbacks (ERC-721 transfers, escrow withdrawals, 0x swap
+  with external callbacks (ERC-721 transfers, vault withdrawals, 0x swap
   paths).
 - **`LibPausable.sol`** — Global circuit breaker. The `DiamondPausable`
   modifiers gate every user-facing mutation facet.

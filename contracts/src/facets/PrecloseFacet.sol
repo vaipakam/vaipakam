@@ -21,7 +21,7 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
-import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
 
@@ -181,8 +181,8 @@ contract PrecloseFacet is
 
             // Lender Yield Fee discount (Tokenomics §6): when the lender has
             // platform-level VPFI-discount consent AND holds >= the required
-            // VPFI in escrow, the 1% treasury cut is paid in VPFI from the
-            // lender's escrow and the lender keeps 100% of interest in the
+            // VPFI in vault, the 1% treasury cut is paid in VPFI from the
+            // lender's vault and the lender keeps 100% of interest in the
             // lending asset. tryApplyYieldFee is a silent fallback.
             uint256 yieldVpfiDeducted;
             if (s.vpfiDiscountConsent[loan.lender] && plan.treasuryShare > 0) {
@@ -209,20 +209,20 @@ contract PrecloseFacet is
                 LibFacet.recordTreasuryAccrual(loan.principalAsset, plan.treasuryShare);
             }
 
-            // T-037 — Lender's due: direct borrower → lender's escrow.
+            // T-037 — Lender's due: direct borrower → lender's vault.
             // Routed through the cross-payer chokepoint variant so the
-            // protocolTrackedEscrowBalance counter ticks under the
-            // LENDER (the escrow owner) while pulling from the
+            // protocolTrackedVaultBalance counter ticks under the
+            // LENDER (the vault owner) while pulling from the
             // borrower's allowance.
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowDepositERC20From.selector,
+                    VaultFactoryFacet.vaultDepositERC20From.selector,
                     msg.sender,        // payer — borrower
-                    loan.lender,       // user — lender's escrow
+                    loan.lender,       // user — lender's vault
                     loan.principalAsset,
                     plan.lenderDue
                 ),
-                EscrowDepositFailed.selector
+                VaultDepositFailed.selector
             );
 
             // Record lender's claimable (principal + interest)
@@ -235,7 +235,7 @@ contract PrecloseFacet is
                 claimed: false
             });
 
-            // Record borrower's claimable (collateral stays in borrower's escrow)
+            // Record borrower's claimable (collateral stays in borrower's vault)
             s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
                 asset: loan.collateralAsset,
                 amount: loan.collateralAmount,
@@ -293,11 +293,11 @@ contract PrecloseFacet is
                 fullRental
             );
 
-            // Deduct from borrower's prepay escrow: treasury fee
+            // Deduct from borrower's prepay vault: treasury fee
             if (treasuryFee > 0) {
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
-                        EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                        VaultFactoryFacet.vaultWithdrawERC20.selector,
                         msg.sender,
                         loan.prepayAsset,
                         LibFacet.getTreasury(),
@@ -308,22 +308,22 @@ contract PrecloseFacet is
                 LibFacet.recordTreasuryAccrual(loan.prepayAsset, treasuryFee);
             }
 
-            // T-037 — escrow → escrow direct, no Diamond intermediate.
-            // `escrowWithdrawERC20` accepts an arbitrary recipient
+            // T-037 — vault → vault direct, no Diamond intermediate.
+            // `vaultWithdrawERC20` accepts an arbitrary recipient
             // (it's just `safeTransfer(recipient, amount)` from inside
-            // the borrower's escrow), so we pass the lender's escrow
+            // the borrower's vault), so we pass the lender's vault
             // straight in. Saves one transfer + removes a transient
             // Diamond `prepayAsset` balance.
-            address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
+            address lenderVault = LibFacet.getOrCreateVault(loan.lender);
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                    VaultFactoryFacet.vaultWithdrawERC20.selector,
                     msg.sender,
                     loan.prepayAsset,
-                    lenderEscrow,
+                    lenderVault,
                     lenderShare
                 ),
-                IVaipakamErrors.EscrowWithdrawFailed.selector
+                IVaipakamErrors.VaultWithdrawFailed.selector
             );
 
             // Record lender's claimable (rental fees in prepayAsset)
@@ -336,7 +336,7 @@ contract PrecloseFacet is
                 claimed: false
             });
 
-            // Refund unused prepay + buffer to borrower (stays in borrower's escrow)
+            // Refund unused prepay + buffer to borrower (stays in borrower's vault)
             uint256 refund = loan.prepayAmount - fullRental + loan.bufferAmount;
             s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
                 asset: loan.prepayAsset,
@@ -374,7 +374,7 @@ contract PrecloseFacet is
      *      Alice accepts Ben's existing Borrower Offer. The offer must use the same
      *      lending/collateral asset types and favor Liam (collateral >= original,
      *      duration <= remaining, amount >= principal). Ben's collateral is already
-     *      locked in his escrow from offer creation. Alice pays accrued interest +
+     *      locked in his vault from offer creation. Alice pays accrued interest +
      *      shortfall. The live loan is updated to reflect Ben as borrower.
      * @param loanId The loan ID to transfer.
      * @param borrowerOfferId The existing Borrower Offer from Ben.
@@ -483,18 +483,18 @@ contract PrecloseFacet is
             LibFacet.recordTreasuryAccrual(payAsset, treasuryFee);
         }
         if (lenderShare > 0) {
-            // T-037 — direct borrower → lender's escrow via the
+            // T-037 — direct borrower → lender's vault via the
             // cross-payer chokepoint. Counter ticks up under the
             // lender even though the borrower is paying.
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowDepositERC20From.selector,
+                    VaultFactoryFacet.vaultDepositERC20From.selector,
                     msg.sender,        // payer
-                    loan.lender,       // user (escrow owner)
+                    loan.lender,       // user (vault owner)
                     payAsset,
                     lenderShare
                 ),
-                EscrowDepositFailed.selector
+                VaultDepositFailed.selector
             );
             s.heldForLender[loanId] += lenderShare;
         }
@@ -503,40 +503,40 @@ contract PrecloseFacet is
         if (loan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                    VaultFactoryFacet.vaultWithdrawERC20.selector,
                     msg.sender,
                     loan.collateralAsset,
                     msg.sender,
                     loan.collateralAmount
                 ),
-                IVaipakamErrors.EscrowWithdrawFailed.selector
+                IVaipakamErrors.VaultWithdrawFailed.selector
             );
         } else if (loan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowWithdrawERC721.selector,
+                    VaultFactoryFacet.vaultWithdrawERC721.selector,
                     msg.sender,
                     loan.collateralAsset,
                     loan.collateralTokenId,
                     msg.sender
                 ),
-                IVaipakamErrors.EscrowWithdrawFailed.selector
+                IVaipakamErrors.VaultWithdrawFailed.selector
             );
         } else if (loan.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowWithdrawERC1155.selector,
+                    VaultFactoryFacet.vaultWithdrawERC1155.selector,
                     msg.sender,
                     loan.collateralAsset,
                     loan.collateralTokenId,
                     loan.collateralQuantity,
                     msg.sender
                 ),
-                IVaipakamErrors.EscrowWithdrawFailed.selector
+                IVaipakamErrors.VaultWithdrawFailed.selector
             );
         }
 
-        // ── 4. Ben's collateral already locked in his escrow at offer creation
+        // ── 4. Ben's collateral already locked in his vault at offer creation
 
         // ── 5. Update loan to reflect Ben as borrower ───────────────────────
         loan.borrower = newBorrower;
@@ -558,7 +558,7 @@ contract PrecloseFacet is
             // Revoke Alice's user right
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowSetNFTUser.selector,
+                    VaultFactoryFacet.vaultSetNFTUser.selector,
                     loan.lender,
                     loan.principalAsset,
                     loan.tokenId,
@@ -570,7 +570,7 @@ contract PrecloseFacet is
             // Assign Ben as new user for remaining duration
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EscrowFactoryFacet.escrowSetNFTUser.selector,
+                    VaultFactoryFacet.vaultSetNFTUser.selector,
                     loan.lender,
                     loan.principalAsset,
                     loan.tokenId,
@@ -651,8 +651,8 @@ contract PrecloseFacet is
      *
      *      Per README Section 8, Option 3:
      *      - Alice deposits principal and creates a Lender Offer via OfferFacet.
-     *      - Alice pays accrued interest (treasury fee + lender share) to lender's escrow.
-     *      - Shortfall (expected interest difference) is pre-paid to lender's escrow.
+     *      - Alice pays accrued interest (treasury fee + lender share) to lender's vault.
+     *      - Shortfall (expected interest difference) is pre-paid to lender's vault.
      *      - The new offer is linked to the original loan via offsetOfferToLoanId.
      *      - When a new borrower (Charlie) accepts the offer normally, call completeOffset()
      *        to release Alice's collateral and close the original loan.
@@ -694,7 +694,7 @@ contract PrecloseFacet is
         );
 
         // ── 2. Create lender offer via cross-facet call ─────────────────────
-        // Alice deposits principal into her escrow (handled by createOffer).
+        // Alice deposits principal into her vault (handled by createOffer).
         // Alice must have approved principalAsset to the diamond before calling.
         newOfferId = _submitOffsetOffer(
             loan,
@@ -735,7 +735,7 @@ contract PrecloseFacet is
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
         // NFT rentals cannot use the offset path: the NFT is in the lender's
-        // escrow, not the borrower's, so createOffer would fail trying to
+        // vault, not the borrower's, so createOffer would fail trying to
         // transfer it from Alice.
         if (loan.assetType != LibVaipakam.AssetType.ERC20)
             revert InvalidOfferTerms();
@@ -780,7 +780,7 @@ contract PrecloseFacet is
      * @dev Settles Alice's accrued-interest + shortfall payments for an
      *      offset. Returns accruedShortfallSum so the caller can emit it.
      *      Extracted so all payment-side locals (treasuryFee, payAsset,
-     *      lenderTotal, lenderEscrow, etc.) stay in their own frame —
+     *      lenderTotal, lenderVault, etc.) stay in their own frame —
      *      otherwise `forge coverage --ir-minimum` runs out of stack slots
      *      when the outer function continues with the offer-creation path.
      */
@@ -829,22 +829,22 @@ contract PrecloseFacet is
         }
 
         // T-037 — Repay original principal + interest/shortfall direct
-        // to old lender's escrow via the cross-payer chokepoint. Alice
+        // to old lender's vault via the cross-payer chokepoint. Alice
         // must return Liam's principal; the new offer deposit is
         // separate capital Alice puts up to become the new lender.
-        // Routing through `escrowDepositERC20From` keeps the Diamond
+        // Routing through `vaultDepositERC20From` keeps the Diamond
         // out of the funds path AND ticks the
-        // protocolTrackedEscrowBalance counter under the old lender.
+        // protocolTrackedVaultBalance counter under the old lender.
         uint256 lenderTotal = loan.principal + interestToLender;
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EscrowFactoryFacet.escrowDepositERC20From.selector,
+                VaultFactoryFacet.vaultDepositERC20From.selector,
                 msg.sender,        // payer — Alice
                 loan.lender,       // user — old lender (Liam)
                 payAssetOffset,
                 lenderTotal
             ),
-            EscrowDepositFailed.selector
+            VaultDepositFailed.selector
         );
         s.heldForLender[loanId] += lenderTotal;
     }
@@ -950,7 +950,7 @@ contract PrecloseFacet is
      *      action bit and the per-loan enable for this loan (borrower-
      *      entitled action).
      *      Verifies the linked offer was accepted, then:
-     *      - Releases Alice's original collateral from escrow.
+     *      - Releases Alice's original collateral from vault.
      *      - Closes Alice's original loan with Liam (status = Repaid).
      *      - Updates NFTs to Claimable.
      * @param originalLoanId The original loan ID that was offset.
@@ -1005,7 +1005,7 @@ contract PrecloseFacet is
             /* lenderSide */ false
         );
 
-        // Record borrower's claimable (collateral stays in borrower's escrow)
+        // Record borrower's claimable (collateral stays in borrower's vault)
         s.borrowerClaims[originalLoanId] = LibVaipakam.ClaimInfo({
             asset: loan.collateralAsset,
             amount: loan.collateralAmount,
@@ -1016,7 +1016,7 @@ contract PrecloseFacet is
         });
 
         // heldForLender funds (from offsetWithNewOffer step 1) are already in the
-        // lender's escrow. They are withdrawn via ClaimFacet.claimAsLender, which
+        // lender's vault. They are withdrawn via ClaimFacet.claimAsLender, which
         // checks s.heldForLender[loanId] and uses the correct payment asset.
         // Do NOT record them in lenderClaims to avoid double-counting.
 
@@ -1082,7 +1082,7 @@ contract PrecloseFacet is
     function _resetNFTRenter(LibVaipakam.Loan storage loan) internal {
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EscrowFactoryFacet.escrowSetNFTUser.selector,
+                VaultFactoryFacet.vaultSetNFTUser.selector,
                 loan.lender,
                 loan.principalAsset,
                 loan.tokenId,

@@ -48,7 +48,7 @@ contract CheckSelectors is Script {
         selectors = new bytes4[](5);
         selectors[0] = OfferCreateFacet.createOffer.selector;
         selectors[1] = OfferAcceptFacet.acceptOffer.selector;
-        selectors[2] = OfferCreateFacet.getUserEscrow.selector;
+        selectors[2] = OfferCreateFacet.getUserVault.selector;
         selectors[3] = OfferCancelFacet.cancelOffer.selector;
         selectors[4] = OfferCancelFacet.getCompatibleOffers.selector;
         // selectors[5] = OfferFacet._simulateLTV.selector;

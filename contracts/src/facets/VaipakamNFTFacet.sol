@@ -348,7 +348,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
      *      Range Orders Phase 1 follow-up: reads the live NFT position
      *      summary via {MetricsFacet.getNFTPositionSummary} so the
      *      rendered metadata reflects the realized loan terms (matched
-     *      principal/rate after a partial fill), live escrow state,
+     *      principal/rate after a partial fill), live vault state,
      *      and current claim availability — not the original offer's
      *      range bounds. Numeric traits use OpenSea `display_type`
      *      conventions (`number`, `boost_percentage`, `date`) for
@@ -457,7 +457,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
             abi.encodePacked(
                 _attributesIdentity(s),
                 _attributesEconomics(s),
-                _attributesEscrowAndClaim(s)
+                _attributesVaultAndClaim(s)
             )
         );
     }
@@ -521,14 +521,14 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
         );
     }
 
-    /// @dev Live escrow + claim traits. Surfaces `Locked Collateral`
-    ///      (what's actually in escrow against this loan right now)
+    /// @dev Live vault + claim traits. Surfaces `Locked Collateral`
+    ///      (what's actually in vault against this loan right now)
     ///      and `Claimable Now` (what the holder can call
     ///      claimAsLender / claimAsBorrower for) so marketplace
     ///      buyers see the live position state, not just static loan
     ///      terms. `Created At` uses `display_type: "date"` so OpenSea
     ///      renders a localized date.
-    function _attributesEscrowAndClaim(
+    function _attributesVaultAndClaim(
         MetricsFacet.NFTPositionSummary memory s
     ) internal pure returns (string memory) {
         return string(

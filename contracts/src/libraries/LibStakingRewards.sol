@@ -8,8 +8,8 @@ import {LibVaipakam} from "./LibVaipakam.sol";
  * @author Vaipakam Developer Team
  * @notice Reward-per-token time-weighted accrual bookkeeping for the
  *         Phase-1 VPFI staking rewards pool (docs/TokenomicsTechSpec.md
- *         §7). Escrow-held VPFI is implicitly "staked" — there is no
- *         separate stake/unstake entrypoint. Whenever a user's escrow
+ *         §7). Vault-held VPFI is implicitly "staked" — there is no
+ *         separate stake/unstake entrypoint. Whenever a user's vault
  *         VPFI balance changes (deposit, fee-discount deduction,
  *         withdrawal) the caller MUST invoke {updateUser} BEFORE the
  *         balance mutation so the checkpoint captures the OLD balance
@@ -68,9 +68,9 @@ library LibStakingRewards {
 
     /**
      * @notice Reconcile `user`'s accrual against the new balance. Call
-     *         BEFORE mutating the underlying escrow VPFI balance.
+     *         BEFORE mutating the underlying vault VPFI balance.
      * @param user             The user whose stake is changing.
-     * @param newStakedBalance The user's NEW escrow VPFI balance after
+     * @param newStakedBalance The user's NEW vault VPFI balance after
      *                         the pending mutation.
      */
     function updateUser(address user, uint256 newStakedBalance) internal {

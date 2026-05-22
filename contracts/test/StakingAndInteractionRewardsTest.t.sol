@@ -11,7 +11,7 @@ import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {StakingRewardsFacet} from "../src/facets/StakingRewardsFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
@@ -19,7 +19,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 
 /// @title StakingAndInteractionRewardsTest
 /// @notice Smoke tests for the Phase-1 VPFI reward surfaces — staking (5% APR
-///         on escrow-held VPFI) and interaction (daily USD-share emissions).
+///         on vault-held VPFI) and interaction (daily USD-share emissions).
 ///         See docs/TokenomicsTechSpec.md §4 and §7.
 contract StakingAndInteractionRewardsTest is SetupTest, IVaipakamErrors {
     VPFIToken internal vpfiToken;
@@ -84,7 +84,7 @@ contract StakingAndInteractionRewardsTest is SetupTest, IVaipakamErrors {
     function _deposit(address user, uint256 amount) internal {
         vm.startPrank(user);
         vpfiToken.approve(address(diamond), amount);
-        VPFIDiscountFacet(address(diamond)).depositVPFIToEscrow(amount);
+        VPFIDiscountFacet(address(diamond)).depositVPFIToVault(amount);
         vm.stopPrank();
     }
 
@@ -138,7 +138,7 @@ contract StakingAndInteractionRewardsTest is SetupTest, IVaipakamErrors {
 
         uint256 walletBefore = vpfiToken.balanceOf(lender);
         vm.prank(lender);
-        VPFIDiscountFacet(address(diamond)).withdrawVPFIFromEscrow(2_000 ether);
+        VPFIDiscountFacet(address(diamond)).withdrawVPFIFromVault(2_000 ether);
 
         assertEq(_staking().getUserStakedVPFI(lender), 3_000 ether);
         assertEq(vpfiToken.balanceOf(lender), walletBefore + 2_000 ether);
@@ -147,8 +147,8 @@ contract StakingAndInteractionRewardsTest is SetupTest, IVaipakamErrors {
     function testWithdrawRevertsOnOverflow() public {
         _deposit(lender, 1_000 ether);
         vm.prank(lender);
-        vm.expectRevert(VPFIEscrowBalanceInsufficient.selector);
-        VPFIDiscountFacet(address(diamond)).withdrawVPFIFromEscrow(2_000 ether);
+        vm.expectRevert(VPFIVaultBalanceInsufficient.selector);
+        VPFIDiscountFacet(address(diamond)).withdrawVPFIFromVault(2_000 ether);
     }
 
     // ─── Interaction ─────────────────────────────────────────────────────────

@@ -181,7 +181,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
         _addAll(_getOracleSelectors());
         _addAll(_getOracleAdminSelectors());
         _addAll(_getNFTSelectors());
-        _addAll(_getEscrowFactorySelectors());
+        _addAll(_getVaultFactorySelectors());
         _addAll(_getOfferCreateSelectors());
         _addAll(_getOfferAcceptSelectors());
         _addAll(_getLoanSelectors());

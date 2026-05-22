@@ -18,9 +18,9 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
-import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
-import {LibUserEscrow} from "../libraries/LibUserEscrow.sol";
+import {LibUserVault} from "../libraries/LibUserVault.sol";
 
 /**
  * @title OfferCreateFacet
@@ -253,7 +253,7 @@ contract OfferCreateFacet is
     /**
      * @notice Creates a new lender or borrower offer.
      * @dev Deposits/locks the creator-side asset into the creator's per-user
-     *      escrow via {EscrowFactoryFacet}:
+     *      vault via {VaultFactoryFacet}:
      *        - Lender/ERC-20: `amount` of `lendingAsset`.
      *        - Lender/ERC-721 or ERC-1155: the NFT itself (custody-based rental).
      *        - Borrower/ERC-20 loan: collateral in its declared asset type.
@@ -263,7 +263,7 @@ contract OfferCreateFacet is
      *      on every create (docs/WebsiteReadme.md §"Offer and acceptance
      *      risk warnings" + README.md §"Liquidity & Asset Classification");
      *      missing consent reverts RiskAndTermsConsentRequired before any
-     *      escrow movement. Mints a position NFT representing the offer.
+     *      vault movement. Mints a position NFT representing the offer.
      *      Reverts InvalidOfferType on zero duration, InvalidAmount on zero
      *      amount, InvalidAssetType on unknown asset enums.
      *      Emits OfferCreated. Callable by anyone when not paused.
@@ -273,9 +273,9 @@ contract OfferCreateFacet is
     function createOffer(
         LibVaipakam.CreateOfferParams calldata params
     ) external nonReentrant whenNotPaused returns (uint256 offerId) {
-        address escrow;
-        (offerId, escrow) = _createOfferSetup(msg.sender, params);
-        _pullCreatorAssetsClassic(msg.sender, params, escrow);
+        address vault;
+        (offerId, vault) = _createOfferSetup(msg.sender, params);
+        _pullCreatorAssetsClassic(msg.sender, params, vault);
         _createOfferFinish(msg.sender, offerId, params);
     }
 
@@ -305,9 +305,9 @@ contract OfferCreateFacet is
         if (msg.sender != address(this)) {
             revert UnauthorizedCrossFacetCall();
         }
-        address escrow;
-        (offerId, escrow) = _createOfferSetup(creator, params);
-        _pullCreatorAssetsClassic(creator, params, escrow);
+        address vault;
+        (offerId, vault) = _createOfferSetup(creator, params);
+        _pullCreatorAssetsClassic(creator, params, vault);
         _createOfferFinish(creator, offerId, params);
     }
 
@@ -360,8 +360,8 @@ contract OfferCreateFacet is
             }
         }
 
-        address escrow;
-        (offerId, escrow) = _createOfferSetup(msg.sender, params);
+        address vault;
+        (offerId, vault) = _createOfferSetup(msg.sender, params);
         uint256 amount = _creatorPullAmount(offerId, params);
         // Resolve the asset the protocol actually expects to pull for
         // this offer shape. Permit2's signature digest binds the user
@@ -382,35 +382,35 @@ contract OfferCreateFacet is
             // Borrower NFT rental offer — Permit2 pulls the prepay.
             expectedAsset = params.prepayAsset;
         }
-        LibPermit2.pull(msg.sender, escrow, expectedAsset, amount, permit, signature);
-        // Permit2 already moved funds to the user's escrow. Record
-        // the deposit in the protocolTrackedEscrowBalance counter so
+        LibPermit2.pull(msg.sender, vault, expectedAsset, amount, permit, signature);
+        // Permit2 already moved funds to the user's vault. Record
+        // the deposit in the protocolTrackedVaultBalance counter so
         // it stays the symmetric mirror of the classic-path
-        // `escrowDepositERC20` flow above. Every Permit2-funded leg
+        // `vaultDepositERC20` flow above. Every Permit2-funded leg
         // here is ERC-20 (the asset-type guards at the top of the
         // function reject any other shape), so the counter is the
         // right home for it.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EscrowFactoryFacet.recordEscrowDepositERC20.selector,
+                VaultFactoryFacet.recordVaultDepositERC20.selector,
                 msg.sender,
                 expectedAsset,
                 amount
             ),
-            EscrowDepositFailed.selector
+            VaultDepositFailed.selector
         );
         _createOfferFinish(msg.sender, offerId, params);
     }
 
     /// @dev Shared pre-pull setup. Runs every validation + allocates
     ///      the offer id + writes offer fields + stores liquidity.
-    ///      Returns the new offer id and the caller's escrow address
+    ///      Returns the new offer id and the caller's vault address
     ///      so the caller can do the actual asset pull via whichever
     ///      path (safeTransferFrom vs Permit2) fits.
     function _createOfferSetup(
         address creator,
         LibVaipakam.CreateOfferParams calldata params
-    ) private returns (uint256 offerId, address escrow) {
+    ) private returns (uint256 offerId, address vault) {
         if (params.durationDays == 0) revert InvalidOfferType();
         // Findings 00025 — ProjectDetailsREADME §2 mandates
         // 1 ≤ durationDays ≤ 365 with on-chain enforcement so external
@@ -535,7 +535,7 @@ contract OfferCreateFacet is
         //     >365d loans; finer cadences require principal ≥ threshold).
         _validatePeriodicCadence(params, offer, principalLiq, collateralLiq);
 
-        escrow = getUserEscrow(creator);
+        vault = getUserVault(creator);
     }
 
     /// @dev T-034 — extracted to keep `_createOfferSetup` readable. Reverts
@@ -713,22 +713,22 @@ contract OfferCreateFacet is
     ///      `LibPermit2.pull` with the signed permit instead.
     ///
     ///      ERC-20 deposits route through
-    ///      `EscrowFactoryFacet.escrowDepositERC20` (the protocol-wide
-    ///      chokepoint) so the `protocolTrackedEscrowBalance` counter
+    ///      `VaultFactoryFacet.vaultDepositERC20` (the protocol-wide
+    ///      chokepoint) so the `protocolTrackedVaultBalance` counter
     ///      ticks at every legitimate inflow. NFTs (ERC-721 / ERC-1155)
     ///      bypass the counter — they're tracked per-loan via
     ///      `loan.collateralAsset / tokenId / quantity` references
     ///      rather than fungible balance, so the counter doesn't
-    ///      apply to them. The `escrow` argument stays in the
+    ///      apply to them. The `vault` argument stays in the
     ///      signature because NFT receivers still target it directly.
     function _pullCreatorAssetsClassic(
         address creator,
         LibVaipakam.CreateOfferParams calldata params,
-        address escrow
+        address vault
     ) private {
         if (params.offerType == LibVaipakam.OfferType.Lender) {
             if (params.assetType == LibVaipakam.AssetType.ERC20) {
-                // Range Orders Phase 1: pre-escrow the upper bound
+                // Range Orders Phase 1: pre-vault the upper bound
                 // (`amountMax`) so subsequent partial fills draw from
                 // the lender's already-locked custody. Auto-collapse
                 // (params.amountMax == 0 → params.amount) keeps legacy
@@ -738,23 +738,23 @@ contract OfferCreateFacet is
                     : params.amountMax;
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
-                        EscrowFactoryFacet.escrowDepositERC20.selector,
+                        VaultFactoryFacet.vaultDepositERC20.selector,
                         creator,
                         params.lendingAsset,
                         lenderPull
                     ),
-                    EscrowDepositFailed.selector
+                    VaultDepositFailed.selector
                 );
             } else if (params.assetType == LibVaipakam.AssetType.ERC721) {
                 IERC721(params.lendingAsset).safeTransferFrom(
                     creator,
-                    escrow,
+                    vault,
                     params.tokenId
                 );
             } else if (params.assetType == LibVaipakam.AssetType.ERC1155) {
                 IERC1155(params.lendingAsset).safeTransferFrom(
                     creator,
-                    escrow,
+                    vault,
                     params.tokenId,
                     params.quantity,
                     ""
@@ -766,7 +766,7 @@ contract OfferCreateFacet is
             // Borrower: lock collateral (or prepay for NFT rental).
             if (params.assetType == LibVaipakam.AssetType.ERC20) {
                 if (params.collateralAssetType == LibVaipakam.AssetType.ERC20) {
-                    // Issue #164 — pre-escrow the upper bound
+                    // Issue #164 — pre-vault the upper bound
                     // (`collateralAmountMax`) so the borrower-range
                     // case mirrors the lender-side amount-range pull:
                     // OfferMatchFacet's excess-refund hook returns the
@@ -778,23 +778,23 @@ contract OfferCreateFacet is
                         : params.collateralAmountMax;
                     LibFacet.crossFacetCall(
                         abi.encodeWithSelector(
-                            EscrowFactoryFacet.escrowDepositERC20.selector,
+                            VaultFactoryFacet.vaultDepositERC20.selector,
                             creator,
                             params.collateralAsset,
                             borrowerPull
                         ),
-                        EscrowDepositFailed.selector
+                        VaultDepositFailed.selector
                     );
                 } else if (params.collateralAssetType == LibVaipakam.AssetType.ERC721) {
                     IERC721(params.collateralAsset).safeTransferFrom(
                         creator,
-                        escrow,
+                        vault,
                         params.collateralTokenId
                     );
                 } else if (params.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
                     IERC1155(params.collateralAsset).safeTransferFrom(
                         creator,
-                        escrow,
+                        vault,
                         params.collateralTokenId,
                         params.collateralQuantity,
                         ""
@@ -809,12 +809,12 @@ contract OfferCreateFacet is
                 uint256 totalPrepay = _nftRentalPrepayTotal(params.amount, params.durationDays);
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
-                        EscrowFactoryFacet.escrowDepositERC20.selector,
+                        VaultFactoryFacet.vaultDepositERC20.selector,
                         creator,
                         params.prepayAsset,
                         totalPrepay
                     ),
-                    EscrowDepositFailed.selector
+                    VaultDepositFailed.selector
                 );
             } else {
                 revert InvalidAssetType();
@@ -832,13 +832,13 @@ contract OfferCreateFacet is
         LibVaipakam.CreateOfferParams calldata params
     ) private view returns (uint256) {
         if (params.offerType == LibVaipakam.OfferType.Lender) {
-            // Range Orders Phase 1: pre-escrow `amountMax` so partial
+            // Range Orders Phase 1: pre-vault `amountMax` so partial
             // fills draw from custody. Auto-collapse for legacy callers.
             return params.amountMax == 0 ? params.amount : params.amountMax;
         }
         if (params.assetType == LibVaipakam.AssetType.ERC20) {
             // Issue #164 — Permit2 pulls the upper bound so the
-            // borrower-range path matches the classic-path pre-escrow.
+            // borrower-range path matches the classic-path pre-vault.
             // Auto-collapse for legacy single-value callers.
             return params.collateralAmountMax == 0
                 ? params.collateralAmount
@@ -931,7 +931,7 @@ contract OfferCreateFacet is
         // event payload mirrors what `previewMatch` sees, sparing
         // indexers from having to re-derive (and from observing the raw
         // storage 0). Lender offers always have `amountMax > 0` (pre-
-        // escrow requirement) so the conditional is a no-op for them.
+        // vault requirement) so the conditional is a no-op for them.
         if (offer.amountMax == 0
             && offer.offerType == LibVaipakam.OfferType.Borrower) {
             uint8 effTier = OracleFacet(address(this))
@@ -1135,16 +1135,16 @@ contract OfferCreateFacet is
     }
 
     /**
-     * @notice Resolve (creating lazily) a user's per-user escrow proxy.
+     * @notice Resolve (creating lazily) a user's per-user vault proxy.
      * @dev Public Diamond entrypoint, retained on this facet post-split
      *      (Issue #67). The cross-facet wrapper body now lives in
-     *      {LibUserEscrow.getOrCreate} so `OfferAcceptFacet` can share it
-     *      without re-hosting the selector. Reverts GetUserEscrowFailed
+     *      {LibUserVault.getOrCreate} so `OfferAcceptFacet` can share it
+     *      without re-hosting the selector. Reverts GetUserVaultFailed
      *      on cross-facet call failure.
-     * @param user The user whose escrow to resolve (created lazily).
-     * @return proxy The user's escrow proxy address.
+     * @param user The user whose vault to resolve (created lazily).
+     * @return proxy The user's vault proxy address.
      */
-    function getUserEscrow(address user) public returns (address proxy) {
-        return LibUserEscrow.getOrCreate(user);
+    function getUserVault(address user) public returns (address proxy) {
+        return LibUserVault.getOrCreate(user);
     }
 }

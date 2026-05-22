@@ -7,14 +7,14 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 
 /**
  * @title ReplaceStaleFacets
- * @notice Redeploys OfferFacet, OracleFacet and EscrowFactoryFacet and Replaces
+ * @notice Redeploys OfferFacet, OracleFacet and VaultFactoryFacet and Replaces
  *         every selector they own. Targets the createOffer failure surfacing
  *         `CrossFacetCallFailed(string)` (0x573c3147) on Sepolia — that legacy
  *         error is only reachable through the non-typed `LibRevert.bubbleOnFailure`
@@ -43,13 +43,13 @@ contract ReplaceStaleFacets is Script {
         OfferCreateFacet offerCreateFacet = new OfferCreateFacet();
         OfferAcceptFacet offerAcceptFacet = new OfferAcceptFacet();
         OracleFacet oracleFacet = new OracleFacet();
-        EscrowFactoryFacet escrowFactoryFacet = new EscrowFactoryFacet();
+        VaultFactoryFacet vaultFactoryFacet = new VaultFactoryFacet();
         ConfigFacet configFacet = new ConfigFacet();
         OracleAdminFacet oracleAdminFacet = new OracleAdminFacet();
 
         console.log("OfferFacet:          ", address(offerCreateFacet));
         console.log("OracleFacet:         ", address(oracleFacet));
-        console.log("EscrowFactoryFacet:  ", address(escrowFactoryFacet));
+        console.log("VaultFactoryFacet:  ", address(vaultFactoryFacet));
         console.log("ConfigFacet:         ", address(configFacet));
         console.log("OracleAdminFacet:    ", address(oracleAdminFacet));
 
@@ -62,14 +62,14 @@ contract ReplaceStaleFacets is Script {
         // path, not this one-off bytecode-refresh script.
 
         // 7 cuts:
-        //   3 Replace (Offer / Oracle / EscrowFactory bytecode refresh)
+        //   3 Replace (Offer / Oracle / VaultFactory bytecode refresh)
         //   1 Replace + 1 Add (ConfigFacet — existing 28 selectors + 27 missing for protocol-console knobs)
         //   1 Replace + 1 Add (OracleAdminFacet — existing 20 + 10 missing Pyth/admin getters)
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](8);
         cuts[0] = _replace(address(offerCreateFacet), _offerCreateSelectors());
         cuts[7] = _replace(address(offerAcceptFacet), _offerAcceptSelectors());
         cuts[1] = _replace(address(oracleFacet), _oracleSelectors());
-        cuts[2] = _replace(address(escrowFactoryFacet), _escrowFactorySelectors());
+        cuts[2] = _replace(address(vaultFactoryFacet), _vaultFactorySelectors());
         cuts[3] = _replace(address(configFacet), _configFacetExistingSelectors());
         cuts[4] = _add(address(configFacet), _configFacetMissingSelectors());
         cuts[5] = _replace(address(oracleAdminFacet), _oracleAdminExistingSelectors());
@@ -116,7 +116,7 @@ contract ReplaceStaleFacets is Script {
         // OfferCancelFacet — refresh those via a sibling cut if needed.
         s = new bytes4[](4);
         s[0] = OfferCreateFacet.createOffer.selector;
-        s[1] = OfferCreateFacet.getUserEscrow.selector;
+        s[1] = OfferCreateFacet.getUserVault.selector;
         s[2] = OfferCreateFacet.createOfferWithPermit.selector;
         s[3] = OfferCreateFacet.createOfferInternal.selector;
     }
@@ -258,36 +258,36 @@ contract ReplaceStaleFacets is Script {
     // note in `run()`: the eid→chainId migration changed the facet's
     // selector set, so a `Replace`-based refresh no longer applies.
 
-    function _escrowFactorySelectors() internal pure returns (bytes4[] memory s) {
+    function _vaultFactorySelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](27);
-        s[0] = EscrowFactoryFacet.initializeEscrowImplementation.selector;
-        s[1] = EscrowFactoryFacet.getOrCreateUserEscrow.selector;
-        s[2] = EscrowFactoryFacet.upgradeEscrowImplementation.selector;
-        s[3] = EscrowFactoryFacet.escrowDepositERC20.selector;
-        s[4] = EscrowFactoryFacet.escrowWithdrawERC20.selector;
-        s[5] = EscrowFactoryFacet.escrowDepositERC721.selector;
-        s[6] = EscrowFactoryFacet.escrowWithdrawERC721.selector;
-        s[7] = EscrowFactoryFacet.escrowDepositERC1155.selector;
-        s[8] = EscrowFactoryFacet.escrowWithdrawERC1155.selector;
-        s[9] = EscrowFactoryFacet.escrowApproveNFT721.selector;
-        s[10] = EscrowFactoryFacet.escrowSetNFTUser.selector;
-        s[11] = EscrowFactoryFacet.escrowGetNFTUserOf.selector;
-        s[12] = EscrowFactoryFacet.escrowGetNFTUserExpires.selector;
-        s[13] = EscrowFactoryFacet.getOfferAmount.selector;
-        s[14] = EscrowFactoryFacet.getVaipakamEscrowImplementationAddress.selector;
-        s[15] = EscrowFactoryFacet.getDiamondAddress.selector;
-        s[16] = EscrowFactoryFacet.setMandatoryEscrowUpgrade.selector;
-        s[17] = EscrowFactoryFacet.upgradeUserEscrow.selector;
+        s[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
+        s[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
+        s[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
+        s[3] = VaultFactoryFacet.vaultDepositERC20.selector;
+        s[4] = VaultFactoryFacet.vaultWithdrawERC20.selector;
+        s[5] = VaultFactoryFacet.vaultDepositERC721.selector;
+        s[6] = VaultFactoryFacet.vaultWithdrawERC721.selector;
+        s[7] = VaultFactoryFacet.vaultDepositERC1155.selector;
+        s[8] = VaultFactoryFacet.vaultWithdrawERC1155.selector;
+        s[9] = VaultFactoryFacet.vaultApproveNFT721.selector;
+        s[10] = VaultFactoryFacet.vaultSetNFTUser.selector;
+        s[11] = VaultFactoryFacet.vaultGetNFTUserOf.selector;
+        s[12] = VaultFactoryFacet.vaultGetNFTUserExpires.selector;
+        s[13] = VaultFactoryFacet.getOfferAmount.selector;
+        s[14] = VaultFactoryFacet.getVaipakamVaultImplementationAddress.selector;
+        s[15] = VaultFactoryFacet.getDiamondAddress.selector;
+        s[16] = VaultFactoryFacet.setMandatoryVaultUpgrade.selector;
+        s[17] = VaultFactoryFacet.upgradeUserVault.selector;
         // T-051 / T-054 — chokepoint deposit + counter-only companions
         // + stuck-token recovery EIP-712 surface.
-        s[18] = EscrowFactoryFacet.escrowDepositERC20From.selector;
-        s[19] = EscrowFactoryFacet.recordEscrowDepositERC20.selector;
-        s[20] = EscrowFactoryFacet.getProtocolTrackedEscrowBalance.selector;
-        s[21] = EscrowFactoryFacet.recoverStuckERC20.selector;
-        s[22] = EscrowFactoryFacet.disown.selector;
-        s[23] = EscrowFactoryFacet.recoveryDomainSeparator.selector;
-        s[24] = EscrowFactoryFacet.recoveryAckTextHash.selector;
-        s[25] = EscrowFactoryFacet.recoveryNonce.selector;
-        s[26] = EscrowFactoryFacet.escrowBannedSource.selector;
+        s[18] = VaultFactoryFacet.vaultDepositERC20From.selector;
+        s[19] = VaultFactoryFacet.recordVaultDepositERC20.selector;
+        s[20] = VaultFactoryFacet.getProtocolTrackedVaultBalance.selector;
+        s[21] = VaultFactoryFacet.recoverStuckERC20.selector;
+        s[22] = VaultFactoryFacet.disown.selector;
+        s[23] = VaultFactoryFacet.recoveryDomainSeparator.selector;
+        s[24] = VaultFactoryFacet.recoveryAckTextHash.selector;
+        s[25] = VaultFactoryFacet.recoveryNonce.selector;
+        s[26] = VaultFactoryFacet.vaultBannedSource.selector;
     }
 }

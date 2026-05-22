@@ -183,7 +183,7 @@ contract AccessControlFacetTest is Test {
         assertEq(AccessControlFacet(address(diamond)).RISK_ADMIN_ROLE(), LibAccessControl.RISK_ADMIN_ROLE);
     }
 
-    // Note: ESCROW_ADMIN_ROLE selector is not cut into the diamond via getAccessControlFacetSelectors
+    // Note: VAULT_ADMIN_ROLE selector is not cut into the diamond via getAccessControlFacetSelectors
 
     // ─── Multi-role scenarios ────────────────────────────────────────────
 

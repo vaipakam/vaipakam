@@ -13,7 +13,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  *      a UUPS upgradeable ERC20 (Capped + Burnable + Pausable +
  *      Ownable2Step) deployed behind an ERC1967Proxy, matching the
  *      project policy that contracts outside the Diamond are UUPS
- *      upgradeable (cf. VaipakamEscrowImplementation).
+ *      upgradeable (cf. VaipakamVaultImplementation).
  *
  *      Cross-chain semantics: this interface describes the CANONICAL
  *      token. On mirror chains (Polygon / Arbitrum / Optimism / Ethereum
@@ -38,7 +38,7 @@ interface IVPFIToken is IERC20 {
     /// @dev ERC20 itself emits Transfer(address(0), to, amount); this event
     ///      exists so indexers can filter mint events without scanning all
     ///      transfers from the zero address.
-    /// @custom:event-category state-change/escrow-mutation
+    /// @custom:event-category state-change/vault-mutation
     event Minted(address indexed to, uint256 amount);
 
     // ─── Errors ──────────────────────────────────────────────────────────────

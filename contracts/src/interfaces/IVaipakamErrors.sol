@@ -26,12 +26,12 @@ interface IVaipakamErrors {
     error NFTStatusUpdateFailed();
     error NFTRenterUpdateFailed();
     error NFTTransferFailed();
-    error EscrowResolutionFailed();
-    error EscrowWithdrawFailed();
-    error EscrowDepositFailed();
-    error EscrowTransferFailed();
+    error VaultResolutionFailed();
+    error VaultWithdrawFailed();
+    error VaultDepositFailed();
+    error VaultTransferFailed();
     /// @dev Stuck-token recovery: caller passed an `amount` greater
-    ///      than `max(0, balanceOf(escrow, token) - tracked)`. The
+    ///      than `max(0, balanceOf(vault, token) - tracked)`. The
     ///      cap is the load-bearing safety property — recovery can
     ///      never reach into protocol-tracked collateral / claims.
     error RecoveryAmountExceedsUnsolicited();
@@ -43,23 +43,23 @@ interface IVaipakamErrors {
     /// @dev Stuck-token recovery: signature does not recover to
     ///      `msg.sender` for the supplied payload.
     error RecoverySignatureInvalid();
-    /// @dev Stuck-token recovery: caller has no escrow proxy
+    /// @dev Stuck-token recovery: caller has no vault proxy
     ///      deployed — nothing to recover from.
-    error RecoveryUserHasNoEscrow();
+    error RecoveryUserHasNoVault();
     /// @dev Stuck-token recovery: user declared a source address that
-    ///      the sanctions oracle flags. Their escrow has been LOCKED
+    ///      the sanctions oracle flags. Their vault has been LOCKED
     ///      under the existing sanctioned-address Tier-1 / Tier-2
     ///      semantics; the ban auto-unlocks when the address is
     ///      de-listed from the oracle.
-    error EscrowBannedDueToSanctionedSource();
+    error VaultBannedDueToSanctionedSource();
     /// @dev Stuck-token recovery: sanctions oracle is currently
     ///      unset OR returned an error. Fail-safe: refuse to execute
     ///      until the oracle is reachable.
     error SanctionsOracleUnavailable();
-    /// @dev Stuck-token recovery: caller's escrow is already locked
+    /// @dev Stuck-token recovery: caller's vault is already locked
     ///      under a previously-recorded sanctioned-source ban; the
     ///      ban hasn't lifted (oracle still flags the source).
-    error EscrowAlreadyBanned();
+    error VaultAlreadyBanned();
     error TreasuryTransferFailed();
     error LoanInitiationFailed();
     error OfferCreationFailed();
@@ -193,9 +193,9 @@ interface IVaipakamErrors {
     ///         Base aggregator to finalize and broadcast the day.
     /// @param dayId First day on the claim cursor that is missing a global.
     error InteractionDayGlobalNotFinalized(uint256 dayId);
-    /// @notice User attempted to withdraw more VPFI than their escrow
+    /// @notice User attempted to withdraw more VPFI than their vault
     ///         currently holds.
-    error VPFIEscrowBalanceInsufficient();
+    error VPFIVaultBalanceInsufficient();
 
     // ─── Cross-Chain Reward Accounting (docs/TokenomicsTechSpec.md §4a) ──────
     /// @notice Aggregator / finalize / broadcast-trigger surface called

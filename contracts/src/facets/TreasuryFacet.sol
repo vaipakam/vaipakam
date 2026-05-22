@@ -47,7 +47,7 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     ///         from the Diamond's ADMIN_ROLE flow for governance audit.
     /// @param to     Recipient of the freshly-minted VPFI.
     /// @param amount Amount minted (18 decimals).
-    /// @custom:event-category state-change/escrow-mutation
+    /// @custom:event-category state-change/vault-mutation
     event VPFIMinted(address indexed to, uint256 amount);
 
     /// @notice Emitted on a successful `convertTreasuryAsset`.

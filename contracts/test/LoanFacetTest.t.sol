@@ -13,10 +13,10 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
-import {VaipakamEscrowImplementation} from "../src/VaipakamEscrowImplementation.sol";
+import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
  // Added for HF/LTV mocks
@@ -30,10 +30,10 @@ import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
  // For cutting
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
-import {VaipakamEscrowImplementation} from "../src/VaipakamEscrowImplementation.sol";
+import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
- // For escrow impl
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+ // For vault impl
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {HelperTest} from "./HelperTest.sol";
@@ -45,10 +45,10 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
-import {VaipakamEscrowImplementation} from "../src/VaipakamEscrowImplementation.sol";
+import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
@@ -105,15 +105,15 @@ contract LoanFacetTest is Test {
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
     VaipakamNFTFacet nftFacet;
-    EscrowFactoryFacet escrowFacet;
+    VaultFactoryFacet vaultFacet;
     LoanFacet loanFacet;
     RiskFacet riskFacet; // Added
     AccessControlFacet accessControlFacet;
     TestMutatorFacet testMutatorFacet;
     HelperTest helperTest;
 
-    // Escrow impl
-    VaipakamEscrowImplementation escrowImpl;
+    // Vault impl
+    VaipakamVaultImplementation vaultImpl;
 
     function setUp() public {
         owner = address(this);
@@ -149,15 +149,15 @@ contract LoanFacetTest is Test {
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
         nftFacet = new VaipakamNFTFacet();
-        escrowFacet = new EscrowFactoryFacet();
+        vaultFacet = new VaultFactoryFacet();
         loanFacet = new LoanFacet();
         riskFacet = new RiskFacet(); // Added
         accessControlFacet = new AccessControlFacet();
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        // Deploy escrow impl
-        escrowImpl = new VaipakamEscrowImplementation();
+        // Deploy vault impl
+        vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](13);
@@ -187,9 +187,9 @@ contract LoanFacetTest is Test {
             functionSelectors: helperTest.getVaipakamNFTFacetSelectors()
         });
         cuts[4] = IDiamondCut.FacetCut({
-            facetAddress: address(escrowFacet),
+            facetAddress: address(vaultFacet),
             action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getEscrowFactoryFacetSelectors()
+            functionSelectors: helperTest.getVaultFactoryFacetSelectors()
         });
         cuts[5] = IDiamondCut.FacetCut({
             facetAddress: address(loanFacet),
@@ -230,9 +230,9 @@ contract LoanFacetTest is Test {
         vm.store(address(diamond), bytes32(uint256(0x2160e84a745d8897ad2778886d40d3563c8bc30c059c5f2173e21e9d47057400)), bytes32(0));
         TestMutatorFacet(address(diamond)).setTreasuryAddress(address(diamond));
 
-        // Init escrow factory with impl
+        // Init vault factory with impl
         vm.prank(owner);
-        EscrowFactoryFacet(address(diamond)).initializeEscrowImplementation();
+        VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
 
         // Mock approvals
         vm.prank(lender);
@@ -348,58 +348,58 @@ contract LoanFacetTest is Test {
         RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 300, 1000
         );
 
-        // Approve escrows
+        // Approve vaults
         vm.prank(lender);
         ERC20(mockERC20).approve(
-            EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender),
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender),
             type(uint256).max
         );
         vm.prank(borrower);
         ERC20(mockERC20).approve(
-            EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(
                 borrower
             ),
             type(uint256).max
         );
         vm.prank(lender);
         ERC20(mockCollateralERC20).approve(
-            EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender),
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender),
             type(uint256).max
         );
         vm.prank(borrower);
         ERC20(mockCollateralERC20).approve(
-            EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(
                 borrower
             ),
             type(uint256).max
         );
         vm.prank(lender);
         ERC20(mockIlliquidERC20).approve(
-            EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender),
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender),
             type(uint256).max
         );
         vm.prank(borrower);
         ERC20(mockIlliquidERC20).approve(
-            EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(
                 borrower
             ),
             type(uint256).max
         );
         vm.prank(lender);
         ERC20(mockIlliquidCollateralERC20).approve(
-            EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender),
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender),
             type(uint256).max
         );
         vm.prank(borrower);
         ERC20(mockIlliquidCollateralERC20).approve(
-            EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(
                 borrower
             ),
             type(uint256).max
         );
         vm.prank(lender);
         IERC721(mockNFT721).setApprovalForAll(
-            EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender),
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender),
             true
         );
     }
@@ -782,12 +782,12 @@ contract LoanFacetTest is Test {
     /// @dev Borrower creates offer, lender accepts → roles are correct
     function testInitiateLoanBorrowerOfferType() public {
         // T-051 — pair the direct deal with a counter record so the
-        // subsequent escrowWithdrawERC20 inside acceptOffer doesn't
-        // underflow protocolTrackedEscrowBalance.
-        address lenderEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender);
-        deal(mockERC20, lenderEscrow, 1000 ether);
+        // subsequent vaultWithdrawERC20 inside acceptOffer doesn't
+        // underflow protocolTrackedVaultBalance.
+        address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        deal(mockERC20, lenderVault, 1000 ether);
         vm.prank(address(diamond));
-        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(lender, mockERC20, 1000 ether);
+        VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(lender, mockERC20, 1000 ether);
 
         vm.prank(borrower);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
@@ -862,15 +862,15 @@ contract LoanFacetTest is Test {
     /// @dev Borrower creates NFT offer (ERC721), lender accepts → prepay/buffer fields set correctly
     function testInitiateLoanBorrowerNFTOfferType() public {
         // Lender needs to own the NFT for a Borrower-type NFT offer
-        // (when lender accepts, the NFT goes to lender's escrow)
-        address lenderEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender);
+        // (when lender accepts, the NFT goes to lender's vault)
+        address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
 
         // Lender must approve the diamond to transfer their NFT
         vm.prank(lender);
         MockRentableNFT721(mockNFT721).setApprovalForAll(address(diamond), true);
-        // Also approve lender escrow
+        // Also approve lender vault
         vm.prank(lender);
-        MockRentableNFT721(mockNFT721).setApprovalForAll(lenderEscrow, true);
+        MockRentableNFT721(mockNFT721).setApprovalForAll(lenderVault, true);
 
         // Borrower creates a Borrower-type NFT offer (requesting to rent an NFT)
         vm.prank(borrower);

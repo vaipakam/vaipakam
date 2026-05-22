@@ -11,7 +11,7 @@ import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
 import {IZeroExProxy} from "../src/interfaces/IZeroExProxy.sol";
@@ -29,10 +29,10 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 ///           FallbackPending ──addCollateral (HF↑, LTV↓)──▶ Active
 ///
 ///         Before cure, the diamond holds the collateral it withdrew from
-///         the borrower's escrow and records a three-way split in
+///         the borrower's vault and records a three-way split in
 ///         `fallbackSnapshot[loanId]`. A successful cure:
 ///           1. transfers `held = lenderCol + treasuryCol + borrowerCol`
-///              from the diamond back to the borrower's escrow;
+///              from the diamond back to the borrower's vault;
 ///           2. deletes `fallbackSnapshot`, `lenderClaims`, `borrowerClaims`;
 ///           3. re-labels both position NFTs to `LoanInitiated`;
 ///           4. transitions status back to `Active`;
@@ -92,7 +92,7 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
         // Past grace.
         vm.warp(block.timestamp + DURATION_DAYS * 1 days + 3 days + 1);
 
-        // Force the 0x swap to revert; escrow pull + NFT label side-effects are
+        // Force the 0x swap to revert; vault pull + NFT label side-effects are
         // mocked away so we don't have to fully wire the default accounting.
         vm.mockCallRevert(
             address(ZeroExProxyMock(mockZeroExProxy)),
@@ -101,7 +101,7 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
         );
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
             abi.encode(true)
         );
         // `updateNFTStatus` returns (), so a zero-byte mock satisfies abi.decode
@@ -186,7 +186,7 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
 
     /// @dev When the cure predicate fails (HF < MIN_HEALTH_FACTOR), the
     ///      loan stays FallbackPending; the collateral has still been
-    ///      transferred into the borrower escrow but no status change.
+    ///      transferred into the borrower vault but no status change.
     function testNoCureWhenHfStillUnderwater() public {
         // Re-mock HF below 1.5e18 so the cure check fails.
         vm.mockCall(

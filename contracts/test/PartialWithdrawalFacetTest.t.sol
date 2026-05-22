@@ -11,7 +11,7 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
@@ -50,7 +50,7 @@ contract PartialWithdrawalFacetTest is Test {
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
     VaipakamNFTFacet nftFacet;
-    EscrowFactoryFacet escrowFacet;
+    VaultFactoryFacet vaultFacet;
     LoanFacet loanFacet;
     RiskFacet riskFacet;
     RepayFacet repayFacet;
@@ -96,7 +96,7 @@ contract PartialWithdrawalFacetTest is Test {
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
         nftFacet = new VaipakamNFTFacet();
-        escrowFacet = new EscrowFactoryFacet();
+        vaultFacet = new VaultFactoryFacet();
         loanFacet = new LoanFacet();
         riskFacet = new RiskFacet();
         repayFacet = new RepayFacet();
@@ -119,7 +119,7 @@ contract PartialWithdrawalFacetTest is Test {
         cuts[1]  = IDiamondCut.FacetCut({facetAddress: address(profileFacet),       action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
         cuts[2]  = IDiamondCut.FacetCut({facetAddress: address(oracleFacet),        action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});
         cuts[3]  = IDiamondCut.FacetCut({facetAddress: address(nftFacet),           action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaipakamNFTFacetSelectors()});
-        cuts[4]  = IDiamondCut.FacetCut({facetAddress: address(escrowFacet),        action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getEscrowFactoryFacetSelectors()});
+        cuts[4]  = IDiamondCut.FacetCut({facetAddress: address(vaultFacet),        action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaultFactoryFacetSelectors()});
         cuts[5]  = IDiamondCut.FacetCut({facetAddress: address(loanFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getLoanFacetSelectors()});
         cuts[6]  = IDiamondCut.FacetCut({facetAddress: address(riskFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskFacetSelectors()});
         cuts[7]  = IDiamondCut.FacetCut({facetAddress: address(repayFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRepayFacetSelectors()});
@@ -136,7 +136,7 @@ contract PartialWithdrawalFacetTest is Test {
 
         AccessControlFacet(address(diamond)).initializeAccessControl();
         AdminFacet(address(diamond)).unpause();
-        EscrowFactoryFacet(address(diamond)).initializeEscrowImplementation();
+        VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(mockZeroExProxy);
         AdminFacet(address(diamond)).setallowanceTarget(mockZeroExProxy);
@@ -166,12 +166,12 @@ contract PartialWithdrawalFacetTest is Test {
         mockLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Liquid);
         mockPrice(mockCollateralERC20, 1e8, 8);
 
-        address lenderEscrow  = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender);
-        address borrowerEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(borrower);
-        vm.prank(lender);   ERC20(mockERC20).approve(lenderEscrow, type(uint256).max);
-        vm.prank(borrower); ERC20(mockERC20).approve(borrowerEscrow, type(uint256).max);
-        vm.prank(lender);   ERC20(mockCollateralERC20).approve(lenderEscrow, type(uint256).max);
-        vm.prank(borrower); ERC20(mockCollateralERC20).approve(borrowerEscrow, type(uint256).max);
+        address lenderVault  = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
+        vm.prank(lender);   ERC20(mockERC20).approve(lenderVault, type(uint256).max);
+        vm.prank(borrower); ERC20(mockERC20).approve(borrowerVault, type(uint256).max);
+        vm.prank(lender);   ERC20(mockCollateralERC20).approve(lenderVault, type(uint256).max);
+        vm.prank(borrower); ERC20(mockCollateralERC20).approve(borrowerVault, type(uint256).max);
 
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
@@ -246,7 +246,7 @@ contract PartialWithdrawalFacetTest is Test {
     function testPartialWithdrawRevertsHealthFactorTooLow() public {
         // Withdraw nearly all collateral → HF too low
         // 1800 - 1700 = 100 ether remaining collateral; HF = 100 * 0.85 / 1000 = 0.085 < 1.5
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
 
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.HealthFactorTooLow.selector);
@@ -265,7 +265,7 @@ contract PartialWithdrawalFacetTest is Test {
         // HF = (collateral * 0.85) / principal
         // For HF >= 1.5: collateral * 0.85 >= 1500 → collateral >= 1765
         // Max withdrawal: 1800 - 1765 = 35 ether
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
 
         vm.expectEmit(true, true, false, false);
         // (loanId, borrower, amount, newCollateralAmount, newHF, newLTV) —
@@ -319,7 +319,7 @@ contract PartialWithdrawalFacetTest is Test {
         loan.collateralAmount = 1800 ether;
         TestMutatorFacet(address(diamond)).setLoan(activeLoanId, loan);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
 
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.LTVExceeded.selector);
@@ -335,7 +335,7 @@ contract PartialWithdrawalFacetTest is Test {
     /// @dev Covers CrossFacetCallFailed("Withdraw failed") in partialWithdrawCollateral
     function testPartialWithdrawCrossFacetFails() public {
         vm.mockCallRevert(
-            address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
             "withdraw failed"
         );
 

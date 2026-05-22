@@ -9,7 +9,7 @@ import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
@@ -52,7 +52,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
     VaipakamNFTFacet nftFacet;
-    EscrowFactoryFacet escrowFacet;
+    VaultFactoryFacet vaultFacet;
     LoanFacet loanFacet;
     RiskFacet riskFacet;
     RepayFacet repayFacet;
@@ -69,9 +69,9 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
     uint256 constant PRINCIPAL  = 1000 ether;
     uint256 constant COLLATERAL = 1800 ether;
 
-    address lenderEscrow;
-    address newLenderEscrow;
-    address borrowerEscrow;
+    address lenderVault;
+    address newLenderVault;
+    address borrowerVault;
 
     function mockLiquidity(address asset, LibVaipakam.LiquidityStatus status) internal {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OracleFacet.checkLiquidity.selector, asset), abi.encode(status));
@@ -105,7 +105,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
         nftFacet = new VaipakamNFTFacet();
-        escrowFacet = new EscrowFactoryFacet();
+        vaultFacet = new VaultFactoryFacet();
         loanFacet = new LoanFacet();
         riskFacet = new RiskFacet();
         repayFacet = new RepayFacet();
@@ -128,7 +128,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         cuts[1]  = IDiamondCut.FacetCut({facetAddress: address(profileFacet),       action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
         cuts[2]  = IDiamondCut.FacetCut({facetAddress: address(oracleFacet),        action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});
         cuts[3]  = IDiamondCut.FacetCut({facetAddress: address(nftFacet),           action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaipakamNFTFacetSelectors()});
-        cuts[4]  = IDiamondCut.FacetCut({facetAddress: address(escrowFacet),        action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getEscrowFactoryFacetSelectors()});
+        cuts[4]  = IDiamondCut.FacetCut({facetAddress: address(vaultFacet),        action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaultFactoryFacetSelectors()});
         cuts[5]  = IDiamondCut.FacetCut({facetAddress: address(loanFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getLoanFacetSelectors()});
         cuts[6]  = IDiamondCut.FacetCut({facetAddress: address(riskFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskFacetSelectors()});
         cuts[7]  = IDiamondCut.FacetCut({facetAddress: address(repayFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRepayFacetSelectors()});
@@ -145,7 +145,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         AccessControlFacet(address(diamond)).initializeAccessControl();
         AdminFacet(address(diamond)).unpause();
 
-        EscrowFactoryFacet(address(diamond)).initializeEscrowImplementation();
+        VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(mockZeroExProxy);
         AdminFacet(address(diamond)).setallowanceTarget(mockZeroExProxy);
@@ -180,15 +180,15 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         mockLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Liquid);
         mockPrice(mockCollateralERC20, 1e8, 8);
 
-        lenderEscrow    = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender);
-        newLenderEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(newLender);
-        borrowerEscrow  = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(borrower);
-        vm.prank(lender);    ERC20(mockERC20).approve(lenderEscrow, type(uint256).max);
-        vm.prank(newLender); ERC20(mockERC20).approve(newLenderEscrow, type(uint256).max);
-        vm.prank(borrower);  ERC20(mockERC20).approve(borrowerEscrow, type(uint256).max);
-        vm.prank(lender);    ERC20(mockCollateralERC20).approve(lenderEscrow, type(uint256).max);
-        vm.prank(newLender); ERC20(mockCollateralERC20).approve(newLenderEscrow, type(uint256).max);
-        vm.prank(borrower);  ERC20(mockCollateralERC20).approve(borrowerEscrow, type(uint256).max);
+        lenderVault    = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        newLenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(newLender);
+        borrowerVault  = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
+        vm.prank(lender);    ERC20(mockERC20).approve(lenderVault, type(uint256).max);
+        vm.prank(newLender); ERC20(mockERC20).approve(newLenderVault, type(uint256).max);
+        vm.prank(borrower);  ERC20(mockERC20).approve(borrowerVault, type(uint256).max);
+        vm.prank(lender);    ERC20(mockCollateralERC20).approve(lenderVault, type(uint256).max);
+        vm.prank(newLender); ERC20(mockCollateralERC20).approve(newLenderVault, type(uint256).max);
+        vm.prank(borrower);  ERC20(mockCollateralERC20).approve(borrowerVault, type(uint256).max);
 
         // Set diamond's country and KYC (needed for cross-facet offer creation in Option 2)
         vm.prank(address(diamond));
@@ -265,8 +265,8 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
             })
         );
 
-        // Mock cross-facet NFT calls (escrow withdraw works natively)
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
+        // Mock cross-facet NFT calls (vault withdraw works natively)
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -289,7 +289,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
 
         // Net settlement: lender receives `principal - liamCost` directly —
         // accrued is netted out of Noah's principal rather than pulled from
-        // Liam.  escrowWithdrawERC20 is mocked, so the diamond needs tokens
+        // Liam.  vaultWithdrawERC20 is mocked, so the diamond needs tokens
         // to pay Liam; that funding happens in the test helper. Here we just
         // assert balance strictly INCREASED by roughly principal - accrued.
         uint256 lenderBalAfter = ERC20(mockERC20).balanceOf(lender);
@@ -366,7 +366,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         // Mock all cross-facet calls that completeLoanSale makes
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
 
         // Expect LoanSaleCompleted event
         vm.expectEmit(true, true, true, false);

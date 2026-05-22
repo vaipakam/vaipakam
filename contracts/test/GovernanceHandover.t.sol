@@ -61,7 +61,7 @@ contract GovernanceHandoverTest is Test {
         diamond = _deployMinDiamond();
 
         // Initialize AccessControl so DEFAULT_ADMIN + ADMIN + PAUSER +
-        // ORACLE_ADMIN + RISK_ADMIN + KYC_ADMIN + ESCROW_ADMIN all land
+        // ORACLE_ADMIN + RISK_ADMIN + KYC_ADMIN + VAULT_ADMIN all land
         // on the deployer initially (matching the real deploy flow).
         AccessControlFacet(address(diamond)).initializeAccessControl();
         AdminFacet(address(diamond)).unpause();
@@ -121,7 +121,7 @@ contract GovernanceHandoverTest is Test {
             LibAccessControl.UNPAUSER_ROLE,
             LibAccessControl.ORACLE_ADMIN_ROLE,
             LibAccessControl.RISK_ADMIN_ROLE,
-            LibAccessControl.ESCROW_ADMIN_ROLE
+            LibAccessControl.VAULT_ADMIN_ROLE
         ];
         for (uint256 i; i < timelockRoles.length; ++i) {
             if (!ac.hasRole(timelockRoles[i], address(timelock))) {
@@ -206,7 +206,7 @@ contract GovernanceHandoverTest is Test {
         assertTrue(ac.hasRole(LibAccessControl.ADMIN_ROLE, address(timelock)));
         assertTrue(ac.hasRole(LibAccessControl.ORACLE_ADMIN_ROLE, address(timelock)));
         assertTrue(ac.hasRole(LibAccessControl.RISK_ADMIN_ROLE, address(timelock)));
-        assertTrue(ac.hasRole(LibAccessControl.ESCROW_ADMIN_ROLE, address(timelock)));
+        assertTrue(ac.hasRole(LibAccessControl.VAULT_ADMIN_ROLE, address(timelock)));
     }
 
     function test_Diamond_DeployerHasNoResidualAdminRole() public {
@@ -216,7 +216,7 @@ contract GovernanceHandoverTest is Test {
         assertFalse(ac.hasRole(LibAccessControl.ADMIN_ROLE, deployer));
         assertFalse(ac.hasRole(LibAccessControl.ORACLE_ADMIN_ROLE, deployer));
         assertFalse(ac.hasRole(LibAccessControl.RISK_ADMIN_ROLE, deployer));
-        assertFalse(ac.hasRole(LibAccessControl.ESCROW_ADMIN_ROLE, deployer));
+        assertFalse(ac.hasRole(LibAccessControl.VAULT_ADMIN_ROLE, deployer));
         assertFalse(ac.hasRole(LibAccessControl.PAUSER_ROLE, deployer));
         assertFalse(ac.hasRole(LibAccessControl.KYC_ADMIN_ROLE, deployer));
     }

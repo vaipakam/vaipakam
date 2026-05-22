@@ -187,7 +187,7 @@ contract KYCTierEnforcementIntegration is SetupTest {
     /// @dev Builds a Lender-side createOffer over (mockERC20 = $1 USDC-like
     ///      principal, mockCollateralERC20 = $2k WETH-like collateral). The
     ///      pricing was set in setUp(); SetupTest pre-approves both actors
-    ///      against the diamond and their per-user escrows for both tokens.
+    ///      against the diamond and their per-user vaults for both tokens.
     function _lenderOffer(uint256 principal) internal returns (uint256 offerId) {
         vm.prank(lender);
         offerId = OfferCreateFacet(address(diamond)).createOffer(

@@ -16,7 +16,7 @@ import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
-import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
@@ -271,10 +271,10 @@ contract SepoliaPositiveFlows is Script {
 
         // Lender approves Diamond and accepts. Post-Option-A,
         // `_acceptOffer` pulls the principal from the lender's wallet
-        // into the lender's escrow inline via the `escrowDepositERC20`
-        // chokepoint, so the legacy direct-transfer-to-escrow workaround
+        // into the lender's vault inline via the `vaultDepositERC20`
+        // chokepoint, so the legacy direct-transfer-to-vault workaround
         // is no longer needed (and would underflow the
-        // `protocolTrackedEscrowBalance` counter).
+        // `protocolTrackedVaultBalance` counter).
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
         uint256 loanId3 = OfferAcceptFacet(diamond).acceptOffer(offerId3, true);

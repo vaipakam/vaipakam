@@ -20,7 +20,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *        2. Grant ADMIN_ROLE        to timelock (AdminFacet / Profile gates)
  *        3. Grant ORACLE_ADMIN_ROLE to timelock (oracle config changes)
  *        4. Grant RISK_ADMIN_ROLE   to timelock (risk param changes)
- *        5. Grant ESCROW_ADMIN_ROLE to timelock (escrow impl upgrades)
+ *        5. Grant VAULT_ADMIN_ROLE to timelock (vault impl upgrades)
  *        6. Transfer LibDiamond ownership (ERC-173) to the timelock
  *        7. Renounce every role held by the deployer EOA
  *
@@ -85,7 +85,7 @@ contract TransferAdminToTimelock is Script {
             LibAccessControl.ADMIN_ROLE,
             LibAccessControl.ORACLE_ADMIN_ROLE,
             LibAccessControl.RISK_ADMIN_ROLE,
-            LibAccessControl.ESCROW_ADMIN_ROLE
+            LibAccessControl.VAULT_ADMIN_ROLE
         ];
 
         // Roles that do NOT migrate to the timelock — they stay on the

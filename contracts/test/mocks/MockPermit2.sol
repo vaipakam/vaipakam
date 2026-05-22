@@ -49,7 +49,7 @@ contract MockPermit2 is ISignatureTransfer {
         callCount += 1;
 
         // Execute the transfer so the facet's post-pull assertions
-        // (escrow balances, offer state, etc.) behave as they would
+        // (vault balances, offer state, etc.) behave as they would
         // under real Permit2.
         IERC20(permit.permitted.token).safeTransferFrom(
             owner,

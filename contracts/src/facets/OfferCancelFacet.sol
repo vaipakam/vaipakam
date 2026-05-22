@@ -10,7 +10,7 @@ import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
-import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 
@@ -104,7 +104,7 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // Active ONLY when the master `partialFillEnabled` flag is on.
         // Defends against the cancel-front-run vector on the matching
         // path: an attacker can't watch matchOffers in mempool, race a
-        // cancelOffer in, and reclaim escrowed assets before the match
+        // cancelOffer in, and reclaim vaulted assets before the match
         // lands. With matching dormant (default), there's no front-run
         // vector, so the cooldown stays off. Partial-filled offers
         // (`amountFilled > 0`) bypass the cooldown unconditionally —
@@ -143,7 +143,7 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         if (offer.offerType == LibVaipakam.OfferType.Lender) {
             if (offer.assetType == LibVaipakam.AssetType.ERC20) {
                 // Range Orders Phase 1 — refund only the UNFILLED
-                // portion. createOffer pre-escrowed `amountMax`; each
+                // portion. createOffer pre-vaulted `amountMax`; each
                 // partial match consumed a slice. Legacy single-value
                 // offers satisfy `amountMax == amount && amountFilled
                 // == 0`, so the refund equals `amount`.
@@ -154,44 +154,44 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                 if (refund > 0) {
                     LibFacet.crossFacetCall(
                         abi.encodeWithSelector(
-                            EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                            VaultFactoryFacet.vaultWithdrawERC20.selector,
                             msg.sender,
                             offer.lendingAsset,
                             msg.sender,
                             refund
                         ),
-                        EscrowWithdrawFailed.selector
+                        VaultWithdrawFailed.selector
                     );
                 }
             } else if (offer.assetType == LibVaipakam.AssetType.ERC721) {
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
-                        EscrowFactoryFacet.escrowWithdrawERC721.selector,
+                        VaultFactoryFacet.vaultWithdrawERC721.selector,
                         msg.sender,
                         offer.lendingAsset,
                         offer.tokenId,
                         msg.sender
                     ),
-                    EscrowWithdrawFailed.selector
+                    VaultWithdrawFailed.selector
                 );
             } else if (offer.assetType == LibVaipakam.AssetType.ERC1155) {
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
-                        EscrowFactoryFacet.escrowWithdrawERC1155.selector,
+                        VaultFactoryFacet.vaultWithdrawERC1155.selector,
                         msg.sender,
                         offer.lendingAsset,
                         offer.tokenId,
                         offer.quantity,
                         msg.sender
                     ),
-                    EscrowWithdrawFailed.selector
+                    VaultWithdrawFailed.selector
                 );
             }
         } else {
             // Borrower: unlock what was actually deposited at create.
             if (offer.assetType == LibVaipakam.AssetType.ERC20) {
                 if (offer.collateralAssetType == LibVaipakam.AssetType.ERC20) {
-                    // Issue #164 — `createOffer` pre-escrows the
+                    // Issue #164 — `createOffer` pre-vaults the
                     // UPPER bound (`collateralAmountMax`, post auto-
                     // collapse). Legacy fallback (`collateralAmountMax
                     // == 0` from a pre-#164 storage row) reads as
@@ -203,7 +203,7 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                     // (`offer.accepted` stays false until dust-close).
                     // The cancel-refund must subtract
                     // `collateralAmountFilled` (the portion of pre-
-                    // escrowed collateral that's BACKING LIVE LOANS),
+                    // vaulted collateral that's BACKING LIVE LOANS),
                     // otherwise the borrower withdraws collateral that
                     // still collateralises open obligations — a real
                     // fund-lock vector. Symmetric with the lender
@@ -215,37 +215,37 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                     if (borrowerColRefund > 0) {
                         LibFacet.crossFacetCall(
                             abi.encodeWithSelector(
-                                EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                                VaultFactoryFacet.vaultWithdrawERC20.selector,
                                 msg.sender,
                                 offer.collateralAsset,
                                 msg.sender,
                                 borrowerColRefund
                             ),
-                            EscrowWithdrawFailed.selector
+                            VaultWithdrawFailed.selector
                         );
                     }
                 } else if (offer.collateralAssetType == LibVaipakam.AssetType.ERC721) {
                     LibFacet.crossFacetCall(
                         abi.encodeWithSelector(
-                            EscrowFactoryFacet.escrowWithdrawERC721.selector,
+                            VaultFactoryFacet.vaultWithdrawERC721.selector,
                             msg.sender,
                             offer.collateralAsset,
                             offer.collateralTokenId,
                             msg.sender
                         ),
-                        EscrowWithdrawFailed.selector
+                        VaultWithdrawFailed.selector
                     );
                 } else if (offer.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
                     LibFacet.crossFacetCall(
                         abi.encodeWithSelector(
-                            EscrowFactoryFacet.escrowWithdrawERC1155.selector,
+                            VaultFactoryFacet.vaultWithdrawERC1155.selector,
                             msg.sender,
                             offer.collateralAsset,
                             offer.collateralTokenId,
                             offer.collateralQuantity,
                             msg.sender
                         ),
-                        EscrowWithdrawFailed.selector
+                        VaultWithdrawFailed.selector
                     );
                 }
             } else if (
@@ -259,13 +259,13 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                 uint256 totalPrepay = prepayAmount + buffer;
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
-                        EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                        VaultFactoryFacet.vaultWithdrawERC20.selector,
                         msg.sender,
                         offer.prepayAsset,
                         msg.sender,
                         totalPrepay
                     ),
-                    EscrowWithdrawFailed.selector
+                    VaultWithdrawFailed.selector
                 );
             }
         }

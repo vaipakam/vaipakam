@@ -10,7 +10,7 @@ import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {OracleFacet} from "../../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../../src/facets/VaipakamNFTFacet.sol";
-import {EscrowFactoryFacet} from "../../src/facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../../src/facets/ProfileFacet.sol";
 import {RiskFacet} from "../../src/facets/RiskFacet.sol";
@@ -48,7 +48,7 @@ contract InvariantBase is Test {
     HelperTest public helperTest;
 
     // Pre-funded actor pool — invariant suites pull from these rather than
-    // spraying calls from `msg.sender` (which would churn escrow creation
+    // spraying calls from `msg.sender` (which would churn vault creation
     // and leave most calls reverting on KYC / country checks).
     address[3] public lenders;
     address[3] public borrowers;
@@ -79,7 +79,7 @@ contract InvariantBase is Test {
 
         AccessControlFacet(address(diamond)).initializeAccessControl();
         AdminFacet(address(diamond)).unpause();
-        EscrowFactoryFacet(address(diamond)).initializeEscrowImplementation();
+        VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
         VaipakamNFTFacet(address(diamond)).initializeNFT();
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(makeAddr("zeroEx"));
@@ -104,7 +104,7 @@ contract InvariantBase is Test {
         ProfileFacet profileFacet = new ProfileFacet();
         OracleFacet oracleFacet = new OracleFacet();
         VaipakamNFTFacet nftFacet = new VaipakamNFTFacet();
-        EscrowFactoryFacet escrowFacet = new EscrowFactoryFacet();
+        VaultFactoryFacet vaultFacet = new VaultFactoryFacet();
         LoanFacet loanFacet = new LoanFacet();
         RiskFacet riskFacet = new RiskFacet();
         RepayFacet repayFacet = new RepayFacet();
@@ -128,7 +128,7 @@ contract InvariantBase is Test {
         cuts[1] = IDiamondCut.FacetCut({facetAddress: address(profileFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
         cuts[2] = IDiamondCut.FacetCut({facetAddress: address(oracleFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});
         cuts[3] = IDiamondCut.FacetCut({facetAddress: address(nftFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaipakamNFTFacetSelectors()});
-        cuts[4] = IDiamondCut.FacetCut({facetAddress: address(escrowFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getEscrowFactoryFacetSelectors()});
+        cuts[4] = IDiamondCut.FacetCut({facetAddress: address(vaultFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaultFactoryFacetSelectors()});
         cuts[5] = IDiamondCut.FacetCut({facetAddress: address(loanFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getLoanFacetSelectors()});
         cuts[6] = IDiamondCut.FacetCut({facetAddress: address(riskFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskFacetSelectors()});
         cuts[7] = IDiamondCut.FacetCut({facetAddress: address(repayFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRepayFacetSelectors()});
@@ -191,12 +191,12 @@ contract InvariantBase is Test {
         ProfileFacet(address(diamond)).setUserCountry("US");
         ProfileFacet(address(diamond)).updateKYCTier(user, LibVaipakam.KYCTier.Tier2);
 
-        address escrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(user);
+        address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user);
         vm.startPrank(user);
         ERC20(mockUSDC).approve(address(diamond), type(uint256).max);
         ERC20(mockWETH).approve(address(diamond), type(uint256).max);
-        ERC20(mockUSDC).approve(escrow, type(uint256).max);
-        ERC20(mockWETH).approve(escrow, type(uint256).max);
+        ERC20(mockUSDC).approve(vault, type(uint256).max);
+        ERC20(mockWETH).approve(vault, type(uint256).max);
         vm.stopPrank();
     }
 

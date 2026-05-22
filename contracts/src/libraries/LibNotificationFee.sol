@@ -3,16 +3,16 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
-import {EscrowFactoryFacet} from "../facets/EscrowFactoryFacet.sol";
+import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 
 /**
  * @title LibNotificationFee
  * @notice T-032 — pricing + collection helpers for the per-loan-side
- *         notification fee. Charged in VPFI from the user's escrow
+ *         notification fee. Charged in VPFI from the user's vault
  *         on the FIRST PaidPush-tier notification fired by the
  *         off-chain hf-watcher Worker. Routed directly to treasury
  *         in a single transfer (no Diamond custody) via the existing
- *         {EscrowFactoryFacet.escrowWithdrawERC20} privileged path.
+ *         {VaultFactoryFacet.vaultWithdrawERC20} privileged path.
  *
  * @dev Library, delegatecalled from `LoanFacet.markNotifBilled` (the
  *      `NOTIF_BILLER_ROLE`-gated external entry). `address(this)`
@@ -33,8 +33,8 @@ import {EscrowFactoryFacet} from "../facets/EscrowFactoryFacet.sol";
  *          live VPFI/numeraire feed and the fee → VPFI math becomes
  *          a single `feeNumeraire / vpfiPriceNumeraire` divide.
  *
- *      No Diamond custody window — the VPFI moves user-escrow →
- *      treasury in one privileged escrow call. The Diamond never
+ *      No Diamond custody window — the VPFI moves user-vault →
+ *      treasury in one privileged vault call. The Diamond never
  *      touches the asset, so the `notification fee` flow doesn't
  *      contribute to any "in-flight" Diamond balance state.
  */
@@ -119,13 +119,13 @@ library LibNotificationFee {
     /// @notice Bills a loan-side once. Idempotent — repeated calls on
     ///         an already-billed side are silent no-ops, matching the
     ///         "first notification only" UX promise of T-032.
-    /// @dev    Pulls VPFI from `payer`'s user-escrow → treasury in a
-    ///         single `escrowWithdrawERC20` call. No Diamond custody.
+    /// @dev    Pulls VPFI from `payer`'s user-vault → treasury in a
+    ///         single `vaultWithdrawERC20` call. No Diamond custody.
     ///         Increments `s.notificationFeesAccrued` for operator
     ///         visibility.
     /// @param  loanId        Loan to bill.
     /// @param  isLenderSide  true ⇒ bill the lender side; false ⇒ borrower.
-    /// @param  payer         The escrow owner (lender or borrower).
+    /// @param  payer         The vault owner (lender or borrower).
     ///                       The caller (LoanFacet.markNotifBilled)
     ///                       supplies whichever party matches
     ///                       `isLenderSide`.
@@ -148,14 +148,14 @@ library LibNotificationFee {
         address treasury = s.treasury;
         if (treasury == address(0)) revert NotifFeeTreasuryNotSet();
 
-        // Direct: user-escrow → treasury. The Diamond is the
-        // privileged caller of the user's escrow proxy
+        // Direct: user-vault → treasury. The Diamond is the
+        // privileged caller of the user's vault proxy
         // (`onlyDiamond` modifier) but never holds the asset itself.
-        // Reverts if the user has no escrow OR insufficient VPFI;
+        // Reverts if the user has no vault OR insufficient VPFI;
         // those reverts surface to the watcher, which logs them and
         // skips the on-chain `markNotifBilled` write — meaning the
         // user's billed flag stays false until they top up VPFI.
-        EscrowFactoryFacet(address(this)).escrowWithdrawERC20(
+        VaultFactoryFacet(address(this)).vaultWithdrawERC20(
             payer,
             vpfi,
             treasury,
