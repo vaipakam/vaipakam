@@ -230,7 +230,7 @@ Required by `ConfigureCcip.s.sol`:
 | `CCIP_REGISTRY_MODULE_OWNER_CUSTOM`| Chainlink `RegistryModuleOwnerCustom` on this chain (the CCT owner-based registrar)  |
 | `CCIP_LANE_CHAIN_IDS`              | Comma-separated EVM chain ids of every REMOTE chain to wire a TokenPool lane to       |
 | `BASE_CHAIN_ID`                    | Mirror chains only — the hub the buy / reward channels peer with                      |
-| `CCIP_GUARDIAN`                    | Optional — guardian address set on every `GuardianPausable` contract (default unset)  |
+| `CCIP_GUARDIAN`                    | Optional — guardian set by `_setGuardians` ONLY on `CcipMessenger`, `VaipakamRewardMessenger`, and the local buy contract (`VpfiBuyAdapter` on mirrors, `VpfiBuyReceiver` on Base). **Not set on `VPFIMirrorToken`** — even though it extends `GuardianPausable`. Operator must `setGuardian` on the mirror token manually if they want the same guardian on it. Default unset → step skipped. |
 | `CCIP_RATE_CAPACITY`               | Optional — per-lane token-bucket capacity (default 50,000 VPFI, design §10)           |
 | `CCIP_RATE_REFILL`                 | Optional — per-lane refill rate, VPFI/s (default 5.8 VPFI/s, design §10)              |
 
@@ -361,8 +361,16 @@ configures:
   — Base only; the canonical messenger broadcasts the finalized daily
   global denominator to every mirror.
 - Register each token pool with CCIP `TokenAdminRegistry` via
-  `RegistryModuleOwnerCustom`. Admin is the deploy multisig at this
-  stage; rotates to the timelock at the handover step.
+  `RegistryModuleOwnerCustom` — **only if the broadcasting admin is
+  the token's `owner()`**. `_registerCct` pre-checks
+  `IOwner(localToken).owner() == admin` and **skips with a console
+  message** when ownership has already moved off the broadcaster
+  (e.g., canonical `VPFIToken` ownership on the governance timelock
+  / multisig). In that case the token owner runs
+  `registerAdminViaOwner` → `acceptAdminRole` → `setPool` as a
+  separate, owner-broadcast transaction. The cutover runbook covers
+  this. Admin is the deploy multisig at this stage; rotates to the
+  timelock at the handover step.
 
 Run `ConfigureCcip` once per (local, remote) chain pair; the wiring
 is symmetric so each ordered pair `(A → B)` and `(B → A)` gets one

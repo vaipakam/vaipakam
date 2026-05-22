@@ -74,10 +74,20 @@ What changed in `contracts/README.md`:
   "Configure CCIP lanes + token pools" and points at
   `ConfigureCcip.s.sol`. The script wires chain selectors,
   remote-messenger peers, the `vpfi-buy` + `vpfi-reward`
-  channels, per-lane rate limits via `VpfiPoolRateGovernor`,
+  channels, per-lane rate limits via `VpfiPoolRateGovernor`, and
   the `setBroadcastDestinations` list on the canonical reward
-  messenger, and the `TokenAdminRegistry` pool registration. An
-  anvil-rehearsal note points at the Foundry test
+  messenger. The `CCIP_GUARDIAN` value (when set) lands on the
+  `CcipMessenger`, `VaipakamRewardMessenger`, and local buy contract
+  — **not** on `VPFIMirrorToken`, which the operator sets manually
+  if matching the same guardian is desired. `TokenAdminRegistry`
+  pool registration runs in the same script **only when the
+  broadcasting admin is the token's `owner()`**; on canonical chains
+  where the `VPFIToken` owner has already been moved to a
+  timelock/multisig, the registration block is skipped with a
+  console message and the token owner runs
+  `registerAdminViaOwner` → `acceptAdminRole` → `setPool` as a
+  separate, owner-broadcast transaction (the cutover runbook
+  covers it). An anvil-rehearsal note points at the Foundry test
   `contracts/test/CcipDeploymentRehearsalTest.t.sol` for the local
   end-to-end pre-flight (run via `forge test --match-path
   'test/CcipDeploymentRehearsalTest.t.sol'`).
