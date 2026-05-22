@@ -111,6 +111,62 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "previewAccept",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "acceptor",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "preview",
+        "type": "tuple",
+        "internalType": "struct OfferAcceptFacet.AcceptPreview",
+        "components": [
+          {
+            "name": "effectivePrincipal",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "interestRateBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "lifEstimate",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralResidualRefund",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "errorCode",
+            "type": "uint8",
+            "internalType": "enum OfferAcceptFacet.AcceptError"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
     "type": "event",
     "name": "OfferAccepted",
     "inputs": [

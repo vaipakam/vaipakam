@@ -191,7 +191,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](4);
         // Single `acceptOffer(uint256,bool)` signature — the VPFI discount
         // path is governed by the platform-level consent flag set via
         // VPFIDiscountFacet.setVPFIDiscountConsent, not a per-call boolean.
@@ -201,6 +201,10 @@ contract HelperTest {
         // Cross-facet entry consumed by OfferMatchFacet.matchOffers
         // (Range Orders Phase 1 EIP-170 split) — address(this)-only.
         selectors[2] = OfferAcceptFacet.acceptOfferInternal.selector;
+        // #196 — contract-side dry-run for the frontend / indexer /
+        // keeper. Pure view; consumers `staticcall` it from the
+        // OfferDetails + AcceptOffer modal.
+        selectors[3] = OfferAcceptFacet.previewAccept.selector;
         return selectors;
     }
 

@@ -1034,4 +1034,292 @@ contract OfferAcceptFacet is
         }
     }
 
+    // ═════════════════════════════════════════════════════════════════
+    // previewAccept — direct-accept dry-run for the frontend (#196)
+    // ═════════════════════════════════════════════════════════════════
+
+    /// @notice Typed revert classifier for `previewAccept`. Mirrors the
+    ///         precondition chain in `_acceptOffer` so the frontend can
+    ///         distinguish recoverable failures (KYC tier-up unlocks the
+    ///         offer; pause lift unblocks; counterparty country shift,
+    ///         etc.) from terminal ones (offer already filled, sanctioned
+    ///         counterparty). `OfferExpired` is reserved for #195 (GTT
+    ///         support) — not currently emitted.
+    enum AcceptError {
+        None,
+        OfferAlreadyAccepted,
+        SanctionedAcceptor,
+        SanctionedCreator,
+        AssetPaused,
+        CountriesNotCompatible,
+        RiskAndTermsConsentRequired,
+        KYCRequired
+    }
+
+    /// @notice Projection of the loan that would land if the supplied
+    ///         acceptor called `acceptOffer(offerId, true)` right now.
+    ///         Happy-path fields are populated for recoverable error
+    ///         cases too (e.g. `errorCode == KYCRequired`) so the
+    ///         frontend can render "tier-up to unlock X principal at
+    ///         Y bps" alongside the error.
+    ///
+    /// @param effectivePrincipal       The role-aware principal the loan
+    ///                                  would lock — see `LoanFacet`
+    ///                                  loan-init for the lender/borrower
+    ///                                  / ERC-20 / NFT-rental mapping.
+    /// @param interestRateBps          The role-aware rate the loan would
+    ///                                  lock. ERC-20 lender offer → the
+    ///                                  lender's floor (`offer.interestRateBps`);
+    ///                                  ERC-20 borrower offer → the
+    ///                                  borrower's ceiling (`offer.interestRateBpsMax`);
+    ///                                  NFT rental → single-value (`offer.interestRateBps`).
+    /// @param collateralAmount         Collateral the loan would lock
+    ///                                  (`offer.collateralAmount` for
+    ///                                  every direct-accept path).
+    /// @param lifEstimate              0.1% Loan Initiation Fee the lender
+    ///                                  would pay out of principal,
+    ///                                  expressed in lending-asset wei.
+    ///                                  Zero if the borrower has a live
+    ///                                  VPFI discount (tier ≥ 1, consent
+    ///                                  flipped, vault holds ≥ the FULL
+    ///                                  LIF-equivalent VPFI). NFT rentals
+    ///                                  do not charge LIF.
+    /// @param collateralResidualRefund For borrower offers with
+    ///                                  `collateralAmountMax > collateralAmount`,
+    ///                                  the excess pre-vaulted collateral
+    ///                                  the borrower gets back at accept.
+    ///                                  Zero on lender offers and on
+    ///                                  borrower offers without a range.
+    /// @param errorCode                `None` on the happy path; the first
+    ///                                  failing precondition's classifier
+    ///                                  otherwise.
+    struct AcceptPreview {
+        uint256 effectivePrincipal;
+        uint256 interestRateBps;
+        uint256 collateralAmount;
+        uint256 lifEstimate;
+        uint256 collateralResidualRefund;
+        AcceptError errorCode;
+    }
+
+    /// @notice Contract-side dry-run for `acceptOffer(offerId, true)`.
+    ///         The frontend gets the resulting loan shape + a typed
+    ///         classifier for the would-be revert in a single
+    ///         `eth_call` — no off-chain duplication of the role-aware
+    ///         mapping, no 4-RPC client-side computation.
+    ///
+    /// @dev    Walks the same precondition chain as `_acceptOffer` —
+    ///         offer-existence, sanctions, per-asset pause, country
+    ///         pair, creator consent, KYC threshold — and returns the
+    ///         first failing classifier without reverting. Happy-path
+    ///         projection fields are populated unconditionally so a
+    ///         recoverable error (`KYCRequired`) still surfaces "this
+    ///         offer would land 10k @ 300 bps if you tier-up."
+    ///
+    ///         Reverts only on `InvalidOffer` (creator == address(0)) —
+    ///         consistent with `acceptOffer`'s top-of-function behaviour
+    ///         and the right move for a non-existent slot. Every other
+    ///         precondition surfaces through `errorCode`.
+    ///
+    ///         Mirrors the direct-accept role-aware mapping in
+    ///         `LoanFacet`'s loan-init (`acceptOffer`-path, NOT the
+    ///         `matchOffers` matcher-midpoint path — the matcher route
+    ///         already has `previewMatch`). `matchOverride` is ignored
+    ///         here even if active mid-tx; a preview call is by
+    ///         construction outside any in-flight `matchOffers`.
+    ///
+    ///         Pure view — safe to call via `staticcall`. No reentrancy
+    ///         guard, no pause gate (a paused contract still needs to
+    ///         answer preview queries for the explorer / indexer / UI).
+    /// @param offerId  Offer being previewed.
+    /// @param acceptor Address being projected as the acceptor. The
+    ///                  frontend passes `connectedAddress`; the indexer
+    ///                  / keeper can pass any candidate counterparty.
+    /// @return preview The projection plus the first failing precondition.
+    function previewAccept(uint256 offerId, address acceptor)
+        external
+        view
+        returns (AcceptPreview memory preview)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Offer storage offer = s.offers[offerId];
+        if (offer.creator == address(0)) revert InvalidOffer();
+
+        // ─── Happy-path projections (populated unconditionally) ─────
+        bool _isERC20 = offer.assetType == LibVaipakam.AssetType.ERC20;
+        bool _isLender = offer.offerType == LibVaipakam.OfferType.Lender;
+
+        // Role-aware mapping mirrors `LoanFacet._copyOfferToLoan` on the
+        // non-match path. NFT rentals stay structurally single-value
+        // (see the PR #187 Codex P1 comment at LoanFacet.sol L678-L691).
+        preview.effectivePrincipal = _isERC20
+            ? (_isLender ? offer.amountMax : offer.amount)
+            : offer.amount;
+        preview.interestRateBps = _isERC20
+            ? (_isLender ? offer.interestRateBps : offer.interestRateBpsMax)
+            : offer.interestRateBps;
+        preview.collateralAmount = offer.collateralAmount;
+
+        // Collateral residual refund — only fires for borrower offers
+        // on the ERC-20 lending + ERC-20 collateral direct-accept path
+        // (see `_refundBorrowerCollateralResidualIfNeeded` for the exact
+        // gating, including the PR #187 Codex P2 NFT-lending carve-out
+        // which prevents an unfunded refund from underflowing the
+        // protocolTrackedVaultBalance counter). Projecting a residual
+        // for any borrower offer with `collateralAmountMax > collateralAmount`
+        // would drift from execution when the lending leg is NFT (the
+        // create-time excess deposit never fired) or when the collateral
+        // leg is non-ERC-20.
+        if (
+            !_isLender
+                && _isERC20
+                && offer.collateralAssetType == LibVaipakam.AssetType.ERC20
+                && offer.collateralAmountMax > offer.collateralAmount
+        ) {
+            preview.collateralResidualRefund =
+                offer.collateralAmountMax - offer.collateralAmount;
+        }
+
+        // LIF estimate. ERC-20 path only — NFT rental offers don't
+        // charge LIF (the `tryApplyBorrowerLif` chain is guarded behind
+        // `offer.assetType == ERC20` in `_acceptOffer`).
+        //
+        // Mirrors the FULL precondition `tryApplyBorrowerLif` itself
+        // checks before pulling VPFI, in execution order:
+        //   1. borrower has consent flipped
+        //   2. lending asset is liquid (oracle classification)
+        //   3. `quote(...).canQuote` — borrower's vault VPFI balance
+        //      resolves a tier ≥ 1 + the LIF-equivalent VPFI rate
+        //      can be computed (`_feeAssetWeiToVPFI` succeeds)
+        //   4. borrower's vault exists (`userVaipakamVaults[borrower] != 0`)
+        //   5. vault holds ≥ `vpfiRequired` (the full LIF-equivalent VPFI)
+        //
+        // Codex round-1 P1 (#196): an earlier draft of this function
+        // treated `canQuote` alone as equivalent to "discount will
+        // apply" and dropped `vpfiRequired` on the floor. That diverged
+        // from execution on the path where the borrower has tier 1+
+        // bookkeeping (oracle resolves) but the actual vault holds
+        // LESS than the FULL LIF-equivalent — `quote` returned true,
+        // `tryApplyBorrowerLif` returned false on the balance check,
+        // so execution actually charged LIF in the principal asset
+        // while the preview projected zero. The vault-balance check
+        // below closes that gap.
+        //
+        // The borrower address depends on the offer side (lender offer
+        // → acceptor; borrower offer → creator), same as the loan-init
+        // resolution.
+        if (_isERC20) {
+            address _borrower = _isLender ? acceptor : offer.creator;
+            bool _vpfiDiscountApplies;
+            if (
+                s.vpfiDiscountConsent[_borrower]
+                    && OracleFacet(address(this)).checkLiquidity(
+                        offer.lendingAsset
+                    ) == LibVaipakam.LiquidityStatus.Liquid
+            ) {
+                (bool _canQuote, uint256 _vpfiRequired, ) =
+                    LibVPFIDiscount.quote(
+                        offer.lendingAsset,
+                        preview.effectivePrincipal,
+                        _borrower
+                    );
+                if (_canQuote) {
+                    address _borrowerVault =
+                        s.userVaipakamVaults[_borrower];
+                    if (
+                        _borrowerVault != address(0)
+                            && IERC20(s.vpfiToken).balanceOf(_borrowerVault)
+                                >= _vpfiRequired
+                    ) {
+                        _vpfiDiscountApplies = true;
+                    }
+                }
+            }
+            if (!_vpfiDiscountApplies) {
+                preview.lifEstimate =
+                    (preview.effectivePrincipal *
+                        LibVaipakam.cfgLoanInitiationFeeBps()) /
+                    LibVaipakam.BASIS_POINTS;
+            }
+        }
+
+        // ─── Precondition chain (first failure wins) ────────────────
+        // Order mirrors `_acceptOffer`. First failing check sets
+        // `errorCode`; subsequent checks are short-circuited via the
+        // sentinel return below to keep the projection deterministic
+        // for the frontend.
+        if (offer.accepted) {
+            preview.errorCode = AcceptError.OfferAlreadyAccepted;
+            return preview;
+        }
+        if (LibVaipakam.isSanctionedAddress(acceptor)) {
+            preview.errorCode = AcceptError.SanctionedAcceptor;
+            return preview;
+        }
+        if (LibVaipakam.isSanctionedAddress(offer.creator)) {
+            preview.errorCode = AcceptError.SanctionedCreator;
+            return preview;
+        }
+        // Per-asset pause check — read storage directly so we don't
+        // re-enter the reverting helper (`LibFacet.requireAssetNotPaused`).
+        if (
+            s.assetPaused[offer.lendingAsset]
+                || s.assetPaused[offer.collateralAsset]
+        ) {
+            preview.errorCode = AcceptError.AssetPaused;
+            return preview;
+        }
+        // Country-pair check — only fires when countries differ AND the
+        // pair is not allowed. On retail (`canTradeBetween` pure-true),
+        // this branch is unreachable; left in for the industrial fork.
+        {
+            string memory _creatorCountry = ProfileFacet(address(this))
+                .getUserCountry(offer.creator);
+            string memory _acceptorCountry = ProfileFacet(address(this))
+                .getUserCountry(acceptor);
+            if (
+                keccak256(abi.encodePacked(_creatorCountry))
+                    != keccak256(abi.encodePacked(_acceptorCountry))
+                    && !LibVaipakam.canTradeBetween(
+                        _creatorCountry,
+                        _acceptorCountry
+                    )
+            ) {
+                preview.errorCode = AcceptError.CountriesNotCompatible;
+                return preview;
+            }
+        }
+        // Defensive creator-consent check. `OfferCreateFacet.createOffer`
+        // enforces this at create time, but `_acceptOffer` re-checks
+        // defensively against any future code path that bypasses
+        // creation enforcement — mirror that here.
+        if (!offer.creatorRiskAndTermsConsent) {
+            preview.errorCode = AcceptError.RiskAndTermsConsentRequired;
+            return preview;
+        }
+        // KYC threshold check — both sides must clear the tier gate at
+        // the projected transaction value.
+        {
+            uint256 _valueNumeraire = _calculateTransactionValueNumeraire(
+                offer,
+                preview.effectivePrincipal
+            );
+            if (
+                !ProfileFacet(address(this)).meetsKYCRequirement(
+                    offer.creator,
+                    _valueNumeraire
+                )
+                    || !ProfileFacet(address(this)).meetsKYCRequirement(
+                        acceptor,
+                        _valueNumeraire
+                    )
+            ) {
+                preview.errorCode = AcceptError.KYCRequired;
+                return preview;
+            }
+        }
+
+        // Happy path: errorCode stays `None`.
+    }
+
 }
