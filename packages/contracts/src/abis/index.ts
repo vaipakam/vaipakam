@@ -10,7 +10,7 @@ import RiskMatchLiquidationFacetABI from './RiskMatchLiquidationFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
 import OracleAdminFacetABI from './OracleAdminFacet.json';
-import EscrowFactoryFacetABI from './EscrowFactoryFacet.json';
+import VaultFactoryFacetABI from './VaultFactoryFacet.json';
 import VaipakamNFTFacetABI from './VaipakamNFTFacet.json';
 import ProfileFacetABI from './ProfileFacet.json';
 import AdminFacetABI from './AdminFacet.json';
@@ -54,7 +54,7 @@ export {
   ClaimFacetABI,
   OracleFacetABI,
   OracleAdminFacetABI,
-  EscrowFactoryFacetABI,
+  VaultFactoryFacetABI,
   VaipakamNFTFacetABI,
   ProfileFacetABI,
   AdminFacetABI,
@@ -102,7 +102,7 @@ export const DIAMOND_ABI = [
   ...ClaimFacetABI,
   ...OracleFacetABI,
   ...OracleAdminFacetABI,
-  ...EscrowFactoryFacetABI,
+  ...VaultFactoryFacetABI,
   ...VaipakamNFTFacetABI,
   ...ProfileFacetABI,
   ...AdminFacetABI,

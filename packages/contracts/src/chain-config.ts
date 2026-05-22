@@ -17,7 +17,7 @@
 /**
  * Static chain descriptor. Some fields come from
  * the per-chain deployments JSON (Diamond proxy address, facet
- * addresses, escrow impl, LZ adapter addresses); others are
+ * addresses, vault impl, LZ adapter addresses); others are
  * deploy-time-stable metadata (chain name, RPC default, native
  * gas symbol, OfferBook default-pair addresses).
  */
@@ -55,9 +55,9 @@ export interface ChainConfig {
    *  card so users can land directly on the facet's `#readContract` tab
    *  on the block explorer. Null falls back to the Diamond proxy. */
   metricsFacetAddress: string | null;
-  /** UUPS escrow implementation deployed by `EscrowFactoryFacet`. Null
+  /** UUPS vault implementation deployed by `VaultFactoryFacet`. Null
    *  falls back to the Diamond proxy in the Security card. */
-  escrowImplAddress: string | null;
+  vaultImplAddress: string | null;
   /** Standalone RiskFacet implementation address. Null falls back to
    *  the Diamond proxy. */
   riskFacetAddress: string | null;

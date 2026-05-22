@@ -187,7 +187,7 @@
   },
   {
     "type": "error",
-    "name": "EscrowWithdrawFailed",
+    "name": "VaultWithdrawFailed",
     "inputs": []
   },
   {

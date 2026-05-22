@@ -797,7 +797,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "escrowVpfiBalance",
+            "name": "vaultVpfiBalance",
             "type": "uint256",
             "internalType": "uint256"
           },

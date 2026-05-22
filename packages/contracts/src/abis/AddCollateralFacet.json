@@ -197,32 +197,32 @@
   },
   {
     "type": "error",
-    "name": "EscrowAlreadyBanned",
+    "name": "VaultAlreadyBanned",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "EscrowBannedDueToSanctionedSource",
+    "name": "VaultBannedDueToSanctionedSource",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "EscrowDepositFailed",
+    "name": "VaultDepositFailed",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "EscrowResolutionFailed",
+    "name": "VaultResolutionFailed",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "EscrowTransferFailed",
+    "name": "VaultTransferFailed",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "EscrowWithdrawFailed",
+    "name": "VaultWithdrawFailed",
     "inputs": []
   },
   {
@@ -637,7 +637,7 @@
   },
   {
     "type": "error",
-    "name": "RecoveryUserHasNoEscrow",
+    "name": "RecoveryUserHasNoVault",
     "inputs": []
   },
   {
@@ -744,7 +744,7 @@
   },
   {
     "type": "error",
-    "name": "VPFIEscrowBalanceInsufficient",
+    "name": "VPFIVaultBalanceInsufficient",
     "inputs": []
   },
   {

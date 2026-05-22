@@ -285,11 +285,11 @@
   },
   {
     "type": "function",
-    "name": "getEscrowStats",
+    "name": "getVaultStats",
     "inputs": [],
     "outputs": [
       {
-        "name": "totalNFTsInEscrow",
+        "name": "totalNFTsInVault",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -983,7 +983,7 @@
   },
   {
     "type": "function",
-    "name": "getTotalNFTsInEscrowByCollection",
+    "name": "getTotalNFTsInVaultByCollection",
     "inputs": [
       {
         "name": "collection",
@@ -1359,7 +1359,7 @@
   },
   {
     "type": "function",
-    "name": "getUserNFTsInEscrow",
+    "name": "getUserNFTsInVault",
     "inputs": [
       {
         "name": "user",

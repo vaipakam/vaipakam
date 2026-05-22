@@ -8,7 +8,7 @@
   },
   {
     "type": "function",
-    "name": "depositVPFIToEscrow",
+    "name": "depositVPFIToVault",
     "inputs": [
       {
         "name": "amount",
@@ -21,7 +21,7 @@
   },
   {
     "type": "function",
-    "name": "depositVPFIToEscrowWithPermit",
+    "name": "depositVPFIToVaultWithPermit",
     "inputs": [
       {
         "name": "amount",
@@ -243,7 +243,7 @@
         "internalType": "uint8"
       },
       {
-        "name": "escrowBal",
+        "name": "vaultBal",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -373,7 +373,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "borrowerEscrowBal",
+        "name": "borrowerVaultBal",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -412,7 +412,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "borrowerEscrowBal",
+        "name": "borrowerVaultBal",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -509,7 +509,7 @@
   },
   {
     "type": "function",
-    "name": "withdrawVPFIFromEscrow",
+    "name": "withdrawVPFIFromVault",
     "inputs": [
       {
         "name": "amount",
@@ -609,7 +609,7 @@
   },
   {
     "type": "event",
-    "name": "VPFIDepositedToEscrow",
+    "name": "VPFIDepositedToVault",
     "inputs": [
       {
         "name": "user",
@@ -624,7 +624,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "newEscrowBalance",
+        "name": "newVaultBalance",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -705,7 +705,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "newEscrowBalance",
+        "name": "newVaultBalance",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -715,7 +715,7 @@
   },
   {
     "type": "event",
-    "name": "VPFIWithdrawnFromEscrow",
+    "name": "VPFIWithdrawnFromVault",
     "inputs": [
       {
         "name": "user",
@@ -730,7 +730,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "newEscrowBalance",
+        "name": "newVaultBalance",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -891,32 +891,32 @@
   },
   {
     "type": "error",
-    "name": "EscrowAlreadyBanned",
+    "name": "VaultAlreadyBanned",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "EscrowBannedDueToSanctionedSource",
+    "name": "VaultBannedDueToSanctionedSource",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "EscrowDepositFailed",
+    "name": "VaultDepositFailed",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "EscrowResolutionFailed",
+    "name": "VaultResolutionFailed",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "EscrowTransferFailed",
+    "name": "VaultTransferFailed",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "EscrowWithdrawFailed",
+    "name": "VaultWithdrawFailed",
     "inputs": []
   },
   {
@@ -1336,7 +1336,7 @@
   },
   {
     "type": "error",
-    "name": "RecoveryUserHasNoEscrow",
+    "name": "RecoveryUserHasNoVault",
     "inputs": []
   },
   {
@@ -1454,7 +1454,7 @@
   },
   {
     "type": "error",
-    "name": "VPFIEscrowBalanceInsufficient",
+    "name": "VPFIVaultBalanceInsufficient",
     "inputs": []
   },
   {
