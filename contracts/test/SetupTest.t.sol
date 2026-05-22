@@ -75,6 +75,21 @@ import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
 import {MockZeroExLegacyAdapter} from "./mocks/MockZeroExLegacyAdapter.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+// #168 Track A — close the second test-vs-prod drift surface. The
+// production diamond cuts these four facets
+// (DiamondFacetNames.cutFacetNames() + DeployDiamond.s.sol §5), but
+// SetupTest historically omitted them. The drift forced every test
+// that mutates a loan past creation (preclose / refinance / partial
+// withdrawal / lender early-withdrawal) to roll its own bespoke
+// `setUp`, which is exactly the duplication Track A is folding away.
+// Same strict-superset pattern as the OfferMatchFacet addition for
+// #173 (see the comment above the OfferMatchFacet cut below): no
+// existing SetupTest consumer routes these selectors today, so adding
+// the cuts can only add reachable surface — it can't break anything.
+import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
+import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
+import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
+import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 
 contract SetupTest is Test {
     VaipakamDiamond diamond;
@@ -157,6 +172,12 @@ contract SetupTest is Test {
     VPFITokenFacet vpfiTokenFacet;
     TestMutatorFacet testMutatorFacet;
     ConfigFacet configFacet;
+    // #168 Track A — Phase-2 facet quartet routed to close the
+    // test-vs-prod drift. Imports + cut entries below.
+    EarlyWithdrawalFacet earlyWithdrawalFacet;
+    PartialWithdrawalFacet partialWithdrawalFacet;
+    PrecloseFacet precloseFacet;
+    RefinanceFacet refinanceFacet;
     HelperTest helperTest;
 
     // Escrow impl
@@ -220,13 +241,23 @@ contract SetupTest is Test {
         vpfiTokenFacet = new VPFITokenFacet();
         testMutatorFacet = new TestMutatorFacet();
         configFacet = new ConfigFacet();
+        // #168 Track A — Phase-2 facet quartet construction (cut below).
+        earlyWithdrawalFacet = new EarlyWithdrawalFacet();
+        partialWithdrawalFacet = new PartialWithdrawalFacet();
+        precloseFacet = new PrecloseFacet();
+        refinanceFacet = new RefinanceFacet();
         helperTest = new HelperTest();
 
         // Deploy escrow impl
         escrowImpl = new VaipakamEscrowImplementation();
 
-        // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](24);
+        // Cut facets into diamond. Slot count tracks
+        // DiamondFacetNames.cutFacetNames() to keep the test diamond a
+        // true superset of production. #168 Track A extended the array
+        // from 24 → 28 to add the PrecloseFacet / RefinanceFacet /
+        // EarlyWithdrawalFacet / PartialWithdrawalFacet quartet that
+        // production cuts but SetupTest had been silently omitting.
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](28);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -358,6 +389,31 @@ contract SetupTest is Test {
             facetAddress: address(offerMatchFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getOfferMatchFacetSelectors()
+        });
+        // #168 Track A — production facet quartet. Each one is cut by
+        // DeployDiamond.s.sol (steps in §5); their selector lists live
+        // in HelperTest. Pause-gated tests, preclose / refinance flows,
+        // partial-withdrawal and lender-early-withdrawal tests can now
+        // inherit from SetupTest instead of rolling bespoke setUps.
+        cuts[24] = IDiamondCut.FacetCut({
+            facetAddress: address(precloseFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getPrecloseFacetSelectors()
+        });
+        cuts[25] = IDiamondCut.FacetCut({
+            facetAddress: address(refinanceFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRefinanceFacetSelectors()
+        });
+        cuts[26] = IDiamondCut.FacetCut({
+            facetAddress: address(earlyWithdrawalFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getEarlyWithdrawalFacetSelectors()
+        });
+        cuts[27] = IDiamondCut.FacetCut({
+            facetAddress: address(partialWithdrawalFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getPartialWithdrawalFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
