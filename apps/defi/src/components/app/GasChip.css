@@ -1,0 +1,38 @@
+/*
+ * GasChip — compact network-fee disclosure chip per UX direction ADR
+ * Tier A.8. Pinned-to-the-bottom-of-confirm-modal-above-the-CTA usage
+ * is the consumer's layout call; this stylesheet covers only the
+ * chip's own visual.
+ *
+ * Visual reference: Uniswap / 1inch / Cowswap "Network fee ~ $X.XX"
+ * inline chip — neutral grey background, mono-numeric typeface for
+ * easy comparison across runs, no strong tint (the chip is
+ * informational, not actionable).
+ */
+
+.gas-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: var(--chip-bg, rgba(110, 110, 130, 0.10));
+  color: var(--chip-fg, inherit);
+  /* Mono-numeric digits so consecutive renders during refresh-pre-
+     sign don't cause the chip width to dance.  `tabular-nums`
+     reserves uniform column widths for digits while leaving
+     letterforms untouched. */
+  font-variant-numeric: tabular-nums;
+  font-size: 0.9em;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+/*
+ * Pending state — softens the chip while the gas estimate hasn't
+ * landed yet. Keeps the layout slot occupied so the consuming modal
+ * doesn't flicker when the estimate arrives.
+ */
+.gas-chip-pending {
+  opacity: 0.55;
+}
