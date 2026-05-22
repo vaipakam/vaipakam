@@ -514,10 +514,13 @@ considered and rejected:
   vocabulary debate.
 
 **Negative / Trade-offs:**
-- ~12 sub-cards of UI work to land the full vision (the canonical
-  card numbers are 1, 2, 3, 4, 5, 5a–5e, 6, 7, 8, 9, 10, 11, 12 —
-  the 5a–5e per-action splits of the LoanDetails parent count as
-  their own tickets for execution-tracking purposes). Each can ship
+- ~17 sub-cards of UI work to land the full vision — the canonical
+  IDs enumerated above are 1, 2, 3, 4, 5, 5a, 5b, 5c, 5d, 5e, 6, 7,
+  8, 9, 10, 11, 12 (17 distinct execution tickets). Cards 5 (the
+  LoanDetails parent surface itself) and 5a–5e (per-action splits)
+  are individually scoped because each ships against a distinct
+  surface even though they share the active-loan-journey grouping.
+  Each can ship
   independently behind a feature flag (the protocol already uses
   kill-switch flags for backend work; the same pattern applies to
   rolled-out UI revamps).

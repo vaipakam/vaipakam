@@ -35,11 +35,16 @@ so the surface feels familiar). The ADR catalogues:
   retail-DEX visual idioms this ADR scopes.
 - **Sub-cards to file** — implementation cards grouped by user
   journey (order-entry / active-loan / post-loan / cross-cutting /
-  conditional / adjacent). One card per significant per-page
-  rework, so checklist rows trace 1:1 to execution tickets —
-  including dedicated cards for `Refinance.tsx`,
+  conditional / adjacent). Standalone-page reworks get strictly
+  1:1 cards (including dedicated cards for `Refinance.tsx`,
   `BorrowerPreclose.tsx`, and `LenderEarlyWithdrawal.tsx` rather
-  than rolling them under the LoanDetails parent.
+  than rolling them under the LoanDetails parent). Two deliberate
+  paired-flow bundles share a single card each — `AddCollateral`
+  + `PartialWithdraw` (sub-card 5e) and `KeeperSettings` + `Alerts`
+  (sub-card 12) — because each pair shares a single panel slot and
+  the same preview component, so a single card is the smaller
+  deviation than splitting a shared-component implementation
+  across two tickets.
   These cards land in the same wave as this ADR merge so each rework
   has a single source of truth for "what's the target state".
 - **Out of scope** — the rejected vocabulary borrows ("margin ratio"
