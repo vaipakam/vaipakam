@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "build": "pnpm run typecheck",
     "typecheck": "tsc -p . --noEmit"
   },
   "dependencies": {

@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "build": "pnpm run typecheck",
     "check-event-coverage": "node scripts/check-event-coverage.mjs",
     "typecheck": "tsc -p . --noEmit && node scripts/check-event-coverage.mjs"
   },
