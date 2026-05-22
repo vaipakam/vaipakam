@@ -1,4 +1,5 @@
 import { type FC } from 'react';
+import { useTranslation } from 'react-i18next';
 import { formatBps, type FormatBpsOptions } from '../../lib/bpsFormat';
 
 /**
@@ -47,7 +48,15 @@ export const BpsValue: FC<BpsValueProps> = ({
   className,
   withTitle = true,
 }) => {
-  const { display, tooltip } = formatBps(bps, { precision, withBpsHint });
+  // Pull the active i18n locale so percent / digit formatting tracks
+  // the user's language. Codex round-1 P2 caught the pre-locale shape
+  // would have shown English punctuation in every locale.
+  const { i18n } = useTranslation();
+  const { display, tooltip } = formatBps(bps, {
+    precision,
+    withBpsHint,
+    locale: i18n.language,
+  });
   return (
     <span
       className={className}

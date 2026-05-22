@@ -71,14 +71,34 @@ const NATIVE_PRECISION = 6;
  * decimal precision without going via `parseFloat` (which would lose
  * precision on big numbers). Pure-string trim; the caller has
  * already ensured the input is finite + non-negative.
+ *
+ * The second return value flags whether the input was truncated to
+ * zero — i.e. the value was non-zero but smaller than `10^-precision`.
+ * The caller renders a "< floor" indicator in that case so a tiny
+ * gas fee never displays as a flat zero (which would understate the
+ * estimate to a low-fee-chain user — Codex round-1 P2 catch).
  */
-function trimDecimal(s: string, precision: number): string {
+function trimDecimal(
+  s: string,
+  precision: number,
+): { display: string; truncatedToZero: boolean } {
   const idx = s.indexOf('.');
-  if (idx < 0) return s;
+  if (idx < 0) return { display: s, truncatedToZero: false };
   const trimmed = s.slice(0, idx + precision + 1);
   // Drop trailing zeros after the decimal point so "0.001000" reads
   // as "0.001" — cleaner on the chip without losing information.
-  return trimmed.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+  const cleaned = trimmed
+    .replace(/(\.\d*?)0+$/, '$1')
+    .replace(/\.$/, '');
+
+  // Detect the "truncated to zero" case: original string had a
+  // non-zero digit somewhere, but the trim sliced it off so `cleaned`
+  // ends at "0" or "-0". The caller turns this into a "< 10^-precision"
+  // display rather than silently rendering "0 ETH" for a tiny non-zero
+  // fee.
+  const isZero = cleaned === '0' || cleaned === '-0';
+  const sourceHasNonZero = /[1-9]/.test(s);
+  return { display: cleaned, truncatedToZero: isZero && sourceHasNonZero };
 }
 
 /**
@@ -159,7 +179,20 @@ export const GasChip: FC<GasChipProps> = ({
   // `formatUnits` returns a decimal string keyed off the decimals
   // parameter — this is the standard viem helper, no custom math.
   const nativeDecimalStr = formatUnits(totalWei, nativeDecimals);
-  const nativeDisplay = trimDecimal(nativeDecimalStr, NATIVE_PRECISION);
+  const { display: trimmed, truncatedToZero } = trimDecimal(
+    nativeDecimalStr,
+    NATIVE_PRECISION,
+  );
+
+  // Tiny-fee preservation: a non-zero fee smaller than the display
+  // precision floor (10^-NATIVE_PRECISION native units) would otherwise
+  // render as "0 <SYMBOL>" — understating the estimate on low-fee
+  // chains (Base / Polygon / BNB at quiet mempool moments). Render it
+  // as "< 0.000001 <SYMBOL>" instead so the user knows the fee is
+  // bounded-but-non-zero. The "<" semantic mirrors the way Uniswap
+  // / 1inch surface dust-sized swap impacts.
+  const floor = `0.${'0'.repeat(NATIVE_PRECISION - 1)}1`; // e.g. "0.000001"
+  const nativeDisplay = truncatedToZero ? `< ${floor}` : trimmed;
 
   // USD qualifier — optional. When undefined / null, the chip just
   // renders the native amount; the qualifier auto-degrades.
@@ -173,7 +206,14 @@ export const GasChip: FC<GasChipProps> = ({
       const usd = nativeFloat * nativePriceUsd;
       // Round half-away-from-zero with `toFixed(2)` — fine for a
       // display estimate the user is reading not bookkeeping against.
-      usdSuffix = ` (~ $${usd.toFixed(2)})`;
+      // For truncated-to-zero native amounts, also surface the USD as
+      // a "< $0.01" bound when the computed USD rounds to zero — same
+      // semantic, same reason.
+      if (truncatedToZero && usd < 0.005) {
+        usdSuffix = ' (~ < $0.01)';
+      } else {
+        usdSuffix = ` (~ $${usd.toFixed(2)})`;
+      }
     }
   }
 

@@ -54,6 +54,24 @@ export interface FormatBpsOptions {
    * non-DeFi reader (e.g., a marketing card embedded in the app).
    */
   withBpsHint?: boolean;
+  /**
+   * BCP-47 locale tag for percent / number formatting (e.g. `'en'`,
+   * `'fr'`, `'de'`, `'hi'`). Routes through `Intl.NumberFormat` so the
+   * decimal separator, digit shaping, and grouping match the user's
+   * locale — a French user sees `"5,05 %"` instead of `"5.05 %"`.
+   *
+   * Defaults to undefined → falls back to the JS runtime's default
+   * locale (typically the browser UI locale on the client). React
+   * surfaces should pass `i18n.language` from `useTranslation()`
+   * explicitly so the percent display tracks the active app locale
+   * even when it differs from the browser default.
+   *
+   * The `%` glyph and the `bps` qualifier stay literal — they're
+   * technical DeFi terms that don't translate per locale. Localising
+   * them would diverge from how other DeFi surfaces (Uniswap,
+   * 1inch, Aave) render the same units.
+   */
+  locale?: string;
 }
 
 /**
@@ -92,7 +110,7 @@ export function formatBps(
   bps: number,
   opts: FormatBpsOptions = {},
 ): FormattedBps {
-  const { precision = 2, withBpsHint = true } = opts;
+  const { precision = 2, withBpsHint = true, locale } = opts;
 
   // Coerce non-finite inputs to a stable display. NaN / Infinity must
   // never reach the DOM — every consumer of this helper either has a
@@ -108,13 +126,27 @@ export function formatBps(
   // — so the on-chain truth stays visible even when display precision
   // is coarse.
   const percent = bps / 100;
-  // `Number.toFixed` rounds half-away-from-zero on most engines, which
-  // is fine for display purposes — the BPS tooltip carries the
-  // authoritative figure for anyone who needs the unrounded value.
-  const display = `${percent.toFixed(precision)} %`;
 
+  // Locale-aware number formatting — French gets `5,05`, German gets
+  // `5,05`, Arabic gets `٥٫٠٥` (Arabic-Indic digits), Hindi gets the
+  // Indian-style grouping at higher magnitudes. `Intl.NumberFormat`
+  // handles digit shaping + decimal separator + grouping in one call.
+  // The `%` glyph and the `bps` qualifier stay literal — see the JSDoc
+  // on FormatBpsOptions.locale for the rationale.
+  const numberFmt = new Intl.NumberFormat(locale, {
+    minimumFractionDigits: precision,
+    maximumFractionDigits: precision,
+  });
+  const display = `${numberFmt.format(percent)} %`;
+
+  // The BPS qualifier in the tooltip uses Intl too so the integer
+  // digit shaping matches the percent on the same display (consistent
+  // numerals in `"5,05 % (505 bps)"` → matching Latin digits;
+  // `"٥٫٠٥ % (٥٠٥ bps)"` → matching Arabic-Indic digits).
   const tooltip = withBpsHint
-    ? `${display} (${bps} bps)`
+    ? `${display} (${new Intl.NumberFormat(locale, {
+        maximumFractionDigits: 0,
+      }).format(bps)} bps)`
     : display;
 
   return { display, tooltip };

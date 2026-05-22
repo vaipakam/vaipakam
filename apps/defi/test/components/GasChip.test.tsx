@@ -151,4 +151,56 @@ describe('GasChip', () => {
     expect(container.textContent).toMatch(/0\.002\s*ETH/);
     expect(container.textContent).not.toMatch(/0\.00200/);
   });
+
+  // Tiny-fee preservation cases (Codex round-1 P2 — pre-fix the chip
+  // would have rendered "0 ETH" for a non-zero fee smaller than the
+  // display precision floor, understating the estimate on low-fee
+  // chains).
+
+  it('renders "< 0.000001 ETH" instead of "0 ETH" for a tiny non-zero fee', () => {
+    // 21_000 × 1 wei = 21_000 wei = 0.000_000_000_000_021 ETH —
+    // smaller than 10^-6 ETH (the chip's precision floor), so the
+    // trimmed display would round to "0". The chip surfaces "< floor"
+    // instead so a low-fee chain doesn't read as zero.
+    const { container } = render(
+      <GasChip
+        gasUnits={21_000n}
+        gasPriceWei={1n}
+        nativeSymbol="ETH"
+      />,
+    );
+    expect(container.textContent).toMatch(/< 0\.000001\s*ETH/);
+    // Crucially: NO bare "0 ETH" anywhere in the chip.
+    expect(container.textContent).not.toMatch(/^\s*0\s*ETH\s*$/);
+  });
+
+  it('renders "(~ < $0.01)" when USD computes below the $0.01 floor for a truncated fee', () => {
+    const { container } = render(
+      <GasChip
+        gasUnits={21_000n}
+        gasPriceWei={1n}
+        nativeSymbol="ETH"
+        nativePriceUsd={3000}
+      />,
+    );
+    // The chip's native side renders "< 0.000001 ETH"; the USD side
+    // mirrors that bounded-non-zero semantic with "(~ < $0.01)".
+    expect(container.textContent).toMatch(/< 0\.000001\s*ETH/);
+    expect(container.textContent).toMatch(/\(~ < \$0\.01\)/);
+  });
+
+  it('keeps the normal "(~ $X.XX)" USD shape when fee is above the precision floor', () => {
+    // 21_000 × 30 gwei = 0.00063 ETH × $3000 = $1.89 — well above the
+    // tiny-fee threshold; chip uses the normal USD shape.
+    const { container } = render(
+      <GasChip
+        gasUnits={21_000n}
+        gasPriceWei={30_000_000_000n}
+        nativeSymbol="ETH"
+        nativePriceUsd={3000}
+      />,
+    );
+    expect(container.textContent).toMatch(/\(~ \$1\.89\)/);
+    expect(container.textContent).not.toMatch(/<\s*\$/);
+  });
 });

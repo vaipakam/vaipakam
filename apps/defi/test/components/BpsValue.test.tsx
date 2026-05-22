@@ -1,6 +1,17 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { BpsValue } from '../../src/components/app/BpsValue';
+
+// BpsValue calls `useTranslation()` to read the active locale. Mock the
+// hook at module scope so the suite stays focused on the component's
+// behaviour; pin the mock to `en` so the test assertions don't depend
+// on the runtime's default-locale resolution.
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({
+    t: (key: string) => key,
+    i18n: { language: 'en', changeLanguage: () => Promise.resolve() },
+  }),
+}));
 
 describe('BpsValue', () => {
   it('renders the display percent in the visible slot', () => {
