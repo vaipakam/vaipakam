@@ -901,7 +901,7 @@ contract DeployDiamond is Script {
     }
 
     function _getOfferAcceptSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = OfferAcceptFacet.acceptOffer.selector;
         // Phase 8b.1 Permit2 addition.
         s[1] = OfferAcceptFacet.acceptOfferWithPermit.selector;
@@ -911,6 +911,10 @@ contract DeployDiamond is Script {
         // nonReentrant lock. `address(this)`-only gated inside the
         // facet body — EOAs cannot call it through the fallback.
         s[2] = OfferAcceptFacet.acceptOfferInternal.selector;
+        // #196 — contract-side dry-run for the frontend / indexer /
+        // keeper. Pure view; mirrors the `_acceptOffer` precondition
+        // chain and the `LoanFacet` direct-accept role-aware mapping.
+        s[3] = OfferAcceptFacet.previewAccept.selector;
         // `cancelOffer`, `getCompatibleOffers`, `getOffer`, and
         // `getOfferDetails` live on `OfferCancelFacet` — see
         // `_getOfferCancelSelectors`.
