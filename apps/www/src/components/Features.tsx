@@ -20,7 +20,7 @@ interface FeatureSpec {
 const FEATURES: FeatureSpec[] = [
   { icon: <Repeat size={24} />, titleKey: 'features.p2pTitle', descKey: 'features.p2pDesc' },
   { icon: <Image size={24} />, titleKey: 'features.nftTitle', descKey: 'features.nftDesc' },
-  { icon: <Wallet size={24} />, titleKey: 'features.escrowTitle', descKey: 'features.escrowDesc' },
+  { icon: <Wallet size={24} />, titleKey: 'features.vaultTitle', descKey: 'features.vaultDesc' },
   { icon: <Award size={24} />, titleKey: 'features.nftPositionTitle', descKey: 'features.nftPositionDesc' },
   { icon: <BarChart3 size={24} />, titleKey: 'features.liquidityTitle', descKey: 'features.liquidityDesc' },
   { icon: <Shield size={24} />, titleKey: 'features.liquidationTitle', descKey: 'features.liquidationDesc' },

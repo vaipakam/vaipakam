@@ -4,7 +4,7 @@ Vaipakamは、vault-to-vaultのlendingプラットフォームです。資産を
 lendしてinterestを得ることができます。資産をborrowする場合は
 collateralを差し入れます。NFTをrentに出せば、ownerはdaily feesを
 受け取れます。すべては2つのwalletの間で直接行われ、loanやrental
-が終了するまで、smart contractsがassetsをescrowで保持します。
+が終了するまで、smart contractsがassetsをvaultで保持します。
 
 このページは**やさしい全体案内**です。技術的な詳細を知りたい場合
 は、画面ごとの説明がある**User Guide**タブ、または完全なwhitepaper
@@ -68,8 +68,8 @@ offerはacceptされます。
 
 Acceptされた瞬間に:
 
-- あなたの1,000 USDCが、あなたのescrowから相手のescrowへ移動します
-- 相手のWETHはcollateralとして相手のescrowにlockされます
+- あなたの1,000 USDCが、あなたのvaultから相手のvaultへ移動します
+- 相手のWETHはcollateralとして相手のvaultにlockされます
 - 双方にposition NFTが発行されます — あなたのNFTは「1,000 USDC
   + interestを受け取る権利」、相手のNFTは「repay後にWETHを取り
   戻す権利」を表します
@@ -138,7 +138,7 @@ collateralは手に入りません。
 
 Flowはloanと同じですが、違いが2つあります。
 
-- **NFTはescrowに残ります**。renterが直接holdすることはありません。
+- **NFTはvaultに残ります**。renterが直接holdすることはありません。
   代わりにprotocolは**ERC-4907**を使い、rental windowの間、renterに
   NFTの"user rights"を与えます。対応するgamesやappsはuser rightsを
   読み取るため、renterはNFTをownせずにplay、log in、utilityの利用が
@@ -148,7 +148,7 @@ Flowはloanと同じですが、違いが2つあります。
   protocolはその日のfeeをownerへreleaseします。renterが早く終了
   したい場合、unused daysはrefundされます。
 
-Rentalが終了すると（expiryまたはdefaultにより）、NFTはownerのescrowへ
+Rentalが終了すると（expiryまたはdefaultにより）、NFTはownerのvaultへ
 戻ります。ownerは再度listするか、自分のwalletへclaim backできます。
 
 ---
@@ -206,7 +206,7 @@ Feesは2つだけで、どちらも小さいものです。
   lending amountの割合で、origination時にborrowerが支払います。
   1,000 USDC loanならdefault rateで1 USDCです。
 
-どちらのfeeも、escrowにVPFIをholdすることで**最大
+どちらのfeeも、vaultにVPFIをholdすることで**最大
 `{liveValue:tier4DiscountBps}`% discount**を受けられます（下記参照）。
 Defaultやliquidationの場合、recovered interestにYield Feeはかかりません
 — protocolはfailed loanからprofitしません。
@@ -235,10 +235,10 @@ Withdrawal fees、idle fees、streaming fees、principalへの
 
 ### 1. Fee discounts
 
-あるchain上のescrowにVPFIをholdしていると、そのchainで参加するloansの
+あるchain上のvaultにVPFIをholdしていると、そのchainで参加するloansの
 protocol feesがdiscountされます。
 
-| Escrow内のVPFI | Fee discount |
+| Vault内のVPFI | Fee discount |
 |---|---|
 | `{liveValue:tier1Min}` – `{liveValue:tier2Min}` (excl.) | `{liveValue:tier1DiscountBps}`% |
 | `{liveValue:tier2Min}` – `{liveValue:tier3Min}` (excl.) | `{liveValue:tier2DiscountBps}`% |
@@ -252,9 +252,9 @@ calculationをgameすることはできません。実際にそのtierをholdし
 
 ### 2. Staking — 5% APR
 
-Escrow内にあるVPFIは、自動的に5% annual yieldのstaking rewardsを得ます。
+Vault内にあるVPFIは、自動的に5% annual yieldのstaking rewardsを得ます。
 別のstaking actionは不要です。lock-upもなく、"unstake"の待ち時間も
-ありません。VPFIをescrowへmoveすれば、その瞬間からearnし始めます。外へ
+ありません。VPFIをvaultへmoveすれば、その瞬間からearnし始めます。外へ
 moveするとaccrualは止まります。
 
 ### 3. Platform interaction rewards
@@ -321,7 +321,7 @@ Flowは同じですが、**Create Offer** pageでERC-20 lendingではなく
 "NFT rental"を選びます。formが順番に案内してくれます。
 
 **VPFIでpassive yield**だけを得たい場合は、**Dashboard** pageで
-VPFIをescrowへdepositします。それだけです — stakingはその瞬間から
+VPFIをvaultへdepositします。それだけです — stakingはその瞬間から
 automaticです。
 
 ---
@@ -335,7 +335,7 @@ automaticです。
   specific walletsの間だけで成立します。shared liquidity poolも、
   utilization curveも、surprise rate spikesもありません。
 - **No proxy custody.** あなたのassetsはshared vaultではなく、自分
-  のescrowに置かれます。Protocolは、あなたがsignしたactionsでのみ
+  のvaultに置かれます。Protocolは、あなたがsignしたactionsでのみ
   それらをmoveします。
 - **No leveraged loops by default.** 望むならborrowed fundsを新しい
   lender offerとしてrepostできますが、protocolはautomatic loopingを

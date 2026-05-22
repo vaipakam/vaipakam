@@ -100,7 +100,7 @@
     "keepers": "キーパー",
     "governanceGroupLabel": "ガバナンス",
     "protocolConsole": "プロトコル・コンソール",
-    "escrow": "あなたの Vaipakam Vault"
+    "vault": "あなたの Vaipakam Vault"
   },
   "dataRights": {
     "title": "あなたのデータ権利 (GDPR / UK GDPR / CCPA)",
@@ -387,7 +387,7 @@
     "buying": "購入中…",
     "approving": "承認中…",
     "approvingVpfi": "VPFIを承認中…",
-    "depositToEscrow": "Vaultに預け入れ",
+    "depositToVault": "Vaultに預け入れ",
     "depositing": "預け入れ中…",
     "unstakeToWallet": "ウォレットに引き出し",
     "unstaking": "引き出し中…",
@@ -395,7 +395,7 @@
     "depositFailed": "預け入れ失敗",
     "unstakeFailed": "引き出し失敗",
     "buyTimedOut": "購入タイムアウト — 資金が返却されました",
-    "escrowBalanceZero": "VaultのVPFI残高が0です — 先にVPFIを預けてください。"
+    "vaultBalanceZero": "VaultのVPFI残高が0です — 先にVPFIを預けてください。"
   },
   "claimCenter": {
     "connectTitle": "ウォレットを接続",
@@ -819,8 +819,8 @@
     "statP2pLabel": "直接レンディング",
     "statNftValue": "NFT",
     "statNftLabel": "ポジション追跡",
-    "statEscrowValue": "1:1",
-    "statEscrowLabel": "Vaipakam Vaults",
+    "statVaultValue": "1:1",
+    "statVaultLabel": "Vaipakam Vaults",
     "demoLendTitle": "1,000 USDCを貸す",
     "demoLendMeta": "5% APR · 30日 · ETH担保",
     "demoLendStatus": "アクティブ",
@@ -839,8 +839,8 @@
     "p2pDesc": "ERC-20 トークンに対して、金利・担保種別・期間などのカスタム条件でオファーを作成または承諾できます。中間プールは介在しません。",
     "nftTitle": "NFT レンタル（ERC-4907）",
     "nftDesc": "ERC-721 および ERC-1155 NFT を日次料金でレンタル可能です。NFT はVault内に安全に保管されたまま、借り手が利用権を取得します。",
-    "escrowTitle": "ユーザー単位のVaipakam Vaults",
-    "escrowDesc": "各ユーザーには専用の UUPS アップグレード可能なVault プロキシが付与されます。資金が混在することはなく、資産は常に分離されます。",
+    "vaultTitle": "ユーザー単位のVaipakam Vaults",
+    "vaultDesc": "各ユーザーには専用の UUPS アップグレード可能なVault プロキシが付与されます。資金が混在することはなく、資産は常に分離されます。",
     "nftPositionTitle": "NFT によるポジション追跡",
     "nftPositionDesc": "すべてのオファーとローンに対し、オンチェーンメタデータを持つ固有の Vaipakam NFT が発行されます。任意のマーケットプレイスで所有権の証明、資金の請求、ステータスの追跡が可能です。",
     "liquidityTitle": "流動性資産と非流動性資産",
@@ -884,8 +884,8 @@
     "subtitle": "スマートコントラクトのアーキテクチャから清算メカニクスに至るまで、すべての設計判断は資産の安全性を最優先しています。下記の各カードは根拠となるオンチェーン成果物にリンクしており、独立して検証可能です。",
     "diamondTitle": "Diamond Standard（EIP-2535）",
     "diamondDesc": "モジュラー型のプロキシアーキテクチャです。プロトコルを停止せずに個別ファセットをアップグレードでき、すべての呼び出しは単一の Diamond エントリポイントを経由します。",
-    "escrowTitle": "ユーザー単位のVaipakam Vaults",
-    "escrowDesc": "各ユーザーは専用の UUPS プロキシVaultを持ち、資金は混在しません。Vaultの必須アップグレード時はアップグレードが完了するまで操作がブロックされます。",
+    "vaultTitle": "ユーザー単位のVaipakam Vaults",
+    "vaultDesc": "各ユーザーは専用の UUPS プロキシVaultを持ち、資金は混在しません。Vaultの必須アップグレード時はアップグレードが完了するまで操作がブロックされます。",
     "transparencyTitle": "オンチェーンの透明性",
     "transparencyDesc": "すべてのオファー、ローン、ステータス変更がオンチェーンに記録されます。Vaipakam NFT はポジション所有権の検証可能な証明として機能します。",
     "slippageTitle": "スリッページと清算の安全性",
@@ -972,9 +972,9 @@
         "li1": "<s>ERC-20 ローン:</s> 元本は任意の ERC-20（USDC、ETH、WBTC など）。担保は任意の ERC-20 または任意の NFT。",
         "li2": "<s>NFT レンタル:</s> 貸し出される NFT が元本となり、担保は ERC-20 です。NFT 自体の ERC-4907 ネイティブ対応は任意です。Vaipakam Vaultsラッパーが、いずれの場合でも統一された <c>userOf</c> / <c>userExpires</c> / <c>userQuantity</c> インターフェースを提供します。"
       },
-      "escrow": {
+      "vault": {
         "q": "Vaipakam Vaultsはどう機能しますか？",
-        "a1": "各ユーザーは UUPS アップグレード可能な専用のプロキシVaultを持ち、初回利用時に <c>EscrowFactoryFacet</c>（クローンファクトリー方式）によってデプロイされます。資産が他者と混ざることは一切ありません。",
+        "a1": "各ユーザーは UUPS アップグレード可能な専用のプロキシVaultを持ち、初回利用時に <c>VaultFactoryFacet</c>（クローンファクトリー方式）によってデプロイされます。資産が他者と混ざることは一切ありません。",
         "a2": "Diamond がVault間の移動を統括しますが、請求権は Vaipakam のポジション NFT に紐づいています。Vaultのカストディはオンチェーンのポジション状態によって厳格に制約されます。"
       },
       "default": {
@@ -1048,12 +1048,12 @@
         "q": "VPFI 割引はどのように機能しますか？",
         "a1": "Vaipakam のVaultに保有された VPFI は、保有者を自動的に割引ティアに配置します。1 回のプラットフォームレベル同意で借り手側（開始）と貸し手側（イールド）の両方をカバーし、割引適用後の手数料はVault内の VPFI から自動的に控除されます。割引パスでは、借り手は元本全額を受け取り、貸し手は利息全額を保持します。",
         "tableTier": "ティア",
-        "tableEscrow": "Vault内 VPFI",
+        "tableVault": "Vault内 VPFI",
         "tableDiscount": "割引",
         "tableInitiation": "実効開始手数料",
         "tableYield": "実効イールド手数料",
-        "row3Escrow": "≥ 5,000、≤ 20,000",
-        "row4Escrow": "> 20,000"
+        "row3Vault": "≥ 5,000、≤ 20,000",
+        "row4Vault": "> 20,000"
       },
       "vpfi-rewards": {
         "q": "VPFI のリワードを得る方法は？",
@@ -1104,10 +1104,10 @@
     "sanctionsMatchBody": "オンチェーン制裁オラクル（Chainalysis）は現在このアドレスを掲載しています。オファー作成またはオファー受諾のトランザクションはプロトコル層でリバートされます。誤判定の場合はChainalysisのサポートに連絡してください — Vaipakamは独自の制裁リストを保持していません。",
     "sanctionsLabelWallet": "接続中のウォレット",
     "sanctionsLabelOfferCreator": "オファー作成者",
-    "escrowUpgradeBody": "Vaultのアップグレードが必要です — Vaultはv{{userVersion}}、必須最低はv{{mandatoryVersion}}（最新v{{currentVersion}}）です。アップグレードまでDiamondフローはリバートします。",
-    "escrowUpgrading": "アップグレード中…",
-    "escrowUpgradeButton": "Vaultをアップグレード",
-    "escrowTxPrefix": "tx",
+    "vaultUpgradeBody": "Vaultのアップグレードが必要です — Vaultはv{{userVersion}}、必須最低はv{{mandatoryVersion}}（最新v{{currentVersion}}）です。アップグレードまでDiamondフローはリバートします。",
+    "vaultUpgrading": "アップグレード中…",
+    "vaultUpgradeButton": "Vaultをアップグレード",
+    "vaultTxPrefix": "tx",
     "unsupportedDiamondPending": "フェーズ1のDiamondは保留中",
     "unsupportedNetwork": "未対応ネットワーク",
     "unsupportedBody": "{{state}}（chainId {{chainId}}）。Vaipakamは各対応ネットワーク上で個別のDiamondとして稼働しています — 現在稼働中：{{liveList}}。",
@@ -1245,8 +1245,8 @@
     "mirrorTip": "ミラーチェーン — このチェーンのVPFIは正規供給の1:1表現です。OFTはブリッジ転送が到着するとここでトークンをミントし、転送が出ると焼却します。そのためミラー残高は常に正規チェーンのロックで裏付けられています。",
     "notRegistered": "VPFIは{{chain}}のDiamondにまだ登録されていません。管理者がsetVPFITokenを呼び出すと、残高とアクティビティがここに表示されます。",
     "walletBalance": "ウォレットVPFI残高",
-    "escrowBalance": "VaultVPFI残高",
-    "escrowTooltip": "このチェーン上のユーザー単位Vaultに現在ステーキングされているVPFI。借り手手数料割引Tierに算入されます。",
+    "vaultBalance": "VaultVPFI残高",
+    "vaultTooltip": "このチェーン上のユーザー単位Vaultに現在ステーキングされているVPFI。借り手手数料割引Tierに算入されます。",
     "shareCirculating": "流通量シェア",
     "shareTooltip": "このチェーンのVPFI供給に対する実効的な所有権 — ウォレット残高 + Vaultロック残高 を循環供給で割った値。Vault VPFIは引き続きユーザー所有で、ティア割引 / {{apr}}% APRのためにロックされているだけです。",
     "circulatingThisChain": "流通量（このチェーン）",
@@ -1256,14 +1256,14 @@
     "treasuryMintDestination": "トレジャリー（ミント先）",
     "yourActivity": "VPFIアクティビティ",
     "noActivity": "{{chain}}でこのウォレットに関わるVPFI転送はまだありません。ユーザー向けの配布（リワード、ステーキング）は後続フェーズで提供されます。",
-    "escrowCountsAsStaked": "Vault VPFIはステーキングされたものとしてカウントされます ({{apr}}% APR)"
+    "vaultCountsAsStaked": "Vault VPFIはステーキングされたものとしてカウントされます ({{apr}}% APR)"
   },
   "buyVpfiCards": {
     "discountStatusTitle": "VPFI割引ステータス",
     "currentTier": "現在のTier",
     "noDiscountYet": "まだ割引はありません",
-    "escrowVpfi": "VaultVPFI",
-    "escrowCountsAsStaked": "VaultVPFIはステーキングとして算入されます（{{apr}}% APR）",
+    "vaultVpfi": "VaultVPFI",
+    "vaultCountsAsStaked": "VaultVPFIはステーキングとして算入されます（{{apr}}% APR）",
     "statusLabel": "ステータス",
     "inactiveOff": "非アクティブ · 割引同意 OFF",
     "inactiveBelowTier1": "非アクティブ · Tier 1未満（Vault{{tier1Min}} VPFI）",
@@ -1274,7 +1274,7 @@
     "enableSharedConsent": "<dashboardLink>Dashboard</dashboardLink> で共有割引同意を有効化してください。",
     "depositMore": "Tier {{tier}}（{{discount}}）に到達するため、Vaultにさらに{{amount}} VPFIを入金してください。",
     "tierColTier": "Tier",
-    "tierColEscrow": "VaultVPFI",
+    "tierColVault": "VaultVPFI",
     "tierColDiscount": "割引",
     "tierN": "Tier {{tier}}",
     "tier1": "Tier 1",
@@ -1302,13 +1302,13 @@
     "gasReserveTooltip": "購入トランザクションが送信できるよう、ウォレット残高から少額のガスリザーブ（{{reserve}} ETH）を保持します。",
     "capExceeded": "この金額は残りの上限を超えています。ETH入力を減らして再試行してください。",
     "exceedsBalance": "金額がウォレットETH残高{{balance}} ETHを超えています（少額のガスリザーブが保持されます）。",
-    "exceedsEscrowBalance": "金額がVaultVPFI残高{{balance}} VPFIを超えています。",
+    "exceedsVaultBalance": "金額がVaultVPFI残高{{balance}} VPFIを超えています。",
     "buyButton": "VPFIを購入",
     "depositTitle": "VPFIをVaultに入金",
     "depositSubtitle": "すべてのチェーンで必要 — 正規チェーンを含みます。",
     "depositSpecNote": "仕様により、VPFIをVaultに移すのは常にユーザーの明示的な操作です。プロトコルが購入またはブリッジ後に自動でVaultに資金を入れることは決してありません。",
     "walletVpfiBalance": "ウォレットVPFI残高",
-    "escrowVpfiBalance": "VaultVPFI残高（{{chain}}）",
+    "vaultVpfiBalance": "VaultVPFI残高（{{chain}}）",
     "depositAmount": "入金するVPFI量",
     "useMaxVpfi": "最大（{{amount}} VPFI）を使用",
     "depositButton": "Vaultに入金",
@@ -1635,13 +1635,13 @@
       "calloutBody": "By accepting you agree that the borrower must pay each period's accrued interest by the period close. If the borrower misses the period beyond the configured grace window, anyone can trigger a settler that sells just enough collateral to cover the shortfall — possibly affecting the loan's health factor and triggering further liquidation."
     }
   },
-  "escrowAssets": {
+  "vaultAssets": {
     "pageTitle": "あなたの Vaipakam Vault",
     "pageSubtitle": "プロトコルがあなたに代わって保管するトークン。各ユーザーは独自の隔離されたVault プロキシを持ち、入出金は常に Vaipakam Diamond を経由します。",
     "addressCardTitle": "Vault アドレス",
     "addressCaption": "プロトコル内部の保管場所 — 資金はプロトコル経由でのみ 出入りします。",
     "viewOnExplorer": "ブロックエクスプローラーでVaultを表示",
-    "noEscrowYet": "まだVaultはありません。初めてオファーを作成または 受け入れるときに自動的に作成されます。",
+    "noVaultYet": "まだVaultはありません。初めてオファーを作成または 受け入れるときに自動的に作成されます。",
     "holdingsTitle": "保有資産",
     "lowToggleShow": "すべて表示（{{n}}件非表示）",
     "lowToggleHide": "少額残高を非表示",
@@ -1659,7 +1659,7 @@
     "connectBody": "ウォレットを接続してVault保有資産を表示してください。",
     "switchChainBody": "Vaipakam 対応チェーンにウォレットを切り替えてVault 保有資産を表示してください。"
   },
-  "escrowRecover": {
+  "vaultRecover": {
     "pageTitle": "詰まったトークンの回収",
     "pageSubtitle": "プロトコルの入金フロー外であなたの Vaipakam Vaultプロキシに到着した ERC-20 トークンを回収します。まず上級ユーザーガイドのセクションを読んでください — 誤った送信元を申告するとプロトコルの制裁ポリシーの下でVaultがロックされる可能性があります。",
     "formTitle": "回収の申告",
