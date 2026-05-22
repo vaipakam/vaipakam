@@ -66,6 +66,12 @@
   cursor: not-allowed;
 }
 
-.risk-callout-consent input[type='checkbox']:disabled + span {
+/*
+ * Disabled-state visual dampening on the label text. Targets `label`
+ * (not `span`) after the round-2 DOM restructure that separated the
+ * input from its label to avoid nesting interactive controls.
+ */
+.risk-callout-consent input[type='checkbox']:disabled + label {
   opacity: 0.65;
+  cursor: not-allowed;
 }
