@@ -107,7 +107,7 @@
     "keepers": "Keeper",
     "governanceGroupLabel": "治理",
     "protocolConsole": "协议控制台",
-    "escrow": "您的 Vaipakam Vault"
+    "vault": "您的 Vaipakam Vault"
   },
   "dataRights": {
     "title": "您的数据权利 (GDPR / UK GDPR / CCPA)",
@@ -404,7 +404,7 @@
     "buying": "购买中…",
     "approving": "授权中…",
     "approvingVpfi": "正在授权 VPFI…",
-    "depositToEscrow": "存入 Vault",
+    "depositToVault": "存入 Vault",
     "depositing": "存款中…",
     "unstakeToWallet": "提取到钱包",
     "unstaking": "提取中…",
@@ -412,7 +412,7 @@
     "depositFailed": "存款失败",
     "unstakeFailed": "提取失败",
     "buyTimedOut": "购买超时 — 资金已退回",
-    "escrowBalanceZero": "您的 Vault VPFI 余额为 0 — 请先存入 VPFI。"
+    "vaultBalanceZero": "您的 Vault VPFI 余额为 0 — 请先存入 VPFI。"
   },
   "claimCenter": {
     "connectTitle": "连接您的钱包",
@@ -836,8 +836,8 @@
     "statP2pLabel": "直接借贷",
     "statNftValue": "NFT",
     "statNftLabel": "头寸追踪",
-    "statEscrowValue": "1:1",
-    "statEscrowLabel": "隔离保管",
+    "statVaultValue": "1:1",
+    "statVaultLabel": "隔离保管",
     "demoLendTitle": "出借 1,000 USDC",
     "demoLendMeta": "5% APR · 30 天 · ETH 抵押品",
     "demoLendStatus": "活跃",
@@ -856,8 +856,8 @@
     "p2pDesc": "针对 ERC-20 代币创建或接受具备自定义条款的报价——利率、抵押品类型与贷款期限。无需中间资金池。",
     "nftTitle": "NFT 租赁（ERC-4907）",
     "nftDesc": "按日定价租赁 ERC-721 与 ERC-1155 NFT。NFT 始终安全保管在保管中，借款方获得使用权。",
-    "escrowTitle": "按用户隔离的保管",
-    "escrowDesc": "每位用户拥有独立的 UUPS 可升级保管代理。资金互不混用，资产始终保持隔离。",
+    "vaultTitle": "按用户隔离的保管",
+    "vaultDesc": "每位用户拥有独立的 UUPS 可升级保管代理。资金互不混用，资产始终保持隔离。",
     "nftPositionTitle": "NFT 头寸追踪",
     "nftPositionDesc": "每个报价与贷款都会铸造一枚带链上元数据的 Vaipakam NFT，可在任何市场上证明所有权、领取资金并追踪状态。",
     "liquidityTitle": "流动资产与非流动资产",
@@ -901,8 +901,8 @@
     "subtitle": "从智能合约架构到清算机制，每项设计决策都以资产安全为优先。下方每张卡片都链接至支撑该说明的链上工件，可独立核验相关标准。",
     "diamondTitle": "Diamond Standard（EIP-2535）",
     "diamondDesc": "模块化代理架构，可在不中断协议的情况下升级单个 facet。所有调用均通过同一个 Diamond 入口路由。",
-    "escrowTitle": "按用户隔离的保管",
-    "escrowDesc": "每位用户均拥有专属的 UUPS 代理保管，资金互不混用。强制保管升级期间将阻止交互，直至用户完成升级。",
+    "vaultTitle": "按用户隔离的保管",
+    "vaultDesc": "每位用户均拥有专属的 UUPS 代理保管，资金互不混用。强制保管升级期间将阻止交互，直至用户完成升级。",
     "transparencyTitle": "链上透明",
     "transparencyDesc": "每一笔报价、贷款及状态变更均链上记录。Vaipakam NFT 作为头寸所有权的可验证凭证。",
     "slippageTitle": "滑点与清算安全",
@@ -989,9 +989,9 @@
         "li1": "<s>ERC-20 贷款：</s>本金为任意 ERC-20（USDC、ETH、WBTC 等）；抵押品可为任意 ERC-20 或任意 NFT。",
         "li2": "<s>NFT 租赁：</s>租出的 NFT 即本金；抵押品为 ERC-20。NFT 是否原生支持 ERC-4907 并不强制——用户级保管包装层在任何情况下都暴露统一的 <c>userOf</c> / <c>userExpires</c> / <c>userQuantity</c> 接口。"
       },
-      "escrow": {
+      "vault": {
         "q": "用户级保管是如何运作的？",
-        "a1": "每位用户都拥有自己的 UUPS 可升级代理保管，首次使用时由 <c>EscrowFactoryFacet</c>（克隆工厂模式）部署。资产从不与他人混合。",
+        "a1": "每位用户都拥有自己的 UUPS 可升级代理保管，首次使用时由 <c>VaultFactoryFacet</c>（克隆工厂模式）部署。资产从不与他人混合。",
         "a2": "Diamond 在各个保管之间编排资产移动，但申领权与 Vaipakam 仓位 NFT 绑定——因此保管的保管严格受链上仓位状态约束。"
       },
       "default": {
@@ -1065,12 +1065,12 @@
         "q": "VPFI 折扣如何运作？",
         "a1": "存放在 Vaipakam 保管中的 VPFI 会自动将持有人置于对应折扣等级。一次平台级同意即可同时覆盖借款方（发起费）与出借方（收益费）两条路径，折扣后的费用直接以 VPFI 从保管自动扣除——折扣路径上，借款方收到全额本金，出借方保留全额利息。",
         "tableTier": "等级",
-        "tableEscrow": "保管中的 VPFI",
+        "tableVault": "保管中的 VPFI",
         "tableDiscount": "折扣",
         "tableInitiation": "实际发起费",
         "tableYield": "实际收益费",
-        "row3Escrow": "≥ 5,000、≤ 20,000",
-        "row4Escrow": "> 20,000"
+        "row3Vault": "≥ 5,000、≤ 20,000",
+        "row4Vault": "> 20,000"
       },
       "vpfi-rewards": {
         "q": "如何获得 VPFI 奖励？",
@@ -1121,10 +1121,10 @@
     "sanctionsMatchBody": "链上制裁预言机（Chainalysis）当前列出此地址。任何创建或接受报价的交易将在协议层回滚。如属误判，请联系Chainalysis支持 — Vaipakam不维护自己的制裁名单。",
     "sanctionsLabelWallet": "已连接钱包",
     "sanctionsLabelOfferCreator": "报价创建者",
-    "escrowUpgradeBody": "需要升级vault — vault版本为v{{userVersion}}，强制最低版本为v{{mandatoryVersion}}（最新v{{currentVersion}}）。在升级前，Diamond流程将回滚。",
-    "escrowUpgrading": "升级中…",
-    "escrowUpgradeButton": "升级vault",
-    "escrowTxPrefix": "tx",
+    "vaultUpgradeBody": "需要升级vault — vault版本为v{{userVersion}}，强制最低版本为v{{mandatoryVersion}}（最新v{{currentVersion}}）。在升级前，Diamond流程将回滚。",
+    "vaultUpgrading": "升级中…",
+    "vaultUpgradeButton": "升级vault",
+    "vaultTxPrefix": "tx",
     "unsupportedDiamondPending": "第1阶段Diamond待部署",
     "unsupportedNetwork": "不支持的网络",
     "unsupportedBody": "{{state}}（chainId {{chainId}}）。Vaipakam在每个支持的网络上作为独立的Diamond运行 — 当前已上线于：{{liveList}}。",
@@ -1262,8 +1262,8 @@
     "mirrorTip": "镜像链 — 此链上的 VPFI 是 canonical 供应的 1:1 表示。当跨链转账到达时 OFT 在此铸造代币，转账离开时销毁，因此镜像余额始终由 canonical 链上的锁定支撑。",
     "notRegistered": "VPFI尚未在{{chain}}上的Diamond中注册。一旦管理员调用setVPFIToken，余额和活动将显示在此处。",
     "walletBalance": "钱包VPFI余额",
-    "escrowBalance": "Vault VPFI余额",
-    "escrowTooltip": "当前在此链按用户vault中质押的VPFI。计入借款人费用折扣Tier。",
+    "vaultBalance": "Vault VPFI余额",
+    "vaultTooltip": "当前在此链按用户vault中质押的VPFI。计入借款人费用折扣Tier。",
     "shareCirculating": "流通占比",
     "shareTooltip": "此链上 VPFI 供应的有效所有权 — 钱包余额加 Vault 锁定余额，除以流通量。Vault VPFI 仍归用户所有；它只是被锁定用于等级折扣 / {{apr}}% APR。",
     "circulatingThisChain": "流通量（此链）",
@@ -1273,14 +1273,14 @@
     "treasuryMintDestination": "金库（铸造目的地）",
     "yourActivity": "VPFI活动",
     "noActivity": "{{chain}}上尚无与此钱包相关的VPFI转账。面向用户的分发（奖励、staking）将在后续阶段推出。",
-    "escrowCountsAsStaked": "Vault VPFI 计为已质押 ({{apr}}% APR)"
+    "vaultCountsAsStaked": "Vault VPFI 计为已质押 ({{apr}}% APR)"
   },
   "buyVpfiCards": {
     "discountStatusTitle": "VPFI折扣状态",
     "currentTier": "当前Tier",
     "noDiscountYet": "暂无折扣",
-    "escrowVpfi": "Vault VPFI",
-    "escrowCountsAsStaked": "Vault VPFI 计为已质押（{{apr}}% APR）",
+    "vaultVpfi": "Vault VPFI",
+    "vaultCountsAsStaked": "Vault VPFI 计为已质押（{{apr}}% APR）",
     "statusLabel": "状态",
     "inactiveOff": "未激活 · 折扣同意 关闭",
     "inactiveBelowTier1": "未激活 · 低于 Tier 1（Vault 中 {{tier1Min}} VPFI）",
@@ -1291,7 +1291,7 @@
     "enableSharedConsent": "请在 <dashboardLink>Dashboard</dashboardLink> 中启用共享折扣同意。",
     "depositMore": "再向vault中存入{{amount}} VPFI以达到Tier {{tier}}（{{discount}}）。",
     "tierColTier": "Tier",
-    "tierColEscrow": "Vault VPFI",
+    "tierColVault": "Vault VPFI",
     "tierColDiscount": "折扣",
     "tierN": "Tier {{tier}}",
     "tier1": "Tier 1",
@@ -1319,13 +1319,13 @@
     "gasReserveTooltip": "从钱包余额中保留少量gas储备（{{reserve}} ETH），以便购买交易仍可广播。",
     "capExceeded": "此金额超过剩余上限。请减少ETH输入并重试。",
     "exceedsBalance": "金额超过钱包ETH余额{{balance}} ETH（保留少量gas储备）。",
-    "exceedsEscrowBalance": "金额超过vault VPFI余额{{balance}} VPFI。",
+    "exceedsVaultBalance": "金额超过vault VPFI余额{{balance}} VPFI。",
     "buyButton": "购买VPFI",
     "depositTitle": "向vault存入VPFI",
     "depositSubtitle": "在每条链上都需要 — 包括 canonical 链。",
     "depositSpecNote": "按规范，将VPFI转入vault始终是用户的明确操作。协议在购买或跨链后绝不会自动为vault注资。",
     "walletVpfiBalance": "钱包VPFI余额",
-    "escrowVpfiBalance": "Vault VPFI余额（{{chain}}）",
+    "vaultVpfiBalance": "Vault VPFI余额（{{chain}}）",
     "depositAmount": "存入的VPFI数量",
     "useMaxVpfi": "使用最大（{{amount}} VPFI）",
     "depositButton": "存入Vault",
@@ -1632,13 +1632,13 @@
       "calloutBody": "By accepting you agree that the borrower must pay each period's accrued interest by the period close. If the borrower misses the period beyond the configured grace window, anyone can trigger a settler that sells just enough collateral to cover the shortfall — possibly affecting the loan's health factor and triggering further liquidation."
     }
   },
-  "escrowAssets": {
+  "vaultAssets": {
     "pageTitle": "您的 Vaipakam Vault",
     "pageSubtitle": "协议代您持有的代币。每位用户都拥有自己独立的保管代理 — 存款和取款始终通过 Vaipakam Diamond 进行。",
     "addressCardTitle": "Vault 地址",
     "addressCaption": "协议内部存储 — 资金仅通过协议进出。",
     "viewOnExplorer": "在区块浏览器中查看Vault",
-    "noEscrowYet": "您还没有Vault。在您第一次创建或接受报价时会自动创建。",
+    "noVaultYet": "您还没有Vault。在您第一次创建或接受报价时会自动创建。",
     "holdingsTitle": "持仓",
     "lowToggleShow": "显示全部（已隐藏 {{n}} 个）",
     "lowToggleHide": "隐藏低余额",
@@ -1656,7 +1656,7 @@
     "connectBody": "连接钱包以查看您的 Vaipakam Vault持仓。",
     "switchChainBody": "请将钱包切换到 Vaipakam 支持的链上以查看您的 Vaipakam Vault持仓。"
   },
-  "escrowRecover": {
+  "vaultRecover": {
     "pageTitle": "卡住代币恢复",
     "pageSubtitle": "恢复在协议存款流程之外到达您的保管代理的 ERC-20 代币。请先阅读高级用户指南部分 — 声明错误的来源可能会根据协议的制裁政策锁定您的 Vaipakam Vault。",
     "formTitle": "恢复声明",
