@@ -7,7 +7,7 @@
  * idempotent steps:
  *
  *   1. Authorize with B2 native API and discover the account.
- *   2. Create the backup bucket (`vaipakam-offchain-backup` by
+ *   2. Create the backup bucket (`vaipakam-offchain-data-archive` by
  *      default; private). Skipped if it already exists.
  *   3. Set lifecycle rules on three prefixes:
  *        archives/         30-day retention (nightly snapshots).
@@ -48,7 +48,7 @@ const REPO_ROOT = resolve(HERE, '../../..');
 
 // ── Defaults — overridable via env or CLI flags. ────────────────────
 const DEFAULTS = {
-  bucketName: 'vaipakam-offchain-backup',
+  bucketName: 'vaipakam-offchain-data-archive',
   // Two scoped Application Keys (PR #248 round-2 follow-up to
   // Codex's healthcheck-can't-GET finding):
   //   write-only — nightly backup uploader.

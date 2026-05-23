@@ -90,7 +90,7 @@
     // bucket region at create-time. Operator sets the matching
     // region's endpoint URL here. Example: "s3.eu-central-003.backblazeb2.com".
     "B2_ENDPOINT": "",
-    // Backup bucket name in B2. Convention: "vaipakam-offchain-backup".
+    // Backup bucket name in B2. Convention: "vaipakam-offchain-data-archive".
     "B2_BUCKET": "",
     // Telegram chat-id receiving healthcheck pages + nightly outcomes.
     // Same chat the lz-watcher posts to is fine — these alerts are

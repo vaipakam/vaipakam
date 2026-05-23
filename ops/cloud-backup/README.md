@@ -53,7 +53,7 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
    ```
 
    The script is idempotent — safe to re-run. It will:
-   - Create the `vaipakam-offchain-backup` bucket (allPrivate) if
+   - Create the `vaipakam-offchain-data-archive` bucket (allPrivate) if
      missing, reuse if present.
    - Set six lifecycle rules: `archives/` + `manifests/` 30-day,
      `archives-monthly/` + `manifests-monthly/` 365-day, plus
@@ -94,7 +94,7 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
 
    ```bash
    wrangler deploy --var B2_ENDPOINT:s3.eu-central-003.backblazeb2.com \
-                   --var B2_BUCKET:vaipakam-offchain-backup \
+                   --var B2_BUCKET:vaipakam-offchain-data-archive \
                    --var TG_OPS_CHAT_ID:-1001234567890
    ```
 

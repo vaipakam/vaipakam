@@ -106,15 +106,15 @@ then deploy.
 b2 account authorize <APPLICATION_KEY_ID> <APPLICATION_KEY>
 
 # 2.2 Find the most recent archive — manifests are named by date.
-b2 ls vaipakam-offchain-backup manifests/ | sort | tail -5
+b2 ls vaipakam-offchain-data-archive manifests/ | sort | tail -5
 
 # 2.3 Download the matching archive + manifest.
 DATE=2026-05-23  # adjust to whatever was latest
 b2 file download \
-  b2://vaipakam-offchain-backup/archives/$DATE.bin \
+  b2://vaipakam-offchain-data-archive/archives/$DATE.bin \
   ./restore/$DATE.bin
 b2 file download \
-  b2://vaipakam-offchain-backup/manifests/$DATE.json \
+  b2://vaipakam-offchain-data-archive/manifests/$DATE.json \
   ./restore/$DATE.json
 ```
 
