@@ -565,6 +565,15 @@ async function processOfferLogs(
         amountMax?: bigint;
         amountFilled?: bigint;
         interestRateBpsMax?: bigint;
+        // #164 — on-chain createdAt (uint64 unix-seconds), stamped at
+        // `createOffer` and immutable thereafter. Captured here
+        // explicitly instead of derived from `first_seen_at` so the
+        // partial-fill cooldown predicate in `MyOffersTable` reads
+        // the same wall-clock as `OfferCancelFacet.cancelOffer`. A
+        // restart, cron lag, or historical backfill would otherwise
+        // shift `first_seen_at` forward and leave the UI's Cancel
+        // button disabled past the contract's window.
+        createdAt?: bigint;
         // #195 — GTT deadline (0 = GTC). #125 — DEX-style fill-mode
         // (0 Partial / 1 AON / 2 IOC). Stamped once at createOffer.
         expiresAt?: bigint;
@@ -585,10 +594,10 @@ async function processOfferLogs(
            use_full_term_interest, creator_fallback_consent, allows_partial_repay,
            creator_current_owner,
            is_stub,
-           expires_at, fill_mode,
+           created_at, expires_at, fill_mode,
            first_seen_block, first_seen_at, updated_at)
          VALUES
-          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
       )
         .bind(
           chainId,
@@ -624,7 +633,11 @@ async function processOfferLogs(
           od.creator.toLowerCase(),
           // Number() on a bigint up to 2^64-1 is safe through 2106
           // (year of the uint32-second epoch ceiling, well past
-          // any reasonable expiresAt). 0 sentinel = GTC.
+          // any reasonable createdAt/expiresAt). 0 sentinel for
+          // expiresAt = GTC; 0 fallback for createdAt covers legacy
+          // pre-#164 rows (rare on a mainnet deploy past #164,
+          // common on a fresh testnet rehearsal that pre-dates it).
+          Number(od.createdAt ?? 0n),
           Number(od.expiresAt ?? 0n),
           Number(od.fillMode ?? 0),
           Number(o.blockNumber),
@@ -901,7 +914,9 @@ async function refreshOfferDetails(
     amountMax?: bigint;
     amountFilled?: bigint;
     interestRateBpsMax?: bigint;
-    // See parallel definition above — #195 GTT + #125 fill-mode.
+    // See parallel definition above — #164 createdAt + #195 GTT +
+    // #125 fill-mode.
+    createdAt?: bigint;
     expiresAt?: bigint;
     fillMode?: number;
   };
@@ -916,7 +931,7 @@ async function refreshOfferDetails(
        collateral_amount = ?, duration_days = ?, position_token_id = ?,
        prepay_asset = ?, use_full_term_interest = ?,
        creator_fallback_consent = ?, allows_partial_repay = ?,
-       expires_at = ?, fill_mode = ?,
+       created_at = ?, expires_at = ?, fill_mode = ?,
        is_stub = 0,
        updated_at = ?
      WHERE chain_id = ? AND offer_id = ?`,
@@ -946,6 +961,7 @@ async function refreshOfferDetails(
       o.useFullTermInterest ? 1 : 0,
       o.creatorRiskAndTermsConsent ? 1 : 0,
       o.allowsPartialRepay ? 1 : 0,
+      Number(o.createdAt ?? 0n),
       Number(o.expiresAt ?? 0n),
       Number(o.fillMode ?? 0),
       now,

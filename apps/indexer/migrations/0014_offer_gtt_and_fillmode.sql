@@ -19,6 +19,20 @@
 -- struct read) and no follow-up ingestion path is needed.
 --
 -- Columns:
+--   created_at  — uint64 unix-seconds; #164's on-chain Offer.createdAt
+--                 field, stamped at `createOffer` and never mutated.
+--                 PRE-#241 the cooldown predicate sourced creation
+--                 time from `first_seen_at`, but that's the indexer's
+--                 ingestion clock — any cron lag, restart, or
+--                 historical backfill shifts the UI cooldown window
+--                 forward and breaks the "Cancel enables exactly
+--                 when contract allows" guarantee. Capturing the
+--                 real on-chain value keeps the gate aligned with
+--                 `OfferCancelFacet.cancelOffer` second-for-second.
+--                 Default 0 lets legacy rows backfill trivially (a
+--                 zero stamp short-circuits the cooldown gate, which
+--                 is the safe fail-open default for the rare
+--                 pre-#164 row that lacks a stored createdAt).
 --   expires_at  — uint64 unix-seconds deadline; 0 sentinel = GTC
 --                 (no expiry). Default 0 lets legacy rows backfill
 --                 trivially: their on-chain `expiresAt` is also
@@ -28,5 +42,6 @@
 --                 1 AON, 2 IOC. Default 0 matches the on-chain
 --                 zero-init for pre-#125 rows.
 
+ALTER TABLE offers ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE offers ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE offers ADD COLUMN fill_mode INTEGER NOT NULL DEFAULT 0;
