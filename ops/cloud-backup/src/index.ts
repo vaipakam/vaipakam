@@ -15,10 +15,21 @@ import { runNightlyBackup } from './backup';
 import { runHealthcheck } from './healthcheck';
 import type { Env } from './env';
 
-function b2Config(env: Env): B2Config {
+/** Two B2 configs — see env.ts for why the keys are split. */
+function b2WriteConfig(env: Env): B2Config {
   return {
-    accessKeyId: env.B2_ACCESS_KEY_ID,
-    secretAccessKey: env.B2_SECRET_ACCESS_KEY,
+    accessKeyId: env.B2_WRITE_ACCESS_KEY_ID,
+    secretAccessKey: env.B2_WRITE_SECRET_ACCESS_KEY,
+    endpoint: env.B2_ENDPOINT,
+    bucket: env.B2_BUCKET,
+    region: parseRegionFromEndpoint(env.B2_ENDPOINT),
+  };
+}
+
+function b2ReadConfig(env: Env): B2Config {
+  return {
+    accessKeyId: env.B2_READ_ACCESS_KEY_ID,
+    secretAccessKey: env.B2_READ_SECRET_ACCESS_KEY,
     endpoint: env.B2_ENDPOINT,
     bucket: env.B2_BUCKET,
     region: parseRegionFromEndpoint(env.B2_ENDPOINT),
@@ -69,12 +80,20 @@ export default {
    */
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     const bootedEnv = await withEncryptionKey(env);
-    const cfg = b2Config(bootedEnv);
 
     if (event.cron === '17 3 * * *') {
-      ctx.waitUntil(handleNightlyBackup(bootedEnv, cfg));
+      // Nightly path uses the write-scoped B2 key — listBuckets +
+      // listFiles + writeFiles only. A compromise that exfiltrates
+      // it can corrupt FUTURE backups (uploading garbage to new
+      // unique keys; immutable naming defeats in-place overwrite of
+      // existing archives) but cannot read past archives.
+      ctx.waitUntil(handleNightlyBackup(bootedEnv, b2WriteConfig(bootedEnv)));
     } else if (event.cron === '0 9 * * 1') {
-      ctx.waitUntil(handleHealthcheck(bootedEnv, cfg));
+      // Weekly healthcheck uses the read-scoped B2 key — listBuckets
+      // + listFiles + readFiles only. A compromise that exfiltrates
+      // it yields AES ciphertext; the offline encryption key blocks
+      // the plaintext.
+      ctx.waitUntil(handleHealthcheck(bootedEnv, b2ReadConfig(bootedEnv)));
     } else {
       console.warn(`[cloud-backup] unknown cron pattern: ${event.cron}`);
     }

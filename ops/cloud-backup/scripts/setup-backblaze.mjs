@@ -49,10 +49,15 @@ const REPO_ROOT = resolve(HERE, '../../..');
 // ── Defaults — overridable via env or CLI flags. ────────────────────
 const DEFAULTS = {
   bucketName: 'vaipakam-offchain-backup',
-  keyName: 'vaipakam-cloud-backup-write-only',
-  // B2 maps "regions" onto a small set of API hosts. The user picks a
-  // region at signup (we display the actual region in the output).
-  // S3 endpoint resolves from that automatically; we surface both.
+  // Two scoped Application Keys (PR #248 round-2 follow-up to
+  // Codex's healthcheck-can't-GET finding):
+  //   write-only — nightly backup uploader.
+  //   read-only  — weekly healthcheck verifier.
+  // The cleavage keeps the nightly key incapable of leaking archive
+  // contents; the healthcheck key gets read access but the
+  // ciphertext stays AES-256-GCM-protected against the offline key.
+  writeKeyName: 'vaipakam-cloud-backup-write-only',
+  readKeyName: 'vaipakam-cloud-backup-read-only',
 };
 
 function parseDotEnv(path) {
@@ -113,6 +118,19 @@ async function b2Authorize(keyId, appKey) {
   };
 }
 
+// CodeQL: js/file-data-in-outbound-network-request is flagged here
+// because `apiUrl` traces back to B2's authorize-response (whose
+// origin we trust by Basic-auth-ing with the operator's master key)
+// and `body` contains operator-controlled values (account id from
+// authorize, bucket / key names from the operator's CLI flags or
+// the defaults at top of file). This is the intended trust
+// boundary: the script's purpose IS to make outbound HTTPS calls
+// to B2 using these values. An attacker who could substitute
+// either input already holds the master key (which would let them
+// do worse things directly via B2's UI). Documented here so a
+// future reviewer doesn't try to "fix" the warning by removing the
+// dynamic URL composition.
+// codeql[js/file-data-in-outbound-network-request]
 async function b2Post(apiUrl, authToken, path, body) {
   const res = await fetch(`${apiUrl}${path}`, {
     method: 'POST',
@@ -186,19 +204,25 @@ async function setLifecycleRules(apiUrl, authToken, accountId, bucketId) {
   return json;
 }
 
-async function createWriteOnlyKey(apiUrl, authToken, accountId, bucketId, keyName) {
+async function createScopedKey(apiUrl, authToken, accountId, bucketId, keyName, capabilities) {
   const { ok, status, json } = await b2Post(apiUrl, authToken, '/b2api/v3/b2_create_key', {
     accountId,
-    capabilities: ['listBuckets', 'listFiles', 'writeFiles'],
+    capabilities,
     keyName,
     bucketId,
   });
   if (!ok) {
     if (json?.code === 'duplicate_key_name') {
+      // Idempotency note: a duplicate-name failure is the script's
+      // signal to abort cleanly rather than blow away the existing
+      // key (B2 won't show the existing Application Key string a
+      // second time, so a force-recreate would orphan the original
+      // secret in CF). The operator handles rotation explicitly.
       fail(
         `Application Key named "${keyName}" already exists. To rotate, ` +
-        `revoke the existing one in the B2 dashboard (or via b2_delete_key) ` +
-        `then re-run this script.`,
+        `revoke the existing one in the B2 dashboard (or via ` +
+        `b2_delete_key) and re-run. The original Application Key ` +
+        `string cannot be retrieved from B2 after creation.`,
       );
     }
     fail(`b2_create_key failed: ${status} ${JSON.stringify(json)}`);
@@ -231,7 +255,8 @@ async function main() {
   }
 
   const bucketName = process.env.BUCKET_NAME || DEFAULTS.bucketName;
-  const keyName = process.env.KEY_NAME || DEFAULTS.keyName;
+  const writeKeyName = process.env.WRITE_KEY_NAME || DEFAULTS.writeKeyName;
+  const readKeyName = process.env.READ_KEY_NAME || DEFAULTS.readKeyName;
 
   log('Authorizing with B2 master key...');
   const auth = await b2Authorize(keyId, appKey);
@@ -277,39 +302,78 @@ async function main() {
   await setLifecycleRules(auth.apiUrl, auth.authToken, auth.accountId, bucket.bucketId);
   log('Lifecycle rules applied.');
 
-  log(`Checking for existing write-only key "${keyName}"...`);
-  const existing = await listKeysByName(auth.apiUrl, auth.authToken, auth.accountId, keyName);
-  if (existing.length > 0) {
-    fail(
-      `Application Key "${keyName}" already exists (id: ${existing[0].applicationKeyId}). ` +
-      `If you need to rotate, revoke the existing one in the B2 dashboard ` +
-      `(or via b2_delete_key) and re-run. The original Application Key string ` +
-      `cannot be retrieved after creation, so reading it back is impossible.`,
+  // Provision the two scoped Application Keys: write-only (nightly
+  // backup) + read-only (weekly healthcheck). Both are skipped
+  // idempotently if a key by the same name already exists — the
+  // operator is expected to handle rotation explicitly (B2 will not
+  // show the Application Key string a second time).
+  log(`Checking for existing write-only key "${writeKeyName}"...`);
+  const writeExisting = await listKeysByName(auth.apiUrl, auth.authToken, auth.accountId, writeKeyName);
+  let newWriteKey = null;
+  if (writeExisting.length > 0) {
+    log(`Write-only key "${writeKeyName}" already exists (id: ${writeExisting[0].applicationKeyId}). Skipping creation.`);
+  } else {
+    log(`Creating write-only key "${writeKeyName}" (scoped to bucket ${bucket.bucketId})...`);
+    newWriteKey = await createScopedKey(
+      auth.apiUrl,
+      auth.authToken,
+      auth.accountId,
+      bucket.bucketId,
+      writeKeyName,
+      ['listBuckets', 'listFiles', 'writeFiles'],
     );
   }
 
-  log(`Creating write-only key "${keyName}" (scoped to bucket ${bucket.bucketId})...`);
-  const newKey = await createWriteOnlyKey(
-    auth.apiUrl,
-    auth.authToken,
-    auth.accountId,
-    bucket.bucketId,
-    keyName,
-  );
+  log(`Checking for existing read-only key "${readKeyName}"...`);
+  const readExisting = await listKeysByName(auth.apiUrl, auth.authToken, auth.accountId, readKeyName);
+  let newReadKey = null;
+  if (readExisting.length > 0) {
+    log(`Read-only key "${readKeyName}" already exists (id: ${readExisting[0].applicationKeyId}). Skipping creation.`);
+  } else {
+    log(`Creating read-only key "${readKeyName}" (scoped to bucket ${bucket.bucketId})...`);
+    newReadKey = await createScopedKey(
+      auth.apiUrl,
+      auth.authToken,
+      auth.accountId,
+      bucket.bucketId,
+      readKeyName,
+      ['listBuckets', 'listFiles', 'readFiles'],
+    );
+  }
 
   console.log('\n========================================================================');
   console.log('SETUP COMPLETE. Plug the following into the Worker via `wrangler secret put`');
-  console.log('and the `--var` flags below. The Application Key STRING is shown ONCE — B2');
-  console.log('never displays it again. Save it to your offline secret store NOW.');
+  console.log('and the `--var` flags below. Each Application Key STRING is shown ONCE — B2');
+  console.log('never displays it again. Save the values to your offline secret store NOW.');
   console.log('========================================================================');
   console.log();
-  console.log(`# Worker secrets (run from ops/cloud-backup):`);
-  console.log(`wrangler secret put B2_ACCESS_KEY_ID`);
-  console.log(`  Paste:  ${newKey.applicationKeyId}`);
-  console.log();
-  console.log(`wrangler secret put B2_SECRET_ACCESS_KEY`);
-  console.log(`  Paste:  ${newKey.applicationKey}`);
-  console.log();
+  if (newWriteKey) {
+    console.log('# Write-only key (nightly backup):');
+    console.log(`wrangler secret put B2_WRITE_ACCESS_KEY_ID`);
+    console.log(`  Paste:  ${newWriteKey.applicationKeyId}`);
+    console.log();
+    console.log(`wrangler secret put B2_WRITE_SECRET_ACCESS_KEY`);
+    console.log(`  Paste:  ${newWriteKey.applicationKey}`);
+    console.log();
+  } else {
+    console.log('# Write-only key already exists; reusing. ' +
+                'If you have lost the application-key string, rotate via:');
+    console.log(`#   - revoke "${writeKeyName}" in B2 dashboard`);
+    console.log('#   - re-run this script');
+    console.log();
+  }
+  if (newReadKey) {
+    console.log('# Read-only key (weekly healthcheck):');
+    console.log(`wrangler secret put B2_READ_ACCESS_KEY_ID`);
+    console.log(`  Paste:  ${newReadKey.applicationKeyId}`);
+    console.log();
+    console.log(`wrangler secret put B2_READ_SECRET_ACCESS_KEY`);
+    console.log(`  Paste:  ${newReadKey.applicationKey}`);
+    console.log();
+  } else {
+    console.log('# Read-only key already exists; reusing. Same rotation note as above.');
+    console.log();
+  }
   console.log(`# Worker vars (deploy-time):`);
   console.log(`B2_ENDPOINT  = ${auth.s3Endpoint?.replace('https://', '') ?? '<set manually — see s3 endpoint in B2 dashboard>'}`);
   console.log(`B2_BUCKET    = ${bucketName}`);

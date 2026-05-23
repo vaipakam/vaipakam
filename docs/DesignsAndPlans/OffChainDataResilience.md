@@ -96,9 +96,50 @@ Schedule a Cloudflare Worker (`ops/cloud-backup`) that nightly:
   separate 2FA from Cloudflare. A CF account loss does not propagate.
 - **Mature for backup workflows**: Backblaze publishes restore-from-
   outage playbooks and offers Application Keys with restricted
-  capability sets — the backup Worker key is `write-only` to the
-  backup bucket, so a CF compromise that exfiltrates the B2 key still
-  can't read or delete the existing backups.
+  capability sets. The pipeline uses TWO scoped keys (see §3.3a):
+  one write-only key for the nightly uploader, one read-only key
+  for the weekly healthcheck. Splitting the keys bounds the blast
+  radius of a CF compromise to ONE of (corrupt future archives /
+  read past ciphertext); the offline AES key blocks the plaintext
+  on the read side.
+
+### 3.3a Two-key B2 access model
+
+The original spec called for a single write-only Application Key
+shared by both the nightly uploader and the weekly healthcheck —
+but the healthcheck has to perform signed GETs to verify archives,
+which a write-only key cannot do. The corrected spec uses two
+bucket-scoped Application Keys:
+
+- **`vaipakam-cloud-backup-write-only`** — `listBuckets` + `listFiles`
+  + `writeFiles`. Used by the nightly cron. A CF compromise that
+  exfiltrates these credentials can corrupt FUTURE archives only —
+  immutable-naming nonce (see §3.3b) prevents overwrite of existing
+  ones, and `deleteFiles` is absent so the attacker can't tombstone
+  the history. The weekly healthcheck will detect the corrupt
+  uploads via SHA-256 mismatch.
+- **`vaipakam-cloud-backup-read-only`** — `listBuckets` + `listFiles`
+  + `readFiles`. Used by the weekly healthcheck. A CF compromise
+  here yields AES-256-GCM ciphertext only; the offline encryption
+  key blocks plaintext recovery.
+
+Both keys are bucket-scoped (cannot touch any other bucket in the
+same account) and the master Application Key never enters the
+Worker — it lives in the operator's offline secret store and only
+comes out for the one-time setup script (or explicit rotation).
+
+### 3.3b Immutable archive object keys
+
+Object keys carry a 32-hex-char (16-byte) cryptographic nonce
+suffix per upload — `archives/YYYY-MM-DD/<nonce>.bin` and
+`manifests/YYYY-MM-DD/<nonce>.json`. Same date written twice (e.g.
+an attacker re-uploading garbage) produces two DIFFERENT object
+keys, so the original archive survives and the healthcheck's
+list-by-prefix + manifest-SHA verification catches the divergence.
+Without the nonce, a single PUT to a predictable key (e.g.
+`archives/2026-05-23.bin`) would silently replace the previous
+night's data — write-only credentials alone don't defend against
+in-place overwrite, only against read/delete.
 
 ### 3.3 Encryption + key management
 

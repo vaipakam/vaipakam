@@ -38,38 +38,59 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
 
 1. **Create a Backblaze B2 account** on a separate billing boundary
    from your Cloudflare account (different email, different card,
-   different 2FA). Create a private bucket — convention:
-   `vaipakam-offchain-backup`. Enable lifecycle rules:
-   - Keep 30 daily snapshots, then transition to monthly retention
-     (12 monthlies), then transition the January archive of each year
-     to indefinite retention.
-2. **Create a write-only Application Key** scoped to that bucket
-   only. `list / write` capabilities, no `read / delete`. This means
-   a CF compromise that exfiltrates the key still can't damage
-   existing backups (write-only ≠ overwrite-capable on B2 when paired
-   with the lifecycle rules).
+   different 2FA).
+
+2. **Run the setup script** to provision the bucket, lifecycle rules,
+   and the two scoped Application Keys (write-only + read-only):
+
+   ```bash
+   # Master B2 Application Key is read from the repo `.env` —
+   # BACKBLAZE_KEY_ID + BACKBLAZE_APP_KEY. After this script runs,
+   # the master key only needs to come back out for explicit
+   # rotation events; the Worker uses the scoped keys.
+   cd ops/cloud-backup
+   node scripts/setup-backblaze.mjs
+   ```
+
+   The script is idempotent — safe to re-run. It will:
+   - Create the `vaipakam-offchain-backup` bucket (allPrivate) if
+     missing, reuse if present.
+   - Set six lifecycle rules: `archives/` + `manifests/` 30-day,
+     `archives-monthly/` + `manifests-monthly/` 365-day, plus
+     `archives-yearly/` + `manifests-yearly/` indefinite.
+   - Create `vaipakam-cloud-backup-write-only` (listBuckets +
+     listFiles + writeFiles, bucket-scoped) for the nightly cron.
+   - Create `vaipakam-cloud-backup-read-only` (listBuckets +
+     listFiles + readFiles, bucket-scoped) for the weekly
+     healthcheck.
+   - Print both key IDs + Application Key strings ONCE. Save them
+     to your offline secret store immediately — B2 never shows the
+     Application Key strings again.
+
 3. **Generate the AES-256 encryption key** locally and store it
-   offline (1Password / pass / a printed paper backup). Never commit
-   it.
+   offline (1Password / pass / a printed paper backup). Never
+   commit, never paste in chat, never store in CF in plaintext
+   except through the wrangler secret upload:
 
    ```bash
    openssl rand -hex 32
    ```
 
-4. **Configure the Worker secrets**:
+4. **Configure the Worker secrets** — paste each value when prompted:
 
    ```bash
    cd ops/cloud-backup
-   wrangler secret put BACKUP_ENCRYPTION_KEY    # the 64-hex-char value from step 3
-   wrangler secret put B2_ACCESS_KEY_ID
-   wrangler secret put B2_SECRET_ACCESS_KEY
-   wrangler secret put TG_BOT_TOKEN             # same bot used by lz-watcher
+   wrangler secret put BACKUP_ENCRYPTION_KEY        # 64-hex from step 3
+   wrangler secret put B2_WRITE_ACCESS_KEY_ID       # from step 2 output
+   wrangler secret put B2_WRITE_SECRET_ACCESS_KEY   # from step 2 output
+   wrangler secret put B2_READ_ACCESS_KEY_ID        # from step 2 output
+   wrangler secret put B2_READ_SECRET_ACCESS_KEY    # from step 2 output
+   wrangler secret put TG_BOT_TOKEN                 # same bot used by lz-watcher
    ```
 
-5. **Set the public vars** in `wrangler.jsonc` (or via
-   `wrangler deploy --var`) — leave the JSONC defaults empty
-   intentionally so an accidental deploy can't proceed without
-   operator action:
+5. **Deploy** with the public vars. JSONC defaults are intentionally
+   empty so an accidental deploy can't proceed without operator
+   action:
 
    ```bash
    wrangler deploy --var B2_ENDPOINT:s3.eu-central-003.backblazeb2.com \
@@ -80,6 +101,10 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
 6. **Verify** — kick a manual run via the Cloudflare dashboard's
    "Trigger" button on the cron, or wait for the first 03:17 UTC
    tick. The Telegram alert lands either way.
+
+7. **Revoke the master key from `.env`** once everything is verified.
+   It only needed to be there for the one-time setup; keeping it on
+   disk is one accidental `git add` away from a leak.
 
 ## Restore
 

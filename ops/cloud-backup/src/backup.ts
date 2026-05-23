@@ -62,26 +62,57 @@ interface Manifest {
   };
 }
 
-// Born-off-chain tables (MUST back up).
+// Born-off-chain tables (MUST back up). Names verified against
+// `apps/indexer/migrations/*.sql` — code-review feedback caught the
+// previous list silently naming `activity` and `liquidity_confidence_*`
+// that don't exist in the real schema; the strict required-set guard
+// below would abort a backup whose REQUIRED list drifts but the
+// optional list could still silently skip mis-named tables. Both
+// lists are now grounded against the live schema.
 const ARCHIVE_TABLES_REQUIRED = [
+  // Diagnostic + legal audit — irrecoverable without backup.
   'diag_errors',
   'diag_legal_holds',
   'diag_legal_hold_audit',
+  // User-supplied / user-derived state (HF alert thresholds,
+  // notification dedupe state, Telegram chat links). Born off chain,
+  // losing them = user-visible breakage on restore.
+  'user_thresholds',
+  'notify_state',
+  'telegram_links',
 ];
 
 // Re-derivable tables (backed up as restore-performance optimisation only).
 const ARCHIVE_TABLES_OPTIONAL = [
   'offers',
   'loans',
-  'activity',
+  'activity_events',
   'oracle_snapshot_state',
-  'liquidity_confidence_observations',
-  'liquidity_confidence_state',
-  'current_holder',
   'indexer_cursor',
+  'liquidity_confidence',
 ];
 
-const LZ_ALERTS_TABLES = ['lz_alerts', 'lz_cursor'];
+// lz-watcher's separate D1. Real schema (per
+// `ops/lz-watcher/migrations/0001_init.sql`): `lz_alert_state` carries
+// the dispatch history, `scan_cursor` the per-chain block cursor,
+// `oft_balance_history` the mint/burn imbalance time-series. All three
+// are REQUIRED — silently skipping any of them dropped the alert-
+// history dataset entirely in the previous shape.
+const LZ_ALERTS_TABLES_REQUIRED = [
+  'lz_alert_state',
+  'scan_cursor',
+  'oft_balance_history',
+];
+
+// Hard memory ceiling. Cloudflare Workers' isolate cap is 128 MB; we
+// guard at 100 MB to leave headroom for stack + transient buffers
+// during encryption + upload. When a future month's growth pushes
+// past this, the nightly aborts loudly via the manifest's
+// `archiveBytes` and pages the operator — better than a silent
+// resource-limit crash. A streaming implementation that removes this
+// ceiling is tracked as a Stage A.1 follow-up; the design doc §6
+// sequencing already lists it.
+const MAX_ARCHIVE_BYTES = 100_000_000;
 
 async function exportTable(db: D1Database, table: string): Promise<TableExport> {
   // PRAGMA table_info returns one row per column — captures the schema
@@ -169,23 +200,32 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
     }
   }
   const lzAlertsTables: TableExport[] = [];
-  for (const t of LZ_ALERTS_TABLES) {
-    try {
-      lzAlertsTables.push(await exportTable(env.DB_LZ_ALERTS, t));
-    } catch (err) {
-      console.warn(`[backup] skipped lz-alerts.${t}: ${(err as Error).message}`);
-    }
+  for (const t of LZ_ALERTS_TABLES_REQUIRED) {
+    // lz-watcher tables are ALL required (alert-history dispatch +
+    // mint/burn balance series + the per-chain scan cursor). The
+    // previous shape only warned + skipped on missing tables — that
+    // meant a renamed table silently dropped the dataset from
+    // archives forever. Now any export failure here is a hard abort.
+    lzAlertsTables.push(await exportTable(env.DB_LZ_ALERTS, t));
   }
 
-  // Required-table guard — if a born-off-chain table truly isn't
+  // Required-table guards — if a born-off-chain table truly isn't
   // there, that's the backup pipeline silently losing data, not a
-  // schema migration that hasn't run yet. Page operator.
-  const missingRequired = ARCHIVE_TABLES_REQUIRED.filter(
+  // schema migration that hasn't run yet. Page operator on either DB.
+  const missingArchive = ARCHIVE_TABLES_REQUIRED.filter(
     (t) => !archiveTables.some((e) => e.name === t),
   );
-  if (missingRequired.length > 0) {
+  if (missingArchive.length > 0) {
     throw new Error(
-      `BACKUP ABORT: required tables missing from vaipakam-archive: ${missingRequired.join(', ')}`,
+      `BACKUP ABORT: required tables missing from vaipakam-archive: ${missingArchive.join(', ')}`,
+    );
+  }
+  const missingLz = LZ_ALERTS_TABLES_REQUIRED.filter(
+    (t) => !lzAlertsTables.some((e) => e.name === t),
+  );
+  if (missingLz.length > 0) {
+    throw new Error(
+      `BACKUP ABORT: required tables missing from vaipakam-lz-alerts-db: ${missingLz.join(', ')}`,
     );
   }
 
@@ -212,6 +252,21 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
     env.encryptionKey,
     plaintext.buffer.slice(0) as ArrayBuffer,
   );
+
+  // Memory ceiling — see MAX_ARCHIVE_BYTES doc-comment. The encoded
+  // archive is the peak-memory shape (plaintext + encrypted both
+  // resident); checking encrypted-size captures both. Abort loud,
+  // page operator, keep the previous night's archive as the
+  // last-known-good rather than crashing the Worker mid-upload.
+  if (encrypted.byteLength > MAX_ARCHIVE_BYTES) {
+    throw new Error(
+      `BACKUP ABORT: archive size ${encrypted.byteLength} bytes exceeds ` +
+      `MAX_ARCHIVE_BYTES (${MAX_ARCHIVE_BYTES}). Cloudflare Workers' 128 MB ` +
+      `isolate cap means the next nightly will start crashing. Time to ship ` +
+      `the streaming implementation (Stage A.1 follow-up).`,
+    );
+  }
+
   const archiveSha = await sha256Hex(encrypted);
 
   // 4. Manifest — small, unencrypted (the healthcheck reads it
@@ -251,39 +306,61 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
 
   // 5. Upload — archive first, then manifest. Reverse-order failure
   //    means a missing manifest with an existing archive (harmless;
-  //    the next run overwrites the orphan). The opposite order would
-  //    leave a manifest pointing at an archive that didn't land,
-  //    which the healthcheck would then false-positive on.
+  //    a later GC sweep cleans the orphan via the lifecycle rule).
+  //    The opposite order would leave a manifest pointing at an
+  //    archive that didn't land, which the healthcheck would then
+  //    false-positive on.
   //
   // Tiered prefixes match the lifecycle rules set by
   // `scripts/setup-backblaze.mjs`:
-  //   archives/         — daily, 30-day retention.
-  //   archives-monthly/ — 1st-of-month, 365-day retention.
-  //   archives-yearly/  — Jan-1, no rule (indefinite).
-  // The nightly archive ALWAYS lands in `archives/`; on the 1st of
-  // the month we ALSO write a copy to `archives-monthly/` (and to
-  // `archives-yearly/` on Jan 1). Same encrypted bytes, three
-  // different lifecycle buckets — B2 dedupes on hash so the storage
-  // cost overhead for the duplicate writes is ~zero.
+  //   archives/<date>/<nonce>.bin         — daily, 30-day retention.
+  //   archives-monthly/<month>/<nonce>.bin — 1st-of-month, 365-day.
+  //   archives-yearly/<year>/<nonce>.bin   — Jan-1, no rule (indefinite).
+  //
+  // Object keys carry a random 16-byte nonce (32 hex chars) so the
+  // SAME date/month/year written twice produces two DIFFERENT keys.
+  // This blocks a write-only-key attacker from overwriting an
+  // existing archive: their PUT lands at a new key, the original
+  // file survives, and the healthcheck's manifest-vs-archive
+  // verification catches the divergence. Without the nonce, a
+  // single PUT to `archives/2026-05-23.bin` with garbage bytes
+  // would silently replace the previous night's data — write-only
+  // alone doesn't defend against in-place overwrite.
+  //
+  // The same nonce is shared by an archive and its manifest so the
+  // healthcheck can pair them deterministically (`archives/<d>/<n>.bin`
+  // ↔ `manifests/<d>/<n>.json`).
   const dateKey = archive.createdAt.slice(0, 10); // YYYY-MM-DD
   const monthKey = archive.createdAt.slice(0, 7); // YYYY-MM
   const yearKey = archive.createdAt.slice(0, 4);  // YYYY
   const isFirstOfMonth = dateKey.endsWith('-01');
   const isFirstOfYear = dateKey.endsWith('-01-01');
 
+  // 16-byte cryptographic nonce → 32 hex chars. crypto.getRandomValues
+  // is the same source WebCrypto's encrypt() draws from internally,
+  // so we don't add any new entropy assumption.
+  const nonceBytes = crypto.getRandomValues(new Uint8Array(16));
+  let nonceHex = '';
+  for (let i = 0; i < nonceBytes.length; i++) {
+    nonceHex += nonceBytes[i].toString(16).padStart(2, '0');
+  }
+
   const writes: Array<{ archive: string; manifest: string }> = [
-    { archive: `archives/${dateKey}.bin`, manifest: `manifests/${dateKey}.json` },
+    {
+      archive: `archives/${dateKey}/${nonceHex}.bin`,
+      manifest: `manifests/${dateKey}/${nonceHex}.json`,
+    },
   ];
   if (isFirstOfMonth) {
     writes.push({
-      archive: `archives-monthly/${monthKey}.bin`,
-      manifest: `manifests-monthly/${monthKey}.json`,
+      archive: `archives-monthly/${monthKey}/${nonceHex}.bin`,
+      manifest: `manifests-monthly/${monthKey}/${nonceHex}.json`,
     });
   }
   if (isFirstOfYear) {
     writes.push({
-      archive: `archives-yearly/${yearKey}.bin`,
-      manifest: `manifests-yearly/${yearKey}.json`,
+      archive: `archives-yearly/${yearKey}/${nonceHex}.bin`,
+      manifest: `manifests-yearly/${yearKey}/${nonceHex}.json`,
     });
   }
 
@@ -293,10 +370,11 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
     await putObject(b2Cfg, w.manifest, manifestBody, 'application/json');
   }
 
-  // The healthcheck only knows about the daily prefix (archives/),
-  // so the BackupRunOutput surfaces the daily key — the monthly /
-  // yearly siblings are recorded in the Telegram alert (alert text
-  // built by index.ts off the durationMs / rowsBackedUp summary).
+  // The healthcheck looks up the most recent manifest under
+  // `manifests/<recent-date>/` via list-with-prefix (the read-scoped
+  // key can do that) and dereferences to its sibling archive. The
+  // BackupRunOutput surfaces the daily key — monthly / yearly
+  // siblings are reflected in the Telegram alert.
   const archiveKey = writes[0].archive;
   const manifestKey = writes[0].manifest;
 

@@ -32,48 +32,64 @@ produced by [`ops/cloud-backup`](../../ops/cloud-backup/README.md).
 
 ## 1. Stand up a fresh Cloudflare account
 
+The order below matters: D1 databases get the new account's
+`database_id` values, and every Worker's `wrangler.jsonc` binds to
+those IDs. Deploying a Worker before its D1 exists (or with the old
+account's ID still pinned in `wrangler.jsonc`) errors out at the
+binding step. So: create the stores first, update the configs,
+then deploy.
+
 1. Sign up for a new Cloudflare account on a clean email + 2FA.
 2. Clone the monorepo:
 
    ```bash
    git clone https://github.com/vaipakam/vaipakam.git
    cd vaipakam
-   ```
-
-3. Recreate every Worker via `wrangler deploy`. The wrangler configs
-   for each Worker are checked into the monorepo (`apps/*/wrangler.jsonc`,
-   `ops/*/wrangler.jsonc`), so this is mechanical:
-
-   ```bash
    pnpm install
-   pnpm --filter @vaipakam/indexer deploy
-   pnpm --filter @vaipakam/keeper deploy
-   pnpm --filter @vaipakam/agent deploy
-   pnpm --filter @vaipakam/defi deploy
-   pnpm --filter @vaipakam/www deploy
-   cd ops/lz-watcher && npm run deploy
-   cd ../cloud-backup && npm run deploy
    ```
 
-4. Recreate D1 databases and run migrations:
+3. Create the D1 databases. Capture the printed `database_id` values
+   — you'll paste these into the wrangler configs in step 5.
 
    ```bash
    wrangler d1 create vaipakam-archive
    wrangler d1 create vaipakam-lz-alerts-db
-   cd apps/indexer
-   wrangler d1 migrations apply vaipakam-archive --remote
-   cd ../../ops/lz-watcher
-   wrangler d1 migrations apply vaipakam-lz-alerts-db --remote
    ```
 
-5. Recreate the R2 bucket:
+4. Create the R2 buckets:
 
    ```bash
    wrangler r2 bucket create vaipakam-legal-vault
    ```
 
-6. Update each Worker's wrangler config with the new D1 `database_id`
-   values (the IDs change on a fresh account) and redeploy.
+5. Update every `wrangler.jsonc` in the monorepo that carries a
+   `database_id` to the new IDs from step 3. The bound paths:
+
+   - `apps/indexer/wrangler.jsonc`     → vaipakam-archive
+   - `apps/keeper/wrangler.jsonc`      → vaipakam-archive
+   - `apps/agent/wrangler.jsonc`       → vaipakam-archive
+   - `ops/lz-watcher/wrangler.jsonc`   → vaipakam-lz-alerts-db
+   - `ops/cloud-backup/wrangler.jsonc` → vaipakam-archive + vaipakam-lz-alerts-db
+
+6. Apply migrations:
+
+   ```bash
+   ( cd apps/indexer    && wrangler d1 migrations apply vaipakam-archive --remote )
+   ( cd ops/lz-watcher  && wrangler d1 migrations apply vaipakam-lz-alerts-db --remote )
+   ```
+
+7. NOW deploy the Workers — the bindings resolve cleanly because the
+   D1 + R2 + updated configs all exist first:
+
+   ```bash
+   pnpm --filter @vaipakam/indexer deploy
+   pnpm --filter @vaipakam/keeper deploy
+   pnpm --filter @vaipakam/agent deploy
+   pnpm --filter @vaipakam/defi deploy
+   pnpm --filter @vaipakam/www deploy
+   ( cd ops/lz-watcher   && npm run deploy )
+   ( cd ops/cloud-backup && npm run deploy )
+   ```
 
 > **Stop here and reassess if this is the right move.** Standing up a
 > new CF account is appropriate for total loss; for live tampering or
@@ -166,20 +182,27 @@ The decrypted JSON has the shape produced by `backup.ts`:
   "version": 1,
   "createdAt": "2026-05-23T03:17:00Z",
   "d1": {
-    "archive": [ { "name": "diag_errors", "schema": [...], "rowCount": N, "rows": [...] }, ... ],
-    "lzAlerts": [ { "name": "lz_alerts", "schema": [...], "rowCount": N, "rows": [...] }, ... ]
+    "archive":  [ { "name": "diag_errors", "schema": [...], "rowCount": N, "rows": [...] }, ... ],
+    "lzAlerts": [ { "name": "lz_alert_state", "schema": [...], "rowCount": N, "rows": [...] }, ... ]
   },
   "r2": { "bucket": "vaipakam-legal-vault", "objects": [ { "key": "...", "size": N, "sha256": "...", "base64Body": "..." }, ... ] }
 }
 ```
 
-For each born-off-chain table (`diag_errors`, `diag_legal_holds`,
-`diag_legal_hold_audit`, `lz_alerts`, `lz_cursor`):
+**Critical**: the two D1 databases are SEPARATE — restoring lz-watcher
+tables into `vaipakam-archive` (or vice versa) lands data in the
+wrong DB and will leave the originating database empty after the
+restore. The `d1.archive[]` entries go to `vaipakam-archive`; the
+`d1.lzAlerts[]` entries go to `vaipakam-lz-alerts-db`. Match by
+source.
+
+For each table:
 
 1. Confirm the archive's `schema[]` matches the live DB's current
    shape. If a migration in main since the archive added or removed
    a column, you'll need a transformation pass. The schema-hash in
    the manifest lets you spot drift without diffing column-by-column.
+
 2. Convert the `rows[]` array to a SQL `INSERT` batch. A small Node
    script does this cleanly:
 
@@ -192,10 +215,21 @@ For each born-off-chain table (`diag_errors`, `diag_legal_holds`,
    }
    ```
 
-3. Apply via wrangler:
+3. Apply via wrangler — targeting the matching D1 binding:
+
+   **`vaipakam-archive` tables** (born-off-chain): `diag_errors`,
+   `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`,
+   `notify_state`, `telegram_links`.
 
    ```bash
-   wrangler d1 execute vaipakam-archive --file=restore/diag_errors.sql --remote
+   wrangler d1 execute vaipakam-archive --file=restore/<table>.sql --remote
+   ```
+
+   **`vaipakam-lz-alerts-db` tables** (lz-watcher): `lz_alert_state`,
+   `scan_cursor`, `oft_balance_history`.
+
+   ```bash
+   wrangler d1 execute vaipakam-lz-alerts-db --file=restore/<table>.sql --remote
    ```
 
 4. Verify row counts match the manifest before moving to the next
@@ -209,17 +243,37 @@ For each object in the decrypted `r2.objects[]`:
 
 ```js
 const bytes = Buffer.from(obj.base64Body, 'base64');
+// Use mkdir -p semantics — legal-vault object keys can contain
+// `/` separators (e.g. `legal-holds/2026-05/notice-42.pdf`).
+fs.mkdirSync(path.dirname(`restore/r2/${obj.key}`), { recursive: true });
 fs.writeFileSync(`restore/r2/${obj.key}`, bytes);
 // confirm SHA matches
 ```
 
-Then upload:
+Then upload. **Note**: a naive `find . -type f` loop emits paths like
+`./legal-holds/notice-42.pdf` whose leading `./` would become part of
+the R2 object key — `legal_doc_ref` rows in the restored D1 reference
+the ORIGINAL keys (`legal-holds/notice-42.pdf`), so a `./`-prefixed
+key would silently break every legal-document lookup. Iterate by
+archived `obj.key` instead:
 
 ```bash
-cd restore/r2
-for f in $(find . -type f); do
-  wrangler r2 object put vaipakam-legal-vault/$f --file=$f
-done
+# scripts/restore-r2.mjs — preserves the original key string verbatim.
+node - <<'NODE'
+import { readFileSync } from 'node:fs';
+import { execSync } from 'node:child_process';
+
+const archive = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+for (const obj of archive.r2.objects) {
+  const local = `restore/r2/${obj.key}`;
+  // wrangler r2 object put uses the bucket/key string after the
+  // first slash — preserve it character-for-character.
+  execSync(
+    `wrangler r2 object put 'vaipakam-legal-vault/${obj.key}' --file='${local}' --remote`,
+    { stdio: 'inherit' },
+  );
+}
+NODE
 ```
 
 Per-object SHA-256 in the archive lets you verify each upload landed

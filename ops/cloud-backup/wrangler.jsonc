@@ -52,22 +52,39 @@
       "bucket_name": "vaipakam-legal-vault",
     },
   ],
-  // Public vars. Real secrets live in `wrangler secret put`:
-  //   BACKUP_ENCRYPTION_KEY    — 32-byte hex AES-256-GCM key, kept
-  //                              OFFLINE outside Cloudflare (e.g.
-  //                              1Password / pass). Never rotated
-  //                              automatically; manual rotation
-  //                              procedure in docs/ops/OffChainRestore.md.
-  //   B2_ACCESS_KEY_ID         — Backblaze Application Key id
-  //                              scoped write-only to the backup
-  //                              bucket. Cannot read or delete past
-  //                              archives — so a CF compromise that
-  //                              steals this key still can't damage
-  //                              the existing backup history.
-  //   B2_SECRET_ACCESS_KEY     — matching secret half of the above.
-  //   TG_BOT_TOKEN             — same Telegram bot the other Workers
-  //                              use; healthcheck failures + nightly
-  //                              backup outcomes go to TG_OPS_CHAT_ID.
+  // Public vars. Real secrets live in `wrangler secret put`. Two
+  // B2 key pairs (write-scoped + read-scoped) — see src/env.ts for
+  // the trust-boundary rationale.
+  //   BACKUP_ENCRYPTION_KEY        — 32-byte hex AES-256-GCM key,
+  //                                  kept OFFLINE outside Cloudflare
+  //                                  (1Password / pass). Never rotated
+  //                                  automatically; manual rotation
+  //                                  procedure in docs/ops/OffChainRestore.md.
+  //   B2_WRITE_ACCESS_KEY_ID       — Application Key id, scoped
+  //                                  write-only to the backup bucket
+  //                                  (listBuckets + listFiles +
+  //                                  writeFiles). Used by the nightly
+  //                                  cron only. A CF compromise that
+  //                                  steals this can corrupt FUTURE
+  //                                  archives (only at NEW unique
+  //                                  object keys — immutable naming
+  //                                  defeats overwrite of existing
+  //                                  ones) but cannot read past
+  //                                  archives or delete anything.
+  //   B2_WRITE_SECRET_ACCESS_KEY   — matching secret of above.
+  //   B2_READ_ACCESS_KEY_ID        — Application Key id, scoped
+  //                                  read-only to the backup bucket
+  //                                  (listBuckets + listFiles +
+  //                                  readFiles). Used by the weekly
+  //                                  healthcheck only. A CF compromise
+  //                                  yields AES-256-GCM ciphertext;
+  //                                  the offline encryption key
+  //                                  protects the plaintext.
+  //   B2_READ_SECRET_ACCESS_KEY    — matching secret of above.
+  //   TG_BOT_TOKEN                 — same Telegram bot the other
+  //                                  Workers use; healthcheck
+  //                                  failures + nightly backup
+  //                                  outcomes go to TG_OPS_CHAT_ID.
   "vars": {
     // Backblaze S3-compatible endpoint. Region-specific; pick the
     // bucket region at create-time. Operator sets the matching
