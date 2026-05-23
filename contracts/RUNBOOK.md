@@ -70,9 +70,14 @@ ADMIN_ADDRESS=0x…         # the admin EOA's address — read by
                           # owner-transfer target.
 
 # Treasury (Diamond-managed; deployer-controlled multi-sig on mainnet)
-TREASURY_ADDRESS=0x…      # read by DeployCrosschain.s.sol (canonical
-                          # chain only — wired into VpfiBuyReceiver
-                          # as the VPFI funding source).
+TREASURY_ADDRESS=0x…      # read by DeployCrosschain.s.sol on MIRROR
+                          # chains — wired into VpfiBuyAdapter as the
+                          # treasury address that receives refunded /
+                          # settled buy-flow funds. Canonical (Base)
+                          # branch does not read this env var; the
+                          # treasury for the buy-flow settlement on
+                          # canonical is configured via the Diamond's
+                          # own AdminFacet setter after deploy.
 
 # Chainlink CCIP wiring (post-T-068, 2026-05-18)
 # Per-chain Router + RMN proxy + TokenAdminRegistry addresses from
@@ -125,17 +130,28 @@ forge script script/DeployCrosschain.s.sol \
 
 Per-chain, branches on `block.chainid ∈ {8453, 84532}` = canonical:
 
-- **Canonical (Base)**: deploys `VPFIToken` (`ERC20Capped` 230M) +
-  the stock CCIP `LockReleaseTokenPool` over it + `VpfiBuyReceiver` +
-  `CcipMessenger` + `VaipakamRewardMessenger` + `VpfiPoolRateGovernor`.
+- **Canonical (Base)**: reads the already-deployed `VPFIToken` address
+  (deployed by the prior Diamond / VPFI bootstrap step — written to
+  `deployments/<chain>/addresses.json` via `Deployments.readVPFIToken()`),
+  then deploys the stock CCIP `LockReleaseTokenPool` over it +
+  `VpfiBuyReceiver` + `CcipMessenger` + `VaipakamRewardMessenger` +
+  `VpfiPoolRateGovernor`. `VPFIToken` itself is NOT redeployed here.
+  Prerequisite: `VPFIToken` must already be live on this chain with
+  its address recorded in the per-chain deployments artifact, or
+  `Deployments.readVPFIToken()` will return `address(0)` and the
+  script will revert at the `LockReleaseTokenPool` constructor.
 - **Mirrors**: deploys `VPFIMirrorToken` (proxy) + stock CCIP
   `BurnMintTokenPool` + `VpfiBuyAdapter` + `CcipMessenger` +
   `VaipakamRewardMessenger` + `VpfiPoolRateGovernor`. Mirror token
   supply is driven by the BurnMintPool; no independent minter
   surface.
 
-Owner of every proxy = `VPFI_OWNER` (multisig → timelock at mainnet
-per the cutover runbook).
+Owner / pending-owner of every cross-chain proxy = `ADMIN_ADDRESS`
+(the admin EOA on testnet rehearsal; multisig → timelock at mainnet
+per the cutover runbook). The `DeployCrosschain.s.sol` script
+threads this single env var into every `initialize(...)` call on
+the cross-chain stack — there is no separate `VPFI_OWNER` or
+`REWARD_OWNER` knob post-T-068.
 
 ### 2.2 Diamond deploy (every chain)
 
@@ -150,7 +166,8 @@ to the mirror (or canonical token on Base) post-deploy via
 
 After the above, for every chain, confirm:
 
-- All proxies' owner is `VPFI_OWNER` / `REWARD_OWNER` (the timelock).
+- All cross-chain proxies' owner is `ADMIN_ADDRESS` (multisig →
+  timelock at mainnet).
 - Block explorers have verified source for every contract.
 - Each contract's runtime bytecode matches the compiled artifact. Use
   `cast code` and diff against local `out/`.

@@ -1118,11 +1118,12 @@ Topology:
 - mirrors (`Ethereum`, `Polygon zkEVM`, `Arbitrum`, `Optimism`, `BNB Chain`)
   are reporters
 - each mirror's `RewardReporterFacet.closeDay(dayId)` sends
-  `chainInterestUSD` to Base via Chainlink CCIP `OApp.send`
+  `chainInterestUSD` to Base via Chainlink CCIP through the
+  `VaipakamRewardMessenger` adapter
 - Base's `RewardAggregatorFacet` finalizes when all expected mirrors
   have reported OR after a 4-hour grace window past `dayId + 1 UTC`
 - Base broadcasts the finalized `dailyGlobalInterestUSD[dayId]` back to
-  every mirror via `OApp.send`
+  every mirror through the same `VaipakamRewardMessenger` adapter
 - mirrors store it as `knownGlobalInterest[dayId]`, the local denominator
 
 A claim for `dayId` reverts locally if the global denominator hasn't
@@ -1179,11 +1180,13 @@ construction.
 
 ### 13.3 `VpfiBuyAdapter` (Mirror chains)
 
-Cross-chain fixed-rate buy entry point. User sends ETH on
-EVM-mainnet-gas chains (Ethereum / Base / Arbitrum / Optimism /
-Polygon zkEVM and their public testnets); on BNB Chain mainnet and
-Polygon PoS the adapter pulls bridged WETH instead, because the
-receiver quotes a single global wei-per-VPFI rate denominated in
+Cross-chain fixed-rate buy entry point. The adapter is deployed
+ONLY on mirror chains — Base hosts the receiver, not the adapter.
+On EVM-mainnet-gas mirrors (Ethereum / Arbitrum / Optimism /
+Polygon zkEVM and their public testnets) the user sends ETH; on
+BNB Chain mainnet and Polygon PoS the adapter pulls bridged WETH
+instead, because the receiver quotes a single global wei-per-VPFI
+rate denominated in
 **ETH-equivalent value**. The adapter forwards a `BUY_REQUEST` over
 CCIP to the canonical Base receiver and has per-lane CCIP rate
 limits in addition to the Diamond-side cap:
@@ -1563,8 +1566,11 @@ reward ranges will be public before mainnet launch.
 12. Vaipakam `README.md`, `CLAUDE.md`, `docs/TokenomicsTechSpec.md`,
     `docs/MEVProtection.md`, `docs/OraclePolicy.md`, `docs/GovernanceConfigDesign.md`,
     `docs/GovernanceRunbook.md`, `docs/WebsiteReadme.md`
-13. Chainlink CCIP KelpDAO Incident Statement (April 2026) and follow-up
-    industry coverage of the cross-chain bridge exploit
+13. LayerZero / KelpDAO Incident Statement (April 2026) and follow-up
+    industry coverage of the cross-chain bridge exploit — referenced
+    here as the precedent that motivated Vaipakam's migration off
+    LayerZero OFT V2 to Chainlink CCIP (no CCIP lane was involved in
+    the incident)
 
 ---
 
