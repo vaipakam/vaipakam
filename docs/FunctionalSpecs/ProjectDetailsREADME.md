@@ -294,6 +294,41 @@ The platform distinguishes between liquid and illiquid assets, which affects how
   - Specify the desired NFT (or type of NFT), maximum acceptable daily rental charge, the ERC-20 token to be used for prepayment (rental fees + 5% buffer), and rental duration.
   - Lock the prepayment (total rental fee + 5% buffer) in ERC-20 tokens in the Vaipakam smart contract upon offer submission. Rental payments will be deducted from this prepayment.
 
+### Offer fill modes (DEX-style flavours)
+
+- Every offer carries a `fillMode` flavour the creator picks at
+  create time. Three modes are supported:
+  - **`Partial`** (default): the offer is matchable at any size in
+    `[amount, amountMax]`; the remainder stays on the book until
+    fully filled or cancelled. Today's behaviour, preserved exactly
+    for every existing offer.
+  - **`Aon`** ("All-or-Nothing"): the offer admits exactly one
+    full-size fill, sized to `offer.amount`. Requires `amount ==
+    amountMax` at create (an amount range under AON is structurally
+    meaningless — only the full fill is reachable). A matcher
+    attempting a partial fill against an AON offer reverts with a
+    typed `AonRequiresFullFill` error carrying the offending offer
+    id, the required full size, and the would-be partial size.
+  - **`Ioc`** ("Immediate-or-Cancel"): the offer is partial-fillable
+    inside a required time window (`expiresAt > 0`); past the
+    deadline the offer lapses via the same lazy-expiry path GTT
+    offers use, and the unmatched remainder is cleanable by any
+    caller via `cancelOffer` with the refund routed to the creator.
+- `fillMode` is **immutable for the offer's lifetime**. The
+  in-place offer modification surface (`OfferMutateFacet`) does not
+  touch this field — changing fill mode mid-life would alter the
+  offer's economic contract that the acceptor agreed to at
+  inspection time.
+- `FOK`, `POST`, and `Iceberg` modes were considered and not
+  shipped. `POST` is a no-op for Vaipakam (every offer is
+  structurally a maker; the acceptor is always the caller of
+  `acceptOffer` or the matcher bot, never another offer). `FOK`
+  is strictly stricter than `Aon` (same-block fill or revert) and
+  fits poorly with P2P lending's slower match cadence. `Iceberg`
+  is deferred post-mainnet pending a real demand signal.
+- See `docs/DesignsAndPlans/OfferFillModesDesign.md` for the full
+  matrix, alternatives table, and failure-mode coverage.
+
 ### Offer modification — in-place edit without cancel-and-re-post
 
 - A creator may modify their own **unaccepted** offer's principal

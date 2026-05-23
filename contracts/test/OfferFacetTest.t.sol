@@ -423,7 +423,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -475,7 +476,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
     }
@@ -504,7 +506,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 0,
                 collateralAmountMax: 100,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -559,7 +562,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500 ether,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -624,7 +628,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -657,7 +662,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 0,
                 collateralAmountMax: 100,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
         assertEq(
@@ -714,7 +720,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -756,7 +763,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -830,7 +838,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
     }
@@ -872,7 +881,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500 ether,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -929,7 +939,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
     }
@@ -969,7 +980,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
     }
@@ -1004,7 +1016,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 0,
                 collateralAmountMax: 100,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
     }
@@ -1034,7 +1047,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -1075,7 +1089,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -1121,7 +1136,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -1186,7 +1202,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -1233,7 +1250,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 0,
                 collateralAmountMax: 100,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -1272,7 +1290,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 0,
                 collateralAmountMax: 100,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -1313,7 +1332,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -1357,7 +1377,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 0,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -1405,7 +1426,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 0,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -1452,7 +1474,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -1500,7 +1523,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -1536,7 +1560,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 0,
                 collateralAmountMax: 100,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
         // offerId = 1; user1 is lender
@@ -1586,7 +1611,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 0,
                 collateralAmountMax: 100,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -1638,7 +1664,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 0,
                 collateralAmountMax: 100,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -1693,7 +1720,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 0,
                 collateralAmountMax: 100,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -1742,7 +1770,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 0,
                 collateralAmountMax: 100,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -1779,7 +1808,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -1820,7 +1850,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -1884,7 +1915,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 0,
                 collateralAmountMax: 100,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
         assertGt(offerId, 0);
@@ -1916,7 +1948,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -1960,7 +1993,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 0,
                 collateralAmountMax: 100,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -2009,7 +2043,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 0,
                 collateralAmountMax: 100,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -2059,7 +2094,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 0,
                 collateralAmountMax: 100,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -2105,7 +2141,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 0,
                 collateralAmountMax: 100,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -2159,7 +2196,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 0,
                 collateralAmountMax: 100,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -2206,7 +2244,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -2259,7 +2298,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 0,
                 collateralAmountMax: 100,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -2339,7 +2379,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
         vm.clearMockedCalls();
@@ -2376,7 +2417,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
         vm.clearMockedCalls();
@@ -2415,7 +2457,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -2465,7 +2508,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 0,
                 collateralAmountMax: 100,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -2523,7 +2567,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 100,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -2587,7 +2632,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 200,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -2635,7 +2681,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 200,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -2701,7 +2748,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 0,
                 collateralAmountMax: 100,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -2749,7 +2797,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 0,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -2805,7 +2854,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 0,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -2864,7 +2914,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 0,
                 collateralAmountMax: 100,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -2921,7 +2972,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 0,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -2968,7 +3020,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -3026,7 +3079,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -3084,7 +3138,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -3142,7 +3197,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -3202,7 +3258,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 0,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -3266,7 +3323,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -3318,7 +3376,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 0,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -3369,7 +3428,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 0,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -3411,7 +3471,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 0,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -3450,7 +3511,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 0,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -3504,7 +3566,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 0,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -3558,7 +3621,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 0,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -3610,7 +3674,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 0,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -3657,7 +3722,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -3704,7 +3770,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 0,
                 collateralAmountMax: 100,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -3749,7 +3816,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 0,
                 collateralAmountMax: 100,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -3801,7 +3869,8 @@ contract OfferFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 0,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 

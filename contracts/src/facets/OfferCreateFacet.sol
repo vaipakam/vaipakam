@@ -114,6 +114,18 @@ contract OfferCreateFacet is
         // "expired — anyone can clean up") directly from the OfferCreated
         // payload, no follow-up `getOffer` view-call.
         uint64 expiresAt;
+        // ── #125 — DEX-style fill-mode flavour ──────────────────────────
+        // `Partial` (0) = today's Range-Orders Phase-1 behaviour (the
+        // backward-compat default for every legacy offer). `Aon` = the
+        // offer admits exactly one full-size fill (the create-time
+        // invariant `amount == amountMax` keeps the AON-required size
+        // unambiguous). `Ioc` = partial-fill within `expiresAt`, then
+        // the unmatched remainder lapses via the shared GTT lazy-
+        // expiry path. Carrying this on the companion event lets
+        // indexers + frontend cache merges render the offer's mode
+        // chip ("AON" / "IOC, 60s window left") directly from the
+        // event payload — no follow-up `getOffer` view-call needed.
+        LibVaipakam.FillMode fillMode;
     }
 
     /// @notice Companion to {OfferCreated} — full self-sufficient
@@ -216,6 +228,20 @@ contract OfferCreateFacet is
     /// (otherwise an attacker could lock a slot for decades and the
     /// permissionless-clear is unreachable until then).
     error OfferExpiryAboveCap(uint64 provided, uint256 cap);
+
+    // ── #125 — Fill-mode validation errors ──────────────────────────────
+    /// `params.fillMode == Aon && params.amount != params.amountMax`.
+    /// An all-or-nothing offer with a non-trivial amount range is
+    /// structurally meaningless — only the full fill is ever reachable.
+    /// Forcing single-value at create lets the match-time AON gate be a
+    /// simple equality check without threading the AON-required-amount
+    /// through the matcher midpoint logic.
+    error AonRequiresSingleValueAmount();
+    /// `params.fillMode == Ioc && params.expiresAt == 0`. IOC's defining
+    /// knob is the time window; an IOC without an `expiresAt` is just a
+    /// Partial offer with extra metadata. Reject loud rather than let
+    /// the creator post an unreachable IOC configuration.
+    error IocRequiresExpiry();
 
     // ── Range Orders Phase 1 errors (docs/RangeOffersDesign.md §5.5) ─
     /// Range invariant: `amountMin > amountMax`.
@@ -989,6 +1015,7 @@ contract OfferCreateFacet is
         f.allowsPartialRepay = offer.allowsPartialRepay;
         f.periodicInterestCadence = offer.periodicInterestCadence;
         f.expiresAt = offer.expiresAt;
+        f.fillMode = offer.fillMode;
 
         emit OfferCreatedDetails(offerId, creator, offer.lendingAsset, f);
     }
@@ -1097,6 +1124,39 @@ contract OfferCreateFacet is
         // zero. Skipping the SSTORE on the GTC path keeps `createOffer`
         // gas identical to pre-#195 for every existing test / script
         // that doesn't set the field.
+
+        // ── #125 — Fill-mode validation + stamp ─────────────────────────
+        // `Partial` (0) is the backward-compat default — every legacy
+        // CreateOfferParams construction that doesn't set the field
+        // gets today's Range-Orders Phase-1 behaviour.
+        //
+        // `Aon` requires `amount == amountMax`. A non-trivial range
+        // under AON is structurally meaningless: the only fill that
+        // ever lands is the full one, so any min/max gap would never
+        // be observable. Forcing single-value at create keeps the
+        // match-time AON gate (revert on any matchAmount < offer
+        // total) unambiguous + cheap (no need to thread "the AON
+        // amount" through the matcher midpoint logic).
+        //
+        // `Ioc` requires `expiresAt > 0`. IOC's defining knob IS the
+        // window — "match what's available within N seconds, cancel
+        // the rest"; an IOC without a window is just `Partial` with
+        // extra metadata. The actual time-window enforcement is
+        // shared with #195's GTT lazy-expiry gate (`isOfferExpired`
+        // fires at every accept / match read), so we don't add a
+        // separate runtime path here.
+        if (params.fillMode == LibVaipakam.FillMode.Aon) {
+            if (params.amount != params.amountMax) {
+                revert AonRequiresSingleValueAmount();
+            }
+        } else if (params.fillMode == LibVaipakam.FillMode.Ioc) {
+            if (params.expiresAt == 0) revert IocRequiresExpiry();
+        }
+        if (params.fillMode != LibVaipakam.FillMode.Partial) {
+            // Skip the SSTORE on the Partial default for the same gas-
+            // identity reason as `expiresAt == 0` above.
+            offer.fillMode = params.fillMode;
+        }
     }
 
     function _writeOfferCollateralFields(

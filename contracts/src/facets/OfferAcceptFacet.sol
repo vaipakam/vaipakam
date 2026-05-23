@@ -168,6 +168,19 @@ contract OfferAcceptFacet is
     // storage row is still in place. The matching `MatchError.OfferExpired`
     // classifier in `LibOfferMatch.previewMatch` lets bots short-circuit.
     error OfferExpired(uint256 offerId, uint64 expiresAt);
+    // #125 — AON ("All-or-Nothing") fill-mode terminal. Fired from
+    // `OfferMatchFacet.matchOffers` when the matcher's would-be
+    // matchAmount doesn't fully consume an AON offer, OR when the AON
+    // offer already carries `amountFilled > 0` (defensive — AON
+    // offers should never admit a prior fill). Surfaces the AON
+    // offer's id, the required fill size (`offer.amount`, which equals
+    // `amountMax` per the create-time single-value invariant), and the
+    // would-be partial size the matcher computed, so a bot's revert
+    // decoder can render "offer X is AON; your match would have only
+    // filled <provided> of <required>." Declared here (rather than on
+    // `OfferMatchFacet`) for ABI continuity with the other match-
+    // routed errors that re-raise from this facet's revert vocabulary.
+    error AonRequiresFullFill(uint256 offerId, uint256 required, uint256 provided);
     // NotOfferCreator inherited from IVaipakamErrors
     // Create-side errors (InvalidOfferType, OfferDurationExceedsCap, the
     // Range Orders Phase 1 errors, GetUserVaultFailed) live on

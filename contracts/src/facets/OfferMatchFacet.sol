@@ -209,6 +209,29 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
                     b_.expiresAt
                 );
             }
+            // #125 — AON terminal: the match would land a partial-fill
+            // against an AON offer, which violates its "single full
+            // fill" contract. Surface the offending offerId so the
+            // matcher's revert decoder can render "offer X is AON;
+            // your match would have only filled Y of Z." Pick the
+            // AON side (lender first deterministically when both
+            // carry AON).
+            if (mr.errorCode == LibOfferMatch.MatchError.AonRequiresFullFill) {
+                LibVaipakam.Offer storage lAon = s.offers[lenderOfferId];
+                if (lAon.fillMode == LibVaipakam.FillMode.Aon) {
+                    revert OfferAcceptFacet.AonRequiresFullFill(
+                        lenderOfferId,
+                        lAon.amount,
+                        mr.matchAmount
+                    );
+                }
+                LibVaipakam.Offer storage bAon = s.offers[borrowerOfferId];
+                revert OfferAcceptFacet.AonRequiresFullFill(
+                    borrowerOfferId,
+                    bAon.amount,
+                    mr.matchAmount
+                );
+            }
             revert InvalidOfferType();
         }
 

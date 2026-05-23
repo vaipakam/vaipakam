@@ -597,6 +597,46 @@ library LibVaipakam {
     }
 
     /**
+     * @notice #125 — DEX-style fill-mode flavour of an offer.
+     * @dev `PARTIAL` is the default (zero-init storage = today's
+     *      Range-Orders Phase-1 partial-fill behaviour) so every legacy
+     *      offer keeps working without a migration.
+     *
+     *      `AON` ("All-or-Nothing") rejects any non-full fill at match
+     *      time. To make the invariant unambiguous, `createOffer`
+     *      requires `amount == amountMax` on AON offers (a non-trivial
+     *      range under AON is structurally meaningless — the only fill
+     *      that ever lands is the full one).
+     *
+     *      `IOC` ("Immediate-or-Cancel") layers on `expiresAt` from
+     *      #195 — the offer is partial-fillable, but only inside the
+     *      time window the creator set. Past `expiresAt` the lazy-
+     *      expiry gate kicks in and the unmatched remainder is
+     *      cleanable via the permissionless `cancelOffer` path.
+     *      `createOffer` requires `expiresAt > 0` on IOC offers; the
+     *      flag itself is descriptive metadata for indexers/UI to
+     *      surface "IOC, 60s window" rather than "GTT until <date>"
+     *      — the runtime enforcement is shared with GTT.
+     *
+     *      `FOK` and `POST` were considered and deferred:
+     *        - POST ("post-only / maker-only") would prevent the offer
+     *          from being the taker of another offer; in Vaipakam every
+     *          offer is structurally a maker (the acceptor is the
+     *          caller of `acceptOffer` or the matcher bot, never an
+     *          offer), so POST is a no-op.
+     *        - FOK ("Fill-or-Kill") is strictly stricter than AON —
+     *          must fill in full in the same block or revert. AON is
+     *          a better fit for P2P lending's slower match cadence.
+     *      Both excluded from this enum to keep the enum surface tight;
+     *      can be appended later without breaking storage layout.
+     */
+    enum FillMode {
+        Partial,
+        Aon,
+        Ioc
+    }
+
+    /**
      * @notice T-034 — cadence at which the borrower must settle accrued
      *         interest during the loan's lifetime.
      * @dev `None` is today's behavior — terminal-only repayment. The four
@@ -1060,6 +1100,14 @@ library LibVaipakam {
         // named-arg syntax still requires every caller to supply the
         // field explicitly).
         uint64 expiresAt;
+        // ── #125 — DEX-style fill-mode flavour ──────────────────────────
+        // `Partial` (= 0) is the GTC-equivalent default and the
+        // backward-compat sentinel: every legacy `CreateOfferParams`
+        // construction site that doesn't set this field gets today's
+        // Range-Orders Phase-1 behaviour. `Aon` requires the create-time
+        // single-value invariant (`amount == amountMax`); `Ioc` requires
+        // `expiresAt > 0` (the window is the IOC's defining knob).
+        FillMode fillMode;
     }
 
     /// @notice #193 — input bundle for `OfferMutateFacet.modifyOffer`.
@@ -1098,7 +1146,7 @@ library LibVaipakam {
         // Slot 0
         uint256 id;
         // Slot 1: creator(20) + 10 small fields (10) + 1 enum (1)
-        //         = 31 bytes packed; 1 free
+        //         + 1 enum (1) #125 = 32 bytes packed; 0 free
         address creator;
         OfferType offerType;
         LiquidityStatus principalLiquidity;
@@ -1119,6 +1167,17 @@ library LibVaipakam {
         // duration-vs-threshold gating. Snapshotted onto `Loan` at
         // acceptance and immutable for the loan's lifetime.
         PeriodicInterestCadence periodicInterestCadence;
+        // ── #125 — DEX-style fill-mode flavour ─────────────────────────
+        // `Partial` (default 0) preserves Range-Orders Phase-1 behaviour
+        // exactly for every legacy storage row (zero-init = Partial).
+        // `Aon` makes the match path reject any non-full fill; `Ioc`
+        // pairs with `expiresAt` to bound the fill window. Stamped
+        // once at `createOffer` and immutable for the offer's
+        // lifetime (mutation surface in #193 does not touch this
+        // field; changing fill mode mid-life would alter the offer's
+        // economic contract). Packs into slot 1 using the 1 byte of
+        // headroom carried since the original Offer struct layout.
+        FillMode fillMode;
         // Slot 2
         address lendingAsset; // ERC20 or NFT contract
         // Slot 3

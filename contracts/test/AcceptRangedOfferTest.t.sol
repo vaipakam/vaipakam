@@ -129,7 +129,8 @@ contract AcceptRangedOfferTest is SetupTest {
                 interestRateBpsMax: rateMax,
                 collateralAmountMax: collateralRequired,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
     }
@@ -166,7 +167,8 @@ contract AcceptRangedOfferTest is SetupTest {
                 interestRateBpsMax: rateMax,
                 collateralAmountMax: collateralAmountMax,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
     }

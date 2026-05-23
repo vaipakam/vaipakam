@@ -298,7 +298,8 @@ contract WorkflowComplianceAndRejection is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
         vm.prank(borrower);
@@ -354,7 +355,8 @@ contract WorkflowComplianceAndRejection is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 0,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -396,7 +398,8 @@ contract WorkflowComplianceAndRejection is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -435,7 +438,8 @@ contract WorkflowComplianceAndRejection is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -475,7 +479,8 @@ contract WorkflowComplianceAndRejection is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -528,7 +533,8 @@ contract WorkflowComplianceAndRejection is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 180 ether,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -576,7 +582,8 @@ contract WorkflowComplianceAndRejection is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 18000 ether,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -616,7 +623,8 @@ contract WorkflowComplianceAndRejection is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -660,7 +668,8 @@ contract WorkflowComplianceAndRejection is Test {
                 interestRateBpsMax: 400,
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
