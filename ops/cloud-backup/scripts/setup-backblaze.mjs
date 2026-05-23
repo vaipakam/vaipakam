@@ -96,7 +96,16 @@ async function b2Authorize(keyId, appKey) {
     accountId: data.accountId,
     authToken: data.authorizationToken,
     apiUrl: data.apiInfo?.storageApi?.apiUrl ?? data.apiUrl,
-    s3Endpoint: data.apiInfo?.storageApi?.s3Api ?? null,
+    // B2 v3 returns the S3-compatible endpoint as `s3ApiUrl` under
+    // `apiInfo.storageApi`. Older v2 responses may have used `.s3Api`
+    // (kept as a defensive fallback) but `s3ApiUrl` is the current
+    // field name. Returns a full URL ("https://s3.us-west-002…");
+    // the Worker's wrangler.jsonc wants the bare host so we strip
+    // the scheme at the call site.
+    s3Endpoint:
+      data.apiInfo?.storageApi?.s3ApiUrl ??
+      data.apiInfo?.storageApi?.s3Api ??
+      null,
     // Master-key cap check — abort hard if the configured key isn't
     // actually the master. A scoped key here would be a misconfig.
     allowedCapabilities: data.apiInfo?.storageApi?.capabilities ?? data.allowed?.capabilities ?? [],
