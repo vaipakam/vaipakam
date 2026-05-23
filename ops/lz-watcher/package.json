@@ -8,7 +8,8 @@
     "deploy": "wrangler deploy",
     "db:migrate": "wrangler d1 migrations apply vaipakam-lz-alerts-db --remote",
     "db:migrate:local": "wrangler d1 migrations apply vaipakam-lz-alerts-db --local",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "npm ci --ignore-scripts && ./node_modules/.bin/tsc --noEmit"
   },
   "dependencies": {
     "viem": "^2.21.0"
