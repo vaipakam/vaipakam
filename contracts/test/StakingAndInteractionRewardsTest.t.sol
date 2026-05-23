@@ -23,9 +23,9 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 ///         See docs/TokenomicsTechSpec.md §4 and §7.
 contract StakingAndInteractionRewardsTest is SetupTest, IVaipakamErrors {
     VPFIToken internal vpfiToken;
-    VPFIDiscountFacet internal discountFacet;
-    StakingRewardsFacet internal stakingFacet;
-    InteractionRewardsFacet internal interactionFacet;
+    // #229: VPFIDiscount + StakingRewards + InteractionRewards facets
+    // now cut by `SetupTest.setupHelper()`; prior local declarations +
+    // local cut block dropped.
 
     uint256 internal constant DIAMOND_FUND = 200_000_000 ether; // 200M VPFI seed
 
@@ -53,28 +53,9 @@ contract StakingAndInteractionRewardsTest is SetupTest, IVaipakamErrors {
         }
         vpfiToken.transfer(address(diamond), DIAMOND_FUND);
 
-        // ── Cut in VPFIDiscount + StakingRewards + InteractionRewards
-        discountFacet = new VPFIDiscountFacet();
-        stakingFacet = new StakingRewardsFacet();
-        interactionFacet = new InteractionRewardsFacet();
-
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](3);
-        cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(discountFacet),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getVPFIDiscountFacetSelectors()
-        });
-        cuts[1] = IDiamondCut.FacetCut({
-            facetAddress: address(stakingFacet),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getStakingRewardsFacetSelectors()
-        });
-        cuts[2] = IDiamondCut.FacetCut({
-            facetAddress: address(interactionFacet),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getInteractionRewardsFacetSelectors()
-        });
-        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        // #229 — VPFIDiscount, StakingRewards, and InteractionRewards
+        // facets are now cut by setupHelper(); the prior 3-entry local
+        // cut block here would double-cut all three and revert.
 
         // Fund users with VPFI + approve the discount facet for deposit.
         vpfiToken.transfer(lender, 20_000 ether);

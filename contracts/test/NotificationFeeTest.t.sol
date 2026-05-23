@@ -49,7 +49,9 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
  *     directly).
  */
 contract NotificationFeeTest is SetupTest {
-    VPFIDiscountFacet internal vpfiDiscountFacet;
+    // #229: VPFIDiscountFacet now cut by `SetupTest.setupHelper()`.
+    // Prior local declaration + local cut dropped — references resolve
+    // to the inherited SetupTest field.
     VPFIToken internal vpfiToken;
     address internal weth;
     address internal treasuryRecipient;
@@ -90,15 +92,8 @@ contract NotificationFeeTest is SetupTest {
         vpfiToken = VPFIToken(address(proxy));
         VPFITokenFacet(address(diamond)).setVPFIToken(address(vpfiToken));
 
-        // Cut VPFIDiscountFacet — needed for `depositVPFIToVault`.
-        vpfiDiscountFacet = new VPFIDiscountFacet();
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
-        cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(vpfiDiscountFacet),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getVPFIDiscountFacetSelectors()
-        });
-        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        // #229 — VPFIDiscountFacet is now cut by setupHelper(). The
+        // prior local cut here would double-cut and revert. Dropped.
 
         // WETH — referenced by LibNotificationFee's Phase 1 path. Use
         // the existing test mock setup: register a dummy WETH address

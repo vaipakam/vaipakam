@@ -38,9 +38,12 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 ///             broadcast → mirror ingress → `InteractionRewardsFacet`
 ///             claim works
 contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
-    RewardReporterFacet internal reporter;
-    RewardAggregatorFacet internal aggregator;
-    InteractionRewardsFacet internal interaction;
+    // #229 — RewardReporter/Aggregator + InteractionRewards facets are
+    // now cut by `SetupTest.setupHelper()`. The prior local declarations
+    // + local cut block dropped; existing `reporter.*` / `aggregator.*`
+    // / `interaction.*` references are unused (the `_rep()` / `_agg()` /
+    // `_int()` helpers below stay as-is, calling through the diamond
+    // proxy directly).
     MockRewardMessenger internal oApp;
 
     address internal alice;
@@ -56,29 +59,9 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
     function setUp() public {
         setupHelper();
 
-        // Cut in reward plumbing + InteractionRewards (plus mutator already).
-        reporter = new RewardReporterFacet();
-        aggregator = new RewardAggregatorFacet();
-        interaction = new InteractionRewardsFacet();
-
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](3);
-        cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(reporter),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getRewardReporterFacetSelectors()
-        });
-        cuts[1] = IDiamondCut.FacetCut({
-            facetAddress: address(aggregator),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getRewardAggregatorFacetSelectors()
-        });
-        cuts[2] = IDiamondCut.FacetCut({
-            facetAddress: address(interaction),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getInteractionRewardsFacetSelectors()
-        });
-        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
-
+        // #229 — reward plumbing facets (RewardReporter, RewardAggregator,
+        // InteractionRewards) now cut by setupHelper(). The prior local
+        // cut here would double-cut and revert.
         oApp = new MockRewardMessenger(address(diamond));
 
         alice = makeAddr("alice");

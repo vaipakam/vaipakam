@@ -31,23 +31,9 @@ contract StalenessHybridTest is SetupTest {
         // clear everything so we exercise the real OracleFacet path.
         vm.clearMockedCalls();
 
-        OracleAdminFacet adminFacet = new OracleAdminFacet();
-        bytes4[] memory selectors = new bytes4[](8);
-        selectors[0] = OracleAdminFacet.setChainlinkRegistry.selector;
-        selectors[1] = OracleAdminFacet.setUsdChainlinkDenominator.selector;
-        selectors[2] = OracleAdminFacet.setEthChainlinkDenominator.selector;
-        selectors[3] = OracleAdminFacet.setWethContract.selector;
-        selectors[4] = OracleAdminFacet.setEthUsdFeed.selector;
-        selectors[5] = OracleAdminFacet.setUniswapV3Factory.selector;
-        selectors[6] = OracleAdminFacet.setStableTokenFeed.selector;
-        selectors[7] = OracleAdminFacet.setSequencerUptimeFeed.selector;
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
-        cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(adminFacet),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: selectors
-        });
-        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        // #229 — OracleAdminFacet is now cut by `SetupTest.setupHelper()`
+        // (all 34 selectors, mirroring DeployDiamond). The prior local
+        // 8-selector subset cut would double-cut and revert. Dropped.
 
         vm.warp(1_000_000);
 

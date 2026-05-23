@@ -76,7 +76,10 @@ contract MockPyth is IPyth {
  *         not duplicated here.
  */
 contract OracleNumeraireGuardTest is SetupTest {
-    OracleAdminFacet internal oracleAdminFacet;
+    // #229: OracleAdminFacet now cut by `SetupTest.setupHelper()` (all
+    // 34 selectors, mirroring DeployDiamond). Prior local declaration
+    // + 10-selector subset cut dropped — references resolve to the
+    // inherited SetupTest field.
     MockPyth internal pyth;
 
     bytes32 internal constant ETH_USD_FEED_ID =
@@ -85,27 +88,10 @@ contract OracleNumeraireGuardTest is SetupTest {
     function setUp() public {
         setupHelper();
 
-        oracleAdminFacet = new OracleAdminFacet();
-        bytes4[] memory selectors = new bytes4[](10);
-        selectors[0] = OracleAdminFacet.setPythOracle.selector;
-        selectors[1] = OracleAdminFacet.getPythOracle.selector;
-        selectors[2] = OracleAdminFacet.setPythCrossCheckFeedId.selector;
-        selectors[3] = OracleAdminFacet.getPythNumeraireFeedId.selector;
-        selectors[4] = OracleAdminFacet.setPythMaxStalenessSeconds.selector;
-        selectors[5] = OracleAdminFacet.getPythMaxStalenessSeconds.selector;
-        selectors[6] = OracleAdminFacet.setPythCrossCheckMaxDeviationBps.selector;
-        selectors[7] = OracleAdminFacet.getPythNumeraireMaxDeviationBps.selector;
-        selectors[8] = OracleAdminFacet.setPythConfidenceMaxBps.selector;
-        selectors[9] = OracleAdminFacet.getPythConfidenceMaxBps.selector;
-
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
-        cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(oracleAdminFacet),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: selectors
-        });
-        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
-
+        // #229 — OracleAdminFacet is now cut by setupHelper() (all 34
+        // selectors, mirroring DeployDiamond's production cut). The
+        // prior local subset cut here would double-cut and revert.
+        // Dropped.
         pyth = new MockPyth();
     }
 

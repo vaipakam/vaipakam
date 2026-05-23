@@ -28,7 +28,7 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 ///         the uncapped coverage valid without changes.
 contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
     VPFIToken internal vpfi;
-    InteractionRewardsFacet internal interactionFacet;
+    // #229: InteractionRewardsFacet cut by `SetupTest.setupHelper()` now.
     MockChainlinkAggregator internal ethNumeraireFeed;
 
     uint256 internal constant DIAMOND_SEED = 100_000_000 ether;
@@ -56,14 +56,8 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
         if (DIAMOND_SEED > have) vpfi.mint(address(this), DIAMOND_SEED - have);
         vpfi.transfer(address(diamond), DIAMOND_SEED);
 
-        interactionFacet = new InteractionRewardsFacet();
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
-        cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(interactionFacet),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getInteractionRewardsFacetSelectors()
-        });
-        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        // #229 — InteractionRewardsFacet is now cut by setupHelper();
+        // the prior local cut here would double-cut and revert.
 
         ethNumeraireFeed = new MockChainlinkAggregator(
             ETH_USD_RAW,

@@ -21,6 +21,17 @@ import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {OwnershipFacet} from "../src/facets/OwnershipFacet.sol";
+// #229 — the remaining production facets being added to SetupTest's
+// 28-facet cut. DiamondLoupeFacet + OracleAdminFacet + LegalFacet
+// have no existing import in HelperTest because the prior
+// SetupTest.cut[] didn't route them; the 6 other missing facets
+// (VPFIDiscountFacet, StakingRewardsFacet, InteractionRewardsFacet,
+// RewardReporter/Aggregator, OwnershipFacet) were imported below
+// but never wired into the 28-facet cut. After #229 SetupTest is a
+// true strict superset of production (+ TestMutatorFacet test-only).
+import {DiamondLoupeFacet} from "../src/facets/DiamondLoupeFacet.sol";
+import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
+import {LegalFacet} from "../src/facets/LegalFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {PayrollFacet} from "../src/facets/PayrollFacet.sol";
 import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
@@ -1067,6 +1078,80 @@ contract HelperTest {
         selectors[27] = VaultFactoryFacet.recoveryAckTextHash.selector;
         selectors[28] = VaultFactoryFacet.recoveryNonce.selector;
         selectors[29] = VaultFactoryFacet.vaultBannedSource.selector;
+        return selectors;
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // #229 — selector helpers added so SetupTest can cut every
+    // production facet from `DiamondFacetNames.cutFacetNames()`. Each
+    // helper mirrors the corresponding `_get*Selectors` block in
+    // `contracts/script/DeployDiamond.s.sol`; keep them in sync when
+    // a selector is added or removed on the facet.
+    // ─────────────────────────────────────────────────────────────────
+
+    /// @dev Mirrors `_getOracleAdminSelectors` at
+    ///      `contracts/script/DeployDiamond.s.sol` L743 (34-entry list).
+    ///      All admin-gated setters + read-back getters for the
+    ///      Chainlink + Tellor + API3 + DIA + Pyth oracle wiring + the
+    ///      Phase 3-4 peer-protocol + tier-reference asset registries.
+    function getOracleAdminFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](34);
+        selectors[0] = OracleAdminFacet.setChainlinkRegistry.selector;
+        selectors[1] = OracleAdminFacet.setUsdChainlinkDenominator.selector;
+        selectors[2] = OracleAdminFacet.setEthChainlinkDenominator.selector;
+        selectors[3] = OracleAdminFacet.setWethContract.selector;
+        selectors[4] = OracleAdminFacet.setEthUsdFeed.selector;
+        selectors[5] = OracleAdminFacet.setUniswapV3Factory.selector;
+        selectors[6] = OracleAdminFacet.setStableTokenFeed.selector;
+        selectors[7] = OracleAdminFacet.setSequencerUptimeFeed.selector;
+        selectors[8] = OracleAdminFacet.setFeedOverride.selector;
+        selectors[9] = OracleAdminFacet.getFeedOverride.selector;
+        selectors[10] = OracleAdminFacet.setTellorOracle.selector;
+        selectors[11] = OracleAdminFacet.getTellorOracle.selector;
+        selectors[12] = OracleAdminFacet.setApi3ServerV1.selector;
+        selectors[13] = OracleAdminFacet.getApi3ServerV1.selector;
+        selectors[14] = OracleAdminFacet.setDIAOracleV2.selector;
+        selectors[15] = OracleAdminFacet.getDIAOracleV2.selector;
+        selectors[16] = OracleAdminFacet.setSecondaryOracleMaxDeviationBps.selector;
+        selectors[17] = OracleAdminFacet.getSecondaryOracleMaxDeviationBps.selector;
+        selectors[18] = OracleAdminFacet.setSecondaryOracleMaxStaleness.selector;
+        selectors[19] = OracleAdminFacet.getSecondaryOracleMaxStaleness.selector;
+        selectors[20] = OracleAdminFacet.setPythOracle.selector;
+        selectors[21] = OracleAdminFacet.getPythOracle.selector;
+        selectors[22] = OracleAdminFacet.setPythCrossCheckFeedId.selector;
+        selectors[23] = OracleAdminFacet.getPythNumeraireFeedId.selector;
+        selectors[24] = OracleAdminFacet.setPythMaxStalenessSeconds.selector;
+        selectors[25] = OracleAdminFacet.getPythMaxStalenessSeconds.selector;
+        selectors[26] = OracleAdminFacet.setPythCrossCheckMaxDeviationBps.selector;
+        selectors[27] = OracleAdminFacet.getPythNumeraireMaxDeviationBps.selector;
+        selectors[28] = OracleAdminFacet.setPythConfidenceMaxBps.selector;
+        selectors[29] = OracleAdminFacet.getPythConfidenceMaxBps.selector;
+        selectors[30] = OracleAdminFacet.setPeerProtocolAddresses.selector;
+        selectors[31] = OracleAdminFacet.getPeerProtocolAddresses.selector;
+        selectors[32] = OracleAdminFacet.setTierReferenceAssets.selector;
+        selectors[33] = OracleAdminFacet.getTierReferenceAssets.selector;
+        return selectors;
+    }
+
+    /// @dev Mirrors `_getLegalSelectors` at
+    ///      `contracts/script/DeployDiamond.s.sol` L1466 (5-entry list).
+    ///      ToS acceptance + admin-side current-ToS pointer
+    ///      management.
+    function getLegalFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](5);
+        selectors[0] = LegalFacet.acceptTerms.selector;
+        selectors[1] = LegalFacet.setCurrentTos.selector;
+        selectors[2] = LegalFacet.hasAcceptedCurrentTerms.selector;
+        selectors[3] = LegalFacet.getCurrentTos.selector;
+        selectors[4] = LegalFacet.getUserTosAcceptance.selector;
         return selectors;
     }
 }

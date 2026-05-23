@@ -34,7 +34,9 @@ import {MockPermit2} from "./mocks/MockPermit2.sol";
  *      separate fork test against real Permit2.
  */
 contract Permit2IntegrationTest is SetupTest {
-    VPFIDiscountFacet internal vpfiDiscountFacet;
+    // #229: VPFIDiscountFacet now cut by `SetupTest.setupHelper()`.
+    // Prior local declaration + local cut dropped — references resolve
+    // to the inherited SetupTest field.
     VPFIToken internal vpfi;
     MockPermit2 internal permit2Mock;
     address internal constant CANONICAL_PERMIT2 =
@@ -48,16 +50,8 @@ contract Permit2IntegrationTest is SetupTest {
         permit2Mock = new MockPermit2();
         vm.etch(CANONICAL_PERMIT2, address(permit2Mock).code);
 
-        // Wire VPFIDiscountFacet onto the diamond so the VPFI permit
-        // test can reach `depositVPFIToVaultWithPermit`.
-        vpfiDiscountFacet = new VPFIDiscountFacet();
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
-        cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(vpfiDiscountFacet),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getVPFIDiscountFacetSelectors()
-        });
-        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        // #229 — VPFIDiscountFacet is now cut by setupHelper(); the
+        // prior local cut would double-cut and revert. Dropped.
 
         // Deploy + register VPFI.
         VPFIToken impl = new VPFIToken();
