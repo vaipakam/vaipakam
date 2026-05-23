@@ -48,6 +48,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -179,6 +180,12 @@ contract SetupTest is Test {
     // BorrowerPartialFillTest (#173) so matchOffers / previewMatch
     // become reachable from every test that inherits SetupTest.
     OfferMatchFacet offerMatchFacet;
+    // OfferMutateFacet — #193 in-place modification surface
+    // (setOfferAmount / setOfferRate / setOfferCollateral +
+    // combined modifyOffer). Carved into its own facet mirroring
+    // the OfferCancel / OfferMatch pattern; cut into the production
+    // diamond at cuts[36] in DeployDiamond.s.sol.
+    OfferMutateFacet offerMutateFacet;
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
     VaipakamNFTFacet nftFacet;
@@ -258,6 +265,7 @@ contract SetupTest is Test {
         offerAcceptFacet = new OfferAcceptFacet();
         offerCancelFacet = new OfferCancelFacet();
         offerMatchFacet = new OfferMatchFacet();
+        offerMutateFacet = new OfferMutateFacet();
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
         nftFacet = new VaipakamNFTFacet();
@@ -321,7 +329,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](37);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](38);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -525,6 +533,12 @@ contract SetupTest is Test {
             facetAddress: address(rewardReporterFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRewardReporterFacetSelectors()
+        });
+        // #193 — in-place offer modification facet.
+        cuts[37] = IDiamondCut.FacetCut({
+            facetAddress: address(offerMutateFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferMutateFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

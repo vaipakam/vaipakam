@@ -2,6 +2,7 @@ import OfferCreateFacetABI from './OfferCreateFacet.json';
 import OfferAcceptFacetABI from './OfferAcceptFacet.json';
 import OfferCancelFacetABI from './OfferCancelFacet.json';
 import OfferMatchFacetABI from './OfferMatchFacet.json';
+import OfferMutateFacetABI from './OfferMutateFacet.json';
 import LoanFacetABI from './LoanFacet.json';
 import RepayFacetABI from './RepayFacet.json';
 import DefaultedFacetABI from './DefaultedFacet.json';
@@ -46,6 +47,7 @@ export {
   OfferAcceptFacetABI,
   OfferCancelFacetABI,
   OfferMatchFacetABI,
+  OfferMutateFacetABI,
   LoanFacetABI,
   RepayFacetABI,
   DefaultedFacetABI,
@@ -94,6 +96,7 @@ export const DIAMOND_ABI = [
   ...OfferAcceptFacetABI,
   ...OfferCancelFacetABI,
   ...OfferMatchFacetABI,
+  ...OfferMutateFacetABI,
   ...LoanFacetABI,
   ...RepayFacetABI,
   ...DefaultedFacetABI,

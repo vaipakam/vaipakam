@@ -91,6 +91,7 @@ FACETS=(
   "OfferCreateFacet"
   "OfferAcceptFacet"
   "OfferMatchFacet"
+  "OfferMutateFacet"
   "OracleAdminFacet"
   "OracleFacet"
   "PartialWithdrawalFacet"

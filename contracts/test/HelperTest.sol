@@ -6,6 +6,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
+import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
@@ -248,6 +249,21 @@ contract HelperTest {
         selectors = new bytes4[](2);
         selectors[0] = OfferMatchFacet.matchOffers.selector;
         selectors[1] = OfferMatchFacet.previewMatch.selector;
+        return selectors;
+    }
+
+    /// @dev OfferMutateFacet — #193 in-place modification surface.
+    ///      Three per-field setters plus the atomic combined helper.
+    function getOfferMutateFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](4);
+        selectors[0] = OfferMutateFacet.setOfferAmount.selector;
+        selectors[1] = OfferMutateFacet.setOfferRate.selector;
+        selectors[2] = OfferMutateFacet.setOfferCollateral.selector;
+        selectors[3] = OfferMutateFacet.modifyOffer.selector;
         return selectors;
     }
 

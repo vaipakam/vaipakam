@@ -20,6 +20,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
+import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -116,6 +117,10 @@ contract DeployDiamond is Script {
         // OfferCancelFacet. Selectors land on the diamond identically;
         // frontend / keeper-bot bindings unaffected by the move.
         OfferCancelFacet offerCancelFacet = new OfferCancelFacet();
+        // #193 — in-place offer modification surface. Carved into its
+        // own facet for the same EIP-170 reason the cancel + match
+        // halves were; selectors land on the diamond identically.
+        OfferMutateFacet offerMutateFacet = new OfferMutateFacet();
         LoanFacet loanFacet = new LoanFacet();
         RepayFacet repayFacet = new RepayFacet();
         DefaultedFacet defaultedFacet = new DefaultedFacet();
@@ -146,7 +151,7 @@ contract DeployDiamond is Script {
         // Diamond instead of leaving it as dead code.
         LegalFacet legalFacet = new LegalFacet();
 
-        console.log("All 34 facets deployed.");
+        console.log("All 35 facets deployed.");
 
         // ── Step 2: Deploy Diamond ──────────────────────────────────────
         // Deployer is the initial ERC-173 owner so it can execute the
@@ -163,8 +168,8 @@ contract DeployDiamond is Script {
         console.log("Diamond deployed at:", diamond);
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
-        // 35 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](36);
+        // 36 facets (DiamondCutFacet already added by constructor)
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](37);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -209,6 +214,12 @@ contract DeployDiamond is Script {
         cuts[35] = _buildCut(
             address(offerAcceptFacet),
             _getOfferAcceptSelectors()
+        );
+        // #193 — in-place offer modification facet, sibling of the
+        // create / accept / cancel / match facets above.
+        cuts[36] = _buildCut(
+            address(offerMutateFacet),
+            _getOfferMutateSelectors()
         );
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
@@ -497,6 +508,9 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("offerAcceptFacet",        address(offerAcceptFacet));
         Deployments.writeFacet("offerMatchFacet",         address(offerMatchFacet));
         Deployments.writeFacet("offerCancelFacet",        address(offerCancelFacet));
+        // #193 / Codex round-2 — persist OfferMutateFacet for explorer
+        // transparency links, operator scripts, and upgrade audits.
+        Deployments.writeFacet("offerMutateFacet",        address(offerMutateFacet));
         Deployments.writeFacet("loanFacet",               address(loanFacet));
         Deployments.writeFacet("repayFacet",              address(repayFacet));
         Deployments.writeFacet("defaultedFacet",          address(defaultedFacet));
@@ -545,6 +559,7 @@ contract DeployDiamond is Script {
         console.log("OfferAcceptFacet:     ", address(offerAcceptFacet));
         console.log("OfferMatchFacet:      ", address(offerMatchFacet));
         console.log("OfferCancelFacet:     ", address(offerCancelFacet));
+        console.log("OfferMutateFacet:     ", address(offerMutateFacet));
         console.log("LoanFacet:            ", address(loanFacet));
         console.log("RepayFacet:           ", address(repayFacet));
         console.log("DefaultedFacet:       ", address(defaultedFacet));
@@ -943,6 +958,17 @@ contract DeployDiamond is Script {
         s[1] = OfferCancelFacet.getCompatibleOffers.selector;
         s[2] = OfferCancelFacet.getOffer.selector;
         s[3] = OfferCancelFacet.getOfferDetails.selector;
+    }
+
+    /// @dev OfferMutateFacet — #193 in-place modification surface
+    ///      (setOfferAmount / setOfferRate / setOfferCollateral +
+    ///      combined modifyOffer). Sibling of OfferCancel / OfferMatch.
+    function _getOfferMutateSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](4);
+        s[0] = OfferMutateFacet.setOfferAmount.selector;
+        s[1] = OfferMutateFacet.setOfferRate.selector;
+        s[2] = OfferMutateFacet.setOfferCollateral.selector;
+        s[3] = OfferMutateFacet.modifyOffer.selector;
     }
 
     function _getLoanSelectors() internal pure returns (bytes4[] memory s) {

@@ -428,6 +428,34 @@ async function processOfferLogs(
     lenderRemainingPostMatch: bigint;
   }[] = [];
   const closed: { offerId: bigint; reason: number }[] = [];
+  // #193 / Codex round-1 P1 — OfferModified and OfferMatched MUST be
+  // applied in chain log order (not bucketed by type) because
+  // `OfferMatched`'s UPDATE reads `amount_max` from the row at apply
+  // time, and `OfferModified` may have just rewritten it. If chain
+  // order is "modify then match", the indexer must reflect the
+  // post-modify amount_max when computing amount_filled; if chain
+  // order is "match then modify", the amount_filled computed against
+  // the pre-modify amount_max is the correct value and the
+  // subsequent modify just rewrites amount_max without touching
+  // amount_filled. Either way, replaying in log order gets it right.
+  // Other events (Created, Accepted, Cancelled, Closed) stay bucketed
+  // because they don't depend on amount_max for their UPDATE
+  // semantics; bucketing them keeps the Created handler's
+  // getOfferDetails read-back coalesced under one pass.
+  type ModifiedOrMatched =
+    | { kind: 'modified';
+        offerId: bigint;
+        amount: bigint;
+        amountMax: bigint;
+        interestRateBps: bigint;
+        interestRateBpsMax: bigint;
+        collateralAmount: bigint;
+        collateralAmountMax: bigint; }
+    | { kind: 'matched';
+        lenderOfferId: bigint;
+        matchAmount: bigint;
+        lenderRemainingPostMatch: bigint; };
+  const orderedMatchAndModify: ModifiedOrMatched[] = [];
   for (const log of logs) {
     const a = log.args;
     if (log.eventName === 'OfferCreated') {
@@ -449,7 +477,12 @@ async function processOfferLogs(
     } else if (log.eventName === 'OfferCanceled') {
       cancelled.push({ offerId: a.offerId as bigint });
     } else if (log.eventName === 'OfferMatched') {
-      matched.push({
+      // #193 / Codex round-1 P1 — flow into the log-order pass below
+      // (interleaved with OfferModified) instead of the bucketed
+      // matched array. Preserves chain order for the amount_max +
+      // amount_filled interdependency.
+      orderedMatchAndModify.push({
+        kind: 'matched',
         lenderOfferId: a.lenderOfferId as bigint,
         matchAmount: a.matchAmount as bigint,
         lenderRemainingPostMatch: a.lenderRemainingPostMatch as bigint,
@@ -458,6 +491,20 @@ async function processOfferLogs(
       closed.push({
         offerId: a.offerId as bigint,
         reason: Number(a.reason),
+      });
+    } else if (log.eventName === 'OfferModified') {
+      // #193 — full post-image arrives in the event payload so we can
+      // refresh the row without a follow-up getOfferDetails read.
+      // Log-order pass below replays this alongside OfferMatched.
+      orderedMatchAndModify.push({
+        kind: 'modified',
+        offerId: a.offerId as bigint,
+        amount: a.amount as bigint,
+        amountMax: a.amountMax as bigint,
+        interestRateBps: a.interestRateBps as bigint,
+        interestRateBpsMax: a.interestRateBpsMax as bigint,
+        collateralAmount: a.collateralAmount as bigint,
+        collateralAmountMax: a.collateralAmountMax as bigint,
       });
     }
   }
@@ -641,34 +688,70 @@ async function processOfferLogs(
     if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
   }
 
-  // Range-Orders Phase 1 — partial-fill ratchet. Each `OfferMatched`
-  // event carries the lender-side `lenderRemainingPostMatch` AFTER
-  // the match, so the new on-chain `amountFilled = amountMax -
-  // lenderRemainingPostMatch`. We can update directly without an RPC
-  // round-trip — replaces the prior "select all status='active' and
-  // re-pull" cron-driven refresh with cheaper event-driven targeted
-  // updates that scale at zero subrequest cost regardless of active
-  // offer count.
+  // #193 / Codex round-1 P1 — log-order replay of OfferMatched and
+  // OfferModified. Both events are interleaved in `orderedMatchAndModify`
+  // in their emit order so amount_filled (computed in the matched
+  // handler from `current amount_max - lenderRemainingPostMatch`) is
+  // always derived from the contract's actual amount_max at the time
+  // of the match. Mixing this into a single log-order loop replaces
+  // the two prior per-type buckets and closes the cross-event
+  // ordering hole Codex called out: under the old order, a
+  // modify-then-match within the same indexed batch would compute
+  // amount_filled against the PRE-modify amount_max, then overwrite
+  // amount_max with the new value — leaving the row's
+  // (amount_filled / amount_max) ratio inconsistent.
   //
   // Note: borrower-side partial fills are out of Phase 1 scope (the
-  // borrowerOfferId is single-fill). The event still fires for them
-  // but `lenderRemainingPostMatch` semantics only apply to the
-  // lender-side row, so we filter on `lenderOfferId` only.
-  for (const m of matched) {
-    const r = await env.DB.prepare(
-      `UPDATE offers
-       SET amount_filled = CAST(amount_max AS INTEGER) - ?,
-           updated_at = ?
-       WHERE chain_id = ? AND offer_id = ? AND amount_max != '0'`,
-    )
-      .bind(
-        m.lenderRemainingPostMatch.toString(),
-        now,
-        chainId,
-        Number(m.lenderOfferId),
+  // borrowerOfferId is single-fill). The `OfferMatched` event still
+  // fires for them but `lenderRemainingPostMatch` semantics only
+  // apply to the lender-side row, so we filter on `lenderOfferId`
+  // only when applying.
+  for (const ev of orderedMatchAndModify) {
+    if (ev.kind === 'matched') {
+      const r = await env.DB.prepare(
+        `UPDATE offers
+         SET amount_filled = CAST(amount_max AS INTEGER) - ?,
+             updated_at = ?
+         WHERE chain_id = ? AND offer_id = ? AND amount_max != '0'`,
       )
-      .run();
-    if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
+        .bind(
+          ev.lenderRemainingPostMatch.toString(),
+          now,
+          chainId,
+          Number(ev.lenderOfferId),
+        )
+        .run();
+      if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
+    } else {
+      // OfferModified — full post-image. Status stays 'active'
+      // (modifications are only allowed on unaccepted offers;
+      // OfferAlreadyAccepted reverts the modify call), so we don't
+      // touch the status column.
+      const r = await env.DB.prepare(
+        `UPDATE offers
+         SET amount = ?,
+             amount_max = ?,
+             interest_rate_bps = ?,
+             interest_rate_bps_max = ?,
+             collateral_amount = ?,
+             collateral_amount_max = ?,
+             updated_at = ?
+         WHERE chain_id = ? AND offer_id = ?`,
+      )
+        .bind(
+          ev.amount.toString(),
+          ev.amountMax.toString(),
+          Number(ev.interestRateBps),
+          Number(ev.interestRateBpsMax),
+          ev.collateralAmount.toString(),
+          ev.collateralAmountMax.toString(),
+          now,
+          chainId,
+          Number(ev.offerId),
+        )
+        .run();
+      if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
+    }
   }
 
   // Range-Orders Phase 1 — terminal close. Maps the OfferCloseReason
@@ -1573,6 +1656,19 @@ function pluckActivityRefs(
         offerId: Number(args.offerId as bigint),
       };
     case 'OfferCanceled':
+      return {
+        actor: (args.creator as string)?.toLowerCase() ?? null,
+        loanId: null,
+        offerId: Number(args.offerId as bigint),
+      };
+    case 'OfferModified':
+      // #193 / Codex round-2 P2 — denormalize the actor (= creator;
+      // OfferMutateFacet's access gate guarantees msg.sender ==
+      // offer.creator) + offerId so per-offer and per-wallet
+      // activity filters surface modify events alongside the other
+      // offer-mutation rows. Without this mapping the event lands
+      // in activity_events with NULL refs and falls out of the
+      // dashboard's offer-timeline + wallet-history queries.
       return {
         actor: (args.creator as string)?.toLowerCase() ?? null,
         loanId: null,

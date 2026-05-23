@@ -294,6 +294,39 @@ The platform distinguishes between liquid and illiquid assets, which affects how
   - Specify the desired NFT (or type of NFT), maximum acceptable daily rental charge, the ERC-20 token to be used for prepayment (rental fees + 5% buffer), and rental duration.
   - Lock the prepayment (total rental fee + 5% buffer) in ERC-20 tokens in the Vaipakam smart contract upon offer submission. Rental payments will be deducted from this prepayment.
 
+### Offer modification — in-place edit without cancel-and-re-post
+
+- A creator may modify their own **unaccepted** offer's principal
+  range (`amount` / `amountMax`), rate range
+  (`interestRateBps` / `interestRateBpsMax`), or collateral range
+  (`collateralAmount` / `collateralAmountMax`) without taking the
+  offer off the book.
+- The three field clusters can be updated individually via
+  `setOfferAmount` / `setOfferRate` / `setOfferCollateral`, or all
+  in one transaction via `modifyOffer` (atomic combined helper).
+- The post-modification offer must satisfy the **same invariants**
+  `createOffer` enforces: positive amount / collateral, range
+  ordering (`amountMax >= amount`, etc.), `interestRateBpsMax <=
+  MAX_INTEREST_BPS`, lender single-value collateral
+  (`collateralAmountMax == collateralAmount`), per-asset pause, and
+  sanctions screening on the creator.
+- Partial-fill bound: the new ceiling cannot fall below the portion
+  already committed to live loans — `amountMax >= amountFilled` and
+  `collateralAmountMax >= collateralAmountFilled`. The remaining
+  unfilled capacity stays the difference between these two.
+- Vault deltas: shrinking `amountMax` on a lender ERC-20 offer
+  refunds the unused portion to the creator's wallet; growing it
+  pulls the additional principal. Symmetric for `collateralAmountMax`
+  on a borrower ERC-20 offer (vs. `collateralAsset`). Borrower
+  NFT-rental offers see the delta in `prepayAsset` when `amount`
+  changes (prepay = amount × durationDays × (1 + buffer)). Other
+  offer shapes update storage with no vault movement.
+- **No Loan Initiation Fee** is charged on a modify; LIF applies to
+  loan initiation only.
+- Already-accepted offers are terminal — modification reverts.
+- See `docs/DesignsAndPlans/OfferModificationDesign.md` for the
+  delta matrix, alternatives table, and failure-mode coverage.
+
 ### Offer expiry (GTT) — optional time-bound offers
 
 - An offer is **Good-Till-Cancelled (GTC) by default**: it stays open
