@@ -90,6 +90,13 @@ const PER_CHAIN_WALL_TIME_BUDGET_MS = 90_000;
 
 /** `LibOfferMatch.MatchError` index 0 == Ok. */
 const MATCH_ERR_OK = 0;
+/** `LibOfferMatch.MatchError.SelfTrade` (the same-creator-both-sides
+ *  classifier added in vaipakam #234). The contract-side load-bearing
+ *  gate lives in `OfferAcceptFacet._acceptOffer`; `previewMatch`
+ *  returns this variant when `L.creator == B.creator` so bots can
+ *  short-circuit before submitting `matchOffers`. Numeric value 11 —
+ *  the variant is the 12th in the enum (after `LtvAboveTier`). */
+const MATCH_ERR_SELF_TRADE = 11;
 
 /** `LibVaipakam.OfferType`. */
 const OFFER_TYPE_LENDER = 0;
@@ -98,6 +105,12 @@ const OFFER_TYPE_BORROWER = 1;
 /** Subset of the `Offer` struct the matcher needs. */
 interface OfferLite {
   id: bigint;
+  /** Offer creator — used for the #235 self-trade pre-filter. Two
+   *  offers with the same creator can never produce a valid loan
+   *  (the contract reverts `SelfTradeForbidden(party)` in
+   *  `_acceptOffer`), so we skip them client-side before paying for
+   *  an `eth_call` to `previewMatch`. */
+  creator: Address;
   offerType: number;
   accepted: boolean;
   assetType: number;
@@ -132,6 +145,7 @@ function bucketKey(o: OfferLite): string {
 function liftOffer(raw: Record<string, unknown>): OfferLite {
   return {
     id: BigInt(raw['id'] as bigint | number),
+    creator: raw['creator'] as Address,
     offerType: Number(raw['offerType']),
     accepted: Boolean(raw['accepted']),
     assetType: Number(raw['assetType']),
@@ -380,9 +394,36 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
         if (attempted.has(pairKey)) continue;
         attempted.add(pairKey);
 
+        // #235 — self-trade short-circuit. Same-creator pairs can
+        // never produce a valid loan (the contract reverts
+        // `SelfTradeForbidden(party)` in `_acceptOffer`), and
+        // `previewMatch` returns `MatchError.SelfTrade`. Skipping
+        // them before the RPC roundtrip saves one `eth_call` per
+        // colluding-creator pair per tick. Lower-cased comparison
+        // because `getOffer` returns checksummed addresses but the
+        // raw bytes are what matter.
+        if (L.creator.toLowerCase() === B.creator.toLowerCase()) {
+          continue;
+        }
+
         previewCalls += 1;
         const p = await previewMatch(ctx, L.id, B.id);
-        if (!p || p.errorCode !== MATCH_ERR_OK) continue;
+        if (!p || p.errorCode !== MATCH_ERR_OK) {
+          // Defence-in-depth: the client-side self-trade pre-filter
+          // above should catch every same-creator pair, but log here
+          // anyway in case `getOffer` ever races against an in-flight
+          // ownership transfer or the OfferLite struct loses the
+          // `creator` field in a future refactor. Other typed errors
+          // are too noisy to log per-pair on a busy book; the
+          // observability story for those lives in the per-tick
+          // submits / previewCalls metric.
+          if (p && p.errorCode === MATCH_ERR_SELF_TRADE) {
+            console.log(
+              `[matcher] chain=${ctx.chainId} self-trade pair slipped pre-filter — L=${L.id} B=${B.id} creator=${L.creator}`,
+            );
+          }
+          continue;
+        }
 
         const ok = await submitMatch(ctx, L.id, B.id, p);
         if (ok) {
