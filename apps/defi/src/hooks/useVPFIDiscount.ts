@@ -106,12 +106,14 @@ export function useVPFIDiscount(chainOverride?: ChainConfig | null) {
   const chain =
     chainOverride && chainOverride.diamondAddress ? chainOverride : defaultChain;
   const diamondAddress = (chain.diamondAddress ?? ZERO_ADDRESS) as Address;
-  // Cache key includes the wallet's ORIGIN chain (defaultChain.lzEid)
-  // because the per-wallet cap bucket is keyed on the origin chain.
-  // Otherwise two users on different origin chains hitting the same
-  // canonical-override read would share a cached `soldToWallet` from
-  // the wrong bucket.
-  const cacheKey = `${chain.chainId}:${(chain.diamondAddress ?? 'none').toLowerCase()}:${(address ?? 'none').toLowerCase()}:eid${defaultChain.lzEid ?? 'na'}`;
+  // Cache key includes the wallet's ORIGIN chainId because the per-
+  // wallet cap bucket is keyed on the origin chain. Otherwise two
+  // users on different origin chains hitting the same canonical-
+  // override read would share a cached `soldToWallet` from the wrong
+  // bucket. The earlier `lzEid` salt that lived here was a LayerZero-
+  // era artifact dropped with the per-chain `lzEid` field in #230 —
+  // `defaultChain.chainId` is the post-T-068 (CCIP) origin-chain key.
+  const cacheKey = `${chain.chainId}:${(chain.diamondAddress ?? 'none').toLowerCase()}:${(address ?? 'none').toLowerCase()}:origin${defaultChain.chainId}`;
 
   const [config, setConfig] = useState<VPFIBuyConfig | null>(() =>
     cached && cached.key === cacheKey ? cached.data : null,

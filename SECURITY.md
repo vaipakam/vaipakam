@@ -36,12 +36,6 @@ We aim to acknowledge within 24h and provide a remediation ETA within 72h. In-sc
 - the subgraph state-machine guard under [`ops/subgraph/`](ops/subgraph/)
 - the Permit2 integration path (`LibPermit2`)
 
-> **Note (2026-05 — partial drift):** the body of this document still
-> carries `## Cross-chain security — LayerZero hardening` content
-> from before the T-068 CCIP migration (April 2026). The in-scope
-> list above and ADR-0004 reflect the current architecture; the
-> body section is tracked for rewrite separately so this PR
-> stays narrow.
 
 Out-of-scope: testnet configuration drift, known issues tracked in audit reports, anything requiring compromise of the admin multi-sig, and the public reference keeper bot in the sibling [`vaipakam-keeper-bot`](https://github.com/vaipakam/vaipakam-keeper-bot) repo (which holds no Diamond role and only submits permissionless `triggerLiquidation` calls — see [`docs/ops/AdminKeysAndPause.md`](docs/ops/AdminKeysAndPause.md) for why no role is granted).
 
@@ -236,55 +230,39 @@ If every adapter under-fills or reverts (slippage > 6%, liquidity disappears, ev
 
 ---
 
-## Cross-chain security — LayerZero hardening
+## Cross-chain security — Chainlink CCIP
 
-Vaipakam ships five LayerZero contracts under [`contracts/src/token/`](contracts/src/token/): `VPFIOFTAdapter`, `VPFIMirror`, `VPFIBuyAdapter`, `VPFIBuyReceiver`, and `VaipakamRewardOApp`. The April 2026 cross-chain bridge incident demonstrated that the LayerZero default 1-required / 0-optional DVN configuration is an exploitable single point of trust. Mainnet Vaipakam deployments **must not** ship that default.
+Vaipakam's cross-chain layer runs on **Chainlink CCIP** post-T-068 (LayerZero → CCIP migration, merged PR #46, 2026-05-18). The on-chain surface lives under [`contracts/src/crosschain/`](contracts/src/crosschain/):
 
-### DVN policy (mainnet-deploy gate)
+- `ICrossChainMessenger` — provider-agnostic port; the domain contracts depend only on this, never on a CCIP-specific library.
+- `CcipMessenger` — the single CCIP-aware adapter that implements `ICrossChainMessenger`.
+- `VPFIMirrorToken` + the stock CCIP `LockReleaseTokenPool` (canonical chain) / `BurnMintTokenPool` (mirror chains) — VPFI deployed as a Cross-Chain Token (CCT).
+- `VpfiBuyAdapter` / `VpfiBuyReceiver` — the cross-chain fixed-rate VPFI buy flow (two-step release, refund on receiver failure).
+- `VaipakamRewardMessenger` — cross-chain reward accounting (REPORT / BROADCAST round-trip).
 
-| Field | Required value |
-|---|---|
-| Required DVN count | **3** |
-| Optional DVN count | **2** |
-| Optional threshold | **1-of-2** |
-| Required DVN set | LayerZero Labs + Google Cloud + (Polyhedra or Nethermind) |
-| Optional DVN set | BWare Labs + (Stargate Labs or Horizen Labs) |
+### Why CCIP
 
-Operator diversity is load-bearing — different corporate operators, different infrastructure providers (not all on the same cloud). An attacker must compromise all 3 required DVNs and at least one of the 2 optionals to land a forged message — a minimum of 4 independent verifier compromises.
+CCIP's security is operated by Chainlink (a committing DON, an executing DON, and an independent **Risk Management Network** with a separate codebase + operators that re-verifies every message) and is uniform for every integrator. There is **no DVN fleet to select or configure** and no insecure default. The LayerZero "1-required / 0-optional DVN" footgun — the shape the April 2026 ~$292M Kelp bridge exploit rode — does not exist on this transport. The migration was driven directly by that incident's analysis (recorded in [`docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md`](docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md) and ADR-0004).
 
-### Confirmations
+### Chain scope (Phase 1)
 
-| Chain | Confirmations | Wall-clock wait |
-|---|---:|---:|
-| Ethereum mainnet | 15 | ~3 min |
-| Base | 10 | ~20 sec |
-| Optimism | 10 | ~20 sec |
-| Arbitrum | 10 | ~10 sec |
-| Polygon zkEVM | 20 | ~1 min |
-| BNB Chain | 15 | ~45 sec |
+Ethereum, Base, Arbitrum, Optimism, BNB Chain. zk-rollup chains and Solana are out of scope for cross-chain in Phase 1.
 
-Higher numbers are acceptable; lower numbers require an audited rationale. Polygon PoS is **out of Phase 1 scope** (weaker bridge trust). Solana is out of scope for all phases until further notice.
+### Mainnet-deploy gates
 
-### Adapter-layer rate limits
+Before any value flows through cross-chain VPFI or buy paths, all of the following must be true:
 
-`VPFIBuyAdapter` ships with defence-in-depth caps tracked in storage and enforced before LayerZero send:
-
-- per-request: `50,000 VPFI`
-- 24-hour rolling: `500,000 VPFI`
-
-Both are governance-tunable. Defaults are `type(uint256).max` (disabled) at deploy time; mainnet deploys must invoke `VPFIBuyAdapter.setRateLimits(50_000e18, 500_000e18)` before routing real value.
-
-### Mainnet deploy gate
-
-Before any value flows through cross-chain VPFI or buy paths, all of the below must be true:
-
-1. `ConfigureLZConfig.s.sol` has run against every (OApp, eid) pair — sets DVNs, confirmations, libraries, and enforced options
-2. `VPFIBuyAdapter.setRateLimits(50_000e18, 500_000e18)` has been called
-3. `LZConfig.t.sol` passes — it asserts every OApp × eid reflects the policy, and fails the build otherwise
+1. CCIP lanes enabled and each `CcipMessenger`'s registry configured per chain — chainId ↔ CCIP `chainSelector`, remote messengers, channel peers.
+2. Per-lane CCIP **rate limits** set on every VPFI TokenPool via [`VpfiPoolRateGovernor`](contracts/src/crosschain/VpfiPoolRateGovernor.sol)'s bounds-checked `rateLimitAdmin`. Starting values: capacity 50,000 VPFI, refill ≈5.8 VPFI/s. The governor refuses to disable a lane's limit and range-bounds every value (ET-008).
+3. The CCT admin (CCIP `TokenAdminRegistry`) and every cross-chain contract's owner = admin multisig → governance timelock.
 
 ### Pause surface
 
-Every LZ-facing contract exposes owner-gated `pause()` / `unpause()` on both send and receive paths. The 46-minute pause during the April 2026 incident blocked ~$200M of follow-up drain — that's the precedent. Pause authority on bridge contracts allows the Guardian Safe to act fast; unpause stays on the Owner / Timelock.
+Every cross-chain contract carries [`GuardianPausable`](contracts/src/libraries/LibPausable.sol): guardian-or-owner `pause()`, owner-only `unpause()`, on both the send and receive paths. A paused inbound reverts; CCIP records it as a failed message, manually re-executable once unpaused, so nothing is lost.
+
+### Operator diversity
+
+CCIP's security model puts operator-diversity inside the protocol itself (committing DON, executing DON, Risk Management Network — three independent operator sets, with the Risk Management Network running an independently-implemented codebase). Vaipakam does not own that diversity layer the way it would have owned the LayerZero DVN configuration; the trade-off is intentional and recorded in the migration ADR.
 
 ---
 
@@ -334,8 +312,8 @@ This repository has been reviewed internally. External audit status is tracked i
 - Phase 7b.1 multi-clone V3 liquidity OR-logic (`OracleLiquidityORTest` is the spec)
 - Phase 7a `LibSwap` swap-failover, including caller insulation on `minOutputAmount` and adapter approval scoping
 - Per-user vault proxy deployment, mandatory upgrade gating, and the storage append-only invariant
-- LayerZero OApp surface: peer authentication, DVN configuration readback, replay protection, and the cross-chain reward mesh finalisation
-- `VPFIBuyAdapter` rate limits and the `VPFIOFTAdapter` global cap enforcement on bridged supply
+- CCIP surface: `CcipMessenger` peer / channel / chainSelector registry authentication, message replay protection, and the cross-chain reward mesh REPORT / BROADCAST finalisation
+- `VpfiBuyAdapter` / `VpfiBuyReceiver` rate limits and the `VpfiPoolRateGovernor` bounds-checked per-lane CCIP rate limits on the canonical-chain `LockReleaseTokenPool` and the mirror-chain `BurnMintTokenPool`s
 - Phase 5 borrower LIF custody (`LibVPFIDiscount.settleBorrowerLifProper` / `forfeitBorrowerLif`) — the held VPFI must never leak through any terminal path
 - Phase 6 keeper per-action authorization (lender-side vs borrower-side scoping)
 - Permit2 integration (signature replay protection, deadline enforcement, exact scope)

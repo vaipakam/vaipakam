@@ -44,7 +44,6 @@ vi.mock('../../src/contracts/useDiamond', () => ({
     diamondAddress: '0x77A16D1807F43A12C1DBde0b06064058cb6FC4BD',
     deployBlock: 10672636,
     isCanonicalVPFI: false,
-    lzEid: 40161,
     testnet: true,
   }),
 }));

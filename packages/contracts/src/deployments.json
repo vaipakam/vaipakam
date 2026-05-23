@@ -45,7 +45,6 @@
     },
     "isCanonicalReward": false,
     "isCanonicalVPFI": false,
-    "lzEid": 40161,
     "lzEndpoint": "0x6EDCE65403992e310A62460808c4b910D972f10f",
     "rewardBaseEid": 40245,
     "rewardGraceSeconds": 14400,
@@ -107,7 +106,6 @@
       "vpfiDiscountFacet": "0xeF31027350Be2c7439C1b0BE022d49421488b72C",
       "vpfiTokenFacet": "0xC66AB83418C20A65C3f8e83B3d11c8C3a6097b6F"
     },
-    "lzEid": 31337,
     "mockChainlinkAggregator": "0x67aD6EA566BA6B0fC52e97Bc25CE46120fdAc04c",
     "mockERC20A": "0x70eE76691Bdd9696552AF8d4fd634b3cF79DD529",
     "mockERC20B": "0x8B190573374637f144AC8D37375d97fd84cBD3a0",
@@ -164,7 +162,6 @@
     },
     "isCanonicalReward": true,
     "isCanonicalVPFI": true,
-    "lzEid": 40245,
     "lzEndpoint": "0x6EDCE65403992e310A62460808c4b910D972f10f",
     "rewardBaseEid": 0,
     "rewardGraceSeconds": 14400,

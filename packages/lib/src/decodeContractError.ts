@@ -386,14 +386,14 @@ const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   '0x3baaf353': 'TradeNotAllowed()',
   '0x515faa71': 'PositionNFTLocked()',
 
-  // ── LayerZero ULN302 (cross-chain executor options) ───────────────────
-  // Thrown when the OApp's stored options bytes can't be parsed by the
-  // SendUln302 message library. Most common cause: the adapter was
-  // deployed with an empty `buyOptions` and `setBuyOptions` was never
-  // called with a valid Type-3 options payload (executor lzReceive gas).
-  // Surfaces on `quoteBuy` / `buy` for the cross-chain VPFI buy bridge.
-  '0x6592671c':
-    'LayerZero executor options are not configured on this adapter. The contract owner must call `setBuyOptions(...)` with a valid Type-3 options payload before bridged buys can quote or send.',
+  // LayerZero ULN302 executor-options friendly-message entry was
+  // dropped in #230 alongside the rest of the LayerZero-era surface —
+  // T-068 (2026-05-18) replaced the OApp / SendUln302 transport with
+  // Chainlink CCIP, which uses Risk Management Network + a committing
+  // DON instead of the LayerZero DVN fleet. The 0x6592671c selector
+  // is no longer reachable from any active code path; the entry was
+  // removed to keep the decoder table aligned with the post-CCIP
+  // contract surface.
 };
 
 /** Extracts the raw revert data (hex string starting with 0x) from the tangle of shapes ethers/injected wallets surface. */
