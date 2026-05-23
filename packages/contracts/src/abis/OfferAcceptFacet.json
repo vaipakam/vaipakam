@@ -802,6 +802,17 @@
   },
   {
     "type": "error",
+    "name": "SelfTradeForbidden",
+    "inputs": [
+      {
+        "name": "party",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SourceChainIdNotExpected",
     "inputs": []
   },
