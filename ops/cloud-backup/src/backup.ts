@@ -254,17 +254,51 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
   //    the next run overwrites the orphan). The opposite order would
   //    leave a manifest pointing at an archive that didn't land,
   //    which the healthcheck would then false-positive on.
+  //
+  // Tiered prefixes match the lifecycle rules set by
+  // `scripts/setup-backblaze.mjs`:
+  //   archives/         — daily, 30-day retention.
+  //   archives-monthly/ — 1st-of-month, 365-day retention.
+  //   archives-yearly/  — Jan-1, no rule (indefinite).
+  // The nightly archive ALWAYS lands in `archives/`; on the 1st of
+  // the month we ALSO write a copy to `archives-monthly/` (and to
+  // `archives-yearly/` on Jan 1). Same encrypted bytes, three
+  // different lifecycle buckets — B2 dedupes on hash so the storage
+  // cost overhead for the duplicate writes is ~zero.
   const dateKey = archive.createdAt.slice(0, 10); // YYYY-MM-DD
-  const archiveKey = `archives/${dateKey}.bin`;
-  const manifestKey = `manifests/${dateKey}.json`;
+  const monthKey = archive.createdAt.slice(0, 7); // YYYY-MM
+  const yearKey = archive.createdAt.slice(0, 4);  // YYYY
+  const isFirstOfMonth = dateKey.endsWith('-01');
+  const isFirstOfYear = dateKey.endsWith('-01-01');
 
-  await putObject(b2Cfg, archiveKey, encrypted, 'application/octet-stream');
-  await putObject(
-    b2Cfg,
-    manifestKey,
-    new TextEncoder().encode(JSON.stringify(manifest, null, 2)),
-    'application/json',
-  );
+  const writes: Array<{ archive: string; manifest: string }> = [
+    { archive: `archives/${dateKey}.bin`, manifest: `manifests/${dateKey}.json` },
+  ];
+  if (isFirstOfMonth) {
+    writes.push({
+      archive: `archives-monthly/${monthKey}.bin`,
+      manifest: `manifests-monthly/${monthKey}.json`,
+    });
+  }
+  if (isFirstOfYear) {
+    writes.push({
+      archive: `archives-yearly/${yearKey}.bin`,
+      manifest: `manifests-yearly/${yearKey}.json`,
+    });
+  }
+
+  const manifestBody = new TextEncoder().encode(JSON.stringify(manifest, null, 2));
+  for (const w of writes) {
+    await putObject(b2Cfg, w.archive, encrypted, 'application/octet-stream');
+    await putObject(b2Cfg, w.manifest, manifestBody, 'application/json');
+  }
+
+  // The healthcheck only knows about the daily prefix (archives/),
+  // so the BackupRunOutput surfaces the daily key — the monthly /
+  // yearly siblings are recorded in the Telegram alert (alert text
+  // built by index.ts off the durationMs / rowsBackedUp summary).
+  const archiveKey = writes[0].archive;
+  const manifestKey = writes[0].manifest;
 
   const rowsBackedUp =
     archiveTables.reduce((a, t) => a + t.rowCount, 0) +
