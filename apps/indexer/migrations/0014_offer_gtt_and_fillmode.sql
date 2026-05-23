@@ -1,0 +1,32 @@
+-- 2026-05-23 — surface #195 (GTT / offer-expiry) and #125
+-- (DEX-style fill-mode flavour) on the indexer's offers table so
+-- the MyOffers list and OfferBook can render the expiry chip
+-- ("Expires in 3h 12m", "Expired") and the fill-mode badge (AON /
+-- IOC) directly from the indexer payload — no per-row on-chain
+-- getOffer() fallback.
+--
+-- Without these two columns the recent #241 cooldown / GTT-countdown
+-- UX work in apps/defi rendered as dead code on every row coming
+-- from the indexer path (which is the primary path on Cloudflare
+-- staging + production): `expiresAt` was always undefined and
+-- `fillMode` was always Partial, so the chip never showed and the
+-- 5-minute cooldown predicate could not exempt expired offers.
+--
+-- Both fields are stamped once at `createOffer` on-chain and
+-- never mutated — once written into the row they're correct for
+-- the offer's lifetime. The schema thus stays in sync with the
+-- {OfferCreatedDetails} event payload (and with `getOffer`'s
+-- struct read) and no follow-up ingestion path is needed.
+--
+-- Columns:
+--   expires_at  — uint64 unix-seconds deadline; 0 sentinel = GTC
+--                 (no expiry). Default 0 lets legacy rows backfill
+--                 trivially: their on-chain `expiresAt` is also
+--                 zero because the slot's headroom was zero at
+--                 create-time.
+--   fill_mode   — uint8 enum: 0 Partial (default — legacy rows),
+--                 1 AON, 2 IOC. Default 0 matches the on-chain
+--                 zero-init for pre-#125 rows.
+
+ALTER TABLE offers ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE offers ADD COLUMN fill_mode INTEGER NOT NULL DEFAULT 0;

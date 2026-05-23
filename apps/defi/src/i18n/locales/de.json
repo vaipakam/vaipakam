@@ -821,7 +821,8 @@
     "cancelTooltip": "Das Angebot zurückziehen und gesperrten Hauptbetrag / Sicherheit an Ihren Vault zurückgeben.",
     "cancel": "Stornieren",
     "cancelling": "Storniere…",
-    "assetTypeLegend": "Asset-Typen: {{kinds}}"
+    "assetTypeLegend": "Asset-Typen: {{kinds}}",
+    "cancelPendingConfig": "Prüfe die Matching-Konfiguration der Chain… Cancel wird aktiviert, sobald die Protokoll-Konfiguration geladen ist."
   },
   "hero": {
     "brand": "Vaipakam",
@@ -1802,5 +1803,10 @@
   },
   "liquidityNotice": {
     "thinCollateralOnChain": "⚠ Dieses Sicherheits-Asset hat geringe Liquidität auf dieser Kette. Wenn es hier liquidiert wird, kann der Tausch teuer sein oder fehlschlagen — und dieses Asset kann auf einer anderen Kette deutlich tiefer sein. Erwägen Sie, die Kette mit mehr Liquidität zu verwenden."
+  },
+  "timeChip": {
+    "cancellableIn": "Kündbar in {{delta}}",
+    "expiresIn": "Läuft in {{delta}} ab",
+    "expiredAgo": "Vor {{delta}} abgelaufen — jeder kann aufräumen"
   }
 }

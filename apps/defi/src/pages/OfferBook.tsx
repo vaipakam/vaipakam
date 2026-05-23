@@ -240,6 +240,14 @@ export type RawOffer = {
   tokenId: bigint;
   allowsPartialRepay?: boolean;
   periodicInterestCadence?: bigint | number;
+  /** #168 / #241 — partial-fill cancel-cooldown driver. */
+  createdAt?: bigint;
+  /** Range Orders Phase 1 / #102 — partial-fill cumulative consumed. */
+  amountFilled?: bigint;
+  /** #195 — GTT deadline; `0n` = GTC. */
+  expiresAt?: bigint;
+  /** #125 — fill-mode flavour: 0 Partial / 1 AON / 2 IOC. */
+  fillMode?: bigint | number;
 };
 
 export function toOfferData(r: RawOffer): OfferData {
@@ -267,6 +275,15 @@ export function toOfferData(r: RawOffer): OfferData {
     tokenId: r.tokenId,
     allowsPartialRepay: r.allowsPartialRepay ?? false,
     periodicInterestCadence: Number(r.periodicInterestCadence ?? 0),
+    // #241 — thread through every field the MyOffers cooldown / GTT
+    // chip relies on. Each is optional so any raw shape that omits
+    // the field (legacy event-payload stubs, cancelled-row identity
+    // stubs) leaves the corresponding OfferData field undefined, and
+    // every consumer defaults undefined to a 0n / Partial sentinel.
+    createdAt: r.createdAt,
+    amountFilled: r.amountFilled,
+    expiresAt: r.expiresAt,
+    fillMode: r.fillMode === undefined ? undefined : Number(r.fillMode),
   };
 }
 

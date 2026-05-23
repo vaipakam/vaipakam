@@ -120,7 +120,8 @@ export default function Dashboard() {
   // RPC budget impact during normal use); the flag is `false` by
   // default on every deployed chain today, so the chip + gate stay
   // dormant until governance flips matching on.
-  const { config: protocolCfg } = useProtocolConfig();
+  const { config: protocolCfg, loading: protocolCfgLoading } =
+    useProtocolConfig();
   const { claims: unclaimed, reload: reloadClaimables } = useClaimables(address);
   // Same cooldown + sync-status state machine the other rescan buttons
   // use, with adaptive growth that arrests spam-clicks: 30 s base,
@@ -406,6 +407,11 @@ export default function Dashboard() {
             }}
             cancellingId={cancellingOfferId}
             partialFillEnabled={protocolCfg?.partialFillEnabled ?? false}
+            // #241 — treat "config still loading" as "could be on".
+            // Without this gate, a user can click Cancel during the
+            // first render on a chain where governance HAS enabled
+            // partial fills and hit a `CancelCooldownActive` revert.
+            partialFillUnknown={protocolCfgLoading || protocolCfg === null}
             chainId={activeChain?.chainId ?? DEFAULT_CHAIN.chainId}
             title={t('dashboard.yourOffers')}
             subtitle={t('myOffersTable.subtitle', { count: myOfferRows.length })}

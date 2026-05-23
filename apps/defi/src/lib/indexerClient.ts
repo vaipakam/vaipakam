@@ -92,6 +92,11 @@ export interface IndexedOffer {
   firstSeenBlock: number;
   firstSeenAt: number;
   updatedAt: number;
+  // #195 / #125 — surfaced via indexer migration 0014. Default 0
+  // sentinels (GTC / Partial) keep legacy pre-migration rows
+  // backward-compatible.
+  expiresAt: number;
+  fillMode: number;
 }
 
 export interface OfferStats {
@@ -563,6 +568,21 @@ export function indexedToRawOffer(o: IndexedOffer): {
   assetType: number;
   tokenId: bigint;
   allowsPartialRepay: boolean;
+  // #168 / #241 — surfaced for the MyOffers cancel-cooldown
+  // predicate, which needs `createdAt` + `amountFilled` to evaluate
+  // the 5-minute window. `createdAt` derives from the indexer's
+  // `firstSeenAt` — the indexer is the only authority for the
+  // wall-clock when the offer first surfaced, and the on-chain
+  // `Offer.createdAt` field is initialised from the same block's
+  // `block.timestamp`, so the two are interchangeable for the
+  // cooldown window.
+  createdAt: bigint;
+  amountFilled: bigint;
+  // #195 / #125 — surfaced for the GTT expiry chip and the
+  // fill-mode badge. Default 0 sentinels keep legacy rows
+  // (GTC + Partial) rendering identically.
+  expiresAt: bigint;
+  fillMode: number;
 } {
   return {
     id: BigInt(o.offerId),
@@ -583,5 +603,9 @@ export function indexedToRawOffer(o: IndexedOffer): {
     assetType: o.assetType,
     tokenId: BigInt(o.tokenId),
     allowsPartialRepay: o.allowsPartialRepay,
+    createdAt: BigInt(o.firstSeenAt),
+    amountFilled: BigInt(o.amountFilled),
+    expiresAt: BigInt(o.expiresAt),
+    fillMode: o.fillMode,
   };
 }

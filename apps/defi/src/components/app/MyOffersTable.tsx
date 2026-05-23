@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { L as Link } from '../L';
 import { bpsToPercent } from '../../lib/format';
@@ -36,6 +37,15 @@ interface Props {
    *  (default on deployed chains today), no gating — Cancel is always
    *  enabled and the chip is suppressed. */
   partialFillEnabled: boolean;
+  /** #241 — true while `useProtocolConfig()` is still loading and
+   *  the parent doesn't yet know whether partial-fill is enabled on
+   *  this chain. The table treats this as "could be on" — Cancel is
+   *  disabled with a loading tooltip until the config resolves, so a
+   *  user can't click straight into a `CancelCooldownActive` revert
+   *  on a chain where governance HAS enabled partial fills. Default
+   *  `false` keeps legacy callers (no protocol-config wiring)
+   *  unchanged. */
+  partialFillUnknown?: boolean;
   /** Chain id this table's offers live on. Threaded through to
    *  `<PrincipalCell>` so each row's "open externally" link routes to
    *  CoinGecko / OpenSea / explorer / Vaipakam-verifier as appropriate
@@ -85,6 +95,7 @@ export function MyOffersTable({
   onCancel,
   cancellingId,
   partialFillEnabled,
+  partialFillUnknown = false,
   chainId,
   title,
   subtitle,
@@ -95,6 +106,31 @@ export function MyOffersTable({
   onPageChange,
 }: Props) {
   const { t } = useTranslation();
+  // #241 — second-resolution wall-clock that re-renders the table
+  // body so the cancel-cooldown disable predicate and the GTT-expiry
+  // bypass flip at the second they cross their bound (instead of
+  // waiting on an unrelated parent re-render). The TimeChip carries
+  // its own adaptive ticker for the *display* — this clock exists
+  // purely to keep the boolean gates and accessible labels honest.
+  // The interval only mounts when there's at least one row that
+  // could benefit (active row with a non-zero createdAt OR
+  // expiresAt); on a quiet table it stays dormant.
+  const needsTick = useMemo(
+    () =>
+      rows.some(
+        (r) =>
+          r.status === 'active' &&
+          ((r.offer.createdAt ?? 0n) > 0n ||
+            (r.offer.expiresAt ?? 0n) > 0n),
+      ),
+    [rows],
+  );
+  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    if (!needsTick) return;
+    const t = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 1000);
+    return () => clearInterval(t);
+  }, [needsTick]);
   // Pagination is opt-in: when all three props are present, slice;
   // otherwise render the full list (legacy behaviour).
   const paginated =
@@ -267,17 +303,41 @@ export function MyOffersTable({
                 const isActive = row.status === 'active';
                 const isFilled = row.status === 'filled';
 
-                // #241 — time-driven UI state.
+                // #241 — time-driven UI state. Both predicates read
+                // the parent's `nowSec` ticker (above) so they flip
+                // at second granularity without waiting on an
+                // unrelated parent re-render.
+                //
+                // GTT expiry (#195) is computed FIRST because the
+                // cooldown predicate excludes expired offers (the
+                // contract's `cancelOffer` bypasses
+                // `CancelCooldownActive` once `expiresAt` lapses —
+                // see `OfferCancelFacet.sol`). Without the exclusion
+                // a short-deadline IOC-style offer that expires
+                // within its own 5-min cooldown would leave the UI
+                // Cancel button disabled even though the contract
+                // would accept the cancellation.
+                const expiresAtSec = Number(offer.expiresAt ?? 0n);
+                const isExpired = expiresAtSec > 0 && nowSec >= expiresAtSec;
+                const showExpiryChip = isActive && expiresAtSec > 0;
                 //
                 // Cooldown gate (Cancel disabled + chip showing "Cancellable in N"):
                 //   Mirrors the contract's `MIN_OFFER_CANCEL_DELAY`
                 //   branch in `OfferCancelFacet.cancelOffer` — fires
                 //   ONLY when partialFillEnabled is on AND the offer
                 //   has zero accumulated fills AND we're inside the
-                //   5-min window from createdAt. Without all three the
-                //   contract doesn't revert, so the UI doesn't gate.
+                //   5-min window from createdAt AND the offer isn't
+                //   already expired. Without all four the contract
+                //   doesn't revert, so the UI doesn't gate.
                 //   `offer.createdAt` is uint64 unix-seconds (#164's
                 //   storage stamp); `offer.amountFilled` is bigint.
+                //
+                //   While `partialFillUnknown` is true (protocol
+                //   config still loading) we fall to the "could be
+                //   on" branch — disable Cancel and show a loading
+                //   tooltip — so the user can't click straight into
+                //   a `CancelCooldownActive` revert on a chain where
+                //   governance HAS enabled partial fills.
                 const createdAtNum = Number(offer.createdAt ?? 0n);
                 const cooldownEndsSec =
                   createdAtNum + CANCEL_COOLDOWN_SECONDS;
@@ -286,16 +346,20 @@ export function MyOffersTable({
                   partialFillEnabled &&
                   (offer.amountFilled ?? 0n) === 0n &&
                   createdAtNum > 0 &&
-                  Math.floor(Date.now() / 1000) < cooldownEndsSec;
-                // GTT expiry chip (#195):
-                //   `expiresAt = 0` is the GTC sentinel — no chip.
-                //   Non-zero = "expires in N" (live) or "expired N ago
-                //   — anyone can clean up" (lapsed). Both states get
-                //   the chip; the lapsed-state copy tells the user
-                //   their Cancel is also reachable to anyone (the
-                //   permissionless-clear path).
-                const expiresAtSec = Number(offer.expiresAt ?? 0n);
-                const showExpiryChip = isActive && expiresAtSec > 0;
+                  !isExpired &&
+                  nowSec < cooldownEndsSec;
+                // While the protocol config is still loading and the
+                // offer's own data suggests a cooldown COULD apply
+                // (zero-fill, inside the 5-min window, not expired),
+                // disable Cancel pre-emptively. Once config resolves
+                // this flips to the actual `cooldownActive` value.
+                const cooldownPending =
+                  isActive &&
+                  partialFillUnknown &&
+                  (offer.amountFilled ?? 0n) === 0n &&
+                  createdAtNum > 0 &&
+                  !isExpired &&
+                  nowSec < cooldownEndsSec;
 
                 return (
                   <tr key={offer.id.toString()}>
@@ -420,26 +484,67 @@ export function MyOffersTable({
                           {/* Per-offer keeper toggles moved to the offer
                               details page — list rows now show only the
                               cancel action so the action column scans as
-                              a single button per row. */}
+                              a single button per row.
+                              The HoverTip is wrapped on a <span> rather
+                              than directly on the button because a
+                              disabled <button> swallows pointer/focus
+                              events, leaving the explanation text
+                              unreachable while it's most needed
+                              (cooldown). The span fields the tip; the
+                              button still owns the click semantics. */}
                           <HoverTip
                             text={
                               cooldownActive
                                 ? t('myOffersTable.cancelCooldownTooltip')
+                                : cooldownPending
+                                ? t('myOffersTable.cancelPendingConfig')
                                 : t('myOffersTable.cancelTooltip')
                             }
                           >
-                            <button
-                              className="btn btn-secondary btn-sm"
-                              onClick={() => onCancel(offer.id)}
-                              disabled={
-                                cancellingId === offer.id || cooldownActive
-                              }
-                            >
-                              {cancellingId === offer.id
-                                ? t('myOffersTable.cancelling')
-                                : t('myOffersTable.cancel')}
-                            </button>
+                            <span style={{ display: 'inline-flex' }}>
+                              <button
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => onCancel(offer.id)}
+                                disabled={
+                                  cancellingId === offer.id ||
+                                  cooldownActive ||
+                                  cooldownPending
+                                }
+                                aria-describedby={
+                                  cooldownActive
+                                    ? `cancel-cooldown-${offer.id.toString()}`
+                                    : undefined
+                                }
+                              >
+                                {cancellingId === offer.id
+                                  ? t('myOffersTable.cancelling')
+                                  : t('myOffersTable.cancel')}
+                              </button>
+                            </span>
                           </HoverTip>
+                          {/* Screen-reader companion: the explanation
+                              the HoverTip already renders visually,
+                              also exposed via aria-describedby on the
+                              button so assistive tech surfaces the
+                              same reason in the cooldown state. */}
+                          {cooldownActive && (
+                            <span
+                              id={`cancel-cooldown-${offer.id.toString()}`}
+                              style={{
+                                position: 'absolute',
+                                width: 1,
+                                height: 1,
+                                padding: 0,
+                                margin: -1,
+                                overflow: 'hidden',
+                                clip: 'rect(0,0,0,0)',
+                                whiteSpace: 'nowrap',
+                                border: 0,
+                              }}
+                            >
+                              {t('myOffersTable.cancelCooldownTooltip')}
+                            </span>
+                          )}
                         </div>
                       )}
                       {/* Filled row's column is empty — the loan link

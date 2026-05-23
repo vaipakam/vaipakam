@@ -565,6 +565,10 @@ async function processOfferLogs(
         amountMax?: bigint;
         amountFilled?: bigint;
         interestRateBpsMax?: bigint;
+        // #195 — GTT deadline (0 = GTC). #125 — DEX-style fill-mode
+        // (0 Partial / 1 AON / 2 IOC). Stamped once at createOffer.
+        expiresAt?: bigint;
+        fillMode?: number;
       };
       const result = await env.DB.prepare(
         `INSERT OR IGNORE INTO offers
@@ -581,9 +585,10 @@ async function processOfferLogs(
            use_full_term_interest, creator_fallback_consent, allows_partial_repay,
            creator_current_owner,
            is_stub,
+           expires_at, fill_mode,
            first_seen_block, first_seen_at, updated_at)
          VALUES
-          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
       )
         .bind(
           chainId,
@@ -617,6 +622,11 @@ async function processOfferLogs(
           // for this position-token overwrites via the loan-block
           // Transfer handler).
           od.creator.toLowerCase(),
+          // Number() on a bigint up to 2^64-1 is safe through 2106
+          // (year of the uint32-second epoch ceiling, well past
+          // any reasonable expiresAt). 0 sentinel = GTC.
+          Number(od.expiresAt ?? 0n),
+          Number(od.fillMode ?? 0),
           Number(o.blockNumber),
           now,
           now,
@@ -891,6 +901,9 @@ async function refreshOfferDetails(
     amountMax?: bigint;
     amountFilled?: bigint;
     interestRateBpsMax?: bigint;
+    // See parallel definition above — #195 GTT + #125 fill-mode.
+    expiresAt?: bigint;
+    fillMode?: number;
   };
   await env.DB.prepare(
     `UPDATE offers SET
@@ -903,6 +916,7 @@ async function refreshOfferDetails(
        collateral_amount = ?, duration_days = ?, position_token_id = ?,
        prepay_asset = ?, use_full_term_interest = ?,
        creator_fallback_consent = ?, allows_partial_repay = ?,
+       expires_at = ?, fill_mode = ?,
        is_stub = 0,
        updated_at = ?
      WHERE chain_id = ? AND offer_id = ?`,
@@ -932,6 +946,8 @@ async function refreshOfferDetails(
       o.useFullTermInterest ? 1 : 0,
       o.creatorRiskAndTermsConsent ? 1 : 0,
       o.allowsPartialRepay ? 1 : 0,
+      Number(o.expiresAt ?? 0n),
+      Number(o.fillMode ?? 0),
       now,
       chainId,
       offerId,

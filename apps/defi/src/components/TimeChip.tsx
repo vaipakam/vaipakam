@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 
 /**
  * Time-driven badge for the offer surfaces (#241).
@@ -60,6 +61,7 @@ function formatDelta(seconds: number): string {
 }
 
 export function TimeChip({ kind, targetSec, className }: TimeChipProps) {
+  const { t } = useTranslation();
   // Tick state. We don't store the formatted string — re-derive on every
   // render so timezone / locale / DST changes don't require remounting.
   const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
@@ -90,22 +92,22 @@ export function TimeChip({ kind, targetSec, className }: TimeChipProps) {
         return { label: null, tone: 'neutral' as const };
       }
       return {
-        label: `Cancellable in ${formatDelta(delta)}`,
+        label: t('timeChip.cancellableIn', { delta: formatDelta(delta) }),
         tone: 'pending' as const,
       };
     }
     // Expiry kind.
     if (elapsed) {
       return {
-        label: `Expired ${formatDelta(delta)} ago — anyone can clean up`,
+        label: t('timeChip.expiredAgo', { delta: formatDelta(delta) }),
         tone: 'expired' as const,
       };
     }
     return {
-      label: `Expires in ${formatDelta(delta)}`,
+      label: t('timeChip.expiresIn', { delta: formatDelta(delta) }),
       tone: 'live' as const,
     };
-  }, [kind, targetSec, nowSec]);
+  }, [kind, targetSec, nowSec, t]);
 
   if (label === null) return null;
 

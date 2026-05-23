@@ -821,7 +821,8 @@
     "cancelTooltip": "Retirer l'offre et restituer le principal / collatéral verrouillé à votre Vaipakam Vault.",
     "cancel": "Annuler",
     "cancelling": "Annulation…",
-    "assetTypeLegend": "Types d'actif : {{kinds}}"
+    "assetTypeLegend": "Types d'actif : {{kinds}}",
+    "cancelPendingConfig": "Vérification de la configuration de matching de la chaîne… Annuler s’activera une fois la configuration du protocole chargée."
   },
   "hero": {
     "brand": "Vaipakam",
@@ -1802,5 +1803,10 @@
   },
   "liquidityNotice": {
     "thinCollateralOnChain": "⚠ Cet actif de garantie a peu de liquidité sur cette chaîne. S'il est liquidé ici, le swap peut être coûteux ou échouer — et cet actif peut être beaucoup plus profond sur une autre chaîne. Envisagez d'utiliser la chaîne où il a plus de liquidité."
+  },
+  "timeChip": {
+    "cancellableIn": "Annulable dans {{delta}}",
+    "expiresIn": "Expire dans {{delta}}",
+    "expiredAgo": "Expirée il y a {{delta}} — n’importe qui peut nettoyer"
   }
 }
