@@ -1009,7 +1009,7 @@
       },
       "chains": {
         "q": "支持哪些区块链？",
-        "a1": "第一阶段面向 <s>Base</s>、<s>Polygon</s>、<s>Arbitrum</s>、<s>Optimism</s> 与 <s>Ethereum 主网</s>。Base 是 VPFI 的 canonical 链（代币在此发行，固定价格购买在此进行），但应用内的 Buy VPFI 页面在所有受支持的链上都能使用——它会自动选择在 Base 上直接购买，或从任意镜像链通过 LayerZero 桥接购买，免去为充值而切换网络的麻烦。",
+        "a1": "第一阶段面向 <s>Base</s>、<s>Polygon</s>、<s>Arbitrum</s>、<s>Optimism</s> 与 <s>Ethereum 主网</s>。Base 是 VPFI 的 canonical 链（代币在此发行，固定价格购买在此进行），但应用内的 Buy VPFI 页面在所有受支持的链上都能使用——它会自动选择在 Base 上直接购买，或从任意镜像链通过 Chainlink CCIP 桥接购买，免去为充值而切换网络的麻烦。",
         "a2": "目前的线上部署是 <s>Sepolia</s>，更多链正在陆续上线。同一笔贷款的所有环节必须在同一网络上完成。"
       },
       "sequencer": {
@@ -1350,7 +1350,7 @@
     "eventLoanTerminalTitle": "贷款结清或违约",
     "eventLoanTerminalDesc": "您的贷款已进入终态 — 已全额偿还、超时违约或 HF 清算。通知双方。",
     "eventVpfiBuyReceivedTitle": "已收到跨链 VPFI 购买",
-    "eventVpfiBuyReceivedDesc": "您发起的经 LayerZero 路由的 VPFI 购买已在规范链上铸造并入账至您的钱包。",
+    "eventVpfiBuyReceivedDesc": "您发起的经 Chainlink CCIP 路由的 VPFI 购买已在规范链上铸造并入账至您的钱包。",
     "eventLoanInitiatedCreatorTitle": "您的报价已匹配为贷款",
     "eventLoanInitiatedCreatorDesc": "当报价被接受(或由机器人匹配)且贷款变为活跃时,发送给报价创建者。",
     "eventMaturityApproachingTitle": "贷款即将到期",
@@ -1533,7 +1533,7 @@
   },
   "cardHelp": {
     "dashboardYourLoans": "已连接钱包在本链上参与的所有贷款 — 作为出借方、借款方或两者皆是。每行链接到包含 HF、LTV、抵押品、还款及领取控件的完整仓位页面。",
-    "dashboardVpfiPanel": "VPFI 是协议代币。本卡片显示本链上的钱包 + 保管余额、占流通供应量的份额以及剩余可铸造上限。Canonical 链负责 mint/burn；镜像链通过 LayerZero OFT 进行 lock/release。",
+    "dashboardVpfiPanel": "VPFI 是协议代币。本卡片显示本链上的钱包 + 保管余额、占流通供应量的份额以及剩余可铸造上限。Canonical 链负责 mint/burn；镜像链通过 Chainlink CCIP CCT 进行 lock/release。",
     "dashboardFeeDiscountConsent": "选择允许协议从保管中以 VPFI 支付折扣手续费。折扣随保管 VPFI 余额按等级递增：Tier 1 (≥{{tier1Min}} VPFI) {{tier1Discount}}%、Tier 2 (≥{{tier2Min}}) {{tier2Discount}}%、Tier 3 (≥{{tier3Min}}) {{tier3Discount}}%、Tier 4 (>{{tier4Min}}) {{tier4Discount}}%。",
     "dashboardRewardsSummary": "您在两个流中的 VPFI 奖励的合并视图：质押收益（保管 VPFI 上的 {{apr}}% APR）和平台交互奖励（您参与的每笔贷款的每日 VPFI 份额）。单击一行以跳转到相应页面上的完整领取卡。",
     "offerBookFilters": "按资产、方向、状态及其他条件筛选下方的市场列表。筛选作用于出借方 / 借款方报价 — 已连接钱包自身的活跃报价（位于上方）始终保持可见，不受筛选影响。",
@@ -1581,9 +1581,9 @@
     "loanDetailsParties": "出借方与借款方地址、保管其资产的逐用户保管代理，以及双方在贷款开启时收到的仓位 NFT。每个 NFT 是该方债权的不记名凭证 — 丢失即丧失债权。",
     "loanDetailsActionsLender": "本贷款上出借方可用的操作。贷款结清后领取（归还本金 + 利息，扣除 {{treasuryFee}}% 国库抽成）。在贷款中途发起提前退出，将出借方 NFT 出售给买方。当 HF < 1 或宽限期到期时，任何人（包括出借方）均可触发清算。被禁用的操作在悬停时显示原因。",
     "loanDetailsActionsBorrower": "本贷款上借款方可用的操作。全额或部分还款；Preclose 直接（立即偿付未偿余额）或抵销（通过 DEX 出售抵押品）；以新条件再融资为新贷款。全额偿还时领取归还抵押品，或归还任何未使用的 VPFI 返还额。被禁用的操作在悬停时显示原因。",
-    "buyVpfiOverview": "在任意受支持链上以 ETH 按固定的早期阶段汇率购买 VPFI。Canonical 链（Base）直接路由至 Diamond；其他每条链通过 VPFIBuyAdapter + LayerZero 往返桥接。VPFI 始终落在所连接链上的钱包 — 无需切换链。",
+    "buyVpfiOverview": "在任意受支持链上以 ETH 按固定的早期阶段汇率购买 VPFI。Canonical 链（Base）直接路由至 Diamond；其他每条链通过 VpfiBuyAdapter + Chainlink CCIP 往返桥接。VPFI 始终落在所连接链上的钱包 — 无需切换链。",
     "buyVpfiDiscountStatus": "此链上活跃的 VPFI 手续费折扣等级。等级由 Vault VPFI 余额决定：Tier 1 ≥{{tier1Min}}、Tier 2 ≥{{tier2Min}}、Tier 3 ≥{{tier3Min}}、Tier 4 >{{tier4Min}}。折扣仅适用于流动性贷款，并且仅在 Dashboard 上的平台级同意开关开启时生效。Vault VPFI 也算作已质押并获得 {{apr}}% 的质押 APR。",
-    "buyVpfiBuy": "步骤 1 — 将 ETH 转换为 VPFI。Canonical 链上调用直接到 Diamond；非 canonical 链则经由 buy adapter 与 LayerZero 往返。每笔与滚动上限均生效（参见 TokenomicsTechSpec）。VPFI 交付到钱包，不会自动存入保管。",
+    "buyVpfiBuy": "步骤 1 — 将 ETH 转换为 VPFI。Canonical 链上调用直接到 Diamond；非 canonical 链则经由 buy adapter 与 Chainlink CCIP 往返。每笔与滚动上限均生效（参见 TokenomicsTechSpec）。VPFI 交付到钱包，不会自动存入保管。",
     "buyVpfiDeposit": "第 2 步 — 将 VPFI 从钱包移入此链上的 vault。始终是显式用户操作：协议永远不会在购买后自动注资 vault。需要这样做才能获得手续费折扣和 {{apr}}% 的质押 APR。可用时使用 Permit2，一个签名即可替代 approve + transfer 组合。",
     "buyVpfiUnstake": "在本链上将 VPFI 从保管转回钱包。即时降低折扣 Tier — 时间加权累加器立即按新（更低）余额对每笔开放贷款重新打戳，因此 unstake 自此刻起对手续费折扣计算即生效。",
     "rewardsOverview": "此链上累积两种奖励流。Vault 中持有的 VPFI 获得被动 {{apr}}% APR（质押池）。在贷款上结算的每 1 USD 利息可获得交互池的每日份额。两者在领取时直接在当前链上铸造 — 无需 bridging。",

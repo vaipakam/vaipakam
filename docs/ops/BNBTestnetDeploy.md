@@ -3,8 +3,26 @@
 End-to-end order of operations for a clean BNB Testnet deployment.
 BNB Testnet is a **mirror-VPFI / mirror-reward** chain in the Phase-1
 mesh — canonical VPFI + reward chain remains Base Sepolia (chainId
-`84532`, LZ eid `40245`). BNB Testnet itself: chainId `97`, LZ eid
-`40102`.
+`84532`). BNB Testnet itself: chainId `97`.
+
+> **T-068 status banner (added 2026-05-23).** Below this banner the
+> runbook uses LayerZero-era scripts and contract names
+> (`DeployVPFIMirror.s.sol`, `DeployVPFIBuyAdapter.s.sol`,
+> `DeployRewardOAppCreate2.s.sol`, `WireVPFIPeers.s.sol`, "LZ eid").
+> These were removed by T-068 (PR #46, merged 2026-05-18) and the
+> cross-chain layer is now Chainlink CCIP — the actual current
+> mirror-chain deploy is two scripts:
+>
+> 1. **`DeployCrosschain.s.sol`** — deploys `CcipMessenger`,
+>    `VaipakamRewardMessenger`, `VpfiPoolRateGovernor`,
+>    `VpfiBuyAdapter`, `VPFIMirrorToken` proxy, and the CCIP
+>    `BurnMintTokenPool` (mirror-side stock pool).
+> 2. **`ConfigureCcip.s.sol`** — channel peers, lane rate limits,
+>    `TokenAdminRegistry` registration, guardian wiring. Idempotent.
+>
+> For the canonical-source equivalent see `contracts/RUNBOOK.md` §2 +
+> §4. The detailed sequence below stays in place as a historical
+> reference until a CCIP-aware BNB testnet cookbook lands.
 
 > Read the [`DeploymentRunbook.md`](./DeploymentRunbook.md) first for
 > the cross-chain plumbing rationale (CREATE2 reward proxy, peer

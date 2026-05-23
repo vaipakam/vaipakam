@@ -149,9 +149,12 @@ contract title.
 
 ### 4c. Optional — Vaipakam token contracts
 
-If the chain has VPFI / VPFIOFTAdapter / etc. deployed, submit those
-too with appropriate names. Skip on mirror chains where only a subset
-of the token plumbing exists.
+If the chain has VPFI / `CcipMessenger` / the VPFI CCIP `TokenPool`
+(`LockReleaseTokenPool` on canonical / `BurnMintTokenPool` on
+mirrors) / `VpfiBuyAdapter` (mirrors) / `VpfiBuyReceiver` (canonical)
+/ `VaipakamRewardMessenger` deployed, submit those too with
+appropriate names. The exact subset depends on whether this chain is
+canonical (Base) or a mirror.
 
 ### Expected timeline
 

@@ -413,7 +413,7 @@ zk-rollup chains and Solana are out of scope.
 Full detail in
 [`docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md`](docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md).
 
-## VPFIBuyAdapter — payment-token mode by chain
+## VpfiBuyAdapter — payment-token mode by chain
 
 The cross-chain VPFI buy adapter pulls funds from the user on the
 source chain and forwards a BUY_REQUEST via Chainlink CCIP (post-
@@ -444,11 +444,12 @@ makes the payment-token mode a load-bearing per-chain config:
 
 **Deploy-time enforcement (two layers)**:
 
-1. `DeployVPFIBuyAdapter.s.sol` pre-flight reverts if
+1. `DeployCrosschain.s.sol` (the per-chain cross-chain stack
+   deployer post-T-068) pre-flight reverts if
    `_chainRequiresWethPaymentToken(chainId) && paymentToken_ == address(0)`.
    Catches "operator chose the wrong mode for this chain" — the
    error message names the env var the operator should set.
-2. `VPFIBuyAdapter.initialize` (and `setPaymentToken` rotation)
+2. `VpfiBuyAdapter.initialize` (and `setPaymentToken` rotation)
    runs `_assertPaymentTokenSane(token)` before any state writes:
    - Non-zero `token` must have bytecode (`token.code.length > 0`)
      — catches an EOA address pasted into the env var.
@@ -468,17 +469,17 @@ strict-WETH-pull chains:
 
 - BNB Chain mainnet (56): canonical bridged WETH on BNB —
   `0x2170Ed0880ac9A755fd29B2688956BD959F933F8`. Confirm against
-  bscscan + the LayerZero bridged-asset registry before pasting
-  into `BNB_VPFI_BUY_PAYMENT_TOKEN`.
+  bscscan + the chain's canonical bridged-asset registry before
+  pasting into `BNB_VPFI_BUY_PAYMENT_TOKEN`.
 - Polygon PoS mainnet (137): canonical WETH9 on Polygon —
   `0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619`. Confirm against
   polygonscan + the Polygon bridge contracts list before pasting
   into `POLYGON_VPFI_BUY_PAYMENT_TOKEN`.
 
-Test coverage: `contracts/test/token/VPFIBuyAdapterPaymentTokenTest.t.sol`
-(10 cases — every revert path on init AND on `setPaymentToken`
-rotation, plus the two acceptance paths). Add to that file when
-extending the validation surface.
+Test coverage: `contracts/test/VpfiBuyFlowTest.t.sol` covers the
+payment-token validation surface post-T-068 (init reverts on
+sanity-check failure, setPaymentToken rotation, both acceptance
+paths). Add to that file when extending the validation surface.
 
 ## VPFI Fee Discounts — Time-Weighted + Claim-Based (Phase 5)
 

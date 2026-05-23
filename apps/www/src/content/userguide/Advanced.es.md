@@ -59,7 +59,7 @@ activa:
   en poder del protocolo).
 - Tope de minteo restante.
 
-Vaipakam transporta VPFI entre cadenas sobre LayerZero V2. **Base
+Vaipakam transporta VPFI entre cadenas sobre Chainlink CCIP. **Base
 es la cadena canónica** —el adaptador canónico allí aplica la
 semántica de bloquear al enviar / liberar al recibir. Cualquier
 otra cadena soportada ejecuta un espejo que mintea cuando llega un
@@ -494,7 +494,7 @@ Dos caminos:
   compra en el protocolo. Mintea VPFI directamente a tu billetera
   en Base.
 - **No canónico** — el adaptador de compra de la cadena local
-  envía un paquete LayerZero al receptor canónico en Base, que
+  envía un paquete Chainlink CCIP al receptor canónico en Base, que
   realiza la compra en Base y puentea el resultado de regreso vía
   el estándar de token cross-chain. Latencia end-to-end ≈ 1 min
   en pares L2-a-L2. El VPFI llega a tu billetera en la cadena de

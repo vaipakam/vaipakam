@@ -52,8 +52,11 @@ export const GLOSSARY_KEEP_VERBATIM = [
   'BNB Chain',
   'BNB',
   'Solana',
-  'LayerZero',
+  'LayerZero', // Kept verbatim in historical / migration narrative; T-068 (2026-05-18) moved the cross-chain layer to CCIP.
   'Chainlink',
+  'CCIP', // Chainlink Cross-Chain Interoperability Protocol (post-T-068).
+  'RMN', // Risk Management Network — CCIP's independent re-verification layer.
+  'CCT', // CCIP Cross-Chain Token pattern.
   'Uniswap',
   'PancakeSwap',
   'SushiSwap',
@@ -93,11 +96,24 @@ export const GLOSSARY_KEEP_VERBATIM = [
   'ClaimFacet',
   'KeeperSettingsFacet',
   'VPFIDiscountFacet',
+  // Pre-T-068 LayerZero-era contracts — kept verbatim in historical
+  // copy + ADRs. Replaced by the CCIP-era set immediately below.
   'VaipakamRewardOApp',
   'VPFIBuyAdapter',
   'VPFIBuyReceiver',
   'VPFIOFTAdapter',
   'VPFIMirror',
+  // Post-T-068 CCIP-era contracts (2026-05-18 onward).
+  'CcipMessenger',
+  'VaipakamRewardMessenger',
+  'VpfiBuyAdapter',
+  'VpfiBuyReceiver',
+  'VPFIMirrorToken',
+  'VpfiPoolRateGovernor',
+  'LockReleaseTokenPool',
+  'BurnMintTokenPool',
+  'TokenAdminRegistry',
+  'GuardianPausable',
   'LibVaipakam',
   'LibVPFIDiscount',
   'LibSwap',

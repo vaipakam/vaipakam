@@ -296,7 +296,7 @@ Tres caminos:
 - **Comprarlo** — a tasa fija (`1 VPFI = 0,001 ETH`) en la página
   **Comprar VPFI**. El programa de tasa fija tiene tope por
   billetera por cadena.
-- **Moverlo por puente** — VPFI es un token LayerZero OFT V2, así que
+- **Moverlo por puente** — VPFI es un token Chainlink CCIP CCT, así que
   se mueve entre cadenas compatibles usando el puente oficial.
 
 ---

@@ -308,7 +308,7 @@ Drei Wege:
 - **Kaufen** — zum Festpreis (`1 VPFI = 0,001 ETH`) auf der Seite
   **VPFI kaufen**. Das Festpreisprogramm ist pro Wallet pro Chain
   gedeckelt.
-- **Bridgen** — VPFI ist ein LayerZero OFT V2-Token, also bewegt
+- **Bridgen** — VPFI ist ein Chainlink CCIP CCT-Token, also bewegt
   er sich zwischen unterstützten Chains über die offizielle Bridge.
 
 ---

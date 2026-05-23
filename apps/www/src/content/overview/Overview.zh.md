@@ -154,7 +154,7 @@ Reward pool 在最初六个月最大，随后在七年内逐步 taper。Early us
 
 - **Earn it** - 通过参与 protocol 获得（即上面的 interaction rewards）。
 - **Buy it** - 在 **Buy VPFI** page 按 fixed rate（`1 VPFI = 0.001 ETH`）购买。Fixed-rate program 对每个 wallet、每条 chain 都有 cap。
-- **Bridge it** - VPFI 是 LayerZero OFT V2 token，因此可以通过 official bridge 在 supported chains 间移动。
+- **Bridge it** - VPFI 是 Chainlink CCIP CCT token，因此可以通过 official bridge 在 supported chains 间移动。
 
 ---
 

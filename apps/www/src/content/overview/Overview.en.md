@@ -272,7 +272,7 @@ Three paths:
 - **Buy it** — at a fixed rate (`1 VPFI = 0.001 ETH`) on the
   **Buy VPFI** page. The fixed-rate program is capped per wallet
   per chain.
-- **Bridge it** — VPFI is a LayerZero OFT V2 token, so it moves
+- **Bridge it** — VPFI is a Chainlink CCIP CCT token, so it moves
   between supported chains using the official bridge.
 
 ---

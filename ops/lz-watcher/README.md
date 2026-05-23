@@ -1,5 +1,37 @@
 # vaipakam-lz-watcher
 
+> **⚠ T-068 deprecation banner (added 2026-05-23).** This Worker watches
+> the pre-T-068 LayerZero V2 surface (DVN config drift, OFT mint/burn
+> imbalance, OApp event-level flow). PR #46 (merged 2026-05-18)
+> migrated the protocol off LayerZero to **Chainlink CCIP**, so the
+> three checks below describe a surface that no longer exists in
+> production:
+>
+> - DVN-count drift — N/A under CCIP (no operator-configurable
+>   verifier; CCIP's Risk Management Network is run by Chainlink with
+>   an independent codebase and operator set).
+> - OFT mint/burn imbalance — replaced by the CCT mint/burn invariant
+>   on `LockReleaseTokenPool` (Base) vs sum of mirror `totalSupply()`.
+>   The equivalent check for CCIP is tracked under the post-T-068
+>   monitoring stack (see [`contracts/RUNBOOK.md`](../../contracts/RUNBOOK.md)
+>   §9 — that's the live monitoring spec going forward).
+> - Oversized VPFI flow — still meaningful; will land on the
+>   replacement CCIP watcher.
+>
+> The Worker is **deferred for decommission**: keep the deployment
+> alive only if any LayerZero mainnet contracts (none ship under
+> T-068) are still observable somewhere; otherwise the
+> `vaipakam-lz-alerts-db` D1 can be archived and the Worker shut
+> down. The replacement CCIP-aware monitoring Worker is tracked as a
+> follow-up — `contracts/RUNBOOK.md` §9 enumerates the watch surface
+> it needs to cover (RMN curse-event drift, CCT mint/burn imbalance,
+> lane rate-limit saturation, pause-lever health, CCIP-fee funding).
+>
+> The rest of this README describes the pre-T-068 architecture and
+> is kept as historical reference only.
+
+---
+
 Internal-only Cloudflare Worker that watches Vaipakam's LayerZero V2
 surface for security drift. Three checks run on a 5-minute cron:
 

@@ -50,7 +50,7 @@ active chain 上当前连接 wallet 的 live VPFI accounting：
   之后)。
 - 剩余可 mint cap。
 
-Vaipakam 通过 LayerZero V2 跨链发送 VPFI。**Base 是 canonical
+Vaipakam 通过 Chainlink CCIP 跨链发送 VPFI。**Base 是 canonical
 chain** — 那里的 canonical adapter 使用 lock-on-send /
 release-on-receive semantics。其他每条受支持的 chain 都运行一个
 mirror：inbound bridge packet 到达时 mint，outbound 时 burn。所有
@@ -402,7 +402,7 @@ liquidations、NFT mints 和 burns，以及 VPFI buys / stakes / unstakes。
 - **Canonical (Base)** — 直接调用 protocol 上的 canonical buy
   flow。在 Base 上直接 mint VPFI 到您的 wallet。
 - **Off-canonical** — local-chain buy adapter 向 Base 上的
-  canonical receiver 发送 LayerZero packet，它在 Base 上执行
+  canonical receiver 发送 Chainlink CCIP packet，它在 Base 上执行
   buy 并通过 cross-chain token standard 把结果 bridge 回来。在
   L2-to-L2 pairs 上端到端 latency ≈ 1 分钟。VPFI 会落到 **origin**
   chain 上您的 wallet。

@@ -57,7 +57,7 @@ active chain पर connected wallet के लिए live VPFI लेखा-ज
   balances को घटाने के बाद)।
 - शेष mintable cap.
 
-Vaipakam VPFI को LayerZero V2 के ऊपर cross-chain भेजता है।
+Vaipakam VPFI को Chainlink CCIP के ऊपर cross-chain भेजता है।
 **Base canonical chain है** — वहाँ canonical adapter
 lock-on-send / release-on-receive semantics लागू करता है। हर
 दूसरी supported chain mirror चलाती है, जो inbound bridge packet
@@ -465,7 +465,7 @@ NFT mints / burns, और VPFI buys / stakes / unstakes दिखाता ह�
   सीधे call करें। VPFI सीधे Base पर आपके wallet में mint होता
   है।
 - **Off-canonical** — local-chain buy adapter Base पर
-  canonical receiver को LayerZero packet भेजता है, जो Base
+  canonical receiver को Chainlink CCIP packet भेजता है, जो Base
   पर खरीद करता है और cross-chain token standard के ज़रिए
   result को वापस bridge करता है। L2-to-L2 pairs पर
   end-to-end latency ≈ 1 मिनट। VPFI **origin** chain पर आपके

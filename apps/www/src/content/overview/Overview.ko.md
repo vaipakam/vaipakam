@@ -270,7 +270,7 @@ early users가 가장 큰 emissions를 받습니다.
 - **Buy it** — **Buy VPFI** page에서 fixed rate
   (`1 VPFI = 0.001 ETH`)로 구매하기. fixed-rate program은 per wallet
   per chain으로 capped됩니다.
-- **Bridge it** — VPFI는 LayerZero OFT V2 token이므로 official bridge를
+- **Bridge it** — VPFI는 Chainlink CCIP CCT token이므로 official bridge를
   사용해 supported chains 사이를 이동할 수 있습니다.
 
 ---
