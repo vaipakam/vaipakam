@@ -22,7 +22,10 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
  *           - Admin gating on setCurrentTos (non-admin reverts).
  */
 contract LegalFacetTest is SetupTest {
-    LegalFacet internal legalFacet;
+    // #229: LegalFacet is cut + constructed in `SetupTest.setupHelper()`
+    // now. The prior local declaration + local cut was a workaround
+    // for the pre-#229 gap and is dropped. References to `legalFacet`
+    // below resolve to the inherited SetupTest field.
 
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
@@ -44,23 +47,10 @@ contract LegalFacetTest is SetupTest {
     );
 
     function setUp() public {
+        // #229 — LegalFacet is now cut by `SetupTest.setupHelper()`.
+        // The prior local `new LegalFacet()` + local diamondCut here
+        // would double-cut the same selectors and revert. Dropped.
         setupHelper();
-
-        legalFacet = new LegalFacet();
-        bytes4[] memory selectors = new bytes4[](5);
-        selectors[0] = LegalFacet.acceptTerms.selector;
-        selectors[1] = LegalFacet.setCurrentTos.selector;
-        selectors[2] = LegalFacet.hasAcceptedCurrentTerms.selector;
-        selectors[3] = LegalFacet.getCurrentTos.selector;
-        selectors[4] = LegalFacet.getUserTosAcceptance.selector;
-
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
-        cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(legalFacet),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: selectors
-        });
-        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
     }
 
     // ─── Gate-disabled state ────────────────────────────────────────────────

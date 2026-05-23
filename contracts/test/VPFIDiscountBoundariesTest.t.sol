@@ -31,7 +31,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 ///         applied at fee-collection time.
 contract VPFIDiscountBoundariesTest is SetupTest {
     VPFIToken internal vpfi;
-    VPFIDiscountFacet internal discountFacet;
+    // #229: VPFIDiscountFacet cut by `SetupTest.setupHelper()` now.
 
     uint256 internal constant DIAMOND_SEED = 10_000_000 ether;
 
@@ -55,14 +55,8 @@ contract VPFIDiscountBoundariesTest is SetupTest {
         if (DIAMOND_SEED > have) vpfi.mint(address(this), DIAMOND_SEED - have);
         vpfi.transfer(address(diamond), DIAMOND_SEED);
 
-        discountFacet = new VPFIDiscountFacet();
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
-        cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(discountFacet),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getVPFIDiscountFacetSelectors()
-        });
-        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        // #229 — VPFIDiscountFacet is now cut by setupHelper();
+        // the prior local cut here would double-cut and revert.
 
         alice = makeAddr("alice");
         vpfi.mint(alice, 100_000 ether);

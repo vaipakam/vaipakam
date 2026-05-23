@@ -66,21 +66,9 @@ contract OraclePadFallbackTest is SetupTest {
         // them so we exercise `_primaryPrice` itself.
         vm.clearMockedCalls();
 
-        OracleAdminFacet adminFacet = new OracleAdminFacet();
-        bytes4[] memory selectors = new bytes4[](6);
-        selectors[0] = OracleAdminFacet.setChainlinkRegistry.selector;
-        selectors[1] = OracleAdminFacet.setUsdChainlinkDenominator.selector;
-        selectors[2] = OracleAdminFacet.setEthChainlinkDenominator.selector;
-        selectors[3] = OracleAdminFacet.setWethContract.selector;
-        selectors[4] = OracleAdminFacet.setEthUsdFeed.selector;
-        selectors[5] = OracleAdminFacet.setUniswapV3Factory.selector;
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
-        cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(adminFacet),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: selectors
-        });
-        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        // #229 — OracleAdminFacet is now cut by `SetupTest.setupHelper()`
+        // (all 34 selectors, mirroring DeployDiamond). The prior local
+        // 6-selector subset cut would double-cut and revert. Dropped.
 
         // ConfigFacet is already cut by setupHelper() — its T-048
         // setters (setPredominantDenominator + setAssetNumeraireDirectFeedOverride)

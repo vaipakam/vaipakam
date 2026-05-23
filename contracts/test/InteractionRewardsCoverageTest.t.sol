@@ -36,7 +36,7 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 ///         All tests seed rewards starting at day 1.
 contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
     VPFIToken internal vpfi;
-    InteractionRewardsFacet internal interactionFacet;
+    // #229: InteractionRewardsFacet cut by `SetupTest.setupHelper()` now.
 
     uint256 internal constant DIAMOND_SEED = 100_000_000 ether; // ≥ 69M cap + slack
 
@@ -61,14 +61,8 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
         if (DIAMOND_SEED > have) vpfi.mint(address(this), DIAMOND_SEED - have);
         vpfi.transfer(address(diamond), DIAMOND_SEED);
 
-        interactionFacet = new InteractionRewardsFacet();
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
-        cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(interactionFacet),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getInteractionRewardsFacetSelectors()
-        });
-        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        // #229 — InteractionRewardsFacet is now cut by setupHelper();
+        // the prior local cut here would double-cut and revert.
 
         alice = makeAddr("alice");
         bob = makeAddr("bob");

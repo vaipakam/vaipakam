@@ -37,19 +37,9 @@ contract FeedOverrideTest is SetupTest {
         // so we exercise the real OracleFacet + feed-override code path.
         vm.clearMockedCalls();
 
-        OracleAdminFacet adminFacet = new OracleAdminFacet();
-        bytes4[] memory selectors = new bytes4[](4);
-        selectors[0] = OracleAdminFacet.setChainlinkRegistry.selector;
-        selectors[1] = OracleAdminFacet.setUsdChainlinkDenominator.selector;
-        selectors[2] = OracleAdminFacet.setFeedOverride.selector;
-        selectors[3] = OracleAdminFacet.getFeedOverride.selector;
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
-        cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(adminFacet),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: selectors
-        });
-        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        // #229 — OracleAdminFacet is now cut by `SetupTest.setupHelper()`
+        // (all 34 selectors, mirroring DeployDiamond). The prior local
+        // subset cut here would double-cut and revert. Dropped.
 
         vm.warp(1_000_000);
 

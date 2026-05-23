@@ -36,7 +36,11 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 ///            branches)
 ///          - emitDiscountApplied access gating
 contract VPFIDiscountFacetTest is SetupTest {
-    VPFIDiscountFacet internal vpfiDiscountFacet;
+    // #229: VPFIDiscountFacet is cut + constructed inside
+    // `SetupTest.setupHelper()` now; the prior local declaration +
+    // local cut was a workaround for the pre-#229 gap and is dropped.
+    // References to `vpfiDiscountFacet` below resolve to the inherited
+    // SetupTest field.
     VPFIToken internal vpfiToken;
     ERC20Mock internal weth; // ETH price-reference asset
 
@@ -107,15 +111,9 @@ contract VPFIDiscountFacetTest is SetupTest {
         vpfiToken.transfer(lender, 5_000 ether);
         vpfiToken.transfer(borrower, 5_000 ether);
 
-        // Deploy + cut VPFIDiscountFacet in. SetupTest does not include it.
-        vpfiDiscountFacet = new VPFIDiscountFacet();
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
-        cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(vpfiDiscountFacet),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getVPFIDiscountFacetSelectors()
-        });
-        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        // #229 — VPFIDiscountFacet is now cut by `SetupTest.setupHelper()`.
+        // The prior local `new VPFIDiscountFacet()` + local diamondCut
+        // here would double-cut the same selectors and revert. Dropped.
 
         // Configure buy-side parameters + ETH reference asset.
         weth = new ERC20Mock("Wrapped Ether", "WETH", 18);

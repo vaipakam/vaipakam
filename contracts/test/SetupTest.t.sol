@@ -75,6 +75,32 @@ import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
 import {MockZeroExLegacyAdapter} from "./mocks/MockZeroExLegacyAdapter.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+// #229 — Close the remaining test-vs-prod facet drift. Post-#228
+// SetupTest cut 27 production facets + TestMutatorFacet (test-only)
+// = 28 cut[] entries; production cuts 36 (per
+// DiamondFacetNames.cutFacetNames()) + DiamondCutFacet via
+// constructor = 37 routed facets. The 9 production facets below
+// were the gap.
+//
+// Why each is safe-additive (no init wiring required):
+//   - DiamondLoupeFacet + OwnershipFacet — pure read surfaces.
+//   - OracleAdminFacet — admin-only setters; deployer already holds
+//     all roles via `initializeAccessControl()`.
+//   - LegalFacet — sanctions oracle defaults to address(0)
+//     (fail-open, per CLAUDE.md retail-deploy policy).
+//   - VPFIDiscountFacet + StakingRewardsFacet + InteractionRewardsFacet
+//     + RewardAggregatorFacet + RewardReporterFacet — state read on
+//     demand from shared storage; zero defaults are valid for every
+//     happy-path consumer.
+import {DiamondLoupeFacet} from "../src/facets/DiamondLoupeFacet.sol";
+import {OwnershipFacet} from "../src/facets/OwnershipFacet.sol";
+import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
+import {LegalFacet} from "../src/facets/LegalFacet.sol";
+import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
+import {StakingRewardsFacet} from "../src/facets/StakingRewardsFacet.sol";
+import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
+import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 // #168 Track A — narrow (not yet close) the test-vs-prod drift. The
 // production diamond cuts these four facets
 // (DiamondFacetNames.cutFacetNames() + DeployDiamond.s.sol §5), but
@@ -179,6 +205,16 @@ contract SetupTest is Test {
     PartialWithdrawalFacet partialWithdrawalFacet;
     PrecloseFacet precloseFacet;
     RefinanceFacet refinanceFacet;
+    // #229 — final 9-facet superset closure.
+    DiamondLoupeFacet diamondLoupeFacet;
+    OwnershipFacet ownershipFacet;
+    OracleAdminFacet oracleAdminFacet;
+    LegalFacet legalFacet;
+    VPFIDiscountFacet vpfiDiscountFacet;
+    StakingRewardsFacet stakingRewardsFacet;
+    InteractionRewardsFacet interactionRewardsFacet;
+    RewardAggregatorFacet rewardAggregatorFacet;
+    RewardReporterFacet rewardReporterFacet;
     HelperTest helperTest;
 
     // Vault impl
@@ -247,33 +283,45 @@ contract SetupTest is Test {
         partialWithdrawalFacet = new PartialWithdrawalFacet();
         precloseFacet = new PrecloseFacet();
         refinanceFacet = new RefinanceFacet();
+        // #229 — final 9-facet superset closure (cut below).
+        diamondLoupeFacet = new DiamondLoupeFacet();
+        ownershipFacet = new OwnershipFacet();
+        oracleAdminFacet = new OracleAdminFacet();
+        legalFacet = new LegalFacet();
+        vpfiDiscountFacet = new VPFIDiscountFacet();
+        stakingRewardsFacet = new StakingRewardsFacet();
+        interactionRewardsFacet = new InteractionRewardsFacet();
+        rewardAggregatorFacet = new RewardAggregatorFacet();
+        rewardReporterFacet = new RewardReporterFacet();
         helperTest = new HelperTest();
 
         // Deploy vault impl
         vaultImpl = new VaipakamVaultImplementation();
 
-        // Cut facets into diamond. #168 Track A extended the array
-        // from 24 → 28 to add the PrecloseFacet / RefinanceFacet /
-        // EarlyWithdrawalFacet / PartialWithdrawalFacet quartet that
-        // production cuts but SetupTest had been silently omitting —
-        // exactly the drift class that surfaced #228's PauseGating
-        // 9-test silent FunctionDoesNotExist regression.
+        // Cut facets into diamond. #229 closes the test-vs-prod drift
+        // that #168 Track A narrowed: 28 → 37 cut[] entries, matching
+        // the 36 facets DiamondFacetNames.cutFacetNames() enumerates
+        // plus TestMutatorFacet (test-only, intentionally on top of
+        // the production superset).
         //
-        // NOTE — SetupTest is NOT yet a strict superset of production.
-        // DiamondFacetNames.cutFacetNames() returns string[36] — 36
-        // production facets cut via the diamond's cut[] list (plus
-        // DiamondCutFacet installed via the constructor, identically
-        // in both production and SetupTest, bringing the production
-        // route count to 37). SetupTest's cut[] has 28 entries: 27
-        // production-overlap facets + TestMutatorFacet (test-only).
-        // The 9 facets still unrouted in SetupTest — DiamondLoupeFacet,
-        // OwnershipFacet, OracleAdminFacet, LegalFacet,
-        // VPFIDiscountFacet, InteractionRewardsFacet,
-        // RewardAggregatorFacet, RewardReporterFacet,
-        // StakingRewardsFacet — are tracked as #229. Closing the
-        // remaining drift is out of scope for the test-scaffolding
-        // fold PR that landed this quartet.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](28);
+        // SetupTest is now a STRICT SUPERSET of production: every facet
+        // in DiamondFacetNames.cutFacetNames() is routed here, plus
+        // TestMutatorFacet for test-only direct-write hooks. The 9
+        // production facets added in #229 (slots 28-36 below) —
+        // DiamondLoupeFacet, OwnershipFacet, OracleAdminFacet,
+        // LegalFacet, VPFIDiscountFacet, StakingRewardsFacet,
+        // InteractionRewardsFacet, RewardAggregatorFacet,
+        // RewardReporterFacet — are pure additive cuts with no
+        // post-init wiring required. Their shared-storage state reads
+        // resolve to zero defaults; happy-path consumers see the same
+        // diamond shape they always did, now with reachable selectors
+        // for the previously-unrouted facets.
+        //
+        // Historical context: #168 Track A (PR #228) added the
+        // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
+        // quartet at slots 24-27 to unblock the PauseGating fold —
+        // those slots stay where they are.
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](37);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -430,6 +478,53 @@ contract SetupTest is Test {
             facetAddress: address(partialWithdrawalFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getPartialWithdrawalFacetSelectors()
+        });
+        // #229 — final 9-facet closure. Slots 28-36 mirror
+        // DiamondFacetNames.cutFacetNames()'s remaining entries.
+        cuts[28] = IDiamondCut.FacetCut({
+            facetAddress: address(diamondLoupeFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getDiamondLoupeFacetSelectors()
+        });
+        cuts[29] = IDiamondCut.FacetCut({
+            facetAddress: address(ownershipFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOwnershipFacetSelectors()
+        });
+        cuts[30] = IDiamondCut.FacetCut({
+            facetAddress: address(oracleAdminFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOracleAdminFacetSelectors()
+        });
+        cuts[31] = IDiamondCut.FacetCut({
+            facetAddress: address(legalFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getLegalFacetSelectors()
+        });
+        cuts[32] = IDiamondCut.FacetCut({
+            facetAddress: address(vpfiDiscountFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getVPFIDiscountFacetSelectors()
+        });
+        cuts[33] = IDiamondCut.FacetCut({
+            facetAddress: address(stakingRewardsFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getStakingRewardsFacetSelectors()
+        });
+        cuts[34] = IDiamondCut.FacetCut({
+            facetAddress: address(interactionRewardsFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getInteractionRewardsFacetSelectors()
+        });
+        cuts[35] = IDiamondCut.FacetCut({
+            facetAddress: address(rewardAggregatorFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRewardAggregatorFacetSelectors()
+        });
+        cuts[36] = IDiamondCut.FacetCut({
+            facetAddress: address(rewardReporterFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRewardReporterFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

@@ -29,30 +29,10 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 ///         so the setters are reachable through the diamond proxy.
 contract OracleAdminFacetTest is SetupTest {
     function setUp() public {
+        // #229 — OracleAdminFacet now cut by `SetupTest.setupHelper()`
+        // (all 34 selectors, mirroring DeployDiamond). The prior local
+        // 11-selector subset cut would double-cut and revert. Dropped.
         setupHelper();
-
-        OracleAdminFacet adminFacet = new OracleAdminFacet();
-        bytes4[] memory selectors = new bytes4[](11);
-        selectors[0] = OracleAdminFacet.setChainlinkRegistry.selector;
-        selectors[1] = OracleAdminFacet.setUsdChainlinkDenominator.selector;
-        selectors[2] = OracleAdminFacet.setEthChainlinkDenominator.selector;
-        selectors[3] = OracleAdminFacet.setWethContract.selector;
-        selectors[4] = OracleAdminFacet.setEthUsdFeed.selector;
-        selectors[5] = OracleAdminFacet.setUniswapV3Factory.selector;
-        selectors[6] = OracleAdminFacet.setStableTokenFeed.selector;
-        selectors[7] = OracleAdminFacet.setFeedOverride.selector;
-        selectors[8] = OracleAdminFacet.getFeedOverride.selector;
-        // Added for the post-audit Gap #3 length-cap tests.
-        selectors[9] = OracleAdminFacet.setTierReferenceAssets.selector;
-        selectors[10] = OracleAdminFacet.getTierReferenceAssets.selector;
-
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
-        cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(adminFacet),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: selectors
-        });
-        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
     }
 
     // ─── Non-owner guard coverage ─────────────────────────────────────────────

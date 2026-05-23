@@ -26,8 +26,9 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 ///           - dormant-period freeze (no-stakers-means-no-RPT-growth)
 contract StakingRewardsCoverageTest is SetupTest, IVaipakamErrors {
     VPFIToken internal vpfi;
-    VPFIDiscountFacet internal discountFacet;
-    StakingRewardsFacet internal stakingFacet;
+    // #229: VPFIDiscount + StakingRewards facets now cut by
+    // `SetupTest.setupHelper()`; prior local declarations + local cut
+    // block dropped.
 
     uint256 internal constant DIAMOND_SEED = 100_000_000 ether;
 
@@ -52,21 +53,9 @@ contract StakingRewardsCoverageTest is SetupTest, IVaipakamErrors {
         if (DIAMOND_SEED > have) vpfi.mint(address(this), DIAMOND_SEED - have);
         vpfi.transfer(address(diamond), DIAMOND_SEED);
 
-        discountFacet = new VPFIDiscountFacet();
-        stakingFacet = new StakingRewardsFacet();
-
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](2);
-        cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(discountFacet),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getVPFIDiscountFacetSelectors()
-        });
-        cuts[1] = IDiamondCut.FacetCut({
-            facetAddress: address(stakingFacet),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getStakingRewardsFacetSelectors()
-        });
-        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        // #229 — VPFIDiscount + StakingRewards facets are now cut by
+        // setupHelper(); the prior 2-entry local cut block here would
+        // double-cut both and revert.
 
         alice = makeAddr("alice");
         bob = makeAddr("bob");
