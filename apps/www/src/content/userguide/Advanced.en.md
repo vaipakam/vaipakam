@@ -53,7 +53,7 @@ Live VPFI accounting for the connected wallet on the active chain:
   balances).
 - Remaining mintable cap.
 
-Vaipakam ships VPFI cross-chain over LayerZero V2. **Base is the
+Vaipakam ships VPFI cross-chain over Chainlink CCIP. **Base is the
 canonical chain** — the canonical adapter there runs the
 lock-on-send / release-on-receive semantics. Every other supported
 chain runs a mirror that mints when an inbound bridge packet
@@ -455,7 +455,7 @@ Two paths:
 - **Canonical (Base)** — direct call to the canonical buy flow
   on the protocol. Mints VPFI directly to your wallet on Base.
 - **Off-canonical** — the local-chain buy adapter sends a
-  LayerZero packet to the canonical receiver on Base, which
+  Chainlink CCIP packet to the canonical receiver on Base, which
   performs the buy on Base and bridges the result back via
   the cross-chain token standard. End-to-end latency is ≈ 1
   minute on L2-to-L2 pairs. The VPFI lands in your wallet on

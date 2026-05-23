@@ -307,7 +307,7 @@ Trois voies :
 - **L'acheter** — à un taux fixe (`1 VPFI = 0,001 ETH`) sur la page
   **Acheter VPFI**. Le programme à taux fixe est plafonné par
   portefeuille par chaîne.
-- **Le transférer par bridge** — VPFI est un token LayerZero OFT V2,
+- **Le transférer par bridge** — VPFI est un token Chainlink CCIP CCT,
   donc il circule entre les chaînes prises en charge via le bridge
   officiel.
 

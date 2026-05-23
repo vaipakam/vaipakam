@@ -4,6 +4,34 @@ Step-by-step procedure for a fresh deployment of the Vaipakam Diamond on a targe
 
 Audience: release engineer + signing multisig.
 
+> **T-068 status banner (added 2026-05-23).** This runbook predates
+> T-068's migration of the cross-chain layer from LayerZero to
+> Chainlink CCIP (PR #46, merged 2026-05-18). The Diamond-side
+> deployment, ABI sync, JSON wiring, multisig handover, and
+> per-phase orchestration logic in §1-§8 are all still current.
+>
+> The **cross-chain sections** below (§9 LayerZero security watcher;
+> any §3-§5 step that references `ConfigureLZConfig.s.sol`,
+> `DeployVPFIMirror.s.sol`, `DeployVPFIBuyAdapter.s.sol`,
+> `DeployRewardOAppCreate2.s.sol`, `WireVPFIPeers.s.sol`, `lzEid`,
+> `lzEndpoint`, or any DVN env var) describe the **pre-T-068
+> LayerZero architecture** and are deprecated. The current cross-
+> chain deploy + wiring is two scripts:
+>
+> 1. **`DeployCrosschain.s.sol`** — per-chain, deploys `CcipMessenger`,
+>    `VaipakamRewardMessenger`, `VpfiPoolRateGovernor`, `VpfiBuyAdapter`
+>    (mirror) / `VpfiBuyReceiver` (Base), `VPFIMirrorToken` (mirrors), and
+>    the stock CCIP `LockReleaseTokenPool` / `BurnMintTokenPool`.
+> 2. **`ConfigureCcip.s.sol`** — channel peers, lane rate limits,
+>    `TokenAdminRegistry` registration, guardian wiring. Idempotent.
+>
+> See [`docs/adr/0004-ccip-over-layerzero.md`](../adr/0004-ccip-over-layerzero.md)
+> for the migration rationale and
+> [`contracts/RUNBOOK.md`](../../contracts/RUNBOOK.md) for the CCIP
+> deploy sequence. The LayerZero-era subsections below stay in place
+> as a historical reference; a structured rewrite of this runbook to
+> CCIP-only is tracked under a follow-up card.
+
 ---
 
 ## TL;DR — pick the right script

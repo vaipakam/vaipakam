@@ -93,7 +93,7 @@ User flows: `createOffer`, `acceptOffer`, `initiateLoan`, `repayLoan`, `repayPar
 - `VaultFactoryFacet.upgradeVaultImplementation / setMandatoryVaultUpgrade`
 - `AdminFacet.pause / unpause / paused`
 - Every pure/view function
-- LayerZero message ingress to `RewardReporterFacet.onRewardBroadcastReceived` and `RewardAggregatorFacet.onChainReportReceived` — so in-flight messages don't fail-and-retry forever (they still have their own auth gates).
+- CCIP message ingress to `RewardReporterFacet.onRewardBroadcastReceived` and `RewardAggregatorFacet.onChainReportReceived` (routed CCIP-router → `CcipMessenger._ccipReceive` → `VaipakamRewardMessenger.onCrossChainMessage` → the diamond) — so in-flight messages don't fail-and-retry forever (they still have their own auth gates + the `GuardianPausable` per-contract pause path).
 
 This is audited and enforced by `PauseGatingTest` — any change to the gated set must update that test.
 
@@ -188,12 +188,25 @@ off-chain notification rails, never on-chain protocol authority.
 | `0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b` (public address) | The Push channel-owner wallet's public side. Surfaced on the frontend via `VITE_PUSH_CHANNEL_ADDRESS` and rendered on `/app/alerts` as a "Subscribe on Push →" deep link. | Public — committed to `frontend/.env.example`, displayed to every user. | Public info; no compromise model. Changing it requires creating a new Push channel + 50-PUSH stake + frontend redeploy. |
 | `RPC_*` (one per chain) | Dedicated RPC URLs — Alchemy / QuickNode / Infura. | `wrangler secret put RPC_BASE` etc. | Quota theft (attacker exhausts our RPC budget). Limited blast radius. Rotate by re-issuing the upstream key + re-setting the secret. |
 
-### `ops/lz-watcher` (internal-only — LayerZero security alerts)
+### `ops/lz-watcher` (internal-only — LEGACY LayerZero security alerts; deferred for decommission post-T-068)
 
 This Worker is internal ops only. Its alerts go to a private
 Telegram channel. No public surface, no autonomous keeper, no
 user-facing notifications. See `IncidentRunbook.md` §5 for the
 per-alert response SOPs.
+
+> **T-068 status:** The cross-chain layer migrated from LayerZero to
+> Chainlink CCIP in PR #46 (2026-05-18). The three checks this
+> Worker runs (DVN-count drift, OFT mint/burn imbalance, OApp event
+> flow) describe the pre-T-068 surface and are deferred for
+> decommission. The post-T-068 monitoring surface lives in
+> `contracts/RUNBOOK.md` §9 (RMN curse-event drift, CCT mint/burn
+> imbalance on `LockReleaseTokenPool` vs sum of mirror
+> `totalSupply()`, lane rate-limit saturation, pause-lever health,
+> CCIP-fee funding). Keys here stay in place only as long as the
+> Worker remains deployed; once it's torn down (operator decision —
+> tracked in the follow-up CCIP-watcher card), the secrets below
+> can be revoked.
 
 | Key | Purpose | Storage | Compromise blast radius |
 |---|---|---|---|
@@ -222,8 +235,14 @@ independent encrypted copies. This means:
   both. So account-level access controls (2FA, IP allowlisting,
   member audit) are the real protection. Audit annually.
 
-Per the LayerZero hardening plan: a Cloudflare account
-compromise drops both Workers, which is one reason our DVN
-configuration uses 3 required + 2 optional with a 1-of-2
-optional threshold — no single off-chain surface compromise
-should be sufficient to break a Vaipakam cross-chain message.
+Per the **post-T-068** cross-chain security model: a Cloudflare
+account compromise drops both Workers, but the cross-chain
+transport itself runs on Chainlink CCIP — the committing DON +
+executing DON + the independent Risk Management Network re-verify
+every message regardless of any off-chain monitoring state. No
+single off-chain surface compromise (Cloudflare, Telegram bot,
+RPC vendor) can break a Vaipakam cross-chain message; the
+defense-in-depth that operators DO own is the per-lane rate-limit
+governor (`VpfiPoolRateGovernor`) + the `GuardianPausable` pause
+lever on every cross-chain contract with a runtime send/receive
+path. See ADR-0004 for the full security model.

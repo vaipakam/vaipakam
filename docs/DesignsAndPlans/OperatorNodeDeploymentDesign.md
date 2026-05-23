@@ -3,16 +3,27 @@
 **Status:** Partially active. Captures the deployment plan for the
 `vaipakam-keeper-bot` and adjacent self-hosted operator services. The
 `rewardCloser` daemon (Phase A) and the local Postgres mirror indexer
-(Phase B) are pre-mainnet ops needs; the custom LayerZero DVN
-(Phase C/D) and observability layer (Phase E) remain deferred. The
-2026-05-07 platform-decentralisation pivot (see
+(Phase B) are pre-mainnet ops needs. **Phases C/D ("custom LayerZero
+DVN") are OBSOLETE post-T-068 (PR #46, merged 2026-05-18)** — the
+protocol migrated the cross-chain layer from LayerZero to Chainlink
+CCIP, which has no operator-configurable verifier surface (CCIP's
+RMN is operated by Chainlink with an independent codebase + operator
+set). The §3 "Self-hosted LayerZero DVN" subsection below is kept as
+historical context; the equivalent defense-in-depth under CCIP is the
+per-lane rate limit governor (`VpfiPoolRateGovernor` —
+bounds-checked, ET-008) plus the `GuardianPausable` pause lever, both
+already wired into the deploy + config scripts. The observability
+layer (Phase E) remains deferred.
+
+The 2026-05-07 platform-decentralisation pivot (see
 `DecentralizedPlatformArchitecture.md`) brings additional
 responsibilities for this node — captured in the Phase 0.5 addendum
 section below — that move the local-indexer Postgres + a new HTTP
 API + a self-hosted WebSocket twin onto the critical path for the
 "no third-party dependency" end-state.
 
-**Last updated:** 2026-05-07.
+**Last updated:** 2026-05-23 (T-068 deprecation banner on the
+LayerZero DVN phases).
 
 ## Context
 

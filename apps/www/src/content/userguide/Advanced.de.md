@@ -59,7 +59,7 @@ Chain:
   Protokoll gehaltenen Bestände).
 - Verbleibender mintbarer Cap.
 
-Vaipakam transportiert VPFI chainübergreifend über LayerZero V2.
+Vaipakam transportiert VPFI chainübergreifend über Chainlink CCIP.
 **Base ist die kanonische Chain** — der kanonische Adapter dort
 setzt die Semantik Lock-on-Send / Release-on-Receive um. Jede
 andere unterstützte Chain betreibt einen Mirror, der bei
@@ -485,7 +485,7 @@ Zwei Pfade:
   Buy-Flows am Protokoll. Mintet VPFI direkt in dein Wallet auf
   Base.
 - **Off-canonical** — der Buy-Adapter auf der lokalen Chain
-  schickt ein LayerZero-Paket an den kanonischen Receiver auf
+  schickt ein Chainlink CCIP-Paket an den kanonischen Receiver auf
   Base, der den Kauf auf Base ausführt und das Ergebnis über den
   Cross-Chain-Token-Standard zurückbridget. End-to-End-Latenz
   ≈ 1 Min auf L2-zu-L2-Paaren. Das VPFI landet im Wallet auf der

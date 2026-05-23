@@ -413,7 +413,7 @@ zk-rollup chains and Solana are out of scope.
 Full detail in
 [`docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md`](docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md).
 
-## VPFIBuyAdapter — payment-token mode by chain
+## VpfiBuyAdapter — payment-token mode by chain
 
 The cross-chain VPFI buy adapter pulls funds from the user on the
 source chain and forwards a BUY_REQUEST via Chainlink CCIP (post-
@@ -442,20 +442,27 @@ makes the payment-token mode a load-bearing per-chain config:
   testnet rate is symbolic, so native-gas mode is acceptable for
   dev-loop convenience. Mainnet equivalents must use WETH-pull.
 
-**Deploy-time enforcement (two layers)**:
+**Deploy-time enforcement**:
 
-1. `DeployVPFIBuyAdapter.s.sol` pre-flight reverts if
-   `_chainRequiresWethPaymentToken(chainId) && paymentToken_ == address(0)`.
-   Catches "operator chose the wrong mode for this chain" — the
-   error message names the env var the operator should set.
-2. `VPFIBuyAdapter.initialize` (and `setPaymentToken` rotation)
-   runs `_assertPaymentTokenSane(token)` before any state writes:
-   - Non-zero `token` must have bytecode (`token.code.length > 0`)
-     — catches an EOA address pasted into the env var.
-   - `IERC20Metadata(token).decimals()` must succeed AND return
-     exactly 18 — catches the most common honest-mistake misconfig
-     (USDC's 6-dec address pasted where a bridged-WETH belongs)
-     and the non-ERC20-contract case (`decimals()` reverts).
+`VpfiBuyAdapter.initialize` (and `setPaymentToken` rotation) runs
+`_assertPaymentTokenSane(token)` before any state writes:
+  - Non-zero `token` must have bytecode (`token.code.length > 0`)
+    — catches an EOA address pasted into the env var.
+  - `IERC20Metadata(token).decimals()` must succeed AND return
+    exactly 18 — catches the most common honest-mistake misconfig
+    (USDC's 6-dec address pasted where a bridged-WETH belongs)
+    and the non-ERC20-contract case (`decimals()` reverts).
+
+`DeployCrosschain.s.sol` itself reads `VPFI_BUY_PAYMENT_TOKEN` from
+env (default `address(0)` = native gas) and forwards it to
+`VpfiBuyAdapter.initialize` — it does **NOT** currently pre-flight
+reject native-gas mode on the strict-WETH-pull chain set. The
+chain-mode choice is therefore an **operator responsibility**:
+operators must set `BNB_VPFI_BUY_PAYMENT_TOKEN` / `POLYGON_VPFI_BUY_PAYMENT_TOKEN`
+to the chain's canonical bridged WETH9 on BNB Chain mainnet and
+Polygon PoS mainnet, otherwise every buy on those chains misprices.
+Adding a deploy-script pre-flight that rejects the wrong mode is a
+small follow-up — tracked under the pre-audit-hardening card.
 
 **What's NOT validated on-chain**: there's no on-chain registry that
 says "this is the canonical bridged WETH9 on chain X". Confirming the
@@ -468,17 +475,24 @@ strict-WETH-pull chains:
 
 - BNB Chain mainnet (56): canonical bridged WETH on BNB —
   `0x2170Ed0880ac9A755fd29B2688956BD959F933F8`. Confirm against
-  bscscan + the LayerZero bridged-asset registry before pasting
-  into `BNB_VPFI_BUY_PAYMENT_TOKEN`.
+  bscscan + the chain's canonical bridged-asset registry before
+  pasting into `BNB_VPFI_BUY_PAYMENT_TOKEN`.
 - Polygon PoS mainnet (137): canonical WETH9 on Polygon —
   `0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619`. Confirm against
   polygonscan + the Polygon bridge contracts list before pasting
   into `POLYGON_VPFI_BUY_PAYMENT_TOKEN`.
 
-Test coverage: `contracts/test/token/VPFIBuyAdapterPaymentTokenTest.t.sol`
-(10 cases — every revert path on init AND on `setPaymentToken`
-rotation, plus the two acceptance paths). Add to that file when
-extending the validation surface.
+Test coverage: `contracts/test/VpfiBuyFlowTest.t.sol` covers the
+end-to-end buy flow (happy path, Diamond-rejects refund, forged-
+delivery park, replayed-delivery park, recover-stuck-VPFI,
+reclaim-timed-out-buy, per-request rate limit, pause-freezes-buy,
+fee-surplus refund, two-step receiver retry) and the
+`SetPaymentToken_RevertWhen_PendingBuysExist` pending-buy rotation
+guard. The init-time `_assertPaymentTokenSane` revert paths
+(`PaymentTokenNotContract`, decimals-mismatch, decimals-call-
+reverts) and the `setPaymentToken` happy-path rotation are NOT yet
+covered — adding those is tracked as a follow-up. When extending the
+validation surface, add the new revert path to that test file.
 
 ## VPFI Fee Discounts — Time-Weighted + Claim-Based (Phase 5)
 

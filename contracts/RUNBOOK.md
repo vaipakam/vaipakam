@@ -58,34 +58,62 @@ OPTIMISM_RPC_URL=…
 POLYGON_ZKEVM_RPC_URL=…
 BNB_RPC_URL=…
 
-# Protocol owner — timelock/multisig address per chain
-# (same address across EVM chains is fine; deterministic deploy via CREATE2
-# is tracked in DeployRewardOAppCreate2.s.sol)
-VPFI_OWNER=0x…       # VPFI token / OFT adapter / mirrors / buy-adapter / receiver
-REWARD_OWNER=0x…     # VaipakamRewardOApp
+# Deployer + admin signing keys — both are EOAs during a fresh
+# rehearsal; on mainnet the admin equivalent is a multisig batch (see
+# the cutover runbook). The deployer key holds the deploy + ownership
+# handover; the admin key runs ConfigureCcip after every chain in the
+# deployment has been deployed.
+DEPLOYER_PRIVATE_KEY=0x…  # read by DeployCrosschain.s.sol
+ADMIN_PRIVATE_KEY=0x…     # read by ConfigureCcip.s.sol
+ADMIN_ADDRESS=0x…         # the admin EOA's address — read by
+                          # DeployCrosschain.s.sol as the post-deploy
+                          # owner-transfer target.
 
-# Treasury (Diamond-managed; deployer-controlled multi-sig)
-TREASURY=0x…
+# Treasury (Diamond-managed; deployer-controlled multi-sig on mainnet)
+TREASURY_ADDRESS=0x…      # read by DeployCrosschain.s.sol on MIRROR
+                          # chains — wired into VpfiBuyAdapter as the
+                          # treasury address that receives refunded /
+                          # settled buy-flow funds. Canonical (Base)
+                          # branch does not read this env var; the
+                          # treasury for the buy-flow settlement on
+                          # canonical is configured via the Diamond's
+                          # own AdminFacet setter after deploy.
 
-# LayerZero endpoint addresses per chain
-# (from https://docs.layerzero.network/v2/deployments/deployed-contracts)
-LZ_ENDPOINT=0x1a44076050125825900e736c501f859c50fE728c  # mainnet canonical
+# Chainlink CCIP wiring (post-T-068, 2026-05-18)
+# Per-chain Router + RMN proxy + TokenAdminRegistry addresses from
+# https://docs.chain.link/ccip/directory
+CCIP_ROUTER=0x…                         # this chain's CCIP Router
+CCIP_RMN_PROXY=0x…                      # this chain's RMN proxy
+                                        # (Risk Management Network endpoint)
+CCIP_TOKEN_ADMIN_REGISTRY=0x…           # this chain's TokenAdminRegistry
+CCIP_REGISTRY_MODULE_OWNER_CUSTOM=0x…   # CCIP owner-based CCT registrar
 
-# ULN library addresses per chain (same page as above)
-SEND_LIB=0x…
-RECV_LIB=0x…
+# Per-chain lane set: comma-separated EVM chain ids of every REMOTE
+# chain to wire a CCIP TokenPool lane to (mirrors connect to Base;
+# Base connects to every mirror).
+CCIP_LANE_CHAIN_IDS=11155111,421614,…
 
-# DVN operator set (3 required + 2 optional, threshold 1)
-DVN_REQUIRED_1=0x…   # LayerZero Labs
-DVN_REQUIRED_2=0x…   # Google Cloud
-DVN_REQUIRED_3=0x…   # Polyhedra OR Nethermind
-DVN_OPTIONAL_1=0x…   # BWare Labs
-DVN_OPTIONAL_2=0x…   # Stargate OR Horizen Labs
+# Mirror chains also need the canonical Base chain id (the hub).
+BASE_CHAIN_ID=8453  # mainnet; 84532 on Base Sepolia
 
-# Optional overrides
-CONFIRMATIONS=        # only if overriding the per-chain default in
-                      # ConfigureLZConfig.s.sol
-CHAIN_ID=             # override block.chainid (rarely needed)
+# Optional overrides (defaults set inside the scripts).
+CCIP_GUARDIAN=             # incident-response guardian; default unset → skipped
+CCIP_RATE_CAPACITY=        # per-lane token-bucket capacity; default 50,000 VPFI
+CCIP_RATE_REFILL=          # per-lane refill rate, VPFI/s; default ~5.8 VPFI/s
+CCIP_DEST_GAS_LIMIT=       # CCIP message dest-gas limit; default 400,000
+VPFI_BUY_PAYMENT_TOKEN=    # mirror-chain ONLY buy-adapter payment token —
+                           # canonical Base ignores this env var (Base
+                           # deploys VpfiBuyReceiver, not the adapter, so
+                           # there's no adapter-side payment-token slot
+                           # to configure). On the mirror branch:
+                           # 0x0 ⇒ native gas (Ethereum / Arbitrum /
+                           # Optimism / Polygon zkEVM + their testnets);
+                           # bridged WETH9 address ⇒ WETH-pull (BNB Chain
+                           # mainnet, Polygon PoS mainnet). See CLAUDE.md
+                           # § "VpfiBuyAdapter — payment-token mode by chain."
+VPFI_BUY_REFUND_TIMEOUT=   # seconds before stuck buys can be refunded;
+                           # default 900 (15 min)
+CHAIN_ID=                  # override block.chainid (rarely needed)
 ```
 
 ---
@@ -94,61 +122,47 @@ CHAIN_ID=             # override block.chainid (rarely needed)
 
 All forge scripts live in `contracts/script/`. Run per-chain, in this
 order. **Never parallelise across chains without a consistency
-plan** — the OFT peer wiring in §5 depends on addresses from §3/§4.
+plan** — the CCIP lane + channel-peer wiring in §4 depends on the
+addresses written by §2.1's deployment artifacts on every chain.
 
-### 2.1 Canonical chain (Base) only: `DeployVPFICanonical.s.sol`
-
-```bash
-forge script script/DeployVPFICanonical.s.sol \
-  --rpc-url $BASE_RPC_URL --broadcast --verify
-```
-
-Deploys `VPFIToken` (ERC20Capped 230M) + `VPFIOFTAdapter` (OFT V2 lock/release).
-Owner for both is `VPFI_OWNER` from env.
-
-### 2.2 Every other chain: `DeployVPFIMirror.s.sol`
+### 2.1 Cross-chain stack (every chain): `DeployCrosschain.s.sol`
 
 ```bash
-# per chain, e.g. Arbitrum
-forge script script/DeployVPFIMirror.s.sol \
-  --rpc-url $ARBITRUM_RPC_URL --broadcast --verify
-```
-
-Deploys `VPFIMirror` (pure OFT V2). No mint surface — supply is driven by
-bridged lock-ins on canonical.
-
-### 2.3 Cross-chain buy adapters (non-Base chains)
-
-```bash
-forge script script/DeployVPFIBuyAdapter.s.sol \
+forge script script/DeployCrosschain.s.sol \
   --rpc-url $<CHAIN>_RPC_URL --broadcast --verify
 ```
 
-Deploys `VPFIBuyAdapter` on every non-Base chain. Pairs with the
-`VPFIBuyReceiver` deployed next.
+Per-chain, branches on `block.chainid ∈ {8453, 84532}` = canonical:
 
-### 2.4 Base: `DeployVPFIBuyReceiver.s.sol`
+- **Canonical (Base)**: reads the already-deployed `VPFIToken` address
+  (deployed by the prior Diamond / VPFI bootstrap step — written to
+  `deployments/<chain>/addresses.json` via `Deployments.readVPFIToken()`),
+  then deploys the stock CCIP `LockReleaseTokenPool` over it +
+  `VpfiBuyReceiver` + `CcipMessenger` + `VaipakamRewardMessenger` +
+  `VpfiPoolRateGovernor`. `VPFIToken` itself is NOT redeployed here.
+  Prerequisite: `VPFIToken` must already be live on this chain with
+  its address recorded in the per-chain deployments artifact, or
+  `Deployments.readVPFIToken()` will return `address(0)` and the
+  script will revert at the `LockReleaseTokenPool` constructor.
+- **Mirrors**: deploys `VPFIMirrorToken` (proxy) + stock CCIP
+  `BurnMintTokenPool` + `VpfiBuyAdapter` + `CcipMessenger` +
+  `VaipakamRewardMessenger` + `VpfiPoolRateGovernor`. Mirror token
+  supply is driven by the BurnMintPool; no independent minter
+  surface.
 
-```bash
-forge script script/DeployVPFIBuyReceiver.s.sol \
-  --rpc-url $BASE_RPC_URL --broadcast --verify
-```
+Owner / pending-owner of every cross-chain proxy = `ADMIN_ADDRESS`
+(the admin EOA on testnet rehearsal; multisig → timelock at mainnet
+per the cutover runbook). The `DeployCrosschain.s.sol` script
+threads this single env var into every `initialize(...)` call on
+the cross-chain stack — there is no separate `VPFI_OWNER` or
+`REWARD_OWNER` knob post-T-068.
 
-### 2.5 Diamond deploy (every chain)
+### 2.2 Diamond deploy (every chain)
 
 Follow the existing Diamond deploy procedure (see
-[`contracts/README.md#repository-layout`](README.md)). Set `vpfiToken` to
-the mirror (or canonical token on Base) post-deploy via
+[`contracts/README.md#repository-layout`](README.md)). Set `vpfiToken`
+to the mirror (or canonical token on Base) post-deploy via
 `AdminFacet.setVPFIToken`.
-
-### 2.6 Reward OApp (every chain, CREATE2-deterministic)
-
-```bash
-# Same salt + impl on every chain ⇒ same address. Deploy impl + proxy
-# in one script.
-forge script script/DeployRewardOAppCreate2.s.sol \
-  --rpc-url $<CHAIN>_RPC_URL --broadcast --verify
-```
 
 ---
 
@@ -156,78 +170,82 @@ forge script script/DeployRewardOAppCreate2.s.sol \
 
 After the above, for every chain, confirm:
 
-- All proxies' owner is `VPFI_OWNER` / `REWARD_OWNER` (the timelock).
+- All cross-chain proxies' owner is `ADMIN_ADDRESS` (multisig →
+  timelock at mainnet).
 - Block explorers have verified source for every contract.
 - Each contract's runtime bytecode matches the compiled artifact. Use
   `cast code` and diff against local `out/`.
 
 ---
 
-## 4. Wire peers — `WireVPFIPeers.s.sol`
+## 4. Wire CCIP — `ConfigureCcip.s.sol`
 
-For every ordered (srcChain, dstChain) pair of **each** OApp mesh:
+After `DeployCrosschain.s.sol` has run on every chain in the deployment,
+run `ConfigureCcip.s.sol` on each chain (idempotent — re-runs are safe).
+It wires four things in one pass:
 
-- VPFI OFT mesh: adapter ↔ every mirror, plus mirror ↔ every other mirror
-  *if* mirror-to-mirror user bridging is desired.
-- VPFI Buy mesh: every BuyAdapter ↔ BuyReceiver on Base.
-- Reward OApp mesh: every mirror ↔ Base; plus broadcast destinations
-  (Base → every mirror).
+- **`CcipMessenger`**: chainId ↔ CCIP selector, the remote-messenger
+  allowlist, the `vpfi-buy` + `vpfi-reward` channels (local handler +
+  remote peers), the guardian.
+- **VPFI CCIP `TokenPool`**: accepts the pending ownership handover
+  from the deployer, registers `VpfiPoolRateGovernor` as
+  `rateLimitAdmin`, adds a lane per remote chain
+  (`applyChainUpdates`), then sets each lane's rate limits through
+  the bounds-checked governor.
+- **Registers** the VPFI token + its pool in the CCIP
+  `TokenAdminRegistry` (CCT enablement).
+- **Canonical-only**: sets `VaipakamRewardMessenger.setBroadcastDestinations`
+  (the mirror chain-id list the daily reward broadcast fans out to).
+- **Mirror-only**: `VPFIMirrorToken.setTokenPool(burnMintPool)`,
+  pointing the mirror VPFI at its Burn/Mint pool.
 
 ```bash
-LOCAL_OAPP=0x<local>  REMOTE_EID=<peer-eid>  REMOTE_PEER=0x<remote> \
-  forge script script/WireVPFIPeers.s.sol \
-    --rpc-url $<LOCAL>_RPC_URL --broadcast
+CCIP_LANE_CHAIN_IDS=11155111,421614,… \
+  forge script script/ConfigureCcip.s.sol \
+    --rpc-url $<LOCAL>_RPC_URL --broadcast -vvv
 ```
 
-Symmetric — run BOTH directions per pair. Missing one leg = messages land
-but responses are black-holed.
+Channel topology is hub-and-spoke (the `vpfi-buy` and `vpfi-reward`
+channels always pair a mirror with canonical Base, never
+mirror ↔ mirror). The TokenPool **lane** topology, by contrast, is
+whatever `CCIP_LANE_CHAIN_IDS` lists — pass Base-only on each mirror
+for a hub-spoke token graph, or the full chain set for a full mesh
+(direct mirror ↔ mirror VPFI transfers).
 
 ---
 
-## 5. Harden LayerZero config — `ConfigureLZConfig.s.sol`
+## 5. Security: Risk Management Network + per-lane rate limits
 
-**This is the DVN-hardening gate. Do not skip, do not shortcut.**
+**T-068 (2026-05-18) removed the operator-configurable verifier
+hardening step.** Under Chainlink CCIP the security model is
+**operated by Chainlink**: a committing DON + an executing DON +
+an **independent Risk Management Network** (RMN, a separate codebase
+and operator set) that re-verifies every message — uniform for
+every integrator. There is no DVN fleet to assemble per-integrator,
+and no "1-required / 0-optional default" footgun reachable by
+configuration mistake.
 
-For every (OApp × chain) pair:
+The operator-visible defence-in-depth that DOES need to be wired
+runs through §4's `ConfigureCcip.s.sol`:
 
-```bash
-OAPP=0x<oapp>  SEND_LIB=$SEND_LIB  RECV_LIB=$RECV_LIB \
-REMOTE_EIDS=30110,30111,30184,30101,30267,30102 \
-DVN_REQUIRED_1=…  DVN_REQUIRED_2=…  DVN_REQUIRED_3=… \
-DVN_OPTIONAL_1=…  DVN_OPTIONAL_2=… \
-  forge script script/ConfigureLZConfig.s.sol \
-    --rpc-url $<CHAIN>_RPC_URL --broadcast
-```
+- **Per-lane rate limits** on every VPFI TokenPool via
+  `VpfiPoolRateGovernor` (capacity 50,000 VPFI, refill ≈5.8 VPFI/s
+  by default; ET-008-bounded — the governor refuses to disable a
+  lane's limit and range-bounds every value).
+- **CCT admin** (`TokenAdminRegistry`) + every cross-chain contract
+  owner = the admin multisig → governance timelock at mainnet.
+- **GuardianPausable** on every cross-chain contract with a runtime
+  send / receive path: `CcipMessenger`, `VaipakamRewardMessenger`,
+  `VpfiBuyAdapter`, `VpfiBuyReceiver`, and the mirror-chain
+  `VPFIMirrorToken` (see §6 below).
 
-Broadcaster key must be the OApp delegate (i.e. the timelock / multisig
-signer). On a Gnosis Safe setup, run via `forge script --ledger` or batch
-through the Safe transaction builder.
-
-### 5.1 Verify the config readback (CI gate)
-
-```bash
-LZ_CONFIG_VERIFY_DVNS=1 \
-DVN_REQUIRED_1=…  DVN_REQUIRED_2=…  DVN_REQUIRED_3=… \
-DVN_OPTIONAL_1=…  DVN_OPTIONAL_2=… \
-  forge test --match-path test/LZConfig.t.sol -vvv
-```
-
-All 5 tests must pass. `test_dvnsPopulatedForMainnetDeploy` ONLY runs
-under `LZ_CONFIG_VERIFY_DVNS=1` — that's the mainnet gate. If sentinel
-addresses (0x01..0xff) are used, the test fails loudly by design.
-
-### 5.2 Rate-limit the buy adapter
-
-```bash
-cast send 0x<VPFIBuyAdapter> "setRateLimits(uint256,uint256)" \
-  50000000000000000000000  \
-  500000000000000000000000 \
-  --private-key $PRIVATE_KEY
-```
-
-(50k VPFI / request, 500k VPFI / 24h rolling. Tunable by governance post-
-deploy.) **Pre-mainnet gate — the contract ships with `type(uint256).max`
-defaults that are effectively no cap.**
+The 2024 LayerZero-era DVN hardening script (`ConfigureLZConfig.s.sol`)
+and the `LZConfig.t.sol` assertion suite are deleted — they have no
+CCIP equivalent because there is no operator-configurable verifier
+surface to harden. The migration ADR is
+[`docs/adr/0004-ccip-over-layerzero.md`](../docs/adr/0004-ccip-over-layerzero.md);
+the design doc is
+[`docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md`](../docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md).
 
 ---
 
@@ -274,7 +292,7 @@ Per chain, via timelock-originated txs:
   `AssetRegistry`.
 - `ProfileFacet.setKYCThresholds(...)` — USD-denominated tier cutoffs.
 - `AdminFacet.setBridgedBuyReceiver(receiver)` on Base only (links the
-  Diamond to the `VPFIBuyReceiver` for `processBridgedBuy` access control).
+  Diamond to the `VpfiBuyReceiver` for `processBridgedBuy` access control).
 - `VPFIDiscountFacet.setVPFIBuyRate(...)` on Base only — fixed rate for the
   early-stage buy program.
 - `VPFIDiscountFacet.setVPFIBuyCaps(globalCap, perWalletCap)` on Base only.
@@ -289,19 +307,24 @@ receipts in `deployments/<network>/initial-config.json` for audit trail.
 
 Off-chain watcher subscribed to:
 
-- **DVN-count drift**: alert if any OApp on any eid has
-  `endpoint.getConfig(oapp, lib, eid, CONFIG_TYPE_ULN)` decoded
-  `requiredDVNCount < 3`. Continuous check every 15 min.
-- **OFT mint/burn imbalance**: sum mirror supplies vs. lock balance in
-  `VPFIOFTAdapter` on Base. Delta > 0.1% = alert.
+- **CCIP RMN curse-event drift**: alert if the Risk Management
+  Network ever curses a chain or lane (the CCIP Router's
+  `isCursed*` views go to true). Continuous check every 15 min.
+- **CCT mint/burn imbalance**: sum mirror supplies (VPFIMirrorToken
+  totalSupply on each mirror) vs. lock balance in the
+  `LockReleaseTokenPool` on Base. Delta > 0.1% = alert.
 - **Large VPFI flow**: any single Transfer of > 10k VPFI on a mirror
-  that doesn't correlate with an adapter-side `_debit` event on Base.
-- **Buy-adapter rate-limit saturation**: daily used / daily cap > 80% =
-  warn, 95% = alert.
+  that doesn't correlate with a Base-side BurnMint/LockRelease event
+  on the matching CCIP message id.
+- **Lane rate-limit saturation**: per-lane `currentRate /
+  rateCapacity` > 80% = warn, 95% = alert (the
+  `VpfiPoolRateGovernor` exposes the lane view).
 - **Pause lever health**: synthetic monthly drill that calls
-  `pause()` on a dev OApp to verify the runbook path works end-to-end.
-- **Executor funding**: LZ executor ETH balance on each chain < 0.05 ETH =
-  page oncall.
+  `pause()` on a dev `CcipMessenger` to verify the runbook path
+  works end-to-end.
+- **CCIP fee funding**: per-chain LINK (or wrapped-native) balance
+  on the chain's outbound CCIP sender < 30-day projected fee
+  burn = page oncall.
 
 Alerts route to a 24/7 oncall rotation. No "alert email that sits in
 someone's spam folder" patterns.
@@ -310,31 +333,41 @@ someone's spam folder" patterns.
 
 ## 10. Incident runbook (in-band)
 
-**Suspected DVN compromise / forged message / unexpected VPFI mint**:
+**Suspected CCIP message-forge / RMN curse / unexpected VPFI mint**:
 
 1. Page oncall. Timelock signers on call immediately.
-2. Call `pause()` on:
-   - `VPFIOFTAdapter` (Base) — freezes lock/release.
-   - Every `VPFIMirror` — freezes mint/burn on each mirror.
-   - `VPFIBuyAdapter` + `VPFIBuyReceiver` — freezes the buy mesh.
-   - `VaipakamRewardOApp` (all chains) — freezes reward aggregation.
+2. Call `pause()` on the affected cross-chain contracts (the
+   `GuardianPausable` lever is reachable to either the guardian
+   or the owner):
+   - `VPFIMirrorToken` on each affected mirror — freezes mirror
+     token transfers + the BurnMintPool path.
+   - `VpfiBuyAdapter` (mirror) + `VpfiBuyReceiver` (Base) —
+     freezes the buy mesh.
+   - `CcipMessenger` (all chains) — freezes the channel-message
+     path (BUY_REQUEST / REWARD_REPORT / REWARD_BROADCAST).
+   - `VaipakamRewardMessenger` (all chains) — freezes reward
+     aggregation. A paused inbound is recorded by CCIP as a
+     failed message and is manually re-executable once unpaused
+     — nothing is lost.
 3. Publish status page update within 15 min of pause.
 4. Investigate. Identify attack vector. Decide:
-   - If isolated to one chain: keep other chains running, unpause after
-     verification.
-   - If DVN-wide: stay paused, coordinate with LZ team + DVN operators.
+   - If isolated to one chain: keep other chains running, unpause
+     after verification.
+   - If RMN-wide: stay paused, coordinate with Chainlink CCIP
+     operators + the protocol's incident commander.
 5. If funds at risk:
-   - Check `totalPendingAmountIn` on `VPFIBuyAdapter` — buyers can call
-     `reclaimTimedOutBuy` after the refund window (default 15 min); the
-     pause doesn't block reclaim.
-   - Adapter's lock balance on Base is ultimately L1-recoverable via a
-     timelock-governed `rescueERC20` call if the peer mesh is fully
-     compromised.
+   - Check pending refunds on `VpfiBuyAdapter` — buyers can call
+     `reclaimTimedOutBuy` after the refund window (default 15 min);
+     the pause doesn't block reclaim.
+   - Pool lock balance on Base (`LockReleaseTokenPool`) is
+     ultimately L1-recoverable via a timelock-governed admin call
+     if the mesh is fully compromised.
 6. Post-mortem within 72h. Public.
 
 Reference: a 46-minute operator pause in the April 2026 cross-chain
-bridge incident prevented ~$200M of follow-up drain. Speed of first
-pause > everything else.
+bridge incident (the Kelp / LayerZero exploit that drove the
+T-068 migration to CCIP) prevented ~$200M of follow-up drain.
+Speed of first pause > everything else.
 
 ---
 
@@ -349,10 +382,21 @@ Tick every box before opening the frontend to public traffic.
 [ ] Owner is timelock on every proxy, every facet.
 [ ] Deployer key destroyed.
 [ ] VPFI minter = Base Diamond.
-[ ] WireVPFIPeers run for every (src, dst) in the mesh.
-[ ] ConfigureLZConfig run for every OApp × eid.
-[ ] LZConfig.t.sol passes with LZ_CONFIG_VERIFY_DVNS=1.
-[ ] setRateLimits called on every VPFIBuyAdapter.
+[ ] DeployCrosschain.s.sol run on every chain in the deployment.
+[ ] ConfigureCcip.s.sol run on every chain (channel peers + lane rate
+    limits + TokenAdminRegistry registration).
+[ ] CCIP_GUARDIAN set on every cross-chain contract with
+    GuardianPausable (CcipMessenger, VaipakamRewardMessenger,
+    VpfiBuyAdapter/VpfiBuyReceiver, VPFIMirrorToken on mirrors).
+[ ] Per-lane rate limits set on every VPFI TokenPool through
+    VpfiPoolRateGovernor (default 50,000 capacity / ~5.8 VPFI/s refill).
+[ ] VpfiBuyAdapter.setRateLimits called on every mirror chain to
+    move the adapter's own per-request + 24h-rolling buy caps off
+    their `type(uint256).max` boot defaults (separate from the
+    TokenPool lane caps — the adapter has its own pre-CCIP-send
+    throttle on `amountIn`). Recommended starting values match the
+    pre-T-068 LayerZero-era defaults: per-request 50,000 VPFI,
+    24h-rolling 500,000 VPFI. Pre-mainnet gate.
 [ ] Initial protocol config (grace period, HF, oracles, KYC, buy rate) set.
 [ ] Monitoring live; test alerts received end-to-end.
 [ ] Incident runbook drilled (pause + unpause on a test OApp).

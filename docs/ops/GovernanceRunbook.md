@@ -99,16 +99,21 @@ forge script script/MigrateOAppGovernance.s.sol \
   --rpc-url $RPC --broadcast
 ```
 
-For every LayerZero OApp deployed on this chain (canonical has
-`VPFIOFTAdapter` + `VPFIBuyReceiver` + `VaipakamRewardOApp`, mirror
-chains have `VPFIMirror` + `VPFIBuyAdapter` + `VaipakamRewardOApp`),
+For every cross-chain contract deployed on this chain (canonical has
+`CcipMessenger` + `VaipakamRewardMessenger` + `VpfiBuyReceiver` + the
+canonical `VPFIToken` and its CCIP `LockReleaseTokenPool`; mirror
+chains have `CcipMessenger` + `VaipakamRewardMessenger` +
+`VpfiBuyAdapter` + `VPFIMirrorToken` + the CCIP `BurnMintTokenPool`),
 the script:
 
-1. Calls `setGuardian(guardian)` while the deployer still owns it.
+1. Calls `setGuardian(guardian)` while the deployer still owns it
+   (every `GuardianPausable` contract — see
+   `docs/adr/0004-ccip-over-layerzero.md` for the coverage map;
+   `VpfiPoolRateGovernor` is the documented exception).
 2. Calls `transferOwnership(timelock)` — an Ownable2Step **propose**.
 
 Addresses are pulled from per-chain env vars (`<CHAIN>_VPFI_TOKEN_ADDRESS`,
-`<CHAIN>_VPFI_OFT_ADAPTER_ADDRESS`, etc.). Missing / zero entries are
+`<CHAIN>_CCIP_MESSENGER_ADDRESS`, etc.). Missing / zero entries are
 silently skipped so the same script runs on canonical and mirror chains.
 
 ### 5. Safe-schedule `acceptOwnership()` on each 2-step contract
@@ -370,8 +375,10 @@ Guardian Safe directly calls `pause()` on the relevant contract:
 
 - `AdminFacet.pause()` on the Diamond — halts every `whenNotPaused`
   Diamond entry point.
-- `VPFIOFTAdapter.pause()` / `VPFIMirror.pause()` / etc. on each LZ
-  contract — halts send and receive legs.
+- `CcipMessenger.pause()` / `VaipakamRewardMessenger.pause()` /
+  `VpfiBuyAdapter.pause()` / `VpfiBuyReceiver.pause()` /
+  `VPFIMirrorToken.pause()` — halts send and receive legs on every
+  cross-chain contract carrying `GuardianPausable`.
 
 No schedule / delay — the call lands inside one block. Pause event
 emitted on-chain; off-chain alerting should trigger a broader

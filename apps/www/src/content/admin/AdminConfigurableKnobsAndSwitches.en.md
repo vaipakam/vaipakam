@@ -314,7 +314,7 @@ the purpose). Default is 4 hours.
 ### Reward OApp / local eid / base eid / canonical reward chain flag
 
 Address + integer + bool fields configuring the cross-chain
-reward reporter. Eid values are LayerZero V2 endpoint ids (40000s
+reward reporter. Eid values are Chainlink CCIP chainSelector ids (40000s
 testnet, 30000s mainnet); no numeric range beyond "a known eid".
 Setter accepts and emits.
 
@@ -691,7 +691,7 @@ only configs. Zero disables that adapter; non-zero enables it.
 Address-only; non-zero enforced; zero disables that
 specific cross-chain lane.
 
-### LayerZero peers
+### Chainlink CCIP peers
 
 (set per-eid, per-OApp). Standard LZ V2 peer
 mesh. Mismatch surfaces as undelivered packets; not a runtime

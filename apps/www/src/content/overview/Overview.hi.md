@@ -289,7 +289,7 @@ Reward pool पहले छह महीनों में सबसे बड
 - **Buy it** — **Buy VPFI** page पर fixed rate
   (`1 VPFI = 0.001 ETH`) पर। Fixed-rate program per wallet per chain
   capped है।
-- **Bridge it** — VPFI एक LayerZero OFT V2 token है, इसलिए official
+- **Bridge it** — VPFI एक Chainlink CCIP CCT token है, इसलिए official
   bridge का इस्तेमाल करके supported chains के बीच move करता है।
 
 ---

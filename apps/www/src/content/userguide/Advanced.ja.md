@@ -56,7 +56,7 @@ active chain 上の connected wallet 向け live VPFI accounting:
   引いた後)。
 - 残りの mint 可能 cap。
 
-Vaipakam は LayerZero V2 上で VPFI を cross-chain に送ります。
+Vaipakam は Chainlink CCIP 上で VPFI を cross-chain に送ります。
 **Base が canonical chain** です — canonical adapter はそこで
 lock-on-send / release-on-receive semantics を実行します。support
 対象の他の chains は mirrors として動き、incoming bridge packets
@@ -456,7 +456,7 @@ liquidations、NFT mints / burns、VPFI buys / stakes / unstakes を
   call します。VPFI は Base 上のあなたの wallet に直接 mint され
   ます。
 - **Off-canonical** — local-chain buy adapter が Base 上の
-  canonical receiver へ LayerZero packet を送ります。receiver は
+  canonical receiver へ Chainlink CCIP packet を送ります。receiver は
   Base で purchase を execute し、cross-chain token standard で
   result を bridge して戻します。L2-to-L2 pairs で end-to-end
   latency は ≈ 1 分です。VPFI は **origin** chain 上のあなたの

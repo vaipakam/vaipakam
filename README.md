@@ -52,15 +52,6 @@ template is the structured channel for findings.
 documented in [`docs/ops/IncidentRunbook.md`](docs/ops/IncidentRunbook.md)
 — **not** a public Issue.
 
-> **Note (2026-05 — known doc drift).** The legacy whitepaper text
-> below still references "LayerZero OFT V2" for the cross-chain layer.
-> T-068 migrated the protocol to **Chainlink CCIP** in April 2026. The
-> canonical whitepaper at
-> [`apps/www/src/content/whitepaper/Whitepaper.en.md`](apps/www/src/content/whitepaper/Whitepaper.en.md)
-> is the current source of truth; the live spec is
-> [`docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md`](docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md)
-> and [`CLAUDE.md`](CLAUDE.md) §"Cross-Chain Security Policy (CCIP)".
-
 ---
 
 ## Abstract
@@ -74,7 +65,7 @@ repayment, claim, refinance, and liquidation state remaining local to a single
 chain. The protocol couples bilateral offer negotiation with per-user isolated
 vaults, tokenized lender / borrower position rights, an oracle stack hardened
 by a Soft 2-of-N secondary quorum, a four-DEX swap-failover liquidation
-pipeline, and a `LayerZero OFT V2` protocol token (`VPFI`) wired for fee
+pipeline, and a `Chainlink CCIP CCT` protocol token (`VPFI`) wired for fee
 discounts, vault-based staking, and locally-claimable interaction rewards
 that share a protocol-wide daily denominator.
 
@@ -916,7 +907,7 @@ profile remains unchanged.
 | Hard Cap        | `230_000_000`                                   |
 | Initial Mint    | `23_000_000` (10% of cap)                       |
 | Canonical Chain | `Base`                                          |
-| Standard        | `LayerZero OFT V2`                              |
+| Standard        | `Chainlink CCIP CCT` (post-T-068, 2026-05-18; `BurnMintTokenPool` on mirrors, `LockReleaseTokenPool` on canonical Base) |
 | Mint Access     | TreasuryFacet via timelock-controlled multi-sig |
 
 The token is `ERC20CappedUpgradeable` (UUPS-upgradeable). The cap is
@@ -1121,11 +1112,11 @@ Topology:
 - mirrors (`Ethereum`, `Polygon zkEVM`, `Arbitrum`, `Optimism`, `BNB Chain`)
   are reporters
 - each mirror's `RewardReporterFacet.closeDay(dayId)` sends
-  `chainInterestUSD` to Base via LayerZero `OApp.send`
+  `chainInterestUSD` to Base via `VaipakamRewardMessenger` over CCIP
 - Base's `RewardAggregatorFacet` finalizes when all expected mirrors
   have reported OR after a 4-hour grace window past `dayId + 1 UTC`
 - Base broadcasts the finalized `dailyGlobalInterestUSD[dayId]` back to
-  every mirror via `OApp.send`
+  every mirror via `VaipakamRewardMessenger.broadcast` over CCIP
 - mirrors store it as `knownGlobalInterest[dayId]`, the local denominator
 
 A claim for `dayId` reverts locally if the global denominator hasn't
@@ -1139,7 +1130,8 @@ cap behavior.
 
 The interaction-reward VPFI pool is held on Base. Per-day per-chain
 payout budgets compute as `(dailyChainInterest × dailyPool) / globalInterest`.
-Treasury bridges that budget to each mirror via the existing OFT path
+Treasury bridges that budget to each mirror via the CCIP CCT path
+(canonical Base `LockReleaseTokenPool` → mirror `BurnMintTokenPool`)
 during finalization. Mirror-side `claimInteractionRewards()` draws from
 the local VPFI reward vault — no synthetic IOUs, no cross-chain claim
 hops.
@@ -1149,74 +1141,118 @@ hops.
 Users have one `Rewards` page per chain that shows pending staking and
 interaction rewards. `Claim Rewards` mints VPFI directly on the
 connected chain. After claim, an optional `Bridge to another chain`
-action surfaces the official LayerZero bridge.
+action surfaces the Chainlink CCIP CCT bridge route (canonical Base ↔
+mirror chains through `LockReleaseTokenPool` / `BurnMintTokenPool`).
 
 ---
 
 ## 13. Cross-Chain Surface
 
-Five LayerZero OApp / OFT contracts live in `contracts/src/token/`:
+T-068 (PR #46, merged 2026-05-18) migrated the cross-chain transport
+from LayerZero to **Chainlink CCIP**. The migration was driven by the
+April 2026 ~$292M Kelp / LayerZero bridge exploit — a configuration
+footgun in LayerZero's "1-required / 0-optional DVN" default
+verifier shape — and is documented in
+[`docs/adr/0004-ccip-over-layerzero.md`](docs/adr/0004-ccip-over-layerzero.md)
+and [`docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md`](docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md).
 
-### 13.1 `VPFIOFTAdapter` (Base)
+The cross-chain code now lives in `contracts/src/crosschain/`:
 
-OFT V2 adapter wrapping `VPFIToken` on the canonical Base chain.
-Bridges OUT lock VPFI on Base + send message → destination mints. IN
-burns on mirror + send → Base unlocks. The global cap is enforced via
-the adapter's lock-set because mirror chains have no hard cap.
+### 13.1 `ICrossChainMessenger` + `CcipMessenger`
 
-### 13.2 `VPFIMirror` (Non-Base)
+`ICrossChainMessenger` is the provider-agnostic port; domain contracts
+depend only on it, never on a CCIP library. `CcipMessenger` is the
+single CCIP-aware adapter — owns the chainId ↔ CCIP selector map, the
+remote-messenger allowlist, and the `vpfi-buy` / `vpfi-reward` channel
+registry (local handlers + remote peers).
 
-Pure OFT V2 deployments on every mirror chain. No independent minter
-surface; only `_credit` via authenticated peer messages. Mirror supply
-equals currently-bridged VPFI.
+### 13.2 `VPFIToken` + `VPFIMirrorToken` (CCIP Cross-Chain Token)
 
-### 13.3 `VPFIBuyAdapter` (Non-Base)
+`VPFIToken` is the canonical ERC-20 on Base (the home chain). Mirror
+chains run `VPFIMirrorToken` proxies backed by the stock CCIP
+**`BurnMintTokenPool`**; canonical Base uses the stock
+**`LockReleaseTokenPool`** so the hard cap stays enforceable at the
+source. Mirror token supply equals currently-bridged VPFI by
+construction.
 
-Cross-chain fixed-rate buy entry point. User sends ETH (or WETH on
-Polygon); adapter locks payment + sends `BUY_REQUEST` to Base. Has
-adapter-layer rate limits in addition to the Diamond-side cap:
+### 13.3 `VpfiBuyAdapter` (mirror chains only)
 
-- per-request: `50,000 VPFI`
-- 24-hour rolling: `500,000 VPFI`
+Cross-chain fixed-rate buy entry point on every mirror chain (canonical
+Base hosts the receiver in §13.4 instead, not the adapter). User sends
+ETH on EVM-mainnet-gas chains (Ethereum / Arbitrum / Optimism / Polygon
+zkEVM and their public testnets); on BNB Chain mainnet and Polygon PoS
+mainnet the adapter pulls bridged WETH instead, because the receiver
+quotes a single global wei-per-VPFI rate denominated in **ETH-equivalent
+value** and a native-gas-mode bid on BNB / MATIC would mis-price every
+buy. The adapter forwards a `BUY_REQUEST` over CCIP to the canonical
+Base receiver.
 
-Both governance-tunable post-deploy.
+Two distinct rate-limit surfaces apply to this flow:
 
-### 13.4 `VPFIBuyReceiver` (Base)
+1. **Adapter-side caps** (`VpfiBuyAdapter.setRateLimits` — per-request
+   + 24h-rolling limits on `amountIn` BEFORE the CCIP send fires).
+   Boot defaults are `type(uint256).max` (effectively off); a
+   pre-mainnet operator gate (see `contracts/RUNBOOK.md` §11)
+   requires these to be tuned to the policy values (recommended:
+   50,000 VPFI / request, 500,000 VPFI / 24h-rolling).
+2. **Per-lane CCIP TokenPool caps** (`VpfiPoolRateGovernor` —
+   capacity 50,000 VPFI, refill ≈5.8 VPFI/s by default; ET-008-
+   bounded so the operator cannot disable a lane's limit and every
+   value is range-bounded). These apply at the CCIP-message-send
+   step, AFTER the adapter caps have already throttled `amountIn`.
 
-Lands cross-chain buys. Processes via VPFIDiscountFacet (debits VPFI
-from treasury balance), OFT-bridges result to buyer's origin chain,
-sends `BUY_SUCCESS` / `BUY_FAILED` back to the originating adapter.
-Pre-funded with ETH for LayerZero native fees.
+Together they give defence-in-depth: an adapter-cap miss falls
+through to the lane cap; a lane misconfiguration is bounded by the
+adapter cap.
 
-### 13.5 `VaipakamRewardOApp`
+### 13.4 `VpfiBuyReceiver` (Base)
 
-Dedicated OApp for cross-chain reward accounting. Mirrors send `REPORT`
-messages to Base; Base sends `BROADCAST` messages back. Authenticates
-sender against the registered peer OApp address.
+Lands cross-chain buys on canonical Base. Processes via
+`VPFIDiscountFacet` (debits VPFI from treasury balance), CCIP-bridges
+the result to the buyer's origin chain through the VPFI CCT path, and
+sends a `BUY_SUCCESS` / `BUY_FAILED` reply back to the originating
+adapter. Pre-funded with native gas for CCIP message fees.
 
-### 13.6 DVN Hardening (Mainnet Operational Requirement)
+### 13.5 `VaipakamRewardMessenger`
 
-LayerZero defaults are 1-required / 0-optional DVN — the single-verifier
-shape that the April 2026 cross-chain bridge incident exploited. Mainnet
-deploys must run `ConfigureLZConfig.s.sol` to install:
+Dedicated CCIP messenger for cross-chain reward accounting. Mirrors
+send `REPORT` messages to Base (their daily `chainInterestUSD`); Base
+sends `BROADCAST` messages back (the finalized
+`dailyGlobalInterestUSD[dayId]`). Authenticates sender against the
+registered peer messenger address on each chain.
 
-- **3 required + 2 optional, threshold 1-of-2**
-- Required: LayerZero Labs + Google Cloud + Polyhedra or Nethermind
-- Optional: BWare Labs + Stargate / Horizen
-- Confirmations: ETH 15, Base 10, OP 10, Arb 10, zkEVM 20, BNB 15
-- Enforced options for every (OApp, eid, msgType) triple
+### 13.6 Security model: CCIP RMN + per-lane rate limits + GuardianPausable
 
-`LZConfig.t.sol` asserts every OApp × eid reflects the policy. Builds
-fail otherwise. The mainnet deploy runbook gates on this script having
-run.
+CCIP's security is **operated by Chainlink** — a committing DON +
+an executing DON + an **independent Risk Management Network** (RMN,
+a separate codebase and operator set) that re-verifies every message.
+Uniform for every integrator: there is no DVN fleet to assemble
+per-integrator, and no "1-required / 0-optional default" footgun
+reachable by configuration mistake. The mainnet-deploy gates that
+matter for this protocol are documented in
+[`CLAUDE.md`](CLAUDE.md) §"Cross-Chain Security Policy (CCIP)":
 
-### 13.7 Pause Surface
+- CCIP lanes enabled and each `CcipMessenger`'s registry configured
+  (chainId↔CCIP selector, remote messenger allowlist, channel peers).
+- Per-lane CCIP rate limits set on every VPFI TokenPool through
+  `VpfiPoolRateGovernor`.
+- CCT admin (CCIP `TokenAdminRegistry`) and every cross-chain
+  contract owner = the admin multisig → governance timelock.
 
-Every LZ-facing contract exposes owner-gated `pause()` / `unpause()` on
-both send and receive paths. The 46-minute pause during the April 2026
-cross-chain bridge incident blocked ~$200M of follow-up drain — the
-precedent. Pause authority on bridge-related contracts allows the
-Guardian Safe to act fast but reserves unpause to the Owner / Timelock.
+### 13.7 Pause surface — `GuardianPausable`
+
+Every cross-chain contract with a runtime send / receive path carries
+`GuardianPausable`: guardian-or-owner `pause()`, owner-only `unpause()`,
+on both send and receive paths. A paused inbound reverts; CCIP records
+it as a failed message, manually re-executable once unpaused — so a
+pause-and-investigate cycle does not lose messages. The
+`VpfiPoolRateGovernor` is the documented exception (rate-limit admin
+only, no runtime send/receive path of its own; setters already
+owner-gated through `Ownable2Step`). The 46-minute pause during the
+April 2026 cross-chain bridge incident blocked ~$200M of follow-up
+drain — the precedent that pause authority needs to be reachable
+fast. Pause authority on cross-chain contracts allows the Guardian
+Safe to act immediately but reserves unpause to the Owner / Timelock.
 
 ---
 
@@ -1311,8 +1347,9 @@ mutation.
 - `VaultFactoryFacet.upgradeVaultImplementation / setMandatoryVaultUpgrade`
 - `AdminFacet.pause / unpause / paused`
 - All view functions
-- LayerZero message ingress to reward OApps (in-flight messages have
-  their own auth gates)
+- CCIP message ingress to the cross-chain messengers (`CcipMessenger`,
+  `VaipakamRewardMessenger`) — in-flight messages have their own auth
+  gates plus the `GuardianPausable` per-contract pause path
 
 `PauseGatingTest` enforces the gated set; any change to it must update
 the test.
@@ -1513,7 +1550,10 @@ fork. Specific load-bearing tests:
 Mandatory third-party security audits before mainnet launch on each
 network. Audit scope includes the Diamond core, the four-DEX swap
 failover, the secondary oracle quorum, the cross-chain reward mesh,
-the borrower LIF custody, and the LayerZero OApp surface.
+the borrower LIF custody, and the Chainlink CCIP cross-chain surface
+(`CcipMessenger`, `VPFIMirrorToken` + the stock CCT TokenPools,
+`VpfiBuyAdapter` / `VpfiBuyReceiver`, `VaipakamRewardMessenger`,
+`VpfiPoolRateGovernor`).
 
 Audit reports will be published where appropriate. The static analysis
 toolchain includes Slither and Mythril. Bug bounty scope, severity, and
@@ -1527,7 +1567,9 @@ reward ranges will be public before mainnet launch.
 2. `ERC-20`, `ERC-721`, `ERC-1155`, `ERC-4907` standards
 3. Chainlink Price Feeds and Feed Registry
 4. Uniswap V3 / PancakeSwap V3 / SushiSwap V3 concentrated-liquidity AMMs
-5. `LayerZero OFT V2` cross-chain token standard
+5. Chainlink CCIP — committing + executing DONs, Risk Management
+   Network, and the Cross-Chain Token (CCT) pattern (`LockReleaseTokenPool`
+   on canonical chains, `BurnMintTokenPool` on mirrors)
 6. Tellor TRB oracle, API3 dAPI, DIA price feeds
 7. 0x Settler v2, 1inch v6 routing aggregators
 8. Balancer V2 vault and subgraph

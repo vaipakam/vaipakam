@@ -59,7 +59,7 @@ active :
   détenus par le protocole).
 - Plafond de minting restant.
 
-Vaipakam transporte VPFI entre chaînes via LayerZero V2. **Base est
+Vaipakam transporte VPFI entre chaînes via Chainlink CCIP. **Base est
 la chaîne canonique** — l'adaptateur canonique y applique la sémantique
 verrouillage à l'envoi / libération à la réception. Toute autre
 chaîne supportée exécute un mirror qui mint à l'arrivée d'un paquet
@@ -496,7 +496,7 @@ Deux voies :
   sur le protocole. Mint VPFI directement vers ton wallet sur
   Base.
 - **Hors canonique** — l'adaptateur d'achat de la chaîne locale
-  envoie un paquet LayerZero au récepteur canonique sur Base, qui
+  envoie un paquet Chainlink CCIP au récepteur canonique sur Base, qui
   exécute l'achat sur Base et renvoie le résultat par bridge via
   le standard de token cross-chain. Latence end-to-end ≈ 1 min
   sur les paires L2-vers-L2. Le VPFI atterrit dans ton wallet
