@@ -787,7 +787,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](19);
+        selectors = new bytes4[](23);
         selectors[0] = VPFIDiscountFacet.buyVPFIWithETH.selector;
         selectors[1] = VPFIDiscountFacet.depositVPFIToVault.selector;
         selectors[2] = VPFIDiscountFacet.quoteVPFIDiscount.selector;
@@ -804,15 +804,27 @@ contract HelperTest {
         selectors[13] = VPFIDiscountFacet.quoteVPFIDiscountFor.selector;
         selectors[14] = VPFIDiscountFacet.getVPFIDiscountTier.selector;
         selectors[15] = VPFIDiscountFacet.withdrawVPFIFromVault.selector;
-        selectors[16] = VPFIDiscountFacet.getUserVpfiDiscountState.selector;
+        // #229 Codex round-1 P1 — bridged-buy quartet was missing from
+        // the HelperTest mirror of production's _getVPFIDiscountSelectors.
+        // Without these four selectors, SetupTest would not actually
+        // be a strict superset of production for the bridged-buy
+        // surface; calls to setBridgedBuyReceiver / processBridgedBuy
+        // / quoteFixedRateBuy through the test diamond would have
+        // reverted FunctionDoesNotExist. Indexed alongside the
+        // remaining production selectors below.
+        selectors[16] = VPFIDiscountFacet.setBridgedBuyReceiver.selector;
+        selectors[17] = VPFIDiscountFacet.getBridgedBuyReceiver.selector;
+        selectors[18] = VPFIDiscountFacet.processBridgedBuy.selector;
+        selectors[19] = VPFIDiscountFacet.quoteFixedRateBuy.selector;
+        selectors[20] = VPFIDiscountFacet.getUserVpfiDiscountState.selector;
         // Phase 8b.1 Permit2 addition — signature-transfer variant of
         // {depositVPFIToVault}.
-        selectors[17] = VPFIDiscountFacet.depositVPFIToVaultWithPermit.selector;
+        selectors[21] = VPFIDiscountFacet.depositVPFIToVaultWithPermit.selector;
         // Per-(buyer, originChainId) wallet-cap query. The Phase 1 30K
         // per-wallet cap applies independently per origin chain
         // (docs/TokenomicsTechSpec.md §8a); this selector lets
         // off-chain consumers read each origin bucket explicitly.
-        selectors[18] = VPFIDiscountFacet.getVPFISoldToByChainId.selector;
+        selectors[22] = VPFIDiscountFacet.getVPFISoldToByChainId.selector;
         return selectors;
     }
 
