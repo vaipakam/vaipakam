@@ -442,21 +442,27 @@ makes the payment-token mode a load-bearing per-chain config:
   testnet rate is symbolic, so native-gas mode is acceptable for
   dev-loop convenience. Mainnet equivalents must use WETH-pull.
 
-**Deploy-time enforcement (two layers)**:
+**Deploy-time enforcement**:
 
-1. `DeployCrosschain.s.sol` (the per-chain cross-chain stack
-   deployer post-T-068) pre-flight reverts if
-   `_chainRequiresWethPaymentToken(chainId) && paymentToken_ == address(0)`.
-   Catches "operator chose the wrong mode for this chain" — the
-   error message names the env var the operator should set.
-2. `VpfiBuyAdapter.initialize` (and `setPaymentToken` rotation)
-   runs `_assertPaymentTokenSane(token)` before any state writes:
-   - Non-zero `token` must have bytecode (`token.code.length > 0`)
-     — catches an EOA address pasted into the env var.
-   - `IERC20Metadata(token).decimals()` must succeed AND return
-     exactly 18 — catches the most common honest-mistake misconfig
-     (USDC's 6-dec address pasted where a bridged-WETH belongs)
-     and the non-ERC20-contract case (`decimals()` reverts).
+`VpfiBuyAdapter.initialize` (and `setPaymentToken` rotation) runs
+`_assertPaymentTokenSane(token)` before any state writes:
+  - Non-zero `token` must have bytecode (`token.code.length > 0`)
+    — catches an EOA address pasted into the env var.
+  - `IERC20Metadata(token).decimals()` must succeed AND return
+    exactly 18 — catches the most common honest-mistake misconfig
+    (USDC's 6-dec address pasted where a bridged-WETH belongs)
+    and the non-ERC20-contract case (`decimals()` reverts).
+
+`DeployCrosschain.s.sol` itself reads `VPFI_BUY_PAYMENT_TOKEN` from
+env (default `address(0)` = native gas) and forwards it to
+`VpfiBuyAdapter.initialize` — it does **NOT** currently pre-flight
+reject native-gas mode on the strict-WETH-pull chain set. The
+chain-mode choice is therefore an **operator responsibility**:
+operators must set `BNB_VPFI_BUY_PAYMENT_TOKEN` / `POLYGON_VPFI_BUY_PAYMENT_TOKEN`
+to the chain's canonical bridged WETH9 on BNB Chain mainnet and
+Polygon PoS mainnet, otherwise every buy on those chains misprices.
+Adding a deploy-script pre-flight that rejects the wrong mode is a
+small follow-up — tracked under the pre-audit-hardening card.
 
 **What's NOT validated on-chain**: there's no on-chain registry that
 says "this is the canonical bridged WETH9 on chain X". Confirming the
@@ -477,9 +483,16 @@ strict-WETH-pull chains:
   into `POLYGON_VPFI_BUY_PAYMENT_TOKEN`.
 
 Test coverage: `contracts/test/VpfiBuyFlowTest.t.sol` covers the
-payment-token validation surface post-T-068 (init reverts on
-sanity-check failure, setPaymentToken rotation, both acceptance
-paths). Add to that file when extending the validation surface.
+end-to-end buy flow (happy path, Diamond-rejects refund, forged-
+delivery park, replayed-delivery park, recover-stuck-VPFI,
+reclaim-timed-out-buy, per-request rate limit, pause-freezes-buy,
+fee-surplus refund, two-step receiver retry) and the
+`SetPaymentToken_RevertWhen_PendingBuysExist` pending-buy rotation
+guard. The init-time `_assertPaymentTokenSane` revert paths
+(`PaymentTokenNotContract`, decimals-mismatch, decimals-call-
+reverts) and the `setPaymentToken` happy-path rotation are NOT yet
+covered — adding those is tracked as a follow-up. When extending the
+validation surface, add the new revert path to that test file.
 
 ## VPFI Fee Discounts — Time-Weighted + Claim-Based (Phase 5)
 

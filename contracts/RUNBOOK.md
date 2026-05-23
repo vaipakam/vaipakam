@@ -58,19 +58,28 @@ OPTIMISM_RPC_URL=…
 POLYGON_ZKEVM_RPC_URL=…
 BNB_RPC_URL=…
 
-# Protocol owner — timelock/multisig address per chain
-# (same address across EVM chains is fine; deterministic deploy via CREATE2
-# is tracked in DeployRewardOAppCreate2.s.sol)
-VPFI_OWNER=0x…       # VPFI token / mirror token / token pools / buy-adapter / receiver
-REWARD_OWNER=0x…     # VaipakamRewardMessenger
+# Deployer + admin signing keys — both are EOAs during a fresh
+# rehearsal; on mainnet the admin equivalent is a multisig batch (see
+# the cutover runbook). The deployer key holds the deploy + ownership
+# handover; the admin key runs ConfigureCcip after every chain in the
+# deployment has been deployed.
+DEPLOYER_PRIVATE_KEY=0x…  # read by DeployCrosschain.s.sol
+ADMIN_PRIVATE_KEY=0x…     # read by ConfigureCcip.s.sol
+ADMIN_ADDRESS=0x…         # the admin EOA's address — read by
+                          # DeployCrosschain.s.sol as the post-deploy
+                          # owner-transfer target.
 
-# Treasury (Diamond-managed; deployer-controlled multi-sig)
-TREASURY=0x…
+# Treasury (Diamond-managed; deployer-controlled multi-sig on mainnet)
+TREASURY_ADDRESS=0x…      # read by DeployCrosschain.s.sol (canonical
+                          # chain only — wired into VpfiBuyReceiver
+                          # as the VPFI funding source).
 
 # Chainlink CCIP wiring (post-T-068, 2026-05-18)
-# Per-chain Router + TokenAdminRegistry addresses from
+# Per-chain Router + RMN proxy + TokenAdminRegistry addresses from
 # https://docs.chain.link/ccip/directory
 CCIP_ROUTER=0x…                         # this chain's CCIP Router
+CCIP_RMN_PROXY=0x…                      # this chain's RMN proxy
+                                        # (Risk Management Network endpoint)
 CCIP_TOKEN_ADMIN_REGISTRY=0x…           # this chain's TokenAdminRegistry
 CCIP_REGISTRY_MODULE_OWNER_CUSTOM=0x…   # CCIP owner-based CCT registrar
 
@@ -82,11 +91,20 @@ CCIP_LANE_CHAIN_IDS=11155111,421614,…
 # Mirror chains also need the canonical Base chain id (the hub).
 BASE_CHAIN_ID=8453  # mainnet; 84532 on Base Sepolia
 
-# Optional overrides (defaults in ConfigureCcip.s.sol)
-CCIP_GUARDIAN=        # incident-response guardian; defaults unset → skipped
-CCIP_RATE_CAPACITY=   # per-lane token-bucket capacity; default 50,000 VPFI
-CCIP_RATE_REFILL=     # per-lane refill rate, VPFI/s; default ~5.8 VPFI/s
-CHAIN_ID=             # override block.chainid (rarely needed)
+# Optional overrides (defaults set inside the scripts).
+CCIP_GUARDIAN=             # incident-response guardian; default unset → skipped
+CCIP_RATE_CAPACITY=        # per-lane token-bucket capacity; default 50,000 VPFI
+CCIP_RATE_REFILL=          # per-lane refill rate, VPFI/s; default ~5.8 VPFI/s
+CCIP_DEST_GAS_LIMIT=       # CCIP message dest-gas limit; default 400,000
+VPFI_BUY_PAYMENT_TOKEN=    # mirror-chain buy-adapter payment token;
+                           # 0x0 ⇒ native gas (Ethereum / Base / Arbitrum /
+                           # Optimism / Polygon zkEVM + their testnets);
+                           # bridged WETH9 address ⇒ WETH-pull (BNB Chain
+                           # mainnet, Polygon PoS mainnet). See CLAUDE.md
+                           # § "VpfiBuyAdapter — payment-token mode by chain."
+VPFI_BUY_REFUND_TIMEOUT=   # seconds before stuck buys can be refunded;
+                           # default 900 (15 min)
+CHAIN_ID=                  # override block.chainid (rarely needed)
 ```
 
 ---
@@ -351,6 +369,13 @@ Tick every box before opening the frontend to public traffic.
     VpfiBuyAdapter/VpfiBuyReceiver, VPFIMirrorToken on mirrors).
 [ ] Per-lane rate limits set on every VPFI TokenPool through
     VpfiPoolRateGovernor (default 50,000 capacity / ~5.8 VPFI/s refill).
+[ ] VpfiBuyAdapter.setRateLimits called on every mirror chain to
+    move the adapter's own per-request + 24h-rolling buy caps off
+    their `type(uint256).max` boot defaults (separate from the
+    TokenPool lane caps — the adapter has its own pre-CCIP-send
+    throttle on `amountIn`). Recommended starting values match the
+    pre-T-068 LayerZero-era defaults: per-request 50,000 VPFI,
+    24h-rolling 500,000 VPFI. Pre-mainnet gate.
 [ ] Initial protocol config (grace period, HF, oracles, KYC, buy rate) set.
 [ ] Monitoring live; test alerts received end-to-end.
 [ ] Incident runbook drilled (pause + unpause on a test OApp).

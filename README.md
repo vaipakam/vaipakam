@@ -1175,24 +1175,35 @@ chains run `VPFIMirrorToken` proxies backed by the stock CCIP
 source. Mirror token supply equals currently-bridged VPFI by
 construction.
 
-### 13.3 `VpfiBuyAdapter` (Mirror chains)
+### 13.3 `VpfiBuyAdapter` (mirror chains only)
 
-Cross-chain fixed-rate buy entry point. User sends ETH on EVM-mainnet
-gas chains (Ethereum / Base / Arbitrum / Optimism / Polygon zkEVM and
-their public testnets); on BNB Chain mainnet and Polygon PoS the
-adapter pulls bridged WETH instead, because the receiver quotes a
-single global wei-per-VPFI rate denominated in **ETH-equivalent value**
-and a native-gas-mode bid on BNB / MATIC would mis-price every buy.
-The adapter forwards a `BUY_REQUEST` over CCIP to the canonical Base
-receiver and has per-lane CCIP rate limits in addition to the
-Diamond-side cap:
+Cross-chain fixed-rate buy entry point on every mirror chain (canonical
+Base hosts the receiver in §13.4 instead, not the adapter). User sends
+ETH on EVM-mainnet-gas chains (Ethereum / Arbitrum / Optimism / Polygon
+zkEVM and their public testnets); on BNB Chain mainnet and Polygon PoS
+mainnet the adapter pulls bridged WETH instead, because the receiver
+quotes a single global wei-per-VPFI rate denominated in **ETH-equivalent
+value** and a native-gas-mode bid on BNB / MATIC would mis-price every
+buy. The adapter forwards a `BUY_REQUEST` over CCIP to the canonical
+Base receiver.
 
-- per-lane capacity: `50,000 VPFI`
-- per-lane refill: `≈5.8 VPFI/s`
+Two distinct rate-limit surfaces apply to this flow:
 
-Set through `VpfiPoolRateGovernor` — the bounds-checked `rateLimitAdmin`
-that refuses to disable a lane's limit and range-bounds every value
-(ET-008).
+1. **Adapter-side caps** (`VpfiBuyAdapter.setRateLimits` — per-request
+   + 24h-rolling limits on `amountIn` BEFORE the CCIP send fires).
+   Boot defaults are `type(uint256).max` (effectively off); a
+   pre-mainnet operator gate (see `contracts/RUNBOOK.md` §11)
+   requires these to be tuned to the policy values (recommended:
+   50,000 VPFI / request, 500,000 VPFI / 24h-rolling).
+2. **Per-lane CCIP TokenPool caps** (`VpfiPoolRateGovernor` —
+   capacity 50,000 VPFI, refill ≈5.8 VPFI/s by default; ET-008-
+   bounded so the operator cannot disable a lane's limit and every
+   value is range-bounded). These apply at the CCIP-message-send
+   step, AFTER the adapter caps have already throttled `amountIn`.
+
+Together they give defence-in-depth: an adapter-cap miss falls
+through to the lane cap; a lane misconfiguration is bounded by the
+adapter cap.
 
 ### 13.4 `VpfiBuyReceiver` (Base)
 
