@@ -1062,6 +1062,32 @@ library LibVaipakam {
         uint64 expiresAt;
     }
 
+    /// @notice #193 — input bundle for `OfferMutateFacet.modifyOffer`.
+    ///         Carries the post-mutation value for every field the
+    ///         three setters can touch, so the combined helper can
+    ///         atomically replay the same invariant set without
+    ///         needing per-field sentinels. Callers supply the
+    ///         existing value for fields they don't intend to change;
+    ///         the frontend reads `getOffer(offerId)` first anyway,
+    ///         so re-passing the unchanged values is free at the call
+    ///         site and avoids the "0 means don't change" ambiguity
+    ///         that would conflict with legitimate zero rates.
+    /// @dev    Fields that aren't part of the modify surface
+    ///         (`durationDays`, `lendingAsset`, asset types, `expiresAt`,
+    ///         `prepayAsset`, `tokenId`/`quantity`, `allowsPartialRepay`,
+    ///         `periodicInterestCadence`, `creatorRiskAndTermsConsent`)
+    ///         are explicitly excluded — modifying them would change
+    ///         the offer's economic contract in ways `OfferMutateFacet`
+    ///         doesn't currently model.
+    struct OfferModifyParams {
+        uint256 amount;
+        uint256 amountMax;
+        uint256 interestRateBps;
+        uint256 interestRateBpsMax;
+        uint256 collateralAmount;
+        uint256 collateralAmountMax;
+    }
+
     /**
      * @notice Struct for an offer (lender or borrower).
      * @dev Stores details for matching and loan initiation.

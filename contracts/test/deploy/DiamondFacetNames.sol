@@ -24,8 +24,8 @@ pragma solidity ^0.8.29;
  *         could drift).
  */
 abstract contract DiamondFacetNames {
-    /// @dev The 36 facets cut into the Diamond by `DeployDiamond.run()`.
-    function cutFacetNames() internal pure returns (string[36] memory) {
+    /// @dev The 37 facets cut into the Diamond by `DeployDiamond.run()`.
+    function cutFacetNames() internal pure returns (string[37] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -45,6 +45,11 @@ abstract contract DiamondFacetNames {
             "OfferCancelFacet",
             "OfferCreateFacet",
             "OfferMatchFacet",
+            // #193 — in-place offer modification entry points
+            // (setOfferAmount / setOfferRate / setOfferCollateral +
+            // combined modifyOffer). Carved out into its own facet
+            // mirroring the OfferCancel / OfferMatch precedent.
+            "OfferMutateFacet",
             "OracleAdminFacet",
             "OracleFacet",
             "OwnershipFacet",

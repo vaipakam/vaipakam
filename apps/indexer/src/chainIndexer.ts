@@ -428,6 +428,18 @@ async function processOfferLogs(
     lenderRemainingPostMatch: bigint;
   }[] = [];
   const closed: { offerId: bigint; reason: number }[] = [];
+  // #193 — in-place offer modification. Each OfferModified event carries
+  // the FULL post-image of the six modifiable fields so the indexer
+  // updates the offers row in a single UPDATE without an RPC re-read.
+  const modified: {
+    offerId: bigint;
+    amount: bigint;
+    amountMax: bigint;
+    interestRateBps: bigint;
+    interestRateBpsMax: bigint;
+    collateralAmount: bigint;
+    collateralAmountMax: bigint;
+  }[] = [];
   for (const log of logs) {
     const a = log.args;
     if (log.eventName === 'OfferCreated') {
@@ -458,6 +470,18 @@ async function processOfferLogs(
       closed.push({
         offerId: a.offerId as bigint,
         reason: Number(a.reason),
+      });
+    } else if (log.eventName === 'OfferModified') {
+      // #193 — full post-image arrives in the event payload so we can
+      // refresh the row without a follow-up getOfferDetails read.
+      modified.push({
+        offerId: a.offerId as bigint,
+        amount: a.amount as bigint,
+        amountMax: a.amountMax as bigint,
+        interestRateBps: a.interestRateBps as bigint,
+        interestRateBpsMax: a.interestRateBpsMax as bigint,
+        collateralAmount: a.collateralAmount as bigint,
+        collateralAmountMax: a.collateralAmountMax as bigint,
       });
     }
   }
@@ -666,6 +690,39 @@ async function processOfferLogs(
         now,
         chainId,
         Number(m.lenderOfferId),
+      )
+      .run();
+    if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
+  }
+
+  // #193 — in-place offer modification. The OfferModified event's
+  // post-image carries every modifiable field, so the indexer rewrites
+  // the six columns in one UPDATE without re-reading via RPC. Status
+  // stays 'active' (modifications are only allowed on unaccepted
+  // offers; OfferAlreadyAccepted reverts the modify call), so we
+  // don't touch the status column.
+  for (const m of modified) {
+    const r = await env.DB.prepare(
+      `UPDATE offers
+       SET amount = ?,
+           amount_max = ?,
+           interest_rate_bps = ?,
+           interest_rate_bps_max = ?,
+           collateral_amount = ?,
+           collateral_amount_max = ?,
+           updated_at = ?
+       WHERE chain_id = ? AND offer_id = ?`,
+    )
+      .bind(
+        m.amount.toString(),
+        m.amountMax.toString(),
+        Number(m.interestRateBps),
+        Number(m.interestRateBpsMax),
+        m.collateralAmount.toString(),
+        m.collateralAmountMax.toString(),
+        now,
+        chainId,
+        Number(m.offerId),
       )
       .run();
     if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
