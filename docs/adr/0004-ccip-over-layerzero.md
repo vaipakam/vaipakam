@@ -52,10 +52,21 @@ LayerZero OFT V2 + messaging surface and replaces it with:
   lane's limit and range-bounds every value.
 
 Per-lane CCIP rate limits start at capacity 50,000 VPFI, refill
-≈5.8 VPFI/s. Every cross-chain contract carries `GuardianPausable`
-(guardian-or-owner `pause()`, owner-only `unpause()`) on both send
-and receive paths. CCT admin = the project's multisig → timelock at
-mainnet.
+≈5.8 VPFI/s. Every cross-chain contract **with a runtime send /
+receive path** carries `GuardianPausable` (guardian-or-owner
+`pause()`, owner-only `unpause()`) — `CcipMessenger`,
+`VaipakamRewardMessenger`, `VpfiBuyAdapter`, `VpfiBuyReceiver`, and
+the mirror-chain VPFI ERC-20 `VPFIMirrorToken`. The
+`VpfiPoolRateGovernor` is the rate-limit admin only (no runtime
+send / receive path of its own; its setters are already owner-gated
+through `Ownable2Step`), so it intentionally does NOT extend the
+pause base — pausing the rate-limit admin would not be load-bearing
+during a cross-chain incident, and the owner can re-set rates
+directly. Mirror chains also wire the guardian on
+`VPFIMirrorToken` via `ConfigureCcip._setGuardians` (post-#200);
+the canonical `VPFIToken` is OFT-shaped and paused via its own
+AccessControl path, not the cross-chain guardian. CCT admin = the
+project's multisig → timelock at mainnet.
 
 ## Consequences
 

@@ -295,8 +295,25 @@ contract ConfigureCcip is Script {
     }
 
     /// @dev Set the guardian — the detect-to-freeze fast lever — on every
-    ///      `GuardianPausable` contract. Skipped when `CCIP_GUARDIAN` is
-    ///      unset (the guardian can always be set later, owner-only).
+    ///      cross-chain `GuardianPausable` contract on this chain.
+    ///      Skipped when `CCIP_GUARDIAN` is unset (the guardian can
+    ///      always be set later, owner-only).
+    ///
+    ///      Coverage map per chain class:
+    ///        - Canonical (Base): `CcipMessenger`, `VaipakamRewardMessenger`,
+    ///          `VpfiBuyReceiver`. The canonical VPFI ERC-20
+    ///          (`VPFIToken`) does NOT extend `GuardianPausable` — it's
+    ///          the long-lived OFT token, paused via its own
+    ///          AccessControl path, not the cross-chain guardian. The
+    ///          rate governor (`VpfiPoolRateGovernor`) is the
+    ///          rate-limit admin only — no runtime send/receive path
+    ///          of its own, no `GuardianPausable` inheritance (see
+    ///          ADR-0004's "*VpfiPoolRateGovernor exception*" note).
+    ///        - Mirrors: `CcipMessenger`, `VaipakamRewardMessenger`,
+    ///          `VpfiBuyAdapter`, plus the mirror VPFI ERC-20
+    ///          (`VPFIMirrorToken`), which DOES extend
+    ///          `GuardianPausable`. Pre-#200 the mirror token was
+    ///          left to the operator's memory; #200 wires it here.
     function _setGuardians(Ctx memory c) internal {
         if (c.guardian == address(0)) {
             console.log("Guardian: CCIP_GUARDIAN unset, skip.");
@@ -305,7 +322,17 @@ contract ConfigureCcip is Script {
         GuardianPausable(c.messenger).setGuardian(c.guardian);
         GuardianPausable(c.rewardMessenger).setGuardian(c.guardian);
         GuardianPausable(c.localBuyContract).setGuardian(c.guardian);
-        console.log("Guardian set on messenger / reward / buy:", c.guardian);
+        if (!c.canonical) {
+            // #200 — mirror-only: `VPFIMirrorToken` extends
+            // `GuardianPausable` for the same incident-response
+            // fast-pause reason the messenger + buy adapter do.
+            // Wiring it here closes the operator-memory footgun
+            // documented in #201.
+            GuardianPausable(c.localToken).setGuardian(c.guardian);
+            console.log("Guardian set on messenger / reward / buy / mirrorToken:", c.guardian);
+        } else {
+            console.log("Guardian set on messenger / reward / buyReceiver:", c.guardian);
+        }
     }
 
     /// @dev Mirror only: point the mirror VPFI ERC20 at its Burn/Mint
