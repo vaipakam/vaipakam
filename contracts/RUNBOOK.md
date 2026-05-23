@@ -101,8 +101,12 @@ CCIP_GUARDIAN=             # incident-response guardian; default unset → skipp
 CCIP_RATE_CAPACITY=        # per-lane token-bucket capacity; default 50,000 VPFI
 CCIP_RATE_REFILL=          # per-lane refill rate, VPFI/s; default ~5.8 VPFI/s
 CCIP_DEST_GAS_LIMIT=       # CCIP message dest-gas limit; default 400,000
-VPFI_BUY_PAYMENT_TOKEN=    # mirror-chain buy-adapter payment token;
-                           # 0x0 ⇒ native gas (Ethereum / Base / Arbitrum /
+VPFI_BUY_PAYMENT_TOKEN=    # mirror-chain ONLY buy-adapter payment token —
+                           # canonical Base ignores this env var (Base
+                           # deploys VpfiBuyReceiver, not the adapter, so
+                           # there's no adapter-side payment-token slot
+                           # to configure). On the mirror branch:
+                           # 0x0 ⇒ native gas (Ethereum / Arbitrum /
                            # Optimism / Polygon zkEVM + their testnets);
                            # bridged WETH9 address ⇒ WETH-pull (BNB Chain
                            # mainnet, Polygon PoS mainnet). See CLAUDE.md
