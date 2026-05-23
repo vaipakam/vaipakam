@@ -10,6 +10,14 @@ import { CardInfo } from '../CardInfo';
 import { HoverTip } from '../HoverTip';
 import { Pager } from './Pager';
 import { PrincipalCell } from './PrincipalCell';
+import { TimeChip } from '../TimeChip';
+
+// #241 — cancel cooldown: 5 min from createdAt while partialFillEnabled
+// is on AND no partial fill has landed yet. Mirrors the contract-side
+// `MIN_OFFER_CANCEL_DELAY` constant in `LibVaipakam.sol`. Surfaced as
+// a button-disabling gate + a TimeChip on the row so the user sees
+// exactly when they'll be able to cancel instead of hitting a revert.
+const CANCEL_COOLDOWN_SECONDS = 5 * 60;
 
 interface Props {
   /** Status-tagged rows from `useMyOffers`. Already sorted newest-id-first. */
@@ -21,6 +29,13 @@ interface Props {
   /** Set of offer ids whose `cancelOffer` tx is currently submitting.
    *  Disables the Cancel button so the user can't double-click. */
   cancellingId: bigint | null;
+  /** #241 — `ProtocolConfig.partialFillEnabled`. When true, the
+   *  contract's 5-min cancel cooldown is in effect for offers whose
+   *  `amountFilled == 0`; the table disables Cancel for those rows
+   *  and renders a TimeChip "Cancellable in N" countdown. When false
+   *  (default on deployed chains today), no gating — Cancel is always
+   *  enabled and the chip is suppressed. */
+  partialFillEnabled: boolean;
   /** Chain id this table's offers live on. Threaded through to
    *  `<PrincipalCell>` so each row's "open externally" link routes to
    *  CoinGecko / OpenSea / explorer / Vaipakam-verifier as appropriate
@@ -69,6 +84,7 @@ export function MyOffersTable({
   rows,
   onCancel,
   cancellingId,
+  partialFillEnabled,
   chainId,
   title,
   subtitle,
@@ -250,6 +266,37 @@ export function MyOffersTable({
                 // Active or filled — full row.
                 const isActive = row.status === 'active';
                 const isFilled = row.status === 'filled';
+
+                // #241 — time-driven UI state.
+                //
+                // Cooldown gate (Cancel disabled + chip showing "Cancellable in N"):
+                //   Mirrors the contract's `MIN_OFFER_CANCEL_DELAY`
+                //   branch in `OfferCancelFacet.cancelOffer` — fires
+                //   ONLY when partialFillEnabled is on AND the offer
+                //   has zero accumulated fills AND we're inside the
+                //   5-min window from createdAt. Without all three the
+                //   contract doesn't revert, so the UI doesn't gate.
+                //   `offer.createdAt` is uint64 unix-seconds (#164's
+                //   storage stamp); `offer.amountFilled` is bigint.
+                const createdAtNum = Number(offer.createdAt ?? 0n);
+                const cooldownEndsSec =
+                  createdAtNum + CANCEL_COOLDOWN_SECONDS;
+                const cooldownActive =
+                  isActive &&
+                  partialFillEnabled &&
+                  (offer.amountFilled ?? 0n) === 0n &&
+                  createdAtNum > 0 &&
+                  Math.floor(Date.now() / 1000) < cooldownEndsSec;
+                // GTT expiry chip (#195):
+                //   `expiresAt = 0` is the GTC sentinel — no chip.
+                //   Non-zero = "expires in N" (live) or "expired N ago
+                //   — anyone can clean up" (lapsed). Both states get
+                //   the chip; the lapsed-state copy tells the user
+                //   their Cancel is also reachable to anyone (the
+                //   permissionless-clear path).
+                const expiresAtSec = Number(offer.expiresAt ?? 0n);
+                const showExpiryChip = isActive && expiresAtSec > 0;
+
                 return (
                   <tr key={offer.id.toString()}>
                     <td><Link to={`/app/offers/${offer.id.toString()}`}>#{offer.id.toString()}</Link></td>
@@ -320,16 +367,31 @@ export function MyOffersTable({
                           )}
                         </div>
                       ) : (
-                        <span
-                          className="status-badge"
+                        <div
                           style={{
-                            background:
-                              'rgba(16, 185, 129, 0.15)',
-                            color: 'var(--accent-green)',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 6,
+                            flexWrap: 'wrap',
                           }}
                         >
-                          {t('myOffersTable.statusActive')}
-                        </span>
+                          <span
+                            className="status-badge"
+                            style={{
+                              background:
+                                'rgba(16, 185, 129, 0.15)',
+                              color: 'var(--accent-green)',
+                            }}
+                          >
+                            {t('myOffersTable.statusActive')}
+                          </span>
+                          {/* #195/#241 — GTT expiry decoration. The
+                              chip itself decides live-vs-expired copy
+                              based on `Date.now()` vs `targetSec`. */}
+                          {showExpiryChip && (
+                            <TimeChip kind="expiry" targetSec={expiresAtSec} />
+                          )}
+                        </div>
                       )}
                     </td>
                     <td>
@@ -343,15 +405,35 @@ export function MyOffersTable({
                             flexWrap: 'wrap',
                           }}
                         >
+                          {/* #241 — cooldown chip + button gating.
+                              While the contract's 5-min cooldown
+                              applies, render the countdown chip and
+                              disable the button. The tooltip explains
+                              the bound so the user doesn't think the
+                              app is broken. */}
+                          {cooldownActive && (
+                            <TimeChip
+                              kind="cooldown"
+                              targetSec={cooldownEndsSec}
+                            />
+                          )}
                           {/* Per-offer keeper toggles moved to the offer
                               details page — list rows now show only the
                               cancel action so the action column scans as
                               a single button per row. */}
-                          <HoverTip text={t('myOffersTable.cancelTooltip')}>
+                          <HoverTip
+                            text={
+                              cooldownActive
+                                ? t('myOffersTable.cancelCooldownTooltip')
+                                : t('myOffersTable.cancelTooltip')
+                            }
+                          >
                             <button
                               className="btn btn-secondary btn-sm"
                               onClick={() => onCancel(offer.id)}
-                              disabled={cancellingId === offer.id}
+                              disabled={
+                                cancellingId === offer.id || cooldownActive
+                              }
                             >
                               {cancellingId === offer.id
                                 ? t('myOffersTable.cancelling')
