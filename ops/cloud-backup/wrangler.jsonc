@@ -1,0 +1,83 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vaipakam-cloud-backup",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+  },
+  // Triggers:
+  //   - Nightly backup at 03:17 UTC (off-peak across UTC / IST / PT).
+  //     The minute is non-zero on purpose so the run doesn't collide
+  //     with every other team-on-the-internet's :00 crons fighting for
+  //     B2's incoming HTTP capacity at exact-minute marks.
+  //   - Weekly healthcheck at 09:00 UTC every Monday — verifies the
+  //     latest archive exists, decrypts, manifest matches schema.
+  //     Failures page the operator immediately via Telegram + Push.
+  "triggers": {
+    "crons": ["17 3 * * *", "0 9 * * 1"],
+  },
+  // D1 — read-only bindings to the two production databases this
+  // Worker backs up. The shared vaipakam-archive holds the indexer
+  // tables + the diag / legal-hold registers; vaipakam-lz-alerts-db
+  // is the lz-watcher's separate alerts DB (kept distinct from
+  // vaipakam-archive for the trust-boundary reasons documented in
+  // CLAUDE.md's D1-schema-discipline section).
+  //
+  // The Worker NEVER writes to either DB; the bindings are present
+  // only so the cron can SELECT rows for export. We deliberately
+  // don't add a third D1 for backup bookkeeping (last-run-id,
+  // success/failure log) — that lives in `wrangler tail` + the
+  // healthcheck alert path, which is enough at Stage A scale.
+  "d1_databases": [
+    {
+      "binding": "DB_ARCHIVE",
+      "database_name": "vaipakam-archive",
+      "database_id": "3cffebf5-b652-4da7-953c-9e1d143ad2fe",
+      "remote": false,
+    },
+    {
+      "binding": "DB_LZ_ALERTS",
+      "database_name": "vaipakam-lz-alerts-db",
+      "database_id": "edefa776-6832-46a0-84f7-e8e0cf157964",
+      "remote": false,
+    },
+  ],
+  // R2 — read-only binding to the legal-vault. The Worker streams
+  // every object out and re-uploads to B2; no writes back to R2.
+  "r2_buckets": [
+    {
+      "binding": "R2_LEGAL_VAULT",
+      "bucket_name": "vaipakam-legal-vault",
+    },
+  ],
+  // Public vars. Real secrets live in `wrangler secret put`:
+  //   BACKUP_ENCRYPTION_KEY    — 32-byte hex AES-256-GCM key, kept
+  //                              OFFLINE outside Cloudflare (e.g.
+  //                              1Password / pass). Never rotated
+  //                              automatically; manual rotation
+  //                              procedure in docs/ops/OffChainRestore.md.
+  //   B2_ACCESS_KEY_ID         — Backblaze Application Key id
+  //                              scoped write-only to the backup
+  //                              bucket. Cannot read or delete past
+  //                              archives — so a CF compromise that
+  //                              steals this key still can't damage
+  //                              the existing backup history.
+  //   B2_SECRET_ACCESS_KEY     — matching secret half of the above.
+  //   TG_BOT_TOKEN             — same Telegram bot the other Workers
+  //                              use; healthcheck failures + nightly
+  //                              backup outcomes go to TG_OPS_CHAT_ID.
+  "vars": {
+    // Backblaze S3-compatible endpoint. Region-specific; pick the
+    // bucket region at create-time. Operator sets the matching
+    // region's endpoint URL here. Example: "s3.eu-central-003.backblazeb2.com".
+    "B2_ENDPOINT": "",
+    // Backup bucket name in B2. Convention: "vaipakam-offchain-backup".
+    "B2_BUCKET": "",
+    // Telegram chat-id receiving healthcheck pages + nightly outcomes.
+    // Same chat the lz-watcher posts to is fine — these alerts are
+    // adjacent in audience.
+    "TG_OPS_CHAT_ID": "",
+  },
+}
