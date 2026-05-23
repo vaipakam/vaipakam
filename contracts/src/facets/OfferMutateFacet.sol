@@ -429,8 +429,33 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             revert CollateralMutationUnsupportedForShape();
         }
 
-        if (newCollateralAmount == 0) revert OfferCreateFacet.CollateralMustBePositive();
-        if (newCollateralAmountMax == 0) revert OfferCreateFacet.CollateralAmountMaxMustBePositive();
+        // Codex round-2 P2 — mirror `_writeOfferCollateralFields`'s
+        // strict-collateral rule: only enforce `collateralAmount > 0`
+        // and `collateralAmountMax > 0` for true ERC-20 LOANS (both
+        // legs ERC-20) AND not the lender-sale-vehicle "both zero"
+        // pattern. Three create-time exceptions get the same pass:
+        //   1. NFT collateral (`collateralAssetType` ERC-721 / ERC-1155):
+        //      lock is by `collateralTokenId` / quantity, not an amount.
+        //   2. NFT-rental offers (`assetType` ERC-721 / ERC-1155):
+        //      the rental fee × duration IS the commitment; collateral
+        //      is optional.
+        //   3. Lender sale-vehicle / no-collateral lender offers
+        //      shipped as `collateralAmount == 0 == collateralAmountMax`
+        //      (BOTH zero, explicit). The actual collateral comes from
+        //      a linked loan via `s.saleOfferToLoanId[offerId]`.
+        // Mixed shapes (one zero, the other positive) still revert.
+        bool enforceStrictCollateral =
+            offer.assetType == LibVaipakam.AssetType.ERC20
+            && offer.collateralAssetType == LibVaipakam.AssetType.ERC20
+            && !(newCollateralAmount == 0 && newCollateralAmountMax == 0);
+        if (enforceStrictCollateral) {
+            if (newCollateralAmount == 0) {
+                revert OfferCreateFacet.CollateralMustBePositive();
+            }
+            if (newCollateralAmountMax == 0) {
+                revert OfferCreateFacet.CollateralAmountMaxMustBePositive();
+            }
+        }
         if (newCollateralAmountMax < newCollateralAmount) {
             revert OfferCreateFacet.InvalidCollateralAmountRange();
         }

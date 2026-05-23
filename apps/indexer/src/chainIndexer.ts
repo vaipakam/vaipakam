@@ -1661,6 +1661,19 @@ function pluckActivityRefs(
         loanId: null,
         offerId: Number(args.offerId as bigint),
       };
+    case 'OfferModified':
+      // #193 / Codex round-2 P2 — denormalize the actor (= creator;
+      // OfferMutateFacet's access gate guarantees msg.sender ==
+      // offer.creator) + offerId so per-offer and per-wallet
+      // activity filters surface modify events alongside the other
+      // offer-mutation rows. Without this mapping the event lands
+      // in activity_events with NULL refs and falls out of the
+      // dashboard's offer-timeline + wallet-history queries.
+      return {
+        actor: (args.creator as string)?.toLowerCase() ?? null,
+        loanId: null,
+        offerId: Number(args.offerId as bigint),
+      };
     case 'LoanInitiated':
       return {
         actor: (args.borrower as string)?.toLowerCase() ?? null,

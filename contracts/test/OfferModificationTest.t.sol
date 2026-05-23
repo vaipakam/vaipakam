@@ -579,6 +579,48 @@ contract OfferModificationTest is SetupTest {
         );
     }
 
+    // ─── Lender sale-vehicle zero-collateral exception (Codex round-2 P2) ─
+
+    function testSetOfferCollateralAcceptsLenderSaleVehicleBothZero() public {
+        // Codex round-2 P2 — `createOffer` allows the lender sale-
+        // vehicle shape where `collateralAmount == 0 ==
+        // collateralAmountMax` on an ERC-20/ERC-20 loan offer.
+        // Modify must mirror the same exception so legitimate
+        // sale-vehicle offers can update their collateral fields
+        // (e.g., to switch from sale-vehicle into a regular
+        // collateralised offer once a real backer arrives).
+        // Build the sale-vehicle shape via direct createOffer with
+        // both collateral fields zero — the createOffer-side branch
+        // (assetType ERC-20 + collateralAssetType ERC-20 + both
+        // collateral fields zero) skips the strict > 0 enforcement.
+        LibVaipakam.CreateOfferParams memory params = _baseLenderParams();
+        params.collateralAmount = 0;
+        params.collateralAmountMax = 0;
+        vm.prank(lender);
+        uint256 id = OfferCreateFacet(address(diamond)).createOffer(params);
+
+        // setOfferCollateral with the same (0, 0) values must NOT
+        // revert. The lender single-value invariant still applies
+        // (0 == 0 ✓), and the new "skip strict enforcement when
+        // both zero" branch lets the call through.
+        vm.prank(lender);
+        _mutate().setOfferCollateral(id, 0, 0);
+
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(id);
+        assertEq(o.collateralAmount, 0);
+        assertEq(o.collateralAmountMax, 0);
+    }
+
+    function testSetOfferCollateralStillRejectsMixedZeroOnERC20Pair() public {
+        // The exception is "BOTH zero, explicit." A mixed shape (one
+        // zero, the other positive) still violates the create
+        // invariant — modify enforces the same.
+        uint256 id = _createLender();
+        vm.prank(lender);
+        vm.expectRevert(OfferCreateFacet.CollateralMustBePositive.selector);
+        _mutate().setOfferCollateral(id, 0, 100 ether);
+    }
+
     // ─── Sanctions screening ─────────────────────────────────────────
 
     function testModifyOfferRevertsOnSanctionedCreator() public {

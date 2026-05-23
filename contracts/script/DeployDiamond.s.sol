@@ -508,6 +508,9 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("offerAcceptFacet",        address(offerAcceptFacet));
         Deployments.writeFacet("offerMatchFacet",         address(offerMatchFacet));
         Deployments.writeFacet("offerCancelFacet",        address(offerCancelFacet));
+        // #193 / Codex round-2 — persist OfferMutateFacet for explorer
+        // transparency links, operator scripts, and upgrade audits.
+        Deployments.writeFacet("offerMutateFacet",        address(offerMutateFacet));
         Deployments.writeFacet("loanFacet",               address(loanFacet));
         Deployments.writeFacet("repayFacet",              address(repayFacet));
         Deployments.writeFacet("defaultedFacet",          address(defaultedFacet));
