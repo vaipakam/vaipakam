@@ -319,6 +319,16 @@ library LibVaipakam {
     // matching path (§9.2 of the design). Partial-filled offers can be
     // cancelled immediately because the lender has already committed value.
     uint256 constant MIN_OFFER_CANCEL_DELAY = 5 minutes;
+    // ── #195 — GTT / offer-expiry horizon cap ────────────────────────────
+    // Upper bound on `expiresAt - block.timestamp` at `createOffer`. A
+    // user posting a multi-decade "1000-year offer" would lock storage
+    // (and pre-vaulted assets) far past any plausible economic window
+    // for free; capping the horizon at one year forces the creator to
+    // re-post if they really want a long-lived offer, and lets the
+    // permissionless-clear path reclaim genuinely abandoned slots
+    // within a bounded grief window. The floor is implicit:
+    // `expiresAt > block.timestamp` (also enforced at createOffer).
+    uint256 constant MAX_OFFER_EXPIRY_HORIZON = 365 days;
     // Loan duration cap defaults + bounds (Findings 00025).
     // ProjectDetailsREADME §2 mandates `1 ≤ durationDays ≤ 365` with
     // on-chain enforcement so external callers cannot bypass the
@@ -1037,6 +1047,19 @@ library LibVaipakam {
         // `PeriodicInterestDisabled`. See
         // docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md §3.
         PeriodicInterestCadence periodicInterestCadence;
+        // ── #195 — GTT / offer-expiry (Good-Till-Time) ──────────────────
+        // Optional absolute unix-seconds deadline after which the offer
+        // can no longer be accepted or matched. `0` is the GTC sentinel
+        // (today's behaviour: lives until the creator cancels it).
+        // Bounded at `createOffer` by `[block.timestamp + 1,
+        // block.timestamp + MAX_OFFER_EXPIRY_HORIZON]`. The acceptance /
+        // match paths read this field via `LibVaipakam.isOfferExpired`
+        // and revert before any state mutation. Append-only at the end
+        // of CreateOfferParams so the calldata layout grows additively
+        // (no positional shift for legacy ABI consumers — Solidity
+        // named-arg syntax still requires every caller to supply the
+        // field explicitly).
+        uint64 expiresAt;
     }
 
     /**
@@ -1111,8 +1134,17 @@ library LibVaipakam {
         uint256 amountFilled;
         // Slot 16
         uint256 interestRateBpsMax; // ≥ interestRateBps; 0 ⇒ collapse to interestRateBps.
-        // Slot 17 — packed: createdAt(8) + 24 bytes headroom
+        // Slot 17 — packed: createdAt(8) + expiresAt(8) + 16 bytes headroom
         uint64 createdAt; // Unix-seconds; stamped at createOffer.
+        // ── #195 — GTT / offer-expiry ──────────────────────────────────
+        // Optional absolute unix-seconds deadline. `0` is the GTC
+        // sentinel (preserves pre-#195 behaviour exactly: every legacy
+        // storage row reads `expiresAt == 0` because the slot is in
+        // the 16-byte headroom of slot 17, which was zeroed at create).
+        // Reads on the accept / match paths flow through
+        // `LibVaipakam.isOfferExpired(offer)` so the GTC short-circuit
+        // is in one place. Stamped once at createOffer; never mutated.
+        uint64 expiresAt;
         // ── Issue #164 — borrower-side collateral range. Append-only
         //    at the end of the Offer struct so the storage layout
         //    stays additive (no slot re-ordering). The legacy
@@ -4478,6 +4510,31 @@ library LibVaipakam {
         } catch {
             return false;
         }
+    }
+
+    /// @notice True when an offer's GTT deadline has elapsed. Single
+    ///         source-of-truth for the GTC short-circuit (`expiresAt
+    ///         == 0`), so every accept / match / preview / cancel call
+    ///         reads the deadline through the same predicate.
+    /// @dev    Pure of storage writes; takes a storage-pointer so the
+    ///         caller pays only the one SLOAD for `expiresAt` (packed
+    ///         next to `createdAt` in slot 17 of the Offer struct, so
+    ///         on the hot accept-path it usually piggybacks on a slot
+    ///         already in the warm cache).
+    ///
+    ///         `>= expiresAt` (not `>`) — the deadline is exclusive of
+    ///         its own second to keep the boundary unambiguous: an offer
+    ///         created with `expiresAt = T` cannot be accepted at
+    ///         `block.timestamp == T`. The matching MAX_OFFER_EXPIRY_HORIZON
+    ///         cap and the createOffer `expiresAt > block.timestamp`
+    ///         check use the same convention.
+    /// @param offer Storage pointer to the offer being queried.
+    /// @return expired `true` iff `expiresAt != 0 && block.timestamp >= expiresAt`.
+    function isOfferExpired(Offer storage offer) internal view returns (bool expired) {
+        uint64 deadline = offer.expiresAt;
+        // GTC sentinel — never expires.
+        if (deadline == 0) return false;
+        return block.timestamp >= uint256(deadline);
     }
 
     /// @notice Mirrors `ProfileFacet.SanctionedAddress` (same name +

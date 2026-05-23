@@ -444,7 +444,8 @@ contract LoanFacetTest is Test {
                 amountMax: amount,
                 interestRateBpsMax: 500,
                 collateralAmountMax: collateralAmount,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
     }
@@ -674,7 +675,8 @@ contract LoanFacetTest is Test {
                 amountMax: 1000 ether,
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500 ether,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -811,7 +813,8 @@ contract LoanFacetTest is Test {
                 amountMax: 1000 ether,
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1800 ether,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
         vm.prank(lender);
@@ -848,7 +851,8 @@ contract LoanFacetTest is Test {
                 amountMax: 1000 ether,
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500 ether,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
         vm.prank(borrower);
@@ -895,7 +899,8 @@ contract LoanFacetTest is Test {
                 amountMax: 10 ether,
                 interestRateBpsMax: 500,
                 collateralAmountMax: 15 ether,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -1033,7 +1038,8 @@ contract LoanFacetTest is Test {
                 amountMax: 1000 ether,
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500 ether,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -1070,7 +1076,8 @@ contract LoanFacetTest is Test {
                 amountMax: 1000 ether,
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500 ether,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
         vm.prank(borrower);
@@ -1119,7 +1126,8 @@ contract LoanFacetTest is Test {
                 amountMax: 1000 ether,
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500 ether,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 

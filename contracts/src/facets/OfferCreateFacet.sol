@@ -107,6 +107,13 @@ contract OfferCreateFacet is
         bool creatorRiskAndTermsConsent;
         bool allowsPartialRepay;
         LibVaipakam.PeriodicInterestCadence periodicInterestCadence;
+        // ── #195 — GTT / offer-expiry ───────────────────────────────────
+        // Absolute unix-seconds deadline. `0` = GTC (no expiry). Carrying
+        // it on the companion event means indexer + frontend cache merges
+        // can render the offer's GTT decoration ("expires in 3h 12m";
+        // "expired — anyone can clean up") directly from the OfferCreated
+        // payload, no follow-up `getOffer` view-call.
+        uint64 expiresAt;
     }
 
     /// @notice Companion to {OfferCreated} — full self-sufficient
@@ -196,6 +203,19 @@ contract OfferCreateFacet is
     /// Findings 00025 — `params.durationDays > MAX_OFFER_DURATION_DAYS`.
     /// Surfaces `(provided, cap)` so the UI / SDK can show the gap.
     error OfferDurationExceedsCap(uint256 provided, uint256 cap);
+
+    // ── #195 — GTT / offer-expiry validation errors ─────────────────────
+    /// `params.expiresAt != 0 && params.expiresAt <= block.timestamp`.
+    /// The creator asked for an expiry that's already in the past (or
+    /// exactly now); the resulting offer would be unmatchable at
+    /// landing, so fail loud at create rather than create-and-strand.
+    error OfferExpiryInPast();
+    /// `params.expiresAt > block.timestamp + MAX_OFFER_EXPIRY_HORIZON`.
+    /// Surfaces `(provided, cap)` so the UI can render the gap. The
+    /// horizon caps the grief window for the permissionless-clear path
+    /// (otherwise an attacker could lock a slot for decades and the
+    /// permissionless-clear is unreachable until then).
+    error OfferExpiryAboveCap(uint64 provided, uint256 cap);
 
     // ── Range Orders Phase 1 errors (docs/RangeOffersDesign.md §5.5) ─
     /// Range invariant: `amountMin > amountMax`.
@@ -968,6 +988,7 @@ contract OfferCreateFacet is
         f.creatorRiskAndTermsConsent = offer.creatorRiskAndTermsConsent;
         f.allowsPartialRepay = offer.allowsPartialRepay;
         f.periodicInterestCadence = offer.periodicInterestCadence;
+        f.expiresAt = offer.expiresAt;
 
         emit OfferCreatedDetails(offerId, creator, offer.lendingAsset, f);
     }
@@ -1046,6 +1067,36 @@ contract OfferCreateFacet is
         offer.interestRateBpsMax = params.interestRateBpsMax;
         offer.amountFilled = 0;
         offer.createdAt = uint64(block.timestamp);
+
+        // ── #195 — GTT / offer-expiry validation + stamp ──────────────
+        // `expiresAt == 0` is the GTC sentinel (preserves pre-#195
+        // behaviour). Any non-zero value must lie strictly after now
+        // and within the protocol's horizon cap, both bounds enforced
+        // at create time so the storage row is always either GTC or
+        // within a bounded grief window. The non-strict lower bound
+        // (`<=`) catches "set expiresAt to now" — that would create an
+        // offer that's expired on creation, which is at-best useless
+        // and at-worst a UX foot-gun. `isOfferExpired` uses `>=` so
+        // the boundary is consistent on both write and read.
+        if (params.expiresAt != 0) {
+            if (uint256(params.expiresAt) <= block.timestamp) {
+                revert OfferExpiryInPast();
+            }
+            if (
+                uint256(params.expiresAt) >
+                block.timestamp + LibVaipakam.MAX_OFFER_EXPIRY_HORIZON
+            ) {
+                revert OfferExpiryAboveCap(
+                    params.expiresAt,
+                    block.timestamp + LibVaipakam.MAX_OFFER_EXPIRY_HORIZON
+                );
+            }
+            offer.expiresAt = params.expiresAt;
+        }
+        // `expiresAt == 0` path: leave the storage slot at its default
+        // zero. Skipping the SSTORE on the GTC path keeps `createOffer`
+        // gas identical to pre-#195 for every existing test / script
+        // that doesn't set the field.
     }
 
     function _writeOfferCollateralFields(

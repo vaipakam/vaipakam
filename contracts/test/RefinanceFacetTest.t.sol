@@ -209,7 +209,8 @@ contract RefinanceFacetTest is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
         vm.prank(borrower);
@@ -238,7 +239,8 @@ contract RefinanceFacetTest is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 400,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -308,7 +310,8 @@ contract RefinanceFacetTest is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 400,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -359,7 +362,8 @@ contract RefinanceFacetTest is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 400,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -467,7 +471,8 @@ contract RefinanceFacetTest is Test {
                 amountMax: PRINCIPAL / 2,
                 interestRateBpsMax: 400,
                 collateralAmountMax: COLLATERAL / 2,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -769,7 +774,8 @@ contract RefinanceFacetTest is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 400,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -828,7 +834,8 @@ contract RefinanceFacetTest is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 400,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -881,7 +888,8 @@ contract RefinanceFacetTest is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 400,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -924,7 +932,8 @@ contract RefinanceFacetTest is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 400,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -1058,7 +1067,8 @@ contract RefinanceFacetTest is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 

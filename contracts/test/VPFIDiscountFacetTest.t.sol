@@ -1019,7 +1019,8 @@ contract VPFIDiscountFacetTest is SetupTest {
                     amountMax: amount,
                     interestRateBpsMax: 500,
                     collateralAmountMax: amount,
-                    periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                    periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                    expiresAt: 0
                 })
             );
     }

@@ -297,7 +297,8 @@ contract WorkflowComplianceAndRejection is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
         vm.prank(borrower);
@@ -352,7 +353,8 @@ contract WorkflowComplianceAndRejection is Test {
                 amountMax: 1 ether,
                 interestRateBpsMax: 500,
                 collateralAmountMax: 0,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -393,7 +395,8 @@ contract WorkflowComplianceAndRejection is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -431,7 +434,8 @@ contract WorkflowComplianceAndRejection is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -470,7 +474,8 @@ contract WorkflowComplianceAndRejection is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -522,7 +527,8 @@ contract WorkflowComplianceAndRejection is Test {
                 amountMax: 100 ether,
                 interestRateBpsMax: 500,
                 collateralAmountMax: 180 ether,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -569,7 +575,8 @@ contract WorkflowComplianceAndRejection is Test {
                 amountMax: 10000 ether,
                 interestRateBpsMax: 500,
                 collateralAmountMax: 18000 ether,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -608,7 +615,8 @@ contract WorkflowComplianceAndRejection is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -651,7 +659,8 @@ contract WorkflowComplianceAndRejection is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 400,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 

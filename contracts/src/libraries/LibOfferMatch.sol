@@ -50,7 +50,8 @@ library LibOfferMatch {
         WrongOfferType,           // L isn't Lender or B isn't Borrower
         HFTooLow,                 // (depthTieredLtvEnabled off) synthetic HF at matched amount + collateral < 1.5e18
         LtvAboveTier,             // (depthTieredLtvEnabled on) synthetic init-LTV at matched amount + collateral > the effective tier cap (or collateral is Tier 0 / no-borrow)
-        SelfTrade                 // #194 — both offers carry the same `creator`. The actual revert lives in `_acceptOffer` (`SelfTradeForbidden(party)`); this variant lets bots short-circuit at preview time.
+        SelfTrade,                // #194 — both offers carry the same `creator`. The actual revert lives in `_acceptOffer` (`SelfTradeForbidden(party)`); this variant lets bots short-circuit at preview time.
+        OfferExpired              // #195 — either offer's GTT deadline (`expiresAt != 0 && block.timestamp >= expiresAt`) has lapsed. The actual revert lives in `_acceptOffer` (`OfferExpired(offerId, expiresAt)`); this variant lets matching bots short-circuit at preview time. Either side can carry the lapse — both lender and borrower offers are GTT-eligible.
     }
 
     /// @notice Structured return from `previewMatch`. Bots check
@@ -208,6 +209,21 @@ library LibOfferMatch {
 
         if (L.accepted || B.accepted) {
             r.errorCode = MatchError.OfferAccepted;
+            return r;
+        }
+
+        // #195 — GTT lazy-enforcement on the match path. Either side's
+        // lapsed deadline kills the match — both lender and borrower
+        // can carry an `expiresAt`. Routes through the shared
+        // `isOfferExpired` predicate so the GTC short-circuit
+        // (`expiresAt == 0`) is co-located with every other consumer.
+        // Sits BEFORE the SelfTrade check because expiry is a more
+        // fundamental terminal — an expired offer that also happens
+        // to be self-trade is still primarily expired, not a
+        // racing self-trade attempt; the indexer-facing classifier
+        // should reflect that.
+        if (LibVaipakam.isOfferExpired(L) || LibVaipakam.isOfferExpired(B)) {
+            r.errorCode = MatchError.OfferExpired;
             return r;
         }
 

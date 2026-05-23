@@ -96,7 +96,8 @@ contract PreviewAcceptTest is SetupTest {
                 amountMax: amountMax,
                 interestRateBpsMax: rateMax,
                 collateralAmountMax: collateralRequired,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
     }
@@ -132,7 +133,8 @@ contract PreviewAcceptTest is SetupTest {
                 amountMax: amountMax,
                 interestRateBpsMax: rateMax,
                 collateralAmountMax: collateralAmountMax,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
     }

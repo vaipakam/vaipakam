@@ -256,7 +256,8 @@ contract AddCollateralFacetTest is Test {
                 amountMax: 1000 ether,
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500 ether,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
         vm.prank(borrower);
@@ -288,7 +289,8 @@ contract AddCollateralFacetTest is Test {
                 amountMax: 1000 ether,
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500 ether,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
         vm.prank(borrower);

@@ -738,7 +738,8 @@ contract RiskFacetTest is Test {
                 collateralAmountMax: 1800 ether,
                 periodicInterestCadence: LibVaipakam
                     .PeriodicInterestCadence
-                    .None
+                    .None,
+                expiresAt: 0
             })
         );
 
@@ -1036,7 +1037,8 @@ contract RiskFacetTest is Test {
                 collateralAmountMax: 1800 ether,
                 periodicInterestCadence: LibVaipakam
                     .PeriodicInterestCadence
-                    .None
+                    .None,
+                expiresAt: 0
             })
         );
         vm.prank(borrower);
@@ -1798,7 +1800,8 @@ contract RiskFacetTest is Test {
                 collateralAmountMax: 1800 ether,
                 periodicInterestCadence: LibVaipakam
                     .PeriodicInterestCadence
-                    .None
+                    .None,
+                expiresAt: 0
             })
         );
         vm.prank(borrower);

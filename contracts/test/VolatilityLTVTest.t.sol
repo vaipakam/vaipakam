@@ -78,7 +78,8 @@ contract VolatilityLTVTest is SetupTest, IVaipakamErrors {
                 amountMax: principal,
                 interestRateBpsMax: 500,
                 collateralAmountMax: collateral,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
