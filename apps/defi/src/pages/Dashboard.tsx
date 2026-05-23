@@ -9,6 +9,7 @@ import { useWallet } from '../context/WalletContext';
 import { useDiamondContract, useDiamondPublicClient } from '../contracts/useDiamond';
 import { prewarmTokenMeta } from '../lib/tokenMeta';
 import { useMyOffers, type MyOfferStatus } from '../hooks/useMyOffers';
+import { useProtocolConfig } from '../hooks/useProtocolConfig';
 import { useClaimables } from '../hooks/useClaimables';
 import { useDashboardLoansBothSides } from '../hooks/useDashboardLoansBothSides';
 import { useOfferGroupedLoans } from '../hooks/useOfferGroupedLoans';
@@ -112,6 +113,15 @@ export default function Dashboard() {
   }, [loans, dashboardPublicClient]);
   const [myOfferStatus, setMyOfferStatus] = useState<MyOfferStatus>('active');
   const { rows: myOfferRows, refetch: refetchMyOffers } = useMyOffers(address, myOfferStatus);
+  // #241 — `MyOffersTable` needs the cancel-cooldown gate flag so it
+  // can disable the Cancel button + show the countdown chip on offers
+  // that the contract would refuse to cancel inside the 5-min window.
+  // `useProtocolConfig` is a one-shot RPC read per chain switch (no
+  // RPC budget impact during normal use); the flag is `false` by
+  // default on every deployed chain today, so the chip + gate stay
+  // dormant until governance flips matching on.
+  const { config: protocolCfg, loading: protocolCfgLoading } =
+    useProtocolConfig();
   const { claims: unclaimed, reload: reloadClaimables } = useClaimables(address);
   // Same cooldown + sync-status state machine the other rescan buttons
   // use, with adaptive growth that arrests spam-clicks: 30 s base,
@@ -396,6 +406,12 @@ export default function Dashboard() {
               }
             }}
             cancellingId={cancellingOfferId}
+            partialFillEnabled={protocolCfg?.partialFillEnabled ?? false}
+            // #241 — treat "config still loading" as "could be on".
+            // Without this gate, a user can click Cancel during the
+            // first render on a chain where governance HAS enabled
+            // partial fills and hit a `CancelCooldownActive` revert.
+            partialFillUnknown={protocolCfgLoading || protocolCfg === null}
             chainId={activeChain?.chainId ?? DEFAULT_CHAIN.chainId}
             title={t('dashboard.yourOffers')}
             subtitle={t('myOffersTable.subtitle', { count: myOfferRows.length })}

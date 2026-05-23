@@ -50,6 +50,32 @@ const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
   '0x2ee39802': 'Offer not found or no longer valid.',
   '0x93f1b0b3': 'Offer has already been accepted.',
   '0xe8439f49': 'Only the creator of this offer can perform this action.',
+  // #195 — GTT / offer-expiry user-facing copy
+  '0xd9e46813':
+    'This offer has expired and can no longer be accepted or matched.',
+  '0x7900bcc7':
+    'Offer expiry must be a future timestamp. Pick a deadline at least 1 second past now.',
+  '0x252d948e':
+    'Offer expiry is too far in the future (1-year horizon cap). Pick an earlier deadline.',
+  '0xa04ac4d0':
+    "Cancel is reserved to the creator while the offer is still live. After expiry anyone can clean it up — the refund goes to the creator regardless of who calls.",
+  '0xc681ed8e':
+    "5-minute cancel cooldown is in effect for unfilled offers. The countdown on the row shows when the offer becomes cancellable.",
+  // #194 — self-trade
+  '0x64f4618d':
+    "Self-trade not allowed — the lender and borrower addresses are the same. Match against a counterparty's offer instead.",
+  // #125 — AON / IOC fill-mode
+  '0x23d29961':
+    'This offer is All-or-Nothing — the matcher would only land a partial fill, which violates the offer terms. Match the full size or skip the pair.',
+  '0x7b0e3b56':
+    'All-or-Nothing offers require single-value amount (min equal to max). Adjust the range so both ends match.',
+  '0x40cd23e2':
+    'Immediate-or-Cancel offers require an expiry window. Set a deadline before publishing.',
+  // #193 — in-place offer modification
+  '0x159351ed':
+    "Cannot shrink the cap below the portion already filled — partial fills against this offer have committed value at the current size.",
+  '0x9ce967aa':
+    'Collateral cannot be modified on this offer shape (borrower NFT-rental offers vault prepay, not collateral). Use modifyOffer for amount or rate only.',
 
   // ── Compliance / KYC ──────────────────────────────────────────────────
   '0x04a6799c':
@@ -256,6 +282,21 @@ const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   '0x2ee39802': 'InvalidOffer()',
   '0x93f1b0b3': 'OfferAlreadyAccepted()',
   '0xe8439f49': 'NotOfferCreator()',
+  // #195 — GTT / offer-expiry surface
+  '0xd9e46813': 'OfferExpired(uint256,uint64)',
+  '0x7900bcc7': 'OfferExpiryInPast()',
+  '0x252d948e': 'OfferExpiryAboveCap(uint64,uint256)',
+  '0xa04ac4d0': 'NotCreatorOrNotExpired(address,uint64)',
+  '0xc681ed8e': 'CancelCooldownActive()',
+  // #194 — self-trade prevention
+  '0x64f4618d': 'SelfTradeForbidden(address)',
+  // #125 — AON / IOC fill-mode surface
+  '0x23d29961': 'AonRequiresFullFill(uint256,uint256,uint256)',
+  '0x7b0e3b56': 'AonRequiresSingleValueAmount()',
+  '0x40cd23e2': 'IocRequiresExpiry()',
+  // #193 — in-place offer modification surface
+  '0x159351ed': 'ModifyBelowFilledFloor(uint256,uint256)',
+  '0x9ce967aa': 'CollateralMutationUnsupportedForShape()',
   '0x13be252b': 'InsufficientAllowance()',
   '0x0bb578c2': 'LiquidityMismatch()',
   '0x97fe4161': 'NonLiquidAssetAndNoIlliquidAsset()',

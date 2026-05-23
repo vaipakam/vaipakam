@@ -84,6 +84,17 @@ interface OfferRow {
   use_full_term_interest: number;
   creator_fallback_consent: number;
   allows_partial_repay: number;
+  // 0014 — surfaced from on-chain Offer for the MyOffers cooldown +
+  // GTT chip (#241), Range-Orders fill-mode badge (#125), and the
+  // expiry indicator (#195). Defaults: 0 / 0 / 0 — pre-#164 / GTC
+  // / Partial. `created_at` is the on-chain stamp from
+  // Offer.createdAt, NOT first_seen_at: the latter is the indexer's
+  // ingestion clock, which drifts on restart / backfill / cron lag
+  // and would push the UI's cancel-cooldown gate past the
+  // contract-side window. See #246 round-2.
+  created_at: number;
+  expires_at: number;
+  fill_mode: number;
   first_seen_block: number;
   first_seen_at: number;
   updated_at: number;
@@ -118,6 +129,9 @@ function toJson(row: OfferRow): Record<string, unknown> {
     useFullTermInterest: row.use_full_term_interest === 1,
     creatorRiskAndTermsConsent: row.creator_fallback_consent === 1,
     allowsPartialRepay: row.allows_partial_repay === 1,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    fillMode: row.fill_mode,
     firstSeenBlock: row.first_seen_block,
     firstSeenAt: row.first_seen_at,
     updatedAt: row.updated_at,

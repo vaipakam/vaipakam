@@ -821,7 +821,8 @@
     "cancelTooltip": "Retirar la oferta y devolver el principal / colateral bloqueado a tu Vaipakam Vault.",
     "cancel": "Cancelar",
     "cancelling": "Cancelando…",
-    "assetTypeLegend": "Tipos de activo: {{kinds}}"
+    "assetTypeLegend": "Tipos de activo: {{kinds}}",
+    "cancelPendingConfig": "Comprobando la configuración de emparejamiento de la cadena… Cancelar se activará cuando se cargue la configuración del protocolo."
   },
   "hero": {
     "brand": "Vaipakam",
@@ -1783,5 +1784,10 @@
   },
   "liquidityNotice": {
     "thinCollateralOnChain": "⚠ Este activo de garantía tiene poca liquidez en esta cadena. Si se liquida aquí, el intercambio puede ser costoso o fallar — y este activo puede tener mucha más profundidad en otra cadena. Considera usar la cadena donde tiene más liquidez."
+  },
+  "timeChip": {
+    "cancellableIn": "Cancelable en {{delta}}",
+    "expiresIn": "Caduca en {{delta}}",
+    "expiredAgo": "Caducó hace {{delta}} — cualquiera puede limpiarla"
   }
 }

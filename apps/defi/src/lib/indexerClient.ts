@@ -92,6 +92,25 @@ export interface IndexedOffer {
   firstSeenBlock: number;
   firstSeenAt: number;
   updatedAt: number;
+  // #164 / #195 / #125 — surfaced via indexer migration 0014.
+  //   createdAt is the ON-CHAIN Offer.createdAt stamp (NOT
+  //     firstSeenAt). Sourced from the Offer struct read; matches
+  //     the contract-side cooldown clock second-for-second.
+  //     Pre-#164 backfilled rows carry 0; the consumer treats 0
+  //     as "cooldown unavailable" and the gate fails open.
+  //   expiresAt: 0 = GTC (no expiry). Non-zero = unix-seconds.
+  //   fillMode: 0 Partial / 1 AON / 2 IOC.
+  //
+  // All three are optional even though the indexer always emits
+  // them post-0014: the frontend and indexer are deployed
+  // independently, so a rollback to a pre-0014 worker shape can
+  // omit these keys mid-traffic. The mapper
+  // (`indexedToRawOffer`) coerces missing values to 0 before
+  // `BigInt` conversion so `BigInt(undefined)` doesn't throw and
+  // break the indexer-fed offer-list path at runtime.
+  createdAt?: number;
+  expiresAt?: number;
+  fillMode?: number;
 }
 
 export interface OfferStats {
@@ -563,7 +582,28 @@ export function indexedToRawOffer(o: IndexedOffer): {
   assetType: number;
   tokenId: bigint;
   allowsPartialRepay: boolean;
+  // #164 / #241 — surfaced for the MyOffers cancel-cooldown
+  // predicate, which needs `createdAt` + `amountFilled` to evaluate
+  // the 5-minute window. `createdAt` is the ON-CHAIN
+  // `Offer.createdAt` stamp (uint64, post-#164), NOT the indexer's
+  // `firstSeenAt`. The latter is the indexer's ingestion clock; on
+  // a fresh indexer, a backfill, or a restart it lags behind the
+  // chain by minutes-to-days, and the UI's cancel gate would stay
+  // disabled past the contract's window. The on-chain value tracks
+  // `OfferCancelFacet.cancelOffer`'s `block.timestamp -
+  // createdAt < MIN_OFFER_CANCEL_DELAY` predicate to the second.
+  createdAt: bigint;
+  amountFilled: bigint;
+  // #195 / #125 — surfaced for the GTT expiry chip and the
+  // fill-mode badge. Default 0 sentinels keep legacy rows
+  // (GTC + Partial) rendering identically.
+  expiresAt: bigint;
+  fillMode: number;
 } {
+  // Optional field narrowing for indexer/frontend version skew —
+  // see the IndexedOffer doc-block. Each new-since-0014 field is
+  // coerced to 0 before `BigInt` conversion so an undefined value
+  // (older worker response shape) doesn't throw at runtime.
   return {
     id: BigInt(o.offerId),
     creator: o.creator,
@@ -583,5 +623,9 @@ export function indexedToRawOffer(o: IndexedOffer): {
     assetType: o.assetType,
     tokenId: BigInt(o.tokenId),
     allowsPartialRepay: o.allowsPartialRepay,
+    createdAt: BigInt(o.createdAt ?? 0),
+    amountFilled: BigInt(o.amountFilled),
+    expiresAt: BigInt(o.expiresAt ?? 0),
+    fillMode: o.fillMode ?? 0,
   };
 }

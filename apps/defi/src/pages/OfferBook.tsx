@@ -137,6 +137,30 @@ export interface OfferData {
   // `s.offerKeeperEnabled[offerId][keeper]`. No single flag on the offer
   // struct. Per-offer keeper selection is surfaced on the offer card
   // only for the creator — see OfferKeeperPicker.
+
+  // ── Fields populated by `getOffer` reads / `OfferCreatedDetails`
+  //    events. Marked optional so legacy construction sites (event-
+  //    payload stubs, cancelled-row identity stubs) typecheck without
+  //    threading every site through a migration. Consumers that need
+  //    these values default to 0n / 0 when undefined.
+  /** Unix-seconds stamp of `createOffer` (uint64 in storage). #164
+   *  introduced the slot to drive the partial-fill cooldown
+   *  (`MIN_OFFER_CANCEL_DELAY` = 5 minutes from this stamp). */
+  createdAt?: bigint;
+  /** Cumulative principal already consumed across partial-fill
+   *  matches (Range Orders Phase 1 / #102). `0` on a fresh
+   *  unmatched offer; non-zero only when matching is active. */
+  amountFilled?: bigint;
+  /** #195 — GTT / offer-expiry. `0n` is the GTC sentinel (today's
+   *  default; never expires). Non-zero = absolute unix-seconds
+   *  deadline; the contract refuses to fill the offer past this
+   *  timestamp, and the permissionless cancelOffer path can clean
+   *  it up with the refund routed to the creator. */
+  expiresAt?: bigint;
+  /** #125 — DEX-style fill-mode flavour
+   *  (0 = Partial / 1 = Aon / 2 = Ioc). Default 0 preserves
+   *  backward-compat with every legacy offer. */
+  fillMode?: number;
 }
 
 type TabFilter = 'both' | 'lender' | 'borrower';
@@ -216,6 +240,14 @@ export type RawOffer = {
   tokenId: bigint;
   allowsPartialRepay?: boolean;
   periodicInterestCadence?: bigint | number;
+  /** #168 / #241 — partial-fill cancel-cooldown driver. */
+  createdAt?: bigint;
+  /** Range Orders Phase 1 / #102 — partial-fill cumulative consumed. */
+  amountFilled?: bigint;
+  /** #195 — GTT deadline; `0n` = GTC. */
+  expiresAt?: bigint;
+  /** #125 — fill-mode flavour: 0 Partial / 1 AON / 2 IOC. */
+  fillMode?: bigint | number;
 };
 
 export function toOfferData(r: RawOffer): OfferData {
@@ -243,6 +275,15 @@ export function toOfferData(r: RawOffer): OfferData {
     tokenId: r.tokenId,
     allowsPartialRepay: r.allowsPartialRepay ?? false,
     periodicInterestCadence: Number(r.periodicInterestCadence ?? 0),
+    // #241 — thread through every field the MyOffers cooldown / GTT
+    // chip relies on. Each is optional so any raw shape that omits
+    // the field (legacy event-payload stubs, cancelled-row identity
+    // stubs) leaves the corresponding OfferData field undefined, and
+    // every consumer defaults undefined to a 0n / Partial sentinel.
+    createdAt: r.createdAt,
+    amountFilled: r.amountFilled,
+    expiresAt: r.expiresAt,
+    fillMode: r.fillMode === undefined ? undefined : Number(r.fillMode),
   };
 }
 

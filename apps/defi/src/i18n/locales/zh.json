@@ -821,7 +821,8 @@
     "cancelTooltip": "撤回报价并将锁定的本金 / 抵押品返回到您的 Vaipakam Vault。",
     "cancel": "取消",
     "cancelling": "取消中…",
-    "assetTypeLegend": "资产类型：{{kinds}}"
+    "assetTypeLegend": "资产类型：{{kinds}}",
+    "cancelPendingConfig": "正在检查链的匹配配置… 协议配置加载完成后，取消将启用。"
   },
   "hero": {
     "brand": "Vaipakam",
@@ -1802,5 +1803,10 @@
   },
   "liquidityNotice": {
     "thinCollateralOnChain": "⚠ 该抵押资产在此链上流动性较薄。如果在此清算,兑换可能成本高或失败 — 该资产在另一条链上可能流动性更深。建议使用流动性更好的链。"
+  },
+  "timeChip": {
+    "cancellableIn": "{{delta}} 后可取消",
+    "expiresIn": "{{delta}} 后过期",
+    "expiredAgo": "{{delta}} 前过期 — 任何人可清理"
   }
 }

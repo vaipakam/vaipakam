@@ -821,7 +821,8 @@
     "cancelTooltip": "オファーを取り下げ、ロックされた元本 / 担保をVaultに返します。",
     "cancel": "キャンセル",
     "cancelling": "キャンセル中…",
-    "assetTypeLegend": "アセットタイプ: {{kinds}}"
+    "assetTypeLegend": "アセットタイプ: {{kinds}}",
+    "cancelPendingConfig": "チェーンのマッチング設定を確認中… プロトコル設定の読み込み完了後、キャンセルが有効になります。"
   },
   "hero": {
     "brand": "Vaipakam",
@@ -1802,5 +1803,10 @@
   },
   "liquidityNotice": {
     "thinCollateralOnChain": "⚠ この担保資産はこのチェーン上では流動性が薄いです。ここで清算される場合、スワップに高コストがかかるか失敗する可能性があり — この資産は別のチェーンではるかに流動性が高い可能性があります。流動性のあるチェーンの使用を検討してください。"
+  },
+  "timeChip": {
+    "cancellableIn": "あと {{delta}} でキャンセル可能",
+    "expiresIn": "あと {{delta}} で期限切れ",
+    "expiredAgo": "{{delta}} 前に期限切れ — 誰でもクリーンアップ可能"
   }
 }

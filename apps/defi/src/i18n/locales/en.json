@@ -1331,9 +1331,16 @@
     "cancelledTooltip": "Cancelled offers don't retain financial details on-chain — only the offer id and side are kept.",
     "manageKeepersTooltip": "Enable specific keepers to drive this offer via the Keeper Settings page.",
     "cancelTooltip": "Withdraw the offer and return the locked principal / collateral to your vault.",
+    "cancelCooldownTooltip": "A 5-minute cancel cooldown is in effect for unfilled offers while range-order matching is active. The countdown above shows when the offer becomes cancellable. Until then the contract refuses cancel to prevent a matcher-frontrun race.",
+    "cancelPendingConfig": "Checking the chain's matching configuration… Cancel will enable once the protocol config resolves.",
     "cancel": "Cancel",
     "cancelling": "Cancelling…",
     "assetTypeLegend": "Asset types: {{kinds}}"
+  },
+  "timeChip": {
+    "cancellableIn": "Cancellable in {{delta}}",
+    "expiresIn": "Expires in {{delta}}",
+    "expiredAgo": "Expired {{delta}} ago — anyone can clean up"
   },
   "hero": {
     "brand": "Vaipakam",
