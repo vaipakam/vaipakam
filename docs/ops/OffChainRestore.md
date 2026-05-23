@@ -128,7 +128,7 @@ The manifest is unencrypted JSON — open it and confirm:
 If any of these mismatch, **stop**: the archive itself is suspect.
 Walk back one date and try again. If two consecutive archives
 mismatch, the backup pipeline was broken silently and the operator
-needs to investigate `wrangler tail vaipakam-cloud-backup`.
+needs to investigate `wrangler tail vaipakam-offchain-data-archive`.
 
 ---
 
@@ -325,10 +325,10 @@ the frontend silently switches back to the cached fast path.
    confirm the chain of `action_type` + `created_at` entries is
    present and ordered.
 4. Run the weekly healthcheck manually on the freshly-recreated
-   `vaipakam-cloud-backup`:
+   `vaipakam-offchain-data-archive`:
 
    ```bash
-   wrangler tail vaipakam-cloud-backup
+   wrangler tail vaipakam-offchain-data-archive
    # Trigger the cron manually from the CF dashboard's "Trigger" button.
    ```
 
@@ -359,7 +359,7 @@ two procedures share the offline-key handling discipline.
    versioning preserves the prior cipher-text version for the
    lifecycle retention window).
 4. `wrangler secret put BACKUP_ENCRYPTION_KEY` on
-   `vaipakam-cloud-backup` to flip the Worker to the new key.
+   `vaipakam-offchain-data-archive` to flip the Worker to the new key.
 5. Wait for one full nightly cycle + one weekly healthcheck. Both
    should land green on the new key.
 6. Retire the OLD key — destroy the offline copies. Keep ONE

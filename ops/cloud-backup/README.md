@@ -1,4 +1,4 @@
-# vaipakam-cloud-backup
+# vaipakam-offchain-data-archive
 
 Internal-ops Cloudflare Worker that nightly exports Vaipakam's off-
 chain footprint to Backblaze B2 on a separate billing/credential
@@ -58,9 +58,9 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
    - Set six lifecycle rules: `archives/` + `manifests/` 30-day,
      `archives-monthly/` + `manifests-monthly/` 365-day, plus
      `archives-yearly/` + `manifests-yearly/` indefinite.
-   - Create `vaipakam-cloud-backup-write-only` (listBuckets +
+   - Create `vaipakam-offchain-data-archive-write-only` (listBuckets +
      listFiles + writeFiles, bucket-scoped) for the nightly cron.
-   - Create `vaipakam-cloud-backup-read-only` (listBuckets +
+   - Create `vaipakam-offchain-data-archive-read-only` (listBuckets +
      listFiles + readFiles, bucket-scoped) for the weekly
      healthcheck.
    - Print both key IDs + Application Key strings ONCE. Save them

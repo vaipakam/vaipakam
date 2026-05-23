@@ -18,7 +18,7 @@
  *      Capabilities: listBuckets + listFiles + writeFiles. NO
  *      readFiles, NO deleteFiles. Then print the scoped Key ID +
  *      Application Key — these are what go into `wrangler secret put`
- *      on `vaipakam-cloud-backup`. NEVER the master key.
+ *      on `vaipakam-offchain-data-archive`. NEVER the master key.
  *
  * Why the master stays offline forever after this script runs:
  *   - The master Application Key has full account control (create /
@@ -56,8 +56,8 @@ const DEFAULTS = {
   // The cleavage keeps the nightly key incapable of leaking archive
   // contents; the healthcheck key gets read access but the
   // ciphertext stays AES-256-GCM-protected against the offline key.
-  writeKeyName: 'vaipakam-cloud-backup-write-only',
-  readKeyName: 'vaipakam-cloud-backup-read-only',
+  writeKeyName: 'vaipakam-offchain-data-archive-write-only',
+  readKeyName: 'vaipakam-offchain-data-archive-read-only',
 };
 
 function parseDotEnv(path) {

@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "vaipakam-cloud-backup",
+  "name": "vaipakam-offchain-data-archive",
   "main": "src/index.ts",
   "compatibility_date": "2026-05-23",
   "compatibility_flags": ["nodejs_compat"],

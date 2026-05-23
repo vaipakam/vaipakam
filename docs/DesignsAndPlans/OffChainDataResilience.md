@@ -111,14 +111,14 @@ but the healthcheck has to perform signed GETs to verify archives,
 which a write-only key cannot do. The corrected spec uses two
 bucket-scoped Application Keys:
 
-- **`vaipakam-cloud-backup-write-only`** — `listBuckets` + `listFiles`
+- **`vaipakam-offchain-data-archive-write-only`** — `listBuckets` + `listFiles`
   + `writeFiles`. Used by the nightly cron. A CF compromise that
   exfiltrates these credentials can corrupt FUTURE archives only —
   immutable-naming nonce (see §3.3b) prevents overwrite of existing
   ones, and `deleteFiles` is absent so the attacker can't tombstone
   the history. The weekly healthcheck will detect the corrupt
   uploads via SHA-256 mismatch.
-- **`vaipakam-cloud-backup-read-only`** — `listBuckets` + `listFiles`
+- **`vaipakam-offchain-data-archive-read-only`** — `listBuckets` + `listFiles`
   + `readFiles`. Used by the weekly healthcheck. A CF compromise
   here yields AES-256-GCM ciphertext only; the offline encryption
   key blocks plaintext recovery.

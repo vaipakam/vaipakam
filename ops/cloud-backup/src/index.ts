@@ -104,7 +104,7 @@ export default {
    *  Always returns 404 with an honest description of why. */
   async fetch(): Promise<Response> {
     return new Response(
-      'vaipakam-cloud-backup is a cron-driven Worker. No HTTP surface.',
+      'vaipakam-offchain-data-archive is a cron-driven Worker. No HTTP surface.',
       { status: 404 },
     );
   },
