@@ -260,25 +260,89 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         LibVaipakam.Offer storage offer = s.offers[offerId];
         _assertMutableBy(offer);
 
-        _assertAmountInvariants(params.amount, params.amountMax, offer.amountFilled);
-        _assertRateInvariants(params.interestRateBps, params.interestRateBpsMax);
-        _assertCollateralInvariants(offer, params.collateralAmount, params.collateralAmountMax);
-
         // Snapshot every old value before writes — the delta helpers
-        // need pre-mutation reads (storage is about to change).
+        // and the unchanged-field short-circuits below need pre-mutation
+        // reads (storage is about to change).
         uint256 oldAmount = offer.amount;
         uint256 oldAmountMax = offer.amountMax;
+        uint256 oldRateBps = offer.interestRateBps;
+        uint256 oldRateBpsMax = offer.interestRateBpsMax;
+        uint256 oldCollateralAmount = offer.collateralAmount;
         uint256 oldCollateralAmountMax = offer.collateralAmountMax;
 
-        offer.amount = params.amount;
-        offer.amountMax = params.amountMax;
-        offer.interestRateBps = params.interestRateBps;
-        offer.interestRateBpsMax = params.interestRateBpsMax;
-        offer.collateralAmount = params.collateralAmount;
-        offer.collateralAmountMax = params.collateralAmountMax;
+        // #193 — per-cluster idempotency. Each cluster (amount, rate,
+        // collateral) is only validated + settled when the caller is
+        // ACTUALLY changing that cluster's values. Skipping unchanged
+        // clusters keeps `modifyOffer` usable on offer shapes where
+        // one cluster is structurally non-mutable — borrower NFT-
+        // rental can call `modifyOffer` to change amount + rate
+        // without tripping `CollateralMutationUnsupportedForShape`,
+        // and a lender shape with zero-valued collateral (legacy
+        // shapes that don't satisfy today's `>0` invariant) can
+        // still update amount + rate. The trade-off: a caller who
+        // wants to set unchanged-but-zero collateral on a fresh
+        // mutate call must use `setOfferCollateral` directly; modify
+        // treats "supplied == existing" as "leave this cluster alone."
 
-        _settleAmountDelta(offer, oldAmount, oldAmountMax, params.amount, params.amountMax);
-        _settleCollateralDelta(offer, oldCollateralAmountMax, params.collateralAmountMax);
+        bool amountChanged =
+            params.amount != oldAmount || params.amountMax != oldAmountMax;
+        bool rateChanged =
+            params.interestRateBps != oldRateBps
+            || params.interestRateBpsMax != oldRateBpsMax;
+        bool collateralChanged =
+            params.collateralAmount != oldCollateralAmount
+            || params.collateralAmountMax != oldCollateralAmountMax;
+
+        if (amountChanged) {
+            _assertAmountInvariants(
+                params.amount,
+                params.amountMax,
+                offer.amountFilled
+            );
+        }
+        if (rateChanged) {
+            _assertRateInvariants(
+                params.interestRateBps,
+                params.interestRateBpsMax
+            );
+        }
+        if (collateralChanged) {
+            _assertCollateralInvariants(
+                offer,
+                params.collateralAmount,
+                params.collateralAmountMax
+            );
+        }
+
+        if (amountChanged) {
+            offer.amount = params.amount;
+            offer.amountMax = params.amountMax;
+        }
+        if (rateChanged) {
+            offer.interestRateBps = params.interestRateBps;
+            offer.interestRateBpsMax = params.interestRateBpsMax;
+        }
+        if (collateralChanged) {
+            offer.collateralAmount = params.collateralAmount;
+            offer.collateralAmountMax = params.collateralAmountMax;
+        }
+
+        if (amountChanged) {
+            _settleAmountDelta(
+                offer,
+                oldAmount,
+                oldAmountMax,
+                params.amount,
+                params.amountMax
+            );
+        }
+        if (collateralChanged) {
+            _settleCollateralDelta(
+                offer,
+                oldCollateralAmountMax,
+                params.collateralAmountMax
+            );
+        }
 
         _emitModified(offerId, offer);
     }

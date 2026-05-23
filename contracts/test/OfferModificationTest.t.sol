@@ -470,6 +470,115 @@ contract OfferModificationTest is SetupTest {
         );
     }
 
+    // ─── Per-cluster idempotency (Codex round-1 P2) ─────────────────
+
+    function testModifyOfferSkipsCollateralBranchOnBorrowerNftRental() public {
+        // Codex round-1 P2 — borrower NFT-rental offers can't mutate
+        // collateral (CollateralMutationUnsupportedForShape), but they
+        // CAN modify amount / rate via `modifyOffer` as long as the
+        // collateral params they pass match the offer's existing values
+        // (idempotent "no change" → no validation fires).
+        vm.prank(borrower);
+        ERC20Mock(mockERC20).approve(address(diamond), type(uint256).max);
+        // NFT-rental borrower offer pre-vaults the prepay
+        // (`amount × durationDays × (1 + bufferBps)`) in `mockERC20`
+        // since we use it as the prepayAsset.
+        vm.prank(borrower);
+        uint256 id = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Borrower,
+                lendingAsset: mockNFT721,
+                amount: 10 ether,         // daily fee
+                interestRateBps: 0,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: 1 ether,
+                durationDays: 5,
+                assetType: LibVaipakam.AssetType.ERC721,
+                tokenId: 1,
+                quantity: 1,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                amountMax: 10 ether,
+                interestRateBpsMax: 0,
+                collateralAmountMax: 1 ether,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
+            })
+        );
+
+        // Now combine-modify just the daily fee + rate while leaving
+        // collateral exactly as-is. Pre-fix this would revert
+        // CollateralMutationUnsupportedForShape; post-fix the
+        // idempotent collateral branch short-circuits.
+        vm.prank(borrower);
+        _mutate().modifyOffer(
+            id,
+            LibVaipakam.OfferModifyParams({
+                amount: 12 ether,
+                amountMax: 12 ether,
+                interestRateBps: 0,
+                interestRateBpsMax: 0,
+                collateralAmount: 1 ether,    // unchanged
+                collateralAmountMax: 1 ether  // unchanged
+            })
+        );
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(id);
+        assertEq(o.amount, 12 ether, "amount updated");
+        assertEq(o.collateralAmount, 1 ether, "collateral untouched");
+    }
+
+    function testModifyOfferStillRevertsWhenChangingCollateralOnBorrowerNftRental() public {
+        // Same offer shape as above, but the caller TRIES to change
+        // collateral — must hit the shape-rejection error, confirming
+        // the idempotent branch fires only on "unchanged".
+        vm.prank(borrower);
+        ERC20Mock(mockERC20).approve(address(diamond), type(uint256).max);
+        vm.prank(borrower);
+        uint256 id = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Borrower,
+                lendingAsset: mockNFT721,
+                amount: 10 ether,
+                interestRateBps: 0,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: 1 ether,
+                durationDays: 5,
+                assetType: LibVaipakam.AssetType.ERC721,
+                tokenId: 2,
+                quantity: 1,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                amountMax: 10 ether,
+                interestRateBpsMax: 0,
+                collateralAmountMax: 1 ether,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
+            })
+        );
+
+        vm.prank(borrower);
+        vm.expectRevert(OfferMutateFacet.CollateralMutationUnsupportedForShape.selector);
+        _mutate().modifyOffer(
+            id,
+            LibVaipakam.OfferModifyParams({
+                amount: 10 ether,
+                amountMax: 10 ether,
+                interestRateBps: 0,
+                interestRateBpsMax: 0,
+                collateralAmount: 2 ether,    // changed!
+                collateralAmountMax: 2 ether  // changed!
+            })
+        );
+    }
+
     // ─── Sanctions screening ─────────────────────────────────────────
 
     function testModifyOfferRevertsOnSanctionedCreator() public {
