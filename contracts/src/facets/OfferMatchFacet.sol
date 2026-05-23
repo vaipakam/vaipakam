@@ -188,6 +188,27 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
                     s.offers[lenderOfferId].creator
                 );
             }
+            // #195 — surface the GTT terminal classifier with the
+            // expired offer's id so the matcher (bot or otherwise) gets
+            // a non-ambiguous revert. Either side can be the expired
+            // offer; pick whichever lapsed (lender first so the report
+            // is deterministic when both expired in the same second).
+            // Re-raises the same typed error the direct-accept path
+            // returns so the ABI is uniform across both entry points.
+            if (mr.errorCode == LibOfferMatch.MatchError.OfferExpired) {
+                LibVaipakam.Offer storage l_ = s.offers[lenderOfferId];
+                if (LibVaipakam.isOfferExpired(l_)) {
+                    revert OfferAcceptFacet.OfferExpired(
+                        lenderOfferId,
+                        l_.expiresAt
+                    );
+                }
+                LibVaipakam.Offer storage b_ = s.offers[borrowerOfferId];
+                revert OfferAcceptFacet.OfferExpired(
+                    borrowerOfferId,
+                    b_.expiresAt
+                );
+            }
             revert InvalidOfferType();
         }
 

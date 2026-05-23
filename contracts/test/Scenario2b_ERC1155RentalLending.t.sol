@@ -250,7 +250,8 @@ contract Scenario2b_ERC1155RentalLending is Test {
                 amountMax: DAILY_FEE,
                 interestRateBpsMax: 0,
                 collateralAmountMax: TOTAL_PREPAY,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 

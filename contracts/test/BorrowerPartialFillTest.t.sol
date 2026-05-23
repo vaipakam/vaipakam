@@ -158,7 +158,8 @@ contract BorrowerPartialFillTest is SetupTest {
                 amountMax: amountMax,
                 interestRateBpsMax: rateMax,
                 collateralAmountMax: collateralMax,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
     }
@@ -199,7 +200,8 @@ contract BorrowerPartialFillTest is SetupTest {
                 amountMax: amount,           // single-value lender
                 interestRateBpsMax: rateMax,
                 collateralAmountMax: collateralRequired,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
     }

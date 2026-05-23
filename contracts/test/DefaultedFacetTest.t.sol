@@ -579,7 +579,8 @@ contract DefaultedFacetTest is Test {
                 amountMax: amount,
                 interestRateBpsMax: 500,
                 collateralAmountMax: collateralAmount,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 

@@ -322,7 +322,8 @@ contract Permit2IntegrationTest is SetupTest {
                 amountMax: principal,
                 interestRateBpsMax: 500,
                 collateralAmountMax: principal,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             });
     }
 }

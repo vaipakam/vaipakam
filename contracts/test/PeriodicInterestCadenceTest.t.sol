@@ -74,7 +74,8 @@ contract PeriodicInterestCadenceTest is SetupTest {
             amountMax: amount,
             interestRateBpsMax: 500,
             collateralAmountMax: 10 * amount,
-            periodicInterestCadence: cadence
+            periodicInterestCadence: cadence,
+            expiresAt: 0
         });
     }
 

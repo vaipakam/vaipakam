@@ -3,7 +3,9 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
-import {LibAuth} from "../libraries/LibAuth.sol";
+// #195 — `LibAuth.requireOfferCreator` is replaced by an inline access
+// gate that admits the creator OR any caller against an expired offer;
+// see `cancelOffer` for the full rule.
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
@@ -79,10 +81,30 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     /// Partial-filled offers can be cancelled immediately and don't
     /// raise this.
     error CancelCooldownActive();
+    /// #195 — caller is neither the offer creator nor cancelling an
+    /// expired offer. Surfaces `(creator, expiresAt)` so the caller's
+    /// UI can render either "you're not the creator" or "this offer
+    /// hasn't expired yet" without an additional read. The lazy-clear
+    /// path widens the access gate to "anyone can clear when expired",
+    /// but the refund still routes to `creator` so the cleaner gets
+    /// no kickback — the SSTORE-clear gas refund discount they earn on
+    /// their own tx is the only economic incentive, and it's bounded
+    /// (EIP-3529 caps refunds at 1/5 of gas used).
+    error NotCreatorOrNotExpired(address creator, uint64 expiresAt);
 
     /**
      * @notice Cancels an unaccepted offer and returns the locked assets.
-     * @dev Creator-only (enforced via {LibAuth.requireOfferCreator}).
+     * @dev Access gate (post-#195):
+     *      - The creator can cancel their own offer unconditionally
+     *        (this is the legacy path; semantics unchanged).
+     *      - ANYONE can cancel an offer whose GTT deadline has elapsed
+     *        (`expiresAt != 0 && block.timestamp >= expiresAt`). The
+     *        refund still routes to `offer.creator` — the cleaner pays
+     *        gas and earns only the SSTORE-clear gas-refund discount
+     *        on their own tx (capped at 1/5 per EIP-3529). This is the
+     *        lazy permissionless-clear path; no keeper sweep, no
+     *        bounty, no treasury cut.
+     *
      *      Releases whatever was actually locked during
      *      {OfferFacet.createOffer}: principal (Lender side) or
      *      collateral / rental prepay+buffer (Borrower side), matching
@@ -90,14 +112,24 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
      *      Range Orders Phase 1: when partial-fills exist
      *      (`amountFilled > 0`) the storage record is preserved and
      *      `accepted = true`; otherwise the slot is deleted for the gas
-     *      refund. Reverts NotOfferCreator, OfferAlreadyAccepted, or
-     *      CancelCooldownActive.
+     *      refund. Reverts NotCreatorOrNotExpired, OfferAlreadyAccepted,
+     *      or CancelCooldownActive.
      * @param offerId The offer ID to cancel.
      */
     function cancelOffer(uint256 offerId) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[offerId];
-        LibAuth.requireOfferCreator(offer);
+        // #195 — access gate widened. Either the creator (unconditional)
+        // or any caller against an expired offer can cancel; the refund
+        // destination is `offer.creator` in both branches (see below),
+        // so the cleaner never receives the creator's vaulted assets.
+        // Note: an `expiresAt == 0` (GTC) offer can be cancelled only
+        // by its creator — `isOfferExpired` returns false on the GTC
+        // sentinel, so the second branch evaluates `false`.
+        address creator = offer.creator;
+        if (creator != msg.sender && !LibVaipakam.isOfferExpired(offer)) {
+            revert NotCreatorOrNotExpired(creator, offer.expiresAt);
+        }
         if (offer.accepted) revert OfferAlreadyAccepted();
 
         // ── Range Orders Phase 1 — cancel cooldown ─────────────────
@@ -109,11 +141,22 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // vector, so the cooldown stays off. Partial-filled offers
         // (`amountFilled > 0`) bypass the cooldown unconditionally —
         // the lender already committed value through prior matches.
+        //
+        // #195 — EXPIRED offers also bypass the cooldown. Rationale:
+        // every accept / match path refuses to bind an expired offer
+        // to a loan (the `isOfferExpired` gate in `_acceptOffer` and
+        // `previewMatch`), so a front-run cancel against an expired
+        // offer can't grief anyone — there's nothing left to race.
+        // Without this bypass an expiresAt < createdAt + 5 min offer
+        // would be stuck "expired but uncleanable" until the cooldown
+        // separately elapsed, which is a UX cliff with no defensive
+        // value.
         if (
             s.protocolCfg.partialFillEnabled
             && offer.amountFilled == 0
             && offer.createdAt != 0
             && block.timestamp < uint256(offer.createdAt) + LibVaipakam.MIN_OFFER_CANCEL_DELAY
+            && !LibVaipakam.isOfferExpired(offer)
         ) {
             revert CancelCooldownActive();
         }
@@ -140,6 +183,14 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             delete s.loanToSaleOfferId[lockedSaleLoanId];
         }
 
+        // #195 — refund destination is ALWAYS the creator's vault (and
+        // the creator's wallet for the withdraw target), never
+        // `msg.sender`. On the legacy creator-cancel path these are the
+        // same address; on the new lazy-clear path the cleaner is NOT
+        // the creator, so routing via `msg.sender` would let an
+        // arbitrary third party drain the creator's vaulted principal
+        // / collateral / prepay. The access-gate widening above is
+        // safe ONLY because every withdraw below targets `creator`.
         if (offer.offerType == LibVaipakam.OfferType.Lender) {
             if (offer.assetType == LibVaipakam.AssetType.ERC20) {
                 // Range Orders Phase 1 — refund only the UNFILLED
@@ -155,9 +206,9 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                     LibFacet.crossFacetCall(
                         abi.encodeWithSelector(
                             VaultFactoryFacet.vaultWithdrawERC20.selector,
-                            msg.sender,
+                            creator,
                             offer.lendingAsset,
-                            msg.sender,
+                            creator,
                             refund
                         ),
                         VaultWithdrawFailed.selector
@@ -167,10 +218,10 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
                         VaultFactoryFacet.vaultWithdrawERC721.selector,
-                        msg.sender,
+                        creator,
                         offer.lendingAsset,
                         offer.tokenId,
-                        msg.sender
+                        creator
                     ),
                     VaultWithdrawFailed.selector
                 );
@@ -178,11 +229,11 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
                         VaultFactoryFacet.vaultWithdrawERC1155.selector,
-                        msg.sender,
+                        creator,
                         offer.lendingAsset,
                         offer.tokenId,
                         offer.quantity,
-                        msg.sender
+                        creator
                     ),
                     VaultWithdrawFailed.selector
                 );
@@ -216,9 +267,9 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                         LibFacet.crossFacetCall(
                             abi.encodeWithSelector(
                                 VaultFactoryFacet.vaultWithdrawERC20.selector,
-                                msg.sender,
+                                creator,
                                 offer.collateralAsset,
-                                msg.sender,
+                                creator,
                                 borrowerColRefund
                             ),
                             VaultWithdrawFailed.selector
@@ -228,10 +279,10 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                     LibFacet.crossFacetCall(
                         abi.encodeWithSelector(
                             VaultFactoryFacet.vaultWithdrawERC721.selector,
-                            msg.sender,
+                            creator,
                             offer.collateralAsset,
                             offer.collateralTokenId,
-                            msg.sender
+                            creator
                         ),
                         VaultWithdrawFailed.selector
                     );
@@ -239,11 +290,11 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                     LibFacet.crossFacetCall(
                         abi.encodeWithSelector(
                             VaultFactoryFacet.vaultWithdrawERC1155.selector,
-                            msg.sender,
+                            creator,
                             offer.collateralAsset,
                             offer.collateralTokenId,
                             offer.collateralQuantity,
-                            msg.sender
+                            creator
                         ),
                         VaultWithdrawFailed.selector
                     );
@@ -260,9 +311,9 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
                         VaultFactoryFacet.vaultWithdrawERC20.selector,
-                        msg.sender,
+                        creator,
                         offer.prepayAsset,
-                        msg.sender,
+                        creator,
                         totalPrepay
                     ),
                     VaultWithdrawFailed.selector
@@ -292,9 +343,16 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // Cancelled" surfaces hydrate cancelled rows from this event;
         // the companion `OfferCanceled` keeps emitting for historical
         // consumers that only need identity (id + creator).
+        //
+        // #195 — log the creator (NOT `msg.sender`) so a lazy-clear
+        // landed by a third party still attributes the cancelled offer
+        // back to its real creator. Indexers that key on the second
+        // topic for "Your Offers / Cancelled" need this; otherwise an
+        // expired offer cleared by Bob would vanish from Alice's
+        // history when she should still see it as terminal.
         emit OfferCanceledDetails(
             offerId,
-            msg.sender,
+            creator,
             offer.offerType,
             offer.assetType,
             offer.lendingAsset,
@@ -328,7 +386,11 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             delete s.offers[offerId];
         }
 
-        emit OfferCanceled(offerId, msg.sender);
+        // #195 — attribute the cancellation to the original creator,
+        // not `msg.sender`. Same rationale as `OfferCanceledDetails`
+        // above; both events must keep the creator as their indexed
+        // address so historical filters continue to work.
+        emit OfferCanceled(offerId, creator);
         emit OfferClosed(offerId, OfferCloseReason.Cancelled);
     }
 

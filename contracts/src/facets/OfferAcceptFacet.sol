@@ -160,6 +160,14 @@ contract OfferAcceptFacet is
     ///         `docs/DesignsAndPlans/SelfTradePreventionADR.md`.
     /// @param party The collapsed address (lender == borrower).
     error SelfTradeForbidden(address party);
+    // #195 — GTT / offer-expiry. Raised when `block.timestamp >=
+    // offer.expiresAt && offer.expiresAt != 0` (lazy-enforcement gate
+    // at every accept / match consumer). Surfaces `(offerId, expiresAt)`
+    // so the frontend can render "this offer expired N minutes ago" —
+    // and the indexer can mark the offer terminal off-chain even if the
+    // storage row is still in place. The matching `MatchError.OfferExpired`
+    // classifier in `LibOfferMatch.previewMatch` lets bots short-circuit.
+    error OfferExpired(uint256 offerId, uint64 expiresAt);
     // NotOfferCreator inherited from IVaipakamErrors
     // Create-side errors (InvalidOfferType, OfferDurationExceedsCap, the
     // Range Orders Phase 1 errors, GetUserVaultFailed) live on
@@ -460,6 +468,15 @@ contract OfferAcceptFacet is
         LibVaipakam.Offer storage offer = s.offers[offerId];
         if (offer.creator == address(0)) revert InvalidOffer();
         if (offer.accepted) revert OfferAlreadyAccepted();
+        // #195 — GTT / offer-expiry. Lazy-enforcement gate: the storage
+        // row may still be in place after `expiresAt` (no keeper sweep)
+        // but every fill / match path must refuse to bind it to a loan.
+        // Routes through `LibVaipakam.isOfferExpired` so the GTC short-
+        // circuit lives in one place. Surfaces `(offerId, expiresAt)` so
+        // the frontend can render "this offer expired N minutes ago".
+        if (LibVaipakam.isOfferExpired(offer)) {
+            revert OfferExpired(offerId, offer.expiresAt);
+        }
 
         // ── Range Orders Phase 1 — address-resolution override ────────
         // When matchOffers is in flight (matchOverride.active), msg.sender
@@ -1069,8 +1086,11 @@ contract OfferAcceptFacet is
     ///         distinguish recoverable failures (KYC tier-up unlocks the
     ///         offer; pause lift unblocks; counterparty country shift,
     ///         etc.) from terminal ones (offer already filled, sanctioned
-    ///         counterparty). `OfferExpired` is reserved for #195 (GTT
-    ///         support) — not currently emitted.
+    ///         counterparty, offer expired).
+    /// @dev    `OfferExpired` was reserved as a comment-only slot pre-#195
+    ///         and is filled by #195 (GTT support). Append-only ordering —
+    ///         existing classifiers keep their integer codes so off-chain
+    ///         consumers don't shift.
     enum AcceptError {
         None,
         OfferAlreadyAccepted,
@@ -1079,7 +1099,14 @@ contract OfferAcceptFacet is
         AssetPaused,
         CountriesNotCompatible,
         RiskAndTermsConsentRequired,
-        KYCRequired
+        KYCRequired,
+        // #195 — `block.timestamp >= offer.expiresAt && offer.expiresAt
+        // != 0`. Terminal — the offer cannot be revived. The companion
+        // typed revert is `OfferExpired(offerId, expiresAt)` on the
+        // accept path; this classifier lets `previewAccept` surface the
+        // same condition without reverting so the UI can disable the
+        // "Accept" button + render an "expired" badge.
+        OfferExpired
     }
 
     /// @notice Projection of the loan that would land if the supplied
@@ -1276,6 +1303,15 @@ contract OfferAcceptFacet is
         // for the frontend.
         if (offer.accepted) {
             preview.errorCode = AcceptError.OfferAlreadyAccepted;
+            return preview;
+        }
+        // #195 — surface the GTT lazy-expiry gate before sanctions /
+        // pause / KYC. Order mirrors `_acceptOffer` (which checks
+        // expiry right after `accepted`) so the classifier the frontend
+        // reads matches the first failure that the real accept call
+        // would hit.
+        if (LibVaipakam.isOfferExpired(offer)) {
+            preview.errorCode = AcceptError.OfferExpired;
             return preview;
         }
         if (LibVaipakam.isSanctionedAddress(acceptor)) {

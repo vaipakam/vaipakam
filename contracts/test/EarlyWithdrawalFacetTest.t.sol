@@ -282,7 +282,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
         vm.prank(borrower);
@@ -311,7 +312,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -436,7 +438,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -499,7 +502,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 1000,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -546,7 +550,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 600,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -589,7 +594,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -643,7 +649,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -683,7 +690,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -720,7 +728,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -770,7 +779,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
         vm.prank(lender);
@@ -802,7 +812,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 amountMax: PRINCIPAL / 2,
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
@@ -842,7 +853,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -875,7 +887,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL + 1,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -974,7 +987,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 300,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -1014,7 +1028,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -1073,7 +1088,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -1115,7 +1131,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -1149,7 +1166,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 amountMax: PRINCIPAL + 100 ether,
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -1189,7 +1207,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 amountMax: PRINCIPAL + 100 ether,
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -1945,7 +1964,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -1995,7 +2015,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 5000,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 

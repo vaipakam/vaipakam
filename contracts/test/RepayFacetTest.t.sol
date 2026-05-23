@@ -348,7 +348,8 @@ contract RepayFacetTest is Test {
                 amountMax: 1000,
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -380,7 +381,8 @@ contract RepayFacetTest is Test {
                 amountMax: 10,
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -623,7 +625,8 @@ contract RepayFacetTest is Test {
                 amountMax: 1000,
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
         vm.prank(borrower);
@@ -675,7 +678,8 @@ contract RepayFacetTest is Test {
                 amountMax: 1000,
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 
@@ -1299,7 +1303,8 @@ contract RepayFacetTest is Test {
                 amountMax: 1000,
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
 

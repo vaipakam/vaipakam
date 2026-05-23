@@ -83,7 +83,8 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
         vm.prank(borrower);

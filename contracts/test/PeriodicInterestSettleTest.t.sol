@@ -75,7 +75,8 @@ contract PeriodicInterestSettleTest is SetupTest {
                 amountMax: 1000 ether,
                 interestRateBpsMax: 1200,
                 collateralAmountMax: 5000 ether,
-                periodicInterestCadence: MONTHLY
+                periodicInterestCadence: MONTHLY,
+                expiresAt: 0
             })
         );
         vm.prank(borrower);
@@ -157,7 +158,8 @@ contract PeriodicInterestSettleTest is SetupTest {
                 amountMax: 100 ether,
                 interestRateBpsMax: 500,
                 collateralAmountMax: 500 ether,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
         vm.prank(borrower);
@@ -244,7 +246,8 @@ contract PeriodicInterestSettleTest is SetupTest {
                 amountMax: 100 ether,
                 interestRateBpsMax: 500,
                 collateralAmountMax: 500 ether,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0
             })
         );
         vm.prank(borrower);

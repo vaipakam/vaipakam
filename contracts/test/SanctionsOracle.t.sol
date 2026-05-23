@@ -328,7 +328,8 @@ contract SanctionsOracleTest is RiskFacetTest {
             amountMax: 1000 ether,
             interestRateBpsMax: 500,
             collateralAmountMax: 1800 ether,
-            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+            expiresAt: 0
         });
     }
 

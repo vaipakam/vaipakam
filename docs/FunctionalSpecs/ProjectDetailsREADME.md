@@ -294,6 +294,37 @@ The platform distinguishes between liquid and illiquid assets, which affects how
   - Specify the desired NFT (or type of NFT), maximum acceptable daily rental charge, the ERC-20 token to be used for prepayment (rental fees + 5% buffer), and rental duration.
   - Lock the prepayment (total rental fee + 5% buffer) in ERC-20 tokens in the Vaipakam smart contract upon offer submission. Rental payments will be deducted from this prepayment.
 
+### Offer expiry (GTT) — optional time-bound offers
+
+- An offer is **Good-Till-Cancelled (GTC) by default**: it stays open
+  on the order book indefinitely until its creator cancels it.
+- An offer **may optionally carry an absolute deadline** (`expiresAt`
+  unix-seconds), in which case it behaves as a **Good-Till-Time (GTT)**
+  offer: at and after the deadline the offer can no longer be
+  accepted or matched. Direct accepts, matchOffers calls, previewAccept
+  classifiers, and previewMatch classifiers all refuse expired offers
+  before any state change.
+- The optional deadline must lie strictly in the future when the offer
+  is created, and must lie within one year from creation. Out-of-bounds
+  values are rejected by the create call. The chosen value is immutable
+  for the life of the offer.
+- A GTT offer that has lapsed is **cleanable by anyone** via the same
+  `cancelOffer` entry point. The cleaner pays gas; the refund (locked
+  principal for a lender offer, locked collateral or rental prepay
+  for a borrower offer) always flows back to the original creator,
+  never to the cleaner. The cleaner gets no protocol-level kickback —
+  the only economic incentive is the SSTORE-clear gas-refund discount
+  on their own transaction, which is bounded by EIP-3529.
+- A GTC offer (`expiresAt == 0`) is cancellable **only** by its
+  creator, exactly as before. The widened access gate applies only
+  to expired GTT offers.
+- The frontend may surface the expiry as quick presets (Never / 1 day
+  / 7 days / 30 days / custom) on the create form, and render an
+  "expires in …" / "expired — anyone can clean up" decoration on
+  open-book rows where `expiresAt > 0`.
+- See `docs/DesignsAndPlans/OfferExpiryGTTDesign.md` for the full
+  rationale, alternatives table, and failure-mode coverage.
+
 ### Process:
 
 - Offers are created through a React-based web interface.

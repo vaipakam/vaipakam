@@ -203,6 +203,11 @@
             "internalType": "uint64"
           },
           {
+            "name": "expiresAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
             "name": "collateralAmountMax",
             "type": "uint256",
             "internalType": "uint256"
@@ -370,6 +375,11 @@
           },
           {
             "name": "createdAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "expiresAt",
             "type": "uint64",
             "internalType": "uint64"
           },
@@ -842,6 +852,22 @@
     "type": "error",
     "name": "NotCanonicalVPFIChain",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotCreatorOrNotExpired",
+    "inputs": [
+      {
+        "name": "creator",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "expiresAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
   },
   {
     "type": "error",
