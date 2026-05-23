@@ -225,8 +225,19 @@ migration. See `CLAUDE.md` § "Retail-deploy policy" and ADR-0002.
 
 ## L
 
-**LayerZero (legacy)** — the pre-T-068 cross-chain transport. Fully
-removed in April 2026; CCIP replaced it. See ADR-0004.
+**LayerZero (deprecated 2026-05-18)** — the pre-T-068 cross-chain
+transport. T-068 (PR #46, merged 2026-05-18) migrated every
+cross-chain code path off LayerZero to Chainlink CCIP. The five
+LayerZero-era contracts (`VPFIOFTAdapter`, `VPFIMirror`,
+`VPFIBuyAdapter`, `VPFIBuyReceiver`, `VaipakamRewardOApp`) were
+replaced by their CCIP equivalents under
+[`contracts/src/crosschain/`](../contracts/src/crosschain/). The
+April 2026 ~$292M Kelp bridge exploit on LayerZero's
+1-required / 0-optional DVN configuration drove the migration —
+CCIP's committing DON + executing DON + independent Risk
+Management Network design avoids that footgun by construction.
+See ADR-0004 and
+[`docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md`](DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md).
 
 **Lender-gated partial repay** — `Offer.allowsPartialRepay`. A creator-
 set opt-in; acceptor consents by accepting. Landed 2026-04-29.

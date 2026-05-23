@@ -37,8 +37,6 @@ export interface ChainConfig {
    *  (lock/release). False on mirror chains (burn/mint). Exactly one
    *  mainnet entry and one testnet entry should be true. */
   isCanonicalVPFI: boolean;
-  /** LayerZero V2 endpoint id, or null when no OFT endpoint is wired here. */
-  lzEid: number | null;
   /** Testnet vs mainnet — used only for UI grouping. */
   testnet: boolean;
   /** VPFIBuyAdapter address on this chain, or null when buys here route
@@ -47,7 +45,7 @@ export interface ChainConfig {
    *  cross-chain buys. */
   vpfiBuyAdapter: string | null;
   /** When set, the adapter pulls this ERC20 for `amountIn` (WETH mode) so
-   *  the user only has to send the LayerZero native fee as `msg.value`.
+   *  the user only has to send the CCIP native fee as `msg.value`.
    *  Null = native ETH mode (default). Ignored when `vpfiBuyAdapter` is null. */
   vpfiBuyPaymentToken: string | null;
   /** Standalone MetricsFacet implementation address (not the Diamond) on

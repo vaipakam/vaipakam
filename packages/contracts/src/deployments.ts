@@ -90,11 +90,18 @@ export interface Deployment {
   admin: HexAddress;
   facets: DeploymentFacets;
 
-  // ── LayerZero V2 (every chain that participates in cross-chain
-  //    messaging — i.e. every non-anvil chain). Optional because
-  //    anvil leaves these unset. ─────────────────────────────────
+  // ── CCIP / LayerZero endpoint metadata (every chain that
+  //    participates in cross-chain messaging — i.e. every non-anvil
+  //    chain). `lzEndpoint` carries the legacy LayerZero V2 endpoint
+  //    address for chains still wiring an OFT mirror at deploy time;
+  //    the post-T-068 (LayerZero → CCIP, 2026-05-18) reads pass
+  //    through the CCIP router resolved from the per-chain
+  //    `chainSelector` instead. Optional because anvil leaves these
+  //    unset. The `lzEid` field is gone (#230) — CCIP uses
+  //    `chainSelector` instead of LayerZero V2 endpoint ids, and the
+  //    LZ-era field had no remaining consumer in the post-#234
+  //    workspace. ────────────────────────────────────────────────
   lzEndpoint?: HexAddress;
-  lzEid?: number;
 
   /** OpenZeppelin TimelockController address. Sits between the
    *  governance multisig and the Diamond on every mainnet deploy.

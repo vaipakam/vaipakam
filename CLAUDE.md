@@ -416,8 +416,9 @@ Full detail in
 ## VPFIBuyAdapter — payment-token mode by chain
 
 The cross-chain VPFI buy adapter pulls funds from the user on the
-source chain and forwards a BUY_REQUEST via LayerZero to the
-canonical Base receiver, which mints + sends VPFI to the buyer.
+source chain and forwards a BUY_REQUEST via Chainlink CCIP (post-
+T-068, 2026-05-18) to the canonical Base receiver, which mints +
+sends VPFI to the buyer.
 The receiver quotes a single global wei-per-VPFI rate denominated in
 **ETH-equivalent value** — not in the source chain's native gas. This
 makes the payment-token mode a load-bearing per-chain config:
