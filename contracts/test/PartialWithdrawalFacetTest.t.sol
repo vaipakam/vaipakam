@@ -196,7 +196,8 @@ contract PartialWithdrawalFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
         vm.prank(borrower);

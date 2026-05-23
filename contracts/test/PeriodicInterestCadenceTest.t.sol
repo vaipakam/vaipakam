@@ -75,7 +75,8 @@ contract PeriodicInterestCadenceTest is SetupTest {
             interestRateBpsMax: 500,
             collateralAmountMax: 10 * amount,
             periodicInterestCadence: cadence,
-            expiresAt: 0
+            expiresAt: 0,
+            fillMode: LibVaipakam.FillMode.Partial
         });
     }
 

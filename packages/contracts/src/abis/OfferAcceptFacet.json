@@ -211,6 +211,27 @@
   },
   {
     "type": "error",
+    "name": "AonRequiresFullFill",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "required",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "provided",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "AssetPaused",
     "inputs": [
       {

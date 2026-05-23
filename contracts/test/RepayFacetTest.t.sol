@@ -349,7 +349,8 @@ contract RepayFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -382,7 +383,8 @@ contract RepayFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -626,7 +628,8 @@ contract RepayFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
         vm.prank(borrower);
@@ -679,7 +682,8 @@ contract RepayFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -1304,7 +1308,8 @@ contract RepayFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 

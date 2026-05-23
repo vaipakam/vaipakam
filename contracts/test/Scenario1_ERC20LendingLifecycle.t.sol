@@ -217,7 +217,8 @@ contract Scenario1_ERC20LendingLifecycle is Test {
                 interestRateBpsMax: RATE_BPS,
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -301,7 +302,8 @@ contract Scenario1_ERC20LendingLifecycle is Test {
                 interestRateBpsMax: RATE_BPS,
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -388,7 +390,8 @@ contract Scenario1_ERC20LendingLifecycle is Test {
                 interestRateBpsMax: RATE_BPS,
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 

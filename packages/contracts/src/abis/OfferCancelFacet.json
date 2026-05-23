@@ -123,6 +123,11 @@
             "internalType": "enum LibVaipakam.PeriodicInterestCadence"
           },
           {
+            "name": "fillMode",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.FillMode"
+          },
+          {
             "name": "lendingAsset",
             "type": "address",
             "internalType": "address"
@@ -297,6 +302,11 @@
             "name": "periodicInterestCadence",
             "type": "uint8",
             "internalType": "enum LibVaipakam.PeriodicInterestCadence"
+          },
+          {
+            "name": "fillMode",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.FillMode"
           },
           {
             "name": "lendingAsset",

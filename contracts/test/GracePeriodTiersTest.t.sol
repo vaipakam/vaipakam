@@ -66,7 +66,8 @@ contract GracePeriodTiersTest is SetupTest {
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1800 ether,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
         vm.prank(borrower);

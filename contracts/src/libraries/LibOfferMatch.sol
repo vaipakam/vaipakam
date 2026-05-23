@@ -51,7 +51,8 @@ library LibOfferMatch {
         HFTooLow,                 // (depthTieredLtvEnabled off) synthetic HF at matched amount + collateral < 1.5e18
         LtvAboveTier,             // (depthTieredLtvEnabled on) synthetic init-LTV at matched amount + collateral > the effective tier cap (or collateral is Tier 0 / no-borrow)
         SelfTrade,                // #194 — both offers carry the same `creator`. The actual revert lives in `_acceptOffer` (`SelfTradeForbidden(party)`); this variant lets bots short-circuit at preview time.
-        OfferExpired              // #195 — either offer's GTT deadline (`expiresAt != 0 && block.timestamp >= expiresAt`) has lapsed. The actual revert lives in `_acceptOffer` (`OfferExpired(offerId, expiresAt)`); this variant lets matching bots short-circuit at preview time. Either side can carry the lapse — both lender and borrower offers are GTT-eligible.
+        OfferExpired,             // #195 — either offer's GTT deadline (`expiresAt != 0 && block.timestamp >= expiresAt`) has lapsed. The actual revert lives in `_acceptOffer` (`OfferExpired(offerId, expiresAt)`); this variant lets matching bots short-circuit at preview time. Either side can carry the lapse — both lender and borrower offers are GTT-eligible.
+        AonRequiresFullFill       // #125 — either offer carries `fillMode = Aon` but the would-be matchAmount isn't its full single-shot fill (`offer.amount`), or the offer already has a non-zero `amountFilled`. AON offers admit exactly one fill, sized to the AON-side's `amount`; any divergence aborts. Create-time invariant `amount == amountMax` keeps the "AON-required fill size" unambiguous.
     }
 
     /// @notice Structured return from `previewMatch`. Bots check
@@ -288,6 +289,36 @@ library LibOfferMatch {
             return r;
         }
         r.matchAmount = midpoint(lo, hi);
+
+        // #125 — AON enforcement. An AON offer admits exactly one fill,
+        // sized to its full `amount`. The create-time invariant
+        // `amount == amountMax` (enforced in `OfferCreateFacet`'s
+        // `_writeOfferPrincipalFields`) guarantees the AON-required
+        // fill size is `offer.amount` unambiguously. Two conditions
+        // must hold per AON side:
+        //   (1) the would-be matchAmount equals the AON side's amount,
+        //       i.e. the overlap midpoint coincides with the AON-
+        //       required full fill;
+        //   (2) `amountFilled == 0` — no prior partial fill has
+        //       accumulated. Defensive: AON should naturally never
+        //       admit a prior fill (it reverts every partial attempt),
+        //       so this check is a belt-and-suspenders against any
+        //       future code path that bypasses the gate.
+        // Both lender + borrower sides are AON-eligible; if both
+        // carry AON, both conditions must hold, which implies
+        // `L.amount == B.amount`.
+        if (L.fillMode == LibVaipakam.FillMode.Aon) {
+            if (r.matchAmount != L.amount || L.amountFilled != 0) {
+                r.errorCode = MatchError.AonRequiresFullFill;
+                return r;
+            }
+        }
+        if (B.fillMode == LibVaipakam.FillMode.Aon) {
+            if (r.matchAmount != B.amount || B.amountFilled != 0) {
+                r.errorCode = MatchError.AonRequiresFullFill;
+                return r;
+            }
+        }
 
         // Range overlap on rate.
         uint256 rateLo = L.interestRateBps > B.interestRateBps

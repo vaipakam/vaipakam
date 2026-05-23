@@ -276,7 +276,8 @@ contract Scenario2_NFTRentalLending is Test {
                 interestRateBpsMax: 0,
                 collateralAmountMax: TOTAL_PREPAY,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 

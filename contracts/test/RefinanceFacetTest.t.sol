@@ -210,7 +210,8 @@ contract RefinanceFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
         vm.prank(borrower);
@@ -240,7 +241,8 @@ contract RefinanceFacetTest is Test {
                 interestRateBpsMax: 400,
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -311,7 +313,8 @@ contract RefinanceFacetTest is Test {
                 interestRateBpsMax: 400,
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -363,7 +366,8 @@ contract RefinanceFacetTest is Test {
                 interestRateBpsMax: 400,
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -472,7 +476,8 @@ contract RefinanceFacetTest is Test {
                 interestRateBpsMax: 400,
                 collateralAmountMax: COLLATERAL / 2,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -775,7 +780,8 @@ contract RefinanceFacetTest is Test {
                 interestRateBpsMax: 400,
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -835,7 +841,8 @@ contract RefinanceFacetTest is Test {
                 interestRateBpsMax: 400,
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -889,7 +896,8 @@ contract RefinanceFacetTest is Test {
                 interestRateBpsMax: 400,
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -933,7 +941,8 @@ contract RefinanceFacetTest is Test {
                 interestRateBpsMax: 400,
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -1068,7 +1077,8 @@ contract RefinanceFacetTest is Test {
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 

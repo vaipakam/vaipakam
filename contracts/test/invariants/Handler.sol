@@ -113,7 +113,8 @@ contract Handler is Test {
             interestRateBpsMax: rateBps,
             collateralAmountMax: collateralAmount,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-            expiresAt: 0
+            expiresAt: 0,
+            fillMode: LibVaipakam.FillMode.Partial
         });
 
         vm.prank(lender);
@@ -162,7 +163,8 @@ contract Handler is Test {
             interestRateBpsMax: rateBps,
             collateralAmountMax: collateralAmount,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-            expiresAt: 0
+            expiresAt: 0,
+            fillMode: LibVaipakam.FillMode.Partial
         });
 
         vm.prank(borrower);

@@ -211,7 +211,8 @@ contract Scenario4_IlliquidCollateral is Test {
                 interestRateBpsMax: RATE_BPS,
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 

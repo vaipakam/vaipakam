@@ -62,7 +62,8 @@ contract OfferModificationTest is SetupTest {
             interestRateBpsMax: 500,
             collateralAmountMax: 5000 ether,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-            expiresAt: 0
+            expiresAt: 0,
+            fillMode: LibVaipakam.FillMode.Partial
         });
     }
 
@@ -92,7 +93,8 @@ contract OfferModificationTest is SetupTest {
             interestRateBpsMax: 500,
             collateralAmountMax: 5000 ether,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-            expiresAt: 0
+            expiresAt: 0,
+            fillMode: LibVaipakam.FillMode.Partial
         });
     }
 
@@ -506,7 +508,8 @@ contract OfferModificationTest is SetupTest {
                 interestRateBpsMax: 0,
                 collateralAmountMax: 1 ether,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -560,7 +563,8 @@ contract OfferModificationTest is SetupTest {
                 interestRateBpsMax: 0,
                 collateralAmountMax: 1 ether,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 

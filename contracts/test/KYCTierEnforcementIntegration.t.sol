@@ -212,7 +212,8 @@ contract KYCTierEnforcementIntegration is SetupTest {
                 interestRateBpsMax: RATE_BPS,
                 collateralAmountMax: COLLATERAL_ERC20,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
     }

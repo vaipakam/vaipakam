@@ -739,7 +739,8 @@ contract RiskFacetTest is Test {
                 periodicInterestCadence: LibVaipakam
                     .PeriodicInterestCadence
                     .None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
 
@@ -1038,7 +1039,8 @@ contract RiskFacetTest is Test {
                 periodicInterestCadence: LibVaipakam
                     .PeriodicInterestCadence
                     .None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
         vm.prank(borrower);
@@ -1801,7 +1803,8 @@ contract RiskFacetTest is Test {
                 periodicInterestCadence: LibVaipakam
                     .PeriodicInterestCadence
                     .None,
-                expiresAt: 0
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial
             })
         );
         vm.prank(borrower);

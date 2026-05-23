@@ -112,6 +112,11 @@
             "name": "expiresAt",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "fillMode",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.FillMode"
           }
         ]
       }
@@ -243,6 +248,11 @@
             "name": "expiresAt",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "fillMode",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.FillMode"
           }
         ]
       }
@@ -369,6 +379,11 @@
             "name": "expiresAt",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "fillMode",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.FillMode"
           }
         ]
       },
@@ -572,6 +587,11 @@
             "name": "expiresAt",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "fillMode",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.FillMode"
           }
         ]
       }
@@ -586,6 +606,11 @@
   {
     "type": "error",
     "name": "AmountMustBePositive",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AonRequiresSingleValueAmount",
     "inputs": []
   },
   {
@@ -844,6 +869,11 @@
   {
     "type": "error",
     "name": "InvalidRateRange",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IocRequiresExpiry",
     "inputs": []
   },
   {
