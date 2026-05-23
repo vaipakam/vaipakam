@@ -9,7 +9,9 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
+import {OracleFacet} from "./OracleFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 /**
  * @title OfferMutateFacet
@@ -158,6 +160,13 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         uint256 oldAmount = offer.amount;
         uint256 oldAmountMax = offer.amountMax;
         _assertAmountInvariants(newAmount, newAmountMax, offer.amountFilled);
+        // Codex round-3 P2 — re-validate the T-034 cadence threshold
+        // against the NEW amount. createOffer rejects (amount, cadence)
+        // pairs that violate the principal-vs-threshold rule; modify
+        // must enforce the same so a creator can't post above the
+        // threshold with a finer cadence and then shrink amount below
+        // it while keeping the finer cadence.
+        _revalidatePeriodicCadenceForAmount(offer, newAmount);
 
         offer.amount = newAmount;
         offer.amountMax = newAmountMax;
@@ -299,6 +308,10 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                 params.amountMax,
                 offer.amountFilled
             );
+            // Codex round-3 P2 — same revalidation hook as
+            // `setOfferAmount`; the new amount must still satisfy the
+            // (amount, cadence) compatibility rule createOffer enforces.
+            _revalidatePeriodicCadenceForAmount(offer, params.amount);
         }
         if (rateChanged) {
             _assertRateInvariants(
@@ -607,6 +620,108 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                 ),
                 VaultWithdrawFailed.selector
             );
+        }
+    }
+
+    /// @dev Codex round-3 P2 — re-run the T-034 periodic-interest-cadence
+    ///      threshold check against the post-mutation `amount`. Mirrors
+    ///      the subset of `OfferCreateFacet._validatePeriodicCadence`
+    ///      that depends on `amount` (Filter 2 — principal-vs-threshold);
+    ///      Filter 0 (both-liquid + ERC-20/ERC-20) is latched at create
+    ///      and immutable through modify, and Filter 1 (cadence interval
+    ///      < duration) depends only on the immutable `durationDays`, so
+    ///      neither needs re-checking here.
+    ///
+    ///      Without this, a creator could open an offer above the
+    ///      `minPrincipalForFinerCadence` threshold with a finer cadence
+    ///      (e.g. Monthly), then shrink `amount` via `setOfferAmount` or
+    ///      `modifyOffer` below the threshold while keeping Monthly —
+    ///      a state `createOffer` rejects with `CadenceNotAllowed`.
+    function _revalidatePeriodicCadenceForAmount(
+        LibVaipakam.Offer storage offer,
+        uint256 newAmount
+    ) private view {
+        LibVaipakam.PeriodicInterestCadence cadence = offer.periodicInterestCadence;
+        bool isMultiYear = uint256(offer.durationDays) > 365;
+        // None cadence on a non-multi-year offer is unconditionally
+        // valid under createOffer's matrix — short-circuit so we don't
+        // pay for the oracle lookup. Multi-year offers with cadence
+        // None are already rejected at create (Row 3/4 require Annual),
+        // so reaching this state would be a defensive impossibility;
+        // we still run the threshold check in that case so a future
+        // code path that bypassed create-time enforcement gets caught.
+        if (cadence == LibVaipakam.PeriodicInterestCadence.None && !isMultiYear) {
+            return;
+        }
+
+        LibVaipakam.ProtocolConfig storage cfgT034 =
+            LibVaipakam.storageSlot().protocolCfg;
+        uint256 threshold = cfgT034.minPrincipalForFinerCadence == 0
+            ? LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_DEFAULT
+            : cfgT034.minPrincipalForFinerCadence;
+
+        uint256 principalNumeraire =
+            _principalToNumeraire1e18(offer.lendingAsset, newAmount);
+        bool aboveThreshold = principalNumeraire >= threshold;
+
+        if (isMultiYear) {
+            if (cadence == LibVaipakam.PeriodicInterestCadence.None) {
+                // Row 3 / Row 4 — multi-year requires at least Annual.
+                revert IVaipakamErrors.CadenceNotAllowed(
+                    uint8(cadence),
+                    uint256(offer.durationDays),
+                    principalNumeraire,
+                    threshold
+                );
+            }
+            if (
+                !aboveThreshold &&
+                cadence != LibVaipakam.PeriodicInterestCadence.Annual
+            ) {
+                // Row 3 — only Annual allowed below threshold on multi-year.
+                revert IVaipakamErrors.CadenceNotAllowed(
+                    uint8(cadence),
+                    uint256(offer.durationDays),
+                    principalNumeraire,
+                    threshold
+                );
+            }
+        } else {
+            // ≤365d. Row 1 — None only below threshold; Row 2 — opt-in
+            // to finer cadences allowed only at-or-above threshold.
+            if (
+                cadence != LibVaipakam.PeriodicInterestCadence.None &&
+                !aboveThreshold
+            ) {
+                revert IVaipakamErrors.CadenceNotAllowed(
+                    uint8(cadence),
+                    uint256(offer.durationDays),
+                    principalNumeraire,
+                    threshold
+                );
+            }
+        }
+    }
+
+    /// @dev Mirrors `OfferCreateFacet._principalToNumeraire1e18` so
+    ///      create + modify see identical "is this above the cadence
+    ///      threshold?" math. Fails soft to 0 when the oracle is
+    ///      unconfigured or reverts (same fail-mode as create).
+    function _principalToNumeraire1e18(
+        address asset,
+        uint256 amount
+    ) private view returns (uint256) {
+        if (asset == address(0) || amount == 0) return 0;
+        try OracleFacet(address(this)).getAssetPrice(asset) returns (
+            uint256 price,
+            uint8 feedDecimals
+        ) {
+            uint8 tokenDecimals = IERC20Metadata(asset).decimals();
+            return (amount * price * 1e18) /
+                (10 ** feedDecimals) /
+                (10 ** tokenDecimals);
+        } catch {
+            return 0;
         }
     }
 
