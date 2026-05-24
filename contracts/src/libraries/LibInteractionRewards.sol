@@ -1044,8 +1044,9 @@ library LibInteractionRewards {
         }
         // forge-lint: disable-next-line unsafe-typecast
         // safe: `answer` is validated > 0 by the local `if (answer <= 0)
-        // return (0, 0);` guard a few lines above this return (just after
-        // the `decimals()` try/catch).
+        // return (0, 0);` guard which runs immediately after the
+        // `latestRoundData` try/catch — i.e. BEFORE the `decimals()`
+        // try/catch — in `_ethUsdPriceRawAndDec` above this return.
         return (uint256(answer), dec);
     }
 
