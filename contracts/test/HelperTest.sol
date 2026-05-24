@@ -379,7 +379,7 @@ contract HelperTest {
         return selectors;
     }
 
-    function getVaipakamNftFacetSelectors()
+    function getVaipakamNFTFacetSelectors()
         public
         pure
         returns (bytes4[] memory selectors)
@@ -1141,7 +1141,7 @@ contract HelperTest {
         selectors[11] = OracleAdminFacet.getTellorOracle.selector;
         selectors[12] = OracleAdminFacet.setApi3ServerV1.selector;
         selectors[13] = OracleAdminFacet.getApi3ServerV1.selector;
-        selectors[14] = OracleAdminFacet.setDiaOracleV2.selector;
+        selectors[14] = OracleAdminFacet.setDIAOracleV2.selector;
         selectors[15] = OracleAdminFacet.getDIAOracleV2.selector;
         selectors[16] = OracleAdminFacet.setSecondaryOracleMaxDeviationBps.selector;
         selectors[17] = OracleAdminFacet.getSecondaryOracleMaxDeviationBps.selector;

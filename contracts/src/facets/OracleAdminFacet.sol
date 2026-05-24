@@ -352,8 +352,8 @@ contract OracleAdminFacet {
      *         at call time. Owner-only.
      * @param oracle DIA Oracle V2 address on this chain, or zero.
      */
-    function setDiaOracleV2(address oracle) external {
-        LibVaipakam.setDiaOracleV2(oracle);
+    function setDIAOracleV2(address oracle) external {
+        LibVaipakam.setDIAOracleV2(oracle);
     }
 
     /// @notice Read the configured DIA Oracle V2 address. Zero

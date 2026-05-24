@@ -780,7 +780,7 @@ contract DeployDiamond is Script {
         s[11] = OracleAdminFacet.getTellorOracle.selector;
         s[12] = OracleAdminFacet.setApi3ServerV1.selector;
         s[13] = OracleAdminFacet.getApi3ServerV1.selector;
-        s[14] = OracleAdminFacet.setDiaOracleV2.selector;
+        s[14] = OracleAdminFacet.setDIAOracleV2.selector;
         s[15] = OracleAdminFacet.getDIAOracleV2.selector;
         s[16] = OracleAdminFacet.setSecondaryOracleMaxDeviationBps.selector;
         s[17] = OracleAdminFacet.getSecondaryOracleMaxDeviationBps.selector;

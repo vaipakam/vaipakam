@@ -233,7 +233,7 @@ contract DefaultedFacetTest is Test {
         cuts[3] = IDiamondCut.FacetCut({
             facetAddress: address(nftFacet),
             action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getVaipakamNftFacetSelectors()
+            functionSelectors: helperTest.getVaipakamNFTFacetSelectors()
         });
         cuts[4] = IDiamondCut.FacetCut({
             facetAddress: address(vaultFacet),

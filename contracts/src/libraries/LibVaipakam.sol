@@ -4204,7 +4204,7 @@ library LibVaipakam {
 
     /// @notice Install the chain's DIA Oracle V2 address. Owner-only;
     ///         null disables DIA's leg of the deviation check globally.
-    function setDiaOracleV2(address oracle) internal {
+    function setDIAOracleV2(address oracle) internal {
         LibDiamond.enforceIsContractOwner();
         Storage storage s = storageSlot();
         address prev = s.diaOracleV2;

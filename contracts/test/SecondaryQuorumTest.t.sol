@@ -102,7 +102,7 @@ contract SecondaryQuorumTest is Test {
         oracleAdminSelectors[6] = OracleAdminFacet.setStableTokenFeed.selector;
         oracleAdminSelectors[7] = OracleAdminFacet.setTellorOracle.selector;
         oracleAdminSelectors[8] = OracleAdminFacet.setApi3ServerV1.selector;
-        oracleAdminSelectors[9] = OracleAdminFacet.setDiaOracleV2.selector;
+        oracleAdminSelectors[9] = OracleAdminFacet.setDIAOracleV2.selector;
         oracleAdminSelectors[10] = OracleAdminFacet.setSecondaryOracleMaxDeviationBps.selector;
         oracleAdminSelectors[11] = OracleAdminFacet.setSecondaryOracleMaxStaleness.selector;
         oracleAdminSelectors[12] = OracleAdminFacet.getSecondaryOracleMaxDeviationBps.selector;
@@ -269,7 +269,7 @@ contract SecondaryQuorumTest is Test {
     }
 
     function _enableDia() internal {
-        OracleAdminFacet(address(diamond)).setDiaOracleV2(mockDia);
+        OracleAdminFacet(address(diamond)).setDIAOracleV2(mockDia);
     }
 
     function _readPrice() internal view returns (uint256, uint8) {
