@@ -107,14 +107,23 @@ abstract contract GuardianPausable is
         emit GuardianUpdated(previous, newGuardian);
     }
 
-    /// @dev Authorizes either the guardian or the owner. Applied to
-    ///      `pause()` in the concrete contracts; intentionally NOT applied
-    ///      to `unpause()` — see contract-level docstring for the rationale.
-    modifier onlyGuardianOrOwner() {
+    /// @dev Extracted modifier body — the modifier itself stays a thin
+    ///      wrapper so each call site in subclasses inlines one function
+    ///      call instead of the full check, deduping bytecode. `internal`
+    ///      (not `private`) so the inlined modifier body in subclasses
+    ///      can reach it.
+    function _checkGuardianOrOwner() internal view {
         address g = _getGuardianStorage().guardian;
         if (msg.sender != g && msg.sender != owner()) {
             revert NotGuardianOrOwner(msg.sender);
         }
+    }
+
+    /// @dev Authorizes either the guardian or the owner. Applied to
+    ///      `pause()` in the concrete contracts; intentionally NOT applied
+    ///      to `unpause()` — see contract-level docstring for the rationale.
+    modifier onlyGuardianOrOwner() {
+        _checkGuardianOrOwner();
         _;
     }
 }

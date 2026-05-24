@@ -244,8 +244,15 @@ contract VaipakamRewardMessenger is
 
     // ─── Modifiers ──────────────────────────────────────────────────────────
 
-    modifier onlyDiamond() {
+    /// @dev Extracted modifier body to keep the modifier itself a thin
+    ///      wrapper — every call site inlines the modifier, so the
+    ///      check living in a private function dedupes the bytecode.
+    function _checkDiamond() private view {
         if (msg.sender != diamond) revert OnlyDiamond();
+    }
+
+    modifier onlyDiamond() {
+        _checkDiamond();
         _;
     }
 

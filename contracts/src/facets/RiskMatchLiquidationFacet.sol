@@ -47,8 +47,13 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     ///      `msg.sender == EOA`. Same pattern `VaultFactoryFacet` uses
     ///      for its cross-facet-only entry-points.
     error OnlyDiamondInternal();
-    modifier onlyDiamondInternal() {
+    /// @dev Extracted modifier body — keeps the modifier a thin wrapper
+    ///      so each call site inlines one function call, deduping bytecode.
+    function _checkDiamondInternal() private view {
         if (msg.sender != address(this)) revert OnlyDiamondInternal();
+    }
+    modifier onlyDiamondInternal() {
+        _checkDiamondInternal();
         _;
     }
 

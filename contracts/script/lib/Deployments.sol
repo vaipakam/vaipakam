@@ -181,6 +181,7 @@ library Deployments {
                 " (run the deploy on that chain first)"
             )
         );
+        // forge-lint: disable-next-line unsafe-cheatcode
         address a = CHEATS.parseJsonAddress(CHEATS.readFile(p), jsonKey);
         require(
             a != address(0),
@@ -417,6 +418,7 @@ library Deployments {
         // 1. Try the addresses.json file.
         string memory p = path();
         if (_fileExists(p)) {
+            // forge-lint: disable-next-line unsafe-cheatcode
             string memory file = CHEATS.readFile(p);
             if (bytes(file).length > 0) {
                 try CHEATS.parseJsonAddress(file, jsonKey) returns (address a) {
@@ -441,6 +443,7 @@ library Deployments {
     {
         string memory p = path();
         if (!_fileExists(p)) return address(0);
+        // forge-lint: disable-next-line unsafe-cheatcode
         string memory file = CHEATS.readFile(p);
         if (bytes(file).length == 0) return address(0);
         try CHEATS.parseJsonAddress(file, jsonKey) returns (address a) {
@@ -509,6 +512,7 @@ library Deployments {
         // files when wrapped in try/catch via the vm interface, but
         // there's no first-class "exists" cheat. We probe by
         // attempting `readFile` and catching the revert.
+        // forge-lint: disable-next-line unsafe-cheatcode
         try CHEATS.readFile(p) returns (string memory contents) {
             return bytes(contents).length > 0;
         } catch {

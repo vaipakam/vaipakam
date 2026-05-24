@@ -146,6 +146,7 @@ contract Handover is Script {
         address pauserSafe = vm.envAddress("PAUSER_ADDRESS");
 
         string memory addressesPath = _resolveAddressesPath();
+        // forge-lint: disable-next-line unsafe-cheatcode
         string memory addrJson = vm.readFile(addressesPath);
 
         address diamond = _readAddrOrRevert(addrJson, "diamond", addressesPath);

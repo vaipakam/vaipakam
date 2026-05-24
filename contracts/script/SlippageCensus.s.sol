@@ -158,6 +158,7 @@ contract SlippageCensus is Script {
         } catch {
             path = "script/SlippageCensus.assets.json";
         }
+        // forge-lint: disable-next-line unsafe-cheatcode
         string memory json = vm.readFile(path);
         string memory key = string.concat(
             ".chain_",
