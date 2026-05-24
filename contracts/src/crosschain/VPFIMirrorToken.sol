@@ -62,6 +62,7 @@ contract VPFIMirrorToken is
     address public tokenPool;
 
     /// @dev Reserved storage for upgrade-safe appends (1 slot used above).
+    // forge-lint: disable-next-line mixed-case-variable
     uint256[49] private __gap;
 
     // ─── Events ─────────────────────────────────────────────────────────────

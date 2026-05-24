@@ -131,6 +131,7 @@ contract CcipMessenger is
     mapping(bytes32 => mapping(uint256 => address)) public channelPeerOf;
 
     /// @dev Reserved storage for upgrade-safe appends. 6 slots used above.
+    // forge-lint: disable-next-line mixed-case-variable
     uint256[44] private __gap;
 
     // ─── Events ─────────────────────────────────────────────────────────────
