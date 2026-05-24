@@ -1,0 +1,137 @@
+file,line,col,cast_expr,target_type,redundant_guess,suggested_action,source_line
+src/libraries/LibPausable.sol,105,24,uint64(block.timestamp + duration),uint64,NO,REVIEW-SAFECAST,uint64 until = uint64(block.timestamp + duration);
+src/facets/ConfigFacet.sol,2027,17,"bytes32(""numeraireSymbol"")",bytes32,NO,SAFE-LITERAL,"bytes32(""numeraireSymbol""), 0, 1, type(uint256).max"
+src/VaipakamVaultImplementation.sol,358,27,uint128(quantity),uint128,NO,REVIEW-SAFECAST,quantity: uint128(quantity)
+src/VaipakamVaultImplementation.sol,365,31,uint128(quantity),uint128,NO,REVIEW-SAFECAST,quantity: uint128(quantity)
+test/DepthTieredLtv.t.sol,148,36,uint256(uint256(PRICE_2000)),uint256,YES,REDUNDANT-REMOVE,"_mockAssetPrice(mockAsset, uint256(uint256(PRICE_2000)), 8);"
+test/DepthTieredLtv.t.sol,148,44,uint256(PRICE_2000),uint256,POSSIBLY,REVIEW-CONTEXT,"_mockAssetPrice(mockAsset, uint256(uint256(PRICE_2000)), 8);"
+test/DepthTieredLtv.t.sol,149,35,uint256(uint256(PRICE_2000)),uint256,YES,REDUNDANT-REMOVE,"_mockAssetPrice(mockWeth, uint256(uint256(PRICE_2000)), 8);"
+test/DepthTieredLtv.t.sol,149,43,uint256(PRICE_2000),uint256,POSSIBLY,REVIEW-CONTEXT,"_mockAssetPrice(mockWeth, uint256(uint256(PRICE_2000)), 8);"
+test/DepthTieredLtv.t.sol,211,36,uint256(uint256(PRICE_2000)),uint256,YES,REDUNDANT-REMOVE,"_mockAssetPrice(mockAsset, uint256(uint256(PRICE_2000)) * 2, 8); // asset now ""worth 2× WETH"""
+test/DepthTieredLtv.t.sol,211,44,uint256(PRICE_2000),uint256,POSSIBLY,REVIEW-CONTEXT,"_mockAssetPrice(mockAsset, uint256(uint256(PRICE_2000)) * 2, 8); // asset now ""worth 2× WETH"""
+test/DepthTieredLtv.t.sol,238,53,uint112(L_TIER3),uint112,NO,REVIEW-SAFECAST,"_mockV2Pool(mockUniV2, mockAsset, mockWeth, uint112(L_TIER3), uint112(L_TIER3));"
+test/DepthTieredLtv.t.sol,238,71,uint112(L_TIER3),uint112,NO,REVIEW-SAFECAST,"_mockV2Pool(mockUniV2, mockAsset, mockWeth, uint112(L_TIER3), uint112(L_TIER3));"
+src/libraries/LibFacet.sol,97,33,uint192(numeraireValue),uint192,NO,REVIEW-SAFECAST,numeraireValue: uint192(numeraireValue)
+src/crosschain/VaipakamRewardMessenger.sol,418,17,uint32(sourceChainId),uint32,NO,REVIEW-SAFECAST,"uint32(sourceChainId), dayId, a, b"
+src/facets/ConfigFacet.sol,2041,17,"bytes32(""minPrincipalForFinerCadence"")",bytes32,NO,SAFE-LITERAL,"bytes32(""minPrincipalForFinerCadence""),"
+src/facets/ConfigFacet.sol,2055,17,"bytes32(""notificationFee"")",bytes32,NO,SAFE-LITERAL,"bytes32(""notificationFee""),"
+src/facets/ConfigFacet.sol,2070,17,"bytes32(""kycTier0VsTier1"")",bytes32,NO,SAFE-LITERAL,"bytes32(""kycTier0VsTier1""),"
+src/facets/ConfigFacet.sol,2084,17,"bytes32(""kycTier0ThresholdNumeraire"")",bytes32,NO,SAFE-LITERAL,"bytes32(""kycTier0ThresholdNumeraire""),"
+src/facets/ConfigFacet.sol,2098,17,"bytes32(""kycTier1ThresholdNumeraire"")",bytes32,NO,SAFE-LITERAL,"bytes32(""kycTier1ThresholdNumeraire""),"
+src/facets/ConfigFacet.sol,2140,17,"bytes32(""minPrincipalForFinerCadence"")",bytes32,NO,SAFE-LITERAL,"bytes32(""minPrincipalForFinerCadence""),"
+src/facets/ConfigFacet.sol,2167,17,"bytes32(""preNotifyDays"")",bytes32,NO,SAFE-LITERAL,"bytes32(""preNotifyDays""),"
+test/DepthTieredLtv.t.sol,253,53,uint112(L_TIER3),uint112,NO,REVIEW-SAFECAST,"_mockV2Pool(mockUniV2, mockAsset, mockWeth, uint112(L_TIER3) * 2, uint112(L_TIER3));"
+test/DepthTieredLtv.t.sol,253,75,uint112(L_TIER3),uint112,NO,REVIEW-SAFECAST,"_mockV2Pool(mockUniV2, mockAsset, mockWeth, uint112(L_TIER3) * 2, uint112(L_TIER3));"
+test/DepthTieredLtv.t.sol,269,53,uint112(L_TIER3),uint112,NO,REVIEW-SAFECAST,"_mockV2Pool(mockUniV2, mockAsset, mockWeth, uint112(L_TIER3), uint112(L_TIER3));"
+test/DepthTieredLtv.t.sol,269,71,uint112(L_TIER3),uint112,NO,REVIEW-SAFECAST,"_mockV2Pool(mockUniV2, mockAsset, mockWeth, uint112(L_TIER3), uint112(L_TIER3));"
+test/DepthTieredLtv.t.sol,361,17,"bytes32(""liquiditySlippageBps"")",bytes32,NO,SAFE-LITERAL,"bytes32(""liquiditySlippageBps""),"
+test/DepthTieredLtv.t.sol,467,44,uint256(uint256(PRICE_2000)),uint256,YES,REDUNDANT-REMOVE,"_mockAssetPrice(address(altQuote), uint256(uint256(PRICE_2000)), 8);"
+test/DepthTieredLtv.t.sol,467,52,uint256(PRICE_2000),uint256,POSSIBLY,REVIEW-CONTEXT,"_mockAssetPrice(address(altQuote), uint256(uint256(PRICE_2000)), 8);"
+test/DepthTieredLtv.t.sol,497,58,uint160(0x1000 + i),uint160,NO,REVIEW-SAFECAST,for (uint256 i; i < 9; ++i) tooMany[i] = address(uint160(0x1000 + i));
+test/CcipDeploymentRehearsalTest.t.sol,459,49,uint32(MIRROR),uint32,NO,REVIEW-SAFECAST,"assertEq(diamondBase.lastReportChain(), uint32(MIRROR), ""report source chain"");"
+test/GraceBucketsTest.t.sol,275,17,"bytes32(""graceBucketMaxDurationDays"")",bytes32,NO,SAFE-LITERAL,"bytes32(""graceBucketMaxDurationDays""),"
+src/crosschain/VpfiBuyReceiver.sol,300,24,uint32(sourceChainId),uint32,NO,REVIEW-SAFECAST,"buyer, uint32(sourceChainId), amountIn, minVpfiOut"
+test/GraceBucketsTest.t.sol,292,17,"bytes32(""graceBucketMaxDurationDays"")",bytes32,NO,SAFE-LITERAL,"bytes32(""graceBucketMaxDurationDays""),"
+test/GraceBucketsTest.t.sol,309,17,"bytes32(""graceBucketSeconds"")",bytes32,NO,SAFE-LITERAL,"bytes32(""graceBucketSeconds""),"
+test/GraceBucketsTest.t.sol,326,17,"bytes32(""graceBucketSeconds"")",bytes32,NO,SAFE-LITERAL,"bytes32(""graceBucketSeconds""),"
+test/GraceBucketsTest.t.sol,343,17,"bytes32(""graceBucketSeconds"")",bytes32,NO,SAFE-LITERAL,"bytes32(""graceBucketSeconds""),"
+test/RiskFacetTest.t.sol,1499,17,"bytes32(""loanInitMaxLtvBps"")",bytes32,NO,SAFE-LITERAL,"bytes32(""loanInitMaxLtvBps""),"
+test/RiskFacetTest.t.sol,1514,63,"bytes32(""loanInitMaxLtvBps"")",bytes32,NO,SAFE-LITERAL,"IVaipakamErrors.ParameterOutOfRange.selector, bytes32(""loanInitMaxLtvBps""),"
+test/InternalMatchPriorityWindow.t.sol,107,31,bytes4(reason),bytes4,NO,REVIEW-SAFECAST,bytes4 selector = bytes4(reason);
+test/RiskFacetTest.t.sol,1543,17,"bytes32(""reserveFactorBps"")",bytes32,NO,SAFE-LITERAL,"bytes32(""reserveFactorBps""),"
+test/InternalMatchPriorityWindow.t.sol,152,31,bytes4(reason),bytes4,NO,REVIEW-SAFECAST,bytes4 selector = bytes4(reason);
+test/InternalMatchPriorityWindow.t.sol,174,31,bytes4(reason),bytes4,NO,REVIEW-SAFECAST,bytes4 selector = bytes4(reason);
+src/facets/OracleFacet.sol,382,28,int256(price),int256,?,REVIEW-CONTEXT,"price: int256(price),"
+src/crosschain/VpfiBuyAdapter.sol,452,23,uint96(amountIn),uint96,NO,REVIEW-SAFECAST,"amountIn: uint96(amountIn),"
+src/facets/OracleFacet.sol,753,44,uint256(net),uint256,POSSIBLY,REVIEW-CONTEXT,return priceMagnitude * (10 ** uint256(net));
+src/facets/OracleFacet.sol,755,28,uint256(-net),uint256,?,REVIEW-CONTEXT,uint256 down = uint256(-net);
+src/facets/OracleFacet.sol,909,38,uint256(int256(value)),uint256,YES,REDUNDANT-REMOVE,"uint256 secondary = _rescale(uint256(int256(value)), 18, primaryDec);"
+src/facets/OracleFacet.sol,1419,30,uint8(d),uint8,NO,REVIEW-SAFECAST,return d > 36 ? 18 : uint8(d);
+src/facets/OracleFacet.sol,1476,28,int24(delta / int56(int256(uint256(twapWindow)))),int24,NO,REVIEW-SAFECAST,meanTick = int24(delta / int56(int256(uint256(twapWindow))));
+src/facets/OracleFacet.sol,1545,17,uint256(d),uint256,POSSIBLY,REVIEW-CONTEXT,if (uint256(d) > ctx.band) return;
+src/facets/OracleFacet.sol,1807,23,uint256(answer),uint256,POSSIBLY,REVIEW-CONTEXT,"return (true, uint256(answer), dec);"
+src/facets/OracleFacet.sol,1865,21,uint256(answer),uint256,POSSIBLY,REVIEW-CONTEXT,"return (uint256(answer), dec);"
+src/facets/OracleFacet.sol,1878,17,uint256(answer),uint256,POSSIBLY,REVIEW-CONTEXT,"return (uint256(answer), dec2);"
+test/fork/OracleMainnetFork.t.sol,76,25,uint256(answer),uint256,POSSIBLY,REVIEW-CONTEXT,uint256 price = uint256(answer);
+src/facets/RewardReporterFacet.sol,276,13,"bytes32(""rewardOApp"")",bytes32,NO,SAFE-LITERAL,"bytes32(""rewardOApp""),"
+src/facets/RewardReporterFacet.sol,297,13,"bytes32(""baseChainId"")",bytes32,NO,SAFE-LITERAL,"bytes32(""baseChainId""),"
+src/facets/RewardReporterFacet.sol,313,13,"bytes32(""isCanonicalRewardChain"")",bytes32,NO,SAFE-LITERAL,"bytes32(""isCanonicalRewardChain""),"
+src/facets/RewardReporterFacet.sol,348,13,"bytes32(""rewardGraceSeconds"")",bytes32,NO,SAFE-LITERAL,"bytes32(""rewardGraceSeconds""),"
+src/facets/OracleFacet.sol,1942,27,uint256(diff),uint256,POSSIBLY,REVIEW-CONTEXT,uint256 devBps = (uint256(diff) * LibVaipakam.BASIS_POINTS) / uint256(peg);
+test/fork/OracleMainnetFork.t.sol,91,25,uint256(answer),uint256,POSSIBLY,REVIEW-CONTEXT,uint256 price = uint256(answer);
+test/InteractionRewardCapTest.t.sol,94,13,uint256(ETH_USD_RAW),uint256,POSSIBLY,REVIEW-CONTEXT,uint256(ETH_USD_RAW);
+test/ConfigFacetTest.t.sol,262,17,"bytes32(""stakingAprBps"")",bytes32,NO,SAFE-LITERAL,"bytes32(""stakingAprBps""),"
+src/facets/OracleFacet.sol,1942,71,uint256(peg),uint256,POSSIBLY,REVIEW-CONTEXT,uint256 devBps = (uint256(diff) * LibVaipakam.BASIS_POINTS) / uint256(peg);
+src/libraries/LibPeriodicInterest.sol,109,13,uint64(uint256(loan.lastPeriodicInterestSettledAt) + days_ * LibVaipakam.ONE_DAY),uint64,NO,REVIEW-SAFECAST,uint64(uint256(loan.lastPeriodicInterestSettledAt) + days_ * LibVaipakam.ONE_DAY);
+src/libraries/LibVaipakam.sol,3859,23,bytes32(bytes(symbol)),bytes32,?,REVIEW-CONTEXT,bytes32 key = bytes32(bytes(symbol));
+src/libraries/LibVaipakam.sol,4460,34,"bytes32(""usd"")",bytes32,NO,SAFE-LITERAL,"return v == bytes32(0) ? bytes32(""usd"") : v;"
+src/libraries/LibInteractionRewards.sol,222,84,int256(perDayNumeraire18),int256,?,REVIEW-CONTEXT,"_applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, startDay, int256(perDayNumeraire18));"
+src/libraries/LibInteractionRewards.sol,223,83,int256(perDayNumeraire18),int256,?,REVIEW-CONTEXT,"_applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, endDay, -int256(perDayNumeraire18));"
+src/libraries/LibInteractionRewards.sol,224,88,int256(perDayNumeraire18),int256,?,REVIEW-CONTEXT,"_applyDelta(s.borrowerPerDayDeltaNumeraire18, s.borrowerFrontierDay, startDay, int256(perDayNumeraire18));"
+src/libraries/LibInteractionRewards.sol,225,87,int256(perDayNumeraire18),int256,?,REVIEW-CONTEXT,"_applyDelta(s.borrowerPerDayDeltaNumeraire18, s.borrowerFrontierDay, endDay, -int256(perDayNumeraire18));"
+src/libraries/LibInteractionRewards.sol,341,84,int256(perDay),int256,?,REVIEW-CONTEXT,"_applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, newStart, int256(perDay));"
+src/libraries/LibInteractionRewards.sol,342,88,int256(perDay),int256,?,REVIEW-CONTEXT,"_applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, originalEnd, -int256(perDay));"
+src/facets/RepayFacet.sol,670,52,uint128(newPaid),uint128,NO,REVIEW-SAFECAST,loan.interestPaidSinceLastPeriod = uint128(newPaid);
+test/VaipakamRewardFlowTest.t.sol,170,49,uint32(MIRROR),uint32,NO,REVIEW-SAFECAST,"assertEq(diamondBase.lastReportChain(), uint32(MIRROR), ""source chain tagged"");"
+src/libraries/LibInteractionRewards.sol,374,24,uint256(int256(open) + delta),uint256,YES,REDUNDANT-REMOVE,open = uint256(int256(open) + delta);
+src/libraries/LibInteractionRewards.sol,374,32,int256(open),int256,?,REVIEW-CONTEXT,open = uint256(int256(open) + delta);
+src/libraries/LibInteractionRewards.sol,396,24,uint256(int256(open) + delta),uint256,YES,REDUNDANT-REMOVE,open = uint256(int256(open) + delta);
+test/OracleNumeraireGuardTest.t.sol,105,17,"bytes32(""pythCrossCheckMaxDeviationBps"")",bytes32,NO,SAFE-LITERAL,"bytes32(""pythCrossCheckMaxDeviationBps""),"
+src/libraries/LibInteractionRewards.sol,396,32,int256(open),int256,?,REVIEW-CONTEXT,open = uint256(int256(open) + delta);
+test/OraclePadFallbackTest.t.sol,124,13,"bytes32(""usd"")",bytes32,NO,SAFE-LITERAL,"bytes32(""usd""),"
+src/libraries/LibInteractionRewards.sol,847,20,uint64(loanId),uint64,NO,REVIEW-SAFECAST,e.loanId = uint64(loanId);
+src/libraries/LibInteractionRewards.sol,848,22,uint32(startDay),uint32,NO,REVIEW-SAFECAST,e.startDay = uint32(startDay);
+src/libraries/LibInteractionRewards.sol,849,20,uint32(endDay),uint32,NO,REVIEW-SAFECAST,e.endDay = uint32(endDay);
+src/libraries/LibInteractionRewards.sol,878,56,int256(perDay),int256,?,REVIEW-CONTEXT,"_applyDelta(deltas, frontier, originalEnd, int256(perDay));"
+test/OraclePadFallbackTest.t.sol,165,13,"bytes32(""usd"")",bytes32,NO,SAFE-LITERAL,"bytes32(""usd""),"
+test/OracleNumeraireGuardTest.t.sol,119,17,"bytes32(""pythCrossCheckMaxDeviationBps"")",bytes32,NO,SAFE-LITERAL,"bytes32(""pythCrossCheckMaxDeviationBps""),"
+test/OraclePadFallbackTest.t.sol,190,13,"bytes32(""usd"")",bytes32,NO,SAFE-LITERAL,"bytes32(""usd""),"
+test/OraclePadFallbackTest.t.sol,213,13,"bytes32(""usd"")",bytes32,NO,SAFE-LITERAL,"bytes32(""usd""),"
+test/SecondaryQuorumTest.t.sol,148,33,int256(int256(CHAINLINK_PRICE_8DEC)),int256,YES,REDUNDANT-REMOVE,"_mockFeedFull(mockFeed, int256(int256(CHAINLINK_PRICE_8DEC)), 8);"
+test/SecondaryQuorumTest.t.sol,148,40,int256(CHAINLINK_PRICE_8DEC),int256,?,REVIEW-CONTEXT,"_mockFeedFull(mockFeed, int256(int256(CHAINLINK_PRICE_8DEC)), 8);"
+test/OracleNumeraireGuardTest.t.sol,135,17,"bytes32(""pythMaxStalenessSeconds"")",bytes32,NO,SAFE-LITERAL,"bytes32(""pythMaxStalenessSeconds""),"
+test/OracleNumeraireGuardTest.t.sol,149,17,"bytes32(""pythMaxStalenessSeconds"")",bytes32,NO,SAFE-LITERAL,"bytes32(""pythMaxStalenessSeconds""),"
+test/OraclePadFallbackTest.t.sol,252,13,"bytes32(""usd"")",bytes32,NO,SAFE-LITERAL,"bytes32(""usd""),"
+test/SecondaryQuorumTest.t.sol,216,24,int224(int256(SECONDARY_AGREE_18DEC)),int224,NO,REVIEW-SAFECAST,"abi.encode(int224(int256(SECONDARY_AGREE_18DEC)), uint32(block.timestamp))"
+src/libraries/LibInteractionRewards.sol,879,52,int256(perDay),int256,?,REVIEW-CONTEXT,"_applyDelta(deltas, frontier, newEnd, -int256(perDay));"
+test/OraclePadFallbackTest.t.sol,275,13,"bytes32(""usd"")",bytes32,NO,SAFE-LITERAL,"bytes32(""usd""),"
+test/SecondaryQuorumTest.t.sol,216,31,int256(SECONDARY_AGREE_18DEC),int256,?,REVIEW-CONTEXT,"abi.encode(int224(int256(SECONDARY_AGREE_18DEC)), uint32(block.timestamp))"
+test/OracleNumeraireGuardTest.t.sol,165,17,"bytes32(""pythConfidenceMaxBps"")",bytes32,NO,SAFE-LITERAL,"bytes32(""pythConfidenceMaxBps""),"
+test/OracleNumeraireGuardTest.t.sol,179,17,"bytes32(""pythConfidenceMaxBps"")",bytes32,NO,SAFE-LITERAL,"bytes32(""pythConfidenceMaxBps""),"
+src/libraries/LibInteractionRewards.sol,880,24,uint32(newEnd),uint32,NO,REVIEW-SAFECAST,e.endDay = uint32(newEnd);
+src/libraries/LibInteractionRewards.sol,1009,17,uint256(answer),uint256,POSSIBLY,REVIEW-CONTEXT,"return (uint256(answer), dec);"
+test/OraclePadFallbackTest.t.sol,291,17,"bytes32(""predominantDenominator"")",bytes32,NO,SAFE-LITERAL,"bytes32(""predominantDenominator""),"
+test/OraclePadFallbackTest.t.sol,299,13,"bytes32(""usd"")",bytes32,NO,SAFE-LITERAL,"bytes32(""usd""),"
+test/FlashLoanLiquidatorTest.t.sol,387,70,uint16(bps),uint16,NO,REVIEW-SAFECAST,function setPremiumBps(uint256 bps) external { premiumBpsLocal = uint16(bps); }
+test/OraclePadFallbackTest.t.sol,309,17,"bytes32(""ethPadFeed"")",bytes32,NO,SAFE-LITERAL,"bytes32(""ethPadFeed""),"
+test/SecondaryQuorumTest.t.sol,224,24,int224(int256(SECONDARY_DISAGREE_18DEC)),int224,NO,REVIEW-SAFECAST,"abi.encode(int224(int256(SECONDARY_DISAGREE_18DEC)), uint32(block.timestamp))"
+test/SecondaryQuorumTest.t.sol,224,31,int256(SECONDARY_DISAGREE_18DEC),int256,?,REVIEW-CONTEXT,"abi.encode(int224(int256(SECONDARY_DISAGREE_18DEC)), uint32(block.timestamp))"
+test/SecondaryQuorumTest.t.sol,238,25,uint128(CHAINLINK_PRICE_8DEC),uint128,NO,REVIEW-SAFECAST,uint128 value = uint128(CHAINLINK_PRICE_8DEC);
+test/OraclePadFallbackTest.t.sol,317,13,"bytes32(""usd"")",bytes32,NO,SAFE-LITERAL,"bytes32(""usd""),"
+test/SecondaryQuorumTest.t.sol,493,17,int224(int256(SECONDARY_AGREE_18DEC)),int224,NO,REVIEW-SAFECAST,"int224(int256(SECONDARY_AGREE_18DEC)),"
+test/SecondaryQuorumTest.t.sol,493,24,int256(SECONDARY_AGREE_18DEC),int256,?,REVIEW-CONTEXT,"int224(int256(SECONDARY_AGREE_18DEC)),"
+script/SlippageCensusPreDeploy.s.sol,68,32,uint8(48 + v % 10),uint8,NO,REVIEW-SAFECAST,s[digits] = bytes1(uint8(48 + v % 10));
+test/SecondaryQuorumTest.t.sol,507,17,uint128(CHAINLINK_PRICE_8DEC),uint128,NO,REVIEW-SAFECAST,"uint128(CHAINLINK_PRICE_8DEC),"
+src/libraries/LibPeerLTV.sol,121,23,uint16(ltv),uint16,NO,REVIEW-SAFECAST,"return (true, uint16(ltv), uint16(liquidationThreshold));"
+src/libraries/LibPeerLTV.sol,121,36,uint16(liquidationThreshold),uint16,NO,REVIEW-SAFECAST,"return (true, uint16(ltv), uint16(liquidationThreshold));"
+src/libraries/LibPeerLTV.sol,181,23,uint16(borrowBps),uint16,NO,REVIEW-SAFECAST,"return (true, uint16(borrowBps), uint16(liquidateBps));"
+test/PeriodicInterestCadenceTest.t.sol,289,51,uint64(startTs),uint64,NO,REVIEW-SAFECAST,"assertEq(l.lastPeriodicInterestSettledAt, uint64(startTs));"
+test/PeriodicInterestCadenceTest.t.sol,368,34,"bytes32(""eur"")",bytes32,NO,SAFE-LITERAL,"fakeFeed, fakeDenom, bytes32(""eur""), bytes32(0), 50_000 * 1e18, 0, 0, 0"
+src/libraries/LibPeerLTV.sol,181,42,uint16(liquidateBps),uint16,NO,REVIEW-SAFECAST,"return (true, uint16(borrowBps), uint16(liquidateBps));"
+src/libraries/LibPeerLTV.sol,254,62,uint8(n),uint8,NO,REVIEW-SAFECAST,"if (n < uint256(minAssetReadings)) return (false, 0, uint8(n));"
+test/PeriodicInterestCadenceTest.t.sol,378,44,"bytes32(""eur"")",bytes32,NO,SAFE-LITERAL,"address(0), makeAddr(""denom""), bytes32(""eur""), bytes32(0), 0, 0, 0, 0"
+test/PeriodicInterestCadenceTest.t.sol,388,46,"bytes32(""eur"")",bytes32,NO,SAFE-LITERAL,"makeAddr(""ethFeed""), address(0), bytes32(""eur""), bytes32(0), 0, 0, 0, 0"
+test/PeriodicInterestCadenceTest.t.sol,412,29,"bytes32(""eur"")",bytes32,NO,SAFE-LITERAL,"bytes32 eurSymbol = bytes32(""eur"");"
+src/libraries/LibPeerLTV.sol,276,34,uint8(n),uint8,NO,REVIEW-SAFECAST,"return (true, medianBps, uint8(n));"
+script/SlippageCensus.s.sol,199,32,uint8(48 + v % 10),uint8,NO,REVIEW-SAFECAST,s[digits] = bytes1(uint8(48 + v % 10));
+test/PeriodicInterestSettleTest.t.sol,101,51,uint64(startTs),uint64,NO,REVIEW-SAFECAST,"assertEq(l.lastPeriodicInterestSettledAt, uint64(startTs));"
+script/ConfigureRewardReporter.s.sol,137,30,uint32(acc),uint32,NO,REVIEW-SAFECAST,out[idx++] = uint32(acc);
+script/lib/LibCreate2Deploy.sol,62,28,uint160(word >> 96),uint160,NO,REVIEW-SAFECAST,deployed = address(uint160(word >> 96));
+test/PeriodicInterestSettleTest.t.sol,314,51,uint64(startTs + 30 days),uint64,NO,REVIEW-SAFECAST,"assertEq(l.lastPeriodicInterestSettledAt, uint64(startTs + 30 days));"
+script/ConfigureRewardReporter.s.sol,147,20,uint32(acc),uint32,NO,REVIEW-SAFECAST,out[idx] = uint32(acc);
+test/PeriodicInterestSettleTest.t.sol,330,41,uint128(expected),uint128,NO,REVIEW-SAFECAST,l.interestPaidSinceLastPeriod = uint128(expected);
+test/PeriodicInterestSettleTest.t.sol,341,56,uint64(startTs + 30 days),uint64,NO,REVIEW-SAFECAST,"assertEq(after_.lastPeriodicInterestSettledAt, uint64(startTs + 30 days));"
+test/PeriodicInterestSettleTest.t.sol,363,51,uint64(startTs),uint64,NO,REVIEW-SAFECAST,"assertEq(l.lastPeriodicInterestSettledAt, uint64(startTs));"
+test/OracleAdminFacetTest.t.sol,215,33,uint160(0x1000 + i),uint160,NO,REVIEW-SAFECAST,assets[i] = address(uint160(0x1000 + i));
+test/OracleAdminFacetTest.t.sol,228,33,uint160(0x1000 + i),uint160,NO,REVIEW-SAFECAST,assets[i] = address(uint160(0x1000 + i));
+test/OracleAdminFacetTest.t.sol,245,33,uint160(0x1000 + i),uint160,NO,REVIEW-SAFECAST,assets[i] = address(uint160(0x1000 + i));
