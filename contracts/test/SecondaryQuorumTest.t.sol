@@ -12,6 +12,7 @@ import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
  * @title SecondaryQuorumTest
@@ -218,7 +219,7 @@ contract SecondaryQuorumTest is Test {
             // safe: `SECONDARY_AGREE_18DEC` is a positive test constant ($2000 in
             // 18-decimal numeraire); well below int256.max.
             // forge-lint: disable-next-line(unsafe-typecast)
-            abi.encode(int224(int256(SECONDARY_AGREE_18DEC)), uint32(block.timestamp))
+            abi.encode(SafeCast.toInt224(int256(SECONDARY_AGREE_18DEC)), uint32(block.timestamp))
         );
     }
 
@@ -229,7 +230,7 @@ contract SecondaryQuorumTest is Test {
             // safe: `SECONDARY_DISAGREE_18DEC` is a positive test constant; well
             // below int256.max.
             // forge-lint: disable-next-line(unsafe-typecast)
-            abi.encode(int224(int256(SECONDARY_DISAGREE_18DEC)), uint32(block.timestamp))
+            abi.encode(SafeCast.toInt224(int256(SECONDARY_DISAGREE_18DEC)), uint32(block.timestamp))
         );
     }
 
@@ -243,7 +244,7 @@ contract SecondaryQuorumTest is Test {
 
     function _mockDiaAgree() internal {
         // DIA returns 8-decimal value.
-        uint128 value = uint128(CHAINLINK_PRICE_8DEC);
+        uint128 value = SafeCast.toUint128(CHAINLINK_PRICE_8DEC);
         vm.mockCall(
             mockDia,
             abi.encodeWithSignature("getValue(string)"),
@@ -501,7 +502,7 @@ contract SecondaryQuorumTest is Test {
                 // safe: `SECONDARY_AGREE_18DEC` is a positive test constant ($2000 in
                 // 18-decimal numeraire); well below int256.max.
                 // forge-lint: disable-next-line(unsafe-typecast)
-                int224(int256(SECONDARY_AGREE_18DEC)),
+                SafeCast.toInt224(int256(SECONDARY_AGREE_18DEC)),
                 uint32(block.timestamp - 7200)
             )
         );
@@ -515,7 +516,7 @@ contract SecondaryQuorumTest is Test {
             mockDia,
             abi.encodeWithSignature("getValue(string)"),
             abi.encode(
-                uint128(CHAINLINK_PRICE_8DEC),
+                SafeCast.toUint128(CHAINLINK_PRICE_8DEC),
                 uint128(block.timestamp - 7200)
             )
         );

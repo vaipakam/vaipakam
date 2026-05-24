@@ -13,6 +13,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {GuardianPausable} from "./GuardianPausable.sol";
 import {IVpfiBuyCcipMessages} from "./IVpfiBuyCcipMessages.sol";
 import {
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
     ICrossChainMessenger,
     ICrossChainMessageRecipient
 } from "./ICrossChainMessenger.sol";
@@ -450,7 +451,7 @@ contract VpfiBuyAdapter is
 
         pendingBuys[requestId] = PendingBuy({
             buyer: msg.sender,
-            amountIn: uint96(amountIn),
+            amountIn: SafeCast.toUint96(amountIn),
             initiatedAt: uint64(block.timestamp),
             status: BuyStatus.Pending
         });

@@ -9,6 +9,7 @@ import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/Reentrancy
 
 import {GuardianPausable} from "./GuardianPausable.sol";
 import {
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
     ICrossChainMessenger,
     ICrossChainMessageRecipient
 } from "./ICrossChainMessenger.sol";
@@ -423,7 +424,7 @@ contract VaipakamRewardMessenger is
             }
             emit ReportReceived(sourceChainId, dayId, a, b);
             IRewardAggregatorIngress(diamond).onChainReportReceived(
-                uint32(sourceChainId), dayId, a, b
+                SafeCast.toUint32(sourceChainId), dayId, a, b
             );
         } else if (msgType == MSG_TYPE_BROADCAST) {
             if (isCanonical) revert BroadcastOnCanonical();

@@ -16,6 +16,7 @@ import {
     ICrossChainMessageRecipient
 } from "./ICrossChainMessenger.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /// @dev The Base-side Diamond surface the receiver calls into. `processBridgedBuy`
 ///      mints VPFI at the fixed rate, debits the global + per-wallet caps, and
@@ -298,7 +299,7 @@ contract VpfiBuyReceiver is
         }
         try
             IVpfiBuyDiamond(diamond).processBridgedBuy(
-                buyer, uint32(sourceChainId), amountIn, minVpfiOut
+                buyer, SafeCast.toUint32(sourceChainId), amountIn, minVpfiOut
             )
         returns (uint256 out) {
             return (true, out, 0);

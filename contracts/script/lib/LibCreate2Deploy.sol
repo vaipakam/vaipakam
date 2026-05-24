@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+
 /// @title LibCreate2Deploy
 /// @notice Thin wrapper around the canonical "Arachnid" Singleton Factory
 ///         at 0x4e59b44847b379578588920cA78FbF26c0B4956C, which is
@@ -59,7 +61,7 @@ library LibCreate2Deploy {
         assembly {
             word := mload(add(ret, 32))
         }
-        deployed = address(uint160(word >> 96));
+        deployed = address(SafeCast.toUint160(word >> 96));
         if (deployed == address(0)) {
             revert Create2DeployFailed(salt, keccak256(initCode));
         }

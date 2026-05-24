@@ -9,6 +9,7 @@ import {LibRevert} from "./LibRevert.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /// @title LibFacet
 /// @notice Shared facet-level helpers previously duplicated across
@@ -94,7 +95,7 @@ library LibFacet {
         s.feeEventsLog.push(
             LibVaipakam.FeeEvent({
                 timestamp: uint64(block.timestamp),
-                numeraireValue: uint192(numeraireValue)
+                numeraireValue: SafeCast.toUint192(numeraireValue)
             })
         );
         s.cumulativeFeesNumeraire += numeraireValue;

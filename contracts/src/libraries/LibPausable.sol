@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+
 /**
  * @title LibPausable
  * @notice Diamond-safe pausable mechanism using ERC-7201 namespaced storage.
@@ -102,7 +104,7 @@ library LibPausable {
         // a confusing revert in the watcher's logs.
         if (ps.paused) return;
         if (ps.pausedUntilTimestamp > block.timestamp) return;
-        uint64 until = uint64(block.timestamp + duration);
+        uint64 until = SafeCast.toUint64(block.timestamp + duration);
         ps.pausedUntilTimestamp = until;
         emit AutoPaused(msg.sender, reason, until);
     }

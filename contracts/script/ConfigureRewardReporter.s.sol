@@ -6,6 +6,7 @@ import {console} from "forge-std/console.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
  * @title ConfigureRewardReporter
@@ -134,7 +135,7 @@ contract ConfigureRewardReporter is Script {
         for (uint256 i = 0; i < b.length; i++) {
             bytes1 c = b[i];
             if (c == ",") {
-                out[idx++] = uint32(acc);
+                out[idx++] = SafeCast.toUint32(acc);
                 acc = 0;
             } else {
                 require(
@@ -144,6 +145,6 @@ contract ConfigureRewardReporter is Script {
                 acc = acc * 10 + (uint8(c) - 0x30);
             }
         }
-        out[idx] = uint32(acc);
+        out[idx] = SafeCast.toUint32(acc);
     }
 }

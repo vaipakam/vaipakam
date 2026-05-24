@@ -22,6 +22,7 @@ import {VpfiBuyReceiver} from "../src/crosschain/VpfiBuyReceiver.sol";
 
 import {MockCcipRouter} from "./mocks/MockCcipRouter.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
  * @dev One mock Vaipakam Diamond serving both cross-chain ingress points a
@@ -455,7 +456,7 @@ contract CcipDeploymentRehearsalTest is Test {
         );
         router.deliver(0, SEL_MIRROR);
         assertEq(diamondBase.reportCount(), 1, "Base aggregator got the report");
-        assertEq(diamondBase.lastReportChain(), uint32(MIRROR), "report source chain");
+        assertEq(diamondBase.lastReportChain(), SafeCast.toUint32(MIRROR), "report source chain");
         assertEq(diamondBase.lastReportDay(), 42, "report day");
 
         // BROADCAST — Base → mirror.

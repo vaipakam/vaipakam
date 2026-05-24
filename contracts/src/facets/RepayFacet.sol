@@ -23,6 +23,7 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 
 /**
@@ -666,7 +667,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 if (newPaid > type(uint128).max) {
                     newPaid = type(uint128).max;
                 }
-                loan.interestPaidSinceLastPeriod = uint128(newPaid);
+                loan.interestPaidSinceLastPeriod = SafeCast.toUint128(newPaid);
                 if (LibPeriodicInterest.canAdvanceCheckpointInline(loan)) {
                     uint256 boundary = LibPeriodicInterest.periodEndAt(loan);
                     uint256 expected =
