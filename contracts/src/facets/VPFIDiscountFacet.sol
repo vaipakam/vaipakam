@@ -380,7 +380,7 @@ contract VPFIDiscountFacet is
         uint256 ethAmount
     ) internal returns (uint256 vpfiOut) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (!s.isCanonicalVpfiChain) revert NotCanonicalVPFIChain();
+        if (!s.isCanonicalVPFIChain) revert NotCanonicalVPFIChain();
         if (!s.vpfiFixedRateBuyEnabled) revert VPFIBuyDisabled();
         // Per-wallet cap is bucketed per origin chain
         // (`vpfiFixedRateSoldToByChainId[buyer][originChainId]`).

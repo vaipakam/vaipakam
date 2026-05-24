@@ -13777,7 +13777,7 @@
   },
   {
     "type": "function",
-    "name": "isCanonicalVpfiChain",
+    "name": "isCanonicalVPFIChain",
     "inputs": [],
     "outputs": [
       {

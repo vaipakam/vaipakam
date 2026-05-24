@@ -793,7 +793,7 @@ contract HelperTest {
         selectors[5] = VPFITokenFacet.getVPFIMinter.selector;
         selectors[6] = VPFITokenFacet.getVPFIBalanceOf.selector;
         selectors[7] = VPFITokenFacet.setCanonicalVPFIChain.selector;
-        selectors[8] = VPFITokenFacet.isCanonicalVpfiChain.selector;
+        selectors[8] = VPFITokenFacet.isCanonicalVPFIChain.selector;
         return selectors;
     }
 

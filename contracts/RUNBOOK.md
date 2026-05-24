@@ -276,7 +276,7 @@ cast send $VPFI_TOKEN "setMinter(address)" $BASE_DIAMOND \
 ```
 
 After this, `TreasuryFacet.mintVPFI` is the only mint path, gated by
-facet-level roles. On every other chain, `isCanonicalVpfiChain` is false
+facet-level roles. On every other chain, `isCanonicalVPFIChain` is false
 and the mint gate short-circuits.
 
 ---

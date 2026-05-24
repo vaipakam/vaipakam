@@ -143,7 +143,7 @@ the pool registration.
    │       ▲                                                    │
    │       │ lock / release                                     │
    │   LockReleaseTokenPool (stock CCIP)                        │
-   │   VaipakamDiamond  ─── isCanonicalVpfiChain = true         │
+   │   VaipakamDiamond  ─── isCanonicalVPFIChain = true         │
    └────────┼───────────────────────────────────────────────────┘
             │
             │ Chainlink CCIP messages
@@ -159,7 +159,7 @@ the pool registration.
    │     ▲ mint / burn       │    │     ▲ mint / burn       │
    │  BurnMintTokenPool      │    │  BurnMintTokenPool      │
    │  VaipakamDiamond        │    │  VaipakamDiamond        │
-   │  isCanonicalVpfiChain   │    │  isCanonicalVpfiChain   │
+   │  isCanonicalVPFIChain   │    │  isCanonicalVPFIChain   │
    │    = false              │    │    = false              │
    └─────────────────────────┘    └─────────────────────────┘
 ```
@@ -174,7 +174,7 @@ Key properties:
   burn to its registered `BurnMintTokenPool`; the pool only mints on
   receipt of a CCIP-delivered, RMN-verified message routed through the
   canonical lane. `TreasuryFacet.mintVPFI` is additionally gated on
-  `isCanonicalVpfiChain`, which is flipped true exactly once (on Base)
+  `isCanonicalVPFIChain`, which is flipped true exactly once (on Base)
   by `VPFITokenFacet.setCanonicalVPFIChain`.
 - **One transport-aware contract.** Domain code in `facets/` depends only
   on the provider-neutral `ICrossChainMessenger` port. The CCIP-aware
@@ -415,7 +415,7 @@ vpfiToken.setMinter(address(baseDiamond));
 
 After this, only the diamond — via `TreasuryFacet.mintVPFI`, which itself
 is role-gated — can mint, and only on Base. On every other chain
-`isCanonicalVpfiChain` is false, so the mint gate short-circuits.
+`isCanonicalVPFIChain` is false, so the mint gate short-circuits.
 
 ---
 

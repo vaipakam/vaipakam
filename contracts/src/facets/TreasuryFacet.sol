@@ -164,7 +164,7 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         // supply arrives exclusively via the Chainlink CCIP CCT (Cross-Chain Token) peer bridge
         // from the canonical adapter, so minting locally would break the
         // 230M global-cap invariant.
-        if (!s.isCanonicalVpfiChain) revert NotCanonicalVPFIChain();
+        if (!s.isCanonicalVPFIChain) revert NotCanonicalVPFIChain();
 
         if (to == address(0)) revert InvalidAddress();
         if (amount == 0) revert ZeroAmount();
