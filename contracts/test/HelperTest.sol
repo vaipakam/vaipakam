@@ -30,7 +30,6 @@ import {OwnershipFacet} from "../src/facets/OwnershipFacet.sol";
 // RewardReporter/Aggregator, OwnershipFacet) were imported below
 // but never wired into the 28-facet cut. After #229 SetupTest is a
 // true strict superset of production (+ TestMutatorFacet test-only).
-import {DiamondLoupeFacet} from "../src/facets/DiamondLoupeFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {LegalFacet} from "../src/facets/LegalFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";

@@ -2,9 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
-import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
-import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {IPyth} from "../src/interfaces/IPyth.sol";

@@ -18,7 +18,6 @@ import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
  * @title StakingBalancesInvariant

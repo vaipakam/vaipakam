@@ -7,7 +7,6 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {CcipMessenger} from "../src/crosschain/CcipMessenger.sol";
 import {VpfiBuyAdapter} from "../src/crosschain/VpfiBuyAdapter.sol";
 import {VpfiBuyReceiver} from "../src/crosschain/VpfiBuyReceiver.sol";
-import {IVpfiBuyCcipMessages} from "../src/crosschain/IVpfiBuyCcipMessages.sol";
 import {ICrossChainMessenger} from "../src/crosschain/ICrossChainMessenger.sol";
 import {MockCcipRouter} from "./mocks/MockCcipRouter.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";

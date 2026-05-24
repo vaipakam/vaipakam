@@ -5,7 +5,6 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
@@ -22,7 +21,6 @@ import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
-import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 
 /// @title VPFIDiscountFacetTest
 /// @notice Exercises the borrower VPFI discount mechanism end-to-end

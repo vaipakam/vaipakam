@@ -19,7 +19,6 @@ import {VpfiPoolRateGovernor} from "../src/crosschain/VpfiPoolRateGovernor.sol";
 import {VaipakamRewardMessenger} from "../src/crosschain/VaipakamRewardMessenger.sol";
 import {VpfiBuyAdapter} from "../src/crosschain/VpfiBuyAdapter.sol";
 import {VpfiBuyReceiver} from "../src/crosschain/VpfiBuyReceiver.sol";
-import {ICrossChainMessenger} from "../src/crosschain/ICrossChainMessenger.sol";
 
 import {MockCcipRouter} from "./mocks/MockCcipRouter.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";

@@ -20,11 +20,9 @@ import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessCont
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
  // For NFT updates/burns
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
-import {MetricsFacet} from "./MetricsFacet.sol";
  // For transfers
 import {ProfileFacet} from "./ProfileFacet.sol";
  // For KYC if high-value
-import {IZeroExProxy} from "../interfaces/IZeroExProxy.sol";
  // For swap calldata encoding
 import {LibSwap} from "../libraries/LibSwap.sol";
 // Issue #66 — the internal-match liquidation cluster was extracted into

@@ -6,7 +6,6 @@ import {console} from "forge-std/console.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
-import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 

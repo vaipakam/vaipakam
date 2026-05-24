@@ -4,12 +4,10 @@ pragma solidity ^0.8.29;
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
-import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
-import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 
 /// @title OfferExpiryTest

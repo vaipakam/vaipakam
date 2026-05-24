@@ -16,9 +16,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
-import {RiskFacet} from "./RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "./RiskMatchLiquidationFacet.sol";
-import {IZeroExProxy} from "../interfaces/IZeroExProxy.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {ISwapAdapter} from "../interfaces/ISwapAdapter.sol";
 

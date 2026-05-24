@@ -7,7 +7,6 @@ import {console} from "forge-std/console.sol";
 import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
-import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";

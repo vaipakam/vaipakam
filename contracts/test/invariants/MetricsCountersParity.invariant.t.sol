@@ -6,8 +6,6 @@ import {InvariantBase} from "./InvariantBase.sol";
 import {Handler} from "./Handler.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
-import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
-import {OfferAcceptFacet} from "../../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
 import {MetricsFacet} from "../../src/facets/MetricsFacet.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";

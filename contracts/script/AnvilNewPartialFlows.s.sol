@@ -13,7 +13,6 @@ import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
-import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";

@@ -7,7 +7,6 @@ import {AdminFacet} from "../../src/facets/AdminFacet.sol";
 import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
-import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 

@@ -18,7 +18,6 @@ import {IZeroExProxy} from "../src/interfaces/IZeroExProxy.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @title FallbackCureTest
 /// @notice Pinpoint coverage for the cure-from-FallbackPending path

@@ -21,7 +21,6 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "./RiskMatchLiquidationFacet.sol";
-import {IZeroExProxy} from "../interfaces/IZeroExProxy.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 
 /**

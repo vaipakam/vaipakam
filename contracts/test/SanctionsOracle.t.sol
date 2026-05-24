@@ -7,7 +7,6 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
-import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
