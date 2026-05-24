@@ -649,7 +649,7 @@ when both flipped.
 so consumers know whether NFT burn is imminent without re-reading.
 ~6.8 k gas.
 
-### 3.12 `CollateralAdded(uint256 indexed loanId, address indexed adder, uint256 newCollateralAmount, uint256 newHF, uint256 amountAdded, uint256 newLtv)`
+### 3.12 `CollateralAdded(uint256 indexed loanId, address indexed adder, uint256 newCollateralAmount, uint256 newHf, uint256 amountAdded, uint256 newLtv)`
 
 **Today:** already carries 5 fields including post-update HF +
 LTV.

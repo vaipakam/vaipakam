@@ -276,7 +276,7 @@ cast send $VPFI_TOKEN "setMinter(address)" $BASE_DIAMOND \
 ```
 
 After this, `TreasuryFacet.mintVPFI` is the only mint path, gated by
-facet-level roles. On every other chain, `isCanonicalVPFIChain` is false
+facet-level roles. On every other chain, `isCanonicalVpfiChain` is false
 and the mint gate short-circuits.
 
 ---
@@ -360,7 +360,7 @@ someone's spam folder" patterns.
      `reclaimTimedOutBuy` after the refund window (default 15 min);
      the pause doesn't block reclaim.
    - Pool lock balance on Base (`LockReleaseTokenPool`) is
-     ultimately L1-recoverable via a timelock-governed admin call
+     ultimately l1-recoverable via a timelock-governed admin call
      if the mesh is fully compromised.
 6. Post-mortem within 72h. Public.
 
