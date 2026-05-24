@@ -122,7 +122,7 @@ contract DeployDiamondIntegrationTest is Test, DiamondFacetNames {
         deployer = vm.addr(DEPLOYER_KEY);
         admin = adminEqDeployer ? deployer : ADMIN_FOR_HANDOVER;
 
-        // forge-lint: disable-next-line unsafe-cheatcode
+        // forge-lint: disable-next-line(unsafe-cheatcode)
         vm.setEnv("DEPLOY_SKIP_ARTIFACTS", "true");
 
         DeployDiamond script = new DeployDiamond();

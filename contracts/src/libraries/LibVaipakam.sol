@@ -3856,6 +3856,11 @@ library LibVaipakam {
     function setStableTokenFeed(string memory symbol, address feed) internal {
         LibDiamond.enforceIsContractOwner();
         Storage storage s = storageSlot();
+        // safe: stable-feed symbols are bounded by `MAX_STABLE_SYMBOL_LEN`
+        // = 10 in `OracleAdminFacet.setStableTokenFeed` (the only call
+        // site that flows here); the symbol's bytes are guaranteed ≤10,
+        // well under bytes32's 32-byte limit.
+        // forge-lint: disable-next-line(unsafe-typecast)
         bytes32 key = bytes32(bytes(symbol));
         uint256 pos = s.stableFeedSymbolPos[key];
         if (feed == address(0)) {
@@ -4457,7 +4462,7 @@ library LibVaipakam {
     ///         `numeraireSymbol` fallback convention.
     function effectivePadSymbol() internal view returns (bytes32) {
         bytes32 v = storageSlot().predominantDenominatorSymbol;
-        // forge-lint: disable-next-line unsafe-typecast
+        // forge-lint: disable-next-line(unsafe-typecast)
         return v == bytes32(0) ? bytes32("usd") : v;
     }
 

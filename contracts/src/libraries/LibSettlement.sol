@@ -27,7 +27,7 @@ library LibSettlement {
     /// @dev `treasuryShare + lenderShare == interest + lateFee` (exact).
     ///      `lenderDue == principal + lenderShare` (convenience, avoids a
     ///      re-add at the call site).
-    // forge-lint: disable-next-line pascal-case-struct
+    // forge-lint: disable-next-line(pascal-case-struct)
     struct ERC20Settlement {
         uint256 principal;      // loan.principal at settlement time
         uint256 interest;       // pre-split interest (full-term or pro-rata)

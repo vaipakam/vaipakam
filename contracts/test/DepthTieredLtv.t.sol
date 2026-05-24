@@ -145,7 +145,12 @@ contract DepthTieredLtv is Test {
         // `_liquidityTier._tryGetAssetPriceView`) for both legs — pin
         // both to $2,000 / 8-dec so the value-balance guard passes for a
         // `sqrtP = 2⁹⁶` (1:1) pool with equal-decimal tokens.
+        // safe: `PRICE_2000` is `int256 constant = 2000e8` — positive and
+        // well below uint256.max.
+        // forge-lint: disable-next-line(unsafe-typecast)
         _mockAssetPrice(mockAsset, uint256(PRICE_2000), 8);
+        // safe: `PRICE_2000` is `int256 constant = 2000e8` — positive.
+        // forge-lint: disable-next-line(unsafe-typecast)
         _mockAssetPrice(mockWeth, uint256(PRICE_2000), 8);
 
         // Default: no pool at any probed tier on any factory. Tests
@@ -208,6 +213,8 @@ contract DepthTieredLtv is Test {
         // too — a tightening vs the legacy `_v3DepthLiquid` metric which
         // had no value-balance guard and would have said Liquid here.
         _mockPool(mockUniFactory, mockAsset, 3000, L_TIER3);
+        // safe: `PRICE_2000` is `int256 constant = 2000e8` — positive.
+        // forge-lint: disable-next-line(unsafe-typecast)
         _mockAssetPrice(mockAsset, uint256(PRICE_2000) * 2, 8); // asset now "worth 2× WETH"
         assertEq(
             uint256(OracleFacet(address(diamond)).checkLiquidity(mockAsset)),
@@ -358,7 +365,7 @@ contract DepthTieredLtv is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.ParameterOutOfRange.selector,
-                // forge-lint: disable-next-line unsafe-typecast
+                // forge-lint: disable-next-line(unsafe-typecast)
                 bytes32("liquiditySlippageBps"),
                 uint256(5000),
                 LibVaipakam.MIN_LIQUIDITY_SLIPPAGE_BPS,
@@ -465,6 +472,8 @@ contract DepthTieredLtv is Test {
         // honoured. (And `_checkLiquidity` still needs an `asset/WETH`
         // pool — keep that one.)
         ERC20Mock altQuote = new ERC20Mock("Alt", "ALT", 18);
+        // safe: `PRICE_2000` is `int256 constant = 2000e8` — positive.
+        // forge-lint: disable-next-line(unsafe-typecast)
         _mockAssetPrice(address(altQuote), uint256(PRICE_2000), 8);
         _mockEmptyAtAllPairsTiers(mockUniFactory, mockAsset, address(altQuote));
 

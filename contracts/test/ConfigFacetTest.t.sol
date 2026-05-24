@@ -259,7 +259,7 @@ contract ConfigFacetTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.ParameterOutOfRange.selector,
-                // forge-lint: disable-next-line unsafe-typecast
+                // forge-lint: disable-next-line(unsafe-typecast)
                 bytes32("stakingAprBps"),
                 uint256(10_001),
                 uint256(0),

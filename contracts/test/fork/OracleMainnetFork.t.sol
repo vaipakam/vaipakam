@@ -73,6 +73,9 @@ contract OracleMainnetForkTest is Test {
         assertGt(answer, 0, "ETH price non-positive");
         // Plausibility: $100 < ETH < $100k — wide enough to survive any era.
         uint8 dec = reg.decimals(WETH, usdDenom);
+        // safe: fork test reads live Chainlink feed; the test guard above
+        // asserts `answer > 0` before casting.
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint256 price = uint256(answer);
         uint256 floor = 100 * (10 ** dec);
         uint256 ceil = 100_000 * (10 ** dec);
@@ -88,6 +91,9 @@ contract OracleMainnetForkTest is Test {
         (, int256 answer, , uint256 updatedAt, ) = reg.latestRoundData(USDC, usdDenom);
         assertGt(answer, 0, "USDC price non-positive");
         uint8 dec = reg.decimals(USDC, usdDenom);
+        // safe: fork test reads live Chainlink feed; the test guard above
+        // asserts `answer > 0` before casting.
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint256 price = uint256(answer);
         // USDC should be within [$0.90, $1.10]
         uint256 floor = (90 * (10 ** dec)) / 100;

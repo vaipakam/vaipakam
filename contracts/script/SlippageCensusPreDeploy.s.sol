@@ -170,7 +170,7 @@ contract SlippageCensusPreDeploy is Script {
             label = "";
         }
 
-        // forge-lint: disable-next-line unsafe-cheatcode
+        // forge-lint: disable-next-line(unsafe-cheatcode)
         string memory json = vm.readFile(path);
         uint256 chainId = block.chainid;
 

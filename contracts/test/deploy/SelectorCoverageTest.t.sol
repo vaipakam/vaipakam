@@ -163,7 +163,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
         view
         returns (string[] memory)
     {
-        // forge-lint: disable-next-line unsafe-cheatcode
+        // forge-lint: disable-next-line(unsafe-cheatcode)
         string memory json = vm.readFile(
             string.concat("out/", facet, ".sol/", facet, ".json")
         );

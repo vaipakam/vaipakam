@@ -216,9 +216,6 @@ library LibInteractionRewards {
         );
         s.loanBorrowerEntryId[loanId] = borrowerId;
 
-        // Only apply deltas that lie in the future relative to the
-        // reporter frontier. Past deltas can't retroactively change an
-        // already-shipped day's total.
         _applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, startDay, int256(perDayNumeraire18));
         _applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, endDay, -int256(perDayNumeraire18));
         _applyDelta(s.borrowerPerDayDeltaNumeraire18, s.borrowerFrontierDay, startDay, int256(perDayNumeraire18));
@@ -333,11 +330,6 @@ library LibInteractionRewards {
             perDay
         );
         s.loanActiveLenderEntryId[loanId] = newId;
-        // Deltas already account for the full original window: the old
-        // entry's close reverses the end-delta at originalEnd and stamps
-        // a fresh end-delta at newStart; we now RE-apply matching deltas
-        // for the new entry so the net denominator contribution is
-        // preserved across the transfer.
         _applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, newStart, int256(perDay));
         _applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, originalEnd, -int256(perDay));
     }
@@ -371,13 +363,13 @@ library LibInteractionRewards {
         for (uint256 d = frontier + 1; d <= through; ) {
             int256 delta = s.lenderPerDayDeltaNumeraire18[d];
             if (delta != 0) {
-                // forge-lint: disable-next-line unsafe-typecast
                 // safe: `open` is uint256, `delta` is int256; signed
                 // arithmetic on the delta requires the int256 cast, and
                 // the result is guaranteed non-negative by the invariant
                 // that lifetime deltas can never drive `open` below 0
                 // (any unwind decrements past the open balance is gated
                 // earlier in the call sites). Both casts are required.
+                // forge-lint: disable-next-line(unsafe-typecast)
                 open = uint256(int256(open) + delta);
             }
             s.totalLenderInterestNumeraire18[d] += open;
@@ -400,13 +392,13 @@ library LibInteractionRewards {
         for (uint256 d = frontier + 1; d <= through; ) {
             int256 delta = s.borrowerPerDayDeltaNumeraire18[d];
             if (delta != 0) {
-                // forge-lint: disable-next-line unsafe-typecast
                 // safe: `open` is uint256, `delta` is int256; signed
                 // arithmetic on the delta requires the int256 cast, and
                 // the result is guaranteed non-negative by the invariant
                 // that lifetime deltas can never drive `open` below 0
                 // (any unwind decrements past the open balance is gated
                 // earlier in the call sites). Both casts are required.
+                // forge-lint: disable-next-line(unsafe-typecast)
                 open = uint256(int256(open) + delta);
             }
             s.totalBorrowerInterestNumeraire18[d] += open;
@@ -1020,6 +1012,11 @@ library LibInteractionRewards {
         } catch {
             return (0, 0);
         }
+        // safe: `answer` is validated > 0 by the local `if (answer <= 0)
+        // return (0, 0);` guard which runs immediately after the
+        // `latestRoundData` try/catch — i.e. BEFORE the `decimals()`
+        // try/catch — in `_ethUsdPriceRawAndDec` above this return.
+        // forge-lint: disable-next-line(unsafe-typecast)
         return (uint256(answer), dec);
     }
 

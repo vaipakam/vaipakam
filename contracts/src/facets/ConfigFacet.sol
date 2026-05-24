@@ -2024,7 +2024,7 @@ contract ConfigFacet is DiamondAccessControl {
             revert IVaipakamErrors.InvalidAddress();
         if (numeraireSymbol == bytes32(0))
             revert IVaipakamErrors.ParameterOutOfRange(
-                // forge-lint: disable-next-line unsafe-typecast
+                // forge-lint: disable-next-line(unsafe-typecast)
                 bytes32("numeraireSymbol"), 0, 1, type(uint256).max
             );
 
@@ -2039,7 +2039,7 @@ contract ConfigFacet is DiamondAccessControl {
             )
         ) {
             revert IVaipakamErrors.ParameterOutOfRange(
-                // forge-lint: disable-next-line unsafe-typecast
+                // forge-lint: disable-next-line(unsafe-typecast)
                 bytes32("minPrincipalForFinerCadence"),
                 newThresholdInNewNumeraire,
                 LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_FLOOR,
@@ -2054,7 +2054,7 @@ contract ConfigFacet is DiamondAccessControl {
             )
         ) {
             revert IVaipakamErrors.ParameterOutOfRange(
-                // forge-lint: disable-next-line unsafe-typecast
+                // forge-lint: disable-next-line(unsafe-typecast)
                 bytes32("notificationFee"),
                 newNotificationFeeInNewNumeraire,
                 LibVaipakam.MIN_NOTIFICATION_FEE_FLOOR,
@@ -2070,7 +2070,7 @@ contract ConfigFacet is DiamondAccessControl {
             newKycTier0InNewNumeraire >= newKycTier1InNewNumeraire
         ) {
             revert IVaipakamErrors.ParameterOutOfRange(
-                // forge-lint: disable-next-line unsafe-typecast
+                // forge-lint: disable-next-line(unsafe-typecast)
                 bytes32("kycTier0VsTier1"),
                 newKycTier0InNewNumeraire,
                 0,
@@ -2085,7 +2085,7 @@ contract ConfigFacet is DiamondAccessControl {
             )
         ) {
             revert IVaipakamErrors.ParameterOutOfRange(
-                // forge-lint: disable-next-line unsafe-typecast
+                // forge-lint: disable-next-line(unsafe-typecast)
                 bytes32("kycTier0ThresholdNumeraire"),
                 newKycTier0InNewNumeraire,
                 LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MIN_FLOOR,
@@ -2100,7 +2100,7 @@ contract ConfigFacet is DiamondAccessControl {
             )
         ) {
             revert IVaipakamErrors.ParameterOutOfRange(
-                // forge-lint: disable-next-line unsafe-typecast
+                // forge-lint: disable-next-line(unsafe-typecast)
                 bytes32("kycTier1ThresholdNumeraire"),
                 newKycTier1InNewNumeraire,
                 LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MIN_FLOOR,
@@ -2143,7 +2143,7 @@ contract ConfigFacet is DiamondAccessControl {
             )
         ) {
             revert IVaipakamErrors.ParameterOutOfRange(
-                // forge-lint: disable-next-line unsafe-typecast
+                // forge-lint: disable-next-line(unsafe-typecast)
                 bytes32("minPrincipalForFinerCadence"),
                 newThreshold,
                 LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_FLOOR,
@@ -2171,7 +2171,7 @@ contract ConfigFacet is DiamondAccessControl {
             )
         ) {
             revert IVaipakamErrors.ParameterOutOfRange(
-                // forge-lint: disable-next-line unsafe-typecast
+                // forge-lint: disable-next-line(unsafe-typecast)
                 bytes32("preNotifyDays"),
                 uint256(newDays),
                 uint256(LibVaipakam.PERIODIC_PRE_NOTIFY_DAYS_FLOOR),
