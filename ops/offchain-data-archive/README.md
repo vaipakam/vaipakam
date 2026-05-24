@@ -98,16 +98,15 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
    wrangler secret put B2_READ_ACCESS_KEY_ID        # from step 2 output
    wrangler secret put B2_READ_SECRET_ACCESS_KEY    # from step 2 output
    wrangler secret put TG_OPS_BOT_TOKEN             # ops-internal Telegram bot — DISTINCT from the user-facing TG_BOT_TOKEN used by apps/keeper + apps/agent. Same bot shared with ops/lz-watcher.
+   wrangler secret put TG_OPS_CHAT_ID               # channel id where ops alerts land (e.g. -1003903308626). Not strictly secret, but kept out of the public repo for free-of-cost obfuscation.
    ```
 
-5. **Deploy** with the public vars. JSONC defaults are intentionally
-   empty so an accidental deploy can't proceed without operator
-   action:
+5. **Deploy** — the B2 endpoint + bucket name are already in
+   `wrangler.jsonc` (they're operationally-public info), so no
+   `--var` flags needed:
 
    ```bash
-   wrangler deploy --var B2_ENDPOINT:s3.eu-central-003.backblazeb2.com \
-                   --var B2_BUCKET:vaipakam-offchain-data-archive \
-                   --var TG_OPS_CHAT_ID:-1001234567890
+   wrangler deploy
    ```
 
 6. **Verify** — kick a manual run via the Cloudflare dashboard's

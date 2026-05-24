@@ -113,15 +113,18 @@
   //                                  nightly backup outcomes go
   //                                  to TG_OPS_CHAT_ID.
   "vars": {
-    // Backblaze S3-compatible endpoint. Region-specific; pick the
-    // bucket region at create-time. Operator sets the matching
-    // region's endpoint URL here. Example: "s3.eu-central-003.backblazeb2.com".
-    "B2_ENDPOINT": "",
-    // Backup bucket name in B2. Convention: "vaipakam-offchain-data-archive".
-    "B2_BUCKET": "",
-    // Telegram chat-id receiving healthcheck pages + nightly outcomes.
-    // Same chat the lz-watcher posts to is fine — these alerts are
-    // adjacent in audience.
-    "TG_OPS_CHAT_ID": "",
+    // Backblaze S3-compatible endpoint. Region-specific; the bucket
+    // was provisioned in eu-central-003 by the setup-backblaze.mjs
+    // script. Public CF/B2 product URL — safe to commit.
+    "B2_ENDPOINT": "s3.eu-central-003.backblazeb2.com",
+    // Backup bucket name in B2. Documented in the design doc + the
+    // restore runbook — safe to commit.
+    "B2_BUCKET": "vaipakam-offchain-data-archive",
+    // TG_OPS_CHAT_ID is set via `wrangler secret put` (NOT here).
+    // Chat IDs aren't strictly secret — they grant nothing without
+    // the bot token — but keeping it out of the public repo
+    // avoids needlessly revealing which channel ops alerts land
+    // in. Free-of-cost obfuscation; Workers reads vars and secrets
+    // identically at the `env.X` site.
   },
 }

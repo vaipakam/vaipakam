@@ -374,7 +374,7 @@ async function main() {
     console.log('# Read-only key already exists; reusing. Same rotation note as above.');
     console.log();
   }
-  console.log(`# Worker vars (deploy-time):`);
+  console.log(`# Worker vars (already committed in wrangler.jsonc — no action):`);
   console.log(`B2_ENDPOINT  = ${auth.s3Endpoint?.replace('https://', '') ?? '<set manually — see s3 endpoint in B2 dashboard>'}`);
   console.log(`B2_BUCKET    = ${bucketName}`);
   console.log();
@@ -383,7 +383,8 @@ async function main() {
   console.log('#      Save to 1Password / pass / paper backup. NEVER commit, NEVER paste in chat.');
   console.log('#   2. wrangler secret put BACKUP_ENCRYPTION_KEY <the 64-hex-char value>');
   console.log('#   3. wrangler secret put TG_OPS_BOT_TOKEN <Telegram bot token>');
-  console.log('#   4. wrangler deploy --var B2_ENDPOINT:<above> --var B2_BUCKET:<above> --var TG_OPS_CHAT_ID:<chat id>');
+  console.log('#   4. wrangler secret put TG_OPS_CHAT_ID <channel id, e.g. -1003903308626>');
+  console.log('#   5. wrangler deploy');
   console.log();
   console.log('Setup script complete.');
 }
