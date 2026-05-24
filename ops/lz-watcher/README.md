@@ -74,7 +74,7 @@ wrangler secret put RPC_ARB
 wrangler secret put RPC_OP
 wrangler secret put RPC_ZKEVM
 wrangler secret put RPC_BNB
-wrangler secret put TG_BOT_TOKEN
+wrangler secret put TG_OPS_BOT_TOKEN
 
 # 4. Edit wrangler.jsonc's `vars` block — paste the LZ V2 endpoint
 #    address, ULN302 send/receive library addresses, and every

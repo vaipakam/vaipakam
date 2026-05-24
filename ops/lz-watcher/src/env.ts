@@ -19,6 +19,13 @@ export interface Env {
   RPC_BNB?: string;
 
   // ── Telegram (bot token: secret; chat id: var) ────────────────────
+  TG_OPS_BOT_TOKEN?: string;
+  // Legacy alias kept TEMPORARILY as a deploy-window fallback (see
+  // runner.ts). Existing deployments that haven't run
+  // `wrangler secret put TG_OPS_BOT_TOKEN` yet keep delivering alerts
+  // via the old secret name. Remove this binding (and the runner.ts
+  // fallback) once every live ops Worker has been re-deployed with
+  // the new secret. Tracked under issue #250.
   TG_BOT_TOKEN?: string;
   TG_OPS_CHAT_ID?: string;
 
