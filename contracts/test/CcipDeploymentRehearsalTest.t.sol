@@ -115,9 +115,9 @@ contract CcipDeploymentRehearsalTest is Test {
     uint64 internal constant SEL_MIRROR = 5009297550715157269;
 
     bytes32 internal constant BUY_CHANNEL =
-        keccak256("vaipakam.ccip.channel.VPFI-buy");
+        keccak256("vaipakam.ccip.channel.vpfi-buy");
     bytes32 internal constant REWARD_CHANNEL =
-        keccak256("vaipakam.ccip.channel.VPFI-reward");
+        keccak256("vaipakam.ccip.channel.vpfi-reward");
 
     uint256 internal constant GAS = 400_000;
     uint64 internal constant TIMEOUT = 15 minutes;

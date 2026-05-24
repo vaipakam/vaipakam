@@ -62,7 +62,7 @@ contract VpfiBuyFlowTest is Test {
     uint64 internal constant SEL_MIRROR = 5009297550715157269;
     uint64 internal constant SEL_BASE = 15971525489660198786;
     bytes32 internal constant CHANNEL =
-        keccak256("vaipakam.ccip.channel.VPFI-buy");
+        keccak256("vaipakam.ccip.channel.vpfi-buy");
 
     uint256 internal constant GAS = 500_000;
     uint64 internal constant TIMEOUT = 15 minutes;
