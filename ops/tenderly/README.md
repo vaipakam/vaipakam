@@ -13,7 +13,11 @@ Presets live in [`alerts.yaml`](./alerts.yaml). Scheduled actions are TypeScript
 | File | Scope |
 |---|---|
 | [`alerts.yaml`](./alerts.yaml) | Protocol-side events on the Diamond + Timelock (loan-state drift, oracle health, diamond-paused, timelock activity). |
-| [`alerts-crosschain.yaml`](./alerts-crosschain.yaml) | Cross-chain CCIP surface under `contracts/src/crosschain/*` (pause / config-drift / ownership / stuck-VPFI). Replaces the legacy `ops/lz-watcher` Worker — see issue #250. |
+| [`alerts-crosschain-shared.yaml`](./alerts-crosschain-shared.yaml) | Cross-chain CCIP presets that apply on EVERY chain — CcipMessenger, VpfiPoolRateGovernor, VaipakamRewardMessenger + their ownership-drift catch-alls. |
+| [`alerts-crosschain-mirror.yaml`](./alerts-crosschain-mirror.yaml) | Cross-chain presets that apply ONLY on mirror chains — VPFIMirrorToken + VpfiBuyAdapter. |
+| [`alerts-crosschain-canonical.yaml`](./alerts-crosschain-canonical.yaml) | Cross-chain presets that apply ONLY on canonical Base — VpfiBuyReceiver. |
+
+The three `alerts-crosschain-*` files together replace the legacy `ops/lz-watcher` Worker (decommissioned LayerZero V2 surface). See issue #250. They are split by chain role so each chain applies only the files that match its contract set — partial / wrong-role addresses would otherwise leave empty `contract:` lines that the Tenderly CLI rejects.
 
 ## Apply (per chain)
 
@@ -32,24 +36,28 @@ export TIMELOCK_ADDRESS=0x...
 envsubst < alerts.yaml > alerts.${CHAIN}.yaml
 tenderly alerts apply --file alerts.${CHAIN}.yaml --project vaipakam
 
-# ── alerts-crosschain.yaml — every chain (set the always-present vars) ─
+# ── alerts-crosschain-shared.yaml — apply on EVERY chain ─────────────
 export CCIP_MESSENGER_ADDRESS=0x...
 export VPFI_POOL_RATE_GOVERNOR_ADDRESS=0x...
 export VAIPAKAM_REWARD_MESSENGER_ADDRESS=0x...
+envsubst < alerts-crosschain-shared.yaml > alerts-crosschain-shared.${CHAIN}.yaml
+tenderly alerts apply --file alerts-crosschain-shared.${CHAIN}.yaml --project vaipakam
 
-# Plus EITHER the canonical (Base) addresses:
-export VPFI_BUY_RECEIVER_ADDRESS=0x...    # Base only
-export VPFI_TOKEN_ADDRESS=0x...           # Base only
+# ── THEN apply the matching role-specific file: ──────────────────────
+#
+# On canonical Base:
+export VPFI_BUY_RECEIVER_ADDRESS=0x...
+envsubst < alerts-crosschain-canonical.yaml > alerts-crosschain-canonical.${CHAIN}.yaml
+tenderly alerts apply --file alerts-crosschain-canonical.${CHAIN}.yaml --project vaipakam
 
-# OR the mirror-chain addresses:
-export VPFI_MIRROR_TOKEN_ADDRESS=0x...    # mirror chains only
-export VPFI_BUY_ADAPTER_ADDRESS=0x...     # mirror chains only
-
-envsubst < alerts-crosschain.yaml > alerts-crosschain.${CHAIN}.yaml
-tenderly alerts apply --file alerts-crosschain.${CHAIN}.yaml --project vaipakam
+# On every mirror chain (Ethereum, Arbitrum, Optimism, Polygon zkEVM, BNB):
+export VPFI_MIRROR_TOKEN_ADDRESS=0x...
+export VPFI_BUY_ADAPTER_ADDRESS=0x...
+envsubst < alerts-crosschain-mirror.yaml > alerts-crosschain-mirror.${CHAIN}.yaml
+tenderly alerts apply --file alerts-crosschain-mirror.${CHAIN}.yaml --project vaipakam
 ```
 
-A chain-role mismatch (setting a canonical-only var on a mirror chain or vice versa) leaves the matching alerts with an empty `contract:` line; the Tenderly CLI rejects the apply with a clear error. The deployment artifacts at `contracts/deployments/<chain-slug>/addresses.json` are the source of truth for each chain's set of cross-chain contract addresses.
+The deployment artifacts at `contracts/deployments/<chain-slug>/addresses.json` are the source of truth for each chain's set of cross-chain contract addresses. Apply EXACTLY the shared file + ONE role-specific file per chain — never both role files on the same chain.
 
 ## Secrets
 
@@ -70,7 +78,7 @@ Web3 Actions read per-chain values from Tenderly Action Secrets (not from env fi
 | P1   | Degraded service, no loss yet — page during business hours  | PagerDuty + #onchain        |
 | P2   | Trend / anomaly to investigate next business day            | Slack-only (#onchain)       |
 
-Cross-chain alerts (per `alerts-crosschain.yaml`) route to an additional `slack-crosschain` channel for security-critical events (config drift on the messenger trust root, pool reassignments, ownership changes). If your Tenderly project doesn't have a `slack-crosschain` channel wired, the alerts fall back to `slack-incidents` cleanly — the destination list in each preset is additive, not exclusive.
+Cross-chain alerts (per the three `alerts-crosschain-*.yaml` files) route to an additional `slack-crosschain` channel for security-critical events (config drift on the messenger trust root, pool reassignments, ownership changes). **Wire `slack-crosschain` in the Tenderly project BEFORE applying these presets** — there is no automatic fallback. Several presets route ONLY to `slack-crosschain` (e.g. `ccip-messenger-channel-registered`, `vpfi-pool-rate-governor-rate-limits-changed`, `vpfi-buy-receiver-stuck-vpfi`), so a missing channel means those alerts have no destination at all. The Tenderly CLI rejects the apply with a clear error if the destination doesn't exist; that's the intended failure mode.
 
 ## Why these alerts and not others
 

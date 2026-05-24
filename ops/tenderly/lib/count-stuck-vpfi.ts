@@ -22,8 +22,11 @@ import { ethers } from 'ethers';
  * `alerts-crosschain.yaml` §F.
  */
 
+// Signature MUST match the on-chain event exactly — ethers' queryFilter
+// computes topic0 from this ABI line, so a mismatch silently returns
+// zero results. Verified against contracts/src/crosschain/VpfiBuyReceiver.sol.
 const RECEIVER_ABI = [
-  'event VPFIStuckForRetry(uint256 indexed messageId, address buyer, uint256 vpfiAmount, string reason)',
+  'event VPFIStuckForRetry(uint64 indexed requestId, uint256 indexed sourceChainId, address indexed buyer, uint256 vpfiOut)',
 ];
 
 const ONE_HOUR_BLOCKS_BASE = 1800; // Base ~2-sec blocks → ~1800/hr.
@@ -33,14 +36,27 @@ const ONE_HOUR_BLOCKS_BASE = 1800; // Base ~2-sec blocks → ~1800/hr.
 
 export const countStuckVpfi: ActionFn = async (
   context: Context,
-  _event: PeriodicEvent,
+  event: PeriodicEvent,
 ) => {
+  // Tenderly invocation params flow through `event.params` (set in the
+  // matching alert preset under `params:`). The earlier shape read from
+  // `context.storage` which was a different namespace — the preset's
+  // `threshold` value was silently ignored. Fall back to `context.storage`
+  // ONLY for operator-tuned overrides (set via `tenderly actions storage
+  // set ...`) — that gives operators a way to bump the threshold without
+  // re-deploying the preset.
+  const params = (event as PeriodicEvent & { params?: Record<string, string> })
+    .params ?? {};
   const receiverAddress =
+    params.receiver ||
     (await context.storage.getStr('VPFI_BUY_RECEIVER_ADDRESS')) ||
     (await context.secrets.get('VPFI_BUY_RECEIVER_ADDRESS'));
   const rpcUrl = await context.secrets.get('RPC_URL');
-  const thresholdStr =
-    (await context.storage.getStr('stuck_vpfi_threshold_per_hour')) || '3';
+  const presetThresholdStr = params.threshold?.toString();
+  const storageOverrideStr = await context.storage.getStr(
+    'stuck_vpfi_threshold_per_hour',
+  );
+  const thresholdStr = storageOverrideStr || presetThresholdStr || '3';
   const threshold = parseInt(thresholdStr, 10);
 
   if (!receiverAddress || !rpcUrl) {
@@ -79,14 +95,16 @@ export const countStuckVpfi: ActionFn = async (
       `Inspect upstream adapter chains for systemic delivery failures.`;
     const sample = events.slice(0, 5).map((e) => {
       // ethers v6 EventLog carries decoded args; fall back to raw if not.
-      const args = (e as { args?: { messageId?: bigint; buyer?: string; vpfiAmount?: bigint; reason?: string } }).args;
+      // Field names match the real VPFIStuckForRetry event signature
+      // verified against contracts/src/crosschain/VpfiBuyReceiver.sol.
+      const args = (e as { args?: { requestId?: bigint; sourceChainId?: bigint; buyer?: string; vpfiOut?: bigint } }).args;
       return {
         block: e.blockNumber,
         tx: e.transactionHash,
-        messageId: args?.messageId?.toString(),
+        requestId: args?.requestId?.toString(),
+        sourceChainId: args?.sourceChainId?.toString(),
         buyer: args?.buyer,
-        vpfiAmount: args?.vpfiAmount?.toString(),
-        reason: args?.reason,
+        vpfiOut: args?.vpfiOut?.toString(),
       };
     });
     console.warn(summary, { sample });

@@ -1,0 +1,85 @@
+# Tenderly Alert Presets — Vaipakam Cross-Chain (CCIP) Stack
+# CANONICAL — applies ONLY to canonical Base (NOT mirror chains).
+#
+# See alerts-crosschain-shared.yaml header for the file-set overview,
+# severity tiers, and apply workflow. Apply this file on Base AFTER the
+# shared file.
+#
+# Required envsubst vars:
+#   VPFI_BUY_RECEIVER_ADDRESS   — the VpfiBuyReceiver proxy on Base
+
+version: 1
+project: vaipakam
+
+# ═══════════════════════════════════════════════════════════════════════
+# §F. VpfiBuyReceiver — canonical Base only
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Mirror chains host the adapter (alerts-crosschain-mirror.yaml §E);
+# Base hosts the buy-flow settlement.
+
+- id: vpfi-buy-receiver-paused
+  severity: P0
+  description: >
+    GuardianPausable.Paused on VpfiBuyReceiver (Base). Incoming
+    cross-chain BUY_REQUEST messages from mirror adapters will revert
+    here; they're parked in CCIP's failed-message register for manual
+    re-execution post-unpause. Buyers on mirror chains see "buy stuck"
+    until either unpause + manual re-execute OR refund-timeout.
+  type: event_emitted
+  contract: ${VPFI_BUY_RECEIVER_ADDRESS}
+  event: Paused(address)
+  destination:
+    - pagerduty
+    - slack-incidents
+
+- id: vpfi-buy-receiver-messenger-changed
+  severity: P0
+  description: >
+    VpfiBuyReceiver.MessengerSet — the CcipMessenger reference (which
+    delivers BUY_REQUEST messages) changed. Same trust-root class as
+    the messenger-side config drift; rogue messenger can deliver forged
+    buys.
+  type: event_emitted
+  contract: ${VPFI_BUY_RECEIVER_ADDRESS}
+  event: MessengerSet(address,address)
+  destination:
+    - pagerduty
+    - slack-incidents
+    - slack-crosschain
+
+- id: vpfi-buy-receiver-stuck-vpfi
+  severity: P1
+  description: >
+    Scheduled action: count VpfiBuyReceiver.VPFIStuckForRetry events in
+    the trailing 1h window. >= 3 within 1h on a Base deploy is an
+    anomaly — investigate the upstream adapter chain (likely a buyer
+    address mismatch, a Diamond-side rejection, or a downstream contract
+    bug). Each stuck VPFI is recoverable via the two-step retry path,
+    but a cluster suggests something systematically wrong.
+  type: web3_action
+  schedule: "0 * * * *" # hourly
+  action: lib/count-stuck-vpfi.ts
+  params:
+    receiver: ${VPFI_BUY_RECEIVER_ADDRESS}
+    chain_id: ${CHAIN_ID}
+    threshold: 3
+  destination:
+    - slack-crosschain
+
+# ═══════════════════════════════════════════════════════════════════════
+# §G-canonical. Ownership drift — canonical-only contracts
+# ═══════════════════════════════════════════════════════════════════════
+
+- id: vpfi-buy-receiver-owner-changed
+  severity: P0
+  description: >
+    Ownership of VpfiBuyReceiver (Base) transferred. Should NEVER fire
+    post mainnet-handover. Investigate immediately.
+  type: event_emitted
+  contract: ${VPFI_BUY_RECEIVER_ADDRESS}
+  event: OwnershipTransferred(address,address)
+  destination:
+    - pagerduty
+    - slack-incidents
+    - slack-crosschain

@@ -1,0 +1,291 @@
+# Tenderly Alert Presets — Vaipakam Cross-Chain (CCIP) Stack
+# SHARED — applies to EVERY chain (canonical Base + every mirror).
+#
+# Companion file to `alerts.yaml`. Replaces the legacy ops/lz-watcher
+# Worker (decommissioned LayerZero V2 surface). See issue #250.
+#
+# Files in this set:
+#   alerts-crosschain-shared.yaml      ← THIS FILE — every chain
+#   alerts-crosschain-canonical.yaml   ← canonical Base only
+#   alerts-crosschain-mirror.yaml      ← mirror chains only
+#
+# Apply per chain (envsubst + tenderly CLI; same workflow as alerts.yaml):
+#
+#   export CHAIN=base-sepolia
+#   export CHAIN_ID=84532
+#   export CCIP_MESSENGER_ADDRESS=0x...
+#   export VPFI_POOL_RATE_GOVERNOR_ADDRESS=0x...
+#   export VAIPAKAM_REWARD_MESSENGER_ADDRESS=0x...
+#   envsubst < alerts-crosschain-shared.yaml > alerts-crosschain-shared.${CHAIN}.yaml
+#   tenderly alerts apply --file alerts-crosschain-shared.${CHAIN}.yaml --project vaipakam
+#
+# Then ALSO apply the role-specific file: alerts-crosschain-canonical.yaml
+# on Base, alerts-crosschain-mirror.yaml on every mirror chain.
+#
+# Severity tiers (same as alerts.yaml):
+#   P0  immediate page — pause tripped or security-critical drift
+#   P1  page during business hours — config change or stuck-state signal
+#   P2  slack-only — trend / cluster signal
+#
+# Destination `slack-crosschain` is a new routing channel for security-
+# critical cross-chain events. Wire it in the Tenderly project before
+# applying these presets; until it exists, alerts route there will fail
+# at apply time. (NO automatic fallback to slack-incidents.)
+
+version: 1
+project: vaipakam
+
+# ═══════════════════════════════════════════════════════════════════════
+# §A. CcipMessenger — every chain
+# ═══════════════════════════════════════════════════════════════════════
+#
+# The single CCIP adapter port that every domain contract talks to.
+# Pause = the cross-chain layer is offline. Config drift = unauthorized
+# governance / compromised admin key.
+
+- id: ccip-messenger-paused
+  severity: P0
+  description: >
+    GuardianPausable.Paused emitted on the CcipMessenger. All cross-chain
+    sends from this chain (VPFI buy, reward report/broadcast) revert
+    until unpause. If the pause was intentional incident response,
+    open the runbook. If not, suspect a guardian-key compromise.
+  type: event_emitted
+  contract: ${CCIP_MESSENGER_ADDRESS}
+  event: Paused(address)
+  destination:
+    - pagerduty
+    - slack-incidents
+
+- id: ccip-messenger-unpaused
+  severity: P1
+  description: >
+    GuardianPausable.Unpaused on the CcipMessenger. Resumption of
+    cross-chain traffic. Cross-reference with the incident timeline;
+    unpause should always trail an explicit "all clear" decision.
+  type: event_emitted
+  contract: ${CCIP_MESSENGER_ADDRESS}
+  event: Unpaused(address)
+  destination:
+    - slack-incidents
+
+- id: ccip-messenger-chain-selector-changed
+  severity: P1
+  description: >
+    CcipMessenger.ChainSelectorSet — the chainId → CCIP-selector map
+    for a destination chain changed. Should only fire during initial
+    wire-up or a CCIP-side selector migration (rare). A subsequent fire
+    in steady state = unauthorized config edit; suspect admin-key
+    compromise. Sanity check against the design doc §10 chain set.
+  type: event_emitted
+  contract: ${CCIP_MESSENGER_ADDRESS}
+  event: ChainSelectorSet(uint256,uint64)
+  destination:
+    - pagerduty
+    - slack-crosschain
+
+- id: ccip-messenger-remote-changed
+  severity: P0
+  description: >
+    CcipMessenger.RemoteMessengerSet — the address we trust as the peer
+    CcipMessenger on a destination chain changed. Critical: this is the
+    cross-chain trust root. An attacker who can flip this can intercept
+    every cross-chain message we send. Compare immediately against the
+    deployment artifacts; if it doesn't match, treat as active
+    compromise.
+  type: event_emitted
+  contract: ${CCIP_MESSENGER_ADDRESS}
+  event: RemoteMessengerSet(uint256,address)
+  destination:
+    - pagerduty
+    - slack-incidents
+    - slack-crosschain
+
+- id: ccip-messenger-channel-peer-changed
+  severity: P0
+  description: >
+    CcipMessenger.ChannelPeerSet — channel routing peer (vpfi-buy or
+    vpfi-reward) updated for a destination chain. Same trust-root class
+    as RemoteMessengerSet but at finer granularity (per-channel). A
+    rogue ChannelPeerSet can redirect channel-scoped messages
+    (e.g. buy delivery) to an attacker-controlled receiver while
+    leaving the messenger trust root intact. Treat as P0.
+  type: event_emitted
+  contract: ${CCIP_MESSENGER_ADDRESS}
+  event: ChannelPeerSet(bytes32,uint256,address)
+  destination:
+    - pagerduty
+    - slack-incidents
+    - slack-crosschain
+
+- id: ccip-messenger-channel-registered
+  severity: P2
+  description: >
+    CcipMessenger.ChannelRegistered — a NEW channel was registered on
+    this chain. Today's channel set is { vpfi-buy, vpfi-reward }.
+    A new channel = either an intentional protocol extension or
+    unauthorized registration; sanity-check against the planned
+    channel inventory.
+  type: event_emitted
+  contract: ${CCIP_MESSENGER_ADDRESS}
+  event: ChannelRegistered(bytes32,address)
+  destination:
+    - slack-crosschain
+
+# ═══════════════════════════════════════════════════════════════════════
+# §B. VpfiPoolRateGovernor — every chain
+# ═══════════════════════════════════════════════════════════════════════
+
+- id: vpfi-pool-rate-governor-paused
+  severity: P0
+  description: >
+    GuardianPausable.Paused on VpfiPoolRateGovernor. Pool rate-limit
+    edits are blocked until unpause — the LIVE per-lane caps stay at
+    their pre-pause values. If the pause is intentional (e.g. governance
+    is staging a coordinated cap change), expect a subsequent batch
+    LaneRateLimitsSet immediately after Unpaused.
+  type: event_emitted
+  contract: ${VPFI_POOL_RATE_GOVERNOR_ADDRESS}
+  event: Paused(address)
+  destination:
+    - pagerduty
+    - slack-incidents
+
+- id: vpfi-pool-rate-governor-rate-limits-changed
+  severity: P1
+  description: >
+    VpfiPoolRateGovernor.LaneRateLimitsSet — per-lane capacity / refill
+    rate updated. Starting values are 50,000 VPFI capacity / ≈5.8 VPFI/s
+    per the design doc §10. A change is either a governance-approved
+    cap bump (sanity check against the change log) or an unauthorized
+    edit. ET-008 bounds reject extreme values at the contract level,
+    so a successful emit means the new values are within sanity range,
+    but still worth reviewing.
+  type: event_emitted
+  contract: ${VPFI_POOL_RATE_GOVERNOR_ADDRESS}
+  event: LaneRateLimitsSet(uint64,uint128,uint128,uint128,uint128)
+  destination:
+    - slack-crosschain
+
+- id: vpfi-pool-rate-governor-pool-changed
+  severity: P0
+  description: >
+    VpfiPoolRateGovernor.PoolSet — the TokenPool address this governor
+    manages changed. The TokenPool is the actual contract holding /
+    minting the cross-chain VPFI on this chain. Flipping it points the
+    rate-limit admin at a different pool; an attacker who flips this
+    can apply manipulated rate limits to a rogue pool while leaving the
+    original pool unbounded. Critical.
+  type: event_emitted
+  contract: ${VPFI_POOL_RATE_GOVERNOR_ADDRESS}
+  event: PoolSet(address,address)
+  destination:
+    - pagerduty
+    - slack-incidents
+    - slack-crosschain
+
+# ═══════════════════════════════════════════════════════════════════════
+# §C. VaipakamRewardMessenger — every chain
+# ═══════════════════════════════════════════════════════════════════════
+
+- id: reward-messenger-paused
+  severity: P0
+  description: >
+    GuardianPausable.Paused on VaipakamRewardMessenger. Per-day reward
+    finalization will stall — claim()-side will revert with
+    "denominator not yet broadcast" until unpause.
+  type: event_emitted
+  contract: ${VAIPAKAM_REWARD_MESSENGER_ADDRESS}
+  event: Paused(address)
+  destination:
+    - pagerduty
+    - slack-incidents
+
+- id: reward-messenger-config-changed
+  severity: P1
+  description: >
+    VaipakamRewardMessenger.MessengerSet — the CcipMessenger reference
+    on the reward messenger changed. Should only fire during deploy /
+    coordinated upgrade. A subsequent fire = unauthorized rewiring of
+    the reward path through a potentially-rogue messenger.
+  type: event_emitted
+  contract: ${VAIPAKAM_REWARD_MESSENGER_ADDRESS}
+  event: MessengerSet(address,address)
+  destination:
+    - pagerduty
+    - slack-crosschain
+
+- id: reward-messenger-diamond-changed
+  severity: P0
+  description: >
+    VaipakamRewardMessenger.DiamondSet — the Diamond reference (which
+    receives reward reports + broadcasts) changed. An attacker who can
+    flip this can redirect reward accounting to a fake Diamond. Critical.
+  type: event_emitted
+  contract: ${VAIPAKAM_REWARD_MESSENGER_ADDRESS}
+  event: DiamondSet(address,address)
+  destination:
+    - pagerduty
+    - slack-incidents
+    - slack-crosschain
+
+- id: reward-messenger-broadcast-destinations-changed
+  severity: P1
+  description: >
+    VaipakamRewardMessenger.BroadcastDestinationsSet — the list of
+    mirror chain ids that receive daily reward broadcasts changed.
+    Expected on chain-set expansion or contraction; unauthorized
+    change = potential broadcast suppression for a mirror chain (its
+    `knownGlobalInterest` would never update, blocking claims there).
+  type: event_emitted
+  contract: ${VAIPAKAM_REWARD_MESSENGER_ADDRESS}
+  event: BroadcastDestinationsSet(uint256[])
+  destination:
+    - slack-crosschain
+
+# ═══════════════════════════════════════════════════════════════════════
+# §G-shared. Ownership drift — contracts that exist on EVERY chain
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Should only fire during the post-deploy handover to the governance
+# multisig → timelock (per CLAUDE.md Cross-Chain Security Policy).
+# Steady-state fires = potential ownership-takeover attempt.
+
+- id: ccip-messenger-owner-changed
+  severity: P0
+  description: >
+    Ownership of CcipMessenger transferred. Should NEVER fire post
+    mainnet-handover. Investigate immediately.
+  type: event_emitted
+  contract: ${CCIP_MESSENGER_ADDRESS}
+  event: OwnershipTransferred(address,address)
+  destination:
+    - pagerduty
+    - slack-incidents
+    - slack-crosschain
+
+- id: vpfi-pool-rate-governor-owner-changed
+  severity: P0
+  description: >
+    Ownership of VpfiPoolRateGovernor transferred. Should NEVER fire
+    post mainnet-handover. Investigate immediately.
+  type: event_emitted
+  contract: ${VPFI_POOL_RATE_GOVERNOR_ADDRESS}
+  event: OwnershipTransferred(address,address)
+  destination:
+    - pagerduty
+    - slack-incidents
+    - slack-crosschain
+
+- id: reward-messenger-owner-changed
+  severity: P0
+  description: >
+    Ownership of VaipakamRewardMessenger transferred. Should NEVER
+    fire post mainnet-handover. Investigate immediately.
+  type: event_emitted
+  contract: ${VAIPAKAM_REWARD_MESSENGER_ADDRESS}
+  event: OwnershipTransferred(address,address)
+  destination:
+    - pagerduty
+    - slack-incidents
+    - slack-crosschain
