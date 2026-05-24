@@ -13,10 +13,10 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {GuardianPausable} from "./GuardianPausable.sol";
 import {IVpfiBuyCcipMessages} from "./IVpfiBuyCcipMessages.sol";
 import {
-import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
     ICrossChainMessenger,
     ICrossChainMessageRecipient
 } from "./ICrossChainMessenger.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
  * @title VpfiBuyAdapter — the source-chain entry point of the cross-chain

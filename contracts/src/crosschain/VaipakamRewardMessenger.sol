@@ -9,10 +9,10 @@ import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/Reentrancy
 
 import {GuardianPausable} from "./GuardianPausable.sol";
 import {
-import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
     ICrossChainMessenger,
     ICrossChainMessageRecipient
 } from "./ICrossChainMessenger.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /// @dev Base-side Diamond ingress for an inbound REPORT.
 interface IRewardAggregatorIngress {
