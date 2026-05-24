@@ -51,7 +51,7 @@ export interface Env {
   // key.
   B2_READ_ACCESS_KEY_ID: string;
   B2_READ_SECRET_ACCESS_KEY: string;
-  TG_BOT_TOKEN: string;
+  TG_OPS_BOT_TOKEN: string;
   // Derived at boot — not a binding, attached by `withEncryptionKey`.
   encryptionKey: CryptoKey;
 }

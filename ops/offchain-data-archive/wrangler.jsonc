@@ -81,10 +81,25 @@
   //                                  the offline encryption key
   //                                  protects the plaintext.
   //   B2_READ_SECRET_ACCESS_KEY    — matching secret of above.
-  //   TG_BOT_TOKEN                 — same Telegram bot the other
-  //                                  Workers use; healthcheck
-  //                                  failures + nightly backup
-  //                                  outcomes go to TG_OPS_CHAT_ID.
+  //   TG_OPS_BOT_TOKEN             — Telegram bot dedicated to
+  //                                  internal-ops alerts (this
+  //                                  Worker + ops/lz-watcher).
+  //                                  DELIBERATELY DISTINCT from
+  //                                  `TG_BOT_TOKEN`, which is the
+  //                                  user-facing bot used by
+  //                                  apps/keeper + apps/agent.
+  //                                  Splitting the bots bounds the
+  //                                  blast radius of a token leak:
+  //                                  a user-bot compromise can't
+  //                                  spoof ops alerts (where the
+  //                                  operator acts on detection
+  //                                  signals like backup failure
+  //                                  or LZ-mesh drift) and an ops-
+  //                                  bot compromise can't reach
+  //                                  the user-alert channels.
+  //                                  Healthcheck failures +
+  //                                  nightly backup outcomes go
+  //                                  to TG_OPS_CHAT_ID.
   "vars": {
     // Backblaze S3-compatible endpoint. Region-specific; pick the
     // bucket region at create-time. Operator sets the matching

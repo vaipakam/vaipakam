@@ -39,9 +39,17 @@
   //                   sepolia.base.org) rate-limit aggressively and
   //                   the watcher's `eth_getLogs` calls will get
   //                   throttled into uselessness.
-  //   TG_BOT_TOKEN  — Telegram bot token from BotFather. The same bot
-  //                   used by hf-watcher CAN be reused here, but the
-  //                   destination chat id is different (`TG_OPS_CHAT_ID`).
+  //   TG_OPS_BOT_TOKEN  — Telegram bot dedicated to internal-ops
+  //                   alerts (this Worker + ops/offchain-data-archive).
+  //                   DELIBERATELY DISTINCT from `TG_BOT_TOKEN`,
+  //                   which is the user-facing bot used by
+  //                   apps/keeper + apps/agent. Splitting the bots
+  //                   bounds the blast radius of a token leak:
+  //                   a user-bot compromise can't spoof ops alerts
+  //                   (where the operator acts on detection signals)
+  //                   and an ops-bot compromise can't reach the
+  //                   user-alert channels. The destination chat id
+  //                   for this Worker is `TG_OPS_CHAT_ID`.
   //
   // Plain vars (public — set here or via `wrangler secret put` if you
   // prefer): every Vaipakam OApp / endpoint / library address per
@@ -51,7 +59,7 @@
     // ── Telegram destination ─────────────────────────────────────────
     // Numeric chat id of the internal ops channel. Add the bot to the
     // channel + read the chat id via @userinfobot or curl
-    // `https://api.telegram.org/bot<TG_BOT_TOKEN>/getUpdates` after
+    // `https://api.telegram.org/bot<TG_OPS_BOT_TOKEN>/getUpdates` after
     // sending a message. NOT a secret — chat ids alone don't grant
     // posting access without the bot token.
     "TG_OPS_CHAT_ID": "",

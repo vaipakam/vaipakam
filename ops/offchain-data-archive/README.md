@@ -48,7 +48,7 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
    # BACKBLAZE_KEY_ID + BACKBLAZE_APP_KEY. After this script runs,
    # the master key only needs to come back out for explicit
    # rotation events; the Worker uses the scoped keys.
-   cd ops/cloud-backup
+   cd ops/offchain-data-archive
    node scripts/setup-backblaze.mjs
    ```
 
@@ -79,13 +79,13 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
 4. **Configure the Worker secrets** — paste each value when prompted:
 
    ```bash
-   cd ops/cloud-backup
+   cd ops/offchain-data-archive
    wrangler secret put BACKUP_ENCRYPTION_KEY        # 64-hex from step 3
    wrangler secret put B2_WRITE_ACCESS_KEY_ID       # from step 2 output
    wrangler secret put B2_WRITE_SECRET_ACCESS_KEY   # from step 2 output
    wrangler secret put B2_READ_ACCESS_KEY_ID        # from step 2 output
    wrangler secret put B2_READ_SECRET_ACCESS_KEY    # from step 2 output
-   wrangler secret put TG_BOT_TOKEN                 # same bot used by lz-watcher
+   wrangler secret put TG_OPS_BOT_TOKEN             # ops-internal Telegram bot — DISTINCT from the user-facing TG_BOT_TOKEN used by apps/keeper + apps/agent. Same bot shared with ops/lz-watcher.
    ```
 
 5. **Deploy** with the public vars. JSONC defaults are intentionally

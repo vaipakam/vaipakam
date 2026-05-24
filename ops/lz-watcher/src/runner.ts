@@ -20,9 +20,9 @@ export async function runLzWatcher(env: Env): Promise<void> {
     console.log('[lz-watcher] no chains configured — nothing to do');
     return;
   }
-  if (!env.TG_BOT_TOKEN || !env.TG_OPS_CHAT_ID) {
+  if (!env.TG_OPS_BOT_TOKEN || !env.TG_OPS_CHAT_ID) {
     console.warn(
-      '[lz-watcher] TG_BOT_TOKEN or TG_OPS_CHAT_ID not set — alerts will be logged but not delivered',
+      '[lz-watcher] TG_OPS_BOT_TOKEN or TG_OPS_CHAT_ID not set — alerts will be logged but not delivered',
     );
   }
 
@@ -60,9 +60,9 @@ export async function runLzWatcher(env: Env): Promise<void> {
     return;
   }
   console.log(`[lz-watcher] tick produced ${messages.length} alert(s)`);
-  if (env.TG_BOT_TOKEN && env.TG_OPS_CHAT_ID) {
+  if (env.TG_OPS_BOT_TOKEN && env.TG_OPS_CHAT_ID) {
     for (const msg of messages) {
-      await sendOpsAlert(env.TG_BOT_TOKEN, env.TG_OPS_CHAT_ID, msg);
+      await sendOpsAlert(env.TG_OPS_BOT_TOKEN, env.TG_OPS_CHAT_ID, msg);
     }
   } else {
     for (const msg of messages) console.log(msg);

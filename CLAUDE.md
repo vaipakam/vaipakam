@@ -353,6 +353,27 @@ artifacts and stay in their respective env / config:
   `KEEPER_ENABLED`, `RPC_*`, `TG_BOT_TOKEN`, `PUSH_CHANNEL_PK`,
   `ZEROEX_API_KEY`, `ONEINCH_API_KEY`.
 - apps/indexer Cloudflare secrets: `RPC_*` only (no signing keys).
+- ops/* Cloudflare secrets: use `TG_OPS_BOT_TOKEN` (NOT
+  `TG_BOT_TOKEN`) — see "Two Telegram bots" below.
+
+**Two Telegram bots — by audience, never share tokens**:
+
+- `TG_BOT_TOKEN` — user-facing bot. Used by `apps/keeper` (HF-band
+  downgrade alerts) + `apps/agent` (Telegram link handshake +
+  periodic-interest pre-notify). Posts to user-supplied chat IDs
+  (`tg_chat_id` per subscription).
+- `TG_OPS_BOT_TOKEN` — ops-internal bot. Used by `ops/lz-watcher`
+  (LZ-mesh DVN drift / OFT imbalance / oversized-flow alerts) +
+  `ops/offchain-data-archive` (nightly backup outcomes + weekly
+  healthcheck verdicts). Posts to a single operator chat
+  (`TG_OPS_CHAT_ID`).
+
+Splitting bounds the blast radius of a token leak. A user-bot
+compromise can't spoof ops alerts (the operator acts on detection
+signals from those — backup failure, lane drift); an ops-bot
+compromise can't reach the user-alert channels. When adding a new
+Worker, pick the matching token based on **who reads the alert**,
+not on convenience.
 
 **Omit-keys policy for chain shape variance**: canonical-VPFI chains
 (Base / Base Sepolia) carry `vpfiOftAdapter` + `vpfiBuyReceiver`;

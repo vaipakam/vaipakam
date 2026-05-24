@@ -19,7 +19,7 @@ export interface Env {
   RPC_BNB?: string;
 
   // ── Telegram (bot token: secret; chat id: var) ────────────────────
-  TG_BOT_TOKEN?: string;
+  TG_OPS_BOT_TOKEN?: string;
   TG_OPS_CHAT_ID?: string;
 
   // ── Per-chain LZ endpoint + ULN302 send/receive libraries ─────────

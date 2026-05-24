@@ -382,7 +382,7 @@ async function main() {
   console.log("#   1. Generate AES-256 backup encryption key locally: `openssl rand -hex 32`");
   console.log('#      Save to 1Password / pass / paper backup. NEVER commit, NEVER paste in chat.');
   console.log('#   2. wrangler secret put BACKUP_ENCRYPTION_KEY <the 64-hex-char value>');
-  console.log('#   3. wrangler secret put TG_BOT_TOKEN <Telegram bot token>');
+  console.log('#   3. wrangler secret put TG_OPS_BOT_TOKEN <Telegram bot token>');
   console.log('#   4. wrangler deploy --var B2_ENDPOINT:<above> --var B2_BUCKET:<above> --var TG_OPS_CHAT_ID:<chat id>');
   console.log();
   console.log('Setup script complete.');

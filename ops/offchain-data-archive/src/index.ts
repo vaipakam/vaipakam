@@ -40,12 +40,12 @@ function b2ReadConfig(env: Env): B2Config {
  *  abort a backup or mask a healthcheck failure. Returns true if the
  *  message landed, false otherwise (logged but swallowed). */
 async function tg(env: Env, text: string): Promise<boolean> {
-  if (!env.TG_BOT_TOKEN || !env.TG_OPS_CHAT_ID) {
-    console.warn('[cloud-backup] TG_BOT_TOKEN/TG_OPS_CHAT_ID unset; skipping alert');
+  if (!env.TG_OPS_BOT_TOKEN || !env.TG_OPS_CHAT_ID) {
+    console.warn('[cloud-backup] TG_OPS_BOT_TOKEN/TG_OPS_CHAT_ID unset; skipping alert');
     return false;
   }
   try {
-    const res = await fetch(`https://api.telegram.org/bot${env.TG_BOT_TOKEN}/sendMessage`, {
+    const res = await fetch(`https://api.telegram.org/bot${env.TG_OPS_BOT_TOKEN}/sendMessage`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
