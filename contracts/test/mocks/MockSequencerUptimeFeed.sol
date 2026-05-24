@@ -17,7 +17,7 @@ contract MockSequencerUptimeFeed is AggregatorV3Interface {
     int256 public answer_; // 0=up, 1=down
     uint256 public startedAt_;
     uint80 public roundId_ = 1;
-    // forge-lint: disable-next-line screaming-snake-case-const
+    // forge-lint: disable-next-line(screaming-snake-case-const)
     uint8 public constant override decimals = 0;
 
     /// @param initialAnswer 0 = up, 1 = down at construction.

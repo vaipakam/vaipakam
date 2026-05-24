@@ -378,11 +378,14 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
                 s.assetPriceSnapshots[asset][today] = LibVaipakam.AssetPriceSnapshot({
                     // Cast: Chainlink price is positive in practice and
                     // we already revert on stale / negative answers
-                    // upstream in `_primaryPrice`.
-                    // forge-lint: disable-next-line unsafe-typecast
-                    // safe: `price` is uint256 from a Chainlink feed already validated
-                    // non-negative + non-stale upstream in `_primaryPrice` (the comment
-                    // above this struct literal already documents it).
+                    // upstream in `_primaryPrice`. The lint warning here
+                    // is intentionally LEFT FIRING — see Codex P2 on
+                    // PR #266: an explicit `SafeCast.toInt256(price)`
+                    // wrap is the proper fix and is tracked as a
+                    // follow-up PR (the current cast silently overflows
+                    // into a negative int256 for uint256 values above
+                    // 2^255, which can't happen with valid feed data
+                    // but lacks an on-chain bound).
                     price: int256(price),
                     feedDecimals: feedDecimals,
                     capturedAt: uint64(block.timestamp)
@@ -754,13 +757,13 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             // pathological feed configurations (Pyth's documented
             // expo range is -18..0; we cap at 30 for hardening).
             if (net > 30) return 0;
-            // forge-lint: disable-next-line unsafe-typecast
+            // forge-lint: disable-next-line(unsafe-typecast)
             // safe: this branch is gated by `if (net >= 0)` above (≥0 → uint256
             // conversion is identity-preserving), AND `net > 30` early-returns,
             // so the cast operates on `net ∈ [0, 30]`.
             return priceMagnitude * (10 ** uint256(net));
         } else {
-            // forge-lint: disable-next-line unsafe-typecast
+            // forge-lint: disable-next-line(unsafe-typecast)
             // safe: in the `else` branch where `net < 0`. By construction
             // `net = int256(uint256(targetDecimals)) + int256(expo)` with
             // `targetDecimals: uint8` and `expo: int32`, so `|net|` is
@@ -922,7 +925,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         if (block.timestamp - reportedAt > LibVaipakam.effectiveSecondaryOracleMaxStaleness()) {
             return SecondaryStatus.Unavailable;
         }
-        // forge-lint: disable-next-line unsafe-typecast
+        // forge-lint: disable-next-line(unsafe-typecast)
         // safe: `value` is int224 from the API3 callback, guaranteed > 0
         // by the check on the prior return path (line above the try/catch
         // closing brace). Widen int224 → int256 → uint256 is the correct
@@ -1507,7 +1510,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ///      `scaleA` = `10**(feedDecimals + tokenDecimals)` so a
     ///      PAD↔base-unit conversion is one `mulDiv`; `band` =
     ///      `twapConsistencyBps`; `twapWindow` = `twapWindowSec`.
-    // forge-lint: disable-next-line pascal-case-struct
+    // forge-lint: disable-next-line(pascal-case-struct)
     struct _TierCtx {
         uint256 pA;
         uint256 scaleA;
@@ -1564,7 +1567,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         if (obsOk) {
             int256 d = int256(curTick) - int256(meanTick);
             if (d < 0) d = -d;
-            // forge-lint: disable-next-line unsafe-typecast
+            // forge-lint: disable-next-line(unsafe-typecast)
             // safe: `d` was just made non-negative by `if (d < 0) d = -d;`
             // above; the cast is therefore identity-preserving.
             if (uint256(d) > ctx.band) return;
@@ -1829,7 +1832,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             if (!allowStablePeg) return (false, 0, 0);
             if (!_answerWithinAnyPeg(answer, dec)) return (false, 0, 0);
         }
-        // forge-lint: disable-next-line unsafe-typecast
+        // forge-lint: disable-next-line(unsafe-typecast)
         // safe: `answer` is validated > 0 by `_readFreshUsdFeed`'s own
         // `if (answer <= 0 || updatedAt == 0 || ...) return (false, 0, 0);`
         // guard near the head of the function, before any cast path runs.
@@ -1891,7 +1894,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             // value.
             if (age > ovr.maxStaleness) revert StalePriceData();
             uint8 dec = AggregatorV3Interface(feed).decimals();
-            // forge-lint: disable-next-line unsafe-typecast
+            // forge-lint: disable-next-line(unsafe-typecast)
             // safe: `answer` is validated > 0 by `_readAggregatorStrict`'s
             // own head-of-function guard (`if (answer <= 0 || ...) revert
             // StalePriceData();`), which runs immediately after
@@ -1909,7 +1912,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             if (!allowStablePeg) revert StalePriceData();
             if (!_answerWithinAnyPeg(answer, dec2)) revert StalePriceData();
         }
-        // forge-lint: disable-next-line unsafe-typecast
+        // forge-lint: disable-next-line(unsafe-typecast)
         // safe: `answer` is validated > 0 by `_readAggregatorStrict`'s
         // own head-of-function guard (`if (answer <= 0 || ...) revert
         // StalePriceData();`), which runs before the staleness + peg
@@ -1978,7 +1981,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     function _withinPegBps(int256 answer, int256 peg) private pure returns (bool) {
         if (peg <= 0) return false;
         int256 diff = answer > peg ? answer - peg : peg - answer;
-        // forge-lint: disable-next-line unsafe-typecast
+        // forge-lint: disable-next-line(unsafe-typecast)
         // safe: `peg` is strictly positive int256 by the function head
         // (`if (peg <= 0) return false;`); `diff = |answer - peg|` is
         // non-negative (can equal 0 when answer == peg). Both casts to

@@ -271,7 +271,7 @@ contract GraceBucketsTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.ParameterOutOfRange.selector,
-                // forge-lint: disable-next-line unsafe-typecast
+                // forge-lint: disable-next-line(unsafe-typecast)
                 bytes32("graceBucketMaxDurationDays"),
                 uint256(6),
                 uint256(7),   // slot 1 minDays
@@ -289,7 +289,7 @@ contract GraceBucketsTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.ParameterOutOfRange.selector,
-                // forge-lint: disable-next-line unsafe-typecast
+                // forge-lint: disable-next-line(unsafe-typecast)
                 bytes32("graceBucketMaxDurationDays"),
                 uint256(600),
                 uint256(180), // slot 4 minDays
@@ -307,7 +307,7 @@ contract GraceBucketsTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.ParameterOutOfRange.selector,
-                // forge-lint: disable-next-line unsafe-typecast
+                // forge-lint: disable-next-line(unsafe-typecast)
                 bytes32("graceBucketSeconds"),
                 uint256(12 hours),
                 uint256(1 days),  // slot 2 minGrace
@@ -325,7 +325,7 @@ contract GraceBucketsTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.ParameterOutOfRange.selector,
-                // forge-lint: disable-next-line unsafe-typecast
+                // forge-lint: disable-next-line(unsafe-typecast)
                 bytes32("graceBucketSeconds"),
                 uint256(6 days),
                 uint256(1 hours), // slot 0 minGrace
@@ -343,7 +343,7 @@ contract GraceBucketsTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.ParameterOutOfRange.selector,
-                // forge-lint: disable-next-line unsafe-typecast
+                // forge-lint: disable-next-line(unsafe-typecast)
                 bytes32("graceBucketSeconds"),
                 uint256(91 days),
                 uint256(14 days), // slot 5 minGrace

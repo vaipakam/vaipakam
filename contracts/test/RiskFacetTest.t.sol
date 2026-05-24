@@ -1496,7 +1496,7 @@ contract RiskFacetTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.ParameterOutOfRange.selector,
-                // forge-lint: disable-next-line unsafe-typecast
+                // forge-lint: disable-next-line(unsafe-typecast)
                 bytes32("loanInitMaxLtvBps"),
                 uint256(0),
                 uint256(LibVaipakam.RISK_PARAMS_MAX_LTV_BPS_MIN),
@@ -1512,7 +1512,7 @@ contract RiskFacetTest is Test {
         vm.prank(owner);
         vm.expectRevert(
             abi.encodeWithSelector(
-                // forge-lint: disable-next-line unsafe-typecast
+                // forge-lint: disable-next-line(unsafe-typecast)
                 IVaipakamErrors.ParameterOutOfRange.selector, bytes32("loanInitMaxLtvBps"),
                 uint256(10001),
                 uint256(LibVaipakam.RISK_PARAMS_MAX_LTV_BPS_MIN),
@@ -1542,7 +1542,7 @@ contract RiskFacetTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.ParameterOutOfRange.selector,
-                // forge-lint: disable-next-line unsafe-typecast
+                // forge-lint: disable-next-line(unsafe-typecast)
                 bytes32("reserveFactorBps"),
                 uint256(10001),
                 uint256(0),

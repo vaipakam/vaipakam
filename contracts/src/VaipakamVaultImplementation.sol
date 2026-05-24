@@ -509,6 +509,6 @@ contract VaipakamVaultImplementation is
     ///      ERC1967 proxies deployed during Phase 1. 50 slots ≈ room
     ///      for ~50 uint256-sized fields (or proportionally fewer
     ///      mappings / arrays / larger structs); sized conservatively.
-    // forge-lint: disable-next-line mixed-case-variable
+    // forge-lint: disable-next-line(mixed-case-variable)
     uint256[50] private __gap;
 }

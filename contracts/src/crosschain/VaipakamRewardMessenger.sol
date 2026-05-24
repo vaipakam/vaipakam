@@ -113,7 +113,7 @@ contract VaipakamRewardMessenger is
     uint256 public destGasLimit;
 
     /// @dev Reserved storage for upgrade-safe appends.
-    // forge-lint: disable-next-line mixed-case-variable
+    // forge-lint: disable-next-line(mixed-case-variable)
     uint256[44] private __gap;
 
     // ─── Events ─────────────────────────────────────────────────────────────
