@@ -74,7 +74,7 @@ abstract contract AggregatorAdapterBase is ISwapAdapter, Ownable2Step {
     ///         construction; immutable. Approval is granted
     ///         immediately before each swap and revoked immediately
     ///         after. NEVER sourced from caller-supplied bytes.
-    address public immutable allowanceTarget;
+    address public immutable ALLOWANCE_TARGET;
 
     /// @notice Allowlist of permitted swap-call destinations. The
     ///         keeper passes one of these as the first field of
@@ -118,7 +118,7 @@ abstract contract AggregatorAdapterBase is ISwapAdapter, Ownable2Step {
     ) Ownable(msg.sender) {
         if (allowanceTarget_ == address(0)) revert InvalidAllowanceTarget();
         if (initialSwapTargets.length == 0) revert InvalidInitialSwapTargets();
-        allowanceTarget = allowanceTarget_;
+        ALLOWANCE_TARGET = allowanceTarget_;
         for (uint256 i = 0; i < initialSwapTargets.length; ++i) {
             address t = initialSwapTargets[i];
             if (t == address(0)) revert InvalidInitialSwapTargets();
@@ -179,14 +179,14 @@ abstract contract AggregatorAdapterBase is ISwapAdapter, Ownable2Step {
         // contract docs warning), invoke the swap target, enforce
         // min-out via balance delta, return residuals.
         input.safeTransferFrom(msg.sender, address(this), inputAmount);
-        input.forceApprove(allowanceTarget, 0);
-        input.forceApprove(allowanceTarget, inputAmount);
+        input.forceApprove(ALLOWANCE_TARGET, 0);
+        input.forceApprove(ALLOWANCE_TARGET, inputAmount);
 
         uint256 outputBalanceBefore = output.balanceOf(address(this));
         (bool ok, bytes memory returnData) = swapTarget.call(swapCalldata);
         // Clear approval regardless of outcome so the AllowanceHolder
         // can't draw on us after the call (defence-in-depth).
-        input.forceApprove(allowanceTarget, 0);
+        input.forceApprove(ALLOWANCE_TARGET, 0);
 
         if (!ok) {
             _returnResiduals(input, output, outputBalanceBefore);

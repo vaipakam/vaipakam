@@ -46,14 +46,14 @@ interface IUniswapV3SwapRouter {
 contract UniV3Adapter is ISwapAdapter {
     using SafeERC20 for IERC20;
 
-    IUniswapV3SwapRouter public immutable router;
+    IUniswapV3SwapRouter public immutable ROUTER;
 
     error AdapterDataRequired();
     error InvalidPoolFee();
 
     constructor(address swapRouter) {
-        require(swapRouter != address(0), "router=0");
-        router = IUniswapV3SwapRouter(swapRouter);
+        require(swapRouter != address(0), "ROUTER=0");
+        ROUTER = IUniswapV3SwapRouter(swapRouter);
     }
 
     /// @inheritdoc ISwapAdapter
@@ -76,10 +76,10 @@ contract UniV3Adapter is ISwapAdapter {
 
         IERC20 input = IERC20(inputToken);
         input.safeTransferFrom(msg.sender, address(this), inputAmount);
-        input.forceApprove(address(router), 0);
-        input.forceApprove(address(router), inputAmount);
+        input.forceApprove(address(ROUTER), 0);
+        input.forceApprove(address(ROUTER), inputAmount);
 
-        outputAmount = router.exactInputSingle(
+        outputAmount = ROUTER.exactInputSingle(
             IUniswapV3SwapRouter.ExactInputSingleParams({
                 tokenIn: inputToken,
                 tokenOut: outputToken,
@@ -92,7 +92,7 @@ contract UniV3Adapter is ISwapAdapter {
             })
         );
 
-        input.forceApprove(address(router), 0);
+        input.forceApprove(address(ROUTER), 0);
         // Router guarantees amountOut >= amountOutMinimum; no extra
         // check needed here. Any residual input (zero on success,
         // full amount if revert bubbled — but revert shortcuts) is

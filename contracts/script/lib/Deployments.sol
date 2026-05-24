@@ -48,7 +48,7 @@ library Deployments {
     // ── Forge cheatcode handle ─────────────────────────────────────────────
     address private constant VM_ADDR =
         address(uint160(uint256(keccak256("hevm cheat code"))));
-    Vm private constant cheats = Vm(VM_ADDR);
+    Vm private constant CHEATS = Vm(VM_ADDR);
 
     // ── Public path API ────────────────────────────────────────────────────
 
@@ -94,7 +94,7 @@ library Deployments {
         revert(
             string.concat(
                 "Deployments: unknown chainid ",
-                cheats.toString(cid)
+                CHEATS.toString(cid)
             )
         );
     }
@@ -177,18 +177,18 @@ library Deployments {
             _fileExists(p),
             string.concat(
                 "Deployments: no artifact for chain ",
-                cheats.toString(chainId),
+                CHEATS.toString(chainId),
                 " (run the deploy on that chain first)"
             )
         );
-        address a = cheats.parseJsonAddress(cheats.readFile(p), jsonKey);
+        address a = CHEATS.parseJsonAddress(CHEATS.readFile(p), jsonKey);
         require(
             a != address(0),
             string.concat(
                 "Deployments: ",
                 jsonKey,
                 " unset for chain ",
-                cheats.toString(chainId)
+                CHEATS.toString(chainId)
             )
         );
         return a;
@@ -387,8 +387,8 @@ library Deployments {
         // same file via `_writeAddr` will use vm.writeJson, which
         // preserves siblings.
         string memory head = "deployments-header";
-        cheats.serializeUint(head, "chainId", block.chainid);
-        string memory finalJson = cheats.serializeString(
+        CHEATS.serializeUint(head, "chainId", block.chainid);
+        string memory finalJson = CHEATS.serializeString(
             head,
             "deployedAt",
             _isoNowApprox()
@@ -399,11 +399,11 @@ library Deployments {
         if (!_fileExists(p)) {
             // `vm.writeJson` does NOT create parent directories; on
             // a fresh chain the per-chain folder won't exist yet.
-            cheats.createDir(
+            CHEATS.createDir(
                 string.concat("deployments/", chainSlug()),
                 true
             );
-            cheats.writeJson(finalJson, p);
+            CHEATS.writeJson(finalJson, p);
         }
     }
 
@@ -417,9 +417,9 @@ library Deployments {
         // 1. Try the addresses.json file.
         string memory p = path();
         if (_fileExists(p)) {
-            string memory file = cheats.readFile(p);
+            string memory file = CHEATS.readFile(p);
             if (bytes(file).length > 0) {
-                try cheats.parseJsonAddress(file, jsonKey) returns (address a) {
+                try CHEATS.parseJsonAddress(file, jsonKey) returns (address a) {
                     if (a != address(0)) return a;
                 } catch {
                     // Key missing / wrong type — fall through.
@@ -441,9 +441,9 @@ library Deployments {
     {
         string memory p = path();
         if (!_fileExists(p)) return address(0);
-        string memory file = cheats.readFile(p);
+        string memory file = CHEATS.readFile(p);
         if (bytes(file).length == 0) return address(0);
-        try cheats.parseJsonAddress(file, jsonKey) returns (address a) {
+        try CHEATS.parseJsonAddress(file, jsonKey) returns (address a) {
             return a;
         } catch {
             return address(0);
@@ -452,17 +452,17 @@ library Deployments {
 
     function _writeAddr(string memory jsonKey, address a) private {
         _ensureFile();
-        cheats.writeJson(cheats.toString(a), path(), jsonKey);
+        CHEATS.writeJson(CHEATS.toString(a), path(), jsonKey);
     }
 
     function _writeUint(string memory jsonKey, uint256 v) private {
         _ensureFile();
-        cheats.writeJson(cheats.toString(v), path(), jsonKey);
+        CHEATS.writeJson(CHEATS.toString(v), path(), jsonKey);
     }
 
     function _writeBool(string memory jsonKey, bool v) private {
         _ensureFile();
-        cheats.writeJson(v ? "true" : "false", path(), jsonKey);
+        CHEATS.writeJson(v ? "true" : "false", path(), jsonKey);
     }
 
     function _writeString(string memory jsonKey, string memory v) private {
@@ -471,7 +471,7 @@ library Deployments {
         // raw JSON fragment. For strings we must wrap in double quotes
         // so the result is valid JSON (otherwise Foundry interprets the
         // value as a number/identifier and produces malformed output).
-        cheats.writeJson(string.concat("\"", v, "\""), path(), jsonKey);
+        CHEATS.writeJson(string.concat("\"", v, "\""), path(), jsonKey);
     }
 
     /// Bootstrap the per-chain `addresses.json` if missing. Creates
@@ -481,18 +481,18 @@ library Deployments {
     function _ensureFile() private {
         string memory p = path();
         if (_fileExists(p)) return;
-        cheats.createDir(
+        CHEATS.createDir(
             string.concat("deployments/", chainSlug()),
             true
         );
         string memory head = "deployments-bootstrap";
-        cheats.serializeUint(head, "chainId", block.chainid);
-        string memory init = cheats.serializeString(
+        CHEATS.serializeUint(head, "chainId", block.chainid);
+        string memory init = CHEATS.serializeString(
             head,
             "deployedAt",
             _isoNowApprox()
         );
-        cheats.writeJson(init, p);
+        CHEATS.writeJson(init, p);
     }
 
     function _legacyEnvAddress(string memory envKeyBase)
@@ -501,7 +501,7 @@ library Deployments {
         returns (address)
     {
         string memory full = string.concat(envPrefix(), envKeyBase);
-        return cheats.envAddress(full);
+        return CHEATS.envAddress(full);
     }
 
     function _fileExists(string memory p) private view returns (bool) {
@@ -509,7 +509,7 @@ library Deployments {
         // files when wrapped in try/catch via the vm interface, but
         // there's no first-class "exists" cheat. We probe by
         // attempting `readFile` and catching the revert.
-        try cheats.readFile(p) returns (string memory contents) {
+        try CHEATS.readFile(p) returns (string memory contents) {
             return bytes(contents).length > 0;
         } catch {
             return false;
@@ -523,7 +523,7 @@ library Deployments {
     /// to be sub-second accurate.
     function _isoNowApprox() private view returns (string memory) {
         return string.concat(
-            cheats.toString(block.timestamp),
+            CHEATS.toString(block.timestamp),
             "-unix"
         );
     }
