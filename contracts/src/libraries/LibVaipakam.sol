@@ -3856,6 +3856,10 @@ library LibVaipakam {
     function setStableTokenFeed(string memory symbol, address feed) internal {
         LibDiamond.enforceIsContractOwner();
         Storage storage s = storageSlot();
+        // forge-lint: disable-next-line unsafe-typecast
+        // safe: `symbol` is a stablecoin ticker (USDC/USDT/DAI/...);
+        // conventional tickers are ≤8 chars, well under bytes32's 32-byte
+        // limit. Operators register stable feeds and use conventional symbols.
         bytes32 key = bytes32(bytes(symbol));
         uint256 pos = s.stableFeedSymbolPos[key];
         if (feed == address(0)) {

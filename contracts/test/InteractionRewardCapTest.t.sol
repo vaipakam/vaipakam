@@ -89,7 +89,13 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
         returns (uint256)
     {
         return
+            // forge-lint: disable-next-line unsafe-typecast
+            // safe: `ETH_USD_DEC` is a positive test constant (small
+            // decimals exponent).
             (interestNumeraire18 * (10 ** uint256(ETH_USD_DEC)) * capRatio) /
+            // forge-lint: disable-next-line unsafe-typecast
+            // safe: `ETH_USD_RAW` is a positive test constant well below
+            // uint256.max.
             uint256(ETH_USD_RAW);
     }
 

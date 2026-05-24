@@ -219,9 +219,21 @@ library LibInteractionRewards {
         // Only apply deltas that lie in the future relative to the
         // reporter frontier. Past deltas can't retroactively change an
         // already-shipped day's total.
+        // forge-lint: disable-next-line unsafe-typecast
+        // safe: `perDayNumeraire18` is bounded by sum-of-bps × principal at
+        // the call sites (offer accept / loan init), staying far below int256.max.
         _applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, startDay, int256(perDayNumeraire18));
+        // forge-lint: disable-next-line unsafe-typecast
+        // safe: same bounded-perDayNumeraire18 invariant as the +int256 site
+        // above; negation stays within int256 bounds.
         _applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, endDay, -int256(perDayNumeraire18));
+        // forge-lint: disable-next-line unsafe-typecast
+        // safe: borrower-side mirror of the lender perDayNumeraire18 bound;
+        // same call-site math caps the value below int256.max.
         _applyDelta(s.borrowerPerDayDeltaNumeraire18, s.borrowerFrontierDay, startDay, int256(perDayNumeraire18));
+        // forge-lint: disable-next-line unsafe-typecast
+        // safe: borrower-side mirror; negation of a bounded uint256 stays
+        // within int256.
         _applyDelta(s.borrowerPerDayDeltaNumeraire18, s.borrowerFrontierDay, endDay, -int256(perDayNumeraire18));
     }
 
@@ -338,7 +350,12 @@ library LibInteractionRewards {
         // a fresh end-delta at newStart; we now RE-apply matching deltas
         // for the new entry so the net denominator contribution is
         // preserved across the transfer.
+        // forge-lint: disable-next-line unsafe-typecast
+        // safe: `perDay` is recomputed from the same bps × principal bound
+        // as the bulk-apply path above, so the int256 narrowing is safe.
         _applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, newStart, int256(perDay));
+        // forge-lint: disable-next-line unsafe-typecast
+        // safe: same bounded-perDay invariant as the +int256 site above.
         _applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, originalEnd, -int256(perDay));
     }
 
@@ -889,7 +906,12 @@ library LibInteractionRewards {
 
         if (newEnd != originalEnd) {
             uint256 perDay = e.perDayNumeraire18;
+            // forge-lint: disable-next-line unsafe-typecast
+            // safe: `perDay` is recomputed from the same bps × principal bound
+            // as the bulk-apply path; staying within int256 by construction.
             _applyDelta(deltas, frontier, originalEnd, int256(perDay));
+            // forge-lint: disable-next-line unsafe-typecast
+            // safe: same bounded-perDay invariant; negation stays within int256.
             _applyDelta(deltas, frontier, newEnd, -int256(perDay));
             e.endDay = uint32(newEnd);
         }
@@ -1020,6 +1042,9 @@ library LibInteractionRewards {
         } catch {
             return (0, 0);
         }
+        // forge-lint: disable-next-line unsafe-typecast
+        // safe: Chainlink `answer` validated > 0 upstream by `_validateFeed`
+        // before this getter returns success.
         return (uint256(answer), dec);
     }
 
