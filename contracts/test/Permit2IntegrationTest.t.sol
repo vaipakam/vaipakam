@@ -137,7 +137,7 @@ contract Permit2IntegrationTest is SetupTest {
 
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOfferWithPermit(
-            _lenderERC20OfferParams(principal),
+            _lenderErc20OfferParams(principal),
             permit,
             ""
         );
@@ -162,7 +162,7 @@ contract Permit2IntegrationTest is SetupTest {
         IERC20(mockERC20).approve(address(diamond), principal);
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
-            _lenderERC20OfferParams(principal)
+            _lenderErc20OfferParams(principal)
         );
 
         // Now accept via Permit2 — borrower signs a permit for their
@@ -238,7 +238,7 @@ contract Permit2IntegrationTest is SetupTest {
             )
         );
         OfferCreateFacet(address(diamond)).createOfferWithPermit(
-            _lenderERC20OfferParams(principal),
+            _lenderErc20OfferParams(principal),
             wrongPermit,
             ""
         );
@@ -252,7 +252,7 @@ contract Permit2IntegrationTest is SetupTest {
         IERC20(mockERC20).approve(address(diamond), principal);
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
-            _lenderERC20OfferParams(principal)
+            _lenderErc20OfferParams(principal)
         );
 
         // Borrower signs a permit for the WRONG asset (the principal
@@ -295,7 +295,7 @@ contract Permit2IntegrationTest is SetupTest {
             });
     }
 
-    function _lenderERC20OfferParams(uint256 principal)
+    function _lenderErc20OfferParams(uint256 principal)
         internal
         view
         returns (LibVaipakam.CreateOfferParams memory)

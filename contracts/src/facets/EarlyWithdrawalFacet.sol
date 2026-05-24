@@ -121,7 +121,7 @@ contract EarlyWithdrawalFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         // Strategic flow — authority binds to current lender-side NFT owner.
-        LibAuth.requireLenderNFTOwner(loan);
+        LibAuth.requireLenderNftOwner(loan);
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
         // NFT rental lender-sale requires NFT custody transfer — not supported in Phase 1
@@ -160,7 +160,7 @@ contract EarlyWithdrawalFacet is
         }
 
         // ── Sanctions & KYC: new lender (Noah) must pass normal initiation checks ─
-        LibCompliance.enforceCountryAndKYC(
+        LibCompliance.enforceCountryAndKyc(
             address(this),
             buyOffer.creator,
             loan.borrower,

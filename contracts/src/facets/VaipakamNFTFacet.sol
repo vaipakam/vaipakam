@@ -84,7 +84,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
         string memory defaultIpfs =
             "https://ipfs.io/ipfs/QmahNt61bcS6dySxy2qszmXC3AsRMoUxapttrj4WLHNc7k";
         LibERC721.initialize("Vaipakam NFT", "VAIPAK", defaultIpfs, defaultIpfs);
-        _registerNFTInterfaces();
+        _registerNftInterfaces();
     }
 
     /// @notice Emitted when the image URI for a (status, isLender) pair
@@ -158,12 +158,12 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
         LibVaipakam.LoanPositionStatus status,
         bool isLender
     ) external view returns (string memory) {
-        return _resolveImageURI(status, isLender);
+        return _resolveImageUri(status, isLender);
     }
 
     /// @dev Image-URI resolution. See {setImageURIForStatus} for the
     ///      lookup-chain spec. Pure storage reads; gas-cheap.
-    function _resolveImageURI(
+    function _resolveImageUri(
         LibVaipakam.LoanPositionStatus status,
         bool isLender
     ) internal view returns (string memory) {
@@ -178,7 +178,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
         return "";
     }
 
-    function _registerNFTInterfaces() internal {
+    function _registerNftInterfaces() internal {
         LibDiamond.DiamondStorage storage ds = LibDiamond.diamondStorage();
         ds.supportedInterfaces[type(IERC721).interfaceId] = true;
         ds.supportedInterfaces[type(IERC721Metadata).interfaceId] = true;
@@ -371,7 +371,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
         // default → contractImageURI chain. Granular over the prior
         // 4-slot active/closed binary so a defaulted lender NFT can
         // render distinct art from a repaid one.
-        string memory image = _resolveImageURI(s.nftStatus, s.isLender);
+        string memory image = _resolveImageUri(s.nftStatus, s.isLender);
 
         // Optional `external_url` — only emitted when an admin has
         // configured the base URL. Empty base ⇒ field omitted, JSON

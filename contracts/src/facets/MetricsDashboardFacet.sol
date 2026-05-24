@@ -144,7 +144,7 @@ contract MetricsDashboardFacet {
             snap.interactionRewardsPending = pending;
         } catch {}
 
-        snap.vaultVpfiBalance = LibVPFIDiscount.vaultVPFIBalance(user);
+        snap.vaultVpfiBalance = LibVPFIDiscount.vaultVpfiBalance(user);
         snap.vpfiTier = _tierFor(snap.vaultVpfiBalance);
         snap.vpfiDiscountConsented = s.vpfiDiscountConsent[user];
 

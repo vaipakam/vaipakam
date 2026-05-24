@@ -227,7 +227,7 @@ contract VaipakamRewardMessenger is
         }
         __Ownable_init(owner_);
         __Ownable2Step_init();
-        __GuardianPausable_init();
+        _guardianPausableInit();
 
         messenger = messenger_;
         diamond = diamond_;

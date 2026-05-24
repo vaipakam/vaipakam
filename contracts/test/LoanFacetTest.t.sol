@@ -184,7 +184,7 @@ contract LoanFacetTest is Test {
         cuts[3] = IDiamondCut.FacetCut({
             facetAddress: address(nftFacet),
             action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getVaipakamNFTFacetSelectors()
+            functionSelectors: helperTest.getVaipakamNftFacetSelectors()
         });
         cuts[4] = IDiamondCut.FacetCut({
             facetAddress: address(vaultFacet),

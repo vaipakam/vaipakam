@@ -155,7 +155,7 @@ contract Scenario2_NFTRentalLending is Test {
         });
         cuts[1] = IDiamondCut.FacetCut({facetAddress: address(profileFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
         cuts[2] = IDiamondCut.FacetCut({facetAddress: address(oracleFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});
-        cuts[3] = IDiamondCut.FacetCut({facetAddress: address(nftFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaipakamNFTFacetSelectors()});
+        cuts[3] = IDiamondCut.FacetCut({facetAddress: address(nftFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaipakamNftFacetSelectors()});
         cuts[4] = IDiamondCut.FacetCut({facetAddress: address(vaultFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaultFactoryFacetSelectors()});
         cuts[5] = IDiamondCut.FacetCut({facetAddress: address(loanFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getLoanFacetSelectors()});
         cuts[6] = IDiamondCut.FacetCut({facetAddress: address(riskFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskFacetSelectors()});
@@ -251,7 +251,7 @@ contract Scenario2_NFTRentalLending is Test {
 
     /// @dev Creates a lender NFT rental offer and has borrower accept it.
     ///      Returns the loanId (always 1 for the first loan).
-    function _createAndAcceptNFTRental() internal returns (uint256 loanId) {
+    function _createAndAcceptNftRental() internal returns (uint256 loanId) {
         // Lender creates offer
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
@@ -303,7 +303,7 @@ contract Scenario2_NFTRentalLending is Test {
         uint256 borrowerUsdcBefore = IERC20(mockUsdc).balanceOf(borrower);
 
         // Step 1 & 2: Create offer and accept
-        uint256 loanId = _createAndAcceptNFTRental();
+        uint256 loanId = _createAndAcceptNftRental();
 
         // Verify loan details
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
@@ -408,7 +408,7 @@ contract Scenario2_NFTRentalLending is Test {
      */
     function test_Scenario2a_ERC721Rental_Default() public {
         // Step 1: Create offer and accept
-        uint256 loanId = _createAndAcceptNFTRental();
+        uint256 loanId = _createAndAcceptNftRental();
 
         // Verify loan is active
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);

@@ -795,7 +795,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ) private view {
         SecondaryStatus tellor = _checkTellor(asset, primaryPrice, primaryDec);
         SecondaryStatus api3 = _checkApi3(asset, primaryPrice, primaryDec);
-        SecondaryStatus dia = _checkDIA(asset, primaryPrice, primaryDec);
+        SecondaryStatus dia = _checkDia(asset, primaryPrice, primaryDec);
 
         bool anyAgree = tellor == SecondaryStatus.Agree ||
             api3 == SecondaryStatus.Agree ||
@@ -913,7 +913,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
 
     /// @dev DIA probe. Key = `<UPPER_SYMBOL>/USD` (e.g. "ETH/USD").
     ///      DIA returns 8-decimal `(uint128 value, uint128 timestamp)`.
-    function _checkDIA(
+    function _checkDia(
         address asset,
         uint256 primaryPrice,
         uint8 primaryDec

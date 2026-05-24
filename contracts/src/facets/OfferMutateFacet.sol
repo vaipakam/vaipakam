@@ -527,7 +527,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             // Lender ERC-20: pre-vault is exactly `amountMax` in
             // `lendingAsset`, so the delta is the simple difference.
             if (newAmountMax != oldAmountMax) {
-                _pullOrRefundERC20(offer.lendingAsset, oldAmountMax, newAmountMax);
+                _pullOrRefundErc20(offer.lendingAsset, oldAmountMax, newAmountMax);
             }
             return;
         }
@@ -554,7 +554,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             if (newAmount != oldAmount) {
                 uint256 oldPrepay = _nftRentalPrepayTotal(oldAmount, offer.durationDays);
                 uint256 newPrepay = _nftRentalPrepayTotal(newAmount, offer.durationDays);
-                _pullOrRefundERC20(offer.prepayAsset, oldPrepay, newPrepay);
+                _pullOrRefundErc20(offer.prepayAsset, oldPrepay, newPrepay);
             }
             return;
         }
@@ -578,7 +578,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             && offer.assetType == LibVaipakam.AssetType.ERC20
             && offer.collateralAssetType == LibVaipakam.AssetType.ERC20
         ) {
-            _pullOrRefundERC20(
+            _pullOrRefundErc20(
                 offer.collateralAsset,
                 oldCollateralAmountMax,
                 newCollateralAmountMax
@@ -592,7 +592,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     ///      between `oldAmount` and `newAmount` using the same vault
     ///      deposit / withdraw selectors `OfferCreateFacet` and
     ///      `OfferCancelFacet` use.
-    function _pullOrRefundERC20(
+    function _pullOrRefundErc20(
         address token,
         uint256 oldAmount,
         uint256 newAmount

@@ -94,7 +94,7 @@ contract VPFIMirrorToken is
         __ERC20Pausable_init();
         __Ownable_init(owner_);
         __Ownable2Step_init();
-        __GuardianPausable_init();
+        _guardianPausableInit();
     }
 
     // ─── Pool management ────────────────────────────────────────────────────

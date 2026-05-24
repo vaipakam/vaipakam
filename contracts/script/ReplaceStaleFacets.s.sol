@@ -224,7 +224,7 @@ contract ReplaceStaleFacets is Script {
         s[6] = OracleAdminFacet.setUsdChainlinkDenominator.selector;
         s[7] = OracleAdminFacet.setWethContract.selector;
         s[8] = OracleAdminFacet.setApi3ServerV1.selector;
-        s[9] = OracleAdminFacet.setDIAOracleV2.selector;
+        s[9] = OracleAdminFacet.setDiaOracleV2.selector;
         s[10] = OracleAdminFacet.setTellorOracle.selector;
         s[11] = OracleAdminFacet.setFeedOverride.selector;
         s[12] = OracleAdminFacet.setSecondaryOracleMaxDeviationBps.selector;

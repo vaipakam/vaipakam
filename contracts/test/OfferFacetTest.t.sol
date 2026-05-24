@@ -144,7 +144,7 @@ contract OfferFacetTest is Test {
         cuts[3] = IDiamondCut.FacetCut({
             facetAddress: address(new VaipakamNFTFacet()),
             action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: getVaipakamNFTFacetSelectors()
+            functionSelectors: getVaipakamNftFacetSelectors()
         });
         // logSelectors("VaipakamNFTFacet", cuts[3]);
         cuts[4] = IDiamondCut.FacetCut({
@@ -310,7 +310,7 @@ contract OfferFacetTest is Test {
         return selectors;
     }
 
-    function getVaipakamNFTFacetSelectors()
+    function getVaipakamNftFacetSelectors()
         internal
         pure
         returns (bytes4[] memory selectors)

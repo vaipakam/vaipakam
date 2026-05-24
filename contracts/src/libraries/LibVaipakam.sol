@@ -1728,7 +1728,7 @@ library LibVaipakam {
         // governance writes lowercase ASCII (e.g. "usd", "eur", "xau").
         // Empty bytes32 (post-deploy default before governance writes)
         // is interpreted as "usd" in `_checkTellor` / `_checkApi3` /
-        // `_checkDIA` so the protocol behaves identically to the pre-
+        // `_checkDia` so the protocol behaves identically to the pre-
         // sweep deploy out of the box.
         bytes32 numeraireSymbol;
         // T-048 — Predominantly Available Denominator (PAD).
@@ -4204,7 +4204,7 @@ library LibVaipakam {
 
     /// @notice Install the chain's DIA Oracle V2 address. Owner-only;
     ///         null disables DIA's leg of the deviation check globally.
-    function setDIAOracleV2(address oracle) internal {
+    function setDiaOracleV2(address oracle) internal {
         LibDiamond.enforceIsContractOwner();
         Storage storage s = storageSlot();
         address prev = s.diaOracleV2;

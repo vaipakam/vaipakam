@@ -94,7 +94,7 @@ contract PrecloseFacetTest is Test {
         TestMutatorFacet(address(diamond)).setLoan(loanId, ld);
     }
 
-    function _setLoanAsNFTRental(uint256 loanId, uint256 prepayAmt, uint256 bufferAmt) internal {
+    function _setLoanAsNftRental(uint256 loanId, uint256 prepayAmt, uint256 bufferAmt) internal {
         LibVaipakam.Loan memory ld = LoanFacet(address(diamond)).getLoanDetails(loanId);
         ld.assetType = LibVaipakam.AssetType.ERC721;
         ld.prepayAsset = mockERC20;
@@ -165,7 +165,7 @@ contract PrecloseFacetTest is Test {
         });
         cuts[1]  = IDiamondCut.FacetCut({facetAddress: address(profileFacet),        action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
         cuts[2]  = IDiamondCut.FacetCut({facetAddress: address(oracleFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});
-        cuts[3]  = IDiamondCut.FacetCut({facetAddress: address(nftFacet),            action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaipakamNFTFacetSelectors()});
+        cuts[3]  = IDiamondCut.FacetCut({facetAddress: address(nftFacet),            action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaipakamNftFacetSelectors()});
         cuts[4]  = IDiamondCut.FacetCut({facetAddress: address(vaultFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaultFactoryFacetSelectors()});
         cuts[5]  = IDiamondCut.FacetCut({facetAddress: address(loanFacet),           action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getLoanFacetSelectors()});
         cuts[6]  = IDiamondCut.FacetCut({facetAddress: address(riskFacet),           action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskFacetSelectors()});
@@ -861,7 +861,7 @@ contract PrecloseFacetTest is Test {
 
     function testPrecloseDirectNFTRentalPath() public {
         uint256 fullRental = PRINCIPAL * 30;
-        _setLoanAsNFTRental(activeLoanId, fullRental, (fullRental * 500) / 10000);
+        _setLoanAsNftRental(activeLoanId, fullRental, (fullRental * 500) / 10000);
 
         // Mock cross-facet calls
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
@@ -1153,7 +1153,7 @@ contract PrecloseFacetTest is Test {
     ///      This hits the `if (loan.assetType != ERC20)` true branch for prepay reset and renter reassignment.
     function testTransferObligationNFTRentalPath() public {
         uint256 fullRental = PRINCIPAL * 30;
-        _setLoanAsNFTRental(activeLoanId, fullRental, (fullRental * 500) / 10000);
+        _setLoanAsNftRental(activeLoanId, fullRental, (fullRental * 500) / 10000);
 
         vm.prank(newBorrower);
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
@@ -1200,7 +1200,7 @@ contract PrecloseFacetTest is Test {
 
     // ─── Test E: completeOffset NFT rental path ─────────────────────────────
 
-    /// @dev Covers the _resetNFTRenter call inside completeOffset when assetType=ERC721.
+    /// @dev Covers the _resetNftRenter call inside completeOffset when assetType=ERC721.
     function testCompleteOffsetNFTRentalPath() public {
         // Create offset offer
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
@@ -1423,7 +1423,7 @@ contract PrecloseFacetTest is Test {
     /// @dev Covers the "Treasury fee transfer failed" revert in precloseDirect NFT path.
     function testPrecloseDirectNFTTreasuryFeeFails() public {
         uint256 fullRental = PRINCIPAL * 30;
-        _setLoanAsNFTRental(activeLoanId, fullRental, (fullRental * 500) / 10000);
+        _setLoanAsNftRental(activeLoanId, fullRental, (fullRental * 500) / 10000);
 
         // Mock treasury fee vaultWithdrawERC20 to fail (first cross-facet call in NFT preclose)
         vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), "treasury fail");
@@ -1536,7 +1536,7 @@ contract PrecloseFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev Covers completeOffset with NFT rental path — exercises the _resetNFTRenter branch.
+    /// @dev Covers completeOffset with NFT rental path — exercises the _resetNftRenter branch.
     function testCompleteOffsetNFTRentalResetRenter() public {
         // Create offset offer
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));

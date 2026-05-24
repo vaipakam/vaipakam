@@ -105,7 +105,7 @@ contract InternalMatchExecutionTest is SetupTest {
     ///      `scaffoldActiveLoan`-seeded loan (which mints no real NFT):
     ///      `ownerOf(lenderTokenId)` → `owner_`, and the void-returning
     ///      `updateNFTStatus` / `burnNFT` cross-facet calls no-op.
-    function _mockLenderNFT(uint256 loanId, address owner_) internal {
+    function _mockLenderNft(uint256 loanId, address owner_) internal {
         uint256 tokenId = _getLoan(loanId).lenderTokenId;
         vm.mockCall(
             address(diamond),
@@ -540,7 +540,7 @@ contract InternalMatchExecutionTest is SetupTest {
         // nothing and the (scaled) residual is distributed via
         // `_distributeFallbackCollateral` (Diamond → vaults), then the
         // lender's claim record withdraws it to `msg.sender`.
-        _mockLenderNFT(LOAN_A, lender);
+        _mockLenderNft(LOAN_A, lender);
         uint256 lenderBalBefore = IERC20(mockCollateralERC20).balanceOf(lender);
 
         vm.prank(lender);
@@ -580,7 +580,7 @@ contract InternalMatchExecutionTest is SetupTest {
         // FULLY matches A. The call must succeed (no `NothingToClaim`
         // revert). Ownership is checked before the auto-dispatch
         // (EC-007 review fix), so the lender NFT must be mocked.
-        _mockLenderNFT(LOAN_A, lender);
+        _mockLenderNft(LOAN_A, lender);
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(LOAN_A);
 
@@ -619,7 +619,7 @@ contract InternalMatchExecutionTest is SetupTest {
         _moveToFallbackPending(LOAN_A, borrower, mockCollateralERC20, 1000, 850, 20, true);
         _mockLtv(LOAN_B, 9_000);
         // The lender NFT is owned by `lender`; `matcher` is NOT the owner.
-        _mockLenderNFT(LOAN_A, lender);
+        _mockLenderNft(LOAN_A, lender);
 
         vm.prank(matcher);
         vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);

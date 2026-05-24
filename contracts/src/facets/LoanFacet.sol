@@ -347,7 +347,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         s.userLoanIds[loan.lender].push(ctx.loanId);
         s.userLoanIds[loan.borrower].push(ctx.loanId);
 
-        _applyRentalPrepayIfNFT(ctx.loanId, ctx.offerId);
+        _applyRentalPrepayIfNft(ctx.loanId, ctx.offerId);
         _maybeRunInitialRiskGates(ctx);
         _mintCounterpartyPosition(ctx);
 
@@ -365,7 +365,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
      *      `_finalizeLoanCreation` to keep that frame small enough for
      *      --ir-minimum (optimizer off during `forge coverage`).
      */
-    function _applyRentalPrepayIfNFT(uint256 loanId, uint256 offerId) private {
+    function _applyRentalPrepayIfNft(uint256 loanId, uint256 offerId) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[offerId];
         if (offer.assetType == LibVaipakam.AssetType.ERC20) return;
@@ -612,7 +612,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     ///      Docs §5.2a.
     function _snapshotLenderDiscount(LibVaipakam.Loan storage loan) private {
         address lender = loan.lender;
-        uint256 lenderBal = LibVPFIDiscount.vaultVPFIBalance(lender);
+        uint256 lenderBal = LibVPFIDiscount.vaultVpfiBalance(lender);
         LibVPFIDiscount.rollupUserDiscount(lender, lenderBal);
         loan.lenderDiscountAccAtInit = LibVaipakam
             .storageSlot()
@@ -630,7 +630,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     ///      window measured here is purely "from now on".
     function _snapshotBorrowerDiscount(LibVaipakam.Loan storage loan) private {
         address borrower = loan.borrower;
-        uint256 borrowerBal = LibVPFIDiscount.vaultVPFIBalance(borrower);
+        uint256 borrowerBal = LibVPFIDiscount.vaultVpfiBalance(borrower);
         LibVPFIDiscount.rollupUserDiscount(borrower, borrowerBal);
         loan.borrowerDiscountAccAtInit = LibVaipakam
             .storageSlot()
@@ -678,7 +678,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             // **NFT rental exception** (PR #187 Codex P1) — NFT lender
             // offers (`assetType == ERC721/ERC1155`) carry `amount` as
             // the DAILY RENTAL FEE, not a principal headline. The
-            // `_pullRentalPrepay` helper and `_applyRentalPrepayIfNFT`
+            // `_pullRentalPrepay` helper and `_applyRentalPrepayIfNft`
             // both compute `amount × durationDays` from `offer.amount`,
             // and rental accrual / deduction in RepayFacet runs off
             // `loan.principal`. Using `offer.amountMax` here would

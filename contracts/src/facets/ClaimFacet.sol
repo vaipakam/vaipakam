@@ -200,7 +200,7 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
 
         // Already-claimed guard FIRST. A successful claim burns the
         // lender position NFT, so on a double-claim attempt
-        // `requireLenderNFTOwner` below would revert
+        // `requireLenderNftOwner` below would revert
         // `ERC721NonexistentToken` on the burned token — this guard
         // must run before it so the caller sees the precise
         // `AlreadyClaimed()` error. (`claim` is a storage pointer; a
@@ -219,7 +219,7 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // trigger the match and skim the matcher incentive. (Without
         // this, the `fullyResolved` early-return path below would
         // bypass the post-resolution ownership check entirely.)
-        LibAuth.requireLenderNFTOwner(loan);
+        LibAuth.requireLenderNftOwner(loan);
 
         // README §7 lines 147–151: if this loan fell back to the claim-time
         // settlement path, attempt one more liquidation before paying the
@@ -440,7 +440,7 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         }
 
         // Verify caller owns the borrower's Vaipakam position NFT
-        LibAuth.requireBorrowerNFTOwner(loan);
+        LibAuth.requireBorrowerNftOwner(loan);
 
         // Mark claimed before transfer to prevent re-entrancy
         claim.claimed = true;
@@ -495,7 +495,7 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                     loanId,
                     msg.sender,
                     lifRebate,
-                    LibVPFIDiscount.vaultVPFIBalance(msg.sender)
+                    LibVPFIDiscount.vaultVpfiBalance(msg.sender)
                 );
             }
         }

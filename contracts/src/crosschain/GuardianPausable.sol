@@ -83,7 +83,7 @@ abstract contract GuardianPausable is
     ///      deploy (deliberately — a contract deploying to a new chain
     ///      should explicitly designate its guardian rather than inherit
     ///      the deployer EOA by accident).
-    function __GuardianPausable_init() internal onlyInitializing {
+    function _guardianPausableInit() internal onlyInitializing {
         __Pausable_init();
     }
 

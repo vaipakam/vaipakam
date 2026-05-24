@@ -228,7 +228,7 @@ contract CcipMessenger is
         if (owner_ == address(0)) revert ZeroAddress();
         __Ownable_init(owner_);
         __Ownable2Step_init();
-        __GuardianPausable_init();
+        _guardianPausableInit();
     }
 
     // ─── Outbound — the {ICrossChainMessenger} port ─────────────────────────

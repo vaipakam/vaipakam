@@ -348,7 +348,7 @@ contract PrecloseFacet is
             });
 
             // Reset NFT renter
-            _resetNFTRenter(loan);
+            _resetNftRenter(loan);
 
             _setLoanClaimable(loan, loanId);
             LibLifecycle.transition(
@@ -435,7 +435,7 @@ contract PrecloseFacet is
             revert InvalidNewBorrower();
 
         // ── Sanctions & KYC: new borrower must pass normal initiation checks ─
-        LibCompliance.enforceCountryAndKYC(
+        LibCompliance.enforceCountryAndKyc(
             address(this),
             newBorrower,
             loan.lender,
@@ -1022,7 +1022,7 @@ contract PrecloseFacet is
 
         // If NFT lending: Reset renter
         if (loan.assetType != LibVaipakam.AssetType.ERC20) {
-            _resetNFTRenter(loan);
+            _resetNftRenter(loan);
         }
 
         // Close original loan — offset completion transitions Active -> Repaid.
@@ -1079,7 +1079,7 @@ contract PrecloseFacet is
                 : 0;
     }
 
-    function _resetNFTRenter(LibVaipakam.Loan storage loan) internal {
+    function _resetNftRenter(LibVaipakam.Loan storage loan) internal {
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 VaultFactoryFacet.vaultSetNFTUser.selector,

@@ -92,14 +92,14 @@ contract AnvilNewPartialFlows is Script {
 
         _deployMocksAndConfigure();
 
-        _scenarioPG_offerStates();
-        _scenarioPN_partialRepayMidLoan();
-        _scenarioPO_collateralDoubled();
-        _scenarioPP_keeperEnabledOnActiveLoan();
-        _scenarioPQ_refinanceOfferPosted();
-        _scenarioPT_loanSaleOfferPosted();
-        _scenarioPU_strayTokenInVault();
-        _scenarioPH_dualClaimableSideBySide();
+        _scenarioPgOfferStates();
+        _scenarioPnPartialRepayMidLoan();
+        _scenarioPoCollateralDoubled();
+        _scenarioPpKeeperEnabledOnActiveLoan();
+        _scenarioPqRefinanceOfferPosted();
+        _scenarioPtLoanSaleOfferPosted();
+        _scenarioPuStrayTokenInVault();
+        _scenarioPhDualClaimableSideBySide();
 
         console.log("");
         console.log("============================================");
@@ -199,7 +199,7 @@ contract AnvilNewPartialFlows is Script {
     /// the bootstrap flips ON) makes cancel-immediately-after-create
     /// fail on Anvil broadcast. OfferFacetCancelCooldownTest covers
     /// the cancel path.
-    function _scenarioPG_offerStates() internal {
+    function _scenarioPgOfferStates() internal {
         console.log("");
         console.log("=== P-G: Offer states (filled + partial-filled) ===");
 
@@ -255,7 +255,7 @@ contract AnvilNewPartialFlows is Script {
     ///      mid-loan → principal halves → loan stays Active. Mid-cycle
     ///      state captured for the Loan Details UI to render the
     ///      reduced principal + remaining interest.
-    function _scenarioPN_partialRepayMidLoan() internal {
+    function _scenarioPnPartialRepayMidLoan() internal {
         console.log("");
         console.log("=== P-N: Loan with partial-repay applied (still active) ===");
 
@@ -296,7 +296,7 @@ contract AnvilNewPartialFlows is Script {
 
     /// @dev Borrower adds collateral to an active loan. UI Loan Details
     ///      should show the new collateral amount + improved HF.
-    function _scenarioPO_collateralDoubled() internal {
+    function _scenarioPoCollateralDoubled() internal {
         console.log("");
         console.log("=== P-O: Loan with collateral doubled mid-flight ===");
 
@@ -331,7 +331,7 @@ contract AnvilNewPartialFlows is Script {
     /// @dev Borrower delegates an action bit to a keeper on a live loan.
     ///      UI Keeper Settings should render the keeper as authorised
     ///      with the specific bit highlighted.
-    function _scenarioPP_keeperEnabledOnActiveLoan() internal {
+    function _scenarioPpKeeperEnabledOnActiveLoan() internal {
         console.log("");
         console.log("=== P-P: Keeper enabled with INIT_PRECLOSE on active loan ===");
 
@@ -374,7 +374,7 @@ contract AnvilNewPartialFlows is Script {
     /// @dev Borrower has an active loan AND posts a new borrower-side
     ///      refinance offer — the UI Refinance step-1 surface shows
     ///      a "pending" offer. No new lender accepts yet.
-    function _scenarioPQ_refinanceOfferPosted() internal {
+    function _scenarioPqRefinanceOfferPosted() internal {
         console.log("");
         console.log("=== P-Q: Refinance offer posted, no acceptance yet ===");
 
@@ -433,7 +433,7 @@ contract AnvilNewPartialFlows is Script {
     ///      The deeper fix needs a dedicated PR.
     ///      Working alternative: `sellLoanViaBuyOffer` (covered by
     ///      AnvilNewPositiveFlows N15).
-    function _scenarioPT_loanSaleOfferPosted() internal {
+    function _scenarioPtLoanSaleOfferPosted() internal {
         console.log("");
         console.log("=== P-T: Loan-sale offer posted, no buyer (SKIPPED) ===");
         console.log("Skipped: createLoanSaleOffer hits a pre-existing");
@@ -448,7 +448,7 @@ contract AnvilNewPartialFlows is Script {
     ///      protocol-tracked counter unchanged. Recovery is NOT
     ///      triggered — the UI Stuck-Token Recovery surface should
     ///      detect the mismatch and prompt the user.
-    function _scenarioPU_strayTokenInVault() internal {
+    function _scenarioPuStrayTokenInVault() internal {
         console.log("");
         console.log("=== P-U: Stray ERC-20 in vault, recovery untriggered ===");
 
@@ -487,7 +487,7 @@ contract AnvilNewPartialFlows is Script {
     ///      claim. Claim Center UI should render both rows side-by-
     ///      side with the lender claimable (principal + interest)
     ///      and borrower claimable (collateral).
-    function _scenarioPH_dualClaimableSideBySide() internal {
+    function _scenarioPhDualClaimableSideBySide() internal {
         console.log("");
         console.log("=== P-H: 1 lender-claimable + 1 borrower-claimable side-by-side ===");
 

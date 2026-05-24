@@ -278,7 +278,7 @@ contract VPFIDiscountFacet is
             msg.sender,
             vpfiOut,
             msg.value,
-            LibVPFIDiscount.vaultVPFIBalance(msg.sender)
+            LibVPFIDiscount.vaultVpfiBalance(msg.sender)
         );
     }
 
@@ -458,7 +458,7 @@ contract VPFIDiscountFacet is
             ),
             VaultDepositFailed.selector
         );
-        emit VPFIDepositedToVault(msg.sender, amount, LibVPFIDiscount.vaultVPFIBalance(msg.sender));
+        emit VPFIDepositedToVault(msg.sender, amount, LibVPFIDiscount.vaultVpfiBalance(msg.sender));
     }
 
     /**
@@ -513,7 +513,7 @@ contract VPFIDiscountFacet is
             ),
             VaultDepositFailed.selector
         );
-        emit VPFIDepositedToVault(msg.sender, amount, LibVPFIDiscount.vaultVPFIBalance(msg.sender));
+        emit VPFIDepositedToVault(msg.sender, amount, LibVPFIDiscount.vaultVpfiBalance(msg.sender));
     }
 
     /// @dev Shared pre-pull setup — validates amount, resolves the VPFI
@@ -620,7 +620,7 @@ contract VPFIDiscountFacet is
             amount
         );
 
-        emit VPFIWithdrawnFromVault(msg.sender, amount, LibVPFIDiscount.vaultVPFIBalance(msg.sender));
+        emit VPFIWithdrawnFromVault(msg.sender, amount, LibVPFIDiscount.vaultVpfiBalance(msg.sender));
     }
 
     /**
@@ -837,7 +837,7 @@ contract VPFIDiscountFacet is
         view
         returns (uint8 tier, uint256 vaultBal, uint256 discountBps)
     {
-        vaultBal = LibVPFIDiscount.vaultVPFIBalance(user);
+        vaultBal = LibVPFIDiscount.vaultVpfiBalance(user);
         tier = LibVPFIDiscount.tierOf(vaultBal);
         discountBps = LibVPFIDiscount.discountBpsForTier(tier);
     }

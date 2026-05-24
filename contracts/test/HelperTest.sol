@@ -379,7 +379,7 @@ contract HelperTest {
         return selectors;
     }
 
-    function getVaipakamNFTFacetSelectors()
+    function getVaipakamNftFacetSelectors()
         public
         pure
         returns (bytes4[] memory selectors)
@@ -820,7 +820,7 @@ contract HelperTest {
         selectors[14] = VPFIDiscountFacet.getVPFIDiscountTier.selector;
         selectors[15] = VPFIDiscountFacet.withdrawVPFIFromVault.selector;
         // #229 Codex round-1 P1 — bridged-buy quartet was missing from
-        // the HelperTest mirror of production's _getVPFIDiscountSelectors.
+        // the HelperTest mirror of production's _getVpfiDiscountSelectors.
         // Without these four selectors, SetupTest would not actually
         // be a strict superset of production for the bridged-buy
         // surface; calls to setBridgedBuyReceiver / processBridgedBuy
@@ -1141,7 +1141,7 @@ contract HelperTest {
         selectors[11] = OracleAdminFacet.getTellorOracle.selector;
         selectors[12] = OracleAdminFacet.setApi3ServerV1.selector;
         selectors[13] = OracleAdminFacet.getApi3ServerV1.selector;
-        selectors[14] = OracleAdminFacet.setDIAOracleV2.selector;
+        selectors[14] = OracleAdminFacet.setDiaOracleV2.selector;
         selectors[15] = OracleAdminFacet.getDIAOracleV2.selector;
         selectors[16] = OracleAdminFacet.setSecondaryOracleMaxDeviationBps.selector;
         selectors[17] = OracleAdminFacet.getSecondaryOracleMaxDeviationBps.selector;

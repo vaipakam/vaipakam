@@ -111,7 +111,7 @@ contract DeployCrosschain is Script {
         address vpfiToken;
         address pool;
         if (canonical) {
-            vpfiToken = Deployments.readVPFIToken();
+            vpfiToken = Deployments.readVpfiToken();
             pool = address(
                 new LockReleaseTokenPool(
                     IERC20(vpfiToken), 18, new address[](0), rmnProxy, router
@@ -214,10 +214,10 @@ contract DeployCrosschain is Script {
         Deployments.writeVpfiPoolRateGovernor(rateGovernor);
         Deployments.writeRewardMessenger(rewardMessenger);
         if (canonical) {
-            Deployments.writeVPFIBuyReceiver(buyContract);
+            Deployments.writeVpfiBuyReceiver(buyContract);
         } else {
-            Deployments.writeVPFIMirror(vpfiToken);
-            Deployments.writeVPFIBuyAdapter(buyContract);
+            Deployments.writeVpfiMirror(vpfiToken);
+            Deployments.writeVpfiBuyAdapter(buyContract);
         }
 
         console.log("");

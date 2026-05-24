@@ -151,12 +151,12 @@ contract ConfigureCcip is Script {
             ".rewardMessenger", "REWARD_MESSENGER_ADDRESS"
         );
         if (c.canonical) {
-            c.localToken = Deployments.readVPFIToken();
-            c.localBuyContract = Deployments.readVPFIBuyReceiver();
+            c.localToken = Deployments.readVpfiToken();
+            c.localBuyContract = Deployments.readVpfiBuyReceiver();
         } else {
             c.localToken =
                 Deployments.readAddress(".vpfiMirror", "VPFI_MIRROR_ADDRESS");
-            c.localBuyContract = Deployments.readVPFIBuyAdapter();
+            c.localBuyContract = Deployments.readVpfiBuyAdapter();
         }
 
         require(c.laneChainIds.length > 0, "ConfigureCcip: no lanes given");

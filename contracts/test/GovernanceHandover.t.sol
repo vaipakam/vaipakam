@@ -390,7 +390,7 @@ contract CrossChainGuardianHarness is
     function initialize(address owner_) external initializer {
         __Ownable_init(owner_);
         __Ownable2Step_init();
-        __GuardianPausable_init();
+        _guardianPausableInit();
     }
 
     function pause() external onlyGuardianOrOwner {

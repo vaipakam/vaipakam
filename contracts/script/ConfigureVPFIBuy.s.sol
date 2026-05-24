@@ -95,7 +95,7 @@ contract ConfigureVPFIBuy is Script {
         // per-chain artifact so the frontend env builder + downstream
         // scripts see one source of truth (no more grepping .env on
         // each redeploy).
-        Deployments.writeVPFIDiscountEthPriceAsset(ethPriceAsset);
+        Deployments.writeVpfiDiscountEthPriceAsset(ethPriceAsset);
         Deployments.writeUint(".vpfiBuyWeiPerVpfi", weiPerVpfi);
         Deployments.writeUint(".vpfiBuyGlobalCap", globalCap);
         Deployments.writeUint(".vpfiBuyPerWalletCap", perWalletCap);
