@@ -119,6 +119,7 @@ contract OraclePadFallbackTest is SetupTest {
         // is short-circuited.
         ConfigFacet(address(diamond)).setPredominantDenominator(
             usdDenominator,
+            // forge-lint: disable-next-line unsafe-typecast
             bytes32("usd"),
             address(feedEthUsd),
             address(0) // padNumeraireRateFeed unset — not needed when PAD==numeraire
@@ -160,6 +161,7 @@ contract OraclePadFallbackTest is SetupTest {
         // Configure PAD with direct USD/EUR FX feed.
         ConfigFacet(address(diamond)).setPredominantDenominator(
             usdDenominator,
+            // forge-lint: disable-next-line unsafe-typecast
             bytes32("usd"),
             address(feedEthUsd),
             address(feedUsdEur) // direct USD/EUR rate
@@ -185,6 +187,7 @@ contract OraclePadFallbackTest is SetupTest {
         // derivation: rate = ETH/EUR over ETH/USD = 3700 / 4000 = 0.925.
         ConfigFacet(address(diamond)).setPredominantDenominator(
             usdDenominator,
+            // forge-lint: disable-next-line unsafe-typecast
             bytes32("usd"),
             address(feedEthUsd), // ETH/PAD = ETH/USD
             address(0) // direct feed unset → derive
@@ -208,6 +211,7 @@ contract OraclePadFallbackTest is SetupTest {
         // PAD configured normally — but the override takes priority.
         ConfigFacet(address(diamond)).setPredominantDenominator(
             usdDenominator,
+            // forge-lint: disable-next-line unsafe-typecast
             bytes32("usd"),
             address(feedEthUsd),
             address(feedUsdEur)
@@ -247,6 +251,7 @@ contract OraclePadFallbackTest is SetupTest {
 
         ConfigFacet(address(diamond)).setPredominantDenominator(
             usdDenominator,
+            // forge-lint: disable-next-line unsafe-typecast
             bytes32("usd"),
             address(feedEthUsd), // ethPadFeed = ETH/USD
             address(feedUsdEur) // direct USD/EUR rate (avoid derivation noise)
@@ -270,6 +275,7 @@ contract OraclePadFallbackTest is SetupTest {
 
         ConfigFacet(address(diamond)).setPredominantDenominator(
             usdDenominator,
+            // forge-lint: disable-next-line unsafe-typecast
             bytes32("usd"),
             address(feedEthUsd), // ETH/PAD set
             address(0) // direct rate unset → must derive
@@ -286,6 +292,7 @@ contract OraclePadFallbackTest is SetupTest {
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.ParameterOutOfRange.selector,
+                // forge-lint: disable-next-line unsafe-typecast
                 bytes32("predominantDenominator"),
                 uint256(0),
                 uint256(1),
@@ -294,6 +301,7 @@ contract OraclePadFallbackTest is SetupTest {
         );
         ConfigFacet(address(diamond)).setPredominantDenominator(
             address(0),
+            // forge-lint: disable-next-line unsafe-typecast
             bytes32("usd"),
             address(feedEthUsd),
             address(0)
@@ -304,6 +312,7 @@ contract OraclePadFallbackTest is SetupTest {
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.ParameterOutOfRange.selector,
+                // forge-lint: disable-next-line unsafe-typecast
                 bytes32("ethPadFeed"),
                 uint256(0),
                 uint256(1),
@@ -312,6 +321,7 @@ contract OraclePadFallbackTest is SetupTest {
         );
         ConfigFacet(address(diamond)).setPredominantDenominator(
             usdDenominator,
+            // forge-lint: disable-next-line unsafe-typecast
             bytes32("usd"),
             address(0),
             address(0)

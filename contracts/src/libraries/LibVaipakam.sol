@@ -4457,6 +4457,7 @@ library LibVaipakam {
     ///         `numeraireSymbol` fallback convention.
     function effectivePadSymbol() internal view returns (bytes32) {
         bytes32 v = storageSlot().predominantDenominatorSymbol;
+        // forge-lint: disable-next-line unsafe-typecast
         return v == bytes32(0) ? bytes32("usd") : v;
     }
 

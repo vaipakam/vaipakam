@@ -365,6 +365,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         vm.expectRevert(IVaipakamErrors.NumeraireSwapDisabled.selector);
         vm.prank(owner);
         ConfigFacet(address(diamond)).setNumeraire(
+            // forge-lint: disable-next-line unsafe-typecast
             fakeFeed, fakeDenom, bytes32("eur"), bytes32(0), 50_000 * 1e18, 0, 0, 0
         );
     }
@@ -375,6 +376,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         vm.expectRevert(IVaipakamErrors.InvalidAddress.selector);
         vm.prank(owner);
         ConfigFacet(address(diamond)).setNumeraire(
+            // forge-lint: disable-next-line unsafe-typecast
             address(0), makeAddr("denom"), bytes32("eur"), bytes32(0), 0, 0, 0, 0
         );
     }
@@ -385,6 +387,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         vm.expectRevert(IVaipakamErrors.InvalidAddress.selector);
         vm.prank(owner);
         ConfigFacet(address(diamond)).setNumeraire(
+            // forge-lint: disable-next-line unsafe-typecast
             makeAddr("ethFeed"), address(0), bytes32("eur"), bytes32(0), 0, 0, 0, 0
         );
     }
@@ -404,11 +407,13 @@ contract PeriodicInterestCadenceTest is SetupTest {
         ConfigFacet(address(diamond)).setNumeraireSwapEnabled(true);
         // Hypothetical EUR rotation: ETH/EUR Chainlink feed +
         // Chainlink Feed Registry's Denominations.EUR constant +
+        // forge-lint: disable-next-line unsafe-typecast
         // bytes32("eur") for symbol-derived secondary queries +
         // Pyth ETH/EUR feed id. None of these need to actually exist
         // on the test chain — the setter only validates structure.
         address ethEurFeed = makeAddr("ethEurFeed");
         address eurDenom = makeAddr("eurDenom");
+        // forge-lint: disable-next-line unsafe-typecast
         bytes32 eurSymbol = bytes32("eur");
         bytes32 pythEurFeedId = bytes32(uint256(0xCAFEBABE));
         uint256 thresholdInEur = 5_000 * 1e18;
