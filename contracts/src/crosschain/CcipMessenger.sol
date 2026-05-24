@@ -131,7 +131,7 @@ contract CcipMessenger is
     mapping(bytes32 => mapping(uint256 => address)) public channelPeerOf;
 
     /// @dev Reserved storage for upgrade-safe appends. 6 slots used above.
-    uint256[44] private _gap;
+    uint256[44] private __gap;
 
     // ─── Events ─────────────────────────────────────────────────────────────
 
