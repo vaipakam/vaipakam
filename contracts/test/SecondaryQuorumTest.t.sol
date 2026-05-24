@@ -144,7 +144,7 @@ contract SecondaryQuorumTest is Test {
         _mockFeedFull(mockEthUsdFeed, int256(2000e8), 8);
         // Wire mockAsset → mockFeed via Feed Registry.
         _mockRegistryFeed(mockAsset, mockFeed);
-        _mockFeedFull(mockFeed, int256(int256(CHAINLINK_PRICE_8DEC)), 8);
+        _mockFeedFull(mockFeed, int256(CHAINLINK_PRICE_8DEC), 8);
 
         // Default state: all three secondaries DISABLED (zero address).
         // Tests that need active secondaries call set*() to enable.
