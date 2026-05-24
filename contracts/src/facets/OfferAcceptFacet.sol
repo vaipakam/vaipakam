@@ -1044,7 +1044,7 @@ contract OfferAcceptFacet is
     ///      Scaled to 1e18 for threshold comparison. Prices come from
     ///      `OracleFacet.getAssetPrice` which returns numeraire-quoted truth
     ///      (USD by post-deploy default; whatever governance has rotated to
-    ///      otherwise) — see Numeraire generalization (B1) release notes.
+    ///      otherwise) — see Numeraire generalization (b1) release notes.
     ///
     /// @dev #183 (Canonical Limit-Order Phase 2) — `lendingAmount` is
     ///      the actual loan principal (role-aware for direct-accept,

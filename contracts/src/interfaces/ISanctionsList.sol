@@ -17,7 +17,7 @@ pragma solidity ^0.8.29;
  *      contract.
  *
  *      Chainalysis ships the oracle on most major chains but NOT on
- *      every L2 or testnet. For chains where no oracle is deployed
+ *      every l2 or testnet. For chains where no oracle is deployed
  *      Vaipakam sets `sanctionsOracle = address(0)`, which disables
  *      the check entirely (see `LibVaipakam.isSanctionedAddress`). A
  *      no-oracle chain is NOT fail-closed — the alternative is

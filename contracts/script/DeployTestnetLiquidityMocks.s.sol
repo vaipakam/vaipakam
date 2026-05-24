@@ -72,7 +72,7 @@ contract DeployTestnetLiquidityMocks is Script {
     ///      We register the mock registry under the same sentinels
     ///      so the protocol's `getFeed(asset, USD)` lookup hits our
     ///      mock feeds 1:1.
-    address constant USD_DENOM = 0x0000000000000000000000000000000000000348;
+    address constant usdDenom = 0x0000000000000000000000000000000000000348;
     address constant ETH_DENOM = 0x000000000000000000000000000000000000000E;
 
     /// @dev Canonical Base predeploy WETH address. Same on Base
@@ -89,7 +89,7 @@ contract DeployTestnetLiquidityMocks is Script {
 
     /// @dev Canonical PancakeSwap WBNB on BNB Smart Chain Testnet —
     ///      the wrapped-native asset role-equivalent of WETH on EVM
-    ///      L1/L2s. The protocol stores this under the same WETH
+    ///      l1/L2s. The protocol stores this under the same WETH
     ///      pointer in `setWethContract(...)` since the role is
     ///      identical: quote-asset for v3-style depth checks.
     address constant BNB_TESTNET_WBNB_DEFAULT = 0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd;
@@ -211,9 +211,9 @@ contract DeployTestnetLiquidityMocks is Script {
         // registry for `getFeed(asset, USD)` first, falling back to
         // `asset/ETH × ETH/USD` only when no direct USD feed is
         // registered. Direct USD makes the path linear.
-        registry.setFeed(address(mUsdc), USD_DENOM, address(mUsdcFeed));
-        registry.setFeed(address(mWbtc), USD_DENOM, address(mWbtcFeed));
-        registry.setFeed(weth, USD_DENOM, address(wethFeed));
+        registry.setFeed(address(mUsdc), usdDenom, address(mUsdcFeed));
+        registry.setFeed(address(mWbtc), usdDenom, address(mWbtcFeed));
+        registry.setFeed(weth, usdDenom, address(wethFeed));
 
         // Mock UniV3 factory + per-pair pools. `MIN_LIQUIDITY_PAD`
         // is satisfied via `MOCK_POOL_LIQUIDITY` chosen above. Both
@@ -240,7 +240,7 @@ contract DeployTestnetLiquidityMocks is Script {
         vm.startBroadcast(adminKey);
         OracleAdminFacet oa = OracleAdminFacet(diamond);
         oa.setChainlinkRegistry(address(registry));
-        oa.setUsdChainlinkDenominator(USD_DENOM);
+        oa.setUsdChainlinkDenominator(usdDenom);
         oa.setEthChainlinkDenominator(ETH_DENOM);
         oa.setWethContract(weth);
         oa.setEthUsdFeed(address(wethFeed));
@@ -249,7 +249,7 @@ contract DeployTestnetLiquidityMocks is Script {
         // Stable-feed shortcuts for the peg-aware staleness rule.
         // Phase 7b lets feeds tagged "USDC", "USDT", etc. sit at the
         // 25h ceiling provided the price stays within ±3% of $1.
-        // Registering mUsdc under the symbol "mUSDC" is a no-op for
+        // Registering mUsdc under the symbol "mUsdc" is a no-op for
         // the peg check (the symbol isn't in the stable-list); we
         // intentionally don't register it there because the
         // mock-driven price model doesn't need that escape hatch.
@@ -276,7 +276,7 @@ contract DeployTestnetLiquidityMocks is Script {
         Deployments.writeAddress(".mockUSDCFeed", address(mUsdcFeed));
         Deployments.writeAddress(".mockWBTCFeed", address(mWbtcFeed));
         Deployments.writeAddress(".mockWETHFeed", address(wethFeed));
-        // The wrapped-native asset (WETH on EVM L1/L2s, WBNB on BNB
+        // The wrapped-native asset (WETH on EVM l1/L2s, WBNB on BNB
         // chains) is consumed by both the contract layer (via
         // OracleAdminFacet.setWethContract above) and the frontend env
         // loader (`weth` per chain). Stamp it once here so the artifact

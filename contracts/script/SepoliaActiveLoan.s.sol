@@ -23,7 +23,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *         eyeballed against real state. Flow:
  *           1) Admin: fund gas, deploy mock USDC/WETH, configure oracle +
  *              risk params + KYC + trade allowance.
- *           2) Lender: createOffer (1000 mUSDC, 30-day term, 5% APR).
+ *           2) Lender: createOffer (1000 mUsdc, 30-day term, 5% APR).
  *           3) Borrower: acceptOffer with 1 mWETH collateral.
  *         After the run, the loan is Active — both NFTs held by their
  *         originators so the Dashboard shows the position for both sides.
@@ -40,7 +40,7 @@ contract SepoliaActiveLoan is Script {
     ERC20Mock usdc;
     ERC20Mock weth;
 
-    uint256 constant LOAN_AMOUNT = 1_000e6;       // 1000 mUSDC
+    uint256 constant LOAN_AMOUNT = 1_000e6;       // 1000 mUsdc
     uint256 constant COLLATERAL_AMOUNT = 1e18;    // 1 mWETH (~$2000 @ $2000/ETH)
 
     function run() external {
@@ -78,7 +78,7 @@ contract SepoliaActiveLoan is Script {
         registry.setFeed(address(usdc), usdDenom, address(usdcFeed));
         registry.setFeed(address(weth), usdDenom, address(wethFeed));
 
-        // Mock v3-style AMM infra: factory + mUSDC/mWETH 0.3% pool above the
+        // Mock v3-style AMM infra: factory + mUsdc/mWETH 0.3% pool above the
         // MIN_LIQUIDITY_PAD threshold so OracleFacet._checkLiquidity
         // classifies both assets Liquid. sqrtPriceX96 is non-zero; the
         // pool-depth check uses `liquidity() * ethUsd` which with 1e24

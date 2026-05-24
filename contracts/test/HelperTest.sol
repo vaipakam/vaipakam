@@ -793,7 +793,7 @@ contract HelperTest {
         selectors[5] = VPFITokenFacet.getVPFIMinter.selector;
         selectors[6] = VPFITokenFacet.getVPFIBalanceOf.selector;
         selectors[7] = VPFITokenFacet.setCanonicalVPFIChain.selector;
-        selectors[8] = VPFITokenFacet.isCanonicalVPFIChain.selector;
+        selectors[8] = VPFITokenFacet.isCanonicalVpfiChain.selector;
         return selectors;
     }
 
@@ -910,7 +910,7 @@ contract HelperTest {
         selectors[30] = ConfigFacet.setNumeraireSwapEnabled.selector;
         selectors[31] = ConfigFacet.getPeriodicInterestConfig.selector;
         // Individual getters used by the protocol-console knob card
-        // reader (which expects one function per knob). Numeraire generalization (B1) —
+        // reader (which expects one function per knob). Numeraire generalization (b1) —
         // the per-knob `getNumeraireOracle` was retired (no
         // INumeraireOracle anymore); replaced with feed-side getters
         // (`getNumeraireSymbol`, `getEthNumeraireFeed`) that surface

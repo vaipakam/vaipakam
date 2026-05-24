@@ -83,7 +83,7 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
     // ─── Happy paths ─────────────────────────────────────────────────────────
 
     function testSingleLenderClaimsEntireHalfPoolForDay() public {
-        // Alice is the only lender on day 1 with $100 interest.
+        // alice is the only lender on day 1 with $100 interest.
         _mut().setDailyLenderInterest(1, alice, 100e18, 100e18);
 
         // Need today ≥ 2 so day 1 is finalized AND cursor-sentinel of 0
@@ -126,7 +126,7 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
     }
 
     function testLenderAndBorrowerHalvesBothEarned() public {
-        // Alice is the sole lender AND the sole borrower on day 1 — she
+        // alice is the sole lender AND the sole borrower on day 1 — she
         // owns 100% of both sides, so she claims the full daily pool
         // (= 2 × halfPool).
         _mut().setDailyLenderInterest(1, alice, 50e18, 50e18);
@@ -343,7 +343,7 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
         vm.prank(alice);
         _facet().claimInteractionRewards();
 
-        // Now pretend the day-3 broadcast lands. Alice claims again.
+        // Now pretend the day-3 broadcast lands. alice claims again.
         _mut().setKnownGlobalDailyInterest(3, 1e18, 0, true);
 
         vm.prank(alice);

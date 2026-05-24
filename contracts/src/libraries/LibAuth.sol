@@ -26,9 +26,9 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
  *
  *        EarlyWithdrawalFacet.createLoanSaleOffer    → INIT_EARLY_WITHDRAW
  *        EarlyWithdrawalFacet.completeLoanSale       → COMPLETE_LOAN_SALE
- *        PrecloseFacet.precloseDirect                → INIT_PRECLOSE
- *        PrecloseFacet.transferObligationViaOffer    → INIT_PRECLOSE
- *        PrecloseFacet.offsetWithNewOffer            → INIT_PRECLOSE
+ *        PrecloseFacet.precloseDirect                → initPreclose
+ *        PrecloseFacet.transferObligationViaOffer    → initPreclose
+ *        PrecloseFacet.offsetWithNewOffer            → initPreclose
  *        PrecloseFacet.completeOffset                → COMPLETE_OFFSET
  *        RefinanceFacet.refinanceLoan                → REFINANCE
  *

@@ -371,13 +371,13 @@ contract PrecloseFacet is
     /**
      * @notice Transfers loan obligation by accepting an existing Borrower Offer (Option 2).
      * @dev Per README Section 8, Option 2:
-     *      Alice accepts Ben's existing Borrower Offer. The offer must use the same
-     *      lending/collateral asset types and favor Liam (collateral >= original,
-     *      duration <= remaining, amount >= principal). Ben's collateral is already
-     *      locked in his vault from offer creation. Alice pays accrued interest +
-     *      shortfall. The live loan is updated to reflect Ben as borrower.
+     *      alice accepts ben's existing Borrower Offer. The offer must use the same
+     *      lending/collateral asset types and favor liam (collateral >= original,
+     *      duration <= remaining, amount >= principal). ben's collateral is already
+     *      locked in his vault from offer creation. alice pays accrued interest +
+     *      shortfall. The live loan is updated to reflect ben as borrower.
      * @param loanId The loan ID to transfer.
-     * @param borrowerOfferId The existing Borrower Offer from Ben.
+     * @param borrowerOfferId The existing Borrower Offer from ben.
      */
     function transferObligationViaOffer(
         uint256 loanId,
@@ -411,7 +411,7 @@ contract PrecloseFacet is
         if (!LibOfferMatch.assertAssetContinuity(loan, offer))
             revert InvalidOfferTerms();
 
-        // Lender-favorability: replacement terms must not reduce Liam's protection
+        // Lender-favorability: replacement terms must not reduce liam's protection
         uint256 remainingDays = _remainingDays(loan);
         if (offer.durationDays > remainingDays) revert InvalidOfferTerms();
         if (offer.collateralAmount < loan.collateralAmount)
@@ -445,7 +445,7 @@ contract PrecloseFacet is
             loan.collateralAmount
         );
 
-        // ── 1. Calculate what Alice owes ────────────────────────────────────
+        // ── 1. Calculate what alice owes ────────────────────────────────────
         // Seconds-based math across accrued, original-remaining, and
         // new-expected to keep rounding symmetric (README §8/§9).
         uint256 elapsed = block.timestamp - loan.startTime;
@@ -469,7 +469,7 @@ contract PrecloseFacet is
             ? originalExpectedRemaining - newExpectedRemaining
             : 0;
 
-        // ── 2. Alice pays accrued + shortfall ───────────────────────────────
+        // ── 2. alice pays accrued + shortfall ───────────────────────────────
         (uint256 treasuryFee, ) = LibEntitlement.splitTreasury(accruedInterest);
         uint256 lenderShare = accruedInterest - treasuryFee + shortfall;
 
@@ -499,7 +499,7 @@ contract PrecloseFacet is
             s.heldForLender[loanId] += lenderShare;
         }
 
-        // ── 3. Release Alice's collateral ───────────────────────────────────
+        // ── 3. Release alice's collateral ───────────────────────────────────
         if (loan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
@@ -536,9 +536,9 @@ contract PrecloseFacet is
             );
         }
 
-        // ── 4. Ben's collateral already locked in his vault at offer creation
+        // ── 4. ben's collateral already locked in his vault at offer creation
 
-        // ── 5. Update loan to reflect Ben as borrower ───────────────────────
+        // ── 5. Update loan to reflect ben as borrower ───────────────────────
         loan.borrower = newBorrower;
         loan.collateralAmount = offer.collateralAmount;
         loan.durationDays = offer.durationDays;
@@ -548,14 +548,14 @@ contract PrecloseFacet is
 
         // ── 5b. NFT rental: reset prepay accounting and reassign user rights ─
         if (loan.assetType != LibVaipakam.AssetType.ERC20) {
-            // Reset prepay accounting to Ben's offer terms (initialized like LoanFacet.initiateLoan)
+            // Reset prepay accounting to ben's offer terms (initialized like LoanFacet.initiateLoan)
             uint256 newPrepay = offer.amount * offer.durationDays;
             uint256 newBuffer = (newPrepay * LibVaipakam.cfgRentalBufferBps()) /
                 LibVaipakam.BASIS_POINTS;
             loan.prepayAmount = newPrepay;
             loan.bufferAmount = newBuffer;
             loan.lastDeductTime = block.timestamp;
-            // Revoke Alice's user right
+            // Revoke alice's user right
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultSetNFTUser.selector,
@@ -567,7 +567,7 @@ contract PrecloseFacet is
                 ),
                 IVaipakamErrors.NFTRenterUpdateFailed.selector
             );
-            // Assign Ben as new user for remaining duration
+            // Assign ben as new user for remaining duration
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultSetNFTUser.selector,
@@ -586,11 +586,11 @@ contract PrecloseFacet is
         LibMetricsHooks.onOfferAccepted(offer.id);
 
         // ── 7. NFT updates ──────────────────────────────────────────────────
-        // Migrate borrower position in one shot (burn Alice's + mint Ben's NFT,
+        // Migrate borrower position in one shot (burn alice's + mint ben's NFT,
         // keep loan.borrower/borrowerTokenId in lockstep with NFT state).
         LibLoan.migrateBorrowerPosition(loanId, newBorrower);
 
-        // Burn Ben's offer position NFT (offer is consumed)
+        // Burn ben's offer position NFT (offer is consumed)
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 VaipakamNFTFacet.burnNFT.selector,
@@ -599,7 +599,7 @@ contract PrecloseFacet is
             IVaipakamErrors.NFTBurnFailed.selector
         );
 
-        // Update Liam's Lender NFT to reflect new borrower
+        // Update liam's Lender NFT to reflect new borrower
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 VaipakamNFTFacet.updateNFTStatus.selector,
@@ -650,14 +650,14 @@ contract PrecloseFacet is
      *      NFT on any marketplace. See LibERC721.LockReason.PrecloseOffset.
      *
      *      Per README Section 8, Option 3:
-     *      - Alice deposits principal and creates a Lender Offer via OfferFacet.
-     *      - Alice pays accrued interest (treasury fee + lender share) to lender's vault.
+     *      - alice deposits principal and creates a Lender Offer via OfferFacet.
+     *      - alice pays accrued interest (treasury fee + lender share) to lender's vault.
      *      - Shortfall (expected interest difference) is pre-paid to lender's vault.
      *      - The new offer is linked to the original loan via offsetOfferToLoanId.
-     *      - When a new borrower (Charlie) accepts the offer normally, call completeOffset()
-     *        to release Alice's collateral and close the original loan.
+     *      - When a new borrower (charlie) accepts the offer normally, call completeOffset()
+     *        to release alice's collateral and close the original loan.
      * @param loanId The original loan ID to offset.
-     * @param interestRateBps The interest rate for Alice's new lender offer.
+     * @param interestRateBps The interest rate for alice's new lender offer.
      * @param durationDays The duration for the new offer (<= remaining).
      * @param collateralAsset The collateral asset for the new offer (can match original).
      * @param collateralAmount The collateral amount required from the new borrower.
@@ -683,7 +683,7 @@ contract PrecloseFacet is
             prepayAsset
         );
 
-        // ── 1. Alice pays accrued interest + shortfall ──────────────────────
+        // ── 1. alice pays accrued interest + shortfall ──────────────────────
         // All payment-flow locals are consumed inside _settleOffsetPayments so
         // the outer frame only carries accruedShortfallSum (needed by emit).
         uint256 accruedShortfallSum = _settleOffsetPayments(
@@ -694,8 +694,8 @@ contract PrecloseFacet is
         );
 
         // ── 2. Create lender offer via cross-facet call ─────────────────────
-        // Alice deposits principal into her vault (handled by createOffer).
-        // Alice must have approved principalAsset to the diamond before calling.
+        // alice deposits principal into her vault (handled by createOffer).
+        // alice must have approved principalAsset to the diamond before calling.
         newOfferId = _submitOffsetOffer(
             loan,
             interestRateBps,
@@ -736,7 +736,7 @@ contract PrecloseFacet is
             revert LoanNotActive();
         // NFT rentals cannot use the offset path: the NFT is in the lender's
         // vault, not the borrower's, so createOffer would fail trying to
-        // transfer it from Alice.
+        // transfer it from alice.
         if (loan.assetType != LibVaipakam.AssetType.ERC20)
             revert InvalidOfferTerms();
         // Enforce same asset types as original loan (README General Rules)
@@ -777,7 +777,7 @@ contract PrecloseFacet is
     }
 
     /**
-     * @dev Settles Alice's accrued-interest + shortfall payments for an
+     * @dev Settles alice's accrued-interest + shortfall payments for an
      *      offset. Returns accruedShortfallSum so the caller can emit it.
      *      Extracted so all payment-side locals (treasuryFee, payAsset,
      *      lenderTotal, lenderVault, etc.) stay in their own frame —
@@ -829,9 +829,9 @@ contract PrecloseFacet is
         }
 
         // T-037 — Repay original principal + interest/shortfall direct
-        // to old lender's vault via the cross-payer chokepoint. Alice
-        // must return Liam's principal; the new offer deposit is
-        // separate capital Alice puts up to become the new lender.
+        // to old lender's vault via the cross-payer chokepoint. alice
+        // must return liam's principal; the new offer deposit is
+        // separate capital alice puts up to become the new lender.
         // Routing through `vaultDepositERC20From` keeps the Diamond
         // out of the funds path AND ticks the
         // protocolTrackedVaultBalance counter under the old lender.
@@ -839,8 +839,8 @@ contract PrecloseFacet is
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 VaultFactoryFacet.vaultDepositERC20From.selector,
-                msg.sender,        // payer — Alice
-                loan.lender,       // user — old lender (Liam)
+                msg.sender,        // payer — alice
+                loan.lender,       // user — old lender (liam)
                 payAssetOffset,
                 lenderTotal
             ),
@@ -882,7 +882,7 @@ contract PrecloseFacet is
         // through the diamond fallback. Same pattern as
         // `OfferFacet.acceptOfferInternal` for matchOffers.
         //
-        // Pass `msg.sender` (Alice, the offset initiator) as
+        // Pass `msg.sender` (alice, the offset initiator) as
         // `creator`. Without this the diamond's call() would set
         // `msg.sender == diamond` inside createOfferInternal,
         // corrupting `offer.creator` and the asset-pull allowance
@@ -950,8 +950,8 @@ contract PrecloseFacet is
      *      action bit and the per-loan enable for this loan (borrower-
      *      entitled action).
      *      Verifies the linked offer was accepted, then:
-     *      - Releases Alice's original collateral from vault.
-     *      - Closes Alice's original loan with Liam (status = Repaid).
+     *      - Releases alice's original collateral from vault.
+     *      - Closes alice's original loan with liam (status = Repaid).
      *      - Updates NFTs to Claimable.
      * @param originalLoanId The original loan ID that was offset.
      */

@@ -4,11 +4,11 @@ pragma solidity ^0.8.29;
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 
 /// @title MockSequencerUptimeFeed
-/// @notice Test double for the Chainlink L2 Sequencer Uptime feed
+/// @notice Test double for the Chainlink l2 Sequencer Uptime feed
 ///         consumed by `OracleFacet._requireSequencerHealthy`. Lets
 ///         tests script sequencer state transitions (up / down / just
 ///         recovered) without depending on the real feed.
-/// @dev Chainlink L2 uptime feed encoding:
+/// @dev Chainlink l2 uptime feed encoding:
 ///        answer == 0 → sequencer UP
 ///        answer == 1 → sequencer DOWN
 ///      `startedAt` is the unix timestamp when the current status began;

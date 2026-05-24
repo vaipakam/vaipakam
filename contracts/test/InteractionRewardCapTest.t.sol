@@ -95,7 +95,7 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
 
     // ─── Default cap engages when the proportional payout would exceed it ────
 
-    /// @notice Alice is the only lender on day 1 with a TINY USD share,
+    /// @notice alice is the only lender on day 1 with a TINY USD share,
     ///         so the proportional formula would hand her the full
     ///         half-pool (~10k VPFI on day 1). The §4 cap at $1 of
     ///         interest is ~0.125 VPFI — that is what she must receive.
@@ -149,7 +149,7 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
 
     // ─── Cap applies independently on lender + borrower sides ──────────────
 
-    /// @notice Alice holds BOTH sides on day 1 with tiny USD totals, so
+    /// @notice alice holds BOTH sides on day 1 with tiny USD totals, so
     ///         both branches hit the cap. Paid must equal 2 × single-side
     ///         cap — NOT double-dip one side's numerator into the other.
     function testCapAppliesPerSideIndependently() public {

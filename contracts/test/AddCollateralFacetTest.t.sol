@@ -393,7 +393,7 @@ contract AddCollateralFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev Tests that when calculateHF staticcall fails gracefully, event still emits with newHF=0.
+    /// @dev Tests that when calculateHF staticcall fails gracefully, event still emits with newHf=0.
     ///      This covers the `if (success && result.length > 0)` FALSE branch.
     function testAddCollateralHFCalcFailGraceful() public {
         uint256 loanId = _createActiveLiquidLoan();

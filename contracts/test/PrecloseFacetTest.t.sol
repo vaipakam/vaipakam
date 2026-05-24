@@ -1692,7 +1692,7 @@ contract PrecloseFacetTest is Test {
 
     // ─── Phase 6 — per-action isolation across entry points ─────────────────
 
-    /// @dev Keeper with only the INIT_PRECLOSE action bit can drive
+    /// @dev Keeper with only the initPreclose action bit can drive
     ///      precloseDirect (positive path through the new requireKeeperFor
     ///      gate) even though they don't have every other bit.
     function testPrecloseDirectAllowsKeeperWithInitPrecloseBit() public {

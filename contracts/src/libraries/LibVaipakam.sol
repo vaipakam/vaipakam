@@ -5,7 +5,7 @@ pragma solidity ^0.8.29;
 import {LibDiamond} from "@diamond-3/libraries/LibDiamond.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
-// Numeraire generalization (B1) (T-047 prep): the INumeraireOracle interface that
+// Numeraire generalization (b1) (T-047 prep): the INumeraireOracle interface that
 // Phase 1+2 introduced for numeraire→USD boundary conversion is no
 // longer needed — `OracleFacet.getAssetPrice` now returns numeraire-
 // quoted prices directly via the renamed Chainlink slots
@@ -363,7 +363,7 @@ library LibVaipakam {
     uint256 constant MIN_AUTO_PAUSE_SECONDS = 300; // 5 min
     uint256 constant MAX_AUTO_PAUSE_SECONDS = 7200; // 2 hours
 
-    /// @dev T-032 / Numeraire generalization (B1) — Notification fee (per loan-side)
+    /// @dev T-032 / Numeraire generalization (b1) — Notification fee (per loan-side)
     ///      defaults + bounds. Charged in VPFI, denominated in the
     ///      ACTIVE NUMERAIRE (1e18-scaled — USD by post-deploy default;
     ///      whatever governance has rotated to otherwise), deducted on
@@ -378,7 +378,7 @@ library LibVaipakam {
     ///
     ///      The numeraire-quoted fee converts to VPFI via the
     ///      ETH/numeraire price returned by `OracleFacet.getAssetPrice(WETH)`
-    ///      (anchored at the oracle layer post-B1) times the fixed
+    ///      (anchored at the oracle layer post-b1) times the fixed
     ///      `VPFI_PER_ETH_FIXED_PHASE1` rate. No USD-intermediate is
     ///      involved — the fee storage value, the oracle return, and
     ///      the resulting math are all in the active numeraire end to
@@ -402,7 +402,7 @@ library LibVaipakam {
     ///      numeraire. When VPFI lists on an exchange (Phase 2),
     ///      governance can replace this fixed rate with a live
     ///      VPFI/numeraire feed without needing the USD intermediate
-    ///      that the pre-B1 design carried.
+    ///      that the pre-b1 design carried.
     uint256 constant VPFI_PER_ETH_FIXED_PHASE1 = 1e15;
     // Sanity ceiling on `interestRateBpsMax` at offer creation. Below
     // 100% APR equivalent (10000 bps). Tighter would risk rejecting
@@ -433,7 +433,7 @@ library LibVaipakam {
     // finer-than-mandatory cadence (Monthly / Quarterly / SemiAnnual on
     // any duration; finer-than-Annual on multi-year). Denominated in
     // numeraire-units (1e18-scaled). Default $100k under USD-as-
-    // numeraire (post-deploy default; B1 — read from Chainlink ETH/USD
+    // numeraire (post-deploy default; b1 — read from Chainlink ETH/USD
     // via `ethNumeraireFeed`). Floor $1k stops a
     // misconfigured "everyone qualifies" setting; ceiling $10M caps the
     // worst-case "nobody qualifies" misfire.
@@ -821,7 +821,7 @@ library LibVaipakam {
         uint256 vpfiTier2Min; // 0 ⇒ VPFI_TIER2_MIN (1_000e18)
         uint256 vpfiTier3Min; // 0 ⇒ VPFI_TIER3_MIN (5_000e18)
         uint256 vpfiTier4Threshold; // 0 ⇒ VPFI_TIER4_THRESHOLD (20_000e18)
-        // ── T-032 / Numeraire generalization (B1) — Notification fee config ─────────
+        // ── T-032 / Numeraire generalization (b1) — Notification fee config ─────────
         // Flat per-loan-side notification fee, denominated in the
         // ACTIVE NUMERAIRE (1e18 scaled — USD by post-deploy default;
         // whatever governance has rotated to otherwise). Charged in
@@ -834,14 +834,14 @@ library LibVaipakam {
         // at the setter so a misfire can't lock users out OR drain
         // their vaults. The fee → VPFI math is anchored end-to-end
         // in the active numeraire: `getAssetPrice(WETH)` returns
-        // ETH/numeraire post-B1, multiplied by the fixed
+        // ETH/numeraire post-b1, multiplied by the fixed
         // `VPFI_PER_ETH_FIXED_PHASE1` peg gives a synthetic
         // VPFI/numeraire rate, and the stored fee divides directly. No
         // USD-intermediate is involved at any step (the per-knob
         // `notificationFeeUsdOracle` was retired in Numeraire generalization (Phase 1);
-        // the `INumeraireOracle` abstraction was retired in B1).
+        // the `INumeraireOracle` abstraction was retired in b1).
         uint256 notificationFee; // 0 ⇒ NOTIFICATION_FEE_DEFAULT (2e18)
-        // ── T-034 / B1 — Periodic Interest Payment config ─────────────
+        // ── T-034 / b1 — Periodic Interest Payment config ─────────────
         // See docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md §6.
         //
         // The numeraire identity is captured by the feed-side slots at
@@ -1722,7 +1722,7 @@ library LibVaipakam {
         address zeroExProxy; // 0x proxy for liquidations
         address allowanceTarget; // allowance target for 0x proxy protocol
         address numeraireChainlinkDenominator; // Chainlink Feed Registry denominator constant for the active numeraire (Denominations.USD by default; rotates with the numeraire)
-        // T-034 Numeraire generalization (B1) — symbol of the active numeraire used by
+        // T-034 Numeraire generalization (b1) — symbol of the active numeraire used by
         // the symbol-derived secondary oracles (Tellor / API3 / DIA). Stored
         // as bytes32 (max 32 ASCII chars) for cheap on-chain comparison;
         // governance writes lowercase ASCII (e.g. "usd", "eur", "xau").
@@ -2011,8 +2011,8 @@ library LibVaipakam {
         // Settlement hooks (RepayFacet on clean full repay, and any
         // future preclose path on a strict clean-repay outcome) record
         // the USD-valued (Chainlink spot) interest booked on day `d`:
-        //   totalLenderInterestNumeraire18[d] += interestUSD
-        //   userLenderInterestNumeraire18[d][lender] += interestUSD
+        //   totalLenderInterestNumeraire18[d] += interestUsd
+        //   userLenderInterestNumeraire18[d][lender] += interestUsd
         //   (and borrower mirror iff clean)
         // Claims walk finalized days < today, cap at MAX_INTERACTION_CLAIM_DAYS
         // per tx, and advance interactionLastClaimedDay.
@@ -2153,7 +2153,7 @@ library LibVaipakam {
         ///      Set via {setBridgedBuyReceiver}; zero disables the
         ///      bridged-buy ingress.
         address bridgedBuyReceiver;
-        // ─── L2 Sequencer Uptime Circuit Breaker ────────────────────────
+        // ─── l2 Sequencer Uptime Circuit Breaker ────────────────────────
         // On L2s (Base/Arb/OP/etc.) we must not consume Chainlink prices
         // while the sequencer has been down — users can't submit txs, so
         // posted prices lag and create a restart-arb / liquidation-storm
@@ -2161,11 +2161,11 @@ library LibVaipakam {
         // consults this Chainlink feed before every price read: if the
         // feed answer is 1 (sequencer DOWN) or the last status change
         // was within SEQUENCER_GRACE_PERIOD seconds (just recovered),
-        // price reads revert. Set to `address(0)` on L1 / Ethereum
+        // price reads revert. Set to `address(0)` on l1 / Ethereum
         // mainnet where no sequencer exists — skips the check.
-        /// @dev Chainlink L2 Sequencer Uptime feed address (e.g., Base
+        /// @dev Chainlink l2 Sequencer Uptime feed address (e.g., Base
         ///      mainnet: 0xBCF85224fc0756B9Fa45aA7892530B47e10b6433).
-        ///      Zero = check skipped (L1/mainnet deployments).
+        ///      Zero = check skipped (l1/mainnet deployments).
         address sequencerUptimeFeed;
         // ─── Per-Asset Pause (governance-controlled reserve pause) ──────
         // Governance can pause a specific asset without flipping the
@@ -2180,7 +2180,7 @@ library LibVaipakam {
         ///      asset is blocked. Defaults to false for every asset.
         mapping(address => bool) assetPaused;
         // ─── Per-user reverse indexes for on-chain enumeration ──────────
-        // Bot / indexer / frontend friendly: lets callers page through
+        // bot / indexer / frontend friendly: lets callers page through
         // every loan and offer a user has touched without scanning event
         // logs. Append-only: entries are never removed even after a loan
         // settles or an offer is cancelled, so historical reads stay
@@ -2238,7 +2238,7 @@ library LibVaipakam {
         ///      MetricsFacet.getProtocolStats.defaultRateBps consumes.
         uint256 terminalBadOrSettledCount;
         /// @dev Σ interestRateBps across every loan ever initiated.
-        ///      Divided by totalLoansEverCreated to yield averageAPR.
+        ///      Divided by totalLoansEverCreated to yield averageApr.
         uint256 interestRateBpsSum;
         /// @dev T-032 — cumulative VPFI debited from user vaults and
         ///      routed to treasury via `LoanFacet.markNotifBilled`.
@@ -3110,7 +3110,7 @@ library LibVaipakam {
     }
 
     /// @dev Returns the KYC Tier-0 threshold in NUMERAIRE-units (1e18-
-    ///      scaled). After Numeraire generalization (B1), `OracleFacet.getAssetPrice`
+    ///      scaled). After Numeraire generalization (b1), `OracleFacet.getAssetPrice`
     ///      returns numeraire-quoted prices directly, so comparison
     ///      sites (`OfferFacet`, `RiskFacet`, `DefaultedFacet`) compute
     ///      `valueNumeraire` and compare against this return value
@@ -3123,7 +3123,7 @@ library LibVaipakam {
     }
 
     /// @dev Returns the KYC Tier-1 threshold in NUMERAIRE-units (1e18-
-    ///      scaled). Same shape as Tier-0 above. Numeraire generalization (B1).
+    ///      scaled). Same shape as Tier-0 above. Numeraire generalization (b1).
     function getKycTier1Threshold() internal view returns (uint256 threshold) {
         uint256 v = storageSlot().kycTier1ThresholdNumeraire;
         return v == 0 ? KYC_TIER1_THRESHOLD_NUMERAIRE : v;
@@ -3889,13 +3889,13 @@ library LibVaipakam {
         s.uniswapV3Factory = newUniswapV3Factory;
     }
 
-    /// @dev Set the Chainlink L2 Sequencer Uptime feed used by
+    /// @dev Set the Chainlink l2 Sequencer Uptime feed used by
     ///      OracleFacet as a circuit breaker before every price read.
     ///      Owner-only. Setting to `address(0)` disables the check —
-    ///      correct for L1/Ethereum mainnet where no sequencer exists.
+    ///      correct for l1/Ethereum mainnet where no sequencer exists.
     ///      On L2s (Base/Arb/OP) this MUST be set to the canonical
     ///      sequencer uptime feed at deploy time.
-    /// @param newFeed Chainlink L2 Sequencer Uptime feed address.
+    /// @param newFeed Chainlink l2 Sequencer Uptime feed address.
     function setSequencerUptimeFeed(address newFeed) internal {
         LibDiamond.enforceIsContractOwner();
         Storage storage s = storageSlot();

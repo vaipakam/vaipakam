@@ -905,7 +905,7 @@ contract ClaimFacetTest is Test {
     }
 
     // ─── Additional branch coverage: ERC1155 claim failure, ERC721 borrower claim failure,
-    //     lenderHasHeld prevents settle, lenderHasNFTCollateralClaim prevents settle ─────
+    //     lenderHasHeld prevents settle, lenderHasNftCollateralClaim prevents settle ─────
 
     /// @dev Covers ERC1155 claim transfer failure path in claimAsLender (line 148-149).
     function testClaimAsLenderERC1155ClaimTransferFails() public {
@@ -968,7 +968,7 @@ contract ClaimFacetTest is Test {
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid), "Loan must not settle when lender has held funds");
     }
 
-    /// @dev Covers lenderHasNFTCollateralClaim check in claimAsBorrower (line 321):
+    /// @dev Covers lenderHasNftCollateralClaim check in claimAsBorrower (line 321):
     ///      when borrower claims first and lenderClaim.assetType != ERC20, loan should NOT settle.
     function testClaimAsBorrowerDoesNotSettleWhenLenderHasNFTCollateralClaim() public {
         uint256 loanId = _createAndAcceptERC20Loan(1000 ether, 1500 ether, 30);

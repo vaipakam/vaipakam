@@ -489,7 +489,7 @@ contract OfferModificationTest is SetupTest {
         uint256 id = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
-                lendingAsset: mockNFT721,
+                lendingAsset: mockNft721,
                 amount: 10 ether,         // daily fee
                 interestRateBps: 0,
                 collateralAsset: mockCollateralERC20,
@@ -544,7 +544,7 @@ contract OfferModificationTest is SetupTest {
         uint256 id = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
-                lendingAsset: mockNFT721,
+                lendingAsset: mockNft721,
                 amount: 10 ether,
                 interestRateBps: 0,
                 collateralAsset: mockCollateralERC20,

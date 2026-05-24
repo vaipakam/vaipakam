@@ -85,9 +85,9 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ///         this multi-source AND-combine.
     error OraclePriceDivergence();
 
-    /// @notice Reverted when the L2 sequencer is currently offline.
+    /// @notice Reverted when the l2 sequencer is currently offline.
     error SequencerDown();
-    /// @notice Reverted when the L2 sequencer has been up for less than
+    /// @notice Reverted when the l2 sequencer has been up for less than
     ///         `LibVaipakam.SEQUENCER_GRACE_PERIOD` seconds after a recovery.
     error SequencerGracePeriod();
 
@@ -337,7 +337,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
      *        2. Other: try asset/USD via Feed Registry (preferred).
      *        3. Fallback: asset/ETH via Feed Registry × ETH/USD.
      *      All paths honour the 2h volatile / 25h stable-peg staleness
-     *      rule and revert on failure. The L2 sequencer circuit breaker
+     *      rule and revert on failure. The l2 sequencer circuit breaker
      *      runs first so queued-tx price lag never reaches LTV/HF math.
      * @param asset The ERC20 token address.
      * @return price The USD price (scaled, 8 decimals for direct USD
@@ -836,7 +836,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         if (!symOk) return SecondaryStatus.Unavailable;
         string memory lower = _toLower(symbol);
 
-        // T-034 Numeraire generalization (B1): lower-case numeraire symbol from
+        // T-034 Numeraire generalization (b1): lower-case numeraire symbol from
         // storage (e.g. "usd", "eur", "xau"). Empty bytes32 default
         // is interpreted as "usd" so the post-deploy behaviour is
         // unchanged out of the box.
@@ -881,7 +881,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         if (!symOk) return SecondaryStatus.Unavailable;
         string memory upper = _toUpper(symbol);
 
-        // T-034 Numeraire generalization (B1): dAPI name uses the active numeraire's
+        // T-034 Numeraire generalization (b1): dAPI name uses the active numeraire's
         // upper-case symbol from storage (default "USD").
         bytes memory packed = abi.encodePacked(upper, "/", _numeraireUpperSymbol());
         if (packed.length > 32) return SecondaryStatus.Unavailable;
@@ -924,7 +924,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
 
         (string memory symbol, bool symOk) = _safeSymbol(asset);
         if (!symOk) return SecondaryStatus.Unavailable;
-        // T-034 Numeraire generalization (B1): DIA key uses the active numeraire's
+        // T-034 Numeraire generalization (b1): DIA key uses the active numeraire's
         // upper-case symbol from storage (default "USD").
         string memory key = string(abi.encodePacked(_toUpper(symbol), "/", _numeraireUpperSymbol()));
 
@@ -948,7 +948,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         return _classifyDeviation(primaryPrice, secondary);
     }
 
-    /// @dev T-034 Numeraire generalization (B1) — read the numeraire symbol from
+    /// @dev T-034 Numeraire generalization (b1) — read the numeraire symbol from
     ///      storage and convert to a lowercase Solidity string for
     ///      the symbol-derived secondary oracle query construction.
     ///      Empty bytes32 (governance never wrote the slot) defaults
@@ -972,7 +972,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         return string(out);
     }
 
-    /// @dev T-034 Numeraire generalization (B1) — uppercase variant for API3 / DIA
+    /// @dev T-034 Numeraire generalization (b1) — uppercase variant for API3 / DIA
     ///      query construction. Reuses `_numeraireLowerSymbol` then
     ///      upper-cases via the existing `_toUpper` helper.
     function _numeraireUpperSymbol() private view returns (string memory) {
@@ -1955,9 +1955,9 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         return n + 1;
     }
 
-    // ─── Sequencer uptime circuit breaker (Chainlink L2 feed) ──────────
+    // ─── Sequencer uptime circuit breaker (Chainlink l2 feed) ──────────
 
-    /// @notice Returns the configured L2 sequencer uptime feed address.
+    /// @notice Returns the configured l2 sequencer uptime feed address.
     function getSequencerUptimeFeed() external view returns (address) {
         return LibVaipakam.storageSlot().sequencerUptimeFeed;
     }

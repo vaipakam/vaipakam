@@ -423,7 +423,7 @@ library LibInteractionRewards {
         uint256 cap = cursor + MAX_CUM_ADVANCE_DAYS;
         if (through > cap) through = cap;
 
-        uint256 prev = cursor == 0 ? 0 : s.cumLenderRPN18[cursor];
+        uint256 prev = cursor == 0 ? 0 : s.cumLenderRpn18[cursor];
         for (uint256 d = cursor + 1; d <= through; ) {
             if (!s.knownGlobalSet[d]) break;
             uint256 globalTotal = s.knownGlobalLenderInterestNumeraire18[d];
@@ -434,7 +434,7 @@ library LibInteractionRewards {
             } else {
                 next = prev + (half * 1e18) / globalTotal;
             }
-            s.cumLenderRPN18[d] = next;
+            s.cumLenderRpn18[d] = next;
             prev = next;
             cursor = d;
             unchecked { ++d; }
@@ -454,7 +454,7 @@ library LibInteractionRewards {
         uint256 cap = cursor + MAX_CUM_ADVANCE_DAYS;
         if (through > cap) through = cap;
 
-        uint256 prev = cursor == 0 ? 0 : s.cumBorrowerRPN18[cursor];
+        uint256 prev = cursor == 0 ? 0 : s.cumBorrowerRpn18[cursor];
         for (uint256 d = cursor + 1; d <= through; ) {
             if (!s.knownGlobalSet[d]) break;
             uint256 globalTotal = s.knownGlobalBorrowerInterestNumeraire18[d];
@@ -465,7 +465,7 @@ library LibInteractionRewards {
             } else {
                 next = prev + (half * 1e18) / globalTotal;
             }
-            s.cumBorrowerRPN18[d] = next;
+            s.cumBorrowerRpn18[d] = next;
             prev = next;
             cursor = d;
             unchecked { ++d; }
@@ -758,11 +758,11 @@ library LibInteractionRewards {
         uint256 cumEnd;
         uint256 cumStart;
         if (e.side == LibVaipakam.RewardSide.Lender) {
-            cumEnd = s.cumLenderRPN18[e.endDay - 1];
-            cumStart = e.startDay == 0 ? 0 : s.cumLenderRPN18[e.startDay - 1];
+            cumEnd = s.cumLenderRpn18[e.endDay - 1];
+            cumStart = e.startDay == 0 ? 0 : s.cumLenderRpn18[e.startDay - 1];
         } else {
-            cumEnd = s.cumBorrowerRPN18[e.endDay - 1];
-            cumStart = e.startDay == 0 ? 0 : s.cumBorrowerRPN18[e.startDay - 1];
+            cumEnd = s.cumBorrowerRpn18[e.endDay - 1];
+            cumStart = e.startDay == 0 ? 0 : s.cumBorrowerRpn18[e.startDay - 1];
         }
         if (cumEnd <= cumStart) {
             if (mutate) e.processed = true;
@@ -807,12 +807,12 @@ library LibInteractionRewards {
         uint256 cumStart;
         if (e.side == LibVaipakam.RewardSide.Lender) {
             if (s.cumLenderCursor < need) return 0;
-            cumEnd = s.cumLenderRPN18[e.endDay - 1];
-            cumStart = e.startDay == 0 ? 0 : s.cumLenderRPN18[e.startDay - 1];
+            cumEnd = s.cumLenderRpn18[e.endDay - 1];
+            cumStart = e.startDay == 0 ? 0 : s.cumLenderRpn18[e.startDay - 1];
         } else {
             if (s.cumBorrowerCursor < need) return 0;
-            cumEnd = s.cumBorrowerRPN18[e.endDay - 1];
-            cumStart = e.startDay == 0 ? 0 : s.cumBorrowerRPN18[e.startDay - 1];
+            cumEnd = s.cumBorrowerRpn18[e.endDay - 1];
+            cumStart = e.startDay == 0 ? 0 : s.cumBorrowerRpn18[e.startDay - 1];
         }
         if (cumEnd <= cumStart) return 0;
         reward = (e.perDayNumeraire18 * (cumEnd - cumStart)) / 1e18;

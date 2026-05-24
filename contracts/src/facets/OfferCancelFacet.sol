@@ -348,7 +348,7 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // landed by a third party still attributes the cancelled offer
         // back to its real creator. Indexers that key on the second
         // topic for "Your Offers / Cancelled" need this; otherwise an
-        // expired offer cleared by Bob would vanish from Alice's
+        // expired offer cleared by bob would vanish from alice's
         // history when she should still see it as terminal.
         emit OfferCanceledDetails(
             offerId,

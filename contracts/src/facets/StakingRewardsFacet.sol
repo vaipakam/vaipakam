@@ -102,13 +102,13 @@ contract StakingRewardsFacet is
     /// @param user Staker to query.
     /// @return     VPFI wei currently held in `user`'s vault and earning rewards.
     function getUserStakedVPFI(address user) external view returns (uint256) {
-        return LibVaipakam.storageSlot().userStakedVPFI[user];
+        return LibVaipakam.storageSlot().userStakedVpfi[user];
     }
 
     /// @notice Sum of staked VPFI across all users.
     /// @return Total vault-held VPFI wei earning staking rewards.
     function getTotalStakedVPFI() external view returns (uint256) {
-        return LibVaipakam.storageSlot().totalStakedVPFI;
+        return LibVaipakam.storageSlot().totalStakedVpfi;
     }
 
     /// @notice Remaining VPFI reservable from the 55.2M staking pool.
@@ -164,7 +164,7 @@ contract StakingRewardsFacet is
         cap = LibVaipakam.VPFI_STAKING_POOL_CAP;
         paidOut = s.stakingPoolPaidOut;
         remaining = cap > paidOut ? cap - paidOut : 0;
-        totalStaked = s.totalStakedVPFI;
+        totalStaked = s.totalStakedVpfi;
         aprBps = LibVaipakam.cfgVpfiStakingAprBps();
     }
 }

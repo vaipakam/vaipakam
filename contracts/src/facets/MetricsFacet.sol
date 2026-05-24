@@ -368,7 +368,7 @@ contract MetricsFacet {
                     buf[filled++] = id;
                 }
             } catch {
-                // Illiquid loan or other LTV-calc revert. Bot
+                // Illiquid loan or other LTV-calc revert. bot
                 // doesn't match against these — skip silently.
             }
         }

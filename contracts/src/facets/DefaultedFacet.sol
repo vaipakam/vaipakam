@@ -116,7 +116,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
 
     // Facet-specific errors (shared errors inherited from IVaipakamErrors)
     error NotDefaultedYet();
-    /// @notice L2 sequencer is offline or still in its 1h recovery grace
+    /// @notice l2 sequencer is offline or still in its 1h recovery grace
     ///         window; default processing is blocked so the caller can
     ///         retry once prices are trustworthy again.
     error SequencerUnhealthy();
@@ -218,7 +218,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
 
         address treasury = LibFacet.getTreasury();
 
-        // L2 circuit breaker: block the default trigger entirely while the
+        // l2 circuit breaker: block the default trigger entirely while the
         // sequencer is down or in its 1h recovery grace window. Chainlink
         // prices and AMM pools are unreliable under those conditions,
         // so a DEX swap would cross heavy slippage. Sequencer outages are

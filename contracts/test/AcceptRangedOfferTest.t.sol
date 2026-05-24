@@ -62,7 +62,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
  *
  *         NOT covered here (intentionally out of scope, tracked as
  *         separate cards): NFT-collateral / NFT-rental partial-fill
- *         shapes (gated by `_isERC20` in `_acceptOffer`, no role-aware
+ *         shapes (gated by `_isErc20` in `_acceptOffer`, no role-aware
  *         range semantic applies); sanctions tier on ranged offers
  *         (covered by `SanctionsOracle.t.sol`'s existing positive
  *         tests against ranged offers via the OfferCreateFacet path);

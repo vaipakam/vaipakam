@@ -26,7 +26,7 @@ import {IVPFIToken} from "../interfaces/IVPFIToken.sol";
  *      The facet's responsibilities are:
  *        1. Bind the Diamond to a specific VPFI proxy address
  *           (`setVPFIToken`, ADMIN_ROLE).
- *        2. Flip the `isCanonicalVPFIChain` flag exactly once, on the
+ *        2. Flip the `isCanonicalVpfiChain` flag exactly once, on the
  *           canonical deploy (`setCanonicalVPFIChain`, ADMIN_ROLE). This
  *           flag gates `TreasuryFacet.mintVPFI` so mirrors cannot mint.
  *        3. Provide gas-cheap view functions so the frontend and other
@@ -87,7 +87,7 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
     }
 
     /// @notice Flag this Diamond as hosting the canonical VPFI + OFT adapter.
-    /// @dev ADMIN_ROLE-only. Flips `isCanonicalVPFIChain` in Diamond storage.
+    /// @dev ADMIN_ROLE-only. Flips `isCanonicalVpfiChain` in Diamond storage.
     ///      Must be set to TRUE exactly once across the whole mesh — on the
     ///      Base (mainnet) / Base Sepolia (testnet) deploy where VPFIToken
     ///      and VPFIMirrorToken live. Leaving this false on the other four
@@ -100,8 +100,8 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
         bool isCanonical
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (s.isCanonicalVPFIChain == isCanonical) return; // No-op guard.
-        s.isCanonicalVPFIChain = isCanonical;
+        if (s.isCanonicalVpfiChain == isCanonical) return; // No-op guard.
+        s.isCanonicalVpfiChain = isCanonical;
         emit CanonicalVPFIChainSet(isCanonical);
     }
 
@@ -109,8 +109,8 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
     ///         (Base mainnet / Base Sepolia). True on exactly one chain in
     ///         the mesh; false on every mirror chain.
     /// @return True on the canonical Diamond deploy, false on every mirror.
-    function isCanonicalVPFIChain() external view returns (bool) {
-        return LibVaipakam.storageSlot().isCanonicalVPFIChain;
+    function isCanonicalVpfiChain() external view returns (bool) {
+        return LibVaipakam.storageSlot().isCanonicalVpfiChain;
     }
 
     /// @notice Total VPFI in circulation across all holders on this chain.
@@ -187,7 +187,7 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         token = s.vpfiToken;
-        canonical = s.isCanonicalVPFIChain;
+        canonical = s.isCanonicalVpfiChain;
         if (token == address(0)) return (token, canonical, 0, 0, 0, address(0));
 
         IVPFIToken t = IVPFIToken(token);
@@ -202,10 +202,10 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
     /// @dev Return the bound VPFI token iff this is the canonical chain, else
     ///      zero — shared guard for getVPFICap / getVPFICapHeadroom /
     ///      getVPFIMinter so their canonical checks don't drift apart.
-    /// @return The bound token address when `isCanonicalVPFIChain`, else zero.
+    /// @return The bound token address when `isCanonicalVpfiChain`, else zero.
     function _canonicalToken() internal view returns (address) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (!s.isCanonicalVPFIChain) return address(0);
+        if (!s.isCanonicalVpfiChain) return address(0);
         return s.vpfiToken;
     }
 

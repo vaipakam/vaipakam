@@ -65,7 +65,7 @@ contract RefinanceFacetTest is Test {
     HelperTest helperTest;
 
     uint256 activeLoanId;
-    uint256 borrowerOfferId; // Alice's Borrower Offer for refinancing
+    uint256 borrowerOfferId; // alice's Borrower Offer for refinancing
     uint256 constant PRINCIPAL  = 1000 ether;
     uint256 constant COLLATERAL = 1800 ether;
 
@@ -186,7 +186,7 @@ contract RefinanceFacetTest is Test {
         vm.prank(newLender); ERC20(mockCollateralERC20).approve(newLenderVault, type(uint256).max);
         vm.prank(borrower);  ERC20(mockCollateralERC20).approve(borrowerVault, type(uint256).max);
 
-        // Create active loan: Lender A -> Borrower (Alice)
+        // Create active loan: Lender A -> Borrower (alice)
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
@@ -217,7 +217,7 @@ contract RefinanceFacetTest is Test {
         vm.prank(borrower);
         activeLoanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
-        // Alice creates a Borrower Offer for refinancing (lower rate = better terms)
+        // alice creates a Borrower Offer for refinancing (lower rate = better terms)
         vm.prank(borrower);
         borrowerOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
@@ -249,7 +249,7 @@ contract RefinanceFacetTest is Test {
         ERC20Mock(mockERC20).mint(address(diamond), 100000 ether);
     }
 
-    /// @dev Helper to deposit principal into newLender's vault and accept Alice's borrower offer.
+    /// @dev Helper to deposit principal into newLender's vault and accept alice's borrower offer.
     function _acceptBorrowerOffer(uint256 offerId) internal returns (uint256 loanId) {
         // newLender must deposit principal into their vault before acceptOffer can withdraw it.
         // T-051 — back the direct transfer with a counter record so the
@@ -374,7 +374,7 @@ contract RefinanceFacetTest is Test {
         // Accept it
         _acceptBorrowerOffer(otherOffer);
 
-        // Alice tries to use someone else's offer
+        // alice tries to use someone else's offer
         vm.prank(borrower);
         vm.expectRevert(RefinanceFacet.InvalidRefinanceOffer.selector);
         RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, otherOffer);
@@ -383,7 +383,7 @@ contract RefinanceFacetTest is Test {
     // ─── refinanceLoan success ────────────────────────────────────────────────
 
     function testRefinanceLoanSuccess() public {
-        // Step 1: newLender accepts Alice's Borrower Offer → new loan created
+        // Step 1: newLender accepts alice's Borrower Offer → new loan created
         _acceptBorrowerOffer(borrowerOfferId);
 
         // Mock the complex cross-facet calls inside refinanceLoan
@@ -405,7 +405,7 @@ contract RefinanceFacetTest is Test {
     ///      the borrower's wallet — otherwise it would be permanently stranded
     ///      since no claim path records it.
     function testRefinanceRefundsFullOldCollateralToBorrower() public {
-        // Step 1: newLender accepts Alice's Borrower Offer → new loan created
+        // Step 1: newLender accepts alice's Borrower Offer → new loan created
         _acceptBorrowerOffer(borrowerOfferId);
 
         address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);

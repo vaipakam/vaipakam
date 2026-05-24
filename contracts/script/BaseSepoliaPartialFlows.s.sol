@@ -52,11 +52,11 @@ contract BaseSepoliaPartialFlows is Script {
     ERC20Mock weth;
     ERC4907Mock nft721;
 
-    uint256 constant LOAN_AMOUNT = 1_000e6;       // 1000 mUSDC
+    uint256 constant LOAN_AMOUNT = 1_000e6;       // 1000 mUsdc
     uint256 constant COLLATERAL_AMOUNT = 1e18;    // 1 mWETH
     uint256 constant INTEREST_BPS = 500;          // 5% APR
     uint256 constant DURATION_DAYS = 30;
-    uint256 constant DAILY_FEE = 10e6;            // 10 mUSDC / day rental
+    uint256 constant DAILY_FEE = 10e6;            // 10 mUsdc / day rental
 
     function run() external {
         diamond = Deployments.readDiamond();

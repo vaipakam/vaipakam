@@ -63,7 +63,7 @@ contract MetricsFacetTest is SetupTest {
         l.id = loanId;
         l.lender = lender_;
         l.borrower = borrower_;
-        l.principalAsset = mockNFT721;
+        l.principalAsset = mockNft721;
         l.assetType = LibVaipakam.AssetType.ERC721;
         l.tokenId = 1;
         l.collateralAsset = mockERC20;
@@ -146,7 +146,7 @@ contract MetricsFacetTest is SetupTest {
         l.principal = 1000 ether;
         l.principalAsset = mockERC20;
         l.assetType = LibVaipakam.AssetType.ERC20;
-        l.collateralAsset = mockNFT721;
+        l.collateralAsset = mockNft721;
         l.collateralAssetType = LibVaipakam.AssetType.ERC721;
         l.collateralTokenId = 1;
         l.status = LibVaipakam.LoanStatus.Active;
@@ -385,7 +385,7 @@ contract MetricsFacetTest is SetupTest {
         _seedNFTRentalLoan(1, lender, borrower, 11, 12);
         TestMutatorFacet(address(diamond)).setNextLoanId(2);
         assertEq(
-            MetricsFacet(address(diamond)).getTotalNFTsInVaultByCollection(mockNFT721),
+            MetricsFacet(address(diamond)).getTotalNFTsInVaultByCollection(mockNft721),
             1
         );
         assertEq(
@@ -479,8 +479,8 @@ contract MetricsFacetTest is SetupTest {
     function testGetActiveOffersByAssetPair_returnsMatchingPair() public {
         _seedOpenOfferWithPair(1, lender, mockERC20, mockCollateralERC20);
         _seedOpenOfferWithPair(2, lender, mockERC20, mockCollateralERC20);
-        _seedOpenOfferWithPair(3, lender, mockERC20, mockNFT721); // different collateral
-        _seedOpenOfferWithPair(4, lender, mockNFT721, mockCollateralERC20); // different lending
+        _seedOpenOfferWithPair(3, lender, mockERC20, mockNft721); // different collateral
+        _seedOpenOfferWithPair(4, lender, mockNft721, mockCollateralERC20); // different lending
         TestMutatorFacet(address(diamond)).setNextOfferId(5);
 
         (uint256[] memory ids, uint256 total) = MetricsFacet(address(diamond))

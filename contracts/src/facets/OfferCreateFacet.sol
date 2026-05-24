@@ -342,7 +342,7 @@ contract OfferCreateFacet is
     ///         `msg.sender == diamond` for the inner code, which
     ///         would corrupt `offer.creator` and the asset-pull
     ///         allowance check. The caller passes the real user
-    ///         (e.g. Alice for offsetWithNewOffer) so every helper
+    ///         (e.g. alice for offsetWithNewOffer) so every helper
     ///         operates on her behalf instead of the Diamond's.
     function createOfferInternal(
         address creator,
@@ -723,7 +723,7 @@ contract OfferCreateFacet is
     }
 
     /// @dev Convert a raw token amount to numeraire-units (1e18-scaled).
-    ///      Single step now after the Numeraire generalization (B1) architectural
+    ///      Single step now after the Numeraire generalization (b1) architectural
     ///      change: `OracleFacet.getAssetPrice` returns numeraire-quoted
     ///      prices natively (governance rotates the underlying Chainlink
     ///      feed addresses + denominator constant when the numeraire

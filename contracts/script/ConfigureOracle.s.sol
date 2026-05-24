@@ -33,7 +33,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *        - <CHAIN>_ETH_USD_FEED      : Chainlink ETH/USD feed
  *        - <CHAIN>_USD_DENOMINATOR   : `Denominations.USD` sentinel (0x...348)
  *        - <CHAIN>_ETH_DENOMINATOR   : `Denominations.ETH` sentinel (0x...0EEE)
- *        - <CHAIN>_SEQUENCER_UPTIME_FEED : L2 sequencer uptime feed
+ *        - <CHAIN>_SEQUENCER_UPTIME_FEED : l2 sequencer uptime feed
  *                                          (set address(0) on L1s / leave unset)
  *        - <CHAIN>_ZEROX_PROXY       : 0x Exchange Proxy (liquidation route)
  *        - <CHAIN>_ZEROX_ALLOWANCE_TARGET : 0x token-puller (usually same as proxy)
@@ -90,7 +90,7 @@ contract ConfigureOracle is Script {
         // we let each env decide to allow forks to stub them out.
         address usdDenom = _resolveAddressStrict("USD_DENOMINATOR");
         address ethDenom = _resolveAddressStrict("ETH_DENOMINATOR");
-        // L1 has no sequencer feed; L2s do. Address(0) disables the check.
+        // l1 has no sequencer feed; L2s do. Address(0) disables the check.
         address sequencerFeed = _resolveAddress("SEQUENCER_UPTIME_FEED");
         address zeroEx = _resolveAddressStrict("ZEROX_PROXY");
         address allowanceTarget = _resolveAddressStrict("ZEROX_ALLOWANCE_TARGET");

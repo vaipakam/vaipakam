@@ -29,12 +29,12 @@ import {OfferCreateFacet} from "./OfferCreateFacet.sol";
  *      ERC-20 loans only (NFT rental lender-sale requires NFT custody
  *      transfer — not supported in Phase 1).
  *
- *      Option 1 — {sellLoanViaBuyOffer}: Liam accepts an existing Lender
- *      Offer from Noah. Noah's principal goes to Liam (minus any rate
- *      shortfall); Liam forfeits accrued interest to treasury.
+ *      Option 1 — {sellLoanViaBuyOffer}: liam accepts an existing Lender
+ *      Offer from Noah. Noah's principal goes to liam (minus any rate
+ *      shortfall); liam forfeits accrued interest to treasury.
  *
  *      Option 2 — two-step:
- *        a) {createLoanSaleOffer}: Liam creates a borrower-style sale
+ *        a) {createLoanSaleOffer}: liam creates a borrower-style sale
  *           offer linked to the live loan via `saleOfferToLoanId`.
  *        b) A new lender accepts the sale offer (via {OfferFacet.acceptOffer},
  *           which atomically calls {completeLoanSale}). The live loan's
@@ -105,7 +105,7 @@ contract EarlyWithdrawalFacet is
 
     /**
      * @notice Allows original lender to sell an active loan by accepting a new Lender Offer.
-     * @dev Option 1: Liam accepts Noah's Lender Offer. Transfers principal, forfeits accrued to treasury,
+     * @dev Option 1: liam accepts Noah's Lender Offer. Transfers principal, forfeits accrued to treasury,
      *      calculates/pays shortfall if rates differ. Updates NFTs, loan lender.
      *      Callable only by original lender. Emits LoanSold.
      * @param loanId The active loan ID to sell.
@@ -148,7 +148,7 @@ contract EarlyWithdrawalFacet is
             revert InvalidSaleOffer();
         if (buyOffer.prepayAsset != loan.prepayAsset) revert InvalidSaleOffer();
 
-        // Borrower-favorability: Noah's terms must not worsen Alice's position (README Section 9)
+        // Borrower-favorability: Noah's terms must not worsen alice's position (README Section 9)
         {
             uint256 elapsedSecs = block.timestamp - loan.startTime;
             uint256 remainDays = loan.durationDays > (elapsedSecs / 1 days)
@@ -174,9 +174,9 @@ contract EarlyWithdrawalFacet is
         uint256 priorHeld = s.heldForLender[loanId];
 
         // ── Net settlement (README Section 9, Option 1) ────────────────────
-        // Noah's principal is the only inflow.  Liam's share (principal minus
+        // Noah's principal is the only inflow.  liam's share (principal minus
         // his cost) is paid out net; treasury cut and Noah's shortfall deposit
-        // come from the same bucket — Liam never needs to pre-approve tokens.
+        // come from the same bucket — liam never needs to pre-approve tokens.
         //   liamCost    = max(accrued, shortfall)
         //   treasuryCut = max(accrued - shortfall, 0)   (unused forfeited accrued)
         //   toNoahHeld  = shortfall                     (compensates Noah)
@@ -206,12 +206,12 @@ contract EarlyWithdrawalFacet is
         uint256 treasuryCut = accrued > shortfall ? accrued - shortfall : 0;
 
         if (buyOffer.amount < loan.principal) revert InvalidSaleOffer();
-        // If Liam's cost exceeds what Noah brings, net settlement cannot
-        // complete — Liam would owe tokens we never collected from him.
+        // If liam's cost exceeds what Noah brings, net settlement cannot
+        // complete — liam would owe tokens we never collected from him.
         if (liamCost > loan.principal) revert RateShortfallTooHigh();
 
         // Pull Noah's principal into the diamond in a single withdraw,
-        // then fan out to Liam / treasury / Noah's heldForLender.
+        // then fan out to liam / treasury / Noah's heldForLender.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 VaultFactoryFacet.vaultWithdrawERC20.selector,
@@ -321,7 +321,7 @@ contract EarlyWithdrawalFacet is
      *      list, sell, transfer, or approve the NFT on any marketplace.
      *      See LibERC721.LockReason.EarlyWithdrawalSale.
      *
-     *      Liam creates offer for his loan position; new lender accepts via OfferFacet.acceptOffer.
+     *      liam creates offer for his loan position; new lender accepts via OfferFacet.acceptOffer.
      *      Terms: Remaining duration, same assets/collateral. Links offer to loan via new mapping.
      *      Callable only by original lender. No event here (emitted on acceptance in OfferFacet).
      * @param loanId The loan ID to sell.
@@ -360,9 +360,9 @@ contract EarlyWithdrawalFacet is
 
         // Create mimicking Borrower Offer via cross-facet call.
         // collateralAmount is set to 0 because this is a lender-position sale,
-        // not a real borrower posting collateral.  Alice's collateral on the
+        // not a real borrower posting collateral.  alice's collateral on the
         // live loan continues to back it after the lender transfer.  Setting 0
-        // avoids requiring Liam to post fresh capital he shouldn't need.
+        // avoids requiring liam to post fresh capital he shouldn't need.
         uint256 saleOfferId = _submitSaleOffer(
             loan,
             remainingDays,
@@ -461,13 +461,13 @@ contract EarlyWithdrawalFacet is
      *      keeper with the COMPLETE_LOAN_SALE action bit and the
      *      per-loan enable for this loan (lender-entitled action).
      *      Verifies the linked sale offer was accepted, then:
-     *      - Principal: Already transferred from Noah to Liam by acceptOffer() (no second transfer).
+     *      - Principal: Already transferred from Noah to liam by acceptOffer() (no second transfer).
      *      - Forfeits accrued interest to treasury (or applies toward shortfall).
      *      - Handles rate shortfall if applicable.
      *      - Updates loan.lender to Noah on the live loan.
-     *      - Burns Liam's lender NFT and mints one for Noah.
+     *      - Burns liam's lender NFT and mints one for Noah.
      *      - Cleans up the temporary loan created by acceptOffer() (burns its NFTs,
-     *        releases Liam's locked collateral, sets dummy claims so ClaimFacet doesn't block).
+     *        releases liam's locked collateral, sets dummy claims so ClaimFacet doesn't block).
      * @param loanId The loan ID whose sale to complete.
      */
     function completeLoanSale(
@@ -502,7 +502,7 @@ contract EarlyWithdrawalFacet is
         uint256 tempLoanId = s.offerIdToLoanId[saleOfferId];
         if (tempLoanId == 0)
             revert LenderResolutionFailed();
-        // For a Borrower-type offer: creator=Liam is borrower, acceptor=Noah is lender
+        // For a Borrower-type offer: creator=liam is borrower, acceptor=Noah is lender
         address newLender = s.loans[tempLoanId].lender;
         if (newLender == address(0))
             revert LenderResolutionFailed();
@@ -511,8 +511,8 @@ contract EarlyWithdrawalFacet is
         uint256 priorHeldSale = s.heldForLender[loanId];
 
         // ── Accrued interest & shortfall ────────────────────────────────────
-        // "Forfeited accrued" means Liam absorbs the cost — the borrower has
-        // not paid this interest yet.  Liam must fund every token that gets
+        // "Forfeited accrued" means liam absorbs the cost — the borrower has
+        // not paid this interest yet.  liam must fund every token that gets
         // routed to treasury or Noah.
         uint256 elapsed = block.timestamp - loan.startTime;
         uint256 totalSecs = loan.durationDays * 1 days;
@@ -529,7 +529,7 @@ contract EarlyWithdrawalFacet is
             (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
 
         // T-037 — pay each destination directly from `originalLender`
-        // (the wallet of Liam, who approved the Diamond). The previous
+        // (the wallet of liam, who approved the Diamond). The previous
         // pull-into-Diamond-then-split pattern incurred 1 transferFrom +
         // N transfers (3 transfers total in the worst case); the new
         // direct-transfer pattern is N transferFroms total (2 in the
@@ -575,7 +575,7 @@ contract EarlyWithdrawalFacet is
 
         // NOTE: Principal transfer already happened in acceptOffer().
         // For Borrower-type offers, acceptOffer() withdraws principal from
-        // Noah's (lender) vault and sends it to Liam (borrower=offer.creator).
+        // Noah's (lender) vault and sends it to liam (borrower=offer.creator).
         // No second transfer needed here.
 
         // Migrate only pre-existing heldForLender from old lender's vault to new lender's
@@ -628,8 +628,8 @@ contract EarlyWithdrawalFacet is
             NFTBurnFailed.selector
         );
 
-        // Release Liam's collateral that was locked when creating the
-        // borrower-style sale offer. Liam locked collateral into his vault
+        // Release liam's collateral that was locked when creating the
+        // borrower-style sale offer. liam locked collateral into his vault
         // via createOffer(Borrower, ...) — return it to him.
         if (tempLoan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
             if (tempLoan.collateralAmount > 0) {

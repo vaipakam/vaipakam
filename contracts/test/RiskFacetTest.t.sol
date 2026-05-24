@@ -1631,11 +1631,11 @@ contract RiskFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev Tests calculateHealthFactor returns type(uint256).max when borrowValueUSD is 0.
+    /// @dev Tests calculateHealthFactor returns type(uint256).max when borrowValueUsd is 0.
     function testCalculateHealthFactorReturnsMaxWhenBorrowZero() public {
         uint256 loanId = createAndAcceptOffer();
 
-        // Mock borrow price to $0 → borrowValueUSD = 0 → should return type(uint256).max
+        // Mock borrow price to $0 → borrowValueUsd = 0 → should return type(uint256).max
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(
@@ -1645,11 +1645,11 @@ contract RiskFacetTest is Test {
             abi.encode(0, 8)
         );
 
-        // With price=0 for both principal and collateral: borrowValueUSD=0 but also collateralValueUSD=0.
+        // With price=0 for both principal and collateral: borrowValueUsd=0 but also collateralValueUsd=0.
         // Need to mock differently: principal at $0 but collateral at $1.
         // Since both use mockERC20, we need a second mock token for collateral.
         // Actually, both assets are mockERC20 (same address). We can't differentiate with vm.mockCall.
-        // Instead, use vm.store to set principal to 0 so currentBorrowBalance=0 → borrowValueUSD=0.
+        // Instead, use vm.store to set principal to 0 so currentBorrowBalance=0 → borrowValueUsd=0.
         vm.clearMockedCalls();
         // Re-mock oracle prices normally for both principal and collateral
         mockOraclePrice(mockERC20, 1e8, 8);
@@ -1750,7 +1750,7 @@ contract RiskFacetTest is Test {
         TestMutatorFacet(address(diamond)).setLiquidationLtvBpsAtInitRaw(loanId, 8500);
     }
 
-    /// @dev Tests calculateLTV when collateral price = 0 → collateralValueUSD = 0 → ZeroCollateral revert.
+    /// @dev Tests calculateLTV when collateral price = 0 → collateralValueUsd = 0 → ZeroCollateral revert.
     ///      This is already tested but we test it with a different setup to also cover the
     ///      path where principal price is nonzero but collateral price is 0.
     function testCalculateLTVZeroCollateralPriceWithDifferentAssets() public {
@@ -2618,12 +2618,12 @@ contract RiskFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev Tests calculateHealthFactor returns type(uint256).max when borrowValueUSD == 0.
-    ///      This exercises the `if (borrowValueUSD == 0) return type(uint256).max` branch.
+    /// @dev Tests calculateHealthFactor returns type(uint256).max when borrowValueUsd == 0.
+    ///      This exercises the `if (borrowValueUsd == 0) return type(uint256).max` branch.
     function testCalculateHealthFactorBorrowValueZero() public {
         uint256 loanId = createAndAcceptOffer();
 
-        // Mock collateral price to 0 → collateralValueUSD = 0 → ZeroCollateral revert
+        // Mock collateral price to 0 → collateralValueUsd = 0 → ZeroCollateral revert
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(
@@ -3374,7 +3374,7 @@ contract RiskFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev L2 sequencer circuit-breaker gates the partial path the same
+    /// @dev l2 sequencer circuit-breaker gates the partial path the same
     ///      way it gates the full triggerLiquidation. While the sequencer
     ///      is unhealthy (down OR still inside its 1h recovery grace),
     ///      Chainlink prices + AMM state can be stale → a swap could
@@ -3549,7 +3549,7 @@ contract RiskFacetTest is Test {
     }
 
     /// @dev Sequencer down → reuse the atomic path's
-    ///      `SequencerUnhealthy` revert. Same L2 circuit-breaker.
+    ///      `SequencerUnhealthy` revert. Same l2 circuit-breaker.
     function testTriggerLiquidationDiscounted_RevertsSequencerUnhealthy() public {
         uint256 loanId = createAndAcceptOffer();
         TestMutatorFacet(address(diamond)).setDiscountPathEnabledRaw(true);

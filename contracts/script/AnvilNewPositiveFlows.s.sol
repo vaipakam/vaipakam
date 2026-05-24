@@ -43,9 +43,9 @@ import {Deployments} from "./lib/Deployments.sol";
  *           N3  — Partial repay (lender opt-in via `allowsPartialRepay`,
  *                 borrower repays 30% mid-loan, then full close).
  *                 Maps to Advanced Guide § Loan Details > Actions.
- *           N4  — Refinance (alice has loan L1; she posts a new
- *                 borrower offer; bob accepts → L2; alice calls
- *                 `refinanceLoan(L1, newOfferId)` to swap lenders).
+ *           N4  — Refinance (alice has loan l1; she posts a new
+ *                 borrower offer; bob accepts → l2; alice calls
+ *                 `refinanceLoan(l1, newOfferId)` to swap lenders).
  *                 Maps to Advanced Guide § Refinance.
  *           N7  — Stuck-token recovery happy path (random ERC20 sent
  *                 to user's vault, user signs the EIP-712
@@ -313,13 +313,13 @@ contract AnvilNewPositiveFlows is Script {
 
     // ─── N4: Refinance ────────────────────────────────────────────────────
 
-    /// @dev alice (borrower) takes loan L1 from Lender A. alice then
+    /// @dev alice (borrower) takes loan l1 from Lender A. alice then
     ///      creates a new Borrower offer at a lower interest rate;
-    ///      Lender B accepts the offer (creating loan L2). alice now
+    ///      Lender B accepts the offer (creating loan l2). alice now
     ///      holds Lender B's principal in hand. She calls
-    ///      `refinanceLoan(L1, newOfferId)` which uses that principal
+    ///      `refinanceLoan(l1, newOfferId)` which uses that principal
     ///      to repay Lender A and rolls the loan over to Lender B's
-    ///      terms. End state: L1 settled, L2 active, single collateral
+    ///      terms. End state: l1 settled, l2 active, single collateral
     ///      lock, no net principal movement to alice (she just swapped
     ///      lenders).
     ///
@@ -330,7 +330,7 @@ contract AnvilNewPositiveFlows is Script {
         console.log("");
         console.log("=== N4: Refinance ===");
 
-        // alice + Lender A create + accept an offer → loan L1.
+        // alice + Lender A create + accept an offer → loan l1.
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
         uint256 offerL1 = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
@@ -352,15 +352,15 @@ contract AnvilNewPositiveFlows is Script {
         vm.stopBroadcast();
         console.log("Alice's refinance borrower offer:", refinanceOfferId);
 
-        // Lender B accepts — creates loan L2. alice receives L2's
+        // Lender B accepts — creates loan l2. alice receives l2's
         // principal in her wallet.
         vm.startBroadcast(newLenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
         OfferAcceptFacet(diamond).acceptOffer(refinanceOfferId, true);
         vm.stopBroadcast();
 
-        // alice repays Lender A using L2's principal. refinanceLoan is
-        // a single-tx settle of L1 against the new offer — alice signs.
+        // alice repays Lender A using l2's principal. refinanceLoan is
+        // a single-tx settle of l1 against the new offer — alice signs.
         vm.startBroadcast(borrowerKey);
         // Refinance pays the OLD lender principal + full-term interest.
         // alice approves enough to cover both.
@@ -368,7 +368,7 @@ contract AnvilNewPositiveFlows is Script {
         RefinanceFacet(diamond).refinanceLoan(loanL1, refinanceOfferId);
         vm.stopBroadcast();
 
-        // Verify L1 is no longer Active (it's been settled by refinance).
+        // Verify l1 is no longer Active (it's been settled by refinance).
         LibVaipakam.Loan memory l1After = LoanFacet(diamond).getLoanDetails(loanL1);
         require(
             l1After.status != LibVaipakam.LoanStatus.Active,
@@ -839,11 +839,11 @@ contract AnvilNewPositiveFlows is Script {
     ///        Phase B: Borrower #1 posts a single-point matchable offer
     ///                 (2.5k @ 500 bps); a third-party "matcher"
     ///                 (newBorrower in this script) calls
-    ///                 `matchOffers(L, B1)`. Loan opens, lender's
+    ///                 `matchOffers(L, b1)`. Loan opens, lender's
     ///                 `amountFilled` = 2.5k (50% filled), 1% LIF
     ///                 kickback to matcher.
     ///        Phase C: Borrower #2 posts another offer (2k @ 500
-    ///                 bps). Matcher calls `matchOffers(L, B2)`.
+    ///                 bps). Matcher calls `matchOffers(L, b2)`.
     ///                 Lender's remaining capacity drops below
     ///                 `amountMin` (2k) → dust auto-close, residual
     ///                 refund.
@@ -1035,15 +1035,15 @@ contract AnvilNewPositiveFlows is Script {
 
     // ─── N5: Preclose Option 2 — transferObligationViaOffer ──────────────
 
-    /// @dev alice (existing borrower of L1, lender = liam) wants to
+    /// @dev alice (existing borrower of l1, lender = liam) wants to
     ///      exit her loan early. ben (a new borrower) creates a
     ///      Borrower offer with terms favoring liam (same asset,
     ///      collateral >= original, duration <= remaining, principal
-    ///      matches L1.principal). alice calls
-    ///      `transferObligationViaOffer(L1, benOfferId)` — she pays
+    ///      matches l1.principal). alice calls
+    ///      `transferObligationViaOffer(l1, benOfferId)` — she pays
     ///      accrued interest + any shortfall directly to liam, ben's
     ///      collateral becomes the new collateral, ben becomes the
-    ///      new borrower of the SAME loan slot (L1). liam stays on as
+    ///      new borrower of the SAME loan slot (l1). liam stays on as
     ///      lender; the loan terms (rate, duration end) are preserved.
     ///
     ///      Roles in this scenario:
@@ -1060,7 +1060,7 @@ contract AnvilNewPositiveFlows is Script {
         console.log("=== N5: Preclose Option 2 (transferObligationViaOffer) ===");
 
         // liam (newLender) creates a lender offer. alice (lender slot)
-        // is the borrower of L1 — she'll be replaced by ben.
+        // is the borrower of l1 — she'll be replaced by ben.
         address liam = newLender;
         address alice = lender;
         address ben = borrower;
@@ -1080,9 +1080,9 @@ contract AnvilNewPositiveFlows is Script {
         console.log("L1 (Liam -> Alice) initiated:", loanL1);
 
         // ben creates a Borrower offer with terms favoring liam:
-        // same lending asset, same collateral asset, principal == L1
+        // same lending asset, same collateral asset, principal == l1
         // principal, durationDays <= remaining, collateralAmount >=
-        // L1.collateralAmount. We use exact-match terms for simplicity.
+        // l1.collateralAmount. We use exact-match terms for simplicity.
         vm.startBroadcast(benKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
         uint256 benOfferId = OfferCreateFacet(diamond).createOffer(_borrowerOfferTakeoverFor(ben));
@@ -1098,7 +1098,7 @@ contract AnvilNewPositiveFlows is Script {
         PrecloseFacet(diamond).transferObligationViaOffer(loanL1, benOfferId);
         vm.stopBroadcast();
 
-        // Verify: L1 is still Active but borrower changed from alice
+        // Verify: l1 is still Active but borrower changed from alice
         // to ben; lender unchanged.
         LibVaipakam.Loan memory l1After = LoanFacet(diamond).getLoanDetails(loanL1);
         require(
@@ -1142,22 +1142,22 @@ contract AnvilNewPositiveFlows is Script {
 
     // ─── N6: Preclose Option 3 — offsetWithNewOffer + completeOffset ─────
 
-    /// @dev alice (borrower of L1, lender = liam) wants to exit AND
+    /// @dev alice (borrower of l1, lender = liam) wants to exit AND
     ///      become a lender herself (Option 3). She:
     ///        1. Pays accrued interest + shortfall to liam.
-    ///        2. Creates a new Lender offer linked to L1 via the
+    ///        2. Creates a new Lender offer linked to l1 via the
     ///           `offsetOfferToLoanId` mapping. The borrower NFT for
-    ///           L1 is natively-locked while the offset is in flight.
+    ///           l1 is natively-locked while the offset is in flight.
     ///        3. charlie (new borrower) accepts the offset offer.
     ///           Inside `_acceptOffer` the auto-link triggers
-    ///           `completeOffset(L1)` which:
-    ///             - Settles L1 (status -> Repaid)
+    ///           `completeOffset(l1)` which:
+    ///             - Settles l1 (status -> Repaid)
     ///             - Releases alice's collateral to her vault
     ///             - charlie's loan against alice as lender goes Active
     ///
     ///      Roles:
     ///        liam   = `newLender`  (original lender)
-    ///        alice  = `lender`     (borrower of L1 -> lender of L_new)
+    ///        alice  = `lender`     (borrower of l1 -> lender of L_new)
     ///        charlie = `borrower`  (new borrower)
     function _scenarioN6_precloseOption3_offset() internal {
         console.log("");
@@ -1170,7 +1170,7 @@ contract AnvilNewPositiveFlows is Script {
         uint256 aliceKey = lenderKey;
         uint256 charlieKey = newBorrowerKey;
 
-        // Setup loan L1: liam -> alice.
+        // Setup loan l1: liam -> alice.
         vm.startBroadcast(liamKey);
         usdc.approve(diamond, LOAN_AMOUNT);
         uint256 lenderOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
@@ -1185,7 +1185,7 @@ contract AnvilNewPositiveFlows is Script {
         // alice calls offsetWithNewOffer. She pays accrued + shortfall
         // to liam (~0 at t≈0 with same rate/duration); deposits new
         // principal into her vault; the diamond mints a Lender offer
-        // on her behalf and links it to L1.
+        // on her behalf and links it to l1.
         vm.startBroadcast(aliceKey);
         // Approve generously: offsetWithNewOffer pulls from alice's
         // wallet THREE times — (1) treasuryFee on accrued, (2)
@@ -1196,7 +1196,7 @@ contract AnvilNewPositiveFlows is Script {
         usdc.approve(diamond, LOAN_AMOUNT * 3);
         uint256 offsetOfferId = PrecloseFacet(diamond).offsetWithNewOffer(
             loanL1,
-            INTEREST_BPS,           // same rate as L1 — minimal shortfall
+            INTEREST_BPS,           // same rate as l1 — minimal shortfall
             DURATION_DAYS,          // same duration — within remaining
             address(weth),
             COLLATERAL_AMOUNT,
@@ -1207,7 +1207,7 @@ contract AnvilNewPositiveFlows is Script {
         console.log("Alice's offset offer:", offsetOfferId);
 
         // charlie accepts. The auto-link inside `_acceptOffer` fires
-        // `PrecloseFacet.completeOffset(L1)` which closes L1 and
+        // `PrecloseFacet.completeOffset(l1)` which closes l1 and
         // releases alice's collateral.
         vm.startBroadcast(charlieKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
@@ -1215,7 +1215,7 @@ contract AnvilNewPositiveFlows is Script {
         vm.stopBroadcast();
         console.log("Charlie accepted -> new loanId:", newLoanId);
 
-        // Verify L1 is no longer Active.
+        // Verify l1 is no longer Active.
         LibVaipakam.Loan memory l1Settled = LoanFacet(diamond).getLoanDetails(loanL1);
         require(
             l1Settled.status != LibVaipakam.LoanStatus.Active,
@@ -1716,12 +1716,12 @@ contract AnvilNewPositiveFlows is Script {
 
     /// @dev Maps to Advanced Guide § Early Withdrawal (Lender) and the
     ///      EarlyWithdrawalFacet `sellLoanViaBuyOffer` path. Roles:
-    ///        - Original lender (Liam = `newLender`) holds an active loan.
-    ///        - Buyer (Bob = `lender`) creates a Lender-type buy offer
+    ///        - Original lender (liam = `newLender`) holds an active loan.
+    ///        - Buyer (bob = `lender`) creates a Lender-type buy offer
     ///          with the same shape as the loan (or no-worse terms).
-    ///        - Liam calls `sellLoanViaBuyOffer(loanId, buyOfferId)` to
-    ///          flip lender on the existing loan to Bob.
-    ///        - Borrower (`newBorrower`) then repays Bob.
+    ///        - liam calls `sellLoanViaBuyOffer(loanId, buyOfferId)` to
+    ///          flip lender on the existing loan to bob.
+    ///        - Borrower (`newBorrower`) then repays bob.
     ///
     ///      The auto-link counterpart (createLoanSaleOffer + buyer
     ///      `acceptOffer` → `completeLoanSale` re-entry) needs the
@@ -1734,7 +1734,7 @@ contract AnvilNewPositiveFlows is Script {
         console.log("");
         console.log("=== N15: Lender Early Withdrawal (sellLoanViaBuyOffer) ===");
 
-        // Step 1: Liam (newLender) lends to newBorrower → loan active.
+        // Step 1: liam (newLender) lends to newBorrower → loan active.
         vm.startBroadcast(newLenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
         uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
@@ -1743,9 +1743,9 @@ contract AnvilNewPositiveFlows is Script {
         weth.approve(diamond, COLLATERAL_AMOUNT);
         uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
         vm.stopBroadcast();
-        console.log("L1 (newLender -> newBorrower) initiated:", loanId);
+        console.log("l1 (newLender -> newBorrower) initiated:", loanId);
 
-        // Step 2: Bob (`lender`) creates a Lender buy offer with the
+        // Step 2: bob (`lender`) creates a Lender buy offer with the
         // same shape — sellLoanViaBuyOffer requires asset/duration/
         // collateral parity (or no-worse terms for borrower).
         vm.startBroadcast(lenderKey);
@@ -1754,7 +1754,7 @@ contract AnvilNewPositiveFlows is Script {
         vm.stopBroadcast();
         console.log("bob's buy offer:", buyOfferId);
 
-        // Step 3: Liam sells the position to Bob.
+        // Step 3: liam sells the position to bob.
         vm.startBroadcast(newLenderKey);
         EarlyWithdrawalFacet(diamond).sellLoanViaBuyOffer(loanId, buyOfferId);
         vm.stopBroadcast();
@@ -1765,7 +1765,7 @@ contract AnvilNewPositiveFlows is Script {
         );
         console.log("Loan lender flipped to bob; loan.lender:", loanAfterSale.lender);
 
-        // Step 4: borrower (newBorrower) repays the loan; Bob now owns
+        // Step 4: borrower (newBorrower) repays the loan; bob now owns
         // the lender position.
         vm.startBroadcast(newBorrowerKey);
         uint256 repayAmt = RepayFacet(diamond).calculateRepaymentAmount(loanId);
@@ -1824,7 +1824,7 @@ contract AnvilNewPositiveFlows is Script {
             offerType: LibVaipakam.OfferType.Borrower,
             lendingAsset: address(usdc),
             amount: LOAN_AMOUNT,
-            // Lower rate than the original loan — Alice is refinancing
+            // Lower rate than the original loan — alice is refinancing
             // because she found a cheaper lender.
             interestRateBps: INTEREST_BPS / 2,
             collateralAsset: address(weth),

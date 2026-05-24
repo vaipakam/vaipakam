@@ -494,7 +494,7 @@ contract BorrowerPartialFillTest is SetupTest {
     ///         - `LibOfferMatch._effBorrowerAmountMax` was DELETED
     ///           (the derivation that was the test's target).
     ///         - `OfferMatchFacet.matchOffers` post-block reads
-    ///           `Bm.amountMax` directly — no GTC sentinel path.
+    ///           `bm.amountMax` directly — no GTC sentinel path.
     ///
     ///         The test stays as a future-proofing assertion that the
     ///         derivation path remains deleted. If a future PR re-adds

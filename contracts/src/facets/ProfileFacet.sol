@@ -192,7 +192,7 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
      *        tier0–tier1       → Tier1 required
      *        ≥ tier1Threshold  → Tier2 required
      *      Values are scaled to 1e18 matching the unit returned by
-     *      `OracleFacet.getAssetPrice` (numeraire-quoted post Numeraire generalization (B1)).
+     *      `OracleFacet.getAssetPrice` (numeraire-quoted post Numeraire generalization (b1)).
      *      Used by OfferFacet, DefaultedFacet, and RiskFacet for transaction-level compliance.
      * @param user The user's address.
      * @param valueNumeraire The transaction value in the active numeraire scaled to 1e18.
@@ -231,7 +231,7 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
      *      compile-time defaults (Tier0 = 1_000 numeraire-units,
      *      Tier1 = 10_000 numeraire-units; reads as $1k / $10k under
      *      USD-as-numeraire — the post-deploy default). After
-     *      Generalizing Numeraire (B1) the comparison sites are
+     *      Generalizing Numeraire (b1) the comparison sites are
      *      numeraire-vs-numeraire end to end: the getters
      *      `getKycTier0Threshold` / `getKycTier1Threshold` return raw
      *      numeraire-units, and `OracleFacet.getAssetPrice` returns
@@ -604,7 +604,7 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
     // tradeAllowance). Phase 4.3 layers in address-level screening via a
     // Chainalysis-style on-chain oracle. The check is a read-through to
     // the configured oracle contract; on chains where no oracle is
-    // deployed (some L2 testnets), governance leaves the oracle address
+    // deployed (some l2 testnets), governance leaves the oracle address
     // zero and the check becomes a no-op.
     //
     // Integration points: `OfferFacet.createOffer` and

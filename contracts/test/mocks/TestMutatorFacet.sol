@@ -494,7 +494,7 @@ contract TestMutatorFacet {
     ///         62-entry test-mutator selector list need not be
     ///         re-indexed. Safe to drop together with that re-index.
     function setLocalEidForTest(uint32 eid) external {
-        LibVaipakam.storageSlot().localEid_LEGACY_DO_NOT_USE = eid;
+        LibVaipakam.storageSlot().localEidLegacyDoNotUse = eid;
     }
 
     /// @notice Append a {LibVaipakam.RewardEntry} record for `user` and link

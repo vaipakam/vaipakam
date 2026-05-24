@@ -183,7 +183,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
 
         // If this is a lender-sale vehicle, the underlying live loan must still
         // be Active.  Otherwise the principal transfer in acceptOffer would send
-        // funds to Liam for a loan that is already repaid/defaulted, and
+        // funds to liam for a loan that is already repaid/defaulted, and
         // completeLoanSale would revert — leaving Noah with no lender rights.
         if (isLenderSaleVehicle) {
             uint256 linkedLoanId = s.saleOfferToLoanId[offerId];

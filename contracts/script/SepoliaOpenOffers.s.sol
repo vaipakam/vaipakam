@@ -60,7 +60,7 @@ contract SepoliaOpenOffers is Script {
     // All LTVs are ~50% against the $2000 mock WETH feed — well clear of the
     // MIN_HEALTH_FACTOR=1.5e18 gate so the offers are actually acceptable.
     struct OfferTier {
-        uint256 principal;      // mUSDC (6 decimals)
+        uint256 principal;      // mUsdc (6 decimals)
         uint256 collateral;     // mWETH (18 decimals)
         uint16 interestBps;
         uint16 durationDays;
@@ -109,7 +109,7 @@ contract SepoliaOpenOffers is Script {
 
         MockUniswapV3Factory univ3Factory = new MockUniswapV3Factory();
         // sqrtPriceX96 = 2^96 (price = 1). Pool liquidity 1e24 clears the
-        // MIN_LIQUIDITY_PAD floor by several orders of magnitude — mUSDC +
+        // MIN_LIQUIDITY_PAD floor by several orders of magnitude — mUsdc +
         // mWETH both classify Liquid.
         univ3Factory.createPool(address(usdc), address(weth), 3000, 79228162514264337593543950336, 1e24);
         vm.stopBroadcast();
