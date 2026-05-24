@@ -3,7 +3,7 @@ pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
 import {VaipakamDiamond} from "../../src/VaipakamDiamond.sol";
-import {IDiamondCut} from "@DIAMOND-3/interfaces/IDiamondCut.sol";
+import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {DiamondCutFacet} from "../../src/facets/DiamondCutFacet.sol";
 import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {ConfigFacet} from "../../src/facets/ConfigFacet.sol";
