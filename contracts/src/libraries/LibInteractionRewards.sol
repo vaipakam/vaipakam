@@ -1043,8 +1043,9 @@ library LibInteractionRewards {
             return (0, 0);
         }
         // forge-lint: disable-next-line unsafe-typecast
-        // safe: Chainlink `answer` validated > 0 upstream by `_validateFeed`
-        // before this getter returns success.
+        // safe: `answer` is validated > 0 by the local `if (answer <= 0)
+        // return (0, 0);` guard a few lines above this return (just after
+        // the `decimals()` try/catch).
         return (uint256(answer), dec);
     }
 

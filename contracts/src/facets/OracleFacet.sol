@@ -1825,8 +1825,9 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             if (!_answerWithinAnyPeg(answer, dec)) return (false, 0, 0);
         }
         // forge-lint: disable-next-line unsafe-typecast
-        // safe: Chainlink `answer` validated > 0 upstream (every `_chainlinkAnswer`
-        // path checks `answer > 0` before returning success).
+        // safe: `answer` is validated > 0 by `_readFreshUsdFeed`'s own
+        // `if (answer <= 0 || updatedAt == 0 || ...) return (false, 0, 0);`
+        // guard near the head of the function, before any cast path runs.
         return (true, uint256(answer), dec);
     }
 
@@ -1886,8 +1887,9 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             if (age > ovr.maxStaleness) revert StalePriceData();
             uint8 dec = AggregatorV3Interface(feed).decimals();
             // forge-lint: disable-next-line unsafe-typecast
-            // safe: Chainlink `answer` validated > 0 upstream (every override
-            // and stable-peg path enforces non-positive ⇒ revert).
+            // safe: `answer` is validated > 0 by `_readFreshUsdFeed`'s own
+            // head-of-function guard (`if (answer <= 0 || ...) return`),
+            // which runs before any override-or-default branch.
             return (uint256(answer), dec);
         }
 
@@ -1902,8 +1904,9 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             if (!_answerWithinAnyPeg(answer, dec2)) revert StalePriceData();
         }
         // forge-lint: disable-next-line unsafe-typecast
-        // safe: Chainlink `answer` validated > 0 by the staleness +
-        // peg check above (stable-feed branch in `_chainlinkAnswer`).
+        // safe: `answer` is validated > 0 by `_readFreshUsdFeed`'s own
+        // head-of-function guard (`if (answer <= 0 || ...) return`),
+        // before the staleness + peg branches reach this return path.
         return (uint256(answer), dec2);
     }
 

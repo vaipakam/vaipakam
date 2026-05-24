@@ -3857,9 +3857,10 @@ library LibVaipakam {
         LibDiamond.enforceIsContractOwner();
         Storage storage s = storageSlot();
         // forge-lint: disable-next-line unsafe-typecast
-        // safe: `symbol` is a stablecoin ticker (USDC/USDT/DAI/...);
-        // conventional tickers are ≤8 chars, well under bytes32's 32-byte
-        // limit. Operators register stable feeds and use conventional symbols.
+        // safe: stable-feed symbols are bounded by `MAX_STABLE_SYMBOL_LEN`
+        // = 10 in `OracleAdminFacet.setStableTokenFeed` (the only call
+        // site that flows here); the symbol's bytes are guaranteed ≤10,
+        // well under bytes32's 32-byte limit.
         bytes32 key = bytes32(bytes(symbol));
         uint256 pos = s.stableFeedSymbolPos[key];
         if (feed == address(0)) {
