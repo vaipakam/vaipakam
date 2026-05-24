@@ -1486,6 +1486,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ///      `scaleA` = `10**(feedDecimals + tokenDecimals)` so a
     ///      PAD↔base-unit conversion is one `mulDiv`; `band` =
     ///      `twapConsistencyBps`; `twapWindow` = `twapWindowSec`.
+    // forge-lint: disable-next-line pascal-case-struct
     struct _TierCtx {
         uint256 pA;
         uint256 scaleA;

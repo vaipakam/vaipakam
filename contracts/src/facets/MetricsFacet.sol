@@ -1349,6 +1349,7 @@ contract MetricsFacet {
     ///         fill NFT shows the matched principal/rate/collateral, NOT
     ///         the lender offer's range bounds. Pre-Range-Orders the NFT
     ///         derived from `offer.amount`; that's incorrect after PR3-B.
+    // forge-lint: disable-next-line pascal-case-struct
     struct NFTPositionSummary {
         uint256 tokenId;
         uint256 offerId;

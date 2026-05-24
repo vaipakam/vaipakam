@@ -157,6 +157,7 @@ contract VpfiBuyAdapter is
     uint256 public totalStuckVPFI;
 
     /// @dev Reserved storage for upgrade-safe appends.
+    // forge-lint: disable-next-line mixed-case-variable
     uint256[38] private __gap;
 
     // ─── Events ─────────────────────────────────────────────────────────────

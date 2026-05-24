@@ -27,6 +27,7 @@ library LibERC721 {
 
     /// @dev APPEND-ONLY POST-LAUNCH. New fields go at the end; never reorder,
     ///      rename, or change types of existing fields on live diamonds.
+    // forge-lint: disable-next-line pascal-case-struct
     struct ERC721Storage {
         string name;
         string symbol;
