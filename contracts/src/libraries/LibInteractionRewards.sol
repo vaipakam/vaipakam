@@ -611,7 +611,7 @@ library LibInteractionRewards {
                 uint256 myL = s.userLenderInterestNumeraire18[d][user];
                 if (myL > 0 && totalL > 0) {
                     uint256 raw = (half * myL) / totalL;
-                    uint256 cap = _capVPFIForInterestUSD(
+                    uint256 cap = _capVpfiForInterestUsd(
                         myL,
                         ethPriceRaw,
                         ethPriceDec,
@@ -623,7 +623,7 @@ library LibInteractionRewards {
                 uint256 myB = s.userBorrowerInterestNumeraire18[d][user];
                 if (myB > 0 && totalB > 0) {
                     uint256 raw = (half * myB) / totalB;
-                    uint256 cap = _capVPFIForInterestUSD(
+                    uint256 cap = _capVpfiForInterestUsd(
                         myB,
                         ethPriceRaw,
                         ethPriceDec,
@@ -653,7 +653,7 @@ library LibInteractionRewards {
                 uint256 myL = s.userLenderInterestNumeraire18[d][user];
                 if (myL > 0 && totalL > 0) {
                     uint256 raw = (half * myL) / totalL;
-                    uint256 cap = _capVPFIForInterestUSD(
+                    uint256 cap = _capVpfiForInterestUsd(
                         myL,
                         ethPriceRaw,
                         ethPriceDec,
@@ -664,7 +664,7 @@ library LibInteractionRewards {
                 uint256 myB = s.userBorrowerInterestNumeraire18[d][user];
                 if (myB > 0 && totalB > 0) {
                     uint256 raw = (half * myB) / totalB;
-                    uint256 cap = _capVPFIForInterestUSD(
+                    uint256 cap = _capVpfiForInterestUsd(
                         myB,
                         ethPriceRaw,
                         ethPriceDec,
@@ -774,7 +774,7 @@ library LibInteractionRewards {
         // Apply the §4 per-user daily cap, scaled to the entry window:
         // cap = daysInWindow * capVPFIForPerDayNumeraire(perDayNumeraire18).
         uint256 daysInWindow = e.endDay - e.startDay;
-        uint256 perDayCap = _capVPFIForInterestUSD(
+        uint256 perDayCap = _capVpfiForInterestUsd(
             e.perDayNumeraire18,
             ethPriceRaw,
             ethPriceDec,
@@ -817,7 +817,7 @@ library LibInteractionRewards {
         if (cumEnd <= cumStart) return 0;
         reward = (e.perDayNumeraire18 * (cumEnd - cumStart)) / 1e18;
 
-        uint256 perDayCap = _capVPFIForInterestUSD(
+        uint256 perDayCap = _capVpfiForInterestUsd(
             e.perDayNumeraire18,
             ethPriceRaw,
             ethPriceDec,
@@ -1013,7 +1013,7 @@ library LibInteractionRewards {
     ///      docs/TokenomicsTechSpec.md §4. Returns `type(uint256).max`
     ///      when the cap is disabled (ETH feed unavailable or admin
     ///      override == max sentinel).
-    function _capVPFIForInterestUSD(
+    function _capVpfiForInterestUsd(
         uint256 interestNumeraire18,
         uint256 ethPriceRaw,
         uint8 feedDec,

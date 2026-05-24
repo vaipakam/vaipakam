@@ -213,12 +213,12 @@ library LibERC721 {
 
     function safeTransferFrom(address from, address to, uint256 tokenId, bytes memory data) internal {
         transferFrom(from, to, tokenId);
-        _checkOnERC721Received(from, to, tokenId, data);
+        _checkOnErc721Received(from, to, tokenId, data);
     }
 
     function _safeMint(address to, uint256 tokenId) internal {
         _mint(to, tokenId);
-        _checkOnERC721Received(address(0), to, tokenId, "");
+        _checkOnErc721Received(address(0), to, tokenId, "");
     }
 
     function _mint(address to, uint256 tokenId) internal {
@@ -342,7 +342,7 @@ library LibERC721 {
         );
     }
 
-    function _checkOnERC721Received(address from, address to, uint256 tokenId, bytes memory data) private {
+    function _checkOnErc721Received(address from, address to, uint256 tokenId, bytes memory data) private {
         if (to.code.length > 0) {
             try IERC721Receiver(to).onERC721Received(msg.sender, from, tokenId, data) returns (bytes4 retval) {
                 if (retval != IERC721Receiver.onERC721Received.selector) {

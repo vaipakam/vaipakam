@@ -97,7 +97,7 @@ library LibVPFIDiscount {
      * @param user Address whose vault balance to read.
      * @return bal Vault VPFI balance (18 decimals), or 0 if unavailable.
      */
-    function vaultVPFIBalance(address user) internal view returns (uint256 bal) {
+    function vaultVpfiBalance(address user) internal view returns (uint256 bal) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.vpfiToken == address(0)) return 0;
         address vault = s.userVaipakamVaults[user];
@@ -107,10 +107,10 @@ library LibVPFIDiscount {
 
     /// @notice Returns the protocol-tracked VPFI balance for `user`,
     ///         used to clamp the yield-bearing balance against
-    ///         unsolicited dust. Mirrors {vaultVPFIBalance}'s
+    ///         unsolicited dust. Mirrors {vaultVpfiBalance}'s
     ///         defensive zero-returns when VPFI / vault are
     ///         unset.
-    function trackedVPFIBalance(address user) internal view returns (uint256) {
+    function trackedVpfiBalance(address user) internal view returns (uint256) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.vpfiToken == address(0)) return 0;
         return s.protocolTrackedVaultBalance[user][s.vpfiToken];
@@ -286,14 +286,14 @@ library LibVPFIDiscount {
     {
         if (principal == 0 || borrower == address(0)) return (false, 0, 0);
 
-        uint256 bal = vaultVPFIBalance(borrower);
+        uint256 bal = vaultVpfiBalance(borrower);
         tier = tierOf(bal);
         if (tier == 0) return (false, 0, 0);
 
         uint256 normalFee = (principal * LibVaipakam.cfgLoanInitiationFeeBps()) /
             LibVaipakam.BASIS_POINTS;
 
-        (bool ok, uint256 vpfi) = _feeAssetWeiToVPFI(principalAsset, normalFee);
+        (bool ok, uint256 vpfi) = _feeAssetWeiToVpfi(principalAsset, normalFee);
         if (!ok) return (false, 0, 0);
         return (true, vpfi, tier);
     }
@@ -340,7 +340,7 @@ library LibVPFIDiscount {
         uint256 payBps = LibVaipakam.BASIS_POINTS - avgBps;
         uint256 tierFee = (normalFee * payBps) / LibVaipakam.BASIS_POINTS;
 
-        (bool ok, uint256 vpfi) = _feeAssetWeiToVPFI(loan.principalAsset, tierFee);
+        (bool ok, uint256 vpfi) = _feeAssetWeiToVpfi(loan.principalAsset, tierFee);
         if (!ok) return (false, 0, 0);
         return (true, vpfi, avgBps);
     }
@@ -650,7 +650,7 @@ library LibVPFIDiscount {
     /// @param feeAmountInAssetWei Fee amount in `feeAsset` wei (native decimals).
     /// @return canQuote           True iff all oracle / config inputs resolved.
     /// @return vpfiRequired       VPFI (18 dec) equivalent of the fee.
-    function _feeAssetWeiToVPFI(
+    function _feeAssetWeiToVpfi(
         address feeAsset,
         uint256 feeAmountInAssetWei
     ) private view returns (bool canQuote, uint256 vpfiRequired) {

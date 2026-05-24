@@ -280,7 +280,7 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
     // ─── Fail-open: oracle failure disables the cap ─────────────────────────
 
     /// @notice When the ETH/USD feed returns a zero/negative answer,
-    ///         {_capVPFIForInterestUSD} returns the uint256-max sentinel
+    ///         {_capVpfiForInterestUsd} returns the uint256-max sentinel
     ///         so the cap branch short-circuits. Matches the graceful-
     ///         degradation pattern in {_interestToNumeraire18} — keeps claim
     ///         flows live during a transient oracle hiccup. The 69M

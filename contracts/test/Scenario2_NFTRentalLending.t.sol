@@ -251,7 +251,7 @@ contract Scenario2_NFTRentalLending is Test {
 
     /// @dev Creates a lender NFT rental offer and has borrower accept it.
     ///      Returns the loanId (always 1 for the first loan).
-    function _createAndAcceptNFTRental() internal returns (uint256 loanId) {
+    function _createAndAcceptNftRental() internal returns (uint256 loanId) {
         // Lender creates offer
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
@@ -303,7 +303,7 @@ contract Scenario2_NFTRentalLending is Test {
         uint256 borrowerUsdcBefore = IERC20(mockUsdc).balanceOf(borrower);
 
         // Step 1 & 2: Create offer and accept
-        uint256 loanId = _createAndAcceptNFTRental();
+        uint256 loanId = _createAndAcceptNftRental();
 
         // Verify loan details
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
@@ -408,7 +408,7 @@ contract Scenario2_NFTRentalLending is Test {
      */
     function test_Scenario2a_ERC721Rental_Default() public {
         // Step 1: Create offer and accept
-        uint256 loanId = _createAndAcceptNFTRental();
+        uint256 loanId = _createAndAcceptNftRental();
 
         // Verify loan is active
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);

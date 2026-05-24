@@ -89,7 +89,7 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
-        LibAuth.requireBorrowerNFTOwner(loan);
+        LibAuth.requireBorrowerNftOwner(loan);
         // FallbackPending is accepted: README allows the borrower to cure a
         // failed liquidation by topping up collateral until the lender claims.
         if (

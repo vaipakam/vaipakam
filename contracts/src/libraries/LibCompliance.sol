@@ -18,7 +18,7 @@ import {OracleFacet} from "../facets/OracleFacet.sol";
 ///      numeraire-quoted truth (USD by post-deploy default; whatever
 ///      governance has rotated to otherwise) — see Numeraire generalization (b1).
 library LibCompliance {
-    function enforceCountryAndKYC(
+    function enforceCountryAndKyc(
         address diamond,
         address newParty,
         address existingParty,

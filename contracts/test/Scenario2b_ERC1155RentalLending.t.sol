@@ -227,7 +227,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
     }
 
     /// @dev Creates the lender's ERC1155 rental offer and has the borrower accept.
-    function _createAndAcceptNFTRental() internal returns (uint256 loanId) {
+    function _createAndAcceptNftRental() internal returns (uint256 loanId) {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
@@ -280,7 +280,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
             "Lender starts with the full 10 bundle"
         );
 
-        uint256 loanId = _createAndAcceptNFTRental();
+        uint256 loanId = _createAndAcceptNftRental();
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(loan.principal, DAILY_FEE, "principal should be the daily fee");
@@ -374,7 +374,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
      *         lender gets full prepay (minus treasury) + bundle; borrower claim = 0.
      */
     function test_Scenario2b_ERC1155Rental_Default() public {
-        uint256 loanId = _createAndAcceptNFTRental();
+        uint256 loanId = _createAndAcceptNftRental();
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Active), "loan Active");

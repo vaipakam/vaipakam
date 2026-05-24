@@ -113,25 +113,25 @@ contract AnvilNewPositiveFlows is Script {
 
         _deployMocksAndConfigure();
 
-        _scenarioN3_partialRepay();
-        _scenarioN4_refinance();
-        _scenarioN7_recoveryHappyPath();
-        _scenarioN1_rangeMatchAndPartialFill();
-        _scenarioN5_precloseOption2_transferObligation();
-        _scenarioN6_precloseOption3_offset();
-        _scenarioN8_recoverySanctionedBan();
-        _scenarioN9_disown();
-        _scenarioN11_sanctionsTier1Deny();
-        _scenarioN12_keeperPerAction();
-        _scenarioN10_vpfiStakingDiscount();
-        _scenarioN13_stakingRewardsClaim();
-        _scenarioN14_unstakeVPFI();
+        _scenarioN3PartialRepay();
+        _scenarioN4Refinance();
+        _scenarioN7RecoveryHappyPath();
+        _scenarioN1RangeMatchAndPartialFill();
+        _scenarioN5PrecloseOption2TransferObligation();
+        _scenarioN6PrecloseOption3Offset();
+        _scenarioN8RecoverySanctionedBan();
+        _scenarioN9Disown();
+        _scenarioN11SanctionsTier1Deny();
+        _scenarioN12KeeperPerAction();
+        _scenarioN10VpfiStakingDiscount();
+        _scenarioN13StakingRewardsClaim();
+        _scenarioN14UnstakeVpfi();
         _restoreVpfiConfig();
-        _scenarioN18_pauseAsset();
-        _scenarioN19_globalPause();
-        _scenarioN20_treasuryAccrual();
-        _scenarioN22_masterFlagDormancy();
-        _scenarioN15_sellLoanViaBuyOffer();
+        _scenarioN18PauseAsset();
+        _scenarioN19GlobalPause();
+        _scenarioN20TreasuryAccrual();
+        _scenarioN22MasterFlagDormancy();
+        _scenarioN15SellLoanViaBuyOffer();
 
         console.log("");
         console.log("============================================");
@@ -259,7 +259,7 @@ contract AnvilNewPositiveFlows is Script {
     ///      30% mid-loan → loan.principal halves; borrower full-closes
     ///      via repayLoan. Verifies the lender-controlled gate works
     ///      end-to-end on chain.
-    function _scenarioN3_partialRepay() internal {
+    function _scenarioN3PartialRepay() internal {
         console.log("");
         console.log("=== N3: Partial Repay ===");
 
@@ -326,7 +326,7 @@ contract AnvilNewPositiveFlows is Script {
     ///      Naming: `borrower` = alice (the borrower being refinanced),
     ///              `lender` = Lender A (the original lender),
     ///              `newLender` = Lender B (the refinancing lender).
-    function _scenarioN4_refinance() internal {
+    function _scenarioN4Refinance() internal {
         console.log("");
         console.log("=== N4: Refinance ===");
 
@@ -399,7 +399,7 @@ contract AnvilNewPositiveFlows is Script {
     ///      End-state: alice's wallet balance increases by the stray
     ///      amount; recovery nonce increments; no ban activates
     ///      (sanctioned-source path is N8, separate scenario).
-    function _scenarioN7_recoveryHappyPath() internal {
+    function _scenarioN7RecoveryHappyPath() internal {
         console.log("");
         console.log("=== N7: Stuck-Token Recovery happy path ===");
 
@@ -503,7 +503,7 @@ contract AnvilNewPositiveFlows is Script {
     ///      Scenario uses `newLender` as the user this time (clean
     ///      vault); `newBorrower` (already used in N7 as the stray
     ///      sender — clean address) is flagged on the oracle.
-    function _scenarioN8_recoverySanctionedBan() internal {
+    function _scenarioN8RecoverySanctionedBan() internal {
         console.log("");
         console.log("=== N8: Stuck-Token Recovery sanctioned-source ban ===");
 
@@ -617,7 +617,7 @@ contract AnvilNewPositiveFlows is Script {
     ///      event). Per Advanced Guide § Disowning unsolicited tokens.
     ///      Tier-2 entry point — sanctioned users can still disown
     ///      (it's purely informational, no funds move).
-    function _scenarioN9_disown() internal {
+    function _scenarioN9Disown() internal {
         console.log("");
         console.log("=== N9: Disown unsolicited tokens ===");
 
@@ -655,7 +655,7 @@ contract AnvilNewPositiveFlows is Script {
     ///        4. Try `borrower.repayLoan(activeLoanId)` — should
     ///           SUCCEED (Tier-2 close-out stays open).
     ///        5. Unflag and verify createOffer succeeds again.
-    function _scenarioN11_sanctionsTier1Deny() internal {
+    function _scenarioN11SanctionsTier1Deny() internal {
         console.log("");
         console.log("=== N11: Sanctions Tier-1 deny / Tier-2 close-out ===");
 
@@ -743,7 +743,7 @@ contract AnvilNewPositiveFlows is Script {
     ///        Lender   = `lender`
     ///        Keeper   = `newBorrower` (any third-party EOA the
     ///                                  borrower trusts)
-    function _scenarioN12_keeperPerAction() internal {
+    function _scenarioN12KeeperPerAction() internal {
         console.log("");
         console.log("=== N12: Keeper Per-Action Authorization ===");
 
@@ -851,7 +851,7 @@ contract AnvilNewPositiveFlows is Script {
     ///      Verifies: rangeAmountEnabled / rangeRateEnabled /
     ///      partialFillEnabled flags work end-to-end; midpoint
     ///      computation; matcher kickback; dust close.
-    function _scenarioN1_rangeMatchAndPartialFill() internal {
+    function _scenarioN1RangeMatchAndPartialFill() internal {
         console.log("");
         console.log("=== N1: Range Match + Partial Fill ===");
 
@@ -1055,7 +1055,7 @@ contract AnvilNewPositiveFlows is Script {
     ///                              role is "borrower being replaced".
     ///                              Naming inversion is local to N5.)
     ///        ben       = `borrower` (the new borrower)
-    function _scenarioN5_precloseOption2_transferObligation() internal {
+    function _scenarioN5PrecloseOption2TransferObligation() internal {
         console.log("");
         console.log("=== N5: Preclose Option 2 (transferObligationViaOffer) ===");
 
@@ -1159,7 +1159,7 @@ contract AnvilNewPositiveFlows is Script {
     ///        liam   = `newLender`  (original lender)
     ///        alice  = `lender`     (borrower of l1 -> lender of L_new)
     ///        charlie = `borrower`  (new borrower)
-    function _scenarioN6_precloseOption3_offset() internal {
+    function _scenarioN6PrecloseOption3Offset() internal {
         console.log("");
         console.log("=== N6: Preclose Option 3 (offsetWithNewOffer + completeOffset) ===");
 
@@ -1281,7 +1281,7 @@ contract AnvilNewPositiveFlows is Script {
     bool private _n10SavedBorrowerConsent;
     bool private _n10SnapshotTaken;
 
-    function _scenarioN10_vpfiStakingDiscount() internal {
+    function _scenarioN10VpfiStakingDiscount() internal {
         console.log("");
         console.log("=== N10: VPFI Staking + Fee-Discount + Claim Rebate ===");
 
@@ -1414,7 +1414,7 @@ contract AnvilNewPositiveFlows is Script {
     ///      claim` OR (b) `pending == 0` AND the claim reverted with
     ///      `NoStakingRewardsToClaim`. Either branch proves the
     ///      accrual + claim plumbing is wired end-to-end.
-    function _scenarioN13_stakingRewardsClaim() internal {
+    function _scenarioN13StakingRewardsClaim() internal {
         console.log("");
         console.log("=== N13: VPFI Staking Rewards Claim ===");
 
@@ -1467,7 +1467,7 @@ contract AnvilNewPositiveFlows is Script {
     ///      the wallet grows by the unstaked amount and the staked
     ///      counter falls to zero. This also exercises T-051's
     ///      `protocolTrackedVaultBalance` decrement on the VPFI side.
-    function _scenarioN14_unstakeVPFI() internal {
+    function _scenarioN14UnstakeVpfi() internal {
         console.log("");
         console.log("=== N14: Unstake VPFI from vault ===");
 
@@ -1513,7 +1513,7 @@ contract AnvilNewPositiveFlows is Script {
     ///      lender's offer-create on USDC reverts, admin unpauses,
     ///      offer-create succeeds. Each new participant uses fresh
     ///      USDC allowance to keep the test isolated from prior runs.
-    function _scenarioN18_pauseAsset() internal {
+    function _scenarioN18PauseAsset() internal {
         console.log("");
         console.log("=== N18: Per-asset pause ===");
 
@@ -1567,7 +1567,7 @@ contract AnvilNewPositiveFlows is Script {
     /// @dev Verifies `AdminFacet.pause()` (PAUSER_ROLE) blocks every
     ///      `whenNotPaused` entry point. We probe with createOffer
     ///      from `lender`, then unpause and verify the action succeeds.
-    function _scenarioN19_globalPause() internal {
+    function _scenarioN19GlobalPause() internal {
         console.log("");
         console.log("=== N19: Global pause ===");
 
@@ -1614,7 +1614,7 @@ contract AnvilNewPositiveFlows is Script {
     ///      growth on duration-bearing fees is exercised by
     ///      TreasuryFacetTest.t.sol unit tests where vm.warp can move
     ///      simulation time.
-    function _scenarioN20_treasuryAccrual() internal {
+    function _scenarioN20TreasuryAccrual() internal {
         console.log("");
         console.log("=== N20: Treasury accrual surface check ===");
 
@@ -1669,7 +1669,7 @@ contract AnvilNewPositiveFlows is Script {
     ///        3. Lender attempts to create an `amountMax > amount`
     ///           range offer → must revert.
     ///        4. Admin re-enables → action succeeds.
-    function _scenarioN22_masterFlagDormancy() internal {
+    function _scenarioN22MasterFlagDormancy() internal {
         console.log("");
         console.log("=== N22: Master-flag dormancy (rangeAmountEnabled) ===");
 
@@ -1730,7 +1730,7 @@ contract AnvilNewPositiveFlows is Script {
     ///      concrete user flow drives it; the simpler
     ///      `sellLoanViaBuyOffer` path is already reentrancy-safe
     ///      because it doesn't re-enter through the diamond fallback.
-    function _scenarioN15_sellLoanViaBuyOffer() internal {
+    function _scenarioN15SellLoanViaBuyOffer() internal {
         console.log("");
         console.log("=== N15: Lender Early Withdrawal (sellLoanViaBuyOffer) ===");
 

@@ -128,9 +128,9 @@ library Deployments {
     function readDiamond()         internal view returns (address) { return _readAddr(".diamond",         "DIAMOND_ADDRESS"); }
     function readVaultImpl()      internal view returns (address) { return _readAddr(".vaultImpl",      "VAULT_IMPL_ADDRESS"); }
     function readTimelock()        internal view returns (address) { return _readAddr(".timelock",        "TIMELOCK_ADDRESS"); }
-    function readVPFIToken()       internal view returns (address) { return _readAddr(".vpfiToken",       "VPFI_TOKEN_ADDRESS"); }
-    function readVPFIBuyAdapter()  internal view returns (address) { return _readAddr(".vpfiBuyAdapter",  "VPFI_BUY_ADAPTER_ADDRESS"); }
-    function readVPFIBuyReceiver() internal view returns (address) { return _readAddr(".vpfiBuyReceiver", "VPFI_BUY_RECEIVER_ADDRESS"); }
+    function readVpfiToken()       internal view returns (address) { return _readAddr(".vpfiToken",       "VPFI_TOKEN_ADDRESS"); }
+    function readVpfiBuyAdapter()  internal view returns (address) { return _readAddr(".vpfiBuyAdapter",  "VPFI_BUY_ADAPTER_ADDRESS"); }
+    function readVpfiBuyReceiver() internal view returns (address) { return _readAddr(".vpfiBuyReceiver", "VPFI_BUY_RECEIVER_ADDRESS"); }
     // T-068 CCIP: the cross-chain reward contract is `VaipakamRewardMessenger`,
     // recorded under `.rewardMessenger` by `DeployCrosschain.s.sol`.
     function readRewardMessenger() internal view returns (address) { return _readAddr(".rewardMessenger", "REWARD_MESSENGER_ADDRESS"); }
@@ -206,14 +206,14 @@ library Deployments {
     function writeDiamond(address a)         internal { _writeAddr(".diamond",         a); }
     function writeVaultImpl(address a)      internal { _writeAddr(".vaultImpl",      a); }
     function writeTimelock(address a)        internal { _writeAddr(".timelock",        a); }
-    function writeVPFIToken(address a)       internal { _writeAddr(".vpfiToken",       a); }
-    function writeVPFITokenImpl(address a)   internal { _writeAddr(".vpfiTokenImpl",   a); }
-    function writeVPFIMirror(address a)      internal { _writeAddr(".vpfiMirror",      a); }
-    function writeVPFIMirrorImpl(address a)  internal { _writeAddr(".vpfiMirrorImpl",  a); }
-    function writeVPFIBuyAdapter(address a)  internal { _writeAddr(".vpfiBuyAdapter",  a); }
-    function writeVPFIBuyAdapterImpl(address a) internal { _writeAddr(".vpfiBuyAdapterImpl", a); }
-    function writeVPFIBuyReceiver(address a) internal { _writeAddr(".vpfiBuyReceiver", a); }
-    function writeVPFIBuyReceiverImpl(address a) internal { _writeAddr(".vpfiBuyReceiverImpl", a); }
+    function writeVpfiToken(address a)       internal { _writeAddr(".vpfiToken",       a); }
+    function writeVpfiTokenImpl(address a)   internal { _writeAddr(".vpfiTokenImpl",   a); }
+    function writeVpfiMirror(address a)      internal { _writeAddr(".vpfiMirror",      a); }
+    function writeVpfiMirrorImpl(address a)  internal { _writeAddr(".vpfiMirrorImpl",  a); }
+    function writeVpfiBuyAdapter(address a)  internal { _writeAddr(".vpfiBuyAdapter",  a); }
+    function writeVpfiBuyAdapterImpl(address a) internal { _writeAddr(".vpfiBuyAdapterImpl", a); }
+    function writeVpfiBuyReceiver(address a) internal { _writeAddr(".vpfiBuyReceiver", a); }
+    function writeVpfiBuyReceiverImpl(address a) internal { _writeAddr(".vpfiBuyReceiverImpl", a); }
     // ── T-068 CCIP cross-chain stack (Phase 6) ─────────────────────────────
     function writeCcipMessenger(address a)        internal { _writeAddr(".ccipMessenger",        a); }
     function writeVpfiTokenPool(address a)        internal { _writeAddr(".vpfiTokenPool",        a); }
@@ -223,8 +223,8 @@ library Deployments {
     function writeWeth(address a)            internal { _writeAddr(".weth",            a); }
     function writeTreasury(address a)        internal { _writeAddr(".treasury",        a); }
     function writeAdmin(address a)           internal { _writeAddr(".admin",           a); }
-    function writeVPFIDiscountEthPriceAsset(address a) internal { _writeAddr(".vpfiDiscountEthPriceAsset", a); }
-    function writeVPFIBuyPaymentToken(address a)       internal { _writeAddr(".vpfiBuyPaymentToken", a); }
+    function writeVpfiDiscountEthPriceAsset(address a) internal { _writeAddr(".vpfiDiscountEthPriceAsset", a); }
+    function writeVpfiBuyPaymentToken(address a)       internal { _writeAddr(".vpfiBuyPaymentToken", a); }
 
     function writeMockChainlinkAggregator(address a) internal { _writeAddr(".mockChainlinkAggregator", a); }
     function writeMockUniswapV3Factory(address a)    internal { _writeAddr(".mockUniswapV3Factory",    a); }
@@ -306,7 +306,7 @@ library Deployments {
         return block.number;
     }
 
-    function writeIsCanonicalVPFI(bool v) internal { _writeBool(".isCanonicalVPFI", v); }
+    function writeIsCanonicalVpfi(bool v) internal { _writeBool(".isCanonicalVPFI", v); }
     function writeIsCanonicalReward(bool v) internal { _writeBool(".isCanonicalReward", v); }
     // T-068: a chain's own identity is `block.chainid` — there is no
     // `rewardLocalEid` to record. `rewardBaseChainId` is the canonical

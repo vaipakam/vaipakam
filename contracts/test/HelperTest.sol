@@ -820,7 +820,7 @@ contract HelperTest {
         selectors[14] = VPFIDiscountFacet.getVPFIDiscountTier.selector;
         selectors[15] = VPFIDiscountFacet.withdrawVPFIFromVault.selector;
         // #229 Codex round-1 P1 — bridged-buy quartet was missing from
-        // the HelperTest mirror of production's _getVPFIDiscountSelectors.
+        // the HelperTest mirror of production's _getVpfiDiscountSelectors.
         // Without these four selectors, SetupTest would not actually
         // be a strict superset of production for the bridged-buy
         // surface; calls to setBridgedBuyReceiver / processBridgedBuy

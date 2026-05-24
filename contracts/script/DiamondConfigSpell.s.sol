@@ -106,12 +106,12 @@ contract DiamondConfigSpell is Script {
     ///      mirror-chain runs of the spell would abort at step 3 of 4
     ///      without this gate. Mirror chains skip step 3 with a
     ///      console-log marker so the operator sees the deliberate skip.
-    function _isCanonicalVPFIChain() internal view returns (bool) {
+    function _isCanonicalVpfiChain() internal view returns (bool) {
         return block.chainid == 84532 || block.chainid == 8453;
     }
 
     function run() external {
-        bool canonical = _isCanonicalVPFIChain();
+        bool canonical = _isCanonicalVpfiChain();
 
         console.log("");
         console.log("[DiamondConfigSpell] ============================================");

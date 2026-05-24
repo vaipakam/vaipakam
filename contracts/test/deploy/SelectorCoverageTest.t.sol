@@ -180,7 +180,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
         _addAll(_getProfileSelectors());
         _addAll(_getOracleSelectors());
         _addAll(_getOracleAdminSelectors());
-        _addAll(_getNFTSelectors());
+        _addAll(_getNftSelectors());
         _addAll(_getVaultFactorySelectors());
         _addAll(_getOfferCreateSelectors());
         _addAll(_getOfferAcceptSelectors());
@@ -196,8 +196,8 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
         _addAll(_getPrecloseSelectors());
         _addAll(_getRefinanceSelectors());
         _addAll(_getMetricsSelectors());
-        _addAll(_getVPFITokenSelectors());
-        _addAll(_getVPFIDiscountSelectors());
+        _addAll(_getVpfiTokenSelectors());
+        _addAll(_getVpfiDiscountSelectors());
         _addAll(_getStakingRewardsSelectors());
         _addAll(_getInteractionRewardsSelectors());
         _addAll(_getRewardReporterSelectors());

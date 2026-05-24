@@ -1256,7 +1256,7 @@ contract OfferAcceptFacet is
         //   2. lending asset is liquid (oracle classification)
         //   3. `quote(...).canQuote` — borrower's vault VPFI balance
         //      resolves a tier ≥ 1 + the LIF-equivalent VPFI rate
-        //      can be computed (`_feeAssetWeiToVPFI` succeeds)
+        //      can be computed (`_feeAssetWeiToVpfi` succeeds)
         //   4. borrower's vault exists (`userVaipakamVaults[borrower] != 0`)
         //   5. vault holds ≥ `vpfiRequired` (the full LIF-equivalent VPFI)
         //

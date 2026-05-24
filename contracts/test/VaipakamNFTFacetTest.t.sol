@@ -38,7 +38,7 @@ contract VaipakamNFTFacetTest is Test {
     uint256 constant OFFER_ID = 10;
     uint256 constant LOAN_ID = 5;
 
-    function _getAllNFTSelectors() internal pure returns (bytes4[] memory selectors) {
+    function _getAllNftSelectors() internal pure returns (bytes4[] memory selectors) {
         selectors = new bytes4[](17);
         selectors[0] = VaipakamNFTFacet.mintNFT.selector;
         selectors[1] = VaipakamNFTFacet.updateNFTStatus.selector;
@@ -78,7 +78,7 @@ contract VaipakamNFTFacetTest is Test {
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(nftFacet),
             action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: _getAllNFTSelectors()
+            functionSelectors: _getAllNftSelectors()
         });
         cuts[1] = IDiamondCut.FacetCut({
             facetAddress: address(accessControlFacet),

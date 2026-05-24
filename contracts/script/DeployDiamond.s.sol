@@ -178,7 +178,7 @@ contract DeployDiamond is Script {
         cuts[4] = _buildCut(address(profileFacet), _getProfileSelectors());
         cuts[5] = _buildCut(address(oracleFacet), _getOracleSelectors());
         cuts[6] = _buildCut(address(oracleAdminFacet), _getOracleAdminSelectors());
-        cuts[7] = _buildCut(address(nftFacet), _getNFTSelectors());
+        cuts[7] = _buildCut(address(nftFacet), _getNftSelectors());
         cuts[8] = _buildCut(address(vaultFactoryFacet), _getVaultFactorySelectors());
         cuts[9] = _buildCut(address(offerCreateFacet), _getOfferCreateSelectors());
         cuts[10] = _buildCut(address(loanFacet), _getLoanSelectors());
@@ -193,8 +193,8 @@ contract DeployDiamond is Script {
         cuts[19] = _buildCut(address(precloseFacet), _getPrecloseSelectors());
         cuts[20] = _buildCut(address(refinanceFacet), _getRefinanceSelectors());
         cuts[21] = _buildCut(address(metricsFacet), _getMetricsSelectors());
-        cuts[22] = _buildCut(address(vpfiTokenFacet), _getVPFITokenSelectors());
-        cuts[23] = _buildCut(address(vpfiDiscountFacet), _getVPFIDiscountSelectors());
+        cuts[22] = _buildCut(address(vpfiTokenFacet), _getVpfiTokenSelectors());
+        cuts[23] = _buildCut(address(vpfiDiscountFacet), _getVpfiDiscountSelectors());
         cuts[24] = _buildCut(address(stakingRewardsFacet), _getStakingRewardsSelectors());
         cuts[25] = _buildCut(address(interactionRewardsFacet), _getInteractionRewardsSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
@@ -811,9 +811,9 @@ contract DeployDiamond is Script {
         s[33] = OracleAdminFacet.getTierReferenceAssets.selector;
     }
 
-    function _getNFTSelectors() internal pure returns (bytes4[] memory s) {
+    function _getNftSelectors() internal pure returns (bytes4[] memory s) {
         // supportsInterface is intentionally omitted — DiamondLoupeFacet owns
-        // that selector. _registerNFTInterfaces() writes the ERC-721 / metadata
+        // that selector. _registerNftInterfaces() writes the ERC-721 / metadata
         // interface IDs into LibDiamond storage so the Loupe's implementation
         // returns true for them.
         s = new bytes4[](29);
@@ -1117,7 +1117,7 @@ contract DeployDiamond is Script {
         s[0] = RefinanceFacet.refinanceLoan.selector;
     }
 
-    function _getVPFITokenSelectors() internal pure returns (bytes4[] memory s) {
+    function _getVpfiTokenSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](10);
         s[0] = VPFITokenFacet.setVPFIToken.selector;
         s[1] = VPFITokenFacet.getVPFIToken.selector;
@@ -1131,7 +1131,7 @@ contract DeployDiamond is Script {
         s[9] = VPFITokenFacet.getVPFISnapshot.selector;
     }
 
-    function _getVPFIDiscountSelectors() internal pure returns (bytes4[] memory s) {
+    function _getVpfiDiscountSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](23);
         s[0] = VPFIDiscountFacet.buyVPFIWithETH.selector;
         s[1] = VPFIDiscountFacet.depositVPFIToVault.selector;

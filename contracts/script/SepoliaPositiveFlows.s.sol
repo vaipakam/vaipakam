@@ -227,7 +227,7 @@ contract SepoliaPositiveFlows is Script {
         // ════════════════════════════════════════════════════════════════
         console.log("");
         console.log("=== SCENARIO 1: ERC-20 Lending Full Lifecycle ===");
-        uint256 loanId1 = _scenario_lenderOffer_borrowerAccepts_repay_claim(
+        uint256 loanId1 = _scenarioLenderOfferBorrowerAcceptsRepayClaim(
             lenderKey, lender, borrowerKey, borrower
         );
         console.log(">>> SCENARIO 1 PASSED <<< loanId:", loanId1);
@@ -1035,7 +1035,7 @@ contract SepoliaPositiveFlows is Script {
         console.log("Both parties claimed for loanId:", loanId);
     }
 
-    function _scenario_lenderOffer_borrowerAccepts_repay_claim(
+    function _scenarioLenderOfferBorrowerAcceptsRepayClaim(
         uint256 lKey, address lAddr, uint256 bKey, address bAddr
     ) internal returns (uint256 loanId) {
         uint256 offerId = _createLenderOffer(lKey, lAddr);

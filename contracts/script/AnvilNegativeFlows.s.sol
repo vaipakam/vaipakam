@@ -87,15 +87,15 @@ contract AnvilNegativeFlows is Script {
 
         _deployMocksAndConfigure();
 
-        _negRA1_amountMaxLessThanAmount();
-        _negRA2_rateMaxLessThanRate();
-        _negRA3_rateAboveCeiling();
-        _neg2_riskAndTermsConsentRequired();
-        _neg3_selfCollateralizedOffer();
-        _neg4_zeroDuration();
-        _neg9_collateralBelowFloor();
-        _neg15_claimBeforeTerminal();
-        _neg20_partialRepayWhenOff();
+        _negRa1AmountMaxLessThanAmount();
+        _negRa2RateMaxLessThanRate();
+        _negRa3RateAboveCeiling();
+        _neg2RiskAndTermsConsentRequired();
+        _neg3SelfCollateralizedOffer();
+        _neg4ZeroDuration();
+        _neg9CollateralBelowFloor();
+        _neg15ClaimBeforeTerminal();
+        _neg20PartialRepayWhenOff();
 
         console.log("");
         console.log("============================================");
@@ -188,7 +188,7 @@ contract AnvilNegativeFlows is Script {
 
     // ─── NEG-RA1: amountMax < amount ────────────────────────────────────
 
-    function _negRA1_amountMaxLessThanAmount() internal {
+    function _negRa1AmountMaxLessThanAmount() internal {
         console.log("");
         console.log("=== NEG-RA1: amountMax < amount reverts ===");
         LibVaipakam.CreateOfferParams memory p = _lenderOfferStandard();
@@ -200,7 +200,7 @@ contract AnvilNegativeFlows is Script {
 
     // ─── NEG-RA2: interestRateBpsMax < interestRateBps ──────────────────
 
-    function _negRA2_rateMaxLessThanRate() internal {
+    function _negRa2RateMaxLessThanRate() internal {
         console.log("");
         console.log("=== NEG-RA2: interestRateBpsMax < interestRateBps reverts ===");
         LibVaipakam.CreateOfferParams memory p = _lenderOfferStandard();
@@ -212,7 +212,7 @@ contract AnvilNegativeFlows is Script {
 
     // ─── NEG-RA3: interestRateBpsMax > MAX_INTEREST_BPS (10000) ─────────
 
-    function _negRA3_rateAboveCeiling() internal {
+    function _negRa3RateAboveCeiling() internal {
         console.log("");
         console.log("=== NEG-RA3: rate above MAX_INTEREST_BPS reverts ===");
         LibVaipakam.CreateOfferParams memory p = _lenderOfferStandard();
@@ -224,7 +224,7 @@ contract AnvilNegativeFlows is Script {
 
     // ─── NEG-2: creatorRiskAndTermsConsent = false reverts ──────────────────
 
-    function _neg2_riskAndTermsConsentRequired() internal {
+    function _neg2RiskAndTermsConsentRequired() internal {
         console.log("");
         console.log("=== NEG-2: creatorRiskAndTermsConsent=false reverts ===");
         LibVaipakam.CreateOfferParams memory p = _lenderOfferStandard();
@@ -236,7 +236,7 @@ contract AnvilNegativeFlows is Script {
 
     // ─── NEG-3: lendingAsset == collateralAsset reverts ─────────────────
 
-    function _neg3_selfCollateralizedOffer() internal {
+    function _neg3SelfCollateralizedOffer() internal {
         console.log("");
         console.log("=== NEG-3: lendingAsset == collateralAsset reverts ===");
         LibVaipakam.CreateOfferParams memory p = _lenderOfferStandard();
@@ -248,7 +248,7 @@ contract AnvilNegativeFlows is Script {
 
     // ─── NEG-4: durationDays == 0 reverts ───────────────────────────────
 
-    function _neg4_zeroDuration() internal {
+    function _neg4ZeroDuration() internal {
         console.log("");
         console.log("=== NEG-4: durationDays=0 reverts ===");
         LibVaipakam.CreateOfferParams memory p = _lenderOfferStandard();
@@ -260,7 +260,7 @@ contract AnvilNegativeFlows is Script {
 
     // ─── NEG-9: lender collateralAmount < floor reverts ─────────────────
 
-    function _neg9_collateralBelowFloor() internal {
+    function _neg9CollateralBelowFloor() internal {
         console.log("");
         console.log("=== NEG-9: lender offer with collateralAmount < floor reverts ===");
         LibVaipakam.CreateOfferParams memory p = _lenderOfferStandard();
@@ -274,7 +274,7 @@ contract AnvilNegativeFlows is Script {
 
     // ─── NEG-15: claim before loan terminates reverts ───────────────────
 
-    function _neg15_claimBeforeTerminal() internal {
+    function _neg15ClaimBeforeTerminal() internal {
         console.log("");
         console.log("=== NEG-15: claim before loan terminates reverts ===");
 
@@ -300,7 +300,7 @@ contract AnvilNegativeFlows is Script {
 
     // ─── NEG-20: partial repay when allowsPartialRepay=false reverts ────
 
-    function _neg20_partialRepayWhenOff() internal {
+    function _neg20PartialRepayWhenOff() internal {
         console.log("");
         console.log("=== NEG-20: partial repay when allowsPartialRepay=false reverts ===");
 

@@ -27,7 +27,7 @@ contract MetricsFacetTest is SetupTest {
 
     // ── scaffolding helpers ────────────────────────────────────────────────
 
-    function _seedActiveERC20Loan(
+    function _seedActiveErc20Loan(
         uint256 loanId,
         address lender_,
         address borrower_,
@@ -52,7 +52,7 @@ contract MetricsFacetTest is SetupTest {
         TestMutatorFacet(address(diamond)).scaffoldActiveLoan(loanId, l);
     }
 
-    function _seedNFTRentalLoan(
+    function _seedNftRentalLoan(
         uint256 loanId,
         address lender_,
         address borrower_,
@@ -126,8 +126,8 @@ contract MetricsFacetTest is SetupTest {
     }
 
     function testGetProtocolTVL_counts2ActiveERC20Loans() public {
-        _seedActiveERC20Loan(1, lender, borrower, 1000 ether, 1500 ether, 500);
-        _seedActiveERC20Loan(2, lender2, borrower2, 2000 ether, 3000 ether, 700);
+        _seedActiveErc20Loan(1, lender, borrower, 1000 ether, 1500 ether, 500);
+        _seedActiveErc20Loan(2, lender2, borrower2, 2000 ether, 3000 ether, 700);
         TestMutatorFacet(address(diamond)).setNextLoanId(3);
 
         (uint256 tvlUsd, uint256 erc20Col, uint256 nftCol) =
@@ -161,7 +161,7 @@ contract MetricsFacetTest is SetupTest {
     }
 
     function testGetProtocolTVL_skipsInactive() public {
-        _seedActiveERC20Loan(1, lender, borrower, 1000 ether, 1500 ether, 500);
+        _seedActiveErc20Loan(1, lender, borrower, 1000 ether, 1500 ether, 500);
         LibVaipakam.Loan memory l2;
         l2.id = 2;
         l2.lender = lender;
@@ -204,10 +204,10 @@ contract MetricsFacetTest is SetupTest {
     }
 
     function testGetProtocolStats_populatedMix() public {
-        _seedActiveERC20Loan(1, lender, borrower, 1000 ether, 1500 ether, 500);
-        _seedActiveERC20Loan(2, lender2, borrower2, 2000 ether, 3000 ether, 700);
+        _seedActiveErc20Loan(1, lender, borrower, 1000 ether, 1500 ether, 500);
+        _seedActiveErc20Loan(2, lender2, borrower2, 2000 ether, 3000 ether, 700);
         // A defaulted loan → contributes to defaultRateBps and interest
-        _seedActiveERC20Loan(3, lender, borrower2, 500 ether, 600 ether, 1000);
+        _seedActiveErc20Loan(3, lender, borrower2, 500 ether, 600 ether, 1000);
         TestMutatorFacet(address(diamond)).scaffoldLoanStatusChange(
             3,
             LibVaipakam.LoanStatus.Active,
@@ -245,8 +245,8 @@ contract MetricsFacetTest is SetupTest {
     // ── getUserCount ───────────────────────────────────────────────────────
 
     function testGetUserCount_dedupsAcrossLoansAndOffers() public {
-        _seedActiveERC20Loan(1, lender, borrower, 100 ether, 150 ether, 500);
-        _seedActiveERC20Loan(2, lender, borrower, 200 ether, 250 ether, 500); // same pair
+        _seedActiveErc20Loan(1, lender, borrower, 100 ether, 150 ether, 500);
+        _seedActiveErc20Loan(2, lender, borrower, 200 ether, 250 ether, 500); // same pair
         TestMutatorFacet(address(diamond)).setNextLoanId(3);
         _seedOpenOffer(1, lender, mockERC20, 100 ether); // same lender
         TestMutatorFacet(address(diamond)).setNextOfferId(2);
@@ -257,7 +257,7 @@ contract MetricsFacetTest is SetupTest {
 
     function testActiveCountsAndPagination() public {
         for (uint256 i = 1; i <= 5; i++) {
-            _seedActiveERC20Loan(i, lender, borrower, 100 ether, 150 ether, 500);
+            _seedActiveErc20Loan(i, lender, borrower, 100 ether, 150 ether, 500);
         }
         TestMutatorFacet(address(diamond)).setNextLoanId(6);
 
@@ -292,8 +292,8 @@ contract MetricsFacetTest is SetupTest {
     // ── getLoanSummary ─────────────────────────────────────────────────────
 
     function testLoanSummaryAveragesDurationAndLTV() public {
-        _seedActiveERC20Loan(1, lender, borrower, 1000 ether, 1500 ether, 500);
-        _seedActiveERC20Loan(2, lender2, borrower2, 2000 ether, 3000 ether, 700);
+        _seedActiveErc20Loan(1, lender, borrower, 1000 ether, 1500 ether, 500);
+        _seedActiveErc20Loan(2, lender2, borrower2, 2000 ether, 3000 ether, 700);
         TestMutatorFacet(address(diamond)).setNextLoanId(3);
 
         (uint256 totalUsd, uint256 avgDuration, uint256 avgLtv) =
@@ -307,7 +307,7 @@ contract MetricsFacetTest is SetupTest {
     // ── getTotalInterestEarnedNumeraire ──────────────────────────────────────────
 
     function testGetTotalInterestEarnedUSD_onlyCompleted() public {
-        _seedActiveERC20Loan(1, lender, borrower, 1000 ether, 1500 ether, 500); // active — excluded
+        _seedActiveErc20Loan(1, lender, borrower, 1000 ether, 1500 ether, 500); // active — excluded
         LibVaipakam.Loan memory l2;
         l2.id = 2;
         l2.lender = lender;
@@ -331,7 +331,7 @@ contract MetricsFacetTest is SetupTest {
         // We need a principal asset present in loans[] for the metric helper
         // to enumerate it (the treasury helper collects unique principal assets
         // from active+inactive loans, then prices the treasury balance).
-        _seedActiveERC20Loan(1, lender, borrower, 1000 ether, 1500 ether, 500);
+        _seedActiveErc20Loan(1, lender, borrower, 1000 ether, 1500 ether, 500);
         TestMutatorFacet(address(diamond)).setNextLoanId(2);
 
         // Seed treasuryBalances by simulating a repay fee transfer: use
@@ -354,7 +354,7 @@ contract MetricsFacetTest is SetupTest {
     // ── NFT / Vault ───────────────────────────────────────────────────────
 
     function testVaultStatsCountsNFTLegs() public {
-        _seedNFTRentalLoan(1, lender, borrower, 11, 12);
+        _seedNftRentalLoan(1, lender, borrower, 11, 12);
         TestMutatorFacet(address(diamond)).setNextLoanId(2);
 
         (uint256 total, uint256 active, uint256 volUsd) =
@@ -365,7 +365,7 @@ contract MetricsFacetTest is SetupTest {
     }
 
     function testNFTRentalDetails_lookupByTokenId() public {
-        _seedNFTRentalLoan(1, lender, borrower, 11, 12);
+        _seedNftRentalLoan(1, lender, borrower, 11, 12);
         TestMutatorFacet(address(diamond)).setNextLoanId(2);
 
         LibVaipakam.Loan memory found =
@@ -382,7 +382,7 @@ contract MetricsFacetTest is SetupTest {
     }
 
     function testTotalNFTsInVaultByCollection_matchesPrincipal() public {
-        _seedNFTRentalLoan(1, lender, borrower, 11, 12);
+        _seedNftRentalLoan(1, lender, borrower, 11, 12);
         TestMutatorFacet(address(diamond)).setNextLoanId(2);
         assertEq(
             MetricsFacet(address(diamond)).getTotalNFTsInVaultByCollection(mockNft721),
@@ -397,7 +397,7 @@ contract MetricsFacetTest is SetupTest {
     // ── User-specific ──────────────────────────────────────────────────────
 
     function testUserSummary_borrowerHFIsMocked() public {
-        _seedActiveERC20Loan(1, lender, borrower, 1000 ether, 1500 ether, 500);
+        _seedActiveErc20Loan(1, lender, borrower, 1000 ether, 1500 ether, 500);
         TestMutatorFacet(address(diamond)).setNextLoanId(2);
 
         (
@@ -416,7 +416,7 @@ contract MetricsFacetTest is SetupTest {
     }
 
     function testUserSummary_lenderHasInfiniteHF() public {
-        _seedActiveERC20Loan(1, lender, borrower, 1000 ether, 1500 ether, 500);
+        _seedActiveErc20Loan(1, lender, borrower, 1000 ether, 1500 ether, 500);
         TestMutatorFacet(address(diamond)).setNextLoanId(2);
         (, , , uint256 hf, uint256 activeN) =
             MetricsFacet(address(diamond)).getUserSummary(lender);
@@ -425,8 +425,8 @@ contract MetricsFacetTest is SetupTest {
     }
 
     function testUserActiveLoansAndOffers() public {
-        _seedActiveERC20Loan(1, lender, borrower, 1000 ether, 1500 ether, 500);
-        _seedActiveERC20Loan(2, lender2, borrower, 2000 ether, 3000 ether, 500);
+        _seedActiveErc20Loan(1, lender, borrower, 1000 ether, 1500 ether, 500);
+        _seedActiveErc20Loan(2, lender2, borrower, 2000 ether, 3000 ether, 500);
         TestMutatorFacet(address(diamond)).setNextLoanId(3);
         _seedOpenOffer(1, lender, mockERC20, 500 ether);
         _seedOpenOffer(2, lender2, mockERC20, 700 ether);
@@ -442,7 +442,7 @@ contract MetricsFacetTest is SetupTest {
     }
 
     function testUserNFTsInVault() public {
-        _seedNFTRentalLoan(1, lender, borrower, 11, 12);
+        _seedNftRentalLoan(1, lender, borrower, 11, 12);
         TestMutatorFacet(address(diamond)).setNextLoanId(2);
         uint256[] memory bTok =
             MetricsFacet(address(diamond)).getUserNFTsInVault(borrower);
@@ -457,7 +457,7 @@ contract MetricsFacetTest is SetupTest {
     // ── ProtocolHealth / BlockTimestamp ────────────────────────────────────
 
     function testGetProtocolHealth_utilizationBpsAndPaused() public {
-        _seedActiveERC20Loan(1, lender, borrower, 1000 ether, 2000 ether, 500);
+        _seedActiveErc20Loan(1, lender, borrower, 1000 ether, 2000 ether, 500);
         TestMutatorFacet(address(diamond)).setNextLoanId(2);
         (uint256 utilBps, uint256 totalCol, uint256 totalDebt, bool paused) =
             MetricsFacet(address(diamond)).getProtocolHealth();

@@ -56,13 +56,13 @@ library LibAuth {
     }
 
     /// @dev Caller must own the lender-side position NFT for this loan.
-    function requireLenderNFTOwner(LibVaipakam.Loan storage loan) internal view {
+    function requireLenderNftOwner(LibVaipakam.Loan storage loan) internal view {
         if (IERC721(address(this)).ownerOf(loan.lenderTokenId) != msg.sender)
             revert IVaipakamErrors.NotNFTOwner();
     }
 
     /// @dev Caller must own the borrower-side position NFT for this loan.
-    function requireBorrowerNFTOwner(LibVaipakam.Loan storage loan) internal view {
+    function requireBorrowerNftOwner(LibVaipakam.Loan storage loan) internal view {
         if (IERC721(address(this)).ownerOf(loan.borrowerTokenId) != msg.sender)
             revert IVaipakamErrors.NotNFTOwner();
     }

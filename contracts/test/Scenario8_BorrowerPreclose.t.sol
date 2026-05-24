@@ -81,7 +81,7 @@ contract Scenario8_BorrowerPreclose is Test {
     function mockHealthFactor(uint256 loanId, uint256 hf) internal {
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId), abi.encode(hf));
     }
-    function mockLTV(uint256 loanId, uint256 ltv) internal {
+    function mockLtv(uint256 loanId, uint256 ltv) internal {
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector, loanId), abi.encode(ltv));
     }
 

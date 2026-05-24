@@ -356,7 +356,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         // For a Lender offer the borrower is unknown at the base view — use
         // the acceptor-aware {quoteVPFIDiscountFor}. Pre-fund borrower vault
         // to tier 1 (>= 100 VPFI) so the tier gate does not short-circuit.
-        uint256 offerId = _createLenderERC20Offer(10_000 ether);
+        uint256 offerId = _createLenderErc20Offer(10_000 ether);
         address borrowerVault = _buyerVault(borrower);
         vpfiToken.transfer(borrowerVault, 500 ether);
         vm.prank(address(diamond));
@@ -380,7 +380,7 @@ contract VPFIDiscountFacetTest is SetupTest {
 
     function testQuoteVPFIDiscountIneligibleWhenRateNotSet() public {
         _facet().setVPFIBuyRate(0);
-        uint256 offerId = _createLenderERC20Offer(10_000 ether);
+        uint256 offerId = _createLenderErc20Offer(10_000 ether);
         address borrowerVault = _buyerVault(borrower);
         vpfiToken.transfer(borrowerVault, 500 ether);
         vm.prank(address(diamond));
@@ -399,7 +399,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         // Borrower holds 0 VPFI in vault → tier 0, quote returns
         // (false, 0, 0, 0) without reverting. Uses acceptor-aware view since
         // base view returns false-for-known-borrower only on Borrower offers.
-        uint256 offerId = _createLenderERC20Offer(10_000 ether);
+        uint256 offerId = _createLenderErc20Offer(10_000 ether);
         (bool eligible, uint256 vpfi, uint256 bal, uint8 tier) = _facet()
             .quoteVPFIDiscountFor(offerId, borrower);
         assertFalse(eligible);
@@ -452,7 +452,7 @@ contract VPFIDiscountFacetTest is SetupTest {
 
     function testAcceptOfferWithVPFIDiscountApplied() public {
         uint256 principal = 10_000 ether;
-        uint256 offerId = _createLenderERC20Offer(principal);
+        uint256 offerId = _createLenderErc20Offer(principal);
 
         // Seed borrower vault to tier 1 so the tier gate unlocks, then quote.
         // Phase 5: quote returns the FULL 0.1% LIF equivalent in VPFI
@@ -541,7 +541,7 @@ contract VPFIDiscountFacetTest is SetupTest {
 
     function testAcceptOfferFallsBackWhenBorrowerHasInsufficientVPFI() public {
         uint256 principal = 10_000 ether;
-        uint256 offerId = _createLenderERC20Offer(principal);
+        uint256 offerId = _createLenderErc20Offer(principal);
 
         // Borrower opts in to platform consent but holds ZERO VPFI in
         // vault — tryApply must return (false, 0) and the lender-paid fee
@@ -590,7 +590,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         // Collateral flag also needs consent; we already pass true below.
 
         uint256 principal = 10_000 ether;
-        uint256 offerId = _createLenderERC20Offer(principal);
+        uint256 offerId = _createLenderErc20Offer(principal);
 
         address borrowerVault = _buyerVault(borrower);
         vpfiToken.transfer(borrowerVault, 5_000 ether);
@@ -655,7 +655,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         _facet().setVPFIDiscountConsent(true);
         vm.stopPrank();
 
-        uint256 offerId = _createLenderERC20Offer(principal);
+        uint256 offerId = _createLenderErc20Offer(principal);
 
         // Borrower accepts normally (no borrower discount).
         _approveAndAcceptForLoan(offerId, principal);
@@ -718,7 +718,7 @@ contract VPFIDiscountFacetTest is SetupTest {
     ///         the lender vault receives principal + 99% of interest.
     function testRepayFallsBackWhenLenderHasNoVPFI() public {
         uint256 principal = 10_000 ether;
-        uint256 offerId = _createLenderERC20Offer(principal);
+        uint256 offerId = _createLenderErc20Offer(principal);
 
         _approveAndAcceptForLoan(offerId, principal);
         uint256 loanId = 1;
@@ -785,7 +785,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         _facet().setVPFIDiscountConsent(true);
         vm.stopPrank();
 
-        uint256 offerId = _createLenderERC20Offer(principal);
+        uint256 offerId = _createLenderErc20Offer(principal);
 
         // Top up enough to cover the full 0.1% LIF in VPFI.
         (, uint256 vpfiRequired, , ) = _facet().quoteVPFIDiscountFor(
@@ -874,7 +874,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         _facet().setVPFIDiscountConsent(true);
         vm.stopPrank();
 
-        uint256 offerId = _createLenderERC20Offer(principal);
+        uint256 offerId = _createLenderErc20Offer(principal);
 
         (, uint256 vpfiRequired, , ) = _facet().quoteVPFIDiscountFor(
             offerId,
@@ -939,7 +939,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         // Use an illiquid-principal offer so default goes through
         // DefaultedFacet.markDefaulted rather than the HF-liquidation path,
         // and acceptOffer takes the VPFI path.
-        uint256 offerId = _createLenderERC20Offer(principal);
+        uint256 offerId = _createLenderErc20Offer(principal);
 
         (, uint256 vpfiRequired, , ) = _facet().quoteVPFIDiscountFor(
             offerId,
@@ -990,7 +990,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         );
     }
 
-    function _createLenderERC20Offer(uint256 amount) internal returns (uint256) {
+    function _createLenderErc20Offer(uint256 amount) internal returns (uint256) {
         // Lender funds the offer with `amount` of mockERC20; collateral is
         // the same asset to keep test wiring minimal.
         ERC20Mock(mockERC20).mint(lender, amount);

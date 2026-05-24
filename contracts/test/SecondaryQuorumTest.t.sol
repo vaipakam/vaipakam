@@ -232,7 +232,7 @@ contract SecondaryQuorumTest is Test {
         );
     }
 
-    function _mockDIAAgree() internal {
+    function _mockDiaAgree() internal {
         // DIA returns 8-decimal value.
         uint128 value = uint128(CHAINLINK_PRICE_8DEC);
         vm.mockCall(
@@ -242,7 +242,7 @@ contract SecondaryQuorumTest is Test {
         );
     }
 
-    function _mockDIADisagree() internal {
+    function _mockDiaDisagree() internal {
         // 25% disagreement.
         uint128 value = uint128((CHAINLINK_PRICE_8DEC * 125) / 100);
         vm.mockCall(
@@ -252,7 +252,7 @@ contract SecondaryQuorumTest is Test {
         );
     }
 
-    function _mockDIANoData() internal {
+    function _mockDiaNoData() internal {
         vm.mockCall(
             mockDia,
             abi.encodeWithSignature("getValue(string)"),
@@ -268,7 +268,7 @@ contract SecondaryQuorumTest is Test {
         OracleAdminFacet(address(diamond)).setApi3ServerV1(mockApi3);
     }
 
-    function _enableDIA() internal {
+    function _enableDia() internal {
         OracleAdminFacet(address(diamond)).setDIAOracleV2(mockDia);
     }
 
@@ -332,15 +332,15 @@ contract SecondaryQuorumTest is Test {
     // Single source — DIA only.
 
     function testQuorumDIAAgreeAcceptsPrice() public {
-        _enableDIA();
-        _mockDIAAgree();
+        _enableDia();
+        _mockDiaAgree();
         (uint256 price, ) = _readPrice();
         assertEq(price, CHAINLINK_PRICE_8DEC);
     }
 
     function testQuorumDIADisagreeReverts() public {
-        _enableDIA();
-        _mockDIADisagree();
+        _enableDia();
+        _mockDiaDisagree();
         vm.expectRevert(OracleFacet.OraclePriceDivergence.selector);
         OracleFacet(address(diamond)).getAssetPrice(mockAsset);
     }
@@ -400,10 +400,10 @@ contract SecondaryQuorumTest is Test {
     function testQuorumAllThreeAgreeAccepts() public {
         _enableTellor();
         _enableApi3();
-        _enableDIA();
+        _enableDia();
         _mockTellorAgree();
         _mockApi3Agree();
-        _mockDIAAgree();
+        _mockDiaAgree();
         (uint256 price, ) = _readPrice();
         assertEq(price, CHAINLINK_PRICE_8DEC);
     }
@@ -411,10 +411,10 @@ contract SecondaryQuorumTest is Test {
     function testQuorumTwoAgreeOneDisagreeAccepts() public {
         _enableTellor();
         _enableApi3();
-        _enableDIA();
+        _enableDia();
         _mockTellorAgree();
         _mockApi3Agree();
-        _mockDIADisagree();
+        _mockDiaDisagree();
         (uint256 price, ) = _readPrice();
         assertEq(price, CHAINLINK_PRICE_8DEC);
     }
@@ -425,10 +425,10 @@ contract SecondaryQuorumTest is Test {
         // form the 2-source quorum.
         _enableTellor();
         _enableApi3();
-        _enableDIA();
+        _enableDia();
         _mockTellorAgree();
         _mockApi3Disagree();
-        _mockDIADisagree();
+        _mockDiaDisagree();
         (uint256 price, ) = _readPrice();
         assertEq(price, CHAINLINK_PRICE_8DEC);
     }
@@ -436,10 +436,10 @@ contract SecondaryQuorumTest is Test {
     function testQuorumAllThreeDisagreeReverts() public {
         _enableTellor();
         _enableApi3();
-        _enableDIA();
+        _enableDia();
         _mockTellorDisagree();
         _mockApi3Disagree();
-        _mockDIADisagree();
+        _mockDiaDisagree();
         vm.expectRevert(OracleFacet.OraclePriceDivergence.selector);
         OracleFacet(address(diamond)).getAssetPrice(mockAsset);
     }
@@ -448,10 +448,10 @@ contract SecondaryQuorumTest is Test {
         // All enabled, none have data — graceful fallback.
         _enableTellor();
         _enableApi3();
-        _enableDIA();
+        _enableDia();
         _mockTellorNoData();
         _mockApi3NoData();
-        _mockDIANoData();
+        _mockDiaNoData();
         (uint256 price, ) = _readPrice();
         assertEq(price, CHAINLINK_PRICE_8DEC);
     }
@@ -498,7 +498,7 @@ contract SecondaryQuorumTest is Test {
     }
 
     function testQuorumStaleDIATreatedAsUnavailable() public {
-        _enableDIA();
+        _enableDia();
         vm.mockCall(
             mockDia,
             abi.encodeWithSignature("getValue(string)"),
