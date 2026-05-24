@@ -24,9 +24,9 @@ that, today, lives **only on Cloudflare**:
 
 | Surface | Store | Owner | Re-derivable from chain? |
 | --- | --- | --- | --- |
-| `vaipakam-archive` D1 — `offers`, `loans`, `activity`, `oracle_snapshot_state`, `liquidity_confidence_*`, `current_holder` | Cloudflare D1 | apps/indexer (writer), apps/keeper + apps/agent (readers / minor writers) | **Yes** — re-index from `block 0` reconstructs every row deterministically. |
-| `vaipakam-archive` D1 — `diag_errors`, `diag_legal_holds`, `diag_legal_hold_audit` | Cloudflare D1 | apps/agent + apps/indexer (write paths) | **No** — born off-chain (frontend error captures, operator legal-hold actions). |
-| `vaipakam-lz-alerts-db` D1 — `lz_alerts`, `lz_cursor` | Cloudflare D1 | ops/lz-watcher | **Partly** — alerts are derived from chain logs, so re-running the watcher reconstructs them, but the alert dispatch history (who-was-notified-when) is born off-chain. |
+| `vaipakam-archive` D1 — `offers`, `loans`, `activity_events`, `oracle_snapshot_state`, `liquidity_confidence`, `indexer_cursor` | Cloudflare D1 | apps/indexer (writer), apps/keeper + apps/agent (readers / minor writers) | **Yes** — re-index from `block 0` reconstructs every row deterministically. |
+| `vaipakam-archive` D1 — `diag_errors`, `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`, `notify_state`, `telegram_links` | Cloudflare D1 | apps/agent + apps/indexer (write paths) | **No** — born off-chain (frontend error captures, operator legal-hold actions, user-supplied HF thresholds + Telegram chat links + notification dedupe state). |
+| `vaipakam-lz-alerts-db` D1 — `lz_alert_state`, `scan_cursor`, `oft_balance_history` | Cloudflare D1 | ops/lz-watcher | **Partly** — alerts are derived from chain logs, so re-running the watcher reconstructs them, but the alert dispatch history (who-was-notified-when) is born off-chain. Note: lz-watcher itself is now obsolete post-T-068 (LayerZero → CCIP migration) — tracked for delete/refactor as issue #250. |
 | `vaipakam-legal-vault` R2 bucket — uploaded legal-hold documents | Cloudflare R2 | apps/agent (uploads) | **No** — third-party documents uploaded by operators, not derivable from any external source. |
 
 A Cloudflare account loss (compromised credentials, billing dispute,
@@ -72,13 +72,15 @@ This bifurcation cuts the cross-replication surface roughly in half.
 
 Schedule a Cloudflare Worker (`ops/offchain-data-archive`) that nightly:
 
-1. Exports the **born off-chain** D1 tables (`diag_errors`,
-   `diag_legal_holds`, `diag_legal_hold_audit`, plus `lz_alerts` /
-   `lz_cursor` from the lz-watcher DB).
+1. Exports the **born off-chain** D1 tables — `diag_errors`,
+   `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`,
+   `notify_state`, `telegram_links` from `vaipakam-archive`, plus
+   `lz_alert_state`, `scan_cursor`, `oft_balance_history` from
+   `vaipakam-lz-alerts-db`.
 2. Exports the **re-derivable** D1 tables (`offers`, `loans`,
-   `activity`, `oracle_snapshot_state`, etc.) — as a *performance*
-   optimisation only; restore can skip them in favour of a fresh
-   re-index.
+   `activity_events`, `oracle_snapshot_state`, `liquidity_confidence`,
+   `indexer_cursor`) — as a *performance* optimisation only;
+   restore can skip them in favour of a fresh re-index from block 0.
 3. Mirrors every object in the `vaipakam-legal-vault` R2 bucket.
 4. Pushes the encrypted-at-rest archive to a **Backblaze B2** bucket
    on a separate billing/credential boundary.

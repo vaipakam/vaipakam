@@ -20,9 +20,23 @@ export async function runLzWatcher(env: Env): Promise<void> {
     console.log('[lz-watcher] no chains configured — nothing to do');
     return;
   }
-  if (!env.TG_OPS_BOT_TOKEN || !env.TG_OPS_CHAT_ID) {
+  // The bot-token secret was renamed TG_BOT_TOKEN → TG_OPS_BOT_TOKEN
+  // (audience cleavage: ops bot ≠ user-facing bot). Keeping a legacy
+  // fallback during the rollout window means an existing deployment
+  // that only has the OLD secret set keeps delivering alerts during
+  // the brief window between code-deploy and `wrangler secret put
+  // TG_OPS_BOT_TOKEN`. Once every deploy is on the new secret, the
+  // fallback is dead code and can be removed (tracked as part of the
+  // lz-watcher refactor / delete decision in issue #250).
+  const tgToken = env.TG_OPS_BOT_TOKEN ?? env.TG_BOT_TOKEN;
+  if (env.TG_BOT_TOKEN && !env.TG_OPS_BOT_TOKEN) {
     console.warn(
-      '[lz-watcher] TG_OPS_BOT_TOKEN or TG_OPS_CHAT_ID not set — alerts will be logged but not delivered',
+      '[lz-watcher] using legacy TG_BOT_TOKEN — rotate to TG_OPS_BOT_TOKEN via `wrangler secret put` and drop TG_BOT_TOKEN. See CLAUDE.md "Two Telegram bots".',
+    );
+  }
+  if (!tgToken || !env.TG_OPS_CHAT_ID) {
+    console.warn(
+      '[lz-watcher] TG_OPS_BOT_TOKEN (or legacy TG_BOT_TOKEN) or TG_OPS_CHAT_ID not set — alerts will be logged but not delivered',
     );
   }
 
@@ -60,9 +74,9 @@ export async function runLzWatcher(env: Env): Promise<void> {
     return;
   }
   console.log(`[lz-watcher] tick produced ${messages.length} alert(s)`);
-  if (env.TG_OPS_BOT_TOKEN && env.TG_OPS_CHAT_ID) {
+  if (tgToken && env.TG_OPS_CHAT_ID) {
     for (const msg of messages) {
-      await sendOpsAlert(env.TG_OPS_BOT_TOKEN, env.TG_OPS_CHAT_ID, msg);
+      await sendOpsAlert(tgToken, env.TG_OPS_CHAT_ID, msg);
     }
   } else {
     for (const msg of messages) console.log(msg);

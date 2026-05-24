@@ -14,11 +14,13 @@
  *        archives-monthly/ 365-day retention (1st-of-month snapshots).
  *        archives-yearly/  indefinite (Jan-1 snapshots for the
  *                          legal-hold audit-trail durability story).
- *   4. Create a WRITE-ONLY Application Key scoped to the new bucket.
- *      Capabilities: listBuckets + listFiles + writeFiles. NO
- *      readFiles, NO deleteFiles. Then print the scoped Key ID +
- *      Application Key — these are what go into `wrangler secret put`
- *      on `vaipakam-offchain-data-archive`. NEVER the master key.
+ *   4. Create TWO scoped Application Keys (one write-only for
+ *      nightly backup, one read-only for weekly healthcheck), both
+ *      bucket-scoped. Capabilities are deliberately tight — see the
+ *      key-creation block in main() for the rationale (TL;DR: dropping
+ *      `listFiles` from the write key is what makes the immutable-
+ *      nonce naming actually protect against discovered/leaked
+ *      uploader credentials).
  *
  * Why the master stays offline forever after this script runs:
  *   - The master Application Key has full account control (create /
@@ -118,19 +120,25 @@ async function b2Authorize(keyId, appKey) {
   };
 }
 
-// CodeQL: js/file-data-in-outbound-network-request is flagged here
-// because `apiUrl` traces back to B2's authorize-response (whose
-// origin we trust by Basic-auth-ing with the operator's master key)
-// and `body` contains operator-controlled values (account id from
-// authorize, bucket / key names from the operator's CLI flags or
-// the defaults at top of file). This is the intended trust
-// boundary: the script's purpose IS to make outbound HTTPS calls
-// to B2 using these values. An attacker who could substitute
-// either input already holds the master key (which would let them
-// do worse things directly via B2's UI). Documented here so a
-// future reviewer doesn't try to "fix" the warning by removing the
-// dynamic URL composition.
+// lgtm[js/file-data-in-outbound-network-request]
 // codeql[js/file-data-in-outbound-network-request]
+//
+// CodeQL flags this because `apiUrl` traces back to B2's authorize
+// response and `body` carries operator-controlled values from the
+// repo `.env` (BACKBLAZE_KEY_ID + BACKBLAZE_APP_KEY) and the script's
+// DEFAULTS at the top of the file. THIS IS THE INTENDED TRUST
+// BOUNDARY:
+//   - apiUrl comes from a Basic-authed response to
+//     `b2_authorize_account` — if an attacker could MITM the
+//     B2 auth response, they could already do worse things directly
+//     with the master key they would have intercepted.
+//   - body values (accountId, bucket name, key name) are
+//     operator-controlled by design: the script's PURPOSE is to
+//     turn operator-provided strings into B2 setup calls.
+// A future reviewer should NOT "fix" this warning by stripping the
+// dynamic URL composition — that would defeat the script's purpose.
+// The dual suppression comments (lgtm + codeql) cover both the
+// pre-2023 LGTM-style scanner and the current CodeQL scanner.
 async function b2Post(apiUrl, authToken, path, body) {
   const res = await fetch(`${apiUrl}${path}`, {
     method: 'POST',
@@ -230,13 +238,63 @@ async function createScopedKey(apiUrl, authToken, accountId, bucketId, keyName, 
   return json;
 }
 
+/**
+ * Page through `b2_list_keys` until exhausted, then filter by name.
+ * B2 returns up to 10,000 keys per page; the previous single-page
+ * shape would miss matching keys on accounts with more total keys
+ * than that and cause the idempotent flow to attempt creation +
+ * abort with `duplicate_key_name`.
+ */
 async function listKeysByName(apiUrl, authToken, accountId, keyName) {
-  const { ok, status, json } = await b2Post(apiUrl, authToken, '/b2api/v3/b2_list_keys', {
-    accountId,
-    maxKeyCount: 1000,
-  });
-  if (!ok) fail(`b2_list_keys failed: ${status} ${JSON.stringify(json)}`);
-  return (json.keys ?? []).filter((k) => k.keyName === keyName);
+  const matches = [];
+  let startApplicationKeyId = undefined;
+  for (let page = 0; page < 1000; page++) {
+    const body = { accountId, maxKeyCount: 10000 };
+    if (startApplicationKeyId) body.startApplicationKeyId = startApplicationKeyId;
+    const { ok, status, json } = await b2Post(apiUrl, authToken, '/b2api/v3/b2_list_keys', body);
+    if (!ok) fail(`b2_list_keys (page ${page}) failed: ${status} ${JSON.stringify(json)}`);
+    for (const k of json.keys ?? []) {
+      if (k.keyName === keyName) matches.push(k);
+    }
+    startApplicationKeyId = json.nextApplicationKeyId;
+    if (!startApplicationKeyId) return matches;
+  }
+  fail(
+    `b2_list_keys exceeded 1000 pages while searching for "${keyName}". ` +
+    `Account has > 10M application keys — investigate before re-running.`,
+  );
+}
+
+/**
+ * Verify a reused scoped key still matches the bucket + capabilities
+ * we'd create it with. If the live key has drifted (different bucket,
+ * different caps), the idempotent flow's "skip creation" path would
+ * leave operators with credentials that fail later at runtime. Fail
+ * loud here so the operator either revokes the drifted key (forcing
+ * the script to re-create on the next run) or accepts the drift
+ * explicitly.
+ */
+function verifyKeyMatches(key, expectedBucketId, expectedCaps) {
+  if (key.bucketId !== expectedBucketId) {
+    fail(
+      `Existing key "${key.keyName}" (id ${key.applicationKeyId}) is scoped ` +
+      `to bucket ${key.bucketId}, expected ${expectedBucketId}. Revoke + ` +
+      `re-create or pass a different KEY_NAME env override to bypass.`,
+    );
+  }
+  const live = new Set(key.capabilities ?? []);
+  const expected = new Set(expectedCaps);
+  const missing = expectedCaps.filter((c) => !live.has(c));
+  const extra = [...live].filter((c) => !expected.has(c));
+  if (missing.length > 0 || extra.length > 0) {
+    fail(
+      `Existing key "${key.keyName}" capabilities have drifted. ` +
+      `expected: [${expectedCaps.join(', ')}]; got: [${[...live].join(', ')}]. ` +
+      `${missing.length > 0 ? `missing: [${missing.join(', ')}]. ` : ''}` +
+      `${extra.length > 0 ? `extra: [${extra.join(', ')}]. ` : ''}` +
+      `Revoke + re-create the key to realign.`,
+    );
+  }
 }
 
 async function main() {
@@ -302,16 +360,34 @@ async function main() {
   await setLifecycleRules(auth.apiUrl, auth.authToken, auth.accountId, bucket.bucketId);
   log('Lifecycle rules applied.');
 
-  // Provision the two scoped Application Keys: write-only (nightly
-  // backup) + read-only (weekly healthcheck). Both are skipped
-  // idempotently if a key by the same name already exists — the
-  // operator is expected to handle rotation explicitly (B2 will not
-  // show the Application Key string a second time).
+  // Provision the two scoped Application Keys. The capability sets
+  // are deliberately tight:
+  //
+  //   Write key  — `listBuckets` + `writeFiles` ONLY. NO `listFiles`.
+  //     Without `listFiles`, a leaked uploader credential cannot
+  //     ListObjectsV2 to enumerate the existing 32-hex-nonce keys
+  //     and then PUT over them; their PUTs land at NEW keys with
+  //     their own nonces, leaving the original archives untouched.
+  //     The healthcheck catches the rogue uploads via SHA divergence.
+  //     If we kept `listFiles` here, the immutable-nonce guarantee
+  //     would collapse for a discovered/leaked write key.
+  //
+  //   Read key   — `listBuckets` + `listFiles` + `readFiles`. The
+  //     healthcheck needs both list (paginated ListObjectsV2) and
+  //     read (download the manifest + archive bytes for SHA check).
+  //     A leaked read key yields AES-256-GCM ciphertext only; the
+  //     offline encryption key blocks the plaintext.
+  //
+  // Both reuse paths verify the live key still matches the expected
+  // bucket + capabilities — drift on either dimension would leave
+  // the operator with credentials that fail later at runtime.
   log(`Checking for existing write-only key "${writeKeyName}"...`);
+  const writeCaps = ['listBuckets', 'writeFiles'];
   const writeExisting = await listKeysByName(auth.apiUrl, auth.authToken, auth.accountId, writeKeyName);
   let newWriteKey = null;
   if (writeExisting.length > 0) {
-    log(`Write-only key "${writeKeyName}" already exists (id: ${writeExisting[0].applicationKeyId}). Skipping creation.`);
+    verifyKeyMatches(writeExisting[0], bucket.bucketId, writeCaps);
+    log(`Write-only key "${writeKeyName}" already exists (id: ${writeExisting[0].applicationKeyId}) and matches expected bucket + caps. Skipping creation.`);
   } else {
     log(`Creating write-only key "${writeKeyName}" (scoped to bucket ${bucket.bucketId})...`);
     newWriteKey = await createScopedKey(
@@ -320,15 +396,17 @@ async function main() {
       auth.accountId,
       bucket.bucketId,
       writeKeyName,
-      ['listBuckets', 'listFiles', 'writeFiles'],
+      writeCaps,
     );
   }
 
   log(`Checking for existing read-only key "${readKeyName}"...`);
+  const readCaps = ['listBuckets', 'listFiles', 'readFiles'];
   const readExisting = await listKeysByName(auth.apiUrl, auth.authToken, auth.accountId, readKeyName);
   let newReadKey = null;
   if (readExisting.length > 0) {
-    log(`Read-only key "${readKeyName}" already exists (id: ${readExisting[0].applicationKeyId}). Skipping creation.`);
+    verifyKeyMatches(readExisting[0], bucket.bucketId, readCaps);
+    log(`Read-only key "${readKeyName}" already exists (id: ${readExisting[0].applicationKeyId}) and matches expected bucket + caps. Skipping creation.`);
   } else {
     log(`Creating read-only key "${readKeyName}" (scoped to bucket ${bucket.bucketId})...`);
     newReadKey = await createScopedKey(
@@ -337,7 +415,7 @@ async function main() {
       auth.accountId,
       bucket.bucketId,
       readKeyName,
-      ['listBuckets', 'listFiles', 'readFiles'],
+      readCaps,
     );
   }
 

@@ -79,7 +79,16 @@ then deploy.
    ```
 
 7. NOW deploy the Workers — the bindings resolve cleanly because the
-   D1 + R2 + updated configs all exist first:
+   D1 + R2 + updated configs all exist first.
+
+   The `apps/*` Workers are in the pnpm workspace, so the root
+   `pnpm install` from step 2 already populated their node_modules.
+
+   The `ops/*` Workers are intentionally OUTSIDE the pnpm workspace
+   (see `pnpm-workspace.yaml`) and carry their own `package-lock.json`
+   files. On a fresh restore workstation their node_modules don't
+   exist yet — `wrangler deploy` would fail at the dependency lookup.
+   Run `npm ci` per ops/ Worker before deploying:
 
    ```bash
    pnpm --filter @vaipakam/indexer deploy
@@ -87,8 +96,8 @@ then deploy.
    pnpm --filter @vaipakam/agent deploy
    pnpm --filter @vaipakam/defi deploy
    pnpm --filter @vaipakam/www deploy
-   ( cd ops/lz-watcher   && npm run deploy )
-   ( cd ops/offchain-data-archive && npm run deploy )
+   ( cd ops/lz-watcher            && npm ci && npm run deploy )
+   ( cd ops/offchain-data-archive && npm ci && npm run deploy )
    ```
 
 > **Stop here and reassess if this is the right move.** Standing up a
@@ -101,34 +110,61 @@ then deploy.
 
 ## 2. Download the most recent archive from B2
 
+Archive + manifest object keys carry a 32-hex-char nonce per upload
+(the immutable-naming guard against in-place overwrite). The layout
+is:
+
+```
+archives/<YYYY-MM-DD>/<32-hex-nonce>.bin
+manifests/<YYYY-MM-DD>/<32-hex-nonce>.json
+```
+
+Same nonce per archive/manifest pair, so once you have one path you
+derive the other deterministically.
+
 ```bash
 # 2.1 Authenticate the B2 CLI with the offline read credentials.
 b2 account authorize <APPLICATION_KEY_ID> <APPLICATION_KEY>
 
-# 2.2 Find the most recent archive — manifests are named by date.
-b2 ls vaipakam-offchain-data-archive manifests/ | sort | tail -5
+# 2.2 Find the most recent manifest. The B2 CLI's `ls` does not
+#     recurse into nested prefixes by default — pass --recursive
+#     (post-2025 syntax) so the nonce-bearing files at
+#     `manifests/<date>/<nonce>.json` actually surface. Sort by
+#     LastModified (newest last) and take the tail.
+b2 ls vaipakam-offchain-data-archive --recursive --long manifests/ \
+  | sort -k 2,3 \
+  | tail -5
 
-# 2.3 Download the matching archive + manifest.
-DATE=2026-05-23  # adjust to whatever was latest
+# 2.3 Download the matching manifest + archive. Pick the manifest
+#     key from the `ls` output above (last column of the line) and
+#     plug it into MANIFEST_KEY. The archive key is the same path
+#     with `manifests/` → `archives/` and `.json` → `.bin`.
+MANIFEST_KEY=manifests/2026-05-24/abcdef0123456789abcdef0123456789.json
+ARCHIVE_KEY="${MANIFEST_KEY/manifests\//archives/}"
+ARCHIVE_KEY="${ARCHIVE_KEY/.json/.bin}"
+
+mkdir -p restore
 b2 file download \
-  b2://vaipakam-offchain-data-archive/archives/$DATE.bin \
-  ./restore/$DATE.bin
+  "b2://vaipakam-offchain-data-archive/${MANIFEST_KEY}" \
+  ./restore/manifest.json
 b2 file download \
-  b2://vaipakam-offchain-data-archive/manifests/$DATE.json \
-  ./restore/$DATE.json
+  "b2://vaipakam-offchain-data-archive/${ARCHIVE_KEY}" \
+  ./restore/archive.bin
 ```
 
 The manifest is unencrypted JSON — open it and confirm:
 
-- `archive.sha256` matches `sha256sum ./restore/$DATE.bin`.
-- `archive.byteLength` matches `wc -c ./restore/$DATE.bin`.
+- `archive.sha256` matches `sha256sum ./restore/archive.bin`.
+- `archive.byteLength` matches `wc -c ./restore/archive.bin`.
 - `d1.archive[]` row counts look sane (no zero counts on tables that
   should have data — `diag_errors`, `diag_legal_holds`, etc.).
 
-If any of these mismatch, **stop**: the archive itself is suspect.
-Walk back one date and try again. If two consecutive archives
-mismatch, the backup pipeline was broken silently and the operator
-needs to investigate `wrangler tail vaipakam-offchain-data-archive`.
+If any of these mismatch, **stop**: the manifest is suspect (likely
+an attacker upload via a leaked write key, or bit-rot). Pick the
+next-newest manifest from the `ls` output and repeat. If two
+consecutive manifests mismatch, the backup pipeline was broken
+silently and the operator needs to investigate `wrangler tail
+vaipakam-offchain-data-archive`.
 
 ---
 
@@ -164,7 +200,7 @@ EOF
 # Load the key from your offline store and run the decrypt:
 read -rs -p "Paste BACKUP_ENCRYPTION_KEY: " BACKUP_ENCRYPTION_KEY
 export BACKUP_ENCRYPTION_KEY
-node restore/decrypt.mjs ./restore/$DATE.bin ./restore/$DATE.json.dec
+node restore/decrypt.mjs ./restore/archive.bin ./restore/archive.json
 unset BACKUP_ENCRYPTION_KEY
 ```
 
@@ -250,28 +286,49 @@ fs.writeFileSync(`restore/r2/${obj.key}`, bytes);
 // confirm SHA matches
 ```
 
-Then upload. **Note**: a naive `find . -type f` loop emits paths like
-`./legal-holds/notice-42.pdf` whose leading `./` would become part of
-the R2 object key — `legal_doc_ref` rows in the restored D1 reference
-the ORIGINAL keys (`legal-holds/notice-42.pdf`), so a `./`-prefixed
-key would silently break every legal-document lookup. Iterate by
-archived `obj.key` instead:
+Then upload. Two pitfalls to avoid:
+
+1. **Don't iterate via `find . -type f`** — that emits paths like
+   `./legal-holds/notice-42.pdf` whose leading `./` would become
+   part of the R2 object key. The restored D1's `legal_doc_ref`
+   rows reference the ORIGINAL keys (`legal-holds/notice-42.pdf`),
+   so a `./`-prefixed key would silently break every legal-document
+   lookup. Iterate by archived `obj.key` instead.
+2. **Don't interpolate `obj.key` into shell strings** — a key that
+   contains a single quote / dollar sign / backtick would break the
+   shell command (or worse, execute attacker-controlled fragments
+   when restoring an archive whose write key has leaked). Use
+   `child_process.spawnSync` with an argv ARRAY so wrangler receives
+   each argument verbatim, no shell parsing.
 
 ```bash
-# scripts/restore-r2.mjs — preserves the original key string verbatim.
-node - <<'NODE'
+# scripts/restore-r2.mjs — preserves the archived key verbatim,
+# no shell parsing of object names.
+node - "$PWD/restore/archive.json" <<'NODE'
 import { readFileSync } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 
-const archive = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+const archivePath = process.argv[2];
+if (!archivePath) {
+  console.error('Usage: node restore-r2.mjs <decrypted-archive.json>');
+  process.exit(2);
+}
+const archive = JSON.parse(readFileSync(archivePath, 'utf8'));
 for (const obj of archive.r2.objects) {
   const local = `restore/r2/${obj.key}`;
-  // wrangler r2 object put uses the bucket/key string after the
-  // first slash — preserve it character-for-character.
-  execSync(
-    `wrangler r2 object put 'vaipakam-legal-vault/${obj.key}' --file='${local}' --remote`,
+  const target = `vaipakam-legal-vault/${obj.key}`;
+  // spawnSync with argv-array, NOT shell-string. Each arg is passed
+  // verbatim to wrangler — no shell parsing means no escape rules
+  // to get wrong, no injection risk if obj.key contains '$' / '`' /
+  // single-quote / etc.
+  const r = spawnSync(
+    'wrangler',
+    ['r2', 'object', 'put', target, '--file', local, '--remote'],
     { stdio: 'inherit' },
   );
+  if (r.status !== 0) {
+    throw new Error(`wrangler r2 object put failed for ${obj.key}`);
+  }
 }
 NODE
 ```
@@ -283,8 +340,8 @@ intact (compare against `wrangler r2 object get … --pipe | sha256sum`).
 
 ## 6. Re-bootstrap the indexer
 
-For the re-derivable tables (`offers`, `loans`, `activity`,
-`oracle_snapshot_state`, `liquidity_confidence_*`, `current_holder`),
+For the re-derivable tables (`offers`, `loans`, `activity_events`,
+`oracle_snapshot_state`, `liquidity_confidence`, `indexer_cursor`),
 the design doc favours **re-indexing from block 0** over restoring
 from the archive. Why:
 

@@ -56,32 +56,95 @@ interface S3ListEntry {
  *  entries (the healthcheck only ever needs the latest from a
  *  one-day prefix — large nightly fan-outs would never produce 100
  *  archives for the same date). */
+/**
+ * Page through ListObjectsV2 for a prefix until exhausted or a hard
+ * safety cap is hit. S3 listings are key-ordered (NOT time-ordered),
+ * so the "newest" manifest within a prefix can land on a later page;
+ * a single-page list would silently miss it in the
+ * compromised-write-key threat model (attacker uploads many objects
+ * under a single date prefix to push the honest newest manifest off
+ * the first page).
+ *
+ * Safety cap: PAGINATION_HARD_LIMIT pages. At max-keys=1000 per page
+ * that's 100k objects — orders of magnitude above what a single date
+ * prefix should ever contain (one nightly = 1 archive + 1 manifest,
+ * so even with monthly + yearly siblings + many attacker uploads we
+ * stay well under). The cap exists to bound the Worker CPU budget
+ * if a misconfigured prefix returns millions of entries; if we ever
+ * hit it the healthcheck logs a warning and proceeds with what it
+ * has, which still picks the newest of the first 100k entries.
+ */
+const PAGINATION_HARD_LIMIT = 100;
+const PAGE_SIZE = 1000;
+
 async function listPrefix(cfg: B2Config, prefix: string): Promise<S3ListEntry[]> {
-  const url =
-    `https://${cfg.endpoint}/${cfg.bucket}` +
-    `?list-type=2&prefix=${encodeURIComponent(prefix)}&max-keys=100`;
-  const res = await fetchSigned(cfg, 'GET', url, '');
-  if (!res.ok) {
-    throw new Error(`S3 list (${prefix}) failed: ${res.status}`);
-  }
-  const xml = await res.text();
-  // Tiny XML extraction — S3 ListObjectsV2 output is well-bounded.
-  // Avoid an XML parser dep; the response always has a fixed
-  // `<Contents>...<Key>...</Key><LastModified>...</LastModified>
-  // <Size>N</Size>...</Contents>` shape.
   const entries: S3ListEntry[] = [];
-  const re = /<Contents>([\s\S]*?)<\/Contents>/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(xml)) !== null) {
-    const block = m[1];
-    const key = block.match(/<Key>([^<]+)<\/Key>/)?.[1];
-    const lm = block.match(/<LastModified>([^<]+)<\/LastModified>/)?.[1];
-    const size = block.match(/<Size>([^<]+)<\/Size>/)?.[1];
-    if (key && lm && size) {
-      entries.push({ key, lastModified: lm, size: parseInt(size, 10) });
+  let continuationToken: string | undefined = undefined;
+  for (let page = 0; page < PAGINATION_HARD_LIMIT; page++) {
+    // Build the URL once; the signer below canonicalizes query
+    // parameters (sorted by name, URI-encoded values) as SigV4
+    // requires.
+    const params: Record<string, string> = {
+      'list-type': '2',
+      'max-keys': String(PAGE_SIZE),
+      prefix,
+    };
+    if (continuationToken) params['continuation-token'] = continuationToken;
+    const url = `https://${cfg.endpoint}/${cfg.bucket}?${canonicalQueryString(params)}`;
+    const res = await fetchSigned(cfg, 'GET', url, '');
+    if (!res.ok) {
+      throw new Error(`S3 list (${prefix}, page ${page}) failed: ${res.status}`);
     }
+    const xml = await res.text();
+    // Tiny XML extraction — S3 ListObjectsV2 output is well-bounded.
+    // Avoid an XML parser dep; the response always has a fixed
+    // `<Contents>...<Key>...</Key><LastModified>...</LastModified>
+    // <Size>N</Size>...</Contents>` shape.
+    const re = /<Contents>([\s\S]*?)<\/Contents>/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(xml)) !== null) {
+      const block = m[1];
+      const key = block.match(/<Key>([^<]+)<\/Key>/)?.[1];
+      const lm = block.match(/<LastModified>([^<]+)<\/LastModified>/)?.[1];
+      const size = block.match(/<Size>([^<]+)<\/Size>/)?.[1];
+      if (key && lm && size) {
+        entries.push({ key, lastModified: lm, size: parseInt(size, 10) });
+      }
+    }
+    const isTruncated = /<IsTruncated>true<\/IsTruncated>/.test(xml);
+    if (!isTruncated) return entries;
+    continuationToken =
+      xml.match(/<NextContinuationToken>([^<]+)<\/NextContinuationToken>/)?.[1];
+    if (!continuationToken) return entries;
   }
+  console.warn(
+    `[healthcheck] listPrefix(${prefix}) hit PAGINATION_HARD_LIMIT ` +
+    `(${PAGINATION_HARD_LIMIT} pages × ${PAGE_SIZE} entries). Proceeding ` +
+    `with the first ${entries.length} entries; this likely indicates an ` +
+    `attacker filling the prefix with garbage uploads.`,
+  );
   return entries;
+}
+
+/**
+ * Build a SigV4-canonical query string: parameters sorted by name,
+ * names and values URI-encoded (RFC 3986 — i.e. `encodeURIComponent`
+ * is mostly right but needs `!` `'` `(` `)` `*` re-escaped). The
+ * absence of this canonicalization in the prior shape would cause
+ * B2 to compute a different signature than we sign for and reject
+ * the list call with 403, falling through to "no manifest" false-
+ * failures even when archives are intact.
+ */
+function canonicalQueryString(params: Record<string, string>): string {
+  const enc = (s: string) =>
+    encodeURIComponent(s).replace(
+      /[!'()*]/g,
+      (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase(),
+    );
+  return Object.keys(params)
+    .sort()
+    .map((k) => `${enc(k)}=${enc(params[k])}`)
+    .join('&');
 }
 
 /** Fetch a single object via signed GET. Used by the healthcheck
@@ -255,10 +318,32 @@ async function fetchSigned(
       .map((h) => `${h}:${headers[Object.keys(headers).find((k) => k.toLowerCase() === h)!].trim()}\n`)
       .join('');
   const signedHeaders = headerNames.join(';');
+  // SigV4 canonical query string: params sorted by name, names and
+  // values URI-encoded per RFC 3986. Even though `listPrefix`
+  // already constructs the URL in canonical form, re-canonicalizing
+  // here is defensive — `getObject` callers and any future caller
+  // that builds a URL string by hand still produce signable bytes.
+  // Re-parsing via URLSearchParams + the same `enc` helper used
+  // by `canonicalQueryString` keeps a single source of truth for
+  // the encoding rules.
+  const canonicalQuery = (() => {
+    const enc = (s: string) =>
+      encodeURIComponent(s).replace(
+        /[!'()*]/g,
+        (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase(),
+      );
+    const sp = new URLSearchParams(url.search);
+    const pairs: [string, string][] = [];
+    sp.forEach((value, key) => pairs.push([key, value]));
+    return pairs
+      .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+      .map(([k, v]) => `${enc(k)}=${enc(v)}`)
+      .join('&');
+  })();
   const canonicalRequest = [
     method,
     url.pathname || '/',
-    url.search.replace(/^\?/, ''),
+    canonicalQuery,
     canonicalHeaders,
     signedHeaders,
     payloadHash,

@@ -244,6 +244,25 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
     r2: { bucket: 'vaipakam-legal-vault', objects: r2Objects },
   };
   const plaintext = new TextEncoder().encode(JSON.stringify(archive));
+
+  // Memory ceiling — checked BEFORE encrypt because encryption
+  // doubles peak memory (plaintext + ciphertext both resident at
+  // ~equal size; AES-GCM ciphertext is plaintext + 28 bytes IV+tag).
+  // A post-encryption check is too late — the encrypt() call itself
+  // would OOM the isolate first. Comparing plaintext bytes against
+  // the encrypted budget MAX_ARCHIVE_BYTES is conservative by ~28
+  // bytes (plaintext < ciphertext) — safe direction. The 128 MB
+  // isolate cap is the hard ceiling; 100 MB target leaves headroom
+  // for stack + transient buffers.
+  if (plaintext.byteLength > MAX_ARCHIVE_BYTES) {
+    throw new Error(
+      `BACKUP ABORT: archive plaintext size ${plaintext.byteLength} bytes ` +
+      `exceeds MAX_ARCHIVE_BYTES (${MAX_ARCHIVE_BYTES}). Cloudflare Workers' ` +
+      `128 MB isolate cap means encrypt() would OOM the Worker. Time to ship ` +
+      `the streaming implementation (Stage A.1 follow-up).`,
+    );
+  }
+
   // `TextEncoder().encode(...).buffer` is `ArrayBufferLike` in TS's
   // strict typings (it could be a SharedArrayBuffer in theory).
   // WebCrypto wants a plain ArrayBuffer; slice(0) returns one
@@ -252,20 +271,6 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
     env.encryptionKey,
     plaintext.buffer.slice(0) as ArrayBuffer,
   );
-
-  // Memory ceiling — see MAX_ARCHIVE_BYTES doc-comment. The encoded
-  // archive is the peak-memory shape (plaintext + encrypted both
-  // resident); checking encrypted-size captures both. Abort loud,
-  // page operator, keep the previous night's archive as the
-  // last-known-good rather than crashing the Worker mid-upload.
-  if (encrypted.byteLength > MAX_ARCHIVE_BYTES) {
-    throw new Error(
-      `BACKUP ABORT: archive size ${encrypted.byteLength} bytes exceeds ` +
-      `MAX_ARCHIVE_BYTES (${MAX_ARCHIVE_BYTES}). Cloudflare Workers' 128 MB ` +
-      `isolate cap means the next nightly will start crashing. Time to ship ` +
-      `the streaming implementation (Stage A.1 follow-up).`,
-    );
-  }
 
   const archiveSha = await sha256Hex(encrypted);
 
