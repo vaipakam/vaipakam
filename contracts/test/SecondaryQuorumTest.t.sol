@@ -144,9 +144,9 @@ contract SecondaryQuorumTest is Test {
         _mockFeedFull(mockEthUsdFeed, int256(2000e8), 8);
         // Wire mockAsset → mockFeed via Feed Registry.
         _mockRegistryFeed(mockAsset, mockFeed);
-        // forge-lint: disable-next-line(unsafe-typecast)
         // safe: `CHAINLINK_PRICE_8DEC` = uint256(2_000_00000000) — positive,
         // far below int256.max.
+        // forge-lint: disable-next-line(unsafe-typecast)
         _mockFeedFull(mockFeed, int256(CHAINLINK_PRICE_8DEC), 8);
 
         // Default state: all three secondaries DISABLED (zero address).
@@ -215,9 +215,9 @@ contract SecondaryQuorumTest is Test {
         vm.mockCall(
             mockApi3,
             abi.encodeWithSignature("readDataFeedWithDapiNameHash(bytes32)"),
-            // forge-lint: disable-next-line(unsafe-typecast)
             // safe: `SECONDARY_AGREE_18DEC` is a positive test constant ($2000 in
             // 18-decimal numeraire); well below int256.max.
+            // forge-lint: disable-next-line(unsafe-typecast)
             abi.encode(int224(int256(SECONDARY_AGREE_18DEC)), uint32(block.timestamp))
         );
     }
@@ -226,9 +226,9 @@ contract SecondaryQuorumTest is Test {
         vm.mockCall(
             mockApi3,
             abi.encodeWithSignature("readDataFeedWithDapiNameHash(bytes32)"),
-            // forge-lint: disable-next-line(unsafe-typecast)
             // safe: `SECONDARY_DISAGREE_18DEC` is a positive test constant; well
             // below int256.max.
+            // forge-lint: disable-next-line(unsafe-typecast)
             abi.encode(int224(int256(SECONDARY_DISAGREE_18DEC)), uint32(block.timestamp))
         );
     }
@@ -498,9 +498,9 @@ contract SecondaryQuorumTest is Test {
             mockApi3,
             abi.encodeWithSignature("readDataFeedWithDapiNameHash(bytes32)"),
             abi.encode(
-                // forge-lint: disable-next-line(unsafe-typecast)
                 // safe: `SECONDARY_AGREE_18DEC` is a positive test constant ($2000 in
                 // 18-decimal numeraire); well below int256.max.
+                // forge-lint: disable-next-line(unsafe-typecast)
                 int224(int256(SECONDARY_AGREE_18DEC)),
                 uint32(block.timestamp - 7200)
             )

@@ -407,10 +407,10 @@ contract PeriodicInterestCadenceTest is SetupTest {
         ConfigFacet(address(diamond)).setNumeraireSwapEnabled(true);
         // Hypothetical EUR rotation: ETH/EUR Chainlink feed +
         // Chainlink Feed Registry's Denominations.EUR constant +
-        // forge-lint: disable-next-line(unsafe-typecast)
         // bytes32("eur") for symbol-derived secondary queries +
         // Pyth ETH/EUR feed id. None of these need to actually exist
         // on the test chain — the setter only validates structure.
+        // forge-lint: disable-next-line(unsafe-typecast)
         address ethEurFeed = makeAddr("ethEurFeed");
         address eurDenom = makeAddr("eurDenom");
         // forge-lint: disable-next-line(unsafe-typecast)
