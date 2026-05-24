@@ -371,6 +371,13 @@ library LibInteractionRewards {
         for (uint256 d = frontier + 1; d <= through; ) {
             int256 delta = s.lenderPerDayDeltaNumeraire18[d];
             if (delta != 0) {
+                // forge-lint: disable-next-line unsafe-typecast
+                // safe: `open` is uint256, `delta` is int256; signed
+                // arithmetic on the delta requires the int256 cast, and
+                // the result is guaranteed non-negative by the invariant
+                // that lifetime deltas can never drive `open` below 0
+                // (any unwind decrements past the open balance is gated
+                // earlier in the call sites). Both casts are required.
                 open = uint256(int256(open) + delta);
             }
             s.totalLenderInterestNumeraire18[d] += open;
@@ -393,6 +400,13 @@ library LibInteractionRewards {
         for (uint256 d = frontier + 1; d <= through; ) {
             int256 delta = s.borrowerPerDayDeltaNumeraire18[d];
             if (delta != 0) {
+                // forge-lint: disable-next-line unsafe-typecast
+                // safe: `open` is uint256, `delta` is int256; signed
+                // arithmetic on the delta requires the int256 cast, and
+                // the result is guaranteed non-negative by the invariant
+                // that lifetime deltas can never drive `open` below 0
+                // (any unwind decrements past the open balance is gated
+                // earlier in the call sites). Both casts are required.
                 open = uint256(int256(open) + delta);
             }
             s.totalBorrowerInterestNumeraire18[d] += open;

@@ -906,6 +906,11 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         if (block.timestamp - reportedAt > LibVaipakam.effectiveSecondaryOracleMaxStaleness()) {
             return SecondaryStatus.Unavailable;
         }
+        // forge-lint: disable-next-line unsafe-typecast
+        // safe: `value` is int224 from the API3 callback, guaranteed > 0
+        // by the check on the prior return path (line above the try/catch
+        // closing brace). Widen int224 → int256 → uint256 is the correct
+        // pattern; neither cast can be removed.
         uint256 secondary = _rescale(uint256(int256(value)), 18, primaryDec);
         if (secondary == 0) return SecondaryStatus.Unavailable;
         return _classifyDeviation(primaryPrice, secondary);
