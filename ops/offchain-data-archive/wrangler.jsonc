@@ -112,19 +112,24 @@
   //                                  Healthcheck failures +
   //                                  nightly backup outcomes go
   //                                  to TG_OPS_CHAT_ID.
-  "vars": {
-    // Backblaze S3-compatible endpoint. Region-specific; the bucket
-    // was provisioned in eu-central-003 by the setup-backblaze.mjs
-    // script. Public CF/B2 product URL — safe to commit.
-    "B2_ENDPOINT": "s3.eu-central-003.backblazeb2.com",
-    // Backup bucket name in B2. Documented in the design doc + the
-    // restore runbook — safe to commit.
-    "B2_BUCKET": "vaipakam-offchain-data-archive",
-    // TG_OPS_CHAT_ID is set via `wrangler secret put` (NOT here).
-    // Chat IDs aren't strictly secret — they grant nothing without
-    // the bot token — but keeping it out of the public repo
-    // avoids needlessly revealing which channel ops alerts land
-    // in. Free-of-cost obfuscation; Workers reads vars and secrets
-    // identically at the `env.X` site.
-  },
+  // All three of B2_ENDPOINT, B2_BUCKET, and TG_OPS_CHAT_ID are
+  // operator-configured via `wrangler secret put` rather than baked
+  // into this JSONC file. Reasons:
+  //   - B2_ENDPOINT is account-region-specific. The
+  //     `scripts/setup-backblaze.mjs` setup script discovers the
+  //     account's S3 endpoint from `b2_authorize_account`'s response
+  //     and prints it. Hard-coding one operator's region here would
+  //     silently break signed B2 calls for any fork / re-deploy on
+  //     a different account whose bucket lives in a different
+  //     region.
+  //   - B2_BUCKET names are globally unique across all B2 accounts.
+  //     A fork can't reuse "vaipakam-offchain-data-archive" — they
+  //     need their own bucket name.
+  //   - TG_OPS_CHAT_ID isn't strictly secret (chat ids grant
+  //     nothing without the bot token) but lifting it out of the
+  //     public repo avoids revealing which channel ops alerts land
+  //     in. Free-of-cost obfuscation.
+  // Workers reads `env.X` identically for vars and secrets — no
+  // Worker code change is needed.
+  "vars": {},
 }

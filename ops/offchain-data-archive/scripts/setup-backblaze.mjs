@@ -452,9 +452,12 @@ async function main() {
     console.log('# Read-only key already exists; reusing. Same rotation note as above.');
     console.log();
   }
-  console.log(`# Worker vars (already committed in wrangler.jsonc — no action):`);
-  console.log(`B2_ENDPOINT  = ${auth.s3Endpoint?.replace('https://', '') ?? '<set manually — see s3 endpoint in B2 dashboard>'}`);
-  console.log(`B2_BUCKET    = ${bucketName}`);
+  console.log(`# B2 endpoint + bucket — set as secrets too (region varies per account):`);
+  console.log(`wrangler secret put B2_ENDPOINT`);
+  console.log(`  Paste:  ${auth.s3Endpoint?.replace('https://', '') ?? '<set manually — see s3 endpoint in B2 dashboard>'}`);
+  console.log();
+  console.log(`wrangler secret put B2_BUCKET`);
+  console.log(`  Paste:  ${bucketName}`);
   console.log();
   console.log('# Still to do (operator):');
   console.log("#   1. Generate AES-256 backup encryption key locally: `openssl rand -hex 32`");
