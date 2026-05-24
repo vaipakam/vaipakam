@@ -70,7 +70,7 @@ This bifurcation cuts the cross-replication surface roughly in half.
 
 ### 3.1 Scope
 
-Schedule a Cloudflare Worker (`ops/cloud-backup`) that nightly:
+Schedule a Cloudflare Worker (`ops/offchain-data-archive`) that nightly:
 
 1. Exports the **born off-chain** D1 tables (`diag_errors`,
    `diag_legal_holds`, `diag_legal_hold_audit`, plus `lz_alerts` /
@@ -185,7 +185,7 @@ implementation PR). High level:
 
 ### 3.6 Operational checks
 
-- A second Cloudflare Worker cron (`ops/cloud-backup/healthcheck`)
+- A second Cloudflare Worker cron (`ops/offchain-data-archive/healthcheck`)
   runs **weekly** to:
   - HEAD the most recent B2 archive.
   - Decrypt + verify the SHA-256 manifest matches the expected
@@ -319,7 +319,7 @@ loss). Stage C closes the integrity gap before mainnet.
 
 ## 6. Sequencing
 
-1. **NOW (pre-audit)**: implement Stage A in `ops/cloud-backup`.
+1. **NOW (pre-audit)**: implement Stage A in `ops/offchain-data-archive`.
    Backup pipeline live, restore-runbook drafted, healthcheck
    alerting in place.
 2. **Audit window**: design doc reviewed; auditors invited to flag any

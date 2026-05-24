@@ -4,7 +4,7 @@ When you read this, something has gone wrong with the Cloudflare side
 of Vaipakam — the account is locked out, the data is tampered with,
 or a deploy mistake wiped a D1 table. This runbook walks the recovery
 path back to a known-good off-chain state from a Backblaze B2 archive
-produced by [`ops/cloud-backup`](../../ops/cloud-backup/README.md).
+produced by [`ops/offchain-data-archive`](../../ops/offchain-data-archive/README.md).
 
 > **On-chain state is fine.** The Diamond, the VPFI token, and every
 > position-NFT live on chain. The protocol's economic core is
@@ -69,7 +69,7 @@ then deploy.
    - `apps/keeper/wrangler.jsonc`      → vaipakam-archive
    - `apps/agent/wrangler.jsonc`       → vaipakam-archive
    - `ops/lz-watcher/wrangler.jsonc`   → vaipakam-lz-alerts-db
-   - `ops/cloud-backup/wrangler.jsonc` → vaipakam-archive + vaipakam-lz-alerts-db
+   - `ops/offchain-data-archive/wrangler.jsonc` → vaipakam-archive + vaipakam-lz-alerts-db
 
 6. Apply migrations:
 
@@ -88,7 +88,7 @@ then deploy.
    pnpm --filter @vaipakam/defi deploy
    pnpm --filter @vaipakam/www deploy
    ( cd ops/lz-watcher   && npm run deploy )
-   ( cd ops/cloud-backup && npm run deploy )
+   ( cd ops/offchain-data-archive && npm run deploy )
    ```
 
 > **Stop here and reassess if this is the right move.** Standing up a

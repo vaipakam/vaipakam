@@ -11,7 +11,7 @@ off-chain layer is what makes the protocol *usable*: the offer-book,
 the diagnostic stream, the legal-hold register.
 
 This PR ships **Stage A** of the resilience plan: a new
-`ops/cloud-backup` Cloudflare Worker that nightly exports the two
+`ops/offchain-data-archive` Cloudflare Worker that nightly exports the two
 production D1 databases (`vaipakam-archive` + `vaipakam-lz-alerts-db`)
 and mirrors the R2 `vaipakam-legal-vault` bucket to a **Backblaze B2**
 bucket on a separate billing + credential boundary. Every archive is
