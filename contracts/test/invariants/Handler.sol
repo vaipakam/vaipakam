@@ -59,8 +59,8 @@ contract Handler is Test {
     constructor(InvariantBase _base) {
         base = _base;
         diamond = address(_base.diamond());
-        usdc = _base.mockUSDC();
-        weth = _base.mockWETH();
+        usdc = _base.mockUsdc();
+        weth = _base.mockWeth();
     }
 
     // ── Actor selection helpers ─────────────────────────────────────────

@@ -39,8 +39,8 @@ contract VaultSolvencyInvariant is Test {
     ///         (diamond + per-user vaults). Sums per asset to survive
     ///         loans that commit collateral in different tokens.
     function invariant_VaultCoversActiveCollateral() public view {
-        uint256 wethCommitted = _sumActiveCollateral(base.mockWETH());
-        uint256 wethHeld = _vaultPerimeterBalance(base.mockWETH());
+        uint256 wethCommitted = _sumActiveCollateral(base.mockWeth());
+        uint256 wethHeld = _vaultPerimeterBalance(base.mockWeth());
         assertGe(
             wethHeld,
             wethCommitted,
@@ -49,8 +49,8 @@ contract VaultSolvencyInvariant is Test {
 
         // USDC is the principal asset but can also land back in vault as
         // repayment proceeds pending claim. The same inequality still holds.
-        uint256 usdcCommitted = _sumActiveCollateral(base.mockUSDC());
-        uint256 usdcHeld = _vaultPerimeterBalance(base.mockUSDC());
+        uint256 usdcCommitted = _sumActiveCollateral(base.mockUsdc());
+        uint256 usdcHeld = _vaultPerimeterBalance(base.mockUsdc());
         assertGe(
             usdcHeld,
             usdcCommitted,

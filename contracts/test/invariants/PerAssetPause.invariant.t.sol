@@ -52,8 +52,8 @@ contract PerAssetPauseInvariant is Test {
     ///         local ledger of intended state — guards against a storage
     ///         slot that drifts out of sync with the setters.
     function invariant_PauseFlagMatchesLedger() public view {
-        address usdc = base.mockUSDC();
-        address weth = base.mockWETH();
+        address usdc = base.mockUsdc();
+        address weth = base.mockWeth();
         assertEq(
             AdminFacet(address(base.diamond())).isAssetPaused(usdc),
             handler.usdcPaused(),
@@ -96,8 +96,8 @@ contract PauseHandler is Test {
     constructor(InvariantBase _base) {
         base = _base;
         diamond = address(_base.diamond());
-        usdc = _base.mockUSDC();
-        weth = _base.mockWETH();
+        usdc = _base.mockUsdc();
+        weth = _base.mockWeth();
     }
 
     // ─── Pause toggles ──────────────────────────────────────────────────
