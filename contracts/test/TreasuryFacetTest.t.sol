@@ -6,7 +6,6 @@ import {Test} from "forge-std/Test.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
-import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";

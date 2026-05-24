@@ -9,7 +9,6 @@ import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
-import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {HelperTest} from "./HelperTest.sol";
 

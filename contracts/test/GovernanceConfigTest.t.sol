@@ -7,8 +7,6 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
-import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
-import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {HelperTest} from "./HelperTest.sol";
 
 /// @title GovernanceConfigTest

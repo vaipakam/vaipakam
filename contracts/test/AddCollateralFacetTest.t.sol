@@ -33,7 +33,6 @@ import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
 import {MockZeroExLegacyAdapter} from "./mocks/MockZeroExLegacyAdapter.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
-import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 
 /**
  * @title AddCollateralFacetTest

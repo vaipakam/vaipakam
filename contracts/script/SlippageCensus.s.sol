@@ -6,7 +6,6 @@ import {console} from "forge-std/console.sol";
 
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
-import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 
 /**
  * @title SlippageCensus

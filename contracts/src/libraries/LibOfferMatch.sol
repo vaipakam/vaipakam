@@ -6,7 +6,6 @@ import {LibFacet} from "./LibFacet.sol";
 import {LibRiskMath} from "./LibRiskMath.sol";
 import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
-import {RiskFacet} from "../facets/RiskFacet.sol";
 
 /**
  * @title LibOfferMatch

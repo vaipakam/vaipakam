@@ -5,7 +5,6 @@ import {RiskFacetTest} from "./RiskFacetTest.t.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
-import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {IZeroExProxy} from "../src/interfaces/IZeroExProxy.sol";
