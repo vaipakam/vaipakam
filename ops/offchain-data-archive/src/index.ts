@@ -70,6 +70,68 @@ async function withEncryptionKey(env: Env): Promise<Env> {
   return env;
 }
 
+/**
+ * Fail-fast preflight that enumerates EVERY required secret/var and
+ * throws a single error naming all the missing ones. Without this
+ * guard, a missing value crashes deep inside helpers (e.g.
+ * `parseRegionFromEndpoint(undefined)` throws `TypeError: Cannot read
+ * properties of undefined` ~10 frames down) and surfaces as CF
+ * Error 1101 with no operator-actionable context.
+ *
+ * Hard-required (cron can't function without these — missing any
+ * means the backup path will crash):
+ *   - BACKUP_ENCRYPTION_KEY  (64 hex chars, AES-256 key)
+ *   - B2_ENDPOINT            (S3-compatible host)
+ *   - B2_BUCKET              (B2 bucket name)
+ *   - B2_WRITE_ACCESS_KEY_ID + B2_WRITE_SECRET_ACCESS_KEY
+ *   - B2_READ_ACCESS_KEY_ID  + B2_READ_SECRET_ACCESS_KEY
+ *
+ * Soft-required (cron functions; alerts silently no-op — `tg()` is
+ * already defensive about these):
+ *   - TG_OPS_BOT_TOKEN
+ *   - TG_OPS_CHAT_ID
+ *
+ * Soft cases are NOT checked here; the operator gets a one-line
+ * `[cloud-backup] TG_OPS_BOT_TOKEN/TG_OPS_CHAT_ID unset; skipping
+ * alert` console warn instead. Without that distinction, a fresh
+ * deploy without TG configured would hard-abort the backup that
+ * would otherwise run fine.
+ */
+function assertRequiredEnv(env: Env): void {
+  const required = [
+    'BACKUP_ENCRYPTION_KEY',
+    'B2_ENDPOINT',
+    'B2_BUCKET',
+    'B2_WRITE_ACCESS_KEY_ID',
+    'B2_WRITE_SECRET_ACCESS_KEY',
+    'B2_READ_ACCESS_KEY_ID',
+    'B2_READ_SECRET_ACCESS_KEY',
+  ] as const;
+  const missing = required.filter((k) => {
+    const v = (env as unknown as Record<string, string | undefined>)[k];
+    return v === undefined || v === '';
+  });
+  if (missing.length > 0) {
+    throw new Error(
+      `MISSING ENV: ${missing.join(', ')}. ` +
+      `Set each via \`wrangler secret put <NAME>\` against the ` +
+      `vaipakam-offchain-data-archive Worker. See ` +
+      `ops/offchain-data-archive/README.md §Setup for the full list ` +
+      `+ values to paste.`,
+    );
+  }
+  // Additional shape check: AES key must be 64 hex chars.
+  // importBackupKey() does the same check but its error surfaces
+  // from inside withEncryptionKey(); calling it out upfront gives
+  // the operator a single page-source-of-truth.
+  if (!/^[0-9a-fA-F]{64}$/.test(env.BACKUP_ENCRYPTION_KEY)) {
+    throw new Error(
+      'MISSING ENV: BACKUP_ENCRYPTION_KEY is set but is not 64 ' +
+      'hex chars (expected an AES-256 key from `openssl rand -hex 32`).',
+    );
+  }
+}
+
 export default {
   /**
    * Cron dispatcher. Single cron at 03:17 UTC daily. Runs the
@@ -103,6 +165,29 @@ export default {
    * Workers Paid ($5/mo, removes the cap).
    */
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    // Preflight: validate every required secret exists BEFORE any
+    // helper that touches them gets called. A missing value would
+    // otherwise crash inside `parseRegionFromEndpoint(undefined)` or
+    // `importBackupKey('')` ~10 frames down, surfacing as CF
+    // Error 1101 with no operator-actionable context.
+    //
+    // On failure: try to alert via Telegram BEFORE rethrowing, so
+    // the operator gets a clear "missing X" message in the ops
+    // channel. `tg()` is itself defensive — if TG creds are ALSO
+    // missing the call silently no-ops, but a console.warn line
+    // surfaces in `wrangler tail`. Then re-throw so the Worker's
+    // invocation log records the failure too.
+    try {
+      assertRequiredEnv(env);
+    } catch (err) {
+      const msg = (err as Error).message;
+      // Note: we haven't booted the encryption key yet, but the
+      // error path doesn't need it — only the tg() call which
+      // reads TG_OPS_BOT_TOKEN + TG_OPS_CHAT_ID directly from env.
+      ctx.waitUntil(tg(env, `🚨 Worker preflight FAILED:\n${msg}`));
+      throw err;
+    }
+
     const bootedEnv = await withEncryptionKey(env);
 
     // Backup path — runs every day. Write-scoped B2 key
