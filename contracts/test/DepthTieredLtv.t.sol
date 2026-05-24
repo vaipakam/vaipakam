@@ -358,6 +358,7 @@ contract DepthTieredLtv is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.ParameterOutOfRange.selector,
+                // forge-lint: disable-next-line unsafe-typecast
                 bytes32("liquiditySlippageBps"),
                 uint256(5000),
                 LibVaipakam.MIN_LIQUIDITY_SLIPPAGE_BPS,

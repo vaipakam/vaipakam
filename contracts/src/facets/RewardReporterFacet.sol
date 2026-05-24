@@ -273,6 +273,7 @@ contract RewardReporterFacet is
         address old = s.rewardOApp;
         s.rewardOApp = oApp;
         emit RewardReporterConfigUpdated(
+            // forge-lint: disable-next-line unsafe-typecast
             bytes32("rewardOApp"),
             bytes32(uint256(uint160(old))),
             bytes32(uint256(uint160(oApp)))
@@ -294,6 +295,7 @@ contract RewardReporterFacet is
         uint32 old = s.baseChainId;
         s.baseChainId = chainId;
         emit RewardReporterConfigUpdated(
+            // forge-lint: disable-next-line unsafe-typecast
             bytes32("baseChainId"),
             bytes32(uint256(old)),
             bytes32(uint256(chainId))
@@ -310,6 +312,7 @@ contract RewardReporterFacet is
         bool old = s.isCanonicalRewardChain;
         s.isCanonicalRewardChain = on;
         emit RewardReporterConfigUpdated(
+            // forge-lint: disable-next-line unsafe-typecast
             bytes32("isCanonicalRewardChain"),
             bytes32(uint256(old ? 1 : 0)),
             bytes32(uint256(on ? 1 : 0))
@@ -345,6 +348,7 @@ contract RewardReporterFacet is
         uint64 old = s.rewardGraceSeconds;
         s.rewardGraceSeconds = secondsValue;
         emit RewardReporterConfigUpdated(
+            // forge-lint: disable-next-line unsafe-typecast
             bytes32("rewardGraceSeconds"),
             bytes32(uint256(old)),
             bytes32(uint256(secondsValue))

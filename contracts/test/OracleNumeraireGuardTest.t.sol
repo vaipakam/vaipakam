@@ -100,6 +100,7 @@ contract OracleNumeraireGuardTest is SetupTest {
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.ParameterOutOfRange.selector,
+                // forge-lint: disable-next-line unsafe-typecast
                 bytes32("pythCrossCheckMaxDeviationBps"),
                 uint256(belowFloor),
                 uint256(LibVaipakam.PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MIN),
@@ -114,6 +115,7 @@ contract OracleNumeraireGuardTest is SetupTest {
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.ParameterOutOfRange.selector,
+                // forge-lint: disable-next-line unsafe-typecast
                 bytes32("pythCrossCheckMaxDeviationBps"),
                 uint256(aboveCeil),
                 uint256(LibVaipakam.PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MIN),
@@ -130,6 +132,7 @@ contract OracleNumeraireGuardTest is SetupTest {
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.ParameterOutOfRange.selector,
+                // forge-lint: disable-next-line unsafe-typecast
                 bytes32("pythMaxStalenessSeconds"),
                 uint256(belowFloor),
                 uint256(LibVaipakam.PYTH_MAX_STALENESS_MIN_SECONDS),
@@ -144,6 +147,7 @@ contract OracleNumeraireGuardTest is SetupTest {
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.ParameterOutOfRange.selector,
+                // forge-lint: disable-next-line unsafe-typecast
                 bytes32("pythMaxStalenessSeconds"),
                 uint256(aboveCeil),
                 uint256(LibVaipakam.PYTH_MAX_STALENESS_MIN_SECONDS),
@@ -160,6 +164,7 @@ contract OracleNumeraireGuardTest is SetupTest {
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.ParameterOutOfRange.selector,
+                // forge-lint: disable-next-line unsafe-typecast
                 bytes32("pythConfidenceMaxBps"),
                 uint256(belowFloor),
                 uint256(LibVaipakam.PYTH_CONFIDENCE_MAX_BPS_MIN),
@@ -174,6 +179,7 @@ contract OracleNumeraireGuardTest is SetupTest {
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.ParameterOutOfRange.selector,
+                // forge-lint: disable-next-line unsafe-typecast
                 bytes32("pythConfidenceMaxBps"),
                 uint256(aboveCeil),
                 uint256(LibVaipakam.PYTH_CONFIDENCE_MAX_BPS_MIN),
