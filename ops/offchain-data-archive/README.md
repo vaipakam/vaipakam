@@ -27,10 +27,22 @@ Design notes: [`docs/DesignsAndPlans/OffChainDataResilience.md`](../../docs/Desi
 
 ## Schedule
 
-- **Nightly backup**: `17 3 * * *` UTC (03:17 — non-zero minute avoids
-  exact-minute B2 contention).
-- **Weekly healthcheck**: `0 9 * * 1` UTC (Mondays 09:00) — confirms
-  the latest archive exists, decrypts cleanly, manifest SHA matches.
+Single cron: **`17 3 * * *` UTC** daily (03:17 — non-zero minute
+avoids exact-minute B2 contention). On every invocation:
+
+- **Backup** runs unconditionally.
+- **Healthcheck** also runs IN PARALLEL when the invocation falls on
+  a Monday. Same cron tick fires both via two independent
+  `ctx.waitUntil` calls; the operator gets two separate Telegram
+  alerts in their natural finish-order (healthcheck first, since
+  it's smaller; backup second).
+
+Why one cron instead of two: the Cloudflare Workers free plan caps
+an account at 5 cron triggers, and the rest of the org already
+occupies 4 (`apps/{keeper,agent,indexer}` + `ops/lz-watcher`).
+Folding healthcheck into the same cron keeps the account at 5/5.
+Split back into two crons if/when the account upgrades to Workers
+Paid ($5/mo, removes the cap).
 
 Both paths report to Telegram (`TG_OPS_CHAT_ID`).
 

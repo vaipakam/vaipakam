@@ -72,30 +72,57 @@ async function withEncryptionKey(env: Env): Promise<Env> {
 
 export default {
   /**
-   * Cron dispatcher. Cloudflare passes `event.cron` matching the
-   * pattern from `wrangler.jsonc`, which is how we tell nightly vs
-   * weekly apart. The two paths share env boot but otherwise don't
-   * interfere — a stuck nightly never blocks the healthcheck, and a
-   * failing healthcheck never aborts a nightly.
+   * Cron dispatcher. Single cron at 03:17 UTC daily. Runs the
+   * nightly backup unconditionally; on Mondays ALSO runs the weekly
+   * healthcheck in parallel.
+   *
+   * Why parallel (two separate `ctx.waitUntil` calls instead of
+   * sequential or `Promise.all`):
+   *  - The two paths share NO state. They use different scoped B2
+   *    keys (write-only vs read-only) and hit different B2 endpoints
+   *    (PUT vs GET / list).
+   *  - Cuts total Worker wall-time roughly in half on Mondays.
+   *  - Failure isolation — a backup-path crash doesn't tear down the
+   *    healthcheck Promise the way `Promise.all` would, and vice
+   *    versa. The operator gets two independent Telegram alerts;
+   *    healthcheck typically finishes first (smaller payload), which
+   *    also gives faster "the cron actually fired" confirmation.
+   *  - The Monday healthcheck verifies the MOST RECENT archive
+   *    within the last 3 days (i.e. yesterday's at the time the cron
+   *    starts, since today's hasn't uploaded yet). Acceptable
+   *    trade-off vs the alternative of healthcheck-after-backup
+   *    sequentially (which would verify today's just-written archive
+   *    for a stronger end-to-end signal at the cost of doubling the
+   *    cron wall-time and serializing failure modes).
+   *
+   * Why one cron at all: free-plan account cap of 5 cron triggers
+   * across the org. apps/{keeper,agent,indexer} + ops/lz-watcher
+   * already occupy 4. Splitting backup + healthcheck into two crons
+   * would push past 5/5 and CF API rejects the deploy with 10072.
+   * Split back into two crons if/when the account upgrades to
+   * Workers Paid ($5/mo, removes the cap).
    */
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     const bootedEnv = await withEncryptionKey(env);
 
-    if (event.cron === '17 3 * * *') {
-      // Nightly path uses the write-scoped B2 key — listBuckets +
-      // listFiles + writeFiles only. A compromise that exfiltrates
-      // it can corrupt FUTURE backups (uploading garbage to new
-      // unique keys; immutable naming defeats in-place overwrite of
-      // existing archives) but cannot read past archives.
-      ctx.waitUntil(handleNightlyBackup(bootedEnv, b2WriteConfig(bootedEnv)));
-    } else if (event.cron === '0 9 * * 1') {
-      // Weekly healthcheck uses the read-scoped B2 key — listBuckets
-      // + listFiles + readFiles only. A compromise that exfiltrates
-      // it yields AES ciphertext; the offline encryption key blocks
-      // the plaintext.
+    // Backup path — runs every day. Write-scoped B2 key
+    // (listBuckets + listFiles + writeFiles). A CF compromise that
+    // exfiltrates these credentials can corrupt FUTURE archives
+    // (only at new unique object keys — the immutable-naming nonce
+    // defeats in-place overwrite of existing ones) but cannot read
+    // past archives or delete them.
+    ctx.waitUntil(handleNightlyBackup(bootedEnv, b2WriteConfig(bootedEnv)));
+
+    // Healthcheck path — runs on Mondays only. Read-scoped B2 key
+    // (listBuckets + listFiles + readFiles). A CF compromise yields
+    // AES-256-GCM ciphertext only; the offline encryption key
+    // blocks plaintext recovery. `getUTCDay()` returns 1 for Monday
+    // (0=Sun..6=Sat). Computed from event.scheduledTime so the
+    // weekday is unambiguous even if the Worker's local clock
+    // somehow drifts (Workers run in UTC; defensive but cheap).
+    const monday = new Date(event.scheduledTime).getUTCDay() === 1;
+    if (monday) {
       ctx.waitUntil(handleHealthcheck(bootedEnv, b2ReadConfig(bootedEnv)));
-    } else {
-      console.warn(`[cloud-backup] unknown cron pattern: ${event.cron}`);
     }
   },
 

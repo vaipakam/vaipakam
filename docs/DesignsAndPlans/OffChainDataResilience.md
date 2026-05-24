@@ -185,13 +185,32 @@ implementation PR). High level:
 
 ### 3.6 Operational checks
 
-- A second Cloudflare Worker cron (`ops/offchain-data-archive/healthcheck`)
-  runs **weekly** to:
-  - HEAD the most recent B2 archive.
-  - Decrypt + verify the SHA-256 manifest matches the expected
-    schema.
-  - Page the operator (Telegram + Push) on any missing / corrupt
-    archive.
+The Worker's single daily cron at 03:17 UTC runs the nightly backup
+unconditionally. On Mondays the same cron tick ALSO runs a
+healthcheck in parallel — two independent `ctx.waitUntil` calls, no
+shared state, separate scoped B2 keys (write-only for backup,
+read-only for healthcheck). The healthcheck:
+
+- Lists the `manifests/<recent-date>/` prefix to discover the latest
+  archive (looks back 0..2 days to tolerate a single missed nightly).
+- Fetches that manifest + the sibling archive at the matching nonce.
+- Verifies the archive's SHA-256 matches the manifest's stamp.
+- Decrypts the archive locally to confirm the key + ciphertext are
+  intact.
+- Pages the operator on any failure via Telegram (`TG_OPS_CHAT_ID`).
+
+The originally-planned shape was a separate Worker cron for the
+healthcheck (running at 09:00 UTC every Monday), but the Cloudflare
+Workers free plan caps an account at 5 cron triggers — apps/keeper,
+apps/agent, apps/indexer, ops/lz-watcher already occupy four, so
+this Worker is restricted to one. Folding the healthcheck into the
+daily cron via a `getUTCDay() === 1` guard preserves the weekly
+cadence at the cost of running the alert at 03:17 UTC instead of
+09:00 UTC. Acceptable trade-off — ops alerts aren't real-time
+actionable so the shifted hour doesn't matter; the Mondays-only
+gating preserves the weekly cadence. If/when the account upgrades
+to Workers Paid ($5/mo, removes the 5-cron cap), this can split
+back into two crons cleanly.
 
 This catches silent backup failure — the highest-frequency real-world
 incident for nightly-backup systems.

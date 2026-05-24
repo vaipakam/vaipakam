@@ -7,16 +7,28 @@
   "observability": {
     "enabled": true,
   },
-  // Triggers:
-  //   - Nightly backup at 03:17 UTC (off-peak across UTC / IST / PT).
-  //     The minute is non-zero on purpose so the run doesn't collide
-  //     with every other team-on-the-internet's :00 crons fighting for
-  //     B2's incoming HTTP capacity at exact-minute marks.
-  //   - Weekly healthcheck at 09:00 UTC every Monday — verifies the
-  //     latest archive exists, decrypts, manifest matches schema.
-  //     Failures page the operator immediately via Telegram + Push.
+  // Triggers: ONE cron per day at 03:17 UTC (off-peak across UTC /
+  // IST / PT). The minute is non-zero on purpose so the run doesn't
+  // collide with every other team-on-the-internet's :00 crons
+  // fighting for B2's incoming HTTP capacity at exact-minute marks.
+  //
+  // The single cron does TWO things on Monday and ONE thing on every
+  // other day:
+  //   - Daily (Mon-Sun): nightly backup runs, encrypts, uploads to B2.
+  //   - Monday only: ALSO runs the weekly healthcheck IN PARALLEL with
+  //     the nightly backup (two independent ctx.waitUntil() calls, no
+  //     shared state, different scoped B2 keys, different B2 endpoints).
+  //
+  // Why one cron instead of two: Cloudflare Workers free plan caps an
+  // account at 5 cron triggers total. apps/{keeper,agent,indexer} take
+  // one each (every-minute) and ops/lz-watcher takes one (every 5min)
+  // — that's 4 of 5. Splitting backup + healthcheck into two crons
+  // here would push the account to 6 and the deploy fails with
+  // CF API error 10072. Folding healthcheck under the same cron keeps
+  // us at 5/5 cleanly. If/when the account upgrades to Workers Paid
+  // ($5/mo, removes the cap), this can split back into two crons.
   "triggers": {
-    "crons": ["17 3 * * *", "0 9 * * 1"],
+    "crons": ["17 3 * * *"],
   },
   // D1 — read-only bindings to the two production databases this
   // Worker backs up. The shared vaipakam-archive holds the indexer
