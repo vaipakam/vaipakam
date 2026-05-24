@@ -27,11 +27,11 @@ contract MockZeroExLegacyAdapter is ISwapAdapter {
     using SafeERC20 for IERC20;
 
     /// @notice The wrapped ZeroExProxyMock instance — fixed at deploy time.
-    address public immutable proxy;
+    address public immutable PROXY;
 
     constructor(address zeroExProxy) {
-        require(zeroExProxy != address(0), "proxy=0");
-        proxy = zeroExProxy;
+        require(zeroExProxy != address(0), "PROXY=0");
+        PROXY = zeroExProxy;
     }
 
     function adapterName() external pure override returns (string memory) {
@@ -51,10 +51,10 @@ contract MockZeroExLegacyAdapter is ISwapAdapter {
         // proxy for the exact amount, mirroring the legacy inline pattern
         // that previously lived in RiskFacet / DefaultedFacet.
         input.safeTransferFrom(msg.sender, address(this), inputAmount);
-        input.forceApprove(proxy, 0);
-        input.forceApprove(proxy, inputAmount);
+        input.forceApprove(PROXY, 0);
+        input.forceApprove(PROXY, inputAmount);
 
-        outputAmount = IZeroExProxy(proxy).swap(
+        outputAmount = IZeroExProxy(PROXY).swap(
             inputToken,
             outputToken,
             inputAmount,
@@ -62,7 +62,7 @@ contract MockZeroExLegacyAdapter is ISwapAdapter {
             recipient
         );
 
-        input.forceApprove(proxy, 0);
+        input.forceApprove(PROXY, 0);
         // Residual input (would be zero on a clean swap; non-zero would
         // indicate a partial fill the proxy mock doesn't simulate)
         // returned to the caller so the failover loop has full balance

@@ -54,14 +54,14 @@ interface IBalancerV2Vault {
 contract BalancerV2Adapter is ISwapAdapter {
     using SafeERC20 for IERC20;
 
-    IBalancerV2Vault public immutable vault;
+    IBalancerV2Vault public immutable VAULT;
 
     error AdapterDataRequired();
     error InvalidPoolId();
 
     constructor(address balancerVault) {
-        require(balancerVault != address(0), "vault=0");
-        vault = IBalancerV2Vault(balancerVault);
+        require(balancerVault != address(0), "VAULT=0");
+        VAULT = IBalancerV2Vault(balancerVault);
     }
 
     /// @inheritdoc ISwapAdapter
@@ -84,15 +84,15 @@ contract BalancerV2Adapter is ISwapAdapter {
 
         IERC20 input = IERC20(inputToken);
         input.safeTransferFrom(msg.sender, address(this), inputAmount);
-        input.forceApprove(address(vault), 0);
-        input.forceApprove(address(vault), inputAmount);
+        input.forceApprove(address(VAULT), 0);
+        input.forceApprove(address(VAULT), inputAmount);
 
         // Vault.swap enforces `amountCalculated >= limit` for
         // GIVEN_IN (the limit is the minimum acceptable output),
         // reverting with `BAL#507` on slippage — same semantic as
         // UniV3's `amountOutMinimum`. Deadline is the current block
         // so the tx cannot sit in the mempool.
-        outputAmount = vault.swap(
+        outputAmount = VAULT.swap(
             IBalancerV2Vault.SingleSwap({
                 poolId: poolId,
                 kind: IBalancerV2Vault.SwapKind.GIVEN_IN,
@@ -111,7 +111,7 @@ contract BalancerV2Adapter is ISwapAdapter {
             block.timestamp
         );
 
-        input.forceApprove(address(vault), 0);
+        input.forceApprove(address(VAULT), 0);
         uint256 residualInput = input.balanceOf(address(this));
         if (residualInput != 0) {
             input.safeTransfer(msg.sender, residualInput);
