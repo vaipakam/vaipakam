@@ -50,10 +50,10 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
     event TradeAllowanceSet(string countryA, string countryB, bool allowed);
 
     /// @notice Emitted when KYC thresholds are updated.
-    /// @param tier0ThresholdUSD New Tier0 ceiling (USD, 1e18-scaled).
-    /// @param tier1ThresholdUSD New Tier1 ceiling (USD, 1e18-scaled).
+    /// @param tier0ThresholdUsd New Tier0 ceiling (USD, 1e18-scaled).
+    /// @param tier1ThresholdUsd New Tier1 ceiling (USD, 1e18-scaled).
     /// @custom:event-category informational/config
-    event KYCThresholdsUpdated(uint256 tier0ThresholdUSD, uint256 tier1ThresholdUSD);
+    event KYCThresholdsUpdated(uint256 tier0ThresholdUsd, uint256 tier1ThresholdUsd);
 
     // Facet-specific errors (CrossFacetCallFailed inherited from IVaipakamErrors)
     error InvalidCountry();
@@ -358,11 +358,11 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
         if (keeper == address(0)) revert InvalidAddress();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
-        IERC721 positionNFT = IERC721(address(this));
+        IERC721 positionNft = IERC721(address(this));
         address lenderHolder;
-        try positionNFT.ownerOf(loan.lenderTokenId) returns (address h) { lenderHolder = h; } catch {}
+        try positionNft.ownerOf(loan.lenderTokenId) returns (address h) { lenderHolder = h; } catch {}
         address borrowerHolder;
-        try positionNFT.ownerOf(loan.borrowerTokenId) returns (address h) { borrowerHolder = h; } catch {}
+        try positionNft.ownerOf(loan.borrowerTokenId) returns (address h) { borrowerHolder = h; } catch {}
 
         if (
             (lenderHolder == address(0) || msg.sender != lenderHolder) &&

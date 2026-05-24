@@ -615,12 +615,12 @@ contract PrecloseFacet is
         // staticcall + degraded-to-0 mirrors the AddCollateralFacet
         // pattern. Saves the consumer a follow-up RiskFacet read for the
         // common liquid case.
-        uint256 newHF;
+        uint256 newHf;
         (bool hfOk, bytes memory hfRet) = address(this).staticcall(
             abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId)
         );
         if (hfOk && hfRet.length > 0) {
-            newHF = abi.decode(hfRet, (uint256));
+            newHf = abi.decode(hfRet, (uint256));
         }
         emit LoanObligationTransferred(
             loanId,
@@ -632,7 +632,7 @@ contract PrecloseFacet is
             loan.interestRateBps,
             loan.durationDays,
             uint64(loan.startTime + loan.durationDays * 1 days),
-            newHF
+            newHf
         );
     }
 

@@ -28,7 +28,7 @@ interface ClaimableTuple {
   tokenId?: bigint;
   quantity?: bigint;
   heldForLender?: bigint;
-  hasRentalNFTReturn?: boolean;
+  hasRentalNftReturn?: boolean;
   0?: string;
   1?: bigint;
   2?: boolean;
@@ -216,7 +216,7 @@ export function useClaimables(address: string | null) {
                   const tokenId = res.tokenId ?? res[4] ?? 0n;
                   const quantity = res.quantity ?? res[5] ?? 0n;
                   const heldForLender = res.heldForLender ?? res[6] ?? 0n;
-                  const hasRentalNFTReturn = res.hasRentalNFTReturn ?? res[7] ?? false;
+                  const hasRentalNftReturn = res.hasRentalNftReturn ?? res[7] ?? false;
                   const lifRebate = s.role === 'borrower' ? borrowerLifRebate : 0n;
 
                   // Mirror ClaimFacet's actionability guard: fungible amount,
@@ -227,7 +227,7 @@ export function useClaimables(address: string | null) {
                     amount > 0n ||
                     assetType !== AssetType.ERC20 ||
                     heldForLender > 0n ||
-                    hasRentalNFTReturn ||
+                    hasRentalNftReturn ||
                     lifRebate > 0n;
                   if (!claimed && actionable) {
                     return {

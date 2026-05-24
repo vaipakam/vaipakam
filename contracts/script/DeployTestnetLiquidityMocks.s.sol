@@ -14,7 +14,7 @@ import {Deployments} from "./lib/Deployments.sol";
  * @title DeployTestnetLiquidityMocks
  * @notice One-shot setup that gives a testnet Vaipakam Diamond
  *         enough mock infrastructure to make TWO mock ERC-20s
- *         (`mUSDC`, `mWBTC`) come out as **liquid** under the
+ *         (`mUsdc`, `mWbtc`) come out as **liquid** under the
  *         protocol's `(price + depth)` classification rule. Supports
  *         Base Sepolia (84532), Ethereum Sepolia (11155111), BNB
  *         Smart Chain Testnet (97), Arbitrum Sepolia (421614), OP
@@ -130,8 +130,8 @@ contract DeployTestnetLiquidityMocks is Script {
     ///      participants in the seeder scripts (lender, borrower,
     ///      treasury, etc.) without re-minting. Sub-mints inside
     ///      the seeders take from this initial pool.
-    uint256 constant MUSDC_INITIAL_SUPPLY = 100_000_000e6;   // 100M mUSDC (6 dec)
-    uint256 constant MWBTC_INITIAL_SUPPLY = 1_000e8;         // 1k mWBTC (8 dec)
+    uint256 constant MUSDC_INITIAL_SUPPLY = 100_000_000e6;   // 100M mUsdc (6 dec)
+    uint256 constant MWBTC_INITIAL_SUPPLY = 1_000e8;         // 1k mWbtc (8 dec)
 
     /// @dev Initial mock prices, 8-decimal Chainlink scale.
     int256 constant MUSDC_USD_PRICE = 1e8;       // $1.00
@@ -194,16 +194,16 @@ contract DeployTestnetLiquidityMocks is Script {
             console.log("Deployed mock WETH for anvil:", weth);
         }
 
-        ERC20Mock mUSDC = new ERC20Mock("Mock USDC", "mUSDC", 6);
-        ERC20Mock mWBTC = new ERC20Mock("Mock WBTC", "mWBTC", 8);
+        ERC20Mock mUsdc = new ERC20Mock("Mock USDC", "mUSDC", 6);
+        ERC20Mock mWbtc = new ERC20Mock("Mock WBTC", "mWBTC", 8);
         // Mint initial supply to the deployer; seeders later transfer
         // sub-balances to lender / borrower / treasury accounts.
-        mUSDC.mint(vm.addr(deployerKey), MUSDC_INITIAL_SUPPLY);
-        mWBTC.mint(vm.addr(deployerKey), MWBTC_INITIAL_SUPPLY);
+        mUsdc.mint(vm.addr(deployerKey), MUSDC_INITIAL_SUPPLY);
+        mWbtc.mint(vm.addr(deployerKey), MWBTC_INITIAL_SUPPLY);
 
         MockChainlinkRegistry registry = new MockChainlinkRegistry();
-        MockChainlinkFeed mUSDCFeed = new MockChainlinkFeed(MUSDC_USD_PRICE, 8);
-        MockChainlinkFeed mWBTCFeed = new MockChainlinkFeed(MWBTC_USD_PRICE, 8);
+        MockChainlinkFeed mUsdcFeed = new MockChainlinkFeed(MUSDC_USD_PRICE, 8);
+        MockChainlinkFeed mWbtcFeed = new MockChainlinkFeed(MWBTC_USD_PRICE, 8);
         MockChainlinkFeed wethFeed  = new MockChainlinkFeed(WETH_USD_PRICE, 8);
 
         // Register every feed under the canonical (asset, USD)
@@ -211,29 +211,29 @@ contract DeployTestnetLiquidityMocks is Script {
         // registry for `getFeed(asset, USD)` first, falling back to
         // `asset/ETH × ETH/USD` only when no direct USD feed is
         // registered. Direct USD makes the path linear.
-        registry.setFeed(address(mUSDC), USD_DENOM, address(mUSDCFeed));
-        registry.setFeed(address(mWBTC), USD_DENOM, address(mWBTCFeed));
+        registry.setFeed(address(mUsdc), USD_DENOM, address(mUsdcFeed));
+        registry.setFeed(address(mWbtc), USD_DENOM, address(mWbtcFeed));
         registry.setFeed(weth, USD_DENOM, address(wethFeed));
 
         // Mock UniV3 factory + per-pair pools. `MIN_LIQUIDITY_PAD`
         // is satisfied via `MOCK_POOL_LIQUIDITY` chosen above. Both
-        // `mUSDC/WETH` and `mWBTC/WETH` clear the floor so both
+        // `mUsdc/WETH` and `mWbtc/WETH` clear the floor so both
         // tokens come out Liquid under
         // `OracleFacet.checkLiquidity`.
         MockUniswapV3Factory univ3 = new MockUniswapV3Factory();
-        univ3.createPool(address(mUSDC), weth, 3000, SQRT_PRICE_X96_ONE, MOCK_POOL_LIQUIDITY);
-        univ3.createPool(address(mWBTC), weth, 3000, SQRT_PRICE_X96_ONE, MOCK_POOL_LIQUIDITY);
+        univ3.createPool(address(mUsdc), weth, 3000, SQRT_PRICE_X96_ONE, MOCK_POOL_LIQUIDITY);
+        univ3.createPool(address(mWbtc), weth, 3000, SQRT_PRICE_X96_ONE, MOCK_POOL_LIQUIDITY);
 
         vm.stopBroadcast();
 
         console.log("");
         console.log("Deployed mocks:");
-        console.log("  mUSDC ERC20:           ", address(mUSDC));
-        console.log("  mWBTC ERC20:           ", address(mWBTC));
+        console.log("  mUSDC ERC20:           ", address(mUsdc));
+        console.log("  mWBTC ERC20:           ", address(mWbtc));
         console.log("  MockChainlinkRegistry: ", address(registry));
         console.log("  MockUniswapV3Factory:  ", address(univ3));
-        console.log("  mUSDC/USD feed:        ", address(mUSDCFeed));
-        console.log("  mWBTC/USD feed:        ", address(mWBTCFeed));
+        console.log("  mUSDC/USD feed:        ", address(mUsdcFeed));
+        console.log("  mWBTC/USD feed:        ", address(mWbtcFeed));
         console.log("  WETH/USD feed:         ", address(wethFeed));
 
         // ── Step 2: Admin-side: wire mocks into Diamond ────────────────
@@ -249,7 +249,7 @@ contract DeployTestnetLiquidityMocks is Script {
         // Stable-feed shortcuts for the peg-aware staleness rule.
         // Phase 7b lets feeds tagged "USDC", "USDT", etc. sit at the
         // 25h ceiling provided the price stays within ±3% of $1.
-        // Registering mUSDC under the symbol "mUSDC" is a no-op for
+        // Registering mUsdc under the symbol "mUSDC" is a no-op for
         // the peg check (the symbol isn't in the stable-list); we
         // intentionally don't register it there because the
         // mock-driven price model doesn't need that escape hatch.
@@ -261,8 +261,8 @@ contract DeployTestnetLiquidityMocks is Script {
         // for offers without a second `updateRiskParams` step.
         // (collateralFactor, ltvBps, liquidationThresholdBps,
         //  stalenessBps, riskScore — see RiskFacet.updateRiskParams)
-        RiskFacet(diamond).updateRiskParams(address(mUSDC), 8000, 300, 1000);
-        RiskFacet(diamond).updateRiskParams(address(mWBTC), 8000, 300, 1000);
+        RiskFacet(diamond).updateRiskParams(address(mUsdc), 8000, 300, 1000);
+        RiskFacet(diamond).updateRiskParams(address(mWbtc), 8000, 300, 1000);
         // WETH itself is the quote asset; no LTV-collateral role, // but registering risk params makes its rows render
         // consistently in the Risk dashboard view.
         RiskFacet(diamond).updateRiskParams(weth, 8000, 300, 1000);
@@ -271,10 +271,10 @@ contract DeployTestnetLiquidityMocks is Script {
         // ── Step 3: persist artifacts ─────────────────────────────────
         Deployments.writeMockChainlinkAggregator(address(registry));
         Deployments.writeMockUniswapV3Factory(address(univ3));
-        Deployments.writeMockERC20A(address(mUSDC));
-        Deployments.writeMockERC20B(address(mWBTC));
-        Deployments.writeAddress(".mockUSDCFeed", address(mUSDCFeed));
-        Deployments.writeAddress(".mockWBTCFeed", address(mWBTCFeed));
+        Deployments.writeMockERC20A(address(mUsdc));
+        Deployments.writeMockERC20B(address(mWbtc));
+        Deployments.writeAddress(".mockUSDCFeed", address(mUsdcFeed));
+        Deployments.writeAddress(".mockWBTCFeed", address(mWbtcFeed));
         Deployments.writeAddress(".mockWETHFeed", address(wethFeed));
         // The wrapped-native asset (WETH on EVM L1/L2s, WBNB on BNB
         // chains) is consumed by both the contract layer (via

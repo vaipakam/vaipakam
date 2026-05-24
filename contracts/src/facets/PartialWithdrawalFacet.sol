@@ -38,16 +38,16 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
     ///        `AddCollateralFacet.CollateralAdded.newCollateralAmount` so
     ///        an indexer can `UPDATE loans SET collateral_amount = ?`
     ///        directly without a read-back or unsafe string arithmetic).
-    /// @param newHF The post-withdrawal Health Factor (scaled to 1e18).
-    /// @param newLTV The post-withdrawal LTV (in bps).
+    /// @param newHf The post-withdrawal Health Factor (scaled to 1e18).
+    /// @param newLtv The post-withdrawal LTV (in bps).
     /// @custom:event-category state-change/loan-mutation
     event PartialCollateralWithdrawn(
         uint256 indexed loanId,
         address indexed borrower,
         uint256 amount,
         uint256 newCollateralAmount,
-        uint256 newHF,
-        uint256 newLTV
+        uint256 newHf,
+        uint256 newLtv
     );
 
     // Facet-specific errors (shared errors inherited from IVaipakamErrors)
@@ -88,16 +88,16 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         // Simulate post-withdrawal HF and LTV using a single oracle/decimals load
         uint256 tempCollateral = loan.collateralAmount - amount;
         ValuationContext memory ctx = _loadValuationContext(loan);
-        uint256 collateralUSD = (tempCollateral * ctx.collateralPrice) /
+        uint256 collateralUsd = (tempCollateral * ctx.collateralPrice) /
             ctx.collateralPriceDivisor;
 
-        uint256 simulatedHF = _hfFromContext(ctx, collateralUSD);
-        if (simulatedHF < LibVaipakam.MIN_HEALTH_FACTOR)
+        uint256 simulatedHf = _hfFromContext(ctx, collateralUsd);
+        if (simulatedHf < LibVaipakam.MIN_HEALTH_FACTOR)
             revert HealthFactorTooLow();
 
-        uint256 simulatedLTV = _ltvFromContext(ctx, collateralUSD);
+        uint256 simulatedLtv = _ltvFromContext(ctx, collateralUsd);
         uint256 loanInitMaxLtvBps = s.assetRiskParams[loan.collateralAsset].loanInitMaxLtvBps;
-        if (simulatedLTV > loanInitMaxLtvBps) revert LTVExceeded();
+        if (simulatedLtv > loanInitMaxLtvBps) revert LTVExceeded();
 
         // Withdraw from vault to borrower
         LibFacet.crossFacetCall(
@@ -119,8 +119,8 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
             msg.sender,
             amount,
             loan.collateralAmount,
-            simulatedHF,
-            simulatedLTV
+            simulatedHf,
+            simulatedLtv
         );
     }
 
@@ -169,13 +169,13 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         while (low < high) {
             uint256 mid = (low + high + 1) / 2; // Ceiling
             uint256 tempCollateral = loan.collateralAmount - mid;
-            uint256 collateralUSD = (tempCollateral * ctx.collateralPrice) /
+            uint256 collateralUsd = (tempCollateral * ctx.collateralPrice) /
                 ctx.collateralPriceDivisor;
 
-            uint256 simHF = _hfFromContext(ctx, collateralUSD);
-            uint256 simLTV = _ltvFromContext(ctx, collateralUSD);
+            uint256 simHf = _hfFromContext(ctx, collateralUsd);
+            uint256 simLtv = _ltvFromContext(ctx, collateralUsd);
 
-            if (simHF >= LibVaipakam.MIN_HEALTH_FACTOR && simLTV <= loanInitMaxLtvBps) {
+            if (simHf >= LibVaipakam.MIN_HEALTH_FACTOR && simLtv <= loanInitMaxLtvBps) {
                 low = mid;
             } else {
                 high = mid - 1;
@@ -189,7 +189,7 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
     ///      partialWithdrawCollateral / calculateMaxWithdrawable and then
     ///      reused for every HF / LTV evaluation.
     struct ValuationContext {
-        uint256 borrowValueUSD;
+        uint256 borrowValueUsd;
         uint256 collateralPrice;
         uint256 collateralPriceDivisor; // 10**(feedDecimals + tokenDecimals)
         uint256 liqThresholdBps;
@@ -206,7 +206,7 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         (uint256 borrowPrice, uint8 borrowFeedDecimals) = OracleFacet(address(this))
             .getAssetPrice(loan.principalAsset);
         uint8 borrowTokenDecimals = IERC20Metadata(loan.principalAsset).decimals();
-        ctx.borrowValueUSD = (currentBorrowBalance * borrowPrice) /
+        ctx.borrowValueUsd = (currentBorrowBalance * borrowPrice) /
             (10 ** borrowFeedDecimals) / (10 ** borrowTokenDecimals);
 
         (uint256 collateralPrice, uint8 collateralFeedDecimals) = OracleFacet(address(this))
@@ -227,20 +227,20 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
 
     function _hfFromContext(
         ValuationContext memory ctx,
-        uint256 collateralValueUSD
+        uint256 collateralValueUsd
     ) internal pure returns (uint256) {
-        if (ctx.borrowValueUSD == 0) return type(uint256).max;
+        if (ctx.borrowValueUsd == 0) return type(uint256).max;
         uint256 riskAdjustedCollateral =
-            (collateralValueUSD * ctx.liqThresholdBps) / LibVaipakam.BASIS_POINTS;
-        return (riskAdjustedCollateral * LibVaipakam.HF_SCALE) / ctx.borrowValueUSD;
+            (collateralValueUsd * ctx.liqThresholdBps) / LibVaipakam.BASIS_POINTS;
+        return (riskAdjustedCollateral * LibVaipakam.HF_SCALE) / ctx.borrowValueUsd;
     }
 
     function _ltvFromContext(
         ValuationContext memory ctx,
-        uint256 collateralValueUSD
+        uint256 collateralValueUsd
     ) internal pure returns (uint256) {
-        if (collateralValueUSD == 0) return type(uint256).max;
-        return (ctx.borrowValueUSD * LibVaipakam.BASIS_POINTS) / collateralValueUSD;
+        if (collateralValueUsd == 0) return type(uint256).max;
+        return (ctx.borrowValueUsd * LibVaipakam.BASIS_POINTS) / collateralValueUsd;
     }
 
     // `_simulateHF` + `_simulateLTV` (previously here) removed in #148

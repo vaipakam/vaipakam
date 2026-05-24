@@ -11,7 +11,7 @@ import {OracleFacet} from "../facets/OracleFacet.sol";
  *         lending ceiling validated at `OfferFacet.createOffer` time
  *         under Range Orders Phase 1 (docs/RangeOffersDesign.md §3).
  *
- *         Both helpers solve `HF = (collateralUSD × liqThresholdBps /
+ *         Both helpers solve `HF = (collateralUsd × liqThresholdBps /
  *         BASIS_POINTS) / debtUSD` for the unknown side at
  *         `HF == MIN_HEALTH_FACTOR` (1.5e18). The concrete USD values
  *         use the same Chainlink-feed conversion as
@@ -67,33 +67,33 @@ library LibRiskMath {
         }
         uint256 liqThresholdBps = LibVaipakam.cfgTierLiquidationLtvBps(tier);
 
-        (uint256 principalUSD, uint256 priceCollateral, uint256 collateralScale) =
+        (uint256 principalUsd, uint256 priceCollateral, uint256 collateralScale) =
             _gatherUsd(amountMax, principalAsset, collateralAsset);
-        if (principalUSD == 0 || priceCollateral == 0) return 0;
+        if (principalUsd == 0 || priceCollateral == 0) return 0;
 
-        // Solve for collateralUSD where HF == MIN_HEALTH_FACTOR (1.5e18):
-        //   collateralUSD × liqThresholdBps / BASIS_POINTS
-        //     == principalUSD × MIN_HEALTH_FACTOR / HF_SCALE
-        //   collateralUSD
-        //     == (principalUSD × MIN_HEALTH_FACTOR × BASIS_POINTS)
+        // Solve for collateralUsd where HF == MIN_HEALTH_FACTOR (1.5e18):
+        //   collateralUsd × liqThresholdBps / BASIS_POINTS
+        //     == principalUsd × MIN_HEALTH_FACTOR / HF_SCALE
+        //   collateralUsd
+        //     == (principalUsd × MIN_HEALTH_FACTOR × BASIS_POINTS)
         //        / (HF_SCALE × liqThresholdBps)
         // BPS multiplications fit comfortably under uint256 since
-        // principalUSD here is the (price-scaled but token-unscaled) raw
+        // principalUsd here is the (price-scaled but token-unscaled) raw
         // numerator of the USD figure RiskFacet uses; see _gatherUsd
         // below — it intentionally returns the un-divided-by-1e18 form
         // so the rest of the math stays in integers.
-        uint256 collateralUSD =
-            (principalUSD * LibVaipakam.MIN_HEALTH_FACTOR * LibVaipakam.BASIS_POINTS)
+        uint256 collateralUsd =
+            (principalUsd * LibVaipakam.MIN_HEALTH_FACTOR * LibVaipakam.BASIS_POINTS)
             / (LibVaipakam.HF_SCALE * liqThresholdBps);
 
-        // Convert collateralUSD back to collateral-asset native units.
+        // Convert collateralUsd back to collateral-asset native units.
         // `collateralScale` already encodes the (10^feedDec × 10^tokenDec)
-        // factor, so `collateral_native = collateralUSD × collateralScale
+        // factor, so `collateral_native = collateralUsd × collateralScale
         // / collateralPrice` recovers the right number.
-        floor = (collateralUSD * collateralScale) / priceCollateral;
+        floor = (collateralUsd * collateralScale) / priceCollateral;
         // Round up by 1 wei when there's any remainder so the caller
         // satisfies the >= relation strictly under integer truncation.
-        if ((collateralUSD * collateralScale) % priceCollateral != 0) {
+        if ((collateralUsd * collateralScale) % priceCollateral != 0) {
             floor += 1;
         }
     }
@@ -106,9 +106,9 @@ library LibRiskMath {
     ///         binding `LoanFacet._checkInitialLtvAndHf` gate. `capBps` is
     ///         the effective cap = `min(assetRiskParams.loanInitMaxLtvBps,
     ///         cfgTierMaxInitLtvBps(effectiveTier(collateral)))`.
-    /// @dev    `LTV = debtUSD × BASIS_POINTS / collateralUSD` (mirrors
+    /// @dev    `LTV = debtUSD × BASIS_POINTS / collateralUsd` (mirrors
     ///         `OracleFacet.calculateLTV`), so `LTV ≤ capBps` ⟺
-    ///         `collateralUSD ≥ debtUSD × BASIS_POINTS / capBps`. Doesn't
+    ///         `collateralUsd ≥ debtUSD × BASIS_POINTS / capBps`. Doesn't
     ///         involve `liqThresholdBps` (the LTV cap is on the *borrow*
     ///         ratio, not the liquidation trigger; and since the invariant
     ///         `capBps ≤ loanInitMaxLtvBps ≤ liqThresholdBps` holds, this floor
@@ -133,15 +133,15 @@ library LibRiskMath {
         if (amountMax == 0) return 0;
         if (capBps == 0) return type(uint256).max; // no-borrow collateral
 
-        (uint256 principalUSD, uint256 priceCollateral, uint256 collateralScale) =
+        (uint256 principalUsd, uint256 priceCollateral, uint256 collateralScale) =
             _gatherUsd(amountMax, principalAsset, collateralAsset);
-        if (principalUSD == 0 || priceCollateral == 0) return 0;
+        if (principalUsd == 0 || priceCollateral == 0) return 0;
 
-        uint256 num = principalUSD * LibVaipakam.BASIS_POINTS;
-        uint256 collateralUSD = num / capBps;
-        if (num % capBps != 0) collateralUSD += 1; // round up
+        uint256 num = principalUsd * LibVaipakam.BASIS_POINTS;
+        uint256 collateralUsd = num / capBps;
+        if (num % capBps != 0) collateralUsd += 1; // round up
 
-        uint256 collNum = collateralUSD * collateralScale;
+        uint256 collNum = collateralUsd * collateralScale;
         floor = collNum / priceCollateral;
         if (collNum % priceCollateral != 0) floor += 1; // round up — satisfy `>=` strictly
     }
@@ -173,24 +173,24 @@ library LibRiskMath {
         }
         uint256 liqThresholdBps = LibVaipakam.cfgTierLiquidationLtvBps(tier);
 
-        (uint256 collateralUSD, uint256 pricePrincipal, uint256 principalScale) =
+        (uint256 collateralUsd, uint256 pricePrincipal, uint256 principalScale) =
             _gatherUsd(collateralAmount, collateralAsset, principalAsset);
-        if (collateralUSD == 0 || pricePrincipal == 0) {
+        if (collateralUsd == 0 || pricePrincipal == 0) {
             return type(uint256).max;
         }
 
-        // Solve for principalUSD where HF == MIN_HEALTH_FACTOR:
-        //   principalUSD
-        //     == (collateralUSD × liqThresholdBps × HF_SCALE)
+        // Solve for principalUsd where HF == MIN_HEALTH_FACTOR:
+        //   principalUsd
+        //     == (collateralUsd × liqThresholdBps × HF_SCALE)
         //        / (BASIS_POINTS × MIN_HEALTH_FACTOR)
-        uint256 principalUSD =
-            (collateralUSD * liqThresholdBps * LibVaipakam.HF_SCALE)
+        uint256 principalUsd =
+            (collateralUsd * liqThresholdBps * LibVaipakam.HF_SCALE)
             / (LibVaipakam.BASIS_POINTS * LibVaipakam.MIN_HEALTH_FACTOR);
 
         // Truncating division here is borrower-friendly: the returned
         // ceiling is the largest amount that can definitely satisfy
         // HF >= 1.5 — any larger amount might fail the runtime gate.
-        ceiling = (principalUSD * principalScale) / pricePrincipal;
+        ceiling = (principalUsd * principalScale) / pricePrincipal;
     }
 
     /// @notice Largest lending amount (principal-asset wei) the borrower
@@ -223,7 +223,7 @@ library LibRiskMath {
     ///           offer derived with `amountMax = 0` because of a missing
     ///           feed simply won't match until the feed comes back,
     ///           rather than advertising a stale ceiling.
-    ///         - otherwise: `floor((collateralUSD × capBps × principalScale)
+    ///         - otherwise: `floor((collateralUsd × capBps × principalScale)
     ///                            / (BASIS_POINTS × pricePrincipal))`.
     ///           Truncating is borrower-friendly: the returned ceiling
     ///           is the largest amount that can definitely satisfy
@@ -256,18 +256,18 @@ library LibRiskMath {
         // derivation path.
         if (capBps == 0) return 0;
 
-        (uint256 collateralUSD, uint256 pricePrincipal, uint256 principalScale) =
+        (uint256 collateralUsd, uint256 pricePrincipal, uint256 principalScale) =
             _gatherUsd(collateralAmount, collateralAsset, principalAsset);
-        if (collateralUSD == 0 || pricePrincipal == 0) return 0;
+        if (collateralUsd == 0 || pricePrincipal == 0) return 0;
 
-        // Solve for principalUSD at LTV == capBps:
-        //   principalUSD == collateralUSD × capBps / BASIS_POINTS
-        uint256 principalUSD =
-            (collateralUSD * capBps) / LibVaipakam.BASIS_POINTS;
+        // Solve for principalUsd at LTV == capBps:
+        //   principalUsd == collateralUsd × capBps / BASIS_POINTS
+        uint256 principalUsd =
+            (collateralUsd * capBps) / LibVaipakam.BASIS_POINTS;
 
         // Convert back to principal-asset wei. Truncating division is
         // borrower-friendly per the docstring.
-        ceiling = (principalUSD * principalScale) / pricePrincipal;
+        ceiling = (principalUsd * principalScale) / pricePrincipal;
     }
 
     /// @dev Internal: returns (subjectUSD_raw, priceOther, scaleOther)
@@ -282,7 +282,7 @@ library LibRiskMath {
         address subjectAsset,
         address otherAsset
     ) private view returns (
-        uint256 subjectUSD,
+        uint256 subjectUsd,
         uint256 priceOther,
         uint256 scaleOther
     ) {
@@ -294,13 +294,13 @@ library LibRiskMath {
             return (0, 0, 0);
         }
         uint8 tokenDecSubject = IERC20Metadata(subjectAsset).decimals();
-        subjectUSD = (subjectAmount * priceSubject)
+        subjectUsd = (subjectAmount * priceSubject)
             / (10 ** feedDecSubject)
             / (10 ** tokenDecSubject);
 
         (uint256 priceO, uint8 feedDecOther) = oracle.getAssetPrice(otherAsset);
         if (priceO == 0) {
-            return (subjectUSD, 0, 0);
+            return (subjectUsd, 0, 0);
         }
         uint8 tokenDecOther = IERC20Metadata(otherAsset).decimals();
         priceOther = priceO;

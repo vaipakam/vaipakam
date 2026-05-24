@@ -309,7 +309,7 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             abi.encodeWithSelector(RiskFacet.calculateLTV.selector, newLoanId),
             LTVCalculationFailed.selector
         );
-        uint256 newLTV = abi.decode(ltvResult, (uint256));
+        uint256 newLtv = abi.decode(ltvResult, (uint256));
         uint256 loanInitMaxLtvBps = s
             .assetRiskParams[oldLoan.collateralAsset]
             .loanInitMaxLtvBps;
@@ -321,10 +321,10 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 LibVaipakam.effectiveTierMaxInitLtvBps(effTier)
             );
             uint256 cap = loanInitMaxLtvBps < tierCap ? loanInitMaxLtvBps : tierCap;
-            if (newLTV > cap) {
-                revert IVaipakamErrors.InitLtvAboveTier(newLTV, cap);
+            if (newLtv > cap) {
+                revert IVaipakamErrors.InitLtvAboveTier(newLtv, cap);
             }
-        } else if (newLTV > loanInitMaxLtvBps) {
+        } else if (newLtv > loanInitMaxLtvBps) {
             revert LTVExceeded();
         }
 
@@ -335,13 +335,13 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             ),
             HealthFactorCalculationFailed.selector
         );
-        uint256 newHF = abi.decode(hfResult, (uint256));
+        uint256 newHf = abi.decode(hfResult, (uint256));
         // Tier-ON ⇒ HF ≥ 1.0 (not born already-liquidatable; the tier
         // cap is the binding buffer). Tier-OFF ⇒ legacy HF ≥ 1.5.
         uint256 hfFloor = tieredOn
             ? LibVaipakam.HF_LIQUIDATION_THRESHOLD
             : LibVaipakam.MIN_HEALTH_FACTOR;
-        if (newHF < hfFloor) revert HealthFactorTooLow();
+        if (newHf < hfFloor) revert HealthFactorTooLow();
 
         // Update old loan NFTs: mark lender NFT as Loan Repaid
         LibFacet.crossFacetCall(

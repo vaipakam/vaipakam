@@ -573,10 +573,10 @@ contract OfferAcceptFacet is
         //      applies only to ERC-20 lending offers.
         // Used by KYC (must gate on real value at risk), the LIF math,
         // the principal transfer, and the OfferAccepted event payload.
-        bool _isERC20 = offer.assetType == LibVaipakam.AssetType.ERC20;
+        bool _isErc20 = offer.assetType == LibVaipakam.AssetType.ERC20;
         uint256 effectivePrincipal = s.matchOverride.active
             ? s.matchOverride.amount
-            : (_isERC20
+            : (_isErc20
                 ? (offer.offerType == LibVaipakam.OfferType.Lender
                     ? offer.amountMax
                     : offer.amount)
@@ -1212,16 +1212,16 @@ contract OfferAcceptFacet is
         if (offer.creator == address(0)) revert InvalidOffer();
 
         // ─── Happy-path projections (populated unconditionally) ─────
-        bool _isERC20 = offer.assetType == LibVaipakam.AssetType.ERC20;
+        bool _isErc20 = offer.assetType == LibVaipakam.AssetType.ERC20;
         bool _isLender = offer.offerType == LibVaipakam.OfferType.Lender;
 
         // Role-aware mapping mirrors `LoanFacet._copyOfferToLoan` on the
         // non-match path. NFT rentals stay structurally single-value
         // (see the PR #187 Codex P1 comment at LoanFacet.sol L678-L691).
-        preview.effectivePrincipal = _isERC20
+        preview.effectivePrincipal = _isErc20
             ? (_isLender ? offer.amountMax : offer.amount)
             : offer.amount;
-        preview.interestRateBps = _isERC20
+        preview.interestRateBps = _isErc20
             ? (_isLender ? offer.interestRateBps : offer.interestRateBpsMax)
             : offer.interestRateBps;
         preview.collateralAmount = offer.collateralAmount;
@@ -1238,7 +1238,7 @@ contract OfferAcceptFacet is
         // leg is non-ERC-20.
         if (
             !_isLender
-                && _isERC20
+                && _isErc20
                 && offer.collateralAssetType == LibVaipakam.AssetType.ERC20
                 && offer.collateralAmountMax > offer.collateralAmount
         ) {
@@ -1274,7 +1274,7 @@ contract OfferAcceptFacet is
         // The borrower address depends on the offer side (lender offer
         // → acceptor; borrower offer → creator), same as the loan-init
         // resolution.
-        if (_isERC20) {
+        if (_isErc20) {
             address _borrower = _isLender ? acceptor : offer.creator;
             bool _vpfiDiscountApplies;
             if (

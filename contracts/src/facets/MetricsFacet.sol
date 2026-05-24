@@ -59,15 +59,15 @@ contract MetricsFacet {
      *      repriced on every call — a loan priced at 100 today may be priced
      *      at 80 tomorrow if the underlying asset moves; this is the
      *      intended semantic of "TVL" as a live market snapshot.
-     * @return tvlInNumeraire Sum of `principalNumeraireLocked` + `erc20CollateralTVL`.
-     * @return erc20CollateralTVL Numeraire-quoted value of ERC-20 collateral on active loans.
-     * @return nftCollateralTVL NFT collateral is priced at $0 (no on-chain oracle);
+     * @return tvlInNumeraire Sum of `principalNumeraireLocked` + `erc20CollateralTvl`.
+     * @return erc20CollateralTvl Numeraire-quoted value of ERC-20 collateral on active loans.
+     * @return nftCollateralTvl NFT collateral is priced at $0 (no on-chain oracle);
      *         returns the COUNT of active loans with NFT collateral instead.
      */
     function getProtocolTVL()
         external
         view
-        returns (uint256 tvlInNumeraire, uint256 erc20CollateralTVL, uint256 nftCollateralTVL)
+        returns (uint256 tvlInNumeraire, uint256 erc20CollateralTvl, uint256 nftCollateralTvl)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256[] storage active = s.activeLoanIdsList;
@@ -80,20 +80,20 @@ contract MetricsFacet {
                 principalNumeraire += _priceAmount(l.principalAsset, l.principal);
             }
             if (l.collateralAssetType == LibVaipakam.AssetType.ERC20) {
-                erc20CollateralTVL += _priceAmount(l.collateralAsset, l.collateralAmount);
+                erc20CollateralTvl += _priceAmount(l.collateralAsset, l.collateralAmount);
             } else {
                 nftCount += 1;
             }
         }
-        tvlInNumeraire = principalNumeraire + erc20CollateralTVL;
-        nftCollateralTVL = nftCount;
+        tvlInNumeraire = principalNumeraire + erc20CollateralTvl;
+        nftCollateralTvl = nftCount;
     }
 
     /**
      * @notice Protocol-wide aggregate counters and rate summaries.
      * @dev Counter-backed fields (`totalUniqueUsers`, `activeLoansCount`,
      *      `activeOffersCount`, `totalLoansEverCreated`, `defaultRateBps`,
-     *      `averageAPR`) resolve to single SLOADs — O(1). `totalVolumeLentNumeraire`
+     *      `averageApr`) resolve to single SLOADs — O(1). `totalVolumeLentNumeraire`
      *      and `totalInterestEarnedNumeraire` are repriced live and require a full
      *      scan over `[1 .. nextLoanId)`; the numbers are never truncated
      *      (no silent MAX_ITER cap), and dashboards that need to call this
@@ -111,7 +111,7 @@ contract MetricsFacet {
             uint256 totalVolumeLentNumeraire,
             uint256 totalInterestEarnedNumeraire,
             uint256 defaultRateBps,
-            uint256 averageAPR
+            uint256 averageApr
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -122,7 +122,7 @@ contract MetricsFacet {
         defaultRateBps = totalLoansEverCreated == 0
             ? 0
             : (s.terminalBadOrSettledCount * LibVaipakam.BASIS_POINTS) / totalLoansEverCreated;
-        averageAPR = totalLoansEverCreated == 0 ? 0 : s.interestRateBpsSum / totalLoansEverCreated;
+        averageApr = totalLoansEverCreated == 0 ? 0 : s.interestRateBpsSum / totalLoansEverCreated;
 
         // IDs are pre-incremented in LoanFacet (`loanId = ++s.nextLoanId`),
         // so `nextLoanId` is the highest id ever assigned — iterate inclusive
@@ -620,7 +620,7 @@ contract MetricsFacet {
      * @notice Aggregate summary across active loans.
      * @return totalActiveLoanValueNumeraire Sum of priced principal across ERC-20 loans.
      * @return averageLoanDuration Simple mean of durationDays across active loans.
-     * @return averageLTV Simple mean of per-loan LTV (bps) via RiskFacet; 0 for NFT legs.
+     * @return averageLtv Simple mean of per-loan LTV (bps) via RiskFacet; 0 for NFT legs.
      */
     function getLoanSummary()
         external
@@ -628,7 +628,7 @@ contract MetricsFacet {
         returns (
             uint256 totalActiveLoanValueNumeraire,
             uint256 averageLoanDuration,
-            uint256 averageLTV
+            uint256 averageLtv
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -654,7 +654,7 @@ contract MetricsFacet {
             }
         }
         averageLoanDuration = len == 0 ? 0 : durSum / len;
-        averageLTV = ltvCount == 0 ? 0 : ltvSum / ltvCount;
+        averageLtv = ltvCount == 0 ? 0 : ltvSum / ltvCount;
     }
 
     // ─── 4. NFT & Vault Metrics ────────────────────────────────────────────
@@ -671,7 +671,7 @@ contract MetricsFacet {
         external
         view
         returns (
-            uint256 totalNFTsInVault,
+            uint256 totalNftsInVault,
             uint256 activeRentalsCount,
             uint256 totalRentalVolumeNumeraire
         )
@@ -686,10 +686,10 @@ contract MetricsFacet {
                 if (l.prepayAsset != address(0) && l.prepayAmount > 0) {
                     totalRentalVolumeNumeraire += _priceAmount(l.prepayAsset, l.prepayAmount);
                 }
-                totalNFTsInVault += 1;
+                totalNftsInVault += 1;
             }
             if (l.collateralAssetType != LibVaipakam.AssetType.ERC20) {
-                totalNFTsInVault += 1;
+                totalNftsInVault += 1;
             }
         }
     }
@@ -747,7 +747,7 @@ contract MetricsFacet {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256[] storage userLoans = s.userLoanIds[user];
         uint256 len = userLoans.length;
-        uint256 minHF = type(uint256).max;
+        uint256 minHf = type(uint256).max;
         bool anyBorrow;
         for (uint256 i = 0; i < len; i++) {
             LibVaipakam.Loan storage l = s.loans[userLoans[i]];
@@ -770,12 +770,12 @@ contract MetricsFacet {
                 ) {
                     try RiskFacet(address(this)).calculateHealthFactor(l.id) returns (uint256 hf) {
                         anyBorrow = true;
-                        if (hf < minHF) minHF = hf;
+                        if (hf < minHf) minHf = hf;
                     } catch { }
                 }
             }
         }
-        healthFactor = anyBorrow ? minHF : type(uint256).max;
+        healthFactor = anyBorrow ? minHf : type(uint256).max;
         availableToClaimNumeraire = 0;
     }
 

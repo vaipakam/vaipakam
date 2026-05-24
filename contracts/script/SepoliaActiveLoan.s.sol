@@ -74,9 +74,9 @@ contract SepoliaActiveLoan is Script {
         MockChainlinkRegistry registry = new MockChainlinkRegistry();
         MockChainlinkFeed usdcFeed = new MockChainlinkFeed(1e8, 8);
         MockChainlinkFeed wethFeed = new MockChainlinkFeed(2000e8, 8);
-        address USD_DENOM = 0x0000000000000000000000000000000000000348;
-        registry.setFeed(address(usdc), USD_DENOM, address(usdcFeed));
-        registry.setFeed(address(weth), USD_DENOM, address(wethFeed));
+        address usdDenom = 0x0000000000000000000000000000000000000348;
+        registry.setFeed(address(usdc), usdDenom, address(usdcFeed));
+        registry.setFeed(address(weth), usdDenom, address(wethFeed));
 
         // Mock v3-style AMM infra: factory + mUSDC/mWETH 0.3% pool above the
         // MIN_LIQUIDITY_PAD threshold so OracleFacet._checkLiquidity
@@ -93,7 +93,7 @@ contract SepoliaActiveLoan is Script {
         if (lender.balance < 0.05 ether) payable(lender).transfer(0.05 ether);
         if (borrower.balance < 0.05 ether) payable(borrower).transfer(0.05 ether);
         OracleAdminFacet(diamond).setChainlinkRegistry(address(registry));
-        OracleAdminFacet(diamond).setUsdChainlinkDenominator(USD_DENOM);
+        OracleAdminFacet(diamond).setUsdChainlinkDenominator(usdDenom);
         OracleAdminFacet(diamond).setWethContract(address(weth));
         OracleAdminFacet(diamond).setEthUsdFeed(address(wethFeed));
         OracleAdminFacet(diamond).setUniswapV3Factory(address(univ3Factory));

@@ -36,8 +36,8 @@ contract VaipakamVaultImplementation is
     IERC1155Receiver
 {
     using SafeERC20 for IERC20;
-    address private DIAMOND;
-    address private IMPLEMENTATION_ADDRESS;
+    address private diamond;
+    address private implementationAddress;
 
     /// @dev Vault-side rental wrapper state. Authoritative for this platform:
     ///      external integrators SHOULD query the vault (via the factory
@@ -78,11 +78,11 @@ contract VaipakamVaultImplementation is
 
     /// @dev Shared check for every function that must be callable only by
     ///      the owning Diamond (or via a controlled self-call). Consolidates
-    ///      the repeated `msg.sender == DIAMOND || msg.sender == address(this)`
+    ///      the repeated `msg.sender == diamond || msg.sender == address(this)`
     ///      guard into one site so any future hardening (e.g. routing via
     ///      a dedicated facet) only has to change here.
     modifier onlyDiamond() {
-        if (msg.sender != DIAMOND && msg.sender != address(this)) {
+        if (msg.sender != diamond && msg.sender != address(this)) {
             revert NotAuthorized();
         }
         _;
@@ -99,8 +99,8 @@ contract VaipakamVaultImplementation is
     ) external initializer {
         __Ownable_init(diamondAddress); // Diamond as owner
         __ERC165_init();
-        DIAMOND = diamondAddress;
-        IMPLEMENTATION_ADDRESS = implAddress;
+        diamond = diamondAddress;
+        implementationAddress = implAddress;
     }
 
     /**
@@ -241,7 +241,7 @@ contract VaipakamVaultImplementation is
     function getOfferAmountFromDiamond(
         uint256 offerId
     ) external view returns (uint256 amount) {
-        (bool success, bytes memory result) = DIAMOND.staticcall(
+        (bool success, bytes memory result) = diamond.staticcall(
             abi.encodeWithSelector(
                 VaultFactoryFacet.getOfferAmount.selector,
                 offerId
@@ -252,7 +252,7 @@ contract VaipakamVaultImplementation is
     }
 
     // function getDiamond() public view returns (address) {
-    //     return DIAMOND;
+    //     return diamond;
     // }
 
     /**
@@ -446,7 +446,7 @@ contract VaipakamVaultImplementation is
         uint256,
         bytes calldata
     ) external view returns (bytes4) {
-        if (operator != DIAMOND && operator != address(this)) {
+        if (operator != diamond && operator != address(this)) {
             revert UnauthorizedNFTSender();
         }
         return IERC721Receiver.onERC721Received.selector;
@@ -459,7 +459,7 @@ contract VaipakamVaultImplementation is
         uint256,
         bytes calldata
     ) external view returns (bytes4) {
-        if (operator != DIAMOND && operator != address(this)) {
+        if (operator != diamond && operator != address(this)) {
             revert UnauthorizedNFTSender();
         }
         return IERC1155Receiver.onERC1155Received.selector;
@@ -472,7 +472,7 @@ contract VaipakamVaultImplementation is
         uint256[] calldata,
         bytes calldata
     ) external view returns (bytes4) {
-        if (operator != DIAMOND && operator != address(this)) {
+        if (operator != diamond && operator != address(this)) {
             revert UnauthorizedNFTSender();
         }
         return IERC1155Receiver.onERC1155BatchReceived.selector;
@@ -502,5 +502,5 @@ contract VaipakamVaultImplementation is
     ///      ERC1967 proxies deployed during Phase 1. 50 slots ≈ room
     ///      for ~50 uint256-sized fields (or proportionally fewer
     ///      mappings / arrays / larger structs); sized conservatively.
-    uint256[50] private __gap;
+    uint256[50] private _gap;
 }

@@ -88,7 +88,7 @@ contract DefaultedFacetTest is Test {
     address mockERC20; // Liquid asset
     address mockCollateralERC20; // Distinct liquid asset for collateral (SelfCollateralizedOffer invariant)
     address mockIlliquidERC20; // Illiquid asset
-    address mockNFT721; // Rentable NFT
+    address mockNft721; // Rentable NFT
     address mockZeroExProxy;
     uint256 constant KYC_THRESHOLD_USD = 2000 * 1e18;
     uint256 constant BASIS_POINTS = 10000;
@@ -161,7 +161,7 @@ contract DefaultedFacetTest is Test {
         mockERC20 = address(new ERC20Mock("MockLiquid", "MLQ", 18));
         mockCollateralERC20 = address(new ERC20Mock("MockCollateral", "MCK", 18));
         mockIlliquidERC20 = address(new ERC20Mock("MockIlliquid", "MIL", 18));
-        mockNFT721 = address(new MockRentableNFT721());
+        mockNft721 = address(new MockRentableNFT721());
         mockZeroExProxy = address(new ZeroExProxyMock());
         address allowanceTarget = mockZeroExProxy; //makeAddr("allowanceTarget"); // Mock for tests
         console.log("mockZeroExProxy: ", mockZeroExProxy);
@@ -173,7 +173,7 @@ contract DefaultedFacetTest is Test {
         ERC20Mock(mockCollateralERC20).mint(borrower, 100000 ether);
         // ERC20Mock(mockIlliquidERC20).mint(lender, 100000 ether);
         ERC20Mock(mockIlliquidERC20).mint(borrower, 100000 ether);
-        MockRentableNFT721(mockNFT721).mint(lender, 1);
+        MockRentableNFT721(mockNft721).mint(lender, 1);
 
         // Mint output tokens to mock (e.g., principalAsset)
         ERC20Mock(mockERC20).mint(address(mockZeroExProxy), 1000000 ether); // Enough for proceeds
@@ -327,12 +327,12 @@ contract DefaultedFacetTest is Test {
         vm.prank(borrower);
         ERC20(mockIlliquidERC20).approve(address(diamond), type(uint256).max);
         vm.prank(lender);
-        MockRentableNFT721(mockNFT721).approve(address(diamond), 1);
+        MockRentableNFT721(mockNft721).approve(address(diamond), 1);
 
         // Mock Oracle: Liquid for ERC20, Illiquid for NFT
         mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
         mockOracleLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Liquid);
-        mockOracleLiquidity(mockNFT721, LibVaipakam.LiquidityStatus.Illiquid);
+        mockOracleLiquidity(mockNft721, LibVaipakam.LiquidityStatus.Illiquid);
         mockOracleLiquidity(
             mockIlliquidERC20,
             LibVaipakam.LiquidityStatus.Illiquid
@@ -447,7 +447,7 @@ contract DefaultedFacetTest is Test {
             address(diamond),
             abi.encodeWithSelector(
                 OracleFacet.checkLiquidity.selector,
-                mockNFT721
+                mockNft721
             ),
             abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
         );
@@ -455,7 +455,7 @@ contract DefaultedFacetTest is Test {
             address(diamond),
             abi.encodeWithSelector(
                 OracleFacet.checkLiquidityOnActiveNetwork.selector,
-                mockNFT721
+                mockNft721
             ),
             abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
         );
@@ -482,13 +482,13 @@ contract DefaultedFacetTest is Test {
             address(diamond),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
-                mockNFT721
+                mockNft721
             ),
             abi.encode(1e8, 8) // $1, 8 decimals
         );
         // Mock decimals() on NFT address (triggerDefault calls IERC20Metadata.decimals on principalAsset)
         vm.mockCall(
-            mockNFT721,
+            mockNft721,
             abi.encodeWithSelector(IERC20Metadata.decimals.selector),
             abi.encode(uint8(18))
         );
@@ -531,7 +531,7 @@ contract DefaultedFacetTest is Test {
             type(uint256).max
         );
         vm.prank(lender);
-        IERC721(mockNFT721).setApprovalForAll(
+        IERC721(mockNft721).setApprovalForAll(
             VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender),
             true
         );
@@ -760,7 +760,7 @@ contract DefaultedFacetTest is Test {
     function testTriggerDefaultNFTRental() public {
         // Create NFT rental loan
         uint256 loanId = createAndAcceptOffer(
-            mockNFT721,
+            mockNft721,
             mockERC20,
             LibVaipakam.AssetType.ERC721,
             10 ether, // Rental fee
@@ -781,7 +781,7 @@ contract DefaultedFacetTest is Test {
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
 
         // Check NFT user reset
-        assertEq(IERC4907(mockNFT721).userOf(1), address(0));
+        assertEq(IERC4907(mockNft721).userOf(1), address(0));
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(
             loanId
@@ -1021,7 +1021,7 @@ contract DefaultedFacetTest is Test {
     /// @dev Tests triggerDefault NFT rental cross-facet failure: buffer to treasury fails.
     function testTriggerDefaultNFTBufferToTreasuryFails() public {
         uint256 loanId = createAndAcceptOffer(
-            mockNFT721, mockERC20, LibVaipakam.AssetType.ERC721,
+            mockNft721, mockERC20, LibVaipakam.AssetType.ERC721,
             10 ether, 1500 ether, 30, 1, 1
         );
         vm.warp(block.timestamp + 33 days + 3);
@@ -1040,7 +1040,7 @@ contract DefaultedFacetTest is Test {
     /// @dev Tests triggerDefault NFT rental cross-facet failure: reset NFT user fails.
     function testTriggerDefaultNFTResetUserFails() public {
         uint256 loanId = createAndAcceptOffer(
-            mockNFT721, mockERC20, LibVaipakam.AssetType.ERC721,
+            mockNft721, mockERC20, LibVaipakam.AssetType.ERC721,
             10 ether, 1500 ether, 30, 1, 1
         );
         vm.warp(block.timestamp + 33 days + 3);
@@ -1079,7 +1079,7 @@ contract DefaultedFacetTest is Test {
         // We can't easily create an ERC1155 loan in setUp, so we directly set loan assetType
         // via storage. First create an NFT (ERC721) loan, then override assetType to ERC1155.
         uint256 loanId = createAndAcceptOffer(
-            mockNFT721, mockERC20, LibVaipakam.AssetType.ERC721,
+            mockNft721, mockERC20, LibVaipakam.AssetType.ERC721,
             10 ether, 1500 ether, 30, 1, 1
         );
 
@@ -1111,7 +1111,7 @@ contract DefaultedFacetTest is Test {
     /// NFT return is now handled by ClaimFacet.claimAsLender (NFT-gated claim model).
     function testTriggerDefaultNFTRentalDoesNotWithdrawNFT() public {
         uint256 loanId = createAndAcceptOffer(
-            mockNFT721, mockERC20, LibVaipakam.AssetType.ERC721,
+            mockNft721, mockERC20, LibVaipakam.AssetType.ERC721,
             10 ether, 1500 ether, 30, 1, 1
         );
         vm.warp(block.timestamp + 33 days + 3);
@@ -1131,7 +1131,7 @@ contract DefaultedFacetTest is Test {
     ///      This covers CrossFacetCallFailed("Get lender vault failed") in the NFT section.
     function testTriggerDefaultNFTGetLenderVaultFails() public {
         uint256 loanId = createAndAcceptOffer(
-            mockNFT721, mockERC20, LibVaipakam.AssetType.ERC721,
+            mockNft721, mockERC20, LibVaipakam.AssetType.ERC721,
             10 ether, 1500 ether, 30, 1, 1
         );
         vm.warp(block.timestamp + 33 days + 3);
@@ -1162,7 +1162,7 @@ contract DefaultedFacetTest is Test {
     ///      Prepay call: (borrower, mockERC20, address(this), 300 ether) — fails.
     function testTriggerDefaultNFTPrepayWithdrawalFails() public {
         uint256 loanId = createAndAcceptOffer(
-            mockNFT721, mockERC20, LibVaipakam.AssetType.ERC721,
+            mockNft721, mockERC20, LibVaipakam.AssetType.ERC721,
             10 ether, 1500 ether, 30, 1, 1
         );
         vm.warp(block.timestamp + 33 days + 3);
@@ -1480,7 +1480,7 @@ contract DefaultedFacetTest is Test {
     function testTriggerDefaultNFTRentalWithTreasuryFee() public {
         // Create NFT rental loan with larger rental fee to ensure treasuryFee > 0
         uint256 loanId = createAndAcceptOffer(
-            mockNFT721, mockERC20, LibVaipakam.AssetType.ERC721,
+            mockNft721, mockERC20, LibVaipakam.AssetType.ERC721,
             100 ether, // larger rental fee → prepay = 100*30=3000, treasuryFee = 3000*100/10000 = 30
             1500 ether, 30, 1, 1
         );
@@ -1544,7 +1544,7 @@ contract DefaultedFacetTest is Test {
     function testTriggerDefaultNFTRentalIlliquidPrepaySkipsKYC() public {
         // Create NFT rental with mockERC20 as prepay asset but mock it illiquid for KYC check
         uint256 loanId = createAndAcceptOffer(
-            mockNFT721, mockERC20, LibVaipakam.AssetType.ERC721,
+            mockNft721, mockERC20, LibVaipakam.AssetType.ERC721,
             100 ether, 1500 ether, 30, 1, 1
         );
 
@@ -1582,7 +1582,7 @@ contract DefaultedFacetTest is Test {
         // Phase 1 pass-through default — enable enforcement for this path.
         AdminFacet(address(diamond)).setKYCEnforcement(true);
         uint256 loanId = createAndAcceptOffer(
-            mockNFT721, mockERC20, LibVaipakam.AssetType.ERC721,
+            mockNft721, mockERC20, LibVaipakam.AssetType.ERC721,
             100 ether, 1500 ether, 30, 1, 1
         );
 
@@ -1739,7 +1739,7 @@ contract DefaultedFacetTest is Test {
     ///      - prepayToLender distribution
     function testTriggerDefaultNFTRentalFullPath() public {
         uint256 loanId = createAndAcceptOffer(
-            mockNFT721, mockERC20, LibVaipakam.AssetType.ERC721,
+            mockNft721, mockERC20, LibVaipakam.AssetType.ERC721,
             100 ether, 1500 ether, 30, 1, 1
         );
 
@@ -1896,10 +1896,10 @@ contract DefaultedFacetTest is Test {
     ///      Uses ERC1155 asset type for the lending asset to exercise the NFT-specific handling.
     function testTriggerDefaultNFTRentalERC1155FullPath() public {
         // Create NFT rental loan with ERC1155 asset type
-        // We'll use mockNFT721 address but set assetType to ERC1155 via storage
+        // We'll use mockNft721 address but set assetType to ERC1155 via storage
         // First create with ERC721 (which existing helper supports), then override assetType
         uint256 loanId = createAndAcceptOffer(
-            mockNFT721, mockERC20, LibVaipakam.AssetType.ERC721,
+            mockNft721, mockERC20, LibVaipakam.AssetType.ERC721,
             100 ether, 1500 ether, 30, 1, 1
         );
 
@@ -1994,7 +1994,7 @@ contract DefaultedFacetTest is Test {
     /// @dev Tests triggerDefault NFT path where vaultSetNFTUser (reset renter) fails.
     function testTriggerDefaultNFTResetRenterFails() public {
         uint256 loanId = createAndAcceptOffer(
-            mockNFT721, mockERC20, LibVaipakam.AssetType.ERC721,
+            mockNft721, mockERC20, LibVaipakam.AssetType.ERC721,
             100 ether, 1500 ether, 30, 1, 1
         );
         vm.warp(block.timestamp + 33 days + 3);

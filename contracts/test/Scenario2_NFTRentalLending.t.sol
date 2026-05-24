@@ -48,8 +48,8 @@ contract Scenario2_NFTRentalLending is Test {
     address owner;
     address lender;
     address borrower;
-    address mockUSDC;
-    address mockNFT721;
+    address mockUsdc;
+    address mockNft721;
     address mockZeroExProxy;
 
     uint256 constant BASIS_POINTS = 10000;
@@ -111,17 +111,17 @@ contract Scenario2_NFTRentalLending is Test {
         borrower = makeAddr("borrower");
 
         // Deploy mocks
-        mockUSDC = address(new ERC20Mock("MockUSDC", "USDC", 18));
-        mockNFT721 = address(new MockRentableNFT721());
+        mockUsdc = address(new ERC20Mock("MockUSDC", "USDC", 18));
+        mockNft721 = address(new MockRentableNFT721());
         mockZeroExProxy = address(new ZeroExProxyMock());
 
         // Mint assets
-        ERC20Mock(mockUSDC).mint(borrower, 100_000 ether);
+        ERC20Mock(mockUsdc).mint(borrower, 100_000 ether);
         // Lender does not need USDC
-        MockRentableNFT721(mockNFT721).mint(lender, 1);
+        MockRentableNFT721(mockNft721).mint(lender, 1);
 
         // Mint to ZeroEx mock for any liquidation proceeds
-        ERC20Mock(mockUSDC).mint(address(mockZeroExProxy), 1_000_000 ether);
+        ERC20Mock(mockUsdc).mint(address(mockZeroExProxy), 1_000_000 ether);
         ZeroExProxyMock(mockZeroExProxy).setRate(11, 10);
 
         // Deploy facets
@@ -187,19 +187,19 @@ contract Scenario2_NFTRentalLending is Test {
 
         // Token approvals to diamond
         vm.prank(lender);
-        MockRentableNFT721(mockNFT721).approve(address(diamond), 1);
+        MockRentableNFT721(mockNft721).approve(address(diamond), 1);
         vm.prank(borrower);
-        ERC20(mockUSDC).approve(address(diamond), type(uint256).max);
+        ERC20(mockUsdc).approve(address(diamond), type(uint256).max);
 
         // Oracle mocks: USDC = Liquid ($1), NFT = Illiquid
-        mockOracleLiquidity(mockUSDC, LibVaipakam.LiquidityStatus.Liquid);
-        mockOracleLiquidity(mockNFT721, LibVaipakam.LiquidityStatus.Illiquid);
-        mockOraclePrice(mockUSDC, 1e8, 8); // $1 with 8 decimals
+        mockOracleLiquidity(mockUsdc, LibVaipakam.LiquidityStatus.Liquid);
+        mockOracleLiquidity(mockNft721, LibVaipakam.LiquidityStatus.Illiquid);
+        mockOraclePrice(mockUsdc, 1e8, 8); // $1 with 8 decimals
         // Mock NFT price for DefaultedFacet KYC check (principalAsset = NFT)
-        mockOraclePrice(mockNFT721, 1e8, 8);
+        mockOraclePrice(mockNft721, 1e8, 8);
         // Mock decimals() on the NFT contract (DefaultedFacet calls IERC20Metadata.decimals on principalAsset)
         vm.mockCall(
-            mockNFT721,
+            mockNft721,
             abi.encodeWithSelector(IERC20Metadata.decimals.selector),
             abi.encode(uint8(18))
         );
@@ -232,7 +232,7 @@ contract Scenario2_NFTRentalLending is Test {
 
         // Risk params for USDC collateral
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockUSDC, 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockUsdc, 8000, 300, 1000);
 
         // Create vaults for both parties (must happen before vault approvals)
         lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
@@ -240,11 +240,11 @@ contract Scenario2_NFTRentalLending is Test {
 
         // Vault approvals
         vm.prank(borrower);
-        ERC20(mockUSDC).approve(borrowerVault, type(uint256).max);
+        ERC20(mockUsdc).approve(borrowerVault, type(uint256).max);
         vm.prank(lender);
-        ERC20(mockUSDC).approve(lenderVault, type(uint256).max);
+        ERC20(mockUsdc).approve(lenderVault, type(uint256).max);
         vm.prank(lender);
-        IERC721(mockNFT721).setApprovalForAll(lenderVault, true);
+        IERC721(mockNft721).setApprovalForAll(lenderVault, true);
     }
 
     // ─── Internal Helpers ────────────────────────────────────────────────────
@@ -257,17 +257,17 @@ contract Scenario2_NFTRentalLending is Test {
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
-                lendingAsset: address(mockNFT721),
+                lendingAsset: address(mockNft721),
                 amount: DAILY_FEE,
                 interestRateBps: 0,
-                collateralAsset: mockUSDC,
+                collateralAsset: mockUsdc,
                 collateralAmount: TOTAL_PREPAY,
                 durationDays: DURATION_DAYS,
                 assetType: LibVaipakam.AssetType.ERC721,
                 tokenId: 1,
                 quantity: 1,
                 creatorRiskAndTermsConsent: true,
-                prepayAsset: mockUSDC,
+                prepayAsset: mockUsdc,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
@@ -300,7 +300,7 @@ contract Scenario2_NFTRentalLending is Test {
      *         7. Verify balances
      */
     function test_Scenario2a_ERC721Rental_FullLifecycle() public {
-        uint256 borrowerUSDCBefore = IERC20(mockUSDC).balanceOf(borrower);
+        uint256 borrowerUsdcBefore = IERC20(mockUsdc).balanceOf(borrower);
 
         // Step 1 & 2: Create offer and accept
         uint256 loanId = _createAndAcceptNFTRental();
@@ -309,17 +309,17 @@ contract Scenario2_NFTRentalLending is Test {
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(loan.principal, DAILY_FEE, "Principal should be daily rental fee");
         assertEq(loan.durationDays, DURATION_DAYS, "Duration should be 7 days");
-        assertEq(loan.prepayAsset, mockUSDC, "Prepay asset should be USDC");
+        assertEq(loan.prepayAsset, mockUsdc, "Prepay asset should be USDC");
         assertEq(uint8(loan.assetType), uint8(LibVaipakam.AssetType.ERC721), "Asset type should be ERC721");
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Active), "Loan should be Active");
         assertEq(loan.lender, lender, "Lender mismatch");
         assertEq(loan.borrower, borrower, "Borrower mismatch");
         assertEq(loan.tokenId, 1, "Token ID should be 1");
-        assertEq(loan.principalAsset, address(mockNFT721), "Principal asset should be NFT");
+        assertEq(loan.principalAsset, address(mockNft721), "Principal asset should be NFT");
 
         // Verify NFT is in lender's vault
         assertEq(
-            IERC721(mockNFT721).ownerOf(1),
+            IERC721(mockNft721).ownerOf(1),
             lenderVault,
             "NFT should be in lender's vault after offer creation"
         );
@@ -339,7 +339,7 @@ contract Scenario2_NFTRentalLending is Test {
         // Check lender claimable
         (address lenderClaimAsset, uint256 lenderClaimAmount, bool lenderClaimed) =
             ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
-        assertEq(lenderClaimAsset, mockUSDC, "Lender claim asset should be USDC");
+        assertEq(lenderClaimAsset, mockUsdc, "Lender claim asset should be USDC");
         assertFalse(lenderClaimed, "Lender should not have claimed yet");
 
         // Rental fees minus treasury: totalRental * 99% = 70 * 0.99 = 69.3
@@ -347,18 +347,18 @@ contract Scenario2_NFTRentalLending is Test {
         uint256 expectedLenderShare = TOTAL_RENTAL - treasuryShare;
         assertEq(lenderClaimAmount, expectedLenderShare, "Lender claim amount mismatch");
 
-        uint256 lenderUSDCBefore = IERC20(mockUSDC).balanceOf(lender);
+        uint256 lenderUsdcBefore = IERC20(mockUsdc).balanceOf(lender);
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
 
         // Verify lender received USDC and NFT
         assertEq(
-            IERC20(mockUSDC).balanceOf(lender),
-            lenderUSDCBefore + expectedLenderShare,
+            IERC20(mockUsdc).balanceOf(lender),
+            lenderUsdcBefore + expectedLenderShare,
             "Lender USDC balance mismatch after claim"
         );
         assertEq(
-            IERC721(mockNFT721).ownerOf(1),
+            IERC721(mockNft721).ownerOf(1),
             lender,
             "NFT should be returned to lender after claim"
         );
@@ -366,7 +366,7 @@ contract Scenario2_NFTRentalLending is Test {
         // Step 6: Borrower claims buffer refund
         (address borrowerClaimAsset, uint256 borrowerClaimAmount, bool borrowerClaimed) =
             ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
-        assertEq(borrowerClaimAsset, mockUSDC, "Borrower claim asset should be USDC");
+        assertEq(borrowerClaimAsset, mockUsdc, "Borrower claim asset should be USDC");
         assertFalse(borrowerClaimed, "Borrower should not have claimed yet");
 
         // Borrower refund = unused prepay + buffer = (73.5 - 70) + 0 = buffer only = 3.5 ether
@@ -375,13 +375,13 @@ contract Scenario2_NFTRentalLending is Test {
         // refund = 70 - 70 + 3.5 = 3.5
         assertEq(borrowerClaimAmount, BUFFER, "Borrower claim amount should be the buffer refund");
 
-        uint256 borrowerUSDCBeforeClaim = IERC20(mockUSDC).balanceOf(borrower);
+        uint256 borrowerUsdcBeforeClaim = IERC20(mockUsdc).balanceOf(borrower);
         vm.prank(borrower);
         ClaimFacet(address(diamond)).claimAsBorrower(loanId);
 
         assertEq(
-            IERC20(mockUSDC).balanceOf(borrower),
-            borrowerUSDCBeforeClaim + BUFFER,
+            IERC20(mockUsdc).balanceOf(borrower),
+            borrowerUsdcBeforeClaim + BUFFER,
             "Borrower USDC balance mismatch after claim"
         );
 
@@ -390,8 +390,8 @@ contract Scenario2_NFTRentalLending is Test {
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Settled), "Loan should be Settled");
 
         // Verify net cost to borrower = totalRental (70 ether) since buffer was refunded
-        uint256 borrowerUSDCAfter = IERC20(mockUSDC).balanceOf(borrower);
-        uint256 borrowerSpent = borrowerUSDCBefore - borrowerUSDCAfter;
+        uint256 borrowerUsdcAfter = IERC20(mockUsdc).balanceOf(borrower);
+        uint256 borrowerSpent = borrowerUsdcBefore - borrowerUsdcAfter;
         assertEq(borrowerSpent, TOTAL_RENTAL, "Borrower net cost should equal total rental");
     }
 
@@ -416,7 +416,7 @@ contract Scenario2_NFTRentalLending is Test {
 
         // Verify NFT is in lender's vault
         assertEq(
-            IERC721(mockNFT721).ownerOf(1),
+            IERC721(mockNft721).ownerOf(1),
             lenderVault,
             "NFT should be in lender's vault"
         );
@@ -437,7 +437,7 @@ contract Scenario2_NFTRentalLending is Test {
         // Step 5: Lender claims
         (address lenderClaimAsset, uint256 lenderClaimAmount, bool lenderClaimed) =
             ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
-        assertEq(lenderClaimAsset, mockUSDC, "Lender claim asset should be USDC");
+        assertEq(lenderClaimAsset, mockUsdc, "Lender claim asset should be USDC");
         assertFalse(lenderClaimed, "Lender should not have claimed yet");
 
         // On default, lender gets prepay minus treasury fee (buffer goes to treasury separately)
@@ -445,18 +445,18 @@ contract Scenario2_NFTRentalLending is Test {
         uint256 expectedLenderDefault = TOTAL_RENTAL - defaultTreasuryFee;
         assertEq(lenderClaimAmount, expectedLenderDefault, "Lender should get rental prepay minus treasury fee on default");
 
-        uint256 lenderUSDCBefore = IERC20(mockUSDC).balanceOf(lender);
+        uint256 lenderUsdcBefore = IERC20(mockUsdc).balanceOf(lender);
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
 
         // Verify lender received USDC and NFT
         assertEq(
-            IERC20(mockUSDC).balanceOf(lender),
-            lenderUSDCBefore + expectedLenderDefault,
+            IERC20(mockUsdc).balanceOf(lender),
+            lenderUsdcBefore + expectedLenderDefault,
             "Lender USDC balance mismatch after default claim"
         );
         assertEq(
-            IERC721(mockNFT721).ownerOf(1),
+            IERC721(mockNft721).ownerOf(1),
             lender,
             "NFT should be returned to lender after default claim"
         );

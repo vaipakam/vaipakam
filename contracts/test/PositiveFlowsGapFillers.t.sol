@@ -64,9 +64,9 @@ contract PositiveFlowsGapFillers is Test {
     address internal owner;
     address internal lender;
     address internal borrower;
-    address internal keeperEOA;
-    address internal mockUSDC;
-    address internal mockWETH;
+    address internal keeperEoa;
+    address internal mockUsdc;
+    address internal mockWeth;
 
     uint256 constant PRINCIPAL = 1000 ether;
     uint256 constant COLLATERAL = 1500 ether;
@@ -81,14 +81,14 @@ contract PositiveFlowsGapFillers is Test {
         owner = address(this);
         lender = makeAddr("lender");
         borrower = makeAddr("borrower");
-        keeperEOA = makeAddr("keeperEOA");
+        keeperEoa = makeAddr("keeperEOA");
 
-        mockUSDC = address(new ERC20Mock("MockUSDC", "USDC", 18));
-        mockWETH = address(new ERC20Mock("MockWETH", "WETH", 18));
-        ERC20Mock(mockUSDC).mint(lender, 100_000 ether);
-        ERC20Mock(mockUSDC).mint(borrower, 100_000 ether);
-        ERC20Mock(mockWETH).mint(lender, 100_000 ether);
-        ERC20Mock(mockWETH).mint(borrower, 100_000 ether);
+        mockUsdc = address(new ERC20Mock("MockUSDC", "USDC", 18));
+        mockWeth = address(new ERC20Mock("MockWETH", "WETH", 18));
+        ERC20Mock(mockUsdc).mint(lender, 100_000 ether);
+        ERC20Mock(mockUsdc).mint(borrower, 100_000 ether);
+        ERC20Mock(mockWeth).mint(lender, 100_000 ether);
+        ERC20Mock(mockWeth).mint(borrower, 100_000 ether);
 
         DiamondCutFacet cutFacet = new DiamondCutFacet();
         diamond = new VaipakamDiamond(owner, address(cutFacet));
@@ -105,8 +105,8 @@ contract PositiveFlowsGapFillers is Test {
         AdminFacet(address(diamond)).setallowanceTarget(makeAddr("zeroExAllowance"));
 
         ProfileFacet(address(diamond)).setTradeAllowance("US", "US", true);
-        RiskFacet(address(diamond)).updateRiskParams(mockUSDC, 8000, 300, 1000);
-        RiskFacet(address(diamond)).updateRiskParams(mockWETH, 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockUsdc, 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockWeth, 8000, 300, 1000);
 
         _mockOracle();
         _onboardActor(lender);
@@ -161,8 +161,8 @@ contract PositiveFlowsGapFillers is Test {
     ///         receives `principal - fee`. Guards against silently-changed
     ///         constants or a drift in the fee transfer path.
     function test_Positive_LoanInitiationFee_ExactDeduction() public {
-        uint256 borrowerUsdcBefore = IERC20(mockUSDC).balanceOf(borrower);
-        uint256 treasuryBalBefore = IERC20(mockUSDC).balanceOf(address(diamond));
+        uint256 borrowerUsdcBefore = IERC20(mockUsdc).balanceOf(borrower);
+        uint256 treasuryBalBefore = IERC20(mockUsdc).balanceOf(address(diamond));
 
         uint256 offerId = _createLenderOffer();
         vm.prank(borrower);
@@ -183,7 +183,7 @@ contract PositiveFlowsGapFillers is Test {
 
         // Borrower wallet credit is principal minus the treasury share
         // (the matcher cut comes back to them as msg.sender).
-        uint256 borrowerUsdcAfter = IERC20(mockUSDC).balanceOf(borrower);
+        uint256 borrowerUsdcAfter = IERC20(mockUsdc).balanceOf(borrower);
         assertEq(
             borrowerUsdcAfter - borrowerUsdcBefore,
             expectedBorrowerCredit,
@@ -192,7 +192,7 @@ contract PositiveFlowsGapFillers is Test {
 
         // Treasury (the diamond itself in this test) retains only the
         // 99% treasury share of LIF.
-        uint256 treasuryBalAfter = IERC20(mockUSDC).balanceOf(address(diamond));
+        uint256 treasuryBalAfter = IERC20(mockUsdc).balanceOf(address(diamond));
         uint256 netRetained = treasuryBalAfter - treasuryBalBefore;
         assertEq(
             netRetained,
@@ -219,9 +219,9 @@ contract PositiveFlowsGapFillers is Test {
         vm.prank(borrower);
         uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
-        LibVaipakam.Loan memory L0 =
+        LibVaipakam.Loan memory l0 =
             LoanFacet(address(diamond)).getLoanDetails(loanId);
-        assertEq(L0.principal, PRINCIPAL, "initial principal");
+        assertEq(l0.principal, PRINCIPAL, "initial principal");
 
         // First leg: partial repay of 40% mid-term.
         uint256 partialAmount = 400 ether;
@@ -229,15 +229,15 @@ contract PositiveFlowsGapFillers is Test {
         vm.prank(borrower);
         RepayFacet(address(diamond)).repayPartial(loanId, partialAmount);
 
-        LibVaipakam.Loan memory L1 =
+        LibVaipakam.Loan memory l1 =
             LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(
-            L1.principal,
+            l1.principal,
             PRINCIPAL - partialAmount,
             "outstanding principal != principal - partial"
         );
         assertEq(
-            uint8(L1.status),
+            uint8(l1.status),
             uint8(LibVaipakam.LoanStatus.Active),
             "partial repay must leave the loan Active"
         );
@@ -247,10 +247,10 @@ contract PositiveFlowsGapFillers is Test {
         vm.prank(borrower);
         RepayFacet(address(diamond)).repayLoan(loanId);
 
-        LibVaipakam.Loan memory L2 =
+        LibVaipakam.Loan memory l2 =
             LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(
-            uint8(L2.status),
+            uint8(l2.status),
             uint8(LibVaipakam.LoanStatus.Repaid),
             "loan must close after full repay of remaining balance"
         );
@@ -276,11 +276,11 @@ contract PositiveFlowsGapFillers is Test {
         );
         vm.prank(lender);
         ProfileFacet(address(diamond)).approveKeeper(
-            keeperEOA,
+            keeperEoa,
             LibVaipakam.KEEPER_ACTION_ALL
         );
         assertEq(
-            ProfileFacet(address(diamond)).getKeeperActions(lender, keeperEOA),
+            ProfileFacet(address(diamond)).getKeeperActions(lender, keeperEoa),
             LibVaipakam.KEEPER_ACTION_ALL,
             "lender whitelist must carry full action bitmask"
         );
@@ -292,7 +292,7 @@ contract PositiveFlowsGapFillers is Test {
         vm.prank(lender);
         ProfileFacet(address(diamond)).setOfferKeeperEnabled(
             offerId,
-            keeperEOA,
+            keeperEoa,
             true
         );
 
@@ -300,7 +300,7 @@ contract PositiveFlowsGapFillers is Test {
         uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         assertTrue(
-            ProfileFacet(address(diamond)).isLoanKeeperEnabled(loanId, keeperEOA),
+            ProfileFacet(address(diamond)).isLoanKeeperEnabled(loanId, keeperEoa),
             "offer-level enable must latch into loan-level at acceptance"
         );
 
@@ -311,17 +311,17 @@ contract PositiveFlowsGapFillers is Test {
         ProfileFacet(address(diamond)).setKeeperAccess(true);
         vm.prank(borrower);
         ProfileFacet(address(diamond)).approveKeeper(
-            keeperEOA,
+            keeperEoa,
             LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE
         );
         vm.prank(borrower);
         ProfileFacet(address(diamond)).setLoanKeeperEnabled(
             loanId,
-            keeperEOA,
+            keeperEoa,
             true
         );
         assertTrue(
-            ProfileFacet(address(diamond)).isLoanKeeperEnabled(loanId, keeperEOA),
+            ProfileFacet(address(diamond)).isLoanKeeperEnabled(loanId, keeperEoa),
             "borrower-side per-loan enable must persist"
         );
     }
@@ -335,10 +335,10 @@ contract PositiveFlowsGapFillers is Test {
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
-                lendingAsset: mockUSDC,
+                lendingAsset: mockUsdc,
                 amount: PRINCIPAL,
                 interestRateBps: RATE_BPS,
-                collateralAsset: mockWETH,
+                collateralAsset: mockWeth,
                 collateralAmount: COLLATERAL,
                 durationDays: DURATION,
                 assetType: LibVaipakam.AssetType.ERC20,
@@ -454,10 +454,10 @@ contract PositiveFlowsGapFillers is Test {
     }
 
     function _mockOracle() internal {
-        _mockLiquidity(mockUSDC, LibVaipakam.LiquidityStatus.Liquid);
-        _mockLiquidity(mockWETH, LibVaipakam.LiquidityStatus.Liquid);
-        _mockPrice(mockUSDC, 1e8, 8);
-        _mockPrice(mockWETH, 2000e8, 8);
+        _mockLiquidity(mockUsdc, LibVaipakam.LiquidityStatus.Liquid);
+        _mockLiquidity(mockWeth, LibVaipakam.LiquidityStatus.Liquid);
+        _mockPrice(mockUsdc, 1e8, 8);
+        _mockPrice(mockWeth, 2000e8, 8);
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
@@ -504,10 +504,10 @@ contract PositiveFlowsGapFillers is Test {
 
         address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user);
         vm.startPrank(user);
-        ERC20(mockUSDC).approve(address(diamond), type(uint256).max);
-        ERC20(mockWETH).approve(address(diamond), type(uint256).max);
-        ERC20(mockUSDC).approve(vault, type(uint256).max);
-        ERC20(mockWETH).approve(vault, type(uint256).max);
+        ERC20(mockUsdc).approve(address(diamond), type(uint256).max);
+        ERC20(mockWeth).approve(address(diamond), type(uint256).max);
+        ERC20(mockUsdc).approve(vault, type(uint256).max);
+        ERC20(mockWeth).approve(vault, type(uint256).max);
         vm.stopPrank();
     }
 }

@@ -157,7 +157,7 @@ contract VpfiBuyAdapter is
     uint256 public totalStuckVPFI;
 
     /// @dev Reserved storage for upgrade-safe appends.
-    uint256[38] private __gap;
+    uint256[38] private _gap;
 
     // ─── Events ─────────────────────────────────────────────────────────────
 

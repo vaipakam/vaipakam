@@ -155,10 +155,10 @@ contract SepoliaPositiveFlows is Script {
         MockChainlinkRegistry mockRegistry = new MockChainlinkRegistry();
         MockChainlinkFeed usdcFeed = new MockChainlinkFeed(1e8, 8);       // $1.00
         MockChainlinkFeed wethFeed = new MockChainlinkFeed(2000e8, 8);    // $2000.00
-        address USD_DENOM = 0x0000000000000000000000000000000000000348;    // Chainlink Denominations.USD
+        address usdDenom = 0x0000000000000000000000000000000000000348;    // Chainlink Denominations.USD
         // Register feeds for liquid mock tokens only (illiquid tokens have NO feed → naturally Illiquid)
-        mockRegistry.setFeed(address(usdc), USD_DENOM, address(usdcFeed));
-        mockRegistry.setFeed(address(weth), USD_DENOM, address(wethFeed));
+        mockRegistry.setFeed(address(usdc), usdDenom, address(usdcFeed));
+        mockRegistry.setFeed(address(weth), usdDenom, address(wethFeed));
 
         // Mock v3-style AMM factory + mUSDC/mWETH 0.3% pool. OracleFacet
         // looks up pools via `factory.getPool(tokenA, tokenB, fee)` (no
@@ -193,7 +193,7 @@ contract SepoliaPositiveFlows is Script {
 
         // Configure Diamond oracle with mock registry
         OracleAdminFacet(diamond).setChainlinkRegistry(address(mockRegistry));
-        OracleAdminFacet(diamond).setUsdChainlinkDenominator(USD_DENOM);
+        OracleAdminFacet(diamond).setUsdChainlinkDenominator(usdDenom);
         OracleAdminFacet(diamond).setWethContract(address(weth));
         OracleAdminFacet(diamond).setEthUsdFeed(address(wethFeed));
         OracleAdminFacet(diamond).setUniswapV3Factory(address(univ3Factory));

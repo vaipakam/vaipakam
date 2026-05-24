@@ -27,8 +27,8 @@ import {HelperTest} from "./HelperTest.sol";
 ///         `AssetPaused` revert fires before any downstream side-effect.
 contract PerAssetPauseTest is Test {
     VaipakamDiamond internal diamond;
-    address internal ASSET_A = address(0xAAA1);
-    address internal ASSET_B = address(0xBBB1);
+    address internal assetA = address(0xAAA1);
+    address internal assetB = address(0xBBB1);
     address internal notAdmin = address(0xBEEF);
 
     function setUp() public {
@@ -65,17 +65,17 @@ contract PerAssetPauseTest is Test {
 
     function test_pauseAsset_emitsEvent() public {
         vm.expectEmit(true, false, false, false, address(diamond));
-        emit AdminFacet.AssetPauseEnabled(ASSET_A);
-        AdminFacet(address(diamond)).pauseAsset(ASSET_A);
-        assertTrue(AdminFacet(address(diamond)).isAssetPaused(ASSET_A));
+        emit AdminFacet.AssetPauseEnabled(assetA);
+        AdminFacet(address(diamond)).pauseAsset(assetA);
+        assertTrue(AdminFacet(address(diamond)).isAssetPaused(assetA));
     }
 
     function test_unpauseAsset_emitsEvent() public {
-        AdminFacet(address(diamond)).pauseAsset(ASSET_A);
+        AdminFacet(address(diamond)).pauseAsset(assetA);
         vm.expectEmit(true, false, false, false, address(diamond));
-        emit AdminFacet.AssetPauseDisabled(ASSET_A);
-        AdminFacet(address(diamond)).unpauseAsset(ASSET_A);
-        assertFalse(AdminFacet(address(diamond)).isAssetPaused(ASSET_A));
+        emit AdminFacet.AssetPauseDisabled(assetA);
+        AdminFacet(address(diamond)).unpauseAsset(assetA);
+        assertFalse(AdminFacet(address(diamond)).isAssetPaused(assetA));
     }
 
     function test_pauseAsset_revertsOnZero() public {
@@ -91,13 +91,13 @@ contract PerAssetPauseTest is Test {
     function test_pauseAsset_revertsWithoutAdminRole() public {
         vm.prank(notAdmin);
         vm.expectRevert(); // AccessControl role-missing revert
-        AdminFacet(address(diamond)).pauseAsset(ASSET_A);
+        AdminFacet(address(diamond)).pauseAsset(assetA);
     }
 
     function test_unpauseAsset_revertsWithoutAdminRole() public {
         vm.prank(notAdmin);
         vm.expectRevert();
-        AdminFacet(address(diamond)).unpauseAsset(ASSET_A);
+        AdminFacet(address(diamond)).unpauseAsset(assetA);
     }
 
     /// @dev PAUSER_ROLE is the fast-key incident-response surface: a
@@ -127,12 +127,12 @@ contract PerAssetPauseTest is Test {
         );
 
         vm.prank(pauser);
-        AdminFacet(address(diamond)).pauseAsset(ASSET_A);
-        assertTrue(AdminFacet(address(diamond)).isAssetPaused(ASSET_A));
+        AdminFacet(address(diamond)).pauseAsset(assetA);
+        assertTrue(AdminFacet(address(diamond)).isAssetPaused(assetA));
 
         // Cleanup uses the test contract's ADMIN_ROLE so this test
         // doesn't pollute sibling tests that assume an unpaused asset.
-        AdminFacet(address(diamond)).unpauseAsset(ASSET_A);
+        AdminFacet(address(diamond)).unpauseAsset(assetA);
     }
 
     /// @dev Asymmetric split: a holder of PAUSER_ROLE alone CANNOT lift
@@ -148,8 +148,8 @@ contract PerAssetPauseTest is Test {
         );
 
         vm.prank(pauser);
-        AdminFacet(address(diamond)).pauseAsset(ASSET_A);
-        assertTrue(AdminFacet(address(diamond)).isAssetPaused(ASSET_A));
+        AdminFacet(address(diamond)).pauseAsset(assetA);
+        assertTrue(AdminFacet(address(diamond)).isAssetPaused(assetA));
 
         vm.prank(pauser);
         vm.expectRevert(
@@ -159,10 +159,10 @@ contract PerAssetPauseTest is Test {
                 LibAccessControl.UNPAUSER_ROLE
             )
         );
-        AdminFacet(address(diamond)).unpauseAsset(ASSET_A);
+        AdminFacet(address(diamond)).unpauseAsset(assetA);
 
         // Cleanup via the test contract's ADMIN_ROLE.
-        AdminFacet(address(diamond)).unpauseAsset(ASSET_A);
+        AdminFacet(address(diamond)).unpauseAsset(assetA);
     }
 
     /// @dev Asymmetric split positive case: UNPAUSER_ROLE alone (no
@@ -170,8 +170,8 @@ contract PerAssetPauseTest is Test {
     ///      recipient at handover — guards the recovery path's
     ///      reachability.
     function test_unpauseAsset_worksWithUnpauserRoleAlone() public {
-        AdminFacet(address(diamond)).pauseAsset(ASSET_A);
-        assertTrue(AdminFacet(address(diamond)).isAssetPaused(ASSET_A));
+        AdminFacet(address(diamond)).pauseAsset(assetA);
+        assertTrue(AdminFacet(address(diamond)).isAssetPaused(assetA));
 
         address unpauser = address(0xCAFE);
         AccessControlFacet(address(diamond)).grantRole(
@@ -192,60 +192,60 @@ contract PerAssetPauseTest is Test {
         );
 
         vm.prank(unpauser);
-        AdminFacet(address(diamond)).unpauseAsset(ASSET_A);
-        assertFalse(AdminFacet(address(diamond)).isAssetPaused(ASSET_A));
+        AdminFacet(address(diamond)).unpauseAsset(assetA);
+        assertFalse(AdminFacet(address(diamond)).isAssetPaused(assetA));
     }
 
     function test_isAssetPaused_defaultsFalse() public view {
-        assertFalse(AdminFacet(address(diamond)).isAssetPaused(ASSET_A));
+        assertFalse(AdminFacet(address(diamond)).isAssetPaused(assetA));
         assertFalse(AdminFacet(address(diamond)).isAssetPaused(address(0)));
     }
 
     function test_pauseAsset_isIdempotent() public {
-        AdminFacet(address(diamond)).pauseAsset(ASSET_A);
-        AdminFacet(address(diamond)).pauseAsset(ASSET_A);
-        assertTrue(AdminFacet(address(diamond)).isAssetPaused(ASSET_A));
+        AdminFacet(address(diamond)).pauseAsset(assetA);
+        AdminFacet(address(diamond)).pauseAsset(assetA);
+        assertTrue(AdminFacet(address(diamond)).isAssetPaused(assetA));
     }
 
     // ─── Creation-path gating: OfferCreateFacet.createOffer ────────────────────
 
     function test_createOffer_blockedWhenLendingAssetPaused() public {
-        AdminFacet(address(diamond)).pauseAsset(ASSET_A);
+        AdminFacet(address(diamond)).pauseAsset(assetA);
         LibVaipakam.CreateOfferParams memory p;
         p.durationDays = 30;
         p.amount = 1;
-        p.lendingAsset = ASSET_A;
-        p.collateralAsset = ASSET_B;
-        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.AssetPaused.selector, ASSET_A));
+        p.lendingAsset = assetA;
+        p.collateralAsset = assetB;
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.AssetPaused.selector, assetA));
         OfferCreateFacet(address(diamond)).createOffer(p);
     }
 
     function test_createOffer_blockedWhenCollateralAssetPaused() public {
-        AdminFacet(address(diamond)).pauseAsset(ASSET_B);
+        AdminFacet(address(diamond)).pauseAsset(assetB);
         LibVaipakam.CreateOfferParams memory p;
         p.durationDays = 30;
         p.amount = 1;
-        p.lendingAsset = ASSET_A;
-        p.collateralAsset = ASSET_B;
-        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.AssetPaused.selector, ASSET_B));
+        p.lendingAsset = assetA;
+        p.collateralAsset = assetB;
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.AssetPaused.selector, assetB));
         OfferCreateFacet(address(diamond)).createOffer(p);
     }
 
     function test_createOffer_unblockedAfterUnpause() public {
-        AdminFacet(address(diamond)).pauseAsset(ASSET_A);
-        AdminFacet(address(diamond)).unpauseAsset(ASSET_A);
+        AdminFacet(address(diamond)).pauseAsset(assetA);
+        AdminFacet(address(diamond)).unpauseAsset(assetA);
         LibVaipakam.CreateOfferParams memory p;
         p.durationDays = 30;
         p.amount = 1;
-        p.lendingAsset = ASSET_A;
-        p.collateralAsset = ASSET_B;
+        p.lendingAsset = assetA;
+        p.collateralAsset = assetB;
         // Gate is no longer tripped; downstream reverts (oracle / vault)
         // are expected and acceptable — we only assert the AssetPaused
         // revert is gone.
         vm.expectRevert();
         try OfferCreateFacet(address(diamond)).createOffer(p) {} catch (bytes memory reason) {
-            _assertReasonNotAssetPaused(reason, ASSET_A);
-            _assertReasonNotAssetPaused(reason, ASSET_B);
+            _assertReasonNotAssetPaused(reason, assetA);
+            _assertReasonNotAssetPaused(reason, assetB);
         }
     }
 

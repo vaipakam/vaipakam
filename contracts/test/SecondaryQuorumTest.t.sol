@@ -50,7 +50,7 @@ contract SecondaryQuorumTest is Test {
 
     address mockTellor;
     address mockApi3;
-    address mockDIA;
+    address mockDia;
 
     DiamondCutFacet cutFacet;
     OracleFacet oracleFacet;
@@ -77,7 +77,7 @@ contract SecondaryQuorumTest is Test {
 
         mockTellor = makeAddr("tellor");
         mockApi3 = makeAddr("api3");
-        mockDIA = makeAddr("dia");
+        mockDia = makeAddr("dia");
 
         cutFacet = new DiamondCutFacet();
         diamond = new VaipakamDiamond(owner, address(cutFacet));
@@ -236,7 +236,7 @@ contract SecondaryQuorumTest is Test {
         // DIA returns 8-decimal value.
         uint128 value = uint128(CHAINLINK_PRICE_8DEC);
         vm.mockCall(
-            mockDIA,
+            mockDia,
             abi.encodeWithSignature("getValue(string)"),
             abi.encode(value, uint128(block.timestamp))
         );
@@ -246,7 +246,7 @@ contract SecondaryQuorumTest is Test {
         // 25% disagreement.
         uint128 value = uint128((CHAINLINK_PRICE_8DEC * 125) / 100);
         vm.mockCall(
-            mockDIA,
+            mockDia,
             abi.encodeWithSignature("getValue(string)"),
             abi.encode(value, uint128(block.timestamp))
         );
@@ -254,7 +254,7 @@ contract SecondaryQuorumTest is Test {
 
     function _mockDIANoData() internal {
         vm.mockCall(
-            mockDIA,
+            mockDia,
             abi.encodeWithSignature("getValue(string)"),
             abi.encode(uint128(0), uint128(0))
         );
@@ -269,7 +269,7 @@ contract SecondaryQuorumTest is Test {
     }
 
     function _enableDIA() internal {
-        OracleAdminFacet(address(diamond)).setDIAOracleV2(mockDIA);
+        OracleAdminFacet(address(diamond)).setDIAOracleV2(mockDia);
     }
 
     function _readPrice() internal view returns (uint256, uint8) {
@@ -500,7 +500,7 @@ contract SecondaryQuorumTest is Test {
     function testQuorumStaleDIATreatedAsUnavailable() public {
         _enableDIA();
         vm.mockCall(
-            mockDIA,
+            mockDia,
             abi.encodeWithSignature("getValue(string)"),
             abi.encode(
                 uint128(CHAINLINK_PRICE_8DEC),

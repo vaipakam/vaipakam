@@ -308,7 +308,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
 
     /**
      * @notice Calculates the Loan-to-Value (LTV) ratio for a loan in basis points.
-     * @dev LTV = (borrowedValueUSD * 10000) / collateralValueUSD; 0 for
+     * @dev LTV = (borrowedValueUsd * 10000) / collateralValueUsd; 0 for
      *      zero-collateral. Uses {getAssetPrice} for both legs, which
      *      reverts on missing/stale feeds. Callers (RiskFacet, LoanFacet)
      *      should only invoke this for liquid loans.
@@ -324,10 +324,10 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         (uint256 borrowedPrice, uint8 borrowedDec) = this.getAssetPrice(borrowedAsset);
         (uint256 collateralPrice, uint8 collateralDec) = this.getAssetPrice(collateralAsset);
 
-        uint256 borrowedValueUSD = (borrowedAmount * borrowedPrice) / (10 ** borrowedDec);
-        uint256 collateralValueUSD = (collateralAmount * collateralPrice) / (10 ** collateralDec);
+        uint256 borrowedValueUsd = (borrowedAmount * borrowedPrice) / (10 ** borrowedDec);
+        uint256 collateralValueUsd = (collateralAmount * collateralPrice) / (10 ** collateralDec);
 
-        ltv = (borrowedValueUSD * LibVaipakam.LTV_SCALE) / collateralValueUSD;
+        ltv = (borrowedValueUsd * LibVaipakam.LTV_SCALE) / collateralValueUsd;
     }
 
     /**
@@ -1780,12 +1780,12 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         uint80 roundId;
         uint80 answeredInRound;
         try AggregatorV3Interface(feed).latestRoundData() returns (
-            uint80 rId, int256 a, uint256, uint256 u, uint80 aIR
+            uint80 rId, int256 a, uint256, uint256 u, uint80 aIr
         ) {
             roundId = rId;
             answer = a;
             updatedAt = u;
-            answeredInRound = aIR;
+            answeredInRound = aIr;
         } catch {
             return (false, 0, 0);
         }
@@ -1911,12 +1911,12 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         uint80 answeredInRound;
         int256 a;
         try AggregatorV3Interface(feed).latestRoundData() returns (
-            uint80 rId, int256 rA, uint256, uint256 u, uint80 aIR
+            uint80 rId, int256 rA, uint256, uint256 u, uint80 aIr
         ) {
             roundId = rId;
             a = rA;
             updatedAt = u;
-            answeredInRound = aIR;
+            answeredInRound = aIr;
         } catch {
             return (false, 0);
         }

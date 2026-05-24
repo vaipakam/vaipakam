@@ -43,7 +43,7 @@ contract DeployerZeroRolesTest is Test {
     address internal notifBillerBot;
     address internal keeperBot;
 
-    bytes32[] internal ALL_ROLES;
+    bytes32[] internal allRoles;
 
     function setUp() public {
         deployer = address(this);
@@ -77,26 +77,26 @@ contract DeployerZeroRolesTest is Test {
         // here (or vice-versa) makes the parity test fail and the
         // deploy-handover drift hazard from Findings 00010 cannot
         // recur silently.
-        ALL_ROLES.push(LibAccessControl.DEFAULT_ADMIN_ROLE);
-        ALL_ROLES.push(LibAccessControl.ADMIN_ROLE);
-        ALL_ROLES.push(LibAccessControl.PAUSER_ROLE);
-        ALL_ROLES.push(LibAccessControl.UNPAUSER_ROLE);
-        ALL_ROLES.push(LibAccessControl.KYC_ADMIN_ROLE);
-        ALL_ROLES.push(LibAccessControl.ORACLE_ADMIN_ROLE);
-        ALL_ROLES.push(LibAccessControl.RISK_ADMIN_ROLE);
-        ALL_ROLES.push(LibAccessControl.VAULT_ADMIN_ROLE);
-        ALL_ROLES.push(LibAccessControl.WATCHER_ROLE);
-        ALL_ROLES.push(LibAccessControl.NOTIF_BILLER_ROLE);
-        ALL_ROLES.push(LibAccessControl.KEEPER_ROLE);
+        allRoles.push(LibAccessControl.DEFAULT_ADMIN_ROLE);
+        allRoles.push(LibAccessControl.ADMIN_ROLE);
+        allRoles.push(LibAccessControl.PAUSER_ROLE);
+        allRoles.push(LibAccessControl.UNPAUSER_ROLE);
+        allRoles.push(LibAccessControl.KYC_ADMIN_ROLE);
+        allRoles.push(LibAccessControl.ORACLE_ADMIN_ROLE);
+        allRoles.push(LibAccessControl.RISK_ADMIN_ROLE);
+        allRoles.push(LibAccessControl.VAULT_ADMIN_ROLE);
+        allRoles.push(LibAccessControl.WATCHER_ROLE);
+        allRoles.push(LibAccessControl.NOTIF_BILLER_ROLE);
+        allRoles.push(LibAccessControl.KEEPER_ROLE);
     }
 
     // ─── 1. Initial state (pre-rotation) ──────────────────────────────────
 
     function testDeployerHoldsEveryRoleAtBootstrap() public view {
         AccessControlFacet ac = AccessControlFacet(address(diamond));
-        for (uint256 i = 0; i < ALL_ROLES.length; i++) {
+        for (uint256 i = 0; i < allRoles.length; i++) {
             assertTrue(
-                ac.hasRole(ALL_ROLES[i], deployer),
+                ac.hasRole(allRoles[i], deployer),
                 "deployer must start with every role (runbook premise)"
             );
         }
@@ -104,10 +104,10 @@ contract DeployerZeroRolesTest is Test {
 
     function testNoOtherPrincipalHoldsAnyRoleAtBootstrap() public view {
         AccessControlFacet ac = AccessControlFacet(address(diamond));
-        for (uint256 i = 0; i < ALL_ROLES.length; i++) {
-            assertFalse(ac.hasRole(ALL_ROLES[i], governanceMultisig));
-            assertFalse(ac.hasRole(ALL_ROLES[i], adminTimelock));
-            assertFalse(ac.hasRole(ALL_ROLES[i], pauserMultisig));
+        for (uint256 i = 0; i < allRoles.length; i++) {
+            assertFalse(ac.hasRole(allRoles[i], governanceMultisig));
+            assertFalse(ac.hasRole(allRoles[i], adminTimelock));
+            assertFalse(ac.hasRole(allRoles[i], pauserMultisig));
         }
     }
 
@@ -157,9 +157,9 @@ contract DeployerZeroRolesTest is Test {
         _rotateRolesToProduction();
 
         AccessControlFacet ac = AccessControlFacet(address(diamond));
-        for (uint256 i = 0; i < ALL_ROLES.length; i++) {
+        for (uint256 i = 0; i < allRoles.length; i++) {
             assertFalse(
-                ac.hasRole(ALL_ROLES[i], deployer),
+                ac.hasRole(allRoles[i], deployer),
                 "deployer must hold zero roles post-rotation"
             );
         }
@@ -185,7 +185,7 @@ contract DeployerZeroRolesTest is Test {
 
     /// @notice **Findings 00010 regression test.** Asserts that the
     ///         library's canonical `grantableRoles()` list equals the
-    ///         test's local `ALL_ROLES` array byte-for-byte. The deploy
+    ///         test's local `allRoles` array byte-for-byte. The deploy
     ///         script consumes the same library list, so this test
     ///         transitively pins the deploy handover too. If a future
     ///         role is added to `LibAccessControl` but missed in
@@ -196,13 +196,13 @@ contract DeployerZeroRolesTest is Test {
         bytes32[] memory libraryRoles = LibAccessControl.grantableRoles();
         assertEq(
             libraryRoles.length,
-            ALL_ROLES.length,
+            allRoles.length,
             "library role count must match test ALL_ROLES count"
         );
         for (uint256 i = 0; i < libraryRoles.length; i++) {
             assertEq(
                 libraryRoles[i],
-                ALL_ROLES[i],
+                allRoles[i],
                 "library role list ordering must match test ALL_ROLES"
             );
         }
@@ -285,9 +285,9 @@ contract DeployerZeroRolesTest is Test {
         _rotateRolesToProduction();
 
         AccessControlFacet ac = AccessControlFacet(address(diamond));
-        for (uint256 i = 0; i < ALL_ROLES.length; i++) {
+        for (uint256 i = 0; i < allRoles.length; i++) {
             assertFalse(
-                ac.hasRole(ALL_ROLES[i], rando),
+                ac.hasRole(allRoles[i], rando),
                 "no stray role grants to arbitrary addresses"
             );
         }

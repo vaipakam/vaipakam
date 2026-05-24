@@ -85,7 +85,7 @@ contract VpfiPoolRateGovernor is
     address public pool;
 
     /// @dev Reserved storage for upgrade-safe appends (1 slot used above).
-    uint256[49] private __gap;
+    uint256[49] private _gap;
 
     // ─── Events ─────────────────────────────────────────────────────────────
 

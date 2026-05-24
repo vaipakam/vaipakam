@@ -131,7 +131,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "hasRentalNFTReturn",
+        "name": "hasRentalNftReturn",
         "type": "bool",
         "internalType": "bool"
       }

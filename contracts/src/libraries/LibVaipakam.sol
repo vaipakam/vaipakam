@@ -1903,7 +1903,7 @@ library LibVaipakam {
         // CCIP CCT pool. Defaults to false at diamond init; flipped to
         // true by VPFITokenFacet.setCanonicalVPFIChain(true) exactly once
         // during the canonical deploy.
-        bool isCanonicalVPFIChain;
+        bool isCanonicalVpfiChain;
         // ── Borrower VPFI Discount (Phase 1) ────────────────────────────
         // Fixed ETH rate at which borrowers may buy VPFI directly from the
         // protocol on the canonical chain. Stored as wei-per-VPFI so the
@@ -1938,7 +1938,7 @@ library LibVaipakam {
         // canonical WETH on the active network. Zero means the ETH oracle
         // is not configured and the discount path falls back silently to
         // the normal lender-paid fee.
-        address vpfiDiscountETHPriceAsset;
+        address vpfiDiscountEthPriceAsset;
         // Admin kill-switch for the fixed-rate buy. The discount path at
         // loan acceptance remains functional even when this flag is false
         // — it only gates `buyVPFIWithETH`. Set via setVPFIBuyEnabled.
@@ -1951,7 +1951,7 @@ library LibVaipakam {
         // facet code no longer reads or writes this mapping. Per spec
         // (docs/TokenomicsTechSpec.md §8a) the per-wallet cap is now
         // enforced per origin chain.
-        mapping(address => uint256) vpfiFixedRateSoldTo_LEGACY_DO_NOT_USE;
+        mapping(address => uint256) vpfiFixedRateSoldToLegacyDoNotUse;
         // Platform-level opt-in to use vaulted VPFI for protocol fee
         // discounts. One common consent governs both the borrower Loan
         // Initiation Fee discount and the lender Yield Fee discount. Per
@@ -1971,17 +1971,17 @@ library LibVaipakam {
         // staked balance as the checkpoint input.
         //
         // rewardPerTokenStored is VPFI-per-staked-VPFI scaled by 1e18.
-        // totalStakedVPFI is the sum of every user's `userStakedVPFI`.
+        // totalStakedVpfi is the sum of every user's `userStakedVpfi`.
         // stakingPoolPaidOut is monotone — claims are capped so this
-        // never exceeds VPFI_STAKING_POOL_CAP. userStakedVPFI mirrors the
+        // never exceeds VPFI_STAKING_POOL_CAP. userStakedVpfi mirrors the
         // user's actual vault VPFI balance; it is authoritative for the
         // accrual math and decouples the reward bookkeeping from any
         // vault-side balance read.
         uint256 stakingRewardPerTokenStored;
         uint256 stakingLastUpdateTime;
-        uint256 totalStakedVPFI;
+        uint256 totalStakedVpfi;
         uint256 stakingPoolPaidOut;
-        mapping(address => uint256) userStakedVPFI;
+        mapping(address => uint256) userStakedVpfi;
         mapping(address => uint256) userStakingRewardPerTokenPaid;
         mapping(address => uint256) userStakingPendingReward;
         // ─── VPFI Lender Yield-Fee Time-Weighted Discount (§5.2a) ──────
@@ -2063,7 +2063,7 @@ library LibVaipakam {
         ///      longer stores a per-chain endpoint id — `block.chainid`
         ///      is the chain identity. Slot retained for storage-layout
         ///      stability; never read or written.
-        uint32 localEid_LEGACY_DO_NOT_USE;
+        uint32 localEidLegacyDoNotUse;
         /// @dev EVM chain id of the canonical (Base) reward chain.
         ///      Mirrors send chain reports here; zero on Base itself.
         uint32 baseChainId;
@@ -2437,10 +2437,10 @@ library LibVaipakam {
         ///      through END of day `d`, using the GLOBAL (cross-chain)
         ///      denominator. Populated lazily by {advanceCumLenderThrough};
         ///      halts at the first day without `knownGlobalSet[d]`.
-        mapping(uint256 => uint256) cumLenderRPN18;
-        /// @dev Mirror of {cumLenderRPN18} for the borrower side.
-        mapping(uint256 => uint256) cumBorrowerRPN18;
-        /// @dev Last day through which {cumLenderRPN18} is populated
+        mapping(uint256 => uint256) cumLenderRpn18;
+        /// @dev Mirror of {cumLenderRpn18} for the borrower side.
+        mapping(uint256 => uint256) cumBorrowerRpn18;
+        /// @dev Last day through which {cumLenderRpn18} is populated
         ///      (contiguous from day 0). Day 0 cum = 0 (spec §4 exclusion).
         uint256 cumLenderCursor;
         /// @dev Mirror of {cumLenderCursor} for the borrower side.

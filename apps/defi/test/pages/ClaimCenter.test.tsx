@@ -99,7 +99,7 @@ describe('ClaimCenter', () => {
     diamondMock.ownerOf.mockImplementation(async (t: bigint) => t === 1n ? '0xME' : '0xOTHER');
     diamondMock.getClaimable.mockResolvedValue({
       asset: '0xPRIN', amount: 1_000_000_000_000_000_000n, claimed: false,
-      assetType: 0n, tokenId: 0n, quantity: 0n, heldForLender: 0n, hasRentalNFTReturn: false,
+      assetType: 0n, tokenId: 0n, quantity: 0n, heldForLender: 0n, hasRentalNftReturn: false,
     });
     diamondMock.claimAsLender.mockResolvedValue({ hash: '0xTX', wait: vi.fn().mockResolvedValue(undefined) });
     renderWithProviders(<ClaimCenter />);
@@ -114,7 +114,7 @@ describe('ClaimCenter', () => {
       .mockResolvedValueOnce(mkLoan({ id: 3n, status: 1 }))
       .mockRejectedValue(new Error('stop'));
     diamondMock.ownerOf.mockImplementation(async (t: bigint) => t === 2n ? '0xME' : '0xX');
-    diamondMock.getClaimable.mockResolvedValue({ asset: '0xC', amount: 1n, claimed: true, assetType: 0n, tokenId: 0n, quantity: 0n, heldForLender: 0n, hasRentalNFTReturn: false });
+    diamondMock.getClaimable.mockResolvedValue({ asset: '0xC', amount: 1n, claimed: true, assetType: 0n, tokenId: 0n, quantity: 0n, heldForLender: 0n, hasRentalNftReturn: false });
     renderWithProviders(<ClaimCenter />);
     await waitFor(() => expect(screen.getByRole('heading', { name: /No Claimable Funds/i })).toBeInTheDocument());
   });
@@ -125,7 +125,7 @@ describe('ClaimCenter', () => {
       .mockResolvedValueOnce(mkLoan({ id: 7n, status: 2 }))
       .mockRejectedValue(new Error('stop'));
     diamondMock.ownerOf.mockImplementation(async (t: bigint) => t === 2n ? '0xME' : '0xOTHER');
-    diamondMock.getClaimable.mockResolvedValue({ asset: '0xCOL', amount: 5n, claimed: false, assetType: 0n, tokenId: 0n, quantity: 0n, heldForLender: 0n, hasRentalNFTReturn: false });
+    diamondMock.getClaimable.mockResolvedValue({ asset: '0xCOL', amount: 5n, claimed: false, assetType: 0n, tokenId: 0n, quantity: 0n, heldForLender: 0n, hasRentalNftReturn: false });
     diamondMock.claimAsBorrower.mockResolvedValue({ hash: '0xTX', wait: vi.fn().mockResolvedValue(undefined) });
     renderWithProviders(<ClaimCenter />);
     await waitFor(() => expect(screen.getByText(/Loan #\d+/i)).toBeInTheDocument());
@@ -137,7 +137,7 @@ describe('ClaimCenter', () => {
     walletMock.address = '0xME';
     diamondMock.getLoanDetails.mockResolvedValueOnce(mkLoan({ status: 1 })).mockRejectedValue(new Error('stop'));
     diamondMock.ownerOf.mockImplementation(async (t: bigint) => t === 1n ? '0xME' : '0xX');
-    diamondMock.getClaimable.mockResolvedValue({ asset: '0xA', amount: 1n, claimed: false, assetType: 0n, tokenId: 0n, quantity: 0n, heldForLender: 0n, hasRentalNFTReturn: false });
+    diamondMock.getClaimable.mockResolvedValue({ asset: '0xA', amount: 1n, claimed: false, assetType: 0n, tokenId: 0n, quantity: 0n, heldForLender: 0n, hasRentalNftReturn: false });
     diamondMock.claimAsLender.mockRejectedValue({ message: 'bad' });
     renderWithProviders(<ClaimCenter />);
     await waitFor(() => expect(screen.getByRole('button', { name: /^Claim$/i })).toBeInTheDocument());

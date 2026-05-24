@@ -101,7 +101,7 @@ contract VpfiBuyReceiver is
     bool public reconciliationWatchdogEnabled;
 
     /// @dev Reserved storage for upgrade-safe appends.
-    uint256[44] private __gap;
+    uint256[44] private _gap;
 
     // ─── Events ─────────────────────────────────────────────────────────────
 

@@ -334,29 +334,29 @@ contract BorrowerPartialFillTest is SetupTest {
         // ── Match 1: B.amountFilled = 5_000; remaining 5_000 ≥
         //    B.amount=1_000 → no dust close yet.
         OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId1, borrowerOfferId);
-        LibVaipakam.Offer memory B1 =
+        LibVaipakam.Offer memory b1 =
             OfferCancelFacet(address(diamond)).getOffer(borrowerOfferId);
-        assertEq(B1.amountFilled, 5_000, "match 1: amountFilled = 5_000");
-        assertFalse(B1.accepted, "match 1: borrower still OPEN");
+        assertEq(b1.amountFilled, 5_000, "match 1: amountFilled = 5_000");
+        assertFalse(b1.accepted, "match 1: borrower still OPEN");
 
         // ── Match 2: B.amountFilled = 9_000; remaining 1_000 == B.amount
         //    → NOT strictly less than the per-match minimum, so no
         //    dust close. Borrower stays open by the design's exact
         //    inequality (`borrowerRemaining < B.amount`).
         OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId2, borrowerOfferId);
-        LibVaipakam.Offer memory B2 =
+        LibVaipakam.Offer memory b2 =
             OfferCancelFacet(address(diamond)).getOffer(borrowerOfferId);
-        assertEq(B2.amountFilled, 9_000, "match 2: amountFilled = 9_000");
-        assertFalse(B2.accepted, "match 2: remaining == amount, no dust yet");
+        assertEq(b2.amountFilled, 9_000, "match 2: amountFilled = 9_000");
+        assertFalse(b2.accepted, "match 2: remaining == amount, no dust yet");
 
         // ── Match 3: B.amountFilled = 10_000; remaining 0 < 1_000 →
         //    dust close (`FullyFilled` branch).
         OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId3, borrowerOfferId);
-        LibVaipakam.Offer memory B3 =
+        LibVaipakam.Offer memory b3 =
             OfferCancelFacet(address(diamond)).getOffer(borrowerOfferId);
-        assertEq(B3.amountFilled, 10_000, "match 3: amountFilled = max");
-        assertTrue(B3.accepted, "match 3: dust-close flips accepted");
-        assertEq(B3.collateralAmountFilled, 1_500, "3 matches x 500 collat");
+        assertEq(b3.amountFilled, 10_000, "match 3: amountFilled = max");
+        assertTrue(b3.accepted, "match 3: dust-close flips accepted");
+        assertEq(b3.collateralAmountFilled, 1_500, "3 matches x 500 collat");
 
         // Dust-close refunds residual collateral
         // (`collateralAmountMax - collateralAmountFilled = 5_000 -
@@ -468,10 +468,10 @@ contract BorrowerPartialFillTest is SetupTest {
             collateralRequired: 500
         });
         OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId, borrowerOfferId);
-        LibVaipakam.Offer memory BPost =
+        LibVaipakam.Offer memory bPost =
             OfferCancelFacet(address(diamond)).getOffer(borrowerOfferId);
-        assertEq(BPost.amountFilled, 7_000, "match landed at lender amount");
-        assertFalse(BPost.accepted, "1_000 remaining >= B.amount; still open");
+        assertEq(bPost.amountFilled, 7_000, "match landed at lender amount");
+        assertFalse(bPost.accepted, "1_000 remaining >= B.amount; still open");
     }
 
     // ─────────────────────────────────────────────────────────────────

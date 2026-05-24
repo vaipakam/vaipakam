@@ -43,7 +43,7 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         uint256 indexed loanId,
         address indexed borrower,
         uint256 restoredCollateralAmount,
-        uint256 newHF
+        uint256 newHf
     );
 
     /// @notice Emitted when a borrower adds collateral to an active loan.
@@ -51,16 +51,16 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     /// @param borrower The borrower's address.
     /// @param amountAdded The additional collateral deposited.
     /// @param newCollateralAmount The total collateral after the addition.
-    /// @param newHF The updated Health Factor (scaled to 1e18) after adding collateral.
-    /// @param newLTV The updated LTV (in basis points) after adding collateral.
+    /// @param newHf The updated Health Factor (scaled to 1e18) after adding collateral.
+    /// @param newLtv The updated LTV (in basis points) after adding collateral.
     /// @custom:event-category state-change/loan-mutation
     event CollateralAdded(
         uint256 indexed loanId,
         address indexed borrower,
         uint256 amountAdded,
         uint256 newCollateralAmount,
-        uint256 newHF,
-        uint256 newLTV
+        uint256 newHf,
+        uint256 newLtv
     );
 
     // Shared errors inherited from IVaipakamErrors
@@ -135,20 +135,20 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         loan.collateralAmount += amount;
 
         // Calculate new HF and LTV for event emission (best-effort; failures don't revert)
-        uint256 newHF;
-        uint256 newLTV;
+        uint256 newHf;
+        uint256 newLtv;
         (bool success, bytes memory result) = address(this).staticcall(
             abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId)
         );
         if (success && result.length > 0) {
-            newHF = abi.decode(result, (uint256));
+            newHf = abi.decode(result, (uint256));
         }
 
         (success, result) = address(this).staticcall(
             abi.encodeWithSelector(RiskFacet.calculateLTV.selector, loanId)
         );
         if (success && result.length > 0) {
-            newLTV = abi.decode(result, (uint256));
+            newLtv = abi.decode(result, (uint256));
         }
 
         emit CollateralAdded(
@@ -156,8 +156,8 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             msg.sender,
             amount,
             loan.collateralAmount,
-            newHF,
-            newLTV
+            newHf,
+            newLtv
         );
 
         // Cure path: a FallbackPending loan reactivates only when both HF and
@@ -167,11 +167,11 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // can still claim at any time.
         if (
             loan.status == LibVaipakam.LoanStatus.FallbackPending &&
-            newHF >= LibVaipakam.MIN_HEALTH_FACTOR &&
-            newLTV <= s.assetRiskParams[loan.collateralAsset].loanInitMaxLtvBps
+            newHf >= LibVaipakam.MIN_HEALTH_FACTOR &&
+            newLtv <= s.assetRiskParams[loan.collateralAsset].loanInitMaxLtvBps
         ) {
             _cureFallback(loanId, loan, borrowerVault);
-            emit LoanCuredFromFallback(loanId, msg.sender, loan.collateralAmount, newHF);
+            emit LoanCuredFromFallback(loanId, msg.sender, loan.collateralAmount, newHf);
         }
     }
 
