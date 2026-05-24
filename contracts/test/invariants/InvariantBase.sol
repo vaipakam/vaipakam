@@ -42,8 +42,8 @@ import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 contract InvariantBase is Test {
     VaipakamDiamond public diamond;
     address public owner;
-    address public mockUSDC;
-    address public mockWETH;
+    address public mockUsdc;
+    address public mockWeth;
 
     HelperTest public helperTest;
 
@@ -58,16 +58,16 @@ contract InvariantBase is Test {
     function deploy() public {
         owner = address(this);
 
-        mockUSDC = address(new ERC20Mock("MockUSDC", "USDC", 18));
-        mockWETH = address(new ERC20Mock("MockWETH", "WETH", 18));
+        mockUsdc = address(new ERC20Mock("MockUSDC", "USDC", 18));
+        mockWeth = address(new ERC20Mock("MockWETH", "WETH", 18));
 
         for (uint256 i = 0; i < 3; i++) {
             lenders[i] = makeAddr(string.concat("lender", vm.toString(i)));
             borrowers[i] = makeAddr(string.concat("borrower", vm.toString(i)));
-            ERC20Mock(mockUSDC).mint(lenders[i], MINT_AMOUNT);
-            ERC20Mock(mockUSDC).mint(borrowers[i], MINT_AMOUNT);
-            ERC20Mock(mockWETH).mint(lenders[i], MINT_AMOUNT);
-            ERC20Mock(mockWETH).mint(borrowers[i], MINT_AMOUNT);
+            ERC20Mock(mockUsdc).mint(lenders[i], MINT_AMOUNT);
+            ERC20Mock(mockUsdc).mint(borrowers[i], MINT_AMOUNT);
+            ERC20Mock(mockWeth).mint(lenders[i], MINT_AMOUNT);
+            ERC20Mock(mockWeth).mint(borrowers[i], MINT_AMOUNT);
         }
 
         DiamondCutFacet cutFacet = new DiamondCutFacet();
@@ -86,8 +86,8 @@ contract InvariantBase is Test {
         AdminFacet(address(diamond)).setallowanceTarget(makeAddr("zeroExAllowance"));
 
         ProfileFacet(address(diamond)).setTradeAllowance("US", "US", true);
-        RiskFacet(address(diamond)).updateRiskParams(mockUSDC, 8000, 300, 1000);
-        RiskFacet(address(diamond)).updateRiskParams(mockWETH, 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockUsdc, 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockWeth, 8000, 300, 1000);
 
         _mockOracle();
 
@@ -146,10 +146,10 @@ contract InvariantBase is Test {
     }
 
     function _mockOracle() internal {
-        _mockLiquidity(mockUSDC, LibVaipakam.LiquidityStatus.Liquid);
-        _mockLiquidity(mockWETH, LibVaipakam.LiquidityStatus.Liquid);
-        _mockPrice(mockUSDC, 1e8, 8);
-        _mockPrice(mockWETH, 2000e8, 8);
+        _mockLiquidity(mockUsdc, LibVaipakam.LiquidityStatus.Liquid);
+        _mockLiquidity(mockWeth, LibVaipakam.LiquidityStatus.Liquid);
+        _mockPrice(mockUsdc, 1e8, 8);
+        _mockPrice(mockWeth, 2000e8, 8);
 
         // HF 2.0, LTV 50% — comfortably above MIN_HEALTH_FACTOR and max LTV
         // so acceptOffer / initiateLoan succeed without reverts.
@@ -193,10 +193,10 @@ contract InvariantBase is Test {
 
         address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user);
         vm.startPrank(user);
-        ERC20(mockUSDC).approve(address(diamond), type(uint256).max);
-        ERC20(mockWETH).approve(address(diamond), type(uint256).max);
-        ERC20(mockUSDC).approve(vault, type(uint256).max);
-        ERC20(mockWETH).approve(vault, type(uint256).max);
+        ERC20(mockUsdc).approve(address(diamond), type(uint256).max);
+        ERC20(mockWeth).approve(address(diamond), type(uint256).max);
+        ERC20(mockUsdc).approve(vault, type(uint256).max);
+        ERC20(mockWeth).approve(vault, type(uint256).max);
         vm.stopPrank();
     }
 

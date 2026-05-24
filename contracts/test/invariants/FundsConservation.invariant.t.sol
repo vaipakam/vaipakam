@@ -33,8 +33,8 @@ contract FundsConservationInvariant is Test {
         base.deploy();
         handler = new Handler(base);
 
-        initialUsdcSupply = ERC20Mock(base.mockUSDC()).totalSupply();
-        initialWethSupply = ERC20Mock(base.mockWETH()).totalSupply();
+        initialUsdcSupply = ERC20Mock(base.mockUsdc()).totalSupply();
+        initialWethSupply = ERC20Mock(base.mockWeth()).totalSupply();
 
         targetContract(address(handler));
     }
@@ -42,7 +42,7 @@ contract FundsConservationInvariant is Test {
     /// @notice Total USDC supply is invariant — no handler action mints or burns.
     function invariant_UsdcSupplyConserved() public view {
         assertEq(
-            ERC20Mock(base.mockUSDC()).totalSupply(),
+            ERC20Mock(base.mockUsdc()).totalSupply(),
             initialUsdcSupply,
             "USDC total supply changed"
         );
@@ -51,7 +51,7 @@ contract FundsConservationInvariant is Test {
     /// @notice Total WETH supply is invariant — no handler action mints or burns.
     function invariant_WethSupplyConserved() public view {
         assertEq(
-            ERC20Mock(base.mockWETH()).totalSupply(),
+            ERC20Mock(base.mockWeth()).totalSupply(),
             initialWethSupply,
             "WETH total supply changed"
         );
@@ -61,12 +61,12 @@ contract FundsConservationInvariant is Test {
     ///         their vaults) equals the initial mint. Any drift means
     ///         tokens escaped the tracked perimeter.
     function invariant_UsdcClosedSystem() public view {
-        uint256 total = _sumBalances(base.mockUSDC());
+        uint256 total = _sumBalances(base.mockUsdc());
         assertEq(total, initialUsdcSupply, "USDC escaped tracked perimeter");
     }
 
     function invariant_WethClosedSystem() public view {
-        uint256 total = _sumBalances(base.mockWETH());
+        uint256 total = _sumBalances(base.mockWeth());
         assertEq(total, initialWethSupply, "WETH escaped tracked perimeter");
     }
 

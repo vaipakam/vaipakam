@@ -43,8 +43,8 @@ contract ScenarioFallbackClaimRaceTest is Test {
         base = new InvariantBase();
         base.deploy();
         diamond = address(base.diamond());
-        usdc = base.mockUSDC();
-        weth = base.mockWETH();
+        usdc = base.mockUsdc();
+        weth = base.mockWeth();
     }
 
     // ── Helpers ────────────────────────────────────────────────────────
