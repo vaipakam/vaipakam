@@ -178,7 +178,7 @@ contract LegalFacetTest is SetupTest {
             LegalFacet(address(diamond)).hasAcceptedCurrentTerms(alice)
         );
 
-        // Alice re-accepts the new version — good again.
+        // alice re-accepts the new version — good again.
         vm.prank(alice);
         LegalFacet(address(diamond)).acceptTerms(2, TOS_HASH_V2);
         assertTrue(

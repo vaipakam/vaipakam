@@ -259,10 +259,10 @@ contract CancelAfterPartialFillTest is SetupTest {
         // Storage row preserved with accepted = true (per the design;
         // partial-filled offers don't get the storage delete that
         // never-matched offers do).
-        LibVaipakam.Offer memory LPost =
+        LibVaipakam.Offer memory lPost =
             OfferCancelFacet(address(diamond)).getOffer(lenderOfferId);
-        assertTrue(LPost.accepted, "cancelled-after-partial offer: accepted=true");
-        assertEq(LPost.amountFilled, 5_000, "amountFilled snapshot preserved");
+        assertTrue(lPost.accepted, "cancelled-after-partial offer: accepted=true");
+        assertEq(lPost.amountFilled, 5_000, "amountFilled snapshot preserved");
 
         // Loan-invariant assertion (P2.3 Codex round-1 #189): the cancel
         // must touch the lender's residual vault and NOTHING ELSE.

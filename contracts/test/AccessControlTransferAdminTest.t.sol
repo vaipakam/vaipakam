@@ -34,14 +34,14 @@ contract AccessControlTransferAdminTest is Test {
     VaipakamDiamond internal diamond;
     HelperTest internal helper;
 
-    address internal CALLER;
+    address internal caller;
     address internal newAdmin = address(0xA11CE);
     address internal nonAdmin = address(0xBEEF);
 
     function setUp() public {
-        CALLER = address(this);
+        caller = address(this);
         DiamondCutFacet cutFacet = new DiamondCutFacet();
-        diamond = new VaipakamDiamond(CALLER, address(cutFacet));
+        diamond = new VaipakamDiamond(caller, address(cutFacet));
         helper = new HelperTest();
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](2);
@@ -72,7 +72,7 @@ contract AccessControlTransferAdminTest is Test {
         // Sanity preconditions
         for (uint256 i = 0; i < roles.length; i++) {
             assertTrue(
-                AccessControlFacet(address(diamond)).hasRole(roles[i], CALLER),
+                AccessControlFacet(address(diamond)).hasRole(roles[i], caller),
                 "caller must hold every role pre-transfer"
             );
             assertFalse(
@@ -80,7 +80,7 @@ contract AccessControlTransferAdminTest is Test {
                 "newAdmin must hold no roles pre-transfer"
             );
         }
-        assertEq(IERC173(address(diamond)).owner(), CALLER);
+        assertEq(IERC173(address(diamond)).owner(), caller);
 
         // Atomic handover.
         AccessControlFacet(address(diamond)).transferAdmin(newAdmin);
@@ -93,7 +93,7 @@ contract AccessControlTransferAdminTest is Test {
                 "newAdmin must hold every role post-transfer"
             );
             assertFalse(
-                AccessControlFacet(address(diamond)).hasRole(roles[i], CALLER),
+                AccessControlFacet(address(diamond)).hasRole(roles[i], caller),
                 "caller must hold no roles post-transfer"
             );
         }
@@ -106,7 +106,7 @@ contract AccessControlTransferAdminTest is Test {
     ///         this top-level event is the cheap pivot indexers rely on.
     function test_transferAdmin_EmitsAdminTransferred() public {
         vm.expectEmit(true, true, false, false, address(diamond));
-        emit AccessControlFacet.AdminTransferred(CALLER, newAdmin);
+        emit AccessControlFacet.AdminTransferred(caller, newAdmin);
         AccessControlFacet(address(diamond)).transferAdmin(newAdmin);
     }
 
@@ -149,7 +149,7 @@ contract AccessControlTransferAdminTest is Test {
 
     function test_transferAdmin_RevertsOnSelf() public {
         vm.expectRevert(AccessControlFacet.TransferAdminToSelf.selector);
-        AccessControlFacet(address(diamond)).transferAdmin(CALLER);
+        AccessControlFacet(address(diamond)).transferAdmin(caller);
     }
 
     function test_transferAdmin_RevertsWhenCallerNotDefaultAdmin() public {
@@ -164,16 +164,16 @@ contract AccessControlTransferAdminTest is Test {
     function test_transferAdmin_NoPartialMutationOnRevert() public {
         bytes32[] memory roles = LibAccessControl.grantableRoles();
 
-        try AccessControlFacet(address(diamond)).transferAdmin(CALLER) {
+        try AccessControlFacet(address(diamond)).transferAdmin(caller) {
             revert("self-transfer should have reverted");
         } catch {}
 
         for (uint256 i = 0; i < roles.length; i++) {
             assertTrue(
-                AccessControlFacet(address(diamond)).hasRole(roles[i], CALLER),
+                AccessControlFacet(address(diamond)).hasRole(roles[i], caller),
                 "caller must still hold every role after revert"
             );
         }
-        assertEq(IERC173(address(diamond)).owner(), CALLER);
+        assertEq(IERC173(address(diamond)).owner(), caller);
     }
 }

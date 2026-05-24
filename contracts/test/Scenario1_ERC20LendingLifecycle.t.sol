@@ -32,15 +32,15 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 /**
  * @title Scenario1_ERC20LendingLifecycle
  * @notice End-to-end scenario tests for ERC20 lending: happy-path repay+claim and default+claim.
- *         Uses two ERC20 tokens: mockUSDC (lending, Liquid) and mockWETH (collateral, Liquid).
+ *         Uses two ERC20 tokens: mockUsdc (lending, Liquid) and mockWeth (collateral, Liquid).
  */
 contract Scenario1_ERC20LendingLifecycle is Test {
     VaipakamDiamond diamond;
     address owner;
     address lender;
     address borrower;
-    address mockUSDC;
-    address mockWETH;
+    address mockUsdc;
+    address mockWeth;
 
     DiamondCutFacet cutFacet;
     OfferCreateFacet offerCreateFacet;
@@ -81,14 +81,14 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         borrower = makeAddr("borrower");
 
         // Deploy two ERC20 tokens
-        mockUSDC = address(new ERC20Mock("MockUSDC", "USDC", 18));
-        mockWETH = address(new ERC20Mock("MockWETH", "WETH", 18));
+        mockUsdc = address(new ERC20Mock("MockUSDC", "USDC", 18));
+        mockWeth = address(new ERC20Mock("MockWETH", "WETH", 18));
 
         // Mint tokens
-        ERC20Mock(mockUSDC).mint(lender,   100000 ether);
-        ERC20Mock(mockUSDC).mint(borrower, 100000 ether);
-        ERC20Mock(mockWETH).mint(lender,   100000 ether);
-        ERC20Mock(mockWETH).mint(borrower, 100000 ether);
+        ERC20Mock(mockUsdc).mint(lender,   100000 ether);
+        ERC20Mock(mockUsdc).mint(borrower, 100000 ether);
+        ERC20Mock(mockWeth).mint(lender,   100000 ether);
+        ERC20Mock(mockWeth).mint(borrower, 100000 ether);
 
         // Deploy facets
         cutFacet          = new DiamondCutFacet();
@@ -144,10 +144,10 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         AdminFacet(address(diamond)).setallowanceTarget(makeAddr("zeroEx"));
 
         // Token approvals to diamond
-        vm.prank(lender);  ERC20(mockUSDC).approve(address(diamond), type(uint256).max);
-        vm.prank(lender);  ERC20(mockWETH).approve(address(diamond), type(uint256).max);
-        vm.prank(borrower); ERC20(mockUSDC).approve(address(diamond), type(uint256).max);
-        vm.prank(borrower); ERC20(mockWETH).approve(address(diamond), type(uint256).max);
+        vm.prank(lender);  ERC20(mockUsdc).approve(address(diamond), type(uint256).max);
+        vm.prank(lender);  ERC20(mockWeth).approve(address(diamond), type(uint256).max);
+        vm.prank(borrower); ERC20(mockUsdc).approve(address(diamond), type(uint256).max);
+        vm.prank(borrower); ERC20(mockWeth).approve(address(diamond), type(uint256).max);
 
         // Country and KYC setup
         vm.prank(owner);
@@ -161,15 +161,15 @@ contract Scenario1_ERC20LendingLifecycle is Test {
 
         // Risk params for WETH collateral
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockWETH, 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockWeth, 8000, 300, 1000);
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockUSDC, 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockUsdc, 8000, 300, 1000);
 
         // Mock oracle: both assets liquid, $1 price
-        mockLiquidity(mockUSDC, LibVaipakam.LiquidityStatus.Liquid);
-        mockLiquidity(mockWETH, LibVaipakam.LiquidityStatus.Liquid);
-        mockPrice(mockUSDC, 1e8, 8);
-        mockPrice(mockWETH, 1e8, 8);
+        mockLiquidity(mockUsdc, LibVaipakam.LiquidityStatus.Liquid);
+        mockLiquidity(mockWeth, LibVaipakam.LiquidityStatus.Liquid);
+        mockPrice(mockUsdc, 1e8, 8);
+        mockPrice(mockWeth, 1e8, 8);
 
         // Mock HF and LTV for loan initiation
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(uint256(2e18)));
@@ -179,36 +179,36 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         address lenderVault  = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
         address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
 
-        vm.prank(lender);  ERC20(mockUSDC).approve(lenderVault, type(uint256).max);
-        vm.prank(lender);  ERC20(mockWETH).approve(lenderVault, type(uint256).max);
-        vm.prank(borrower); ERC20(mockUSDC).approve(borrowerVault, type(uint256).max);
-        vm.prank(borrower); ERC20(mockWETH).approve(borrowerVault, type(uint256).max);
+        vm.prank(lender);  ERC20(mockUsdc).approve(lenderVault, type(uint256).max);
+        vm.prank(lender);  ERC20(mockWeth).approve(lenderVault, type(uint256).max);
+        vm.prank(borrower); ERC20(mockUsdc).approve(borrowerVault, type(uint256).max);
+        vm.prank(borrower); ERC20(mockWeth).approve(borrowerVault, type(uint256).max);
     }
 
     // ─── Scenario 1a: Happy Path — Create Offer, Accept, Repay, Both Claim ───
 
     function test_Scenario1a_CreateOffer_Accept_Repay_Claims() public {
         // Record initial balances
-        uint256 lenderUSDCBefore  = IERC20(mockUSDC).balanceOf(lender);
-        uint256 borrowerUSDCBefore = IERC20(mockUSDC).balanceOf(borrower);
-        uint256 borrowerWETHBefore = IERC20(mockWETH).balanceOf(borrower);
+        uint256 lenderUsdcBefore  = IERC20(mockUsdc).balanceOf(lender);
+        uint256 borrowerUsdcBefore = IERC20(mockUsdc).balanceOf(borrower);
+        uint256 borrowerWethBefore = IERC20(mockWeth).balanceOf(borrower);
 
         // Step 1: Lender creates offer
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
-                lendingAsset: mockUSDC,
+                lendingAsset: mockUsdc,
                 amount: PRINCIPAL,
                 interestRateBps: RATE_BPS,
-                collateralAsset: mockWETH,
+                collateralAsset: mockWeth,
                 collateralAmount: COLLATERAL,
                 durationDays: DURATION,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
                 creatorRiskAndTermsConsent: true,
-                prepayAsset: mockUSDC,
+                prepayAsset: mockUsdc,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
@@ -251,8 +251,8 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         ClaimFacet(address(diamond)).claimAsLender(loanId);
 
         // Verify lender received funds
-        uint256 lenderUSDCAfterClaim = IERC20(mockUSDC).balanceOf(lender);
-        assertEq(lenderUSDCAfterClaim - lenderUSDCBefore, lenderClaimAmount - PRINCIPAL, "Lender net gain should equal claim minus principal spent");
+        uint256 lenderUsdcAfterClaim = IERC20(mockUsdc).balanceOf(lender);
+        assertEq(lenderUsdcAfterClaim - lenderUsdcBefore, lenderClaimAmount - PRINCIPAL, "Lender net gain should equal claim minus principal spent");
 
         // Step 6: Borrower claims (collateral returned)
         (, uint256 borrowerClaimAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
@@ -266,8 +266,8 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Settled));
 
         // Verify borrower got collateral back
-        uint256 borrowerWETHAfter = IERC20(mockWETH).balanceOf(borrower);
-        assertEq(borrowerWETHAfter, borrowerWETHBefore, "Borrower should have collateral returned");
+        uint256 borrowerWethAfter = IERC20(mockWeth).balanceOf(borrower);
+        assertEq(borrowerWethAfter, borrowerWethBefore, "Borrower should have collateral returned");
     }
 
     // ─── Scenario 1b: Default Path — Create Offer, Accept, Default, Lender Claims ───
@@ -275,25 +275,25 @@ contract Scenario1_ERC20LendingLifecycle is Test {
     function test_Scenario1b_CreateOffer_Accept_Default_LenderClaims() public {
         // For the default test, use illiquid collateral path (simpler, no 0x swap needed).
         // Mock both assets as illiquid during offer creation to avoid MixedCollateralNotAllowed.
-        mockLiquidity(mockUSDC, LibVaipakam.LiquidityStatus.Illiquid);
-        mockLiquidity(mockWETH, LibVaipakam.LiquidityStatus.Illiquid);
+        mockLiquidity(mockUsdc, LibVaipakam.LiquidityStatus.Illiquid);
+        mockLiquidity(mockWeth, LibVaipakam.LiquidityStatus.Illiquid);
 
         // Step 1: Lender creates offer with illiquid consent
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
-                lendingAsset: mockUSDC,
+                lendingAsset: mockUsdc,
                 amount: PRINCIPAL,
                 interestRateBps: RATE_BPS,
-                collateralAsset: mockWETH,
+                collateralAsset: mockWeth,
                 collateralAmount: COLLATERAL,
                 durationDays: DURATION,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
                 creatorRiskAndTermsConsent: true,
-                prepayAsset: mockUSDC,
+                prepayAsset: mockUsdc,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
@@ -312,9 +312,9 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
 
         // Restore liquidity mocks after loan creation (for other operations)
-        mockLiquidity(mockUSDC, LibVaipakam.LiquidityStatus.Liquid);
+        mockLiquidity(mockUsdc, LibVaipakam.LiquidityStatus.Liquid);
         // Keep WETH as illiquid for the default path
-        mockLiquidity(mockWETH, LibVaipakam.LiquidityStatus.Illiquid);
+        mockLiquidity(mockWeth, LibVaipakam.LiquidityStatus.Illiquid);
 
         // Verify loan is Active
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
@@ -338,18 +338,18 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         // Step 5: Verify lender has claimable collateral
         (address claimAsset, uint256 lenderClaimAmount, bool claimed) =
             ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
-        assertEq(claimAsset, mockWETH, "Lender claim asset should be WETH collateral");
+        assertEq(claimAsset, mockWeth, "Lender claim asset should be WETH collateral");
         assertEq(lenderClaimAmount, COLLATERAL, "Lender should claim full collateral");
         assertFalse(claimed, "Should not be claimed yet");
 
         // Step 6: Lender claims collateral
-        uint256 lenderWETHBefore = IERC20(mockWETH).balanceOf(lender);
+        uint256 lenderWethBefore = IERC20(mockWeth).balanceOf(lender);
 
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
 
-        uint256 lenderWETHAfter = IERC20(mockWETH).balanceOf(lender);
-        assertEq(lenderWETHAfter - lenderWETHBefore, COLLATERAL, "Lender should receive full collateral");
+        uint256 lenderWethAfter = IERC20(mockWeth).balanceOf(lender);
+        assertEq(lenderWethAfter - lenderWethBefore, COLLATERAL, "Lender should receive full collateral");
 
         // Step 7: Verify borrower has nothing to claim (illiquid default = full collateral to lender)
         (, uint256 borrowerClaimAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
@@ -364,24 +364,24 @@ contract Scenario1_ERC20LendingLifecycle is Test {
 
     function test_Scenario1c_ThirdPartyRepays_BorrowerClaimsCollateral() public {
         address thirdParty = makeAddr("thirdParty");
-        ERC20Mock(mockUSDC).mint(thirdParty, 100000 ether);
+        ERC20Mock(mockUsdc).mint(thirdParty, 100000 ether);
 
         // Step 1: Lender creates offer
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
-                lendingAsset: mockUSDC,
+                lendingAsset: mockUsdc,
                 amount: PRINCIPAL,
                 interestRateBps: RATE_BPS,
-                collateralAsset: mockWETH,
+                collateralAsset: mockWeth,
                 collateralAmount: COLLATERAL,
                 durationDays: DURATION,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
                 creatorRiskAndTermsConsent: true,
-                prepayAsset: mockUSDC,
+                prepayAsset: mockUsdc,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
@@ -404,7 +404,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
 
         // Step 4: Third party approves and repays on borrower's behalf
         vm.prank(thirdParty);
-        ERC20(mockUSDC).approve(address(diamond), type(uint256).max);
+        ERC20(mockUsdc).approve(address(diamond), type(uint256).max);
         vm.prank(thirdParty);
         RepayFacet(address(diamond)).repayLoan(loanId);
 
@@ -416,12 +416,12 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         (, uint256 borrowerClaimAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
         assertEq(borrowerClaimAmount, COLLATERAL, "Borrower should claim full collateral");
 
-        uint256 borrowerWETHBefore = IERC20(mockWETH).balanceOf(borrower);
+        uint256 borrowerWethBefore = IERC20(mockWeth).balanceOf(borrower);
         vm.prank(borrower);
         ClaimFacet(address(diamond)).claimAsBorrower(loanId);
 
-        uint256 borrowerWETHAfter = IERC20(mockWETH).balanceOf(borrower);
-        assertEq(borrowerWETHAfter - borrowerWETHBefore, COLLATERAL, "Borrower should receive full collateral");
+        uint256 borrowerWethAfter = IERC20(mockWeth).balanceOf(borrower);
+        assertEq(borrowerWethAfter - borrowerWethBefore, COLLATERAL, "Borrower should receive full collateral");
 
         // Step 6: Verify third party has NO claim to collateral
         // (third party is not the borrower NFT holder, so claimAsBorrower would revert)

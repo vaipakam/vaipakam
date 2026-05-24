@@ -8,9 +8,9 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {MockSequencerUptimeFeed} from "./mocks/MockSequencerUptimeFeed.sol";
 
 /// @title SequencerUptimeCheckTest
-/// @notice Covers the L2 sequencer uptime circuit breaker
+/// @notice Covers the l2 sequencer uptime circuit breaker
 ///         wired in OracleFacet. Verifies:
-///           1. Feed unset  → check is a no-op (correct for L1 deployments)
+///           1. Feed unset  → check is a no-op (correct for l1 deployments)
 ///           2. Sequencer UP and past the 1h grace window → healthy
 ///           3. Sequencer DOWN (answer != 0) → getAssetPrice reverts
 ///              SequencerDown, checkLiquidity returns Illiquid
@@ -46,7 +46,7 @@ contract SequencerUptimeCheckTest is SetupTest {
         );
     }
 
-    // ─── L1 path: feed unset ──────────────────────────────────────────────
+    // ─── l1 path: feed unset ──────────────────────────────────────────────
 
     function testFeedUnsetTreatsSequencerAsHealthy() public view {
         // SetupTest does not wire the sequencer feed — it starts at zero.

@@ -70,21 +70,21 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     error OfferNotAccepted();
 
     /**
-     * @notice Completes refinancing after Alice's Borrower Offer has been accepted by Lender B.
+     * @notice Completes refinancing after alice's Borrower Offer has been accepted by Lender B.
      * @dev Per README Section "Allow Borrower to Choose New Lender with Better Offer":
-     *      1. Alice creates a Borrower Offer (separate tx via OfferFacet.createOffer).
-     *      2. Lender B accepts Alice's offer (separate tx via OfferFacet.acceptOffer),
-     *         creating a new loan. Principal from Lender B is sent to Alice.
-     *      3. Alice calls this function to close the old loan:
+     *      1. alice creates a Borrower Offer (separate tx via OfferFacet.createOffer).
+     *      2. Lender B accepts alice's offer (separate tx via OfferFacet.acceptOffer),
+     *         creating a new loan. Principal from Lender B is sent to alice.
+     *      3. alice calls this function to close the old loan:
      *         - Verifies the Borrower Offer was accepted and a new loan exists.
      *         - Repays old lender (principal + full-term interest + shortfall;
      *           see LibEntitlement.fullTermInterest — matches README early
      *           repayment economics).
-     *         - Releases old collateral back to Alice.
+     *         - Releases old collateral back to alice.
      *         - Checks post-refinance HF and LTV on new loan.
      *         - Updates old loan NFTs and marks old loan Repaid.
      * @param oldLoanId The current loan ID to refinance.
-     * @param borrowerOfferId The Borrower Offer ID that Alice created and Lender B accepted.
+     * @param borrowerOfferId The Borrower Offer ID that alice created and Lender B accepted.
      */
     function refinanceLoan(
         uint256 oldLoanId,
@@ -133,7 +133,7 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             }
         }
 
-        // Validate: must be a Borrower offer created by Alice, already accepted
+        // Validate: must be a Borrower offer created by alice, already accepted
         LibVaipakam.Offer storage offer = s.offers[borrowerOfferId];
         if (
             offer.offerType != LibVaipakam.OfferType.Borrower ||
@@ -159,14 +159,14 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         if (!LibOfferMatch.assertAssetContinuity(oldLoan, offer))
             revert InvalidRefinanceOffer();
 
-        // Find the new loan created when Lender B accepted Alice's offer
+        // Find the new loan created when Lender B accepted alice's offer
         uint256 newLoanId = s.offerIdToLoanId[borrowerOfferId];
         if (newLoanId == 0) revert InvalidRefinanceOffer();
         LibVaipakam.Loan storage newLoan = s.loans[newLoanId];
         address newLender = newLoan.lender;
 
         // ── Repay old lender ──────────────────────────────────────────────
-        // Alice already received new principal from Lender B (via acceptOffer).
+        // alice already received new principal from Lender B (via acceptOffer).
         // README: repay old lender with principal + full-term interest (early repayment rules).
         uint256 oldInterest = LibEntitlement.fullTermInterest(
             oldLoan.principal,
@@ -309,7 +309,7 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             abi.encodeWithSelector(RiskFacet.calculateLTV.selector, newLoanId),
             LTVCalculationFailed.selector
         );
-        uint256 newLTV = abi.decode(ltvResult, (uint256));
+        uint256 newLtv = abi.decode(ltvResult, (uint256));
         uint256 loanInitMaxLtvBps = s
             .assetRiskParams[oldLoan.collateralAsset]
             .loanInitMaxLtvBps;
@@ -321,10 +321,10 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 LibVaipakam.effectiveTierMaxInitLtvBps(effTier)
             );
             uint256 cap = loanInitMaxLtvBps < tierCap ? loanInitMaxLtvBps : tierCap;
-            if (newLTV > cap) {
-                revert IVaipakamErrors.InitLtvAboveTier(newLTV, cap);
+            if (newLtv > cap) {
+                revert IVaipakamErrors.InitLtvAboveTier(newLtv, cap);
             }
-        } else if (newLTV > loanInitMaxLtvBps) {
+        } else if (newLtv > loanInitMaxLtvBps) {
             revert LTVExceeded();
         }
 
@@ -335,13 +335,13 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             ),
             HealthFactorCalculationFailed.selector
         );
-        uint256 newHF = abi.decode(hfResult, (uint256));
+        uint256 newHf = abi.decode(hfResult, (uint256));
         // Tier-ON ⇒ HF ≥ 1.0 (not born already-liquidatable; the tier
         // cap is the binding buffer). Tier-OFF ⇒ legacy HF ≥ 1.5.
         uint256 hfFloor = tieredOn
             ? LibVaipakam.HF_LIQUIDATION_THRESHOLD
             : LibVaipakam.MIN_HEALTH_FACTOR;
-        if (newHF < hfFloor) revert HealthFactorTooLow();
+        if (newHf < hfFloor) revert HealthFactorTooLow();
 
         // Update old loan NFTs: mark lender NFT as Loan Repaid
         LibFacet.crossFacetCall(

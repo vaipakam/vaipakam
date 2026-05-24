@@ -47,8 +47,8 @@ contract Scenario2b_ERC1155RentalLending is Test {
     address owner;
     address lender;
     address borrower;
-    address mockUSDC;
-    address mockNFT1155;
+    address mockUsdc;
+    address mockNft1155;
     address mockZeroExProxy;
 
     uint256 constant BASIS_POINTS = 10000;
@@ -106,14 +106,14 @@ contract Scenario2b_ERC1155RentalLending is Test {
         lender = makeAddr("lender");
         borrower = makeAddr("borrower");
 
-        mockUSDC = address(new ERC20Mock("MockUSDC", "USDC", 18));
-        mockNFT1155 = address(new ERC1155RentableMock());
+        mockUsdc = address(new ERC20Mock("MockUSDC", "USDC", 18));
+        mockNft1155 = address(new ERC1155RentableMock());
         mockZeroExProxy = address(new ZeroExProxyMock());
 
-        ERC20Mock(mockUSDC).mint(borrower, 100_000 ether);
-        ERC1155RentableMock(mockNFT1155).mint(lender, TOKEN_ID, 10);
+        ERC20Mock(mockUsdc).mint(borrower, 100_000 ether);
+        ERC1155RentableMock(mockNft1155).mint(lender, TOKEN_ID, 10);
 
-        ERC20Mock(mockUSDC).mint(address(mockZeroExProxy), 1_000_000 ether);
+        ERC20Mock(mockUsdc).mint(address(mockZeroExProxy), 1_000_000 ether);
         ZeroExProxyMock(mockZeroExProxy).setRate(11, 10);
 
         cutFacet = new DiamondCutFacet();
@@ -175,14 +175,14 @@ contract Scenario2b_ERC1155RentalLending is Test {
         );
 
         vm.prank(borrower);
-        ERC20(mockUSDC).approve(address(diamond), type(uint256).max);
+        ERC20(mockUsdc).approve(address(diamond), type(uint256).max);
 
-        mockOracleLiquidity(mockUSDC, LibVaipakam.LiquidityStatus.Liquid);
-        mockOracleLiquidity(mockNFT1155, LibVaipakam.LiquidityStatus.Illiquid);
-        mockOraclePrice(mockUSDC, 1e8, 8);
-        mockOraclePrice(mockNFT1155, 1e8, 8);
+        mockOracleLiquidity(mockUsdc, LibVaipakam.LiquidityStatus.Liquid);
+        mockOracleLiquidity(mockNft1155, LibVaipakam.LiquidityStatus.Illiquid);
+        mockOraclePrice(mockUsdc, 1e8, 8);
+        mockOraclePrice(mockNft1155, 1e8, 8);
         vm.mockCall(
-            mockNFT1155,
+            mockNft1155,
             abi.encodeWithSelector(IERC20Metadata.decimals.selector),
             abi.encode(uint8(18))
         );
@@ -211,19 +211,19 @@ contract Scenario2b_ERC1155RentalLending is Test {
         );
 
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockUSDC, 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockUsdc, 8000, 300, 1000);
 
         lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
         borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
 
         vm.prank(borrower);
-        ERC20(mockUSDC).approve(borrowerVault, type(uint256).max);
+        ERC20(mockUsdc).approve(borrowerVault, type(uint256).max);
         vm.prank(lender);
-        ERC20(mockUSDC).approve(lenderVault, type(uint256).max);
+        ERC20(mockUsdc).approve(lenderVault, type(uint256).max);
         vm.prank(lender);
-        IERC1155(mockNFT1155).setApprovalForAll(address(diamond), true);
+        IERC1155(mockNft1155).setApprovalForAll(address(diamond), true);
         vm.prank(lender);
-        IERC1155(mockNFT1155).setApprovalForAll(lenderVault, true);
+        IERC1155(mockNft1155).setApprovalForAll(lenderVault, true);
     }
 
     /// @dev Creates the lender's ERC1155 rental offer and has the borrower accept.
@@ -232,17 +232,17 @@ contract Scenario2b_ERC1155RentalLending is Test {
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
-                lendingAsset: address(mockNFT1155),
+                lendingAsset: address(mockNft1155),
                 amount: DAILY_FEE,
                 interestRateBps: 0,
-                collateralAsset: mockUSDC,
+                collateralAsset: mockUsdc,
                 collateralAmount: TOTAL_PREPAY,
                 durationDays: DURATION_DAYS,
                 assetType: LibVaipakam.AssetType.ERC1155,
                 tokenId: TOKEN_ID,
                 quantity: QUANTITY,
                 creatorRiskAndTermsConsent: true,
-                prepayAsset: mockUSDC,
+                prepayAsset: mockUsdc,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
@@ -271,11 +271,11 @@ contract Scenario2b_ERC1155RentalLending is Test {
      *         6. Loan Settled
      */
     function test_Scenario2b_ERC1155Rental_FullLifecycle() public {
-        uint256 borrowerUSDCBefore = IERC20(mockUSDC).balanceOf(borrower);
+        uint256 borrowerUsdcBefore = IERC20(mockUsdc).balanceOf(borrower);
 
         // Precondition: full 10-unit bundle in lender's wallet.
         assertEq(
-            IERC1155(mockNFT1155).balanceOf(lender, TOKEN_ID),
+            IERC1155(mockNft1155).balanceOf(lender, TOKEN_ID),
             10,
             "Lender starts with the full 10 bundle"
         );
@@ -285,23 +285,23 @@ contract Scenario2b_ERC1155RentalLending is Test {
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(loan.principal, DAILY_FEE, "principal should be the daily fee");
         assertEq(loan.durationDays, DURATION_DAYS, "duration 7 days");
-        assertEq(loan.prepayAsset, mockUSDC, "prepay asset should be USDC");
+        assertEq(loan.prepayAsset, mockUsdc, "prepay asset should be USDC");
         assertEq(uint8(loan.assetType), uint8(LibVaipakam.AssetType.ERC1155), "ERC1155 asset type");
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Active), "loan Active");
         assertEq(loan.lender, lender, "lender mismatch");
         assertEq(loan.borrower, borrower, "borrower mismatch");
         assertEq(loan.tokenId, TOKEN_ID, "token id should be 1");
         assertEq(loan.quantity, QUANTITY, "quantity should be 5");
-        assertEq(loan.principalAsset, address(mockNFT1155), "principal asset should be the ERC1155");
+        assertEq(loan.principalAsset, address(mockNft1155), "principal asset should be the ERC1155");
 
         // Bundle still sits in lender's vault while the rental is live.
         assertEq(
-            IERC1155(mockNFT1155).balanceOf(lenderVault, TOKEN_ID),
+            IERC1155(mockNft1155).balanceOf(lenderVault, TOKEN_ID),
             QUANTITY,
             "Vault retains ERC1155 while rental is live"
         );
         assertEq(
-            IERC1155(mockNFT1155).balanceOf(borrower, TOKEN_ID),
+            IERC1155(mockNft1155).balanceOf(borrower, TOKEN_ID),
             0,
             "Borrower never physically holds the ERC1155 (user rights only)"
         );
@@ -316,55 +316,55 @@ contract Scenario2b_ERC1155RentalLending is Test {
 
         (address lenderClaimAsset, uint256 lenderClaimAmount, bool lenderClaimed) =
             ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
-        assertEq(lenderClaimAsset, mockUSDC, "lender claim asset USDC");
+        assertEq(lenderClaimAsset, mockUsdc, "lender claim asset USDC");
         assertFalse(lenderClaimed, "lender not yet claimed");
 
         uint256 treasuryShare = (TOTAL_RENTAL * TREASURY_FEE_BPS) / BASIS_POINTS;
         uint256 expectedLenderShare = TOTAL_RENTAL - treasuryShare;
         assertEq(lenderClaimAmount, expectedLenderShare, "lender claim amount mismatch");
 
-        uint256 lenderUSDCBefore = IERC20(mockUSDC).balanceOf(lender);
+        uint256 lenderUsdcBefore = IERC20(mockUsdc).balanceOf(lender);
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
 
         assertEq(
-            IERC20(mockUSDC).balanceOf(lender),
-            lenderUSDCBefore + expectedLenderShare,
+            IERC20(mockUsdc).balanceOf(lender),
+            lenderUsdcBefore + expectedLenderShare,
             "lender USDC balance mismatch after claim"
         );
         // ERC1155 returned from vault to lender
         assertEq(
-            IERC1155(mockNFT1155).balanceOf(lender, TOKEN_ID),
+            IERC1155(mockNft1155).balanceOf(lender, TOKEN_ID),
             10, // back to full bundle
             "ERC1155 bundle returned to lender on claim"
         );
         assertEq(
-            IERC1155(mockNFT1155).balanceOf(lenderVault, TOKEN_ID),
+            IERC1155(mockNft1155).balanceOf(lenderVault, TOKEN_ID),
             0,
             "Vault drained after claim"
         );
 
         (address borrowerClaimAsset, uint256 borrowerClaimAmount, bool borrowerClaimed) =
             ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
-        assertEq(borrowerClaimAsset, mockUSDC, "borrower claim asset USDC");
+        assertEq(borrowerClaimAsset, mockUsdc, "borrower claim asset USDC");
         assertFalse(borrowerClaimed, "borrower not yet claimed");
         assertEq(borrowerClaimAmount, BUFFER, "borrower refund should be the buffer");
 
-        uint256 borrowerUSDCBeforeClaim = IERC20(mockUSDC).balanceOf(borrower);
+        uint256 borrowerUsdcBeforeClaim = IERC20(mockUsdc).balanceOf(borrower);
         vm.prank(borrower);
         ClaimFacet(address(diamond)).claimAsBorrower(loanId);
 
         assertEq(
-            IERC20(mockUSDC).balanceOf(borrower),
-            borrowerUSDCBeforeClaim + BUFFER,
+            IERC20(mockUsdc).balanceOf(borrower),
+            borrowerUsdcBeforeClaim + BUFFER,
             "borrower USDC balance mismatch after claim"
         );
 
         loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Settled), "loan Settled");
 
-        uint256 borrowerUSDCAfter = IERC20(mockUSDC).balanceOf(borrower);
-        uint256 borrowerSpent = borrowerUSDCBefore - borrowerUSDCAfter;
+        uint256 borrowerUsdcAfter = IERC20(mockUsdc).balanceOf(borrower);
+        uint256 borrowerSpent = borrowerUsdcBefore - borrowerUsdcAfter;
         assertEq(borrowerSpent, TOTAL_RENTAL, "net cost should equal total rental");
     }
 
@@ -381,7 +381,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
 
         // Bundle parked in lender's vault while rental is live.
         assertEq(
-            IERC1155(mockNFT1155).balanceOf(lenderVault, TOKEN_ID),
+            IERC1155(mockNft1155).balanceOf(lenderVault, TOKEN_ID),
             QUANTITY,
             "vault holds rental bundle"
         );
@@ -397,7 +397,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
 
         (address lenderClaimAsset, uint256 lenderClaimAmount, bool lenderClaimed) =
             ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
-        assertEq(lenderClaimAsset, mockUSDC, "lender claim asset USDC");
+        assertEq(lenderClaimAsset, mockUsdc, "lender claim asset USDC");
         assertFalse(lenderClaimed, "lender not yet claimed");
 
         uint256 defaultTreasuryFee = (TOTAL_RENTAL * TREASURY_FEE_BPS) / BASIS_POINTS;
@@ -408,18 +408,18 @@ contract Scenario2b_ERC1155RentalLending is Test {
             "lender should get prepay minus treasury on default"
         );
 
-        uint256 lenderUSDCBefore = IERC20(mockUSDC).balanceOf(lender);
+        uint256 lenderUsdcBefore = IERC20(mockUsdc).balanceOf(lender);
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
 
         assertEq(
-            IERC20(mockUSDC).balanceOf(lender),
-            lenderUSDCBefore + expectedLenderDefault,
+            IERC20(mockUsdc).balanceOf(lender),
+            lenderUsdcBefore + expectedLenderDefault,
             "lender USDC mismatch after default claim"
         );
         // ERC1155 returned to lender on default (rental bundle reverts to owner)
         assertEq(
-            IERC1155(mockNFT1155).balanceOf(lender, TOKEN_ID),
+            IERC1155(mockNft1155).balanceOf(lender, TOKEN_ID),
             10,
             "ERC1155 bundle returned to lender on default"
         );

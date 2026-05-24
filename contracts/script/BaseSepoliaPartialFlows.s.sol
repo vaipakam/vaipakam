@@ -52,11 +52,11 @@ contract BaseSepoliaPartialFlows is Script {
     ERC20Mock weth;
     ERC4907Mock nft721;
 
-    uint256 constant LOAN_AMOUNT = 1_000e6;       // 1000 mUSDC
+    uint256 constant LOAN_AMOUNT = 1_000e6;       // 1000 mUsdc
     uint256 constant COLLATERAL_AMOUNT = 1e18;    // 1 mWETH
     uint256 constant INTEREST_BPS = 500;          // 5% APR
     uint256 constant DURATION_DAYS = 30;
-    uint256 constant DAILY_FEE = 10e6;            // 10 mUSDC / day rental
+    uint256 constant DAILY_FEE = 10e6;            // 10 mUsdc / day rental
 
     function run() external {
         diamond = Deployments.readDiamond();
@@ -108,9 +108,9 @@ contract BaseSepoliaPartialFlows is Script {
         MockChainlinkRegistry registry = new MockChainlinkRegistry();
         MockChainlinkFeed usdcFeed = new MockChainlinkFeed(1e8, 8);
         MockChainlinkFeed wethFeed = new MockChainlinkFeed(2000e8, 8);
-        address USD_DENOM = 0x0000000000000000000000000000000000000348;
-        registry.setFeed(address(usdc), USD_DENOM, address(usdcFeed));
-        registry.setFeed(address(weth), USD_DENOM, address(wethFeed));
+        address usdDenom = 0x0000000000000000000000000000000000000348;
+        registry.setFeed(address(usdc), usdDenom, address(usdcFeed));
+        registry.setFeed(address(weth), usdDenom, address(wethFeed));
 
         MockUniswapV3Factory univ3Factory = new MockUniswapV3Factory();
         uint160 mockSqrtPriceX96 = 79228162514264337593543950336;
@@ -125,7 +125,7 @@ contract BaseSepoliaPartialFlows is Script {
         _fundIfNeeded(newBorrower, 0.02 ether);
 
         OracleAdminFacet(diamond).setChainlinkRegistry(address(registry));
-        OracleAdminFacet(diamond).setUsdChainlinkDenominator(USD_DENOM);
+        OracleAdminFacet(diamond).setUsdChainlinkDenominator(usdDenom);
         OracleAdminFacet(diamond).setWethContract(address(weth));
         OracleAdminFacet(diamond).setEthUsdFeed(address(wethFeed));
         OracleAdminFacet(diamond).setUniswapV3Factory(address(univ3Factory));

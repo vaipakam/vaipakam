@@ -580,9 +580,9 @@ contract ConfigFacet is DiamondAccessControl {
      *      exactly 0 to reset to the library default
      *      `NOTIFICATION_FEE_DEFAULT` (2.0 numeraire-units = `2e18`).
      *
-     *      Numeraire generalization (B1) — the per-knob `notificationFeeUsdOracle`
+     *      Numeraire generalization (b1) — the per-knob `notificationFeeUsdOracle`
      *      was retired in Phase 1, and the `INumeraireOracle`
-     *      abstraction was retired in B1. The protocol's reference
+     *      abstraction was retired in b1. The protocol's reference
      *      currency now lives at the oracle layer
      *      (`s.ethNumeraireFeed` / `s.numeraireSymbol` /
      *      `s.numeraireChainlinkDenominator`); the fee → VPFI math is
@@ -1931,7 +1931,7 @@ contract ConfigFacet is DiamondAccessControl {
     /// @notice Emitted when the numeraire address AND its companion
     ///         threshold value flip atomically via {setNumeraire}.
     /// @notice Emitted on every atomic numeraire rotation. After
-    ///         Numeraire generalization (B1), the numeraire is identified by its
+    ///         Numeraire generalization (b1), the numeraire is identified by its
     ///         feed-side config (ETH/<numeraire> Chainlink feed +
     ///         lowercase ASCII symbol that drives Tellor/API3/DIA
     ///         queries) — there is no longer a single numeraireOracle
@@ -1969,7 +1969,7 @@ contract ConfigFacet is DiamondAccessControl {
     /// @custom:event-category informational/config
     event NumeraireSwapEnabledSet(bool enabled);
 
-    /// @notice T-034 Numeraire generalization (B1) — atomic numeraire rotation.
+    /// @notice T-034 Numeraire generalization (b1) — atomic numeraire rotation.
     ///         The struct carries ALL state that defines the protocol's
     ///         reference currency at once. By construction, governance
     ///         cannot rotate the numeraire without simultaneously
@@ -2392,7 +2392,7 @@ contract ConfigFacet is DiamondAccessControl {
 
     /// @notice Bundled getter for the entire T-034 config surface,
     ///         intended for the frontend `usePeriodicInterestConfig`
-    ///         hook. Numeraire generalization (B1) — the per-knob `numeraireOracle`
+    ///         hook. Numeraire generalization (b1) — the per-knob `numeraireOracle`
     ///         field is gone; the numeraire identity is captured by
     ///         the symbol (`getNumeraireSymbol()`) + ETH feed
     ///         (`getEthNumeraireFeed()`) — both readable individually.

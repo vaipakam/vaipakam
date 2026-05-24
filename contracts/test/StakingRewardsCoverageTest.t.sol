@@ -20,7 +20,7 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 ///           - pull-only: accrual continues without auto-claim on top-ups
 ///           - pool-cap truncation at claim (paid = remaining)
 ///           - pool-exhausted revert (StakingPoolExhausted)
-///           - totalStakedVPFI tracks deposit/withdraw exactly
+///           - totalStakedVpfi tracks deposit/withdraw exactly
 ///           - dormant-period freeze (no-stakers-means-no-RPT-growth)
 contract StakingRewardsCoverageTest is SetupTest, IVaipakamErrors {
     VPFIToken internal vpfi;
@@ -81,9 +81,9 @@ contract StakingRewardsCoverageTest is SetupTest, IVaipakamErrors {
     // ─── Accrual math ────────────────────────────────────────────────────────
 
     function testMultiUserProportionalAccrual() public {
-        // Alice deposits 10k, Bob deposits 30k at t=0. After 180 days the
+        // alice deposits 10k, bob deposits 30k at t=0. After 180 days the
         // per-token rate is identical across the two, so each user's
-        // pending is stake * accrued-rate. Bob should have exactly 3×
+        // pending is stake * accrued-rate. bob should have exactly 3×
         // alice's pending (no rounding here because rpt is 1e18-scaled).
         _deposit(alice, 10_000 ether);
         _deposit(bob, 30_000 ether);
@@ -97,9 +97,9 @@ contract StakingRewardsCoverageTest is SetupTest, IVaipakamErrors {
     }
 
     function testMidPeriodDepositEarnsOnlyFromDepositTime() public {
-        // Alice deposits at t=T0. Bob deposits at t=T0+180d. At t=T0+360d,
-        // Alice earned a full year on 10k while Bob earned 6 months on 10k
-        // - Alice's pending should be ~2x Bob's. Targets captured up-front
+        // alice deposits at t=T0. bob deposits at t=T0+180d. At t=T0+360d,
+        // alice earned a full year on 10k while bob earned 6 months on 10k
+        // - alice's pending should be ~2x bob's. Targets captured up-front
         // to avoid any IR-codegen reliance on t0's liveness past the first
         // warp.
         uint256 t0 = block.timestamp;

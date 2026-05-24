@@ -282,7 +282,7 @@ contract RewardReporterFacet is
     // NOTE: there is no `setLocalChainId` — a chain's own identity is
     // `block.chainid`, read directly. T-068 dropped the old settable
     // `localEid`; its storage slot is retained as
-    // `localEid_LEGACY_DO_NOT_USE` for layout stability.
+    // `localEidLegacyDoNotUse` for layout stability.
 
     /// @notice Set the canonical (Base) reward chain's EVM chain id —
     ///         the destination for mirror-side chain reports. Zero on Base.

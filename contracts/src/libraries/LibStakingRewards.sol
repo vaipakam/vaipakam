@@ -27,7 +27,7 @@ import {LibVaipakam} from "./LibVaipakam.sol";
  *                        * (rewardPerToken - userRewardPerTokenPaid)
  *                        / 1e18
  *
- *      When totalStakedVPFI == 0 we intentionally freeze the
+ *      When totalStakedVpfi == 0 we intentionally freeze the
  *      rewardPerToken counter so that periods with no stakers do not
  *      credit whoever stakes first with retroactive yield.
  *
@@ -42,7 +42,7 @@ library LibStakingRewards {
     /// @return The live rewardPerToken value (scaled by 1e18), not persisted.
     function currentRewardPerToken() internal view returns (uint256) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (s.totalStakedVPFI == 0) return s.stakingRewardPerTokenStored;
+        if (s.totalStakedVpfi == 0) return s.stakingRewardPerTokenStored;
         uint256 dt = block.timestamp - s.stakingLastUpdateTime;
         if (dt == 0) return s.stakingRewardPerTokenStored;
         uint256 increment = (LibVaipakam.cfgVpfiStakingAprBps() *
@@ -76,7 +76,7 @@ library LibStakingRewards {
     function updateUser(address user, uint256 newStakedBalance) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         checkpointGlobal();
-        uint256 oldStaked = s.userStakedVPFI[user];
+        uint256 oldStaked = s.userStakedVpfi[user];
         uint256 rpt = s.stakingRewardPerTokenStored;
         // Fold any newly-accrued pending for the user at the OLD balance.
         uint256 paid = s.userStakingRewardPerTokenPaid[user];
@@ -88,11 +88,11 @@ library LibStakingRewards {
         s.userStakingRewardPerTokenPaid[user] = rpt;
         // Apply the new balance to the global total.
         if (newStakedBalance > oldStaked) {
-            s.totalStakedVPFI += (newStakedBalance - oldStaked);
+            s.totalStakedVpfi += (newStakedBalance - oldStaked);
         } else if (newStakedBalance < oldStaked) {
-            s.totalStakedVPFI -= (oldStaked - newStakedBalance);
+            s.totalStakedVpfi -= (oldStaked - newStakedBalance);
         }
-        s.userStakedVPFI[user] = newStakedBalance;
+        s.userStakedVpfi[user] = newStakedBalance;
     }
 
     /// @notice Pending VPFI for `user` accrued up to `block.timestamp`.
@@ -104,7 +104,7 @@ library LibStakingRewards {
     function pendingOf(address user) internal view returns (uint256) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 rpt = currentRewardPerToken();
-        uint256 staked = s.userStakedVPFI[user];
+        uint256 staked = s.userStakedVpfi[user];
         uint256 paid = s.userStakingRewardPerTokenPaid[user];
         uint256 accrued;
         if (rpt > paid && staked > 0) {
@@ -125,7 +125,7 @@ library LibStakingRewards {
     function debitClaim(address user) internal returns (uint256 payable_) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // Refresh pending at current time using the user's current stake.
-        updateUser(user, s.userStakedVPFI[user]);
+        updateUser(user, s.userStakedVpfi[user]);
         uint256 pending = s.userStakingPendingReward[user];
         if (pending == 0) return 0;
         uint256 paidOut = s.stakingPoolPaidOut;

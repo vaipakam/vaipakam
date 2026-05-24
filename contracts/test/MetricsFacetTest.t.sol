@@ -63,7 +63,7 @@ contract MetricsFacetTest is SetupTest {
         l.id = loanId;
         l.lender = lender_;
         l.borrower = borrower_;
-        l.principalAsset = mockNFT721;
+        l.principalAsset = mockNft721;
         l.assetType = LibVaipakam.AssetType.ERC721;
         l.tokenId = 1;
         l.collateralAsset = mockERC20;
@@ -118,9 +118,9 @@ contract MetricsFacetTest is SetupTest {
     // ── getProtocolTVL ──────────────────────────────────────────────────────
 
     function testGetProtocolTVL_emptyReturnsZero() public view {
-        (uint256 tvlUSD, uint256 erc20Col, uint256 nftCol) =
+        (uint256 tvlUsd, uint256 erc20Col, uint256 nftCol) =
             MetricsFacet(address(diamond)).getProtocolTVL();
-        assertEq(tvlUSD, 0);
+        assertEq(tvlUsd, 0);
         assertEq(erc20Col, 0);
         assertEq(nftCol, 0);
     }
@@ -130,11 +130,11 @@ contract MetricsFacetTest is SetupTest {
         _seedActiveERC20Loan(2, lender2, borrower2, 2000 ether, 3000 ether, 700);
         TestMutatorFacet(address(diamond)).setNextLoanId(3);
 
-        (uint256 tvlUSD, uint256 erc20Col, uint256 nftCol) =
+        (uint256 tvlUsd, uint256 erc20Col, uint256 nftCol) =
             MetricsFacet(address(diamond)).getProtocolTVL();
         // principal USD + collateral USD. $1 mock price, 8 decimals → (amount * 1e8)/1e8 = amount
         assertEq(erc20Col, 4500 ether);
-        assertEq(tvlUSD, 3000 ether + 4500 ether);
+        assertEq(tvlUsd, 3000 ether + 4500 ether);
         assertEq(nftCol, 0);
     }
 
@@ -146,18 +146,18 @@ contract MetricsFacetTest is SetupTest {
         l.principal = 1000 ether;
         l.principalAsset = mockERC20;
         l.assetType = LibVaipakam.AssetType.ERC20;
-        l.collateralAsset = mockNFT721;
+        l.collateralAsset = mockNft721;
         l.collateralAssetType = LibVaipakam.AssetType.ERC721;
         l.collateralTokenId = 1;
         l.status = LibVaipakam.LoanStatus.Active;
         TestMutatorFacet(address(diamond)).scaffoldActiveLoan(1, l);
         TestMutatorFacet(address(diamond)).setNextLoanId(2);
 
-        (uint256 tvlUSD, uint256 erc20Col, uint256 nftCol) =
+        (uint256 tvlUsd, uint256 erc20Col, uint256 nftCol) =
             MetricsFacet(address(diamond)).getProtocolTVL();
         assertEq(erc20Col, 0);
         assertEq(nftCol, 1);
-        assertEq(tvlUSD, 1000 ether);
+        assertEq(tvlUsd, 1000 ether);
     }
 
     function testGetProtocolTVL_skipsInactive() public {
@@ -176,8 +176,8 @@ contract MetricsFacetTest is SetupTest {
         TestMutatorFacet(address(diamond)).setLoan(2, l2);
         TestMutatorFacet(address(diamond)).setNextLoanId(3);
 
-        (uint256 tvlUSD, , ) = MetricsFacet(address(diamond)).getProtocolTVL();
-        assertEq(tvlUSD, 1000 ether + 1500 ether); // only loan 1
+        (uint256 tvlUsd, , ) = MetricsFacet(address(diamond)).getProtocolTVL();
+        assertEq(tvlUsd, 1000 ether + 1500 ether); // only loan 1
     }
 
     // ── getProtocolStats ───────────────────────────────────────────────────
@@ -188,19 +188,19 @@ contract MetricsFacetTest is SetupTest {
             uint256 active,
             uint256 offers,
             uint256 ever,
-            uint256 volUSD,
-            uint256 interestUSD,
+            uint256 volUsd,
+            uint256 interestUsd,
             uint256 defaultBps,
-            uint256 avgAPR
+            uint256 avgApr
         ) = MetricsFacet(address(diamond)).getProtocolStats();
         assertEq(users, 0);
         assertEq(active, 0);
         assertEq(offers, 0);
         assertEq(ever, 0);
-        assertEq(volUSD, 0);
-        assertEq(interestUSD, 0);
+        assertEq(volUsd, 0);
+        assertEq(interestUsd, 0);
         assertEq(defaultBps, 0);
-        assertEq(avgAPR, 0);
+        assertEq(avgApr, 0);
     }
 
     function testGetProtocolStats_populatedMix() public {
@@ -223,23 +223,23 @@ contract MetricsFacetTest is SetupTest {
             uint256 active,
             uint256 offers,
             uint256 ever,
-            uint256 volUSD,
-            uint256 interestUSD,
+            uint256 volUsd,
+            uint256 interestUsd,
             uint256 defaultBps,
-            uint256 avgAPR
+            uint256 avgApr
         ) = MetricsFacet(address(diamond)).getProtocolStats();
         // lender, borrower, lender2, borrower2 + offer creator lender → 4 unique
         assertEq(users, 4);
         assertEq(active, 2);
         assertEq(offers, 1);
         assertEq(ever, 3);
-        assertEq(volUSD, 3500 ether);
+        assertEq(volUsd, 3500 ether);
         // interest from loan 3 only (active ones excluded): 500 * 1000 / 10000 = 50
-        assertEq(interestUSD, 50 ether);
+        assertEq(interestUsd, 50 ether);
         // 1 defaulted / 3 loans → 3333 bps
         assertEq(defaultBps, 3333);
         // (500+700+1000)/3 = 733
-        assertEq(avgAPR, 733);
+        assertEq(avgApr, 733);
     }
 
     // ── getUserCount ───────────────────────────────────────────────────────
@@ -296,12 +296,12 @@ contract MetricsFacetTest is SetupTest {
         _seedActiveERC20Loan(2, lender2, borrower2, 2000 ether, 3000 ether, 700);
         TestMutatorFacet(address(diamond)).setNextLoanId(3);
 
-        (uint256 totalUSD, uint256 avgDuration, uint256 avgLTV) =
+        (uint256 totalUsd, uint256 avgDuration, uint256 avgLtv) =
             MetricsFacet(address(diamond)).getLoanSummary();
-        assertEq(totalUSD, 3000 ether);
+        assertEq(totalUsd, 3000 ether);
         assertEq(avgDuration, 30);
         // SetupTest mocks calculateLTV → 6666
-        assertEq(avgLTV, 6666);
+        assertEq(avgLtv, 6666);
     }
 
     // ── getTotalInterestEarnedNumeraire ──────────────────────────────────────────
@@ -338,10 +338,10 @@ contract MetricsFacetTest is SetupTest {
         // AdminFacet path isn't exposed here; instead vm.store a mapping slot.
         // Simpler: use deal to a mapping entry through vm.record not possible —
         // accept returning 0 is valid when no treasury balance has accrued.
-        (uint256 balUSD, uint256 totalUSD, uint256 d24, uint256 d7) =
+        (uint256 balUsd, uint256 totalUsd, uint256 d24, uint256 d7) =
             MetricsFacet(address(diamond)).getTreasuryMetrics();
-        assertEq(balUSD, 0);
-        assertEq(totalUSD, 0);
+        assertEq(balUsd, 0);
+        assertEq(totalUsd, 0);
         assertEq(d24, 0);
         assertEq(d7, 0);
     }
@@ -357,11 +357,11 @@ contract MetricsFacetTest is SetupTest {
         _seedNFTRentalLoan(1, lender, borrower, 11, 12);
         TestMutatorFacet(address(diamond)).setNextLoanId(2);
 
-        (uint256 total, uint256 active, uint256 volUSD) =
+        (uint256 total, uint256 active, uint256 volUsd) =
             MetricsFacet(address(diamond)).getVaultStats();
         assertEq(total, 1);
         assertEq(active, 1);
-        assertEq(volUSD, 50 ether);
+        assertEq(volUsd, 50 ether);
     }
 
     function testNFTRentalDetails_lookupByTokenId() public {
@@ -385,7 +385,7 @@ contract MetricsFacetTest is SetupTest {
         _seedNFTRentalLoan(1, lender, borrower, 11, 12);
         TestMutatorFacet(address(diamond)).setNextLoanId(2);
         assertEq(
-            MetricsFacet(address(diamond)).getTotalNFTsInVaultByCollection(mockNFT721),
+            MetricsFacet(address(diamond)).getTotalNFTsInVaultByCollection(mockNft721),
             1
         );
         assertEq(
@@ -403,13 +403,13 @@ contract MetricsFacetTest is SetupTest {
         (
             uint256 col,
             uint256 debt,
-            uint256 claimUSD,
+            uint256 claimUsd,
             uint256 hf,
             uint256 activeN
         ) = MetricsFacet(address(diamond)).getUserSummary(borrower);
         assertEq(col, 1500 ether);
         assertEq(debt, 1000 ether);
-        assertEq(claimUSD, 0);
+        assertEq(claimUsd, 0);
         // SetupTest mocks HF = 2e18
         assertEq(hf, 2e18);
         assertEq(activeN, 1);
@@ -479,8 +479,8 @@ contract MetricsFacetTest is SetupTest {
     function testGetActiveOffersByAssetPair_returnsMatchingPair() public {
         _seedOpenOfferWithPair(1, lender, mockERC20, mockCollateralERC20);
         _seedOpenOfferWithPair(2, lender, mockERC20, mockCollateralERC20);
-        _seedOpenOfferWithPair(3, lender, mockERC20, mockNFT721); // different collateral
-        _seedOpenOfferWithPair(4, lender, mockNFT721, mockCollateralERC20); // different lending
+        _seedOpenOfferWithPair(3, lender, mockERC20, mockNft721); // different collateral
+        _seedOpenOfferWithPair(4, lender, mockNft721, mockCollateralERC20); // different lending
         TestMutatorFacet(address(diamond)).setNextOfferId(5);
 
         (uint256[] memory ids, uint256 total) = MetricsFacet(address(diamond))

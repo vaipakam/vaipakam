@@ -876,7 +876,7 @@ contract VPFIDiscountFacet is
             LibVaipakam.cfgVpfiFixedWalletCap(),
             s.vpfiFixedRateTotalSold,
             s.vpfiFixedRateBuyEnabled,
-            s.vpfiDiscountETHPriceAsset
+            s.vpfiDiscountEthPriceAsset
         );
     }
 
@@ -931,7 +931,7 @@ contract VPFIDiscountFacet is
             s.vpfiFixedRateGlobalCap,
             s.vpfiFixedRatePerWalletCap,
             s.vpfiFixedRateBuyEnabled,
-            s.vpfiDiscountETHPriceAsset
+            s.vpfiDiscountEthPriceAsset
         );
     }
 
@@ -961,7 +961,7 @@ contract VPFIDiscountFacet is
             globalCap,
             perWalletCap,
             s.vpfiFixedRateBuyEnabled,
-            s.vpfiDiscountETHPriceAsset
+            s.vpfiDiscountEthPriceAsset
         );
     }
 
@@ -982,7 +982,7 @@ contract VPFIDiscountFacet is
             s.vpfiFixedRateGlobalCap,
             s.vpfiFixedRatePerWalletCap,
             enabled,
-            s.vpfiDiscountETHPriceAsset
+            s.vpfiDiscountEthPriceAsset
         );
     }
 
@@ -1039,7 +1039,7 @@ contract VPFIDiscountFacet is
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        s.vpfiDiscountETHPriceAsset = asset;
+        s.vpfiDiscountEthPriceAsset = asset;
         emit VPFIBuyConfigUpdated(
             s.vpfiFixedRateWeiPerVpfi,
             s.vpfiFixedRateGlobalCap,

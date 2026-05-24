@@ -44,7 +44,7 @@ library LibERC721 {
         // isLender) pair, with per-side defaults for any state that
         // wasn't explicitly populated. Lookup chain consumed by
         // `VaipakamNFTFacet.tokenURI`:
-        //   1. statusImageURIs[status][isLender]      — exact match
+        //   1. statusImageUris[status][isLender]      — exact match
         //   2. defaultLenderImage / defaultBorrowerImage — per-side fallback
         //   3. contractImageURI                          — collection-level fallback
         //   4. empty string                              — last resort
@@ -53,7 +53,7 @@ library LibERC721 {
         // setters via VaipakamNFTFacet.setImageURIForStatus +
         // setDefaultImage. Governance-transferable at any time by
         // rotating ADMIN_ROLE.
-        mapping(LibVaipakam.LoanPositionStatus => mapping(bool => string)) statusImageURIs;
+        mapping(LibVaipakam.LoanPositionStatus => mapping(bool => string)) statusImageUris;
         string defaultLenderImage;
         string defaultBorrowerImage;
         // Collection-level metadata (contractURI convention + EIP-2981 royalties).

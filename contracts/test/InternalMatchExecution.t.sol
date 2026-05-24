@@ -144,7 +144,7 @@ contract InternalMatchExecutionTest is SetupTest {
         vm.prank(matcher);
         RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
 
-        // Moved amounts: 1000 each leg. Bot share: 10 each leg
+        // Moved amounts: 1000 each leg. bot share: 10 each leg
         // (1% of 1000). Lender share: 990 each.
         assertEq(IERC20(mockERC20).balanceOf(aLenderVault) - aLenderXBefore, 990);
         assertEq(IERC20(mockCollateralERC20).balanceOf(bLenderVault) - bLenderYBefore, 990);

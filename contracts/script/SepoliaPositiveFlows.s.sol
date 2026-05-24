@@ -155,16 +155,16 @@ contract SepoliaPositiveFlows is Script {
         MockChainlinkRegistry mockRegistry = new MockChainlinkRegistry();
         MockChainlinkFeed usdcFeed = new MockChainlinkFeed(1e8, 8);       // $1.00
         MockChainlinkFeed wethFeed = new MockChainlinkFeed(2000e8, 8);    // $2000.00
-        address USD_DENOM = 0x0000000000000000000000000000000000000348;    // Chainlink Denominations.USD
+        address usdDenom = 0x0000000000000000000000000000000000000348;    // Chainlink Denominations.USD
         // Register feeds for liquid mock tokens only (illiquid tokens have NO feed → naturally Illiquid)
-        mockRegistry.setFeed(address(usdc), USD_DENOM, address(usdcFeed));
-        mockRegistry.setFeed(address(weth), USD_DENOM, address(wethFeed));
+        mockRegistry.setFeed(address(usdc), usdDenom, address(usdcFeed));
+        mockRegistry.setFeed(address(weth), usdDenom, address(wethFeed));
 
-        // Mock v3-style AMM factory + mUSDC/mWETH 0.3% pool. OracleFacet
+        // Mock v3-style AMM factory + mUsdc/mWETH 0.3% pool. OracleFacet
         // looks up pools via `factory.getPool(tokenA, tokenB, fee)` (no
         // CREATE2 derivation), so any ABI-compatible mock works. Pool
         // liquidity is set well above the MIN_LIQUIDITY_PAD floor so
-        // mUSDC and mWETH classify Liquid; illiquidToken/illiquidLending
+        // mUsdc and mWETH classify Liquid; illiquidToken/illiquidLending
         // have no pool registered and classify Illiquid naturally.
         MockUniswapV3Factory univ3Factory = new MockUniswapV3Factory();
         uint160 mockSqrtPriceX96 = 79228162514264337593543950336; // 2^96 ≈ price 1
@@ -184,7 +184,7 @@ contract SepoliaPositiveFlows is Script {
 
         // Fund participant EOAs with enough gas for the scenario run.
         // 0.05 ETH is generous for L2s (Base, Polygon) and sufficient for
-        // Sepolia L1 with typical testnet gas (~1-3 gwei). Top up the
+        // Sepolia l1 with typical testnet gas (~1-3 gwei). Top up the
         // deployer side of .env and re-run if any scenario hits OOG.
         _fundIfNeeded(lender, 0.05 ether);
         _fundIfNeeded(borrower, 0.05 ether);
@@ -193,7 +193,7 @@ contract SepoliaPositiveFlows is Script {
 
         // Configure Diamond oracle with mock registry
         OracleAdminFacet(diamond).setChainlinkRegistry(address(mockRegistry));
-        OracleAdminFacet(diamond).setUsdChainlinkDenominator(USD_DENOM);
+        OracleAdminFacet(diamond).setUsdChainlinkDenominator(usdDenom);
         OracleAdminFacet(diamond).setWethContract(address(weth));
         OracleAdminFacet(diamond).setEthUsdFeed(address(wethFeed));
         OracleAdminFacet(diamond).setUniswapV3Factory(address(univ3Factory));

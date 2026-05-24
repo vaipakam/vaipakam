@@ -317,7 +317,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "averageLTV",
+        "name": "averageLtv",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -867,7 +867,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "averageAPR",
+        "name": "averageApr",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -885,12 +885,12 @@
         "internalType": "uint256"
       },
       {
-        "name": "erc20CollateralTVL",
+        "name": "erc20CollateralTvl",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "nftCollateralTVL",
+        "name": "nftCollateralTvl",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -1548,7 +1548,7 @@
     "inputs": [],
     "outputs": [
       {
-        "name": "totalNFTsInVault",
+        "name": "totalNftsInVault",
         "type": "uint256",
         "internalType": "uint256"
       },

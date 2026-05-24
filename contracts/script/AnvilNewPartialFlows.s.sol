@@ -45,7 +45,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *           P-N  Loan with one partial-repay applied, principal
  *                reduced, status still Active
  *           P-O  Loan with collateral doubled mid-flight
- *           P-P  Keeper enabled with INIT_PRECLOSE on an active loan
+ *           P-P  Keeper enabled with initPreclose on an active loan
  *           P-Q  Borrower-side refinance offer posted, no acceptance
  *           P-T  Lender posted createLoanSaleOffer, no buyer yet
  *           P-U  Stray ERC-20 parked in user vault, recovery NOT
@@ -142,9 +142,9 @@ contract AnvilNewPartialFlows is Script {
         MockChainlinkRegistry registry = new MockChainlinkRegistry();
         MockChainlinkFeed usdcFeed = new MockChainlinkFeed(1e8, 8);
         MockChainlinkFeed wethFeed = new MockChainlinkFeed(2000e8, 8);
-        address USD_DENOM = 0x0000000000000000000000000000000000000348;
-        registry.setFeed(address(usdc), USD_DENOM, address(usdcFeed));
-        registry.setFeed(address(weth), USD_DENOM, address(wethFeed));
+        address usdDenom = 0x0000000000000000000000000000000000000348;
+        registry.setFeed(address(usdc), usdDenom, address(usdcFeed));
+        registry.setFeed(address(weth), usdDenom, address(wethFeed));
 
         MockUniswapV3Factory univ3 = new MockUniswapV3Factory();
         univ3.createPool(
@@ -158,7 +158,7 @@ contract AnvilNewPartialFlows is Script {
 
         vm.startBroadcast(adminKey);
         OracleAdminFacet(diamond).setChainlinkRegistry(address(registry));
-        OracleAdminFacet(diamond).setUsdChainlinkDenominator(USD_DENOM);
+        OracleAdminFacet(diamond).setUsdChainlinkDenominator(usdDenom);
         OracleAdminFacet(diamond).setWethContract(address(weth));
         OracleAdminFacet(diamond).setEthUsdFeed(address(wethFeed));
         OracleAdminFacet(diamond).setUniswapV3Factory(address(univ3));
@@ -326,7 +326,7 @@ contract AnvilNewPartialFlows is Script {
         console.log(">>> P-O PASSED <<<");
     }
 
-    // ─── P-P: Keeper enabled with INIT_PRECLOSE on active loan ──────────
+    // ─── P-P: Keeper enabled with initPreclose on active loan ──────────
 
     /// @dev Borrower delegates an action bit to a keeper on a live loan.
     ///      UI Keeper Settings should render the keeper as authorised
@@ -347,7 +347,7 @@ contract AnvilNewPartialFlows is Script {
 
         // Borrower → keeper authorization (3 switches per LibAuth):
         //   1. setKeeperAccess(true)
-        //   2. approveKeeper(keeper, INIT_PRECLOSE)
+        //   2. approveKeeper(keeper, initPreclose)
         //   3. setLoanKeeperEnabled(loanId, keeper, true)
         address keeperAddr = newBorrower;
         vm.startBroadcast(borrowerKey);

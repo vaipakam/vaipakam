@@ -25,7 +25,7 @@ contract OracleAdminFacet {
     // existing `testOwnerCanZeroUsdDenominator` documents the
     // supported flow: post-zero, `getAssetPrice` reverts cleanly with
     // `NoPriceFeed` (no silent breakage). Closing it out
-    // (revert-on-zero) would break the documented L2 / fallback path.
+    // (revert-on-zero) would break the documented l2 / fallback path.
 
     /// @notice `setStableTokenFeed.symbol` exceeded MAX_STABLE_SYMBOL_LEN
     ///         (10 bytes — accommodates every ISO 4217 fiat code +
@@ -52,7 +52,7 @@ contract OracleAdminFacet {
      *         OracleFacet for asset/USD and asset/ETH lookups.
      * @dev Owner-only (enforced inside `LibVaipakam.setChainlinkRegistry`).
      *      Setting to `address(0)` disables registry-based price lookups —
-     *      correct for L2 deployments where the Feed Registry is not
+     *      correct for l2 deployments where the Feed Registry is not
      *      available; OracleFacet then falls through to the direct
      *      `ethNumeraireFeed` path for WETH.
      * @param registry The Chainlink Feed Registry contract address.
@@ -224,17 +224,17 @@ contract OracleAdminFacet {
     }
 
     /**
-     * @notice Sets the Chainlink L2 Sequencer Uptime feed used as an
-     *         oracle circuit breaker on L2 deployments.
+     * @notice Sets the Chainlink l2 Sequencer Uptime feed used as an
+     *         oracle circuit breaker on l2 deployments.
      * @dev Owner-only. Setting to `address(0)` disables the check —
-     *      correct for L1/Ethereum mainnet where no sequencer exists;
+     *      correct for l1/Ethereum mainnet where no sequencer exists;
      *      required on L2s (Base, Arbitrum, Optimism, etc.) where
      *      Chainlink publishes a uptime feed. When non-zero,
      *      `OracleFacet.getAssetPrice` and `checkLiquidity` will revert
      *      with `SequencerDown` (sequencer currently offline) or
      *      `SequencerGracePeriod` (came back up <1h ago) before any
      *      price read.
-     * @param feed The Chainlink L2 Sequencer Uptime feed address.
+     * @param feed The Chainlink l2 Sequencer Uptime feed address.
      */
     function setSequencerUptimeFeed(address feed) external {
         LibVaipakam.setSequencerUptimeFeed(feed);

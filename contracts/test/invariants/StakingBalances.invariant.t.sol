@@ -26,7 +26,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
  *         ledger invariants hold regardless of how the fuzzer scripts the
  *         deposit/withdraw/claim/warp sequence:
  *
- *           1. `sum(userStakedVPFI[*]) == totalStakedVPFI`  — accounting.
+ *           1. `sum(userStakedVpfi[*]) == totalStakedVpfi`  — accounting.
  *           2. `stakingPoolPaidOut <= VPFI_STAKING_POOL_CAP` — pool cap.
  *           3. `stakingPoolPaidOut` is monotonically non-decreasing — pool
  *              rewards are paid out, never clawed back.

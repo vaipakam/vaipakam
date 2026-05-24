@@ -72,9 +72,9 @@ contract WorkflowComplianceAndRejection is Test {
     address sanctionedUser;
     address newLender;
 
-    ERC20Mock mockUSDC;
-    ERC20Mock mockWETH;
-    MockRentableNFT721Test mockNFT;
+    ERC20Mock mockUsdc;
+    ERC20Mock mockWeth;
+    MockRentableNFT721Test mockNft;
 
     DiamondCutFacet cutFacet;
     OfferCreateFacet offerCreateFacet;
@@ -126,19 +126,19 @@ contract WorkflowComplianceAndRejection is Test {
         newLender = makeAddr("newLender");
 
         // Deploy mock tokens
-        mockUSDC = new ERC20Mock("MockUSDC", "USDC", 18);
-        mockWETH = new ERC20Mock("MockWETH", "WETH", 18);
-        mockNFT = new MockRentableNFT721Test();
+        mockUsdc = new ERC20Mock("MockUSDC", "USDC", 18);
+        mockWeth = new ERC20Mock("MockWETH", "WETH", 18);
+        mockNft = new MockRentableNFT721Test();
 
         // Mint tokens to all actors
-        mockUSDC.mint(lender, 100000 ether);
-        mockUSDC.mint(borrower, 100000 ether);
-        mockUSDC.mint(sanctionedUser, 100000 ether);
-        mockUSDC.mint(newLender, 100000 ether);
-        mockWETH.mint(lender, 100000 ether);
-        mockWETH.mint(borrower, 100000 ether);
-        mockWETH.mint(sanctionedUser, 100000 ether);
-        mockWETH.mint(newLender, 100000 ether);
+        mockUsdc.mint(lender, 100000 ether);
+        mockUsdc.mint(borrower, 100000 ether);
+        mockUsdc.mint(sanctionedUser, 100000 ether);
+        mockUsdc.mint(newLender, 100000 ether);
+        mockWeth.mint(lender, 100000 ether);
+        mockWeth.mint(borrower, 100000 ether);
+        mockWeth.mint(sanctionedUser, 100000 ether);
+        mockWeth.mint(newLender, 100000 ether);
 
         // Deploy facets
         cutFacet = new DiamondCutFacet();
@@ -201,13 +201,13 @@ contract WorkflowComplianceAndRejection is Test {
         AdminFacet(address(diamond)).setallowanceTarget(makeAddr("zeroEx"));
 
         // Approvals for diamond
-        vm.prank(lender);    ERC20(address(mockUSDC)).approve(address(diamond), type(uint256).max);
-        vm.prank(borrower);  ERC20(address(mockUSDC)).approve(address(diamond), type(uint256).max);
-        vm.prank(sanctionedUser); ERC20(address(mockUSDC)).approve(address(diamond), type(uint256).max);
-        vm.prank(newLender); ERC20(address(mockUSDC)).approve(address(diamond), type(uint256).max);
-        vm.prank(borrower);  ERC20(address(mockWETH)).approve(address(diamond), type(uint256).max);
-        vm.prank(sanctionedUser); ERC20(address(mockWETH)).approve(address(diamond), type(uint256).max);
-        vm.prank(newLender); ERC20(address(mockWETH)).approve(address(diamond), type(uint256).max);
+        vm.prank(lender);    ERC20(address(mockUsdc)).approve(address(diamond), type(uint256).max);
+        vm.prank(borrower);  ERC20(address(mockUsdc)).approve(address(diamond), type(uint256).max);
+        vm.prank(sanctionedUser); ERC20(address(mockUsdc)).approve(address(diamond), type(uint256).max);
+        vm.prank(newLender); ERC20(address(mockUsdc)).approve(address(diamond), type(uint256).max);
+        vm.prank(borrower);  ERC20(address(mockWeth)).approve(address(diamond), type(uint256).max);
+        vm.prank(sanctionedUser); ERC20(address(mockWeth)).approve(address(diamond), type(uint256).max);
+        vm.prank(newLender); ERC20(address(mockWeth)).approve(address(diamond), type(uint256).max);
 
         // Trade allowances: US<->US = true, NO US<->IR allowance (default false)
         vm.prank(owner);
@@ -229,21 +229,21 @@ contract WorkflowComplianceAndRejection is Test {
         vm.prank(owner);
         ProfileFacet(address(diamond)).updateKYCTier(sanctionedUser, LibVaipakam.KYCTier.Tier2);
 
-        // Risk params for mockUSDC
+        // Risk params for mockUsdc
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(address(mockUSDC), 8000, 300, 1000);
-        // Risk params for mockWETH (used as distinct collateral asset after SelfCollateralizedOffer invariant)
+        RiskFacet(address(diamond)).updateRiskParams(address(mockUsdc), 8000, 300, 1000);
+        // Risk params for mockWeth (used as distinct collateral asset after SelfCollateralizedOffer invariant)
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(address(mockWETH), 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(address(mockWeth), 8000, 300, 1000);
 
-        // Mock oracle: mockUSDC = Liquid, $1 price
-        mockLiquidity(address(mockUSDC), LibVaipakam.LiquidityStatus.Liquid);
-        mockPrice(address(mockUSDC), 1e8, 8);
-        // mockWETH = Liquid, $1 price (for simplicity)
-        mockLiquidity(address(mockWETH), LibVaipakam.LiquidityStatus.Liquid);
-        mockPrice(address(mockWETH), 1e8, 8);
-        // mockNFT = Illiquid
-        mockLiquidity(address(mockNFT), LibVaipakam.LiquidityStatus.Illiquid);
+        // Mock oracle: mockUsdc = Liquid, $1 price
+        mockLiquidity(address(mockUsdc), LibVaipakam.LiquidityStatus.Liquid);
+        mockPrice(address(mockUsdc), 1e8, 8);
+        // mockWeth = Liquid, $1 price (for simplicity)
+        mockLiquidity(address(mockWeth), LibVaipakam.LiquidityStatus.Liquid);
+        mockPrice(address(mockWeth), 1e8, 8);
+        // mockNft = Illiquid
+        mockLiquidity(address(mockNft), LibVaipakam.LiquidityStatus.Illiquid);
 
         // Mock HF and LTV for loan initiation
         vm.mockCall(
@@ -263,33 +263,33 @@ contract WorkflowComplianceAndRejection is Test {
         address sanctionedVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(sanctionedUser);
         address newLenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(newLender);
 
-        vm.prank(lender);    ERC20(address(mockUSDC)).approve(lenderVault, type(uint256).max);
-        vm.prank(borrower);  ERC20(address(mockUSDC)).approve(borrowerVault, type(uint256).max);
-        vm.prank(sanctionedUser); ERC20(address(mockUSDC)).approve(sanctionedVault, type(uint256).max);
-        vm.prank(newLender); ERC20(address(mockUSDC)).approve(newLenderVault, type(uint256).max);
-        vm.prank(borrower);  ERC20(address(mockWETH)).approve(borrowerVault, type(uint256).max);
-        vm.prank(sanctionedUser); ERC20(address(mockWETH)).approve(sanctionedVault, type(uint256).max);
-        vm.prank(newLender); ERC20(address(mockWETH)).approve(newLenderVault, type(uint256).max);
+        vm.prank(lender);    ERC20(address(mockUsdc)).approve(lenderVault, type(uint256).max);
+        vm.prank(borrower);  ERC20(address(mockUsdc)).approve(borrowerVault, type(uint256).max);
+        vm.prank(sanctionedUser); ERC20(address(mockUsdc)).approve(sanctionedVault, type(uint256).max);
+        vm.prank(newLender); ERC20(address(mockUsdc)).approve(newLenderVault, type(uint256).max);
+        vm.prank(borrower);  ERC20(address(mockWeth)).approve(borrowerVault, type(uint256).max);
+        vm.prank(sanctionedUser); ERC20(address(mockWeth)).approve(sanctionedVault, type(uint256).max);
+        vm.prank(newLender); ERC20(address(mockWeth)).approve(newLenderVault, type(uint256).max);
 
         // Mint tokens to diamond for internal transfers
-        mockUSDC.mint(address(diamond), 100000 ether);
+        mockUsdc.mint(address(diamond), 100000 ether);
 
         // ── Create active ERC20 loan (lender creates offer, borrower accepts) ──
         vm.prank(lender);
         uint256 erc20OfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
-                lendingAsset: address(mockUSDC),
+                lendingAsset: address(mockUsdc),
                 amount: PRINCIPAL,
                 interestRateBps: 500,
-                collateralAsset: address(mockWETH),
+                collateralAsset: address(mockWeth),
                 collateralAmount: COLLATERAL,
                 durationDays: 30,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
                 creatorRiskAndTermsConsent: true,
-                prepayAsset: address(mockUSDC),
+                prepayAsset: address(mockUsdc),
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
@@ -307,17 +307,17 @@ contract WorkflowComplianceAndRejection is Test {
 
         // ── Create active NFT rental loan ──
         // Mint NFT to lender, approve to diamond
-        mockNFT.mint(lender, 1);
+        mockNft.mint(lender, 1);
         vm.prank(lender);
-        mockNFT.approve(address(diamond), 1);
+        mockNft.approve(address(diamond), 1);
 
         // Approve NFT to lender's vault
         vm.prank(lender);
-        mockNFT.setApprovalForAll(lenderVault, true);
+        mockNft.setApprovalForAll(lenderVault, true);
 
         // Mock decimals on NFT address (needed for price calculation)
         vm.mockCall(
-            address(mockNFT),
+            address(mockNft),
             abi.encodeWithSelector(bytes4(keccak256("decimals()"))),
             abi.encode(uint8(18))
         );
@@ -329,24 +329,24 @@ contract WorkflowComplianceAndRejection is Test {
             abi.encode(true)
         );
 
-        // Borrower needs mockUSDC approved for prepay (fee * days + buffer)
+        // Borrower needs mockUsdc approved for prepay (fee * days + buffer)
         // NFT rental: lender creates offer with dailyFee=1 ether, 30 days
         // Prepay = 1 ether * 30 = 30 ether + 5% buffer = 31.5 ether
         vm.prank(lender);
         uint256 nftOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
-                lendingAsset: address(mockNFT),
+                lendingAsset: address(mockNft),
                 amount: 1 ether,
                 interestRateBps: 500,
-                collateralAsset: address(mockUSDC),
+                collateralAsset: address(mockUsdc),
                 collateralAmount: 0,
                 durationDays: 30,
                 assetType: LibVaipakam.AssetType.ERC721,
                 tokenId: 1,
                 quantity: 0,
                 creatorRiskAndTermsConsent: true,
-                prepayAsset: address(mockUSDC),
+                prepayAsset: address(mockUsdc),
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
@@ -360,7 +360,7 @@ contract WorkflowComplianceAndRejection is Test {
             })
         );
 
-        // Borrower accepts the NFT rental offer (pays prepay from mockUSDC)
+        // Borrower accepts the NFT rental offer (pays prepay from mockUsdc)
         vm.prank(borrower);
         nftLoanId = OfferAcceptFacet(address(diamond)).acceptOffer(nftOfferId, true);
     }
@@ -379,17 +379,17 @@ contract WorkflowComplianceAndRejection is Test {
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
-                lendingAsset: address(mockUSDC),
+                lendingAsset: address(mockUsdc),
                 amount: PRINCIPAL,
                 interestRateBps: 500,
-                collateralAsset: address(mockWETH),
+                collateralAsset: address(mockWeth),
                 collateralAmount: COLLATERAL,
                 durationDays: 30,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
                 creatorRiskAndTermsConsent: true,
-                prepayAsset: address(mockUSDC),
+                prepayAsset: address(mockUsdc),
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
@@ -419,17 +419,17 @@ contract WorkflowComplianceAndRejection is Test {
         uint256 sanctionedOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
-                lendingAsset: address(mockUSDC),
+                lendingAsset: address(mockUsdc),
                 amount: PRINCIPAL,
                 interestRateBps: 500,
-                collateralAsset: address(mockWETH),
+                collateralAsset: address(mockWeth),
                 collateralAmount: COLLATERAL,
                 durationDays: 30,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
                 creatorRiskAndTermsConsent: true,
-                prepayAsset: address(mockUSDC),
+                prepayAsset: address(mockUsdc),
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
@@ -460,17 +460,17 @@ contract WorkflowComplianceAndRejection is Test {
         uint256 sanctionedOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
-                lendingAsset: address(mockUSDC),
+                lendingAsset: address(mockUsdc),
                 amount: PRINCIPAL,
                 interestRateBps: 500,
-                collateralAsset: address(mockWETH),
+                collateralAsset: address(mockWeth),
                 collateralAmount: COLLATERAL,
                 durationDays: 30,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
                 creatorRiskAndTermsConsent: true,
-                prepayAsset: address(mockUSDC),
+                prepayAsset: address(mockUsdc),
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
@@ -498,33 +498,33 @@ contract WorkflowComplianceAndRejection is Test {
     function test_KYC_BelowThreshold_NoKYCRequired() public {
         // Create a new user with Tier0 KYC (default, no explicit tier set needed)
         address noKycUser = makeAddr("noKycUser");
-        mockUSDC.mint(noKycUser, 100000 ether);
-        mockWETH.mint(noKycUser, 100000 ether);
-        vm.prank(noKycUser); ERC20(address(mockUSDC)).approve(address(diamond), type(uint256).max);
-        vm.prank(noKycUser); ERC20(address(mockWETH)).approve(address(diamond), type(uint256).max);
+        mockUsdc.mint(noKycUser, 100000 ether);
+        mockWeth.mint(noKycUser, 100000 ether);
+        vm.prank(noKycUser); ERC20(address(mockUsdc)).approve(address(diamond), type(uint256).max);
+        vm.prank(noKycUser); ERC20(address(mockWeth)).approve(address(diamond), type(uint256).max);
         vm.prank(noKycUser); ProfileFacet(address(diamond)).setUserCountry("US");
         // Tier0 is default - no updateKYCTier call needed
 
         address noKycVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(noKycUser);
-        vm.prank(noKycUser); ERC20(address(mockUSDC)).approve(noKycVault, type(uint256).max);
-        vm.prank(noKycUser); ERC20(address(mockWETH)).approve(noKycVault, type(uint256).max);
+        vm.prank(noKycUser); ERC20(address(mockUsdc)).approve(noKycVault, type(uint256).max);
+        vm.prank(noKycUser); ERC20(address(mockWeth)).approve(noKycVault, type(uint256).max);
 
         // Create a small offer: 100 USDC (= $100 at $1 price, well below $1000 threshold)
         vm.prank(lender);
         uint256 smallOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
-                lendingAsset: address(mockUSDC),
+                lendingAsset: address(mockUsdc),
                 amount: 100 ether,
                 interestRateBps: 500,
-                collateralAsset: address(mockWETH),
+                collateralAsset: address(mockWeth),
                 collateralAmount: 180 ether,
                 durationDays: 30,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
                 creatorRiskAndTermsConsent: true,
-                prepayAsset: address(mockUSDC),
+                prepayAsset: address(mockUsdc),
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
@@ -550,30 +550,30 @@ contract WorkflowComplianceAndRejection is Test {
         // the retained tiered-threshold path, so flip enforcement on.
         AdminFacet(address(diamond)).setKYCEnforcement(true);
         address noKycUser = makeAddr("noKycUser2");
-        mockUSDC.mint(noKycUser, 100000 ether);
-        vm.prank(noKycUser); ERC20(address(mockUSDC)).approve(address(diamond), type(uint256).max);
+        mockUsdc.mint(noKycUser, 100000 ether);
+        vm.prank(noKycUser); ERC20(address(mockUsdc)).approve(address(diamond), type(uint256).max);
         vm.prank(noKycUser); ProfileFacet(address(diamond)).setUserCountry("US");
         // Tier0 is default
 
         address noKycVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(noKycUser);
-        vm.prank(noKycUser); ERC20(address(mockUSDC)).approve(noKycVault, type(uint256).max);
+        vm.prank(noKycUser); ERC20(address(mockUsdc)).approve(noKycVault, type(uint256).max);
 
         // Create a large offer: 10000 USDC (= $10000 at $1 price, requires Tier2)
         vm.prank(lender);
         uint256 largeOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
-                lendingAsset: address(mockUSDC),
+                lendingAsset: address(mockUsdc),
                 amount: 10000 ether,
                 interestRateBps: 500,
-                collateralAsset: address(mockWETH),
+                collateralAsset: address(mockWeth),
                 collateralAmount: 18000 ether,
                 durationDays: 30,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
                 creatorRiskAndTermsConsent: true,
-                prepayAsset: address(mockUSDC),
+                prepayAsset: address(mockUsdc),
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
@@ -604,17 +604,17 @@ contract WorkflowComplianceAndRejection is Test {
         uint256 buyOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
-                lendingAsset: address(mockUSDC),
+                lendingAsset: address(mockUsdc),
                 amount: PRINCIPAL,
                 interestRateBps: 500,
-                collateralAsset: address(mockWETH),
+                collateralAsset: address(mockWeth),
                 collateralAmount: COLLATERAL,
                 durationDays: 30,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
                 creatorRiskAndTermsConsent: true,
-                prepayAsset: address(mockUSDC),
+                prepayAsset: address(mockUsdc),
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
@@ -649,17 +649,17 @@ contract WorkflowComplianceAndRejection is Test {
         uint256 refiOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
-                lendingAsset: address(mockUSDC),
+                lendingAsset: address(mockUsdc),
                 amount: PRINCIPAL,
                 interestRateBps: 400,
-                collateralAsset: address(mockWETH),
+                collateralAsset: address(mockWeth),
                 collateralAmount: COLLATERAL,
                 durationDays: 30,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
                 creatorRiskAndTermsConsent: true,
-                prepayAsset: address(mockUSDC),
+                prepayAsset: address(mockUsdc),
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
@@ -770,11 +770,11 @@ contract WorkflowComplianceAndRejection is Test {
         vm.clearMockedCalls();
 
         // Re-mock oracle calls needed for getOrCreateUserVault (it may check liquidity/price)
-        mockLiquidity(address(mockUSDC), LibVaipakam.LiquidityStatus.Liquid);
-        mockPrice(address(mockUSDC), 1e8, 8);
-        mockLiquidity(address(mockWETH), LibVaipakam.LiquidityStatus.Liquid);
-        mockPrice(address(mockWETH), 1e8, 8);
-        mockLiquidity(address(mockNFT), LibVaipakam.LiquidityStatus.Illiquid);
+        mockLiquidity(address(mockUsdc), LibVaipakam.LiquidityStatus.Liquid);
+        mockPrice(address(mockUsdc), 1e8, 8);
+        mockLiquidity(address(mockWeth), LibVaipakam.LiquidityStatus.Liquid);
+        mockPrice(address(mockWeth), 1e8, 8);
+        mockLiquidity(address(mockNft), LibVaipakam.LiquidityStatus.Illiquid);
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),

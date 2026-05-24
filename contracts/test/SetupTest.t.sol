@@ -127,7 +127,7 @@ contract SetupTest is Test {
     address mockERC20; // Liquid asset
     address mockCollateralERC20; // Second liquid asset (collateral leg — distinct from lending leg)
     address mockIlliquidERC20; // Illiquid asset
-    address mockNFT721; // Rentable NFT
+    address mockNft721; // Rentable NFT
     address mockZeroExProxy;
     uint256 constant KYC_THRESHOLD_USD = 2000 * 1e18;
     uint256 constant BASIS_POINTS = 10000;
@@ -236,7 +236,7 @@ contract SetupTest is Test {
         mockERC20 = address(new ERC20Mock("MockLiquid", "MLQ", 18));
         mockCollateralERC20 = address(new ERC20Mock("MockCollateral", "MCK", 18));
         mockIlliquidERC20 = address(new ERC20Mock("MockIlliquid", "MIL", 18));
-        mockNFT721 = address(new MockRentableNFT721());
+        mockNft721 = address(new MockRentableNFT721());
         mockZeroExProxy = address(new ZeroExProxyMock());
         address allowanceTarget = mockZeroExProxy; //makeAddr("allowanceTarget"); // Mock for tests
         console.log("mockZeroExProxy: ", mockZeroExProxy);
@@ -248,7 +248,7 @@ contract SetupTest is Test {
         ERC20Mock(mockCollateralERC20).mint(borrower, 100000 ether);
         // ERC20Mock(mockIlliquidERC20).mint(lender, 100000 ether);
         ERC20Mock(mockIlliquidERC20).mint(borrower, 100000 ether);
-        MockRentableNFT721(mockNFT721).mint(lender, 1);
+        MockRentableNFT721(mockNft721).mint(lender, 1);
 
         // Mint output tokens to mock (e.g., principalAsset)
         ERC20Mock(mockERC20).mint(address(mockZeroExProxy), 1000000 ether); // Enough for proceeds
@@ -598,12 +598,12 @@ contract SetupTest is Test {
         vm.prank(borrower);
         ERC20(mockIlliquidERC20).approve(address(diamond), type(uint256).max);
         vm.prank(lender);
-        MockRentableNFT721(mockNFT721).approve(address(diamond), 1);
+        MockRentableNFT721(mockNft721).approve(address(diamond), 1);
 
         // Mock Oracle: Liquid for ERC20, Illiquid for NFT
         mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
         mockOracleLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Liquid);
-        mockOracleLiquidity(mockNFT721, LibVaipakam.LiquidityStatus.Illiquid);
+        mockOracleLiquidity(mockNft721, LibVaipakam.LiquidityStatus.Illiquid);
         mockOracleLiquidity(
             mockIlliquidERC20,
             LibVaipakam.LiquidityStatus.Illiquid
@@ -720,7 +720,7 @@ contract SetupTest is Test {
             address(diamond),
             abi.encodeWithSelector(
                 OracleFacet.checkLiquidity.selector,
-                mockNFT721
+                mockNft721
             ),
             abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
         );
@@ -728,7 +728,7 @@ contract SetupTest is Test {
             address(diamond),
             abi.encodeWithSelector(
                 OracleFacet.checkLiquidityOnActiveNetwork.selector,
-                mockNFT721
+                mockNft721
             ),
             abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
         );
@@ -797,7 +797,7 @@ contract SetupTest is Test {
             type(uint256).max
         );
         vm.prank(lender);
-        IERC721(mockNFT721).setApprovalForAll(
+        IERC721(mockNft721).setApprovalForAll(
             VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender),
             true
         );

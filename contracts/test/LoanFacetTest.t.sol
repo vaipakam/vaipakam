@@ -66,7 +66,7 @@ contract LoanFacetTest is Test {
     address mockCollateralERC20; // Second liquid asset (collateral leg)
     address mockIlliquidERC20; // Illiquid asset
     address mockIlliquidCollateralERC20; // Second illiquid asset for collateral leg (SelfCollateralizedOffer invariant)
-    address mockNFT721; // Rentable NFT
+    address mockNft721; // Rentable NFT
     uint256 constant KYC_THRESHOLD_USD = 2000 * 1e18;
     uint256 constant BASIS_POINTS = 10000;
     uint256 constant RENTAL_BUFFER_BPS = 500;
@@ -125,7 +125,7 @@ contract LoanFacetTest is Test {
         mockCollateralERC20 = address(new ERC20Mock("MockCollateral", "MCK", 18));
         mockIlliquidERC20 = address(new ERC20Mock("MockIlliquid", "MIL", 18));
         mockIlliquidCollateralERC20 = address(new ERC20Mock("MockIlliquidCol", "MIC", 18));
-        mockNFT721 = address(new MockRentableNFT721());
+        mockNft721 = address(new MockRentableNFT721());
 
         // Mint some assets
         ERC20Mock(mockERC20).mint(lender, 10000 ether);
@@ -136,7 +136,7 @@ contract LoanFacetTest is Test {
         ERC20Mock(mockIlliquidERC20).mint(borrower, 10000 ether);
         ERC20Mock(mockIlliquidCollateralERC20).mint(lender, 10000 ether);
         ERC20Mock(mockIlliquidCollateralERC20).mint(borrower, 10000 ether);
-        MockRentableNFT721(mockNFT721).mint(lender, 1);
+        MockRentableNFT721(mockNft721).mint(lender, 1);
 
         // Deploy facets
         cutFacet = new DiamondCutFacet();
@@ -252,7 +252,7 @@ contract LoanFacetTest is Test {
         vm.prank(borrower);
         ERC20(mockIlliquidCollateralERC20).approve(address(diamond), type(uint256).max);
         vm.prank(lender);
-        MockRentableNFT721(mockNFT721).approve(address(diamond), 1);
+        MockRentableNFT721(mockNft721).approve(address(diamond), 1);
 
         // Set user countries (for sanctions)
         vm.prank(lender);
@@ -295,7 +295,7 @@ contract LoanFacetTest is Test {
             address(diamond),
             abi.encodeWithSelector(
                 OracleFacet.checkLiquidity.selector,
-                mockNFT721
+                mockNft721
             ),
             abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
         );
@@ -398,7 +398,7 @@ contract LoanFacetTest is Test {
             type(uint256).max
         );
         vm.prank(lender);
-        IERC721(mockNFT721).setApprovalForAll(
+        IERC721(mockNft721).setApprovalForAll(
             VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender),
             true
         );
@@ -470,7 +470,7 @@ contract LoanFacetTest is Test {
         // // mockOraclePrice(mockERC20, 1e6, 6); // Low price to < $2k
         // // Mock Oracle: Liquid for ERC20, Illiquid for NFT
         // mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
-        // mockOracleLiquidity(mockNFT721, LibVaipakam.LiquidityStatus.Illiquid);
+        // mockOracleLiquidity(mockNft721, LibVaipakam.LiquidityStatus.Illiquid);
         // mockOraclePrice(mockERC20, 1e8, 8); // $1 price, 8 decimals
 
         vm.prank(borrower);
@@ -566,7 +566,7 @@ contract LoanFacetTest is Test {
 
     function testInitiateLoanForNFT() public {
         uint256 offerId = createOffer(
-            mockNFT721,
+            mockNft721,
             mockERC20,
             LibVaipakam.AssetType.ERC721,
             10 ether,
@@ -875,17 +875,17 @@ contract LoanFacetTest is Test {
 
         // Lender must approve the diamond to transfer their NFT
         vm.prank(lender);
-        MockRentableNFT721(mockNFT721).setApprovalForAll(address(diamond), true);
+        MockRentableNFT721(mockNft721).setApprovalForAll(address(diamond), true);
         // Also approve lender vault
         vm.prank(lender);
-        MockRentableNFT721(mockNFT721).setApprovalForAll(lenderVault, true);
+        MockRentableNFT721(mockNft721).setApprovalForAll(lenderVault, true);
 
         // Borrower creates a Borrower-type NFT offer (requesting to rent an NFT)
         vm.prank(borrower);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
-                lendingAsset: mockNFT721,
+                lendingAsset: mockNft721,
                 amount: 10 ether, // daily rental fee
                 interestRateBps: 500,
                 collateralAsset: mockERC20,

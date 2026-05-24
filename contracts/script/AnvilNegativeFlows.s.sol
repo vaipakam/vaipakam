@@ -140,9 +140,9 @@ contract AnvilNegativeFlows is Script {
         MockChainlinkRegistry registry = new MockChainlinkRegistry();
         MockChainlinkFeed usdcFeed = new MockChainlinkFeed(1e8, 8);
         MockChainlinkFeed wethFeed = new MockChainlinkFeed(2000e8, 8);
-        address USD_DENOM = 0x0000000000000000000000000000000000000348;
-        registry.setFeed(address(usdc), USD_DENOM, address(usdcFeed));
-        registry.setFeed(address(weth), USD_DENOM, address(wethFeed));
+        address usdDenom = 0x0000000000000000000000000000000000000348;
+        registry.setFeed(address(usdc), usdDenom, address(usdcFeed));
+        registry.setFeed(address(weth), usdDenom, address(wethFeed));
 
         MockUniswapV3Factory univ3 = new MockUniswapV3Factory();
         univ3.createPool(
@@ -156,7 +156,7 @@ contract AnvilNegativeFlows is Script {
 
         vm.startBroadcast(adminKey);
         OracleAdminFacet(diamond).setChainlinkRegistry(address(registry));
-        OracleAdminFacet(diamond).setUsdChainlinkDenominator(USD_DENOM);
+        OracleAdminFacet(diamond).setUsdChainlinkDenominator(usdDenom);
         OracleAdminFacet(diamond).setWethContract(address(weth));
         OracleAdminFacet(diamond).setEthUsdFeed(address(wethFeed));
         OracleAdminFacet(diamond).setUniswapV3Factory(address(univ3));

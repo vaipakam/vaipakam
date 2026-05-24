@@ -360,7 +360,7 @@ someone's spam folder" patterns.
      `reclaimTimedOutBuy` after the refund window (default 15 min);
      the pause doesn't block reclaim.
    - Pool lock balance on Base (`LockReleaseTokenPool`) is
-     ultimately L1-recoverable via a timelock-governed admin call
+     ultimately l1-recoverable via a timelock-governed admin call
      if the mesh is fully compromised.
 6. Post-mortem within 72h. Public.
 

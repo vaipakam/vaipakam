@@ -33,15 +33,15 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
  * @title Scenario4_IlliquidCollateral
  * @notice Tests illiquid collateral default flow: both parties consent to illiquid,
  *         loan defaults past grace period, full collateral transfers to lender.
- *         Uses mockUSDC (lending, Liquid) and mockILLIQUID (collateral, Illiquid).
+ *         Uses mockUsdc (lending, Liquid) and mockIlliquid (collateral, Illiquid).
  */
 contract Scenario4_IlliquidCollateral is Test {
     VaipakamDiamond diamond;
     address owner;
     address lender;
     address borrower;
-    address mockUSDC;     // Lending asset (Liquid)
-    address mockILLIQUID; // Collateral asset (Illiquid)
+    address mockUsdc;     // Lending asset (Liquid)
+    address mockIlliquid; // Collateral asset (Illiquid)
 
     DiamondCutFacet cutFacet;
     OfferCreateFacet offerCreateFacet;
@@ -80,13 +80,13 @@ contract Scenario4_IlliquidCollateral is Test {
         borrower = makeAddr("borrower");
 
         // Deploy two ERC20 tokens
-        mockUSDC     = address(new ERC20Mock("MockUSDC", "USDC", 18));
-        mockILLIQUID = address(new ERC20Mock("MockIlliquid", "ILLQ", 18));
+        mockUsdc     = address(new ERC20Mock("MockUSDC", "USDC", 18));
+        mockIlliquid = address(new ERC20Mock("MockIlliquid", "ILLQ", 18));
 
         // Mint tokens
-        ERC20Mock(mockUSDC).mint(lender,   100000 ether);
-        ERC20Mock(mockUSDC).mint(borrower, 100000 ether);
-        ERC20Mock(mockILLIQUID).mint(borrower, 100000 ether);
+        ERC20Mock(mockUsdc).mint(lender,   100000 ether);
+        ERC20Mock(mockUsdc).mint(borrower, 100000 ether);
+        ERC20Mock(mockIlliquid).mint(borrower, 100000 ether);
 
         // Deploy facets
         cutFacet          = new DiamondCutFacet();
@@ -142,9 +142,9 @@ contract Scenario4_IlliquidCollateral is Test {
         AdminFacet(address(diamond)).setallowanceTarget(makeAddr("zeroEx"));
 
         // Token approvals to diamond
-        vm.prank(lender);   ERC20(mockUSDC).approve(address(diamond), type(uint256).max);
-        vm.prank(borrower); ERC20(mockUSDC).approve(address(diamond), type(uint256).max);
-        vm.prank(borrower); ERC20(mockILLIQUID).approve(address(diamond), type(uint256).max);
+        vm.prank(lender);   ERC20(mockUsdc).approve(address(diamond), type(uint256).max);
+        vm.prank(borrower); ERC20(mockUsdc).approve(address(diamond), type(uint256).max);
+        vm.prank(borrower); ERC20(mockIlliquid).approve(address(diamond), type(uint256).max);
 
         // Country and KYC setup
         vm.prank(owner);
@@ -158,17 +158,17 @@ contract Scenario4_IlliquidCollateral is Test {
 
         // Risk params
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockUSDC, 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockUsdc, 8000, 300, 1000);
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockILLIQUID, 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockIlliquid, 8000, 300, 1000);
 
         // Mock oracle: USDC = Liquid, ILLIQUID = Illiquid
         // During offer creation we need both to be illiquid to avoid MixedCollateralNotAllowed.
         // We set them correctly per-test.
-        mockLiquidity(mockUSDC,     LibVaipakam.LiquidityStatus.Illiquid);
-        mockLiquidity(mockILLIQUID, LibVaipakam.LiquidityStatus.Illiquid);
-        mockPrice(mockUSDC, 1e8, 8);
-        mockPrice(mockILLIQUID, 1e8, 8);
+        mockLiquidity(mockUsdc,     LibVaipakam.LiquidityStatus.Illiquid);
+        mockLiquidity(mockIlliquid, LibVaipakam.LiquidityStatus.Illiquid);
+        mockPrice(mockUsdc, 1e8, 8);
+        mockPrice(mockIlliquid, 1e8, 8);
 
         // Mock HF and LTV for loan initiation
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(uint256(2e18)));
@@ -178,9 +178,9 @@ contract Scenario4_IlliquidCollateral is Test {
         address lenderVault   = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
         address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
 
-        vm.prank(lender);   ERC20(mockUSDC).approve(lenderVault, type(uint256).max);
-        vm.prank(borrower); ERC20(mockUSDC).approve(borrowerVault, type(uint256).max);
-        vm.prank(borrower); ERC20(mockILLIQUID).approve(borrowerVault, type(uint256).max);
+        vm.prank(lender);   ERC20(mockUsdc).approve(lenderVault, type(uint256).max);
+        vm.prank(borrower); ERC20(mockUsdc).approve(borrowerVault, type(uint256).max);
+        vm.prank(borrower); ERC20(mockIlliquid).approve(borrowerVault, type(uint256).max);
     }
 
     // ─── Scenario 4a: Illiquid Collateral Default — Full Transfer to Lender ───
@@ -192,17 +192,17 @@ contract Scenario4_IlliquidCollateral is Test {
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
-                lendingAsset: mockUSDC,
+                lendingAsset: mockUsdc,
                 amount: PRINCIPAL,
                 interestRateBps: RATE_BPS,
-                collateralAsset: mockILLIQUID,
+                collateralAsset: mockIlliquid,
                 collateralAmount: COLLATERAL,
                 durationDays: DURATION,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
                 creatorRiskAndTermsConsent: true,
-                prepayAsset: mockUSDC,
+                prepayAsset: mockUsdc,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
@@ -226,12 +226,12 @@ contract Scenario4_IlliquidCollateral is Test {
         assertTrue(loan.riskAndTermsConsentFromBoth, "Both parties should have consented to illiquid");
         assertEq(loan.principal, PRINCIPAL);
         assertEq(loan.collateralAmount, COLLATERAL);
-        assertEq(loan.collateralAsset, mockILLIQUID);
+        assertEq(loan.collateralAsset, mockIlliquid);
 
         // Restore USDC to liquid after loan creation (for oracle checks during default)
-        mockLiquidity(mockUSDC, LibVaipakam.LiquidityStatus.Liquid);
+        mockLiquidity(mockUsdc, LibVaipakam.LiquidityStatus.Liquid);
         // Keep ILLIQUID as illiquid
-        mockLiquidity(mockILLIQUID, LibVaipakam.LiquidityStatus.Illiquid);
+        mockLiquidity(mockIlliquid, LibVaipakam.LiquidityStatus.Illiquid);
 
         // Step 3: Warp past maturity + grace period
         uint256 endTime = block.timestamp + 30 days;
@@ -253,7 +253,7 @@ contract Scenario4_IlliquidCollateral is Test {
         // Step 6: Verify lender claimable = full collateral
         (address claimAsset, uint256 lenderClaimAmount, bool claimed) =
             ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
-        assertEq(claimAsset, mockILLIQUID, "Lender claim asset should be illiquid collateral");
+        assertEq(claimAsset, mockIlliquid, "Lender claim asset should be illiquid collateral");
         assertEq(lenderClaimAmount, COLLATERAL, "Lender should claim full collateral amount");
         assertFalse(claimed, "Lender should not have claimed yet");
 
@@ -262,18 +262,18 @@ contract Scenario4_IlliquidCollateral is Test {
         assertEq(borrowerClaimAmount, 0, "Borrower should have no claim after illiquid default");
 
         // Step 8: Lender claims the collateral
-        uint256 lenderILLQBefore = IERC20(mockILLIQUID).balanceOf(lender);
+        uint256 lenderIllqBefore = IERC20(mockIlliquid).balanceOf(lender);
 
         vm.prank(lender);
         vm.expectEmit(true, true, false, true);
         // Illiquid default: borrower had nothing to claim (claimed=true at default time),
         // so newBothClaimed=true the moment lender claims → loan settles + NFT burns.
-        emit ClaimFacet.LenderFundsClaimed(loanId, lender, mockILLIQUID, COLLATERAL, /* newBothClaimed */ true);
+        emit ClaimFacet.LenderFundsClaimed(loanId, lender, mockIlliquid, COLLATERAL, /* newBothClaimed */ true);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
 
         // Verify lender received the collateral
-        uint256 lenderILLQAfter = IERC20(mockILLIQUID).balanceOf(lender);
-        assertEq(lenderILLQAfter - lenderILLQBefore, COLLATERAL, "Lender should receive full collateral");
+        uint256 lenderIllqAfter = IERC20(mockIlliquid).balanceOf(lender);
+        assertEq(lenderIllqAfter - lenderIllqBefore, COLLATERAL, "Lender should receive full collateral");
 
         // Verify claim is marked as done
         (,, bool lenderClaimed) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);

@@ -96,7 +96,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     error InvalidLoan();
     error ZeroCollateral();
     error HealthFactorNotLow();
-    /// @notice L2 sequencer is offline or still in its 1h recovery grace
+    /// @notice l2 sequencer is offline or still in its 1h recovery grace
     ///         window; HF-based liquidation is blocked to avoid swapping
     ///         against stale Chainlink / AMM state.
     error SequencerUnhealthy();
@@ -479,7 +479,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active) revert InvalidLoan();
 
-        // L2 circuit breaker: block HF-based liquidation when the sequencer
+        // l2 circuit breaker: block HF-based liquidation when the sequencer
         // is down or still in the 1h grace window. Chainlink prices and
         // AMM pools may be stale under those conditions, so a swap here
         // would execute against mispriced state and either cross heavy
@@ -1296,7 +1296,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
      *         - Master kill-switch (`discountPathEnabled`). Default
      *           false; flipped on per chain by ADMIN_ROLE /
      *           TimelockController after audit sign-off.
-     *         - L2 sequencer circuit-breaker.
+     *         - l2 sequencer circuit-breaker.
      *         - HF < 1e18.
      *
      *         Settlement math (oracle-priced, both legs required):
@@ -1392,7 +1392,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active) revert InvalidLoan();
 
-        // L2 circuit-breaker — same as atomic path. While the
+        // l2 circuit-breaker — same as atomic path. While the
         // sequencer is unhealthy, oracle reads may be stale and the
         // discount-priced seizure could mis-price.
         if (!OracleFacet(address(this)).sequencerHealthy()) {
@@ -1837,7 +1837,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     ///      calculateHealthFactor, and isCollateralValueCollapsed — the latter
     ///      previously re-ran the full fetch twice (once per view) for ~6-9k
     ///      of duplicated oracle/staticcall overhead. Numeraire-quoted prices
-    ///      come from `OracleFacet.getAssetPrice` (Numeraire generalization (B1)).
+    ///      come from `OracleFacet.getAssetPrice` (Numeraire generalization (b1)).
     function _computeNumeraireValues(
         LibVaipakam.Loan storage loan
     ) internal view returns (uint256 borrowValueNumeraire, uint256 collateralValueNumeraire) {

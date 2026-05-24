@@ -293,8 +293,8 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
 
         // Net settlement: lender receives `principal - liamCost` directly —
         // accrued is netted out of Noah's principal rather than pulled from
-        // Liam.  vaultWithdrawERC20 is mocked, so the diamond needs tokens
-        // to pay Liam; that funding happens in the test helper. Here we just
+        // liam.  vaultWithdrawERC20 is mocked, so the diamond needs tokens
+        // to pay liam; that funding happens in the test helper. Here we just
         // assert balance strictly INCREASED by roughly principal - accrued.
         uint256 lenderBalAfter = ERC20(mockERC20).balanceOf(lender);
         assertGt(lenderBalAfter, lenderBalBefore, "Lender should have received net principal");

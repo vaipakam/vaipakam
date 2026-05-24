@@ -22,7 +22,7 @@ import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
  *        Phase 1 (default): the stored `notificationFee` is in the
  *          active numeraire (USD by post-deploy default; whatever
  *          governance rotated to). `OracleFacet.getAssetPrice(WETH)`
- *          returns ETH/numeraire post-B1. Multiplied by the fixed
+ *          returns ETH/numeraire post-b1. Multiplied by the fixed
  *          peg `VPFI_PER_ETH_FIXED_PHASE1 = 1e15` (1 VPFI = 0.001
  *          ETH, both 18-dec — peg is unit-agnostic, describes the
  *          VPFI-to-ETH ratio), this yields a synthetic VPFI/numeraire
@@ -66,7 +66,7 @@ library LibNotificationFee {
     ///         `cfgNotificationFee()` at the current price feeds,
     ///         anchored to ETH/numeraire.
     /// @dev    Anchor: the active numeraire (USD by post-deploy
-    ///         default, governance-rotatable). After B1,
+    ///         default, governance-rotatable). After b1,
     ///         `OracleFacet.getAssetPrice(WETH)` returns the
     ///         numeraire-quoted ETH price natively — governance
     ///         repoints `s.ethNumeraireFeed` at a Chainlink

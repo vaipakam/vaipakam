@@ -93,7 +93,7 @@ contract RiskFacetTest is Test {
     address mockERC20; // Liquid asset
     address mockCollateralERC20; // Second liquid asset (collateral leg)
     address mockIlliquidERC20; // Illiquid asset
-    address mockNFT721; // Rentable NFT
+    address mockNft721; // Rentable NFT
     address mockZeroExProxy;
     uint256 constant KYC_THRESHOLD_USD = 2000 * 1e18;
     uint256 constant BASIS_POINTS = 10000;
@@ -195,7 +195,7 @@ contract RiskFacetTest is Test {
             new ERC20Mock("MockCollateral", "MCK", 18)
         );
         mockIlliquidERC20 = address(new ERC20Mock("MockIlliquid", "MIL", 18));
-        mockNFT721 = address(new MockRentableNFT721());
+        mockNft721 = address(new MockRentableNFT721());
         mockZeroExProxy = address(new ZeroExProxyMock());
         address allowanceTarget = mockZeroExProxy;
         console.log("mockZeroExProxy: ", mockZeroExProxy);
@@ -207,7 +207,7 @@ contract RiskFacetTest is Test {
         ERC20Mock(mockCollateralERC20).mint(borrower, 100000 ether);
         // ERC20Mock(mockIlliquidERC20).mint(lender, 100000 ether);
         ERC20Mock(mockIlliquidERC20).mint(borrower, 100000 ether);
-        MockRentableNFT721(mockNFT721).mint(lender, 1);
+        MockRentableNFT721(mockNft721).mint(lender, 1);
 
         // Mint output tokens to mock (e.g., principalAsset)
         ERC20Mock(mockERC20).mint(address(mockZeroExProxy), 1000000 ether); // Enough for proceeds
@@ -363,7 +363,7 @@ contract RiskFacetTest is Test {
         vm.prank(borrower);
         ERC20(mockIlliquidERC20).approve(address(diamond), type(uint256).max);
         vm.prank(lender);
-        MockRentableNFT721(mockNFT721).approve(address(diamond), 1);
+        MockRentableNFT721(mockNft721).approve(address(diamond), 1);
 
         // Mock Oracle: Liquid for ERC20, Illiquid for NFT
         mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
@@ -371,7 +371,7 @@ contract RiskFacetTest is Test {
             mockCollateralERC20,
             LibVaipakam.LiquidityStatus.Liquid
         );
-        mockOracleLiquidity(mockNFT721, LibVaipakam.LiquidityStatus.Illiquid);
+        mockOracleLiquidity(mockNft721, LibVaipakam.LiquidityStatus.Illiquid);
         mockOracleLiquidity(
             mockIlliquidERC20,
             LibVaipakam.LiquidityStatus.Illiquid
@@ -495,7 +495,7 @@ contract RiskFacetTest is Test {
             address(diamond),
             abi.encodeWithSelector(
                 OracleFacet.checkLiquidity.selector,
-                mockNFT721
+                mockNft721
             ),
             abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
         );
@@ -503,7 +503,7 @@ contract RiskFacetTest is Test {
             address(diamond),
             abi.encodeWithSelector(
                 OracleFacet.checkLiquidityOnActiveNetwork.selector,
-                mockNFT721
+                mockNft721
             ),
             abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
         );
@@ -572,7 +572,7 @@ contract RiskFacetTest is Test {
             type(uint256).max
         );
         vm.prank(lender);
-        IERC721(mockNFT721).setApprovalForAll(
+        IERC721(mockNft721).setApprovalForAll(
             VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender),
             true
         );
@@ -1631,11 +1631,11 @@ contract RiskFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev Tests calculateHealthFactor returns type(uint256).max when borrowValueUSD is 0.
+    /// @dev Tests calculateHealthFactor returns type(uint256).max when borrowValueUsd is 0.
     function testCalculateHealthFactorReturnsMaxWhenBorrowZero() public {
         uint256 loanId = createAndAcceptOffer();
 
-        // Mock borrow price to $0 → borrowValueUSD = 0 → should return type(uint256).max
+        // Mock borrow price to $0 → borrowValueUsd = 0 → should return type(uint256).max
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(
@@ -1645,11 +1645,11 @@ contract RiskFacetTest is Test {
             abi.encode(0, 8)
         );
 
-        // With price=0 for both principal and collateral: borrowValueUSD=0 but also collateralValueUSD=0.
+        // With price=0 for both principal and collateral: borrowValueUsd=0 but also collateralValueUsd=0.
         // Need to mock differently: principal at $0 but collateral at $1.
         // Since both use mockERC20, we need a second mock token for collateral.
         // Actually, both assets are mockERC20 (same address). We can't differentiate with vm.mockCall.
-        // Instead, use vm.store to set principal to 0 so currentBorrowBalance=0 → borrowValueUSD=0.
+        // Instead, use vm.store to set principal to 0 so currentBorrowBalance=0 → borrowValueUsd=0.
         vm.clearMockedCalls();
         // Re-mock oracle prices normally for both principal and collateral
         mockOraclePrice(mockERC20, 1e8, 8);
@@ -1750,7 +1750,7 @@ contract RiskFacetTest is Test {
         TestMutatorFacet(address(diamond)).setLiquidationLtvBpsAtInitRaw(loanId, 8500);
     }
 
-    /// @dev Tests calculateLTV when collateral price = 0 → collateralValueUSD = 0 → ZeroCollateral revert.
+    /// @dev Tests calculateLTV when collateral price = 0 → collateralValueUsd = 0 → ZeroCollateral revert.
     ///      This is already tested but we test it with a different setup to also cover the
     ///      path where principal price is nonzero but collateral price is 0.
     function testCalculateLTVZeroCollateralPriceWithDifferentAssets() public {
@@ -2618,12 +2618,12 @@ contract RiskFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev Tests calculateHealthFactor returns type(uint256).max when borrowValueUSD == 0.
-    ///      This exercises the `if (borrowValueUSD == 0) return type(uint256).max` branch.
+    /// @dev Tests calculateHealthFactor returns type(uint256).max when borrowValueUsd == 0.
+    ///      This exercises the `if (borrowValueUsd == 0) return type(uint256).max` branch.
     function testCalculateHealthFactorBorrowValueZero() public {
         uint256 loanId = createAndAcceptOffer();
 
-        // Mock collateral price to 0 → collateralValueUSD = 0 → ZeroCollateral revert
+        // Mock collateral price to 0 → collateralValueUsd = 0 → ZeroCollateral revert
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(
@@ -3374,7 +3374,7 @@ contract RiskFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev L2 sequencer circuit-breaker gates the partial path the same
+    /// @dev l2 sequencer circuit-breaker gates the partial path the same
     ///      way it gates the full triggerLiquidation. While the sequencer
     ///      is unhealthy (down OR still inside its 1h recovery grace),
     ///      Chainlink prices + AMM state can be stale → a swap could
@@ -3549,7 +3549,7 @@ contract RiskFacetTest is Test {
     }
 
     /// @dev Sequencer down → reuse the atomic path's
-    ///      `SequencerUnhealthy` revert. Same L2 circuit-breaker.
+    ///      `SequencerUnhealthy` revert. Same l2 circuit-breaker.
     function testTriggerLiquidationDiscounted_RevertsSequencerUnhealthy() public {
         uint256 loanId = createAndAcceptOffer();
         TestMutatorFacet(address(diamond)).setDiscountPathEnabledRaw(true);

@@ -190,22 +190,22 @@ contract InteractionHandler is Test {
     function seedLender(
         uint256 actorSeed,
         uint256 daySeed,
-        uint256 userUSD,
-        uint256 totalUSD
+        uint256 userUsd,
+        uint256 totalUsd
     ) external {
         address user = actors[actorSeed % 3];
         (uint256 today, bool active) = InteractionRewardsFacet(diamond)
             .getInteractionCurrentDay();
         if (!active) return;
         uint256 d = daySeed % (today + 1);
-        userUSD = bound(userUSD, 1e18, 1_000e18);
-        totalUSD = bound(totalUSD, userUSD, userUSD * 4);
+        userUsd = bound(userUsd, 1e18, 1_000e18);
+        totalUsd = bound(totalUsd, userUsd, userUsd * 4);
 
         try TestMutatorFacet(diamond).setDailyLenderInterest(
             d,
             user,
-            userUSD,
-            totalUSD
+            userUsd,
+            totalUsd
         ) {
             seeds++;
         } catch {}
@@ -214,22 +214,22 @@ contract InteractionHandler is Test {
     function seedBorrower(
         uint256 actorSeed,
         uint256 daySeed,
-        uint256 userUSD,
-        uint256 totalUSD
+        uint256 userUsd,
+        uint256 totalUsd
     ) external {
         address user = actors[actorSeed % 3];
         (uint256 today, bool active) = InteractionRewardsFacet(diamond)
             .getInteractionCurrentDay();
         if (!active) return;
         uint256 d = daySeed % (today + 1);
-        userUSD = bound(userUSD, 1e18, 1_000e18);
-        totalUSD = bound(totalUSD, userUSD, userUSD * 4);
+        userUsd = bound(userUsd, 1e18, 1_000e18);
+        totalUsd = bound(totalUsd, userUsd, userUsd * 4);
 
         try TestMutatorFacet(diamond).setDailyBorrowerInterest(
             d,
             user,
-            userUSD,
-            totalUSD
+            userUsd,
+            totalUsd
         ) {
             seeds++;
         } catch {}

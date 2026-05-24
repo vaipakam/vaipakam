@@ -109,7 +109,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
      *         an empty string to clear the override and fall back to
      *         the per-side default image. Lookup chain consumed by
      *         `tokenURI`:
-     *           1. statusImageURIs[status][isLender]
+     *           1. statusImageUris[status][isLender]
      *           2. defaultLenderImage / defaultBorrowerImage
      *           3. contractImageURI
      *           4. empty string
@@ -122,7 +122,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
         bool isLender,
         string calldata uri
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
-        LibERC721._storage().statusImageURIs[status][isLender] = uri;
+        LibERC721._storage().statusImageUris[status][isLender] = uri;
         emit StatusImageURIUpdated(status, isLender, uri);
     }
 
@@ -168,7 +168,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
         bool isLender
     ) internal view returns (string memory) {
         LibERC721.ERC721Storage storage es = LibERC721._storage();
-        string memory specific = es.statusImageURIs[status][isLender];
+        string memory specific = es.statusImageUris[status][isLender];
         if (bytes(specific).length > 0) return specific;
         string memory sideDefault = isLender
             ? es.defaultLenderImage

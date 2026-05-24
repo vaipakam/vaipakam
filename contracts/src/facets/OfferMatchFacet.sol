@@ -386,10 +386,10 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         //     residual collateral to the borrower's wallet and flip
         //     `accepted = true`. Mirrors the lender-side dust-close
         //     condition exactly.
-        LibVaipakam.Offer storage Bm = s.offers[borrowerOfferId];
-        if (s.protocolCfg.partialFillEnabled && !Bm.accepted) {
-            Bm.amountFilled += mr.matchAmount;
-            Bm.collateralAmountFilled += mr.reqCollateral;
+        LibVaipakam.Offer storage bm = s.offers[borrowerOfferId];
+        if (s.protocolCfg.partialFillEnabled && !bm.accepted) {
+            bm.amountFilled += mr.matchAmount;
+            bm.collateralAmountFilled += mr.reqCollateral;
             // #183 (Canonical Limit-Order Phase 2): direct storage read
             // for the borrower's effective ceiling. The GTC derivation
             // (`amountMax == 0 → derive from collateralAmountMax ×
@@ -398,29 +398,29 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             // Frontend computes the value at create-time and ships
             // explicit non-zero; see
             // `docs/DesignsAndPlans/CanonicalLimitOrderPhase2Design.md` §5.
-            uint256 effBorrowerAmountMax = Bm.amountMax;
-            uint256 borrowerRemaining = effBorrowerAmountMax - Bm.amountFilled;
-            if (borrowerRemaining < Bm.amount) {
+            uint256 effBorrowerAmountMax = bm.amountMax;
+            uint256 borrowerRemaining = effBorrowerAmountMax - bm.amountFilled;
+            if (borrowerRemaining < bm.amount) {
                 // Dust-close: refund residual collateral and flip accepted.
-                if (Bm.collateralAssetType == LibVaipakam.AssetType.ERC20) {
-                    uint256 borrowerCollPulled = Bm.collateralAmountMax == 0
-                        ? Bm.collateralAmount
-                        : Bm.collateralAmountMax;
-                    if (borrowerCollPulled > Bm.collateralAmountFilled) {
-                        uint256 collRefund = borrowerCollPulled - Bm.collateralAmountFilled;
+                if (bm.collateralAssetType == LibVaipakam.AssetType.ERC20) {
+                    uint256 borrowerCollPulled = bm.collateralAmountMax == 0
+                        ? bm.collateralAmount
+                        : bm.collateralAmountMax;
+                    if (borrowerCollPulled > bm.collateralAmountFilled) {
+                        uint256 collRefund = borrowerCollPulled - bm.collateralAmountFilled;
                         LibFacet.crossFacetCall(
                             abi.encodeWithSelector(
                                 VaultFactoryFacet.vaultWithdrawERC20.selector,
-                                Bm.creator,           // pull from borrower's vault
-                                Bm.collateralAsset,
-                                Bm.creator,           // refund to borrower's wallet
+                                bm.creator,           // pull from borrower's vault
+                                bm.collateralAsset,
+                                bm.creator,           // refund to borrower's wallet
                                 collRefund
                             ),
                             VaultWithdrawFailed.selector
                         );
                     }
                 }
-                Bm.accepted = true;
+                bm.accepted = true;
                 // Codex round-1 P1 — pair the metrics-hook fire with
                 // the accept-flip. The hook was deferred by
                 // `OfferAcceptFacet._acceptOffer` on every partial-fill
@@ -445,9 +445,9 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         //   post-match fill (= the offer's `amount` once accepted).
         // Post-#102 (partial-fill ON): `amountFilled` accumulates per
         //   match; the event reports it directly.
-        uint256 borrowerEffFilled = (s.protocolCfg.partialFillEnabled || Bm.amountFilled > 0)
-            ? Bm.amountFilled
-            : (Bm.accepted ? Bm.amount : 0);
+        uint256 borrowerEffFilled = (s.protocolCfg.partialFillEnabled || bm.amountFilled > 0)
+            ? bm.amountFilled
+            : (bm.accepted ? bm.amount : 0);
         emit OfferMatched(
             lenderOfferId,
             borrowerOfferId,
@@ -467,7 +467,7 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
                 * LibVaipakam.cfgLifMatcherFeeBps())
                 / (LibVaipakam.BASIS_POINTS * LibVaipakam.BASIS_POINTS),
             borrowerEffFilled,
-            Bm.accepted
+            bm.accepted
         );
     }
 }

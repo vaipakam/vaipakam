@@ -256,9 +256,9 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // `claim` + the already-claimed guard were resolved at the top
         // of this function; re-read nothing here.
         bool hasHeld = s.heldForLender[loanId] > 0;
-        bool hasRentalNFT = loan.assetType != LibVaipakam.AssetType.ERC20;
-        bool hasNFTCollateralClaim = claim.assetType != LibVaipakam.AssetType.ERC20;
-        if (claim.amount == 0 && !hasHeld && !hasRentalNFT && !hasNFTCollateralClaim) revert NothingToClaim();
+        bool hasRentalNft = loan.assetType != LibVaipakam.AssetType.ERC20;
+        bool hasNftCollateralClaim = claim.assetType != LibVaipakam.AssetType.ERC20;
+        if (claim.amount == 0 && !hasHeld && !hasRentalNft && !hasNftCollateralClaim) revert NothingToClaim();
 
         // Lender position-NFT ownership was already verified at the top
         // of this function (before the claim-time fallback resolution).
@@ -433,9 +433,9 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // rebate credited at proper settlement (borrowerLifRebate). Loans
         // that paid LIF in the lending asset, or defaulted/liquidated,
         // have rebateAmount == 0 and no-op that branch below.
-        bool hasNFTClaim = claim.assetType != LibVaipakam.AssetType.ERC20;
+        bool hasNftClaim = claim.assetType != LibVaipakam.AssetType.ERC20;
         uint256 lifRebate = s.borrowerLifRebate[loanId].rebateAmount;
-        if (claim.amount == 0 && !hasNFTClaim && lifRebate == 0) {
+        if (claim.amount == 0 && !hasNftClaim && lifRebate == 0) {
             revert NothingToClaim();
         }
 
@@ -524,10 +524,10 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // claimAsBorrower has run, every borrower-side payout has cleared.
         LibVaipakam.ClaimInfo storage lenderClaim = s.lenderClaims[loanId];
         bool lenderHasHeld = s.heldForLender[loanId] > 0;
-        bool lenderHasRentalNFT = loan.assetType != LibVaipakam.AssetType.ERC20;
-        bool lenderHasNFTCollateralClaim = lenderClaim.assetType != LibVaipakam.AssetType.ERC20;
+        bool lenderHasRentalNft = loan.assetType != LibVaipakam.AssetType.ERC20;
+        bool lenderHasNftCollateralClaim = lenderClaim.assetType != LibVaipakam.AssetType.ERC20;
         bool lenderFullyClaimed = lenderClaim.claimed;
-        bool lenderHasNothing = lenderClaim.amount == 0 && !lenderHasHeld && !lenderHasRentalNFT && !lenderHasNFTCollateralClaim;
+        bool lenderHasNothing = lenderClaim.amount == 0 && !lenderHasHeld && !lenderHasRentalNft && !lenderHasNftCollateralClaim;
         bool willSettle = lenderFullyClaimed || lenderHasNothing;
 
         emit BorrowerFundsClaimed(
@@ -903,7 +903,7 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     ///         those cases carry `amount == 0` but are still claimable.
     /// @dev Treat the claim as actionable when:
     ///         `!claimed && (amount > 0 || assetType != ERC20 ||
-    ///                      heldForLender > 0 || hasRentalNFTReturn)`
+    ///                      heldForLender > 0 || hasRentalNftReturn)`
     ///      — mirroring the guards in `claimAsLender` / `claimAsBorrower`.
     ///      Phase 5 adds the borrower LIF rebate; query
     ///      {getBorrowerLifRebate} for that lane.
@@ -921,7 +921,7 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             uint256 tokenId,
             uint256 quantity,
             uint256 heldForLender,
-            bool hasRentalNFTReturn
+            bool hasRentalNftReturn
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -939,7 +939,7 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // NFT-asset loans (ERC-721/1155 lent out) entitle the lender to
             // reclaim the NFT at resolution even when no fungible amount
             // was recorded against the claim struct.
-            hasRentalNFTReturn =
+            hasRentalNftReturn =
                 s.loans[loanId].assetType != LibVaipakam.AssetType.ERC20;
         }
     }

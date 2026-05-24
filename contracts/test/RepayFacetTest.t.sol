@@ -56,7 +56,7 @@ contract RepayFacetTest is Test {
     address borrower;
     address mockERC20;
     address mockCollateralERC20;
-    address mockNFT721;
+    address mockNft721;
     uint256 constant BASIS_POINTS = 10000;
     uint256 constant TREASURY_FEE_BPS = 100;
 
@@ -113,7 +113,7 @@ contract RepayFacetTest is Test {
         // Mocks
         mockERC20 = address(new ERC20Mock("MockToken", "MTK", 18));
         mockCollateralERC20 = address(new ERC20Mock("MockCollateral", "MCK", 18));
-        mockNFT721 = address(new MockRentableNFT721());
+        mockNft721 = address(new MockRentableNFT721());
 
         // Deploy facets
         cutFacet = new DiamondCutFacet();
@@ -230,9 +230,9 @@ contract RepayFacetTest is Test {
 
         // Mock NFT approval/ownership
         vm.prank(lender);
-        MockRentableNFT721(mockNFT721).mint(lender, 1);
+        MockRentableNFT721(mockNft721).mint(lender, 1);
         vm.prank(lender);
-        MockRentableNFT721(mockNFT721).approve(address(diamond), 1);
+        MockRentableNFT721(mockNft721).approve(address(diamond), 1);
 
         // Set countries
         vm.prank(lender);
@@ -253,7 +253,7 @@ contract RepayFacetTest is Test {
         // Mock Oracle: Liquid for ERC20, Illiquid for NFT
         mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
         mockOracleLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Liquid);
-        mockOracleLiquidity(mockNFT721, LibVaipakam.LiquidityStatus.Illiquid);
+        mockOracleLiquidity(mockNft721, LibVaipakam.LiquidityStatus.Illiquid);
         mockOraclePrice(mockERC20, 1e8, 8); // $1 price, 8 decimals
         mockOraclePrice(mockCollateralERC20, 1e8, 8);
 
@@ -305,7 +305,7 @@ contract RepayFacetTest is Test {
         // vm.prank(lender);
         // uint256 offerId2 = OfferCreateFacet(address(diamond)).createOffer(
         //     LibVaipakam.OfferType.Lender,
-        //     mockNFT721, // lendingAsset,
+        //     mockNft721, // lendingAsset,
         //     1000, //amount,
         //     500, // 5%
         //     mockERC20, // collateralAsset,
@@ -364,7 +364,7 @@ contract RepayFacetTest is Test {
         uint256 offerId2 = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
-                lendingAsset: mockNFT721,
+                lendingAsset: mockNft721,
                 amount: 10,
                 interestRateBps: 500,
                 collateralAsset: mockERC20,

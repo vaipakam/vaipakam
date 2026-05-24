@@ -17,7 +17,7 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 library LibEntitlement {
     /// @notice Full-term interest: `principal * rateBps * durationDays / (DAYS_PER_YEAR * BASIS_POINTS)`.
     /// @dev Used when the loan is repaid-early-but-owes-full-term (README: lender
-    ///      is made whole on duration) or at refinance when Alice owes the old
+    ///      is made whole on duration) or at refinance when alice owes the old
     ///      lender the full promised coupon.
     function fullTermInterest(
         uint256 principal,

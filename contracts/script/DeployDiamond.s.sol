@@ -459,12 +459,12 @@ contract DeployDiamond is Script {
         //   - chainSlug:   stable identifier matching the directory
         //   - lzEndpoint:  LayerZero V2 EndpointV2 for this chain
         //   - lzEid:       LayerZero V2 endpoint id
-        //   - deployBlock: L2 block in which the Diamond proxy was created
+        //   - deployBlock: l2 block in which the Diamond proxy was created
         //                  (frontend uses this as the lower-bound for
         //                  log scans — `eth_getLogs(fromBlock=deployBlock)`).
         //                  On Arbitrum chains the EVM `block.number` opcode
-        //                  returns the L1 block (sequencer-approximate),
-        //                  NOT the L2 block where the deploy actually
+        //                  returns the l1 block (sequencer-approximate),
+        //                  NOT the l2 block where the deploy actually
         //                  landed. `Deployments.writeDeployBlock()` (no
         //                  arg) reads ArbSys.arbBlockNumber() on Arb
         //                  chains and falls through to block.number

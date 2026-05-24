@@ -31,7 +31,7 @@ import {AnvilNewPartialFlows} from "./AnvilNewPartialFlows.s.sol";
  *           P-N  Loan with one partial-repay applied, principal
  *                reduced, status still Active.
  *           P-O  Loan with collateral doubled mid-flight.
- *           P-P  Keeper enabled with INIT_PRECLOSE on an active loan.
+ *           P-P  Keeper enabled with initPreclose on an active loan.
  *           P-Q  Borrower-side refinance offer posted, no acceptance.
  *           P-R  Stray ERC-20 token sitting in user vault (recovery
  *                preview state).

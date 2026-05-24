@@ -14,8 +14,8 @@ import {Deployments} from "./lib/Deployments.sol";
  * @notice Anvil-only: creates one matchable lender + borrower offer
  *         pair so the keeper-bot's `offerMatcher` detector has
  *         something to chew on. Designed to land a midpoint match
- *         that satisfies HF >= 1.5 against the mock-priced mUSDC /
- *         mWBTC pair from `DeployTestnetLiquidityMocks`.
+ *         that satisfies HF >= 1.5 against the mock-priced mUsdc /
+ *         mWbtc pair from `DeployTestnetLiquidityMocks`.
  *
  * @dev Hard-gated to `block.chainid == 31337`. Uses anvil's well-known
  *      prefunded keys (Foundry's standard mnemonic) for the lender
@@ -24,7 +24,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *        - lender = anvil account #3 (0x90F7...b906)
  *        - borrower = anvil account #4 (0x15d3...6A65)
  *
- *      The deployer (anvil #0) holds the full mUSDC/mWBTC supply
+ *      The deployer (anvil #0) holds the full mUsdc/mWbtc supply
  *      from the mocks deploy. This script transfers operating
  *      balances to lender + borrower before they create offers.
  *
@@ -42,16 +42,16 @@ import {Deployments} from "./lib/Deployments.sol";
  *      multi-bucket bot smoke tests.
  *
  *      Matching arithmetic for the seeded pair:
- *        Lender:   amountMin=500 mUSDC, amountMax=2000 mUSDC,
+ *        Lender:   amountMin=500 mUsdc, amountMax=2000 mUsdc,
  *                  rateMin=400bps, rateMax=600bps,
- *                  collateralAmount=0.2 mWBTC at amountMax (= $12k),
+ *                  collateralAmount=0.2 mWbtc at amountMax (= $12k),
  *                  durationDays=30.
- *        Borrower: amount=1000 mUSDC (single-fill in Phase 1),
+ *        Borrower: amount=1000 mUsdc (single-fill in Phase 1),
  *                  rate=450-550bps,
- *                  collateralAmount=0.15 mWBTC (= $9k),
+ *                  collateralAmount=0.15 mWbtc (= $9k),
  *                  durationDays=30.
- *        Midpoint: matchAmount=1000 mUSDC, matchRateBps=500,
- *                  reqCollateral=0.1 mWBTC ($6k @ $60k/BTC mock).
+ *        Midpoint: matchAmount=1000 mUsdc, matchRateBps=500,
+ *                  reqCollateral=0.1 mWbtc ($6k @ $60k/BTC mock).
  *        HF at match: collateral-USD / debt-USD ≈ 6.0 — well above 1.5.
  */
 contract SeedAnvilOffers is Script {
@@ -63,12 +63,12 @@ contract SeedAnvilOffers is Script {
     uint256 internal constant BORROWER_ANVIL_KEY =
         0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a;
 
-    // mUSDC has 6 decimals, mWBTC has 8 decimals (matches the mocks).
-    uint256 internal constant LENDER_AMOUNT_MIN = 500e6;       // 500 mUSDC
-    uint256 internal constant LENDER_AMOUNT_MAX = 2000e6;      // 2000 mUSDC
-    uint256 internal constant BORROWER_AMOUNT = 1000e6;        // 1000 mUSDC (single-fill)
-    uint256 internal constant LENDER_COLLAT = 2e7;             // 0.2 mWBTC
-    uint256 internal constant BORROWER_COLLAT = 15e6;          // 0.15 mWBTC
+    // mUsdc has 6 decimals, mWbtc has 8 decimals (matches the mocks).
+    uint256 internal constant LENDER_AMOUNT_MIN = 500e6;       // 500 mUsdc
+    uint256 internal constant LENDER_AMOUNT_MAX = 2000e6;      // 2000 mUsdc
+    uint256 internal constant BORROWER_AMOUNT = 1000e6;        // 1000 mUsdc (single-fill)
+    uint256 internal constant LENDER_COLLAT = 2e7;             // 0.2 mWbtc
+    uint256 internal constant BORROWER_COLLAT = 15e6;          // 0.15 mWbtc
     uint256 internal constant LENDER_RATE_MIN = 400;
     uint256 internal constant LENDER_RATE_MAX = 600;
     uint256 internal constant BORROWER_RATE_MIN = 450;
@@ -84,31 +84,31 @@ contract SeedAnvilOffers is Script {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
         address diamond = Deployments.readDiamond();
-        address mUSDC = Deployments.readMockERC20A();
-        address mWBTC = Deployments.readMockERC20B();
+        address mUsdc = Deployments.readMockERC20A();
+        address mWbtc = Deployments.readMockERC20B();
 
         require(diamond != address(0), "SeedAnvilOffers: diamond not deployed");
-        require(mUSDC != address(0), "SeedAnvilOffers: mUSDC not deployed");
-        require(mWBTC != address(0), "SeedAnvilOffers: mWBTC not deployed");
+        require(mUsdc != address(0), "SeedAnvilOffers: mUSDC not deployed");
+        require(mWbtc != address(0), "SeedAnvilOffers: mWBTC not deployed");
 
         address lender = vm.addr(LENDER_ANVIL_KEY);
         address borrower = vm.addr(BORROWER_ANVIL_KEY);
 
         console.log("=== Seed Anvil Offers ===");
         console.log("Diamond:  ", diamond);
-        console.log("mUSDC:    ", mUSDC);
-        console.log("mWBTC:    ", mWBTC);
+        console.log("mUSDC:    ", mUsdc);
+        console.log("mWBTC:    ", mWbtc);
         console.log("Lender:   ", lender);
         console.log("Borrower: ", borrower);
 
         // ── Step 1: Deployer transfers operating balances ───────────────
         // The mocks deploy minted everything to the deployer; spread
-        // some to the lender (mUSDC for principal) and borrower (mWBTC
+        // some to the lender (mUsdc for principal) and borrower (mWbtc
         // for collateral). Capped at LENDER_AMOUNT_MAX / BORROWER_COLLAT
         // so re-running the script doesn't drain the deployer's float.
         vm.startBroadcast(deployerKey);
-        IERC20(mUSDC).transfer(lender, LENDER_AMOUNT_MAX);
-        IERC20(mWBTC).transfer(borrower, BORROWER_COLLAT);
+        IERC20(mUsdc).transfer(lender, LENDER_AMOUNT_MAX);
+        IERC20(mWbtc).transfer(borrower, BORROWER_COLLAT);
         vm.stopBroadcast();
 
         // ── Step 2: Admin tags both sides Tier2 KYC ────────────────────
@@ -128,17 +128,17 @@ contract SeedAnvilOffers is Script {
 
         // ── Step 3: Lender creates the range offer ──────────────────────
         vm.startBroadcast(LENDER_ANVIL_KEY);
-        IERC20(mUSDC).approve(diamond, LENDER_AMOUNT_MAX);
+        IERC20(mUsdc).approve(diamond, LENDER_AMOUNT_MAX);
         uint256 lenderOfferId = OfferCreateFacet(diamond).createOffer(
-            _lenderOfferParams(mUSDC, mWBTC)
+            _lenderOfferParams(mUsdc, mWbtc)
         );
         vm.stopBroadcast();
 
         // ── Step 4: Borrower creates the matching single-fill offer ─────
         vm.startBroadcast(BORROWER_ANVIL_KEY);
-        IERC20(mWBTC).approve(diamond, BORROWER_COLLAT);
+        IERC20(mWbtc).approve(diamond, BORROWER_COLLAT);
         uint256 borrowerOfferId = OfferCreateFacet(diamond).createOffer(
-            _borrowerOfferParams(mUSDC, mWBTC)
+            _borrowerOfferParams(mUsdc, mWbtc)
         );
         vm.stopBroadcast();
 
@@ -159,24 +159,24 @@ contract SeedAnvilOffers is Script {
         vm.stopBroadcast();
     }
 
-    function _lenderOfferParams(address mUSDC, address mWBTC)
+    function _lenderOfferParams(address mUsdc, address mWbtc)
         internal
         pure
         returns (LibVaipakam.CreateOfferParams memory)
     {
         return LibVaipakam.CreateOfferParams({
             offerType: LibVaipakam.OfferType.Lender,
-            lendingAsset: mUSDC,
+            lendingAsset: mUsdc,
             amount: LENDER_AMOUNT_MIN,
             interestRateBps: LENDER_RATE_MIN,
-            collateralAsset: mWBTC,
+            collateralAsset: mWbtc,
             collateralAmount: LENDER_COLLAT,
             durationDays: DURATION_DAYS,
             assetType: LibVaipakam.AssetType.ERC20,
             tokenId: 0,
             quantity: 0,
             creatorRiskAndTermsConsent: true,
-            prepayAsset: mUSDC,
+            prepayAsset: mUsdc,
             collateralAssetType: LibVaipakam.AssetType.ERC20,
             collateralTokenId: 0,
             collateralQuantity: 0,
@@ -190,7 +190,7 @@ contract SeedAnvilOffers is Script {
         });
     }
 
-    function _borrowerOfferParams(address mUSDC, address mWBTC)
+    function _borrowerOfferParams(address mUsdc, address mWbtc)
         internal
         pure
         returns (LibVaipakam.CreateOfferParams memory)
@@ -199,17 +199,17 @@ contract SeedAnvilOffers is Script {
         // (auto-collapse via 0 also works; spelled out here for clarity).
         return LibVaipakam.CreateOfferParams({
             offerType: LibVaipakam.OfferType.Borrower,
-            lendingAsset: mUSDC,
+            lendingAsset: mUsdc,
             amount: BORROWER_AMOUNT,
             interestRateBps: BORROWER_RATE_MIN,
-            collateralAsset: mWBTC,
+            collateralAsset: mWbtc,
             collateralAmount: BORROWER_COLLAT,
             durationDays: DURATION_DAYS,
             assetType: LibVaipakam.AssetType.ERC20,
             tokenId: 0,
             quantity: 0,
             creatorRiskAndTermsConsent: true,
-            prepayAsset: mUSDC,
+            prepayAsset: mUsdc,
             collateralAssetType: LibVaipakam.AssetType.ERC20,
             collateralTokenId: 0,
             collateralQuantity: 0,

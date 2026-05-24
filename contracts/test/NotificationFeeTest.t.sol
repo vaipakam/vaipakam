@@ -98,7 +98,7 @@ contract NotificationFeeTest is SetupTest {
         weth = makeAddr("weth");
         // Mock the OracleFacet ETH/numeraire read at 2000/8dec —
         // directly on the diamond (the path LibNotificationFee uses).
-        // Post-B1 `getAssetPrice(WETH)` returns numeraire-quoted; with
+        // Post-b1 `getAssetPrice(WETH)` returns numeraire-quoted; with
         // USD-as-numeraire (the default) this is the ETH/USD price.
         vm.mockCall(
             address(diamond),

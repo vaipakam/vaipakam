@@ -48,7 +48,7 @@ contract ClaimFacetTest is Test {
     address mockERC20;
     address mockCollateralERC20;
     address mockIlliquidERC20;
-    address mockNFT721;
+    address mockNft721;
     address mockZeroExProxy;
 
     uint256 constant BASIS_POINTS = 10000;
@@ -103,7 +103,7 @@ contract ClaimFacetTest is Test {
         mockERC20 = address(new ERC20Mock("MockLiquid", "MLQ", 18));
         mockCollateralERC20 = address(new ERC20Mock("MockCollateral", "MCK", 18));
         mockIlliquidERC20 = address(new ERC20Mock("MockIlliquid", "MIL", 18));
-        mockNFT721 = address(new MockRentableNFT721());
+        mockNft721 = address(new MockRentableNFT721());
         mockZeroExProxy = address(new ZeroExProxyMock());
 
         ERC20Mock(mockERC20).mint(lender, 100000 ether);
@@ -111,7 +111,7 @@ contract ClaimFacetTest is Test {
         ERC20Mock(mockCollateralERC20).mint(lender, 100000 ether);
         ERC20Mock(mockCollateralERC20).mint(borrower, 100000 ether);
         ERC20Mock(mockIlliquidERC20).mint(borrower, 100000 ether);
-        MockRentableNFT721(mockNFT721).mint(lender, 1);
+        MockRentableNFT721(mockNft721).mint(lender, 1);
         ERC20Mock(mockERC20).mint(address(mockZeroExProxy), 1000000 ether);
         ERC20Mock(mockCollateralERC20).mint(address(mockZeroExProxy), 1000000 ether);
         ZeroExProxyMock(mockZeroExProxy).setRate(11, 10);
@@ -190,13 +190,13 @@ contract ClaimFacetTest is Test {
         vm.prank(borrower);
         ERC20(mockIlliquidERC20).approve(address(diamond), type(uint256).max);
         vm.prank(lender);
-        MockRentableNFT721(mockNFT721).approve(address(diamond), 1);
+        MockRentableNFT721(mockNft721).approve(address(diamond), 1);
 
         // Oracle mocks
         mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
         mockOracleLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Liquid);
         mockOracleLiquidity(mockIlliquidERC20, LibVaipakam.LiquidityStatus.Illiquid);
-        mockOracleLiquidity(mockNFT721, LibVaipakam.LiquidityStatus.Illiquid);
+        mockOracleLiquidity(mockNft721, LibVaipakam.LiquidityStatus.Illiquid);
         mockOraclePrice(mockERC20, 1e8, 8); // $1 with 8 decimals
         mockOraclePrice(mockCollateralERC20, 1e8, 8);
 
@@ -233,7 +233,7 @@ contract ClaimFacetTest is Test {
         vm.prank(borrower);
         ERC20(mockIlliquidERC20).approve(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower), type(uint256).max);
         vm.prank(lender);
-        IERC721(mockNFT721).setApprovalForAll(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender), true);
+        IERC721(mockNft721).setApprovalForAll(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender), true);
     }
 
     /// @dev Creates a lender offer and borrower accepts it to initiate a loan.
@@ -905,7 +905,7 @@ contract ClaimFacetTest is Test {
     }
 
     // ─── Additional branch coverage: ERC1155 claim failure, ERC721 borrower claim failure,
-    //     lenderHasHeld prevents settle, lenderHasNFTCollateralClaim prevents settle ─────
+    //     lenderHasHeld prevents settle, lenderHasNftCollateralClaim prevents settle ─────
 
     /// @dev Covers ERC1155 claim transfer failure path in claimAsLender (line 148-149).
     function testClaimAsLenderERC1155ClaimTransferFails() public {
@@ -968,7 +968,7 @@ contract ClaimFacetTest is Test {
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid), "Loan must not settle when lender has held funds");
     }
 
-    /// @dev Covers lenderHasNFTCollateralClaim check in claimAsBorrower (line 321):
+    /// @dev Covers lenderHasNftCollateralClaim check in claimAsBorrower (line 321):
     ///      when borrower claims first and lenderClaim.assetType != ERC20, loan should NOT settle.
     function testClaimAsBorrowerDoesNotSettleWhenLenderHasNFTCollateralClaim() public {
         uint256 loanId = _createAndAcceptERC20Loan(1000 ether, 1500 ether, 30);

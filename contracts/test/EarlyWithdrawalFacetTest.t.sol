@@ -1994,7 +1994,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
         // Net settlement withdraws principal from Noah (mocked → no real tokens
-        // move) then fans it out; seed the diamond so the safeTransfer to Liam
+        // move) then fans it out; seed the diamond so the safeTransfer to liam
         // and the heldForLender migration both have balance.
         deal(mockERC20, address(diamond), PRINCIPAL + 100 ether);
 
@@ -2007,7 +2007,7 @@ contract EarlyWithdrawalFacetTest is Test {
     }
 
     /// @dev Covers sellLoanViaBuyOffer where accrued < shortfall (higher rate, short elapsed).
-    ///      The `else` branch: Liam pays accrued + remainingShortfall to Noah.
+    ///      The `else` branch: liam pays accrued + remainingShortfall to Noah.
     function testSellLoanAccruedLessThanShortfall() public {
         // Warp 1 day first, then create buy offer with duration <= remaining (29 days)
         vm.warp(block.timestamp + 1 days);

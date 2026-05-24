@@ -499,13 +499,13 @@
     "name": "KYCThresholdsUpdated",
     "inputs": [
       {
-        "name": "tier0ThresholdUSD",
+        "name": "tier0ThresholdUsd",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "tier1ThresholdUSD",
+        "name": "tier1ThresholdUsd",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
