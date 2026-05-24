@@ -81,10 +81,17 @@ contract VaipakamVaultImplementation is
     ///      the repeated `msg.sender == diamond || msg.sender == address(this)`
     ///      guard into one site so any future hardening (e.g. routing via
     ///      a dedicated facet) only has to change here.
-    modifier onlyDiamond() {
+    /// @dev Extracted modifier body to keep the modifier itself a thin
+    ///      wrapper — every call site inlines the modifier, so the
+    ///      check living in a private function dedupes the bytecode.
+    function _checkDiamond() private view {
         if (msg.sender != diamond && msg.sender != address(this)) {
             revert NotAuthorized();
         }
+    }
+
+    modifier onlyDiamond() {
+        _checkDiamond();
         _;
     }
 

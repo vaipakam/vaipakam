@@ -22,7 +22,10 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
     ///      is handed to a time-locked governance executor — PAUSER_ROLE
     ///      can remain a fast-key multisig. Mirror modifier
     ///      {onlyAdminOrUnpauser} gates the inverse (asset unpause).
-    modifier onlyAdminOrPauser() {
+    /// @dev Extracted modifier body — the modifier stays a thin wrapper
+    ///      so each call site inlines one function call instead of the
+    ///      full role check, deduping bytecode.
+    function _checkAdminOrPauser() private view {
         if (
             !LibAccessControl.hasRole(LibAccessControl.ADMIN_ROLE, msg.sender) &&
             !LibAccessControl.hasRole(LibAccessControl.PAUSER_ROLE, msg.sender)
@@ -32,6 +35,10 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
                 LibAccessControl.PAUSER_ROLE
             );
         }
+    }
+
+    modifier onlyAdminOrPauser() {
+        _checkAdminOrPauser();
         _;
     }
 
@@ -44,7 +51,9 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
     ///      through the slower UNPAUSER (Timelock) surface, giving
     ///      on-call operators a review window to confirm the incident
     ///      is genuinely resolved.
-    modifier onlyAdminOrUnpauser() {
+    /// @dev Extracted modifier body — same wrapper pattern as
+    ///      {_checkAdminOrPauser} above.
+    function _checkAdminOrUnpauser() private view {
         if (
             !LibAccessControl.hasRole(LibAccessControl.ADMIN_ROLE, msg.sender) &&
             !LibAccessControl.hasRole(LibAccessControl.UNPAUSER_ROLE, msg.sender)
@@ -54,6 +63,10 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
                 LibAccessControl.UNPAUSER_ROLE
             );
         }
+    }
+
+    modifier onlyAdminOrUnpauser() {
+        _checkAdminOrUnpauser();
         _;
     }
 

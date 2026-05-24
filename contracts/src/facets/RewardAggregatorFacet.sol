@@ -132,21 +132,32 @@ contract RewardAggregatorFacet is
 
     // ─── Modifiers ──────────────────────────────────────────────────────────
 
-    /// @dev All mutating methods are Base-only.
-    modifier onlyCanonical() {
+    /// @dev Extracted modifier bodies — the modifiers themselves stay thin
+    ///      wrappers so each call site inlines one function call instead of
+    ///      the full check, deduping bytecode.
+    function _checkCanonical() private view {
         if (!LibVaipakam.storageSlot().isCanonicalRewardChain) {
             revert NotCanonicalRewardChain();
         }
+    }
+
+    function _checkRewardOApp() private view {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (msg.sender != s.rewardOApp || s.rewardOApp == address(0)) {
+            revert NotAuthorizedRewardOApp();
+        }
+    }
+
+    /// @dev All mutating methods are Base-only.
+    modifier onlyCanonical() {
+        _checkCanonical();
         _;
     }
 
     /// @dev Ingress handlers trust only the registered OApp — never
     ///      accept reports from random contracts.
     modifier onlyRewardOApp() {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (msg.sender != s.rewardOApp || s.rewardOApp == address(0)) {
-            revert NotAuthorizedRewardOApp();
-        }
+        _checkRewardOApp();
         _;
     }
 

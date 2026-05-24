@@ -111,9 +111,16 @@ contract VPFIMirrorToken is
         emit TokenPoolUpdated(previous, newPool);
     }
 
+    /// @dev Extracted modifier body — the modifier itself stays a thin
+    ///      wrapper so each call site inlines a single function call
+    ///      instead of the full check, deduping bytecode.
+    function _checkTokenPool() private view {
+        if (msg.sender != tokenPool) revert NotTokenPool(msg.sender);
+    }
+
     /// @dev Restricts a call to the registered CCIP pool.
     modifier onlyTokenPool() {
-        if (msg.sender != tokenPool) revert NotTokenPool(msg.sender);
+        _checkTokenPool();
         _;
     }
 
