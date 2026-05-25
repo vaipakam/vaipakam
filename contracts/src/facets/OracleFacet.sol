@@ -1498,7 +1498,21 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             (int56[] memory tickCumulatives, ) = abi.decode(obsData, (int56[], uint160[]));
             if (tickCumulatives.length >= 2 && twapWindow > 0) {
                 int56 delta = tickCumulatives[1] - tickCumulatives[0];
-                meanTick = SafeCast.toInt24(delta / int56(int256(uint256(twapWindow))));
+                // REVIEW-SAFECAST: intentional unchecked truncation —
+                // this is the "never reverts the route search" path
+                // (see comment at the function-doc line above). A
+                // buggy V3-clone returning garbage tickCumulatives
+                // could produce a delta-over-twapWindow that exceeds
+                // int24 range; SafeCast.toInt24 would revert the
+                // whole route search instead of letting the
+                // surrounding TWAP-consistency check soft-fail via
+                // observeOk = false. The downstream consumer
+                // (`_passesTwapConsistencyCheck`) compares meanTick
+                // against spotTick within a band — a junk meanTick
+                // from a malformed pool fails that comparison
+                // gracefully. Per Codex P1 PR #267.
+                // forge-lint: disable-next-line(unsafe-typecast)
+                meanTick = int24(delta / int56(int256(uint256(twapWindow))));
                 observeOk = true;
             }
         }
