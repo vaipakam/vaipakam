@@ -11,6 +11,10 @@
 
 ---
 
+- [ ] **T-087** `yetToPromote`: Is it possible to have on global VPFI balance (irrespective of chains) to decide on fee rebates?
+
+---
+
 - [ ] **T-086** `yetToPromote`: Is it possible to allow borrower to auction their NFT while their NFT is in the Vault / Vault (when it is a collateral for a loan), so that borrower can sell that NFT and repay the loan, he may auction it in any 3rd party apps like opensea etc, but when it is sold, the amount first need to come to Vaiapakam vaults (vault) and then amount will be first provided to lender and then for any charges and the remaining would go to borrower. if the sell price (or sold amount) is less then the amount that need to be given to lender + charges (if nay), then the sell should not be allowed and when defualted, the NFT will be transfered to lender after grace period as usual. is that possible? what do you say? whats your take? is there a better approach? what will happen if we provide operator access to borrower when it is in Vaipakam Vaults, all the above conditions would be satisfied or we need to build a better Vault (or vault) for it to happen. what do you say? whats your take? is there a better approach? also need to check if vaipakam itself would be able to auction it in 3rd pary websites like opensea during grace period and seel if it covers principle + interest + any other charges (like liquidation fee, etc.,) and the remaining would be provided to borrower. if the sell price (or sold amount) doen't cover the required amount then the NFT itself would be transffered to lender afetr grace period? is that possibel? these scenarios need to be handeled for both ERC721 NFT and ERC1155 NFT. should we allowe user to do it or only we have to do it, whats the standard procedure? do we need to get consent from borrower for autioning during grace period while offer acceptance (and offer creation itself)? file a card to work on it.
 
 ---
@@ -542,5 +546,14 @@ Also the info icon mapping inside protocol console should go only to `www` (http
 ---
 
 - [ ] **ET-001** `promotedToProjectCard`: Migrate the transaction-scanner (the apps/agent `/scan/blockaid` proxy + the frontend `SimulationPreview`) from Blockaid to **GoPlus** — Blockaid's API key couldn't be provisioned, which blocks the scanning feature's production readiness. After a Blowfish-vs-GoPlus comparison GoPlus was chosen: transaction simulation + threat assessment (covers SimulationPreview) plus token-security / malicious-address / rug-pull screening across 40+ chains, with generous free access — and one provider also covers the T-079 token-screening idea. Tracked as [Issue #32](https://github.com/vaipakam/vaipakam/issues/32).
+
+---
+
+Once the Github PAT expires, re run these two lines with new PAT Token Key
+
+```
+secret-tool store --label='gh PAT (vaipakam)' service gh-pat account vaipakam
+secret-tool store --label='gh PAT (raja4shekar)' service gh-pat account raja4shekar
+```
 
 ---

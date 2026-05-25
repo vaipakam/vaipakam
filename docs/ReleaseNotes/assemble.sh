@@ -53,7 +53,24 @@ fi
 
 for f in "${frags[@]}"; do
   printf '\n' >> "$OUT"
-  cat "$f" >> "$OUT"
+  # Rewrite relative link paths from fragment-perspective
+  # (docs/ReleaseNotes/unreleased/) to assembled-file-perspective
+  # (docs/ReleaseNotes/) — one directory level shallower. Two
+  # targeted rewrites only; links that are ALREADY correct from the
+  # assembled file's perspective are left untouched:
+  #   ](../../X) -> ](../X)       fragment-perspective deep path
+  #                               collapses one level
+  #   ](./X)     -> ](../X)       ./ meant fragment's own dir;
+  #                               doesn't survive assembly, so
+  #                               promote up to docs/ at least
+  # NOT rewritten:
+  #   ](../X)    stays            already correct from
+  #                               docs/ReleaseNotes/<date>.md
+  #   ](X)       stays            already in same dir as assembled
+  sed -E '
+    s|\]\(\.\./\.\./|](\.\./|g
+    s|\]\(\./|](\.\./|g
+  ' "$f" >> "$OUT"
   # Ensure a trailing newline between fragments.
   [ -z "$(tail -c1 "$f")" ] || printf '\n' >> "$OUT"
 done
