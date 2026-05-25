@@ -63,6 +63,19 @@
   },
   {
     "type": "event",
+    "name": "LiquidationFallbackOracleUnavailable",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "LiquidationFallbackSplit",
     "inputs": [
       {
@@ -85,7 +98,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "fallbackConsentFromBoth",
+        "name": "riskAndTermsConsentFromBoth",
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
@@ -116,7 +129,7 @@
         "internalType": "address"
       },
       {
-        "name": "fallbackConsentFromBoth",
+        "name": "riskAndTermsConsentFromBoth",
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
@@ -259,7 +272,7 @@
   },
   {
     "type": "error",
-    "name": "BaseEidNotSet",
+    "name": "BaseChainIdNotSet",
     "inputs": []
   },
   {
@@ -352,41 +365,6 @@
   },
   {
     "type": "error",
-    "name": "VaultAlreadyBanned",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultBannedDueToSanctionedSource",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultDepositFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultResolutionFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultTransferFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultWithdrawFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "FallbackConsentRequired",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "HealthFactorCalculationFailed",
     "inputs": []
   },
@@ -397,22 +375,6 @@
   },
   {
     "type": "error",
-    "name": "IllegalTransition",
-    "inputs": [
-      {
-        "name": "from",
-        "type": "uint8",
-        "internalType": "enum LibVaipakam.LoanStatus"
-      },
-      {
-        "name": "to",
-        "type": "uint8",
-        "internalType": "enum LibVaipakam.LoanStatus"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "IlliquidAsset",
     "inputs": []
   },
@@ -420,6 +382,22 @@
     "type": "error",
     "name": "IlliquidLoanNoRiskMath",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InitLtvAboveTier",
+    "inputs": [
+      {
+        "name": "ltv",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tierCapBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -471,6 +449,22 @@
     "type": "error",
     "name": "InvalidLoanStatus",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidTransition",
+    "inputs": [
+      {
+        "name": "from",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.LoanStatus"
+      },
+      {
+        "name": "to",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.LoanStatus"
+      }
+    ]
   },
   {
     "type": "error",
@@ -584,7 +578,7 @@
   },
   {
     "type": "error",
-    "name": "NotAuthorizedRewardOApp",
+    "name": "NotAuthorizedRewardMessenger",
     "inputs": []
   },
   {
@@ -827,8 +821,40 @@
   },
   {
     "type": "error",
-    "name": "RewardOAppNotSet",
+    "name": "RewardMessengerNotSet",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RiskAndTermsConsentRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SafeCastOverflowedUintDowncast",
+    "inputs": [
+      {
+        "name": "bits",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SafeCastOverflowedUintToInt",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -858,7 +884,7 @@
   },
   {
     "type": "error",
-    "name": "SourceEidNotExpected",
+    "name": "SourceChainIdNotExpected",
     "inputs": []
   },
   {
@@ -898,17 +924,12 @@
   },
   {
     "type": "error",
-    "name": "VPFICanonicalEidNotSet",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VPFIVaultBalanceInsufficient",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "VPFIGlobalCapExceeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIInvalidOriginChainId",
     "inputs": []
   },
   {
@@ -924,6 +945,41 @@
   {
     "type": "error",
     "name": "VPFITokenNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIVaultBalanceInsufficient",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultAlreadyBanned",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultBannedDueToSanctionedSource",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultDepositFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultResolutionFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultTransferFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultWithdrawFailed",
     "inputs": []
   },
   {
@@ -1002,7 +1058,7 @@
             "internalType": "bool"
           },
           {
-            "name": "fallbackConsentFromBoth",
+            "name": "riskAndTermsConsentFromBoth",
             "type": "bool",
             "internalType": "bool"
           },
@@ -1018,6 +1074,11 @@
           },
           {
             "name": "fallbackTreasuryBpsAtInit",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "liquidationLtvBpsAtInit",
             "type": "uint16",
             "internalType": "uint16"
           },
@@ -1176,7 +1237,7 @@
         "internalType": "address"
       },
       {
-        "name": "acceptorFallbackConsent",
+        "name": "acceptorRiskAndTermsConsent",
         "type": "bool",
         "internalType": "bool"
       }
@@ -1355,7 +1416,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "fallbackConsentFromBoth",
+            "name": "riskAndTermsConsentFromBoth",
             "type": "bool",
             "internalType": "bool"
           },
@@ -1376,6 +1437,16 @@
           },
           {
             "name": "healthFactorAtInit",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "lenderTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "borrowerTokenId",
             "type": "uint256",
             "internalType": "uint256"
           }
@@ -1450,7 +1521,7 @@
   },
   {
     "type": "error",
-    "name": "BaseEidNotSet",
+    "name": "BaseChainIdNotSet",
     "inputs": []
   },
   {
@@ -1543,41 +1614,6 @@
   },
   {
     "type": "error",
-    "name": "VaultAlreadyBanned",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultBannedDueToSanctionedSource",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultDepositFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultResolutionFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultTransferFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultWithdrawFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "FallbackConsentRequired",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "HealthFactorCalculationFailed",
     "inputs": []
   },
@@ -1595,6 +1631,22 @@
     "type": "error",
     "name": "IlliquidLoanNoRiskMath",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InitLtvAboveTier",
+    "inputs": [
+      {
+        "name": "ltv",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tierCapBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -1764,7 +1816,7 @@
   },
   {
     "type": "error",
-    "name": "NotAuthorizedRewardOApp",
+    "name": "NotAuthorizedRewardMessenger",
     "inputs": []
   },
   {
@@ -2017,8 +2069,40 @@
   },
   {
     "type": "error",
-    "name": "RewardOAppNotSet",
+    "name": "RewardMessengerNotSet",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RiskAndTermsConsentRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SafeCastOverflowedUintDowncast",
+    "inputs": [
+      {
+        "name": "bits",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SafeCastOverflowedUintToInt",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -2032,7 +2116,7 @@
   },
   {
     "type": "error",
-    "name": "SourceEidNotExpected",
+    "name": "SourceChainIdNotExpected",
     "inputs": []
   },
   {
@@ -2072,17 +2156,12 @@
   },
   {
     "type": "error",
-    "name": "VPFICanonicalEidNotSet",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VPFIVaultBalanceInsufficient",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "VPFIGlobalCapExceeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIInvalidOriginChainId",
     "inputs": []
   },
   {
@@ -2098,6 +2177,41 @@
   {
     "type": "error",
     "name": "VPFITokenNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIVaultBalanceInsufficient",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultAlreadyBanned",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultBannedDueToSanctionedSource",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultDepositFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultResolutionFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultTransferFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultWithdrawFailed",
     "inputs": []
   },
   {
@@ -2655,7 +2769,7 @@
   },
   {
     "type": "error",
-    "name": "BaseEidNotSet",
+    "name": "BaseChainIdNotSet",
     "inputs": []
   },
   {
@@ -2748,41 +2862,6 @@
   },
   {
     "type": "error",
-    "name": "VaultAlreadyBanned",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultBannedDueToSanctionedSource",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultDepositFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultResolutionFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultTransferFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultWithdrawFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "FallbackConsentRequired",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "HealthFactorCalculationFailed",
     "inputs": []
   },
@@ -2793,22 +2872,6 @@
   },
   {
     "type": "error",
-    "name": "IllegalTransition",
-    "inputs": [
-      {
-        "name": "from",
-        "type": "uint8",
-        "internalType": "enum LibVaipakam.LoanStatus"
-      },
-      {
-        "name": "to",
-        "type": "uint8",
-        "internalType": "enum LibVaipakam.LoanStatus"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "IlliquidAsset",
     "inputs": []
   },
@@ -2816,6 +2879,22 @@
     "type": "error",
     "name": "IlliquidLoanNoRiskMath",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InitLtvAboveTier",
+    "inputs": [
+      {
+        "name": "ltv",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tierCapBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -2877,6 +2956,22 @@
     "type": "error",
     "name": "InvalidLoanStatus",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidTransition",
+    "inputs": [
+      {
+        "name": "from",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.LoanStatus"
+      },
+      {
+        "name": "to",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.LoanStatus"
+      }
+    ]
   },
   {
     "type": "error",
@@ -2990,7 +3085,7 @@
   },
   {
     "type": "error",
-    "name": "NotAuthorizedRewardOApp",
+    "name": "NotAuthorizedRewardMessenger",
     "inputs": []
   },
   {
@@ -3248,8 +3343,40 @@
   },
   {
     "type": "error",
-    "name": "RewardOAppNotSet",
+    "name": "RewardMessengerNotSet",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RiskAndTermsConsentRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SafeCastOverflowedUintDowncast",
+    "inputs": [
+      {
+        "name": "bits",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SafeCastOverflowedUintToInt",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -3285,7 +3412,7 @@
   },
   {
     "type": "error",
-    "name": "SourceEidNotExpected",
+    "name": "SourceChainIdNotExpected",
     "inputs": []
   },
   {
@@ -3325,17 +3452,12 @@
   },
   {
     "type": "error",
-    "name": "VPFICanonicalEidNotSet",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VPFIVaultBalanceInsufficient",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "VPFIGlobalCapExceeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIInvalidOriginChainId",
     "inputs": []
   },
   {
@@ -3351,6 +3473,41 @@
   {
     "type": "error",
     "name": "VPFITokenNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIVaultBalanceInsufficient",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultAlreadyBanned",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultBannedDueToSanctionedSource",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultDepositFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultResolutionFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultTransferFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultWithdrawFailed",
     "inputs": []
   },
   {
@@ -3442,6 +3599,99 @@
   },
   {
     "type": "function",
+    "name": "triggerLiquidationDiscounted",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recipient",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "triggerLiquidationSplit",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "splits",
+        "type": "tuple[]",
+        "internalType": "struct LibSwap.SplitCall[]",
+        "components": [
+          {
+            "name": "adapterIdx",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "splitAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "data",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "triggerPartialLiquidation",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "fractionBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "adapterCalls",
+        "type": "tuple[]",
+        "internalType": "struct LibSwap.AdapterCall[]",
+        "components": [
+          {
+            "name": "adapterIdx",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "data",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "updateRiskParams",
     "inputs": [
       {
@@ -3450,12 +3700,7 @@
         "internalType": "address"
       },
       {
-        "name": "maxLtvBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "liqThresholdBps",
+        "name": "loanInitMaxLtvBps",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -3500,7 +3745,75 @@
   },
   {
     "type": "event",
+    "name": "LiquidationDiscounted",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "liquidator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "recipient",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "tier",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "discountBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "totalDebt",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "collateralSeized",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerSurplus",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "LiquidationFallback",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "LiquidationFallbackOracleUnavailable",
     "inputs": [
       {
         "name": "loanId",
@@ -3526,6 +3839,61 @@
   },
   {
     "type": "event",
+    "name": "LoanPartiallyLiquidated",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "liquidator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "fractionBps",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "swappedCollateral",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "proceeds",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "principalRepaid",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "interestRepaid",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "hfAfter",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "RiskParamsUpdated",
     "inputs": [
       {
@@ -3535,13 +3903,7 @@
         "internalType": "address"
       },
       {
-        "name": "maxLtvBps",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "liqThresholdBps",
+        "name": "loanInitMaxLtvBps",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -3681,7 +4043,7 @@
   },
   {
     "type": "error",
-    "name": "BaseEidNotSet",
+    "name": "BaseChainIdNotSet",
     "inputs": []
   },
   {
@@ -3769,42 +4131,17 @@
   },
   {
     "type": "error",
+    "name": "DiscountPathDisabled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EmptySplitList",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "EnforcedPause",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultAlreadyBanned",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultBannedDueToSanctionedSource",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultDepositFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultResolutionFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultTransferFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultWithdrawFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "FallbackConsentRequired",
     "inputs": []
   },
   {
@@ -3824,22 +4161,6 @@
   },
   {
     "type": "error",
-    "name": "IllegalTransition",
-    "inputs": [
-      {
-        "name": "from",
-        "type": "uint8",
-        "internalType": "enum LibVaipakam.LoanStatus"
-      },
-      {
-        "name": "to",
-        "type": "uint8",
-        "internalType": "enum LibVaipakam.LoanStatus"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "IlliquidAsset",
     "inputs": []
   },
@@ -3847,6 +4168,22 @@
     "type": "error",
     "name": "IlliquidLoanNoRiskMath",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InitLtvAboveTier",
+    "inputs": [
+      {
+        "name": "ltv",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tierCapBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -3873,6 +4210,22 @@
     "type": "error",
     "name": "InteractionPoolExhausted",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InternalMatchOnlyBand",
+    "inputs": [
+      {
+        "name": "currentLtvBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "windowCeilingBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -3903,6 +4256,38 @@
     "type": "error",
     "name": "InvalidLoanStatus",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidPartialFraction",
+    "inputs": [
+      {
+        "name": "fractionBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "capBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidTransition",
+    "inputs": [
+      {
+        "name": "from",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.LoanStatus"
+      },
+      {
+        "name": "to",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.LoanStatus"
+      }
+    ]
   },
   {
     "type": "error",
@@ -4016,7 +4401,7 @@
   },
   {
     "type": "error",
-    "name": "NotAuthorizedRewardOApp",
+    "name": "NotAuthorizedRewardMessenger",
     "inputs": []
   },
   {
@@ -4071,6 +4456,22 @@
   },
   {
     "type": "error",
+    "name": "OracleStaleForDiscount",
+    "inputs": [
+      {
+        "name": "principalAsset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "collateralAsset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "PadNumeraireRateFeedStale",
     "inputs": []
   },
@@ -4115,6 +4516,59 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "PartialAfterMaturity",
+    "inputs": [
+      {
+        "name": "endTime",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "nowTs",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PartialFullyClosedUseFull",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PartialMustImproveHF",
+    "inputs": [
+      {
+        "name": "hfBefore",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "hfAfter",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PartialMustRestoreHF",
+    "inputs": [
+      {
+        "name": "hfAfter",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PartialSwapAllFailed",
+    "inputs": []
   },
   {
     "type": "error",
@@ -4254,8 +4708,40 @@
   },
   {
     "type": "error",
-    "name": "RewardOAppNotSet",
+    "name": "RewardMessengerNotSet",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RiskAndTermsConsentRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SafeCastOverflowedUintDowncast",
+    "inputs": [
+      {
+        "name": "bits",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SafeCastOverflowedUintToInt",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -4296,8 +4782,40 @@
   },
   {
     "type": "error",
-    "name": "SourceEidNotExpected",
+    "name": "SourceChainIdNotExpected",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SplitMinOutputUnderfilled",
+    "inputs": [
+      {
+        "name": "totalOutput",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "minOutputAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SplitSumMismatch",
+    "inputs": [
+      {
+        "name": "sum",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "inputAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -4313,6 +4831,17 @@
     "type": "error",
     "name": "UnauthorizedCrossFacetCall",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UntierableCollateral",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",
@@ -4336,17 +4865,12 @@
   },
   {
     "type": "error",
-    "name": "VPFICanonicalEidNotSet",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VPFIVaultBalanceInsufficient",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "VPFIGlobalCapExceeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIInvalidOriginChainId",
     "inputs": []
   },
   {
@@ -4366,7 +4890,47 @@
   },
   {
     "type": "error",
+    "name": "VPFIVaultBalanceInsufficient",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultAlreadyBanned",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultBannedDueToSanctionedSource",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultDepositFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultResolutionFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultTransferFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultWithdrawFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ZeroCollateral",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroRecipient",
     "inputs": []
   }
 ]
