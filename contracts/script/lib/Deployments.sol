@@ -132,8 +132,20 @@ library Deployments {
     function readVpfiBuyAdapter()  internal view returns (address) { return _readAddr(".vpfiBuyAdapter",  "VPFI_BUY_ADAPTER_ADDRESS"); }
     function readVpfiBuyReceiver() internal view returns (address) { return _readAddr(".vpfiBuyReceiver", "VPFI_BUY_RECEIVER_ADDRESS"); }
     // T-068 CCIP: the cross-chain reward contract is `VaipakamRewardMessenger`,
-    // recorded under `.rewardMessenger` by `DeployCrosschain.s.sol`.
-    function readRewardMessenger() internal view returns (address) { return _readAddr(".rewardMessenger", "REWARD_MESSENGER_ADDRESS"); }
+    // recorded under `.rewardMessenger` by `DeployCrosschain.s.sol`. Older
+    // artifacts (pre-PR #272 contract-side rename) recorded the same
+    // address under the LayerZero-era key `.rewardOApp`; this reader
+    // tries the new key first and falls back to the legacy key so
+    // `Handover.s.sol`, `ConfigureRewardReporter.s.sol`, and any
+    // operational tool that walks pre-rename addresses.json files keeps
+    // resolving the same address. Without the fallback, every consumer
+    // silently resolves to `address(0)` on legacy artifacts.
+    function readRewardMessenger() internal view returns (address) {
+        address a = _tryReadAddr(".rewardMessenger");
+        if (a == address(0)) a = _tryReadAddr(".rewardOApp");
+        if (a == address(0)) a = _readAddr(".rewardMessenger", "REWARD_MESSENGER_ADDRESS");
+        return a;
+    }
     function readFlashLoanLiquidator() internal view returns (address) { return _tryReadAddr(".flashLoanLiquidator"); }
 
     // Track-C mock infra (Base Sepolia testnet only). Falls back to env on chains

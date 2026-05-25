@@ -1636,6 +1636,14 @@ phase_pause_rehearsal() {
   local PAUSE_TARGETS=()
   for KEY in diamond ccipMessenger rewardMessenger vpfiBuyReceiver vpfiBuyAdapter; do
     local ADDR=$(jq -r --arg k "$KEY" '.[$k] // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null)
+    # Legacy fallback: pre-PR #272 artifacts stored the reward messenger
+    # under the LayerZero-era key `rewardOApp`. Same pattern as
+    # `pause-all-chains.sh`. Without this, the pause rehearsal
+    # SILENTLY omits the messenger on legacy artifacts — the very
+    # contract the 5-minute containment path depends on.
+    if [ "$KEY" = "rewardMessenger" ] && { [ -z "$ADDR" ] || [ "$ADDR" = "null" ]; }; then
+      ADDR=$(jq -r '.rewardOApp // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null)
+    fi
     if [ -n "$ADDR" ] && [ "$ADDR" != "null" ]; then
       PAUSE_TARGETS+=("$KEY:$ADDR")
     fi

@@ -926,9 +926,18 @@ EOF
   # .env needs no per-chain entry.
   export BASE_CHAIN_ID=8453
   # DeployCrosschain records the reward contract under `.rewardMessenger`.
-  # Hand ConfigureRewardReporter that address explicitly so it doesn't
-  # fall back to the legacy `.rewardMessenger` artifact key.
+  # Hand ConfigureRewardReporter that address explicitly via the
+  # `REWARD_OAPP_PROXY` env var (legacy name, kept for back-compat) so
+  # the configurator doesn't have to re-read the file itself. On a
+  # pre-PR-#272 artifact the same address lives under the LayerZero-era
+  # `.rewardOApp` key — fall back to it so a fresh mainnet rerun
+  # against an older addresses.json doesn't silently leave the env
+  # var unset (which would push the ADMIN-EOA path into
+  # ConfigureRewardReporter as the messenger address).
   REWARD_MSGR=$(jq -r '.rewardMessenger // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
+  if [ -z "$REWARD_MSGR" ]; then
+    REWARD_MSGR=$(jq -r '.rewardOApp // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
+  fi
   if [ -n "$REWARD_MSGR" ]; then
     export REWARD_OAPP_PROXY="$REWARD_MSGR"
   fi

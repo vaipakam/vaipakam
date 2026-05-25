@@ -157,6 +157,17 @@ contract Handover is Script {
         address tokenPool = _readAddrOptional(addrJson, "vpfiTokenPool");
         address rateGovernor = _readAddrOptional(addrJson, "vpfiPoolRateGovernor");
         address rewardMessenger = _readAddrOptional(addrJson, "rewardMessenger");
+        // Legacy fallback: pre-PR #272 artifacts stored the same address
+        // under the LayerZero-era key `rewardOApp`. Without this the
+        // ownership-transfer block below silently skips the reward
+        // messenger on legacy artifacts — the address would resolve to
+        // zero, the `if (rewardMessenger != address(0))` gate would
+        // short-circuit, and the messenger's owner stays on the deploy
+        // EOA instead of rotating to the timelock. Flagged by external
+        // review of PR #272.
+        if (rewardMessenger == address(0)) {
+            rewardMessenger = _readAddrOptional(addrJson, "rewardOApp");
+        }
         // Chain-scoped per the omit-keys policy: a mirror carries
         // `vpfiMirror` + `vpfiBuyAdapter`; canonical Base carries
         // `vpfiBuyReceiver` (its VPFI is the pre-existing `vpfiToken`).
