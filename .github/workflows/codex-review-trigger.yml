@@ -42,8 +42,8 @@ jobs:
               core.info(`Skipping bot actor: ${actor}`);
               return;
             }
-            // Public-repo safety: only owner/collaborators can trigger paid review.
-            const allowedAssociations = new Set(['OWNER', 'COLLABORATOR']);
+            // Public-repo safety: only owner/collaborators/members can trigger paid review.
+            const allowedAssociations = new Set(['OWNER', 'COLLABORATOR', 'MEMBER']);
             if (!allowedAssociations.has(association)) {
               core.info(`Skipping unprivileged actor (${association}): ${actor}`);
               return;
