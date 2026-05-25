@@ -217,10 +217,10 @@ library LibInteractionRewards {
         );
         s.loanBorrowerEntryId[loanId] = borrowerId;
 
-        _applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, startDay, int256(perDayNumeraire18));
-        _applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, endDay, -int256(perDayNumeraire18));
-        _applyDelta(s.borrowerPerDayDeltaNumeraire18, s.borrowerFrontierDay, startDay, int256(perDayNumeraire18));
-        _applyDelta(s.borrowerPerDayDeltaNumeraire18, s.borrowerFrontierDay, endDay, -int256(perDayNumeraire18));
+        _applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, startDay, SafeCast.toInt256(perDayNumeraire18));
+        _applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, endDay, -SafeCast.toInt256(perDayNumeraire18));
+        _applyDelta(s.borrowerPerDayDeltaNumeraire18, s.borrowerFrontierDay, startDay, SafeCast.toInt256(perDayNumeraire18));
+        _applyDelta(s.borrowerPerDayDeltaNumeraire18, s.borrowerFrontierDay, endDay, -SafeCast.toInt256(perDayNumeraire18));
     }
 
     /**
@@ -331,8 +331,8 @@ library LibInteractionRewards {
             perDay
         );
         s.loanActiveLenderEntryId[loanId] = newId;
-        _applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, newStart, int256(perDay));
-        _applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, originalEnd, -int256(perDay));
+        _applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, newStart, SafeCast.toInt256(perDay));
+        _applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, originalEnd, -SafeCast.toInt256(perDay));
     }
 
     // ─── Frontier advance (local totals + cum-per-USD) ──────────────────────
@@ -882,8 +882,8 @@ library LibInteractionRewards {
 
         if (newEnd != originalEnd) {
             uint256 perDay = e.perDayNumeraire18;
-            _applyDelta(deltas, frontier, originalEnd, int256(perDay));
-            _applyDelta(deltas, frontier, newEnd, -int256(perDay));
+            _applyDelta(deltas, frontier, originalEnd, SafeCast.toInt256(perDay));
+            _applyDelta(deltas, frontier, newEnd, -SafeCast.toInt256(perDay));
             e.endDay = SafeCast.toUint32(newEnd);
         }
         if (forfeited) e.forfeited = true;

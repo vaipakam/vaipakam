@@ -377,17 +377,12 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             // subsequent caller can retry once the feed recovers.
             try this.getAssetPrice(asset) returns (uint256 price, uint8 feedDecimals) {
                 s.assetPriceSnapshots[asset][today] = LibVaipakam.AssetPriceSnapshot({
-                    // Cast: Chainlink price is positive in practice and
-                    // we already revert on stale / negative answers
-                    // upstream in `_primaryPrice`. The lint warning here
-                    // is intentionally LEFT FIRING — see Codex P2 on
-                    // PR #266: an explicit `SafeCast.toInt256(price)`
-                    // wrap is the proper fix and is tracked as a
-                    // follow-up PR (the current cast silently overflows
-                    // into a negative int256 for uint256 values above
-                    // 2^255, which can't happen with valid feed data
-                    // but lacks an on-chain bound).
-                    price: int256(price),
+                    // SafeCast: Chainlink price is non-negative + non-stale
+                    // by `_primaryPrice`'s upstream guards. SafeCast.toInt256
+                    // catches any pathological uint256 > 2^255 (impossible
+                    // with valid feed data, but explicit revert > silent
+                    // overflow into a negative int256). Per Codex P2 PR #266.
+                    price: SafeCast.toInt256(price),
                     feedDecimals: feedDecimals,
                     capturedAt: uint64(block.timestamp)
                 });
