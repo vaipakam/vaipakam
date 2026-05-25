@@ -91,11 +91,11 @@ contract VpfiBuyReceiver is
     /// @notice requestId → VPFI parked on this contract because the leg-2
     ///         delivery send soft-failed. Owner-retryable via
     ///         {retryStuckDelivery}.
-    mapping(uint64 => uint256) public stuckVPFIByRequest;
+    mapping(uint64 => uint256) public stuckVpfiByRequest;
 
     /// @notice Sum of stuck VPFI; the rescue path refuses to drain
     ///         {vpfiToken} below this figure.
-    uint256 public totalStuckVPFI;
+    uint256 public totalStuckVpfi;
 
     /// @notice Informational flag for the off-chain reconciliation
     ///         watchdog. No on-chain behaviour depends on it.
@@ -269,8 +269,8 @@ contract VpfiBuyReceiver is
                 requestId, sourceChainId, buyer, amountIn, vpfiOut, messageId
             );
         } else {
-            stuckVPFIByRequest[requestId] += vpfiOut;
-            totalStuckVPFI += vpfiOut;
+            stuckVpfiByRequest[requestId] += vpfiOut;
+            totalStuckVpfi += vpfiOut;
             emit VPFIStuckForRetry(requestId, sourceChainId, buyer, vpfiOut);
         }
     }
@@ -416,8 +416,8 @@ contract VpfiBuyReceiver is
     ///         top up the ETH float or fix the lane config and retry.
     /// @param requestId      The stuck request.
     /// @param sourceChainId  The mirror chain to deliver to.
-    // Slither flags `reentrancy-eth` because `stuckVPFIByRequest` /
-    // `totalStuckVPFI` are written after the external `_tryDeliver` call
+    // Slither flags `reentrancy-eth` because `stuckVpfiByRequest` /
+    // `totalStuckVpfi` are written after the external `_tryDeliver` call
     // (which forwards ETH to `messenger`). Gated by `onlyOwner` AND
     // `nonReentrant`; the recipient is the admin-set messenger, not an
     // attacker contract. Not a vuln.
@@ -426,15 +426,15 @@ contract VpfiBuyReceiver is
         uint64 requestId,
         uint256 sourceChainId
     ) external onlyOwner nonReentrant {
-        uint256 amt = stuckVPFIByRequest[requestId];
+        uint256 amt = stuckVpfiByRequest[requestId];
         if (amt == 0) revert NoStuckVPFI(requestId);
 
         (bytes32 messageId, bool ok) =
             _tryDeliver(sourceChainId, requestId, amt);
         if (!ok) revert RetryDispatchFailed(requestId);
 
-        stuckVPFIByRequest[requestId] = 0;
-        totalStuckVPFI -= amt;
+        stuckVpfiByRequest[requestId] = 0;
+        totalStuckVpfi -= amt;
         emit StuckDeliveryRetried(requestId, sourceChainId, amt, messageId);
     }
 
@@ -502,7 +502,7 @@ contract VpfiBuyReceiver is
     }
 
     /// @notice Owner-only: drain an ERC20. When draining {vpfiToken},
-    ///         refuses to go below {totalStuckVPFI} — VPFI owed to a buyer
+    ///         refuses to go below {totalStuckVpfi} — VPFI owed to a buyer
     ///         whose delivery failed is protected; use {retryStuckDelivery}
     ///         to complete that buy instead.
     function rescueERC20(
@@ -513,7 +513,7 @@ contract VpfiBuyReceiver is
         if (to == address(0)) revert ZeroAddress();
         if (token == vpfiToken) {
             uint256 bal = IERC20(token).balanceOf(address(this));
-            if (amount > bal || bal - amount < totalStuckVPFI) {
+            if (amount > bal || bal - amount < totalStuckVpfi) {
                 revert RescueWouldTouchStuckVPFI();
             }
         }

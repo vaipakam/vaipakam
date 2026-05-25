@@ -1127,7 +1127,7 @@ contract DeployDiamond is Script {
         s[5] = VPFITokenFacet.getVPFIMinter.selector;
         s[6] = VPFITokenFacet.getVPFIBalanceOf.selector;
         s[7] = VPFITokenFacet.setCanonicalVPFIChain.selector;
-        s[8] = VPFITokenFacet.isCanonicalVPFIChain.selector;
+        s[8] = VPFITokenFacet.isCanonicalVpfiChain.selector;
         s[9] = VPFITokenFacet.getVPFISnapshot.selector;
     }
 

@@ -151,11 +151,11 @@ contract VpfiBuyAdapter is
     /// @notice requestId → VPFI parked on this contract because a delivery
     ///         had no matching (or an already-resolved) `pendingBuys`
     ///         entry — the two-step guard fired. Owner-recoverable.
-    mapping(uint64 => uint256) public stuckVPFIByRequest;
+    mapping(uint64 => uint256) public stuckVpfiByRequest;
 
     /// @notice Sum of stuck VPFI; the rescue path refuses to drain
     ///         {vpfiToken} below this figure.
-    uint256 public totalStuckVPFI;
+    uint256 public totalStuckVpfi;
 
     /// @dev Reserved storage for upgrade-safe appends.
     // forge-lint: disable-next-line(mixed-case-variable)
@@ -546,8 +546,8 @@ contract VpfiBuyAdapter is
         // (a replayed/late delivery): park the VPFI as stuck. The
         // attacker / duplicate gets nothing routed anywhere.
         if (p.buyer == address(0) || p.status != BuyStatus.Pending) {
-            stuckVPFIByRequest[requestId] += vpfiAmount;
-            totalStuckVPFI += vpfiAmount;
+            stuckVpfiByRequest[requestId] += vpfiAmount;
+            totalStuckVpfi += vpfiAmount;
             emit UnsolicitedDelivery(
                 requestId,
                 vpfiAmount,
@@ -590,17 +590,17 @@ contract VpfiBuyAdapter is
     }
 
     /// @notice Owner recovery for VPFI parked by {UnsolicitedDelivery}.
-    /// @dev `totalStuckVPFI` is decremented atomically so a compromised
+    /// @dev `totalStuckVpfi` is decremented atomically so a compromised
     ///      owner cannot sweep VPFI tied to other stuck ids.
     function recoverStuckVPFI(
         uint64 requestId,
         address recipient
     ) external onlyOwner {
         if (recipient == address(0)) revert ZeroAddress();
-        uint256 amt = stuckVPFIByRequest[requestId];
+        uint256 amt = stuckVpfiByRequest[requestId];
         if (amt == 0) revert NoStuckVPFI(requestId);
-        stuckVPFIByRequest[requestId] = 0;
-        totalStuckVPFI -= amt;
+        stuckVpfiByRequest[requestId] = 0;
+        totalStuckVpfi -= amt;
         IERC20(vpfiToken).safeTransfer(recipient, amt);
         emit StuckVPFIRecovered(requestId, recipient, amt);
     }
@@ -769,7 +769,7 @@ contract VpfiBuyAdapter is
 
     /// @notice Owner-only: drain an ERC20. Refuses to drain the payment
     ///         token below {totalPendingAmountIn}, or {vpfiToken} below
-    ///         {totalStuckVPFI} — buyer funds and stuck VPFI are
+    ///         {totalStuckVpfi} — buyer funds and stuck VPFI are
     ///         protected from a compromised owner. Use {recoverStuckVPFI}
     ///         to release parked VPFI.
     function rescueERC20(
@@ -782,7 +782,7 @@ contract VpfiBuyAdapter is
         if (token == paymentToken && paymentToken != address(0)) {
             floor = totalPendingAmountIn;
         } else if (token == vpfiToken) {
-            floor = totalStuckVPFI;
+            floor = totalStuckVpfi;
         }
         if (floor > 0) {
             uint256 bal = IERC20(token).balanceOf(address(this));

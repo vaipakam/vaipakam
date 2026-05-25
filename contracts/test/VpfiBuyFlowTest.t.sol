@@ -251,8 +251,8 @@ contract VpfiBuyFlowTest is Test {
         );
 
         // vpfi reached no wallet — it is parked stuck for owner recovery.
-        assertEq(adapter.stuckVPFIByRequest(99), amount, "forged delivery parked");
-        assertEq(adapter.totalStuckVPFI(), amount, "stuck total");
+        assertEq(adapter.stuckVpfiByRequest(99), amount, "forged delivery parked");
+        assertEq(adapter.totalStuckVpfi(), amount, "stuck total");
         assertEq(VPFI.balanceOf(buyer), 0, "nothing routed anywhere");
     }
 
@@ -274,7 +274,7 @@ contract VpfiBuyFlowTest is Test {
 
         // The buyer is NOT paid twice; the replayed vpfi parks stuck.
         assertEq(VPFI.balanceOf(buyer), 1_000 ether, "still paid once only");
-        assertEq(adapter.stuckVPFIByRequest(1), amount, "replay parked stuck");
+        assertEq(adapter.stuckVpfiByRequest(1), amount, "replay parked stuck");
     }
 
     function test_RecoverStuckVPFI() public {
@@ -289,7 +289,7 @@ contract VpfiBuyFlowTest is Test {
         vm.prank(owner);
         adapter.recoverStuckVPFI(99, recovery);
         assertEq(VPFI.balanceOf(recovery), amount, "recovered");
-        assertEq(adapter.totalStuckVPFI(), 0, "stuck cleared");
+        assertEq(adapter.totalStuckVpfi(), 0, "stuck cleared");
     }
 
     // ─── Timeout refund ─────────────────────────────────────────────────────
@@ -433,7 +433,7 @@ contract VpfiBuyFlowTest is Test {
 
         assertEq(router.pendingCount(), 1, "leg-2 not dispatched");
         assertEq(
-            receiver.stuckVPFIByRequest(1), 1_000 ether, "VPFI parked stuck"
+            receiver.stuckVpfiByRequest(1), 1_000 ether, "VPFI parked stuck"
         );
 
         // Re-fund the float and retry — leg 2 now dispatches.
@@ -441,7 +441,7 @@ contract VpfiBuyFlowTest is Test {
         vm.prank(owner);
         receiver.retryStuckDelivery(1, MIRROR);
         assertEq(router.pendingCount(), 2, "leg-2 dispatched on retry");
-        assertEq(receiver.totalStuckVPFI(), 0, "stuck cleared");
+        assertEq(receiver.totalStuckVpfi(), 0, "stuck cleared");
 
         _deliver(1, SEL_BASE);
         assertEq(VPFI.balanceOf(buyer), 1_000 ether, "buyer paid after retry");
