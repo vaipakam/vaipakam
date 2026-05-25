@@ -243,6 +243,7 @@ contract AccessControlFacet is DiamondAccessControl {
 
     /// @notice Root admin role; can grant/revoke every other role.
     /// @return The DEFAULT_ADMIN_ROLE identifier.
+    // forge-lint: disable-next-line(mixed-case-function)
     function DEFAULT_ADMIN_ROLE() external pure returns (bytes32) {
         return LibAccessControl.DEFAULT_ADMIN_ROLE;
     }
@@ -250,18 +251,21 @@ contract AccessControlFacet is DiamondAccessControl {
     /// @notice Holds AdminFacet / ProfileFacet admin privileges
     ///         (treasury, 0x proxy, trade allowances, KYC thresholds).
     /// @return The ADMIN_ROLE identifier.
+    // forge-lint: disable-next-line(mixed-case-function)
     function ADMIN_ROLE() external pure returns (bytes32) {
         return LibAccessControl.ADMIN_ROLE;
     }
 
     /// @notice Authorised to pause/unpause the diamond via AdminFacet.
     /// @return The PAUSER_ROLE identifier.
+    // forge-lint: disable-next-line(mixed-case-function)
     function PAUSER_ROLE() external pure returns (bytes32) {
         return LibAccessControl.PAUSER_ROLE;
     }
 
     /// @notice Authorised to set per-user KYC tier via ProfileFacet.
     /// @return The KYC_ADMIN_ROLE identifier.
+    // forge-lint: disable-next-line(mixed-case-function)
     function KYC_ADMIN_ROLE() external pure returns (bytes32) {
         return LibAccessControl.KYC_ADMIN_ROLE;
     }
@@ -270,12 +274,14 @@ contract AccessControlFacet is DiamondAccessControl {
     ///         setters use LibDiamond owner, but the role is reserved for
     ///         future role-gated oracle admin surfaces).
     /// @return The ORACLE_ADMIN_ROLE identifier.
+    // forge-lint: disable-next-line(mixed-case-function)
     function ORACLE_ADMIN_ROLE() external pure returns (bytes32) {
         return LibAccessControl.ORACLE_ADMIN_ROLE;
     }
 
     /// @notice Authorised to update per-asset risk params via RiskFacet.
     /// @return The RISK_ADMIN_ROLE identifier.
+    // forge-lint: disable-next-line(mixed-case-function)
     function RISK_ADMIN_ROLE() external pure returns (bytes32) {
         return LibAccessControl.RISK_ADMIN_ROLE;
     }
@@ -283,6 +289,7 @@ contract AccessControlFacet is DiamondAccessControl {
     /// @notice Authorised to manage the vault implementation template and
     ///         mandatory upgrade version via VaultFactoryFacet.
     /// @return The VAULT_ADMIN_ROLE identifier.
+    // forge-lint: disable-next-line(mixed-case-function)
     function VAULT_ADMIN_ROLE() external pure returns (bytes32) {
         return LibAccessControl.VAULT_ADMIN_ROLE;
     }
