@@ -103,7 +103,7 @@
     "inputs": [],
     "outputs": [
       {
-        "name": "rewardOApp",
+        "name": "rewardMessenger",
         "type": "address",
         "internalType": "address"
       },
@@ -194,10 +194,10 @@
   },
   {
     "type": "function",
-    "name": "setRewardOApp",
+    "name": "setRewardMessenger",
     "inputs": [
       {
-        "name": "oApp",
+        "name": "messenger",
         "type": "address",
         "internalType": "address"
       }
@@ -234,7 +234,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "viaOApp",
+        "name": "viaMessenger",
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
@@ -606,7 +606,7 @@
   },
   {
     "type": "error",
-    "name": "NotAuthorizedRewardOApp",
+    "name": "NotAuthorizedRewardMessenger",
     "inputs": []
   },
   {
@@ -844,7 +844,7 @@
   },
   {
     "type": "error",
-    "name": "RewardOAppNotSet",
+    "name": "RewardMessengerNotSet",
     "inputs": []
   },
   {

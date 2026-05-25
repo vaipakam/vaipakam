@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
+import {IRewardMessenger} from "../src/interfaces/IRewardMessenger.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
@@ -107,67 +108,6 @@ contract ConfigureRewardReporter is Script {
             rewardMessenger = envOverride;
         } else if (envOverride != address(0)) {
             // Env-only path (no artifact yet on this chain).
-            //
-            // Operational peer-binding verification (PR #272 round 3):
-            // ask the messenger contract itself whose Diamond it
-            // thinks it's bound to. A mismatch means the env override
-            // either:
-            //   (a) points at a wrong-chain messenger (the most common
-            //       stale-env failure mode in multi-chain runs);
-            //   (b) points at a contract that isn't a
-            //       VaipakamRewardMessenger at all (an EOA, a different
-            //       proxy, a typo'd address); or
-            //   (c) points at a messenger bound to a different
-            //       Diamond (still wrong-Diamond for the chain we're
-            //       configuring).
-            //
-            // The check catches every honest stale-env case INCLUDING
-            // the fresh-first-time-set one the on-chain cross-check
-            // alternative (Option 1, abandoned) couldn't cover — there,
-            // a brand-new Diamond's `currentMessenger == 0` made the
-            // check trivially pass and the wrong address went through.
-            // Asking the messenger directly doesn't depend on the
-            // Diamond's prior state.
-            //
-            // ── Honest limits of this guard ──────────────────────────
-            // The `diamond` field on `VaipakamRewardMessenger` is NOT
-            // a constructor-time immutable — the contract is
-            // UUPS-upgradeable, `diamond` is plain storage set in
-            // `initialize()` with an `onlyOwner setDiamond` mutator
-            // (see `VaipakamRewardMessenger.sol` L100 / L500). So this
-            // verify is operational defence-in-depth, NOT a
-            // cryptographic anchor. It does NOT defend against:
-            //   • a malicious env address pointing at an attacker-
-            //     controlled contract that implements `diamond()`
-            //     returning this Diamond's address; or
-            //   • a compromised messenger owner who used `setDiamond`
-            //     to spoof the binding back to this Diamond before
-            //     the operator runs the script.
-            //
-            // Both cases require attacker capability the script can't
-            // gate around: an attacker with `ADMIN_PRIVATE_KEY` (the
-            // key this script broadcasts with) can bypass the script
-            // entirely by calling `setRewardMessenger(...)` directly
-            // on the Diamond; an attacker who owns the messenger
-            // contract has already compromised the cross-chain trust
-            // boundary upstream. Operator-mistake protection is the
-            // script's actual job; admin-key / messenger-owner
-            // compromise is out of scope.
-            //
-            // Cost: one extra `view` call per configure run. No new
-            // env vars, no format change, no back-compat break.
-            require(
-                envOverride.code.length > 0,
-                "ConfigureRewardReporter: REWARD_OAPP_PROXY is not a contract "
-                "(env override is either an EOA or an undeployed address)"
-            );
-            address bound = IPeerBoundMessenger(envOverride).diamond();
-            require(
-                bound == diamond,
-                "ConfigureRewardReporter: REWARD_OAPP_PROXY messenger's .diamond() "
-                "does not match this Diamond - env override is bound to a different "
-                "Diamond (likely stale env from a prior chain's run; unset and rerun)"
-            );
             rewardMessenger = envOverride;
         } else if (artifactValue != address(0)) {
             // Artifact-only path (no env override).
@@ -178,6 +118,28 @@ contract ConfigureRewardReporter is Script {
             // var or addresses.json missing).
             rewardMessenger = Deployments.readRewardMessenger();
         }
+        // Defence-in-depth (PR #272 round 4): apply the messenger
+        // interface + peer-binding verify to EVERY resolved address,
+        // regardless of which source (env / artifact / both) supplied
+        // it. Codex flagged two paths in the prior shape:
+        //   (a) `VpfiBuyReceiver` also exposes a `diamond()` getter
+        //       bound to the canonical Base Diamond. The env-only
+        //       branch's narrow `.diamond()`-only check would have
+        //       accepted that contract, then `setRewardMessenger(...)`
+        //       would land, and subsequent
+        //       `IRewardMessenger.sendChainReport` calls on it would
+        //       fail downstream — silent miswire.
+        //   (b) The env+artifact-match branch skipped the verify
+        //       entirely: a copied stale artifact PLUS a matching
+        //       stale env would have agreed on the same wrong
+        //       address and gone through unchecked.
+        // The helper closes both: interface presence (via
+        // IRewardMessenger selector existence) distinguishes a real
+        // messenger from any contract that happens to expose
+        // `diamond()`; peer-binding asserts the messenger is bound
+        // to THIS Diamond. Applied uniformly to every non-zero
+        // resolved address.
+        _assertIsMessengerBoundToThisDiamond(rewardMessenger, diamond);
         // EVM chain id of the canonical (Base) reward chain — the
         // destination for mirror-side chain reports. The reward facets
         // key by chain id (T-068), so this MUST be a real chain id
@@ -257,5 +219,83 @@ contract ConfigureRewardReporter is Script {
             }
         }
         out[idx] = SafeCast.toUint32(acc);
+    }
+
+    /// @dev Defence-in-depth assertion that `candidate` is a contract
+    ///      that:
+    ///        (1) has runtime bytecode (not an EOA);
+    ///        (2) implements the `IRewardMessenger` interface, by
+    ///            checking that BOTH messenger-specific view selectors
+    ///            (`quoteSendChainReport` + `quoteBroadcastGlobal`)
+    ///            are present — distinguishes a real messenger from
+    ///            `VpfiBuyReceiver` or any other contract that
+    ///            happens to expose a `diamond()` getter; AND
+    ///        (3) reports its `diamond` as the local Diamond — catches
+    ///            wrong-chain / wrong-Diamond stale-env mistakes.
+    ///
+    ///      Selector-existence is detected via low-level `staticcall`
+    ///      + `success || returndata.length > 0`. This is robust to
+    ///      revert-with-data outcomes (e.g. CCIP fee oracle reverting
+    ///      because lanes aren't configured yet — still proves the
+    ///      selector is implemented). Only a true "no selector + no
+    ///      fallback" call produces `(false, empty)`, which is what
+    ///      we reject.
+    ///
+    ///      Operational defence; NOT cryptographic — see the
+    ///      threat-model breakdown in `run()`. A motivated attacker
+    ///      with `ADMIN_PRIVATE_KEY` can bypass the script entirely;
+    ///      a compromised messenger owner who set `setDiamond` to
+    ///      spoof can satisfy (3). Both are admin-trust-boundary
+    ///      compromises out of scope for the configure script.
+    function _assertIsMessengerBoundToThisDiamond(
+        address candidate,
+        address localDiamond
+    ) internal view {
+        require(
+            candidate.code.length > 0,
+            "ConfigureRewardReporter: rewardMessenger candidate is not a contract "
+            "(env or artifact resolved to an EOA / undeployed address)"
+        );
+
+        // (2a) IRewardMessenger.quoteSendChainReport selector present?
+        (bool ok1, bytes memory ret1) = candidate.staticcall(
+            abi.encodeWithSelector(
+                IRewardMessenger.quoteSendChainReport.selector,
+                uint256(0),
+                uint256(0),
+                uint256(0)
+            )
+        );
+        require(
+            ok1 || ret1.length > 0,
+            "ConfigureRewardReporter: rewardMessenger candidate does not implement "
+            "IRewardMessenger.quoteSendChainReport (likely VpfiBuyReceiver or another "
+            "non-messenger contract bound to the same Diamond)"
+        );
+
+        // (2b) IRewardMessenger.quoteBroadcastGlobal selector present?
+        (bool ok2, bytes memory ret2) = candidate.staticcall(
+            abi.encodeWithSelector(
+                IRewardMessenger.quoteBroadcastGlobal.selector,
+                uint256(0),
+                uint256(0),
+                uint256(0)
+            )
+        );
+        require(
+            ok2 || ret2.length > 0,
+            "ConfigureRewardReporter: rewardMessenger candidate does not implement "
+            "IRewardMessenger.quoteBroadcastGlobal (likely VpfiBuyReceiver or another "
+            "non-messenger contract bound to the same Diamond)"
+        );
+
+        // (3) Peer-binding: messenger.diamond() == localDiamond.
+        address bound = IPeerBoundMessenger(candidate).diamond();
+        require(
+            bound == localDiamond,
+            "ConfigureRewardReporter: rewardMessenger candidate's .diamond() does not "
+            "match the local Diamond - bound to a different Diamond (likely stale env "
+            "or wrong-chain artifact; unset / fix and rerun)"
+        );
     }
 }

@@ -385,7 +385,7 @@
   },
   {
     "type": "error",
-    "name": "NotAuthorizedRewardOApp",
+    "name": "NotAuthorizedRewardMessenger",
     "inputs": []
   },
   {
@@ -628,7 +628,7 @@
   },
   {
     "type": "error",
-    "name": "RewardOAppNotSet",
+    "name": "RewardMessengerNotSet",
     "inputs": []
   },
   {
