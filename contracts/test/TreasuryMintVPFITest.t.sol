@@ -205,11 +205,11 @@ contract TreasuryMintVPFITest is SetupTest {
     }
 
     function testCanonicalFlagViewMatchesSetter() public {
-        assertTrue(_facet().isCanonicalVPFIChain());
+        assertTrue(_facet().isCanonicalVpfiChain());
         _facet().setCanonicalVPFIChain(false);
-        assertFalse(_facet().isCanonicalVPFIChain());
+        assertFalse(_facet().isCanonicalVpfiChain());
         _facet().setCanonicalVPFIChain(true);
-        assertTrue(_facet().isCanonicalVPFIChain());
+        assertTrue(_facet().isCanonicalVpfiChain());
     }
 
     function testCapViewsReturnZeroOnMirror() public {

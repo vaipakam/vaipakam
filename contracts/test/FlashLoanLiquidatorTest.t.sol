@@ -121,8 +121,8 @@ contract FlashLoanLiquidatorTest is Test {
             address(aavePool),
             address(0)
         );
-        assertEq(l.balancerV2Vault(), address(0));
-        assertEq(l.aaveV3Pool(), address(aavePool));
+        assertEq(l.BALANCER_V2_VAULT(), address(0));
+        assertEq(l.AAVE_V3_POOL(), address(aavePool));
     }
 
     function testConstructorAllowsBalancerOnlyChain() public {
@@ -133,8 +133,8 @@ contract FlashLoanLiquidatorTest is Test {
             address(0),
             address(balancerVault)
         );
-        assertEq(l.aaveV3Pool(), address(0));
-        assertEq(l.balancerV2Vault(), address(balancerVault));
+        assertEq(l.AAVE_V3_POOL(), address(0));
+        assertEq(l.BALANCER_V2_VAULT(), address(balancerVault));
     }
 
     // ─── Owner-gate enforcement ──────────────────────────────────────

@@ -109,10 +109,10 @@ What it does:
 jq '.flashLoanLiquidator' contracts/deployments/base/addresses.json
 
 # 2. The on-chain contract reports the right immutables.
-cast call $FLL_ADDRESS "owner()(address)"           --rpc-url $VITE_BASE_RPC_URL
-cast call $FLL_ADDRESS "diamond()(address)"         --rpc-url $VITE_BASE_RPC_URL
-cast call $FLL_ADDRESS "aaveV3Pool()(address)"      --rpc-url $VITE_BASE_RPC_URL
-cast call $FLL_ADDRESS "balancerV2Vault()(address)" --rpc-url $VITE_BASE_RPC_URL
+cast call $FLL_ADDRESS "OWNER()(address)"             --rpc-url $VITE_BASE_RPC_URL
+cast call $FLL_ADDRESS "DIAMOND()(address)"           --rpc-url $VITE_BASE_RPC_URL
+cast call $FLL_ADDRESS "AAVE_V3_POOL()(address)"      --rpc-url $VITE_BASE_RPC_URL
+cast call $FLL_ADDRESS "BALANCER_V2_VAULT()(address)" --rpc-url $VITE_BASE_RPC_URL
 # Each should match what you put in step 1.
 
 # 3. Etherscan verification picked up — the constructor args show

@@ -1903,7 +1903,7 @@ library LibVaipakam {
         // CCIP CCT pool. Defaults to false at diamond init; flipped to
         // true by VPFITokenFacet.setCanonicalVPFIChain(true) exactly once
         // during the canonical deploy.
-        bool isCanonicalVPFIChain;
+        bool isCanonicalVpfiChain;
         // ── Borrower VPFI Discount (Phase 1) ────────────────────────────
         // Fixed ETH rate at which borrowers may buy VPFI directly from the
         // protocol on the canonical chain. Stored as wei-per-VPFI so the

@@ -33,7 +33,7 @@ interface IRiskFacetDiscount {
  *         discount-path liquidation
  *         (`RiskFacet.triggerLiquidationDiscounted`). Borrows the
  *         outstanding principal asset from Aave V3 or Balancer V2,
- *         pays it to the Vaipakam diamond at oracle-priced
+ *         pays it to the Vaipakam DIAMOND at oracle-priced
  *         debt-plus-discount value, receives the borrower's
  *         collateral at the per-tier discount, swaps the collateral
  *         back to principal on an off-chain-ranked DEX, repays the
@@ -42,11 +42,11 @@ interface IRiskFacetDiscount {
  *
  * @dev    Phase 3 of `docs/DesignsAndPlans/FlashLoanLiquidationPath.md`.
  *         Deployed per chain (one address per chain) alongside the
- *         keeper bot in `apps/keeper`. The contract is owner-gated
+ *         keeper bot in `apps/keeper`. The contract is OWNER-gated
  *         on the *entry point* — only the bot's EOA can initiate a
  *         flash-loan-funded liquidation — to prevent a griefer
  *         from triggering tx-spam costs against us. The underlying
- *         discount-path call to the diamond is permissionless, so
+ *         discount-path call to the DIAMOND is permissionless, so
  *         external MEV liquidators can write their own equivalent
  *         receiver (e.g. against Aave's own ParaSwap-style sweeper
  *         or any custom flash-loan provider) and compete against
@@ -54,14 +54,14 @@ interface IRiskFacetDiscount {
  *
  *         Layout:
  *           - `liquidateViaAaveV3` / `liquidateViaBalancerV2` —
- *             owner-only entry points, choose flash-loan provider.
+ *             OWNER-only entry points, choose flash-loan provider.
  *           - `executeOperation` — Aave V3 callback shape.
  *           - `receiveFlashLoan` — Balancer V2 callback shape.
  *           - `_runLiquidation` — shared post-flash-loan flow:
- *             approve the diamond, trigger the discounted
+ *             approve the DIAMOND, trigger the discounted
  *             liquidation, swap the seized collateral back to the
- *             principal asset via owner-supplied calldata.
- *           - `withdraw` / `rescueToken` — owner can pull profits
+ *             principal asset via OWNER-supplied calldata.
+ *           - `withdraw` / `rescueToken` — OWNER can pull profits
  *             OR rescue stuck tokens.
  *
  *         Reentrancy: each flash-loan provider's callback runs
@@ -69,7 +69,7 @@ interface IRiskFacetDiscount {
  *         from outside is naturally blocked while the loan is open.
  *         The `_inFlight` flag also blocks a malicious nested
  *         `triggerLiquidationDiscounted` from re-entering one of
- *         our entry points (defence-in-depth — the diamond's
+ *         our entry points (defence-in-depth — the DIAMOND's
  *         `ReentrancyGuard` already covers this).
  *
  *         Security notes:
@@ -86,7 +86,7 @@ interface IRiskFacetDiscount {
  *             the whole tx (including the discounted-liquidation
  *             call — borrower state is preserved).
  *           - `swapTarget` and `swapAllowanceTarget` are
- *             owner-supplied per-call (not stored) so the bot can
+ *             OWNER-supplied per-call (not stored) so the bot can
  *             route via different aggregators per loan.
  */
 contract FlashLoanLiquidator is
@@ -100,21 +100,21 @@ contract FlashLoanLiquidator is
     /// @notice Owner-EOA of the keeper bot — the only address allowed
     ///         to initiate a flash-loan-funded liquidation via this
     ///         contract. Set once at construction; rotating the
-    ///         owner means deploying a new contract.
-    address public immutable owner;
+    ///         OWNER means deploying a new contract.
+    address public immutable OWNER;
 
-    /// @notice Vaipakam diamond address on this chain. Constructor-
+    /// @notice Vaipakam DIAMOND address on this chain. Constructor-
     ///         supplied to keep this contract chain-agnostic.
-    address public immutable diamond;
+    address public immutable DIAMOND;
 
     /// @notice Aave V3 Pool address on this chain. Set to
     ///         `address(0)` when Aave V3 isn't available (then
     ///         `liquidateViaAaveV3` reverts).
-    address public immutable aaveV3Pool;
+    address public immutable AAVE_V3_POOL;
 
     /// @notice Balancer V2 Vault address on this chain. Set to
     ///         `address(0)` when Balancer V2 isn't available.
-    address public immutable balancerV2Vault;
+    address public immutable BALANCER_V2_VAULT;
 
     // ─── Transient state ─────────────────────────────────────────────
 
@@ -153,14 +153,14 @@ contract FlashLoanLiquidator is
         uint256 netProfit
     );
 
-    /// @notice Emitted on every owner-side withdrawal (profit
+    /// @notice Emitted on every OWNER-side withdrawal (profit
     ///         sweep or token rescue).
     event Withdrawn(address indexed token, uint256 amount);
 
     // ─── Constructor ─────────────────────────────────────────────────
 
     /// @param _owner             Keeper-bot EOA. Cannot be zero.
-    /// @param _diamond           Vaipakam diamond on this chain.
+    /// @param _diamond           Vaipakam DIAMOND on this chain.
     ///                           Cannot be zero.
     /// @param _aaveV3Pool        Aave V3 Pool. `address(0)` if Aave
     ///                           V3 isn't deployed on this chain
@@ -181,10 +181,10 @@ contract FlashLoanLiquidator is
             _aaveV3Pool != address(0) || _balancerV2Vault != address(0),
             "no provider"
         );
-        owner = _owner;
-        diamond = _diamond;
-        aaveV3Pool = _aaveV3Pool;
-        balancerV2Vault = _balancerV2Vault;
+        OWNER = _owner;
+        DIAMOND = _diamond;
+        AAVE_V3_POOL = _aaveV3Pool;
+        BALANCER_V2_VAULT = _balancerV2Vault;
     }
 
     // ─── Modifiers ───────────────────────────────────────────────────
@@ -193,7 +193,7 @@ contract FlashLoanLiquidator is
     ///      wrapper — every call site inlines the modifier, so the
     ///      check living in a private function dedupes the bytecode.
     function _checkOwner() private view {
-        if (msg.sender != owner) revert NotOwner();
+        if (msg.sender != OWNER) revert NotOwner();
     }
 
     modifier onlyOwner() {
@@ -211,9 +211,9 @@ contract FlashLoanLiquidator is
     ///         2. Call `flashLoanSimple` — Aave sends `totalDebt`
     ///            of `principalAsset` to this contract.
     ///         3. Aave invokes `executeOperation` synchronously.
-    ///         4. Inside the callback: approve diamond, trigger
+    ///         4. Inside the callback: approve DIAMOND, trigger
     ///            discounted liquidation, swap seized collateral
-    ///            for more principal-asset via owner-supplied
+    ///            for more principal-asset via OWNER-supplied
     ///            calldata.
     ///         5. Approve Aave to sweep `totalDebt + premium`.
     ///         6. Return true — Aave reclaims funds.
@@ -223,9 +223,9 @@ contract FlashLoanLiquidator is
     /// @param principalAsset       Loan's principal asset — what
     ///                             we flash-loan.
     /// @param collateralAsset      Loan's collateral asset — what
-    ///                             the diamond will hand us, then
+    ///                             the DIAMOND will hand us, then
     ///                             we swap back to principal.
-    /// @param totalDebt            Exact debt to pay the diamond.
+    /// @param totalDebt            Exact debt to pay the DIAMOND.
     ///                             Caller computes off-chain from
     ///                             `LoanFacet.getLoanDetails` +
     ///                             current borrow-balance interest.
@@ -246,7 +246,7 @@ contract FlashLoanLiquidator is
         address swapAllowanceTarget,
         bytes calldata swapCalldata
     ) external onlyOwner {
-        if (aaveV3Pool == address(0)) revert ProviderNotConfigured();
+        if (AAVE_V3_POOL == address(0)) revert ProviderNotConfigured();
 
         bytes memory params = abi.encode(
             loanId,
@@ -256,7 +256,7 @@ contract FlashLoanLiquidator is
             swapCalldata
         );
         _inFlight = true;
-        IAaveV3Pool(aaveV3Pool).flashLoanSimple(
+        IAaveV3Pool(AAVE_V3_POOL).flashLoanSimple(
             address(this),
             principalAsset,
             totalDebt,
@@ -282,7 +282,7 @@ contract FlashLoanLiquidator is
         address swapAllowanceTarget,
         bytes calldata swapCalldata
     ) external onlyOwner {
-        if (balancerV2Vault == address(0)) revert ProviderNotConfigured();
+        if (BALANCER_V2_VAULT == address(0)) revert ProviderNotConfigured();
 
         bytes memory params = abi.encode(
             loanId,
@@ -297,7 +297,7 @@ contract FlashLoanLiquidator is
         amounts[0] = totalDebt;
 
         _inFlight = true;
-        IBalancerV2Vault(balancerV2Vault).flashLoan(
+        IBalancerV2Vault(BALANCER_V2_VAULT).flashLoan(
             IFlashLoanRecipient(address(this)),
             tokens,
             amounts,
@@ -319,8 +319,8 @@ contract FlashLoanLiquidator is
         bytes calldata params
     ) external returns (bool) {
         if (!_inFlight) revert NotInFlight();
-        if (msg.sender != aaveV3Pool) {
-            revert NotFlashLoanProvider(aaveV3Pool, msg.sender);
+        if (msg.sender != AAVE_V3_POOL) {
+            revert NotFlashLoanProvider(AAVE_V3_POOL, msg.sender);
         }
         if (initiator != address(this)) {
             revert WrongInitiator(address(this), initiator);
@@ -330,7 +330,7 @@ contract FlashLoanLiquidator is
 
         // Approve Aave to pull `amount + premium` back. Exact
         // amount — no leftover allowance.
-        IERC20(asset).forceApprove(aaveV3Pool, amount + premium);
+        IERC20(asset).forceApprove(AAVE_V3_POOL, amount + premium);
         return true;
     }
 
@@ -345,8 +345,8 @@ contract FlashLoanLiquidator is
         bytes memory userData
     ) external {
         if (!_inFlight) revert NotInFlight();
-        if (msg.sender != balancerV2Vault) {
-            revert NotFlashLoanProvider(balancerV2Vault, msg.sender);
+        if (msg.sender != BALANCER_V2_VAULT) {
+            revert NotFlashLoanProvider(BALANCER_V2_VAULT, msg.sender);
         }
         // We always flash-loan a single asset — defensive against
         // a Vault that erroneously hands us a different shape.
@@ -362,12 +362,12 @@ contract FlashLoanLiquidator is
         );
 
         // Balancer V2: push repayment directly to the Vault.
-        tokens[0].safeTransfer(balancerV2Vault, amounts[0] + feeAmounts[0]);
+        tokens[0].safeTransfer(BALANCER_V2_VAULT, amounts[0] + feeAmounts[0]);
     }
 
     // ─── Shared post-flash-loan logic ────────────────────────────────
 
-    /// @dev Decode `params`, approve the diamond, trigger the
+    /// @dev Decode `params`, approve the DIAMOND, trigger the
     ///      discounted liquidation, then run the off-chain-supplied
     ///      swap to convert the seized collateral back to the
     ///      principal asset. Reverts if the post-swap balance is
@@ -386,21 +386,21 @@ contract FlashLoanLiquidator is
             bytes memory swapCalldata
         ) = abi.decode(params, (uint256, address, address, address, bytes));
 
-        // 1. Approve diamond for the exact debt amount. The
-        // diamond's `safeTransferFrom` consumes the entire
+        // 1. Approve DIAMOND for the exact debt amount. The
+        // DIAMOND's `safeTransferFrom` consumes the entire
         // allowance — no leftover risk.
-        IERC20(principalAsset).forceApprove(diamond, totalDebt);
+        IERC20(principalAsset).forceApprove(DIAMOND, totalDebt);
 
         // 2. Trigger discounted liquidation. Collateral lands on
         // this contract (we passed `address(this)` as recipient).
-        IRiskFacetDiscount(diamond).triggerLiquidationDiscounted(
+        IRiskFacetDiscount(DIAMOND).triggerLiquidationDiscounted(
             loanId,
             address(this),
             "" /* extraData reserved for v2 */
         );
 
         // 3. Snapshot the seized collateral balance. The exact
-        // size depends on the diamond's per-tier discount math
+        // size depends on the DIAMOND's per-tier discount math
         // applied to the loan's oracle-priced collateral value;
         // we don't try to second-guess it on-chain.
         uint256 collateralSeized = IERC20(collateralAsset).balanceOf(address(this));
@@ -443,16 +443,16 @@ contract FlashLoanLiquidator is
 
     // ─── Owner withdraw / rescue ─────────────────────────────────────
 
-    /// @notice Sweep `amount` of `token` to the owner. Used to
+    /// @notice Sweep `amount` of `token` to the OWNER. Used to
     ///         pull accumulated profit after each successful
     ///         liquidation. Passing `address(0)` sweeps native
     ///         ETH (in case any drifts in from an aggregator).
     function withdraw(address token, uint256 amount) external onlyOwner {
         if (token == address(0)) {
-            (bool ok, ) = payable(owner).call{value: amount}("");
+            (bool ok, ) = payable(OWNER).call{value: amount}("");
             require(ok, "eth send");
         } else {
-            IERC20(token).safeTransfer(owner, amount);
+            IERC20(token).safeTransfer(OWNER, amount);
         }
         emit Withdrawn(token, amount);
     }
