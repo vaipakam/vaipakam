@@ -8,6 +8,18 @@ import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
+/// @dev Minimal local interface for `VaipakamRewardMessenger.diamond()`.
+///      The messenger sets its `diamond` field as an immutable at
+///      construction, so this is the load-bearing identity binding of
+///      the cross-chain peer relationship — used here to positive-verify
+///      that an env-supplied messenger address actually belongs on
+///      *this* Diamond. Local declaration avoids dragging the whole
+///      `VaipakamRewardMessenger` Solidity import (with its CCIP /
+///      OpenZeppelin transitive cost) into this thin configure script.
+interface IPeerBoundMessenger {
+    function diamond() external view returns (address);
+}
+
 /**
  * @title ConfigureRewardReporter
  * @notice One-shot post-deploy script that wires the Diamond's cross-chain
@@ -90,28 +102,41 @@ contract ConfigureRewardReporter is Script {
         } else if (envOverride != address(0)) {
             // Env-only path (no artifact yet on this chain).
             //
-            // Additional defence-in-depth: if the Diamond ALREADY has a
-            // non-zero `rewardMessenger` configured on-chain, the env
-            // override MUST equal that current value. This catches the
-            // remaining hole the deploy-script wrapper `unset` doesn't
-            // cover: a direct `forge script ConfigureRewardReporter`
-            // invocation with a stale `REWARD_OAPP_PROXY` and a missing
-            // artifact, against a Diamond that was previously
-            // configured correctly. Without this check, the script
-            // would silently overwrite the correct on-chain messenger
-            // with the stale (wrong-chain) env value. A genuine
-            // first-time-set (Diamond's current messenger == 0) still
-            // works — the env-only path is the legitimate bootstrap.
-            (address currentMessenger,,,,) =
-                RewardReporterFacet(diamond).getRewardReporterConfig();
-            if (currentMessenger != address(0)) {
-                require(
-                    envOverride == currentMessenger,
-                    "ConfigureRewardReporter: REWARD_OAPP_PROXY env disagrees with on-chain "
-                    "rewardMessenger (Diamond is already configured; env override would overwrite "
-                    "with a different address - likely stale env, unset and rerun)"
-                );
-            }
+            // Positive peer-binding verification (PR #272 round 3):
+            // ask the messenger contract itself whose Diamond it
+            // thinks it's bound to. `VaipakamRewardMessenger` sets the
+            // `diamond` field as a constructor-time immutable, so a
+            // mismatch means the env override either:
+            //   (a) points at a wrong-chain messenger (the most common
+            //       stale-env failure mode in multi-chain runs);
+            //   (b) points at a contract that isn't a
+            //       VaipakamRewardMessenger at all (an EOA, a different
+            //       proxy, a typo'd address); or
+            //   (c) points at a messenger correctly bound to a
+            //       different Diamond (still wrong-Diamond for the
+            //       chain we're configuring).
+            //
+            // The check catches every stale-env case INCLUDING the
+            // fresh-first-time-set one the prior on-chain cross-check
+            // (53737d02) couldn't cover — there, `currentMessenger`
+            // was zero so the check trivially passed and the wrong
+            // address went through. Asking the messenger directly
+            // doesn't depend on the Diamond's prior state.
+            //
+            // Cost: one extra `view` call per configure run. Zero
+            // operator friction, no new env vars, no format change.
+            require(
+                envOverride.code.length > 0,
+                "ConfigureRewardReporter: REWARD_OAPP_PROXY is not a contract "
+                "(env override is either an EOA or an undeployed address)"
+            );
+            address bound = IPeerBoundMessenger(envOverride).diamond();
+            require(
+                bound == diamond,
+                "ConfigureRewardReporter: REWARD_OAPP_PROXY messenger's .diamond() "
+                "does not match this Diamond - env override is bound to a different "
+                "Diamond (likely stale env from a prior chain's run; unset and rerun)"
+            );
             rewardMessenger = envOverride;
         } else if (artifactValue != address(0)) {
             // Artifact-only path (no env override).
