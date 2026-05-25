@@ -1,0 +1,133 @@
+name: codex-review-trigger
+
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - reopened
+  issue_comment:
+    types:
+      - created
+      - edited
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  detect-and-forward:
+    # PR events, or PR-thread issue_comment events only.
+    if: |
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Parse trigger and optionally forward
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const isPrEvent = context.eventName === 'pull_request';
+            const actor = context.actor || '';
+
+            // Avoid bot loops.
+            if (actor.endsWith('[bot]') || actor.toLowerCase().includes('codex')) {
+              core.info(`Skipping bot actor: ${actor}`);
+              return;
+            }
+
+            const sourceText = isPrEvent
+              ? (context.payload.pull_request?.body || '')
+              : (context.payload.comment?.body || '');
+
+            // Canonical mode parser per AGENTS.md; profile suffix is optional.
+            const triggerRegex = /@codex\s+review\s+(normal|adversarial|full(?:\s+security-critical)?)(?:\s+([a-z0-9-]+(?:\s+[a-z0-9-]+)*))?/i;
+            const match = sourceText.match(triggerRegex);
+
+            if (!match) {
+              core.info('No @codex review trigger found.');
+              return;
+            }
+
+            const mode = match[1].trim().replace(/\s+/g, ' ');
+            const profile = (match[2] || '').trim().replace(/\s+/g, ' ');
+            const normalizedTrigger = `@codex review ${mode}${profile ? ` ${profile}` : ''}`;
+
+            const issueNumber = isPrEvent
+              ? context.payload.pull_request.number
+              : context.payload.issue.number;
+
+            // Fetch PR to anchor dedupe on current head commit SHA.
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: issueNumber,
+            });
+            const headSha = pr.data.head.sha;
+
+            // React on the PR itself for visibility (best-effort).
+            try {
+              await github.rest.reactions.createForIssue({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                content: 'eyes',
+              });
+            } catch (err) {
+              const status = err?.status || 0;
+              if (status !== 200 && status !== 201) {
+                core.info(`PR reaction skipped: ${err.message}`);
+              }
+            }
+
+            // Idempotency: one forwarding comment per (trigger + head SHA).
+            const marker = `<!-- codex-review-trigger:${normalizedTrigger.toLowerCase()}|sha:${headSha} -->`;
+            const existingComments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+
+            const alreadyForwarded = existingComments.some((c) =>
+              (c.body || '').includes(marker)
+            );
+
+            if (alreadyForwarded) {
+              core.info(`Trigger already forwarded for PR #${issueNumber} at ${headSha}: ${normalizedTrigger}`);
+              return;
+            }
+
+            if (isPrEvent) {
+              const body = [
+                marker,
+                `Detected review trigger in PR description at head \`${headSha}\`: \`${normalizedTrigger}\``,
+                normalizedTrigger,
+              ].join('\n');
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body,
+              });
+
+              core.info(`Forwarded trigger for PR #${issueNumber} at ${headSha}: ${normalizedTrigger}`);
+              return;
+            }
+
+            const body = [
+              marker,
+              `Detected review trigger in PR comment by @${actor} at head \`${headSha}\`: \`${normalizedTrigger}\``,
+              normalizedTrigger,
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body,
+            });
+
+            core.info(`Forwarded comment trigger for PR #${issueNumber} at ${headSha}: ${normalizedTrigger}`);
