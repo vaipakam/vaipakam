@@ -147,9 +147,13 @@ contract ConfigureCcip is Script {
         c.rateGovernor = Deployments.readAddress(
             ".vpfiPoolRateGovernor", "VPFI_POOL_RATE_GOVERNOR_ADDRESS"
         );
-        c.rewardMessenger = Deployments.readAddress(
-            ".rewardMessenger", "REWARD_MESSENGER_ADDRESS"
-        );
+        // Typed reader: tries `.rewardMessenger` first, falls back to
+        // the LayerZero-era `.rewardOApp` for pre-PR-#272 artifacts.
+        // Without the typed reader (the prior generic
+        // `readAddress(".rewardMessenger", env)` call) ConfigureCcip
+        // would hard-fail every wiring against a legacy artifact even
+        // though the address is unchanged.
+        c.rewardMessenger = Deployments.readRewardMessenger();
         if (c.canonical) {
             c.localToken = Deployments.readVpfiToken();
             c.localBuyContract = Deployments.readVpfiBuyReceiver();
@@ -271,7 +275,8 @@ contract ConfigureCcip is Script {
                 m.setChannelPeer(
                     VPFI_REWARD_CHANNEL,
                     cid,
-                    Deployments.readAddressForChain(cid, ".rewardMessenger")
+                    // Typed reader: legacy `.rewardOApp` fallback per PR #272.
+                    Deployments.readRewardMessengerForChain(cid)
                 );
                 console.log("  channel peers wired -> mirror", cid);
             }
@@ -286,9 +291,8 @@ contract ConfigureCcip is Script {
             m.setChannelPeer(
                 VPFI_REWARD_CHANNEL,
                 c.baseChainId,
-                Deployments.readAddressForChain(
-                    c.baseChainId, ".rewardMessenger"
-                )
+                // Typed reader: legacy `.rewardOApp` fallback per PR #272.
+                Deployments.readRewardMessengerForChain(c.baseChainId)
             );
             console.log("  channel peers wired -> Base", c.baseChainId);
         }

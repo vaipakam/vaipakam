@@ -926,14 +926,15 @@ EOF
   # .env needs no per-chain entry.
   export BASE_CHAIN_ID=8453
   # DeployCrosschain records the reward contract under `.rewardMessenger`.
-  # Hand ConfigureRewardReporter that address explicitly via the
-  # `REWARD_OAPP_PROXY` env var (legacy name, kept for back-compat) so
-  # the configurator doesn't have to re-read the file itself. On a
-  # pre-PR-#272 artifact the same address lives under the LayerZero-era
-  # `.rewardOApp` key — fall back to it so a fresh mainnet rerun
-  # against an older addresses.json doesn't silently leave the env
-  # var unset (which would push the ADMIN-EOA path into
-  # ConfigureRewardReporter as the messenger address).
+  # Hand ConfigureRewardReporter that address explicitly via the legacy
+  # env-var name `REWARD_OAPP_PROXY` (kept for back-compat). Pre-PR-#272
+  # artifacts store the same address under `.rewardOApp`; fall back to it.
+  #
+  # IMPORTANT: explicitly unset `REWARD_OAPP_PROXY` before the read so a
+  # stale carry-over from a prior chain's run in a multi-chain loop
+  # cannot silently override this chain's correct artifact resolution.
+  # Mirror of the same fix on `deploy-testnet.sh`'s phase_configure.
+  unset REWARD_OAPP_PROXY
   REWARD_MSGR=$(jq -r '.rewardMessenger // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
   if [ -z "$REWARD_MSGR" ]; then
     REWARD_MSGR=$(jq -r '.rewardOApp // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
@@ -941,6 +942,9 @@ EOF
   if [ -n "$REWARD_MSGR" ]; then
     export REWARD_OAPP_PROXY="$REWARD_MSGR"
   fi
+  # If both keys missed, REWARD_OAPP_PROXY stays unset; ConfigureRewardReporter
+  # then falls through to `Deployments.readRewardMessenger()` which has
+  # its own library-level fallback (and reverts loudly if it also misses).
 
   forge script script/DiamondConfigSpell.s.sol \
     --rpc-url "$RPC" --broadcast --slow
