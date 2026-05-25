@@ -25,22 +25,26 @@ other `*.md` here is a pending fragment.
 Write relative links in fragments **from the assembled file's
 perspective** (`docs/ReleaseNotes/<date>.md`), not from the
 fragment's own location (`docs/ReleaseNotes/unreleased/<frag>.md`).
-The assembler rewrites paths during fold so they resolve correctly:
+Links you write that way are already correct and the assembler
+leaves them alone. The assembler only intervenes when a fragment
+uses a fragment-perspective path or an unsafe same-dir reference:
 
 | What you write in a fragment | What lands in the assembled file |
 |---|---|
-| `](../DesignsAndPlans/X.md)` (parent of `docs/ReleaseNotes/`) | `](DesignsAndPlans/X.md)` |
-| `](../../DesignsAndPlans/X.md)` (parent of `docs/`) | `](../DesignsAndPlans/X.md)` |
-| `](./X.md)` (same dir as fragment, i.e. `unreleased/`) | `](../X.md)` |
+| `](../DesignsAndPlans/X.md)` — correct from `docs/ReleaseNotes/<date>.md` (recommended) | **unchanged** |
+| `](DesignsAndPlans/X.md)` — would point at non-existent `docs/ReleaseNotes/DesignsAndPlans/` | **unchanged** (author's mistake; assembler doesn't second-guess) |
+| `](../../DesignsAndPlans/X.md)` — fragment-perspective deep path | rewritten to `](../DesignsAndPlans/X.md)` |
+| `](./X.md)` — meant `unreleased/X.md`, doesn't survive assembly | rewritten to `](../X.md)` |
 
-Pure path arithmetic: the rewriter drops one leading `../` from each
-link, and promotes a bare `./` to `../`. The most natural authoring
-convention is therefore to **write the link as if your fragment
-already lived at `docs/ReleaseNotes/<date>.md`** — then the rewriter
-is a no-op safety net rather than something you rely on. The link
-Codex flagged on PR #275 (`../../DesignsAndPlans/UxDirectionDexCexHybrid.md`)
-was correct for the fragment's location but broke after fold; the
-assembler now rewrites it to `../DesignsAndPlans/...` automatically.
+The rewriter is purely two narrow substitutions: `](../../` →
+`](../`, and `](./` → `](../`. It does **not** touch a single-level
+`](../X)` (that's already correct after assembly) or a bare
+`](X)` (which is the assembler's directory, also already correct).
+
+The original Codex-flagged link on PR #275
+(`../../DesignsAndPlans/UxDirectionDexCexHybrid.md`) was correct
+for the fragment's location but broke after fold; the assembler
+now rewrites it to `../DesignsAndPlans/...` automatically.
 
 ## Assembling a day's notes
 

@@ -55,15 +55,20 @@ for f in "${frags[@]}"; do
   printf '\n' >> "$OUT"
   # Rewrite relative link paths from fragment-perspective
   # (docs/ReleaseNotes/unreleased/) to assembled-file-perspective
-  # (docs/ReleaseNotes/) — one directory level shallower:
-  #   ](../X)    -> ](X)          parent-of-unreleased == same-dir-of-assembled
-  #   ](../../X) -> ](../X)       deeper relative paths drop one level
-  #   ](./X)     -> ](../X)       ./ meant same-dir-as-fragment; promote up
-  # Order matters: the drop-one-`../` rule runs first so the
-  # ./-promote rule doesn't double-rewrite a path that already
-  # had a `../` segment.
+  # (docs/ReleaseNotes/) — one directory level shallower. Two
+  # targeted rewrites only; links that are ALREADY correct from the
+  # assembled file's perspective are left untouched:
+  #   ](../../X) -> ](../X)       fragment-perspective deep path
+  #                               collapses one level
+  #   ](./X)     -> ](../X)       ./ meant fragment's own dir;
+  #                               doesn't survive assembly, so
+  #                               promote up to docs/ at least
+  # NOT rewritten:
+  #   ](../X)    stays            already correct from
+  #                               docs/ReleaseNotes/<date>.md
+  #   ](X)       stays            already in same dir as assembled
   sed -E '
-    s|\]\(\.\./|](|g
+    s|\]\(\.\./\.\./|](\.\./|g
     s|\]\(\./|](\.\./|g
   ' "$f" >> "$OUT"
   # Ensure a trailing newline between fragments.
