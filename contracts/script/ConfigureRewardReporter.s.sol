@@ -9,11 +9,17 @@ import {Deployments} from "./lib/Deployments.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /// @dev Minimal local interface for `VaipakamRewardMessenger.diamond()`.
-///      The messenger sets its `diamond` field as an immutable at
-///      construction, so this is the load-bearing identity binding of
-///      the cross-chain peer relationship — used here to positive-verify
-///      that an env-supplied messenger address actually belongs on
-///      *this* Diamond. Local declaration avoids dragging the whole
+///      Used by the env-only branch of `run()` to ask the messenger
+///      contract whose Diamond it thinks it's bound to. The `diamond`
+///      field is plain storage (set in the messenger's
+///      `initialize()` and mutable via its `onlyOwner setDiamond`
+///      mutator), so this is OPERATIONAL defence against honest
+///      stale-env mistakes, NOT a cryptographic anchor against a
+///      malicious `diamond()` impl or a compromised messenger owner —
+///      see the long-form comment at the call site for the full
+///      threat-model breakdown.
+///
+///      Local declaration avoids dragging the whole
 ///      `VaipakamRewardMessenger` Solidity import (with its CCIP /
 ///      OpenZeppelin transitive cost) into this thin configure script.
 interface IPeerBoundMessenger {
@@ -102,29 +108,54 @@ contract ConfigureRewardReporter is Script {
         } else if (envOverride != address(0)) {
             // Env-only path (no artifact yet on this chain).
             //
-            // Positive peer-binding verification (PR #272 round 3):
+            // Operational peer-binding verification (PR #272 round 3):
             // ask the messenger contract itself whose Diamond it
-            // thinks it's bound to. `VaipakamRewardMessenger` sets the
-            // `diamond` field as a constructor-time immutable, so a
-            // mismatch means the env override either:
+            // thinks it's bound to. A mismatch means the env override
+            // either:
             //   (a) points at a wrong-chain messenger (the most common
             //       stale-env failure mode in multi-chain runs);
             //   (b) points at a contract that isn't a
             //       VaipakamRewardMessenger at all (an EOA, a different
             //       proxy, a typo'd address); or
-            //   (c) points at a messenger correctly bound to a
-            //       different Diamond (still wrong-Diamond for the
-            //       chain we're configuring).
+            //   (c) points at a messenger bound to a different
+            //       Diamond (still wrong-Diamond for the chain we're
+            //       configuring).
             //
-            // The check catches every stale-env case INCLUDING the
-            // fresh-first-time-set one the prior on-chain cross-check
-            // (53737d02) couldn't cover — there, `currentMessenger`
-            // was zero so the check trivially passed and the wrong
-            // address went through. Asking the messenger directly
-            // doesn't depend on the Diamond's prior state.
+            // The check catches every honest stale-env case INCLUDING
+            // the fresh-first-time-set one the on-chain cross-check
+            // alternative (Option 1, abandoned) couldn't cover — there,
+            // a brand-new Diamond's `currentMessenger == 0` made the
+            // check trivially pass and the wrong address went through.
+            // Asking the messenger directly doesn't depend on the
+            // Diamond's prior state.
             //
-            // Cost: one extra `view` call per configure run. Zero
-            // operator friction, no new env vars, no format change.
+            // ── Honest limits of this guard ──────────────────────────
+            // The `diamond` field on `VaipakamRewardMessenger` is NOT
+            // a constructor-time immutable — the contract is
+            // UUPS-upgradeable, `diamond` is plain storage set in
+            // `initialize()` with an `onlyOwner setDiamond` mutator
+            // (see `VaipakamRewardMessenger.sol` L100 / L500). So this
+            // verify is operational defence-in-depth, NOT a
+            // cryptographic anchor. It does NOT defend against:
+            //   • a malicious env address pointing at an attacker-
+            //     controlled contract that implements `diamond()`
+            //     returning this Diamond's address; or
+            //   • a compromised messenger owner who used `setDiamond`
+            //     to spoof the binding back to this Diamond before
+            //     the operator runs the script.
+            //
+            // Both cases require attacker capability the script can't
+            // gate around: an attacker with `ADMIN_PRIVATE_KEY` (the
+            // key this script broadcasts with) can bypass the script
+            // entirely by calling `setRewardMessenger(...)` directly
+            // on the Diamond; an attacker who owns the messenger
+            // contract has already compromised the cross-chain trust
+            // boundary upstream. Operator-mistake protection is the
+            // script's actual job; admin-key / messenger-owner
+            // compromise is out of scope.
+            //
+            // Cost: one extra `view` call per configure run. No new
+            // env vars, no format change, no back-compat break.
             require(
                 envOverride.code.length > 0,
                 "ConfigureRewardReporter: REWARD_OAPP_PROXY is not a contract "
