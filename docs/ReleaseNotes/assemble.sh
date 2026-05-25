@@ -53,7 +53,19 @@ fi
 
 for f in "${frags[@]}"; do
   printf '\n' >> "$OUT"
-  cat "$f" >> "$OUT"
+  # Rewrite relative link paths from fragment-perspective
+  # (docs/ReleaseNotes/unreleased/) to assembled-file-perspective
+  # (docs/ReleaseNotes/) — one directory level shallower:
+  #   ](../X)    -> ](X)          parent-of-unreleased == same-dir-of-assembled
+  #   ](../../X) -> ](../X)       deeper relative paths drop one level
+  #   ](./X)     -> ](../X)       ./ meant same-dir-as-fragment; promote up
+  # Order matters: the drop-one-`../` rule runs first so the
+  # ./-promote rule doesn't double-rewrite a path that already
+  # had a `../` segment.
+  sed -E '
+    s|\]\(\.\./|](|g
+    s|\]\(\./|](\.\./|g
+  ' "$f" >> "$OUT"
   # Ensure a trailing newline between fragments.
   [ -z "$(tail -c1 "$f")" ] || printf '\n' >> "$OUT"
 done
