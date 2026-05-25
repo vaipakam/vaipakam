@@ -104,6 +104,8 @@ contract InternalMatchPriorityWindowTest is SetupTest {
             // If somehow it succeeds in test env, that's also fine —
             // means the gate didn't fire.
         } catch (bytes memory reason) {
+            // safe: no SafeCast variant for bytes-target casts; this site narrows a longer hash to its prefix, which is the intended bytes4(<bytes-expr>) pattern.
+            // forge-lint: disable-next-line(unsafe-typecast)
             bytes4 selector = bytes4(reason);
             require(
                 selector != RiskFacet.InternalMatchOnlyBand.selector,
@@ -149,6 +151,10 @@ contract InternalMatchPriorityWindowTest is SetupTest {
 
         try RiskFacet(address(diamond)).triggerLiquidation(LOAN_ID, _adapterCalls()) {}
         catch (bytes memory reason) {
+            // safe: no SafeCast variant for bytes-target casts; this is the
+            // standard `bytes4(<bytes-error-payload>)` selector-extraction
+            // pattern Solidity tooling uses.
+            // forge-lint: disable-next-line(unsafe-typecast)
             bytes4 selector = bytes4(reason);
             require(
                 selector != RiskFacet.InternalMatchOnlyBand.selector,
@@ -171,6 +177,10 @@ contract InternalMatchPriorityWindowTest is SetupTest {
 
         try RiskFacet(address(diamond)).triggerLiquidation(LOAN_ID, _adapterCalls()) {}
         catch (bytes memory reason) {
+            // safe: no SafeCast variant for bytes-target casts; this is the
+            // standard `bytes4(<bytes-error-payload>)` selector-extraction
+            // pattern Solidity tooling uses.
+            // forge-lint: disable-next-line(unsafe-typecast)
             bytes4 selector = bytes4(reason);
             require(
                 selector != RiskFacet.InternalMatchOnlyBand.selector,

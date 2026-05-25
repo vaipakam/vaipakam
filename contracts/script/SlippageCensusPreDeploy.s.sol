@@ -10,6 +10,7 @@ import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
  * @title SlippageCensusPreDeploy
@@ -65,7 +66,7 @@ contract SlippageCensusPreDeploy is Script {
         bytes memory s = new bytes(digits);
         while (v != 0) {
             digits -= 1;
-            s[digits] = bytes1(uint8(48 + v % 10));
+            s[digits] = bytes1(SafeCast.toUint8(48 + v % 10));
             v /= 10;
         }
         return string(s);

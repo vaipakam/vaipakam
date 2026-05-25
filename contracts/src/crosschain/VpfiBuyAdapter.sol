@@ -16,6 +16,7 @@ import {
     ICrossChainMessenger,
     ICrossChainMessageRecipient
 } from "./ICrossChainMessenger.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
  * @title VpfiBuyAdapter — the source-chain entry point of the cross-chain
@@ -450,7 +451,7 @@ contract VpfiBuyAdapter is
 
         pendingBuys[requestId] = PendingBuy({
             buyer: msg.sender,
-            amountIn: uint96(amountIn),
+            amountIn: SafeCast.toUint96(amountIn),
             initiatedAt: uint64(block.timestamp),
             status: BuyStatus.Pending
         });

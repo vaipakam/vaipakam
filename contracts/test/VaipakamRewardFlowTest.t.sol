@@ -9,6 +9,7 @@ import {CcipMessenger} from "../src/crosschain/CcipMessenger.sol";
 import {VaipakamRewardMessenger} from "../src/crosschain/VaipakamRewardMessenger.sol";
 import {ICrossChainMessenger} from "../src/crosschain/ICrossChainMessenger.sol";
 import {MockCcipRouter} from "./mocks/MockCcipRouter.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /// @dev Records the reward-ingress calls — stands in for a Vaipakam Diamond.
 contract MockRewardDiamond {
@@ -167,7 +168,7 @@ contract VaipakamRewardFlowTest is Test {
         router.deliver(0, SEL_MIRROR);
 
         assertEq(diamondBase.reportCount(), 1, "Base aggregator got the report");
-        assertEq(diamondBase.lastReportChain(), uint32(MIRROR), "source chain tagged");
+        assertEq(diamondBase.lastReportChain(), SafeCast.toUint32(MIRROR), "source chain tagged");
         assertEq(diamondBase.lastReportDay(), 42, "dayId");
         assertEq(diamondBase.lastReportLender(), 1_000 ether, "lender numeraire");
         assertEq(diamondBase.lastReportBorrower(), 500 ether, "borrower numeraire");

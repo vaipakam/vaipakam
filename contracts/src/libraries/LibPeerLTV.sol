@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {IAavePoolDataProvider} from "../interfaces/IAavePoolDataProvider.sol";
 import {IComet} from "../interfaces/IComet.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
  * @title LibPeerLTV
@@ -118,7 +119,7 @@ library LibPeerLTV {
         ) {
             return (false, 0, 0);
         }
-        return (true, uint16(ltv), uint16(liquidationThreshold));
+        return (true, SafeCast.toUint16(ltv), SafeCast.toUint16(liquidationThreshold));
     }
 
     /// @notice Read an asset's risk parameters from a Compound V3
@@ -178,7 +179,7 @@ library LibPeerLTV {
         ) {
             return (false, 0, 0);
         }
-        return (true, uint16(borrowBps), uint16(liquidateBps));
+        return (true, SafeCast.toUint16(borrowBps), SafeCast.toUint16(liquidateBps));
     }
 
     // ─── Phase 4: tier-LTV aggregation ────────────────────────────────────
@@ -251,7 +252,7 @@ library LibPeerLTV {
             }
         }
 
-        if (n < uint256(minAssetReadings)) return (false, 0, uint8(n));
+        if (n < uint256(minAssetReadings)) return (false, 0, SafeCast.toUint8(n));
 
         // In-place insertion sort — n is small (typical ≤ 10), so the
         // O(n²) is fine. Median of n entries: n%2==1 ⇒ middle; n%2==0
@@ -273,7 +274,7 @@ library LibPeerLTV {
                 (uint256(assetMedians[n / 2 - 1]) + uint256(assetMedians[n / 2])) / 2
             );
         }
-        return (true, medianBps, uint8(n));
+        return (true, medianBps, SafeCast.toUint8(n));
     }
 
     /// @dev Per-asset consensus: collect peer LTVs for one asset,

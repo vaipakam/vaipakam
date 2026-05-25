@@ -9,6 +9,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 // Numeraire generalization (b1) — INumeraireOracle interface and its mocks were
 // retired in favour of the symbol-derived feed slots
@@ -286,7 +287,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         LibVaipakam.Loan memory l =
             LoanFacet(address(diamond)).getLoanDetails(1);
         assertEq(uint8(l.periodicInterestCadence), uint8(MONTHLY));
-        assertEq(l.lastPeriodicInterestSettledAt, uint64(startTs));
+        assertEq(l.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs));
         assertEq(l.interestPaidSinceLastPeriod, 0);
         // startTime downsize sanity — should equal block.timestamp at init.
         assertEq(uint256(l.startTime), startTs);

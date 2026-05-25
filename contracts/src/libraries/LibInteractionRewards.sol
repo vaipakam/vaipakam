@@ -5,6 +5,7 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
  * @title LibInteractionRewards
@@ -850,9 +851,9 @@ library LibInteractionRewards {
         id = ++s.nextRewardEntryId;
         LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
         e.user = user;
-        e.loanId = uint64(loanId);
-        e.startDay = uint32(startDay);
-        e.endDay = uint32(endDay);
+        e.loanId = SafeCast.toUint64(loanId);
+        e.startDay = SafeCast.toUint32(startDay);
+        e.endDay = SafeCast.toUint32(endDay);
         e.side = side;
         e.perDayNumeraire18 = perDayNumeraire18;
         // processed/forfeited default to false
@@ -883,7 +884,7 @@ library LibInteractionRewards {
             uint256 perDay = e.perDayNumeraire18;
             _applyDelta(deltas, frontier, originalEnd, int256(perDay));
             _applyDelta(deltas, frontier, newEnd, -int256(perDay));
-            e.endDay = uint32(newEnd);
+            e.endDay = SafeCast.toUint32(newEnd);
         }
         if (forfeited) e.forfeited = true;
     }

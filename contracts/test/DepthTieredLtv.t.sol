@@ -16,6 +16,7 @@ import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
  * @title DepthTieredLtv
@@ -242,7 +243,7 @@ contract DepthTieredLtv is Test {
         // at the larger test sizes wins ⇒ Tier 3.
         address mockUniV2 = makeAddr("uniV2Factory");
         AdminFacet(address(diamond)).setUniswapV2Factory(mockUniV2);
-        _mockV2Pool(mockUniV2, mockAsset, mockWeth, uint112(L_TIER3), uint112(L_TIER3));
+        _mockV2Pool(mockUniV2, mockAsset, mockWeth, SafeCast.toUint112(L_TIER3), SafeCast.toUint112(L_TIER3));
         assertEq(OracleFacet(address(diamond)).getLiquidityTier(mockAsset), 3);
     }
 
@@ -257,7 +258,7 @@ contract DepthTieredLtv is Test {
         // V2 pool with deep but unbalanced reserves (asset side 2× the
         // WETH side at the feed prices ⇒ pool spot disagrees with the
         // feed by 100% ⇒ guard rejects ⇒ V2 leg contributes nothing).
-        _mockV2Pool(mockUniV2, mockAsset, mockWeth, uint112(L_TIER3) * 2, uint112(L_TIER3));
+        _mockV2Pool(mockUniV2, mockAsset, mockWeth, SafeCast.toUint112(L_TIER3) * 2, SafeCast.toUint112(L_TIER3));
         assertEq(OracleFacet(address(diamond)).getLiquidityTier(mockAsset), 1);
     }
 
@@ -273,7 +274,7 @@ contract DepthTieredLtv is Test {
     function test_tier_v2_aloneClassifiesLiquidPostStep3() public {
         address mockUniV2 = makeAddr("uniV2Factory");
         AdminFacet(address(diamond)).setUniswapV2Factory(mockUniV2);
-        _mockV2Pool(mockUniV2, mockAsset, mockWeth, uint112(L_TIER3), uint112(L_TIER3));
+        _mockV2Pool(mockUniV2, mockAsset, mockWeth, SafeCast.toUint112(L_TIER3), SafeCast.toUint112(L_TIER3));
         // V3 factories all empty for this asset (default setUp), but the
         // deep V2 pool clears the floor slippage on its own.
         assertEq(
@@ -504,7 +505,7 @@ contract DepthTieredLtv is Test {
         ConfigFacet(address(diamond)).setPaaAssets(withDup);
 
         address[] memory tooMany = new address[](9);
-        for (uint256 i; i < 9; ++i) tooMany[i] = address(uint160(0x1000 + i));
+        for (uint256 i; i < 9; ++i) tooMany[i] = address(SafeCast.toUint160(0x1000 + i));
         vm.expectRevert(abi.encodeWithSelector(ConfigFacet.PaaListInvalid.selector, "over MAX_PAA_ASSETS"));
         ConfigFacet(address(diamond)).setPaaAssets(tooMany);
     }

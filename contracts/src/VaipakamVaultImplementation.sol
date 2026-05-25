@@ -14,6 +14,7 @@ import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Re
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IERC4907} from "./interfaces/IERC4907.sol";
 import {VaultFactoryFacet} from "./facets/VaultFactoryFacet.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
  * @title VaipakamVaultImplementation
@@ -362,14 +363,14 @@ contract VaipakamVaultImplementation is
             list[existingIdx] = RentalEntry({
                 user: user,
                 expires: expires,
-                quantity: uint128(quantity)
+                quantity: SafeCast.toUint128(quantity)
             });
         } else {
             list.push(
                 RentalEntry({
                     user: user,
                     expires: expires,
-                    quantity: uint128(quantity)
+                    quantity: SafeCast.toUint128(quantity)
                 })
             );
         }

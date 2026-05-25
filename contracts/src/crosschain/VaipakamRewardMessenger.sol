@@ -12,6 +12,7 @@ import {
     ICrossChainMessenger,
     ICrossChainMessageRecipient
 } from "./ICrossChainMessenger.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /// @dev Base-side Diamond ingress for an inbound REPORT.
 interface IRewardAggregatorIngress {
@@ -423,7 +424,7 @@ contract VaipakamRewardMessenger is
             }
             emit ReportReceived(sourceChainId, dayId, a, b);
             IRewardAggregatorIngress(diamond).onChainReportReceived(
-                uint32(sourceChainId), dayId, a, b
+                SafeCast.toUint32(sourceChainId), dayId, a, b
             );
         } else if (msgType == MSG_TYPE_BROADCAST) {
             if (isCanonical) revert BroadcastOnCanonical();

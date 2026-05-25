@@ -12,6 +12,7 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /// @title PeriodicInterestSettleTest
 /// @notice T-034 PR2 — coverage for the settle entry point (just-stamp +
@@ -98,7 +99,7 @@ contract PeriodicInterestSettleTest is SetupTest {
     function testCadenceSnapshottedAtAcceptance() public {
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(l.periodicInterestCadence), uint8(MONTHLY));
-        assertEq(l.lastPeriodicInterestSettledAt, uint64(startTs));
+        assertEq(l.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs));
         assertEq(l.interestPaidSinceLastPeriod, 0);
     }
 
@@ -311,7 +312,7 @@ contract PeriodicInterestSettleTest is SetupTest {
 
         // Verify checkpoint advanced.
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
-        assertEq(l.lastPeriodicInterestSettledAt, uint64(startTs + 30 days));
+        assertEq(l.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs + 30 days));
         assertEq(l.interestPaidSinceLastPeriod, 0); // reset after advance
     }
 
@@ -327,7 +328,7 @@ contract PeriodicInterestSettleTest is SetupTest {
         // Expected for the period at the current principal and rate.
         uint256 expected = (uint256(l.principal) *
             uint256(l.interestRateBps) * 30) / (10_000 * 365);
-        l.interestPaidSinceLastPeriod = uint128(expected);
+        l.interestPaidSinceLastPeriod = SafeCast.toUint128(expected);
         TestMutatorFacet(address(diamond)).setLoan(loanId, l);
 
         // Past the boundary + grace.
@@ -338,7 +339,7 @@ contract PeriodicInterestSettleTest is SetupTest {
         RepayFacet(address(diamond)).settlePeriodicInterest(loanId, _emptyAdapterCalls());
 
         LibVaipakam.Loan memory after_ = LoanFacet(address(diamond)).getLoanDetails(loanId);
-        assertEq(after_.lastPeriodicInterestSettledAt, uint64(startTs + 30 days));
+        assertEq(after_.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs + 30 days));
         assertEq(after_.interestPaidSinceLastPeriod, 0);
     }
 
@@ -360,6 +361,6 @@ contract PeriodicInterestSettleTest is SetupTest {
         // accrual math but must be > 0 at 10 days into the loan.
         assertGt(l.interestPaidSinceLastPeriod, 0);
         // Checkpoint NOT yet advanced (we're still within the period).
-        assertEq(l.lastPeriodicInterestSettledAt, uint64(startTs));
+        assertEq(l.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs));
     }
 }

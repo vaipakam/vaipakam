@@ -14,6 +14,7 @@ import {
     IFlashLoanRecipient
 } from "../src/interfaces/IBalancerV2Vault.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /// @title FlashLoanLiquidatorTest
 /// @notice Unit tests for the FlashLoanLiquidator reference contract
@@ -384,7 +385,7 @@ contract MockAaveV3Pool is IAaveV3Pool {
     uint16 public premiumBpsLocal;
 
     function setPrincipal(address a) external { principalAsset = a; }
-    function setPremiumBps(uint256 bps) external { premiumBpsLocal = uint16(bps); }
+    function setPremiumBps(uint256 bps) external { premiumBpsLocal = SafeCast.toUint16(bps); }
 
     function FLASHLOAN_PREMIUM_TOTAL() external view returns (uint128) {
         return uint128(premiumBpsLocal);

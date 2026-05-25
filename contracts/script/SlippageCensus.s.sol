@@ -6,6 +6,7 @@ import {console} from "forge-std/console.sol";
 
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
  * @title SlippageCensus
@@ -196,7 +197,7 @@ contract SlippageCensus is Script {
         bytes memory s = new bytes(digits);
         while (v != 0) {
             digits -= 1;
-            s[digits] = bytes1(uint8(48 + v % 10));
+            s[digits] = bytes1(SafeCast.toUint8(48 + v % 10));
             v /= 10;
         }
         return string(s);

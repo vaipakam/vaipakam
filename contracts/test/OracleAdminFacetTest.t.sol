@@ -5,6 +5,7 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /// @title OracleAdminFacetTest
 /// @notice Owner-only coverage for the four oracle-config setters exposed by
@@ -210,7 +211,7 @@ contract OracleAdminFacetTest is SetupTest {
         // 20 assets — exactly at the cap, must succeed.
         address[] memory assets = new address[](20);
         for (uint256 i = 0; i < 20; ++i) {
-            assets[i] = address(uint160(0x1000 + i));
+            assets[i] = address(SafeCast.toUint160(0x1000 + i));
         }
         OracleAdminFacet(address(diamond)).setTierReferenceAssets(1, assets);
         // Confirm the persisted list has the expected length.
@@ -223,7 +224,7 @@ contract OracleAdminFacetTest is SetupTest {
         // 21 assets — just over the cap, must revert.
         address[] memory assets = new address[](21);
         for (uint256 i = 0; i < 21; ++i) {
-            assets[i] = address(uint160(0x1000 + i));
+            assets[i] = address(SafeCast.toUint160(0x1000 + i));
         }
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -240,7 +241,7 @@ contract OracleAdminFacetTest is SetupTest {
         // refresh" exploit shape the cap defends against.
         address[] memory assets = new address[](1000);
         for (uint256 i = 0; i < 1000; ++i) {
-            assets[i] = address(uint160(0x1000 + i));
+            assets[i] = address(SafeCast.toUint160(0x1000 + i));
         }
         vm.expectRevert(
             abi.encodeWithSelector(

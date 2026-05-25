@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
  * @title LibPeriodicInterest — period-arithmetic helpers (T-034 PR2).
@@ -106,7 +107,7 @@ library LibPeriodicInterest {
         uint256 days_ = LibVaipakam.intervalDays(loan.periodicInterestCadence);
         if (days_ == 0) return;
         loan.lastPeriodicInterestSettledAt =
-            uint64(uint256(loan.lastPeriodicInterestSettledAt) + days_ * LibVaipakam.ONE_DAY);
+            SafeCast.toUint64(uint256(loan.lastPeriodicInterestSettledAt) + days_ * LibVaipakam.ONE_DAY);
         loan.interestPaidSinceLastPeriod = 0;
     }
 }

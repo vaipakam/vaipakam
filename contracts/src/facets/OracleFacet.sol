@@ -17,6 +17,7 @@ import {ITellor} from "../interfaces/ITellor.sol";
 import {IApi3ServerV1} from "../interfaces/IApi3ServerV1.sol";
 import {IDIAOracleV2} from "../interfaces/IDIAOracleV2.sol";
 import {IPyth} from "../interfaces/IPyth.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
  * @title OracleFacet
@@ -1440,7 +1441,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         (bool ok, bytes memory data) = token.staticcall(abi.encodeWithSignature("decimals()"));
         if (!ok || data.length < 32) return 18;
         uint256 d = abi.decode(data, (uint256));
-        return d > 36 ? 18 : uint8(d);
+        return d > 36 ? 18 : SafeCast.toUint8(d);
     }
 
     /// @dev Read a Uni-V3-clone pool's state for the depth-tier route
@@ -1497,6 +1498,20 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             (int56[] memory tickCumulatives, ) = abi.decode(obsData, (int56[], uint160[]));
             if (tickCumulatives.length >= 2 && twapWindow > 0) {
                 int56 delta = tickCumulatives[1] - tickCumulatives[0];
+                // REVIEW-SAFECAST: intentional unchecked truncation —
+                // this is the "never reverts the route search" path
+                // (see comment at the function-doc line above). A
+                // buggy V3-clone returning garbage tickCumulatives
+                // could produce a delta-over-twapWindow that exceeds
+                // int24 range; SafeCast.toInt24 would revert the
+                // whole route search instead of letting the
+                // surrounding TWAP-consistency check soft-fail via
+                // observeOk = false. The downstream consumer
+                // (`_passesTwapConsistencyCheck`) compares meanTick
+                // against spotTick within a band — a junk meanTick
+                // from a malformed pool fails that comparison
+                // gracefully. Per Codex P1 PR #267.
+                // forge-lint: disable-next-line(unsafe-typecast)
                 meanTick = int24(delta / int56(int256(uint256(twapWindow))));
                 observeOk = true;
             }
