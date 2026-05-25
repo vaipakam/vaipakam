@@ -244,7 +244,7 @@ actually match — and consciously diverge, with clear naming and
 tooltips, only where lending primitives have no DEX analog.
 
 This release publishes
-[`docs/DesignsAndPlans/UxDirectionDexCexHybrid.md`](../../DesignsAndPlans/UxDirectionDexCexHybrid.md)
+[`docs/DesignsAndPlans/UxDirectionDexCexHybrid.md`](../DesignsAndPlans/UxDirectionDexCexHybrid.md)
 — the design pass that names every Tier-A vocabulary borrow (where the
 DEX/CEX wording AND idiom is adopted 1:1) and every Tier-B retention
 (where the lending-native name stays but the visual idiom is borrowed
