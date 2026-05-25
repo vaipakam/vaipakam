@@ -89,6 +89,29 @@ contract ConfigureRewardReporter is Script {
             rewardMessenger = envOverride;
         } else if (envOverride != address(0)) {
             // Env-only path (no artifact yet on this chain).
+            //
+            // Additional defence-in-depth: if the Diamond ALREADY has a
+            // non-zero `rewardMessenger` configured on-chain, the env
+            // override MUST equal that current value. This catches the
+            // remaining hole the deploy-script wrapper `unset` doesn't
+            // cover: a direct `forge script ConfigureRewardReporter`
+            // invocation with a stale `REWARD_OAPP_PROXY` and a missing
+            // artifact, against a Diamond that was previously
+            // configured correctly. Without this check, the script
+            // would silently overwrite the correct on-chain messenger
+            // with the stale (wrong-chain) env value. A genuine
+            // first-time-set (Diamond's current messenger == 0) still
+            // works — the env-only path is the legitimate bootstrap.
+            (address currentMessenger,,,,) =
+                RewardReporterFacet(diamond).getRewardReporterConfig();
+            if (currentMessenger != address(0)) {
+                require(
+                    envOverride == currentMessenger,
+                    "ConfigureRewardReporter: REWARD_OAPP_PROXY env disagrees with on-chain "
+                    "rewardMessenger (Diamond is already configured; env override would overwrite "
+                    "with a different address - likely stale env, unset and rerun)"
+                );
+            }
             rewardMessenger = envOverride;
         } else if (artifactValue != address(0)) {
             // Artifact-only path (no env override).
