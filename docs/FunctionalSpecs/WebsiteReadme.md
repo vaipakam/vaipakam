@@ -676,6 +676,13 @@ Dashboard offer-management requirements:
 
 - the dashboard should include a `Your Offers` card with `Active`, `Filled`, `Cancelled`, and `All` chip filters
 - active offer rows should include a `Cancel` action wired to the protocol's offer-cancel function, disabling the control while the transaction is pending
+- active offer rows should show the offer's fill mode, good-till-time expiry, and any cancel cooldown in user-readable form
+- cancel controls should explain when an offer is temporarily not cancellable, including a countdown when the cooldown end time is known
+- expired good-till-time offers should be presented as no longer acceptable, with a clear cleanup state when the user or keeper can remove them from the active book
+- users should be able to edit their own unaccepted open offers without cancelling and reposting when protocol rules allow it; the review state should summarize changed terms, additional vault pull requirements, refunds, and any already-filled amount that cannot be reduced
+- direct-accept review should use the protocol acceptance preview as its source of truth for effective principal, rate, collateral, Loan Initiation Fee estimate, residual collateral refund, and typed blockers
+- state-changing offer review dialogs should use a shared risk-and-consent shape and show the estimated network fee consistently above the submit action
+- interest-rate and fee displays should show user-friendly percentages, with basis-point details available as supporting context rather than as the primary visible value
 - filled offer rows should show the resulting `Loan #X` link when the accepted-offer event maps the offer to a loan
 - cancelled offer rows should reconstruct terms from the richest available source: first a detailed on-chain cancel event, then a browser-local snapshot captured while the offer was active, then an identity-only fallback with clear unavailable fields
 - cancelled-offer reconstruction helpers should stay out of the user-facing Activity feed and Loan Details timeline when they duplicate a single cancel action rather than representing a separate user-visible lifecycle event
