@@ -202,10 +202,10 @@ interface IVaipakamErrors {
     ///         on a non-canonical Diamond (Base is the canonical reward chain).
     error NotCanonicalRewardChain();
     /// @notice Trusted ingress handler invoked by an address other than
-    ///         the Diamond's registered `rewardOApp`.
-    error NotAuthorizedRewardOApp();
-    /// @notice `rewardOApp` has not been configured on this Diamond yet.
-    error RewardOAppNotSet();
+    ///         the Diamond's registered `rewardMessenger`.
+    error NotAuthorizedRewardMessenger();
+    /// @notice `rewardMessenger` has not been configured on this Diamond yet.
+    error RewardMessengerNotSet();
     /// @notice Mirror-side Diamond has not been told the canonical
     ///         reward chain's EVM chain id (`baseChainId`) yet.
     error BaseChainIdNotSet();

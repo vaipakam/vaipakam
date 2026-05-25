@@ -132,8 +132,73 @@ library Deployments {
     function readVpfiBuyAdapter()  internal view returns (address) { return _readAddr(".vpfiBuyAdapter",  "VPFI_BUY_ADAPTER_ADDRESS"); }
     function readVpfiBuyReceiver() internal view returns (address) { return _readAddr(".vpfiBuyReceiver", "VPFI_BUY_RECEIVER_ADDRESS"); }
     // T-068 CCIP: the cross-chain reward contract is `VaipakamRewardMessenger`,
-    // recorded under `.rewardMessenger` by `DeployCrosschain.s.sol`.
-    function readRewardMessenger() internal view returns (address) { return _readAddr(".rewardMessenger", "REWARD_MESSENGER_ADDRESS"); }
+    // recorded under `.rewardMessenger` by `DeployCrosschain.s.sol`. Older
+    // artifacts (pre-PR #272 contract-side rename) recorded the same
+    // address under the LayerZero-era key `.rewardOApp`; this reader
+    // tries the new key first and falls back to the legacy key so
+    // `Handover.s.sol`, `ConfigureRewardReporter.s.sol`, and any
+    // operational tool that walks pre-rename addresses.json files keeps
+    // resolving the same address. Without the fallback, every consumer
+    // silently resolves to `address(0)` on legacy artifacts.
+    function readRewardMessenger() internal view returns (address) {
+        address a = _tryReadAddr(".rewardMessenger");
+        if (a == address(0)) a = _tryReadAddr(".rewardOApp");
+        if (a == address(0)) a = _readAddr(".rewardMessenger", "REWARD_MESSENGER_ADDRESS");
+        return a;
+    }
+    /// @notice Same fallback chain as {readRewardMessenger} but returns
+    ///         `address(0)` on full miss instead of reverting. Used by
+    ///         callers that need to cross-check an env-var override
+    ///         against the artifact without blocking the env-only path
+    ///         (e.g. {ConfigureRewardReporter}'s defence-in-depth check).
+    function tryReadRewardMessenger() internal view returns (address) {
+        address a = _tryReadAddr(".rewardMessenger");
+        if (a == address(0)) a = _tryReadAddr(".rewardOApp");
+        return a;
+    }
+
+    /// @notice Cross-chain typed reader for the reward messenger address on
+    ///         `chainId`. Same legacy fallback as {readRewardMessenger}:
+    ///         tries `.rewardMessenger` first, falls back to the
+    ///         LayerZero-era `.rewardOApp` key for legacy artifacts.
+    ///         Reverts loudly if neither key resolves — cross-chain wiring
+    ///         must never silently wire `address(0)`. Without this, `ConfigureCcip`
+    ///         hard-fails on every legacy addresses.json that another chain
+    ///         in the mesh hasn't yet been redeployed against PR #272+
+    ///         contracts.
+    function readRewardMessengerForChain(uint256 chainId) internal view returns (address) {
+        string memory p = string.concat(
+            "deployments/", slugForChainId(chainId), "/addresses.json"
+        );
+        require(
+            _fileExists(p),
+            string.concat(
+                "Deployments: no artifact for chain ",
+                CHEATS.toString(chainId),
+                " (run the deploy on that chain first)"
+            )
+        );
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        string memory file = CHEATS.readFile(p);
+        address a;
+        try CHEATS.parseJsonAddress(file, ".rewardMessenger") returns (address newKey) {
+            a = newKey;
+        } catch { /* missing new key — try legacy */ }
+        if (a == address(0)) {
+            try CHEATS.parseJsonAddress(file, ".rewardOApp") returns (address legacyKey) {
+                a = legacyKey;
+            } catch { /* neither key present */ }
+        }
+        require(
+            a != address(0),
+            string.concat(
+                "Deployments: neither .rewardMessenger nor .rewardOApp set for chain ",
+                CHEATS.toString(chainId)
+            )
+        );
+        return a;
+    }
+
     function readFlashLoanLiquidator() internal view returns (address) { return _tryReadAddr(".flashLoanLiquidator"); }
 
     // Track-C mock infra (Base Sepolia testnet only). Falls back to env on chains

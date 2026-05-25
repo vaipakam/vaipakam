@@ -91,6 +91,7 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
      * @notice Deprecated. Use updateKYCTier instead, which keeps kycVerified in sync.
      * @dev Kept for backward compatibility of the selector but reverts unconditionally.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function updateKYCStatus(address, bool) external pure {
         revert("Deprecated: use updateKYCTier");
     }
@@ -127,6 +128,7 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
      * @param user The user's address.
      * @return verified True if KYC verified (or if Phase 1 pass-through is active).
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function isKYCVerified(address user) external view returns (bool verified) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (!s.kycEnforcementEnabled) return true;
@@ -158,6 +160,7 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
      * @param user The user's address.
      * @param tier The new KYC tier (Tier0 = no KYC, Tier1 = limited, Tier2 = full).
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function updateKYCTier(
         address user,
         LibVaipakam.KYCTier tier
@@ -178,6 +181,7 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
      * @param user The user's address.
      * @return tier The KYC tier (Tier0, Tier1, or Tier2).
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function getKYCTier(
         address user
     ) external view returns (LibVaipakam.KYCTier tier) {
@@ -198,6 +202,7 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
      * @param valueNumeraire The transaction value in the active numeraire scaled to 1e18.
      * @return meetsRequirement True if the user's KYC tier is sufficient for the given value.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function meetsKYCRequirement(
         address user,
         uint256 valueNumeraire
@@ -240,6 +245,7 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
      * @param tier0ThresholdNumeraire Max numeraire value for no-KYC tier (default 1_000 * 1e18).
      * @param tier1ThresholdNumeraire Max numeraire value for limited-KYC tier (default 10_000 * 1e18).
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function updateKYCThresholds(
         uint256 tier0ThresholdNumeraire,
         uint256 tier1ThresholdNumeraire
@@ -285,6 +291,7 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
      * @return tier0 The Tier0 threshold in USD (scaled 1e18).
      * @return tier1 The Tier1 threshold in USD (scaled 1e18).
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function getKYCThresholds() external view returns (uint256 tier0, uint256 tier1) {
         tier0 = LibVaipakam.getKycTier0Threshold();
         tier1 = LibVaipakam.getKycTier1Threshold();

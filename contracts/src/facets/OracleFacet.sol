@@ -314,6 +314,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
      *      reverts on missing/stale feeds. Callers (RiskFacet, LoanFacet)
      *      should only invoke this for liquid loans.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function calculateLTV(
         address borrowedAsset,
         uint256 borrowedAmount,

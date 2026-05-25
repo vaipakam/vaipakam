@@ -12,7 +12,7 @@ import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
 ///         `RewardReporterFacet` without spinning up a full CCIP
 ///         router / OffRamp stack.
 /// @dev Two operating modes per test:
-///        1. Diamond.rewardOApp() == address(this). Then the facet allows
+///        1. Diamond.rewardMessenger() == address(this). Then the facet allows
 ///           this contract to deliver messages via {deliverChainReport}
 ///           (mirror→Base) and {deliverBroadcast} (Base→mirror).
 ///        2. {sendChainReport} / {broadcastGlobal} are the sender-side
@@ -119,7 +119,7 @@ contract MockRewardMessenger is IRewardMessenger {
 
     /// @notice Simulate a mirror's report landing on the Base aggregator.
     /// @dev Test prank: the mock calls the Diamond's aggregator as itself
-    ///      (`msg.sender == rewardOApp`), satisfying `onlyRewardOApp`.
+    ///      (`msg.sender == rewardMessenger`), satisfying `onlyRewardMessenger`.
     function deliverChainReport(
         uint32 sourceChainId,
         uint256 dayId,

@@ -1032,7 +1032,7 @@ contract HelperTest {
         selectors = new bytes4[](11);
         selectors[0] = RewardReporterFacet.closeDay.selector;
         selectors[1] = RewardReporterFacet.onRewardBroadcastReceived.selector;
-        selectors[2] = RewardReporterFacet.setRewardOApp.selector;
+        selectors[2] = RewardReporterFacet.setRewardMessenger.selector;
         // T-068: `setLocalEid` removed — chain identity is `block.chainid`.
         selectors[3] = RewardReporterFacet.setBaseChainId.selector;
         selectors[4] = RewardReporterFacet.setIsCanonicalRewardChain.selector;

@@ -444,6 +444,7 @@ contract VpfiBuyReceiver is
     receive() external payable {}
 
     /// @notice Owner / ops ETH top-up (named alias of {receive}).
+    // forge-lint: disable-next-line(mixed-case-function)
     function fundETH() external payable {}
 
     // ─── Emergency pause ────────────────────────────────────────────────────
@@ -472,6 +473,7 @@ contract VpfiBuyReceiver is
         diamond = newDiamond;
     }
 
+    // forge-lint: disable-next-line(mixed-case-function)
     function setVPFIToken(address newToken) external onlyOwner {
         if (newToken == address(0)) revert ZeroAddress();
         emit VPFITokenSet(vpfiToken, newToken);
@@ -495,6 +497,7 @@ contract VpfiBuyReceiver is
     // ─── Rescue ─────────────────────────────────────────────────────────────
 
     /// @notice Owner-only: drain the native ETH float.
+    // forge-lint: disable-next-line(mixed-case-function)
     function rescueETH(address payable to, uint256 amount) external onlyOwner {
         if (to == address(0)) revert ZeroAddress();
         (bool ok, ) = to.call{value: amount}("");
@@ -505,6 +508,7 @@ contract VpfiBuyReceiver is
     ///         refuses to go below {totalStuckVpfi} — VPFI owed to a buyer
     ///         whose delivery failed is protected; use {retryStuckDelivery}
     ///         to complete that buy instead.
+    // forge-lint: disable-next-line(mixed-case-function)
     function rescueERC20(
         address token,
         address to,

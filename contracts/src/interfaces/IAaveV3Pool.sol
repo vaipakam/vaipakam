@@ -30,6 +30,7 @@ interface IAaveV3Pool {
     ///         chain deployments tune it lower. Used by the
     ///         keeper-bot's profitability simulation to budget
     ///         the repayment.
+    // forge-lint: disable-next-line(mixed-case-function)
     function FLASHLOAN_PREMIUM_TOTAL() external view returns (uint128);
 }
 

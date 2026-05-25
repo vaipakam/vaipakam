@@ -123,8 +123,18 @@ list_pause_targets() {
   local slug="$1"
   local addr_file="$DEPLOY_ROOT/$slug/addresses.json"
   [ ! -f "$addr_file" ] && return 1
-  for KEY in diamond rewardOApp vpfiOftAdapter vpfiMirror vpfiBuyReceiver vpfiBuyAdapter; do
+  for KEY in diamond rewardMessenger vpfiOftAdapter vpfiMirror vpfiBuyReceiver vpfiBuyAdapter; do
     local ADDR=$(jq -r --arg k "$KEY" '.[$k] // empty' "$addr_file" 2>/dev/null)
+    # Legacy fallback: pre-T-068 deployment artifacts stored the cross-
+    # chain reward messenger under the LayerZero-era key `rewardOApp`.
+    # Mirrors the same fallback pattern in `deploy-testnet.sh` /
+    # `deploy-mainnet.sh`. Without this, an emergency pause run against
+    # older addresses.json files (which is most of them today) would
+    # SILENTLY skip the reward messenger — gutting the documented
+    # 5-minute containment path. Caught by Codex review on PR #272.
+    if [ "$KEY" = "rewardMessenger" ] && { [ -z "$ADDR" ] || [ "$ADDR" = "null" ]; }; then
+      ADDR=$(jq -r '.rewardOApp // empty' "$addr_file" 2>/dev/null)
+    fi
     if [ -n "$ADDR" ] && [ "$ADDR" != "null" ]; then
       echo "$KEY:$ADDR"
     fi

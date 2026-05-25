@@ -68,9 +68,11 @@ interface IVPFIToken is IERC20 {
 
     /// @notice Hard cap on total supply across all mints.
     /// @return 230_000_000 * 1e18.
+    // forge-lint: disable-next-line(mixed-case-function)
     function TOTAL_SUPPLY_CAP() external view returns (uint256);
 
     /// @notice Initial one-time mint at deployment (10% of cap).
     /// @return 23_000_000 * 1e18.
+    // forge-lint: disable-next-line(mixed-case-function)
     function INITIAL_MINT() external view returns (uint256);
 }

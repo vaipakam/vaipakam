@@ -352,12 +352,14 @@ contract OracleAdminFacet {
      *         at call time. Owner-only.
      * @param oracle DIA Oracle V2 address on this chain, or zero.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function setDIAOracleV2(address oracle) external {
         LibVaipakam.setDIAOracleV2(oracle);
     }
 
     /// @notice Read the configured DIA Oracle V2 address. Zero
     ///         indicates DIA is disabled.
+    // forge-lint: disable-next-line(mixed-case-function)
     function getDIAOracleV2() external view returns (address) {
         return LibVaipakam.storageSlot().diaOracleV2;
     }
