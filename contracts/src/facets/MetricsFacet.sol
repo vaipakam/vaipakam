@@ -64,6 +64,7 @@ contract MetricsFacet {
      * @return nftCollateralTvl NFT collateral is priced at $0 (no on-chain oracle);
      *         returns the COUNT of active loans with NFT collateral instead.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function getProtocolTVL()
         external
         view
@@ -698,6 +699,7 @@ contract MetricsFacet {
     /// @dev O(1): resolves via `loanIdByPositionTokenId` reverse mapping
     ///      maintained by LibMetricsHooks. Returns empty Loan when the
     ///      position is not an NFT-rental leg or no longer active.
+    // forge-lint: disable-next-line(mixed-case-function)
     function getNFTRentalDetails(uint256 tokenId) external view returns (LibVaipakam.Loan memory) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 id = s.loanIdByPositionTokenId[tokenId];
@@ -713,6 +715,7 @@ contract MetricsFacet {
 
     /// @notice Count of active loan legs whose contract matches `collection`.
     ///         Counter-backed via `nftsInVaultByCollection` — O(1).
+    // forge-lint: disable-next-line(mixed-case-function)
     function getTotalNFTsInVaultByCollection(address collection) external view returns (uint256) {
         return LibVaipakam.storageSlot().nftsInVaultByCollection[collection];
     }
@@ -828,6 +831,7 @@ contract MetricsFacet {
      * @dev O(activeLoansCount) — iterates the active-loan list. Does not
      *      reach into per-user vault proxies.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function getUserNFTsInVault(address user) external view returns (uint256[] memory tokenIds) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // Walk the user's lifetime loan index, filter to active +
@@ -1386,6 +1390,7 @@ contract MetricsFacet {
     ///                NFTs; the `isLender` flag in the return shape
     ///                disambiguates).
     /// @return s     The structured summary; see {NFTPositionSummary}.
+    // forge-lint: disable-next-line(mixed-case-function)
     function getNFTPositionSummary(uint256 tokenId)
         external
         view

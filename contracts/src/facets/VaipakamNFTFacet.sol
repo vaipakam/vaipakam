@@ -64,6 +64,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
      * @dev Must be called once during diamond deployment (e.g., in DiamondInit).
      *      Replaces the constructor which cannot initialize diamond proxy storage.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function initializeNFT() external onlyRole(LibAccessControl.ADMIN_ROLE) {
         // Name + symbol are intentionally one-shot at deploy time —
         // `LibERC721.initialize` reverts on second call. No admin
@@ -117,6 +118,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
      * @param isLender `true` for lender NFTs, `false` for borrower NFTs.
      * @param uri      Image URL (IPFS, https, or data URI).
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function setImageURIForStatus(
         LibVaipakam.LoanPositionStatus status,
         bool isLender,
@@ -154,6 +156,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
      * @return uri The resolved image URI string. Empty when no entry is
      *             set at any level of the chain.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function getImageURIFor(
         LibVaipakam.LoanPositionStatus status,
         bool isLender
@@ -277,6 +280,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
      * @notice Mints a new Vaipakam NFT for an offer or loan participant.
      * @dev Callable only by authorized facets (e.g., OfferFacet via Diamond).
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function mintNFT(
         address to,
         uint256 tokenId,
@@ -300,6 +304,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
      * @notice Updates the status of an existing Vaipakam NFT.
      * @dev Callable only by authorized facets.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function updateNFTStatus(
         uint256 tokenId,
         uint256 loanId,
@@ -317,6 +322,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
      * @notice Burns a Vaipakam NFT after loan closure or claims.
      * @dev Callable only by authorized facets.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function burnNFT(uint256 tokenId) external {
         _enforceAuthorizedCaller();
         LibERC721._burn(tokenId);
@@ -354,6 +360,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
      *      conventions (`number`, `boost_percentage`, `date`) for
      *      sensible marketplace rendering.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function tokenURI(
         uint256 tokenId
     ) public view override returns (string memory) {
@@ -726,6 +733,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
      *      Image defaults to the lender-side default image asset unless
      *      the admin has set a dedicated `contractImageURI`.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function contractURI() external view returns (string memory) {
         LibERC721.ERC721Storage storage es = LibERC721._storage();
         string memory image = bytes(es.contractImageURI).length > 0
@@ -755,6 +763,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
      * @notice Sets a dedicated collection image (overrides the lender-active default).
      * @dev Admin-only. Passing an empty string clears the override.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function setContractImageURI(string calldata uri)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)

@@ -68,6 +68,7 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
     ///      admin is expected to pass the ERC1967Proxy for the canonical
     ///      VPFIToken deployment. Emits {VPFITokenSet}.
     /// @param newToken The VPFI token proxy address (must be non-zero).
+    // forge-lint: disable-next-line(mixed-case-function)
     function setVPFIToken(address newToken) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         if (newToken == address(0)) revert InvalidAddress();
 
@@ -82,6 +83,7 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
     /// @notice Returns the VPFI token proxy address registered with the
     ///         Diamond, or zero if not yet registered.
     /// @return The registered VPFI token proxy address (zero if unset).
+    // forge-lint: disable-next-line(mixed-case-function)
     function getVPFIToken() external view returns (address) {
         return LibVaipakam.storageSlot().vpfiToken;
     }
@@ -96,6 +98,7 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
     ///      VPFI locally — they can only receive bridged supply via the LZ
     ///      peer mesh. Emits {CanonicalVPFIChainSet}.
     /// @param isCanonical New flag value.
+    // forge-lint: disable-next-line(mixed-case-function)
     function setCanonicalVPFIChain(
         bool isCanonical
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
@@ -116,6 +119,7 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
     /// @notice Total VPFI in circulation across all holders on this chain.
     /// @dev Returns zero if the token is not yet registered.
     /// @return Total ERC20 supply on this chain, or zero if no token bound.
+    // forge-lint: disable-next-line(mixed-case-function)
     function getVPFITotalSupply() external view returns (uint256) {
         address token = LibVaipakam.storageSlot().vpfiToken;
         if (token == address(0)) return 0;
@@ -129,6 +133,7 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
     ///      is enforced globally by the canonical-side lock-set, not by
     ///      any mirror. Also returns zero if no token is registered yet.
     /// @return The hard supply cap (230M * 1e18) on the canonical chain; zero elsewhere.
+    // forge-lint: disable-next-line(mixed-case-function)
     function getVPFICap() external view returns (uint256) {
         address token = _canonicalToken();
         if (token == address(0)) return 0;
@@ -141,6 +146,7 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
     ///      canonical chain; returns zero on mirror chains (see
     ///      `getVPFICap`) and when no token is registered.
     /// @return Remaining mintable supply on the canonical chain; zero elsewhere.
+    // forge-lint: disable-next-line(mixed-case-function)
     function getVPFICapHeadroom() external view returns (uint256) {
         address token = _canonicalToken();
         if (token == address(0)) return 0;
@@ -153,6 +159,7 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
     ///      mint surface (supply bridges in via the LZ peer mesh), so
     ///      this returns zero there and when no token is registered.
     /// @return The authorized minter address on the canonical chain; zero elsewhere.
+    // forge-lint: disable-next-line(mixed-case-function)
     function getVPFIMinter() external view returns (address) {
         address token = _canonicalToken();
         if (token == address(0)) return address(0);
@@ -173,6 +180,7 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
     /// @return cap          Hard supply cap on canonical chain; zero on mirrors.
     /// @return headroom     `cap - totalSupply` on canonical chain; zero on mirrors.
     /// @return minter       Authorized minter on canonical chain; zero on mirrors.
+    // forge-lint: disable-next-line(mixed-case-function)
     function getVPFISnapshot()
         external
         view
@@ -215,6 +223,7 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
     ///      Diamond's perspective).
     /// @param account Holder address to query.
     /// @return        ERC20 balance of `account`, or zero if no token bound.
+    // forge-lint: disable-next-line(mixed-case-function)
     function getVPFIBalanceOf(address account) external view returns (uint256) {
         address token = LibVaipakam.storageSlot().vpfiToken;
         if (token == address(0)) return 0;

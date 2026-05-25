@@ -101,12 +101,14 @@ contract StakingRewardsFacet is
     ///         deposit / discount deduction / withdrawal hook.
     /// @param user Staker to query.
     /// @return     VPFI wei currently held in `user`'s vault and earning rewards.
+    // forge-lint: disable-next-line(mixed-case-function)
     function getUserStakedVPFI(address user) external view returns (uint256) {
         return LibVaipakam.storageSlot().userStakedVpfi[user];
     }
 
     /// @notice Sum of staked VPFI across all users.
     /// @return Total vault-held VPFI wei earning staking rewards.
+    // forge-lint: disable-next-line(mixed-case-function)
     function getTotalStakedVPFI() external view returns (uint256) {
         return LibVaipakam.storageSlot().totalStakedVpfi;
     }
@@ -127,6 +129,7 @@ contract StakingRewardsFacet is
     /// @dev Reflects the admin override in effect — see
     ///      {ConfigFacet.setStakingApr}. Defaults to 500 (5%) when unset.
     /// @return APR in basis points (500 = 5.00%).
+    // forge-lint: disable-next-line(mixed-case-function)
     function getStakingAPRBps() external view returns (uint256) {
         return LibVaipakam.cfgVpfiStakingAprBps();
     }

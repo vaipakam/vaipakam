@@ -416,6 +416,7 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
     ///      and {ProfileFacet.updateKYCTier} remain operational regardless.
     /// @param enforced True to activate tiered enforcement, false to keep
     ///        (or return to) Phase 1 pass-through.
+    // forge-lint: disable-next-line(mixed-case-function)
     function setKYCEnforcement(bool enforced) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.kycEnforcementEnabled = enforced;
@@ -425,6 +426,7 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
     /// @notice Returns whether KYC enforcement is currently active.
     /// @return enforced False under Phase 1 pass-through (default), true when
     ///         governance has activated tiered enforcement.
+    // forge-lint: disable-next-line(mixed-case-function)
     function isKYCEnforcementEnabled() external view returns (bool enforced) {
         return LibVaipakam.storageSlot().kycEnforcementEnabled;
     }

@@ -346,6 +346,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
      * @param loanId The loan ID.
      * @return ltv The LTV in basis points (e.g., 7500 for 75%).
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function calculateLTV(uint256 loanId) public view returns (uint256 ltv) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];

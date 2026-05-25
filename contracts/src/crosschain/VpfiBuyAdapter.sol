@@ -592,6 +592,7 @@ contract VpfiBuyAdapter is
     /// @notice Owner recovery for VPFI parked by {UnsolicitedDelivery}.
     /// @dev `totalStuckVpfi` is decremented atomically so a compromised
     ///      owner cannot sweep VPFI tied to other stuck ids.
+    // forge-lint: disable-next-line(mixed-case-function)
     function recoverStuckVPFI(
         uint64 requestId,
         address recipient
@@ -699,6 +700,7 @@ contract VpfiBuyAdapter is
         paymentToken = newToken;
     }
 
+    // forge-lint: disable-next-line(mixed-case-function)
     function setVPFIToken(address newToken) external onlyOwner {
         if (newToken == address(0)) revert ZeroAddress();
         emit VPFITokenSet(vpfiToken, newToken);
@@ -755,6 +757,7 @@ contract VpfiBuyAdapter is
 
     /// @notice Owner-only: drain loose ETH. In native mode, refuses to
     ///         drain below {totalPendingAmountIn}.
+    // forge-lint: disable-next-line(mixed-case-function)
     function rescueETH(address payable to, uint256 amount) external onlyOwner {
         if (to == address(0)) revert ZeroAddress();
         if (paymentToken == address(0)) {
@@ -772,6 +775,7 @@ contract VpfiBuyAdapter is
     ///         {totalStuckVpfi} — buyer funds and stuck VPFI are
     ///         protected from a compromised owner. Use {recoverStuckVPFI}
     ///         to release parked VPFI.
+    // forge-lint: disable-next-line(mixed-case-function)
     function rescueERC20(
         address token,
         address to,

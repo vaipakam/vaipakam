@@ -586,7 +586,7 @@ contract DeployDiamond is Script {
         console.log("Treasury:             ", treasury);
         console.log("");
         console.log("!! Cross-chain reward plumbing still requires per-chain wiring:");
-        console.log("   - RewardReporterFacet.setRewardOApp / setBaseChainId");
+        console.log("   - RewardReporterFacet.setRewardMessenger / setBaseChainId");
         console.log("   - RewardReporterFacet.setIsCanonicalRewardChain (true only on Base)");
         console.log("   - RewardAggregatorFacet.setExpectedSourceChainIds (Base only)");
         console.log("   See docs/ops/DeploymentRunbook.md section 3.");
@@ -1206,7 +1206,7 @@ contract DeployDiamond is Script {
         s = new bytes4[](11);
         s[0] = RewardReporterFacet.closeDay.selector;
         s[1] = RewardReporterFacet.onRewardBroadcastReceived.selector;
-        s[2] = RewardReporterFacet.setRewardOApp.selector;
+        s[2] = RewardReporterFacet.setRewardMessenger.selector;
         // T-068: `setLocalEid` removed — a chain's own identity is
         // `block.chainid`, no longer a settable endpoint id.
         s[3] = RewardReporterFacet.setBaseChainId.selector;

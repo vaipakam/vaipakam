@@ -284,6 +284,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      * @param token The ERC-20 token address.
      * @param amount The amount to deposit.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function vaultDepositERC20(
         address user,
         address token,
@@ -329,6 +330,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      * @param token  ERC-20 token address.
      * @param amount Amount to deposit.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function vaultDepositERC20From(
         address payer,
         address user,
@@ -361,6 +363,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      *         onlyDiamondInternal — gated to cross-facet callers so
      *         no external party can write to the counter directly.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function recordVaultDepositERC20(
         address user,
         address token,
@@ -384,6 +387,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      * @param recipient The recipient address.
      * @param amount The amount to withdraw.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function vaultWithdrawERC20(
         address user,
         address token,
@@ -579,6 +583,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      *      poisoned by a third party can't accidentally trip the
      *      sanctions-source ban.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function recoverStuckERC20(
         address token,
         address declaredSource,
@@ -796,6 +801,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      * @param nftContract The NFT contract address.
      * @param tokenId The token ID.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function vaultDepositERC721(
         address user,
         address nftContract,
@@ -821,6 +827,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      * @param tokenId The token ID.
      * @param recipient The recipient address.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function vaultWithdrawERC721(
         address user,
         address nftContract,
@@ -848,6 +855,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      * @param tokenId The token ID.
      * @param amount The amount to deposit.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function vaultDepositERC1155(
         address user,
         address nftContract,
@@ -876,6 +884,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      * @param amount The amount to withdraw.
      * @param recipient The recipient address.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function vaultWithdrawERC1155(
         address user,
         address nftContract,
@@ -904,6 +913,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      * @param nftContract The NFT contract address.
      * @param tokenId The token ID.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function vaultApproveNFT721(
         address user,
         address nftContract,
@@ -936,6 +946,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      * @param renter The temporary renter address (borrower).
      * @param expires The expiration timestamp (end of loan term).
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function vaultSetNFTUser(
         address user,
         address nftContract,
@@ -1092,6 +1103,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      * @param tokenId The token ID.
      * @return The current renter address (zero if none or failure).
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function vaultGetNFTUserOf(
         address user,
         address nftContract,
@@ -1122,6 +1134,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      * @param tokenId The token ID.
      * @return The expiration timestamp (0 if none or failure).
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function vaultGetNFTUserExpires(
         address user,
         address nftContract,
@@ -1158,6 +1171,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      * @param expires      Rental expiry timestamp for this `renter`.
      * @param quantity     Units of `tokenId` to record for `renter`.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function vaultSetNFTUser1155(
         address user,
         address nftContract,
@@ -1242,6 +1256,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      * @param tokenId      The token id to query.
      * @return quantity    Rented quantity (0 if no active rental or lookup fails).
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function vaultGetNFTQuantity(
         address user,
         address nftContract,

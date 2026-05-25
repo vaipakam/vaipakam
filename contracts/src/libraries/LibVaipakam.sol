@@ -2047,7 +2047,7 @@ library LibVaipakam {
         //     as the formula denominator
         //
         // Trust model: CCIP messages flow through the dedicated
-        // VaipakamRewardMessenger contract addressed by `rewardOApp`
+        // VaipakamRewardMessenger contract addressed by `rewardMessenger`
         // (storage slot name retained for layout stability; see the
         // legacy-name comment below). Only that address may invoke
         // the trusted ingress handlers
@@ -2071,10 +2071,16 @@ library LibVaipakam {
         ///      (`VaipakamRewardMessenger`, CCIP-backed post-T-068). Only
         ///      this address may call the trusted ingress handlers
         ///      (aggregator receive on Base, broadcast receive on mirrors).
-        ///      The slot is named `rewardOApp` for storage-layout stability
-        ///      — pre-T-068 the same address pointed at a LayerZero OApp;
-        ///      renaming the field would have been an ABI/layout break.
-        address rewardOApp;
+        ///      Pre-T-068 the same slot held a LayerZero OApp address and
+        ///      was named `rewardOApp`; the field was renamed to
+        ///      `rewardMessenger` once the LayerZero rip-out completed.
+        ///      Solidity storage layout is determined by field order and
+        ///      type, not name — so the rename is layout-preserving (same
+        ///      offset, same 32-byte slot). The selector / error name
+        ///      changes (`setRewardMessenger`, `NotAuthorizedRewardMessenger`,
+        ///      `RewardMessengerNotSet`) are the real ABI breaks; consumers
+        ///      regenerate ABIs in the same PR.
+        address rewardMessenger;
         /// @dev Seconds past the first chain report for day `D` after
         ///      which `finalizeDay(D)` may be called even if not every
         ///      expected mirror has reported. Defaults to 4 hours when
@@ -2147,7 +2153,7 @@ library LibVaipakam {
         // CCIP CCT pool wired to the canonical `VPFIToken`.
         //
         // `bridgedBuyReceiver` is the sole address allowed to call
-        // {processBridgedBuy} — identical trust pattern to `rewardOApp`.
+        // {processBridgedBuy} — identical trust pattern to `rewardMessenger`.
         /// @dev Authorized VPFIBuyReceiver contract on Base. Only this
         ///      address may invoke {VPFIDiscountFacet.processBridgedBuy}.
         ///      Set via {setBridgedBuyReceiver}; zero disables the

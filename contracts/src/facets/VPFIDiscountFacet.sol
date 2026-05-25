@@ -242,6 +242,7 @@ contract VPFIDiscountFacet is
      *
      *      Emits {VPFIPurchasedWithETH}.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function buyVPFIWithETH() external payable nonReentrant whenNotPaused {
         // Tier-1 sanctions gate. Sanctioned wallet cannot acquire
         // new VPFI via the fixed-rate buy. See policy block on
@@ -433,6 +434,7 @@ contract VPFIDiscountFacet is
      *      `InvalidAmount` on zero amount. Emits {VPFIDepositedToVault}.
      * @param amount VPFI wei amount to deposit (18 decimals).
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function depositVPFIToVault(uint256 amount)
         external
         nonReentrant
@@ -484,6 +486,7 @@ contract VPFIDiscountFacet is
      * @param permit    `PermitTransferFrom` struct the user signed.
      * @param signature 65-byte ECDSA signature over the EIP-712 digest.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function depositVPFIToVaultWithPermit(
         uint256 amount,
         ISignatureTransfer.PermitTransferFrom calldata permit,
@@ -578,6 +581,7 @@ contract VPFIDiscountFacet is
      *      Emits {VPFIWithdrawnFromVault}.
      * @param amount VPFI wei amount to withdraw (18 decimals).
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function withdrawVPFIFromVault(uint256 amount)
         external
         nonReentrant
@@ -644,6 +648,7 @@ contract VPFIDiscountFacet is
      *      Emits {VPFIDiscountConsentChanged}.
      * @param enabled True to opt in; false to opt out.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function setVPFIDiscountConsent(bool enabled)
         external
         nonReentrant
@@ -663,6 +668,7 @@ contract VPFIDiscountFacet is
      * @param user The address whose consent to read.
      * @return enabled Consent state.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function getVPFIDiscountConsent(address user)
         external
         view
@@ -731,6 +737,7 @@ contract VPFIDiscountFacet is
      * @return borrowerVaultBal Borrower's current vault VPFI balance.
      * @return tier              Resolved tier 1..4 (0 when ineligible).
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function quoteVPFIDiscount(uint256 offerId)
         external
         view
@@ -788,6 +795,7 @@ contract VPFIDiscountFacet is
      * @return borrowerVaultBal `borrower`'s current vault VPFI balance.
      * @return tier              Resolved tier 1..4 (0 when ineligible).
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function quoteVPFIDiscountFor(uint256 offerId, address borrower)
         external
         view
@@ -832,6 +840,7 @@ contract VPFIDiscountFacet is
      * @return vaultBal   `user`'s current vault VPFI balance.
      * @return discountBps Discount applied to the normal fee for this tier.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function getVPFIDiscountTier(address user)
         external
         view
@@ -857,6 +866,7 @@ contract VPFIDiscountFacet is
      * @return enabled      True iff the buy path is currently open.
      * @return ethPriceAsset ERC-20 used as the ETH/USD reference asset.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function getVPFIBuyConfig()
         external
         view
@@ -892,6 +902,7 @@ contract VPFIDiscountFacet is
     /// @return soldTo Cumulative VPFI (18 dec) `user` has purchased
     ///                against the per-wallet cap on this chain's local
     ///                origin bucket.
+    // forge-lint: disable-next-line(mixed-case-function)
     function getVPFISoldTo(address user) external view returns (uint256 soldTo) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return s.vpfiFixedRateSoldToByChainId[user][uint32(block.chainid)];
@@ -905,6 +916,7 @@ contract VPFIDiscountFacet is
     /// @param  originChainId EVM chain id of the origin chain.
     /// @return soldTo    Cumulative VPFI (18 dec) `user` has purchased
     ///                   from `originChainId`.
+    // forge-lint: disable-next-line(mixed-case-function)
     function getVPFISoldToByChainId(address user, uint32 originChainId)
         external
         view
@@ -920,6 +932,7 @@ contract VPFIDiscountFacet is
     /// @dev Setting to zero disables both the buy path and the discount
     ///      quote. ADMIN_ROLE-only. Emits {VPFIBuyConfigUpdated}.
     /// @param weiPerVpfi ETH wei accepted per 1 VPFI (18 dec).
+    // forge-lint: disable-next-line(mixed-case-function)
     function setVPFIBuyRate(uint256 weiPerVpfi)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
@@ -949,6 +962,7 @@ contract VPFIDiscountFacet is
     ///                     (0 = fall back to the 2.3M VPFI spec default).
     /// @param perWalletCap Max VPFI sellable per buyer address
     ///                     (0 = fall back to the 30k VPFI spec default).
+    // forge-lint: disable-next-line(mixed-case-function)
     function setVPFIBuyCaps(uint256 globalCap, uint256 perWalletCap)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
@@ -971,6 +985,7 @@ contract VPFIDiscountFacet is
     ///      even while the buy gate is closed. ADMIN_ROLE-only.
     ///      Emits {VPFIBuyConfigUpdated}.
     /// @param enabled True to open the buy path, false to close it.
+    // forge-lint: disable-next-line(mixed-case-function)
     function setVPFIBuyEnabled(bool enabled)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
@@ -986,7 +1001,7 @@ contract VPFIDiscountFacet is
         );
     }
 
-    /// @notice Register (or rotate) the authorized VPFIBuyReceiver OApp
+    /// @notice Register (or rotate) the authorized VPFIBuyReceiver
     ///         on Base. Only this address may invoke
     ///         {processBridgedBuy}.
     /// @dev ADMIN_ROLE-gated. Zero disables the bridged-buy ingress
@@ -1034,6 +1049,7 @@ contract VPFIDiscountFacet is
     ///      fee). ADMIN_ROLE-only. Emits {VPFIBuyConfigUpdated}.
     /// @param asset ERC-20 address used as the ETH reference
     ///              (Chainlink-backed); address(0) disables the quote.
+    // forge-lint: disable-next-line(mixed-case-function)
     function setVPFIDiscountETHPriceAsset(address asset)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)

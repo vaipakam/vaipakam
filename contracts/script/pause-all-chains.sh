@@ -123,7 +123,7 @@ list_pause_targets() {
   local slug="$1"
   local addr_file="$DEPLOY_ROOT/$slug/addresses.json"
   [ ! -f "$addr_file" ] && return 1
-  for KEY in diamond rewardOApp vpfiOftAdapter vpfiMirror vpfiBuyReceiver vpfiBuyAdapter; do
+  for KEY in diamond rewardMessenger vpfiOftAdapter vpfiMirror vpfiBuyReceiver vpfiBuyAdapter; do
     local ADDR=$(jq -r --arg k "$KEY" '.[$k] // empty' "$addr_file" 2>/dev/null)
     if [ -n "$ADDR" ] && [ "$ADDR" != "null" ]; then
       echo "$KEY:$ADDR"

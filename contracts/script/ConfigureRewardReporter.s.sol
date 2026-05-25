@@ -23,7 +23,7 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  *
  *      Steps (all idempotent):
  *        1. setBaseChainId(canonicalBaseChainId)
- *        2. setRewardOApp(rewardMessengerProxy)
+ *        2. setRewardMessenger(rewardMessengerProxy)
  *        3. setRewardGraceSeconds(default 14400 unless env overrides)
  *        4. setIsCanonicalRewardChain(true on Base only)
  *        5. (Base only) setExpectedSourceChainIds(list of source chain ids)
@@ -32,7 +32,7 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  *        - ADMIN_PRIVATE_KEY        : ADMIN_ROLE-holding EOA. The
  *                                      RewardReporterFacet setters this
  *                                      script broadcasts (`setBaseChainId`,
- *                                      `setRewardOApp`,
+ *                                      `setRewardMessenger`,
  *                                      `setIsCanonicalRewardChain`,
  *                                      `setExpectedSourceChainIds`) all
  *                                      gate on `ADMIN_ROLE`.
@@ -63,9 +63,9 @@ contract ConfigureRewardReporter is Script {
         // read — the multi-chain orchestrators pass it so this script
         // never has to depend on the artifact key staying in step.
         address diamond = Deployments.readDiamond();
-        address rewardOApp = vm.envOr("REWARD_OAPP_PROXY", address(0));
-        if (rewardOApp == address(0)) {
-            rewardOApp = Deployments.readRewardMessenger();
+        address rewardMessenger = vm.envOr("REWARD_OAPP_PROXY", address(0));
+        if (rewardMessenger == address(0)) {
+            rewardMessenger = Deployments.readRewardMessenger();
         }
         // EVM chain id of the canonical (Base) reward chain — the
         // destination for mirror-side chain reports. The reward facets
@@ -78,7 +78,7 @@ contract ConfigureRewardReporter is Script {
         console.log("=== Configure Reward Reporter ===");
         console.log("Chain id:      ", block.chainid);
         console.log("Diamond:       ", diamond);
-        console.log("RewardOApp:    ", rewardOApp);
+        console.log("RewardMessenger:    ", rewardMessenger);
         console.log("Base chain id: ", uint256(baseChainId));
         console.log("Grace secs:    ", uint256(grace));
         console.log("Canonical:     ", canonical);
@@ -87,7 +87,7 @@ contract ConfigureRewardReporter is Script {
         RewardReporterFacet rr = RewardReporterFacet(diamond);
         // No `setLocalEid` — a chain's identity is `block.chainid`.
         rr.setBaseChainId(baseChainId);
-        rr.setRewardOApp(rewardOApp);
+        rr.setRewardMessenger(rewardMessenger);
         rr.setRewardGraceSeconds(grace);
         rr.setIsCanonicalRewardChain(canonical);
 
@@ -109,7 +109,7 @@ contract ConfigureRewardReporter is Script {
         // Mirror the per-chain reward-mesh config into the artifact so
         // downstream scripts + the frontend env builder don't have to
         // re-read env vars or query the Diamond.
-        Deployments.writeRewardMessenger(rewardOApp);
+        Deployments.writeRewardMessenger(rewardMessenger);
         Deployments.writeRewardBaseChainId(baseChainId);
         Deployments.writeRewardGraceSeconds(grace);
         Deployments.writeIsCanonicalReward(canonical);

@@ -1070,7 +1070,7 @@ EOF
   fi
   # DeployCrosschain records the reward contract under `.rewardMessenger`.
   # Hand ConfigureRewardReporter that address explicitly so it doesn't
-  # fall back to the legacy `.rewardOApp` artifact key.
+  # fall back to the legacy `.rewardMessenger` artifact key.
   REWARD_MSGR=$(jq -r '.rewardMessenger // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
   if [ -n "$REWARD_MSGR" ]; then
     export REWARD_OAPP_PROXY="$REWARD_MSGR"

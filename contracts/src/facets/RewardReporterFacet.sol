@@ -32,7 +32,7 @@ import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
  *      handler: when Base finalizes day `D`, its messenger broadcasts the
  *      pair back and the mirror's messenger invokes this method, which
  *      populates `knownGlobal*InterestNumeraire18[D]` used by the §4 formula.
- *      Gated to `rewardOApp` — no other address may write these values.
+ *      Gated to `rewardMessenger` — no other address may write these values.
  *
  *      Admin surface configures the cross-chain wiring (messenger address,
  *      canonical Base chain id, canonical flag, grace window) under
@@ -56,14 +56,14 @@ contract RewardReporterFacet is
     /// @param sourceChainId         EVM chain id of the source (local) chain.
     /// @param lenderNumeraire18           Local lender USD-18 interest on `dayId`.
     /// @param borrowerNumeraire18         Local borrower USD-18 interest on `dayId`.
-    /// @param viaOApp               False iff recorded directly (Base path).
+    /// @param viaMessenger               False iff recorded directly (Base path).
     /// @custom:event-category informational/reward-transport
     event ChainInterestReported(
         uint256 indexed dayId,
         uint32 indexed sourceChainId,
         uint256 lenderNumeraire18,
         uint256 borrowerNumeraire18,
-        bool viaOApp
+        bool viaMessenger
     );
 
     /// @notice Emitted when the mirror-side ingress writes the finalized
@@ -109,7 +109,7 @@ contract RewardReporterFacet is
      *      Reverts:
      *        - `RewardDayNotElapsed` if `dayId` ≥ `currentDay`.
      *        - `ChainDayAlreadyReported` if the local report already fired.
-     *        - `RewardOAppNotSet` / `BaseChainIdNotSet` on mirror chains that
+     *        - `RewardMessengerNotSet` / `BaseChainIdNotSet` on mirror chains that
      *          have not been wired yet.
      *
      *      Whenever the write is recorded into aggregator storage on the
@@ -149,7 +149,7 @@ contract RewardReporterFacet is
                 chainId,
                 lenderNumeraire18,
                 borrowerNumeraire18,
-                /* viaOApp */ false
+                /* viaMessenger */ false
             );
 
             // Refund any stray msg.value — canonical path is fee-free.
@@ -158,8 +158,8 @@ contract RewardReporterFacet is
                 require(ok, "refund failed");
             }
         } else {
-            address oApp = s.rewardOApp;
-            if (oApp == address(0)) revert RewardOAppNotSet();
+            address messenger = s.rewardMessenger;
+            if (messenger == address(0)) revert RewardMessengerNotSet();
             if (s.baseChainId == 0) revert BaseChainIdNotSet();
 
             emit ChainInterestReported(
@@ -167,11 +167,11 @@ contract RewardReporterFacet is
                 uint32(block.chainid),
                 lenderNumeraire18,
                 borrowerNumeraire18,
-                /* viaOApp */ true
+                /* viaMessenger */ true
             );
 
             // Forward full msg.value; messenger refunds the caller directly.
-            IRewardMessenger(oApp).sendChainReport{value: msg.value}(
+            IRewardMessenger(messenger).sendChainReport{value: msg.value}(
                 dayId,
                 lenderNumeraire18,
                 borrowerNumeraire18,
@@ -213,7 +213,7 @@ contract RewardReporterFacet is
      *         denominator for `dayId` and this function stamps it into
      *         `knownGlobal{Lender,Borrower}InterestNumeraire18` so local
      *         {LibInteractionRewards.claimForUserWindow} can use it.
-     * @dev Gated to the Diamond's registered `rewardOApp`. First call for
+     * @dev Gated to the Diamond's registered `rewardMessenger`. First call for
      *      `dayId` writes the pair; repeat calls must carry the SAME
      *      numbers (idempotent on match, revert `KnownGlobalAlreadySet`
      *      on divergence).
@@ -232,8 +232,8 @@ contract RewardReporterFacet is
         uint256 globalBorrowerNumeraire18
     ) external {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (msg.sender != s.rewardOApp || s.rewardOApp == address(0)) {
-            revert NotAuthorizedRewardOApp();
+        if (msg.sender != s.rewardMessenger || s.rewardMessenger == address(0)) {
+            revert NotAuthorizedRewardMessenger();
         }
 
         if (s.knownGlobalSet[dayId]) {
@@ -263,20 +263,20 @@ contract RewardReporterFacet is
 
     /// @notice Register (or rotate) the cross-chain messenger authorized to
     ///         deliver cross-chain reward messages on this Diamond.
-    /// @dev ADMIN_ROLE-gated. Passing `address(0)` disables the OApp
+    /// @dev ADMIN_ROLE-gated. Passing `address(0)` disables the messenger
     ///      ingress until a new one is wired.
-    /// @param oApp VaipakamRewardMessenger proxy address on this chain.
-    function setRewardOApp(
-        address oApp
+    /// @param messenger VaipakamRewardMessenger proxy address on this chain.
+    function setRewardMessenger(
+        address messenger
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address old = s.rewardOApp;
-        s.rewardOApp = oApp;
+        address old = s.rewardMessenger;
+        s.rewardMessenger = messenger;
         emit RewardReporterConfigUpdated(
             // forge-lint: disable-next-line(unsafe-typecast)
-            bytes32("rewardOApp"),
+            bytes32("rewardMessenger"),
             bytes32(uint256(uint160(old))),
-            bytes32(uint256(uint160(oApp)))
+            bytes32(uint256(uint160(messenger)))
         );
     }
 
@@ -412,7 +412,7 @@ contract RewardReporterFacet is
 
     /// @notice Snapshot the cross-chain reward wiring in one call — for
     ///         deploy / ops dashboards.
-    /// @return rewardOApp              Registered reward messenger address.
+    /// @return rewardMessenger              Registered reward messenger address.
     /// @return localChainId           This chain's EVM chain id.
     /// @return baseChainId            Canonical reward chain's EVM chain id.
     /// @return isCanonicalRewardChain  Canonical flag.
@@ -421,7 +421,7 @@ contract RewardReporterFacet is
         external
         view
         returns (
-            address rewardOApp,
+            address rewardMessenger,
             uint32 localChainId,
             uint32 baseChainId,
             bool isCanonicalRewardChain,
@@ -430,7 +430,7 @@ contract RewardReporterFacet is
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return (
-            s.rewardOApp,
+            s.rewardMessenger,
             uint32(block.chainid),
             s.baseChainId,
             s.isCanonicalRewardChain,

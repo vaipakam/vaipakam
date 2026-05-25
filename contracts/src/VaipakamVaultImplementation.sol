@@ -117,6 +117,7 @@ contract VaipakamVaultImplementation is
      * @param token The ERC-20 token address.
      * @param amount The amount to deposit.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function depositERC20(address token, uint256 amount) external onlyOwner {
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
     }
@@ -139,6 +140,7 @@ contract VaipakamVaultImplementation is
      * @param recipient The recipient address.
      * @param amount The amount to withdraw.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function withdrawERC20(
         address token,
         address recipient,
@@ -153,6 +155,7 @@ contract VaipakamVaultImplementation is
      * @param nftContract The NFT contract address.
      * @param tokenId The token ID.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function depositERC721(
         address nftContract,
         uint256 tokenId
@@ -171,6 +174,7 @@ contract VaipakamVaultImplementation is
      * @param tokenId The token ID.
      * @param recipient The recipient address.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function withdrawERC721(
         address nftContract,
         uint256 tokenId,
@@ -190,6 +194,7 @@ contract VaipakamVaultImplementation is
      * @param tokenId The token ID.
      * @param amount The amount to deposit.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function depositERC1155(
         address nftContract,
         uint256 tokenId,
@@ -212,6 +217,7 @@ contract VaipakamVaultImplementation is
      * @param amount The amount to withdraw.
      * @param recipient The recipient address.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function withdrawERC1155(
         address nftContract,
         uint256 tokenId,
@@ -233,6 +239,7 @@ contract VaipakamVaultImplementation is
      * @param nftContract The NFT contract address.
      * @param tokenId The token ID.
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function approveERC721(
         address nftContract,
         uint256 tokenId
@@ -448,6 +455,7 @@ contract VaipakamVaultImplementation is
     // transfer fails atomically (no orphan asset, no off-ledger balance).
     // ERC-20 cannot be gated this way (no callback) — frontend warning +
     // operational sweep are the controls there.
+    // forge-lint: disable-next-line(mixed-case-function)
     function onERC721Received(
         address operator,
         address,
@@ -460,6 +468,7 @@ contract VaipakamVaultImplementation is
         return IERC721Receiver.onERC721Received.selector;
     }
 
+    // forge-lint: disable-next-line(mixed-case-function)
     function onERC1155Received(
         address operator,
         address,
@@ -473,6 +482,7 @@ contract VaipakamVaultImplementation is
         return IERC1155Receiver.onERC1155Received.selector;
     }
 
+    // forge-lint: disable-next-line(mixed-case-function)
     function onERC1155BatchReceived(
         address operator,
         address,

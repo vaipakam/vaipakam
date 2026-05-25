@@ -153,6 +153,7 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
      * @param to     Recipient of the freshly-minted VPFI (non-zero).
      * @param amount VPFI amount in 18 decimals (non-zero).
      */
+    // forge-lint: disable-next-line(mixed-case-function)
     function mintVPFI(
         address to,
         uint256 amount

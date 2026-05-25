@@ -27,7 +27,7 @@ import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
  *        1. Mirror Diamonds call {RewardReporterFacet.closeDay} on day
  *           `D+1` onward, forwarding `(lenderNumeraire18, borrowerNumeraire18)` via
  *           Chainlink CCIP.
- *        2. On arrival, the Base OApp calls {onChainReportReceived}
+ *        2. On arrival, the Base messenger calls {onChainReportReceived}
  *           which records the pair under the source chainId, increments
  *           `chainDailyReportCount[D]`, and stamps `dailyFirstReportAt[D]`.
  *        3. Once every expected chainId has reported OR
@@ -39,7 +39,7 @@ import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
  *           and emits {DailyGlobalInterestFinalized}.
  *        4. {broadcastGlobal} is a separate permissionless payable
  *           call that ships the finalized pair to every mirror via the
- *           OApp. Split out so finalization stays cheap and broadcast
+ *           messenger. Split out so finalization stays cheap and broadcast
  *           fees can be replayed if a cross-chain leg fails.
  *
  *      Late reports (same `D`, landing after finalization) are rejected
@@ -141,10 +141,10 @@ contract RewardAggregatorFacet is
         }
     }
 
-    function _checkRewardOApp() private view {
+    function _checkRewardMessenger() private view {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (msg.sender != s.rewardOApp || s.rewardOApp == address(0)) {
-            revert NotAuthorizedRewardOApp();
+        if (msg.sender != s.rewardMessenger || s.rewardMessenger == address(0)) {
+            revert NotAuthorizedRewardMessenger();
         }
     }
 
@@ -154,10 +154,10 @@ contract RewardAggregatorFacet is
         _;
     }
 
-    /// @dev Ingress handlers trust only the registered OApp — never
+    /// @dev Ingress handlers trust only the registered messenger — never
     ///      accept reports from random contracts.
-    modifier onlyRewardOApp() {
-        _checkRewardOApp();
+    modifier onlyRewardMessenger() {
+        _checkRewardMessenger();
         _;
     }
 
@@ -166,7 +166,7 @@ contract RewardAggregatorFacet is
     /**
      * @notice Record a mirror's day-`D` `(lender, borrower)` USD-18 pair
      *         under `sourceChainId`.
-     * @dev Only callable by `rewardOApp`. Rejects duplicates via
+     * @dev Only callable by `rewardMessenger`. Rejects duplicates via
      *      `chainDailyReported[dayId][sourceChainId]`. Rejects late reports
      *      once `dailyGlobalFinalized[dayId] == true`. Rejects unknown
      *      source chainIds not in `expectedSourceChainIds`.
@@ -184,7 +184,7 @@ contract RewardAggregatorFacet is
         uint256 dayId,
         uint256 lenderNumeraire18,
         uint256 borrowerNumeraire18
-    ) external onlyRewardOApp onlyCanonical {
+    ) external onlyRewardMessenger onlyCanonical {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
         if (!_isExpectedChainId(s, sourceChainId)) revert SourceChainIdNotExpected();
@@ -365,9 +365,9 @@ contract RewardAggregatorFacet is
 
     /**
      * @notice Ship the finalized `(globalLender, globalBorrower)` pair
-     *         for `dayId` to every mirror via the registered OApp.
+     *         for `dayId` to every mirror via the registered messenger.
      * @dev Payable, permissionless. `msg.value` must cover the sum of
-     *      per-destination LZ native fees — quote first via
+     *      per-destination CCIP native fees — quote first via
      *      {IRewardMessenger.quoteBroadcastGlobal}. Leftover refunds to the
      *      caller.
      *
@@ -381,10 +381,10 @@ contract RewardAggregatorFacet is
     ) external payable nonReentrant whenNotPaused onlyCanonical {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (!s.dailyGlobalFinalized[dayId]) revert DayNotReadyToFinalize();
-        address oApp = s.rewardOApp;
-        if (oApp == address(0)) revert RewardOAppNotSet();
+        address messenger = s.rewardMessenger;
+        if (messenger == address(0)) revert RewardMessengerNotSet();
 
-        IRewardMessenger(oApp).broadcastGlobal{value: msg.value}(
+        IRewardMessenger(messenger).broadcastGlobal{value: msg.value}(
             dayId,
             s.dailyGlobalLenderInterestNumeraire18[dayId],
             s.dailyGlobalBorrowerInterestNumeraire18[dayId],
