@@ -146,6 +146,16 @@ library Deployments {
         if (a == address(0)) a = _readAddr(".rewardMessenger", "REWARD_MESSENGER_ADDRESS");
         return a;
     }
+    /// @notice Same fallback chain as {readRewardMessenger} but returns
+    ///         `address(0)` on full miss instead of reverting. Used by
+    ///         callers that need to cross-check an env-var override
+    ///         against the artifact without blocking the env-only path
+    ///         (e.g. {ConfigureRewardReporter}'s defence-in-depth check).
+    function tryReadRewardMessenger() internal view returns (address) {
+        address a = _tryReadAddr(".rewardMessenger");
+        if (a == address(0)) a = _tryReadAddr(".rewardOApp");
+        return a;
+    }
 
     /// @notice Cross-chain typed reader for the reward messenger address on
     ///         `chainId`. Same legacy fallback as {readRewardMessenger}:

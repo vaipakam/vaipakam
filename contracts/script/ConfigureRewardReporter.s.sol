@@ -62,9 +62,41 @@ contract ConfigureRewardReporter is Script {
         // `REWARD_OAPP_PROXY` env var, when set, overrides the artifact
         // read — the multi-chain orchestrators pass it so this script
         // never has to depend on the artifact key staying in step.
+        //
+        // Defence-in-depth (PR #272): when BOTH the env var and the
+        // artifact resolve, they must agree. A stale `REWARD_OAPP_PROXY`
+        // carried over from a prior chain's run in a multi-chain loop —
+        // or an operator running `forge script ConfigureRewardReporter`
+        // directly with an old env var — would otherwise silently wire
+        // the wrong-chain messenger on this Diamond. The deploy-script
+        // wrappers (`deploy-testnet.sh` / `deploy-mainnet.sh`) `unset`
+        // the env at the start of phase_configure, but a direct invoke
+        // bypasses that. This mismatch check makes the bug loud.
         address diamond = Deployments.readDiamond();
-        address rewardMessenger = vm.envOr("REWARD_OAPP_PROXY", address(0));
-        if (rewardMessenger == address(0)) {
+        address envOverride = vm.envOr("REWARD_OAPP_PROXY", address(0));
+        // Use the optional reader (returns address(0) on miss) so the
+        // env-only path doesn't get blocked by a missing artifact.
+        address artifactValue = Deployments.tryReadRewardMessenger();
+        address rewardMessenger;
+        if (envOverride != address(0) && artifactValue != address(0)) {
+            // BOTH set: must agree, else likely stale env from a prior
+            // chain's run.
+            require(
+                envOverride == artifactValue,
+                "ConfigureRewardReporter: REWARD_OAPP_PROXY env disagrees with .rewardMessenger artifact "
+                "(likely stale env from a prior chain's run; unset and rerun, or fix the artifact)"
+            );
+            rewardMessenger = envOverride;
+        } else if (envOverride != address(0)) {
+            // Env-only path (no artifact yet on this chain).
+            rewardMessenger = envOverride;
+        } else if (artifactValue != address(0)) {
+            // Artifact-only path (no env override).
+            rewardMessenger = artifactValue;
+        } else {
+            // Neither — load the reverting reader to produce the usual
+            // env-fallback error path (`REWARD_MESSENGER_ADDRESS` env
+            // var or addresses.json missing).
             rewardMessenger = Deployments.readRewardMessenger();
         }
         // EVM chain id of the canonical (Base) reward chain — the
