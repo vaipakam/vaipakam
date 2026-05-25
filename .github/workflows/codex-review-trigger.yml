@@ -14,10 +14,13 @@ on:
 permissions:
   contents: read
   issues: write
-  pull-requests: write
+  pull-requests: read
 
 jobs:
   detect-and-forward:
+    concurrency:
+      group: codex-trigger-pr-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: false
     # PR events, or PR-thread issue_comment events only.
     if: |
       github.event_name == 'pull_request' ||
@@ -30,10 +33,19 @@ jobs:
           script: |
             const isPrEvent = context.eventName === 'pull_request';
             const actor = context.actor || '';
+            const association = isPrEvent
+              ? context.payload.pull_request?.author_association
+              : context.payload.comment?.author_association;
 
             // Avoid bot loops.
             if (actor.endsWith('[bot]') || actor.toLowerCase().includes('codex')) {
               core.info(`Skipping bot actor: ${actor}`);
+              return;
+            }
+            // Public-repo safety: only owner/collaborators can trigger paid review.
+            const allowedAssociations = new Set(['OWNER', 'COLLABORATOR']);
+            if (!allowedAssociations.has(association)) {
+              core.info(`Skipping unprivileged actor (${association}): ${actor}`);
               return;
             }
 
@@ -75,10 +87,7 @@ jobs:
                 content: 'eyes',
               });
             } catch (err) {
-              const status = err?.status || 0;
-              if (status !== 200 && status !== 201) {
-                core.info(`PR reaction skipped: ${err.message}`);
-              }
+              core.info(`PR reaction skipped: ${err.message}`);
             }
 
             // Idempotency: one forwarding comment per (trigger + head SHA).
