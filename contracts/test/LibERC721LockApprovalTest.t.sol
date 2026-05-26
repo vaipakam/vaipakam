@@ -328,16 +328,25 @@ contract LibERC721LockApprovalTest is SetupTest {
             "approval must be invalidated mid-lock"
         );
 
-        // T=2: owner cancels / completes — token unlocked. Epoch stays
-        // at 1; the stale grant remains invalidated.
+        // T=2: owner cancels / completes — token unlocked. The unlock
+        // ALSO bumps the epoch (round-3 invariant: every transition
+        // out of locked invalidates approvals, legacy or counted). So
+        // by the end of step 2 epoch=2; the stale grant (stamped at
+        // epoch=0) remains invalidated.
         TestMutatorFacet(address(diamond)).unlockNFTRaw(TEST_TOKEN_A);
+        assertEq(
+            TestMutatorFacet(address(diamond)).getOperatorApprovalEpoch(nftOwner),
+            2,
+            "epoch bumps on unlock too (round-3 invariant)"
+        );
         assertFalse(
             VaipakamNFTFacet(address(diamond)).isApprovedForAll(nftOwner, operator),
             "BYPASS CLOSED: pre-lock approval must NOT spring back to life on unlock"
         );
 
-        // T=3: owner explicitly re-grants. Now approval works again, but
-        // only because the user opted in after the lock cycle.
+        // T=3: owner explicitly re-grants. Now approval works again,
+        // stamped at the current (post-unlock) epoch — 2, because the
+        // unlock bumped from 1 to 2.
         vm.prank(nftOwner);
         VaipakamNFTFacet(address(diamond)).setApprovalForAll(operator, true);
         assertTrue(
@@ -346,8 +355,8 @@ contract LibERC721LockApprovalTest is SetupTest {
         );
         assertEq(
             TestMutatorFacet(address(diamond)).getOperatorApprovalGrantEpoch(nftOwner, operator),
-            1,
-            "re-grant stamped at current epoch (1)"
+            2,
+            "re-grant stamped at current (post-unlock) epoch (2)"
         );
     }
 
