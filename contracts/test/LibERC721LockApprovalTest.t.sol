@@ -564,7 +564,7 @@ contract LibERC721LockApprovalTest is SetupTest {
         assertEq(
             TestMutatorFacet(address(diamond)).getOperatorApprovalEpoch(nftOwner),
             2,
-            "epoch is the real source of truth — bumped on every unlock"
+            "epoch is the real source of truth - bumped on every unlock"
         );
 
         // Owner can now grant a fresh approval (counter says 0).
@@ -577,7 +577,7 @@ contract LibERC721LockApprovalTest is SetupTest {
         TestMutatorFacet(address(diamond)).unlockNFTRaw(TEST_TOKEN_B);
         assertFalse(
             VaipakamNFTFacet(address(diamond)).isApprovedForAll(nftOwner, operator),
-            "BYPASS CLOSED: every unlock invalidates approvals — counter drift doesn't open a window"
+            "BYPASS CLOSED: every unlock invalidates approvals - counter drift doesn't open a window"
         );
     }
 
