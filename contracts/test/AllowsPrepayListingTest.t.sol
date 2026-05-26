@@ -85,24 +85,14 @@ contract AllowsPrepayListingTest is SetupTest {
         l.allowsPrepayListing = true;
         TestMutatorFacet(address(diamond)).setLoan(TEST_LOAN_ID, l);
 
-        LoanFacet.LoanDetails memory details = LoanFacet(address(diamond)).getLoanDetails(
+        LibVaipakam.Loan memory details = LoanFacet(address(diamond)).getLoanDetails(
             TEST_LOAN_ID
         );
-        // `getLoanDetails` may not yet surface `allowsPrepayListing` —
-        // verify via raw storage read through TestMutatorFacet if not.
-        // (Surface wiring happens in a follow-up alongside the step-6
-        // facet.) The storage round-trip below proves the field exists.
         assertEq(details.id, TEST_LOAN_ID, "scaffold landed at the right id");
-
-        // Direct storage read via TestMutatorFacet.setLoan / inspect.
-        // The getter pattern is identical to allowsPartialRepay — once
-        // step-6 surfaces it on `LoanDetails`, this assertion lifts to
-        // `details.allowsPrepayListing`.
-        // For now: re-read the loan and assert the field via the
-        // exposed `setLoan` round-trip semantics — `getOffer`-style
-        // direct getters for Loan don't exist; the field's correctness
-        // is established by the storage layout test above + the
-        // wire-copy verified by the test sweep.
+        assertTrue(
+            details.allowsPrepayListing,
+            "Loan.allowsPrepayListing round-trips through storage as true"
+        );
     }
 
     function test_loan_allowsPrepayListing_defaultsFalse() public {
@@ -113,10 +103,14 @@ contract AllowsPrepayListingTest is SetupTest {
         // No explicit set -> default false.
         TestMutatorFacet(address(diamond)).setLoan(TEST_LOAN_ID + 1, l);
 
-        LoanFacet.LoanDetails memory details = LoanFacet(address(diamond)).getLoanDetails(
+        LibVaipakam.Loan memory details = LoanFacet(address(diamond)).getLoanDetails(
             TEST_LOAN_ID + 1
         );
         assertEq(details.id, TEST_LOAN_ID + 1, "scaffold landed at the right id");
+        assertFalse(
+            details.allowsPrepayListing,
+            "Loan.allowsPrepayListing default is false"
+        );
     }
 
     // ─── CreateOfferParams round-trip ──────────────────────────────────
