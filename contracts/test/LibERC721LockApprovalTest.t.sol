@@ -455,6 +455,161 @@ contract LibERC721LockApprovalTest is SetupTest {
         );
     }
 
+    // ─── Codex round-3 P1s — legacy-lock security invariants ─────────────
+    //
+    // These tests prove that the security property survives mixed
+    // legacy/counted lock state. The counter can drift below truth in
+    // mixed state (because legacy locks don't decrement to a negative
+    // number — they're absorbed by the `count > 0` guard), but the
+    // epoch bump on every `_unlock` / `_burn` invalidates operator
+    // approvals regardless, so post-unlock transfers always require a
+    // fresh re-grant.
+
+    /// @notice Pre-existing operator approval (granted long before any
+    ///         lock) must be invalidated when a LEGACY lock unwinds —
+    ///         even though `_lock` never ran for the legacy token. The
+    ///         epoch bump on `_unlock` is the chokepoint.
+    function test_preExistingApproval_invalidatedAfterLegacyUnlock() public {
+        // T=0: grant operator approval (no locks, counter=0, epoch=0).
+        vm.prank(nftOwner);
+        VaipakamNFTFacet(address(diamond)).setApprovalForAll(operator, true);
+        assertTrue(
+            VaipakamNFTFacet(address(diamond)).isApprovedForAll(nftOwner, operator),
+            "pre-grant valid"
+        );
+
+        // Simulate a pre-upgrade lock (no epoch bump from `_lock`).
+        TestMutatorFacet(address(diamond)).forceSetLockWithoutCounter(
+            TEST_TOKEN_A, LibERC721.LockReason.PrecloseOffset
+        );
+        // Mid-legacy-lock, `_lock` was never called so the epoch is
+        // still 0. The approval IS still technically valid by epoch
+        // check at this point — but transferFrom is blocked by the
+        // lock itself. The security property activates on `_unlock`.
+
+        // Unlock — epoch bumps even for the legacy lock.
+        TestMutatorFacet(address(diamond)).unlockNFTRaw(TEST_TOKEN_A);
+
+        assertFalse(
+            VaipakamNFTFacet(address(diamond)).isApprovedForAll(nftOwner, operator),
+            "BYPASS CLOSED: pre-existing approval invalidated after legacy unlock"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getOperatorApprovalEpoch(nftOwner),
+            1,
+            "epoch bumped on legacy unlock"
+        );
+    }
+
+    /// @notice An approval GRANTED during a legacy lock (the gate sees
+    ///         the counter as 0 and allows it) must still be
+    ///         invalidated when the legacy lock unwinds — the L293
+    ///         attack window Codex flagged.
+    function test_approvalGrantedDuringLegacyLock_invalidatedAtUnlock() public {
+        // Legacy lock — counter stays at 0 (the gate is a no-op).
+        TestMutatorFacet(address(diamond)).forceSetLockWithoutCounter(
+            TEST_TOKEN_A, LibERC721.LockReason.EarlyWithdrawalSale
+        );
+
+        // Owner grants operator approval — gate passes because counter
+        // is 0 (legacy lock didn't increment). grant_epoch stamped at
+        // current epoch (still 0).
+        vm.prank(nftOwner);
+        VaipakamNFTFacet(address(diamond)).setApprovalForAll(operator, true);
+        assertTrue(
+            VaipakamNFTFacet(address(diamond)).isApprovedForAll(nftOwner, operator),
+            "grant during legacy lock initially valid (transfer still blocked by lock)"
+        );
+
+        // Unlock — epoch bumps. The mid-lock grant is now stale.
+        TestMutatorFacet(address(diamond)).unlockNFTRaw(TEST_TOKEN_A);
+
+        assertFalse(
+            VaipakamNFTFacet(address(diamond)).isApprovedForAll(nftOwner, operator),
+            "BYPASS CLOSED: grant-during-legacy-lock approval invalidated at unlock"
+        );
+    }
+
+    /// @notice Mixed legacy + counted locks — even though the counter
+    ///         drifts (legacy-unlock decrements toward 0 while a
+    ///         counted lock is still active), the epoch chain keeps
+    ///         operator-approval invalidation correct. The drift is
+    ///         cosmetic; the security property holds.
+    function test_mixedLegacyAndCountedLocks_securityHoldsDespiteCounterDrift() public {
+        // Legacy lock on TOKEN_A (counter stays 0).
+        TestMutatorFacet(address(diamond)).forceSetLockWithoutCounter(
+            TEST_TOKEN_A, LibERC721.LockReason.PrecloseOffset
+        );
+        // Counted lock on TOKEN_B (counter goes to 1, epoch to 1).
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
+            TEST_TOKEN_B, LibERC721.LockReason.EarlyWithdrawalSale
+        );
+        assertEq(TestMutatorFacet(address(diamond)).getLockedTokenCount(nftOwner), 1);
+        assertEq(TestMutatorFacet(address(diamond)).getOperatorApprovalEpoch(nftOwner), 1);
+
+        // setApprovalForAll(.., true) blocked because counter > 0.
+        vm.prank(nftOwner);
+        vm.expectRevert();
+        VaipakamNFTFacet(address(diamond)).setApprovalForAll(operator, true);
+
+        // Unlock the LEGACY token. Counter drifts from 1 to 0
+        // (incorrect — TOKEN_B is still locked) but the epoch bumps
+        // to 2, which is what matters.
+        TestMutatorFacet(address(diamond)).unlockNFTRaw(TEST_TOKEN_A);
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLockedTokenCount(nftOwner),
+            0,
+            "counter drifts (cosmetic)"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getOperatorApprovalEpoch(nftOwner),
+            2,
+            "epoch is the real source of truth — bumped on every unlock"
+        );
+
+        // Owner can now grant a fresh approval (counter says 0).
+        vm.prank(nftOwner);
+        VaipakamNFTFacet(address(diamond)).setApprovalForAll(operator, true);
+        assertTrue(VaipakamNFTFacet(address(diamond)).isApprovedForAll(nftOwner, operator));
+
+        // Eventually TOKEN_B unlocks — epoch bumps to 3, fresh grant
+        // (stamped at epoch=2) becomes stale.
+        TestMutatorFacet(address(diamond)).unlockNFTRaw(TEST_TOKEN_B);
+        assertFalse(
+            VaipakamNFTFacet(address(diamond)).isApprovedForAll(nftOwner, operator),
+            "BYPASS CLOSED: every unlock invalidates approvals — counter drift doesn't open a window"
+        );
+    }
+
+    /// @notice Symmetric — `_burn` on a legacy-locked token must also
+    ///         bump the epoch (matching `_unlock`). Without this, the
+    ///         migrateLenderPosition path on a legacy lock would
+    ///         re-open the bypass.
+    function test_burnLegacyLock_bumpsEpoch() public {
+        // Pre-grant.
+        vm.prank(nftOwner);
+        VaipakamNFTFacet(address(diamond)).setApprovalForAll(operator, true);
+        assertTrue(
+            VaipakamNFTFacet(address(diamond)).isApprovedForAll(nftOwner, operator)
+        );
+
+        // Legacy lock + burn.
+        TestMutatorFacet(address(diamond)).forceSetLockWithoutCounter(
+            TEST_TOKEN_A, LibERC721.LockReason.EarlyWithdrawalSale
+        );
+        TestMutatorFacet(address(diamond)).burnNFTRaw(TEST_TOKEN_A);
+
+        assertEq(
+            TestMutatorFacet(address(diamond)).getOperatorApprovalEpoch(nftOwner),
+            1,
+            "epoch bumps on legacy-locked burn"
+        );
+        assertFalse(
+            VaipakamNFTFacet(address(diamond)).isApprovedForAll(nftOwner, operator),
+            "BYPASS CLOSED: pre-grant invalidated by legacy-lock burn"
+        );
+    }
+
     /// @notice Mixed legacy + new lock state must still self-balance
     ///         once the legacy lock has flowed through `_unlock`. A
     ///         later fresh `_lock` (post-upgrade) increments cleanly to 1.

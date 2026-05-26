@@ -177,22 +177,29 @@ library LibERC721 {
 
     function _unlock(uint256 tokenId) internal {
         ERC721Storage storage es = _storage();
-        // Decrement ONLY when the token was actually locked. Reading
-        // the owner BEFORE clearing the lock keeps the math correct if a
-        // future code path ever transfers a locked token (today's flows
-        // can't — `transferFrom` is `_requireNotLocked`-guarded — but the
-        // invariant is read-before-clear). The `count > 0` guard is the
-        // upgrade-safety belt: on a diamond upgrade where tokens were
-        // already locked BEFORE this counter existed (pre-PR-#282
-        // PrecloseFacet / EarlyWithdrawalFacet positions still in
-        // flight), the owner's `lockedTokenCount` was never incremented.
-        // Without this guard, the first post-upgrade `_unlock` on such a
-        // legacy lock would underflow and revert the cancel /
-        // completion call, stranding the position. Pre-upgrade locks
-        // flow through cleanly as no-ops on the counter; new locks
-        // post-upgrade self-balance.
+        // For ANY transition out of locked state (counted or legacy),
+        // bump the per-owner operator-approval epoch BEFORE clearing
+        // the lock. This is the security-critical invariant for the
+        // setApprovalForAll-during-lock hardening: every transition
+        // out of locked invalidates every operator approval, no matter
+        // how the token entered the locked state. Critical for the
+        // upgrade-transition cohort — pre-PR-#282 locks never bumped
+        // the epoch on lock (the counter + epoch fields didn't exist
+        // yet), so bumping ONLY at lock-time would leave that cohort
+        // exposed; bumping at unlock too closes the loop for both
+        // pre-existing operator approvals AND any approval the owner
+        // grants while a legacy lock is active (which is allowed
+        // because the counter-gate sees the legacy lock as `count=0`).
+        //
+        // The `count > 0` guarded decrement is the upgrade underflow
+        // belt: legacy locks have `lockedTokenCount == 0` because the
+        // pre-PR `_lock` never incremented. Subtracting unconditionally
+        // would revert the cancel / completion call. Counter drift
+        // between legacy and counted locks is acceptable now that the
+        // epoch chain is the SoT for approval validity.
         if (es.locks[tokenId] != LockReason.None) {
             address owner = ownerOf(tokenId);
+            es.operatorApprovalEpoch[owner]++;
             uint256 count = es.lockedTokenCount[owner];
             if (count > 0) {
                 es.lockedTokenCount[owner] = count - 1;
@@ -338,18 +345,17 @@ library LibERC721 {
     function _burn(uint256 tokenId) internal {
         ERC721Storage storage es = _storage();
         address owner = ownerOf(tokenId);
-        // If the token is currently locked, decrement the owner's
-        // `lockedTokenCount` BEFORE clearing storage. Without this,
-        // EarlyWithdrawalFacet.completeLoanSale (which burns
-        // `loan.lenderTokenId` via `LibLoan.migrateLenderPosition` while
-        // the token is still locked) would leave the owner's counter
-        // permanently positive, falsely blocking every future
-        // `setApprovalForAll(.., true)` call from that wallet. The
-        // `count > 0` guard handles the diamond-upgrade case (see the
-        // matching note in {_unlock}): pre-PR locks have a 0 counter,
-        // so a guarded burn flows through cleanly instead of reverting
-        // on underflow.
+        // Symmetric with {_unlock}: burning a locked token is a
+        // transition out of locked state, so it MUST bump the
+        // operator-approval epoch — closes the bypass for the
+        // EarlyWithdrawalFacet.completeLoanSale → migrateLenderPosition
+        // path AND for any legacy locks (where the counter is 0 but
+        // operator approvals should still be invalidated). The guarded
+        // decrement keeps the counter from underflowing on legacy
+        // locks; counter accuracy is best-effort, the epoch chain is
+        // the security source of truth.
         if (es.locks[tokenId] != LockReason.None) {
+            es.operatorApprovalEpoch[owner]++;
             uint256 count = es.lockedTokenCount[owner];
             if (count > 0) {
                 es.lockedTokenCount[owner] = count - 1;
