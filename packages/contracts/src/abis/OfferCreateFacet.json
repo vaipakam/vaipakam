@@ -607,6 +607,11 @@
             "name": "fillMode",
             "type": "uint8",
             "internalType": "enum LibVaipakam.FillMode"
+          },
+          {
+            "name": "allowsPrepayListing",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
