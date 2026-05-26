@@ -182,6 +182,42 @@ contract DeployCrosschain is Script {
         } else {
             address treasury = vm.envAddress("TREASURY_ADDRESS");
             address paymentToken = vm.envOr("VPFI_BUY_PAYMENT_TOKEN", address(0));
+            // ── Pre-flight: payment-token mode by chain ─────────────────
+            // BNB Chain mainnet (56) and Polygon PoS mainnet (137) must
+            // use WETH-pull mode, not native-gas. The `VpfiBuyAdapter`
+            // quotes a single global ETH-equivalent rate; using native
+            // gas on a chain where the native token isn't ETH-priced
+            // would silently misprice every buy (1 BNB ≠ 1 ETH worth of
+            // value, 1 MATIC/POL ≠ 1 ETH worth of value). The runtime
+            // `_assertPaymentTokenSane` on `VpfiBuyAdapter.initialize`
+            // already checks shape (contract + 18 decimals) but cannot
+            // detect "operator forgot to set the env var on the wrong
+            // chain" — that's this gate's job.
+            //
+            // Testnet exemption (BNB Smart Chain Testnet 97 + Polygon
+            // Amoy 80002): gas tokens have no real value and the
+            // testnet rate is symbolic, so native-gas mode is fine for
+            // dev-loop convenience. Mainnet equivalents must use
+            // WETH-pull.
+            //
+            // See CLAUDE.md §"VpfiBuyAdapter — payment-token mode by
+            // chain" for the policy + canonical bridged-WETH addresses
+            // (BNB: 0x2170Ed0880ac9A755fd29B2688956BD959F933F8 ;
+            //  Polygon: 0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619).
+            if (paymentToken == address(0)) {
+                require(
+                    block.chainid != 56,
+                    "DeployCrosschain: VPFI_BUY_PAYMENT_TOKEN unset on BNB Chain mainnet "
+                    "(chainId 56) - native-gas mode would misprice. Set the env to canonical "
+                    "bridged WETH 0x2170Ed0880ac9A755fd29B2688956BD959F933F8."
+                );
+                require(
+                    block.chainid != 137,
+                    "DeployCrosschain: VPFI_BUY_PAYMENT_TOKEN unset on Polygon PoS mainnet "
+                    "(chainId 137) - native-gas mode would misprice. Set the env to canonical "
+                    "WETH9 0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619."
+                );
+            }
             uint64 refundTimeout =
                 uint64(vm.envOr("VPFI_BUY_REFUND_TIMEOUT", uint256(900)));
             VpfiBuyAdapter adapterImpl = new VpfiBuyAdapter();
