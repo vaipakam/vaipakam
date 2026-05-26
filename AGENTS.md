@@ -240,13 +240,23 @@ When reviewing a pull request from the Review clone, you **must** fetch the PR b
 
 **Critical requirement**: Do **not** begin a deep review of a PR (especially anything beyond trivial changes) without first fetching the PR’s branch into the Review clone.
 
-**Recommended workflow**:
-1. In the Review clone, fetch the PR branch:
+**Recommended workflow** (always run from the Review clone):
+
+**Important**: Always fetch the latest `main` branch **together with** the PR branch before reviewing. This ensures you review against the most current codebase, not a stale base.
+
+1. Fetch both the latest `main` and the target PR branch:
    ```bash
+   git fetch origin main
    gh pr checkout <PR-number>
    ```
-   (This creates a local tracking branch for the PR.)
-2. Perform the full review against the actual PR branch. This allows you to use local tools such as `grep`, run tests, explore context, use `git diff`, etc. on the exact code being proposed.
+
+   Or as a combined one-liner:
+   ```bash
+   git fetch origin && gh pr checkout <PR-number> && git checkout main && git pull origin main && git checkout -
+   ```
+
+2. Perform the full review against the actual PR branch (now based on latest `main`). This allows you to use local tools such as `grep`, run tests, explore context, use `git diff main...HEAD`, etc. on the exact code being proposed.
+
 3. After finishing your review, switch back to `main`:
    ```bash
    git checkout main
