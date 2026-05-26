@@ -230,4 +230,178 @@ contract LibERC721LockApprovalTest is SetupTest {
         vm.prank(nftOwner);
         VaipakamNFTFacet(address(diamond)).setApprovalForAll(operator, true);
     }
+
+    // ─── L145 — burn-while-locked counter drift (Codex P1) ────────────────
+
+    /// @notice Burning a token that is still locked at burn time must
+    ///         decrement `lockedTokenCount` so the owner is not stranded
+    ///         with a permanently positive counter. Reachable in
+    ///         production via `EarlyWithdrawalFacet.completeLoanSale` →
+    ///         `LibLoan.migrateLenderPosition`, which burns
+    ///         `loan.lenderTokenId` without `_unlock`-ing it first.
+    function test_burnWhileLocked_decrementsLockedTokenCount() public {
+        TestMutatorFacet(address(diamond)).testLockNFT(
+            TEST_TOKEN_A, LibERC721.LockReason.EarlyWithdrawalSale
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLockedTokenCount(nftOwner),
+            1,
+            "counter is 1 after lock"
+        );
+
+        // Burn the still-locked token (mirrors LibLoan.migrateLenderPosition).
+        TestMutatorFacet(address(diamond)).testBurnNFT(TEST_TOKEN_A);
+
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLockedTokenCount(nftOwner),
+            0,
+            "counter must return to 0 after burn"
+        );
+
+        // And `setApprovalForAll(.., true)` must succeed — proves the
+        // owner isn't permanently locked out of granting future approvals.
+        vm.prank(nftOwner);
+        VaipakamNFTFacet(address(diamond)).setApprovalForAll(operator, true);
+        assertTrue(
+            VaipakamNFTFacet(address(diamond)).isApprovedForAll(nftOwner, operator),
+            "approval should land after burn-of-locked unwinds the counter"
+        );
+    }
+
+    /// @notice Burning an UNlocked token must NOT underflow / touch the
+    ///         counter. Default branch coverage for the L145 fix.
+    function test_burnUnlocked_doesNotTouchCounter() public {
+        // Pre-condition: counter is 0 (no locks).
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLockedTokenCount(nftOwner),
+            0
+        );
+
+        TestMutatorFacet(address(diamond)).testBurnNFT(TEST_TOKEN_A);
+
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLockedTokenCount(nftOwner),
+            0,
+            "counter must stay 0 when burning an unlocked token"
+        );
+    }
+
+    // ─── L151 — pre-lock operator approval survives the cycle (Codex P1) ──
+
+    /// @notice Operator approvals granted BEFORE a lock must not survive
+    ///         the lock/unlock cycle — otherwise the attacker bypass
+    ///         described in the release note is still partially open.
+    ///         The epoch bump in `_lock` plus the grant-epoch check in
+    ///         `isApprovedForAll` close this path.
+    function test_preLockOperatorApproval_invalidatedAfterUnlock() public {
+        // T=0: grant operator approval (no locks yet).
+        vm.prank(nftOwner);
+        VaipakamNFTFacet(address(diamond)).setApprovalForAll(operator, true);
+        assertTrue(
+            VaipakamNFTFacet(address(diamond)).isApprovedForAll(nftOwner, operator),
+            "approval valid before any lock"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getOperatorApprovalEpoch(nftOwner),
+            0,
+            "epoch starts at 0"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getOperatorApprovalGrantEpoch(nftOwner, operator),
+            0,
+            "grant stamped at epoch 0"
+        );
+
+        // T=1: owner enters a lock (Preclose offset, EarlyWithdrawal,
+        // or the future T-086 prepay path).
+        TestMutatorFacet(address(diamond)).testLockNFT(
+            TEST_TOKEN_A, LibERC721.LockReason.PrecloseOffset
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getOperatorApprovalEpoch(nftOwner),
+            1,
+            "epoch bumps on lock"
+        );
+        // The pre-existing operator approval is now stale.
+        assertFalse(
+            VaipakamNFTFacet(address(diamond)).isApprovedForAll(nftOwner, operator),
+            "approval must be invalidated mid-lock"
+        );
+
+        // T=2: owner cancels / completes — token unlocked. Epoch stays
+        // at 1; the stale grant remains invalidated.
+        TestMutatorFacet(address(diamond)).testUnlockNFT(TEST_TOKEN_A);
+        assertFalse(
+            VaipakamNFTFacet(address(diamond)).isApprovedForAll(nftOwner, operator),
+            "BYPASS CLOSED: pre-lock approval must NOT spring back to life on unlock"
+        );
+
+        // T=3: owner explicitly re-grants. Now approval works again, but
+        // only because the user opted in after the lock cycle.
+        vm.prank(nftOwner);
+        VaipakamNFTFacet(address(diamond)).setApprovalForAll(operator, true);
+        assertTrue(
+            VaipakamNFTFacet(address(diamond)).isApprovedForAll(nftOwner, operator),
+            "fresh post-unlock grant works"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getOperatorApprovalGrantEpoch(nftOwner, operator),
+            1,
+            "re-grant stamped at current epoch (1)"
+        );
+    }
+
+    /// @notice Each fresh `_lock` (None→non-None) bumps the epoch.
+    ///         Re-locking a token that is ALREADY locked (defensive — not
+    ///         today's facet design but the storage invariant must hold)
+    ///         must NOT bump again.
+    function test_lockEpoch_doesNotBumpOnRelock() public {
+        TestMutatorFacet(address(diamond)).testLockNFT(
+            TEST_TOKEN_A, LibERC721.LockReason.PrecloseOffset
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getOperatorApprovalEpoch(nftOwner),
+            1
+        );
+
+        // Re-lock same token with a different reason — must not double-bump.
+        TestMutatorFacet(address(diamond)).testLockNFT(
+            TEST_TOKEN_A, LibERC721.LockReason.EarlyWithdrawalSale
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getOperatorApprovalEpoch(nftOwner),
+            1,
+            "epoch must not double-bump on re-lock"
+        );
+
+        // A second DISTINCT token entering a lock DOES bump again — every
+        // fresh lock event is a fresh signal to revoke prior approvals.
+        TestMutatorFacet(address(diamond)).testLockNFT(
+            TEST_TOKEN_B, LibERC721.LockReason.EarlyWithdrawalSale
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getOperatorApprovalEpoch(nftOwner),
+            2,
+            "epoch bumps on second distinct token's lock"
+        );
+    }
+
+    /// @notice Another owner's lock cycle must not invalidate the
+    ///         current user's pre-existing operator approval —
+    ///         epochs are per-owner.
+    function test_otherOwnerLock_doesNotInvalidateMyApproval() public {
+        // stranger grants an approval; nftOwner has a separate lock cycle.
+        vm.prank(stranger);
+        VaipakamNFTFacet(address(diamond)).setApprovalForAll(operator, true);
+
+        TestMutatorFacet(address(diamond)).testLockNFT(
+            TEST_TOKEN_A, LibERC721.LockReason.PrecloseOffset
+        );
+
+        // stranger's approval is unaffected by nftOwner's epoch bump.
+        assertTrue(
+            VaipakamNFTFacet(address(diamond)).isApprovedForAll(stranger, operator),
+            "epochs are per-owner; stranger's approval must survive nftOwner's lock"
+        );
+    }
 }

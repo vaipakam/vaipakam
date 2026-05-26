@@ -12,13 +12,15 @@ The window between unlock and the next state-changing call from the rightful own
 
 ### The fix
 
-Three small changes in `contracts/src/libraries/LibERC721.sol`:
+Five small changes in `contracts/src/libraries/LibERC721.sol`:
 
 1. **New per-owner counter:** `mapping(address => uint256) lockedTokenCount` added to the `ERC721Storage` struct (append-only field, end of struct).
-2. **`_lock` / `_unlock` maintain the counter** — `++` on the `None → non-None` transition; `--` on the `non-None → None` transition. Re-locking a token with a different reason does not double-count.
+2. **`_lock` / `_unlock` / `_burn` maintain the counter** — `++` on the `None → non-None` transition; `--` on the `non-None → None` transition; `--` when a still-locked token is burned. Re-locking a token with a different reason does not double-count. Burning the locked lender-side position NFT during `EarlyWithdrawalFacet.completeLoanSale` (which goes through `LibLoan.migrateLenderPosition` without an `_unlock` first) used to strand the counter permanently positive — now it cleanly decrements.
 3. **`setApprovalForAll` gates new approvals on the counter:**
    - If `approved == true` AND `lockedTokenCount[msg.sender] > 0`, revert `ApprovalForbiddenWhileTokensLocked(owner, lockedCount)`.
    - If `approved == false` (revocation), always allowed — a user must be able to withdraw a prior approval at any time.
+4. **Per-owner operator-approval epoch closes the pre-lock-grant path.** The counter gate alone only blocks NEW approvals while locked — operator approvals granted BEFORE the owner's first lock would survive the lock/unlock cycle and let an attacker `transferFrom` immediately on release. To close that, `_lock` now bumps a per-owner `operatorApprovalEpoch` on every fresh `None → non-None` transition, `setApprovalForAll` stamps each new grant with the then-current epoch in `operatorApprovalGrantEpoch`, and `isApprovedForAll(owner, operator)` returns `true` only when the stamped grant epoch matches the owner's current epoch. Any approval granted before the most recent lock is silently treated as stale — the user must explicitly re-grant after the lock cycle ends.
+5. **Storage layout is append-only.** Three new fields go at the end of the `ERC721Storage` struct: `lockedTokenCount`, `operatorApprovalEpoch`, `operatorApprovalGrantEpoch`. No existing field is reordered, renamed, or retyped.
 
 ### Why this PR is small + ships now, not bundled with T-086
 
@@ -34,5 +36,7 @@ New `LibERC721LockApprovalTest.t.sol` exercises:
 - `setApprovalForAll(operator, false)` (revocation) succeeds regardless of lock state.
 - Approval succeeds after unlock.
 - Other users' approvals are unaffected by a lock on the test owner's token.
+- **Burn-while-locked path (L145):** burning a still-locked token decrements the counter so the owner is not stranded with a permanently positive `lockedTokenCount`; the owner can subsequently grant a fresh approval. Burning an unlocked token does not touch the counter.
+- **Pre-lock operator approval path (L151):** an approval granted before the owner's first lock is invalidated mid-lock AND stays invalidated after `_unlock` — the user must explicitly re-grant. Epoch bumps only on the `None → non-None` transition (re-locking with a different reason doesn't double-bump). Epochs are per-owner, so a stranger's separate lock cycle doesn't invalidate the test owner's approval.
 
-The test uses three new test-only helpers on `TestMutatorFacet` (`testMintNFT`, `testLockNFT`, `testUnlockNFT`, plus the `getLockedTokenCount` reader) so the focused unit test doesn't have to stand up a full offer-accept + Preclose lifecycle for what is fundamentally a library-level gate. The production-side flows (PrecloseFacet, EarlyWithdrawalFacet) still go through their facets exclusively; these helpers are NOT cut into production deployments.
+The test uses five new test-only helpers on `TestMutatorFacet` (`testMintNFT`, `testLockNFT`, `testUnlockNFT`, `testBurnNFT`, plus the `getLockedTokenCount` / `getOperatorApprovalEpoch` / `getOperatorApprovalGrantEpoch` readers) so the focused unit test doesn't have to stand up a full offer-accept + Preclose lifecycle for what is fundamentally a library-level gate. The production-side flows (PrecloseFacet, EarlyWithdrawalFacet) still go through their facets exclusively; these helpers are NOT cut into production deployments.

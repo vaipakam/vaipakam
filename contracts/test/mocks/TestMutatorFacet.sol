@@ -588,8 +588,35 @@ contract TestMutatorFacet {
         LibERC721._unlock(tokenId);
     }
 
+    /// @notice Test-only: burn a tokenId via the library. Mirrors the
+    ///         call `LibLoan.migrateLenderPosition` /
+    ///         `VaipakamNFTFacet._burnInternal` make internally — used
+    ///         by the focused lock-counter test to assert that burning
+    ///         a still-locked token doesn't permanently strand the
+    ///         owner's counter (the L145 finding closed by this PR).
+    // forge-lint: disable-next-line(mixed-case-function)
+    function testBurnNFT(uint256 tokenId) external {
+        LibERC721._burn(tokenId);
+    }
+
     /// @notice Test-only: read the per-owner locked-token counter.
     function getLockedTokenCount(address owner) external view returns (uint256) {
         return LibERC721._storage().lockedTokenCount[owner];
+    }
+
+    /// @notice Test-only: read the per-owner operator-approval epoch
+    ///         (bumped on every fresh `_lock`).
+    function getOperatorApprovalEpoch(address owner) external view returns (uint256) {
+        return LibERC721._storage().operatorApprovalEpoch[owner];
+    }
+
+    /// @notice Test-only: read the epoch stamped when an operator
+    ///         approval was granted.
+    function getOperatorApprovalGrantEpoch(address owner, address operator)
+        external
+        view
+        returns (uint256)
+    {
+        return LibERC721._storage().operatorApprovalGrantEpoch[owner][operator];
     }
 }

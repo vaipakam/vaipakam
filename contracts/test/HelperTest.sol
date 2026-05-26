@@ -55,7 +55,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](66);
+        selectors = new bytes4[](69);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -180,6 +180,14 @@ contract HelperTest {
         // forge-lint: disable-next-line(mixed-case-function)
         selectors[64] = TestMutatorFacet.testUnlockNFT.selector;
         selectors[65] = TestMutatorFacet.getLockedTokenCount.selector;
+        // Burn + epoch readers — Codex P1 follow-ups on the
+        // setApprovalForAll-during-lock hardening (PR #282, L145 burn
+        // counter drift; L151 pre-lock operator approval survives the
+        // lock/unlock cycle).
+        // forge-lint: disable-next-line(mixed-case-function)
+        selectors[66] = TestMutatorFacet.testBurnNFT.selector;
+        selectors[67] = TestMutatorFacet.getOperatorApprovalEpoch.selector;
+        selectors[68] = TestMutatorFacet.getOperatorApprovalGrantEpoch.selector;
         return selectors;
     }
 
