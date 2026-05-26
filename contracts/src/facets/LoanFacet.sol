@@ -94,6 +94,10 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         uint256 bufferAmount;
         bool riskAndTermsConsentFromBoth;
         bool allowsPartialRepay;
+        // T-086 step 4 — companion-event surface for the lender's
+        // prepay-listing consent (snapshotted from Offer at loan-init).
+        // See `Loan.allowsPrepayListing`.
+        bool allowsPrepayListing;
         LibVaipakam.PeriodicInterestCadence periodicInterestCadence;
         address matcher;
         uint256 healthFactorAtInit;
@@ -290,6 +294,10 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         d.bufferAmount = loan.bufferAmount;
         d.riskAndTermsConsentFromBoth = loan.riskAndTermsConsentFromBoth;
         d.allowsPartialRepay = loan.allowsPartialRepay;
+        // T-086 step 4 — surface the lender's prepay-listing consent
+        // (snapshotted from Offer) on the companion event so cache-merge
+        // consumers don't need a follow-up `getLoanDetails` view-call.
+        d.allowsPrepayListing = loan.allowsPrepayListing;
         d.periodicInterestCadence = loan.periodicInterestCadence;
         d.matcher = loan.matcher;
         // Position-NFT ids — set by `_finalizeLoanCreation` (which runs

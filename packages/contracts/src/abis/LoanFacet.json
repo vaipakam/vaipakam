@@ -448,6 +448,11 @@
             "internalType": "bool"
           },
           {
+            "name": "allowsPrepayListing",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
             "name": "periodicInterestCadence",
             "type": "uint8",
             "internalType": "enum LibVaipakam.PeriodicInterestCadence"

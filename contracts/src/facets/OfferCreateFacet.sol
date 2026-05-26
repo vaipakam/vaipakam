@@ -126,6 +126,14 @@ contract OfferCreateFacet is
         // chip ("AON" / "IOC, 60s window left") directly from the
         // event payload — no follow-up `getOffer` view-call needed.
         LibVaipakam.FillMode fillMode;
+        // ── T-086 step 4 — lender consent to allow a borrower
+        //    Seaport prepay collateral listing on the loan's collateral
+        //    NFT. Carried on the companion event so indexer + frontend
+        //    cache merges can render the offer's prepay-listing-allowed
+        //    decoration directly from the OfferCreated payload — no
+        //    follow-up `getOffer` view-call. See
+        //    {CreateOfferParams.allowsPrepayListing}.
+        bool allowsPrepayListing;
     }
 
     /// @notice Companion to {OfferCreated} — full self-sufficient
@@ -1016,6 +1024,11 @@ contract OfferCreateFacet is
         f.periodicInterestCadence = offer.periodicInterestCadence;
         f.expiresAt = offer.expiresAt;
         f.fillMode = offer.fillMode;
+        // T-086 step 4 — companion-event surface for the lender's
+        // prepay-listing consent. Carried so indexer / frontend cache
+        // merges can render the offer's "borrower may post a prepay
+        // listing" decoration without a follow-up `getOffer` view-call.
+        f.allowsPrepayListing = offer.allowsPrepayListing;
 
         emit OfferCreatedDetails(offerId, creator, offer.lendingAsset, f);
     }
