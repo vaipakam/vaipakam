@@ -67,6 +67,8 @@ const DELIBERATELY_NOT_HANDLED = {
     'partial-liquidation companion event — surfaced via activity_events but the loans row keeps its Active status with reduced principal/collateral (read via live RPC getLoanDetails). Schema-side indexing is a follow-up.',
   LiquidationDiscounted:
     'discount-path companion event (flash-loan path, FlashLoanLiquidationPath.md) — surfaced via activity_events; the loan-status flip to Defaulted arrives via LoanDefaulted which IS handled.',
+  PrepayCollateralSaleSettled:
+    'TEMPORARY — emitted by PrepayListingFacet.executorFinalizePrepaySale on the T-086 Seaport prepay-sale terminal (Active→Settled). Handler wiring lives in design-doc §13 step 12 (`docs/DesignsAndPlans/NFTCollateralSaleAndAuction.md`): an `apps/indexer/src/chainIndexer.ts` branch will UPDATE loans SET status="Settled" and surface the event in activity_events. Remove this allowlist entry in that step-12 PR.',
 };
 
 /** Recursively collect every `.sol` file under a directory. */
