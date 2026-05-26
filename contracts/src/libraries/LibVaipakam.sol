@@ -1108,6 +1108,21 @@ library LibVaipakam {
         // single-value invariant (`amount == amountMax`); `Ioc` requires
         // `expiresAt > 0` (the window is the IOC's defining knob).
         FillMode fillMode;
+        // ── T-086 step 4 — `allowsPrepayListing` lender-consent gate ────
+        // Lender-controlled gate for the borrower's right to post a
+        // Seaport-mediated prepay collateral listing on the loan's
+        // collateral NFT while the loan is still active (the T-086
+        // flow — see
+        // `docs/DesignsAndPlans/NFTCollateralSaleAndAuction.md`).
+        //
+        // Semantics mirror `allowsPartialRepay`: it's part of the
+        // take-it-or-leave-it offer package. An acceptor who disagrees
+        // with the flag simply doesn't accept. Snapshotted onto
+        // `Loan.allowsPrepayListing` at loan-init and enforced at the
+        // top of the (step-6) `NFTPrepayListingFacet.postPrepayListing`
+        // entry. Default `false` is the safe behaviour: explicit
+        // opt-in only.
+        bool allowsPrepayListing;
     }
 
     /// @notice #193 — input bundle for `OfferMutateFacet.modifyOffer`.
@@ -1253,6 +1268,17 @@ library LibVaipakam {
         //          to start writing — adding the slot now keeps the
         //          storage layout stable across the #164 → #102 step.
         uint256 collateralAmountFilled;
+        // ── T-086 step 4 — `allowsPrepayListing` lender consent ─────────
+        // Slot 20 (packed: 1 byte of a fresh slot). Append-only field;
+        // copied verbatim from `CreateOfferParams.allowsPrepayListing`
+        // at `createOffer` time and snapshotted onto
+        // `Loan.allowsPrepayListing` at loan-init. While `false`
+        // (the default), the (step-6) `NFTPrepayListingFacet` MUST
+        // reject `postPrepayListing` calls for any loan created from
+        // this offer. See
+        // `docs/DesignsAndPlans/NFTCollateralSaleAndAuction.md` §13
+        // step 4 for the full lifecycle.
+        bool allowsPrepayListing;
     }
 
     /**
@@ -1426,6 +1452,17 @@ library LibVaipakam {
         // leave both flags `false` — they're billed only on PaidPush.
         bool lenderNotifBilled;
         bool borrowerNotifBilled;
+        // ── T-086 step 4 — `allowsPrepayListing` snapshot at loan-init ──
+        // Append-only field. Copied verbatim from
+        // `Offer.allowsPrepayListing` in `LoanFacet.initiateLoan`;
+        // immutable for the loan's lifetime regardless of any later
+        // offer-level change (offers can't be edited post-create today,
+        // but this matches the snapshot-and-lock pattern used for
+        // `allowsPartialRepay` / fallback consent / split bps elsewhere
+        // on this struct). The (step-6) `NFTPrepayListingFacet` reads
+        // THIS field (not the offer's) — once the loan is initialized
+        // the relevant consent is fixed-at-loan-init.
+        bool allowsPrepayListing;
     }
 
     /**

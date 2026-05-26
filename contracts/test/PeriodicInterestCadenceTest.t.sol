@@ -72,6 +72,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
             collateralTokenId: 0,
             collateralQuantity: 0,
             allowsPartialRepay: false,
+            allowsPrepayListing: false,
             amountMax: amount,
             interestRateBpsMax: 500,
             collateralAmountMax: 10 * amount,

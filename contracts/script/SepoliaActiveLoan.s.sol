@@ -155,6 +155,7 @@ contract SepoliaActiveLoan is Script {
             collateralTokenId: 0,
             collateralQuantity: 0,
             allowsPartialRepay: false,
+            allowsPrepayListing: false,
             amountMax: 0,
             interestRateBpsMax: 0,
             collateralAmountMax: 0,

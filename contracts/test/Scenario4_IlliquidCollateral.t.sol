@@ -207,6 +207,7 @@ contract Scenario4_IlliquidCollateral is Test {
                 collateralTokenId: 0,
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
+                allowsPrepayListing: false,
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: RATE_BPS,
                 collateralAmountMax: COLLATERAL,

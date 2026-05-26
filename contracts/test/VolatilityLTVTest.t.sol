@@ -75,6 +75,7 @@ contract VolatilityLTVTest is SetupTest, IVaipakamErrors {
                 collateralTokenId: 0,
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
+                allowsPrepayListing: false,
                 amountMax: principal,
                 interestRateBpsMax: 500,
                 collateralAmountMax: collateral,

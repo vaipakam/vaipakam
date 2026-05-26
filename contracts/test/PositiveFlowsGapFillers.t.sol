@@ -350,6 +350,7 @@ contract PositiveFlowsGapFillers is Test {
                 collateralTokenId: 0,
                 collateralQuantity: 0,
                 allowsPartialRepay: true,
+                allowsPrepayListing: false,
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: RATE_BPS,
                 collateralAmountMax: COLLATERAL,

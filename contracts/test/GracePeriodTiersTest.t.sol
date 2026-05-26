@@ -62,6 +62,7 @@ contract GracePeriodTiersTest is SetupTest {
                 collateralTokenId: 0,
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
+                allowsPrepayListing: false,
                 amountMax: 1000 ether,
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1800 ether,

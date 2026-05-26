@@ -746,6 +746,12 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // authorisation; default false reverts the call with
         // {PartialRepayNotAllowed}.
         loan.allowsPartialRepay = offer.allowsPartialRepay;
+        // T-086 step 4 — snapshot the lender's prepay-listing consent
+        // onto the loan. Borrower's step-6 `postPrepayListing` reads
+        // THIS field; offer-level changes can't affect a loan once
+        // initialized. Default `false` = (step-6) facet hard-reverts
+        // on `postPrepayListing` for the loan.
+        loan.allowsPrepayListing = offer.allowsPrepayListing;
         // T-034 — snapshot the lender's chosen Periodic Interest Payment
         // cadence onto the loan. Offer-level validation in
         // `OfferFacet._validatePeriodicCadence` already gated illegal

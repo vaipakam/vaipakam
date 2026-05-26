@@ -576,6 +576,7 @@ contract DefaultedFacetTest is Test {
                 collateralTokenId: 0,
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
+                allowsPrepayListing: false,
                 amountMax: amount,
                 interestRateBpsMax: 500,
                 collateralAmountMax: collateralAmount,
