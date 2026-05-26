@@ -95,11 +95,31 @@ The Diamond stores a governance-managed `mapping(address => bool) approvedCondui
 
 The vault's `setCollateralOperatorApproval` reverts if the `conduit` is not in the allow-list at call time. The executor's `validateOrder` ALSO checks that `msg.sender == seaport && conduitOf(order) ∈ approvedConduits` to prevent a future-compromised conduit from receiving fill notifications.
 
-### 4.3 Vault keeps custody (no NFT transfer to executor)
+### 4.3 Vault is the offerer (because vault holds the NFT); ERC-1271 is a thin delegate
 
-The vault retains the collateral NFT throughout the listing. The executor is the Seaport offerer ONLY in the sense that its address is the order's signer (via ERC-1271). Seaport pulls the NFT from the **vault** (which approved the conduit) at match time. The executor never holds the NFT.
+**Round 4.1 correction.** Earlier Round 4 said the executor was the offerer while the vault held custody — that contradicts Seaport's offer-transfer semantics (Seaport transfers offer items FROM the order's `offerer` address; if offerer ≠ holder, the transfer reverts). Round 4.1 corrects:
 
-This avoids: (a) a second NFT transfer (vault → executor) before listing; (b) executor becoming a custody point for collateral; (c) the cleanup question if the listing expires (NFT already in the right place).
+- **`VaipakamVaultImplementation` IS the offerer** because it holds the NFT.
+- Vault implements ERC-1271 as a **thin 5-line delegate**:
+
+```solidity
+function isValidSignature(bytes32 hash, bytes memory) external view returns (bytes4) {
+    address exec = LibVaipakamStorage.s().orderHashToExecutor[hash];
+    if (exec == address(0)) return 0xffffffff; // INVALID
+    return IListingExecutor(exec).isOrderValid(hash) ? 0x1626ba7e : 0xffffffff;
+}
+```
+
+- `CollateralListingExecutor` (singleton) is the **Seaport zone** (still). The zone callback (`validateOrder`) is called by Seaport AFTER the offer + consideration transfers complete; the zone mutates loan state (marks settled, releases lock, calls LIF settlement). Zone ≠ offerer in Seaport; they can be different contracts.
+
+The vault's ERC-1271 is 5 lines + one storage mapping (`orderHashToExecutor[hash] → executor`). It does NOT contain live-debt math, recipient validation, or grace-time checks — those stay in the executor. The vault grows by ~5 lines of audit surface; the heavy logic stays in the executor.
+
+**New vault entries (Diamond-gated):**
+- `setCollateralOperatorApproval(nftContract, tokenId, conduit, approved)` — already in Round 4
+- `registerListingOrderHash(orderHash, executor)` — called by the listing facet at sign time; populates `orderHashToExecutor` so the vault's ERC-1271 can delegate
+- `revokeListingOrderHash(orderHash)` — called on cancel / expire / successful fill
+
+Vault keeps custody throughout: at sign time, vault grants per-token Seaport-conduit approval for the collateral NFT; at fill time, Seaport pulls the NFT from the vault using the conduit's approval; at zone callback, the executor mutates loan state and the lock releases. No NFT ever transfers vault→executor.
 
 ### 4.4 What this architecture is NOT
 
@@ -179,28 +199,62 @@ Seaport's `restricted` family includes `FULL_RESTRICTED` (no partial fills) and 
 
 `CollateralListingExecutor` constructs only `FULL_RESTRICTED` orders. ERC1155 partial-balance sales remain out-of-scope for v1.
 
-### 5.7 On-chain loan finalization — zone `validateOrder` with `msg.sender == seaport` gate
+### 5.7 On-chain loan finalization — zone `validateOrder` with critical checks duplicated
 
 Per Codex L179, `validateOrder` MUST require `msg.sender == seaport` (the canonical Seaport address). Otherwise an arbitrary external caller could force-close a loan by invoking the zone directly.
+
+**Round 4.1 additional defence (Codex L123 catch):** Seaport's `validate()` function allows pre-registration of a signed order on-chain; subsequent fulfillments SKIP the `isValidSignature` callback. If someone calls `Seaport.validate(order)` after sign time, the vault's ERC-1271 delegate never runs at fill time → live-debt + recipient + grace checks bypassed.
+
+**Resolution:** the same critical checks the ERC-1271 path runs MUST be duplicated in the zone callback. The zone callback fires for restricted orders REGARDLESS of pre-validation state, so checks here are not bypassable.
 
 ```solidity
 function validateOrder(ZoneParameters calldata params) external returns (bytes4) {
     require(msg.sender == SEAPORT, "Not Seaport");
-    uint256 loanId = orderToLoan[params.orderHash];
-    require(loanId != 0, "Unknown order");
-    require(loans[loanId].status == Active, "Loan not active");
+
+    // Round 4.1: look up the loan + conduit pinned at sign time.
+    OrderContext memory ctx = orderContext[params.orderHash];
+    require(ctx.loanId != 0, "Unknown order");
+    require(approvedConduits[ctx.conduit], "Conduit no longer approved");
+    require(loans[ctx.loanId].status == Active, "Loan not active");
+
+    // Round 4.1: re-derive the live floor + recipients at THIS block.
+    //  Defence against Seaport.validate() pre-registration which would
+    //  bypass the ERC-1271 callback.
+    uint256 floor = LibCollateralSettlement.liveFloor(ctx.loanId, block.timestamp);
+    require(params.consideration.length == 3, "Bad consideration shape");
+    require(
+        params.consideration[0].amount >= principalPlusAccruedInterest(ctx.loanId),
+        "Lender short-paid"
+    );
+    require(
+        params.consideration[1].amount >= treasuryAndPrecloseFee(ctx.loanId),
+        "Treasury short-paid"
+    );
+    require(
+        params.consideration[0].recipient ==
+            lenderNFT.ownerOf(loans[ctx.loanId].lenderNftId),
+        "Wrong lender recipient"
+    );
+    require(
+        params.consideration[2].recipient ==
+            borrowerNFT.ownerOf(loans[ctx.loanId].borrowerNftId),
+        "Wrong borrower recipient"
+    );
+    require(block.timestamp < loans[ctx.loanId].gracePeriodEnd, "Grace expired");
+
     // Atomic with Seaport's fill: lender + treasury + borrower paid; NFT exited.
-    loans[loanId].status = Settled;
-    LibERC721._unlock(loans[loanId].borrowerNftId);
-    LibVPFIDiscount.settleBorrowerLifProper(loans[loanId]);  // ← LOAD-BEARING per CLAUDE.md
-    // Emit the same settled-loan events RepayFacet fires (LoanRepaid, etc.)
-    // with @custom:event-category state-change/loan-mutation natspec so the
-    // indexer event-coverage script picks them up.
+    loans[ctx.loanId].status = Settled;
+    LibERC721._unlock(loans[ctx.loanId].borrowerNftId);
+    LibVPFIDiscount.settleBorrowerLifProper(loans[ctx.loanId]);  // ← LOAD-BEARING per CLAUDE.md
+    emit LoanRepaid(ctx.loanId, /* via Seaport-prepay path */);
+
     return MAGIC_VALUE;
 }
 ```
 
-The LIF settlement is the seam your reviewer flagged. Every proper-close terminal path in this codebase (RepayFacet, PrecloseFacet direct + offset, RefinanceFacet) calls `LibVPFIDiscount.settleBorrowerLifProper(loan)`. A successful Seaport fill IS a proper close (lender paid in full, borrower receives remainder, treasury receives fees) — so MUST call it. Missing it produces stuck-active loans + VPFI rebate accounting drift (the exact failure mode CLAUDE.md documents).
+**Round 4.1 storage change (Codex L97 catch):** the `orderHashToLoan` mapping is extended to `orderHashToContext` storing `(loanId, conduit)` — so the zone can verify the conduit is still in the governance allow-list at settlement time. Without this, a conduit removed from the allow-list after sign time would still fill orders signed before removal.
+
+The LIF settlement is the seam your external reviewer flagged. Every proper-close terminal path in this codebase (RepayFacet, PrecloseFacet direct + offset, RefinanceFacet) calls `LibVPFIDiscount.settleBorrowerLifProper(loan)`. A successful Seaport fill IS a proper close — so MUST call it. Missing it produces stuck-active loans + VPFI rebate accounting drift (the exact failure mode CLAUDE.md documents).
 
 The `cancelExpiredPrepayListing` path does NOT call `settleBorrowerLifProper` — that's correct: it just releases the lock + cancels the Seaport order; the loan stays `Active` until the existing `markDefaulted` / `triggerLiquidation` machinery runs, at which point those facets call `forfeitBorrowerLif(loan)` (bad-path) as they do today.
 
@@ -228,7 +282,22 @@ For v1: **full vaulted balance only**. Partial-balance sales deferred.
 
 **Single boundary:** `loan.gracePeriodEnd`. The listing window is `[loan.initBlock, loan.gracePeriodEnd)`. Earlier rounds had wording inconsistency ("pre-grace only" while enforcement used grace end) — Round 4 standardizes on `gracePeriodEnd` everywhere.
 
-**Seaport endTime semantics:** Seaport's source treats `endTime` as **exclusive** — a match attempt where `block.timestamp >= endTime` reverts. Setting `endTime = loan.gracePeriodEnd` means the LAST fillable block has `block.timestamp == gracePeriodEnd - 1`. The block where `block.timestamp == gracePeriodEnd` is the first block where the listing is dead AND `markDefaulted` becomes callable. There's no same-block ambiguity (Seaport rejects → no NFT exit; `markDefaulted` proceeds normally). Documented here for verification at implementation time.
+**Authoritative boundary semantics (verified against existing code):**
+
+| Path | Valid when | Source |
+|---|---|---|
+| `RepayFacet.repayLoan` | `block.timestamp <= gracePeriodEnd` | `RepayFacet.sol:283` rejects `> graceEnd` |
+| `DefaultedFacet.markDefaulted` | `block.timestamp > gracePeriodEnd` | `DefaultedFacet.sol:217` rejects `<= graceEnd` |
+| `RiskFacet.triggerLiquidation` (liquid) | HF < 1.0 OR `block.timestamp > gracePeriodEnd` | Existing flow unchanged |
+| Seaport fill via this design (executor zone) | `block.timestamp < gracePeriodEnd` (endTime exclusive) | This design |
+
+The three paths are **mutually exclusive across the boundary** with no same-block overlap:
+
+- `block.timestamp < gracePeriodEnd`: repayment valid, Seaport fill valid, default invalid.
+- `block.timestamp == gracePeriodEnd`: repayment STILL valid (last valid block), Seaport fill invalid (Seaport `endTime` is exclusive — match rejects on `>= endTime`), default invalid.
+- `block.timestamp > gracePeriodEnd`: repayment invalid, Seaport fill invalid, default valid.
+
+**Round 4.1 fix:** my earlier wording said `markDefaulted` becomes callable at `block.timestamp == gracePeriodEnd`. That was wrong — the existing code rejects until `block.timestamp > gracePeriodEnd`. Doc corrected to match.
 
 **Same-block race protection (post-grace):** between `gracePeriodEnd` and the first `markDefaulted` call, anyone can call `cancelExpiredPrepayListing(loanId)` — it's the permissionless safety net that releases the lock even if no one has triggered the default yet.
 
