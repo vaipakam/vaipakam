@@ -35,8 +35,10 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 contract LibCollateralSettlementTest is SetupTest {
     uint256 internal constant TEST_LOAN_ID = 7_701;
     uint256 internal constant ONE_DAY = 1 days;
-    uint256 internal constant DAYS_PER_YEAR = 365;
-    uint256 internal constant BASIS_POINTS = 10_000;
+    uint256 internal constant LCS_DAYS_PER_YEAR = 365;
+    // `BASIS_POINTS` (10_000) is already declared on the inherited
+    // {SetupTest} contract. Reusing the inherited constant directly
+    // below; re-declaring it locally would collide (Solidity 9097).
 
     uint256 internal constant PRINCIPAL = 100_000e18;
     uint256 internal constant RATE_BPS = 1_200; // 12% APR
@@ -84,7 +86,7 @@ contract LibCollateralSettlementTest is SetupTest {
         pure
         returns (uint256)
     {
-        return (principal * rateBps * elapsedDays) / (DAYS_PER_YEAR * BASIS_POINTS);
+        return (principal * rateBps * elapsedDays) / (LCS_DAYS_PER_YEAR * BASIS_POINTS);
     }
 
     // ─── 1. Day-zero: no accrued interest yet ───────────────────────────
