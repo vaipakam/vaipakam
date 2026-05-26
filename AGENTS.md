@@ -238,7 +238,7 @@ It does **not** apply to:
 
 When reviewing a pull request from the Review clone, you **must** fetch the PR branch locally before conducting any meaningful review.
 
-**Critical requirement**: Do **not** begin a deep review of a PR (especially anything beyond trivial changes) without first fetching the PR’s branch into the Review clone.
+**Critical requirement**: Do **not** begin a deep review of a PR (especially anything beyond trivial changes) without first fetching the PR's branch into the Review clone.
 
 **Recommended workflow** (always run from the Review clone):
 
@@ -284,6 +284,8 @@ git branch -D <pr-branch-name>
 During an active, same-day review session on a PR (for example, while you are still discussing and iterating with the author), you may keep the branch temporarily. However, once that review round is complete or at the end of the day, you must clean it up.
 
 **Do not** run these cleanup commands in the main development clone (`/home/pranav/Codes/Vaipakam/vaipakam/`) unless you have your own established personal workflow there.
+
+**Relationship to the "keep merged branches" rule** (auto-memory `feedback_keep_merged_branches.md`): that rule says don't pass `--delete-branch` to `gh pr merge` and don't push-delete merged branches; it scopes to **remote** branches on `vaipakam/vaipakam` (kept for post-merge troubleshooting until the project's final-stage sweep). This guideline scopes to **local** working-tree branches in the **Review** clone — a different lifecycle. Both can hold simultaneously: remote merged branches stay on GitHub; local PR-review branches in the Review clone are deleted after each review round.
 
 ### Rationale
 
