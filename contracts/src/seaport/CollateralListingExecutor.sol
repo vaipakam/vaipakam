@@ -422,15 +422,24 @@ contract CollateralListingExecutor is
             IVaipakamPrepayContext(vaipakamDiamond).getPrepayContext(loanId, block.timestamp);
 
         if (pctx.status != LibVaipakam.LoanStatus.Active) revert LoanNotActive(loanId);
-        // Grace boundary uses `>=` — sale path closes at the EXACT
-        // grace-end instant (not after it) so a borrower can't race
-        // a fill against the default trigger. Codex L362 flagged a
-        // `>` vs `>=` consistency question on Round 1; sticking with
-        // `>=` here is the safer choice because at exact equality the
-        // diamond's `markDefaulted` becomes callable in the SAME
-        // block, and a parallel prepay fill would otherwise close at
-        // a stale floor.
-        if (block.timestamp >= pctx.graceEnd) revert GraceExpired(loanId);
+        // Grace boundary uses strict `>` to mirror the rest of the
+        // loan lifecycle. The grace window CLOSES the instant after
+        // `graceEnd`, not at the tick itself:
+        //   - `DefaultedFacet:217` reverts `NotDefaultedYet` when
+        //     `block.timestamp <= graceEnd`, so `markDefaulted` is
+        //     NOT callable AT the boundary tick — only after it.
+        //   - `RepayFacet:283` / `RepayFacet:616` revert
+        //     `RepaymentPastGracePeriod` only when
+        //     `block.timestamp > graceEnd`, so a regular repay is
+        //     allowed AT the boundary tick.
+        // Rejecting a prepay sale at the same tick a repay is still
+        // allowed (and a default is still NOT) would be an arbitrary
+        // last-second mismatch. Codex P2 on Round 2 (PR #288 thread
+        // PRRT_kwDOSP_93M6ExkLz) called this out; an earlier in-code
+        // comment defended `>=` on the assumption that `markDefaulted`
+        // was already callable at the tick, which the
+        // `DefaultedFacet:217` check above shows is wrong.
+        if (block.timestamp > pctx.graceEnd) revert GraceExpired(loanId);
 
         // ── Offer-side schema check ─────────────────────────────────────
         // The order MUST be selling EXACTLY the loan's collateral NFT.
