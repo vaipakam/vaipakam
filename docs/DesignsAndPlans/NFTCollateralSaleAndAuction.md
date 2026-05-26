@@ -1,6 +1,13 @@
 # NFT Collateral Sale + Grace-Period Auction (T-086 design)
 
-**Status:** Design exploration · Not ratified · Tracking Issue [#279](https://github.com/vaipakam/vaipakam/issues/279)
+**Status:** Design exploration · Round 2 (post-pivot) · Not ratified · Tracking Issue [#279](https://github.com/vaipakam/vaipakam/issues/279)
+
+> **History:**
+> - Round 1 explored four approaches and recommended a Vaipakam-native marketplace (Approach 4.3).
+> - Codex adversarial review on PR #280 surfaced four P1s + two P2s — addressed in commit `ee4453d1`.
+> - User input then **pivoted away from Vaipakam-native marketplace toward third-party-marketplaces-only via Seaport ERC-1271** (Approach 4.2). The protocol becomes the seller-of-record on every listing; borrower controls price pre-grace; price snaps to floor post-grace; multi-marketplace expansion as a separate follow-up.
+>
+> This is the Round 2 redraft reflecting the pivot.
 
 ## 1. Problem statement
 
@@ -13,11 +20,13 @@ There's no path to **realize the NFT's market equity** while the loan is live. A
 
 Symmetrically, lenders facing a defaulting borrower receive the raw NFT and have to sell it themselves — instead of receiving the protocol-extracted cash equivalent.
 
-Two scenarios this design covers:
+The "Auction to prepay loan" UX captures this: a single button on the borrower's loan card that posts the collateral NFT for sale on third-party marketplaces (OpenSea v1; Blur / LooksRare / X2Y2 / Magic Eden in v2+), with proceeds flowing into the vault's settlement waterfall instead of to the borrower directly.
 
-**Scenario A — Borrower-initiated sale during active loan.** Borrower wants to sell the collateralized NFT on a third-party marketplace (OpenSea, Blur, Magic Eden). On match, proceeds flow into the vault, lender + treasury are paid out, remainder lands with the borrower. NFT transfers to the buyer atomically with debt settlement. If price doesn't cover debt + fees, the sale is blocked.
+The two operational modes share the same plumbing but differ in WHO controls the price:
 
-**Scenario B — Protocol-initiated grace-period auction.** Once grace expires, instead of immediately transferring NFT-to-lender, the protocol auctions the NFT at a reserve = debt + fees + liquidation fee. If a taker covers the reserve: cash distribution per the waterfall. If no taker by a deadline: fall through to NFT-to-lender (the existing default path stays as the unhappy-case backstop).
+**Pre-grace (active loan).** Borrower clicks "Auction to prepay loan," sets an asking price at or above the protocol-computed floor `principal + accruedInterest + preclose fee + 2% buffer`, and the vault posts a Seaport order. Buyer matches → atomic settlement.
+
+**Post-grace.** Pre-grace listing (if any) auto-re-prices to the post-grace floor `principal + (accrued-up-to-grace-expiry interest) + late fee + liquidation fee + 2% buffer`. If no pre-grace listing existed, the protocol posts a fresh one at this floor. Borrower can no longer modify the listing. If unfilled by the configurable post-grace window (default 7 days), fall through to the existing default flow (NFT-to-lender).
 
 Both must work for ERC721 and ERC1155.
 
@@ -25,247 +34,182 @@ Both must work for ERC721 and ERC1155.
 
 What MUST be preserved:
 
-- **Collateral lock invariant.** While a loan is active and not in a sale-settling state, the vault MUST NOT release the NFT to anyone except (a) the borrower on full repayment, (b) the lender on default, or (c) a settling buyer in the sale paths added here.
-- **Settlement waterfall ordering.** Lender debt (principal + interest) is paid before treasury fee. Treasury fee before liquidation fee. Liquidation fee before borrower remainder. No path skips ahead.
-- **No equity dilution.** A successful sale must not produce a state where the lender is short-paid OR the buyer ends up without the NFT after paying.
-- **Consent capture.** The lender at offer-acceptance time must know whether the loan allows borrower-initiated sale (Scenario A) and/or grace-period auction (Scenario B). A lender who refuses either path must be able to decline at offer acceptance.
+- **Collateral lock invariant.** While a loan is active and not in a sale-settling state, the vault MUST NOT release the NFT to anyone except (a) the borrower on full repayment, (b) the lender on default, or (c) a marketplace-contract pulling the NFT atomically with a Seaport-routed payment that lands in the vault's settlement waterfall.
+- **Marketplace-approval invariant.** The vault MAY grant `setApprovalForAll(seaportConduit, true)` (or per-token `approve`) to a known, audited Seaport conduit contract. The vault MUST NEVER grant operator approval to any EOA (in particular, NEVER to the borrower or the loan.borrower address). This is the rule that makes the third-party-marketplace path safe — the marketplace's contract code controls atomicity, not a human.
+- **Settlement waterfall ordering.** Lender debt (principal + accrued interest) is paid before treasury fee. Treasury fee before liquidation fee. Liquidation fee before borrower remainder. No path skips ahead. The waterfall is enforced by Seaport's `consideration` items, not by a separate post-sale distribution transaction.
+- **No equity dilution.** A successful Seaport match must not produce a state where the lender is short-paid OR the buyer ends up without the NFT after paying. Lender-debt-coverage is a HARD revert condition; partial lender settlement is forbidden.
+- **Consent capture.** The lender at offer-acceptance time MUST know whether the loan allows pre-grace sale and/or post-grace auction. A lender who refuses either path MUST be able to decline at offer acceptance.
 
 What can be relaxed (vs. today):
 
-- The "NFT only ever leaves the vault to repayer-or-lender" invariant — the sale paths add a third class of authorized recipient (the settling buyer). The relaxation is OK because the buyer's atomic payment IS the borrower's repayment, with the buyer as the conduit.
+- The "NFT only ever leaves the vault to repayer-or-lender" invariant — the sale paths add a third class of authorized recipient (the Seaport-routed buyer). The relaxation is OK because the buyer's atomic payment IS the borrower's repayment, with Seaport's `consideration` distribution as the conduit.
 
-What the threat model explicitly does NOT defend against (out of scope here, covered by other layers):
+What the threat model explicitly does NOT defend against (out of scope here):
 
-- Borrower picking a marketplace whose smart contracts are themselves malicious (general DeFi attack surface; same risk as any OpenSea user).
-- Borrower listing at a price below market and leaving equity on the table — that's the borrower's choice, not a protocol failure.
-- A buyer who reneges after partial commitment — addressed by atomicity requirements in each approach.
+- Seaport itself being malicious or compromised. Treated as a trust root; we're trusting OpenSea's audited Seaport contracts the same way the rest of the NFT ecosystem does. If Seaport is compromised, our worst case is the same as every other NFT protocol's worst case.
+- Borrower listing at a price below market and leaving equity on the table — that's the borrower's choice; not a protocol failure.
+- A Seaport-side reneging (order signed, never filled) — Seaport's order lifecycle handles this; we trust the protocol's signature/cancellation semantics.
 
-## 3. Why the obvious approach doesn't work
+## 3. Why operator delegation to the borrower fails
 
 **Operator delegation to the borrower** is the first thing that comes to mind: have the vault call `setApprovalForAll(borrower, true)` or `approve(borrower, tokenId)` on the held NFT, then the borrower lists on OpenSea normally.
 
 This breaks the collateral lock invariant. Once the borrower has operator rights, they can call `safeTransferFrom(vault, anyAddress, tokenId)` and walk the NFT out of the vault to anywhere — no marketplace needed, no settlement needed. Marketplaces require seller approval; once granted, the seller controls the NFT's destination.
 
-So we need a different approach.
+**Operator delegation to the marketplace conduit** is the safe pattern, and is what this design uses. The vault approves the Seaport conduit contract (OpenSea's audited code). The conduit can pull the NFT iff a matching buy order has paid the consideration into the vault's settlement-waterfall recipients. The conduit cannot route the NFT elsewhere; it cannot pull without a matching paid buy.
 
-## 4. Approach inventory
+So: approval-to-EOA = NO; approval-to-audited-marketplace-contract = YES.
 
-Four approaches, each with a different position on the trade-off triangle: **third-party liquidity** vs **atomicity** vs **engineering lift**.
+## 4. Approaches considered (and rejected, briefly)
 
-### 4.1 Claim-NFT + redemption gate
+Round 1 of this doc weighed four approaches: claim-NFT redemption gate (4.1), Seaport ERC-1271 protocol-as-seller (4.2), Vaipakam-native marketplace (4.3), hybrid (4.4). User input narrowed the design to **4.2 only** based on:
 
-Mint a separate ERC721 (per loan) representing "rights to settle this loan and claim the underlying collateral." Borrower lists the **claim NFT** (not the original) on OpenSea.
+- **Maximum third-party liquidity** (the whole point of "Auction to prepay loan" — buyers shop OpenSea-first; we go to where they are)
+- **Vault keeps full control of the NFT** (approval-to-marketplace, NOT to borrower)
+- **No in-built marketplace** (deliberate — we don't want to compete with OpenSea on UX or liquidity discovery)
 
-Flow:
-1. Borrower calls `mintSaleClaim(loanId)` → vault mints a claim NFT to the borrower.
-2. Borrower lists the claim NFT on OpenSea at a price = `(borrower-expected market value) - (outstandingDebt + fees)` (the equity portion).
-3. Buyer purchases the claim NFT on OpenSea, paying the borrower the equity directly.
-4. Buyer calls `redeemSaleClaim(claimTokenId)` on the vault, paying `outstandingDebt + fees` into the vault. Vault burns the claim, releases the original collateral NFT to the buyer, atomically credits lender + treasury.
-5. **Reneging guard:** the claim NFT has a redemption deadline (e.g., 7 days). If unredeemed by deadline, the claim auto-voids and the borrower can repossess via `voidExpiredSaleClaim(loanId)`. The buyer who paid for the claim on OpenSea but didn't redeem in time is out the equity payment to the borrower — same shape as buying any auction lot and not paying gas to claim it.
+The rejected approaches:
+- **4.1 Claim-NFT redemption gate** — buyer-reneging risk (buyer pays equity on OpenSea, never redeems). Adding a redemption deadline mitigates but doesn't eliminate. The mental model is also confusing for buyers: they list a "rights-to-claim" NFT, not the actual collateral.
+- **4.3 Vaipakam-native marketplace** — no external liquidity. Borrowers and buyers would have to come find Vaipakam-native listings on the Vaipakam frontend. Fails the "go where the buyers are" goal.
+- **4.4 Hybrid (4.3 default + 4.1 optional)** — two paths to maintain, two consent flags to gate, splits engineering investment. If we're going third-party, go third-party fully.
 
-Pros:
-- Native third-party marketplace liquidity (OpenSea / Blur lists the claim NFT just like any other ERC721)
-- Buyer pays equity directly to borrower (no protocol-side custody of fiat-equivalent value)
-- Settlement-side atomicity guaranteed by `redeemSaleClaim` being atomic
+The remainder of this doc is the Round-2 design for 4.2.
 
-Cons:
-- Marketplaces show the claim NFT, not the underlying collateral. Buyers see a "rights to claim X" listing with metadata pointing at X. Confusing UX unless we standardize the claim-NFT metadata (image, description, "redemption deadline" trait, "underlying" trait pointing at the original NFT contract + tokenId).
-- Reneging cost is borne by the buyer. If the buyer's wallet is unfunded for the redemption gas + the second `debt+fees` payment, they bought a worthless claim. The borrower walks away with the equity payment, the lender's loan keeps accruing.
-- Claim NFTs proliferate — one per loan that opts in, plus voided/expired claims (cleanup needed).
+## 5. Recommendation (Round 2)
 
-Engineering lift: **Medium.** New `NFTSaleClaimFacet`, claim ERC721 contract (or reuse position-NFT pattern), `redeemSaleClaim` / `voidExpiredSaleClaim` entry points.
+**Approach 4.2: Seaport ERC-1271, protocol-as-seller.** The vault implements ERC-1271 `isValidSignature(orderHash, encodedConditions)` returning valid only for Seaport orders whose `consideration` items route the proceeds correctly (lender, treasury, liquidator on post-grace, borrower remainder). The vault signs the order; OpenSea (and follow-up marketplaces) see a vault-listed NFT; buyers match normally.
 
-### 4.2 Seaport ERC-1271 vault-signed listings
+**Borrower's only on-chain action** is calling Vaipakam's facet (`postPrepayListing(loanId, askPrice)` pre-grace, `cancelPrepayListing(loanId)`). The facet validates inputs, constructs the Seaport order, signs via ERC-1271, and emits an event that the frontend / backend relays to OpenSea via OpenSea's listing API. The borrower never touches Seaport directly.
 
-The vault contract signs Seaport orders via ERC-1271, listing the collateral NFT on OpenSea directly. Borrower triggers the sign-and-list via a Vaipakam facet; the vault's ERC-1271 `isValidSignature` returns true only for orders whose Seaport `consideration` items route the proceeds correctly (lender ZONE, treasury ZONE, borrower ZONE, with reserve checks).
+**Post-grace conversion**: a separate facet entry (`convertToPostGraceListing(loanId)`) that anyone can call once `block.timestamp > loan.gracePeriodEnd`. It:
+1. Snapshots `interestAccrualEnd = gracePeriodEnd` (accrual freeze; see §6.2).
+2. Computes the post-grace floor.
+3. If a pre-grace listing exists, cancels the existing Seaport order; signs a fresh one at the post-grace floor.
+4. If no pre-grace listing exists, signs a fresh Seaport order at the post-grace floor.
+5. Starts the post-grace window timer.
 
-Flow:
-1. Borrower calls `listOnSeaport(loanId, askPrice, deadline)`.
-2. Vault constructs the Seaport order: offer = collateral NFT; consideration = `[debt+interest → lender, treasury fee → treasury, remainder → borrower]`.
-3. Vault publishes the order ID (off-chain via OpenSea API; or on-chain via Seaport's order book).
-4. Buyer matches on OpenSea normally. Seaport calls vault's ERC-1271 `isValidSignature`; vault verifies the order matches the stored expected shape; returns valid.
-5. Seaport executes the transfer + consideration distribution atomically. Lender receives debt+interest, treasury receives fee, borrower receives remainder, NFT goes to buyer.
-6. After successful execution, vault marks the loan settled (callback from Seaport, or borrower / keeper triggers `markSettledAfterSeaport(loanId)`).
+If unfilled by `postGraceWindow` (default 7 days), anyone can call `fallThroughToDefault(loanId)`, which:
+1. Cancels the Seaport order.
+2. Invokes the existing `DefaultedFacet.markDefaulted` flow.
+3. NFT goes to lender per today's default semantics.
 
-Pros:
-- Native OpenSea liquidity, native UX (collateral NFT listed directly)
-- Atomicity via Seaport's match logic
-- No claim-NFT proliferation
+## 6. Settlement semantics
 
-Cons:
-- Significant engineering lift: ERC-1271 logic, Seaport order construction, consideration verification, post-execution callback wiring
-- Requires Seaport to be deployed on every chain where Vaipakam operates (BNB, Polygon mainnet, etc.) — most major chains have it, but coverage is not universal
-- Tight coupling to Seaport's order schema; any Seaport upgrade requires Vaipakam re-verification
-- Pre-execution state mutation: the listing is signed but not executed. Between signing and execution, the loan's `outstandingDebt + fees` is shifting (interest accrues). The consideration amounts in the signed order may go stale → either we re-sign on a schedule (operator burden), or we accept a small over-pay to the lender (treasury writes back the difference)
+### 6.1 Sale authority binds to current borrower-position NFT holder, not stored borrower address
 
-Engineering lift: **High.** New `NFTSeaportListingFacet`, ERC-1271 implementation on the vault, consideration schema verification, post-execution callback handling.
+(Unchanged from the Round-1 amendment.)
 
-### 4.3 Vaipakam-native marketplace
+The codebase issues a borrower-position ERC721 at loan initiation (see `VaipakamNFTFacet.mintNFT`). Transferring that NFT transfers all borrower-side rights. Sale authority MUST follow the same rule:
 
-Bypass third-party marketplaces entirely. Vaipakam implements its own listing + bidding primitives on-chain.
-
-Flow:
-1. **Current borrower-position NFT holder** (NOT the original `loan.borrower` address — see §6.1 below) calls `listForSale(loanId, askPrice)` with `askPrice ≥ liveSettlementFloor(loanId)` (live floor, recomputed at call time; see §6.2). Vault marks the loan "for sale at X."
-2. While the listing is active, the **borrower-position NFT is transfer-locked** (see §6.3). The current holder can cancel via `cancelListing(loanId)` to release the lock.
-3. Any buyer calls `buyCollateral(loanId)` with `msg.value == askPrice` (or ERC20 `transferFrom`). The vault rechecks `askPrice ≥ liveSettlementFloor(loanId)` at execution time and reverts if interest accrual has pushed the floor above the listed askPrice (see §6.2).
-4. Atomically: buyer's payment → settlement waterfall (§6); NFT → buyer; loan → settled; borrower-position NFT burned.
-
-Pros:
-- Cleanest architecturally — single contract, atomic, no external dependency
-- No claim NFT proliferation, no Seaport coupling
-- Easy to add bidding later (auction-style, English-style, Dutch) as separate facets
-
-Cons:
-- Zero external liquidity — buyers must come find Vaipakam-native listings on the Vaipakam frontend (or build their own scrapers). Most NFT buyers shop OpenSea-first.
-- Borrowers lose the OpenSea audience entirely
-- Need to build listing-discovery UX on the frontend (browse, filter, etc.)
-- Long-lived listings need active-floor monitoring (the listed price can fall below the live floor as interest accrues; the listing then becomes un-fillable until re-listed). UX must show "listing expires when floor crosses askPrice" so borrowers don't get surprised.
-
-Engineering lift: **Low** for the contract; **Medium** for the listing-discovery frontend.
-
-### 4.4 Hybrid — Vaipakam-native primary + claim-NFT secondary
-
-Default to the Vaipakam-native marketplace (4.3) for borrower-initiated sales. Layer the claim-NFT path (4.1) as an opt-in for borrowers who specifically want OpenSea liquidity. The two paths share the same settlement waterfall (handled by a `LibCollateralSettlement` library); they differ only in how the buyer is matched.
-
-Pros:
-- Conservative baseline (4.3) with optional reach (4.1) layered on top
-- Settlement library is shared → one place to audit the waterfall
-- Borrower picks the trade-off (private buyer via Vaipakam vs. wider OpenSea reach)
-
-Cons:
-- Two implementation paths to maintain
-- Two consent flags in the offer (allows-Vaipakam-sale, allows-claim-NFT-issuance)
-
-Engineering lift: **Medium-High** total.
-
-## 5. Recommendation
-
-For Scenario A (borrower-initiated sale): **start with Approach 4.3 (Vaipakam-native marketplace).** It's the smallest engineering lift, the cleanest atomicity story, and gives the protocol full control over the settlement waterfall. The trade-off — losing third-party liquidity — is real but bounded: borrowers who urgently need to exit can use the native marketplace; borrowers who want to wait for an OpenSea buyer can do so AFTER repaying (the existing flow). We learn whether the liquidity gap is the bottleneck before investing in Seaport / claim-NFT complexity.
-
-For Scenario B (protocol-initiated grace-period auction): **use a protocol-controlled auction, also Vaipakam-native (Approach 4.3 shape).** The protocol posts the listing at a reserve based on **debt-floored fees, not sale-price-floored fees** (closed-form reserve, see §6.4), with a configurable deadline. Interest accrual on the underlying loan **freezes at grace expiry** (see §6.2) so the reserve target stays stable across the auction window. If a buyer hits the reserve, settlement waterfall runs. If not, fall through to the existing default flow (NFT-to-lender). Scenario B is a strict extension of A's primitives: same listing entry, same buy entry, different actor (protocol vs. borrower), different reserve formula, and different accrual semantics during the listing.
-
-If Scenario A's Vaipakam-native marketplace shows clear liquidity-gap evidence in production (borrowers listing but no buyers within N days), upgrade to Approach 4.1 (claim-NFT) as the OpenSea route. Re-evaluate Approach 4.2 (Seaport ERC-1271) only if the engineering investment becomes justifiable by deep market data.
-
-## 6. Settlement semantics (shared invariants)
-
-Both scenarios share the same payout code (`LibCollateralSettlement.distribute`) and the same set of invariants. The next four subsections call out the four invariants that the first draft of this doc either understated or got wrong; the adversarial Codex review on PR #280 raised every one of them.
-
-### 6.1 Sale authority binds to current borrower-position NFT, not stored borrower address
-
-The codebase issues a borrower-position ERC721 at loan initiation (see `VaipakamNFTFacet.mintNFT`). Transferring that NFT transfers all borrower-side rights (interest payments, prepayments, claims). Sale authority MUST follow the same rule:
-
-- `listForSale(loanId, askPrice)` and `cancelListing(loanId)` are authorized iff `msg.sender == borrowerNFT.ownerOf(loan.borrowerNftId)` at call time.
+- `postPrepayListing(loanId, askPrice)` and `cancelPrepayListing(loanId)` are authorized iff `msg.sender == borrowerNFT.ownerOf(loan.borrowerNftId)` at call time.
 - A snapshot of `loan.borrower` (the original EOA) is NOT used for authorization. After a borrower-NFT transfer, the new holder is the sale authority.
-- Keeper-bot authorization for sale flows is OUT OF SCOPE in v1 — keepers can trigger liquidations and (in v2 of this design) grace-period auctions, but the borrower-initiated sale is borrower-NFT-holder-only. Adding a keeper-delegated sale entry is a follow-up after the base flow is in place.
+- `convertToPostGraceListing` and `fallThroughToDefault` are permissionless (any address can call them once their respective conditions are met). They don't require borrower-NFT-holder authority — they're protocol-level state transitions any keeper or external party can trigger.
 
-### 6.2 Live-accrual recompute at every settlement boundary
+### 6.2 Live-accrual recompute + Scenario B freeze
 
-Interest accrues per-block on active loans. The first draft had two related bugs the Codex review caught:
+(Refined from the Round-1 amendment.)
 
-- Scenario A: a borrower lists at `askPrice = currentFloor + 1 wei`. Three weeks later, accrued interest has pushed the floor above the askPrice. A buyer who calls `buyCollateral` would short-pay the lender if the contract uses the listing-time floor.
-- Scenario B: similar dynamic. Protocol posts at grace expiry. Auction runs for 72 hours. A bid at the original reserve underpays the lender by 72 hours of accrued interest.
-
-Two complementary fixes:
-
-- **Scenario A — settlement-time floor recheck.** `buyCollateral` recomputes `liveSettlementFloor(loanId)` at execution-block and reverts with `ListingFloorExceeded(askPrice, liveFloor)` if `askPrice < liveFloor`. The borrower's listing is now un-fillable; the borrower must `cancelListing` and re-list at a higher price. UX surfaces "listing expires when floor crosses askPrice" so this isn't a surprise.
-- **Scenario B — accrual freeze at grace expiry.** When the protocol posts a grace-period auction, the loan's `interestAccrualEnd` snapshot is set to `gracePeriodEnd`. All subsequent settlement math uses the frozen accrual. If the auction fails (no taker) and falls through to NFT-to-lender, the lender takes the NFT directly — the frozen-accrual amount is never read, so no harm. If the auction succeeds, the reserve is stable for the buyer's whole bidding window.
-
-These two fixes are different in shape (recheck vs. freeze) because the two scenarios have different actors at risk: Scenario A's borrower-set askPrice is borrower-controlled, so the protocol enforces by reverting; Scenario B's reserve is protocol-controlled, so the protocol enforces by freezing the floor.
+- **Pre-grace listings:** `postPrepayListing` computes the floor at call time using current accrued interest. The borrower picks an askPrice at or above the floor + the 2% buffer. Between listing-post and Seaport-match, interest keeps accruing. If accrued interest moves the floor above the listed askPrice, the listing becomes un-fillable — Seaport's ERC-1271 callback on a match attempt validates the live `consideration` amounts against the live floor; if `askPrice < liveFloor`, ERC-1271 returns invalid, Seaport rejects the match. The borrower must `cancelPrepayListing` and re-list at a higher price. The 2% buffer gives ~hours-to-days of fillability headroom depending on the loan's APR.
+- **Post-grace listings:** `convertToPostGraceListing` snapshots `interestAccrualEnd = gracePeriodEnd`. All subsequent settlement math uses the frozen accrual. The post-grace floor is stable for the whole `postGraceWindow` (default 7 days). If the auction succeeds, the buyer pays the frozen floor and the lender gets the (frozen) full debt. If the auction fails (no taker by `postGraceWindow`), the lender takes the NFT directly via the existing default flow — the frozen amount is never read.
 
 ### 6.3 Borrower-position NFT transfer-lock during active listing
 
-While Scenario A's listing is active OR Scenario B's auction is posted, the loan's borrower-position NFT is transfer-locked: `safeTransferFrom` on the borrower-NFT contract reverts with `BorrowerNftLockedDuringSale(loanId)`. The lock is set on `listForSale` / `postGraceAuction` and released on `cancelListing` / `buyCollateral` / auction-deadline-expiry.
+(Unchanged from the Round-1 amendment.)
 
-Without this lock, two race conditions exist:
-- Borrower A lists. Buyer matches. Borrower A transfers borrower-position NFT to Borrower B mid-execution. Who receives the borrower-remainder? With the lock, the question can't arise: transfer reverts while listing is active. Without the lock, contention requires an explicit ordering rule.
-- Borrower A lists. Borrower A transfers borrower-position NFT to Borrower B. Buyer matches. Borrower B receives the proceeds (per §6.1). But Borrower B may not know about the active listing they inherited — surprise sale. The lock surfaces the listing to Borrower B BEFORE the transfer (they have to wait for cancel or settlement).
+While a Seaport listing is active for `loanId`, the loan's borrower-position NFT is transfer-locked: `safeTransferFrom` on the borrower-NFT contract reverts with `BorrowerNftLockedDuringSale(loanId)`. The lock is set on `postPrepayListing` / `convertToPostGraceListing` and released on `cancelPrepayListing` / successful Seaport match / `fallThroughToDefault`.
 
-### 6.4 Settlement waterfall (with closed-form Scenario B reserve)
+### 6.4 Settlement waterfall — Seaport `consideration` items
 
-```
-salePrice flow:
-  ├─→ Lender:      principal + accruedInterest          (HARD REQUIREMENT)
-  ├─→ Treasury:    treasuryFee = treasuryFeeBps × interest / 10000
-  ├─→ Liquidator:  liquidationFee = liquidationFeeBps × debt / 10000
-  │                                                       (Scenario B only;
-  │                                                        debt-based, NOT
-  │                                                        salePrice-based)
-  └─→ Borrower:    remainder = salePrice - (above)        (≥ 0)
-```
-
-**Lender-debt-coverage invariant (HARD).** The settlement REVERTS if `salePrice < principal + accruedInterest + treasuryFee + (liquidationFee if Scenario B)`. There is no shortfall-capped lender payout; partial lender settlement is forbidden. The first draft had "(capped at salePrice if shortfall)" — that contradicted both the no-equity-dilution threat model (§2) and the §3 reasoning. Codex caught it; it's now gone.
-
-**Closed-form reserve (Scenario B).** The first draft defined `liquidationFee = liquidationFeeBps × salePrice` AND `reserve = debt + interest + treasuryFee + liquidationFee` — a circular dependency. Codex caught it. Resolution: the liquidation fee is `liquidationFeeBps × debt` (debt-based, not salePrice-based). Reserve becomes:
+The waterfall is enforced by Seaport's `consideration` array, NOT by a separate post-sale distribution transaction. When the vault signs a Seaport order, the order encodes the consideration items:
 
 ```
-liveSettlementFloor(loanId, scenarioB=true)
+Seaport order:
+  offer:
+    [collateral NFT (ERC721 or ERC1155 with quantity)]
+  consideration:
+    [lender:    principal + accruedInterest      → loan.lender address]
+    [treasury:  treasuryFeeBps × interest / 10000 → s.treasury]
+    [liquidator: liquidationFeeBps × principal / 10000 → keeper-or-treasury per ratified open Q  (post-grace only)]
+    [borrower:  remainder                         → borrowerNFT.ownerOf(loan.borrowerNftId)]
+```
+
+On a successful match, Seaport atomically:
+1. Pulls payment from the buyer.
+2. Splits payment per the consideration array (each recipient is paid in order).
+3. Pulls the NFT from the vault.
+4. Delivers the NFT to the buyer.
+
+If any consideration item can't be paid (insufficient buyer payment for the full sum), Seaport reverts the entire match. So the lender-debt-coverage HARD requirement is enforced by Seaport's own protocol semantics — we don't need a separate revert path in our code, just need to construct the consideration items correctly.
+
+**Closed-form floors (no circular dependency):**
+
+```
+preGraceFloor(loanId)
     = principal + accruedInterest
-    + treasuryFeeBps × accruedInterest / 10000
-    + liquidationFeeBps × principal / 10000
+    + preclose_fee_bps × accruedInterest / 10000
+
+postGraceFloor(loanId)
+    = principal + accruedInterestAtGraceExpiry
+    + late_fee_bps × principal / 10000
+    + liquidation_fee_bps × principal / 10000
 ```
 
-Non-circular. Computable at listing-time. Stable across the auction window because Scenario B freezes accrual at grace expiry (§6.2).
-
-For Scenario A:
-```
-liveSettlementFloor(loanId, scenarioB=false)
-    = principal + accruedInterest
-    + treasuryFeeBps × accruedInterest / 10000
-```
-(No liquidation fee in Scenario A — the borrower initiates voluntarily.)
-
-Borrower remainder is whatever's left after all three protocol-side recipients are paid in full. If the sale was at exactly the floor, the borrower gets zero — and the threat-model is preserved (no underpay, no dilution). If the sale was above the floor, the borrower gets the equity.
+Both are **debt-floored**, not sale-price-floored — no circular math. The 2% buffer sits ON TOP of these floors at askPrice/listing-price computation time; it's not part of the floor itself.
 
 ## 7. Consent capture model
 
-Both flags live on the Offer struct (not the Loan struct) so the lender sees them at acceptance:
+(Refined from the Round-1 amendment.)
 
-- `allowsBorrowerSale` — Scenario A is allowed. Default: `true` (most flexible for borrower).
-- `allowsGracePeriodAuction` — Scenario B is allowed. Default: `true` (better for the protocol's loan-recovery outcomes; lender prefers cash over a raw NFT).
+Two flags on the Offer struct (visible to lender at acceptance):
 
-The offer-creation UI exposes both as toggles. Acceptance freezes them into the resulting Loan struct. The lender at acceptance sees the flags and can decline if they want a strict NFT-to-lender outcome on default.
+- `allowsPrepayListing` — pre-grace borrower-initiated listing is allowed. Default: `true` (most flexible for borrower).
+- `allowsPostGraceAuction` — post-grace protocol-initiated auction is allowed. Default: `true` (better for the protocol's loan-recovery outcomes; lender prefers cash over a raw NFT).
 
-Backward compatibility: existing loans (no flags in the struct) default to BOTH being `false` (the existing behavior). Migration is an offer-level field, not a loan-level retrofit, so existing loans are unaffected.
+Acceptance freezes both into the resulting Loan struct. The facet entry points check the corresponding flag:
+
+- `postPrepayListing` reverts if `!loan.allowsPrepayListing`.
+- `convertToPostGraceListing` reverts if `!loan.allowsPostGraceAuction`. (If false, grace expiry falls straight through to today's default flow.)
+
+Backward compatibility: existing loans (pre-this-PR) default BOTH flags to `false` on the Loan struct (today's behavior preserved). New offers can opt in via the offer UI.
 
 ## 8. ERC721 vs ERC1155
 
-ERC721 is the simpler case (one token per loan; full custody). The flow above describes ERC721.
+ERC721 is the v1 target (simpler — one token per loan; Seaport's standard `offer` shape).
 
-ERC1155 needs two extensions:
-- The vault holds a **balance** (multiple units of the same token ID); listings can be for partial-balance amounts.
-- Settlement releases the listed units atomically with payment; the residual balance stays in the vault.
+ERC1155 needs the Seaport `offer` to specify quantity. The vault's borrower-position NFT already tracks the collateralized 1155 balance per loan, so the offer is `(1155 contract, tokenId, vaulted-balance)`. Settlement releases the full vaulted balance atomically with payment.
 
-For Scenario A's first cut, **restrict ERC1155 sales to the full vaulted balance** (no partial sales). Partial-balance sales add complexity (which units to release, what happens to the partial residual on default) that doesn't justify the first-implementation lift. Add partial-balance support in a follow-up.
-
-For Scenario B, similar: grace-period auction sells the full vaulted balance. No partial liquidation.
+For v1, **restrict ERC1155 sales to the full vaulted balance** (no partial sales). Partial-balance support adds complexity (which units to release, what happens to the partial residual on default) that doesn't justify the v1 lift.
 
 ## 9. Open questions for ratification
 
-1. **Reserve formula for Scenario B.** Is `outstandingDebt + interest + treasuryFee + liquidationFee` the right floor? Should we add a market-tracking premium (e.g., `1.1 ×` to leave room for buyer price discovery)?
-2. **Auction deadline default.** How long does Scenario B's auction stay open before falling through to NFT-to-lender? 24h? 72h? Borrower-configurable at offer time?
-3. **Liquidator vs. treasury for the liquidation fee.** Existing default flow has no fee (NFT just goes to lender). Scenario B introduces a `liquidationFee` — should it go to the keeper who triggered the auction (incentive), to the treasury (revenue), or split?
-4. **Native + ERC20 sale price.** Should askPrice be ETH-only, or also accept stablecoin payment? If multi-currency, how do we price the reserve consistently? Most NFT marketplaces use a chain-native + WETH default.
-5. **Sale before delinquency vs. only after some condition.** Should Scenario A be allowed from day 1 of the loan, or only after some condition (e.g., HF < 2.0, or 80% through the loan term)? Day-1 is simpler; conditional adds gating complexity.
+1. **Liquidator-vs-treasury for the liquidation fee.** Existing default flow has no fee. Scenario B's `liquidation_fee_bps × principal / 10000` — should it go to the keeper who called `convertToPostGraceListing` (incentive to trigger), to the treasury (revenue), or split? **Open.**
+2. **Post-grace window default.** 7 days is my proposed default. Should it be borrower-configurable at offer time? Protocol-configurable via governance? Hard-coded? **Open.**
+3. **Native ETH vs ERC20 sale price.** Seaport's `consideration` items are token-typed. Should askPrice be ETH-only (simpler order shape) or also accept stablecoin payment? Most NFT marketplaces use chain-native + WETH default; supporting both is engineering work. **Open.**
+4. **The 2% buffer — protocol-configurable?** Hard-coded in the facet, governance-configurable, or borrower-controlled (with a min)? My default: governance-configurable, initialized to 2%. **Open.**
+
+The Round-1 doc had five open questions; today three of them are resolved by the user-input pivot:
+- ✅ Reserve formula: closed-form, debt-floored. (§6.4)
+- ✅ Auction deadline default: 7 days. (Q2 above is the only remaining question — what mechanism sets it.)
+- ✅ Sale eligibility: day-1 onward, no conditional gating beyond the consent flags.
 
 ## 10. Out of scope (deferred)
 
-- Cross-chain NFT sales (NFT on chain X, buyer on chain Y). NFTs aren't bridgeable in the general case; the sale happens on the chain the NFT lives on.
-- Dutch / English / Vickrey auction mechanics beyond fixed-price + reserve.
-- Bid aggregation across marketplaces (operator chooses one venue per listing).
-- Partial-balance ERC1155 sales (Section 8).
-- Renegotiation / refinancing during a live sale listing (the existing `RefinanceFacet` and the new sale listing are mutually exclusive: a borrower with an active sale listing can't refinance, and vice versa).
+- Cross-chain NFT sales (NFT on chain X, buyer on chain Y). NFTs aren't bridgeable in the general case; sale happens on the chain the NFT lives on.
+- Dutch / English / Vickrey auction mechanics beyond fixed-price.
+- Bid aggregation across marketplaces (operator chooses one venue per listing in v1; multi-marketplace fan-out is the follow-up tracked separately).
+- Partial-balance ERC1155 sales (§8).
+- Renegotiation / refinancing during a live sale listing (mutually exclusive: a borrower with an active listing can't refinance, and vice versa).
 
 ## 11. Sequencing
 
-The original draft had Scenario A's facet (`NFTSaleFacet`) merging before the offer-flag extension that captures lender consent. Codex caught the inversion: shipping sale entry points before consent fields means borrower-initiated sales could exist without a lender opt-in, breaking the §2 consent invariant. Resolved by reordering — **consent-field rollout strictly before sale entry points**, AND the sale facet's `listForSale` is gated on `loan.allowsBorrowerSale == true` so it physically cannot execute on a pre-consent-field loan.
+1. **Ratify this Round-2 design** (this PR — `@codex review adversarial design-doc`; address findings; merge).
+2. **Implement `LibCollateralSettlement`** — the shared waterfall library + the floor-formula functions (`preGraceFloor`, `postGraceFloor`). Comprehensive unit tests including the closed-form math.
+3. **Extend Offer + Loan structs** — add `allowsPrepayListing` + `allowsPostGraceAuction` flags. **MUST land before step 4.**
+4. **Implement vault ERC-1271** — `isValidSignature` that validates Seaport orders against the live floor at execution. Construct Seaport order helpers (encode offer + consideration). Cancellation helper.
+5. **Implement `NFTPrepayListingFacet`** — Scenario A entries: `postPrepayListing`, `cancelPrepayListing`. ERC721 only. Borrower-position NFT transfer-lock (§6.3). Live-accrual recompute via ERC-1271 callback (§6.2). Gated on `loan.allowsPrepayListing == true`.
+6. **Implement `NFTPostGraceAuctionFacet`** — Scenario B entries: `convertToPostGraceListing`, `fallThroughToDefault`. Accrual-freeze-at-grace-expiry (§6.2). Gated on `loan.allowsPostGraceAuction == true`. Post-grace window default 7 days.
+7. **Wire OpenSea API integration** — frontend posts the listing to OpenSea via their API after the vault signs. Listing-discovery UX (borrower view).
+8. **ERC1155 extension** — both facets, full-balance only.
+9. **(Separate follow-up card — multi-marketplace expansion)** — extend to Blur / LooksRare / X2Y2 / Magic Eden, with the design questions (parallel-vs-sequential listings, cancel-on-match-elsewhere, marketplace-specific order shapes) addressed in a dedicated design doc. Tracked separately so v1 doesn't get blocked on multi-marketplace research.
 
-1. **Ratify this design** (this PR — `@codex review adversarial design-doc`; address findings; merge).
-2. **Implement `LibCollateralSettlement`** — the shared waterfall library (§6.4). Comprehensive unit tests, including the lender-debt-coverage revert path and the closed-form reserve math.
-3. **Extend Offer + Loan structs** — add `allowsBorrowerSale` + `allowsGracePeriodAuction` flags on both. Default both to `false` on the Loan struct (existing loans), `true` on new Offers. Migration: offer-level only, no loan-level retrofit. **Critical: this MUST land before step 4 OR the sale facet's entry points must hard-revert on missing flag fields.**
-4. **Implement `NFTSaleFacet`** — Scenario A's `listForSale` / `buyCollateral` / `cancelListing`. ERC721 only. Authorization binds to current borrower-position NFT holder (§6.1). Borrower-position NFT transfer-lock during active listing (§6.3). Live-accrual recompute at settlement boundary (§6.2). `listForSale` requires `loan.allowsBorrowerSale == true` — physically gated so step 4 cannot ship a working sale flow without step 3's consent fields.
-5. **Wire UI** — listing creation, listing browse, buy flow. Frontend.
-6. **Implement `NFTAuctionFacet`** — Scenario B's protocol-initiated auction. Reuses `LibCollateralSettlement`. ERC721 only. Accrual-freeze-at-grace-expiry semantics (§6.2). Gated on `loan.allowsGracePeriodAuction == true`.
-7. **ERC1155 extension** — both facets, full-balance only. (Partial-balance sales deferred per §8.)
-8. **Re-evaluate Approach 4.1 vs. 4.2** — based on real liquidity-gap evidence from Steps 4-6 in production.
-
-Each step is a separate PR. Steps 1-2 are foundational; **step 3 is the consent-gate prerequisite for everything below it**; 4-5 deliver Scenario A; 6 delivers Scenario B; 7 extends to ERC1155; 8 is a future-looking expansion.
+Each step is a separate PR. Steps 1-2 foundational; step 3 is the consent-gate prerequisite; 4-7 deliver the OpenSea pre-grace + post-grace flow end-to-end; 8 extends ERC1155; 9 is the multi-marketplace expansion follow-up.
