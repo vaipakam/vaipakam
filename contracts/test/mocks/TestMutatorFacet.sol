@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LibMetricsHooks} from "../../src/libraries/LibMetricsHooks.sol";
+import {LibERC721} from "../../src/libraries/LibERC721.sol";
 
 /// @title TestMutatorFacet
 /// @notice Test-only facet that exposes full struct setters for Loan and
@@ -553,5 +554,42 @@ contract TestMutatorFacet {
             perDayNumeraire18: perDayNumeraire18
         });
         s.userRewardEntryIds[user].push(id);
+    }
+
+    // ─── LibERC721 lock-state direct manipulators (test-only) ───────────
+    // Wraps the internal `_lock`/`_unlock` library functions so unit
+    // tests can exercise the lock-counter + `setApprovalForAll` gating
+    // without running a full Preclose / EarlyWithdrawal lifecycle. The
+    // production-side flows still go through PrecloseFacet /
+    // EarlyWithdrawalFacet exclusively; these helpers are NOT cut into
+    // production deployments.
+
+    /// @notice Test-only: mint a tokenId to `to`, bypassing the
+    ///         production `_enforceAuthorizedCaller` gate on
+    ///         `VaipakamNFTFacet.mintNFT`. Used by the focused
+    ///         setApprovalForAll-during-lock test to populate a token
+    ///         without standing up the full offer-accept loan lifecycle.
+    // forge-lint: disable-next-line(mixed-case-function)
+    function testMintNFT(address to, uint256 tokenId) external {
+        LibERC721._mint(to, tokenId);
+    }
+
+    /// @notice Test-only: lock a tokenId with the given reason. Mirrors
+    ///         the call PrecloseFacet / EarlyWithdrawalFacet make
+    ///         internally.
+    // forge-lint: disable-next-line(mixed-case-function)
+    function testLockNFT(uint256 tokenId, LibERC721.LockReason reason) external {
+        LibERC721._lock(tokenId, reason);
+    }
+
+    /// @notice Test-only: unlock a tokenId.
+    // forge-lint: disable-next-line(mixed-case-function)
+    function testUnlockNFT(uint256 tokenId) external {
+        LibERC721._unlock(tokenId);
+    }
+
+    /// @notice Test-only: read the per-owner locked-token counter.
+    function getLockedTokenCount(address owner) external view returns (uint256) {
+        return LibERC721._storage().lockedTokenCount[owner];
     }
 }

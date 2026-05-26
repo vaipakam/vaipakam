@@ -88,6 +88,16 @@ library LibERC721 {
         // back into the dApp. Empty string ⇒ field is omitted from
         // the JSON; setter is `VaipakamNFTFacet.setExternalUrlBase`.
         string externalUrlBase;
+        // ─── Per-owner locked-token counter ─────────────────────────────
+        // Maintained by {_lock} (++) / {_unlock} (--) so {setApprovalForAll}
+        // can refuse NEW operator approvals while the caller owns ANY locked
+        // token. Closes the bypass where an attacker pre-approved via
+        // `setApprovalForAll` before the lock can immediately `transferFrom`
+        // on lock release (PrecloseOffset / EarlyWithdrawalSale cancel paths,
+        // and the future PrepayCollateralListing path from T-086 / #279).
+        // Revocations (`approved == false`) are always allowed regardless of
+        // lock state so a user can withdraw a prior approval at any time.
+        mapping(address => uint256) lockedTokenCount;
     }
 
     /// @custom:event-category state-change/nft-mutation
@@ -107,6 +117,14 @@ library LibERC721 {
     error ERC721InvalidOperator(address operator);
     error ERC721AlreadyInitialized();
     error ERC721Locked(uint256 tokenId, LockReason reason);
+    /// @notice Reverts when an owner with at least one locked token attempts
+    ///         to grant a NEW `setApprovalForAll` approval. Revocations
+    ///         (`approved == false`) are always allowed. Closes the
+    ///         pre-approved-operator bypass: without this gate, an attacker
+    ///         pre-approved via `setApprovalForAll` before {_lock} could
+    ///         immediately `transferFrom` on lock release, even though
+    ///         `transferFrom` itself is `_requireNotLocked`-guarded.
+    error ApprovalForbiddenWhileTokensLocked(address owner, uint256 lockedCount);
 
     function _storage() internal pure returns (ERC721Storage storage es) {
         bytes32 position = ERC721_STORAGE_POSITION;
@@ -117,14 +135,33 @@ library LibERC721 {
 
     function _lock(uint256 tokenId, LockReason reason) internal {
         ERC721Storage storage es = _storage();
+        // Increment the owner's `lockedTokenCount` ONLY on the
+        // None→non-None transition. A re-lock with a different reason
+        // (e.g., overlapping Preclose then EarlyWithdrawal flows on the
+        // same token — currently impossible by facet design but defended
+        // here for storage-correctness) does NOT double-count.
+        if (es.locks[tokenId] == LockReason.None) {
+            es.lockedTokenCount[ownerOf(tokenId)]++;
+        }
         es.locks[tokenId] = reason;
-        // Revoke any outstanding approval so a stale approvee can't act on
-        // behalf of a locked owner once the flow completes.
+        // Revoke any outstanding per-token approval so a stale approvee
+        // can't act on behalf of a locked owner once the flow completes.
+        // Operator-level approvals are gated separately via
+        // `setApprovalForAll` + the `lockedTokenCount` counter.
         delete es.tokenApprovals[tokenId];
     }
 
     function _unlock(uint256 tokenId) internal {
-        delete _storage().locks[tokenId];
+        ERC721Storage storage es = _storage();
+        // Decrement ONLY when the token was actually locked. Reading
+        // the owner BEFORE clearing the lock keeps the math correct if a
+        // future code path ever transfers a locked token (today's flows
+        // can't — `transferFrom` is `_requireNotLocked`-guarded — but the
+        // invariant is read-before-clear).
+        if (es.locks[tokenId] != LockReason.None) {
+            es.lockedTokenCount[ownerOf(tokenId)]--;
+        }
+        delete es.locks[tokenId];
     }
 
     function lockOf(uint256 tokenId) internal view returns (LockReason) {
@@ -197,6 +234,19 @@ library LibERC721 {
 
     function setApprovalForAll(address operator, bool approved) internal {
         if (operator == address(0)) revert ERC721InvalidOperator(address(0));
+        // Refuse NEW operator approvals while the caller owns ANY locked
+        // token. Closes the bypass where `_lock` only cleared per-token
+        // approval but left operator approvals untouched — an attacker
+        // pre-approved via `setApprovalForAll` could `transferFrom` on
+        // lock release, even though `transferFrom` itself is
+        // `_requireNotLocked`-guarded. Revocations are unrestricted so a
+        // user can always withdraw a prior approval.
+        if (approved) {
+            uint256 lockedCount = _storage().lockedTokenCount[msg.sender];
+            if (lockedCount > 0) {
+                revert ApprovalForbiddenWhileTokensLocked(msg.sender, lockedCount);
+            }
+        }
         _storage().operatorApprovals[msg.sender][operator] = approved;
         emit ApprovalForAll(msg.sender, operator, approved);
     }

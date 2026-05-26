@@ -55,7 +55,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](62);
+        selectors = new bytes4[](66);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -171,6 +171,15 @@ contract HelperTest {
         // treasury / borrower entitlements + active flag) without
         // running the full at-fallback liquidation flow.
         selectors[61] = TestMutatorFacet.setFallbackSnapshotRaw.selector;
+        // LibERC721 lock-state + mint direct manipulators — exposed for
+        // the focused setApprovalForAll-during-lock unit test.
+        // forge-lint: disable-next-line(mixed-case-function)
+        selectors[62] = TestMutatorFacet.testMintNFT.selector;
+        // forge-lint: disable-next-line(mixed-case-function)
+        selectors[63] = TestMutatorFacet.testLockNFT.selector;
+        // forge-lint: disable-next-line(mixed-case-function)
+        selectors[64] = TestMutatorFacet.testUnlockNFT.selector;
+        selectors[65] = TestMutatorFacet.getLockedTokenCount.selector;
         return selectors;
     }
 
