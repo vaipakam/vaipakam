@@ -123,6 +123,125 @@ contract LibERC721LockApprovalTest is SetupTest {
         );
     }
 
+    // ─── T-086 step 2 — LockReason.PrepayCollateralListing smoke tests ───
+
+    /// @notice Sanity: the storage value of `PrepayCollateralListing` is 3,
+    ///         appended at the tail of the enum after `None` (0),
+    ///         `PrecloseOffset` (1), and `EarlyWithdrawalSale` (2). Locks
+    ///         in-flight from pre-T-086 storage MUST keep their semantic
+    ///         meaning after this PR — the append-only rule on the enum
+    ///         is load-bearing for diamond upgrades.
+    function test_lockReasonEnum_prepayCollateralListingValueIs3() public pure {
+        assertEq(uint8(LibERC721.LockReason.None), 0, "None == 0");
+        assertEq(uint8(LibERC721.LockReason.PrecloseOffset), 1, "PrecloseOffset == 1");
+        assertEq(uint8(LibERC721.LockReason.EarlyWithdrawalSale), 2, "EarlyWithdrawalSale == 2");
+        assertEq(
+            uint8(LibERC721.LockReason.PrepayCollateralListing),
+            3,
+            "PrepayCollateralListing must append as value 3 (storage append-only)"
+        );
+    }
+
+    /// @notice Lock/unlock round-trip on the new reason: the counter math
+    ///         (++ on `None → PrepayCollateralListing`, -- on
+    ///         `PrepayCollateralListing → None`), the epoch bumps (on both
+    ///         lock and unlock per the round-3 invariant), and the
+    ///         `positionLock` view all behave identically to the existing
+    ///         reasons. This is the smoke check that the new enum value is
+    ///         a first-class citizen, not a special case.
+    function test_lockReason_prepayCollateralListing_fullLifecycle() public {
+        // Before lock: counter 0, epoch 0, position unlocked.
+        assertEq(TestMutatorFacet(address(diamond)).getLockedTokenCount(nftOwner), 0);
+        assertEq(TestMutatorFacet(address(diamond)).getOperatorApprovalEpoch(nftOwner), 0);
+        assertEq(
+            uint256(VaipakamNFTFacet(address(diamond)).positionLock(TEST_TOKEN_A)),
+            uint256(LibERC721.LockReason.None)
+        );
+
+        // Lock with PrepayCollateralListing.
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
+            TEST_TOKEN_A, LibERC721.LockReason.PrepayCollateralListing
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLockedTokenCount(nftOwner),
+            1,
+            "counter increments on PrepayCollateralListing lock"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getOperatorApprovalEpoch(nftOwner),
+            1,
+            "epoch bumps on PrepayCollateralListing lock"
+        );
+        assertEq(
+            uint256(VaipakamNFTFacet(address(diamond)).positionLock(TEST_TOKEN_A)),
+            uint256(LibERC721.LockReason.PrepayCollateralListing),
+            "positionLock view reports the new reason"
+        );
+
+        // Mid-lock: setApprovalForAll(.., true) is blocked because counter > 0.
+        vm.prank(nftOwner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibERC721.ApprovalForbiddenWhileTokensLocked.selector, nftOwner, 1
+            )
+        );
+        VaipakamNFTFacet(address(diamond)).setApprovalForAll(operator, true);
+
+        // Unlock — counter back to 0, epoch bumps to 2 (round-3 invariant).
+        TestMutatorFacet(address(diamond)).unlockNFTRaw(TEST_TOKEN_A);
+        assertEq(TestMutatorFacet(address(diamond)).getLockedTokenCount(nftOwner), 0);
+        assertEq(TestMutatorFacet(address(diamond)).getOperatorApprovalEpoch(nftOwner), 2);
+        assertEq(
+            uint256(VaipakamNFTFacet(address(diamond)).positionLock(TEST_TOKEN_A)),
+            uint256(LibERC721.LockReason.None)
+        );
+
+        // Post-unlock: fresh setApprovalForAll(.., true) succeeds, stamped
+        // at epoch=2.
+        vm.prank(nftOwner);
+        VaipakamNFTFacet(address(diamond)).setApprovalForAll(operator, true);
+        assertTrue(
+            VaipakamNFTFacet(address(diamond)).isApprovedForAll(nftOwner, operator)
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getOperatorApprovalGrantEpoch(nftOwner, operator),
+            2
+        );
+    }
+
+    /// @notice Mixing reasons: a PrecloseOffset lock on TOKEN_A and a
+    ///         PrepayCollateralListing lock on TOKEN_B count toward the
+    ///         same per-owner counter. Each lock independently bumps the
+    ///         epoch (each `None → non-None` transition is a fresh bump).
+    function test_lockReason_prepayMixesWithPrecloseInCounter() public {
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
+            TEST_TOKEN_A, LibERC721.LockReason.PrecloseOffset
+        );
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
+            TEST_TOKEN_B, LibERC721.LockReason.PrepayCollateralListing
+        );
+
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLockedTokenCount(nftOwner),
+            2,
+            "counter sums across reasons"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getOperatorApprovalEpoch(nftOwner),
+            2,
+            "two distinct locks bump the epoch twice"
+        );
+        // Both locks self-identify correctly through the view.
+        assertEq(
+            uint256(VaipakamNFTFacet(address(diamond)).positionLock(TEST_TOKEN_A)),
+            uint256(LibERC721.LockReason.PrecloseOffset)
+        );
+        assertEq(
+            uint256(VaipakamNFTFacet(address(diamond)).positionLock(TEST_TOKEN_B)),
+            uint256(LibERC721.LockReason.PrepayCollateralListing)
+        );
+    }
+
     // ─── setApprovalForAll gating ────────────────────────────────────────
 
     function test_setApprovalForAll_blockedWhileOwnerHasLockedToken() public {
