@@ -105,9 +105,10 @@ Engineering lift: **High.** New `NFTSeaportListingFacet`, ERC-1271 implementatio
 Bypass third-party marketplaces entirely. Vaipakam implements its own listing + bidding primitives on-chain.
 
 Flow:
-1. Borrower calls `listForSale(loanId, askPrice)` with `askPrice ≥ outstandingDebt + fees`. Vault marks the loan "for sale at X."
-2. Any buyer calls `buyCollateral(loanId)` with `msg.value == askPrice` (or ERC20 `transferFrom`).
-3. Atomically: buyer's payment → lender (debt + interest) + treasury (fee) + borrower (remainder); NFT → buyer; loan → settled.
+1. **Current borrower-position NFT holder** (NOT the original `loan.borrower` address — see §6.1 below) calls `listForSale(loanId, askPrice)` with `askPrice ≥ liveSettlementFloor(loanId)` (live floor, recomputed at call time; see §6.2). Vault marks the loan "for sale at X."
+2. While the listing is active, the **borrower-position NFT is transfer-locked** (see §6.3). The current holder can cancel via `cancelListing(loanId)` to release the lock.
+3. Any buyer calls `buyCollateral(loanId)` with `msg.value == askPrice` (or ERC20 `transferFrom`). The vault rechecks `askPrice ≥ liveSettlementFloor(loanId)` at execution time and reverts if interest accrual has pushed the floor above the listed askPrice (see §6.2).
+4. Atomically: buyer's payment → settlement waterfall (§6); NFT → buyer; loan → settled; borrower-position NFT burned.
 
 Pros:
 - Cleanest architecturally — single contract, atomic, no external dependency
@@ -118,6 +119,7 @@ Cons:
 - Zero external liquidity — buyers must come find Vaipakam-native listings on the Vaipakam frontend (or build their own scrapers). Most NFT buyers shop OpenSea-first.
 - Borrowers lose the OpenSea audience entirely
 - Need to build listing-discovery UX on the frontend (browse, filter, etc.)
+- Long-lived listings need active-floor monitoring (the listed price can fall below the live floor as interest accrues; the listing then becomes un-fillable until re-listed). UX must show "listing expires when floor crosses askPrice" so borrowers don't get surprised.
 
 Engineering lift: **Low** for the contract; **Medium** for the listing-discovery frontend.
 
@@ -140,27 +142,79 @@ Engineering lift: **Medium-High** total.
 
 For Scenario A (borrower-initiated sale): **start with Approach 4.3 (Vaipakam-native marketplace).** It's the smallest engineering lift, the cleanest atomicity story, and gives the protocol full control over the settlement waterfall. The trade-off — losing third-party liquidity — is real but bounded: borrowers who urgently need to exit can use the native marketplace; borrowers who want to wait for an OpenSea buyer can do so AFTER repaying (the existing flow). We learn whether the liquidity gap is the bottleneck before investing in Seaport / claim-NFT complexity.
 
-For Scenario B (protocol-initiated grace-period auction): **use a protocol-controlled auction, also Vaipakam-native (Approach 4.3 shape).** The protocol posts the listing at a reserve = `outstandingDebt + interest + treasuryFee + liquidationFee`, with a configurable deadline. If a buyer hits the reserve, settlement waterfall runs. If not, fall through to the existing default flow (NFT-to-lender). Scenario B is a strict extension of A's primitives: same listing entry, same buy entry, different actor (protocol vs. borrower) and different reserve formula.
+For Scenario B (protocol-initiated grace-period auction): **use a protocol-controlled auction, also Vaipakam-native (Approach 4.3 shape).** The protocol posts the listing at a reserve based on **debt-floored fees, not sale-price-floored fees** (closed-form reserve, see §6.4), with a configurable deadline. Interest accrual on the underlying loan **freezes at grace expiry** (see §6.2) so the reserve target stays stable across the auction window. If a buyer hits the reserve, settlement waterfall runs. If not, fall through to the existing default flow (NFT-to-lender). Scenario B is a strict extension of A's primitives: same listing entry, same buy entry, different actor (protocol vs. borrower), different reserve formula, and different accrual semantics during the listing.
 
 If Scenario A's Vaipakam-native marketplace shows clear liquidity-gap evidence in production (borrowers listing but no buyers within N days), upgrade to Approach 4.1 (claim-NFT) as the OpenSea route. Re-evaluate Approach 4.2 (Seaport ERC-1271) only if the engineering investment becomes justifiable by deep market data.
 
-## 6. Settlement waterfall (shared)
+## 6. Settlement semantics (shared invariants)
 
-Both scenarios share the same waterfall. Implement once as `LibCollateralSettlement.distribute(loanId, salePrice)`:
+Both scenarios share the same payout code (`LibCollateralSettlement.distribute`) and the same set of invariants. The next four subsections call out the four invariants that the first draft of this doc either understated or got wrong; the adversarial Codex review on PR #280 raised every one of them.
+
+### 6.1 Sale authority binds to current borrower-position NFT, not stored borrower address
+
+The codebase issues a borrower-position ERC721 at loan initiation (see `VaipakamNFTFacet.mintNFT`). Transferring that NFT transfers all borrower-side rights (interest payments, prepayments, claims). Sale authority MUST follow the same rule:
+
+- `listForSale(loanId, askPrice)` and `cancelListing(loanId)` are authorized iff `msg.sender == borrowerNFT.ownerOf(loan.borrowerNftId)` at call time.
+- A snapshot of `loan.borrower` (the original EOA) is NOT used for authorization. After a borrower-NFT transfer, the new holder is the sale authority.
+- Keeper-bot authorization for sale flows is OUT OF SCOPE in v1 — keepers can trigger liquidations and (in v2 of this design) grace-period auctions, but the borrower-initiated sale is borrower-NFT-holder-only. Adding a keeper-delegated sale entry is a follow-up after the base flow is in place.
+
+### 6.2 Live-accrual recompute at every settlement boundary
+
+Interest accrues per-block on active loans. The first draft had two related bugs the Codex review caught:
+
+- Scenario A: a borrower lists at `askPrice = currentFloor + 1 wei`. Three weeks later, accrued interest has pushed the floor above the askPrice. A buyer who calls `buyCollateral` would short-pay the lender if the contract uses the listing-time floor.
+- Scenario B: similar dynamic. Protocol posts at grace expiry. Auction runs for 72 hours. A bid at the original reserve underpays the lender by 72 hours of accrued interest.
+
+Two complementary fixes:
+
+- **Scenario A — settlement-time floor recheck.** `buyCollateral` recomputes `liveSettlementFloor(loanId)` at execution-block and reverts with `ListingFloorExceeded(askPrice, liveFloor)` if `askPrice < liveFloor`. The borrower's listing is now un-fillable; the borrower must `cancelListing` and re-list at a higher price. UX surfaces "listing expires when floor crosses askPrice" so this isn't a surprise.
+- **Scenario B — accrual freeze at grace expiry.** When the protocol posts a grace-period auction, the loan's `interestAccrualEnd` snapshot is set to `gracePeriodEnd`. All subsequent settlement math uses the frozen accrual. If the auction fails (no taker) and falls through to NFT-to-lender, the lender takes the NFT directly — the frozen-accrual amount is never read, so no harm. If the auction succeeds, the reserve is stable for the buyer's whole bidding window.
+
+These two fixes are different in shape (recheck vs. freeze) because the two scenarios have different actors at risk: Scenario A's borrower-set askPrice is borrower-controlled, so the protocol enforces by reverting; Scenario B's reserve is protocol-controlled, so the protocol enforces by freezing the floor.
+
+### 6.3 Borrower-position NFT transfer-lock during active listing
+
+While Scenario A's listing is active OR Scenario B's auction is posted, the loan's borrower-position NFT is transfer-locked: `safeTransferFrom` on the borrower-NFT contract reverts with `BorrowerNftLockedDuringSale(loanId)`. The lock is set on `listForSale` / `postGraceAuction` and released on `cancelListing` / `buyCollateral` / auction-deadline-expiry.
+
+Without this lock, two race conditions exist:
+- Borrower A lists. Buyer matches. Borrower A transfers borrower-position NFT to Borrower B mid-execution. Who receives the borrower-remainder? With the lock, the question can't arise: transfer reverts while listing is active. Without the lock, contention requires an explicit ordering rule.
+- Borrower A lists. Borrower A transfers borrower-position NFT to Borrower B. Buyer matches. Borrower B receives the proceeds (per §6.1). But Borrower B may not know about the active listing they inherited — surprise sale. The lock surfaces the listing to Borrower B BEFORE the transfer (they have to wait for cancel or settlement).
+
+### 6.4 Settlement waterfall (with closed-form Scenario B reserve)
 
 ```
 salePrice flow:
-  ├─→ Lender:      principal + accrued interest (capped at salePrice if shortfall)
-  ├─→ Treasury:    treasuryFee (BPS of interest)
-  ├─→ Liquidator:  liquidationFee (Scenario B only, fixed BPS of salePrice)
-  └─→ Borrower:    remainder (≥ 0)
+  ├─→ Lender:      principal + accruedInterest          (HARD REQUIREMENT)
+  ├─→ Treasury:    treasuryFee = treasuryFeeBps × interest / 10000
+  ├─→ Liquidator:  liquidationFee = liquidationFeeBps × debt / 10000
+  │                                                       (Scenario B only;
+  │                                                        debt-based, NOT
+  │                                                        salePrice-based)
+  └─→ Borrower:    remainder = salePrice - (above)        (≥ 0)
 ```
 
-Invariants:
-- `salePrice ≥ principal + accruedInterest + treasuryFee + (liquidationFee if Scenario B)`
-- If the inequality fails, the sale REVERTS in Scenario A (borrower's responsibility to set a viable askPrice). In Scenario B, the reserve is set above this floor by construction, so the inequality holds if a taker matched.
+**Lender-debt-coverage invariant (HARD).** The settlement REVERTS if `salePrice < principal + accruedInterest + treasuryFee + (liquidationFee if Scenario B)`. There is no shortfall-capped lender payout; partial lender settlement is forbidden. The first draft had "(capped at salePrice if shortfall)" — that contradicted both the no-equity-dilution threat model (§2) and the §3 reasoning. Codex caught it; it's now gone.
 
-Lender accrual stops at the block of the settlement transaction.
+**Closed-form reserve (Scenario B).** The first draft defined `liquidationFee = liquidationFeeBps × salePrice` AND `reserve = debt + interest + treasuryFee + liquidationFee` — a circular dependency. Codex caught it. Resolution: the liquidation fee is `liquidationFeeBps × debt` (debt-based, not salePrice-based). Reserve becomes:
+
+```
+liveSettlementFloor(loanId, scenarioB=true)
+    = principal + accruedInterest
+    + treasuryFeeBps × accruedInterest / 10000
+    + liquidationFeeBps × principal / 10000
+```
+
+Non-circular. Computable at listing-time. Stable across the auction window because Scenario B freezes accrual at grace expiry (§6.2).
+
+For Scenario A:
+```
+liveSettlementFloor(loanId, scenarioB=false)
+    = principal + accruedInterest
+    + treasuryFeeBps × accruedInterest / 10000
+```
+(No liquidation fee in Scenario A — the borrower initiates voluntarily.)
+
+Borrower remainder is whatever's left after all three protocol-side recipients are paid in full. If the sale was at exactly the floor, the borrower gets zero — and the threat-model is preserved (no underpay, no dilution). If the sale was above the floor, the borrower gets the equity.
 
 ## 7. Consent capture model
 
@@ -203,13 +257,15 @@ For Scenario B, similar: grace-period auction sells the full vaulted balance. No
 
 ## 11. Sequencing
 
-1. **Ratify this design** (PR opens with `@codex review adversarial design-doc`; address findings; merge).
-2. **Implement `LibCollateralSettlement`** — the shared waterfall library. Comprehensive unit tests.
-3. **Implement `NFTSaleFacet`** — Scenario A's `listForSale` / `buyCollateral` / `cancelListing`. ERC721 only.
-4. **Extend Offer struct** — add `allowsBorrowerSale` + `allowsGracePeriodAuction` flags. Migration: offer-level only, no loan-level retrofit.
-5. **Wire UI** — listing creation, listing browse, buy flow. Frontend.
-6. **Implement `NFTAuctionFacet`** — Scenario B's protocol-initiated auction. Reuses `LibCollateralSettlement`. ERC721 only.
-7. **ERC1155 extension** — both facets, full-balance only.
-8. **Re-evaluate Approach 4.1 vs. 4.2** — based on real liquidity-gap evidence from Steps 3-6 in production.
+The original draft had Scenario A's facet (`NFTSaleFacet`) merging before the offer-flag extension that captures lender consent. Codex caught the inversion: shipping sale entry points before consent fields means borrower-initiated sales could exist without a lender opt-in, breaking the §2 consent invariant. Resolved by reordering — **consent-field rollout strictly before sale entry points**, AND the sale facet's `listForSale` is gated on `loan.allowsBorrowerSale == true` so it physically cannot execute on a pre-consent-field loan.
 
-Each step is a separate PR. Steps 1-2 are foundational; 3-5 deliver Scenario A; 6 delivers Scenario B; 7 extends to ERC1155; 8 is a future-looking expansion.
+1. **Ratify this design** (this PR — `@codex review adversarial design-doc`; address findings; merge).
+2. **Implement `LibCollateralSettlement`** — the shared waterfall library (§6.4). Comprehensive unit tests, including the lender-debt-coverage revert path and the closed-form reserve math.
+3. **Extend Offer + Loan structs** — add `allowsBorrowerSale` + `allowsGracePeriodAuction` flags on both. Default both to `false` on the Loan struct (existing loans), `true` on new Offers. Migration: offer-level only, no loan-level retrofit. **Critical: this MUST land before step 4 OR the sale facet's entry points must hard-revert on missing flag fields.**
+4. **Implement `NFTSaleFacet`** — Scenario A's `listForSale` / `buyCollateral` / `cancelListing`. ERC721 only. Authorization binds to current borrower-position NFT holder (§6.1). Borrower-position NFT transfer-lock during active listing (§6.3). Live-accrual recompute at settlement boundary (§6.2). `listForSale` requires `loan.allowsBorrowerSale == true` — physically gated so step 4 cannot ship a working sale flow without step 3's consent fields.
+5. **Wire UI** — listing creation, listing browse, buy flow. Frontend.
+6. **Implement `NFTAuctionFacet`** — Scenario B's protocol-initiated auction. Reuses `LibCollateralSettlement`. ERC721 only. Accrual-freeze-at-grace-expiry semantics (§6.2). Gated on `loan.allowsGracePeriodAuction == true`.
+7. **ERC1155 extension** — both facets, full-balance only. (Partial-balance sales deferred per §8.)
+8. **Re-evaluate Approach 4.1 vs. 4.2** — based on real liquidity-gap evidence from Steps 4-6 in production.
+
+Each step is a separate PR. Steps 1-2 are foundational; **step 3 is the consent-gate prerequisite for everything below it**; 4-5 deliver Scenario A; 6 delivers Scenario B; 7 extends to ERC1155; 8 is a future-looking expansion.
