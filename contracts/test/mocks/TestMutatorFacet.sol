@@ -99,6 +99,7 @@ contract TestMutatorFacet {
     ///         Allows tests that exercise the retained tiered-KYC framework
     ///         to activate enforcement without cutting AdminFacet into their
     ///         minimal diamond setup.
+    // forge-lint: disable-next-line(mixed-case-function)
     function setKYCEnforcementFlag(bool enforced) external {
         LibVaipakam.storageSlot().kycEnforcementEnabled = enforced;
     }
@@ -318,6 +319,7 @@ contract TestMutatorFacet {
     ///         (assetType + tokenId + quantity) without disturbing the
     ///         asset / amount / claimed fields. Used by ClaimFacetTest's
     ///         ERC721 / ERC1155 claim-asset coverage tests.
+    // forge-lint: disable-next-line(mixed-case-function)
     function setLenderClaimNFTFieldsRaw(
         uint256 loanId,
         LibVaipakam.AssetType assetType,
@@ -332,6 +334,7 @@ contract TestMutatorFacet {
 
     /// @notice Mirror of `setLenderClaimNFTFieldsRaw` for the borrower
     ///         side.
+    // forge-lint: disable-next-line(mixed-case-function)
     function setBorrowerClaimNFTFieldsRaw(
         uint256 loanId,
         LibVaipakam.AssetType assetType,
@@ -392,6 +395,7 @@ contract TestMutatorFacet {
     /// @notice Test-only: expose raw staking accrual storage fields so tests
     ///         can assert against the internal reward-per-token counters
     ///         without grepping storage slots.
+    // forge-lint: disable-next-line(mixed-case-function)
     function getStakingRPTStored() external view returns (uint256) {
         return LibVaipakam.storageSlot().stakingRewardPerTokenStored;
     }

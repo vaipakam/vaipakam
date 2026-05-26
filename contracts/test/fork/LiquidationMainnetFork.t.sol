@@ -32,7 +32,7 @@ contract LiquidationMainnetForkTest is Test {
     // ── Mainnet infra (real deployed addresses) ─────────────────────────
     address internal constant CHAINLINK_FEED_REGISTRY =
         0x47Fb2585D2C56Fe188D0E6ec628a38b74fCeeeDf;
-    address internal constant usdDenom =
+    address internal constant USD_DENOM =
         0x0000000000000000000000000000000000000348;
     address internal constant UNISWAP_V3_FACTORY =
         0x1F98431c8aD98523631AE4a59f267346ea31F984;
@@ -87,7 +87,7 @@ contract LiquidationMainnetForkTest is Test {
     function _wireOracleInfrastructure() internal {
         OracleAdminFacet admin = OracleAdminFacet(address(diamond));
         admin.setChainlinkRegistry(CHAINLINK_FEED_REGISTRY);
-        admin.setUsdChainlinkDenominator(usdDenom);
+        admin.setUsdChainlinkDenominator(USD_DENOM);
         admin.setWethContract(WETH);
         admin.setEthUsdFeed(ETH_USD_FEED);
         admin.setUniswapV3Factory(UNISWAP_V3_FACTORY);

@@ -72,7 +72,7 @@ contract DeployTestnetLiquidityMocks is Script {
     ///      We register the mock registry under the same sentinels
     ///      so the protocol's `getFeed(asset, USD)` lookup hits our
     ///      mock feeds 1:1.
-    address constant usdDenom = 0x0000000000000000000000000000000000000348;
+    address constant USD_DENOM = 0x0000000000000000000000000000000000000348;
     address constant ETH_DENOM = 0x000000000000000000000000000000000000000E;
 
     /// @dev Canonical Base predeploy WETH address. Same on Base
@@ -211,9 +211,9 @@ contract DeployTestnetLiquidityMocks is Script {
         // registry for `getFeed(asset, USD)` first, falling back to
         // `asset/ETH × ETH/USD` only when no direct USD feed is
         // registered. Direct USD makes the path linear.
-        registry.setFeed(address(mUsdc), usdDenom, address(mUsdcFeed));
-        registry.setFeed(address(mWbtc), usdDenom, address(mWbtcFeed));
-        registry.setFeed(weth, usdDenom, address(wethFeed));
+        registry.setFeed(address(mUsdc), USD_DENOM, address(mUsdcFeed));
+        registry.setFeed(address(mWbtc), USD_DENOM, address(mWbtcFeed));
+        registry.setFeed(weth, USD_DENOM, address(wethFeed));
 
         // Mock UniV3 factory + per-pair pools. `MIN_LIQUIDITY_PAD`
         // is satisfied via `MOCK_POOL_LIQUIDITY` chosen above. Both
@@ -240,7 +240,7 @@ contract DeployTestnetLiquidityMocks is Script {
         vm.startBroadcast(adminKey);
         OracleAdminFacet oa = OracleAdminFacet(diamond);
         oa.setChainlinkRegistry(address(registry));
-        oa.setUsdChainlinkDenominator(usdDenom);
+        oa.setUsdChainlinkDenominator(USD_DENOM);
         oa.setEthChainlinkDenominator(ETH_DENOM);
         oa.setWethContract(weth);
         oa.setEthUsdFeed(address(wethFeed));

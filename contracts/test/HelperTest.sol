@@ -379,6 +379,7 @@ contract HelperTest {
         return selectors;
     }
 
+    // forge-lint: disable-next-line(mixed-case-function)
     function getVaipakamNFTFacetSelectors()
         public
         pure
@@ -779,6 +780,7 @@ contract HelperTest {
         return selectors;
     }
 
+    // forge-lint: disable-next-line(mixed-case-function)
     function getVPFITokenFacetSelectors()
         public
         pure
@@ -797,6 +799,7 @@ contract HelperTest {
         return selectors;
     }
 
+    // forge-lint: disable-next-line(mixed-case-function)
     function getVPFIDiscountFacetSelectors()
         public
         pure
