@@ -275,16 +275,19 @@ During an active, same-day review session on a PR (for example, while you are st
 
 **Do not** run these cleanup commands in the main development clone (`/home/pranav/Codes/Vaipakam/vaipakam/`) unless you have your own established personal workflow there.
 
+### Rationale
+
+- Prevents accidental pollution of the active development environment.
+- Enables high-quality, thorough reviews by giving full access to local tooling on the exact PR code.
+- Maintains clear separation between "building" and "reviewing".
+- Keeps the Review clone lightweight through disciplined branch management.
+
+### Failure to follow this guideline
+
+**Failure to follow this guideline** when working inside the Review clone (i.e., reviewing PRs directly against `main` without fetching the branch) is considered insufficient for anything beyond trivial or low-risk changes.
+
 ### Graphify Knowledge Graph
 
 When deeper architectural context is needed during reviews, use the graphify knowledge graph located in the main workspace:
 `/home/pranav/Codes/Vaipakam/vaipakam/graphify-out/`
 
-### Rationale
-
-- Prevents accidental pollution of the active development environment.
-- Enables high-quality, thorough reviews by giving full access to local tooling on the exact PR code.
-- Maintains clear separation between “building” and “reviewing”.
-- Keeps the Review clone lightweight through disciplined branch management.
-
-**Failure to follow this guideline** when working inside the Review clone (i.e., reviewing PRs directly against `main` without fetching the branch) is considered insufficient for anything beyond trivial or low-risk changes.
