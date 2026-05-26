@@ -88,6 +88,30 @@ library LibERC721 {
         // back into the dApp. Empty string ⇒ field is omitted from
         // the JSON; setter is `VaipakamNFTFacet.setExternalUrlBase`.
         string externalUrlBase;
+        // ─── Per-owner locked-token counter ─────────────────────────────
+        // Maintained by {_lock} (++) / {_unlock} (--) / {_burn} (--) so
+        // {setApprovalForAll} can refuse NEW operator approvals while the
+        // caller owns ANY locked token. Closes the bypass where an attacker
+        // pre-approved via `setApprovalForAll` before the lock can
+        // immediately `transferFrom` on lock release (PrecloseOffset /
+        // EarlyWithdrawalSale cancel paths, and the future
+        // PrepayCollateralListing path from T-086 / #279). Revocations
+        // (`approved == false`) are always allowed regardless of lock state
+        // so a user can withdraw a prior approval at any time.
+        mapping(address => uint256) lockedTokenCount;
+
+        // ─── Per-owner operator-approval epoch ──────────────────────────
+        // Bumped by {_lock} on every fresh None→non-None lock so that any
+        // operator approval granted BEFORE this lock cycle is treated as
+        // stale. Without this, the locked-count gate alone is incomplete —
+        // an attacker pre-approved via {setApprovalForAll} BEFORE the
+        // owner's first lock survives the lock/unlock cycle and can
+        // `transferFrom` on release. {setApprovalForAll} stamps each grant
+        // with the then-current epoch into {operatorApprovalGrantEpoch};
+        // {isApprovedForAll} returns `true` only when the stamped grant
+        // epoch matches the owner's current epoch.
+        mapping(address => uint256) operatorApprovalEpoch;
+        mapping(address => mapping(address => uint256)) operatorApprovalGrantEpoch;
     }
 
     /// @custom:event-category state-change/nft-mutation
@@ -107,6 +131,14 @@ library LibERC721 {
     error ERC721InvalidOperator(address operator);
     error ERC721AlreadyInitialized();
     error ERC721Locked(uint256 tokenId, LockReason reason);
+    /// @notice Reverts when an owner with at least one locked token attempts
+    ///         to grant a NEW `setApprovalForAll` approval. Revocations
+    ///         (`approved == false`) are always allowed. Closes the
+    ///         pre-approved-operator bypass: without this gate, an attacker
+    ///         pre-approved via `setApprovalForAll` before {_lock} could
+    ///         immediately `transferFrom` on lock release, even though
+    ///         `transferFrom` itself is `_requireNotLocked`-guarded.
+    error ApprovalForbiddenWhileTokensLocked(address owner, uint256 lockedCount);
 
     function _storage() internal pure returns (ERC721Storage storage es) {
         bytes32 position = ERC721_STORAGE_POSITION;
@@ -117,14 +149,63 @@ library LibERC721 {
 
     function _lock(uint256 tokenId, LockReason reason) internal {
         ERC721Storage storage es = _storage();
+        // Increment the owner's `lockedTokenCount` and bump their
+        // operator-approval epoch ONLY on the None→non-None transition.
+        // A re-lock with a different reason (e.g., overlapping Preclose
+        // then EarlyWithdrawal flows on the same token — currently
+        // impossible by facet design but defended here for
+        // storage-correctness) does NOT double-count and does NOT bump
+        // the epoch again. The epoch bump is what closes the
+        // pre-approved-operator bypass: any approval granted before this
+        // lock no longer satisfies the grant-epoch check in
+        // {isApprovedForAll}, so a stale operator can't `transferFrom`
+        // on lock release even though the owner never explicitly
+        // revoked them.
+        if (es.locks[tokenId] == LockReason.None) {
+            address owner = ownerOf(tokenId);
+            es.lockedTokenCount[owner]++;
+            es.operatorApprovalEpoch[owner]++;
+        }
         es.locks[tokenId] = reason;
-        // Revoke any outstanding approval so a stale approvee can't act on
-        // behalf of a locked owner once the flow completes.
+        // Revoke any outstanding per-token approval so a stale approvee
+        // can't act on behalf of a locked owner once the flow completes.
+        // Operator-level approvals are gated separately via the
+        // {operatorApprovalEpoch} bump above + the {lockedTokenCount}
+        // counter consulted by `setApprovalForAll`.
         delete es.tokenApprovals[tokenId];
     }
 
     function _unlock(uint256 tokenId) internal {
-        delete _storage().locks[tokenId];
+        ERC721Storage storage es = _storage();
+        // For ANY transition out of locked state (counted or legacy),
+        // bump the per-owner operator-approval epoch BEFORE clearing
+        // the lock. This is the security-critical invariant for the
+        // setApprovalForAll-during-lock hardening: every transition
+        // out of locked invalidates every operator approval, no matter
+        // how the token entered the locked state. Critical for the
+        // upgrade-transition cohort — pre-PR-#282 locks never bumped
+        // the epoch on lock (the counter + epoch fields didn't exist
+        // yet), so bumping ONLY at lock-time would leave that cohort
+        // exposed; bumping at unlock too closes the loop for both
+        // pre-existing operator approvals AND any approval the owner
+        // grants while a legacy lock is active (which is allowed
+        // because the counter-gate sees the legacy lock as `count=0`).
+        //
+        // The `count > 0` guarded decrement is the upgrade underflow
+        // belt: legacy locks have `lockedTokenCount == 0` because the
+        // pre-PR `_lock` never incremented. Subtracting unconditionally
+        // would revert the cancel / completion call. Counter drift
+        // between legacy and counted locks is acceptable now that the
+        // epoch chain is the SoT for approval validity.
+        if (es.locks[tokenId] != LockReason.None) {
+            address owner = ownerOf(tokenId);
+            es.operatorApprovalEpoch[owner]++;
+            uint256 count = es.lockedTokenCount[owner];
+            if (count > 0) {
+                es.lockedTokenCount[owner] = count - 1;
+            }
+        }
+        delete es.locks[tokenId];
     }
 
     function lockOf(uint256 tokenId) internal view returns (LockReason) {
@@ -181,7 +262,14 @@ library LibERC721 {
     }
 
     function isApprovedForAll(address owner, address operator) internal view returns (bool) {
-        return _storage().operatorApprovals[owner][operator];
+        ERC721Storage storage es = _storage();
+        if (!es.operatorApprovals[owner][operator]) return false;
+        // An approval is only honored if it was granted in the owner's
+        // CURRENT epoch — any approval granted before the owner's most
+        // recent {_lock} is treated as stale. Closes the pre-approved-
+        // operator bypass even though the underlying `operatorApprovals`
+        // bool was never explicitly revoked.
+        return es.operatorApprovalGrantEpoch[owner][operator] >= es.operatorApprovalEpoch[owner];
     }
 
     function approve(address to, uint256 tokenId) internal {
@@ -197,7 +285,28 @@ library LibERC721 {
 
     function setApprovalForAll(address operator, bool approved) internal {
         if (operator == address(0)) revert ERC721InvalidOperator(address(0));
-        _storage().operatorApprovals[msg.sender][operator] = approved;
+        ERC721Storage storage es = _storage();
+        // Refuse NEW operator approvals while the caller owns ANY locked
+        // token. Closes the bypass where `_lock` only cleared per-token
+        // approval but left operator approvals untouched — an attacker
+        // pre-approved via `setApprovalForAll` could `transferFrom` on
+        // lock release, even though `transferFrom` itself is
+        // `_requireNotLocked`-guarded. Revocations are unrestricted so a
+        // user can always withdraw a prior approval.
+        if (approved) {
+            uint256 lockedCount = es.lockedTokenCount[msg.sender];
+            if (lockedCount > 0) {
+                revert ApprovalForbiddenWhileTokensLocked(msg.sender, lockedCount);
+            }
+            // Stamp the grant with the caller's CURRENT operator-approval
+            // epoch. The next `_lock` the caller makes will bump that
+            // epoch, leaving this grant stale by the epoch check in
+            // {isApprovedForAll}. Pairs with the locked-count gate above
+            // — together they close BOTH the "grant during lock" path
+            // and the "grant before lock survives the unlock" path.
+            es.operatorApprovalGrantEpoch[msg.sender][operator] = es.operatorApprovalEpoch[msg.sender];
+        }
+        es.operatorApprovals[msg.sender][operator] = approved;
         emit ApprovalForAll(msg.sender, operator, approved);
     }
 
@@ -236,6 +345,22 @@ library LibERC721 {
     function _burn(uint256 tokenId) internal {
         ERC721Storage storage es = _storage();
         address owner = ownerOf(tokenId);
+        // Symmetric with {_unlock}: burning a locked token is a
+        // transition out of locked state, so it MUST bump the
+        // operator-approval epoch — closes the bypass for the
+        // EarlyWithdrawalFacet.completeLoanSale → migrateLenderPosition
+        // path AND for any legacy locks (where the counter is 0 but
+        // operator approvals should still be invalidated). The guarded
+        // decrement keeps the counter from underflowing on legacy
+        // locks; counter accuracy is best-effort, the epoch chain is
+        // the security source of truth.
+        if (es.locks[tokenId] != LockReason.None) {
+            es.operatorApprovalEpoch[owner]++;
+            uint256 count = es.lockedTokenCount[owner];
+            if (count > 0) {
+                es.lockedTokenCount[owner] = count - 1;
+            }
+        }
         es.balances[owner] -= 1;
         _removeTokenFromOwnerEnumeration(es, owner, tokenId);
         _removeTokenFromAllTokensEnumeration(es, tokenId);
