@@ -233,6 +233,11 @@
             "name": "borrowerNotifBilled",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "allowsPrepayListing",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -439,6 +444,11 @@
           },
           {
             "name": "allowsPartialRepay",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "allowsPrepayListing",
             "type": "bool",
             "internalType": "bool"
           },

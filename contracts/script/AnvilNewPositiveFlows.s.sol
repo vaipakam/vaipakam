@@ -984,6 +984,7 @@ contract AnvilNewPositiveFlows is Script {
             collateralTokenId: 0,
             collateralQuantity: 0,
             allowsPartialRepay: false,
+            allowsPrepayListing: false,
             amountMax: amtMax,
             interestRateBpsMax: rMax,
             collateralAmountMax: 0,
@@ -1024,6 +1025,7 @@ contract AnvilNewPositiveFlows is Script {
             collateralTokenId: 0,
             collateralQuantity: 0,
             allowsPartialRepay: false,
+            allowsPrepayListing: false,
             amountMax: 0,         // single-point amount
             interestRateBpsMax: 0,// single-point rate
             collateralAmountMax: 0, // #164 — single-point collateral
@@ -1131,6 +1133,7 @@ contract AnvilNewPositiveFlows is Script {
             collateralTokenId: 0,
             collateralQuantity: 0,
             allowsPartialRepay: false,
+            allowsPrepayListing: false,
             amountMax: 0,
             interestRateBpsMax: 0,
             collateralAmountMax: 0,
@@ -1804,6 +1807,7 @@ contract AnvilNewPositiveFlows is Script {
             collateralTokenId: 0,
             collateralQuantity: 0,
             allowsPartialRepay: false,
+            allowsPrepayListing: false,
             amountMax: 0,
             interestRateBpsMax: 0,
             collateralAmountMax: 0,
@@ -1839,6 +1843,7 @@ contract AnvilNewPositiveFlows is Script {
             collateralTokenId: 0,
             collateralQuantity: 0,
             allowsPartialRepay: false,
+            allowsPrepayListing: false,
             amountMax: 0,
             interestRateBpsMax: 0,
             collateralAmountMax: 0,

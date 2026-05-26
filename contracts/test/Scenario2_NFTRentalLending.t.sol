@@ -272,6 +272,7 @@ contract Scenario2_NFTRentalLending is Test {
                 collateralTokenId: 0,
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
+                allowsPrepayListing: false,
                 amountMax: DAILY_FEE,
                 interestRateBpsMax: 0,
                 collateralAmountMax: TOTAL_PREPAY,

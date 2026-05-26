@@ -152,6 +152,7 @@ contract BorrowerPartialFillTest is SetupTest {
                 collateralTokenId: 0,
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
+                allowsPrepayListing: false,
                 amountMax: amountMax,
                 interestRateBpsMax: rateMax,
                 collateralAmountMax: collateralMax,
@@ -195,6 +196,7 @@ contract BorrowerPartialFillTest is SetupTest {
                 collateralTokenId: 0,
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
+                allowsPrepayListing: false,
                 amountMax: amount,           // single-value lender
                 interestRateBpsMax: rateMax,
                 collateralAmountMax: collateralRequired,

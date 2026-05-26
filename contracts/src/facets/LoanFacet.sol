@@ -94,6 +94,10 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         uint256 bufferAmount;
         bool riskAndTermsConsentFromBoth;
         bool allowsPartialRepay;
+        // T-086 step 4 — companion-event surface for the lender's
+        // prepay-listing consent (snapshotted from Offer at loan-init).
+        // See `Loan.allowsPrepayListing`.
+        bool allowsPrepayListing;
         LibVaipakam.PeriodicInterestCadence periodicInterestCadence;
         address matcher;
         uint256 healthFactorAtInit;
@@ -290,6 +294,10 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         d.bufferAmount = loan.bufferAmount;
         d.riskAndTermsConsentFromBoth = loan.riskAndTermsConsentFromBoth;
         d.allowsPartialRepay = loan.allowsPartialRepay;
+        // T-086 step 4 — surface the lender's prepay-listing consent
+        // (snapshotted from Offer) on the companion event so cache-merge
+        // consumers don't need a follow-up `getLoanDetails` view-call.
+        d.allowsPrepayListing = loan.allowsPrepayListing;
         d.periodicInterestCadence = loan.periodicInterestCadence;
         d.matcher = loan.matcher;
         // Position-NFT ids — set by `_finalizeLoanCreation` (which runs
@@ -746,6 +754,12 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // authorisation; default false reverts the call with
         // {PartialRepayNotAllowed}.
         loan.allowsPartialRepay = offer.allowsPartialRepay;
+        // T-086 step 4 — snapshot the lender's prepay-listing consent
+        // onto the loan. Borrower's step-6 `postPrepayListing` reads
+        // THIS field; offer-level changes can't affect a loan once
+        // initialized. Default `false` = (step-6) facet hard-reverts
+        // on `postPrepayListing` for the loan.
+        loan.allowsPrepayListing = offer.allowsPrepayListing;
         // T-034 — snapshot the lender's chosen Periodic Interest Payment
         // cadence onto the loan. Offer-level validation in
         // `OfferFacet._validatePeriodicCadence` already gated illegal

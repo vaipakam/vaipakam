@@ -318,6 +318,11 @@
                 "name": "borrowerNotifBilled",
                 "type": "bool",
                 "internalType": "bool"
+              },
+              {
+                "name": "allowsPrepayListing",
+                "type": "bool",
+                "internalType": "bool"
               }
             ]
           },
@@ -566,6 +571,11 @@
                 "name": "borrowerNotifBilled",
                 "type": "bool",
                 "internalType": "bool"
+              },
+              {
+                "name": "allowsPrepayListing",
+                "type": "bool",
+                "internalType": "bool"
               }
             ]
           },
@@ -779,6 +789,11 @@
             "name": "collateralAmountFilled",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "allowsPrepayListing",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
