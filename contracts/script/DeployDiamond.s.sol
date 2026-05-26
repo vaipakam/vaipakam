@@ -33,6 +33,7 @@ import {PayrollFacet} from "../src/facets/PayrollFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
+import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {MetricsDashboardFacet} from "../src/facets/MetricsDashboardFacet.sol";
@@ -134,6 +135,7 @@ contract DeployDiamond is Script {
         EarlyWithdrawalFacet earlyWithdrawalFacet = new EarlyWithdrawalFacet();
         PartialWithdrawalFacet partialWithdrawalFacet = new PartialWithdrawalFacet();
         PrecloseFacet precloseFacet = new PrecloseFacet();
+        PrepayListingFacet prepayListingFacet = new PrepayListingFacet();
         RefinanceFacet refinanceFacet = new RefinanceFacet();
         MetricsFacet metricsFacet = new MetricsFacet();
         MetricsDashboardFacet metricsDashboardFacet = new MetricsDashboardFacet();
@@ -169,7 +171,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 36 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](37);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](38);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -220,6 +222,14 @@ contract DeployDiamond is Script {
         cuts[36] = _buildCut(
             address(offerMutateFacet),
             _getOfferMutateSelectors()
+        );
+        // T-086 step 5 — `PrepayListingFacet` (executor↔diamond trust
+        // boundary for Seaport prepay collateral sales). Hosts the
+        // bundled view the executor reads + the privileged
+        // finalization callback + the executor-address admin setter.
+        cuts[37] = _buildCut(
+            address(prepayListingFacet),
+            _getPrepayListingSelectors()
         );
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
@@ -523,6 +533,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("earlyWithdrawalFacet",    address(earlyWithdrawalFacet));
         Deployments.writeFacet("partialWithdrawalFacet",  address(partialWithdrawalFacet));
         Deployments.writeFacet("precloseFacet",           address(precloseFacet));
+        Deployments.writeFacet("prepayListingFacet",      address(prepayListingFacet));
         Deployments.writeFacet("refinanceFacet",          address(refinanceFacet));
         Deployments.writeFacet("metricsFacet",            address(metricsFacet));
         Deployments.writeFacet("metricsDashboardFacet",   address(metricsDashboardFacet));
@@ -572,6 +583,7 @@ contract DeployDiamond is Script {
         console.log("EarlyWithdrawalFacet: ", address(earlyWithdrawalFacet));
         console.log("PartialWithdrawalFacet:", address(partialWithdrawalFacet));
         console.log("PrecloseFacet:        ", address(precloseFacet));
+        console.log("PrepayListingFacet:   ", address(prepayListingFacet));
         console.log("RefinanceFacet:       ", address(refinanceFacet));
         console.log("MetricsFacet:         ", address(metricsFacet));
         console.log("MetricsDashboardFacet:", address(metricsDashboardFacet));
@@ -1110,6 +1122,20 @@ contract DeployDiamond is Script {
         // auto-link block when a third party accepts an offset offer.
         // Same `address(this)`-only gate as `acceptOfferInternal`.
         s[4] = PrecloseFacet.completeOffsetInternal.selector;
+    }
+
+    /// @dev T-086 step 5 — `PrepayListingFacet` selectors. Hosts the
+    ///      executor↔diamond trust boundary for Seaport prepay
+    ///      collateral sales: the bundled view the executor reads,
+    ///      the privileged finalization callback (msg.sender ==
+    ///      collateralListingExecutor gate), and the admin setter +
+    ///      read-side for the executor address.
+    function _getPrepayListingSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](4);
+        s[0] = PrepayListingFacet.getPrepayContext.selector;
+        s[1] = PrepayListingFacet.executorFinalizePrepaySale.selector;
+        s[2] = PrepayListingFacet.setCollateralListingExecutor.selector;
+        s[3] = PrepayListingFacet.getCollateralListingExecutor.selector;
     }
 
     function _getRefinanceSelectors() internal pure returns (bytes4[] memory s) {

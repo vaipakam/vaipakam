@@ -212,6 +212,10 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
         _addAll(_getMetricsDashboardSelectors());
         _addAll(_getPayrollSelectors());
         _addAll(_getRiskMatchLiquidationSelectors());
+        // T-086 step 5 — `PrepayListingFacet` (executor↔diamond trust
+        // boundary for Seaport prepay collateral sales). Selector
+        // helper lives on `DeployDiamond.s.sol` like every other facet.
+        _addAll(_getPrepayListingSelectors());
     }
 
     /// @dev Add a selector list to the routed set, rejecting two faults:
