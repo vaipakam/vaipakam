@@ -569,22 +569,21 @@ contract TestMutatorFacet {
     ///         `VaipakamNFTFacet.mintNFT`. Used by the focused
     ///         setApprovalForAll-during-lock test to populate a token
     ///         without standing up the full offer-accept loan lifecycle.
-    // forge-lint: disable-next-line(mixed-case-function)
-    function testMintNFT(address to, uint256 tokenId) external {
+    /// @dev    Name avoids the `test...` prefix so Foundry's test
+    ///         discovery doesn't try to run this as a fuzz case.
+    function mintNFTRaw(address to, uint256 tokenId) external {
         LibERC721._mint(to, tokenId);
     }
 
     /// @notice Test-only: lock a tokenId with the given reason. Mirrors
     ///         the call PrecloseFacet / EarlyWithdrawalFacet make
     ///         internally.
-    // forge-lint: disable-next-line(mixed-case-function)
-    function testLockNFT(uint256 tokenId, LibERC721.LockReason reason) external {
+    function lockNFTRaw(uint256 tokenId, LibERC721.LockReason reason) external {
         LibERC721._lock(tokenId, reason);
     }
 
     /// @notice Test-only: unlock a tokenId.
-    // forge-lint: disable-next-line(mixed-case-function)
-    function testUnlockNFT(uint256 tokenId) external {
+    function unlockNFTRaw(uint256 tokenId) external {
         LibERC721._unlock(tokenId);
     }
 
@@ -594,8 +593,7 @@ contract TestMutatorFacet {
     ///         by the focused lock-counter test to assert that burning
     ///         a still-locked token doesn't permanently strand the
     ///         owner's counter (the L145 finding closed by this PR).
-    // forge-lint: disable-next-line(mixed-case-function)
-    function testBurnNFT(uint256 tokenId) external {
+    function burnNFTRaw(uint256 tokenId) external {
         LibERC721._burn(tokenId);
     }
 

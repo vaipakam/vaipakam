@@ -38,8 +38,8 @@ contract LibERC721LockApprovalTest is SetupTest {
         // Mint two test tokens to nftOwner so we can exercise multi-token
         // counter math too (single-token locks, multi-token locks, partial
         // unlocks).
-        TestMutatorFacet(address(diamond)).testMintNFT(nftOwner, TEST_TOKEN_A);
-        TestMutatorFacet(address(diamond)).testMintNFT(nftOwner, TEST_TOKEN_B);
+        TestMutatorFacet(address(diamond)).mintNFTRaw(nftOwner, TEST_TOKEN_A);
+        TestMutatorFacet(address(diamond)).mintNFTRaw(nftOwner, TEST_TOKEN_B);
     }
 
     // ─── Counter math sanity ─────────────────────────────────────────────
@@ -53,7 +53,7 @@ contract LibERC721LockApprovalTest is SetupTest {
     }
 
     function test_lockedTokenCount_incrementsOnLock() public {
-        TestMutatorFacet(address(diamond)).testLockNFT(
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
             TEST_TOKEN_A, LibERC721.LockReason.PrecloseOffset
         );
         assertEq(
@@ -64,10 +64,10 @@ contract LibERC721LockApprovalTest is SetupTest {
     }
 
     function test_lockedTokenCount_decrementsOnUnlock() public {
-        TestMutatorFacet(address(diamond)).testLockNFT(
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
             TEST_TOKEN_A, LibERC721.LockReason.PrecloseOffset
         );
-        TestMutatorFacet(address(diamond)).testUnlockNFT(TEST_TOKEN_A);
+        TestMutatorFacet(address(diamond)).unlockNFTRaw(TEST_TOKEN_A);
         assertEq(
             TestMutatorFacet(address(diamond)).getLockedTokenCount(nftOwner),
             0,
@@ -76,10 +76,10 @@ contract LibERC721LockApprovalTest is SetupTest {
     }
 
     function test_lockedTokenCount_handlesMultipleTokens() public {
-        TestMutatorFacet(address(diamond)).testLockNFT(
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
             TEST_TOKEN_A, LibERC721.LockReason.PrecloseOffset
         );
-        TestMutatorFacet(address(diamond)).testLockNFT(
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
             TEST_TOKEN_B, LibERC721.LockReason.EarlyWithdrawalSale
         );
         assertEq(
@@ -89,7 +89,7 @@ contract LibERC721LockApprovalTest is SetupTest {
         );
 
         // Unlock one — counter goes to 1.
-        TestMutatorFacet(address(diamond)).testUnlockNFT(TEST_TOKEN_A);
+        TestMutatorFacet(address(diamond)).unlockNFTRaw(TEST_TOKEN_A);
         assertEq(
             TestMutatorFacet(address(diamond)).getLockedTokenCount(nftOwner),
             1,
@@ -97,7 +97,7 @@ contract LibERC721LockApprovalTest is SetupTest {
         );
 
         // Unlock the other — back to 0.
-        TestMutatorFacet(address(diamond)).testUnlockNFT(TEST_TOKEN_B);
+        TestMutatorFacet(address(diamond)).unlockNFTRaw(TEST_TOKEN_B);
         assertEq(
             TestMutatorFacet(address(diamond)).getLockedTokenCount(nftOwner),
             0,
@@ -107,13 +107,13 @@ contract LibERC721LockApprovalTest is SetupTest {
 
     function test_lockedTokenCount_reLockSameTokenNoDoubleCount() public {
         // Lock with reason A.
-        TestMutatorFacet(address(diamond)).testLockNFT(
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
             TEST_TOKEN_A, LibERC721.LockReason.PrecloseOffset
         );
         // Re-lock with a different reason (defensive — today's facet
         // design doesn't trigger this, but the storage invariant must
         // hold). Counter must NOT double-count.
-        TestMutatorFacet(address(diamond)).testLockNFT(
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
             TEST_TOKEN_A, LibERC721.LockReason.EarlyWithdrawalSale
         );
         assertEq(
@@ -126,7 +126,7 @@ contract LibERC721LockApprovalTest is SetupTest {
     // ─── setApprovalForAll gating ────────────────────────────────────────
 
     function test_setApprovalForAll_blockedWhileOwnerHasLockedToken() public {
-        TestMutatorFacet(address(diamond)).testLockNFT(
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
             TEST_TOKEN_A, LibERC721.LockReason.PrecloseOffset
         );
 
@@ -147,7 +147,7 @@ contract LibERC721LockApprovalTest is SetupTest {
         VaipakamNFTFacet(address(diamond)).setApprovalForAll(operator, true);
 
         // Lock a token.
-        TestMutatorFacet(address(diamond)).testLockNFT(
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
             TEST_TOKEN_A, LibERC721.LockReason.PrecloseOffset
         );
 
@@ -163,7 +163,7 @@ contract LibERC721LockApprovalTest is SetupTest {
     }
 
     function test_setApprovalForAll_allowedAfterUnlock() public {
-        TestMutatorFacet(address(diamond)).testLockNFT(
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
             TEST_TOKEN_A, LibERC721.LockReason.PrecloseOffset
         );
 
@@ -173,7 +173,7 @@ contract LibERC721LockApprovalTest is SetupTest {
         VaipakamNFTFacet(address(diamond)).setApprovalForAll(operator, true);
 
         // Unlock — approval should now succeed.
-        TestMutatorFacet(address(diamond)).testUnlockNFT(TEST_TOKEN_A);
+        TestMutatorFacet(address(diamond)).unlockNFTRaw(TEST_TOKEN_A);
 
         vm.prank(nftOwner);
         VaipakamNFTFacet(address(diamond)).setApprovalForAll(operator, true);
@@ -186,7 +186,7 @@ contract LibERC721LockApprovalTest is SetupTest {
 
     function test_setApprovalForAll_otherUsersUnaffected() public {
         // Lock nftOwner's token — counter[nftOwner] = 1, but counter[stranger] = 0.
-        TestMutatorFacet(address(diamond)).testLockNFT(
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
             TEST_TOKEN_A, LibERC721.LockReason.PrecloseOffset
         );
 
@@ -203,16 +203,16 @@ contract LibERC721LockApprovalTest is SetupTest {
 
     function test_setApprovalForAll_partialUnlockKeepsBlock() public {
         // Lock two tokens.
-        TestMutatorFacet(address(diamond)).testLockNFT(
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
             TEST_TOKEN_A, LibERC721.LockReason.PrecloseOffset
         );
-        TestMutatorFacet(address(diamond)).testLockNFT(
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
             TEST_TOKEN_B, LibERC721.LockReason.EarlyWithdrawalSale
         );
 
         // Unlock just one — counter goes from 2 to 1, but is still > 0,
         // so setApprovalForAll(approved=true) must STILL revert.
-        TestMutatorFacet(address(diamond)).testUnlockNFT(TEST_TOKEN_A);
+        TestMutatorFacet(address(diamond)).unlockNFTRaw(TEST_TOKEN_A);
 
         vm.prank(nftOwner);
         vm.expectRevert(
@@ -225,7 +225,7 @@ contract LibERC721LockApprovalTest is SetupTest {
         VaipakamNFTFacet(address(diamond)).setApprovalForAll(operator, true);
 
         // Unlock the other — now approval should work.
-        TestMutatorFacet(address(diamond)).testUnlockNFT(TEST_TOKEN_B);
+        TestMutatorFacet(address(diamond)).unlockNFTRaw(TEST_TOKEN_B);
 
         vm.prank(nftOwner);
         VaipakamNFTFacet(address(diamond)).setApprovalForAll(operator, true);
@@ -240,7 +240,7 @@ contract LibERC721LockApprovalTest is SetupTest {
     ///         `LibLoan.migrateLenderPosition`, which burns
     ///         `loan.lenderTokenId` without `_unlock`-ing it first.
     function test_burnWhileLocked_decrementsLockedTokenCount() public {
-        TestMutatorFacet(address(diamond)).testLockNFT(
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
             TEST_TOKEN_A, LibERC721.LockReason.EarlyWithdrawalSale
         );
         assertEq(
@@ -250,7 +250,7 @@ contract LibERC721LockApprovalTest is SetupTest {
         );
 
         // Burn the still-locked token (mirrors LibLoan.migrateLenderPosition).
-        TestMutatorFacet(address(diamond)).testBurnNFT(TEST_TOKEN_A);
+        TestMutatorFacet(address(diamond)).burnNFTRaw(TEST_TOKEN_A);
 
         assertEq(
             TestMutatorFacet(address(diamond)).getLockedTokenCount(nftOwner),
@@ -277,7 +277,7 @@ contract LibERC721LockApprovalTest is SetupTest {
             0
         );
 
-        TestMutatorFacet(address(diamond)).testBurnNFT(TEST_TOKEN_A);
+        TestMutatorFacet(address(diamond)).burnNFTRaw(TEST_TOKEN_A);
 
         assertEq(
             TestMutatorFacet(address(diamond)).getLockedTokenCount(nftOwner),
@@ -314,7 +314,7 @@ contract LibERC721LockApprovalTest is SetupTest {
 
         // T=1: owner enters a lock (Preclose offset, EarlyWithdrawal,
         // or the future T-086 prepay path).
-        TestMutatorFacet(address(diamond)).testLockNFT(
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
             TEST_TOKEN_A, LibERC721.LockReason.PrecloseOffset
         );
         assertEq(
@@ -330,7 +330,7 @@ contract LibERC721LockApprovalTest is SetupTest {
 
         // T=2: owner cancels / completes — token unlocked. Epoch stays
         // at 1; the stale grant remains invalidated.
-        TestMutatorFacet(address(diamond)).testUnlockNFT(TEST_TOKEN_A);
+        TestMutatorFacet(address(diamond)).unlockNFTRaw(TEST_TOKEN_A);
         assertFalse(
             VaipakamNFTFacet(address(diamond)).isApprovedForAll(nftOwner, operator),
             "BYPASS CLOSED: pre-lock approval must NOT spring back to life on unlock"
@@ -356,7 +356,7 @@ contract LibERC721LockApprovalTest is SetupTest {
     ///         today's facet design but the storage invariant must hold)
     ///         must NOT bump again.
     function test_lockEpoch_doesNotBumpOnRelock() public {
-        TestMutatorFacet(address(diamond)).testLockNFT(
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
             TEST_TOKEN_A, LibERC721.LockReason.PrecloseOffset
         );
         assertEq(
@@ -365,7 +365,7 @@ contract LibERC721LockApprovalTest is SetupTest {
         );
 
         // Re-lock same token with a different reason — must not double-bump.
-        TestMutatorFacet(address(diamond)).testLockNFT(
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
             TEST_TOKEN_A, LibERC721.LockReason.EarlyWithdrawalSale
         );
         assertEq(
@@ -376,7 +376,7 @@ contract LibERC721LockApprovalTest is SetupTest {
 
         // A second DISTINCT token entering a lock DOES bump again — every
         // fresh lock event is a fresh signal to revoke prior approvals.
-        TestMutatorFacet(address(diamond)).testLockNFT(
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
             TEST_TOKEN_B, LibERC721.LockReason.EarlyWithdrawalSale
         );
         assertEq(
@@ -416,7 +416,7 @@ contract LibERC721LockApprovalTest is SetupTest {
         );
 
         // First post-upgrade `_unlock` must NOT revert on underflow.
-        TestMutatorFacet(address(diamond)).testUnlockNFT(TEST_TOKEN_A);
+        TestMutatorFacet(address(diamond)).unlockNFTRaw(TEST_TOKEN_A);
 
         assertEq(
             uint256(VaipakamNFTFacet(address(diamond)).positionLock(TEST_TOKEN_A)),
@@ -446,7 +446,7 @@ contract LibERC721LockApprovalTest is SetupTest {
         // not revert (mirrors EarlyWithdrawalFacet.completeLoanSale →
         // LibLoan.migrateLenderPosition burning the locked
         // `lenderTokenId`).
-        TestMutatorFacet(address(diamond)).testBurnNFT(TEST_TOKEN_A);
+        TestMutatorFacet(address(diamond)).burnNFTRaw(TEST_TOKEN_A);
 
         assertEq(
             TestMutatorFacet(address(diamond)).getLockedTokenCount(nftOwner),
@@ -465,12 +465,12 @@ contract LibERC721LockApprovalTest is SetupTest {
         );
 
         // Cancel the legacy flow — `_unlock` is the guarded no-op.
-        TestMutatorFacet(address(diamond)).testUnlockNFT(TEST_TOKEN_A);
+        TestMutatorFacet(address(diamond)).unlockNFTRaw(TEST_TOKEN_A);
         assertEq(TestMutatorFacet(address(diamond)).getLockedTokenCount(nftOwner), 0);
 
         // Fresh post-upgrade `_lock` on a different token — counter
         // increments cleanly to 1 (no legacy state poisoning).
-        TestMutatorFacet(address(diamond)).testLockNFT(
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
             TEST_TOKEN_B, LibERC721.LockReason.EarlyWithdrawalSale
         );
         assertEq(
@@ -488,7 +488,7 @@ contract LibERC721LockApprovalTest is SetupTest {
         vm.prank(stranger);
         VaipakamNFTFacet(address(diamond)).setApprovalForAll(operator, true);
 
-        TestMutatorFacet(address(diamond)).testLockNFT(
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
             TEST_TOKEN_A, LibERC721.LockReason.PrecloseOffset
         );
 

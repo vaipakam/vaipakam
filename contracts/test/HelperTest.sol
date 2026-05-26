@@ -172,20 +172,18 @@ contract HelperTest {
         // running the full at-fallback liquidation flow.
         selectors[61] = TestMutatorFacet.setFallbackSnapshotRaw.selector;
         // LibERC721 lock-state + mint direct manipulators — exposed for
-        // the focused setApprovalForAll-during-lock unit test.
-        // forge-lint: disable-next-line(mixed-case-function)
-        selectors[62] = TestMutatorFacet.testMintNFT.selector;
-        // forge-lint: disable-next-line(mixed-case-function)
-        selectors[63] = TestMutatorFacet.testLockNFT.selector;
-        // forge-lint: disable-next-line(mixed-case-function)
-        selectors[64] = TestMutatorFacet.testUnlockNFT.selector;
+        // the focused setApprovalForAll-during-lock unit test. Names
+        // intentionally avoid the `test*` prefix so Foundry's test
+        // discovery doesn't try to run these as fuzz cases.
+        selectors[62] = TestMutatorFacet.mintNFTRaw.selector;
+        selectors[63] = TestMutatorFacet.lockNFTRaw.selector;
+        selectors[64] = TestMutatorFacet.unlockNFTRaw.selector;
         selectors[65] = TestMutatorFacet.getLockedTokenCount.selector;
         // Burn + epoch readers — Codex P1 follow-ups on the
         // setApprovalForAll-during-lock hardening (PR #282, L145 burn
         // counter drift; L151 pre-lock operator approval survives the
         // lock/unlock cycle).
-        // forge-lint: disable-next-line(mixed-case-function)
-        selectors[66] = TestMutatorFacet.testBurnNFT.selector;
+        selectors[66] = TestMutatorFacet.burnNFTRaw.selector;
         selectors[67] = TestMutatorFacet.getOperatorApprovalEpoch.selector;
         selectors[68] = TestMutatorFacet.getOperatorApprovalGrantEpoch.selector;
         // Codex P1 round-2 follow-up — direct `locks[tokenId]` writer
@@ -407,7 +405,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](17);
+        selectors = new bytes4[](22);
         selectors[0] = VaipakamNFTFacet.mintNFT.selector;
         selectors[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         selectors[2] = VaipakamNFTFacet.burnNFT.selector;
@@ -430,6 +428,16 @@ contract HelperTest {
         // Status-keyed image scheme companions.
         selectors[15] = VaipakamNFTFacet.setDefaultImage.selector;
         selectors[16] = VaipakamNFTFacet.getImageURIFor.selector;
+        // ERC721 approval surface + position-lock view — needed by the
+        // PR #282 LibERC721LockApprovalTest coverage. Production cuts
+        // these as part of DeployDiamond.s.sol; SetupTest historically
+        // omitted them because no pre-#282 test exercised approval
+        // semantics on the position NFT directly.
+        selectors[17] = bytes4(keccak256("approve(address,uint256)"));
+        selectors[18] = bytes4(keccak256("getApproved(uint256)"));
+        selectors[19] = bytes4(keccak256("setApprovalForAll(address,bool)"));
+        selectors[20] = bytes4(keccak256("isApprovedForAll(address,address)"));
+        selectors[21] = VaipakamNFTFacet.positionLock.selector;
         return selectors;
     }
 
