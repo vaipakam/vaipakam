@@ -22,8 +22,16 @@ library LibERC721 {
     /// @dev Reason a position NFT is temporarily non-transferable. Set by the
     ///      facet that initiated the flow; cleared on completion or cancel.
     ///      Front-run prevention during multi-step strategic flows — see
-    ///      PrecloseFacet Option 3 (offset) and EarlyWithdrawalFacet (sale).
-    enum LockReason { None, PrecloseOffset, EarlyWithdrawalSale }
+    ///      PrecloseFacet Option 3 (offset), EarlyWithdrawalFacet (sale), and
+    ///      `NFTPrepayListingFacet` (prepay collateral listing, T-086).
+    ///
+    ///      APPEND-ONLY POST-LAUNCH. The underlying storage type is `uint8`
+    ///      and the order of entries fixes the on-chain value: `None=0`,
+    ///      `PrecloseOffset=1`, `EarlyWithdrawalSale=2`, `PrepayCollateralListing=3`.
+    ///      Adding a new reason MUST happen at the tail; reordering or
+    ///      removing entries reinterprets every existing `locks[tokenId]`
+    ///      value on a live diamond.
+    enum LockReason { None, PrecloseOffset, EarlyWithdrawalSale, PrepayCollateralListing }
 
     /// @dev APPEND-ONLY POST-LAUNCH. New fields go at the end; never reorder,
     ///      rename, or change types of existing fields on live diamonds.
