@@ -181,9 +181,22 @@ library LibERC721 {
         // the owner BEFORE clearing the lock keeps the math correct if a
         // future code path ever transfers a locked token (today's flows
         // can't — `transferFrom` is `_requireNotLocked`-guarded — but the
-        // invariant is read-before-clear).
+        // invariant is read-before-clear). The `count > 0` guard is the
+        // upgrade-safety belt: on a diamond upgrade where tokens were
+        // already locked BEFORE this counter existed (pre-PR-#282
+        // PrecloseFacet / EarlyWithdrawalFacet positions still in
+        // flight), the owner's `lockedTokenCount` was never incremented.
+        // Without this guard, the first post-upgrade `_unlock` on such a
+        // legacy lock would underflow and revert the cancel /
+        // completion call, stranding the position. Pre-upgrade locks
+        // flow through cleanly as no-ops on the counter; new locks
+        // post-upgrade self-balance.
         if (es.locks[tokenId] != LockReason.None) {
-            es.lockedTokenCount[ownerOf(tokenId)]--;
+            address owner = ownerOf(tokenId);
+            uint256 count = es.lockedTokenCount[owner];
+            if (count > 0) {
+                es.lockedTokenCount[owner] = count - 1;
+            }
         }
         delete es.locks[tokenId];
     }
@@ -331,9 +344,16 @@ library LibERC721 {
         // `loan.lenderTokenId` via `LibLoan.migrateLenderPosition` while
         // the token is still locked) would leave the owner's counter
         // permanently positive, falsely blocking every future
-        // `setApprovalForAll(.., true)` call from that wallet.
+        // `setApprovalForAll(.., true)` call from that wallet. The
+        // `count > 0` guard handles the diamond-upgrade case (see the
+        // matching note in {_unlock}): pre-PR locks have a 0 counter,
+        // so a guarded burn flows through cleanly instead of reverting
+        // on underflow.
         if (es.locks[tokenId] != LockReason.None) {
-            es.lockedTokenCount[owner]--;
+            uint256 count = es.lockedTokenCount[owner];
+            if (count > 0) {
+                es.lockedTokenCount[owner] = count - 1;
+            }
         }
         es.balances[owner] -= 1;
         _removeTokenFromOwnerEnumeration(es, owner, tokenId);

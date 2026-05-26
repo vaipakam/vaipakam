@@ -55,7 +55,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](69);
+        selectors = new bytes4[](70);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -188,6 +188,11 @@ contract HelperTest {
         selectors[66] = TestMutatorFacet.testBurnNFT.selector;
         selectors[67] = TestMutatorFacet.getOperatorApprovalEpoch.selector;
         selectors[68] = TestMutatorFacet.getOperatorApprovalGrantEpoch.selector;
+        // Codex P1 round-2 follow-up — direct `locks[tokenId]` writer
+        // that skips the counter increment, used to simulate a
+        // pre-PR-#282 diamond upgrade state where a token is locked but
+        // the owner's `lockedTokenCount` is 0.
+        selectors[69] = TestMutatorFacet.forceSetLockWithoutCounter.selector;
         return selectors;
     }
 

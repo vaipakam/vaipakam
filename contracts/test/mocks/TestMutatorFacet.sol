@@ -599,6 +599,20 @@ contract TestMutatorFacet {
         LibERC721._burn(tokenId);
     }
 
+    /// @notice Test-only: write `locks[tokenId]` directly, BYPASSING
+    ///         the counter-increment side-effect of {LibERC721._lock}.
+    ///         Simulates a pre-PR-#282 diamond upgrade state where
+    ///         tokens were locked under the old code path (which had
+    ///         no `lockedTokenCount` mapping) and the owner's counter
+    ///         is therefore 0 even though `locks[tokenId] != None`.
+    ///         Used by the focused regression test to assert that the
+    ///         first post-upgrade `_unlock` / `_burn` on such a legacy
+    ///         lock does NOT underflow + revert.
+    // forge-lint: disable-next-line(mixed-case-function)
+    function forceSetLockWithoutCounter(uint256 tokenId, LibERC721.LockReason reason) external {
+        LibERC721._storage().locks[tokenId] = reason;
+    }
+
     /// @notice Test-only: read the per-owner locked-token counter.
     function getLockedTokenCount(address owner) external view returns (uint256) {
         return LibERC721._storage().lockedTokenCount[owner];

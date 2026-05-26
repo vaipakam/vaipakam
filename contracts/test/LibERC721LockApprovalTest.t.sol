@@ -386,6 +386,100 @@ contract LibERC721LockApprovalTest is SetupTest {
         );
     }
 
+    // ─── L186 — pre-upgrade lock underflow guard (Codex P1 round 2) ───────
+
+    /// @notice On a diamond upgrade where tokens were already locked
+    ///         BEFORE this PR introduced `lockedTokenCount`, the owner's
+    ///         counter is 0 even though `locks[tokenId] != None`. The
+    ///         first post-upgrade `_unlock` on such a legacy lock must
+    ///         NOT underflow — otherwise the cancel call from
+    ///         `PrecloseFacet.cancelPreclose` /
+    ///         `EarlyWithdrawalFacet.cancelLoanSale` would revert and
+    ///         strand every in-flight position. Simulated by writing
+    ///         `locks[tokenId]` directly via `forceSetLockWithoutCounter`
+    ///         (which bypasses the counter increment that `_lock`
+    ///         normally performs).
+    function test_unlockLegacyLock_doesNotUnderflowCounter() public {
+        // Simulate a pre-upgrade lock — `locks[tokenId]` set, counter is 0.
+        TestMutatorFacet(address(diamond)).forceSetLockWithoutCounter(
+            TEST_TOKEN_A, LibERC721.LockReason.PrecloseOffset
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLockedTokenCount(nftOwner),
+            0,
+            "pre-condition: legacy-lock has counter at 0"
+        );
+        assertEq(
+            uint256(VaipakamNFTFacet(address(diamond)).lockOf(TEST_TOKEN_A)),
+            uint256(LibERC721.LockReason.PrecloseOffset),
+            "pre-condition: token is legacy-locked"
+        );
+
+        // First post-upgrade `_unlock` must NOT revert on underflow.
+        TestMutatorFacet(address(diamond)).testUnlockNFT(TEST_TOKEN_A);
+
+        assertEq(
+            uint256(VaipakamNFTFacet(address(diamond)).lockOf(TEST_TOKEN_A)),
+            uint256(LibERC721.LockReason.None),
+            "legacy lock should clear cleanly"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLockedTokenCount(nftOwner),
+            0,
+            "counter must stay at 0; guard absorbs the no-op decrement"
+        );
+    }
+
+    /// @notice Symmetric guard for `_burn` — burning a legacy-locked
+    ///         (pre-upgrade) token must NOT underflow.
+    function test_burnLegacyLock_doesNotUnderflowCounter() public {
+        TestMutatorFacet(address(diamond)).forceSetLockWithoutCounter(
+            TEST_TOKEN_A, LibERC721.LockReason.EarlyWithdrawalSale
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLockedTokenCount(nftOwner),
+            0,
+            "pre-condition: legacy-lock has counter at 0"
+        );
+
+        // First post-upgrade `_burn` on the legacy-locked token must
+        // not revert (mirrors EarlyWithdrawalFacet.completeLoanSale →
+        // LibLoan.migrateLenderPosition burning the locked
+        // `lenderTokenId`).
+        TestMutatorFacet(address(diamond)).testBurnNFT(TEST_TOKEN_A);
+
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLockedTokenCount(nftOwner),
+            0,
+            "counter must stay at 0; guard absorbs the no-op decrement"
+        );
+    }
+
+    /// @notice Mixed legacy + new lock state must still self-balance
+    ///         once the legacy lock has flowed through `_unlock`. A
+    ///         later fresh `_lock` (post-upgrade) increments cleanly to 1.
+    function test_legacyAndNewLocks_counterEventuallyConsistent() public {
+        // Legacy lock — counter stays at 0.
+        TestMutatorFacet(address(diamond)).forceSetLockWithoutCounter(
+            TEST_TOKEN_A, LibERC721.LockReason.PrecloseOffset
+        );
+
+        // Cancel the legacy flow — `_unlock` is the guarded no-op.
+        TestMutatorFacet(address(diamond)).testUnlockNFT(TEST_TOKEN_A);
+        assertEq(TestMutatorFacet(address(diamond)).getLockedTokenCount(nftOwner), 0);
+
+        // Fresh post-upgrade `_lock` on a different token — counter
+        // increments cleanly to 1 (no legacy state poisoning).
+        TestMutatorFacet(address(diamond)).testLockNFT(
+            TEST_TOKEN_B, LibERC721.LockReason.EarlyWithdrawalSale
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLockedTokenCount(nftOwner),
+            1,
+            "fresh post-upgrade lock increments from a clean 0 -> 1"
+        );
+    }
+
     /// @notice Another owner's lock cycle must not invalidate the
     ///         current user's pre-existing operator approval —
     ///         epochs are per-owner.
