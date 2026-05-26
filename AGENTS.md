@@ -248,13 +248,15 @@ When reviewing a pull request from the Review clone, you **must** fetch the PR b
    ```bash
    BASE=$(gh pr view <PR-number> --json baseRefName -q .baseRefName)
    git fetch origin "$BASE"
-   gh pr checkout <PR-number>
+   gh pr checkout <PR-number> --force
    ```
 
    Or as a combined one-liner:
    ```bash
-   BASE=$(gh pr view <PR-number> --json baseRefName -q .baseRefName) && git fetch origin "$BASE" && gh pr checkout <PR-number>
+   BASE=$(gh pr view <PR-number> --json baseRefName -q .baseRefName) && git fetch origin "$BASE" && gh pr checkout <PR-number> --force
    ```
+
+   The `--force` flag matters on re-reviews. If the local PR branch already exists from a prior round and the author force-pushed since, plain `gh pr checkout <PR-number>` does NOT reset to the latest tip — it leaves you reviewing stale history. `--force` resets the existing local branch to the PR's current head (per the `gh` CLI docs), so the cleanup-after-review rule below is belt-and-braces against the same-day exception window when you intentionally kept the branch around.
 
 2. Review the PR by diffing against the **remote** base ref, not the local branch — `origin/$BASE` is what step 1 just refreshed; the local `$BASE` branch may still be stale, and `git fetch` does NOT move it. The PR branch's ancestry is NOT rebased onto the new base by these commands; you are *comparing* the PR against the latest base, not running on top of it.
    ```bash
