@@ -2875,6 +2875,23 @@ library LibVaipakam {
         // for services, not a securities-style revenue share.
         mapping(uint256 => PayrollStream) payrollStreams;
         uint256 payrollStreamCount;
+        // ── T-086 step 5 — `collateralListingExecutor` singleton address ──
+        // Append-only field. The Seaport prepay-listing flow routes
+        // ERC-1271 sign-time + zone-callback fill-time verification
+        // through a dedicated singleton (see
+        // `contracts/src/seaport/CollateralListingExecutor.sol`). The
+        // diamond stores the executor's address here so the
+        // step-5 `PrepayListingFacet.executorFinalizePrepaySale`
+        // callback can assert `msg.sender == storedExecutor` before
+        // touching loan state (privileged-caller gate).
+        //
+        // Set post-deploy via `PrepayListingFacet.setCollateralListingExecutor`
+        // (ADMIN_ROLE-gated → governance timelock + multisig
+        // post-handover, per the CLAUDE.md Cross-Chain Security
+        // Policy pattern). Default `address(0)` while unset; the
+        // callback method's gate refuses every call until governance
+        // wires the executor.
+        address collateralListingExecutor;
     }
 
     /// @dev One entry of the treasury-conversion target allocation
