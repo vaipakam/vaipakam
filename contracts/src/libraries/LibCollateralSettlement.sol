@@ -51,50 +51,70 @@ import {LibEntitlement} from "./LibEntitlement.sol";
  */
 library LibCollateralSettlement {
     /// @notice Lender's settlement entitlement at `asOfTimestamp`:
-    ///         `loan.principal + accruedInterest(asOfTimestamp)`.
-    /// @dev    The accrued-interest helper rounds elapsed time DOWN to whole
-    ///         days, matching the canonical RepayFacet / PrecloseFacet
-    ///         model. Same rounding model = no off-by-one drift between
-    ///         the floor we sign and the floor the loan facets credit on
-    ///         a parallel proper-close.
+    ///         `loan.principal + settlementInterest(asOfTimestamp)`.
+    /// @dev    Routes through {LibEntitlement.settlementInterest}, NOT
+    ///         the raw {accruedInterestToTime} primitive. This is the
+    ///         load-bearing distinction for loans created with
+    ///         `loan.useFullTermInterest == true` (lender promised the
+    ///         full coupon regardless of early close): `settlementInterest`
+    ///         returns `fullTermInterest(principal, rateBps, durationDays)`
+    ///         for those loans and `accruedInterestToTime` (whole-day
+    ///         pro-rata) otherwise. Using only `accruedInterestToTime`
+    ///         here would understate the lender's floor on full-term
+    ///         loans and let a Seaport prepay sale close the loan below
+    ///         the lender's contracted entitlement.
+    ///
+    ///         Same helper is the canonical source RepayFacet,
+    ///         PrecloseFacet, RefinanceFacet, and PartialWithdrawalFacet
+    ///         already use at settlement, so the floor we sign here
+    ///         can never disagree with what those facets credit on a
+    ///         parallel proper close.
     function principalPlusAccruedInterest(uint256 loanId, uint256 asOfTimestamp)
         internal
         view
         returns (uint256)
     {
         LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
-        return loan.principal + LibEntitlement.accruedInterestToTime(loan, asOfTimestamp);
+        return loan.principal + LibEntitlement.settlementInterest(loan, asOfTimestamp);
     }
 
     /// @notice Treasury + preclose fee entitlement at `asOfTimestamp`:
-    ///         `accruedInterest × (treasuryFeeBps + precloseFeeBps) / 10000`.
-    /// @dev    `precloseFeeBps` is currently treated as `0`; the
+    ///         `settlementInterest × (treasuryFeeBps + precloseFeeBps) / 10000`.
+    /// @dev    Uses the same `settlementInterest` value as the lender
+    ///         leg — the treasury cut is a fraction of the lender's
+    ///         owed interest, so the two amounts MUST share the same
+    ///         interest basis. For pro-rata loans this is whole-day-
+    ///         rounded accrual; for `useFullTermInterest == true` loans
+    ///         it's the full promised coupon, even at a pre-maturity
+    ///         sale.
+    ///
+    ///         `precloseFeeBps` is currently treated as `0`; the
     ///         {NFTPrepayListingFacet} / {CollateralListingExecutor} PR
     ///         (design doc §13 step 5) adds `cfgPrecloseFeeBps()` to
     ///         {LibVaipakam} and threads it into the sum here. The
     ///         structure of the formula matches §5.2 of the design doc.
     ///
-    ///         Returns `0` when the loan has no accrued interest yet
-    ///         (e.g. `asOfTimestamp <= loan.startTime` or
-    ///         `nowTime - startTime < 1 day`) — the per-day rounding model
-    ///         flows through unchanged.
+    ///         Returns `0` when the loan has no settlement-interest
+    ///         obligation yet — `asOfTimestamp <= loan.startTime` AND
+    ///         `useFullTermInterest == false` (full-term loans owe the
+    ///         full coupon from the first moment).
     function treasuryAndPrecloseFee(uint256 loanId, uint256 asOfTimestamp)
         internal
         view
         returns (uint256)
     {
         LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
-        uint256 accrued = LibEntitlement.accruedInterestToTime(loan, asOfTimestamp);
-        if (accrued == 0) return 0;
+        uint256 interestOwed = LibEntitlement.settlementInterest(loan, asOfTimestamp);
+        if (interestOwed == 0) return 0;
 
-        // Precloseclose fee summand kept explicit at 0 here so that:
+        // Preclose fee summand kept explicit at 0 here so that:
         //  (a) the formula structure exactly mirrors design doc §5.2;
         //  (b) the §13 step-5 PR can drop in a single `cfgPrecloseFeeBps()`
         //      read with a one-line diff, no surrounding shape changes.
         uint256 precloseFeeBps = 0;
         uint256 feeBpsSum = LibVaipakam.cfgTreasuryFeeBps() + precloseFeeBps;
 
-        return (accrued * feeBpsSum) / LibVaipakam.BASIS_POINTS;
+        return (interestOwed * feeBpsSum) / LibVaipakam.BASIS_POINTS;
     }
 
     /// @notice The minimum aggregate sale price for a Seaport prepay

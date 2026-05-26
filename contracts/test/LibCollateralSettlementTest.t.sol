@@ -70,6 +70,24 @@ contract LibCollateralSettlementTest is SetupTest {
         uint256 startTime,
         uint256 durationDays
     ) internal {
+        _scaffoldLoanFull({
+            id: id,
+            principal: principal,
+            rateBps: rateBps,
+            startTime: startTime,
+            durationDays: durationDays,
+            useFullTermInterest: false
+        });
+    }
+
+    function _scaffoldLoanFull(
+        uint256 id,
+        uint256 principal,
+        uint256 rateBps,
+        uint256 startTime,
+        uint256 durationDays,
+        bool useFullTermInterest
+    ) internal {
         LibVaipakam.Loan memory loan;
         loan.lender = _lender;
         loan.borrower = _borrower;
@@ -78,6 +96,7 @@ contract LibCollateralSettlementTest is SetupTest {
         loan.startTime = uint64(startTime);
         loan.durationDays = durationDays;
         loan.status = LibVaipakam.LoanStatus.Active;
+        loan.useFullTermInterest = useFullTermInterest;
         TestMutatorFacet(address(diamond)).setLoan(id, loan);
     }
 
@@ -299,5 +318,121 @@ contract LibCollateralSettlementTest is SetupTest {
             TEST_LOAN_ID + 3, block.timestamp
         );
         assertEq(floorB, floorA * 2, "floor scales linearly with principal");
+    }
+
+    // ─── 8. useFullTermInterest branch (Codex P1) ───────────────────────
+
+    /// @notice On loans created with `useFullTermInterest == true`, the
+    ///         lender is owed the FULL promised coupon regardless of how
+    ///         early a Seaport prepay sale closes the loan. The floor
+    ///         therefore prices off `fullTermInterest`, not pro-rata
+    ///         accrual — otherwise a buyer at T+1day could close the loan
+    ///         paying only `principal + 1d_accrued + fee` and skip the
+    ///         lender's contracted-but-not-yet-accrued interest.
+    function test_liveFloor_useFullTermInterest_atDayZero() public {
+        _scaffoldLoanFull({
+            id: TEST_LOAN_ID + 4,
+            principal: PRINCIPAL,
+            rateBps: RATE_BPS,
+            startTime: block.timestamp,
+            durationDays: DURATION_DAYS,
+            useFullTermInterest: true
+        });
+
+        uint256 expectedFullTerm = _expectedAccrued(
+            PRINCIPAL, RATE_BPS, DURATION_DAYS
+        );
+        uint256 expectedFeeLeg = (expectedFullTerm * DEFAULT_TREASURY_FEE_BPS) / BASIS_POINTS;
+        uint256 expectedFloor = PRINCIPAL + expectedFullTerm + expectedFeeLeg;
+
+        // At day zero, a `useFullTermInterest` loan ALREADY owes the
+        // full coupon. Pro-rata would say 0.
+        assertEq(
+            TestMutatorFacet(address(diamond)).getPrincipalPlusAccruedInterest(
+                TEST_LOAN_ID + 4, block.timestamp
+            ),
+            PRINCIPAL + expectedFullTerm,
+            "lender leg = principal + full-term interest, even at t=startTime"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getTreasuryAndPrecloseFee(
+                TEST_LOAN_ID + 4, block.timestamp
+            ),
+            expectedFeeLeg,
+            "fee leg cuts from the full-term interest, not pro-rata"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLiveFloor(
+                TEST_LOAN_ID + 4, block.timestamp
+            ),
+            expectedFloor,
+            "liveFloor honors useFullTermInterest at day zero"
+        );
+    }
+
+    /// @notice `useFullTermInterest` keeps the floor constant for the
+    ///         loan's lifetime — neither lender nor treasury leg moves
+    ///         with elapsed time. (Compare to the pro-rata path where
+    ///         accrued grows daily.)
+    function test_liveFloor_useFullTermInterest_constantOverTerm() public {
+        _scaffoldLoanFull({
+            id: TEST_LOAN_ID + 5,
+            principal: PRINCIPAL,
+            rateBps: RATE_BPS,
+            startTime: block.timestamp,
+            durationDays: DURATION_DAYS,
+            useFullTermInterest: true
+        });
+
+        uint256 floorAtStart = TestMutatorFacet(address(diamond)).getLiveFloor(
+            TEST_LOAN_ID + 5, block.timestamp
+        );
+
+        vm.warp(block.timestamp + 15 * ONE_DAY);
+        uint256 floorMidTerm = TestMutatorFacet(address(diamond)).getLiveFloor(
+            TEST_LOAN_ID + 5, block.timestamp
+        );
+
+        vm.warp(block.timestamp + 15 * ONE_DAY); // now at T+30d (full term)
+        uint256 floorAtMaturity = TestMutatorFacet(address(diamond)).getLiveFloor(
+            TEST_LOAN_ID + 5, block.timestamp
+        );
+
+        assertEq(floorAtStart, floorMidTerm, "full-term floor stays flat mid-term");
+        assertEq(floorMidTerm, floorAtMaturity, "full-term floor stays flat at maturity");
+        assertGt(floorAtStart, PRINCIPAL, "but it's above principal (the lender's coupon is baked in)");
+    }
+
+    /// @notice Cross-check: at the loan's natural maturity (`T+durationDays`),
+    ///         a pro-rata loan's floor equals a parallel
+    ///         `useFullTermInterest` loan's floor (the full coupon
+    ///         accrues to exactly the full-term value). Confirms the
+    ///         two branches converge at the boundary.
+    function test_liveFloor_proRataAndFullTermConverge_atMaturity() public {
+        // The pre-existing TEST_LOAN_ID is pro-rata at the default
+        // 100k/12%APR/30d setup. Scaffold a parallel useFullTermInterest
+        // loan with the same params.
+        _scaffoldLoanFull({
+            id: TEST_LOAN_ID + 6,
+            principal: PRINCIPAL,
+            rateBps: RATE_BPS,
+            startTime: block.timestamp,
+            durationDays: DURATION_DAYS,
+            useFullTermInterest: true
+        });
+
+        vm.warp(block.timestamp + DURATION_DAYS * ONE_DAY);
+
+        uint256 floorProRata = TestMutatorFacet(address(diamond)).getLiveFloor(
+            TEST_LOAN_ID, block.timestamp
+        );
+        uint256 floorFullTerm = TestMutatorFacet(address(diamond)).getLiveFloor(
+            TEST_LOAN_ID + 6, block.timestamp
+        );
+        assertEq(
+            floorProRata,
+            floorFullTerm,
+            "at natural maturity, pro-rata and full-term floors converge"
+        );
     }
 }

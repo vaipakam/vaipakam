@@ -17,9 +17,11 @@ Three view helpers in `contracts/src/libraries/LibCollateralSettlement.sol`, eac
 
 The borrower's residual (`consideration[2]`) isn't computed here — it's the executor's `askPrice − liveFloor`, derived from the signed order at fill time.
 
-### Reuses existing math; introduces no new accrual model
+### Reuses existing math; honors `useFullTermInterest`
 
-The accrued-interest helper is `LibEntitlement.accruedInterestToTime` — the same per-whole-day-rounded function `RepayFacet`, `PrecloseFacet`, `RefinanceFacet`, and `PartialWithdrawalFacet` already call. Same rounding model = no off-by-one drift between the floor we sign + the obligation those facets credit on a parallel proper close. The treasury-fee bps routes through `LibVaipakam.cfgTreasuryFeeBps()` (so the 0-means-default-100 fallback contract is preserved verbatim).
+The interest helper is `LibEntitlement.settlementInterest` — same canonical source `RepayFacet`, `PrecloseFacet`, `RefinanceFacet`, and `PartialWithdrawalFacet` use at settlement. This is load-bearing for loans created with `loan.useFullTermInterest == true`: `settlementInterest` returns `fullTermInterest(principal, rateBps, durationDays)` for those (the lender's contracted full coupon, owed regardless of how early the close happens), and falls back to per-whole-day-rounded `accruedInterestToTime` for the standard pro-rata path. Using only `accruedInterestToTime` would have understated the floor on full-term loans — a Codex P1 finding on the round-1 draft of this PR; addressed by routing both legs through `settlementInterest`.
+
+The treasury-fee bps routes through `LibVaipakam.cfgTreasuryFeeBps()` (so the 0-means-default-100 fallback contract is preserved verbatim). The fee leg uses the SAME `settlementInterest` value as the lender leg — the treasury cut is taken from the lender's owed interest, so both amounts MUST share the same interest basis.
 
 ### `precloseFeeBps` summand is currently zero, structurally complete
 
@@ -37,6 +39,9 @@ The formula in design doc §5.2 reads `treasuryFeeBps + precloseFeeBps`, but `cf
 - **Treasury fee override**: a `setTreasuryFeeBpsRaw(500)` (5%) bumps the fee leg accordingly; a `setTreasuryFeeBpsRaw(0)` falls back to the 1% constant default (the `cfgTreasuryFeeBps` contract).
 - **Edge cases**: zero principal → floor = 0; zero rate → floor stays at principal forever.
 - **Cross-loan isolation**: a 2× principal loan produces exactly 2× floor at the same timestamp (linear-in-principal sanity check).
+- **`useFullTermInterest` at day zero**: a full-term loan already owes the full coupon at `t=startTime`; floor accounts for it, fee leg cuts from the full term too.
+- **`useFullTermInterest` constant over term**: full-term floor stays flat across the loan's lifetime (compare to the pro-rata path where accrued grows daily).
+- **Pro-rata + full-term convergence at maturity**: at `T+durationDays`, the two branches converge — pro-rata's accrued at full term equals the full-term coupon by construction.
 
 The tests use four new view proxies on `TestMutatorFacet` (`getLiveFloor`, `getPrincipalPlusAccruedInterest`, `getTreasuryAndPrecloseFee`) plus a `setTreasuryFeeBpsRaw` direct-write helper — same pattern as the PR #282 lock-state testing scaffolding. `HelperTest._getTestMutatorFacetSelectors()` selector array grows 70 → 74.
 
