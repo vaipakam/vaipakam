@@ -96,6 +96,7 @@ FACETS=(
   "OracleFacet"
   "PartialWithdrawalFacet"
   "PrecloseFacet"
+  "PrepayListingFacet"
   "ProfileFacet"
   "RefinanceFacet"
   "RepayFacet"

@@ -60,7 +60,13 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
  *         `NFTPrepayListingFacet`; this facet is just the
  *         executor↔diamond trust boundary.
  */
-contract PrepayListingFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
+contract PrepayListingFacet is
+    DiamondPausable,
+    DiamondAccessControl,
+    IVaipakamErrors,
+    IVaipakamPrepayContext,
+    IVaipakamPrepayCallbacks
+{
     // ─── Events ─────────────────────────────────────────────────────────
 
     /// @custom:event-category state-change/loan-mutation
@@ -73,7 +79,7 @@ contract PrepayListingFacet is DiamondPausable, DiamondAccessControl, IVaipakamE
 
     error NotExecutor(address caller, address expected);
     error ExecutorNotSet();
-    error LoanNotActive(uint256 loanId, LibVaipakam.LoanStatus actual);
+    error PrepayLoanNotActive(uint256 loanId, LibVaipakam.LoanStatus actual);
 
     // ─── View: getPrepayContext (called by the executor) ────────────────
 
@@ -81,6 +87,7 @@ contract PrepayListingFacet is DiamondPausable, DiamondAccessControl, IVaipakamE
     function getPrepayContext(uint256 loanId, uint256 asOfTimestamp)
         external
         view
+        override
         returns (IVaipakamPrepayContext.PrepayContext memory ctx)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -129,7 +136,7 @@ contract PrepayListingFacet is DiamondPausable, DiamondAccessControl, IVaipakamE
     // ─── Callback: executorFinalizePrepaySale ───────────────────────────
 
     /// @inheritdoc IVaipakamPrepayCallbacks
-    function executorFinalizePrepaySale(uint256 loanId) external whenNotPaused {
+    function executorFinalizePrepaySale(uint256 loanId) external override whenNotPaused {
         // ── Privileged-caller gate ─────────────────────────────────────
         // The diamond accepts finalization callbacks ONLY from the
         // configured collateralListingExecutor address. Setting the
@@ -148,7 +155,7 @@ contract PrepayListingFacet is DiamondPausable, DiamondAccessControl, IVaipakamE
         // implementation that misses the check).
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active) {
-            revert LoanNotActive(loanId, loan.status);
+            revert PrepayLoanNotActive(loanId, loan.status);
         }
 
         // ── Atomic finalization ─────────────────────────────────────────

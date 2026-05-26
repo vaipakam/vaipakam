@@ -121,7 +121,7 @@ contract PrepayListingFacetTest is SetupTest {
         vm.prank(mockExecutor);
         vm.expectRevert(
             abi.encodeWithSelector(
-                PrepayListingFacet.LoanNotActive.selector,
+                PrepayListingFacet.PrepayLoanNotActive.selector,
                 TEST_LOAN_ID,
                 LibVaipakam.LoanStatus.Settled
             )
