@@ -881,6 +881,22 @@
   },
   {
     "type": "error",
+    "name": "ApprovalForbiddenWhileTokensLocked",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "lockedCount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ERC721AlreadyInitialized",
     "inputs": []
   },
