@@ -9,11 +9,9 @@ import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 
 import {ISeaportZone, ZoneParameters, ReceivedItem, ItemType} from "./ISeaportZone.sol";
 import {IVaipakamPrepayCallbacks} from "./IVaipakamPrepayCallbacks.sol";
+import {IVaipakamPrepayContext} from "./IVaipakamPrepayContext.sol";
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
-import {LibCollateralSettlement} from "../libraries/LibCollateralSettlement.sol";
-import {VaipakamNFTFacet} from "../facets/VaipakamNFTFacet.sol";
-import {LoanFacet} from "../facets/LoanFacet.sol";
 
 /**
  * @title CollateralListingExecutor
@@ -166,6 +164,7 @@ contract CollateralListingExecutor is
     error UnsupportedCollateralAssetType();
     error ZeroAddress();
     error AlreadyRecorded(bytes32 orderHash);
+    error LoanIdOverflow(uint256 loanId);
 
     // ─── Initializer / UUPS ─────────────────────────────────────────────
 
@@ -237,6 +236,14 @@ contract CollateralListingExecutor is
         if (msg.sender != vaipakamDiamond) revert NotDiamond();
         if (!approvedConduits[conduit]) revert ConduitNotApproved(conduit);
         if (orderContext[orderHash].loanId != 0) revert AlreadyRecorded(orderHash);
+        // Explicit bounds check before the narrowing uint96 cast (Codex
+        // L242 P2 on Round 1). Silent narrowing would let a loanId
+        // exceeding 2^96 wrap into a different valid loan record at
+        // fill time, causing mis-settlement. With 2^96 ≈ 7.9 × 10^28
+        // and one nextLoanId increment per loan, the bound is
+        // comfortably above any realistic protocol lifetime — but
+        // explicit > silent.
+        if (loanId > type(uint96).max) revert LoanIdOverflow(loanId);
         orderContext[orderHash] = OrderContext({
             loanId: uint96(loanId),
             conduit: conduit
@@ -299,12 +306,16 @@ contract CollateralListingExecutor is
             return 0xffffffff;
         }
         // Conservative liveness gate at 1271 time: refuse to sign if
-        // the loan isn't Active. Fill-time re-checks will catch the
-        // race window between this view and the zone callback.
-        LibVaipakam.Loan memory loan = LoanFacet(vaipakamDiamond).getLoanDetails(
-            uint256(ctx.loanId)
-        );
-        if (loan.status != LibVaipakam.LoanStatus.Active) {
+        // the loan isn't Active. Fill-time re-checks in {authorizeOrder}
+        // + {validateOrder} will catch the race window between this
+        // view and the actual fill. The 1271 path can't do the rigorous
+        // content checks (Seaport doesn't pass order content here), so
+        // the heavy lifting lives in the zone hooks.
+        IVaipakamPrepayContext.PrepayContext memory pctx =
+            IVaipakamPrepayContext(vaipakamDiamond).getPrepayContext(
+                uint256(ctx.loanId), block.timestamp
+            );
+        if (pctx.status != LibVaipakam.LoanStatus.Active) {
             return 0xffffffff;
         }
         return IERC1271.isValidSignature.selector;
@@ -337,6 +348,25 @@ contract CollateralListingExecutor is
     ///         acceptance; reverts (via specific errors) on every
     ///         failure mode. Seaport aborts the fill on revert or
     ///         wrong selector.
+    /// @notice Pre-transfer Seaport hook (Seaport 1.6). Runs the FULL
+    ///         precondition stack before any transfers occur, so a
+    ///         rejection here aborts the fill at the cheapest point.
+    /// @dev    Reverts on every failure mode; returns the
+    ///         `authorizeOrder` magic selector on acceptance. The check
+    ///         stack is implemented in {_checkOrderPreconditions} and
+    ///         re-run from {validateOrder} verbatim per design doc §5.7
+    ///         (defends against `Seaport.validate()` pre-registration
+    ///         path which SKIPS this hook).
+    function authorizeOrder(ZoneParameters calldata params)
+        external
+        override
+        returns (bytes4)
+    {
+        if (msg.sender != seaport) revert NotSeaport();
+        _checkOrderPreconditions(params);
+        return ISeaportZone.authorizeOrder.selector;
+    }
+
     function validateOrder(ZoneParameters calldata params)
         external
         override
@@ -344,139 +374,10 @@ contract CollateralListingExecutor is
     {
         if (msg.sender != seaport) revert NotSeaport();
 
-        OrderContext memory ctx = orderContext[params.orderHash];
-        if (ctx.loanId == 0) revert UnknownOrder(params.orderHash);
-        if (!approvedConduits[ctx.conduit]) revert ConduitNotApproved(ctx.conduit);
-
-        uint256 loanId = uint256(ctx.loanId);
-        LibVaipakam.Loan memory loan = LoanFacet(vaipakamDiamond).getLoanDetails(loanId);
-
-        if (loan.status != LibVaipakam.LoanStatus.Active) revert LoanNotActive(loanId);
-        // Grace expiry = startTime + durationDays + gracePeriod(durationDays).
-        // The per-duration grace bucket is governance-tunable via
-        // `ConfigFacet.setGraceBuckets`; we read through the canonical
-        // `LibVaipakam.gracePeriod` helper so the prepay flow honors
-        // any future bucket changes without code edits here.
-        uint256 endTime = uint256(loan.startTime) + (loan.durationDays * 1 days);
-        uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
-        if (block.timestamp >= graceEnd) revert GraceExpired(loanId);
-
-        // ── Offer-side schema check ─────────────────────────────────────
-        // The order MUST be selling EXACTLY the loan's collateral NFT.
-        // Without this binding, a malicious caller could submit a Seaport
-        // order that satisfies all the consideration amounts but offers
-        // some OTHER NFT — the diamond would settle the loan + unlock
-        // the borrower NFT without the collateral actually being
-        // delivered to the buyer (Codex / Grok blocker on Round 1).
-        if (params.offer.length != 1) {
-            revert WrongOfferCount(1, params.offer.length);
-        }
-        ItemType expectedOfferType;
-        if (loan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
-            expectedOfferType = ItemType.ERC721;
-        } else if (loan.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
-            expectedOfferType = ItemType.ERC1155;
-        } else {
-            // ERC20 collateral is not eligible for T-086 prepay listings
-            // (no NFT to sell). The borrower-facing
-            // `NFTPrepayListingFacet.postPrepayListing` (step 6)
-            // rejects upstream too; this revert is defense-in-depth at
-            // the fill boundary.
-            revert UnsupportedCollateralAssetType();
-        }
-        if (params.offer[0].itemType != expectedOfferType) {
-            revert WrongOfferItemType(expectedOfferType, params.offer[0].itemType);
-        }
-        if (params.offer[0].token != loan.collateralAsset) {
-            revert WrongOfferToken(loan.collateralAsset, params.offer[0].token);
-        }
-        if (params.offer[0].identifier != loan.collateralTokenId) {
-            revert WrongOfferIdentifier(loan.collateralTokenId, params.offer[0].identifier);
-        }
-        // ERC721 sells a quantity of 1; ERC1155 sells the loan's full
-        // collateralQuantity. Per design doc §5.6 + §7, T-086 v1 sells
-        // the FULL ERC1155 balance (no partial fills); FULL_RESTRICTED
-        // order type enforces single-fill but the explicit amount check
-        // here also pins the right magnitude.
-        uint256 expectedOfferAmount =
-            loan.collateralAssetType == LibVaipakam.AssetType.ERC721
-                ? 1
-                : loan.collateralQuantity;
-        if (params.offer[0].amount != expectedOfferAmount) {
-            revert WrongOfferAmount(expectedOfferAmount, params.offer[0].amount);
-        }
-
-        // ── Consideration shape check ───────────────────────────────────
-        // Three legs in fixed order: [lender, treasury, borrower] per
-        // design doc §5.5. Each must be in the loan's lending asset
-        // (ERC20 only for v1 — NFT-rental loans don't fit the prepay
-        // sale flow). Without these checks, a fill could route the
-        // right amounts in the WRONG token (Codex / Grok blocker on
-        // Round 1).
-        if (params.consideration.length != 3) {
-            revert WrongConsiderationCount(3, params.consideration.length);
-        }
-        if (loan.assetType != LibVaipakam.AssetType.ERC20) {
-            // NFT-rental lending loans don't have a fungible
-            // principalAsset → no Seaport prepay-listing path is
-            // meaningful for them. Reject explicitly so an
-            // accidental T-086 attempt on a rental loan fails clean.
-            revert UnsupportedLendingAssetType();
-        }
-        _assertConsiderationItem(
-            params.consideration[0], 0, loan.principalAsset,
-            params.orderHash
-        );
-        _assertConsiderationItem(
-            params.consideration[1], 1, loan.principalAsset,
-            params.orderHash
-        );
-        _assertConsiderationItem(
-            params.consideration[2], 2, loan.principalAsset,
-            params.orderHash
-        );
-
-        // ── Live-floor leg checks ───────────────────────────────────────
-        // Lender + treasury amounts compared against the live floor at
-        // THIS block (so interest accrued since sign-time bumps the
-        // required amount; the borrower's 2% buffer compensates for
-        // this drift up to the buffer cap). Borrower residual is
-        // whatever's left over and Seaport's atomic settlement
-        // guarantees it routes correctly.
-        uint256 lenderLeg = LibCollateralSettlement.principalPlusAccruedInterest(
-            loanId, block.timestamp
-        );
-        uint256 treasuryLeg = LibCollateralSettlement.treasuryAndPrecloseFee(
-            loanId, block.timestamp
-        );
-
-        if (params.consideration[0].amount < lenderLeg) {
-            revert LenderShortPaid(params.orderHash);
-        }
-        if (params.consideration[1].amount < treasuryLeg) {
-            revert TreasuryShortPaid(params.orderHash);
-        }
-
-        // ── Recipient checks (bind to CURRENT NFT holders + treasury) ──
-        // Position-NFT transfers between sign + fill move the right
-        // to receive lender / borrower economics with the NFT. Re-derive
-        // the current holders here; reject if the signed consideration
-        // doesn't match. Treasury is re-derived from diamond storage
-        // (NOT trusted from the signed order) — a sign-time treasury
-        // pointer could be stale if governance rotated treasury between
-        // sign + fill; on-chain re-derive keeps the diamond's view
-        // authoritative.
-        address lenderHolder = VaipakamNFTFacet(vaipakamDiamond).ownerOf(loan.lenderTokenId);
-        if (params.consideration[0].recipient != lenderHolder) {
-            revert WrongLenderRecipient(params.orderHash);
-        }
-        if (params.consideration[1].recipient != _treasury()) {
-            revert WrongTreasuryRecipient(params.orderHash);
-        }
-        address borrowerHolder = VaipakamNFTFacet(vaipakamDiamond).ownerOf(loan.borrowerTokenId);
-        if (params.consideration[2].recipient != borrowerHolder) {
-            revert WrongBorrowerRecipient(params.orderHash);
-        }
+        // Re-run the full precondition stack — `Seaport.validate()`
+        // pre-registration path SKIPS {authorizeOrder}, so the same
+        // checks MUST run here too (design doc §5.7).
+        uint256 loanId = _checkOrderPreconditions(params);
 
         // ── Atomic settlement: callback to the diamond ──────────────────
         // The diamond's privileged facet method asserts
@@ -492,6 +393,134 @@ contract CollateralListingExecutor is
 
         emit OrderFilled(params.orderHash, loanId);
         return ISeaportZone.validateOrder.selector;
+    }
+
+    /// @notice The full precondition check stack shared by both
+    ///         {authorizeOrder} and {validateOrder}. Reverts on every
+    ///         failure mode; returns the resolved loanId on success.
+    /// @dev    Reads loan state, live floor, grace expiry, NFT
+    ///         holders, and treasury via ONE call to the diamond's
+    ///         {IVaipakamPrepayContext.getPrepayContext} — running
+    ///         in the DIAMOND'S storage context, not the executor's.
+    ///         Round 1 incorrectly called `LibCollateralSettlement`
+    ///         and `LibVaipakam.gracePeriod` directly from the executor;
+    ///         those libraries read `LibVaipakam.storageSlot()` against
+    ///         the caller's storage, which on the executor singleton
+    ///         is empty → all values evaluated to 0 → unsafe. Codex
+    ///         L450 P0 on Round 1 caught this.
+    function _checkOrderPreconditions(ZoneParameters calldata params)
+        internal
+        view
+        returns (uint256 loanId)
+    {
+        OrderContext memory ctx = orderContext[params.orderHash];
+        if (ctx.loanId == 0) revert UnknownOrder(params.orderHash);
+        if (!approvedConduits[ctx.conduit]) revert ConduitNotApproved(ctx.conduit);
+
+        loanId = uint256(ctx.loanId);
+        IVaipakamPrepayContext.PrepayContext memory pctx =
+            IVaipakamPrepayContext(vaipakamDiamond).getPrepayContext(loanId, block.timestamp);
+
+        if (pctx.status != LibVaipakam.LoanStatus.Active) revert LoanNotActive(loanId);
+        // Grace boundary uses `>=` — sale path closes at the EXACT
+        // grace-end instant (not after it) so a borrower can't race
+        // a fill against the default trigger. Codex L362 flagged a
+        // `>` vs `>=` consistency question on Round 1; sticking with
+        // `>=` here is the safer choice because at exact equality the
+        // diamond's `markDefaulted` becomes callable in the SAME
+        // block, and a parallel prepay fill would otherwise close at
+        // a stale floor.
+        if (block.timestamp >= pctx.graceEnd) revert GraceExpired(loanId);
+
+        // ── Offer-side schema check ─────────────────────────────────────
+        // The order MUST be selling EXACTLY the loan's collateral NFT.
+        // Without this binding, a malicious caller could submit an order
+        // that satisfies all the consideration amounts but offers some
+        // OTHER NFT — the diamond would settle the loan + unlock the
+        // borrower NFT without the collateral being delivered (Codex /
+        // Grok blocker on Round 1).
+        if (params.offer.length != 1) {
+            revert WrongOfferCount(1, params.offer.length);
+        }
+        ItemType expectedOfferType;
+        if (pctx.collateralAssetType == LibVaipakam.AssetType.ERC721) {
+            expectedOfferType = ItemType.ERC721;
+        } else if (pctx.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
+            expectedOfferType = ItemType.ERC1155;
+        } else {
+            // ERC20 collateral is not eligible for T-086 prepay listings
+            // (no NFT to sell). The borrower-facing
+            // `NFTPrepayListingFacet.postPrepayListing` (step 6)
+            // rejects upstream too; this revert is defense-in-depth at
+            // the fill boundary.
+            revert UnsupportedCollateralAssetType();
+        }
+        if (params.offer[0].itemType != expectedOfferType) {
+            revert WrongOfferItemType(expectedOfferType, params.offer[0].itemType);
+        }
+        if (params.offer[0].token != pctx.collateralAsset) {
+            revert WrongOfferToken(pctx.collateralAsset, params.offer[0].token);
+        }
+        if (params.offer[0].identifier != pctx.collateralTokenId) {
+            revert WrongOfferIdentifier(pctx.collateralTokenId, params.offer[0].identifier);
+        }
+        // ERC721 sells a quantity of 1; ERC1155 sells the loan's full
+        // collateralQuantity. Per design doc §5.6 + §7, T-086 v1 sells
+        // the FULL ERC1155 balance (no partial fills); FULL_RESTRICTED
+        // order type enforces single-fill but the explicit amount check
+        // here also pins the right magnitude.
+        uint256 expectedOfferAmount =
+            pctx.collateralAssetType == LibVaipakam.AssetType.ERC721
+                ? 1
+                : pctx.collateralQuantity;
+        if (params.offer[0].amount != expectedOfferAmount) {
+            revert WrongOfferAmount(expectedOfferAmount, params.offer[0].amount);
+        }
+
+        // ── Consideration shape check ───────────────────────────────────
+        // Three legs in fixed order: [lender, treasury, borrower] per
+        // design doc §5.5. Each must be in the loan's lending asset
+        // (ERC20 only for v1 — NFT-rental loans don't fit the prepay
+        // sale flow). Without these checks, a fill could route the
+        // right amounts in the WRONG token (Codex / Grok blocker on
+        // Round 1).
+        if (params.consideration.length != 3) {
+            revert WrongConsiderationCount(3, params.consideration.length);
+        }
+        if (pctx.assetType != LibVaipakam.AssetType.ERC20) {
+            revert UnsupportedLendingAssetType();
+        }
+        _assertConsiderationItem(params.consideration[0], 0, pctx.principalAsset, params.orderHash);
+        _assertConsiderationItem(params.consideration[1], 1, pctx.principalAsset, params.orderHash);
+        _assertConsiderationItem(params.consideration[2], 2, pctx.principalAsset, params.orderHash);
+
+        // ── Live-floor leg checks (read from the diamond view) ─────────
+        // Lender + treasury legs compared against the live floor as
+        // resolved by the diamond at THIS block. The diamond invokes
+        // `LibCollateralSettlement` in its own storage context, so the
+        // floor is correctly derived from loan state (Round 1 was
+        // calling the library from the executor, which read empty
+        // storage — Codex L450 P0).
+        if (params.consideration[0].amount < pctx.lenderLeg) {
+            revert LenderShortPaid(params.orderHash);
+        }
+        if (params.consideration[1].amount < pctx.treasuryLeg) {
+            revert TreasuryShortPaid(params.orderHash);
+        }
+
+        // ── Recipient checks (bind to CURRENT NFT holders + treasury) ──
+        // The diamond resolved the lender + borrower position-NFT
+        // current holders + the configured treasury address. Recipient
+        // mismatches reject the fill atomically.
+        if (params.consideration[0].recipient != pctx.lenderNftOwner) {
+            revert WrongLenderRecipient(params.orderHash);
+        }
+        if (params.consideration[1].recipient != pctx.treasury) {
+            revert WrongTreasuryRecipient(params.orderHash);
+        }
+        if (params.consideration[2].recipient != pctx.borrowerNftOwner) {
+            revert WrongBorrowerRecipient(params.orderHash);
+        }
     }
 
     // ─── Internal helpers ──────────────────────────────────────────────
@@ -525,27 +554,4 @@ contract CollateralListingExecutor is
         orderHash; // solhint-disable-line no-unused-vars
     }
 
-    /// @notice Read the diamond's current treasury address. We re-derive
-    ///         at fill time so a governance rotation between sign + fill
-    ///         is reflected — the order's signed treasury recipient is
-    ///         checked against THIS value, not the stale sign-time one.
-    function _treasury() internal view returns (address) {
-        // The diamond exposes the treasury via a public storage read on
-        // `LibVaipakam.Storage.treasury`. Since the diamond isn't this
-        // contract, we go through the `AdminFacet` (or any facet that
-        // exposes a treasury view). For simplicity + decoupling from a
-        // specific facet, we read through a minimal interface call.
-        return _IVaipakamTreasury(vaipakamDiamond).getTreasury();
-    }
-}
-
-/// @dev Internal one-method view interface for the diamond's
-///      `getTreasury` address read. Lives at file scope so the executor
-///      can call `_IVaipakamTreasury(vaipakamDiamond).getTreasury()`
-///      without pulling in the full AdminFacet ABI. The diamond MUST
-///      expose `getTreasury() external view returns (address)` —
-///      Vaipakam's existing `AdminFacet.getTreasury` does.
-// forge-lint: disable-next-line(mixed-case-variable)
-interface _IVaipakamTreasury {
-    function getTreasury() external view returns (address);
 }

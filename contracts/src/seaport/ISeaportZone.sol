@@ -88,16 +88,49 @@ struct ZoneParameters {
 /**
  * @title ISeaportZone
  * @notice The zone-callback interface Seaport invokes on restricted orders
- *         (`FULL_RESTRICTED` and `PARTIAL_RESTRICTED` order types) at fill
- *         time. T-086 listings are always `FULL_RESTRICTED` per design
- *         doc §5.6 (so a buyer can't acquire only part of an ERC1155
- *         balance and close the loan with partial payment).
+ *         (`FULL_RESTRICTED` and `PARTIAL_RESTRICTED` order types). T-086
+ *         listings are always `FULL_RESTRICTED` per design doc §5.6 (so a
+ *         buyer can't acquire only part of an ERC1155 balance and close
+ *         the loan with partial payment).
  *
- *         The selector return value MUST match
- *         `ISeaportZone.validateOrder.selector` to signal acceptance.
- *         A revert or wrong selector causes Seaport to abort the fill.
+ *         **Seaport 1.6 invokes TWO hooks per fill** (one of the Round-2
+ *         findings on PR #288 — Round 1 only implemented `validateOrder`,
+ *         which would have made every listing unfulfillable because
+ *         Seaport would revert on the missing `authorizeOrder` selector
+ *         BEFORE running our check stack):
+ *
+ *           - {authorizeOrder} runs BEFORE transfers. The zone returns
+ *             the magic value to authorize the fill; reverting here aborts
+ *             the fill before any transfers occur (most efficient
+ *             rejection point). T-086 puts every precondition check
+ *             (recipient binding, schema enforcement, live floor,
+ *             grace, status, conduit) here.
+ *
+ *           - {validateOrder} runs AFTER transfers complete. The zone
+ *             returns the magic value to finalize, or reverts to roll
+ *             back the entire fill atomically. T-086 puts the diamond
+ *             callback (loan-status flip + lock release + LIF settlement)
+ *             here, after Seaport has confirmed the transfers. Per
+ *             design doc §5.7 (`Seaport.validate()` pre-registration
+ *             defense), the same critical checks are duplicated here so
+ *             the precondition stack runs even when Seaport skipped
+ *             {authorizeOrder} via the pre-registered path.
+ *
+ *         Both selectors MUST be returned exactly on acceptance; a
+ *         revert or wrong selector causes Seaport to abort the fill.
+ *         Reference: OpenSea Seaport Hooks documentation +
+ *         `seaport-types/src/interfaces/ZoneInterface.sol`.
  */
 interface ISeaportZone {
+    /// @notice Pre-transfer hook. Authorize OR reject the fill before
+    ///         Seaport moves any tokens.
+    function authorizeOrder(ZoneParameters calldata params)
+        external
+        returns (bytes4 authorizedOrderMagicValue);
+
+    /// @notice Post-transfer hook. Finalize state after Seaport has
+    ///         completed the transfers, OR revert to roll back the
+    ///         entire fill atomically.
     function validateOrder(ZoneParameters calldata params)
         external
         returns (bytes4 validOrderMagicValue);
