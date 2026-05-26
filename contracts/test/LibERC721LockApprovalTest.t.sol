@@ -29,8 +29,8 @@ contract LibERC721LockApprovalTest is SetupTest {
     uint256 internal constant TEST_TOKEN_A = 9_999_001;
     uint256 internal constant TEST_TOKEN_B = 9_999_002;
 
-    function setUp() public override {
-        super.setUp();
+    function setUp() public {
+        setupHelper();
         nftOwner = makeAddr("nftOwner");
         stranger = makeAddr("stranger");
         operator = makeAddr("operator");
