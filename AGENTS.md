@@ -242,22 +242,28 @@ When reviewing a pull request from the Review clone, you **must** fetch the PR b
 
 **Recommended workflow** (always run from the Review clone):
 
-**Important**: Always fetch the latest `main` branch **together with** the PR branch before reviewing. This ensures you review against the most current codebase, not a stale base.
+**Important**: Always refresh the PR's actual base branch from the remote **together with** the PR branch before reviewing. Most PRs target `main`, but stacked PRs and release-branch PRs target other bases — diffing a stacked PR against `main` would silently fold in the parent stack's changes and mislead the review.
 
-1. Fetch both the latest `main` and the target PR branch:
+1. Find the PR's base branch, refresh it from the remote, and check out the PR branch:
    ```bash
-   git fetch origin main
+   BASE=$(gh pr view <PR-number> --json baseRefName -q .baseRefName)
+   git fetch origin "$BASE"
    gh pr checkout <PR-number>
    ```
 
    Or as a combined one-liner:
    ```bash
-   git fetch origin && gh pr checkout <PR-number> && git checkout main && git pull origin main && git checkout -
+   BASE=$(gh pr view <PR-number> --json baseRefName -q .baseRefName) && git fetch origin "$BASE" && gh pr checkout <PR-number>
    ```
 
-2. Perform the full review against the actual PR branch (now based on latest `main`). This allows you to use local tools such as `grep`, run tests, explore context, use `git diff main...HEAD`, etc. on the exact code being proposed.
+2. Review the PR by diffing against the **remote** base ref, not the local branch — `origin/$BASE` is what step 1 just refreshed; the local `$BASE` branch may still be stale, and `git fetch` does NOT move it. The PR branch's ancestry is NOT rebased onto the new base by these commands; you are *comparing* the PR against the latest base, not running on top of it.
+   ```bash
+   git diff "origin/$BASE...HEAD"   # three-dot: only the PR's own commits
+   git log  "origin/$BASE..HEAD"    # two-dot: PR-only commits
+   ```
+   This lets you use local tools (`grep`, focused tests, file exploration) on the exact PR code with an accurate base for context.
 
-3. After finishing your review, switch back to `main`:
+3. After finishing your review, switch back to `main` (the default working branch in the Review clone — even when the PR targeted a different base):
    ```bash
    git checkout main
    ```
