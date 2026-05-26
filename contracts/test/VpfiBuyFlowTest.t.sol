@@ -86,7 +86,7 @@ contract VpfiBuyFlowTest is Test {
         router.setSupported(SEL_BASE, true);
         fee = router.fixedFee();
 
-        vpfi = new ERC20Mock("Vaipakam DeFi Token", "vpfi", 18);
+        vpfi = new ERC20Mock("Vaipakam DeFi Token", "VPFI", 18);
         diamond = new MockBuyDiamond(vpfi);
 
         messengerMirror = _deployMessenger();
