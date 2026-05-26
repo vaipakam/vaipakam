@@ -410,7 +410,7 @@ contract LibERC721LockApprovalTest is SetupTest {
             "pre-condition: legacy-lock has counter at 0"
         );
         assertEq(
-            uint256(VaipakamNFTFacet(address(diamond)).lockOf(TEST_TOKEN_A)),
+            uint256(VaipakamNFTFacet(address(diamond)).positionLock(TEST_TOKEN_A)),
             uint256(LibERC721.LockReason.PrecloseOffset),
             "pre-condition: token is legacy-locked"
         );
@@ -419,7 +419,7 @@ contract LibERC721LockApprovalTest is SetupTest {
         TestMutatorFacet(address(diamond)).testUnlockNFT(TEST_TOKEN_A);
 
         assertEq(
-            uint256(VaipakamNFTFacet(address(diamond)).lockOf(TEST_TOKEN_A)),
+            uint256(VaipakamNFTFacet(address(diamond)).positionLock(TEST_TOKEN_A)),
             uint256(LibERC721.LockReason.None),
             "legacy lock should clear cleanly"
         );
