@@ -46,15 +46,15 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
  *         and later corrects itself.
  */
 contract StakingRewardMonotonicityInvariant is Test {
-    VaipakamDiamond public DIAMOND;
-    VPFIToken public VPFI;
+    VaipakamDiamond public diamond;
+    VPFIToken public vpfi;
     StakingMonotonicityHandler public handler;
 
     function setUp() public {
         address owner = address(this);
 
         DiamondCutFacet cut = new DiamondCutFacet();
-        DIAMOND = new VaipakamDiamond(owner, address(cut));
+        diamond = new VaipakamDiamond(owner, address(cut));
 
         HelperTest helper = new HelperTest();
 
@@ -108,14 +108,14 @@ contract StakingRewardMonotonicityInvariant is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helper.getTestMutatorFacetSelectors()
         });
-        IDiamondCut(address(DIAMOND)).diamondCut(cuts, address(0), "");
+        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
-        AccessControlFacet(address(DIAMOND)).initializeAccessControl();
-        AdminFacet(address(DIAMOND)).unpause();
-        AdminFacet(address(DIAMOND)).setTreasury(address(DIAMOND));
+        AccessControlFacet(address(diamond)).initializeAccessControl();
+        AdminFacet(address(diamond)).unpause();
+        AdminFacet(address(diamond)).setTreasury(address(diamond));
 
         VaipakamVaultImplementation vaultImpl = new VaipakamVaultImplementation();
-        VaultFactoryFacet(address(DIAMOND)).initializeVaultImplementation();
+        VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
         vaultImpl;
 
         VPFIToken impl = new VPFIToken();
@@ -124,21 +124,21 @@ contract StakingRewardMonotonicityInvariant is Test {
             (address(this), address(this), address(this))
         );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
-        VPFI = VPFIToken(address(proxy));
+        vpfi = VPFIToken(address(proxy));
 
-        VPFITokenFacet(address(DIAMOND)).setCanonicalVPFIChain(true);
-        VPFITokenFacet(address(DIAMOND)).setVPFIToken(address(VPFI));
+        VPFITokenFacet(address(diamond)).setCanonicalVPFIChain(true);
+        VPFITokenFacet(address(diamond)).setVPFIToken(address(vpfi));
 
         // Fund the diamond with the full staking pool so the pool-cap
         // truncation code path only fires when we deliberately drain it.
         uint256 seed = LibVaipakam.VPFI_STAKING_POOL_CAP + 1_000_000 ether;
-        uint256 have = VPFI.balanceOf(address(this));
-        if (seed > have) VPFI.mint(address(this), seed - have);
-        VPFI.transfer(address(DIAMOND), seed);
+        uint256 have = vpfi.balanceOf(address(this));
+        if (seed > have) vpfi.mint(address(this), seed - have);
+        vpfi.transfer(address(diamond), seed);
 
-        handler = new StakingMonotonicityHandler(address(DIAMOND), address(VPFI));
+        handler = new StakingMonotonicityHandler(address(diamond), address(vpfi));
         for (uint256 i = 0; i < 3; i++) {
-            VPFI.mint(handler.actorAt(i), 500_000 ether);
+            vpfi.mint(handler.actorAt(i), 500_000 ether);
         }
 
         targetContract(address(handler));
@@ -150,7 +150,7 @@ contract StakingRewardMonotonicityInvariant is Test {
     ///         every state-mutating action).
     function invariant_RewardPerTokenStoredMonotone() public view {
         uint256 current =
-            StakingRewardsFacet(address(DIAMOND)).getStakingRewardPerTokenStored();
+            StakingRewardsFacet(address(diamond)).getStakingRewardPerTokenStored();
         assertGe(
             current,
             handler.maxObservedRpt(),
@@ -168,7 +168,7 @@ contract StakingRewardMonotonicityInvariant is Test {
             if (handler.lastActionClaimed(i)) continue;
             address user = handler.actorAt(i);
             uint256 pending =
-                StakingRewardsFacet(address(DIAMOND)).previewStakingRewards(user);
+                StakingRewardsFacet(address(diamond)).previewStakingRewards(user);
             assertGe(
                 pending,
                 handler.maxObservedPending(i),
@@ -186,8 +186,8 @@ contract StakingRewardMonotonicityInvariant is Test {
  *      the single tick when the claim actually ran.
  */
 contract StakingMonotonicityHandler is Test {
-    address public immutable DIAMOND;
-    VPFIToken public immutable VPFI;
+    address public immutable diamond;
+    VPFIToken public immutable vpfi;
 
     address[3] internal actors;
 
@@ -204,8 +204,8 @@ contract StakingMonotonicityHandler is Test {
     uint256 public warps;
 
     constructor(address _diamond, address _vpfi) {
-        DIAMOND = _diamond;
-        VPFI = VPFIToken(_vpfi);
+        diamond = _diamond;
+        vpfi = VPFIToken(_vpfi);
         actors[0] = makeAddr("stake-monotone-0");
         actors[1] = makeAddr("stake-monotone-1");
         actors[2] = makeAddr("stake-monotone-2");
@@ -223,10 +223,10 @@ contract StakingMonotonicityHandler is Test {
 
     function _captureRptAndPending() internal {
         uint256 rpt =
-            StakingRewardsFacet(DIAMOND).getStakingRewardPerTokenStored();
+            StakingRewardsFacet(diamond).getStakingRewardPerTokenStored();
         if (rpt > maxObservedRpt) maxObservedRpt = rpt;
         for (uint256 i = 0; i < 3; i++) {
-            uint256 p = StakingRewardsFacet(DIAMOND).previewStakingRewards(actors[i]);
+            uint256 p = StakingRewardsFacet(diamond).previewStakingRewards(actors[i]);
             if (p > maxObservedPending[i]) maxObservedPending[i] = p;
         }
     }
@@ -235,13 +235,13 @@ contract StakingMonotonicityHandler is Test {
         _clearClaimFlags();
         address user = actors[actorSeed % 3];
         amount = bound(amount, 1 ether, 100_000 ether);
-        if (VPFI.balanceOf(user) < amount) {
+        if (vpfi.balanceOf(user) < amount) {
             _captureRptAndPending();
             return;
         }
         vm.startPrank(user);
-        VPFI.approve(DIAMOND, amount);
-        try VPFIDiscountFacet(DIAMOND).depositVPFIToVault(amount) {
+        vpfi.approve(diamond, amount);
+        try VPFIDiscountFacet(diamond).depositVPFIToVault(amount) {
             deposits++;
         } catch {}
         vm.stopPrank();
@@ -251,14 +251,14 @@ contract StakingMonotonicityHandler is Test {
     function withdraw(uint256 actorSeed, uint256 amount) external {
         _clearClaimFlags();
         address user = actors[actorSeed % 3];
-        uint256 staked = StakingRewardsFacet(DIAMOND).getUserStakedVPFI(user);
+        uint256 staked = StakingRewardsFacet(diamond).getUserStakedVPFI(user);
         if (staked == 0) {
             _captureRptAndPending();
             return;
         }
         amount = bound(amount, 1, staked);
         vm.prank(user);
-        try VPFIDiscountFacet(DIAMOND).withdrawVPFIFromVault(amount) {
+        try VPFIDiscountFacet(diamond).withdrawVPFIFromVault(amount) {
             withdrawals++;
         } catch {}
         _captureRptAndPending();
@@ -269,7 +269,7 @@ contract StakingMonotonicityHandler is Test {
         uint256 idx = actorSeed % 3;
         address user = actors[idx];
         vm.prank(user);
-        try StakingRewardsFacet(DIAMOND).claimStakingRewards() {
+        try StakingRewardsFacet(diamond).claimStakingRewards() {
             claims++;
             // A successful claim is the only path that can legitimately
             // reduce pending below the prior maximum. Reset the ghost for
@@ -279,7 +279,7 @@ contract StakingMonotonicityHandler is Test {
         } catch {}
         // RPT itself only moves forward; still update max.
         uint256 rpt =
-            StakingRewardsFacet(DIAMOND).getStakingRewardPerTokenStored();
+            StakingRewardsFacet(diamond).getStakingRewardPerTokenStored();
         if (rpt > maxObservedRpt) maxObservedRpt = rpt;
     }
 

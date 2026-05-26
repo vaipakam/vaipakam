@@ -478,6 +478,7 @@ contract MockSwapAggregator {
     uint256 public rateDiv = 100;
     bool public shouldRevert;
 
+    // forge-lint: disable-next-line(mixed-case-function)
     function setIO(address sell, address buy) external {
         sellToken = sell;
         buyToken = buy;

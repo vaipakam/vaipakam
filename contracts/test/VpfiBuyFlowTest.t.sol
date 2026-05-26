@@ -17,12 +17,12 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
  *      Diamond which mints the canonical vpfi onto the receiver contract.
  */
 contract MockBuyDiamond {
-    ERC20Mock public immutable VPFI;
+    ERC20Mock public immutable vpfi;
     bool public willRevert;
     uint256 public fixedOut = 1_000 ether;
 
     constructor(ERC20Mock vpfi_) {
-        VPFI = vpfi_;
+        vpfi = vpfi_;
     }
 
     function setRevert(bool v) external {
@@ -41,7 +41,7 @@ contract MockBuyDiamond {
     ) external returns (uint256) {
         require(!willRevert, "diamond: rejected");
         require(fixedOut >= minVpfiOut, "diamond: slippage");
-        VPFI.mint(msg.sender, fixedOut);
+        vpfi.mint(msg.sender, fixedOut);
         return fixedOut;
     }
 }
@@ -76,7 +76,7 @@ contract VpfiBuyFlowTest is Test {
     VpfiBuyAdapter internal adapter;
     VpfiBuyReceiver internal receiver;
     MockBuyDiamond internal diamond;
-    ERC20Mock internal VPFI;
+    ERC20Mock internal vpfi;
 
     uint256 internal fee;
 
@@ -86,8 +86,8 @@ contract VpfiBuyFlowTest is Test {
         router.setSupported(SEL_BASE, true);
         fee = router.fixedFee();
 
-        VPFI = new ERC20Mock("Vaipakam DeFi Token", "VPFI", 18);
-        diamond = new MockBuyDiamond(VPFI);
+        vpfi = new ERC20Mock("Vaipakam DeFi Token", "VPFI", 18);
+        diamond = new MockBuyDiamond(vpfi);
 
         messengerMirror = _deployMessenger();
         messengerBase = _deployMessenger();
@@ -138,7 +138,7 @@ contract VpfiBuyFlowTest is Test {
                             BASE,
                             treasury,
                             address(0), // native-ETH mode
-                            address(VPFI),
+                            address(vpfi),
                             TIMEOUT,
                             GAS
                         )
@@ -156,7 +156,7 @@ contract VpfiBuyFlowTest is Test {
                     address(impl),
                     abi.encodeCall(
                         VpfiBuyReceiver.initialize,
-                        (owner, address(messengerBase), address(diamond), address(VPFI), GAS)
+                        (owner, address(messengerBase), address(diamond), address(vpfi), GAS)
                     )
                 )
             )
@@ -187,7 +187,7 @@ contract VpfiBuyFlowTest is Test {
         // Leg 2 — vpfi delivery → mirror. The adapter releases to the buyer.
         _deliver(1, SEL_BASE);
 
-        assertEq(VPFI.balanceOf(buyer), 1_000 ether, "buyer received VPFI");
+        assertEq(vpfi.balanceOf(buyer), 1_000 ether, "buyer received vpfi");
         assertEq(
             treasury.balance, treasuryBefore + amountIn, "payment released"
         );
@@ -215,7 +215,7 @@ contract VpfiBuyFlowTest is Test {
 
         // The buyer is made whole for `amountIn` (they still spent `fee`).
         assertEq(buyer.balance, buyerBefore - fee, "amountIn refunded");
-        assertEq(VPFI.balanceOf(buyer), 0, "no VPFI on a failed buy");
+        assertEq(vpfi.balanceOf(buyer), 0, "no vpfi on a failed buy");
         ( , , , VpfiBuyAdapter.BuyStatus status) = adapter.pendingBuys(1);
         assertEq(
             uint8(status),
@@ -232,7 +232,7 @@ contract VpfiBuyFlowTest is Test {
     ) internal view returns (ICrossChainMessenger.TokenAmount[] memory t) {
         t = new ICrossChainMessenger.TokenAmount[](1);
         t[0] = ICrossChainMessenger.TokenAmount({
-            token: address(VPFI),
+            token: address(vpfi),
             amount: amount
         });
     }
@@ -243,7 +243,7 @@ contract VpfiBuyFlowTest is Test {
         // case. The messenger forwards the tokens to the handler before
         // the callback, so mint them onto the adapter first.
         uint256 amount = 500 ether;
-        VPFI.mint(address(adapter), amount);
+        vpfi.mint(address(adapter), amount);
 
         vm.prank(address(messengerMirror));
         adapter.onCrossChainMessage(
@@ -253,7 +253,7 @@ contract VpfiBuyFlowTest is Test {
         // vpfi reached no wallet — it is parked stuck for owner recovery.
         assertEq(adapter.stuckVpfiByRequest(99), amount, "forged delivery parked");
         assertEq(adapter.totalStuckVpfi(), amount, "stuck total");
-        assertEq(VPFI.balanceOf(buyer), 0, "nothing routed anywhere");
+        assertEq(vpfi.balanceOf(buyer), 0, "nothing routed anywhere");
     }
 
     function test_TwoStep_ReplayedDelivery_ParksStuck() public {
@@ -262,24 +262,24 @@ contract VpfiBuyFlowTest is Test {
         adapter.buy{value: 1 ether + fee}(1 ether, 0);
         _deliver(0, SEL_MIRROR);
         _deliver(1, SEL_BASE);
-        assertEq(VPFI.balanceOf(buyer), 1_000 ether, "paid once");
+        assertEq(vpfi.balanceOf(buyer), 1_000 ether, "paid once");
 
         // Replay leg 2 for requestId 1 — its status is now ResolvedSuccess.
         uint256 amount = 1_000 ether;
-        VPFI.mint(address(adapter), amount);
+        vpfi.mint(address(adapter), amount);
         vm.prank(address(messengerMirror));
         adapter.onCrossChainMessage(
             BASE, address(receiver), abi.encode(uint64(1)), _vpfiTokens(amount)
         );
 
         // The buyer is NOT paid twice; the replayed vpfi parks stuck.
-        assertEq(VPFI.balanceOf(buyer), 1_000 ether, "still paid once only");
+        assertEq(vpfi.balanceOf(buyer), 1_000 ether, "still paid once only");
         assertEq(adapter.stuckVpfiByRequest(1), amount, "replay parked stuck");
     }
 
     function test_RecoverStuckVPFI() public {
         uint256 amount = 500 ether;
-        VPFI.mint(address(adapter), amount);
+        vpfi.mint(address(adapter), amount);
         vm.prank(address(messengerMirror));
         adapter.onCrossChainMessage(
             BASE, address(receiver), abi.encode(uint64(99)), _vpfiTokens(amount)
@@ -288,7 +288,7 @@ contract VpfiBuyFlowTest is Test {
         address recovery = makeAddr("recovery");
         vm.prank(owner);
         adapter.recoverStuckVPFI(99, recovery);
-        assertEq(VPFI.balanceOf(recovery), amount, "recovered");
+        assertEq(vpfi.balanceOf(recovery), amount, "recovered");
         assertEq(adapter.totalStuckVpfi(), 0, "stuck cleared");
     }
 
@@ -433,7 +433,7 @@ contract VpfiBuyFlowTest is Test {
 
         assertEq(router.pendingCount(), 1, "leg-2 not dispatched");
         assertEq(
-            receiver.stuckVpfiByRequest(1), 1_000 ether, "VPFI parked stuck"
+            receiver.stuckVpfiByRequest(1), 1_000 ether, "vpfi parked stuck"
         );
 
         // Re-fund the float and retry — leg 2 now dispatches.
@@ -444,6 +444,6 @@ contract VpfiBuyFlowTest is Test {
         assertEq(receiver.totalStuckVpfi(), 0, "stuck cleared");
 
         _deliver(1, SEL_BASE);
-        assertEq(VPFI.balanceOf(buyer), 1_000 ether, "buyer paid after retry");
+        assertEq(vpfi.balanceOf(buyer), 1_000 ether, "buyer paid after retry");
     }
 }

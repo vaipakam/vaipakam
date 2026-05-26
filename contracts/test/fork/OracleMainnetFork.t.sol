@@ -43,7 +43,7 @@ contract OracleMainnetForkTest is Test {
     // Mainnet Chainlink Feed Registry
     address internal constant CHAINLINK_FEED_REGISTRY =
         0x47Fb2585D2C56Fe188D0E6ec628a38b74fCeeeDf;
-    address internal constant usdDenom =
+    address internal constant USD_DENOM =
         0x0000000000000000000000000000000000000348;
 
     // Mainnet v3-style AMM Factory
@@ -69,10 +69,10 @@ contract OracleMainnetForkTest is Test {
     function test_Fork_ChainlinkEthUsdFeed() public view {
         if (!forkEnabled) return;
         IChainlinkFeedRegistry reg = IChainlinkFeedRegistry(CHAINLINK_FEED_REGISTRY);
-        (, int256 answer, , uint256 updatedAt, ) = reg.latestRoundData(WETH, usdDenom);
+        (, int256 answer, , uint256 updatedAt, ) = reg.latestRoundData(WETH, USD_DENOM);
         assertGt(answer, 0, "ETH price non-positive");
         // Plausibility: $100 < ETH < $100k — wide enough to survive any era.
-        uint8 dec = reg.decimals(WETH, usdDenom);
+        uint8 dec = reg.decimals(WETH, USD_DENOM);
         // safe: fork test reads live Chainlink feed; the test guard above
         // asserts `answer > 0` before casting.
         // forge-lint: disable-next-line(unsafe-typecast)
@@ -88,9 +88,9 @@ contract OracleMainnetForkTest is Test {
     function test_Fork_ChainlinkUsdcUsdFeed() public view {
         if (!forkEnabled) return;
         IChainlinkFeedRegistry reg = IChainlinkFeedRegistry(CHAINLINK_FEED_REGISTRY);
-        (, int256 answer, , uint256 updatedAt, ) = reg.latestRoundData(USDC, usdDenom);
+        (, int256 answer, , uint256 updatedAt, ) = reg.latestRoundData(USDC, USD_DENOM);
         assertGt(answer, 0, "USDC price non-positive");
-        uint8 dec = reg.decimals(USDC, usdDenom);
+        uint8 dec = reg.decimals(USDC, USD_DENOM);
         // safe: fork test reads live Chainlink feed; the test guard above
         // asserts `answer > 0` before casting.
         // forge-lint: disable-next-line(unsafe-typecast)

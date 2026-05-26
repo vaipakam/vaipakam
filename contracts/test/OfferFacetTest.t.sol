@@ -310,6 +310,7 @@ contract OfferFacetTest is Test {
         return selectors;
     }
 
+    // forge-lint: disable-next-line(mixed-case-function)
     function getVaipakamNFTFacetSelectors()
         internal
         pure

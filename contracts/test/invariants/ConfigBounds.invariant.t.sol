@@ -36,14 +36,14 @@ import {HelperTest} from "../HelperTest.sol";
  *         No lending machinery deployed so the fuzz surface stays tight.
  */
 contract ConfigBoundsInvariant is Test {
-    VaipakamDiamond public DIAMOND;
+    VaipakamDiamond public diamond;
     ConfigHandler public handler;
 
     function setUp() public {
         address owner = address(this);
 
         DiamondCutFacet cut = new DiamondCutFacet();
-        DIAMOND = new VaipakamDiamond(owner, address(cut));
+        diamond = new VaipakamDiamond(owner, address(cut));
 
         HelperTest helper = new HelperTest();
         AccessControlFacet ac = new AccessControlFacet();
@@ -60,18 +60,18 @@ contract ConfigBoundsInvariant is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helper.getConfigFacetSelectors()
         });
-        IDiamondCut(address(DIAMOND)).diamondCut(cuts, address(0), "");
+        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
-        AccessControlFacet(address(DIAMOND)).initializeAccessControl();
+        AccessControlFacet(address(diamond)).initializeAccessControl();
         // Diamond born paused (LibPausable). Clear via direct
         // storage write since this fixture doesn't cut AdminFacet.
-        vm.store(address(DIAMOND), bytes32(uint256(0x2160e84a745d8897ad2778886d40d3563c8bc30c059c5f2173e21e9d47057400)), bytes32(0));
+        vm.store(address(diamond), bytes32(uint256(0x2160e84a745d8897ad2778886d40d3563c8bc30c059c5f2173e21e9d47057400)), bytes32(0));
 
-        handler = new ConfigHandler(address(DIAMOND));
+        handler = new ConfigHandler(address(diamond));
         // Owner has ADMIN_ROLE after initializeAccessControl; delegate to
         // handler so the fuzzer can call every setter from a consistent
         // caller without tripping access control.
-        AccessControlFacet(address(DIAMOND)).grantRole(
+        AccessControlFacet(address(diamond)).grantRole(
             keccak256("ADMIN_ROLE"),
             address(handler)
         );
@@ -89,7 +89,7 @@ contract ConfigBoundsInvariant is Test {
     /// @notice Fees resolved through ConfigFacet never exceed MAX_FEE_BPS.
     function invariant_FeesWithinCap() public view {
         (uint256 treasury, uint256 init) =
-            ConfigFacet(address(DIAMOND)).getFeesConfig();
+            ConfigFacet(address(diamond)).getFeesConfig();
         assertLe(treasury, MAX_FEE_BPS, "treasuryFeeBps > cap");
         assertLe(init, MAX_FEE_BPS, "loanInitiationFeeBps > cap");
     }
@@ -97,7 +97,7 @@ contract ConfigBoundsInvariant is Test {
     /// @notice Liquidation knobs all sit within their individual caps.
     function invariant_LiquidationConfigWithinCaps() public view {
         (uint256 handlingFee, uint256 slippage, uint256 incentive) =
-            ConfigFacet(address(DIAMOND)).getLiquidationConfig();
+            ConfigFacet(address(diamond)).getLiquidationConfig();
         assertLe(handlingFee, MAX_FEE_BPS, "handlingFeeBps > cap");
         assertLe(slippage, MAX_SLIPPAGE_BPS, "maxSlippageBps > cap");
         assertLe(incentive, MAX_INCENTIVE_BPS, "maxIncentiveBps > cap");
@@ -108,14 +108,14 @@ contract ConfigBoundsInvariant is Test {
     ///         Rental buffer sits within its cap.
     function invariant_RiskConfigSafe() public view {
         (uint256 vol, uint256 rental) =
-            ConfigFacet(address(DIAMOND)).getRiskConfig();
+            ConfigFacet(address(diamond)).getRiskConfig();
         assertGt(vol, LibVaipakam.BASIS_POINTS, "volatility LTV <= 100%");
         assertLe(rental, MAX_FEE_BPS, "rentalBufferBps > cap");
     }
 
     /// @notice Staking APR resolved through the getter stays within 100%.
     function invariant_StakingAprWithinCap() public view {
-        uint256 apr = ConfigFacet(address(DIAMOND)).getStakingAprBps();
+        uint256 apr = ConfigFacet(address(diamond)).getStakingAprBps();
         assertLe(apr, MAX_STAKING_APR_BPS, "stakingAprBps > 100%");
     }
 
@@ -124,7 +124,7 @@ contract ConfigBoundsInvariant is Test {
     ///         interleaved. Matches the NonMonotoneTierThresholds guard.
     function invariant_TierThresholdsMonotone() public view {
         (uint256 t1, uint256 t2, uint256 t3, uint256 t4) =
-            ConfigFacet(address(DIAMOND)).getVpfiTierThresholds();
+            ConfigFacet(address(diamond)).getVpfiTierThresholds();
         assertLt(t1, t2, "t1 >= t2");
         assertLt(t2, t3, "t2 >= t3");
         assertLe(t3, t4, "t3 > t4");
@@ -135,7 +135,7 @@ contract ConfigBoundsInvariant is Test {
     ///         higher discount than a higher-balance user.
     function invariant_TierDiscountsMonotoneAndCapped() public view {
         (uint256 d1, uint256 d2, uint256 d3, uint256 d4) =
-            ConfigFacet(address(DIAMOND)).getVpfiTierDiscountBps();
+            ConfigFacet(address(diamond)).getVpfiTierDiscountBps();
         assertLe(d1, MAX_DISCOUNT_BPS, "d1 > cap");
         assertLe(d2, MAX_DISCOUNT_BPS, "d2 > cap");
         assertLe(d3, MAX_DISCOUNT_BPS, "d3 > cap");
@@ -153,14 +153,14 @@ contract ConfigBoundsInvariant is Test {
  *      call and must survive.
  */
 contract ConfigHandler is Test {
-    address public immutable DIAMOND;
+    address public immutable diamond;
 
     constructor(address _diamond) {
-        DIAMOND = _diamond;
+        diamond = _diamond;
     }
 
     function setFeesConfig(uint16 treasury, uint16 init) external {
-        try ConfigFacet(DIAMOND).setFeesConfig(treasury, init) {} catch {}
+        try ConfigFacet(diamond).setFeesConfig(treasury, init) {} catch {}
     }
 
     function setLiquidationConfig(
@@ -168,15 +168,15 @@ contract ConfigHandler is Test {
         uint16 slippage,
         uint16 incentive
     ) external {
-        try ConfigFacet(DIAMOND).setLiquidationConfig(handlingFee, slippage, incentive) {} catch {}
+        try ConfigFacet(diamond).setLiquidationConfig(handlingFee, slippage, incentive) {} catch {}
     }
 
     function setRiskConfig(uint16 volLtv, uint16 rental) external {
-        try ConfigFacet(DIAMOND).setRiskConfig(volLtv, rental) {} catch {}
+        try ConfigFacet(diamond).setRiskConfig(volLtv, rental) {} catch {}
     }
 
     function setStakingApr(uint16 apr) external {
-        try ConfigFacet(DIAMOND).setStakingApr(apr) {} catch {}
+        try ConfigFacet(diamond).setStakingApr(apr) {} catch {}
     }
 
     function setVpfiTierThresholds(
@@ -194,7 +194,7 @@ contract ConfigHandler is Test {
         t3 = bound(t3, 0, 1_000_000 ether);
         t4 = bound(t4, 0, 1_000_000 ether);
         try
-            ConfigFacet(DIAMOND).setVpfiTierThresholds(t1, t2, t3, t4)
+            ConfigFacet(diamond).setVpfiTierThresholds(t1, t2, t3, t4)
         {} catch {}
     }
 
@@ -205,7 +205,7 @@ contract ConfigHandler is Test {
         uint16 t4
     ) external {
         try
-            ConfigFacet(DIAMOND).setVpfiTierDiscountBps(t1, t2, t3, t4)
+            ConfigFacet(diamond).setVpfiTierDiscountBps(t1, t2, t3, t4)
         {} catch {}
     }
 }

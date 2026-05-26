@@ -165,6 +165,7 @@ contract VPFIHandler is Test {
     ///         headroom so the fuzz sequence will routinely ask for values
     ///         the token must reject; the invariant then asserts that those
     ///         rejections actually happened (supply stayed in range).
+    // forge-lint: disable-next-line(mixed-case-function)
     function mintVPFI(uint256 recipientSeed, uint256 amount) external {
         address to = recipients[recipientSeed % 3];
 
