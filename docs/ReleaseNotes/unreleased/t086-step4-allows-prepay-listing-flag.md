@@ -43,3 +43,5 @@ This shape choice keeps reviewer cognitive load minimal: anyone who has reviewed
 - **CreateOfferParams compile-time**: pins the field's presence on the calldata-input struct, fails to compile if removed.
 
 The sweep itself is the second half of the test plan: every existing test that constructs a `CreateOfferParams` now does so with `allowsPrepayListing: false`, so the full forge-test regression validates that the new field's default-false path runs cleanly through every existing flow (create / accept / repay / preclose / refinance / partial-withdrawal / liquidate / default / claim / etc.).
+
+<!-- ci-retrigger marker: empty rerun stuck in queue 90+ min on 79edb6a0; pushing trivial change to fire fresh workflow_run -->
