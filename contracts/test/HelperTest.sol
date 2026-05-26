@@ -55,7 +55,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](70);
+        selectors = new bytes4[](74);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -191,6 +191,12 @@ contract HelperTest {
         // pre-PR-#282 diamond upgrade state where a token is locked but
         // the owner's `lockedTokenCount` is 0.
         selectors[69] = TestMutatorFacet.forceSetLockWithoutCounter.selector;
+        // T-086 step 3 — LibCollateralSettlement view proxies + raw
+        // treasury-fee setter for the focused floor-formula tests.
+        selectors[70] = TestMutatorFacet.getLiveFloor.selector;
+        selectors[71] = TestMutatorFacet.getPrincipalPlusAccruedInterest.selector;
+        selectors[72] = TestMutatorFacet.getTreasuryAndPrecloseFee.selector;
+        selectors[73] = TestMutatorFacet.setTreasuryFeeBpsRaw.selector;
         return selectors;
     }
 

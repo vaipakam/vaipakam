@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LibMetricsHooks} from "../../src/libraries/LibMetricsHooks.sol";
 import {LibERC721} from "../../src/libraries/LibERC721.sol";
+import {LibCollateralSettlement} from "../../src/libraries/LibCollateralSettlement.sol";
 
 /// @title TestMutatorFacet
 /// @notice Test-only facet that exposes full struct setters for Loan and
@@ -595,6 +596,45 @@ contract TestMutatorFacet {
     ///         owner's counter (the L145 finding closed by this PR).
     function burnNFTRaw(uint256 tokenId) external {
         LibERC721._burn(tokenId);
+    }
+
+    // ─── LibCollateralSettlement view proxies (T-086 step 3) ────────────
+    // Pure view wrappers so the focused test for the closed-form floor
+    // formula doesn't have to stand up a Seaport order — it just
+    // scaffolds a Loan via {setLoan} and reads the floor through the
+    // diamond.
+
+    function getLiveFloor(uint256 loanId, uint256 asOfTimestamp)
+        external
+        view
+        returns (uint256)
+    {
+        return LibCollateralSettlement.liveFloor(loanId, asOfTimestamp);
+    }
+
+    function getPrincipalPlusAccruedInterest(uint256 loanId, uint256 asOfTimestamp)
+        external
+        view
+        returns (uint256)
+    {
+        return LibCollateralSettlement.principalPlusAccruedInterest(loanId, asOfTimestamp);
+    }
+
+    function getTreasuryAndPrecloseFee(uint256 loanId, uint256 asOfTimestamp)
+        external
+        view
+        returns (uint256)
+    {
+        return LibCollateralSettlement.treasuryAndPrecloseFee(loanId, asOfTimestamp);
+    }
+
+    /// @notice Test-only direct write to `protocolCfg.treasuryFeeBps` so
+    ///         the LibCollateralSettlement tests can flip the treasury
+    ///         fee without cutting `ConfigFacet` into the minimal test
+    ///         diamond. Bypasses the bounded-range setter — callers
+    ///         supply raw bps.
+    function setTreasuryFeeBpsRaw(uint16 bps) external {
+        LibVaipakam.storageSlot().protocolCfg.treasuryFeeBps = bps;
     }
 
     /// @notice Test-only: write `locks[tokenId]` directly, BYPASSING
