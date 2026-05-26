@@ -79,6 +79,7 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
                 collateralTokenId: 0,
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
+                allowsPrepayListing: false,
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: 500,
                 collateralAmountMax: COLLATERAL,

@@ -1172,6 +1172,11 @@ contract OfferCreateFacet is
         // Lender-controlled gate for borrower-initiated partial repay.
         // See {CreateOfferParams.allowsPartialRepay} for full semantics.
         offer.allowsPartialRepay = params.allowsPartialRepay;
+        // T-086 step 4 — lender consent to allow a borrower-initiated
+        // Seaport prepay listing on the loan's collateral NFT. See
+        // {CreateOfferParams.allowsPrepayListing} for full semantics.
+        // Snapshotted to {Loan.allowsPrepayListing} at loan-init.
+        offer.allowsPrepayListing = params.allowsPrepayListing;
         // Phase 6: keeper access is per-keeper via
         // `offerKeeperEnabled[offerId][keeper]`. Creator enables specific
         // keepers post-create via `ProfileFacet.setOfferKeeperEnabled`.

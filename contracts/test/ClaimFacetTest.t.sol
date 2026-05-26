@@ -261,6 +261,7 @@ contract ClaimFacetTest is Test {
                 collateralTokenId: 0,
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
+                allowsPrepayListing: false,
                 amountMax: principalAmount,
                 interestRateBpsMax: 500,
                 collateralAmountMax: collateralAmount,
