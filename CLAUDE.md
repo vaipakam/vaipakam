@@ -655,7 +655,7 @@ Rules:
 - When ever running forge build, forge script or forge test, run them in high priority
 - [Run forge build / forge test in high priority](feedback_forge_high_priority.md) — prefix every forge build/test/script with `nice -n -10 ionice -c 2 -n 0`; viaIR runs are 5–15 min and 8 GB RSS, low priority causes 2–3× slowdowns under parallel desktop load
 
-### Two `foundry.toml` profiles (Issue #185)
+### Three `foundry.toml` profiles (Issue #185 + #296)
 
 Three profiles live in `contracts/foundry.toml`:
 
@@ -683,11 +683,17 @@ Three profiles live in `contracts/foundry.toml`:
 
 - Iterating on a contract change, want to know "does it compile?":
   `FOUNDRY_PROFILE=quick forge build` — ~44 s cold, <1 s warm.
-- Running tests, scripts, regression, predeploy-check, gas snapshot:
-  `forge build` / `forge test` / `forge script` — default profile,
-  unchanged.
+- Running operator-local full regression / scripts / predeploy-check
+  / gas-snapshot diff: `forge build` / `forge test --no-match-path
+  "test/invariants/*"` / `forge script` — default profile.
+- Running the invariant suite specifically (separate pass; full-
+  regression command above excludes it): `forge test --match-path
+  "test/invariants/*"` — default profile.
 - Pre-PR sanity check (compile + targeted tests): default profile.
-- CI is unchanged — every gate runs under default.
+- CI (`ci.yml` + Slither + Build docs): runs under `cifast`. The
+  `mainnet-gate.yml` workflow runs `predeploy-check.sh --full`
+  under the default profile on `ubuntu-latest` and shares the
+  16 GB ceiling — see ADR-0011 for the pre-release-track caveat.
 
 **Do NOT use `FOUNDRY_PROFILE=quick` with `forge test`** — tests need
 viaIR + optimizer parity with src/ to faithfully reproduce production

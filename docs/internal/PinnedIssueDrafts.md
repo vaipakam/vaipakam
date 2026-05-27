@@ -37,7 +37,7 @@ rather than living only as opaque "Edit" actions on GitHub.
 >
 > | Milestone | Status | Tracks |
 > |---|---|---|
-> | [`audit-prep`](../milestone/1) | **Current** | Pre-audit hardening — branch protection, signed commits, mainnet-gate workflow, ADRs, glossary, SECURITY.md, CodeQL + Slither + gas-snapshot tracking, Cloudflare posture, dependency triage. |
+> | [`audit-prep`](../milestone/1) | **Current** | Pre-audit hardening — branch protection, signed commits, mainnet-gate workflow, ADRs, glossary, SECURITY.md, CodeQL + Slither static analysis, Cloudflare posture, dependency triage. |
 > | [`audit-1`](../milestone/2) | Pending | Third-party audit engagement window. |
 > | [`audit-1-fixes`](../milestone/3) | Pending | Findings remediation from audit-1. |
 > | [`mainnet-cutover`](../milestone/4) | Pending | The cutover runbook execution — testnet → mainnet on every chain. |

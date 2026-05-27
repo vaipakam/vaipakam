@@ -1,7 +1,17 @@
 # ADR-0006: Three-tier CI split — `contracts-fast`, `contracts-full`, `mainnet-gate`
 
-**Status:** Accepted
+**Status:** Superseded by [ADR-0011](0011-ci-scope-cifast-profile.md) (2026-05-28)
 **Date:** 2026-05 (Pre-audit hardening #74; ADR backfilled 2026-05-20)
+
+> **Superseded.** The three-tier shape this ADR describes was retired
+> in #297 (closes #296) after the test corpus grew past the 16 GB
+> ubuntu-latest ceiling. `contracts-full` and `gas-snapshot` are no
+> longer in `ci.yml`; per-PR contracts CI runs under the narrow
+> `cifast` foundry profile and the full regression moved to
+> operator-local + the release-track `mainnet-gate` workflow. See
+> [ADR-0011](0011-ci-scope-cifast-profile.md) for the post-#296
+> design. The historical content below is preserved as the audit
+> trail of the previous decision.
 
 ## Context
 

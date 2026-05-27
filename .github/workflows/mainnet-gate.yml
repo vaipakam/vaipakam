@@ -1,17 +1,36 @@
 # Mainnet gate — hard-gate workflow that runs the FULL forge regression
 # as a required check before any release-track commit can ship to mainnet.
 #
-# Why this exists: the routine PR CI (ci.yml) runs both the deploy-sanity
-# suite (`contracts-fast`) AND the full 2,012-test regression
-# (`contracts-full`) as required checks on every CONTRACTS-touching PR.
-# But docs-only PRs see contracts-full skipped (path-filter false), and
-# the release-track flow ALSO needs the full-regression guarantee on the
-# exact commit being tagged for cutover.
+# Why this exists: the routine PR CI (ci.yml) runs only the narrow
+# deploy-sanity + positive-flow surface (`contracts-fast` under the
+# `cifast` foundry profile) as a required check on every CONTRACTS-
+# touching PR. The full 2,012-test regression is deliberately NOT in
+# per-PR CI (its ~17.7 GB cold-build RSS overruns the 16 GB
+# ubuntu-latest ceiling — see #296 / ADR-0006). Full regression is an
+# operator-local responsibility at end-of-step + mainnet preflight.
 #
-# This workflow re-runs the full regression as the final
-# defence on release-track commits, providing audit-trail symmetry with
-# what `deploy-mainnet.sh` invokes at preflight step [1b] and catching the
-# rare case where a force-push between PR merge and tag changes the tree.
+# This workflow is the release-track full-regression gate — it runs
+# `predeploy-check.sh --full` on the same `ubuntu-latest` runner,
+# under the default foundry profile, bit-identical to what
+# `deploy-mainnet.sh` invokes at preflight step [1b]. So a force-push
+# between PR merge and tag, or any drift between the operator's
+# local box and the artifact lineage being shipped, is caught
+# before deploy.
+#
+# Runner-ceiling caveat (per ADR-0011, 2026-05-27): the default-
+# profile full forge regression on the current test corpus peaks at
+# ~17.7 GB RSS, over the 16 GB `ubuntu-latest` ceiling. The narrow
+# `release/**` + `v*` trigger set means this workflow has NOT yet
+# been exercised on the current corpus — no release-track refs
+# exist yet on this repo. Before the FIRST push to a `release/**`
+# branch or the first `v*` tag, the operator must either:
+#   (a) confirm `predeploy-check.sh --full` fits on `ubuntu-latest`
+#       for that release commit's corpus (re-measure with `/usr/bin/
+#       time -v forge test --no-match-path "test/invariants/*"`), or
+#   (b) move this workflow to a self-hosted runner / a different
+#       scheduled path.
+# Discovering the OOM gap at cutover would be expensive; documenting
+# the gap here keeps the operator's pre-cutover checklist honest.
 #
 # This workflow is the safety net at the line that matters: before a
 # release-track commit hits any deployable branch / tag, the full
