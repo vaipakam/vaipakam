@@ -63,13 +63,17 @@ contract NFTPrepayListingFacetTest is SetupTest {
         // pass the allow-list precondition.
         mockExecutor.setApprovedConduit(conduit, true);
 
-        // Wire executor + buffer (the two post-deploy gates the
-        // facet enforces). Both ADMIN_ROLE-gated.
+        // Wire executor + buffer + master kill-switch (the three
+        // post-deploy gates the facet enforces). All ADMIN_ROLE-
+        // gated. The kill-switch flip is the new step 6 dependency
+        // that gates the path on steps 7 + 10 landing.
         vm.startPrank(owner);
         PrepayListingFacet(address(diamond))
             .setCollateralListingExecutor(address(mockExecutor));
         ConfigFacet(address(diamond))
             .setPrepayListingBufferBps(TEST_BUFFER_BPS);
+        ConfigFacet(address(diamond))
+            .setPrepayListingEnabled(true);
         vm.stopPrank();
     }
 
@@ -272,6 +276,45 @@ contract NFTPrepayListingFacetTest is SetupTest {
         );
     }
 
+    function test_postPrepayListing_revertsKillSwitchOff() public {
+        // Flip the master kill-switch off AFTER setUp turned it on.
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setPrepayListingEnabled(false);
+
+        _scaffoldActiveLoan({allowsPrepay: true});
+        vm.prank(borrowerHolder);
+        vm.expectRevert(NFTPrepayListingFacet.PrepayListingDisabled.selector);
+        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+        );
+    }
+
+    function test_postPrepayListing_revertsBorrowerNFTAlreadyLocked() public {
+        // Codex P1 round-1: pre-existing lock (e.g. Preclose offset)
+        // must NOT be silently overwritten by a PrepayCollateralListing
+        // post — concurrent strategic flows are not supported.
+        _scaffoldActiveLoan({allowsPrepay: true});
+
+        // Simulate a prior strategic-flow lock (Preclose offset).
+        // Use TestMutatorFacet so we can write the lock through the
+        // diamond's storage context.
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
+            BORROWER_TOKEN_ID, LibERC721.LockReason.PrecloseOffset
+        );
+
+        vm.prank(borrowerHolder);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NFTPrepayListingFacet.BorrowerNFTAlreadyLocked.selector,
+                BORROWER_TOKEN_ID,
+                LibERC721.LockReason.PrecloseOffset
+            )
+        );
+        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+        );
+    }
+
     function test_postPrepayListing_revertsBufferNotConfigured() public {
         // Reset buffer to 0 AFTER setUp configured it.
         vm.prank(owner);
@@ -438,6 +481,49 @@ contract NFTPrepayListingFacetTest is SetupTest {
         );
     }
 
+    // ─── 4b. PrepayListingFacet.executorFinalizePrepaySale ──────────────
+    // (Step-5 facet, but tightened in step 6 to clear step-6
+    // bookkeeping. Test that integration here so the contract here
+    // is covered.)
+
+    function test_executorFinalize_clearsListingOrderHash() public {
+        // Codex P2 round-1: a successful Seaport fill (which calls
+        // back into the diamond via `executorFinalizePrepaySale`)
+        // must clear `s.prepayListingOrderHash[loanId]`. Otherwise
+        // `getPrepayListingOrderHash` would keep returning a live-
+        // looking hash forever after the sale settled, and the
+        // cancel paths would find a hash but couldn't run (status
+        // != Active).
+        _scaffoldActiveLoan({allowsPrepay: true});
+
+        vm.prank(borrowerHolder);
+        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+        );
+
+        // Pre-condition: hash is recorded.
+        assertEq(
+            NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
+            ORDER_HASH_A,
+            "pre: orderHash recorded"
+        );
+
+        // Simulate the Seaport fill terminal: the executor calls
+        // `executorFinalizePrepaySale` on the diamond. In real
+        // usage the call comes from the executor singleton; the
+        // diamond's gate checks `msg.sender == storedExecutor`
+        // which is our MockListingExecutorRecorder address.
+        vm.prank(address(mockExecutor));
+        PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(LOAN_ID);
+
+        // Post-condition: hash cleared.
+        assertEq(
+            NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
+            bytes32(0),
+            "post-fill: orderHash cleared"
+        );
+    }
+
     // ─── 5. cancelExpiredPrepayListing (permissionless) ─────────────────
 
     function test_cancelExpiredPrepayListing_revertsGraceNotExpired() public {
@@ -462,6 +548,77 @@ contract NFTPrepayListingFacetTest is SetupTest {
         NFTPrepayListingFacet(address(diamond)).cancelExpiredPrepayListing(LOAN_ID);
     }
 
+    function test_cancelExpiredPrepayListing_revertsAtGraceBoundary() public {
+        // Codex P2 round-1: at exactly `block.timestamp ==
+        // gracePeriodEnd`, the step-5 executor still allows fills
+        // (strict `>` reject condition). Permissionless cancel
+        // must NOT race that fill window — only valid at strict
+        // `block.timestamp > gracePeriodEnd`.
+        _scaffoldActiveLoan({allowsPrepay: true});
+
+        vm.prank(borrowerHolder);
+        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+        );
+
+        uint256 graceEnd = _graceEnd();
+        vm.warp(graceEnd); // exactly at the boundary
+
+        vm.prank(randomCaller);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NFTPrepayListingFacet.GraceNotExpired.selector,
+                LOAN_ID,
+                graceEnd,
+                graceEnd
+            )
+        );
+        NFTPrepayListingFacet(address(diamond)).cancelExpiredPrepayListing(LOAN_ID);
+    }
+
+    function test_cancelExpiredPrepayListing_worksAfterDefault() public {
+        // Codex P1 round-1: post-default, the loan flips status to
+        // Defaulted / Liquidated; the cleanup path MUST still work
+        // so the borrower NFT isn't stranded locked.
+        _scaffoldActiveLoan({allowsPrepay: true});
+        uint256 graceEnd = _graceEnd();
+
+        // Snapshot the loan as scaffolded — captures the original
+        // startTime BEFORE any warp drifts block.timestamp away.
+        LibVaipakam.Loan memory snapshot = _baseLoan();
+        snapshot.allowsPrepayListing = true;
+
+        // Post at T0 while loan is Active.
+        vm.prank(borrowerHolder);
+        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+        );
+
+        // Flip status to Defaulted while keeping startTime +
+        // durationDays unchanged. Simulates the moment AFTER
+        // `markDefaulted` runs but BEFORE anyone calls our cleanup.
+        snapshot.status = LibVaipakam.LoanStatus.Defaulted;
+        TestMutatorFacet(address(diamond)).setLoan(LOAN_ID, snapshot);
+
+        // Now warp past grace.
+        vm.warp(graceEnd + 1);
+
+        // Permissionless cleanup still works.
+        vm.prank(randomCaller);
+        NFTPrepayListingFacet(address(diamond)).cancelExpiredPrepayListing(LOAN_ID);
+
+        assertEq(
+            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
+            uint8(LibERC721.LockReason.None),
+            "post-default cleanup still releases the lock"
+        );
+        assertEq(
+            NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
+            bytes32(0),
+            "post-default cleanup clears bookkeeping"
+        );
+    }
+
     function test_cancelExpiredPrepayListing_permissionlessHappyPath() public {
         _scaffoldActiveLoan({allowsPrepay: true});
 
@@ -470,7 +627,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
             LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
         );
 
-        // Warp past grace.
+        // Warp PAST grace (strict — exactly `>= graceEnd + 1`).
         vm.warp(_graceEnd() + 1);
 
         // ANYONE can call — use a non-holder.

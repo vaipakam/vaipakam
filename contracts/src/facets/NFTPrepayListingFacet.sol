@@ -187,6 +187,20 @@ contract NFTPrepayListingFacet is
     ///         the facet uses for "no listing".
     error ZeroOrderHash();
 
+    /// @notice The borrower-position NFT is already locked under a
+    ///         different reason (e.g. Preclose offset, EarlyWithdrawal
+    ///         sale). Posting a prepay listing would overwrite that
+    ///         reason and `_unlock` at cancel/fill time would clear
+    ///         the older flow's lock state. Concurrent strategic
+    ///         flows are not supported in v1; the borrower must
+    ///         resolve the existing flow first.
+    error BorrowerNFTAlreadyLocked(uint256 tokenId, LibERC721.LockReason currentReason);
+
+    /// @notice Master kill-switch is off. ADMIN flips it on once
+    ///         steps 7 (vault approval) + 10 (default-flow lock-
+    ///         bypass) are wired end-to-end.
+    error PrepayListingDisabled();
+
     // ─── Cancel-reason enum ─────────────────────────────────────────────
 
     /// @dev `Borrower` — current borrower-position holder cancelled
@@ -240,6 +254,15 @@ contract NFTPrepayListingFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
+        // 0. Master kill-switch. The full path needs step 7 (vault
+        //    approval) + step 10 (default-flow lock-bypass) wired
+        //    end-to-end; until those land, governance keeps this
+        //    `false` so borrowers can't post listings that won't
+        //    fill. Cancel paths stay open regardless of this flag
+        //    so any listings that DID get posted under a previous
+        //    `true` can always be cleaned up.
+        if (!s.cfgPrepayListingEnabled) revert PrepayListingDisabled();
+
         // 1. Loan-state preconditions.
         if (loan.status != LibVaipakam.LoanStatus.Active) {
             revert PrepayLoanNotActive(loanId, loan.status);
@@ -250,6 +273,33 @@ contract NFTPrepayListingFacet is
         // v1 = ERC721 only (design doc §7 + §13 step 15 ERC1155 deferral).
         if (loan.collateralAssetType != LibVaipakam.AssetType.ERC721) {
             revert UnsupportedCollateralForV1(loan.collateralAssetType);
+        }
+
+        // 2'. Borrower-NFT must NOT carry an existing lock under a
+        //     different reason (Preclose offset / EarlyWithdrawal
+        //     sale). `LibERC721._lock` writes the reason
+        //     unconditionally — without this pre-check, a posting
+        //     would overwrite a Preclose lock, and later
+        //     cancel/fill `_unlock` would clear the lock entirely
+        //     even though the Preclose flow's storage mappings are
+        //     still live, breaking that flow's invariants. v1
+        //     refuses concurrent strategic flows; the borrower
+        //     resolves the existing flow first.
+        //
+        //     The "active listing already exists" case is reported
+        //     via the more specific {PrepayListingAlreadyExists}
+        //     below — that check fires FIRST so the lock-collision
+        //     error is reserved for the cross-flow case (the
+        //     PrepayCollateralListing reason set by this facet's
+        //     own prior post is detected by the bookkeeping
+        //     mapping, not by the lock state).
+        bytes32 existing = s.prepayListingOrderHash[loanId];
+        if (existing != bytes32(0)) {
+            revert PrepayListingAlreadyExists(loanId, existing);
+        }
+        LibERC721.LockReason currentLock = LibERC721.lockOf(loan.borrowerTokenId);
+        if (currentLock != LibERC721.LockReason.None) {
+            revert BorrowerNFTAlreadyLocked(loan.borrowerTokenId, currentLock);
         }
 
         // 2. Grace-window upper bound. Listing has to fit inside the
@@ -268,14 +318,10 @@ contract NFTPrepayListingFacet is
             revert NotPositionHolder(loanId, msg.sender, holder);
         }
 
-        // 4. No double-list. The diamond's per-loan orderHash slot
-        //    is the canonical "is there a live listing?" signal;
-        //    we don't trust the lock alone (a lock might have been
-        //    set by a future feature with a different reason).
-        bytes32 existing = s.prepayListingOrderHash[loanId];
-        if (existing != bytes32(0)) {
-            revert PrepayListingAlreadyExists(loanId, existing);
-        }
+        // 4. (PrepayListingAlreadyExists is checked earlier as part
+        //    of the lock-collision precondition block above — the
+        //    two preconditions are paired so a post-on-an-active-
+        //    listing reports the more specific error.)
 
         // 5. Live-floor check with the configured buffer.
         IListingExecutorRecorder executor = _requireExecutor(s);
@@ -328,6 +374,10 @@ contract NFTPrepayListingFacet is
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
+
+        // Same master-kill-switch gate as `post`: governance can
+        // disable BOTH post AND update without disabling cancels.
+        if (!s.cfgPrepayListingEnabled) revert PrepayListingDisabled();
 
         if (loan.status != LibVaipakam.LoanStatus.Active) {
             revert PrepayLoanNotActive(loanId, loan.status);
@@ -438,16 +488,27 @@ contract NFTPrepayListingFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
-        if (loan.status != LibVaipakam.LoanStatus.Active) {
-            revert PrepayLoanNotActive(loanId, loan.status);
-        }
+        // INTENTIONALLY no loan-status gate here. After grace
+        // expiry, `DefaultedFacet.markDefaulted` / RiskFacet
+        // liquidation might flip the loan to `Defaulted` /
+        // `Liquidated` BEFORE this cleanup runs. The design-doc
+        // §5.4 plan has those default-flow facets unlock the
+        // borrower NFT themselves as their first step (step 10),
+        // but until that wires up the borrower NFT would sit
+        // locked with no escape if we gated this cleanup on
+        // `Active`. So: any loan-status is acceptable here. The
+        // operation is no-fund-movement (just lock release +
+        // bookkeeping clear); safe across every terminal state.
 
-        // Permissionless gate. Strict `>=` aligns with the design
-        // doc §8 boundary table — grace-end inclusive is "expired"
-        // for this cleanup path, matching the Seaport `endTime`
-        // exclusive semantic the order itself was signed with.
+        // Permissionless gate — strict `>` matches the step-5
+        // executor's reject condition (`block.timestamp >
+        // pctx.graceEnd → GraceExpired`). At exactly
+        // `block.timestamp == gracePeriodEnd` the executor still
+        // permits a fill, so we MUST NOT race that path with a
+        // cancel here. Cleanup is only valid at strict
+        // `block.timestamp > gracePeriodEnd`.
         uint256 gracePeriodEnd = _gracePeriodEnd(loan);
-        if (block.timestamp < gracePeriodEnd) {
+        if (block.timestamp <= gracePeriodEnd) {
             revert GraceNotExpired(loanId, block.timestamp, gracePeriodEnd);
         }
 

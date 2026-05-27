@@ -2938,6 +2938,21 @@ library LibVaipakam {
         // step). Stored as `uint256` for slot-packing simplicity even
         // though only the low 16 bits are used.
         uint256 cfgPrepayListingBufferBps;
+        // `cfgPrepayListingEnabled` — master kill-switch for the
+        // prepay-listing path. Default `false` until governance flips
+        // it on once the FULL flow is wired end-to-end (the vault's
+        // narrow `setCollateralOperatorApproval` entry from design-
+        // doc step 7, the vault's ERC-1271 delegate, and the
+        // default-flow lock-bypass from step 10 — without those,
+        // postings can succeed at the diamond-side surface but the
+        // Seaport fill path can't actually pull the NFT through the
+        // conduit, stranding borrowers in lock-up). The
+        // {NFTPrepayListingFacet.postPrepayListing} /
+        // `updatePrepayListing` paths refuse to record a new listing
+        // while this is `false`; cancel paths stay open regardless
+        // (the cleanup path must always work, otherwise a flag-flip
+        // window would strand whatever listings did get posted).
+        bool cfgPrepayListingEnabled;
     }
 
     /// @dev One entry of the treasury-conversion target allocation

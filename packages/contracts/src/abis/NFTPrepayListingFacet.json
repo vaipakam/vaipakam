@@ -263,6 +263,22 @@
   },
   {
     "type": "error",
+    "name": "BorrowerNFTAlreadyLocked",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "currentReason",
+        "type": "uint8",
+        "internalType": "enum LibERC721.LockReason"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "BridgedBuyReceiverNotSet",
     "inputs": []
   },
@@ -832,6 +848,11 @@
   {
     "type": "error",
     "name": "PrepayListingBufferNotConfigured",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PrepayListingDisabled",
     "inputs": []
   },
   {

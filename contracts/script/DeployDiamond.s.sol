@@ -1273,7 +1273,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](82);
+        s = new bytes4[](83);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -1423,6 +1423,10 @@ contract DeployDiamond is Script {
         // the live floor. Default 0 (post-deploy unconfigured =
         // listing-path blocked); ADMIN sets to e.g. 200 bps (2%).
         s[81] = ConfigFacet.setPrepayListingBufferBps.selector;
+        // T-086 step 6 — prepay-listing master kill-switch. Default
+        // false; ADMIN flips on once steps 7 (vault approval) + 10
+        // (default-flow lock-bypass) are wired end-to-end.
+        s[82] = ConfigFacet.setPrepayListingEnabled.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {

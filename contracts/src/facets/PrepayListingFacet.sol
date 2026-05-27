@@ -170,6 +170,18 @@ contract PrepayListingFacet is
         LibERC721._unlock(loan.borrowerTokenId);
         LibVPFIDiscount.settleBorrowerLifProper(loan);
 
+        // T-086 step 6 — clear the diamond's per-loan listing
+        // bookkeeping (`s.prepayListingOrderHash[loanId]`) populated
+        // by `NFTPrepayListingFacet.postPrepayListing` /
+        // `updatePrepayListing`. Without this `delete`, the slot
+        // would stay populated forever after a successful fill:
+        // `getPrepayListingOrderHash` would keep returning a
+        // "live-looking" hash, and the cancel paths would find a
+        // hash but couldn't run (status != Active). The executor
+        // clears its own `orderContext` from `validateOrder`; this
+        // line is the diamond-side companion clear.
+        delete s.prepayListingOrderHash[loanId];
+
         emit PrepayCollateralSaleSettled(loanId, msg.sender);
     }
 

@@ -907,7 +907,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](82);
+        selectors = new bytes4[](83);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -1037,6 +1037,8 @@ contract HelperTest {
         selectors[80] = ConfigFacet.setRangeCollateralEnabled.selector;
         // T-086 step 6 — prepay-listing safety buffer setter.
         selectors[81] = ConfigFacet.setPrepayListingBufferBps.selector;
+        // T-086 step 6 — prepay-listing master kill-switch setter.
+        selectors[82] = ConfigFacet.setPrepayListingEnabled.selector;
         return selectors;
     }
 

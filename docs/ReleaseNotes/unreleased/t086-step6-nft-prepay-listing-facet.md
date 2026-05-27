@@ -24,6 +24,23 @@ If a listing's grace window expires without a fill, anyone can
 the safety net so the borrower's position NFT isn't left locked
 forever waiting for a buyer that didn't show up.
 
+### Master kill-switch — listings dormant until governance enables
+
+A new ConfigFacet setter `setPrepayListingEnabled(bool)` gates the
+`postPrepayListing` / `updatePrepayListing` paths behind a master
+flag. The flag defaults `false` on a fresh deploy: until the
+vault's narrow `setCollateralOperatorApproval` entry (design-doc
+step 7), the vault's ERC-1271 delegate, and the default-flow lock-
+bypass (step 10) are wired end-to-end, a posted listing CANNOT
+actually fill (Seaport can't pull the NFT through the conduit
+without the vault's per-token approval). Shipping step 6 behind
+this gate keeps the UX trap dormant — borrowers can't post
+listings that would lock their position NFT without an escape
+until they manually cancel. The cancel paths (borrower-side AND
+the permissionless grace-expired cleanup) stay open regardless of
+the flag so any listings posted under a previous `true` always
+have a cleanup path.
+
 ### What this PR ships in detail
 
 Five entry points on the new `NFTPrepayListingFacet`:

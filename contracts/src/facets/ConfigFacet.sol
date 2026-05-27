@@ -246,6 +246,38 @@ contract ConfigFacet is DiamondAccessControl {
         emit PrepayListingBufferBpsSet(newBps);
     }
 
+    /// @notice Emitted on every flip of the prepay-listing master
+    ///         kill-switch.
+    /// @custom:event-category informational/config
+    event PrepayListingEnabledSet(bool enabled);
+
+    /**
+     * @notice Flip the prepay-listing master kill-switch. While
+     *         `false` (the post-deploy default), the borrower-side
+     *         `postPrepayListing` / `updatePrepayListing` entry
+     *         points refuse to record new listings; cancel paths
+     *         (borrower-side + permissionless grace-expired) stay
+     *         open so any listings posted under a previous `true`
+     *         can always be cleaned up.
+     * @dev    ADMIN_ROLE-gated. Governance flips on per chain only
+     *         after the vault's narrow `setCollateralOperatorApproval`
+     *         entry (design-doc step 7), the vault's ERC-1271
+     *         delegate, and the default-flow lock-bypass (step 10)
+     *         are wired end-to-end. Without those a posted listing
+     *         can't fill — Seaport rejects the conduit transfer —
+     *         and the borrower's position NFT sits locked until
+     *         they manually cancel. Shipping step 6 behind this
+     *         gate keeps that UX trap dormant until the rest of
+     *         the flow lands.
+     */
+    function setPrepayListingEnabled(bool enabled)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.storageSlot().cfgPrepayListingEnabled = enabled;
+        emit PrepayListingEnabledSet(enabled);
+    }
+
     // ── Treasury conversion (T-600) knobs ───────────────────────────────
 
     /// @notice Emitted when the treasury-conversion target allocation is

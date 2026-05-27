@@ -1363,6 +1363,19 @@
   },
   {
     "type": "function",
+    "name": "setPrepayListingEnabled",
+    "inputs": [
+      {
+        "name": "enabled",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setRangeAmountEnabled",
     "inputs": [
       {
@@ -2112,6 +2125,19 @@
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PrepayListingEnabledSet",
+    "inputs": [
+      {
+        "name": "enabled",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
       }
     ],
     "anonymous": false
