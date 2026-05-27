@@ -98,6 +98,173 @@ fs_permissions = [
   { access = "read", path = "./out/" },
 ]
 
+# ── #290 — CI-fast scope profile ───────────────────────────────────────────
+# Scope: deploy-sanity + positive-flow scenarios. `contracts-fast` runs
+# under this profile so the per-PR-push CI lane peaks at ~3.2 GB RSS in
+# ~5:22 wall-clock instead of the ~17.7 GB / 30 min full build (which
+# was OOM-killing the standard-runner job that gated PR #288).
+#
+# IN scope (compiled):
+#   - all of src/
+#   - script/ (test/deploy/DeployDiamondIntegrationTest imports
+#     DeployDiamond.s.sol; other deploy + Anvil scripts compile as a
+#     side-effect)
+#   - test/deploy/** (3 deploy-sanity tests + DiamondFacetNames helper)
+#   - test/scenarios/** (8 positive-flow happy-path scenarios)
+#   - test/mocks/** (required by several scripts that import ERC20Mock,
+#     ERC1155RentableMock, ZeroExProxyMock, etc.)
+#   - test/SetupTest.t.sol (scenarios' inherited base, transitively
+#     pulled in via import even though it's also a top-level .t.sol;
+#     Foundry's import-graph-driven compile keeps imported bases even
+#     when they're in the skip list)
+#   - test/HelperTest.sol (selector helper SetupTest uses)
+#   - lib/
+#
+# OUT of scope (skipped — picked up by `contracts-full` on
+# `workflow_dispatch` only):
+#   - the other 94 top-level test/*.t.sol files (per-facet integration
+#     + library + workflow tests) — enumerated explicitly below because
+#     Foundry's globset implementation appears to traverse subdirectories
+#     for `test/*.t.sol` patterns, which would incorrectly catch the
+#     positive flows under test/scenarios/**
+#   - test/invariants/** (24 invariant tests)
+#   - test/fork/** (3 mainnet-fork tests; need RPC URLs)
+#   - test/token/** (1 token-specific test)
+#
+# Behavioural parity: all compile settings (viaIR, optimizer, optimizer_runs,
+# solc_version) are identical to `[profile.default]` so the bytecode this
+# profile produces is bit-identical to what the operator runs locally.
+# Only the file-skip list differs.
+[profile.cifast]
+src = "src"
+out = "out"
+libs = ["lib"]
+solc_version = '0.8.29'
+viaIR = true
+optimizer = true
+optimizer_runs = 200
+threads = 8
+skip = [
+  # Chainlink dependency tests (mirrors default — Foundry doesn't
+  # deep-merge arrays across profiles)
+  "lib/chainlink-ccip/**/*.t.sol",
+  "lib/chainlink-evm/**/*.t.sol",
+  "lib/chainlink-ccip/**/test/**",
+  "lib/chainlink-evm/**/test/**",
+  # CI-fast scope: every non-positive-flow top-level test file is
+  # enumerated below. Positive flows live under `test/scenarios/**`
+  # (intentionally not listed here, so they stay in the build graph)
+  # along with `test/deploy/**`, `test/SetupTest.t.sol`,
+  # `test/HelperTest.sol`, and `test/mocks/**`.
+  #
+  # Why enumerated rather than a glob: Foundry's `skip` matching
+  # appears to traverse subdirectories under a `test/*.t.sol` glob,
+  # which would incorrectly catch `test/scenarios/**` files. Explicit
+  # paths are unambiguous.
+  "test/AcceptRangedOfferTest.t.sol",
+  "test/AccessControlFacetTest.t.sol",
+  "test/AccessControlTransferAdminTest.t.sol",
+  "test/AddCollateralFacetTest.t.sol",
+  "test/AdminFacetTest.t.sol",
+  "test/AllowsPrepayListingTest.t.sol",
+  "test/BorrowerPartialFillTest.t.sol",
+  "test/CancelAfterPartialFillTest.t.sol",
+  "test/CcipDeploymentRehearsalTest.t.sol",
+  "test/CcipMessengerTest.t.sol",
+  "test/ClaimFacetTest.t.sol",
+  "test/ConfigFacetTest.t.sol",
+  "test/CountryPairGatedTest.t.sol",
+  "test/CrossChainRewardPlumbingTest.t.sol",
+  "test/DefaultedFacetTest.t.sol",
+  "test/DeployerZeroRolesTest.t.sol",
+  "test/DepthTieredLtv.t.sol",
+  "test/DiamondBornPausedTest.t.sol",
+  "test/DiamondLoupeFacetTest.t.sol",
+  "test/EarlyWithdrawalFacetTest.t.sol",
+  "test/EnumerationTest.t.sol",
+  "test/FallbackCureTest.t.sol",
+  "test/FeedOverride.t.sol",
+  "test/FlashLoanLiquidatorTest.t.sol",
+  "test/GovernanceConfigTest.t.sol",
+  "test/GovernanceHandover.t.sol",
+  "test/GraceBucketsTest.t.sol",
+  "test/GracePeriodTiersTest.t.sol",
+  "test/InteractionRewardCapTest.t.sol",
+  "test/InteractionRewardsCoverageTest.t.sol",
+  "test/InternalMatchAutoDispatch.t.sol",
+  "test/InternalMatchConfig.t.sol",
+  "test/InternalMatchExecution.t.sol",
+  "test/InternalMatchLiquidationGates.t.sol",
+  "test/InternalMatchPriorityWindow.t.sol",
+  "test/KYCTierEnforcementIntegration.t.sol",
+  "test/LegalFacet.t.sol",
+  "test/LibCollateralSettlementTest.t.sol",
+  "test/LibERC721LockApprovalTest.t.sol",
+  "test/LibPeerLTV.t.sol",
+  "test/LibSlippageTest.t.sol",
+  "test/LiquidationMinOutputInvariant.t.sol",
+  "test/LoanFacetTest.t.sol",
+  "test/MatchOffersScaffoldTest.t.sol",
+  "test/MetricsDashboardFacetTest.t.sol",
+  "test/MetricsFacetTest.t.sol",
+  "test/MetricsRevenueByAssetTest.t.sol",
+  "test/NotificationFeeTest.t.sol",
+  "test/OfferExpiryTest.t.sol",
+  "test/OfferFacetTest.t.sol",
+  "test/OfferFillModeTest.t.sol",
+  "test/OfferModificationTest.t.sol",
+  "test/OracleAdminFacetTest.t.sol",
+  "test/OracleFacetTest.t.sol",
+  "test/OracleHistoricalPriceTest.t.sol",
+  "test/OracleLiquidityORTest.t.sol",
+  "test/OracleNumeraireGuardTest.t.sol",
+  "test/OraclePadFallbackTest.t.sol",
+  "test/PartialWithdrawalFacetTest.t.sol",
+  "test/PauseGatingTest.t.sol",
+  "test/PerAssetPauseTest.t.sol",
+  "test/PeriodicInterestCadenceTest.t.sol",
+  "test/PeriodicInterestSettleTest.t.sol",
+  "test/Permit2IntegrationTest.t.sol",
+  "test/PrecloseFacetTest.t.sol",
+  "test/PreviewAcceptTest.t.sol",
+  "test/ProfileFacetTest.t.sol",
+  "test/RefinanceFacetTest.t.sol",
+  "test/RepayFacetTest.t.sol",
+  "test/RiskFacetTest.t.sol",
+  "test/SanctionsOracle.t.sol",
+  "test/SecondaryQuorumTest.t.sol",
+  "test/SelfTradePreventionTest.t.sol",
+  "test/SequencerUptimeCheckTest.t.sol",
+  "test/StakingAndInteractionRewardsTest.t.sol",
+  "test/StakingRewardsCoverageTest.t.sol",
+  "test/StalenessHybridTest.t.sol",
+  "test/SwapAdapterTest.t.sol",
+  "test/TreasuryConvertAndPayroll.t.sol",
+  "test/TreasuryFacetTest.t.sol",
+  "test/TreasuryMintVPFITest.t.sol",
+  "test/VaipakamNFTFacetTest.t.sol",
+  "test/VaipakamRewardFlowTest.t.sol",
+  "test/VaipakamTimelockTest.t.sol",
+  "test/VaultFactoryFacetTest.t.sol",
+  "test/VaultRecoveryTest.t.sol",
+  "test/VolatilityLTVTest.t.sol",
+  "test/VpfiBuyFlowTest.t.sol",
+  "test/VPFIDiscountBoundariesTest.t.sol",
+  "test/VPFIDiscountFacetTest.t.sol",
+  "test/VPFIMirrorTokenTest.t.sol",
+  "test/VpfiPoolRateGovernorTest.t.sol",
+  "test/VPFITokenFacetTest.t.sol",
+  "test/WorkflowComplianceAndRejection.t.sol",
+  "test/invariants/**",
+  "test/fork/**",
+  "test/token/**",
+]
+fs_permissions = [
+  { access = "read-write", path = "./deployments/" },
+  { access = "read", path = "./script/" },
+  { access = "read", path = "./out/" },
+]
+
 [fuzz]
 runs = 1000
 
