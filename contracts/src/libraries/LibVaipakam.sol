@@ -2892,6 +2892,52 @@ library LibVaipakam {
         // callback method's gate refuses every call until governance
         // wires the executor.
         address collateralListingExecutor;
+        // ── T-086 step 6 — borrower-facing prepay-listing state ─────────
+        // `prepayListingOrderHash[loanId]` is the Seaport orderHash the
+        // borrower currently has live on the conduit for `loanId`, or
+        // `bytes32(0)` if no listing is active. Three reasons for the
+        // mapping (vs. inferring "is there a listing?" from the lock
+        // alone):
+        //   1. {NFTPrepayListingFacet.cancelPrepayListing} and the
+        //      permissionless {cancelExpiredPrepayListing} need to
+        //      call `executor.clearOrder(orderHash)` without forcing
+        //      the caller (especially the permissionless cancel path)
+        //      to know the off-chain orderHash. Indexers / frontends
+        //      can cancel by loanId alone.
+        //   2. {updatePrepayListing} must clear the OLD orderHash on
+        //      the executor before recording the new one — a previous
+        //      orderHash left in `orderContext` would still be
+        //      fillable until grace expiry. We need the old hash to
+        //      pass to `clearOrder`.
+        //   3. The `LibERC721._lock(LockReason.PrepayCollateralListing)`
+        //      lock is the consent + safety primitive; this mapping
+        //      is the orderHash bookkeeping. Keeping them in separate
+        //      storage slots avoids overloading the lock semantics.
+        // Default `bytes32(0)`; the listing facet treats zero as "no
+        // active listing" and the lock state is the canonical
+        // post/cancel signal.
+        mapping(uint256 => bytes32) prepayListingOrderHash;
+        // `cfgPrepayListingBufferBps` — the safety margin the listing
+        // facet adds on top of the live floor when validating
+        // `askPrice` at {NFTPrepayListingFacet.postPrepayListing} /
+        // `updatePrepayListing` time. The live floor at the moment of
+        // signing is a lower-bound; by the time a Seaport buyer fills
+        // the order, accrued interest has grown the floor slightly.
+        // Without a buffer, the executor's {validateOrder} zone
+        // callback would reject the fill (lender / treasury legs
+        // short-paid) and the borrower would have to re-list. The
+        // buffer is the fillability headroom — design doc §10.2
+        // settles on 200 bps (2%) as the default, which gives the
+        // listing several hours of fill window at realistic APRs.
+        // Governance-configurable via `ConfigFacet.setPrepayListingBufferBps`
+        // (ADMIN_ROLE, range-bounded to ≤ 1000 bps so a misset doesn't
+        // accidentally lock out every borrower from listing). Default
+        // `0` while unset — the facet treats unset as "buffer
+        // discipline not yet configured" and refuses listings until
+        // governance has explicitly set it (one-time post-deploy
+        // step). Stored as `uint256` for slot-packing simplicity even
+        // though only the low 16 bits are used.
+        uint256 cfgPrepayListingBufferBps;
     }
 
     /// @dev One entry of the treasury-conversion target allocation

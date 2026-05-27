@@ -69,6 +69,12 @@ const DELIBERATELY_NOT_HANDLED = {
     'discount-path companion event (flash-loan path, FlashLoanLiquidationPath.md) — surfaced via activity_events; the loan-status flip to Defaulted arrives via LoanDefaulted which IS handled.',
   PrepayCollateralSaleSettled:
     'TEMPORARY — emitted by PrepayListingFacet.executorFinalizePrepaySale on the T-086 Seaport prepay-sale terminal (Active→Settled). Handler wiring lives in design-doc §13 step 12 (`docs/DesignsAndPlans/NFTCollateralSaleAndAuction.md`): an `apps/indexer/src/chainIndexer.ts` branch will UPDATE loans SET status="Settled" and surface the event in activity_events. Remove this allowlist entry in that step-12 PR.',
+  PrepayListingPosted:
+    'TEMPORARY — emitted by NFTPrepayListingFacet.postPrepayListing on T-086 step 6. Bookkeeping event (borrower posted a Seaport listing for the collateral); does not flip loan.status. Handler wiring is design-doc §13 step 12 (a new `prepay_listings` table + INSERT branch in chainIndexer.ts). Remove this allowlist entry in that step-12 PR.',
+  PrepayListingUpdated:
+    'TEMPORARY — emitted by NFTPrepayListingFacet.updatePrepayListing on T-086 step 6. Bookkeeping event (orderHash rotation); does not flip loan.status. Same step-12 handler as PrepayListingPosted (UPDATE prepay_listings SET orderHash = …). Remove this allowlist entry in that step-12 PR.',
+  PrepayListingCanceled:
+    'TEMPORARY — emitted by NFTPrepayListingFacet.cancelPrepayListing + cancelExpiredPrepayListing on T-086 step 6. Bookkeeping event (listing cleared); does not flip loan.status. Same step-12 handler as PrepayListingPosted (DELETE FROM prepay_listings WHERE loan_id = …). Remove this allowlist entry in that step-12 PR.',
 };
 
 /** Recursively collect every `.sol` file under a directory. */

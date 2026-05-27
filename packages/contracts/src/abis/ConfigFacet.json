@@ -1350,6 +1350,19 @@
   },
   {
     "type": "function",
+    "name": "setPrepayListingBufferBps",
+    "inputs": [
+      {
+        "name": "newBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setRangeAmountEnabled",
     "inputs": [
       {
@@ -2092,6 +2105,19 @@
   },
   {
     "type": "event",
+    "name": "PrepayListingBufferBpsSet",
+    "inputs": [
+      {
+        "name": "newBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "RangeAmountEnabledSet",
     "inputs": [
       {
@@ -2646,6 +2672,22 @@
         "name": "bps",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidPrepayListingBufferBps",
+    "inputs": [
+      {
+        "name": "bps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "maxAllowed",
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ]
   },

@@ -34,6 +34,7 @@ import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
+import {NFTPrepayListingFacet} from "../src/facets/NFTPrepayListingFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {MetricsDashboardFacet} from "../src/facets/MetricsDashboardFacet.sol";
@@ -136,6 +137,7 @@ contract DeployDiamond is Script {
         PartialWithdrawalFacet partialWithdrawalFacet = new PartialWithdrawalFacet();
         PrecloseFacet precloseFacet = new PrecloseFacet();
         PrepayListingFacet prepayListingFacet = new PrepayListingFacet();
+        NFTPrepayListingFacet nftPrepayListingFacet = new NFTPrepayListingFacet();
         RefinanceFacet refinanceFacet = new RefinanceFacet();
         MetricsFacet metricsFacet = new MetricsFacet();
         MetricsDashboardFacet metricsDashboardFacet = new MetricsDashboardFacet();
@@ -171,7 +173,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 36 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](38);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](39);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -230,6 +232,13 @@ contract DeployDiamond is Script {
         cuts[37] = _buildCut(
             address(prepayListingFacet),
             _getPrepayListingSelectors()
+        );
+        // T-086 step 6 — `NFTPrepayListingFacet` (borrower-facing
+        // post / update / cancel / cancelExpired entry points for
+        // the Seaport prepay listing flow + two view helpers).
+        cuts[38] = _buildCut(
+            address(nftPrepayListingFacet),
+            _getNFTPrepayListingSelectors()
         );
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
@@ -584,6 +593,7 @@ contract DeployDiamond is Script {
         console.log("PartialWithdrawalFacet:", address(partialWithdrawalFacet));
         console.log("PrecloseFacet:        ", address(precloseFacet));
         console.log("PrepayListingFacet:   ", address(prepayListingFacet));
+        console.log("NFTPrepayListingFacet:", address(nftPrepayListingFacet));
         console.log("RefinanceFacet:       ", address(refinanceFacet));
         console.log("MetricsFacet:         ", address(metricsFacet));
         console.log("MetricsDashboardFacet:", address(metricsDashboardFacet));
@@ -1138,6 +1148,22 @@ contract DeployDiamond is Script {
         s[3] = PrepayListingFacet.getCollateralListingExecutor.selector;
     }
 
+    /// @dev T-086 step 6 — `NFTPrepayListingFacet` selectors. Hosts the
+    ///      borrower-facing post / update / cancel / cancelExpired
+    ///      entry points for the Seaport prepay listing flow, plus
+    ///      two view helpers (`getPrepayListingOrderHash` +
+    ///      `getPrepayListingBufferBps`) read by the frontend +
+    ///      indexer when rendering listing status.
+    function _getNFTPrepayListingSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](6);
+        s[0] = NFTPrepayListingFacet.postPrepayListing.selector;
+        s[1] = NFTPrepayListingFacet.updatePrepayListing.selector;
+        s[2] = NFTPrepayListingFacet.cancelPrepayListing.selector;
+        s[3] = NFTPrepayListingFacet.cancelExpiredPrepayListing.selector;
+        s[4] = NFTPrepayListingFacet.getPrepayListingOrderHash.selector;
+        s[5] = NFTPrepayListingFacet.getPrepayListingBufferBps.selector;
+    }
+
     function _getRefinanceSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](1);
         s[0] = RefinanceFacet.refinanceLoan.selector;
@@ -1247,7 +1273,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](81);
+        s = new bytes4[](82);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -1391,6 +1417,12 @@ contract DeployDiamond is Script {
         // Defaults `false` on a fresh deploy; flipped on by governance
         // via the setter below. See docs/RangeOffersDesign.md §3.
         s[80] = ConfigFacet.setRangeCollateralEnabled.selector;
+        // T-086 step 6 — prepay-listing safety buffer setter. Read
+        // by `NFTPrepayListingFacet.{postPrepayListing,
+        // updatePrepayListing}` when validating askPrice against
+        // the live floor. Default 0 (post-deploy unconfigured =
+        // listing-path blocked); ADMIN sets to e.g. 200 bps (2%).
+        s[81] = ConfigFacet.setPrepayListingBufferBps.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {

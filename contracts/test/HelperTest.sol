@@ -15,6 +15,7 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
+import {NFTPrepayListingFacet} from "../src/facets/NFTPrepayListingFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -906,7 +907,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](81);
+        selectors = new bytes4[](82);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -1034,6 +1035,8 @@ contract HelperTest {
         selectors[79] = ConfigFacet.getTreasuryConvertConfig.selector;
         // Issue #164 — borrower-side collateral range master flag.
         selectors[80] = ConfigFacet.setRangeCollateralEnabled.selector;
+        // T-086 step 6 — prepay-listing safety buffer setter.
+        selectors[81] = ConfigFacet.setPrepayListingBufferBps.selector;
         return selectors;
     }
 
@@ -1238,6 +1241,27 @@ contract HelperTest {
         selectors[1] = PrepayListingFacet.executorFinalizePrepaySale.selector;
         selectors[2] = PrepayListingFacet.setCollateralListingExecutor.selector;
         selectors[3] = PrepayListingFacet.getCollateralListingExecutor.selector;
+        return selectors;
+    }
+
+    /// @dev T-086 step 6 — `NFTPrepayListingFacet` selectors. Mirrors
+    ///      `DeployDiamond._getNFTPrepayListingSelectors`. Two view
+    ///      helpers (`getPrepayListingOrderHash`,
+    ///      `getPrepayListingBufferBps`) are routed through the
+    ///      facet so the frontend can render listing status without
+    ///      reading raw storage slots.
+    function getNFTPrepayListingFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](6);
+        selectors[0] = NFTPrepayListingFacet.postPrepayListing.selector;
+        selectors[1] = NFTPrepayListingFacet.updatePrepayListing.selector;
+        selectors[2] = NFTPrepayListingFacet.cancelPrepayListing.selector;
+        selectors[3] = NFTPrepayListingFacet.cancelExpiredPrepayListing.selector;
+        selectors[4] = NFTPrepayListingFacet.getPrepayListingOrderHash.selector;
+        selectors[5] = NFTPrepayListingFacet.getPrepayListingBufferBps.selector;
         return selectors;
     }
 }
