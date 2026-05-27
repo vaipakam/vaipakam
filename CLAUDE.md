@@ -657,13 +657,22 @@ Rules:
 
 ### Two `foundry.toml` profiles (Issue #185)
 
-Two profiles live in `contracts/foundry.toml`:
+Three profiles live in `contracts/foundry.toml`:
 
 - **`default`** — full coverage. Compiles `src/` + `test/` + `script/`,
-  viaIR + optimizer (runs=200). Used by CI gates (`contracts-fast`,
-  `contracts-full`, `Build docs`, `Slither`, `Gas snapshot diff`),
-  `predeploy-check.sh`, and every regression / mainnet-deploy path.
-  Cold compile: 14-19 min, ~8 GB RSS.
+  viaIR + optimizer (runs=200). Used by operator-local full-regression
+  runs (`forge test --no-match-path "test/invariants/*"`) at end-of-step
+  and every mainnet-deploy path. Cold compile: 14-19 min, ~17.7 GB RSS
+  on this codebase as of 2026-05-27 (over the 16 GB ubuntu-latest CI
+  ceiling — NOT used by any GitHub Actions job for that reason).
+- **`cifast`** — narrow scope for the per-PR-push CI lane. Compiles
+  `src/` + `script/` + `test/deploy/**` + `test/scenarios/**` +
+  `test/mocks/**` + `test/SetupTest.t.sol` + `test/HelperTest.sol` only.
+  Same `viaIR + optimizer=200` settings as default. Used by EVERY
+  forge-using job in `ci.yml` (contracts-fast, build-docs, slither).
+  Cold compile: ~5 min, ~3.2 GB peak RSS. Skips the 94 non-positive
+  top-level test files + invariants + fork tests — those run locally
+  at end-of-step under the default profile.
 - **`quick`** — fast inner-loop iteration. Compiles `src/` + `lib/`
   only (skips project `test/` and `script/`); viaIR + optimizer still
   ON (some src/ facets, e.g. `VaultFactoryFacet.sol:631`,
