@@ -813,10 +813,16 @@ jobs:
       needs.detect-changes.outputs.contracts == 'true'
       && needs.contracts-fast.result == 'success'
     runs-on: ubuntu-latest
-    # `forge doc --build` on warm-cache artifacts is the NatSpec →
-    # mdbook rendering step only — ~5-8 min on observed runs. 20 leaves
-    # generous headroom for runner variability.
-    timeout-minutes: 20
+    # `forge doc --build` only reads src/ NatSpec — it doesn't need test/
+    # at all. Pre-#290 it inherited the default profile, so a cache miss
+    # on any test file triggered a full-scope re-compile (which is what
+    # timed this job out under #295's narrowed `contracts-fast` cache).
+    # Running under FOUNDRY_PROFILE=cifast aligns this job's compile
+    # graph with contracts-fast's cache, so a warm restore is now a
+    # no-op compile + just the NatSpec → mdbook rendering step (~3-5 min).
+    timeout-minutes: 15
+    env:
+      FOUNDRY_PROFILE: cifast
     defaults:
       run:
         working-directory: contracts
