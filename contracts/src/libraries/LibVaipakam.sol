@@ -2917,6 +2917,20 @@ library LibVaipakam {
         // active listing" and the lock state is the canonical
         // post/cancel signal.
         mapping(uint256 => bytes32) prepayListingOrderHash;
+        // T-086 step 6 round 2 — recording-executor pin per listing
+        // (Codex P2 catch on PR #300 round 2). Records the
+        // executor address that was active in
+        // `s.collateralListingExecutor` at post/update time, so a
+        // cancel can call `clearOrder` on THAT executor's
+        // `orderContext` mapping rather than whichever executor is
+        // currently configured. Governance rotation A → B while a
+        // listing is live would otherwise leave A's orderContext
+        // populated forever — and if A is later restored, the
+        // supposedly-canceled order resurrects. Default `address(0)`
+        // ≡ "no active listing"; set atomically with
+        // `prepayListingOrderHash` in post / update; cleared
+        // atomically with it in cancel / finalize.
+        mapping(uint256 => address) prepayListingExecutor;
         // `cfgPrepayListingBufferBps` — the safety margin the listing
         // facet adds on top of the live floor when validating
         // `askPrice` at {NFTPrepayListingFacet.postPrepayListing} /

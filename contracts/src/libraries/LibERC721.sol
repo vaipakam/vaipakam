@@ -139,6 +139,11 @@ library LibERC721 {
     error ERC721InvalidOperator(address operator);
     error ERC721AlreadyInitialized();
     error ERC721Locked(uint256 tokenId, LockReason reason);
+    /// @notice Attempted to lock a token already locked under a
+    ///         different reason. T-086 step 6 round 2 cross-flow
+    ///         collision guard — concurrent strategic flows are
+    ///         not supported in v1.
+    error LockReasonConflict(uint256 tokenId, LockReason current, LockReason attempted);
     /// @notice Reverts when an owner with at least one locked token attempts
     ///         to grant a NEW `setApprovalForAll` approval. Revocations
     ///         (`approved == false`) are always allowed. Closes the
@@ -157,19 +162,27 @@ library LibERC721 {
 
     function _lock(uint256 tokenId, LockReason reason) internal {
         ERC721Storage storage es = _storage();
+        LockReason current = es.locks[tokenId];
+        // Cross-flow lock collision discipline (T-086 step 6 round 2 —
+        // Codex P1 catch). Without this, a second strategic flow
+        // (e.g. PrecloseOffset over an already-PrepayCollateralListing-
+        // locked token) silently overwrites the original reason; the
+        // first flow's later `_unlock` clears the second flow's lock
+        // even though its mapping state is still live, breaking that
+        // flow's invariants. Allow a same-reason re-lock as a no-op
+        // (a flow's idempotent restamp). Reject every other non-None
+        // transition.
+        if (current != LockReason.None && current != reason) {
+            revert LockReasonConflict(tokenId, current, reason);
+        }
         // Increment the owner's `lockedTokenCount` and bump their
         // operator-approval epoch ONLY on the None→non-None transition.
-        // A re-lock with a different reason (e.g., overlapping Preclose
-        // then EarlyWithdrawal flows on the same token — currently
-        // impossible by facet design but defended here for
-        // storage-correctness) does NOT double-count and does NOT bump
-        // the epoch again. The epoch bump is what closes the
-        // pre-approved-operator bypass: any approval granted before this
-        // lock no longer satisfies the grant-epoch check in
-        // {isApprovedForAll}, so a stale operator can't `transferFrom`
-        // on lock release even though the owner never explicitly
-        // revoked them.
-        if (es.locks[tokenId] == LockReason.None) {
+        // The epoch bump is what closes the pre-approved-operator
+        // bypass: any approval granted before this lock no longer
+        // satisfies the grant-epoch check in {isApprovedForAll}, so a
+        // stale operator can't `transferFrom` on lock release even
+        // though the owner never explicitly revoked them.
+        if (current == LockReason.None) {
             address owner = ownerOf(tokenId);
             es.lockedTokenCount[owner]++;
             es.operatorApprovalEpoch[owner]++;

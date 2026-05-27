@@ -349,6 +349,10 @@ contract NFTPrepayListingFacet is
         //    deciding factor.
         LibERC721._lock(loan.borrowerTokenId, LibERC721.LockReason.PrepayCollateralListing);
         s.prepayListingOrderHash[loanId] = orderHash;
+        // Pin the executor that's currently configured so cancel
+        // paths target the same executor's orderContext, surviving
+        // governance rotation. Round-2 Codex P2 fix.
+        s.prepayListingExecutor[loanId] = address(executor);
         executor.recordOrder(orderHash, loanId, conduit);
 
         emit PrepayListingPosted(loanId, msg.sender, orderHash, askPrice, conduit);
@@ -401,20 +405,27 @@ contract NFTPrepayListingFacet is
             revert PrepayListingNotFound(loanId);
         }
 
-        IListingExecutorRecorder executor = _requireExecutor(s);
+        IListingExecutorRecorder currentExecutor = _requireExecutor(s);
         _requireAskCoversFloor(loanId, newAskPrice, s.cfgPrepayListingBufferBps);
 
-        if (!executor.approvedConduits(conduit)) {
+        if (!currentExecutor.approvedConduits(conduit)) {
             revert ConduitNotApproved(conduit);
         }
 
-        // Clear the old order on the executor BEFORE recording the
-        // new one — a stale binding sitting around in
-        // `orderContext` would otherwise still be fillable.
-        executor.clearOrder(oldOrderHash);
+        // Clear the old order on the executor that ORIGINALLY
+        // recorded it — survives a governance rotation between
+        // post and update (Codex P2 round-2 fix). If the pinned
+        // executor is the same as the current one, this is a
+        // no-op duplicate clear; otherwise we're clearing the old
+        // executor's orderContext while recording on the new one.
+        address pinnedExecutor = s.prepayListingExecutor[loanId];
+        if (pinnedExecutor != address(0)) {
+            IListingExecutorRecorder(pinnedExecutor).clearOrder(oldOrderHash);
+        }
 
         s.prepayListingOrderHash[loanId] = newOrderHash;
-        executor.recordOrder(newOrderHash, loanId, conduit);
+        s.prepayListingExecutor[loanId] = address(currentExecutor);
+        currentExecutor.recordOrder(newOrderHash, loanId, conduit);
 
         emit PrepayListingUpdated(loanId, msg.sender, oldOrderHash, newOrderHash, newAskPrice, conduit);
     }
@@ -433,12 +444,25 @@ contract NFTPrepayListingFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
-        // Loan must be Active — cancelling a listing on a Settled
-        // / Defaulted loan is no-op territory but a clear error
-        // protects callers from silent half-success.
-        if (loan.status != LibVaipakam.LoanStatus.Active) {
-            revert PrepayLoanNotActive(loanId, loan.status);
-        }
+        // INTENTIONALLY no loan-status gate (Codex P2 round-2 fix).
+        // If a live prepay-listed loan gets repaid via
+        // `RepayFacet.repayLoan` (or precloseped via PrecloseFacet,
+        // refinanced via RefinanceFacet), those terminals currently
+        // don't clear the prepay-listing bookkeeping — so the
+        // borrower's only escape from a stale listing without this
+        // would be the post-grace permissionless path. Letting the
+        // current position-NFT holder always cancel keeps the
+        // cleanup immediate; the operation is no-fund-movement
+        // (lock release + bookkeeping clear), safe across every
+        // terminal state.
+        //
+        // Follow-up: the Repay / Preclose / Refinance terminals
+        // SHOULD eventually call into a shared `_clearPrepayListing`
+        // helper themselves so the bookkeeping clears atomically
+        // with the close. That cross-facet wiring is tracked
+        // alongside the design-doc §13 step-10 default-flow
+        // integration; until that lands, this borrower escape
+        // hatch is the safety net.
 
         address holder = VaipakamNFTFacet(address(this)).ownerOf(loan.borrowerTokenId);
         if (holder != msg.sender) {
@@ -601,11 +625,23 @@ contract NFTPrepayListingFacet is
         bytes32 orderHash,
         CancelReason reason
     ) private {
-        IListingExecutorRecorder executor = _requireExecutor(s);
+        // Resolve the executor to clear on: the address pinned at
+        // post/update time (Codex P2 round-2 fix). Survives a
+        // governance rotation while the listing was live — the
+        // current `s.collateralListingExecutor` might already
+        // point at a successor.
+        address pinnedExecutor = s.prepayListingExecutor[loanId];
+        // The post/update paths always set both `orderHash` AND
+        // `executor` atomically, so a non-zero orderHash invariably
+        // pairs with a non-zero executor address. We still guard
+        // defensively here in case a future migration introduces
+        // an unset-executor state mid-rollout.
+        if (pinnedExecutor == address(0)) revert ExecutorNotSet();
 
         LibERC721._unlock(loan.borrowerTokenId);
         delete s.prepayListingOrderHash[loanId];
-        executor.clearOrder(orderHash);
+        delete s.prepayListingExecutor[loanId];
+        IListingExecutorRecorder(pinnedExecutor).clearOrder(orderHash);
 
         emit PrepayListingCanceled(loanId, msg.sender, orderHash, reason);
     }

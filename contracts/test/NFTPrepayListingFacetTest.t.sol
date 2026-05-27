@@ -451,6 +451,87 @@ contract NFTPrepayListingFacetTest is SetupTest {
         NFTPrepayListingFacet(address(diamond)).cancelPrepayListing(LOAN_ID);
     }
 
+    function test_cancelPrepayListing_clearsOnOriginalExecutorAfterRotation() public {
+        // Codex P2 round-2: governance rotates the executor from
+        // A to B while a listing is live. Cancel must clear A's
+        // orderContext (the one that recorded the listing), NOT
+        // B's. Otherwise A would still hold a "live" binding and a
+        // rollback to A would resurrect the cancelled order.
+        _scaffoldActiveLoan({allowsPrepay: true});
+
+        // Post under executor A (= mockExecutor wired in setUp).
+        vm.prank(borrowerHolder);
+        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+        );
+        uint256 aRecordCount = mockExecutor.recordCallCount();
+
+        // Governance rotates to executor B.
+        MockListingExecutorRecorder mockExecutorB = new MockListingExecutorRecorder();
+        mockExecutorB.setApprovedConduit(conduit, true);
+        vm.prank(owner);
+        PrepayListingFacet(address(diamond))
+            .setCollateralListingExecutor(address(mockExecutorB));
+
+        // Borrower cancels — must clear on A, NOT B.
+        vm.prank(borrowerHolder);
+        NFTPrepayListingFacet(address(diamond)).cancelPrepayListing(LOAN_ID);
+
+        assertEq(
+            mockExecutor.clearCallCount(),
+            1,
+            "A's clearOrder called (pinned executor at post time)"
+        );
+        assertEq(
+            mockExecutor.lastClearedOrderHash(),
+            ORDER_HASH_A,
+            "A cleared the right hash"
+        );
+        assertEq(
+            mockExecutorB.clearCallCount(),
+            0,
+            "B's clearOrder NOT called - B never recorded this listing"
+        );
+        // Sanity: A's record-call count unchanged by the cancel.
+        assertEq(mockExecutor.recordCallCount(), aRecordCount, "A.recordOrder not re-invoked");
+    }
+
+    function test_cancelPrepayListing_worksAfterRepaid() public {
+        // Codex P2 round-2: if loan is repaid via RepayFacet (which
+        // doesn't currently clear listing bookkeeping), the
+        // borrower must still be able to clean up the stale
+        // listing themselves. The pre-grace borrower cancel must
+        // NOT be `Active`-gated.
+        _scaffoldActiveLoan({allowsPrepay: true});
+        LibVaipakam.Loan memory snapshot = _baseLoan();
+        snapshot.allowsPrepayListing = true;
+
+        vm.prank(borrowerHolder);
+        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+        );
+
+        // Simulate `repayLoan` finishing: flip status to Repaid
+        // while keeping startTime + everything else intact.
+        snapshot.status = LibVaipakam.LoanStatus.Repaid;
+        TestMutatorFacet(address(diamond)).setLoan(LOAN_ID, snapshot);
+
+        // Borrower can still cancel.
+        vm.prank(borrowerHolder);
+        NFTPrepayListingFacet(address(diamond)).cancelPrepayListing(LOAN_ID);
+
+        assertEq(
+            NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
+            bytes32(0),
+            "post-repay cancel clears bookkeeping"
+        );
+        assertEq(
+            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
+            uint8(LibERC721.LockReason.None),
+            "post-repay cancel releases the lock"
+        );
+    }
+
     function test_cancelPrepayListing_happyPath() public {
         _scaffoldActiveLoan({allowsPrepay: true});
 
