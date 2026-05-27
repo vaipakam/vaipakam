@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {SetupTest} from "./SetupTest.t.sol";
+import {SetupLoans} from "./setup/SetupLoans.t.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
@@ -54,7 +54,7 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
  *              `meetsKYCRequirement` returns true unconditionally and
  *              the assertions wouldn't bind.
  */
-contract KYCTierEnforcementIntegration is SetupTest {
+contract KYCTierEnforcementIntegration is SetupLoans {
     uint256 constant DURATION = 30;
     uint256 constant RATE_BPS = 500;
 
@@ -71,8 +71,8 @@ contract KYCTierEnforcementIntegration is SetupTest {
     uint256 constant PRINCIPAL_ABOVE_TIER1 = 15_000 ether;
     uint256 constant COLLATERAL_ERC20 = 0.05 ether; // ~$100 @ $2k WETH
 
-    function setUp() public {
-        setupHelper();
+    function setUp() public override {
+        super.setUp(); // SetupLoans → SetupOffers → SetupCore → TestBase
 
         // (1) Re-price the collateral leg to $2,000 — overrides the
         //     SetupTest default of $1 so the principal dominates the

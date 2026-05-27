@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {SetupTest} from "./SetupTest.t.sol";
+import {SetupCore} from "./setup/SetupCore.t.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -23,15 +23,12 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 ///           - eth/usd feed write             → WETH pricing + depth→USD
 ///             conversion in {checkLiquidity}
 ///
-///         SetupTest cuts {OracleFacet} but not {OracleAdminFacet}. This test
-///         extends the shared setup by diamond-cutting the admin facet on top
-///         so the setters are reachable through the diamond proxy.
-contract OracleAdminFacetTest is SetupTest {
-    function setUp() public {
-        // #229 — OracleAdminFacet now cut by `SetupTest.setupHelper()`
-        // (all 34 selectors, mirroring DeployDiamond). The prior local
-        // 11-selector subset cut would double-cut and revert. Dropped.
-        setupHelper();
+///         Stage 2 audit-migration (2026-05-27): `is SetupTest` → `is SetupCore`.
+///         SetupCore deploys 13 universally-needed facets including OracleFacet
+///         + OracleAdminFacet as a natural pair; no extra cuts needed in this test.
+contract OracleAdminFacetTest is SetupCore {
+    function setUp() public override {
+        super.setUp(); // SetupCore → TestBase (Diamond + 13 core facets + mocks)
     }
 
     // ─── Non-owner guard coverage ─────────────────────────────────────────────

@@ -3,45 +3,18 @@ pragma solidity 0.8.29;
 
 import {SetupCore} from "./SetupCore.t.sol";
 
-import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
-import {ConfigFacet} from "../../src/facets/ConfigFacet.sol";
-import {LegalFacet} from "../../src/facets/LegalFacet.sol";
-
-/// @title SetupConfig — SetupCore + ConfigFacet + LegalFacet.
-/// @notice Narrow base for config / legal-surface tests. Carries the 8
-///         core facets + the 2 config-area facets. No mock tokens, no
-///         risk params, no oracle mocks — those belong to flow bases
-///         (SetupOffers / SetupLoans / ...).
+/// @title SetupConfig — alias for SetupCore (Stage 2 reshape).
+/// @notice Stage 2 of the audit moved `ConfigFacet` + `LegalFacet` into
+///         `SetupCore` (broadly needed across families). SetupConfig
+///         remains as a thin alias so the migration mapping in the design
+///         doc stays readable ("Config / Legal tests → SetupConfig") and
+///         so future config-specific helpers have a logical home if
+///         they're ever needed. No additional facets, no additional setUp.
 ///
-/// @dev Compile cost: 10 facet TYPE imports (8 from Core + 2 here) vs the
-///      old `SetupTest`'s 39. The inheriting test contract's IR only
-///      flattens these 10 facet types.
-///
-///      Target tests for migration: `ConfigFacetTest`, `LegalFacetTest`,
-///      `LibFeesConfigTest`, any test asserting only `set*Config(...)`
-///      surface behaviour.
+/// @dev If you find yourself adding facets here, ask first whether they
+///      belong in SetupCore (broadly needed) or in a more specific base.
 abstract contract SetupConfig is SetupCore {
-    ConfigFacet internal configFacet;
-    LegalFacet internal legalFacet;
-
     function setUp() public virtual override {
-        super.setUp(); // SetupCore → TestBase
-
-        configFacet = new ConfigFacet();
-        legalFacet = new LegalFacet();
-
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](2);
-        cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(configFacet),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getConfigFacetSelectors()
-        });
-        cuts[1] = IDiamondCut.FacetCut({
-            facetAddress: address(legalFacet),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getLegalFacetSelectors()
-        });
-
-        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        super.setUp();
     }
 }

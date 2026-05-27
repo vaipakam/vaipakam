@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {SetupTest} from "./SetupTest.t.sol";
+import {SetupMetrics} from "./setup/SetupMetrics.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {MetricsDashboardFacet} from "../src/facets/MetricsDashboardFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
@@ -16,13 +16,13 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
  *         straight into storage, so the bundled views are exercised
  *         without going through the full lifecycle.
  */
-contract MetricsDashboardFacetTest is SetupTest {
+contract MetricsDashboardFacetTest is SetupMetrics {
     MetricsDashboardFacet internal dash;
     address internal lender2;
     address internal borrower2;
 
-    function setUp() public {
-        setupHelper();
+    function setUp() public override {
+        super.setUp(); // SetupMetrics → SetupCore → TestBase
         dash = MetricsDashboardFacet(address(diamond));
         lender2 = makeAddr("lender2");
         borrower2 = makeAddr("borrower2");

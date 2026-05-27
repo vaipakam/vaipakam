@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {SetupTest} from "./SetupTest.t.sol";
+import {SetupMetrics} from "./setup/SetupMetrics.t.sol";
+import {SetupLoans} from "./setup/SetupLoans.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
@@ -15,12 +16,12 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
  *         lifecycle. Uniqueness, pagination, status filters, and price-failure
  *         fail-closed behaviour are the primary concerns.
  */
-contract MetricsFacetTest is SetupTest {
+contract MetricsFacetTest is SetupLoans, SetupMetrics {
     address lender2;
     address borrower2;
 
-    function setUp() public {
-        setupHelper();
+    function setUp() public override(SetupLoans, SetupMetrics) {
+        super.setUp(); // C3: SetupLoans → SetupOffers → SetupMetrics → SetupCore → TestBase
         lender2 = makeAddr("lender2");
         borrower2 = makeAddr("borrower2");
     }

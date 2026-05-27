@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {SetupTest} from "./SetupTest.t.sol";
+import {SetupTreasury} from "./setup/SetupTreasury.t.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {PayrollFacet} from "../src/facets/PayrollFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
@@ -20,7 +20,7 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
  *         (convert accumulated fees to the ETH/wBTC/VPFI target allocation) and
  *         the `PayrollFacet` founder-salary streams.
  */
-contract TreasuryConvertAndPayrollTest is SetupTest {
+contract TreasuryConvertAndPayrollTest is SetupTreasury {
     address internal founder;
 
     // Convert-test target tokens.
@@ -30,8 +30,8 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
     MockSwapAdapter internal adapter;
     uint256 internal adapterIdx; // slot of `adapter` in s.swapAdapters
 
-    function setUp() public {
-        setupHelper();
+    function setUp() public override {
+        super.setUp(); // SetupTreasury → SetupCore → TestBase
         founder = makeAddr("founder");
         // Foundry starts `block.timestamp` at 1. Advance well past the
         // 30-day convert interval so the time-leg of the eligibility

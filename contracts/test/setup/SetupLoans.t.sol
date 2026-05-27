@@ -5,7 +5,8 @@ import {SetupOffers} from "./SetupOffers.t.sol";
 
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
-import {VaipakamNFTFacet} from "../../src/facets/VaipakamNFTFacet.sol";
+// VaipakamNFTFacet moved to SetupCore (Stage 2 reshape — broadly needed
+// across families). Available via inherited `nftFacet` field.
 import {RiskFacet} from "../../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../../src/facets/RiskMatchLiquidationFacet.sol";
 import {RepayFacet} from "../../src/facets/RepayFacet.sol";
@@ -22,7 +23,7 @@ import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
 /// @dev Compile cost: 21 facet TYPE imports vs the old `SetupTest`'s 39.
 abstract contract SetupLoans is SetupOffers {
     LoanFacet internal loanFacet;
-    VaipakamNFTFacet internal nftFacet;
+    // nftFacet inherited from SetupCore (Stage 2 reshape).
     RiskFacet internal riskFacet;
     RiskMatchLiquidationFacet internal riskMatchLiquidationFacet;
     RepayFacet internal repayFacet;
@@ -34,7 +35,6 @@ abstract contract SetupLoans is SetupOffers {
         super.setUp(); // SetupOffers → SetupCore → TestBase
 
         loanFacet = new LoanFacet();
-        nftFacet = new VaipakamNFTFacet();
         riskFacet = new RiskFacet();
         riskMatchLiquidationFacet = new RiskMatchLiquidationFacet();
         repayFacet = new RepayFacet();
@@ -42,48 +42,69 @@ abstract contract SetupLoans is SetupOffers {
         defaultFacet = new DefaultedFacet();
         claimFacet = new ClaimFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](8);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](7);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(loanFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getLoanFacetSelectors()
         });
         cuts[1] = IDiamondCut.FacetCut({
-            facetAddress: address(nftFacet),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getVaipakamNFTFacetSelectors()
-        });
-        cuts[2] = IDiamondCut.FacetCut({
             facetAddress: address(riskFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRiskFacetSelectors()
         });
-        cuts[3] = IDiamondCut.FacetCut({
+        cuts[2] = IDiamondCut.FacetCut({
             facetAddress: address(riskMatchLiquidationFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRiskMatchLiquidationFacetSelectors()
         });
-        cuts[4] = IDiamondCut.FacetCut({
+        cuts[3] = IDiamondCut.FacetCut({
             facetAddress: address(repayFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRepayFacetSelectors()
         });
-        cuts[5] = IDiamondCut.FacetCut({
+        cuts[4] = IDiamondCut.FacetCut({
             facetAddress: address(addCollateralFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getAddCollateralFacetSelectors()
         });
-        cuts[6] = IDiamondCut.FacetCut({
+        cuts[5] = IDiamondCut.FacetCut({
             facetAddress: address(defaultFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getDefaultedFacetSelectors()
         });
-        cuts[7] = IDiamondCut.FacetCut({
+        cuts[6] = IDiamondCut.FacetCut({
             facetAddress: address(claimFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getClaimFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+
+        // Loan-family runtime defaults — match the values the old
+        // `SetupTest.setupHelper()` seeded so migrated tests find the
+        // same risk-params state. 8000 BPS init-LTV, 300 BPS liq bonus,
+        // 1000 BPS volatility threshold on both ERC20 legs.
+        vm.prank(owner);
+        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 300, 1000);
+        vm.prank(owner);
+        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 300, 1000);
+
+        // The old `SetupTest.setupHelper()` blanket-mocked RiskFacet's
+        // HF + LTV calculations so most loan tests don't have to wire
+        // realistic oracle scenarios to satisfy the loan-init gates.
+        // Tests that exercise the real math (HealthFactorTest,
+        // RiskFacetTest's HF-specific cases) call `vm.clearMockedCalls`
+        // or selector-specific mocks in their own setUp.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
+            abi.encode(uint256(2e18)) // HF 2.0, well above 1.5 floor
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateLTV.selector),
+            abi.encode(uint256(6666)) // 66.66 %, well below 8000 BPS init cap
+        );
     }
 }

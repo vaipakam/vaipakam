@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {SetupTest} from "./SetupTest.t.sol";
+import {SetupConfig} from "./setup/SetupConfig.t.sol";
 import {LegalFacet} from "../src/facets/LegalFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 
@@ -19,11 +19,13 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
  *           - Version bumps invalidate all prior acceptances.
  *           - Admin gating on setCurrentTos (non-admin reverts).
  */
-contract LegalFacetTest is SetupTest {
-    // #229: LegalFacet is cut + constructed in `SetupTest.setupHelper()`
-    // now. The prior local declaration + local cut was a workaround
-    // for the pre-#229 gap and is dropped. References to `legalFacet`
-    // below resolve to the inherited SetupTest field.
+contract LegalFacetTest is SetupConfig {
+    // Stage 1 audit-migration (2026-05-27): `is SetupTest` → `is SetupConfig`.
+    // SetupConfig deploys Core (8 facets — DiamondCut/Loupe/Ownership/
+    // AccessControl/Admin/Profile/Oracle/VaultFactory) + ConfigFacet +
+    // LegalFacet. That's the entire surface this test touches; the previous
+    // SetupTest carried 29 unused facets. References to `diamond` and
+    // `legalFacet` resolve to the inherited slim-base fields.
 
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
@@ -44,11 +46,8 @@ contract LegalFacetTest is SetupTest {
         bytes32 newHash
     );
 
-    function setUp() public {
-        // #229 — LegalFacet is now cut by `SetupTest.setupHelper()`.
-        // The prior local `new LegalFacet()` + local diamondCut here
-        // would double-cut the same selectors and revert. Dropped.
-        setupHelper();
+    function setUp() public override {
+        super.setUp(); // SetupConfig → SetupCore → TestBase
     }
 
     // ─── Gate-disabled state ────────────────────────────────────────────────

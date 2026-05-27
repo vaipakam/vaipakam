@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {SetupTest} from "./SetupTest.t.sol";
+import {SetupMetrics} from "./setup/SetupMetrics.t.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 
 interface IRevenueByAsset {
@@ -21,11 +21,11 @@ interface IRevenueByAsset {
  *         pokers (the bucket is exposed at
  *         `s.treasuryAccrualByDay[asset][dayIndex]`).
  */
-contract MetricsRevenueByAssetTest is SetupTest {
+contract MetricsRevenueByAssetTest is SetupMetrics {
     IRevenueByAsset internal rev;
 
-    function setUp() public {
-        setupHelper();
+    function setUp() public override {
+        super.setUp(); // SetupMetrics → SetupCore → TestBase
         rev = IRevenueByAsset(address(diamond));
     }
 
