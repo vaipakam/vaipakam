@@ -136,6 +136,14 @@ contract ConfigFacet is DiamondAccessControl {
     // of hostile-governance scenario the timelock + cap combo is for.
     uint16 private constant MAX_FALLBACK_BPS = 1_000;       // 10% per party
     uint16 private constant MAX_FALLBACK_COMBINED_BPS = 1_500; // 15% combined
+    // T-086 step 6 — `cfgPrepayListingBufferBps` ceiling. Default at
+    // first config write is expected to be 200 bps (2%, per design
+    // doc §10.2). A 10% ceiling keeps governance flex generous (5×
+    // the design default) without permitting a setting so wide that
+    // borrowers can't satisfy the floor — at 10% the listing's
+    // minimum ask is already 1.1× the live floor, which on a typical
+    // NFT collateral economy is meaningful headroom but not punitive.
+    uint16 private constant MAX_PREPAY_LISTING_BUFFER_BPS = 1_000; // 10%
     // Cap on the PAA list length — every entry adds a `getPool` probe ×
     // the ≤0.3% fee tiers to the depth-tier route search's hot path, so
     // keep it small (2–4 in practice). 8 is generous headroom.
@@ -191,6 +199,83 @@ contract ConfigFacet is DiamondAccessControl {
         if (newBps > MAX_FEE_BPS) revert InvalidFeeBps(newBps, MAX_FEE_BPS);
         LibVaipakam.storageSlot().protocolCfg.lifMatcherFeeBps = newBps;
         emit LifMatcherFeeBpsSet(newBps);
+    }
+
+    // ── T-086 step 6 — prepay-listing buffer knob ───────────────────────
+
+    /// @notice Emitted on every update of `cfgPrepayListingBufferBps`.
+    /// @custom:event-category informational/config
+    event PrepayListingBufferBpsSet(uint16 newBps);
+
+    /// @notice Misset prepay-listing buffer (above the
+    ///         {MAX_PREPAY_LISTING_BUFFER_BPS} ceiling).
+    error InvalidPrepayListingBufferBps(uint16 bps, uint16 maxAllowed);
+
+    /**
+     * @notice Set the prepay-listing safety buffer on top of the live
+     *         floor, in basis points. Read by
+     *         {NFTPrepayListingFacet.postPrepayListing} /
+     *         `updatePrepayListing` when validating `askPrice` —
+     *         the minimum allowed ask is `liveFloor × (10000 + bps) /
+     *         10000`, which gives the listing several hours of
+     *         fill-window headroom against accruing interest.
+     * @dev    ADMIN_ROLE-gated (governance timelock + multisig
+     *         post-handover, per the CLAUDE.md Cross-Chain Security
+     *         Policy pattern). Range-bounded to
+     *         {MAX_PREPAY_LISTING_BUFFER_BPS} (10%); a higher
+     *         setting would effectively lock most borrowers out of
+     *         the prepay path. Setting to `0` is allowed but
+     *         operationally inadvisable — a zero-buffer listing
+     *         becomes unfillable within seconds of post as interest
+     *         accrues; the facet itself still permits the value so
+     *         governance can express "buffer discipline off" if it
+     *         ever needs to. Default storage value `0` means the
+     *         facet refuses listings until governance has explicitly
+     *         configured it (one-time post-deploy step).
+     * @param newBps New buffer BPS, 0–MAX_PREPAY_LISTING_BUFFER_BPS.
+     *               Stored on `Storage.cfgPrepayListingBufferBps`.
+     */
+    function setPrepayListingBufferBps(uint16 newBps)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (newBps > MAX_PREPAY_LISTING_BUFFER_BPS) {
+            revert InvalidPrepayListingBufferBps(newBps, MAX_PREPAY_LISTING_BUFFER_BPS);
+        }
+        LibVaipakam.storageSlot().cfgPrepayListingBufferBps = newBps;
+        emit PrepayListingBufferBpsSet(newBps);
+    }
+
+    /// @notice Emitted on every flip of the prepay-listing master
+    ///         kill-switch.
+    /// @custom:event-category informational/config
+    event PrepayListingEnabledSet(bool enabled);
+
+    /**
+     * @notice Flip the prepay-listing master kill-switch. While
+     *         `false` (the post-deploy default), the borrower-side
+     *         `postPrepayListing` / `updatePrepayListing` entry
+     *         points refuse to record new listings; cancel paths
+     *         (borrower-side + permissionless grace-expired) stay
+     *         open so any listings posted under a previous `true`
+     *         can always be cleaned up.
+     * @dev    ADMIN_ROLE-gated. Governance flips on per chain only
+     *         after the vault's narrow `setCollateralOperatorApproval`
+     *         entry (design-doc step 7), the vault's ERC-1271
+     *         delegate, and the default-flow lock-bypass (step 10)
+     *         are wired end-to-end. Without those a posted listing
+     *         can't fill — Seaport rejects the conduit transfer —
+     *         and the borrower's position NFT sits locked until
+     *         they manually cancel. Shipping step 6 behind this
+     *         gate keeps that UX trap dormant until the rest of
+     *         the flow lands.
+     */
+    function setPrepayListingEnabled(bool enabled)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.storageSlot().cfgPrepayListingEnabled = enabled;
+        emit PrepayListingEnabledSet(enabled);
     }
 
     // ── Treasury conversion (T-600) knobs ───────────────────────────────

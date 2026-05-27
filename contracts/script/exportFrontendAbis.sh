@@ -97,6 +97,7 @@ FACETS=(
   "PartialWithdrawalFacet"
   "PrecloseFacet"
   "PrepayListingFacet"
+  "NFTPrepayListingFacet"
   "ProfileFacet"
   "RefinanceFacet"
   "RepayFacet"

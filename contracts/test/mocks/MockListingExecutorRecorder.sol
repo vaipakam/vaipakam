@@ -1,0 +1,67 @@
+// test/mocks/MockListingExecutorRecorder.sol
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.29;
+
+import {IListingExecutorRecorder} from "../../src/seaport/IListingExecutorRecorder.sol";
+
+/**
+ * @title MockListingExecutorRecorder
+ * @notice Minimal stand-in for `CollateralListingExecutor` in
+ *         `NFTPrepayListingFacet` unit tests. Implements
+ *         {IListingExecutorRecorder} surface only.
+ *
+ *         Records every call so the test can assert the facet
+ *         issued the expected `recordOrder` / `clearOrder` calls
+ *         with the right arguments — without standing up a full
+ *         Seaport + UUPS-proxy + governance executor.
+ */
+contract MockListingExecutorRecorder is IListingExecutorRecorder {
+    struct RecordedCall {
+        bytes32 orderHash;
+        uint256 loanId;
+        address conduit;
+    }
+
+    RecordedCall[] public recordOrderCalls;
+    bytes32[] public clearOrderCalls;
+
+    mapping(address => bool) private _approvedConduits;
+
+    // ─── Test-side configuration (NOT in the real executor) ─────────────
+
+    function setApprovedConduit(address conduit, bool approved) external {
+        _approvedConduits[conduit] = approved;
+    }
+
+    // ─── IListingExecutorRecorder ───────────────────────────────────────
+
+    function recordOrder(bytes32 orderHash, uint256 loanId, address conduit) external override {
+        recordOrderCalls.push(RecordedCall({orderHash: orderHash, loanId: loanId, conduit: conduit}));
+    }
+
+    function clearOrder(bytes32 orderHash) external override {
+        clearOrderCalls.push(orderHash);
+    }
+
+    function approvedConduits(address conduit) external view override returns (bool) {
+        return _approvedConduits[conduit];
+    }
+
+    // ─── Test inspection helpers ───────────────────────────────────────
+
+    function recordCallCount() external view returns (uint256) {
+        return recordOrderCalls.length;
+    }
+
+    function clearCallCount() external view returns (uint256) {
+        return clearOrderCalls.length;
+    }
+
+    function lastRecordedOrderHash() external view returns (bytes32) {
+        return recordOrderCalls[recordOrderCalls.length - 1].orderHash;
+    }
+
+    function lastClearedOrderHash() external view returns (bytes32) {
+        return clearOrderCalls[clearOrderCalls.length - 1];
+    }
+}

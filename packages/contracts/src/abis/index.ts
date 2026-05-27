@@ -37,6 +37,12 @@ import VpfiBuyReceiverABI from './VpfiBuyReceiver.json';
 import RewardReporterFacetABI from './RewardReporterFacet.json';
 import ConfigFacetABI from './ConfigFacet.json';
 import LegalFacetABI from './LegalFacet.json';
+// T-086 step 5 — executor↔diamond trust boundary for Seaport
+// prepay collateral sales (see contracts/src/seaport/CollateralListingExecutor.sol).
+import PrepayListingFacetABI from './PrepayListingFacet.json';
+// T-086 step 6 — borrower-facing post / update / cancel / cancelExpired
+// entry points for the Seaport prepay listing flow.
+import NFTPrepayListingFacetABI from './NFTPrepayListingFacet.json';
 // FlashLoanLiquidationPath.md Phase 3 — standalone reference
 // receiver. Named export only; deliberately NOT spread into
 // DIAMOND_ABI below (it's not part of the diamond's selector set).
@@ -79,6 +85,8 @@ export {
   RewardReporterFacetABI,
   ConfigFacetABI,
   LegalFacetABI,
+  PrepayListingFacetABI,
+  NFTPrepayListingFacetABI,
   FlashLoanLiquidatorABI,
 };
 
@@ -126,6 +134,8 @@ export const DIAMOND_ABI = [
   ...RewardReporterFacetABI,
   ...ConfigFacetABI,
   ...LegalFacetABI,
+  ...PrepayListingFacetABI,
+  ...NFTPrepayListingFacetABI,
 ];
 
 /** Viem-typed alias for hooks using `encodeFunctionData` /

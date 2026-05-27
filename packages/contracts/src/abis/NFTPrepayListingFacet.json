@@ -1,87 +1,85 @@
 [
   {
     "type": "function",
-    "name": "completeOffset",
-    "inputs": [
-      {
-        "name": "originalLoanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "completeOffsetInternal",
-    "inputs": [
-      {
-        "name": "originalLoanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "offsetWithNewOffer",
+    "name": "cancelExpiredPrepayListing",
     "inputs": [
       {
         "name": "loanId",
         "type": "uint256",
         "internalType": "uint256"
-      },
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "cancelPrepayListing",
+    "inputs": [
       {
-        "name": "interestRateBps",
+        "name": "loanId",
         "type": "uint256",
         "internalType": "uint256"
-      },
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getPrepayListingBufferBps",
+    "inputs": [],
+    "outputs": [
       {
-        "name": "durationDays",
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
-      },
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getPrepayListingOrderHash",
+    "inputs": [
       {
-        "name": "collateralAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "collateralAmount",
+        "name": "loanId",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "creatorRiskAndTermsConsent",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "prepayAsset",
-        "type": "address",
-        "internalType": "address"
       }
     ],
     "outputs": [
       {
-        "name": "newOfferId",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
-    "stateMutability": "nonpayable"
+    "stateMutability": "view"
   },
   {
     "type": "function",
-    "name": "precloseDirect",
+    "name": "postPrepayListing",
     "inputs": [
       {
         "name": "loanId",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "askPrice",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "orderHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "conduit",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -89,7 +87,7 @@
   },
   {
     "type": "function",
-    "name": "transferObligationViaOffer",
+    "name": "updatePrepayListing",
     "inputs": [
       {
         "name": "loanId",
@@ -97,9 +95,19 @@
         "internalType": "uint256"
       },
       {
-        "name": "borrowerOfferId",
+        "name": "newAskPrice",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "newOrderHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "conduit",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -107,7 +115,7 @@
   },
   {
     "type": "event",
-    "name": "LoanObligationTransferred",
+    "name": "PrepayListingCanceled",
     "inputs": [
       {
         "name": "loanId",
@@ -116,191 +124,126 @@
         "internalType": "uint256"
       },
       {
-        "name": "originalBorrower",
+        "name": "caller",
         "type": "address",
         "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "newBorrower",
-        "type": "address",
+        "name": "orderHash",
+        "type": "bytes32",
         "indexed": true,
-        "internalType": "address"
+        "internalType": "bytes32"
       },
       {
-        "name": "shortfallPaid",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newBorrowerTokenId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newCollateralAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newInterestRateBps",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newDurationDays",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newDueTimestamp",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      },
-      {
-        "name": "newHealthFactor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LoanPreclosedDirect",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "borrower",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "interestPaid",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LoanSettlementBreakdown",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "principal",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "interest",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "lateFee",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "treasuryShare",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "lenderShare",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "OffsetCompleted",
-    "inputs": [
-      {
-        "name": "originalLoanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newOfferId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "borrower",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "newStatus",
+        "name": "reason",
         "type": "uint8",
         "indexed": false,
-        "internalType": "uint8"
+        "internalType": "enum NFTPrepayListingFacet.CancelReason"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "OffsetOfferCreated",
+    "name": "PrepayListingPosted",
     "inputs": [
       {
-        "name": "originalLoanId",
+        "name": "loanId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
       },
       {
-        "name": "newOfferId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "borrower",
+        "name": "lister",
         "type": "address",
         "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "shortfallPaid",
+        "name": "orderHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "askPrice",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      },
+      {
+        "name": "conduit",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PrepayListingUpdated",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "lister",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "oldOrderHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "newOrderHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "newAskPrice",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "conduit",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AskBelowFloor",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "askPrice",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "minAsk",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -317,6 +260,22 @@
     "type": "error",
     "name": "BaseChainIdNotSet",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BorrowerNFTAlreadyLocked",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "currentReason",
+        "type": "uint8",
+        "internalType": "enum LibERC721.LockReason"
+      }
+    ]
   },
   {
     "type": "error",
@@ -377,6 +336,17 @@
   },
   {
     "type": "error",
+    "name": "ConduitNotApproved",
+    "inputs": [
+      {
+        "name": "conduit",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "CountriesNotCompatible",
     "inputs": []
   },
@@ -419,6 +389,32 @@
   },
   {
     "type": "error",
+    "name": "ExecutorNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "GraceNotExpired",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "nowTime",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "gracePeriodEnd",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "HealthFactorCalculationFailed",
     "inputs": []
   },
@@ -452,11 +448,6 @@
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "InsufficientCollateral",
-    "inputs": []
   },
   {
     "type": "error",
@@ -508,32 +499,6 @@
     "type": "error",
     "name": "InvalidLoanStatus",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidNewBorrower",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidOfferTerms",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidTransition",
-    "inputs": [
-      {
-        "name": "from",
-        "type": "uint8",
-        "internalType": "enum LibVaipakam.LoanStatus"
-      },
-      {
-        "name": "to",
-        "type": "uint8",
-        "internalType": "enum LibVaipakam.LoanStatus"
-      }
-    ]
   },
   {
     "type": "error",
@@ -703,6 +668,27 @@
   },
   {
     "type": "error",
+    "name": "NotPositionHolder",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "expected",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "NumeraireSwapDisabled",
     "inputs": []
   },
@@ -714,16 +700,6 @@
   {
     "type": "error",
     "name": "OfferCreationFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "OffsetNotLinked",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "OffsetOfferNotAccepted",
     "inputs": []
   },
   {
@@ -855,6 +831,91 @@
   },
   {
     "type": "error",
+    "name": "PrepayGraceWindowClosed",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "nowTime",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "gracePeriodEnd",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PrepayListingAlreadyExists",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "existingOrderHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PrepayListingBufferNotConfigured",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PrepayListingDisabled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PrepayListingNotAllowed",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PrepayListingNotFound",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PrepayLoanNotActive",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "actual",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.LoanStatus"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RecoveryAmountExceedsUnsolicited",
     "inputs": []
   },
@@ -876,11 +937,6 @@
   {
     "type": "error",
     "name": "RecoveryUserHasNoVault",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ReentrancyGuardReentrantCall",
     "inputs": []
   },
   {
@@ -921,44 +977,6 @@
   },
   {
     "type": "error",
-    "name": "SafeCastOverflowedUintDowncast",
-    "inputs": [
-      {
-        "name": "bits",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "value",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "SafeERC20FailedOperation",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "SanctionedAddress",
-    "inputs": [
-      {
-        "name": "who",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "SanctionsOracleUnavailable",
     "inputs": []
   },
@@ -986,6 +1004,17 @@
     "type": "error",
     "name": "UnauthorizedCrossFacetCall",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnsupportedCollateralForV1",
+    "inputs": [
+      {
+        "name": "collateralType",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.AssetType"
+      }
+    ]
   },
   {
     "type": "error",
@@ -1065,6 +1094,11 @@
   {
     "type": "error",
     "name": "VaultWithdrawFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroOrderHash",
     "inputs": []
   }
 ]

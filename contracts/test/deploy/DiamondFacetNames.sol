@@ -24,9 +24,10 @@ pragma solidity ^0.8.29;
  *         could drift).
  */
 abstract contract DiamondFacetNames {
-    /// @dev The 38 facets cut into the Diamond by `DeployDiamond.run()`.
-    ///      (37 → 38 in T-086 step 5 with `PrepayListingFacet`.)
-    function cutFacetNames() internal pure returns (string[38] memory) {
+    /// @dev The 39 facets cut into the Diamond by `DeployDiamond.run()`.
+    ///      (37 → 38 in T-086 step 5 with `PrepayListingFacet`;
+    ///      38 → 39 in T-086 step 6 with `NFTPrepayListingFacet`.)
+    function cutFacetNames() internal pure returns (string[39] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -58,6 +59,7 @@ abstract contract DiamondFacetNames {
             "PayrollFacet",
             "PrecloseFacet",
             "PrepayListingFacet",
+            "NFTPrepayListingFacet",
             "ProfileFacet",
             "RefinanceFacet",
             "RepayFacet",
