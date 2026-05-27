@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {SetupTest} from "./SetupTest.t.sol";
+import {Test} from "forge-std/Test.sol";
+import {SetupComposable} from "./composable/SetupComposable.sol";
+import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
@@ -36,7 +38,23 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 ///           - Full E2E: mirror closeDay → Base ingress → finalize →
 ///             broadcast → mirror ingress → `InteractionRewardsFacet`
 ///             claim works
-contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
+contract CrossChainRewardPlumbingTest is Test, IVaipakamErrors {
+
+    // ── Stage 6 composition migration (2026-05-27) ──────────────────────
+    SetupComposable internal helpers;
+    VaipakamDiamond internal diamond;
+    address internal owner;
+    address internal lender;
+    address internal borrower;
+    address internal mockERC20;
+    address internal mockCollateralERC20;
+    address internal mockIlliquidERC20;
+    address internal mockNft721;
+    address internal mockZeroExProxy;
+    uint256 internal constant BASIS_POINTS = 10_000;
+    uint256 internal constant KYC_THRESHOLD_USD = 2000 * 1e18;
+    uint256 internal constant RENTAL_BUFFER_BPS = 500;
+    uint256 internal constant MIN_HEALTH_FACTOR = 150 * 1e16;
     // #229 — RewardReporter/Aggregator + InteractionRewards facets are
     // now cut by `SetupTest.setupHelper()`. The prior local declarations
     // + local cut block dropped; existing `reporter.*` / `aggregator.*`
@@ -56,7 +74,17 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
     uint32 internal constant CHAIN_UNKNOWN = 137; // Polygon — not in expected list
 
     function setUp() public {
-        setupHelper();
+        helpers = new SetupComposable();
+        helpers.bootstrap(address(this));
+        diamond = helpers.diamond();
+        owner = helpers.owner();
+        lender = helpers.lender();
+        borrower = helpers.borrower();
+        mockERC20 = helpers.mockERC20();
+        mockCollateralERC20 = helpers.mockCollateralERC20();
+        mockIlliquidERC20 = helpers.mockIlliquidERC20();
+        mockNft721 = helpers.mockNft721();
+        mockZeroExProxy = helpers.mockZeroExProxy();
 
         // #229 — reward plumbing facets (RewardReporter, RewardAggregator,
         // InteractionRewards) now cut by setupHelper(). The prior local

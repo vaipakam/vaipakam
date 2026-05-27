@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {SetupTest} from "./SetupTest.t.sol";
+import {Test} from "forge-std/Test.sol";
+import {SetupComposable} from "./composable/SetupComposable.sol";
+import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {VPFIToken} from "../src/token/VPFIToken.sol";
@@ -15,7 +17,23 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 /// @notice Smoke tests for the Phase-1 VPFI reward surfaces — staking (5% APR
 ///         on vault-held VPFI) and interaction (daily USD-share emissions).
 ///         See docs/TokenomicsTechSpec.md §4 and §7.
-contract StakingAndInteractionRewardsTest is SetupTest, IVaipakamErrors {
+contract StakingAndInteractionRewardsTest is Test, IVaipakamErrors {
+
+    // ── Stage 6 composition migration (2026-05-27) ──────────────────────
+    SetupComposable internal helpers;
+    VaipakamDiamond internal diamond;
+    address internal owner;
+    address internal lender;
+    address internal borrower;
+    address internal mockERC20;
+    address internal mockCollateralERC20;
+    address internal mockIlliquidERC20;
+    address internal mockNft721;
+    address internal mockZeroExProxy;
+    uint256 internal constant BASIS_POINTS = 10_000;
+    uint256 internal constant KYC_THRESHOLD_USD = 2000 * 1e18;
+    uint256 internal constant RENTAL_BUFFER_BPS = 500;
+    uint256 internal constant MIN_HEALTH_FACTOR = 150 * 1e16;
     VPFIToken internal vpfiToken;
     // #229: VPFIDiscount + StakingRewards + InteractionRewards facets
     // now cut by `SetupTest.setupHelper()`; prior local declarations +
@@ -24,7 +42,17 @@ contract StakingAndInteractionRewardsTest is SetupTest, IVaipakamErrors {
     uint256 internal constant DIAMOND_FUND = 200_000_000 ether; // 200M VPFI seed
 
     function setUp() public {
-        setupHelper();
+        helpers = new SetupComposable();
+        helpers.bootstrap(address(this));
+        diamond = helpers.diamond();
+        owner = helpers.owner();
+        lender = helpers.lender();
+        borrower = helpers.borrower();
+        mockERC20 = helpers.mockERC20();
+        mockCollateralERC20 = helpers.mockCollateralERC20();
+        mockIlliquidERC20 = helpers.mockIlliquidERC20();
+        mockNft721 = helpers.mockNft721();
+        mockZeroExProxy = helpers.mockZeroExProxy();
 
         // ── Deploy VPFI + register on the diamond
         VPFIToken impl = new VPFIToken();

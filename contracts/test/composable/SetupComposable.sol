@@ -167,11 +167,11 @@ contract SetupComposable {
     address public owner;
     address public lender; // User1
     address public borrower; // User2
-    address mockERC20; // Liquid asset
-    address mockCollateralERC20; // Second liquid asset (collateral leg — distinct from lending leg)
-    address mockIlliquidERC20; // Illiquid asset
-    address mockNft721; // Rentable NFT
-    address mockZeroExProxy;
+    address public mockERC20; // Liquid asset
+    address public mockCollateralERC20; // Second liquid asset (collateral leg — distinct from lending leg)
+    address public mockIlliquidERC20; // Illiquid asset
+    address public mockNft721; // Rentable NFT
+    address public mockZeroExProxy;
     uint256 constant KYC_THRESHOLD_USD = 2000 * 1e18;
     uint256 constant BASIS_POINTS = 10000;
     uint256 constant RENTAL_BUFFER_BPS = 500;
@@ -183,7 +183,7 @@ contract SetupComposable {
     function mockOracleLiquidity(
         address asset,
         LibVaipakam.LiquidityStatus status
-    ) internal {
+    ) public {
         // Use vm.mockCall for OracleFacet.checkLiquidity
         vm.mockCall(
             address(diamond),
@@ -203,7 +203,7 @@ contract SetupComposable {
         address asset,
         uint256 price,
         uint8 decimals
-    ) internal {
+    ) public {
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset),
@@ -212,59 +212,59 @@ contract SetupComposable {
     }
 
     // Facet addresses
-    DiamondCutFacet cutFacet;
-    OfferCreateFacet offerCreateFacet;
-    OfferAcceptFacet offerAcceptFacet;
-    OfferCancelFacet offerCancelFacet;
+    DiamondCutFacet public cutFacet;
+    OfferCreateFacet public offerCreateFacet;
+    OfferAcceptFacet public offerAcceptFacet;
+    OfferCancelFacet public offerCancelFacet;
     // OfferMatchFacet — Range Orders Phase 1 matching surface (#46).
     // Production diamond cuts it (DiamondFacetNames §4 + DeployDiamond
     // step 5e); SetupTest's test diamond previously omitted it, which
     // was a latent drift between test and prod. Fix landed alongside
     // BorrowerPartialFillTest (#173) so matchOffers / previewMatch
     // become reachable from every test that inherits SetupTest.
-    OfferMatchFacet offerMatchFacet;
+    OfferMatchFacet public offerMatchFacet;
     // OfferMutateFacet — #193 in-place modification surface
     // (setOfferAmount / setOfferRate / setOfferCollateral +
     // combined modifyOffer). Carved into its own facet mirroring
     // the OfferCancel / OfferMatch pattern; cut into the production
     // diamond at cuts[36] in DeployDiamond.s.sol.
-    OfferMutateFacet offerMutateFacet;
-    ProfileFacet profileFacet;
-    OracleFacet oracleFacet;
-    VaipakamNFTFacet nftFacet;
-    VaultFactoryFacet vaultFacet;
-    LoanFacet loanFacet;
-    DefaultedFacet defaultFacet;
-    RiskFacet riskFacet; // Added
-    RiskMatchLiquidationFacet riskMatchLiquidationFacet;
-    RepayFacet repayFacet;
-    AdminFacet adminFacet;
-    ClaimFacet claimFacet;
-    AddCollateralFacet addCollateralFacet;
-    AccessControlFacet accessControlFacet;
-    MetricsFacet metricsFacet;
-    MetricsDashboardFacet metricsDashboardFacet;
-    TreasuryFacet treasuryFacet;
-    PayrollFacet payrollFacet;
-    VPFITokenFacet vpfiTokenFacet;
-    TestMutatorFacet testMutatorFacet;
-    ConfigFacet configFacet;
+    OfferMutateFacet public offerMutateFacet;
+    ProfileFacet public profileFacet;
+    OracleFacet public oracleFacet;
+    VaipakamNFTFacet public nftFacet;
+    VaultFactoryFacet public vaultFacet;
+    LoanFacet public loanFacet;
+    DefaultedFacet public defaultFacet;
+    RiskFacet public riskFacet; // Added
+    RiskMatchLiquidationFacet public riskMatchLiquidationFacet;
+    RepayFacet public repayFacet;
+    AdminFacet public adminFacet;
+    ClaimFacet public claimFacet;
+    AddCollateralFacet public addCollateralFacet;
+    AccessControlFacet public accessControlFacet;
+    MetricsFacet public metricsFacet;
+    MetricsDashboardFacet public metricsDashboardFacet;
+    TreasuryFacet public treasuryFacet;
+    PayrollFacet public payrollFacet;
+    VPFITokenFacet public vpfiTokenFacet;
+    TestMutatorFacet public testMutatorFacet;
+    ConfigFacet public configFacet;
     // #168 Track A — Phase-2 facet quartet routed to close the
     // test-vs-prod drift. Imports + cut entries below.
-    EarlyWithdrawalFacet earlyWithdrawalFacet;
-    PartialWithdrawalFacet partialWithdrawalFacet;
-    PrecloseFacet precloseFacet;
-    RefinanceFacet refinanceFacet;
+    EarlyWithdrawalFacet public earlyWithdrawalFacet;
+    PartialWithdrawalFacet public partialWithdrawalFacet;
+    PrecloseFacet public precloseFacet;
+    RefinanceFacet public refinanceFacet;
     // #229 — final 9-facet superset closure.
-    DiamondLoupeFacet diamondLoupeFacet;
-    OwnershipFacet ownershipFacet;
-    OracleAdminFacet oracleAdminFacet;
-    LegalFacet legalFacet;
-    VPFIDiscountFacet vpfiDiscountFacet;
-    StakingRewardsFacet stakingRewardsFacet;
-    InteractionRewardsFacet interactionRewardsFacet;
-    RewardAggregatorFacet rewardAggregatorFacet;
-    RewardReporterFacet rewardReporterFacet;
+    DiamondLoupeFacet public diamondLoupeFacet;
+    OwnershipFacet public ownershipFacet;
+    OracleAdminFacet public oracleAdminFacet;
+    LegalFacet public legalFacet;
+    VPFIDiscountFacet public vpfiDiscountFacet;
+    StakingRewardsFacet public stakingRewardsFacet;
+    InteractionRewardsFacet public interactionRewardsFacet;
+    RewardAggregatorFacet public rewardAggregatorFacet;
+    RewardReporterFacet public rewardReporterFacet;
     HelperTest helperTest;
 
     // Vault impl

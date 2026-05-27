@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {SetupTest} from "./SetupTest.t.sol";
+import {Test} from "forge-std/Test.sol";
+import {SetupComposable} from "./composable/SetupComposable.sol";
+import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
@@ -22,7 +24,27 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 ///         covered separately in PeriodicInterestAutoLiquidateTest.t.sol
 ///         once that's wired with the existing 4-DEX failover mock
 ///         infrastructure.
-contract PeriodicInterestSettleTest is SetupTest {
+contract PeriodicInterestSettleTest is Test {
+
+    // ── Stage 6 composition migration (2026-05-27) ──────────────────────
+    // Inherit only forge-std `Test`; the Diamond + facet routing + state
+    // are owned by a `SetupComposable` instance the test composes via
+    // `setUp`. Common SetupTest fields are mirrored locally below so the
+    // bulk of test-body code keeps compiling unchanged.
+    SetupComposable internal helpers;
+    VaipakamDiamond internal diamond;
+    address internal owner;
+    address internal lender;
+    address internal borrower;
+    address internal mockERC20;
+    address internal mockCollateralERC20;
+    address internal mockIlliquidERC20;
+    address internal mockNft721;
+    address internal mockZeroExProxy;
+    uint256 internal constant BASIS_POINTS = 10_000;
+    uint256 internal constant KYC_THRESHOLD_USD = 2000 * 1e18;
+    uint256 internal constant RENTAL_BUFFER_BPS = 500;
+    uint256 internal constant MIN_HEALTH_FACTOR = 150 * 1e16;
     LibVaipakam.PeriodicInterestCadence constant MONTHLY =
         LibVaipakam.PeriodicInterestCadence.Monthly;
 
@@ -30,7 +52,17 @@ contract PeriodicInterestSettleTest is SetupTest {
     uint256 internal startTs;
 
     function setUp() public {
-        setupHelper();
+        helpers = new SetupComposable();
+        helpers.bootstrap(address(this));
+        diamond = helpers.diamond();
+        owner = helpers.owner();
+        lender = helpers.lender();
+        borrower = helpers.borrower();
+        mockERC20 = helpers.mockERC20();
+        mockCollateralERC20 = helpers.mockCollateralERC20();
+        mockIlliquidERC20 = helpers.mockIlliquidERC20();
+        mockNft721 = helpers.mockNft721();
+        mockZeroExProxy = helpers.mockZeroExProxy();
         // Enable the feature.
         vm.prank(owner);
         ConfigFacet(address(diamond)).setPeriodicInterestEnabled(true);
@@ -41,8 +73,8 @@ contract PeriodicInterestSettleTest is SetupTest {
         // Price the lending asset so the loan crosses the threshold —
         // 1000 tokens × $1000 = $1M, well above the $100k default
         // threshold so monthly cadence is permitted.
-        mockOraclePrice(mockERC20, 1_000 * 1e8, 8);
-        mockOraclePrice(mockCollateralERC20, 1_000 * 1e8, 8);
+        helpers.mockOraclePrice(mockERC20, 1_000 * 1e8, 8);
+        helpers.mockOraclePrice(mockCollateralERC20, 1_000 * 1e8, 8);
         loanId = _createMonthlyLoan(90);
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
         startTs = uint256(l.startTime);

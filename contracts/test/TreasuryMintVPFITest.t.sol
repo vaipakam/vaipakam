@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {SetupTest} from "./SetupTest.t.sol";
+import {Test} from "forge-std/Test.sol";
+import {SetupComposable} from "./composable/SetupComposable.sol";
+import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
@@ -14,7 +16,27 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 ///         TreasuryFacet: access control, guard conditions, the
 ///         "Diamond-not-minter" bubble-up, happy path, and cap
 ///         enforcement that is delegated to the token.
-contract TreasuryMintVPFITest is SetupTest {
+contract TreasuryMintVPFITest is Test {
+
+    // ── Stage 6 composition migration (2026-05-27) ──────────────────────
+    // Inherit only forge-std `Test`; the Diamond + facet routing + state
+    // are owned by a `SetupComposable` instance the test composes via
+    // `setUp`. Common SetupTest fields are mirrored locally below so the
+    // bulk of test-body code keeps compiling unchanged.
+    SetupComposable internal helpers;
+    VaipakamDiamond internal diamond;
+    address internal owner;
+    address internal lender;
+    address internal borrower;
+    address internal mockERC20;
+    address internal mockCollateralERC20;
+    address internal mockIlliquidERC20;
+    address internal mockNft721;
+    address internal mockZeroExProxy;
+    uint256 internal constant BASIS_POINTS = 10_000;
+    uint256 internal constant KYC_THRESHOLD_USD = 2000 * 1e18;
+    uint256 internal constant RENTAL_BUFFER_BPS = 500;
+    uint256 internal constant MIN_HEALTH_FACTOR = 150 * 1e16;
     VPFIToken internal token;
     address internal constant TOKEN_OWNER = address(0xA11CE);
     address internal constant INITIAL_RECIPIENT = address(0xCAFE);
@@ -23,7 +45,17 @@ contract TreasuryMintVPFITest is SetupTest {
     event VPFIMinted(address indexed to, uint256 amount);
 
     function setUp() public {
-        setupHelper();
+        helpers = new SetupComposable();
+        helpers.bootstrap(address(this));
+        diamond = helpers.diamond();
+        owner = helpers.owner();
+        lender = helpers.lender();
+        borrower = helpers.borrower();
+        mockERC20 = helpers.mockERC20();
+        mockCollateralERC20 = helpers.mockCollateralERC20();
+        mockIlliquidERC20 = helpers.mockIlliquidERC20();
+        mockNft721 = helpers.mockNft721();
+        mockZeroExProxy = helpers.mockZeroExProxy();
 
         VPFIToken impl = new VPFIToken();
         bytes memory initData = abi.encodeCall(

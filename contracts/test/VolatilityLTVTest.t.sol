@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {SetupTest} from "./SetupTest.t.sol";
+import {Test} from "forge-std/Test.sol";
+import {SetupComposable} from "./composable/SetupComposable.sol";
+import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -32,20 +34,46 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 ///            for other tests. We clear those so the real math runs.
 ///          - Oracle liquidity + price mocks are re-applied after the clear
 ///            so RiskFacet's `_computeUsdValues` returns the expected USD.
-contract VolatilityLTVTest is SetupTest, IVaipakamErrors {
+contract VolatilityLTVTest is Test, IVaipakamErrors {
+
+    // ── Stage 6 composition migration (2026-05-27) ──────────────────────
+    SetupComposable internal helpers;
+    VaipakamDiamond internal diamond;
+    address internal owner;
+    address internal lender;
+    address internal borrower;
+    address internal mockERC20;
+    address internal mockCollateralERC20;
+    address internal mockIlliquidERC20;
+    address internal mockNft721;
+    address internal mockZeroExProxy;
+    uint256 internal constant BASIS_POINTS = 10_000;
+    uint256 internal constant KYC_THRESHOLD_USD = 2000 * 1e18;
+    uint256 internal constant RENTAL_BUFFER_BPS = 500;
+    uint256 internal constant MIN_HEALTH_FACTOR = 150 * 1e16;
     uint256 internal loanId;
 
     function setUp() public {
-        setupHelper();
+        helpers = new SetupComposable();
+        helpers.bootstrap(address(this));
+        diamond = helpers.diamond();
+        owner = helpers.owner();
+        lender = helpers.lender();
+        borrower = helpers.borrower();
+        mockERC20 = helpers.mockERC20();
+        mockCollateralERC20 = helpers.mockCollateralERC20();
+        mockIlliquidERC20 = helpers.mockIlliquidERC20();
+        mockNft721 = helpers.mockNft721();
+        mockZeroExProxy = helpers.mockZeroExProxy();
 
         // Drop the catch-all RiskFacet mocks; we want real LTV/HF math.
         vm.clearMockedCalls();
 
         // Re-apply the oracle + liquidity mocks that real RiskFacet needs.
-        mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
-        mockOraclePrice(mockERC20, 1e8, 8);
-        mockOracleLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Liquid);
-        mockOraclePrice(mockCollateralERC20, 1e8, 8);
+        helpers.mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
+        helpers.mockOraclePrice(mockERC20, 1e8, 8);
+        helpers.mockOracleLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Liquid);
+        helpers.mockOraclePrice(mockCollateralERC20, 1e8, 8);
 
         // Create a baseline loan: principal=1000, collateral=1800, $1 each
         // → LTV = 5555 bps, HF = 1.53e18 (both well below thresholds).

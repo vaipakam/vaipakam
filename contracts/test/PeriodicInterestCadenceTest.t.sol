@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {SetupTest} from "./SetupTest.t.sol";
+import {Test} from "forge-std/Test.sol";
+import {SetupComposable} from "./composable/SetupComposable.sol";
+import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
@@ -25,7 +27,27 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 ///         paths land in PR2 — out of scope here.
 ///
 ///         See docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md.
-contract PeriodicInterestCadenceTest is SetupTest {
+contract PeriodicInterestCadenceTest is Test {
+
+    // ── Stage 6 composition migration (2026-05-27) ──────────────────────
+    // Inherit only forge-std `Test`; the Diamond + facet routing + state
+    // are owned by a `SetupComposable` instance the test composes via
+    // `setUp`. Common SetupTest fields are mirrored locally below so the
+    // bulk of test-body code keeps compiling unchanged.
+    SetupComposable internal helpers;
+    VaipakamDiamond internal diamond;
+    address internal owner;
+    address internal lender;
+    address internal borrower;
+    address internal mockERC20;
+    address internal mockCollateralERC20;
+    address internal mockIlliquidERC20;
+    address internal mockNft721;
+    address internal mockZeroExProxy;
+    uint256 internal constant BASIS_POINTS = 10_000;
+    uint256 internal constant KYC_THRESHOLD_USD = 2000 * 1e18;
+    uint256 internal constant RENTAL_BUFFER_BPS = 500;
+    uint256 internal constant MIN_HEALTH_FACTOR = 150 * 1e16;
     // Shorthand
     LibVaipakam.PeriodicInterestCadence constant NONE_C =
         LibVaipakam.PeriodicInterestCadence.None;
@@ -39,7 +61,17 @@ contract PeriodicInterestCadenceTest is SetupTest {
         LibVaipakam.PeriodicInterestCadence.Annual;
 
     function setUp() public {
-        setupHelper();
+        helpers = new SetupComposable();
+        helpers.bootstrap(address(this));
+        diamond = helpers.diamond();
+        owner = helpers.owner();
+        lender = helpers.lender();
+        borrower = helpers.borrower();
+        mockERC20 = helpers.mockERC20();
+        mockCollateralERC20 = helpers.mockCollateralERC20();
+        mockIlliquidERC20 = helpers.mockIlliquidERC20();
+        mockNft721 = helpers.mockNft721();
+        mockZeroExProxy = helpers.mockZeroExProxy();
         // Default starts the feature DISABLED. Most tests opt in.
     }
 
@@ -193,7 +225,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         _enableFeature();
         // Need above-threshold to bypass Filter 2 row 2 — set principal
         // to something the oracle will price above $100k.
-        mockOraclePrice(mockERC20, 1_000 * 1e8, 8); // $1000 per token
+        helpers.mockOraclePrice(mockERC20, 1_000 * 1e8, 8); // $1000 per token
         vm.expectPartialRevert(IVaipakamErrors.CadenceNotAllowed.selector);
         _create(_baseLenderParams(1000 ether, 365, ANNUAL));
     }
@@ -219,13 +251,13 @@ contract PeriodicInterestCadenceTest is SetupTest {
         _enableFeature();
         // Price 1 token = $1000. Principal 1000 tokens = $1M, well above
         // the $100k default threshold.
-        mockOraclePrice(mockERC20, 1_000 * 1e8, 8);
+        helpers.mockOraclePrice(mockERC20, 1_000 * 1e8, 8);
         _create(_baseLenderParams(1000 ether, 60, MONTHLY));
     }
 
     function testFilter2Row2_AboveThreshold_QuarterlyAllowedOn180d() public {
         _enableFeature();
-        mockOraclePrice(mockERC20, 1_000 * 1e8, 8);
+        helpers.mockOraclePrice(mockERC20, 1_000 * 1e8, 8);
         _create(_baseLenderParams(1000 ether, 180, QUARTERLY));
     }
 
@@ -263,7 +295,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         _enableFeature();
         vm.prank(owner);
         ConfigFacet(address(diamond)).setMaxOfferDurationDays(2 * 365);
-        mockOraclePrice(mockERC20, 1_000 * 1e8, 8);
+        helpers.mockOraclePrice(mockERC20, 1_000 * 1e8, 8);
         _create(_baseLenderParams(1000 ether, 730, MONTHLY));
     }
 
@@ -271,7 +303,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         _enableFeature();
         vm.prank(owner);
         ConfigFacet(address(diamond)).setMaxOfferDurationDays(2 * 365);
-        mockOraclePrice(mockERC20, 1_000 * 1e8, 8);
+        helpers.mockOraclePrice(mockERC20, 1_000 * 1e8, 8);
         _create(_baseLenderParams(1000 ether, 730, ANNUAL));
     }
 
@@ -279,7 +311,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
 
     function testCadenceSnapshottedOntoLoan() public {
         _enableFeature();
-        mockOraclePrice(mockERC20, 1_000 * 1e8, 8);
+        helpers.mockOraclePrice(mockERC20, 1_000 * 1e8, 8);
         uint256 offerId = _create(_baseLenderParams(1000 ether, 60, MONTHLY));
         uint256 startTs = block.timestamp;
         vm.prank(borrower);

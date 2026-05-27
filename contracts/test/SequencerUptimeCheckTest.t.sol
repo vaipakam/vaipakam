@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {SetupTest} from "./SetupTest.t.sol";
+import {Test} from "forge-std/Test.sol";
+import {SetupComposable} from "./composable/SetupComposable.sol";
+import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -20,11 +22,41 @@ import {MockSequencerUptimeFeed} from "./mocks/MockSequencerUptimeFeed.sol";
 ///         Loan-lifecycle integration (triggerLiquidation / triggerDefault
 ///         reverts) is covered in the liquidation / default test suites by
 ///         flipping the mock mid-flow.
-contract SequencerUptimeCheckTest is SetupTest {
+contract SequencerUptimeCheckTest is Test {
+
+    // ── Stage 6 composition migration (2026-05-27) ──────────────────────
+    // Inherit only forge-std `Test`; the Diamond + facet routing + state
+    // are owned by a `SetupComposable` instance the test composes via
+    // `setUp`. Common SetupTest fields are mirrored locally below so the
+    // bulk of test-body code keeps compiling unchanged.
+    SetupComposable internal helpers;
+    VaipakamDiamond internal diamond;
+    address internal owner;
+    address internal lender;
+    address internal borrower;
+    address internal mockERC20;
+    address internal mockCollateralERC20;
+    address internal mockIlliquidERC20;
+    address internal mockNft721;
+    address internal mockZeroExProxy;
+    uint256 internal constant BASIS_POINTS = 10_000;
+    uint256 internal constant KYC_THRESHOLD_USD = 2000 * 1e18;
+    uint256 internal constant RENTAL_BUFFER_BPS = 500;
+    uint256 internal constant MIN_HEALTH_FACTOR = 150 * 1e16;
     MockSequencerUptimeFeed internal seqFeed;
 
     function setUp() public {
-        setupHelper();
+        helpers = new SetupComposable();
+        helpers.bootstrap(address(this));
+        diamond = helpers.diamond();
+        owner = helpers.owner();
+        lender = helpers.lender();
+        borrower = helpers.borrower();
+        mockERC20 = helpers.mockERC20();
+        mockCollateralERC20 = helpers.mockCollateralERC20();
+        mockIlliquidERC20 = helpers.mockIlliquidERC20();
+        mockNft721 = helpers.mockNft721();
+        mockZeroExProxy = helpers.mockZeroExProxy();
         // SetupTest installs `vm.mockCall` stubs for OracleFacet.getAssetPrice
         // and checkLiquidity on the shared liquid asset. Those mocks would
         // intercept our calls before the sequencer guard ran. Clear them so
