@@ -395,14 +395,21 @@ jobs:
       && needs.detect-changes.outputs.contracts == 'true'
       && needs.workspaces.result != 'failure'
     runs-on: ubuntu-latest
-    # Timeout bumped from the original 15 → 45 min. Cold-cache cold-clone
-    # forge build is dominated by submodule clone (~2-3 min) + viaIR
-    # compile (5-15 min) + the deploy-sanity test step (~30 s). The
-    # earlier 15-min ceiling auto-killed runs that hadn't even reached
-    # the test phase (observed on PR #86's cold-cache run — cancelled at
-    # exactly 15 min 15 s). Warm-cache runs finish in 2-3 min and never
-    # touch this ceiling; cold-cache runs need the headroom.
-    timeout-minutes: 45
+    # Timeout reduced 45 → 15 min after #290 narrowed `contracts-fast`'s
+    # scope. Under the `cifast` foundry profile this job now compiles
+    # src/ + script/ + test/deploy/** + test/scenarios/** + test/mocks/**
+    # + SetupTest + HelperTest (~310 files instead of the previous ~430)
+    # and skips every non-positive top-level test file. Local cold-build
+    # measurement: ~5:22 wall-clock + ~3.17 GB peak RSS — comfortably
+    # under the 16 GB GitHub-hosted ubuntu-latest standard-runner ceiling
+    # that was OOM-killing the pre-#290 full-scope build (~17.7 GB).
+    timeout-minutes: 15
+    # #290 — every forge invocation in this job runs under the
+    # narrow-scope `cifast` profile defined in `contracts/foundry.toml`.
+    # This is what reduces peak RSS from ~17.7 GB → ~3.2 GB and keeps
+    # the OOM-shutdown failures we hit on PR #288 off the table.
+    env:
+      FOUNDRY_PROFILE: cifast
     defaults:
       run:
         working-directory: contracts
@@ -503,14 +510,21 @@ jobs:
     # regression makes gas numbers meaningless. If contracts-fast fails,
     # this job cascade-skips and gas-snapshot follows.
     needs: [detect-changes, contracts-fast]
+    # #290 — this job ONLY runs on manual `workflow_dispatch` fire.
+    # Full regression is structurally too heavy for GitHub-hosted
+    # `ubuntu-latest` standard runners (peak ~17.7 GB RSS vs 16 GB
+    # ceiling — OOM-shutdown root cause for PR #288). Operators run
+    # the full regression LOCALLY at end-of-step (see CLAUDE.md
+    # "Executing forge" + memory `feedback_no_local_forge_builds.md`),
+    # and manually fire this workflow before mainnet-rollout PRs via
+    # the Actions tab. The default profile (test + script + invariants)
+    # is unchanged here.
     if: |
-      needs.detect-changes.outputs.contracts == 'true'
+      github.event_name == 'workflow_dispatch'
+      && needs.detect-changes.outputs.contracts == 'true'
       && needs.contracts-fast.result == 'success'
     runs-on: ubuntu-latest
-    # Timeout is shorter now (45 → 30 min) — this job no longer pays for
-    # cold forge build. Warm-restore + full regression caps at ~15 min on
-    # observed runs; 30 leaves headroom for runner variability.
-    timeout-minutes: 30
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: contracts
