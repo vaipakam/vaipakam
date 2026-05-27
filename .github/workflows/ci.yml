@@ -484,6 +484,15 @@ jobs:
       - name: Pre-deploy check (deploy-sanity suite)
         run: bash script/predeploy-check.sh
 
+      # #290 — also run the positive-flow scenarios at runtime. The
+      # `cifast` profile already COMPILES them, but predeploy-check.sh
+      # only runs `forge test --match-path "test/deploy/*"`. Running
+      # the scenarios here gives the per-PR-push CI lane runtime
+      # coverage of every positive-flow happy path (Codex P2 review
+      # on PR #295 caught the gap).
+      - name: Run positive-flow scenarios
+        run: forge test --match-path "test/scenarios/*.t.sol"
+
   # ── contracts-full ─────────────────────────────────────────────────────
   # Informational. Runs the same predeploy-check.sh script with `--full`,
   # which swaps the deploy-sanity suite for the full
@@ -510,15 +519,26 @@ jobs:
     # regression makes gas numbers meaningless. If contracts-fast fails,
     # this job cascade-skips and gas-snapshot follows.
     needs: [detect-changes, contracts-fast]
-    # #290 — this job ONLY runs on manual `workflow_dispatch` fire.
-    # Full regression is structurally too heavy for GitHub-hosted
-    # `ubuntu-latest` standard runners (peak ~17.7 GB RSS vs 16 GB
-    # ceiling — OOM-shutdown root cause for PR #288). Operators run
-    # the full regression LOCALLY at end-of-step (see CLAUDE.md
-    # "Executing forge" + memory `feedback_no_local_forge_builds.md`),
-    # and manually fire this workflow before mainnet-rollout PRs via
-    # the Actions tab. The default profile (test + script + invariants)
-    # is unchanged here.
+    # #290 — this job ONLY runs on `workflow_dispatch` (manual fire
+    # via the Actions tab). Maintainer policy (2026-05-27): full
+    # regression is operator-local, NOT a CI cost. Three reasons:
+    #
+    #   1. The peak RSS of the full-scope build is ~17.7 GB vs the
+    #      16 GB ceiling of GitHub-hosted `ubuntu-latest` standard
+    #      runners — OOM-shutdown root cause for PR #288.
+    #   2. Operators run `forge test --no-match-path "test/invariants/*"`
+    #      LOCALLY at end-of-step before opening / wrapping a PR
+    #      (CLAUDE.md "Executing forge" + memory
+    #      `feedback_no_local_forge_builds.md`).
+    #   3. The drift safety-net Codex P2 reviewer flagged (submodule
+    #      pin drift, CodeQL-pack updates, dep-bump failures) is still
+    #      covered by the OTHER scheduled jobs — `contracts-fast`
+    #      (Mondays compile under cifast = src + lib + scenarios +
+    #      deploy + setup), `slither` (src/ static analysis),
+    #      `build-docs` (src/ NatSpec), `CodeQL` — which all run on
+    #      the inherited weekly schedule. Drift that only affects the
+    #      94 non-positive top-level tests is acceptable to discover
+    #      at the operator's next end-of-step run.
     if: |
       github.event_name == 'workflow_dispatch'
       && needs.detect-changes.outputs.contracts == 'true'
