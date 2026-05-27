@@ -14,6 +14,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
+import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -1218,6 +1219,25 @@ contract HelperTest {
         selectors[2] = LegalFacet.hasAcceptedCurrentTerms.selector;
         selectors[3] = LegalFacet.getCurrentTos.selector;
         selectors[4] = LegalFacet.getUserTosAcceptance.selector;
+        return selectors;
+    }
+
+    /// @dev T-086 step 5 — `PrepayListingFacet` selectors. Hosts the
+    ///      executor↔diamond trust boundary for Seaport prepay
+    ///      collateral sales (see
+    ///      `contracts/src/seaport/CollateralListingExecutor.sol`).
+    ///      Selectors mirror `DeployDiamond._getPrepayListingSelectors`
+    ///      verbatim.
+    function getPrepayListingFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](4);
+        selectors[0] = PrepayListingFacet.getPrepayContext.selector;
+        selectors[1] = PrepayListingFacet.executorFinalizePrepaySale.selector;
+        selectors[2] = PrepayListingFacet.setCollateralListingExecutor.selector;
+        selectors[3] = PrepayListingFacet.getCollateralListingExecutor.selector;
         return selectors;
     }
 }

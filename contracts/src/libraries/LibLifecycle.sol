@@ -85,7 +85,18 @@ library LibLifecycle {
                 // `triggerInternalMatchLiquidation` fully clears the
                 // loan's principal. Partial matches stay Active and
                 // don't transition.
-                to == LibVaipakam.LoanStatus.InternalMatched;
+                to == LibVaipakam.LoanStatus.InternalMatched ||
+                // T-086 step 5 — Seaport prepay-collateral-sale terminal
+                // edge. The sale settles atomically inside Seaport's
+                // fill: lender owed amount + treasury fee + borrower
+                // residual are all distributed in one tx, then the
+                // executor's zone callback flips Active → Settled.
+                // Unlike Repaid/Defaulted there's no separate claim
+                // step — Seaport's atomic transfer IS the settlement.
+                // Restricted to the privileged callback path on
+                // `PrepayListingFacet.executorFinalizePrepaySale`
+                // (msg.sender == storedCollateralListingExecutor).
+                to == LibVaipakam.LoanStatus.Settled;
         }
         if (from == LibVaipakam.LoanStatus.FallbackPending) {
             return

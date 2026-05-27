@@ -117,6 +117,7 @@ import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
+import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 
 contract SetupTest is Test {
@@ -211,6 +212,7 @@ contract SetupTest is Test {
     EarlyWithdrawalFacet earlyWithdrawalFacet;
     PartialWithdrawalFacet partialWithdrawalFacet;
     PrecloseFacet precloseFacet;
+    PrepayListingFacet prepayListingFacet;
     RefinanceFacet refinanceFacet;
     // #229 — final 9-facet superset closure.
     DiamondLoupeFacet diamondLoupeFacet;
@@ -290,6 +292,7 @@ contract SetupTest is Test {
         earlyWithdrawalFacet = new EarlyWithdrawalFacet();
         partialWithdrawalFacet = new PartialWithdrawalFacet();
         precloseFacet = new PrecloseFacet();
+        prepayListingFacet = new PrepayListingFacet();
         refinanceFacet = new RefinanceFacet();
         // #229 — final 9-facet superset closure (cut below).
         diamondLoupeFacet = new DiamondLoupeFacet();
@@ -329,7 +332,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](38);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](39);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -539,6 +542,13 @@ contract SetupTest is Test {
             facetAddress: address(offerMutateFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getOfferMutateFacetSelectors()
+        });
+        // T-086 step 5 — PrepayListingFacet (executor↔diamond trust
+        // boundary for Seaport prepay collateral sales).
+        cuts[38] = IDiamondCut.FacetCut({
+            facetAddress: address(prepayListingFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getPrepayListingFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
