@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {SetupTest} from "./SetupTest.t.sol";
+import {Test} from "forge-std/Test.sol";
+import {SetupComposable} from "./composable/SetupComposable.sol";
+import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {LegalFacet} from "../src/facets/LegalFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 
@@ -19,11 +21,19 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
  *           - Version bumps invalidate all prior acceptances.
  *           - Admin gating on setCurrentTos (non-admin reverts).
  */
-contract LegalFacetTest is SetupTest {
-    // #229: LegalFacet is cut + constructed in `SetupTest.setupHelper()`
-    // now. The prior local declaration + local cut was a workaround
-    // for the pre-#229 gap and is dropped. References to `legalFacet`
-    // below resolve to the inherited SetupTest field.
+contract LegalFacetTest is Test {
+    // Stage 6a composition-first migration (2026-05-27): test inherits
+    // ONLY forge-std `Test`. The Diamond + facet routing + bootstrap
+    // state are owned by an external `SetupComposable` instance that
+    // the test owns via composition, NOT inheritance.
+    SetupComposable internal helpers;
+    /// @dev Convenience mirror of `helpers.diamond()` — assigned in
+    ///      `setUp` once so the test body's existing `diamond` references
+    ///      keep compiling unchanged. The mirror is a single address
+    ///      slot; the `VaipakamDiamond` type was already imported, so
+    ///      no extra type weight enters this contract's IR.
+    VaipakamDiamond internal diamond;
+    address internal owner;
 
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
@@ -45,10 +55,10 @@ contract LegalFacetTest is SetupTest {
     );
 
     function setUp() public {
-        // #229 — LegalFacet is now cut by `SetupTest.setupHelper()`.
-        // The prior local `new LegalFacet()` + local diamondCut here
-        // would double-cut the same selectors and revert. Dropped.
-        setupHelper();
+        helpers = new SetupComposable();
+        helpers.bootstrap(address(this));
+        diamond = helpers.diamond();
+        owner = helpers.owner();
     }
 
     // ─── Gate-disabled state ────────────────────────────────────────────────
