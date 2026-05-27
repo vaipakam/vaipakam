@@ -66,9 +66,10 @@
 #                     small follow-up PR.
 #
 # For the `Protect main` ruleset's required-status-checks rule, wire
-# `contracts-fast`, `workspaces`, and `detect-changes`. Both contracts-
-# fast and workspaces are conditionally required via their `if:`
-# guards (contracts-touching path filter) — branch protection treats
+# `contracts-fast`, `workspaces`, `detect-changes`, `Build docs`, and
+# `Slither static analysis` (post-#296 / ADR-0011 — five required
+# contexts on every merge to main). All five are conditionally
+# required via path-filter `if:` guards — branch protection treats
 # `if:`-skipped checks as SUCCESS, so docs-only PRs still merge fast.
 #
 # The release/* / `v*` tag-gated `mainnet-gate.yml` follow-up

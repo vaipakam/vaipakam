@@ -1,7 +1,8 @@
 # ADR-0011: CI compile scope narrowed to the `cifast` foundry profile; full regression is operator-local
 
 **Status:** Accepted (supersedes [ADR-0006](0006-three-tier-ci-split.md))
-**Date:** 2026-05-28 (lands with #297; supersedes ADR-0006's three-tier design)
+**Decision implemented in:** #295 (2026-05-27, `cifast` profile + CI scope narrowing) + #297 (2026-05-27, `contracts-full` + `gas-snapshot` removed from `ci.yml`; `Protect main` ruleset updated).
+**ADR landing in:** #298 / #299 (2026-05-28, this doc-cascade PR — the structural change had already merged; this ADR backfills the audit record).
 
 ## Context
 
@@ -27,17 +28,28 @@ structural, not a transient:
   refactors landed marginal savings (-0.42 GB / 7 tests for slim
   base; -0.22 GB for full composition migration) — neither closed
   the ~1.7 GB headroom gap.
-- Per-path `viaIR` is structurally infeasible — tests import `src/`
-  into the same compile unit, so a `via_ir = false` segment on tests
-  would force `src/` through the non-IR pipeline and lose
-  production-parity bytecode.
+- Per-path `viaIR` is structurally infeasible: Solidity's compile
+  unit is the import closure. A `[profile.x] via_ir = false`
+  segment that targets `test/**` only would still pull every
+  imported `src/` file into the same unit (every test imports
+  facets via dynamic Diamond casts plus library helpers), and the
+  unit's compile flags apply to ALL files in it. So either the
+  whole unit goes through `viaIR` (the production setting and the
+  current default profile) or none of it does — which would lose
+  production-parity bytecode. Tested in a throwaway worktree on
+  2026-05-27; `forge build` rejected the mixed config.
 
-A non-self-hosted runner remains the explicit operator preference
-(see `feedback_no_self_hosted_runner.md`): GitHub-hosted is free for
-public repos and the maintenance cost of self-hosted is not worth
-unlocking ~5 contracts PRs/week. So the constraint is real: the full
-regression cannot run on GitHub Actions, regardless of how we split
-it.
+A non-self-hosted runner remains the explicit operator decision:
+GitHub-hosted `ubuntu-latest` is free for public repos and the
+maintenance burden of a self-hosted runner — image upkeep, secret
+hygiene, network-egress posture, the contributor-PR fork-runner
+sandboxing the GitHub-hosted path gives us for free — is not worth
+the speedup at the current ~5 contracts PRs/week cadence. If that
+cadence climbs above ≥5 contracts PRs/week sustained, or
+audit-prep adds a regular heavy-test cycle, revisit this. So the
+constraint is real: at ubuntu-latest's 16 GB ceiling, the
+default-profile full forge regression cannot run on GitHub Actions
+in any per-PR form, regardless of how we split it.
 
 ## Decision
 
@@ -72,10 +84,23 @@ closes #296):
 4. **`Slither static analysis`** and **`Build docs`** also run under
    `FOUNDRY_PROFILE=cifast` — they only need `src/` compiled, and
    the smaller compile graph drops their cold cost too.
-5. **`mainnet-gate`** keeps running `predeploy-check.sh --full` on
-   release branches + v* tags + `workflow_dispatch`. It's the only
-   GitHub-Actions surface that exercises the full regression, and
-   it runs on a narrowly-scoped trigger set rather than every PR.
+5. **`mainnet-gate`** keeps the `bash script/predeploy-check.sh
+   --full` step in place on push to `release/**`, PR targeting
+   `release/**`, every `v*` tag push, and `workflow_dispatch`. It
+   runs on the same `ubuntu-latest` runner under the default
+   foundry profile, so it shares the 16 GB ceiling. **It has NOT
+   been exercised on the current test corpus** (no release-track
+   refs exist yet on this repo). Before the first push to a
+   `release/**` branch or the first `v*` tag, the operator must
+   either: (a) confirm `predeploy-check.sh --full` fits on
+   `ubuntu-latest` for that release commit's corpus, or (b) move
+   the gate to a self-hosted runner / a different scheduled path.
+   This ADR documents the gap so it's not discovered at cutover.
+   The narrow trigger set (release branches + version tags, not
+   every PR) is what makes the unknown tolerable for now:
+   the per-PR loop is unblocked by the `cifast` change above, and
+   the operator-local end-of-step full run is the real defence
+   on contracts changes day-to-day.
 6. **`Protect main` ruleset** updated to drop `contracts-full` +
    `Gas snapshot diff` from `required_status_checks`. The required
    set is now: `contracts-fast` + `detect-changes` + `workspaces` +
@@ -97,10 +122,13 @@ closes #296):
 
 **Negative / accepted costs**
 
-- Full regression cannot run on GitHub Actions. The operator runs
-  it locally at end-of-step + mainnet preflight; the release-track
-  `mainnet-gate` workflow is the only audit-trail trace of a full
-  green run.
+- Full regression cannot run on GitHub Actions in any per-PR form.
+  The operator runs it locally at end-of-step + mainnet preflight;
+  the release-track `mainnet-gate` workflow holds the
+  `predeploy-check.sh --full` step but shares the same 16 GB
+  ceiling and has not yet been validated on the current corpus
+  (see the "release-track gate's runner constraint" note above —
+  operator action required before the first release/v* push).
 - A non-deploy-sanity / non-positive-flow regression introduced by
   a PR will NOT be caught by CI. Caught instead by: (a) the
   end-of-step local full run (operator), (b) `mainnet-gate` on the
@@ -128,16 +156,18 @@ closes #296):
 
 ## Alternatives considered
 
-**Alternative A — Self-hosted runner**: Rejected. Maintenance cost
-(image upkeep, secret hygiene, network egress) is not worth ~5
-contracts PRs/week. `feedback_no_self_hosted_runner.md` captures the
-explicit operator preference.
+**Alternative A — Self-hosted runner**: Rejected. The maintenance
+burden (runner-image upkeep, secret hygiene, network-egress posture,
+contributor-PR fork-runner sandboxing) is not worth the speedup at
+the current ~5 contracts PRs/week cadence. Revisit if cadence climbs
+or audit prep adds a regular heavy-test cycle.
 
-**Alternative B — Per-path viaIR off on tests**: Rejected. Tests
-import `src/` into the same compile unit; a `via_ir = false`
-segment on tests would force `src/` through the non-IR pipeline and
-lose production-parity bytecode. Documented in
-`feedback_viair_per_path_infeasible.md`.
+**Alternative B — Per-path viaIR off on tests**: Rejected as
+structurally infeasible (per the "constraint" section above):
+Solidity's compile unit is the import closure, so a `via_ir = false`
+on `test/**` would still need `src/` files in the same unit, and a
+unit's compile flags apply uniformly. Tested in a throwaway
+worktree; `forge build` rejected the mixed config.
 
 **Alternative C — Slim-base / composition refactor of the test
 suite**: Measured marginal (≤0.4 GB savings); doesn't close the
@@ -163,5 +193,4 @@ end-of-step.
 - Workflow: [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml), [`.github/workflows/mainnet-gate.yml`](../../.github/workflows/mainnet-gate.yml)
 - Profile: [`contracts/foundry.toml`](../../contracts/foundry.toml) → `[profile.cifast]`
 - Pre-deploy gate: [`contracts/script/predeploy-check.sh`](../../contracts/script/predeploy-check.sh)
-- Operator memories: `feedback_no_self_hosted_runner.md`, `feedback_viair_per_path_infeasible.md`, `feedback_ci_compute_over_wall_clock.md`
 - Related ADR: [ADR-0006](0006-three-tier-ci-split.md) (superseded by this one)

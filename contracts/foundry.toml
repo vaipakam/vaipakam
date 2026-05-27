@@ -120,8 +120,11 @@ fs_permissions = [
 #   - test/HelperTest.sol (selector helper SetupTest uses)
 #   - lib/
 #
-# OUT of scope (skipped — picked up by `contracts-full` on
-# `workflow_dispatch` only):
+# OUT of scope (skipped — picked up by operator-local
+# `forge test --no-match-path "test/invariants/*"` at end-of-step,
+# and by the release-track `mainnet-gate.yml` workflow on push to
+# `release/**` / `v*` tags via `predeploy-check.sh --full`. NOT
+# exercised on per-PR CI; see ADR-0011 for the why):
 #   - the other 94 top-level test/*.t.sol files (per-facet integration
 #     + library + workflow tests) — enumerated explicitly below because
 #     Foundry's globset implementation appears to traverse subdirectories
