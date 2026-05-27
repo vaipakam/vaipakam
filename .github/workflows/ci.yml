@@ -543,9 +543,9 @@ jobs:
       - name: Snapshot submodule SHAs (for content-based cache key)
         run: git submodule status --recursive > .submodule-state
 
-      # Same cache key shape as contracts-fast + contracts-full +
-      # gas-snapshot. contracts-fast saved this at its job end; this
-      # job restores it, so slither's forge build hits warm artifacts.
+      # Same cache key shape as contracts-fast (and Build docs).
+      # contracts-fast saved this at its job end; this job restores
+      # it, so slither's forge build hits warm artifacts.
       - name: Restore forge artifacts (warm from contracts-fast)
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
@@ -635,11 +635,11 @@ jobs:
       - name: Snapshot submodule SHAs (for content-based cache key)
         run: git submodule status --recursive > .submodule-state
 
-      # Same cache key shape as contracts-fast + contracts-full +
-      # gas-snapshot + slither. contracts-fast saved this at its job
-      # end; this job restores it, so the `forge doc --build` step
-      # below hits warm artifacts and skips re-compilation entirely
-      # (only the NatSpec → mdbook rendering runs).
+      # Same cache key shape as contracts-fast (and the slither job).
+      # contracts-fast saved this at its job end; this job restores
+      # it, so the `forge doc --build` step below hits warm artifacts
+      # and skips re-compilation entirely (only the NatSpec → mdbook
+      # rendering runs).
       - name: Restore forge artifacts (warm from contracts-fast)
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:

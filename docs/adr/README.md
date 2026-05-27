@@ -45,11 +45,12 @@ That's the point of the record.
 | [ADR-0003](0003-vpfi-time-weighted-discount.md) | Time-weighted accumulator for VPFI fee discounts | Accepted |
 | [ADR-0004](0004-ccip-over-layerzero.md) | Migrate cross-chain transport from LayerZero to Chainlink CCIP | Accepted |
 | [ADR-0005](0005-depth-tiered-ltv.md) | Depth-tiered LTV behind a kill-switch | Accepted |
-| [ADR-0006](0006-three-tier-ci-split.md) | Three-tier CI split — `contracts-fast`, `contracts-full`, `mainnet-gate` | Accepted |
+| [ADR-0006](0006-three-tier-ci-split.md) | Three-tier CI split — `contracts-fast`, `contracts-full`, `mainnet-gate` | Superseded by [ADR-0011](0011-ci-scope-cifast-profile.md) |
 | [ADR-0007](0007-functionalspecs-doc-sourced.md) | FunctionalSpecs are sourced from documents, never transcribed from code | Accepted |
 | [ADR-0008](0008-per-user-vault-factory.md) | Per-user UUPS vault via factory, not a commingled vault | Accepted |
 | [ADR-0009](0009-bsl-vs-mit-license.md) | BSL-1.1 on the protocol, MIT on the public reference keeper bot | Accepted |
 | [ADR-0010](0010-canonical-rate-semantics.md) | Canonical limit-order semantics for Offer min/max fields (lender = ceiling, borrower = floor; LTV/HF derived not entered; `loanInitMaxLtvBps` live-at-match) | Accepted |
+| [ADR-0011](0011-ci-scope-cifast-profile.md) | CI compile scope narrowed to the `cifast` foundry profile; full regression is operator-local | Accepted (supersedes [ADR-0006](0006-three-tier-ci-split.md)) |
 
 ## Filing a new ADR
 

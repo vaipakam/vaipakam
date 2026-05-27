@@ -67,8 +67,8 @@ jobs:
       - name: Restore foundry cache
         # Reuse the same cache key shape the contracts jobs warm — so
         # docs builds ride on whatever forge artifacts a prior `forge
-        # build` already produced (whether from this workflow, ci.yml,
-        # or the gas-snapshot workflow).
+        # build` already produced (whether from this workflow or
+        # ci.yml's `contracts-fast` job).
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |

@@ -701,7 +701,7 @@ push picks them up.
 |---|---|
 | `forge build` passes | `cd contracts && forge build` |
 | `forge test` — 100% pass | `cd contracts && forge test` |
-| Gas snapshot reviewed (`.gas-snapshot` diff) | `forge snapshot --diff` |
+| Gas snapshot reviewed (`.gas-snapshot` diff, operator-local) | `forge snapshot --diff` |
 | `CLAUDE.md`, `remappings.txt` unchanged since audit | `git status` |
 | Release commit tagged | `git tag -s vX.Y.Z && git push --tags` |
 | `ADMIN_ADDRESS` env = timelock contract (**not** an EOA on mainnet) | see `AdminKeysAndPause.md` |

@@ -1,17 +1,21 @@
 # Mainnet gate — hard-gate workflow that runs the FULL forge regression
 # as a required check before any release-track commit can ship to mainnet.
 #
-# Why this exists: the routine PR CI (ci.yml) runs both the deploy-sanity
-# suite (`contracts-fast`) AND the full 2,012-test regression
-# (`contracts-full`) as required checks on every CONTRACTS-touching PR.
-# But docs-only PRs see contracts-full skipped (path-filter false), and
-# the release-track flow ALSO needs the full-regression guarantee on the
-# exact commit being tagged for cutover.
+# Why this exists: the routine PR CI (ci.yml) runs only the narrow
+# deploy-sanity + positive-flow surface (`contracts-fast` under the
+# `cifast` foundry profile) as a required check on every CONTRACTS-
+# touching PR. The full 2,012-test regression is deliberately NOT in
+# per-PR CI (its ~17.7 GB cold-build RSS overruns the 16 GB
+# ubuntu-latest ceiling — see #296 / ADR-0006). Full regression is an
+# operator-local responsibility at end-of-step + mainnet preflight.
 #
-# This workflow re-runs the full regression as the final
-# defence on release-track commits, providing audit-trail symmetry with
-# what `deploy-mainnet.sh` invokes at preflight step [1b] and catching the
-# rare case where a force-push between PR merge and tag changes the tree.
+# This workflow restores that full-regression guarantee at the line
+# where it matters most — the release-track commit being tagged for
+# cutover — by running `predeploy-check.sh --full` itself, in CI,
+# bit-identical to what `deploy-mainnet.sh` invokes at preflight step
+# [1b]. So a force-push between PR merge and tag, or any drift
+# between the operator's local box and the artifact lineage being
+# shipped, is caught before deploy.
 #
 # This workflow is the safety net at the line that matters: before a
 # release-track commit hits any deployable branch / tag, the full

@@ -340,7 +340,7 @@ surfaces sit ABOVE the board:
 
 | Milestone | Focus |
 |---|---|
-| `audit-prep` | Pre-audit hardening — branch protection, signed commits, CI gates, ADRs, glossary, SECURITY.md, CodeQL + Slither + gas-snapshot tracking, Cloudflare posture, dependency triage. |
+| `audit-prep` | Pre-audit hardening — branch protection, signed commits, CI gates, ADRs, glossary, SECURITY.md, CodeQL + Slither static analysis, Cloudflare posture, dependency triage. |
 | `audit-1` | Third-party audit engagement window. |
 | `audit-1-fixes` | Findings remediation from audit-1. |
 | `mainnet-cutover` | Testnet → mainnet rollout per the cutover runbook. |
@@ -594,42 +594,36 @@ lives at
 
 ### 7.1 `Protect main` ruleset (monorepo)
 
-Eight independent gates on every merge:
+Ten independent gates on every merge:
 
 ```
-1. ✅ no branch deletion
-2. ✅ no force-push / non-fast-forward
-3. ✅ linear history (squash / rebase only)
-4. ✅ PR required, with thread resolution
-5. ✅ detect-changes check SUCCESS (CI path-filter job)
-6. ✅ contracts-fast check SUCCESS (forge build + deploy-sanity)
-7. ✅ workspaces check SUCCESS (pnpm typecheck per workspace)
-8. ✅ signed commits
+ 1. ✅ no branch deletion
+ 2. ✅ no force-push / non-fast-forward
+ 3. ✅ linear history (squash / rebase only)
+ 4. ✅ PR required, with thread resolution
+ 5. ✅ detect-changes check SUCCESS (CI path-filter job)
+ 6. ✅ contracts-fast check SUCCESS (forge build + deploy-sanity + positive-flow scenarios; FOUNDRY_PROFILE=cifast)
+ 7. ✅ workspaces check SUCCESS (pnpm typecheck per workspace)
+ 8. ✅ Build docs check SUCCESS (forge doc; FOUNDRY_PROFILE=cifast)
+ 9. ✅ Slither static analysis check SUCCESS (FOUNDRY_PROFILE=cifast)
+10. ✅ signed commits
 ```
 
-`contracts-full` runs **serialized after** `contracts-fast` (via
-`needs:`), as **informational only** — surfaces the full 2,012-test
-regression on every PR but doesn't gate the merge. The serial
-ordering's actual benefit:
+The full 2,012-test forge regression is **NOT** a per-PR CI gate. It
+overruns the 16 GB ubuntu-latest RSS ceiling cold and was removed
+from `ci.yml` in #297 (closes #296). It now runs:
 
-- **Eliminates the parallel-save race** on the shared cache key
-  (parallel jobs writing the same key risk one job's save being
-  discarded).
-- **Avoids attributing TWO cold-cache forge builds to a single run**
-  in observability — the run sequences `build → test → full-test`
-  cleanly rather than building twice.
-- **Fail-fast** — if `contracts-fast` is red, `contracts-full` skips
-  entirely (the `if:` guard depends on `contracts-fast.result == 'success'`).
+- **Operator-local** at end-of-step + at mainnet preflight via
+  `bash contracts/script/predeploy-check.sh --full`.
+- **`mainnet-gate.yml`** on push to `release/**`, PR to `release/**`,
+  every `v*` tag push, and `workflow_dispatch` — bit-identical to
+  what `deploy-mainnet.sh` invokes at preflight step `[1b]`.
 
-Same-run cache transfer is the whole point: `actions/cache` saves at
-job END (post step); a downstream job in the SAME workflow run, gated
-by `needs:`, then restores that just-saved cache by key. That's why
-`contracts-fast` → `contracts-full` is serialized — `contracts-full`
-restores the cache `contracts-fast` saved seconds earlier in the same
-run, so the full regression rides on a warm foundry artifact tree
-instead of paying a second cold rebuild. The inline comments in
-`.github/workflows/ci.yml` (`contracts-full` cache section, lines
-~200-210) walk through the save→restore-in-same-run mechanics.
+`ADR-0011` (supersedes ADR-0006) records the full rationale +
+measurements. The `cifast` foundry profile (in `contracts/foundry.toml`)
+narrows the compile graph to `src/` + `script/` + `lib/` +
+`test/deploy/**` + `test/scenarios/**` + `test/mocks/**` + setup/helper —
+cold ~3.17 GB / 5:22, well under the 16 GB ceiling.
 
 ### 7.2 `Protect main` ruleset (keeper-bot)
 
@@ -761,9 +755,13 @@ state or copy from another machine if needed.
 
 ### 9.4 Pre-deploy gate — `contracts/script/predeploy-check.sh`
 
-Single cohesive gate that CI's `contracts-fast` and `contracts-full`
-both invoke, and that the mainnet-deploy script also runs at preflight
-step `[1b]`. Always run from the `contracts/` directory. Modes:
+Single cohesive gate. CI's `contracts-fast` invokes the default
+(deploy-sanity) mode under `FOUNDRY_PROFILE=cifast`. The
+`mainnet-gate.yml` workflow and the mainnet-deploy script
+(`deploy-mainnet.sh` preflight step `[1b]`) invoke `--full`
+under the default profile — the only places the full 2,012-test
+regression runs in CI. Always run from the `contracts/` directory.
+Modes:
 
 ```bash
 cd contracts
@@ -809,16 +807,17 @@ correlation is recorded.
 
 Combined effect of the #74 arc:
 
-- Routine PRs gated on **`detect-changes` + `contracts-fast` + `workspaces` + signed commits + thread resolution + linear history + no-delete + no-force-push** (eight gates).
-- Routine PRs skip the slow regression when no contracts changed — `<1 min` merge cycle.
-- Contracts PRs run the full regression as informational + fast deploy-sanity as blocking.
+- Routine PRs gated on **`detect-changes` + `contracts-fast` + `workspaces` + `Build docs` + `Slither static analysis` + signed commits + thread resolution + linear history + no-delete + no-force-push** (ten gates).
+- Path-filter (`detect-changes`) skips downstream jobs when scope doesn't apply — docs-only PRs merge in `<1 min`.
+- Contracts PRs run the deploy-sanity suite + positive-flow scenarios under the `cifast` foundry profile (~5 min cold) — production-bytecode-identical, but the full 2,012-test regression is operator-local + `mainnet-gate.yml`.
 - Mainnet cutover paths gated on `mainnet-gate.yml` (full regression as hard gate on `release/**` + `v*`).
 - Keeper-bot has equivalent protection on its own `main`.
 
 The auditor-facing story: every state on main carries a CI run that
-proved it passed the deploy-sanity guardrails, was signed, and went
-through PR review with thread resolution. The `release/**` lineage
-adds proof of full-regression green before any mainnet artifact.
+proved it passed the deploy-sanity + positive-flow guardrails, was
+signed, and went through PR review with thread resolution. The
+`release/**` lineage adds proof of full-regression green before any
+mainnet artifact.
 
 ---
 
