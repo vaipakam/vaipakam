@@ -8,6 +8,27 @@ optimizer = true
 optimizer_runs = 200
 threads = 8
 
+# EXPERIMENT (2026-05-27, chore/test-suite-audit-viaIR-off-for-tests):
+# disable viaIR for `test/**/*.sol` while keeping it ON for `src/`. Several
+# src/ facets structurally need viaIR (VaultFactoryFacet.sol:631 + others
+# hit stack-too-deep without it), so the global setting stays on. Test
+# files do not get deployed — their compiled bytecode runs only inside
+# forge — so test-vs-prod bytecode parity is NOT a concern for test/
+# code. The hypothesis: dropping viaIR for the ~58 kLOC test surface
+# significantly reduces both cold-compile wall-clock and peak RSS, which
+# directly addresses the 17.96 GB OOM ceiling on standard
+# ubuntu-latest GitHub Actions runners (16 GB cap) that has been killing
+# our contracts-fast jobs (see commit b5475055 on
+# feat/t086-step5-collateral-listing-executor).
+#
+# If a specific test file DOES hit stack-too-deep without viaIR, we have
+# two escape valves: (1) move the override list to exclude that file, or
+# (2) refactor the test to reduce stack pressure (extract helpers, use
+# `unchecked` blocks, etc.).
+compilation_restrictions = [
+    { paths = "test/**/*.sol", via_ir = false },
+]
+
 # T-068 — the vendored Chainlink `chainlink-ccip` / `chainlink-evm` trees
 # carry Chainlink's OWN Foundry test files (`*.t.sol`) and test helpers.
 # `forge test` test-discovery would otherwise try to compile them, and they
