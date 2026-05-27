@@ -135,11 +135,19 @@ closes #296):
   release/v-tag push, (c) CodeQL / Slither weekly runs for static
   patterns, (d) Codex review.
 - The `cifast` `skip = [...]` list enumerates every excluded test
-  file. New `test/*.t.sol` files default to being COMPILED by
-  `cifast` (a glob can't predict the future). When adding a new
-  test that doesn't earn its compile cost in the CI scope, also
-  append it to `skip = [...]` — flagged in the
-  `feedback_facet_addition_checklist.md` operator memory.
+  file by name. New `test/*.t.sol` files default to being COMPILED
+  by `cifast` (a glob can't predict the future). To keep the
+  3.2 GB cold-RSS budget intact, every PR that adds a top-level
+  `test/*.t.sol` outside `test/scenarios/**` MUST either: (a)
+  append the new file to `[profile.cifast] skip = [...]` in
+  `contracts/foundry.toml` (the default — most new tests don't
+  earn their compile cost in the deploy-sanity scope), or (b)
+  explicitly justify in the PR description why the new test is
+  CI-scope-worthy (positive-flow scenario, deploy-sanity
+  guardrail). The skip-list discipline is named in the
+  facet-addition + test-addition rows of the
+  [Project Procedures §7 contracts CI](../internal/ProjectProcedures.md)
+  guide so it's not a tribal-knowledge convention.
 
 **Risks the decision creates**
 

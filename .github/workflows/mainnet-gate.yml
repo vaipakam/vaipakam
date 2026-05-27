@@ -9,13 +9,28 @@
 # ubuntu-latest ceiling — see #296 / ADR-0006). Full regression is an
 # operator-local responsibility at end-of-step + mainnet preflight.
 #
-# This workflow restores that full-regression guarantee at the line
-# where it matters most — the release-track commit being tagged for
-# cutover — by running `predeploy-check.sh --full` itself, in CI,
-# bit-identical to what `deploy-mainnet.sh` invokes at preflight step
-# [1b]. So a force-push between PR merge and tag, or any drift
-# between the operator's local box and the artifact lineage being
-# shipped, is caught before deploy.
+# This workflow is the release-track full-regression gate — it runs
+# `predeploy-check.sh --full` on the same `ubuntu-latest` runner,
+# under the default foundry profile, bit-identical to what
+# `deploy-mainnet.sh` invokes at preflight step [1b]. So a force-push
+# between PR merge and tag, or any drift between the operator's
+# local box and the artifact lineage being shipped, is caught
+# before deploy.
+#
+# Runner-ceiling caveat (per ADR-0011, 2026-05-27): the default-
+# profile full forge regression on the current test corpus peaks at
+# ~17.7 GB RSS, over the 16 GB `ubuntu-latest` ceiling. The narrow
+# `release/**` + `v*` trigger set means this workflow has NOT yet
+# been exercised on the current corpus — no release-track refs
+# exist yet on this repo. Before the FIRST push to a `release/**`
+# branch or the first `v*` tag, the operator must either:
+#   (a) confirm `predeploy-check.sh --full` fits on `ubuntu-latest`
+#       for that release commit's corpus (re-measure with `/usr/bin/
+#       time -v forge test --no-match-path "test/invariants/*"`), or
+#   (b) move this workflow to a self-hosted runner / a different
+#       scheduled path.
+# Discovering the OOM gap at cutover would be expensive; documenting
+# the gap here keeps the operator's pre-cutover checklist honest.
 #
 # This workflow is the safety net at the line that matters: before a
 # release-track commit hits any deployable branch / tag, the full

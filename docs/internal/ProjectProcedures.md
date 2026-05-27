@@ -625,6 +625,28 @@ narrows the compile graph to `src/` + `script/` + `lib/` +
 `test/deploy/**` + `test/scenarios/**` + `test/mocks/**` + setup/helper —
 cold ~3.17 GB / 5:22, well under the 16 GB ceiling.
 
+**Skip-list discipline for new test files.** The `cifast` profile's
+`skip = [...]` list enumerates every excluded `test/*.t.sol` by
+name (a glob can't predict the future). Every PR that adds a new
+top-level test file outside `test/scenarios/**` MUST either:
+
+- (a) Append the new filename to `[profile.cifast] skip = [...]`
+  in `contracts/foundry.toml`. This is the default for the vast
+  majority of new tests — per-facet integration tests, library
+  tests, workflow tests, etc., don't earn their CI compile cost
+  in the deploy-sanity + positive-flow scope. They run
+  operator-local at end-of-step + on the release-track gate.
+- (b) Explicitly justify in the PR description why the new test
+  IS CI-scope-worthy. Acceptable justifications: it's a new
+  positive-flow scenario (also place it under `test/scenarios/`);
+  it's a deploy-sanity guardrail (also place it under
+  `test/deploy/`); it's a guardrail for the cifast skip-list
+  itself.
+
+Missing this discipline causes the `cifast` cold-build RSS to
+creep above its 3.2 GB headroom. The PR template's "Test plan"
+section is the natural place to acknowledge the choice.
+
 ### 7.2 `Protect main` ruleset (keeper-bot)
 
 Six gates: deletion / non-fast-forward / linear / PR-with-thread / signed +

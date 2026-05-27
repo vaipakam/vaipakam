@@ -120,11 +120,20 @@ fs_permissions = [
 #   - test/HelperTest.sol (selector helper SetupTest uses)
 #   - lib/
 #
-# OUT of scope (skipped — picked up by operator-local
-# `forge test --no-match-path "test/invariants/*"` at end-of-step,
-# and by the release-track `mainnet-gate.yml` workflow on push to
-# `release/**` / `v*` tags via `predeploy-check.sh --full`. NOT
-# exercised on per-PR CI; see ADR-0011 for the why):
+# OUT of scope (skipped — coverage paths split by what runs them):
+#   - The 94 top-level non-positive `test/*.t.sol` files + `test/fork/**`
+#     + `test/token/**` are picked up by operator-local
+#     `forge test --no-match-path "test/invariants/*"` at end-of-step
+#     and by the release-track `mainnet-gate.yml` workflow on push to
+#     `release/**` / `v*` tags via `predeploy-check.sh --full` (which
+#     runs the same `--no-match-path` exclusion under the default
+#     profile).
+#   - `test/invariants/**` is excluded from the full-regression command
+#     above; it runs as a SEPARATE pass via
+#     `forge test --match-path "test/invariants/*"` (operator-local,
+#     periodic — invariant runs are CPU-heavy and not on every step's
+#     hot path).
+# NOT exercised on per-PR CI; see ADR-0011 for the why:
 #   - the other 94 top-level test/*.t.sol files (per-facet integration
 #     + library + workflow tests) — enumerated explicitly below because
 #     Foundry's globset implementation appears to traverse subdirectories
