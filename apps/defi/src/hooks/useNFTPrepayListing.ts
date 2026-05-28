@@ -216,28 +216,34 @@ export function useNFTPrepayListing(
         // the freshest listing into `listing` state so the banner
         // and child action mode flip atomically with the tx.
         const { sawTransition, latest } = await waitForIndexer(flow, prior);
-        if (sawTransition) {
-          // Indexer caught up and confirmed the expected transition.
+        if (flow === 'cancelPrepayListing') {
+          // Cancel's on-chain final state is KNOWN once `tx.wait()`
+          // resolves: the listing is gone. Stale indexer rows
+          // returned during the poll window (the worker hasn't
+          // ingested the cancel yet) must NOT override that. Codex
+          // round-6 P2 fix on PR #308 — without this short-circuit,
+          // a lagging-indexer cancel would settle the pre-cancel
+          // row back into `listing`, keeping the banner visible
+          // and making a second cancel attempt revert with
+          // `PrepayListingNotFound`.
+          setListing(undefined);
+        } else if (sawTransition) {
+          // Post / update: indexer caught up and confirmed the
+          // expected transition (post → listing exists; update →
+          // orderHash differs from prior).
           setListing(latest);
         } else if (latest !== undefined) {
-          // Indexer responded but transition not observed within the
-          // budget — settle to its latest view (best effort). For
-          // update, this is still better than reverting to prior;
-          // the borrower will see the previous orderHash and pull
-          // the new one on the next user-driven refresh.
+          // Post / update: indexer responded but transition not
+          // observed within the budget — settle to its latest view
+          // (best effort). For update this is still better than
+          // reverting to prior; the borrower will see the previous
+          // orderHash and pull the new one on the next user-driven
+          // refresh.
           setListing(latest);
-        } else if (flow === 'cancelPrepayListing') {
-          // Cancel is the one flow where we KNOW the on-chain final
-          // state independent of the indexer — the listing is gone.
-          // Forcing `setListing(undefined)` here flips the UI out of
-          // banner / cancel mode even on a total indexer outage; a
-          // second cancel attempt would otherwise revert with
-          // `PrepayListingNotFound`. Codex round-5 P3 fix on PR #308.
-          setListing(undefined);
         }
-        // Else (post/update + total indexer outage): leave `listing`
-        // alone — the on-chain write succeeded; treating an
-        // unavailable cache as "no listing" would hide a live
+        // Else (post / update + total indexer outage): leave
+        // `listing` alone — the on-chain write succeeded; treating
+        // an unavailable cache as "no listing" would hide a live
         // post/update and put the borrower back into post mode.
         // Codex round-4 P3 fix on PR #308.
         step.success({ note: `tx ${tx.hash}` });
