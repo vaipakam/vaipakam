@@ -1876,7 +1876,12 @@ const GRACE_SECONDS_ABI = [
     type: 'function',
     name: 'getEffectiveGraceSeconds',
     stateMutability: 'view',
-    inputs: [{ name: 'durationDays', type: 'uint16' }],
+    // On-chain signature is `uint256 durationDays` (per
+    // ConfigFacet.sol:1969). A mismatch here would compile a
+    // different 4-byte selector and the RPC would 404 silently,
+    // falling back to the `graceEnd = 0` sentinel. Codex P2
+    // round-4 on PR #304.
+    inputs: [{ name: 'durationDays', type: 'uint256' }],
     outputs: [{ name: '', type: 'uint256' }],
   },
 ] as const;
@@ -1909,7 +1914,7 @@ async function _resolveGraceEnd(
         address: diamond,
         abi: GRACE_SECONDS_ABI,
         functionName: 'getEffectiveGraceSeconds',
-        args: [durationDays],
+        args: [BigInt(durationDays)],
       })) as bigint,
     );
     return startTime + durationDays * 86_400 + graceSeconds;
