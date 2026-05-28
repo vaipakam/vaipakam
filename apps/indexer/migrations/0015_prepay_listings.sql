@@ -26,7 +26,14 @@ CREATE TABLE IF NOT EXISTS prepay_listings (
   order_hash          TEXT    NOT NULL,
   ask_price           TEXT    NOT NULL,  -- string-uint256, like other amount columns
   conduit             TEXT    NOT NULL,  -- 0x-prefixed lowercase
-  executor            TEXT    NOT NULL,  -- the listing's pinned executor address
+  -- NOTE: the listing's pinned executor address is NOT persisted
+  -- here. The on-chain event payload (`PrepayListingPosted` /
+  -- `PrepayListingUpdated`) doesn't carry it; the diamond stores
+  -- it in `s.prepayListingExecutor[loanId]`. Storing the diamond
+  -- address as a placeholder would be misleading — the frontend
+  -- queries the diamond's view directly when it needs the
+  -- pinned executor (rare today; only after governance has
+  -- actively rotated). See Codex P2 round-1 on PR #304.
 
   -- Lister identity (current borrower-position-NFT holder at post
   -- time). NOT necessarily the loan's `borrower` (the original EOA

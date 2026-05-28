@@ -1547,20 +1547,7 @@ async function processLoanLogs(
         await applyMatch(loanIdB, nB, nA);
       }
     } else if (log.eventName === 'PrepayListingPosted') {
-      // T-086 step 12 — Seaport prepay-listing INSERT. The diamond's
-      // `NFTPrepayListingFacet.postPrepayListing` event payload
-      // carries everything the frontend needs (orderHash, askPrice,
-      // conduit). The `executor` address comes from
-      // `s.prepayListingExecutor[loanId]` which equals the
-      // currently configured `s.collateralListingExecutor` at post
-      // time — we don't surface it in the event payload but the
-      // indexer can fetch it from the executor-tracking table once
-      // step 12.B lands. For now: store the diamond address as a
-      // placeholder; the per-row `executor` column is only used by
-      // the frontend's "which executor authorized this listing"
-      // disambiguation, which doesn't matter until governance has
-      // actively rotated the executor — a state that doesn't exist
-      // yet on any live deploy.
+      // T-086 step 12 — Seaport prepay-listing INSERT.
       const loanId = Number(a.loanId as bigint);
       const orderHash = String(a.orderHash as `0x${string}`).toLowerCase();
       const askPrice = String(a.askPrice as bigint);
@@ -1578,18 +1565,19 @@ async function processLoanLogs(
       const graceEnd = loanRow
         ? Number(loanRow.start_time) +
           Number(loanRow.duration_days) * 86_400 +
-          // Match `LibVaipakam.gracePeriod(durationDays)`: default
-          // 3 days. The indexer doesn't (yet) read the governance-
-          // tunable grace bucket; that's a follow-up if/when
-          // governance flips the schedule.
-          3 * 86_400
+          _defaultGraceSeconds(Number(loanRow.duration_days))
         : 0;
+      // Use the log's block timestamp (chain-time) for posted_at /
+      // updated_at — backfills processed minutes later still
+      // anchor to when the listing actually went on-chain. Codex
+      // P3 round-1 on PR #304.
+      const blockAt = blockTimestamps.get(log.blockNumber) ?? now;
       await env.DB.prepare(
         `INSERT OR REPLACE INTO prepay_listings
-           (chain_id, loan_id, order_hash, ask_price, conduit, executor,
+           (chain_id, loan_id, order_hash, ask_price, conduit,
             lister, posted_at, updated_at, grace_period_end,
             block_number, tx_hash, log_index)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
         .bind(
           chainId,
@@ -1597,12 +1585,9 @@ async function processLoanLogs(
           orderHash,
           askPrice,
           conduit,
-          // Executor address placeholder — see comment above.
-          // The diamond IS the executor record-keeper at present.
-          diamond.toLowerCase(),
           lister,
-          now,
-          now,
+          blockAt,
+          blockAt,
           graceEnd,
           Number(log.blockNumber),
           String(log.transactionHash as `0x${string}`).toLowerCase(),
@@ -1610,16 +1595,34 @@ async function processLoanLogs(
         )
         .run();
     } else if (log.eventName === 'PrepayListingUpdated') {
-      // Update is a re-sign — DELETE the old row and INSERT a fresh
-      // one keyed on the new orderHash. We do this in two steps
-      // because the primary key is (chain_id, loan_id) which is
-      // STABLE across updates; only the orderHash + ask change.
+      // Update is a re-sign. UPSERT (not UPDATE) so a re-sign
+      // observed AFTER an indexer-rollout boundary — where the
+      // original `PrepayListingPosted` was missed — still
+      // materialises the row from the event payload. Codex P2
+      // round-1 on PR #304.
       const loanId = Number(a.loanId as bigint);
       const newOrderHash = String(a.newOrderHash as `0x${string}`).toLowerCase();
       const newAskPrice = String(a.newAskPrice as bigint);
       const conduit = String(a.conduit as Address).toLowerCase();
       const lister = String(a.lister as Address).toLowerCase();
-      await env.DB.prepare(
+      const blockAt = blockTimestamps.get(log.blockNumber) ?? now;
+      // Resolve grace_period_end the same way the Posted handler
+      // does — needed for the backfill-INSERT case.
+      const loanRow = await env.DB.prepare(
+        `SELECT start_time, duration_days FROM loans WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(chainId, loanId)
+        .first<{ start_time: number; duration_days: number }>();
+      const graceEnd = loanRow
+        ? Number(loanRow.start_time) +
+          Number(loanRow.duration_days) * 86_400 +
+          _defaultGraceSeconds(Number(loanRow.duration_days))
+        : 0;
+      // Try a `posted_at`-preserving UPDATE first (the common
+      // case — the row exists from a prior Posted event); fall
+      // back to an INSERT when no row exists (the rollout-
+      // backfill case).
+      const upd = await env.DB.prepare(
         `UPDATE prepay_listings
            SET order_hash = ?, ask_price = ?, conduit = ?, lister = ?,
                updated_at = ?, block_number = ?, tx_hash = ?, log_index = ?
@@ -1630,7 +1633,7 @@ async function processLoanLogs(
           newAskPrice,
           conduit,
           lister,
-          now,
+          blockAt,
           Number(log.blockNumber),
           String(log.transactionHash as `0x${string}`).toLowerCase(),
           Number(log.logIndex),
@@ -1638,6 +1641,35 @@ async function processLoanLogs(
           loanId,
         )
         .run();
+      if ((upd.meta?.changes ?? 0) === 0) {
+        // No row to update — the Posted event must have been
+        // missed (rollout window). Materialise from the Updated
+        // payload, anchoring `posted_at` to the current event's
+        // blockAt as a best-effort proxy (the true post time
+        // isn't recoverable without an RPC scan).
+        await env.DB.prepare(
+          `INSERT OR REPLACE INTO prepay_listings
+             (chain_id, loan_id, order_hash, ask_price, conduit,
+              lister, posted_at, updated_at, grace_period_end,
+              block_number, tx_hash, log_index)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+          .bind(
+            chainId,
+            loanId,
+            newOrderHash,
+            newAskPrice,
+            conduit,
+            lister,
+            blockAt,
+            blockAt,
+            graceEnd,
+            Number(log.blockNumber),
+            String(log.transactionHash as `0x${string}`).toLowerCase(),
+            Number(log.logIndex),
+          )
+          .run();
+      }
     } else if (log.eventName === 'PrepayListingCanceled') {
       // Cancel (borrower / grace-expired) terminates the listing
       // WITHOUT closing the loan — loan stays Active until a
@@ -1649,21 +1681,35 @@ async function processLoanLogs(
         .bind(chainId, loanId)
         .run();
     } else if (log.eventName === 'PrepayCollateralSaleSettled') {
-      // Successful Seaport fill: loan was Active → flips to
-      // Repaid (proper-close path; the borrower's collateral was
-      // sold to pay off the lender + treasury + borrower remainder).
-      // Same `repaid` status the regular RepayFacet terminal uses
-      // — the loan is closed, NFTs are claimable, and the subsequent
-      // LoanSettled event will flip to 'settled' once both sides
-      // have claimed.
+      // Successful Seaport fill: loan went Active → Settled
+      // ATOMICALLY in `PrepayListingFacet.executorFinalizePrepaySale`
+      // — there is no separate claim step nor a follow-up
+      // `LoanSettled` event the indexer can wait for. So we flip
+      // directly to `settled` here (NOT `repaid`); otherwise the
+      // claimables query (`status IN ('repaid','defaulted','liquidated')`)
+      // would treat the loan as forever-claimable. Codex P1
+      // round-1 on PR #304.
       const loanId = Number(a.loanId as bigint);
       await env.DB.prepare(
         `DELETE FROM prepay_listings WHERE chain_id = ? AND loan_id = ?`,
       )
         .bind(chainId, loanId)
         .run();
-      const r = await flipLoanStatus(env, chainId, a, log, 'repaid');
-      if (r) statusUpdates++;
+      const blockAt = blockTimestamps.get(log.blockNumber) ?? now;
+      const r = await env.DB.prepare(
+        `UPDATE loans
+           SET status = 'settled', terminal_block = ?, terminal_at = ?, updated_at = ?
+         WHERE chain_id = ? AND loan_id = ? AND status = 'active'`,
+      )
+        .bind(
+          Number(log.blockNumber),
+          blockAt,
+          now,
+          chainId,
+          loanId,
+        )
+        .run();
+      if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
     }
     // Notes on events deliberately not state-mutating here:
     //  - LoanSettlementBreakdown / PeriodicSlippageOverBuffer /
@@ -1788,6 +1834,25 @@ async function recordActivityEvents(
 /** Map a decoded event to the cross-domain reference columns the
  *  activity_events ledger denormalizes for fast filtering. The full
  *  args bag is preserved separately in `args_json`. */
+/// @dev T-086 step 12 — mirror of `LibVaipakam.gracePeriod()`'s
+///      compile-time default schedule (no on-chain grace buckets
+///      configured). Used by the prepay-listing handlers to compute
+///      `grace_period_end` without an RPC round-trip per event.
+///      Will drift if/when governance calls
+///      `ConfigFacet.setGraceBuckets` — at that point the indexer
+///      needs to either re-read the on-chain schedule on each
+///      relevant event, or treat the table's `grace_period_end`
+///      as a hint with on-chain verification at the cancel-expired
+///      moment.
+function _defaultGraceSeconds(durationDays: number): number {
+  if (durationDays < 7) return 3_600;       // 1 hour
+  if (durationDays < 30) return 86_400;     // 1 day
+  if (durationDays < 90) return 259_200;    // 3 days
+  if (durationDays < 180) return 604_800;   // 1 week
+  if (durationDays < 365) return 1_209_600; // 2 weeks
+  return 2_592_000;                          // 30 days
+}
+
 function pluckActivityRefs(
   eventName: string,
   args: Record<string, unknown>,

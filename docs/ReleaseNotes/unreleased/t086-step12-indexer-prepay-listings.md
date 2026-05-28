@@ -15,9 +15,13 @@ entries and ships the actual handlers + persistence table.
   (composite PK `(chain_id, loan_id)` since at most one listing
   per loan is live at a time — the facet enforces this).
 - Columns capture the listing payload (order_hash, ask_price,
-  conduit, executor, lister), chain-time anchors (posted_at,
-  updated_at, grace_period_end), and per-row provenance
-  (block_number, tx_hash, log_index).
+  conduit, lister), chain-time anchors (posted_at, updated_at,
+  grace_period_end), and per-row provenance (block_number,
+  tx_hash, log_index). The on-chain pinned executor address is
+  intentionally NOT persisted — the event payload doesn't carry
+  it, and storing a placeholder would mislead readers. The
+  frontend queries the diamond view directly when the rare
+  governance-rotation case requires it.
 - Two secondary indexes: `idx_prepay_listings_order_hash`
   (reverse lookup for cancel events that carry orderHash) and
   `idx_prepay_listings_lister` (frontend "my listings" view).
@@ -37,10 +41,12 @@ entries and ships the actual handlers + persistence table.
   Active (a cancel doesn't close the loan; a subsequent
   terminal event will).
 - `PrepayCollateralSaleSettled` — `DELETE` the row AND flip
-  `loans.status` from `active` → `repaid` (proper-close path,
-  same status the regular RepayFacet terminal uses; the
-  subsequent `LoanSettled` event flips `repaid` → `settled`
-  once both sides have claimed).
+  `loans.status` directly to `settled`. The Seaport prepay
+  sale terminal does Active → Settled ATOMICALLY in the
+  contract; there is no separate claim step nor a follow-up
+  `LoanSettled` event the indexer can wait for. Flipping to
+  `repaid` (as the regular RepayFacet terminal does) would
+  leave the loan forever in the claimables set.
 
 **Event-coverage script cleanup:**
 
