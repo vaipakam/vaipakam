@@ -1554,6 +1554,13 @@ async function processLoanLogs(
             )
             .run();
           statusUpdates++;
+          // T-086 step 12 / Codex P2 round-5 — internal-match
+          // terminal also clears the listing. The on-chain loan
+          // is no longer Active so any subsequent Seaport fill
+          // would revert at the executor's `getPrepayContext`
+          // check, but the indexed projection needs to mirror
+          // the terminal state immediately.
+          await _deletePrepayListing(env, chainId, loanId);
         } else {
           await env.DB.prepare(
             `UPDATE loans SET principal = ?, collateral_amount = ?, updated_at = ? WHERE chain_id = ? AND loan_id = ?`,
