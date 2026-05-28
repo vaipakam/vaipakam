@@ -22,6 +22,7 @@ import {ProfileFacet} from "./ProfileFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "./RiskMatchLiquidationFacet.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
+import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 
 /**
  * @title DefaultedFacet
@@ -179,6 +180,20 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert InvalidLoanStatus();
+
+        // T-086 step 10 — default-flow lock-bypass. If a prepay-
+        // listing is live on this loan, clear it FIRST so the
+        // borrower-position NFT is unlocked + the diamond / vault /
+        // executor bookkeeping is consistent before this facet
+        // starts moving collateral. Idempotent no-op when no
+        // listing is live. See design doc §5.4 — without this,
+        // the strict `LibERC721._lock` overwrite-protection
+        // (step 6 round 2) would block any subsequent flow that
+        // needs to re-lock the same token, and stale orderHash
+        // bindings on the executor / vault would let a previously-
+        // signed Seaport order continue to be (futilely) submitted.
+        s; // suppress unused-storage warning; the library reads it.
+        LibPrepayCleanup.clearActiveListing(loan, loanId);
 
         // Tiered KYC check on loan value for the lender. Both branches
         // (ERC20 loan / NFT rental) price the same way — we only differ in

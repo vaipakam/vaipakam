@@ -57,7 +57,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](74);
+        selectors = new bytes4[](75);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -199,6 +199,8 @@ contract HelperTest {
         selectors[71] = TestMutatorFacet.getPrincipalPlusAccruedInterest.selector;
         selectors[72] = TestMutatorFacet.getTreasuryAndPrecloseFee.selector;
         selectors[73] = TestMutatorFacet.setTreasuryFeeBpsRaw.selector;
+        // T-086 step 10 — test-only direct invoke of LibPrepayCleanup.
+        selectors[74] = TestMutatorFacet.invokePrepayCleanup.selector;
         return selectors;
     }
 

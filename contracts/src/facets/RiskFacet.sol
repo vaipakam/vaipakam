@@ -9,6 +9,7 @@ import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
+import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -480,6 +481,14 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active) revert InvalidLoan();
 
+        // T-086 step 10 — clear any live prepay listing FIRST so
+        // the borrower-position NFT is unlocked + the diamond /
+        // vault / executor bookkeeping is consistent before this
+        // facet starts moving collateral. Idempotent no-op when
+        // no listing is live. See design doc §5.4.
+        s; // suppress unused-storage warning; the library reads it.
+        LibPrepayCleanup.clearActiveListing(loan, loanId);
+
         // l2 circuit breaker: block HF-based liquidation when the sequencer
         // is down or still in the 1h grace window. Chainlink prices and
         // AMM pools may be stale under those conditions, so a swap here
@@ -819,6 +828,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active) revert InvalidLoan();
+        s; // suppress unused-storage warning; the library reads it.
+        // T-086 step 10 — see {triggerLiquidation}'s sibling block.
+        LibPrepayCleanup.clearActiveListing(loan, loanId);
         if (!OracleFacet(address(this)).sequencerHealthy()) {
             revert SequencerUnhealthy();
         }
@@ -1392,6 +1404,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active) revert InvalidLoan();
+        s; // suppress unused-storage warning; the library reads it.
+        // T-086 step 10 — see {triggerLiquidation}'s sibling block.
+        LibPrepayCleanup.clearActiveListing(loan, loanId);
 
         // l2 circuit-breaker — same as atomic path. While the
         // sequencer is unhealthy, oracle reads may be stale and the
