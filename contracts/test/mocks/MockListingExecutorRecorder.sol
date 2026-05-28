@@ -27,10 +27,22 @@ contract MockListingExecutorRecorder is IListingExecutorRecorder {
 
     mapping(address => bool) private _approvedConduits;
 
+    /// @notice #306 — the real `CollateralListingExecutor` exposes
+    ///         `seaport` as a public state variable; the diamond's
+    ///         `postPrepayListing` reads it to derive the canonical
+    ///         orderHash via Seaport's view. Mirror the field so
+    ///         `CollateralListingExecutor(address(mock)).seaport()`
+    ///         resolves in tests.
+    address public seaport;
+
     // ─── Test-side configuration (NOT in the real executor) ─────────────
 
     function setApprovedConduit(address conduit, bool approved) external {
         _approvedConduits[conduit] = approved;
+    }
+
+    function setSeaport(address newSeaport) external {
+        seaport = newSeaport;
     }
 
     // ─── IListingExecutorRecorder ───────────────────────────────────────

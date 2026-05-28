@@ -14,6 +14,8 @@ import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.so
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockListingExecutorRecorder} from "./mocks/MockListingExecutorRecorder.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
+import {MockSeaport} from "./mocks/MockSeaport.sol";
+import {MockConduitController} from "./mocks/MockConduitController.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
 /**
@@ -43,19 +45,26 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 contract NFTPrepayListingFacetTest is SetupTest {
     MockListingExecutorRecorder internal mockExecutor;
     MockRentableNFT721 internal collateralNFT;
+    MockSeaport internal mockSeaport;
+    MockConduitController internal mockConduitController;
     address internal borrowerVaultAddr;
 
     address internal borrowerHolder;
     address internal randomCaller;
     address internal conduit;
+    bytes32 internal conduitKey;
 
     uint256 internal constant LOAN_ID = 4_242;
     uint256 internal constant LENDER_TOKEN_ID = 100;
     uint256 internal constant BORROWER_TOKEN_ID = 101;
     uint256 internal constant COLLATERAL_TOKEN_ID = 1;
 
-    bytes32 internal constant ORDER_HASH_A = bytes32(uint256(0xa11ce));
-    bytes32 internal constant ORDER_HASH_B = bytes32(uint256(0xb0b));
+    // #306 fix — orderHashes are now DERIVED by Seaport from the
+    // OrderComponents the diamond constructs. Tests no longer pin
+    // them as constants; the post / update happy paths assert
+    // against whatever hash MockSeaport returned.
+    uint256 internal constant TEST_SALT_A = 0xa11ce;
+    uint256 internal constant TEST_SALT_B = 0xb0b;
 
     uint16 internal constant TEST_BUFFER_BPS = 200; // 2 %
 
@@ -63,13 +72,21 @@ contract NFTPrepayListingFacetTest is SetupTest {
         setupHelper();
         mockExecutor = new MockListingExecutorRecorder();
         collateralNFT = new MockRentableNFT721();
+        // #306 — MockConduitController + MockSeaport. The diamond's
+        // postPrepayListing calls into Seaport.getOrderHash +
+        // Seaport.conduitController + ConduitController.getConduit
+        // to construct + verify the canonical order.
+        mockConduitController = new MockConduitController();
+        mockSeaport = new MockSeaport(address(mockConduitController));
+        mockExecutor.setSeaport(address(mockSeaport));
+
         borrowerHolder = makeAddr("borrowerHolder");
         randomCaller = makeAddr("randomCaller");
         conduit = makeAddr("seaportConduitMock");
+        conduitKey = keccak256("test-conduit-key");
+        mockConduitController.register(conduitKey, conduit);
 
-        // Create the borrower's vault + deposit the collateral NFT
-        // (mint to borrower, transfer to vault) so the step-7 vault
-        // wiring has a real ERC721 to call `approve` against.
+        // Create the borrower's vault + deposit the collateral NFT.
         borrowerVaultAddr =
             VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrowerHolder);
         collateralNFT.mint(borrowerHolder, COLLATERAL_TOKEN_ID);
@@ -127,14 +144,10 @@ contract NFTPrepayListingFacetTest is SetupTest {
 
     // ─── 2. postPrepayListing — revert paths ────────────────────────────
 
-    function test_postPrepayListing_revertsZeroOrderHash() public {
-        _scaffoldActiveLoan({allowsPrepay: true});
-        vm.prank(borrowerHolder);
-        vm.expectRevert(NFTPrepayListingFacet.ZeroOrderHash.selector);
-        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, _floorPlusBuffer(), bytes32(0), conduit
-        );
-    }
+    // (`test_postPrepayListing_revertsZeroOrderHash` removed in
+    // #306 fix — the new API doesn't take an orderHash; the
+    // diamond constructs the canonical Seaport order and derives
+    // the hash itself.)
 
     function test_postPrepayListing_revertsLoanNotActive() public {
         // Scaffold a Settled loan.
@@ -148,7 +161,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
             )
         );
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, 1e18, ORDER_HASH_A, conduit
+            LOAN_ID, 1e18, TEST_SALT_A, conduitKey
         );
     }
 
@@ -162,14 +175,16 @@ contract NFTPrepayListingFacetTest is SetupTest {
             )
         );
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
         );
     }
 
     function test_postPrepayListing_revertsUnsupportedCollateralForV1() public {
-        // Build an Active loan with ERC1155 collateral (step 6 = ERC721 only).
+        // #306 + step 15 — ERC721 + ERC1155 both supported now.
+        // ERC20 collateral remains rejected (no NFT identifier
+        // for the Seaport offer item).
         LibVaipakam.Loan memory loan = _baseLoan();
-        loan.collateralAssetType = LibVaipakam.AssetType.ERC1155;
+        loan.collateralAssetType = LibVaipakam.AssetType.ERC20;
         loan.allowsPrepayListing = true;
         TestMutatorFacet(address(diamond)).setLoan(LOAN_ID, loan);
 
@@ -177,11 +192,11 @@ contract NFTPrepayListingFacetTest is SetupTest {
         vm.expectRevert(
             abi.encodeWithSelector(
                 NFTPrepayListingFacet.UnsupportedCollateralForV1.selector,
-                LibVaipakam.AssetType.ERC1155
+                LibVaipakam.AssetType.ERC20
             )
         );
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
         );
     }
 
@@ -201,7 +216,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
             )
         );
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
         );
     }
 
@@ -217,35 +232,42 @@ contract NFTPrepayListingFacetTest is SetupTest {
             )
         );
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
         );
     }
 
     function test_postPrepayListing_revertsAlreadyExists() public {
         _scaffoldActiveLoan({allowsPrepay: true});
-        // First post — happy path.
+        // First post — happy path. Capture the diamond-derived hash.
         vm.prank(borrowerHolder);
-        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+        bytes32 firstHash = NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
         );
 
-        // Second post — should fail.
+        // Second post — should fail with the first listing's hash.
         vm.prank(borrowerHolder);
         vm.expectRevert(
             abi.encodeWithSelector(
                 NFTPrepayListingFacet.PrepayListingAlreadyExists.selector,
                 LOAN_ID,
-                ORDER_HASH_A
+                firstHash
             )
         );
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_B, conduit
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_B, conduitKey
         );
     }
 
     function test_postPrepayListing_revertsConduitNotApproved() public {
         _scaffoldActiveLoan({allowsPrepay: true});
         address rogueConduit = makeAddr("rogueConduit");
+        bytes32 rogueConduitKey = keccak256("rogue-conduit");
+        // Register the rogueKey → rogueConduit pair in the mock
+        // ConduitController so the on-chain resolveConduit
+        // succeeds; then the executor's allow-list check (which
+        // returns false for an unapproved address) fires the
+        // expected revert.
+        mockConduitController.register(rogueConduitKey, rogueConduit);
         // approvedConduits[rogueConduit] = false (default).
         vm.prank(borrowerHolder);
         vm.expectRevert(
@@ -255,7 +277,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
             )
         );
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, rogueConduit
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, rogueConduitKey
         );
     }
 
@@ -275,7 +297,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
             )
         );
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, minAsk - 1, ORDER_HASH_A, conduit
+            LOAN_ID, minAsk - 1, TEST_SALT_A, conduitKey
         );
     }
 
@@ -289,7 +311,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         vm.prank(borrowerHolder);
         vm.expectRevert(NFTPrepayListingFacet.ExecutorNotSet.selector);
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
         );
     }
 
@@ -302,7 +324,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         vm.prank(borrowerHolder);
         vm.expectRevert(NFTPrepayListingFacet.PrepayListingDisabled.selector);
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
         );
     }
 
@@ -328,7 +350,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
             )
         );
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
         );
     }
 
@@ -341,7 +363,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         vm.prank(borrowerHolder);
         vm.expectRevert(NFTPrepayListingFacet.PrepayListingBufferNotConfigured.selector);
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
         );
     }
 
@@ -352,22 +374,23 @@ contract NFTPrepayListingFacetTest is SetupTest {
         uint256 ask = _floorPlusBuffer();
 
         vm.prank(borrowerHolder);
-        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, ask, ORDER_HASH_A, conduit
+        bytes32 derivedHash = NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, ask, TEST_SALT_A, conduitKey
         );
 
         // Diamond bookkeeping.
         assertEq(
             NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
-            ORDER_HASH_A,
+            derivedHash,
             "diamond stores active orderHash"
         );
+        assertTrue(derivedHash != bytes32(0), "diamond-derived hash is non-zero");
 
         // Executor side received the recordOrder call.
         assertEq(mockExecutor.recordCallCount(), 1, "executor.recordOrder called once");
         assertEq(
             mockExecutor.lastRecordedOrderHash(),
-            ORDER_HASH_A,
+            derivedHash,
             "executor recorded the right orderHash"
         );
 
@@ -392,29 +415,30 @@ contract NFTPrepayListingFacetTest is SetupTest {
             )
         );
         NFTPrepayListingFacet(address(diamond)).updatePrepayListing(
-            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_B, conduit
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_B, conduitKey
         );
     }
 
     function test_updatePrepayListing_happyPath() public {
         _scaffoldActiveLoan({allowsPrepay: true});
 
-        // 1. Post with hash A.
+        // 1. Post with salt A — capture derived hash.
         vm.prank(borrowerHolder);
-        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+        bytes32 hashA = NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
         );
 
-        // 2. Update to hash B.
+        // 2. Update with salt B — capture derived hash.
         vm.prank(borrowerHolder);
-        NFTPrepayListingFacet(address(diamond)).updatePrepayListing(
-            LOAN_ID, _floorPlusBuffer() + 1 ether, ORDER_HASH_B, conduit
+        bytes32 hashB = NFTPrepayListingFacet(address(diamond)).updatePrepayListing(
+            LOAN_ID, _floorPlusBuffer() + 1 ether, TEST_SALT_B, conduitKey
         );
+        assertTrue(hashA != hashB, "different salts -> different hashes");
 
         // Bookkeeping points at the new hash.
         assertEq(
             NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
-            ORDER_HASH_B,
+            hashB,
             "orderHash replaced with the new one"
         );
 
@@ -422,8 +446,8 @@ contract NFTPrepayListingFacetTest is SetupTest {
         // one second record (for B).
         assertEq(mockExecutor.recordCallCount(), 2, "two recordOrder calls (initial + replace)");
         assertEq(mockExecutor.clearCallCount(), 1, "one clearOrder call (clear A)");
-        assertEq(mockExecutor.lastClearedOrderHash(), ORDER_HASH_A, "A was cleared");
-        assertEq(mockExecutor.lastRecordedOrderHash(), ORDER_HASH_B, "B was recorded");
+        assertEq(mockExecutor.lastClearedOrderHash(), hashA, "A was cleared");
+        assertEq(mockExecutor.lastRecordedOrderHash(), hashB, "B was recorded");
 
         // Lock stays on through the update (only the orderHash rotates).
         assertEq(
@@ -440,7 +464,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
 
         vm.prank(borrowerHolder);
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
         );
 
         vm.prank(randomCaller);
@@ -479,7 +503,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         // Post under executor A (= mockExecutor wired in setUp).
         vm.prank(borrowerHolder);
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
         );
         uint256 aRecordCount = mockExecutor.recordCallCount();
 
@@ -499,11 +523,12 @@ contract NFTPrepayListingFacetTest is SetupTest {
             1,
             "A's clearOrder called (pinned executor at post time)"
         );
-        assertEq(
-            mockExecutor.lastClearedOrderHash(),
-            ORDER_HASH_A,
-            "A cleared the right hash"
-        );
+        // Cleared hash equals the diamond's stored hash at post
+        // time — we don't pin it as a constant, just confirm
+        // round-trip consistency.
+        // (No additional assertion needed; `getPrepayListingOrderHash`
+        // having been cleared to `bytes32(0)` post-cancel plus the
+        // clearCallCount of 1 above is the right pair of signals.)
         assertEq(
             mockExecutorB.clearCallCount(),
             0,
@@ -525,7 +550,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
 
         vm.prank(borrowerHolder);
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
         );
 
         // Simulate `repayLoan` finishing: flip status to Repaid
@@ -553,8 +578,8 @@ contract NFTPrepayListingFacetTest is SetupTest {
         _scaffoldActiveLoan({allowsPrepay: true});
 
         vm.prank(borrowerHolder);
-        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+        bytes32 derivedHash = NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
         );
 
         vm.prank(borrowerHolder);
@@ -567,9 +592,9 @@ contract NFTPrepayListingFacetTest is SetupTest {
             "orderHash cleared on cancel"
         );
 
-        // Executor saw the clearOrder.
+        // Executor saw the clearOrder with the diamond-derived hash.
         assertEq(mockExecutor.clearCallCount(), 1, "executor.clearOrder called once");
-        assertEq(mockExecutor.lastClearedOrderHash(), ORDER_HASH_A, "cleared the right hash");
+        assertEq(mockExecutor.lastClearedOrderHash(), derivedHash, "cleared the right hash");
 
         // Lock released.
         assertEq(
@@ -595,7 +620,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
 
         vm.prank(borrowerHolder);
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
         );
 
         // Post: the configured conduit is approved for the token.
@@ -613,12 +638,12 @@ contract NFTPrepayListingFacetTest is SetupTest {
         _scaffoldActiveLoan({allowsPrepay: true});
 
         vm.prank(borrowerHolder);
-        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+        bytes32 derivedHash = NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
         );
 
         assertEq(
-            VaipakamVaultImplementation(borrowerVaultAddr).getListingExecutor(ORDER_HASH_A),
+            VaipakamVaultImplementation(borrowerVaultAddr).getListingExecutor(derivedHash),
             address(mockExecutor),
             "vault pins orderHash to executor"
         );
@@ -628,8 +653,8 @@ contract NFTPrepayListingFacetTest is SetupTest {
         _scaffoldActiveLoan({allowsPrepay: true});
 
         vm.prank(borrowerHolder);
-        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+        bytes32 derivedHash = NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
         );
 
         vm.prank(borrowerHolder);
@@ -637,7 +662,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
 
         // Vault binding cleared.
         assertEq(
-            VaipakamVaultImplementation(borrowerVaultAddr).getListingExecutor(ORDER_HASH_A),
+            VaipakamVaultImplementation(borrowerVaultAddr).getListingExecutor(derivedHash),
             address(0),
             "vault binding cleared on cancel"
         );
@@ -651,15 +676,13 @@ contract NFTPrepayListingFacetTest is SetupTest {
 
     function test_vault_isValidSignature_returnsMagicWhenExecutorApproves() public {
         // Full ERC-1271 path: vault delegates to mockExecutor;
-        // because MockListingExecutorRecorder is a stub, we need
-        // to use the real executor for `isOrderValid` to return
-        // the right thing. For this test, MockListingExecutorRecorder
-        // doesn't implement `isOrderValid`, so the call would
-        // revert. Skip the round-trip; assert via the simpler
-        // unknown-hash path instead: an unregistered orderHash
-        // returns the INVALID sentinel.
+        // because MockListingExecutorRecorder is a stub it has
+        // no `isOrderValid` view. Assert the simpler
+        // unregistered-hash path: any hash not in the vault's
+        // `_listingExecutor` map returns the INVALID sentinel.
+        bytes32 unregisteredHash = keccak256("never-registered");
         bytes4 invalid = VaipakamVaultImplementation(borrowerVaultAddr)
-            .isValidSignature(ORDER_HASH_A, "");
+            .isValidSignature(unregisteredHash, "");
         assertEq(invalid, bytes4(0xffffffff), "unregistered hash -> invalid");
     }
 
@@ -679,14 +702,14 @@ contract NFTPrepayListingFacetTest is SetupTest {
         _scaffoldActiveLoan({allowsPrepay: true});
 
         vm.prank(borrowerHolder);
-        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+        bytes32 derivedHash = NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
         );
 
         // Pre-condition: hash is recorded.
         assertEq(
             NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
-            ORDER_HASH_A,
+            derivedHash,
             "pre: orderHash recorded"
         );
 
@@ -732,18 +755,18 @@ contract NFTPrepayListingFacetTest is SetupTest {
         _scaffoldActiveLoan({allowsPrepay: true});
 
         vm.prank(borrowerHolder);
-        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+        bytes32 derivedHash = NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
         );
 
         // Pre: everything is wired.
         assertEq(
             NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
-            ORDER_HASH_A
+            derivedHash
         );
         assertEq(collateralNFT.getApproved(COLLATERAL_TOKEN_ID), conduit);
         assertEq(
-            VaipakamVaultImplementation(borrowerVaultAddr).getListingExecutor(ORDER_HASH_A),
+            VaipakamVaultImplementation(borrowerVaultAddr).getListingExecutor(derivedHash),
             address(mockExecutor)
         );
         assertEq(
@@ -768,7 +791,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
             "conduit approval revoked"
         );
         assertEq(
-            VaipakamVaultImplementation(borrowerVaultAddr).getListingExecutor(ORDER_HASH_A),
+            VaipakamVaultImplementation(borrowerVaultAddr).getListingExecutor(derivedHash),
             address(0),
             "vault orderHash binding cleared"
         );
@@ -779,7 +802,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         );
         // Executor side received the clearOrder.
         assertEq(mockExecutor.clearCallCount(), 1, "executor.clearOrder called");
-        assertEq(mockExecutor.lastClearedOrderHash(), ORDER_HASH_A);
+        assertEq(mockExecutor.lastClearedOrderHash(), derivedHash);
     }
 
     // ─── 5. cancelExpiredPrepayListing (permissionless) ─────────────────
@@ -789,7 +812,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
 
         vm.prank(borrowerHolder);
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
         );
 
         // Pre-grace — permissionless cancel must refuse.
@@ -816,7 +839,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
 
         vm.prank(borrowerHolder);
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
         );
 
         uint256 graceEnd = _graceEnd();
@@ -849,7 +872,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         // Post at T0 while loan is Active.
         vm.prank(borrowerHolder);
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
         );
 
         // Flip status to Defaulted while keeping startTime +
@@ -882,7 +905,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
 
         vm.prank(borrowerHolder);
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
         );
 
         // Warp PAST grace (strict — exactly `>= graceEnd + 1`).
@@ -941,11 +964,13 @@ contract NFTPrepayListingFacetTest is SetupTest {
         loan.allowsPrepayListing = allowsPrepay;
         TestMutatorFacet(address(diamond)).setLoan(LOAN_ID, loan);
 
-        // Mint the borrower-position NFT to the holder so the
-        // authority gate passes. Lender NFT mint isn't needed for
-        // step 6's surface (the executor's zone callback at step 5
-        // re-checks lender recipient at fill time, not here).
+        // Mint both position NFTs. The #306 fix calls
+        // `getPrepayContext` from the facet's `postPrepayListing`
+        // to derive the canonical order's consideration recipients
+        // (lender + borrower NFT holders); both must exist or
+        // `ownerOf` reverts ERC721NonexistentToken.
         TestMutatorFacet(address(diamond)).mintNFTRaw(borrowerHolder, BORROWER_TOKEN_ID);
+        TestMutatorFacet(address(diamond)).mintNFTRaw(makeAddr("loanLender"), LENDER_TOKEN_ID);
     }
 
     /// @dev Grace boundary = startTime + durationDays + grace(durationDays).

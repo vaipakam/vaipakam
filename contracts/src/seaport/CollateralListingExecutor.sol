@@ -162,6 +162,12 @@ contract CollateralListingExecutor is
     error WrongOfferAmount(uint256 expected, uint256 actual);
     error UnsupportedLendingAssetType();
     error UnsupportedCollateralAssetType();
+    /// @notice #306 defense-in-depth — `params.offerer` doesn't
+    ///         match the borrower's per-user vault address.
+    ///         Structurally redundant with the canonical-hash
+    ///         construction in `LibPrepayOrder`, but catches a
+    ///         future invariant break.
+    error WrongOfferer(address expected, address actual);
     error ZeroAddress();
     error AlreadyRecorded(bytes32 orderHash);
     error LoanIdOverflow(uint256 loanId);
@@ -433,6 +439,20 @@ contract CollateralListingExecutor is
             IVaipakamPrepayContext(vaipakamDiamond).getPrepayContext(loanId, block.timestamp);
 
         if (pctx.status != LibVaipakam.LoanStatus.Active) revert LoanNotActive(loanId);
+
+        // #306 architectural-fix defense-in-depth: the order's
+        // `offerer` MUST be the borrower's per-user vault. The
+        // diamond's `postPrepayListing` already binds the
+        // orderHash to a vault-offerer order shape (the
+        // canonical-hash construction in `LibPrepayOrder`), so
+        // a hash registered for a different-offerer order
+        // structurally can't exist in `orderContext`. This
+        // explicit check is redundant in the happy path but
+        // catches any future migration or upgrade that loosens
+        // the canonical-hash invariant.
+        if (params.offerer != pctx.borrowerVault) {
+            revert WrongOfferer(pctx.borrowerVault, params.offerer);
+        }
         // Grace boundary uses strict `>` to mirror the rest of the
         // loan lifecycle. The grace window CLOSES the instant after
         // `graceEnd`, not at the tick itself:

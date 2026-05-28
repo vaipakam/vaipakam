@@ -336,6 +336,48 @@ contract VaipakamVaultImplementation is
     }
 
     /**
+     * @notice ERC1155 sibling of {setCollateralOperatorApproval}.
+     *         Grants (or revokes) operator-level approval on an
+     *         ERC1155 collateral collection — ERC1155 has no
+     *         per-token `approve`; the standard's only approval
+     *         surface is `setApprovalForAll(operator, approved)`,
+     *         which is operator-wide on the collection.
+     * @dev    Diamond-gated. T-086 step 15 extension folded into
+     *         #306's architectural fix.
+     *
+     *         The operator-wide approval's blast radius is bounded
+     *         by:
+     *           1. The Seaport order's `FULL_RESTRICTED` orderType
+     *              — Seaport refuses partial fills; the executor
+     *              content gate enforces the full vaulted balance.
+     *           2. The diamond's #306 canonical-order construction —
+     *              the orderHash registered on the vault's
+     *              ERC-1271 mapping corresponds to a SPECIFIC
+     *              `(collection, tokenId, fullAmount)` offer
+     *              that the diamond verified; a malicious order
+     *              with a different shape would have a different
+     *              hash and the vault's ERC-1271 would return
+     *              INVALID for it.
+     *
+     *         The conduit-allow-list discipline on the executor
+     *         singleton is the trust anchor — only conduits the
+     *         protocol has explicitly approved can be passed.
+     */
+    function setCollateralOperatorApprovalERC1155(
+        address nftContract,
+        address conduit,
+        bool approved
+    ) external onlyDiamond {
+        IERC1155(nftContract).setApprovalForAll(conduit, approved);
+        emit CollateralOperatorApprovalSet(
+            nftContract,
+            0, // tokenId placeholder — ERC1155 approval is operator-wide
+            conduit,
+            approved
+        );
+    }
+
+    /**
      * @notice Pin a Seaport `orderHash → executor` binding so this
      *         vault's ERC-1271 {isValidSignature} can delegate to
      *         that executor's `isOrderValid` at sign-verification

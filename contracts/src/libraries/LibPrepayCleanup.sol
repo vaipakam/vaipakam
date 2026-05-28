@@ -85,9 +85,17 @@ library LibPrepayCleanup {
         address vaultAddr = s.userVaipakamVaults[loan.borrower];
         if (vaultAddr != address(0)) {
             VaipakamVaultImplementation vault = VaipakamVaultImplementation(vaultAddr);
-            vault.setCollateralOperatorApproval(
-                loan.collateralAsset, loan.collateralTokenId, address(0), false
-            );
+            // T-086 step 15 + #306 fix — branch on asset type.
+            // ERC721 explicitly revokes the per-token approval;
+            // ERC1155 leaves the operator-wide approval in place
+            // (orderHash invalidation via `revokeListingOrderHash`
+            // is the authoritative safety primitive, matching the
+            // standard Seaport ERC1155 conduit pattern).
+            if (loan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
+                vault.setCollateralOperatorApproval(
+                    loan.collateralAsset, loan.collateralTokenId, address(0), false
+                );
+            }
             vault.revokeListingOrderHash(orderHash);
         }
     }
