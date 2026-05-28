@@ -26,7 +26,11 @@ interface Props {
 export function PrepayListingBanner({ listing, principalAsset }: Props) {
   const { t } = useTranslation();
   const now = Math.floor(Date.now() / 1000);
-  const graceClosed = now >= listing.gracePeriodEnd;
+  // Strict `>` to match `CollateralListingExecutor`'s boundary
+  // (`block.timestamp > pctx.graceEnd` rejects fills). The exact
+  // `endTime + grace` tick is still fillable on-chain. Codex
+  // round-4 P3 fix on PR #308.
+  const graceClosed = now > listing.gracePeriodEnd;
   const secondsLeft = Math.max(0, listing.gracePeriodEnd - now);
   const daysLeft = Math.floor(secondsLeft / 86400);
   const hoursLeft = Math.floor((secondsLeft % 86400) / 3600);

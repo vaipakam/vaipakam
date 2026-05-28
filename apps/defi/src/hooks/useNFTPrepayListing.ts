@@ -151,41 +151,40 @@ export function useNFTPrepayListing(
     async (
       flow: 'postPrepayListing' | 'updatePrepayListing' | 'cancelPrepayListing',
       prior: IndexedPrepayListing | null | undefined,
-    ): Promise<IndexedPrepayListing | null | undefined> => {
-      if (!loanId) return undefined;
+    ): Promise<{
+      /** True iff a poll observed the expected transition. */
+      sawTransition: boolean;
+      /** The latest indexer view we got. Undefined when no poll
+       *  returned a row (e.g. indexer outage). */
+      latest: IndexedPrepayListing | null | undefined;
+    }> => {
+      if (!loanId) return { sawTransition: false, latest: undefined };
       // 1 s, 2 s, 3 s, 4 s, 5 s → ~15 s total worst case. Short enough
       // to keep the user in-flow; long enough for a healthy indexer
       // (block-time-aligned scans) to catch up.
       const delays = [1000, 2000, 3000, 4000, 5000];
-      let lastRow: IndexedPrepayListing | null | undefined = undefined;
+      let latest: IndexedPrepayListing | null | undefined = undefined;
+      let indexerEverResponded = false;
       for (const d of delays) {
         await new Promise((r) => setTimeout(r, d));
         const row = await fetchLoanById(chainId, Number(loanId));
         if (!row) continue;
-        lastRow = row.prepayListing;
+        indexerEverResponded = true;
+        latest = row.prepayListing;
         if (flow === 'cancelPrepayListing') {
-          // Expected: listing gone.
-          if (!row.prepayListing) return undefined;
+          if (!row.prepayListing) return { sawTransition: true, latest: undefined };
         } else if (flow === 'postPrepayListing') {
-          // Expected: a listing now exists. `prior` was nullish; any
-          // present listing is the new one (diamond enforces "at most
-          // one live listing per loan" so we can't conflate with a
-          // prior-loan row here).
-          if (row.prepayListing) return row.prepayListing;
+          if (row.prepayListing) return { sawTransition: true, latest: row.prepayListing };
         } else {
-          // Update: a listing was already there; expected transition
-          // is "orderHash changes from `prior.orderHash`". A row that
-          // STILL returns the prior orderHash means the indexer is
-          // lagging; keep polling.
           if (
             row.prepayListing &&
             (!prior || row.prepayListing.orderHash !== prior.orderHash)
           ) {
-            return row.prepayListing;
+            return { sawTransition: true, latest: row.prepayListing };
           }
         }
       }
-      return lastRow;
+      return { sawTransition: false, latest: indexerEverResponded ? latest : undefined };
     },
     [chainId, loanId],
   );
@@ -216,8 +215,24 @@ export function useNFTPrepayListing(
         // Poll the indexer for the expected transition; this writes
         // the freshest listing into `listing` state so the banner
         // and child action mode flip atomically with the tx.
-        const fresh = await waitForIndexer(flow, prior);
-        setListing(fresh);
+        const { sawTransition, latest } = await waitForIndexer(flow, prior);
+        if (sawTransition) {
+          // Indexer caught up and confirmed the expected transition.
+          setListing(latest);
+        } else if (latest !== undefined) {
+          // Indexer responded but transition not observed within the
+          // budget — settle to its latest view (best effort). For
+          // update, this is still better than reverting to prior;
+          // the borrower will see the previous orderHash and pull
+          // the new one on the next user-driven refresh.
+          setListing(latest);
+        }
+        // Else: indexer never responded (every poll returned `null`
+        // → worker outage). Leave `listing` alone — the on-chain
+        // write succeeded; treating an unavailable cache as "no
+        // listing" would hide a live post/update and put the
+        // borrower back into post mode. Codex round-4 P3 fix on PR
+        // #308.
         step.success({ note: `tx ${tx.hash}` });
       } catch (err) {
         setActionError(decodeContractError(err, `${flow} failed`));

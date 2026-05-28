@@ -1119,28 +1119,32 @@ export default function LoanDetails() {
         </div>
       )}
 
-      {/* T-086 step 13 — Seaport prepay listing surface. Rendered as
-          its OWN card (outside `availability.repay`'s wrapper) so a
-          stale listing still has a cancel button after the loan
-          transitions away from Active — the on-chain
-          `cancelPrepayListing` intentionally has no status gate so
-          the borrower can always wind down a leftover listing /
-          release the borrower-NFT lock. Codex round-3 P2 fix on PR
-          #308. */}
+      {/* T-086 step 13 — Seaport prepay listing surface. Rendered
+          OUTSIDE the `availability.repay` wrapper so a stale listing
+          still has a cancel button after the loan transitions away
+          from Active — the on-chain `cancelPrepayListing`
+          intentionally has no status gate. The component owns its
+          own card wrapper so its `return null` (past-grace + no
+          listing, or still loading) doesn't leave an empty card in
+          the DOM. Codex round-4 P3 fix on PR #308. The page-level
+          gate also drops the surface entirely while the indexer
+          fetch is in flight (`prepayListing.loading`) — `listing
+          === null` is the hook's documented loading sentinel; we
+          mustn't briefly show post mode on a loan that already
+          has a live listing. Codex round-4 P3 fix on PR #308. */}
       {address &&
         isBorrower &&
+        !prepayListing.loading &&
         (availability.prepayListing || !!prepayListingState) && (
-          <div id="prepay-listing-card" className="card loan-actions-card">
-            <PrepayListingActions
-              loanId={BigInt(loanId!)}
-              principalAsset={loan.principalAsset}
-              borrowerTokenId={loan.borrowerTokenId}
-              prepayListing={prepayListing}
-              hasLiveListing={!!prepayListingState}
-              pastPrepayGrace={pastPrepayGrace}
-              loanIsActive={isActive}
-            />
-          </div>
+          <PrepayListingActions
+            loanId={BigInt(loanId!)}
+            principalAsset={loan.principalAsset}
+            borrowerTokenId={loan.borrowerTokenId}
+            prepayListing={prepayListing}
+            hasLiveListing={!!prepayListingState}
+            pastPrepayGrace={pastPrepayGrace}
+            loanIsActive={isActive}
+          />
         )}
 
       {/* Per-loan keeper toggles (gate 3 of the Phase-6 keeper auth

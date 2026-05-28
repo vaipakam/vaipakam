@@ -89,6 +89,12 @@ export function PrepayListingActions({
   const { t } = useTranslation();
   const diamond = useDiamondRead();
   const meta = useTokenMeta(principalAsset);
+  // We delay form initialization until `meta` is non-null so a
+  // non-18-decimal principal (USDC=6, etc.) gets seeded with the
+  // correct units. Until then `decimals` is the 18-default and any
+  // pre-fill would mis-format the ask. Codex round-4 P2 fix on PR
+  // #308.
+  const metaLoaded = meta !== null;
   const decimals = meta?.decimals ?? 18;
 
   const {
@@ -100,6 +106,18 @@ export function PrepayListingActions({
     updatePrepayListing,
     cancelPrepayListing,
   } = prepayListing;
+
+  // Periodic refresh tick — bumps every 60s so the on-chain floor /
+  // min-ask read below stays current while the form sits open and
+  // interest accrues. Without this, a borrower could craft an ask
+  // the UI presents as valid but the on-chain `_requireAskCoversFloor`
+  // now rejects with `AskBelowFloor`. Codex round-4 P3 fix on PR
+  // #308.
+  const [floorTick, setFloorTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setFloorTick((n) => n + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   // Min-ask anchor + live floor + kill-switch + lock state — all pulled
   // from the diamond rather than re-derived in JS, so the live grace,
@@ -163,7 +181,7 @@ export function PrepayListingActions({
     return () => {
       cancelled = true;
     };
-  }, [diamond, loanId, borrowerTokenId, listing?.updatedAt]);
+  }, [diamond, loanId, borrowerTokenId, listing?.updatedAt, floorTick]);
 
   // Gate status — disable the post path when any of:
   //   • master kill-switch is OFF
@@ -211,9 +229,11 @@ export function PrepayListingActions({
   const [conduitInitialized, setConduitInitialized] = useState(false);
 
   // Identity key — combination of loanId + listing.orderHash (or a
-  // sentinel for "no listing"). When this changes we wipe the init
-  // flags so the next render reseeds from the new live state.
-  const listingIdentity = `${loanId.toString()}::${listing?.orderHash ?? '<none>'}`;
+  // sentinel for "no listing") + decimals. `decimals` is in the key
+  // so a late-arriving `useTokenMeta` resolution (USDC=6 catching up
+  // from the 18-default) triggers a re-init of the ask field with
+  // the correct unit. Codex round-4 P2 fix on PR #308.
+  const listingIdentity = `${loanId.toString()}::${listing?.orderHash ?? '<none>'}::${decimals}`;
   const [seenIdentity, setSeenIdentity] = useState<string | null>(null);
   useEffect(() => {
     if (seenIdentity !== listingIdentity) {
@@ -224,6 +244,9 @@ export function PrepayListingActions({
   }, [listingIdentity, seenIdentity]);
 
   useEffect(() => {
+    // Delay init until token metadata has resolved so the ask
+    // pre-fill uses the right decimals from the first paint.
+    if (!metaLoaded) return;
     if (hasLiveListing && listing) {
       if (!askInitialized) {
         setAskPriceInput(formatUnits(BigInt(listing.askPrice), decimals));
@@ -257,6 +280,7 @@ export function PrepayListingActions({
       setAskInitialized(true);
     }
   }, [
+    metaLoaded,
     hasLiveListing,
     listing,
     minAsk,
@@ -354,7 +378,8 @@ export function PrepayListingActions({
 
   if (cancelOnly) {
     return (
-      <div className="action-group">
+      <div id="prepay-listing-card" className="card loan-actions-card">
+        <div className="action-group">
         <h4
           className="action-title"
           style={{ display: 'flex', alignItems: 'center', gap: 6 }}
@@ -441,6 +466,7 @@ export function PrepayListingActions({
             {t('prepayListing.actions.txSubmitted', { hash: txHash })}
           </p>
         )}
+        </div>
       </div>
     );
   }
@@ -451,7 +477,8 @@ export function PrepayListingActions({
   // Codex P2 fix round 3 on PR #308.
   if (unavailableReason !== null && !hasLiveListing) {
     return (
-      <div className="action-group">
+      <div id="prepay-listing-card" className="card loan-actions-card">
+        <div className="action-group">
         <h4
           className="action-title"
           style={{ display: 'flex', alignItems: 'center', gap: 6 }}
@@ -473,11 +500,13 @@ export function PrepayListingActions({
               t('prepayListing.actions.unavailableNftLocked')}
           </span>
         </div>
+        </div>
       </div>
     );
   }
 
   return (
+    <div id="prepay-listing-card" className="card loan-actions-card">
     <div className="action-group">
       <h4
         className="action-title"
@@ -779,6 +808,7 @@ export function PrepayListingActions({
           {t('prepayListing.actions.txSubmitted', { hash: txHash })}
         </p>
       )}
+    </div>
     </div>
   );
 }
