@@ -189,13 +189,18 @@ export default function LoanDetails() {
     role,
   };
 
-  // T-086 step 13 — indexer-backed listing state. Owned by the page so a
-  // single fetch feeds both the banner (everyone) and the action group
-  // (borrower). The `PrepayListingActions` component below also opens
-  // its own copy of the hook for tx state; both calls memoize across
-  // their own `loanId` arg and share the indexer-cached HTTP response
-  // when both fire on the same loan-details mount.
-  const { listing: prepayListingState } = useNFTPrepayListing(loanId);
+  // T-086 step 13 — indexer-backed listing state. Owned by the page so
+  // a SINGLE hook instance feeds both the banner (everyone) and the
+  // action group (borrower). Wiring `onAfterSuccess` to `loadLoan` here
+  // means a successful post/update/cancel also re-pulls the on-chain
+  // loan + holders state in the same await chain as the hook's own
+  // indexer reload — so banner state, action mode, and on-chain reads
+  // all switch over atomically. Codex caught the dual-hook variant on
+  // PR #308 review; this is the single-source-of-truth fix.
+  const prepayListing = useNFTPrepayListing(loanId, {
+    onAfterSuccess: loadLoan,
+  });
+  const prepayListingState = prepayListing.listing;
 
   // T-086 — read live grace seconds for the loan's duration tier so we
   // can render the prepay-listing action up to (and including) the grace
@@ -1098,13 +1103,15 @@ export default function LoanDetails() {
           {/* T-086 step 13 — Seaport prepay listing surface. NFT-collateral
               loans where the lender pre-consented can post a Seaport order
               priced above live floor; fill at OpenSea pays lender +
-              treasury + refunds borrower in a single tx. */}
+              treasury + refunds borrower in a single tx. The single
+              `prepayListing` hook instance from above is threaded in as
+              a prop so banner + action mode never diverge. */}
           {availability.prepayListing && (
             <PrepayListingActions
               loanId={BigInt(loanId!)}
               principalAsset={loan.principalAsset}
+              prepayListing={prepayListing}
               hasLiveListing={!!prepayListingState}
-              onActionSuccess={loadLoan}
             />
           )}
         </div>

@@ -4,7 +4,7 @@ import { parseUnits, formatUnits, isHex } from 'viem';
 import { Tag, AlertTriangle, X } from 'lucide-react';
 import { useDiamondRead } from '../../contracts/useDiamond';
 import { useTokenMeta } from '../../lib/tokenMeta';
-import { useNFTPrepayListing } from '../../hooks/useNFTPrepayListing';
+import type { UseNFTPrepayListingResult } from '../../hooks/useNFTPrepayListing';
 import { ErrorAlert } from '../app/ErrorAlert';
 import { TokenAmount } from '../app/TokenAmount';
 
@@ -19,13 +19,16 @@ interface Props {
   /** Loan's principal asset address — TokenAmount uses this to render the
    *  min-ask in the right symbol + decimals. */
   principalAsset: string;
+  /** Hook result PASSED IN BY THE PARENT (loan-details page) so a single
+   *  `useNFTPrepayListing` instance backs both the page banner and this
+   *  action surface. Two separate instances would let banner state go
+   *  stale after a successful write — caught by Codex on PR #308. */
+  prepayListing: UseNFTPrepayListingResult;
   /** True when listing currently exists (banner shown). Drives the
-   *  "Post" vs "Update + Cancel" choice. */
+   *  "Post" vs "Update + Cancel" choice. Derived by the parent from
+   *  `prepayListing.listing` so the parent's banner gate and this
+   *  child's mode toggle share one source. */
   hasLiveListing: boolean;
-  /** Reload callback the parent uses to refresh the loan + indexer view
-   *  after a successful action. The hook also reloads its own indexer
-   *  fetch internally; this re-pulls the on-chain loan + holders. */
-  onActionSuccess: () => void;
 }
 
 /**
@@ -54,8 +57,8 @@ interface Props {
 export function PrepayListingActions({
   loanId,
   principalAsset,
+  prepayListing,
   hasLiveListing,
-  onActionSuccess,
 }: Props) {
   const { t } = useTranslation();
   const diamond = useDiamondRead();
@@ -70,7 +73,7 @@ export function PrepayListingActions({
     postPrepayListing,
     updatePrepayListing,
     cancelPrepayListing,
-  } = useNFTPrepayListing(loanId.toString());
+  } = prepayListing;
 
   // Min-ask anchor + live floor — both pulled from the diamond rather
   // than re-derived in JS, so the live grace + interest accrual lands
@@ -175,6 +178,12 @@ export function PrepayListingActions({
   const ask = parseAskPrice();
   const askBelowMin = ask !== null && minAsk !== null && ask < minAsk;
 
+  // The hook's action functions return `true` on success, `false`
+  // otherwise. The hook ALSO runs its own indexer-reload + the
+  // parent's `onAfterSuccess` (which the parent wires to `loadLoan`)
+  // inside the same try/catch, so no follow-up refresh is needed
+  // here — we only adjust local view state (close the cancel
+  // confirm) on success.
   const handlePost = async () => {
     if (!ask || !conduitKeyValid) return;
     await postPrepayListing(
@@ -183,7 +192,6 @@ export function PrepayListingActions({
       parseSalt(),
       conduitKey as `0x${string}`,
     );
-    onActionSuccess();
   };
 
   const handleUpdate = async () => {
@@ -194,13 +202,11 @@ export function PrepayListingActions({
       parseSalt(),
       conduitKey as `0x${string}`,
     );
-    onActionSuccess();
   };
 
   const handleCancel = async () => {
-    await cancelPrepayListing(loanId);
-    setConfirmingCancel(false);
-    onActionSuccess();
+    const ok = await cancelPrepayListing(loanId);
+    if (ok) setConfirmingCancel(false);
   };
 
   return (
