@@ -1546,6 +1546,124 @@ async function processLoanLogs(
         await applyMatch(loanIdA, nA, nB);
         await applyMatch(loanIdB, nB, nA);
       }
+    } else if (log.eventName === 'PrepayListingPosted') {
+      // T-086 step 12 — Seaport prepay-listing INSERT. The diamond's
+      // `NFTPrepayListingFacet.postPrepayListing` event payload
+      // carries everything the frontend needs (orderHash, askPrice,
+      // conduit). The `executor` address comes from
+      // `s.prepayListingExecutor[loanId]` which equals the
+      // currently configured `s.collateralListingExecutor` at post
+      // time — we don't surface it in the event payload but the
+      // indexer can fetch it from the executor-tracking table once
+      // step 12.B lands. For now: store the diamond address as a
+      // placeholder; the per-row `executor` column is only used by
+      // the frontend's "which executor authorized this listing"
+      // disambiguation, which doesn't matter until governance has
+      // actively rotated the executor — a state that doesn't exist
+      // yet on any live deploy.
+      const loanId = Number(a.loanId as bigint);
+      const orderHash = String(a.orderHash as `0x${string}`).toLowerCase();
+      const askPrice = String(a.askPrice as bigint);
+      const conduit = String(a.conduit as Address).toLowerCase();
+      const lister = String(a.lister as Address).toLowerCase();
+      // Resolve `grace_period_end` from the loans table — the
+      // listing payload doesn't carry it, but every loan in
+      // `loans` is already populated by the time PrepayListingPosted
+      // fires (`postPrepayListing` requires loan.status == Active).
+      const loanRow = await env.DB.prepare(
+        `SELECT start_time, duration_days FROM loans WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(chainId, loanId)
+        .first<{ start_time: number; duration_days: number }>();
+      const graceEnd = loanRow
+        ? Number(loanRow.start_time) +
+          Number(loanRow.duration_days) * 86_400 +
+          // Match `LibVaipakam.gracePeriod(durationDays)`: default
+          // 3 days. The indexer doesn't (yet) read the governance-
+          // tunable grace bucket; that's a follow-up if/when
+          // governance flips the schedule.
+          3 * 86_400
+        : 0;
+      await env.DB.prepare(
+        `INSERT OR REPLACE INTO prepay_listings
+           (chain_id, loan_id, order_hash, ask_price, conduit, executor,
+            lister, posted_at, updated_at, grace_period_end,
+            block_number, tx_hash, log_index)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+        .bind(
+          chainId,
+          loanId,
+          orderHash,
+          askPrice,
+          conduit,
+          // Executor address placeholder — see comment above.
+          // The diamond IS the executor record-keeper at present.
+          diamond.toLowerCase(),
+          lister,
+          now,
+          now,
+          graceEnd,
+          Number(log.blockNumber),
+          String(log.transactionHash as `0x${string}`).toLowerCase(),
+          Number(log.logIndex),
+        )
+        .run();
+    } else if (log.eventName === 'PrepayListingUpdated') {
+      // Update is a re-sign — DELETE the old row and INSERT a fresh
+      // one keyed on the new orderHash. We do this in two steps
+      // because the primary key is (chain_id, loan_id) which is
+      // STABLE across updates; only the orderHash + ask change.
+      const loanId = Number(a.loanId as bigint);
+      const newOrderHash = String(a.newOrderHash as `0x${string}`).toLowerCase();
+      const newAskPrice = String(a.newAskPrice as bigint);
+      const conduit = String(a.conduit as Address).toLowerCase();
+      const lister = String(a.lister as Address).toLowerCase();
+      await env.DB.prepare(
+        `UPDATE prepay_listings
+           SET order_hash = ?, ask_price = ?, conduit = ?, lister = ?,
+               updated_at = ?, block_number = ?, tx_hash = ?, log_index = ?
+         WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(
+          newOrderHash,
+          newAskPrice,
+          conduit,
+          lister,
+          now,
+          Number(log.blockNumber),
+          String(log.transactionHash as `0x${string}`).toLowerCase(),
+          Number(log.logIndex),
+          chainId,
+          loanId,
+        )
+        .run();
+    } else if (log.eventName === 'PrepayListingCanceled') {
+      // Cancel (borrower / grace-expired) terminates the listing
+      // WITHOUT closing the loan — loan stays Active until a
+      // separate terminal (repay / default / liquidation) fires.
+      const loanId = Number(a.loanId as bigint);
+      await env.DB.prepare(
+        `DELETE FROM prepay_listings WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(chainId, loanId)
+        .run();
+    } else if (log.eventName === 'PrepayCollateralSaleSettled') {
+      // Successful Seaport fill: loan was Active → flips to
+      // Repaid (proper-close path; the borrower's collateral was
+      // sold to pay off the lender + treasury + borrower remainder).
+      // Same `repaid` status the regular RepayFacet terminal uses
+      // — the loan is closed, NFTs are claimable, and the subsequent
+      // LoanSettled event will flip to 'settled' once both sides
+      // have claimed.
+      const loanId = Number(a.loanId as bigint);
+      await env.DB.prepare(
+        `DELETE FROM prepay_listings WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(chainId, loanId)
+        .run();
+      const r = await flipLoanStatus(env, chainId, a, log, 'repaid');
+      if (r) statusUpdates++;
     }
     // Notes on events deliberately not state-mutating here:
     //  - LoanSettlementBreakdown / PeriodicSlippageOverBuffer /
