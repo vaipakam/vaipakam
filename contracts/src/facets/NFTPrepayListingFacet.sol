@@ -10,6 +10,7 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IListingExecutorRecorder} from "../seaport/IListingExecutorRecorder.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
+import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 
 /**
  * @title NFTPrepayListingFacet
@@ -355,6 +356,17 @@ contract NFTPrepayListingFacet is
         s.prepayListingExecutor[loanId] = address(executor);
         executor.recordOrder(orderHash, loanId, conduit);
 
+        // T-086 step 7 — vault-side wiring. Two narrow calls into
+        // the borrower's vault: grant the Seaport conduit a
+        // per-token approval on the collateral NFT (so Seaport
+        // can pull it on fill), and pin the orderHash → executor
+        // binding on the vault's ERC-1271 mapping (so Seaport's
+        // signature verification at fill time returns the magic
+        // value via the vault delegating to executor.isOrderValid).
+        // Without these, the diamond would have recorded the
+        // listing but Seaport wouldn't be able to fill it.
+        _wireVaultForListing(s, loan, orderHash, conduit, address(executor), true);
+
         emit PrepayListingPosted(loanId, msg.sender, orderHash, askPrice, conduit);
     }
 
@@ -426,6 +438,19 @@ contract NFTPrepayListingFacet is
         s.prepayListingOrderHash[loanId] = newOrderHash;
         s.prepayListingExecutor[loanId] = address(currentExecutor);
         currentExecutor.recordOrder(newOrderHash, loanId, conduit);
+
+        // T-086 step 7 — vault-side rotation. Revoke the old
+        // orderHash → executor binding, register the new one;
+        // re-grant the conduit approval (idempotent if conduit
+        // unchanged; updates the per-token approval target if
+        // the borrower picked a different conduit on the new
+        // signing).
+        VaipakamVaultImplementation vault = _userVault(s, loan.borrower);
+        vault.revokeListingOrderHash(oldOrderHash);
+        vault.registerListingOrderHash(newOrderHash, address(currentExecutor));
+        vault.setCollateralOperatorApproval(
+            loan.collateralAsset, loan.collateralTokenId, conduit, true
+        );
 
         emit PrepayListingUpdated(loanId, msg.sender, oldOrderHash, newOrderHash, newAskPrice, conduit);
     }
@@ -643,6 +668,62 @@ contract NFTPrepayListingFacet is
         delete s.prepayListingExecutor[loanId];
         IListingExecutorRecorder(pinnedExecutor).clearOrder(orderHash);
 
+        // T-086 step 7 — vault-side cleanup. Revoke the conduit's
+        // per-token approval AND the orderHash → executor binding
+        // so a previously-signed Seaport order can no longer fill
+        // even if it's already posted to the conduit's order book.
+        // The vault must exist for the loan to have made it
+        // through `postPrepayListing` in the first place; we still
+        // guard defensively against a future migration window
+        // where the mapping could be out of sync.
+        address vaultAddr = s.userVaipakamVaults[loan.borrower];
+        if (vaultAddr != address(0)) {
+            VaipakamVaultImplementation vault = VaipakamVaultImplementation(vaultAddr);
+            vault.setCollateralOperatorApproval(
+                loan.collateralAsset, loan.collateralTokenId, address(0), false
+            );
+            vault.revokeListingOrderHash(orderHash);
+        }
+
         emit PrepayListingCanceled(loanId, msg.sender, orderHash, reason);
+    }
+
+    /// @dev Shared helper for `postPrepayListing`'s vault wiring.
+    ///      Looks up the borrower's vault, grants the Seaport
+    ///      conduit a per-token approval on the collateral NFT,
+    ///      and pins the orderHash → executor binding on the
+    ///      vault's ERC-1271 mapping. Factored out so the post
+    ///      path body stays focused on the diamond-side state
+    ///      mutations.
+    function _wireVaultForListing(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.Loan storage loan,
+        bytes32 orderHash,
+        address conduit,
+        address executor,
+        bool /* approve */
+    ) private {
+        address vaultAddr = s.userVaipakamVaults[loan.borrower];
+        if (vaultAddr == address(0)) revert ExecutorNotSet();
+        VaipakamVaultImplementation vault = VaipakamVaultImplementation(vaultAddr);
+        vault.setCollateralOperatorApproval(
+            loan.collateralAsset, loan.collateralTokenId, conduit, true
+        );
+        vault.registerListingOrderHash(orderHash, executor);
+    }
+
+    /// @dev Read-only borrower-vault lookup. Reverts via
+    ///      {ExecutorNotSet} for the unset case to match the
+    ///      sister error already raised when the executor address
+    ///      isn't configured — both signal "the prepay path
+    ///      isn't fully wired for this loan", and surfacing a
+    ///      single error keeps the borrower's UX simple.
+    function _userVault(
+        LibVaipakam.Storage storage s,
+        address user
+    ) private view returns (VaipakamVaultImplementation) {
+        address vaultAddr = s.userVaipakamVaults[user];
+        if (vaultAddr == address(0)) revert ExecutorNotSet();
+        return VaipakamVaultImplementation(vaultAddr);
     }
 }

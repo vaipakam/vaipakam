@@ -298,27 +298,38 @@ contract CollateralListingExecutor is
         override
         returns (bytes4)
     {
+        return isOrderValid(hash)
+            ? IERC1271.isValidSignature.selector
+            : bytes4(0xffffffff);
+    }
+
+    /// @notice ERC-1271 logic factored into a boolean view so the
+    ///         vault's `isValidSignature` (step 7 vault delegate)
+    ///         can consult the executor without re-deriving the
+    ///         magic-value-encoded `bytes4` return shape.
+    /// @dev    Same checks as the local {isValidSignature}: order
+    ///         context populated, conduit still approved, loan
+    ///         still Active. The richer recipient / floor / grace
+    ///         re-checks happen at fill time in the zone callbacks
+    ///         (`authorizeOrder` + `validateOrder`); this 1271-side
+    ///         view is the coarser membership gate.
+    function isOrderValid(bytes32 hash) public view returns (bool) {
         OrderContext memory ctx = orderContext[hash];
-        if (ctx.loanId == 0) {
-            return 0xffffffff;
-        }
-        if (!approvedConduits[ctx.conduit]) {
-            return 0xffffffff;
-        }
-        // Conservative liveness gate at 1271 time: refuse to sign if
-        // the loan isn't Active. Fill-time re-checks in {authorizeOrder}
-        // + {validateOrder} will catch the race window between this
-        // view and the actual fill. The 1271 path can't do the rigorous
-        // content checks (Seaport doesn't pass order content here), so
-        // the heavy lifting lives in the zone hooks.
+        if (ctx.loanId == 0) return false;
+        if (!approvedConduits[ctx.conduit]) return false;
+        // Conservative liveness gate at 1271 time: refuse to sign
+        // if the loan isn't Active. Fill-time re-checks in
+        // `authorizeOrder` + `validateOrder` will catch the race
+        // window between this view and the actual fill. The 1271
+        // path can't do the rigorous content checks (Seaport
+        // doesn't pass order content here), so the heavy lifting
+        // lives in the zone hooks.
         IVaipakamPrepayContext.PrepayContext memory pctx =
             IVaipakamPrepayContext(vaipakamDiamond).getPrepayContext(
                 uint256(ctx.loanId), block.timestamp
             );
-        if (pctx.status != LibVaipakam.LoanStatus.Active) {
-            return 0xffffffff;
-        }
-        return IERC1271.isValidSignature.selector;
+        if (pctx.status != LibVaipakam.LoanStatus.Active) return false;
+        return true;
     }
 
     // ─── Seaport zone callback (fill-time content gate) ─────────────────
