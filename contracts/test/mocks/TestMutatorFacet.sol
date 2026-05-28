@@ -5,6 +5,7 @@ import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LibMetricsHooks} from "../../src/libraries/LibMetricsHooks.sol";
 import {LibERC721} from "../../src/libraries/LibERC721.sol";
 import {LibCollateralSettlement} from "../../src/libraries/LibCollateralSettlement.sol";
+import {LibPrepayCleanup} from "../../src/libraries/LibPrepayCleanup.sol";
 
 /// @title TestMutatorFacet
 /// @notice Test-only facet that exposes full struct setters for Loan and
@@ -20,6 +21,18 @@ contract TestMutatorFacet {
     /// @notice Overwrite the entire Loan record at `loanId`.
     function setLoan(uint256 loanId, LibVaipakam.Loan memory data) external {
         LibVaipakam.storageSlot().loans[loanId] = data;
+    }
+
+    /// @notice Test-only entry that invokes the step-10
+    ///         {LibPrepayCleanup.clearActiveListing} helper from
+    ///         the diamond's storage context. Equivalent to what
+    ///         `DefaultedFacet.triggerDefault` and
+    ///         `RiskFacet.triggerLiquidation*` do as their first
+    ///         step, without the surrounding KYC / oracle / swap
+    ///         scaffolding.
+    function invokePrepayCleanup(uint256 loanId) external {
+        LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
+        LibPrepayCleanup.clearActiveListing(loan, loanId);
     }
 
     /// @notice Overwrite the entire Offer record at `offerId`.

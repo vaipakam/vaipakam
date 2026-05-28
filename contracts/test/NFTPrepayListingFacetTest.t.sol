@@ -706,6 +706,82 @@ contract NFTPrepayListingFacetTest is SetupTest {
         );
     }
 
+    // ─── 4c. LibPrepayCleanup (step 10) — default-flow lock-bypass ──────
+
+    function test_libPrepayCleanup_noopWhenNoListing() public {
+        // No listing posted — invoking the cleanup should be a no-op.
+        _scaffoldActiveLoan({allowsPrepay: true});
+
+        // Should NOT revert.
+        TestMutatorFacet(address(diamond)).invokePrepayCleanup(LOAN_ID);
+
+        // Nothing to assert beyond "didn't revert" — but also confirm
+        // bookkeeping mappings stayed empty.
+        assertEq(
+            NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
+            bytes32(0),
+            "no listing means no bookkeeping"
+        );
+    }
+
+    function test_libPrepayCleanup_clearsLiveListing() public {
+        // Post a listing then invoke the cleanup directly. Verifies
+        // the library does the full sweep — diamond mappings,
+        // executor.clearOrder, vault binding + conduit approval,
+        // borrower-NFT lock — atomically.
+        _scaffoldActiveLoan({allowsPrepay: true});
+
+        vm.prank(borrowerHolder);
+        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, _floorPlusBuffer(), ORDER_HASH_A, conduit
+        );
+
+        // Pre: everything is wired.
+        assertEq(
+            NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
+            ORDER_HASH_A
+        );
+        assertEq(collateralNFT.getApproved(COLLATERAL_TOKEN_ID), conduit);
+        assertEq(
+            VaipakamVaultImplementation(borrowerVaultAddr).getListingExecutor(ORDER_HASH_A),
+            address(mockExecutor)
+        );
+        assertEq(
+            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
+            uint8(LibERC721.LockReason.PrepayCollateralListing)
+        );
+
+        // Trigger the cleanup helper (the entry point both
+        // DefaultedFacet.triggerDefault and
+        // RiskFacet.triggerLiquidation* invoke as their first step).
+        TestMutatorFacet(address(diamond)).invokePrepayCleanup(LOAN_ID);
+
+        // Post: everything cleared atomically.
+        assertEq(
+            NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
+            bytes32(0),
+            "diamond orderHash cleared"
+        );
+        assertEq(
+            collateralNFT.getApproved(COLLATERAL_TOKEN_ID),
+            address(0),
+            "conduit approval revoked"
+        );
+        assertEq(
+            VaipakamVaultImplementation(borrowerVaultAddr).getListingExecutor(ORDER_HASH_A),
+            address(0),
+            "vault orderHash binding cleared"
+        );
+        assertEq(
+            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
+            uint8(LibERC721.LockReason.None),
+            "borrower NFT lock released"
+        );
+        // Executor side received the clearOrder.
+        assertEq(mockExecutor.clearCallCount(), 1, "executor.clearOrder called");
+        assertEq(mockExecutor.lastClearedOrderHash(), ORDER_HASH_A);
+    }
+
     // ─── 5. cancelExpiredPrepayListing (permissionless) ─────────────────
 
     function test_cancelExpiredPrepayListing_revertsGraceNotExpired() public {
