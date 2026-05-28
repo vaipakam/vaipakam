@@ -233,7 +233,11 @@ export async function handleLoansActive(req: Request, env: Env): Promise<Respons
   }
 }
 
-/** GET /loans/:id?chainId=8453 */
+/** GET /loans/:id?chainId=8453 — returns the loan row plus, if a
+ *  prepay listing is live for that loan, a nested `prepayListing`
+ *  object with the order_hash / ask_price / conduit / lister /
+ *  grace_period_end the connected app needs to render the "your
+ *  loan has a live listing" banner + cancel CTA. */
 export async function handleLoanById(
   req: Request,
   env: Env,
@@ -252,7 +256,35 @@ export async function handleLoanById(
       .bind(chainId, loanId)
       .first<LoanRow>();
     if (!row) return jsonResponse({ error: 'not-found' }, 404);
-    return jsonResponse(loanToJson(row));
+    const listing = await env.DB.prepare(
+      `SELECT order_hash, ask_price, conduit, lister,
+              posted_at, updated_at, grace_period_end
+       FROM prepay_listings
+       WHERE chain_id = ? AND loan_id = ?`,
+    )
+      .bind(chainId, loanId)
+      .first<{
+        order_hash: string;
+        ask_price: string;
+        conduit: string;
+        lister: string;
+        posted_at: number;
+        updated_at: number;
+        grace_period_end: number;
+      }>();
+    const payload: Record<string, unknown> = loanToJson(row);
+    if (listing) {
+      payload.prepayListing = {
+        orderHash: listing.order_hash,
+        askPrice: listing.ask_price,
+        conduit: listing.conduit,
+        lister: listing.lister,
+        postedAt: listing.posted_at,
+        updatedAt: listing.updated_at,
+        gracePeriodEnd: listing.grace_period_end,
+      };
+    }
+    return jsonResponse(payload);
   } catch (err) {
     console.error('[loanRoutes] byId failed', err);
     return jsonResponse({ error: 'byId-failed' }, 500);
