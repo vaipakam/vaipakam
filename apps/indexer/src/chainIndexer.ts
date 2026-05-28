@@ -1372,6 +1372,7 @@ async function processLoanLogs(
     } else if (log.eventName === 'PartialRepaid') {
       // Partial repayment — loan stays Active, but `principal` shrinks.
       // The event carries the post-state `newPrincipal`, so mirror it.
+      const loanId = Number(a.loanId as bigint);
       await env.DB.prepare(
         `UPDATE loans SET principal = ?, updated_at = ?
          WHERE chain_id = ? AND loan_id = ?`,
@@ -1380,9 +1381,30 @@ async function processLoanLogs(
           String(a.newPrincipal as bigint),
           Math.floor(Date.now() / 1000),
           chainId,
-          Number(a.loanId as bigint),
+          loanId,
         )
         .run();
+      // T-086 step 12 — refresh `prepay_listings.grace_period_end`
+      // if the loan has a live listing. Partial repayment can
+      // reset `startTime` (ERC20 loans) or reduce `durationDays`
+      // (NFT rentals), both of which move the grace boundary.
+      // Skip the RPC read when there's no live listing to refresh
+      // (most loans aren't listed). Codex P2 round-3 on PR #304.
+      const hasListing = await env.DB.prepare(
+        `SELECT 1 FROM prepay_listings WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(chainId, loanId)
+        .first<{ '1': number } | null>();
+      if (hasListing) {
+        const refreshedGraceEnd = await _resolveGraceEnd(client, diamond, loanId);
+        await env.DB.prepare(
+          `UPDATE prepay_listings
+             SET grace_period_end = ?, updated_at = ?
+           WHERE chain_id = ? AND loan_id = ?`,
+        )
+          .bind(refreshedGraceEnd, now, chainId, loanId)
+          .run();
+      }
     } else if (log.eventName === 'CollateralAdded') {
       // Borrower topped up collateral — loan stays Active, but
       // `collateral_amount` grows. The event carries `newCollateralAmount`.
@@ -1623,10 +1645,16 @@ async function processLoanLogs(
       // case — the row exists from a prior Posted event); fall
       // back to an INSERT when no row exists (the rollout-
       // backfill case).
+      // Updated path now ALSO refreshes `grace_period_end` (Codex
+      // P2 round-3): a re-sign typically follows a partial
+      // repayment that mutated startTime / durationDays, so the
+      // grace boundary moved. Include the freshly RPC-resolved
+      // value in the UPDATE.
       const upd = await env.DB.prepare(
         `UPDATE prepay_listings
            SET order_hash = ?, ask_price = ?, conduit = ?, lister = ?,
-               updated_at = ?, block_number = ?, tx_hash = ?, log_index = ?
+               updated_at = ?, grace_period_end = ?,
+               block_number = ?, tx_hash = ?, log_index = ?
          WHERE chain_id = ? AND loan_id = ?`,
       )
         .bind(
@@ -1635,6 +1663,7 @@ async function processLoanLogs(
           conduit,
           lister,
           blockAt,
+          graceEnd,
           Number(log.blockNumber),
           String(log.transactionHash as `0x${string}`).toLowerCase(),
           Number(log.logIndex),
@@ -1835,26 +1864,32 @@ async function recordActivityEvents(
 /** Map a decoded event to the cross-domain reference columns the
  *  activity_events ledger denormalizes for fast filtering. The full
  *  args bag is preserved separately in `args_json`. */
-/// @dev T-086 step 12 — mirror of `LibVaipakam.gracePeriod()`'s
-///      compile-time default schedule (no on-chain grace buckets
-///      configured). Used by `_resolveGraceEnd` below.
-function _defaultGraceSeconds(durationDays: number): number {
-  if (durationDays < 7) return 3_600;       // 1 hour
-  if (durationDays < 30) return 86_400;     // 1 day
-  if (durationDays < 90) return 259_200;    // 3 days
-  if (durationDays < 180) return 604_800;   // 1 week
-  if (durationDays < 365) return 1_209_600; // 2 weeks
-  return 2_592_000;                          // 30 days
-}
+/// @dev Minimal ABI for the on-chain
+///      `ConfigFacet.getEffectiveGraceSeconds(durationDays)` view.
+///      Inlined here (not pulled in via the full ConfigFacet ABI)
+///      because the indexer only needs this one function. Honors
+///      the governance-tunable grace schedule
+///      (`ConfigFacet.setGraceBuckets`) — fixes the "default-only"
+///      drift Codex round-3 P2 flagged.
+const GRACE_SECONDS_ABI = [
+  {
+    type: 'function',
+    name: 'getEffectiveGraceSeconds',
+    stateMutability: 'view',
+    inputs: [{ name: 'durationDays', type: 'uint16' }],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+] as const;
 
 /// @dev RPC-read the loan's CURRENT `startTime + durationDays`
-///      and apply the default grace schedule. Reading from RPC
-///      (not from the indexer's cached `loans` row) is the
-///      correct source — `RepayFacet.repayPartial` resets
-///      `startTime` for ERC20 loans and reduces `durationDays`
-///      for NFT rentals, and the indexer's loans table only
-///      mirrors `principal` on `PartialRepaid` (per Codex P2
-///      round-2 on PR #304).
+///      AND the on-chain effective grace-seconds for that
+///      durationDays. Reading from RPC (not the indexer's cached
+///      `loans` row) is the correct source — `RepayFacet.repayPartial`
+///      resets `startTime` for ERC20 loans and reduces
+///      `durationDays` for NFT rentals; governance can also flip
+///      the grace schedule via `ConfigFacet.setGraceBuckets`.
+///      Falls back to `0` (sentinel) on RPC failure, with a
+///      console.error.
 async function _resolveGraceEnd(
   client: PublicClient,
   diamond: Address,
@@ -1869,7 +1904,15 @@ async function _resolveGraceEnd(
     })) as { startTime: bigint; durationDays: number | bigint };
     const startTime = Number(detail.startTime);
     const durationDays = Number(detail.durationDays);
-    return startTime + durationDays * 86_400 + _defaultGraceSeconds(durationDays);
+    const graceSeconds = Number(
+      (await client.readContract({
+        address: diamond,
+        abi: GRACE_SECONDS_ABI,
+        functionName: 'getEffectiveGraceSeconds',
+        args: [durationDays],
+      })) as bigint,
+    );
+    return startTime + durationDays * 86_400 + graceSeconds;
   } catch (err) {
     console.error(`[chainIndexer] _resolveGraceEnd(${loanId}) failed`, err);
     return 0; // Sentinel — the frontend treats 0 as "unknown grace end".
