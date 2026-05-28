@@ -13,6 +13,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IVaipakamPrepayContext} from "../seaport/IVaipakamPrepayContext.sol";
 import {IVaipakamPrepayCallbacks} from "../seaport/IVaipakamPrepayCallbacks.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
+import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 
 /**
  * @title PrepayListingFacet
@@ -181,8 +182,24 @@ contract PrepayListingFacet is
         // hash but couldn't run (status != Active). The executor
         // clears its own `orderContext` from `validateOrder`; these
         // lines are the diamond-side companion clears.
+        bytes32 orderHash = s.prepayListingOrderHash[loanId];
         delete s.prepayListingOrderHash[loanId];
         delete s.prepayListingExecutor[loanId];
+
+        // T-086 step 7 — vault-side cleanup. Seaport's transferFrom
+        // at fill time auto-clears the per-token approval (ERC-721
+        // standard), so we only need to revoke the orderHash →
+        // executor binding here — leaving it populated would let
+        // a subsequent ERC-1271 query (e.g. via Seaport.validate
+        // pre-registration on a NEW signing of the same content)
+        // return the magic value. Guard for the vault-missing
+        // edge case to match the cancel-path defensiveness.
+        if (orderHash != bytes32(0)) {
+            address vaultAddr = s.userVaipakamVaults[loan.borrower];
+            if (vaultAddr != address(0)) {
+                VaipakamVaultImplementation(vaultAddr).revokeListingOrderHash(orderHash);
+            }
+        }
 
         emit PrepayCollateralSaleSettled(loanId, msg.sender);
     }

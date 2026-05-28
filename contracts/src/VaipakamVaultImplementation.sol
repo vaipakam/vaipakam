@@ -15,6 +15,7 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IERC4907} from "./interfaces/IERC4907.sol";
 import {VaultFactoryFacet} from "./facets/VaultFactoryFacet.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {IListingExecutorValidator} from "./seaport/IListingExecutorValidator.sol";
 
 /**
  * @title VaipakamVaultImplementation
@@ -54,6 +55,28 @@ contract VaipakamVaultImplementation is
         uint128 quantity;
     }
     mapping(address => mapping(uint256 => RentalEntry[])) private _rentalEntries;
+
+    /// @dev T-086 step 7 — Seaport prepay-collateral-listing support.
+    ///      Maps a Seaport `orderHash` to the executor singleton
+    ///      address that recorded it. Populated by
+    ///      {registerListingOrderHash} (called by the diamond's
+    ///      `NFTPrepayListingFacet.postPrepayListing` /
+    ///      `updatePrepayListing`); cleared by
+    ///      {revokeListingOrderHash} (called by every cancel path
+    ///      + the post-fill finalization). Consumed by this
+    ///      contract's {isValidSignature} (ERC-1271) to delegate
+    ///      Seaport's sign-time signature verification to the
+    ///      executor's {IListingExecutorValidator.isOrderValid}.
+    ///
+    ///      Per-vault scope: each per-user vault holds the
+    ///      orderHash → executor bindings for ITS borrower's
+    ///      listings only. The mapping is sparse and small.
+    ///
+    ///      Storage layout note: appended to the tail of the
+    ///      pre-gap layout, paired with a corresponding decrement
+    ///      of `__gap` below to keep the overall slot footprint
+    ///      constant across UUPS upgrades.
+    mapping(bytes32 => address) private _listingExecutor;
 
     // Custom errors for clarity and gas efficiency.
     /// @dev Caller is not the Diamond (or this contract itself via
@@ -245,6 +268,155 @@ contract VaipakamVaultImplementation is
         uint256 tokenId
     ) external onlyDiamond {
         IERC721(nftContract).approve(address(this), tokenId);
+    }
+
+    // ─── T-086 step 7 — Seaport prepay-listing narrow entries ───────────
+
+    /// @notice Emitted when the diamond toggles a Seaport conduit's
+    ///         per-token approval on the vault's collateral NFT.
+    ///         `conduit == address(0)` (or `approved == false`)
+    ///         signals an approval revocation.
+    event CollateralOperatorApprovalSet(
+        address indexed nftContract,
+        uint256 indexed tokenId,
+        address indexed conduit,
+        bool approved
+    );
+
+    /// @notice Emitted when the diamond pins a Seaport `orderHash`
+    ///         to its recording executor for ERC-1271 delegation.
+    event ListingOrderHashRegistered(bytes32 indexed orderHash, address indexed executor);
+
+    /// @notice Emitted when the diamond clears an orderHash → executor
+    ///         binding (cancel / cancelExpired / post-fill).
+    event ListingOrderHashRevoked(bytes32 indexed orderHash);
+
+    /// @dev Caller-passed zero `orderHash` to a register / revoke.
+    ///      Seaport never produces a zero hash so it's an obvious
+    ///      sentinel the vault rejects.
+    error ZeroOrderHash();
+
+    /// @dev Caller-passed zero `executor` to {registerListingOrderHash}.
+    error ZeroExecutor();
+
+    /**
+     * @notice Set / unset a Seaport conduit's per-token approval
+     *         on a collateral NFT held by this vault.
+     * @dev    Diamond-gated; the diamond is responsible for
+     *         pre-validating that `conduit` is in the executor's
+     *         governance-managed allow-list at call time. The
+     *         vault performs the raw `IERC721.approve` write
+     *         (passing `address(0)` to revoke when `approved` is
+     *         `false`).
+     *
+     *         The NFT must already live in this vault — the
+     *         `IERC721.approve` call would revert if the vault
+     *         isn't the current owner, which is the right
+     *         invariant: the diamond should only authorise an
+     *         approval against a vault that holds the collateral.
+     *
+     *         Seaport-side semantic: after a successful fill,
+     *         `IERC721.transferFrom` clears the per-token approval
+     *         atomically with the transfer (ERC-721 standard), so
+     *         the post-fill state is approval = `address(0)`
+     *         without an explicit revoke call. The diamond's
+     *         cancel paths DO explicitly revoke; that's the only
+     *         path that leaves the NFT in the vault while clearing
+     *         the approval.
+     */
+    function setCollateralOperatorApproval(
+        address nftContract,
+        uint256 tokenId,
+        address conduit,
+        bool approved
+    ) external onlyDiamond {
+        address target = approved ? conduit : address(0);
+        IERC721(nftContract).approve(target, tokenId);
+        emit CollateralOperatorApprovalSet(nftContract, tokenId, conduit, approved);
+    }
+
+    /**
+     * @notice Pin a Seaport `orderHash → executor` binding so this
+     *         vault's ERC-1271 {isValidSignature} can delegate to
+     *         that executor's `isOrderValid` at sign-verification
+     *         time.
+     * @dev    Diamond-gated. Called by
+     *         `NFTPrepayListingFacet.postPrepayListing` and
+     *         `updatePrepayListing` immediately after the diamond
+     *         records the listing on the executor itself, so the
+     *         vault's mapping and the executor's `orderContext`
+     *         stay in lock-step.
+     */
+    function registerListingOrderHash(bytes32 orderHash, address executor)
+        external
+        onlyDiamond
+    {
+        if (orderHash == bytes32(0)) revert ZeroOrderHash();
+        if (executor == address(0)) revert ZeroExecutor();
+        _listingExecutor[orderHash] = executor;
+        emit ListingOrderHashRegistered(orderHash, executor);
+    }
+
+    /**
+     * @notice Clear the `orderHash → executor` binding so the
+     *         vault's ERC-1271 stops returning the magic value
+     *         for `orderHash` (sign-time verifications for any
+     *         subsequent Seaport fill of this order will then
+     *         fail). Idempotent: clearing an already-cleared hash
+     *         is a no-op.
+     * @dev    Diamond-gated. Called by every cancel path
+     *         (borrower cancel + permissionless grace-expired)
+     *         and by the executor-finalize callback after a
+     *         successful Seaport fill.
+     */
+    function revokeListingOrderHash(bytes32 orderHash) external onlyDiamond {
+        if (orderHash == bytes32(0)) revert ZeroOrderHash();
+        delete _listingExecutor[orderHash];
+        emit ListingOrderHashRevoked(orderHash);
+    }
+
+    /**
+     * @notice ERC-1271 signature-verification callback used by
+     *         Seaport for orders whose `offerer` is this vault.
+     *         Delegates to the executor pinned at register time;
+     *         returns the magic value iff that executor still
+     *         considers the order valid (recorded, conduit in the
+     *         allow-list, loan still Active).
+     * @dev    The `signature` argument is intentionally ignored —
+     *         the vault doesn't sign with a private key. The
+     *         orderHash binding registered by the diamond is the
+     *         authoritative "we authorised an order with this
+     *         hash" record. Anything not in `_listingExecutor`
+     *         is rejected.
+     *
+     *         Why this lives on the vault (per design doc §4.3):
+     *         Seaport pulls offer items from the order's
+     *         `offerer` address. The vault holds the collateral
+     *         NFT, so the vault IS the offerer. Seaport calls
+     *         `offerer.isValidSignature(...)` per ERC-1271, so
+     *         the callback must live here, not on the executor.
+     *         The executor is the order's `zone` (which handles
+     *         the post-fill `validateOrder` content checks); the
+     *         offerer-and-zone are distinct roles in Seaport's
+     *         restricted-order model.
+     */
+    function isValidSignature(bytes32 hash, bytes calldata /* signature */)
+        external
+        view
+        returns (bytes4)
+    {
+        address exec = _listingExecutor[hash];
+        if (exec == address(0)) return 0xffffffff;
+        return IListingExecutorValidator(exec).isOrderValid(hash)
+            ? bytes4(0x1626ba7e)
+            : bytes4(0xffffffff);
+    }
+
+    /// @notice Read-side view: which executor (if any) does this
+    ///         vault delegate ERC-1271 verification to for
+    ///         `orderHash`? Returns `address(0)` if no binding.
+    function getListingExecutor(bytes32 orderHash) external view returns (address) {
+        return _listingExecutor[orderHash];
     }
 
     /**
@@ -521,5 +693,5 @@ contract VaipakamVaultImplementation is
     ///      for ~50 uint256-sized fields (or proportionally fewer
     ///      mappings / arrays / larger structs); sized conservatively.
     // forge-lint: disable-next-line(mixed-case-variable)
-    uint256[50] private __gap;
+    uint256[49] private __gap;
 }
