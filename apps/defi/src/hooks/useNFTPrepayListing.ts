@@ -134,16 +134,23 @@ export function useNFTPrepayListing(
   /** After a successful tx, the indexer worker is event-driven and
    *  may not have ingested the write by the time we hit `/loans/:id`.
    *  Poll up to ~15 s for the listing JOIN to reflect the expected
-   *  transition (post → listing exists; cancel → listing gone), with
-   *  a short backoff. Returns the final indexer view (which the
-   *  caller writes into `listing` state). If the indexer never
-   *  catches up within the budget we return whatever it last gave us
-   *  — the on-chain tx already succeeded, so this is a UI freshness
-   *  guarantee, not a correctness one. Codex round-2 P2 fix on PR
-   *  #308. */
+   *  transition with a short backoff. Returns the final indexer
+   *  view (which the caller writes into `listing` state). If the
+   *  indexer never catches up within the budget we return whatever
+   *  it last gave us — the on-chain tx already succeeded, so this
+   *  is a UI freshness guarantee, not a correctness one. Codex
+   *  round-2 P2 fix on PR #308.
+   *
+   *  The transition test compares against the `prior` listing the
+   *  caller observed BEFORE the write. For `update`, "any listing
+   *  is present" would match the pre-update row immediately and
+   *  settle stale state back into `listing` — Codex round-3 P2 fix
+   *  on PR #308. The comparison now uses orderHash transition for
+   *  post + update, and listing-disappearance for cancel. */
   const waitForIndexer = useCallback(
     async (
       flow: 'postPrepayListing' | 'updatePrepayListing' | 'cancelPrepayListing',
+      prior: IndexedPrepayListing | null | undefined,
     ): Promise<IndexedPrepayListing | null | undefined> => {
       if (!loanId) return undefined;
       // 1 s, 2 s, 3 s, 4 s, 5 s → ~15 s total worst case. Short enough
@@ -156,18 +163,26 @@ export function useNFTPrepayListing(
         const row = await fetchLoanById(chainId, Number(loanId));
         if (!row) continue;
         lastRow = row.prepayListing;
-        // For `cancel`, expected state is "listing gone" (undefined).
-        // For `post` / `update`, expected state is "listing present" —
-        // we don't know the new orderHash by the time the diamond
-        // call resolves (it returns the hash but we don't thread it
-        // through this helper), so "present" is good enough; the next
-        // user-driven action will fetch the up-to-date hash. The
-        // alternative — passing newOrderHash down — couples the hook
-        // tighter to the diamond return shape without a real benefit.
         if (flow === 'cancelPrepayListing') {
+          // Expected: listing gone.
           if (!row.prepayListing) return undefined;
-        } else {
+        } else if (flow === 'postPrepayListing') {
+          // Expected: a listing now exists. `prior` was nullish; any
+          // present listing is the new one (diamond enforces "at most
+          // one live listing per loan" so we can't conflate with a
+          // prior-loan row here).
           if (row.prepayListing) return row.prepayListing;
+        } else {
+          // Update: a listing was already there; expected transition
+          // is "orderHash changes from `prior.orderHash`". A row that
+          // STILL returns the prior orderHash means the indexer is
+          // lagging; keep polling.
+          if (
+            row.prepayListing &&
+            (!prior || row.prepayListing.orderHash !== prior.orderHash)
+          ) {
+            return row.prepayListing;
+          }
         }
       }
       return lastRow;
@@ -190,6 +205,10 @@ export function useNFTPrepayListing(
         step: 'submit-tx',
         loanId: loanIdArg.toString(),
       });
+      // Snapshot the prior listing BEFORE the write so the indexer
+      // poll can detect a transition (especially for update, where a
+      // row already exists pre-write — Codex round-3 P2 fix).
+      const prior = listing;
       try {
         const tx = await submit();
         setTxHash(tx.hash);
@@ -197,15 +216,9 @@ export function useNFTPrepayListing(
         // Poll the indexer for the expected transition; this writes
         // the freshest listing into `listing` state so the banner
         // and child action mode flip atomically with the tx.
-        const fresh = await waitForIndexer(flow);
+        const fresh = await waitForIndexer(flow, prior);
         setListing(fresh);
-        // Fire the parent's refresh hook AFTER the indexer poll — so
-        // the parent's on-chain `getLoanDetails` read and the
-        // indexer's listing JOIN both reflect the post-write reality
-        // by the time any sibling re-render kicks in.
-        if (onAfterSuccess) await onAfterSuccess();
         step.success({ note: `tx ${tx.hash}` });
-        return true;
       } catch (err) {
         setActionError(decodeContractError(err, `${flow} failed`));
         step.failure(err);
@@ -213,8 +226,28 @@ export function useNFTPrepayListing(
       } finally {
         setActionLoading(false);
       }
+      // Parent-refresh side-effect is OUT of the main try/catch — a
+      // throw here means a transient `loadLoan` failure AFTER an
+      // on-chain success, which we surface to the diagnostics log
+      // but DO NOT report back to the caller as "the write failed".
+      // Codex round-3 P2 fix on PR #308 — a stale on-chain-loan
+      // read shouldn't roll back the cancel-confirm close /
+      // success-only UI on a write that already landed.
+      if (onAfterSuccess) {
+        try {
+          await onAfterSuccess();
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[useNFTPrepayListing] onAfterSuccess threw after a successful ${flow}; ` +
+              `on-chain write already confirmed, parent refresh will retry on next render.`,
+            err,
+          );
+        }
+      }
+      return true;
     },
-    [waitForIndexer, onAfterSuccess],
+    [waitForIndexer, onAfterSuccess, listing],
   );
 
   const postPrepayListing = useCallback(

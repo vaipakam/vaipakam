@@ -242,10 +242,17 @@ export default function LoanDetails() {
     const id = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 60_000);
     return () => clearInterval(id);
   }, []);
+  // When the live grace read fails, collapse to the `isOverdue`
+  // fallback so the child receives the same conservative gate the
+  // availability context uses. Without this, an overdue loan with no
+  // live listing on a chain where the read is failing would render
+  // the post form despite the diamond rejecting post/update past
+  // grace. Codex round-3 P2 fix on PR #308.
   const pastPrepayGrace =
-    !!loan &&
-    prepayGraceSeconds !== null &&
-    BigInt(nowSec) >= BigInt(endTime) + prepayGraceSeconds;
+    prepayGraceSeconds === null
+      ? isOverdue
+      : !!loan &&
+        BigInt(nowSec) >= BigInt(endTime) + prepayGraceSeconds;
 
   const availability = getLoanActionAvailability({
     status: loan ? Number(loan.status) : -1,
@@ -1109,13 +1116,21 @@ export default function LoanDetails() {
             </>
           )}
 
-          {/* T-086 step 13 — Seaport prepay listing surface. NFT-collateral
-              loans where the lender pre-consented can post a Seaport order
-              priced above live floor; fill at OpenSea pays lender +
-              treasury + refunds borrower in a single tx. The single
-              `prepayListing` hook instance from above is threaded in as
-              a prop so banner + action mode never diverge. */}
-          {availability.prepayListing && (
+        </div>
+      )}
+
+      {/* T-086 step 13 — Seaport prepay listing surface. Rendered as
+          its OWN card (outside `availability.repay`'s wrapper) so a
+          stale listing still has a cancel button after the loan
+          transitions away from Active — the on-chain
+          `cancelPrepayListing` intentionally has no status gate so
+          the borrower can always wind down a leftover listing /
+          release the borrower-NFT lock. Codex round-3 P2 fix on PR
+          #308. */}
+      {address &&
+        isBorrower &&
+        (availability.prepayListing || !!prepayListingState) && (
+          <div id="prepay-listing-card" className="card loan-actions-card">
             <PrepayListingActions
               loanId={BigInt(loanId!)}
               principalAsset={loan.principalAsset}
@@ -1123,10 +1138,10 @@ export default function LoanDetails() {
               prepayListing={prepayListing}
               hasLiveListing={!!prepayListingState}
               pastPrepayGrace={pastPrepayGrace}
+              loanIsActive={isActive}
             />
-          )}
-        </div>
-      )}
+          </div>
+        )}
 
       {/* Per-loan keeper toggles (gate 3 of the Phase-6 keeper auth
           model). Each NFT holder sees their own whitelist's keepers

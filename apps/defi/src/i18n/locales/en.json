@@ -868,8 +868,8 @@
       "graceEnds": "Listing window closes",
       "graceLeftDaysHours": "in {{days}}d {{hours}}h",
       "graceLeftHours": "in {{hours}}h",
-      "graceClosed": "closed — permissionless cancel callable",
-      "graceClosedHint": "The grace window has closed. Anyone can now cancel this listing on-chain; until they do, a buyer who already saw the order on OpenSea can still complete the purchase.",
+      "graceClosed": "closed — order no longer fillable",
+      "graceClosedHint": "The grace window has closed. The executor rejects fills past grace, so the order is no longer executable on-chain — even though it may still be visible on OpenSea until someone (you, the borrower, or a permissionless caller) cancels it.",
       "viewOnExplorer": "View order on explorer"
     },
     "actions": {
@@ -898,6 +898,7 @@
       "unavailableNftLockedCanCancel": "Your borrower-position NFT is locked by another flow. You can still cancel this listing; updates are blocked until the other lock clears.",
       "cancelOnlyTitle": "Cancel collateral listing",
       "cancelOnlyPastGrace": "The grace window for posting new or updated listings has closed. You can still cancel this listing to release the borrower-position-NFT lock.",
+      "cancelOnlyLoanClosed": "This loan is no longer active, but a prepay-listing row is still on the indexer. Cancel it to release the on-chain order hash and the borrower-position-NFT lock.",
       "postCta": "Post listing",
       "updateCta": "Update listing",
       "cancelCta": "Cancel listing",

@@ -41,6 +41,12 @@ interface Props {
    *  case instead of disappearing entirely (Codex round-2 P2 fix on
    *  PR #308). */
   pastPrepayGrace: boolean;
+  /** True only while the loan is in `Active` status. Post/update on a
+   *  non-Active loan revert `PrepayLoanNotActive` on-chain, but
+   *  `cancelPrepayListing` intentionally has no status gate — so a
+   *  stale post-close listing should still surface its cancel
+   *  button. Codex round-3 P2 fix on PR #308. */
+  loanIsActive: boolean;
 }
 
 /** `LibERC721.LockReason` enum (0 = None). Mirrors the on-chain
@@ -78,6 +84,7 @@ export function PrepayListingActions({
   prepayListing,
   hasLiveListing,
   pastPrepayGrace,
+  loanIsActive,
 }: Props) {
   const { t } = useTranslation();
   const diamond = useDiamondRead();
@@ -196,8 +203,25 @@ export function PrepayListingActions({
 
   // One-shot init flags so subsequent live-listing updates from the
   // hook's indexer reload don't trample borrower-typed values mid-edit.
+  // Reset when the listing IDENTITY changes (new listing posted,
+  // cancelled, or replaced by an update) — without this reset, a fresh
+  // post form after a cancel would keep the old ask and the deliberately
+  // blank update-mode conduit input. Codex round-3 P2 fix on PR #308.
   const [askInitialized, setAskInitialized] = useState(false);
   const [conduitInitialized, setConduitInitialized] = useState(false);
+
+  // Identity key — combination of loanId + listing.orderHash (or a
+  // sentinel for "no listing"). When this changes we wipe the init
+  // flags so the next render reseeds from the new live state.
+  const listingIdentity = `${loanId.toString()}::${listing?.orderHash ?? '<none>'}`;
+  const [seenIdentity, setSeenIdentity] = useState<string | null>(null);
+  useEffect(() => {
+    if (seenIdentity !== listingIdentity) {
+      setAskInitialized(false);
+      setConduitInitialized(false);
+      setSeenIdentity(listingIdentity);
+    }
+  }, [listingIdentity, seenIdentity]);
 
   useEffect(() => {
     if (hasLiveListing && listing) {
@@ -219,6 +243,12 @@ export function PrepayListingActions({
         setConduitInitialized(true);
       }
     } else if (!hasLiveListing && minAsk !== null && !askInitialized) {
+      // Fresh post mode after a cancel/none state — reset conduit to
+      // the OpenSea default so the borrower starts from the
+      // happy-path input instead of inheriting the deliberately-blank
+      // update-mode value.
+      setConduitKey(OPENSEA_CONDUIT_KEY);
+      setConduitInitialized(true);
       // Suggest 5 % headroom above the configured buffer-floor as a
       // starting point — same shape the buffer itself takes, doubling
       // up gives the borrower a comfortable signature lifetime.
@@ -303,19 +333,24 @@ export function PrepayListingActions({
     if (ok) setConfirmingCancel(false);
   };
 
-  // ─── Past-grace + no live listing → hide surface entirely ─────────
-  // Post + update both revert `PrepayGraceWindowClosed` past grace.
-  // Without a live listing, there's nothing the borrower can do here
-  // — render null so the page doesn't show an empty action group.
-  if (pastPrepayGrace && !hasLiveListing) {
+  // ─── Hide surface entirely when nothing is actionable ─────────────
+  // Past grace OR loan no longer Active without a live listing means
+  // post/update are both forbidden by the diamond and there's
+  // nothing to cancel — render null so the page doesn't show an
+  // empty card. Codex round-3 P2 fix on PR #308.
+  if ((pastPrepayGrace || !loanIsActive) && !hasLiveListing) {
     return null;
   }
 
   // ─── Cancel-only mode ─────────────────────────────────────────────
-  // Live listing + (past-grace OR feature unavailable) → only the
-  // cancel path stays open on-chain. Show the cancel button + a
-  // contextual reason instead of the full form.
-  const cancelOnly = hasLiveListing && (pastPrepayGrace || unavailableReason !== null);
+  // Live listing + (past-grace OR feature unavailable OR loan no
+  // longer Active) → only the cancel path stays open on-chain.
+  // Show the cancel button + a contextual reason instead of the
+  // full form. The borrower-cancel diamond entry has no loan-status
+  // gate so a stale post-close listing can always be unwound.
+  const cancelOnly =
+    hasLiveListing &&
+    (pastPrepayGrace || !loanIsActive || unavailableReason !== null);
 
   if (cancelOnly) {
     return (
@@ -333,13 +368,15 @@ export function PrepayListingActions({
         >
           <AlertTriangle size={16} />
           <span>
-            {pastPrepayGrace
-              ? t('prepayListing.actions.cancelOnlyPastGrace')
-              : unavailableReason === 'feature'
-                ? t('prepayListing.actions.unavailableFeatureDisabledCanCancel')
-                : unavailableReason === 'buffer'
-                  ? t('prepayListing.actions.unavailableBufferUnconfiguredCanCancel')
-                  : t('prepayListing.actions.unavailableNftLockedCanCancel')}
+            {!loanIsActive
+              ? t('prepayListing.actions.cancelOnlyLoanClosed')
+              : pastPrepayGrace
+                ? t('prepayListing.actions.cancelOnlyPastGrace')
+                : unavailableReason === 'feature'
+                  ? t('prepayListing.actions.unavailableFeatureDisabledCanCancel')
+                  : unavailableReason === 'buffer'
+                    ? t('prepayListing.actions.unavailableBufferUnconfiguredCanCancel')
+                    : t('prepayListing.actions.unavailableNftLockedCanCancel')}
           </span>
         </div>
         <div className="action-row">
