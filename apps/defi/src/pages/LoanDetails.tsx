@@ -47,6 +47,9 @@ import { LoanTimeline } from "../components/app/LoanTimeline";
 import { SanctionsBanner } from "../components/app/SanctionsBanner";
 import { CardInfo } from "../components/CardInfo";
 import { PeriodicInterestCheckpointCard } from "../components/loanDetails/PeriodicInterestCheckpointCard";
+import { PrepayListingBanner } from "../components/loanDetails/PrepayListingBanner";
+import { PrepayListingActions } from "../components/loanDetails/PrepayListingActions";
+import { useNFTPrepayListing } from "../hooks/useNFTPrepayListing";
 import "./LoanDetails.css";
 
 export default function LoanDetails() {
@@ -186,11 +189,83 @@ export default function LoanDetails() {
     role,
   };
 
+  // T-086 step 13 — indexer-backed listing state. Owned by the page so
+  // a SINGLE hook instance feeds both the banner (everyone) and the
+  // action group (borrower). Wiring `onAfterSuccess` to `loadLoan` here
+  // means a successful post/update/cancel also re-pulls the on-chain
+  // loan + holders state in the same await chain as the hook's own
+  // indexer reload — so banner state, action mode, and on-chain reads
+  // all switch over atomically. Codex caught the dual-hook variant on
+  // PR #308 review; this is the single-source-of-truth fix.
+  const prepayListing = useNFTPrepayListing(loanId, {
+    onAfterSuccess: loadLoan,
+  });
+  const prepayListingState = prepayListing.listing;
+
+  // T-086 — read live grace seconds for the loan's duration tier so we
+  // can render the prepay-listing action up to (and including) the grace
+  // window, matching `NFTPrepayListingFacet.postPrepayListing`'s strict
+  // `block.timestamp < endTime + gracePeriod(durationDays)` upper bound.
+  // A read failure (older deploy / RPC blip) leaves `graceSeconds` null;
+  // the gate then collapses to `!isOverdue`, hiding the surface the
+  // moment the loan goes overdue — a safe default that just causes a
+  // small UX miss inside the grace window.
+  const [prepayGraceSeconds, setPrepayGraceSeconds] = useState<bigint | null>(
+    null,
+  );
+  useEffect(() => {
+    let cancelled = false;
+    if (!loan) return;
+    (async () => {
+      try {
+        const d = diamond as unknown as {
+          getEffectiveGraceSeconds: (durationDays: bigint) => Promise<bigint>;
+        };
+        const g = await d.getEffectiveGraceSeconds(BigInt(loan.durationDays));
+        if (!cancelled) setPrepayGraceSeconds(g);
+      } catch {
+        if (!cancelled) setPrepayGraceSeconds(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [diamond, loan]);
+  // Tick state — bumps `nowSec` once per minute (cheap) so the
+  // grace-boundary comparison below re-evaluates if the user leaves
+  // the page mounted across the boundary crossing. Without this, a
+  // page opened pre-grace would keep showing the action surface
+  // forever even after `now >= endTime + gracePeriod`. Codex P3 fix
+  // round 3 on PR #308.
+  const [nowSec, setNowSec] = useState(Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    const id = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  // When the live grace read fails, collapse to the `isOverdue`
+  // fallback so the child receives the same conservative gate the
+  // availability context uses. Without this, an overdue loan with no
+  // live listing on a chain where the read is failing would render
+  // the post form despite the diamond rejecting post/update past
+  // grace. Codex round-3 P2 fix on PR #308.
+  const pastPrepayGrace =
+    prepayGraceSeconds === null
+      ? isOverdue
+      : !!loan &&
+        BigInt(nowSec) >= BigInt(endTime) + prepayGraceSeconds;
+
   const availability = getLoanActionAvailability({
     status: loan ? Number(loan.status) : -1,
     role: role ?? "none",
     isOverdue,
     assetType: loan ? Number(loan.assetType) : -1,
+    collateralAssetType: loan ? Number(loan.collateralAssetType) : -1,
+    allowsPrepayListing: !!loan && Boolean(loan.allowsPrepayListing),
+    pastPrepayGrace:
+      prepayGraceSeconds === null
+        ? // Fallback: collapse to `isOverdue` when the live read failed.
+          isOverdue
+        : pastPrepayGrace,
     showAdvanced,
     walletConnected: !!address,
   });
@@ -461,6 +536,17 @@ export default function LoanDetails() {
         blockExplorer={activeBlockExplorer}
         onClaimed={loadLoan}
       />
+
+      {/* T-086 step 13 — live prepay-listing state. Visible to everyone
+          (lender/borrower/third-party) when a Seaport listing is live; the
+          borrower's management surface (update/cancel) lives in the
+          Actions card below. */}
+      {prepayListingState && (
+        <PrepayListingBanner
+          listing={prepayListingState}
+          principalAsset={loan.principalAsset}
+        />
+      )}
 
       {isLender && Number(loan.assetType) === AssetType.ERC20 && (
         <div style={{ marginBottom: 16 }}>
@@ -1029,8 +1115,38 @@ export default function LoanDetails() {
               </div>
             </>
           )}
+
         </div>
       )}
+
+      {/* T-086 step 13 — Seaport prepay listing surface. Rendered
+          OUTSIDE the `availability.repay` wrapper so a stale listing
+          still has a cancel button after the loan transitions away
+          from Active — the on-chain `cancelPrepayListing`
+          intentionally has no status gate. The component owns its
+          own card wrapper so its `return null` (past-grace + no
+          listing, or still loading) doesn't leave an empty card in
+          the DOM. Codex round-4 P3 fix on PR #308. The page-level
+          gate also drops the surface entirely while the indexer
+          fetch is in flight (`prepayListing.loading`) — `listing
+          === null` is the hook's documented loading sentinel; we
+          mustn't briefly show post mode on a loan that already
+          has a live listing. Codex round-4 P3 fix on PR #308. */}
+      {address &&
+        isBorrower &&
+        !prepayListing.loading &&
+        prepayListingState !== null &&
+        (availability.prepayListing || !!prepayListingState) && (
+          <PrepayListingActions
+            loanId={BigInt(loanId!)}
+            principalAsset={loan.principalAsset}
+            borrowerTokenId={loan.borrowerTokenId}
+            prepayListing={prepayListing}
+            hasLiveListing={!!prepayListingState}
+            pastPrepayGrace={pastPrepayGrace}
+            loanIsActive={isActive}
+          />
+        )}
 
       {/* Per-loan keeper toggles (gate 3 of the Phase-6 keeper auth
           model). Each NFT holder sees their own whitelist's keepers

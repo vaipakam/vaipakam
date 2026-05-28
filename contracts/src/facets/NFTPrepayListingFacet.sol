@@ -642,6 +642,20 @@ contract NFTPrepayListingFacet is
         return LibVaipakam.storageSlot().cfgPrepayListingBufferBps;
     }
 
+    /// @notice Master kill-switch state for the prepay-listing feature.
+    ///         Mirrors `cfgPrepayListingEnabled` (set via
+    ///         {ConfigFacet.setPrepayListingEnabled}). Both
+    ///         `postPrepayListing` and `updatePrepayListing` revert
+    ///         {PrepayListingDisabled} while this is false; cancel
+    ///         paths (borrower + permissionless-expired) intentionally
+    ///         stay open even with the switch off so an in-flight
+    ///         listing can always be unwound. Frontend reads this to
+    ///         render an "unavailable on this chain" notice instead of
+    ///         a form that's guaranteed to revert at submit.
+    function getPrepayListingEnabled() external view returns (bool) {
+        return LibVaipakam.storageSlot().cfgPrepayListingEnabled;
+    }
+
     // ─── Internal helpers ───────────────────────────────────────────────
 
     /// @dev Computes `startTime + durationDays + grace(durationDays)`.

@@ -1155,13 +1155,18 @@ contract DeployDiamond is Script {
     ///      `getPrepayListingBufferBps`) read by the frontend +
     ///      indexer when rendering listing status.
     function _getNFTPrepayListingSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](6);
+        s = new bytes4[](7);
         s[0] = NFTPrepayListingFacet.postPrepayListing.selector;
         s[1] = NFTPrepayListingFacet.updatePrepayListing.selector;
         s[2] = NFTPrepayListingFacet.cancelPrepayListing.selector;
         s[3] = NFTPrepayListingFacet.cancelExpiredPrepayListing.selector;
         s[4] = NFTPrepayListingFacet.getPrepayListingOrderHash.selector;
         s[5] = NFTPrepayListingFacet.getPrepayListingBufferBps.selector;
+        // Round-3 fix on PR #308 — Codex P2: frontend needs to read the
+        // master kill-switch to render the action surface as
+        // "unavailable on this chain" instead of a form that reverts at
+        // submit with `PrepayListingDisabled`.
+        s[6] = NFTPrepayListingFacet.getPrepayListingEnabled.selector;
     }
 
     function _getRefinanceSelectors() internal pure returns (bytes4[] memory s) {

@@ -174,6 +174,22 @@ export function fetchOffersByCreator(
 // Phase B — loans + activity events
 // ──────────────────────────────────────────────────────────────────
 
+/**
+ * T-086 step 13 — Seaport prepay-listing payload nested on the
+ * indexer's `/loans/:id` response when a live listing exists for
+ * the loan. The indexer joins from the `prepay_listings` table.
+ * Absent when no listing is live.
+ */
+export interface IndexedPrepayListing {
+  orderHash: string;       // 0x-prefixed bytes32
+  askPrice: string;        // string-uint256 (principal asset wei)
+  conduit: string;         // 0x-prefixed lowercase
+  lister: string;          // current borrower-position-NFT holder at post time
+  postedAt: number;        // unix seconds (block timestamp)
+  updatedAt: number;       // unix seconds (re-sign anchor; equals postedAt until first update)
+  gracePeriodEnd: number;  // unix seconds; permissionless cancelExpired becomes callable at strict `>`
+}
+
 export interface IndexedLoan {
   chainId: number;
   loanId: number;
@@ -195,11 +211,15 @@ export interface IndexedLoan {
   interestRateBps: number;
   startTime: number;
   allowsPartialRepay: boolean;
+  /** T-086 step 4 — lender consent flag for the prepay-listing flow. */
+  allowsPrepayListing?: boolean;
   startBlock: number;
   startAt: number;
   terminalBlock: number | null;
   terminalAt: number | null;
   updatedAt: number;
+  /** T-086 step 13 — present iff a Seaport prepay listing is live. */
+  prepayListing?: IndexedPrepayListing;
 }
 
 /**

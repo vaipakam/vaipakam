@@ -30,6 +30,7 @@ export type JourneyArea =
   | 'preclose'
   | 'refinance'
   | 'early-withdrawal'
+  | 'prepay-listing'      // T-086 Seaport prepay-listing flow
   | 'nft-verifier'
   | 'log-index'
   | 'dashboard'
