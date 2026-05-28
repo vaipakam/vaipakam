@@ -1135,6 +1135,7 @@ export default function LoanDetails() {
       {address &&
         isBorrower &&
         !prepayListing.loading &&
+        prepayListingState !== null &&
         (availability.prepayListing || !!prepayListingState) && (
           <PrepayListingActions
             loanId={BigInt(loanId!)}

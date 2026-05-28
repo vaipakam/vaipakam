@@ -89,8 +89,15 @@ export function getLoanActionAvailability(ctx: LoanActionContext): LoanActionAva
     earlyWithdrawal: canAct && isLender && !ctx.isOverdue && isActive && isErc20,
     preclose: canAct && isBorrower && !ctx.isOverdue && isActive && ctx.showAdvanced && isErc20,
     refinance: canAct && isBorrower && !ctx.isOverdue && isActive && ctx.showAdvanced && isErc20,
-    // T-086 prepay listing — NFT collateral, lender pre-consent flag,
-    // active. Note we intentionally DO NOT gate on `!pastPrepayGrace`
+    // T-086 prepay listing — NFT collateral, ERC20 principal, lender
+    // pre-consent flag, active. The ERC20-principal gate matches the
+    // executor's `_assertOrderContent` reject for non-ERC20
+    // lendingAsset (`UnsupportedLendingAssetType`) and `LibPrepayOrder`'s
+    // ERC20-consideration leg — an NFT-rental loan
+    // (ERC721/ERC1155 principal) can never fill via this flow.
+    // Codex round-5 P2 fix on PR #308.
+    //
+    // Note we intentionally DO NOT gate on `!pastPrepayGrace`
     // here: `cancelPrepayListing` is callable both before and after
     // the grace window (the on-chain `NFTPrepayListingFacet.cancelPrepayListing`
     // has no grace check, only `cancelExpiredPrepayListing` is
@@ -104,6 +111,7 @@ export function getLoanActionAvailability(ctx: LoanActionContext): LoanActionAva
       canAct &&
       isBorrower &&
       isActive &&
+      isErc20 &&
       isNftCollateral &&
       ctx.allowsPrepayListing,
   };

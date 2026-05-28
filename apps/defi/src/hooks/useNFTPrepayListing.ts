@@ -226,13 +226,20 @@ export function useNFTPrepayListing(
           // the borrower will see the previous orderHash and pull
           // the new one on the next user-driven refresh.
           setListing(latest);
+        } else if (flow === 'cancelPrepayListing') {
+          // Cancel is the one flow where we KNOW the on-chain final
+          // state independent of the indexer — the listing is gone.
+          // Forcing `setListing(undefined)` here flips the UI out of
+          // banner / cancel mode even on a total indexer outage; a
+          // second cancel attempt would otherwise revert with
+          // `PrepayListingNotFound`. Codex round-5 P3 fix on PR #308.
+          setListing(undefined);
         }
-        // Else: indexer never responded (every poll returned `null`
-        // → worker outage). Leave `listing` alone — the on-chain
-        // write succeeded; treating an unavailable cache as "no
-        // listing" would hide a live post/update and put the
-        // borrower back into post mode. Codex round-4 P3 fix on PR
-        // #308.
+        // Else (post/update + total indexer outage): leave `listing`
+        // alone — the on-chain write succeeded; treating an
+        // unavailable cache as "no listing" would hide a live
+        // post/update and put the borrower back into post mode.
+        // Codex round-4 P3 fix on PR #308.
         step.success({ note: `tx ${tx.hash}` });
       } catch (err) {
         setActionError(decodeContractError(err, `${flow} failed`));
