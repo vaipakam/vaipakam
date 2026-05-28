@@ -90,6 +90,17 @@
         "namespace_id": "1004",
         "simple": { "limit": 60, "period": 60 },
       },
+      {
+        // T-086 step 14 — POST /opensea/listing is one call per
+        // borrower post/update tx, so the budget is tight on
+        // purpose. The endpoint exists so casual NFT buyers see
+        // the listing on OpenSea's UI; abuse would just spam
+        // OpenSea's API on our key.
+        "name": "OPENSEA_LISTING_RATELIMIT",
+        "type": "ratelimit",
+        "namespace_id": "1005",
+        "simple": { "limit": 30, "period": 60 },
+      },
     ],
   },
 
@@ -112,6 +123,9 @@
   //   - PUSH_CHANNEL_PK      — Push channel signer.
   //   - ZEROEX_API_KEY,
   //     ONEINCH_API_KEY      — public quote-proxy aggregator keys.
+  //   - OPENSEA_API_KEY      — T-086 step 14: OpenSea Listings API
+  //                            key for `POST /opensea/listing`.
+  //                            Server-side only.
   //   - DIAG_WALLET_HMAC_KEY — T-075: server secret keying the
   //                            per-wallet deletion hash. When unset,
   //                            connected-wallet capture skips writes
@@ -140,6 +154,10 @@
     { "binding": "PUSH_CHANNEL_PK",     "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "PUSH_CHANNEL_PK" },
     { "binding": "ZEROEX_API_KEY",      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "ZEROEX_API_KEY" },
     { "binding": "ONEINCH_API_KEY",     "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "ONEINCH_API_KEY" },
+    // T-086 step 14 — OpenSea Listings API key powers
+    // `POST /opensea/listing`. Server-side only; the dapp never
+    // sees this key.
+    { "binding": "OPENSEA_API_KEY",     "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "OPENSEA_API_KEY" },
     { "binding": "DIAG_WALLET_HMAC_KEY", "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "DIAG_WALLET_HMAC_KEY" },
     // ET-001 — no transaction-scan secret. The pre-sign transaction
     // preview is a frontend-only viem `eth_call` simulation (no API

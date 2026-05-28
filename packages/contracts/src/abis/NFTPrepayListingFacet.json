@@ -202,6 +202,24 @@
         "type": "address",
         "indexed": false,
         "internalType": "address"
+      },
+      {
+        "name": "conduitKey",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "salt",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "executor",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -242,6 +260,24 @@
       },
       {
         "name": "conduit",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "newConduitKey",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "newSalt",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "executor",
         "type": "address",
         "indexed": false,
         "internalType": "address"

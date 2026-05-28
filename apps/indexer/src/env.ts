@@ -73,6 +73,12 @@ export interface WorkerEnv {
   RPC_BNB_TESTNET?: SecretBinding;
   RPC_POLYGON_AMOY?: SecretBinding;
   CANCELLED_OFFER_RETENTION_DAYS?: string;
+  // T-086 step 14 — OpenSea Listings API key for the autonomous
+  // republish path (`apps/indexer/src/openseaPublish.ts`). The
+  // indexer holds its own key (separate from the agent Worker's)
+  // so a key rotation can happen one Worker at a time without
+  // dropping coverage.
+  OPENSEA_API_KEY?: SecretBinding;
 }
 
 /**
@@ -100,6 +106,9 @@ export interface Env {
   // 2026-05-08 — cancelled-offer retention in days. Default 30.
   // String → int coerce + clamp at >= 1 inside the prune helper.
   CANCELLED_OFFER_RETENTION_DAYS?: string;
+
+  // T-086 step 14 — resolved OpenSea Listings API key.
+  OPENSEA_API_KEY?: string;
 }
 
 /**
@@ -149,6 +158,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     opSep,
     bnbTest,
     polyAmoy,
+    openSea,
   ] = await Promise.all([
     readSecret(raw.RPC_BASE),
     readSecret(raw.RPC_ETH),
@@ -161,10 +171,12 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     readSecret(raw.RPC_OP_SEPOLIA),
     readSecret(raw.RPC_BNB_TESTNET),
     readSecret(raw.RPC_POLYGON_AMOY),
+    readSecret(raw.OPENSEA_API_KEY),
   ]);
   return {
     DB: raw.DB,
     CANCELLED_OFFER_RETENTION_DAYS: raw.CANCELLED_OFFER_RETENTION_DAYS,
+    OPENSEA_API_KEY: openSea,
     RPC_BASE: base,
     RPC_ETH: eth,
     RPC_ARB: arb,

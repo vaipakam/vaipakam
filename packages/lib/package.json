@@ -32,6 +32,10 @@
     "./crossDomainPref": {
       "types": "./src/crossDomainPref.ts",
       "default": "./src/crossDomainPref.ts"
+    },
+    "./prepayOrderShape": {
+      "types": "./src/prepayOrderShape.ts",
+      "default": "./src/prepayOrderShape.ts"
     }
   },
   "peerDependencies": {

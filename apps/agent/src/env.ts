@@ -120,6 +120,11 @@ interface BaseEnv {
   QUOTE_0X_RATELIMIT?: RateLimitBinding;
   QUOTE_1INCH_RATELIMIT?: RateLimitBinding;
   DIAG_RECORD_RATELIMIT?: RateLimitBinding;
+  // T-086 step 14 — per-IP gate on `POST /opensea/listing`. The
+  // expected call rate is one POST per borrower-driven
+  // postPrepayListing / updatePrepayListing tx, so a tight budget
+  // is plenty; the binding exists mainly as an abuse safety net.
+  OPENSEA_LISTING_RATELIMIT?: RateLimitBinding;
 
   // Diagnostics sampling (0.0–1.0; default 1.0 = write every accepted POST).
   // Coerced from string to float at read time. Out-of-range values
@@ -176,6 +181,10 @@ export interface WorkerEnv extends BaseEnv {
   // Aggregator API keys for the public `/quote/*` proxies.
   ZEROEX_API_KEY?: SecretBinding;
   ONEINCH_API_KEY?: SecretBinding;
+  // T-086 step 14 — OpenSea Listings API key for the
+  // `POST /opensea/listing` proxy. Used server-side only; the dapp
+  // never sees this key.
+  OPENSEA_API_KEY?: SecretBinding;
   // T-075 — server secret keying the per-wallet deletion hash.
   DIAG_WALLET_HMAC_KEY?: SecretBinding;
 }
@@ -209,6 +218,8 @@ export interface Env extends BaseEnv {
   // Aggregator API keys for the public `/quote/*` proxies.
   ZEROEX_API_KEY?: string;
   ONEINCH_API_KEY?: string;
+  // T-086 step 14 — resolved OpenSea Listings API key.
+  OPENSEA_API_KEY?: string;
 
   // T-075 — server secret for the per-wallet deletion key.
   // `wallet_hash = HMAC-SHA256(fullWallet, DIAG_WALLET_HMAC_KEY)`.
@@ -283,6 +294,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     pushPk,
     zeroEx,
     oneInch,
+    openSea,
     walletHmac,
   ] = await Promise.all([
     readSecret(raw.RPC_BASE),
@@ -301,6 +313,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     readSecret(raw.PUSH_CHANNEL_PK),
     readSecret(raw.ZEROEX_API_KEY),
     readSecret(raw.ONEINCH_API_KEY),
+    readSecret(raw.OPENSEA_API_KEY),
     readSecret(raw.DIAG_WALLET_HMAC_KEY),
   ]);
   return {
@@ -310,6 +323,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     QUOTE_0X_RATELIMIT: raw.QUOTE_0X_RATELIMIT,
     QUOTE_1INCH_RATELIMIT: raw.QUOTE_1INCH_RATELIMIT,
     DIAG_RECORD_RATELIMIT: raw.DIAG_RECORD_RATELIMIT,
+    OPENSEA_LISTING_RATELIMIT: raw.OPENSEA_LISTING_RATELIMIT,
     DIAG_SAMPLE_RATE: raw.DIAG_SAMPLE_RATE,
     DIAG_RETENTION_DAYS: raw.DIAG_RETENTION_DAYS,
     DIAG_LEGAL_DOCS: raw.DIAG_LEGAL_DOCS,
@@ -331,6 +345,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     PUSH_CHANNEL_PK: pushPk,
     ZEROEX_API_KEY: zeroEx,
     ONEINCH_API_KEY: oneInch,
+    OPENSEA_API_KEY: openSea,
     DIAG_WALLET_HMAC_KEY: walletHmac,
     // RPC_ZKEVM intentionally unset — Polygon zkEVM is out of scope.
   };
