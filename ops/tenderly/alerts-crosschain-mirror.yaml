@@ -1,0 +1,150 @@
+# Tenderly Alert Presets — Vaipakam Cross-Chain (CCIP) Stack
+# MIRROR — applies ONLY to mirror chains (NOT canonical Base).
+#
+# See alerts-crosschain-shared.yaml header for the file-set overview,
+# severity tiers, and apply workflow. Apply this file on every mirror
+# chain (Ethereum, Arbitrum, Optimism, Polygon zkEVM, BNB Chain) after
+# the shared file.
+#
+# Required envsubst vars:
+#   VPFI_MIRROR_TOKEN_ADDRESS   — the VPFIMirrorToken proxy on this chain
+#   VPFI_BUY_ADAPTER_ADDRESS    — the VpfiBuyAdapter proxy on this chain
+
+version: 1
+project: vaipakam
+
+# ═══════════════════════════════════════════════════════════════════════
+# §D. VPFIMirrorToken — mirror chains only
+# ═══════════════════════════════════════════════════════════════════════
+#
+# The canonical chain (Base) uses VPFIToken + LockReleaseTokenPool which
+# doesn't fire a TokenPoolUpdated equivalent — the canonical pool is set
+# at CCT registry time and is immutable post-registration.
+
+- id: vpfi-mirror-token-paused
+  severity: P0
+  description: >
+    GuardianPausable.Paused on VPFIMirrorToken (mirror chain).
+    Cross-chain VPFI mint/burn is blocked — incoming CCIP messages
+    that would mint VPFI on this chain will fail at the BurnMintPool's
+    call to VPFIMirrorToken.mint(); they're parked in CCIP's failed-
+    message register for manual re-execution post-unpause.
+  type: event_emitted
+  contract: ${VPFI_MIRROR_TOKEN_ADDRESS}
+  event: Paused(address)
+  destination:
+    - pagerduty
+    - slack-incidents
+
+- id: vpfi-mirror-token-pool-updated
+  severity: P0
+  description: >
+    VPFIMirrorToken.TokenPoolUpdated — the BurnMintTokenPool address
+    this mirror trusts to call mint()/burn() changed. The pool is the
+    CCIP-registry-managed bridge; a rogue change here means an
+    attacker-controlled pool can mint VPFI on this mirror without
+    the corresponding lock on Base. Critical — direct path to
+    arbitrary mirror VPFI inflation.
+  type: event_emitted
+  contract: ${VPFI_MIRROR_TOKEN_ADDRESS}
+  event: TokenPoolUpdated(address,address)
+  destination:
+    - pagerduty
+    - slack-incidents
+    - slack-crosschain
+
+# ═══════════════════════════════════════════════════════════════════════
+# §E. VpfiBuyAdapter — mirror chains only
+# ═══════════════════════════════════════════════════════════════════════
+
+- id: vpfi-buy-adapter-paused
+  severity: P0
+  description: >
+    GuardianPausable.Paused on VpfiBuyAdapter (mirror chain).
+    Cross-chain VPFI buys originated from this chain will revert.
+    Existing pending buys (BuyRequested but not yet resolved on Base)
+    can be reclaimed via `reclaimTimedOutBuy` post-refund-timeout.
+  type: event_emitted
+  contract: ${VPFI_BUY_ADAPTER_ADDRESS}
+  event: Paused(address)
+  destination:
+    - pagerduty
+    - slack-incidents
+
+- id: vpfi-buy-adapter-rate-limits-changed
+  severity: P1
+  description: >
+    VpfiBuyAdapter.RateLimitsSet — per-request cap or rolling 24h cap
+    changed on the adapter. Defence-in-depth ABOVE the per-lane CCIP
+    TokenPool limits managed by VpfiPoolRateGovernor; tightening these
+    is conservative, loosening them widens blast radius on a forged-
+    delivery scenario. Compare new values against the design doc §10
+    starting values + the operator change calendar.
+  type: event_emitted
+  contract: ${VPFI_BUY_ADAPTER_ADDRESS}
+  event: RateLimitsSet(uint256,uint256)
+  destination:
+    - slack-crosschain
+
+- id: vpfi-buy-adapter-payment-token-changed
+  severity: P0
+  description: >
+    VpfiBuyAdapter.PaymentTokenSet — the ERC20 the adapter pulls from
+    buyers (or address(0) for native gas) changed. On BNB Chain + Polygon
+    PoS mainnet the wrong setting causes every buy to misprice (per the
+    "VpfiBuyAdapter payment-token mode by chain" section in CLAUDE.md).
+    The init-time `_assertPaymentTokenSane` guard catches obvious cases
+    (non-contract addresses, non-18-dec tokens) but doesn't enforce the
+    chain → mode policy at the contract level — that's operator-side.
+  type: event_emitted
+  contract: ${VPFI_BUY_ADAPTER_ADDRESS}
+  event: PaymentTokenSet(address,address)
+  destination:
+    - pagerduty
+    - slack-incidents
+    - slack-crosschain
+
+- id: vpfi-buy-adapter-treasury-changed
+  severity: P0
+  description: >
+    VpfiBuyAdapter.TreasurySet — the address that receives refunded /
+    settled buy-flow funds changed. An attacker who can flip this can
+    siphon both refund and settlement flows. Sanity check against the
+    governance multisig address.
+  type: event_emitted
+  contract: ${VPFI_BUY_ADAPTER_ADDRESS}
+  event: TreasurySet(address,address)
+  destination:
+    - pagerduty
+    - slack-incidents
+    - slack-crosschain
+
+# ═══════════════════════════════════════════════════════════════════════
+# §G-mirror. Ownership drift — mirror-only contracts
+# ═══════════════════════════════════════════════════════════════════════
+
+- id: vpfi-mirror-token-owner-changed
+  severity: P0
+  description: >
+    Ownership of VPFIMirrorToken (mirror chain) transferred. Should
+    NEVER fire post mainnet-handover. Investigate immediately.
+  type: event_emitted
+  contract: ${VPFI_MIRROR_TOKEN_ADDRESS}
+  event: OwnershipTransferred(address,address)
+  destination:
+    - pagerduty
+    - slack-incidents
+    - slack-crosschain
+
+- id: vpfi-buy-adapter-owner-changed
+  severity: P0
+  description: >
+    Ownership of VpfiBuyAdapter (mirror chain) transferred. Should
+    NEVER fire post mainnet-handover. Investigate immediately.
+  type: event_emitted
+  contract: ${VPFI_BUY_ADAPTER_ADDRESS}
+  event: OwnershipTransferred(address,address)
+  destination:
+    - pagerduty
+    - slack-incidents
+    - slack-crosschain
