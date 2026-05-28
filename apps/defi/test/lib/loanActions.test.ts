@@ -11,6 +11,16 @@ function mkCtx(over: Partial<LoanActionContext> = {}): LoanActionContext {
     role: 'borrower',
     isOverdue: false,
     assetType: AssetType.ERC20,
+    // T-086 step 13 defaults — NFT collateral + lender consent +
+    // not-past-grace. Pre-T-086 the factory only seeded the loan-level
+    // ERC20-principal fields, but the prepay-listing gate also reads
+    // the collateral-side asset type, the lender's consent flag, and
+    // the live grace window. Default to "all gates open" so the
+    // base-case assertions in this file still pass; per-test
+    // overrides via `over` flip individual fields.
+    collateralAssetType: AssetType.ERC721,
+    allowsPrepayListing: true,
+    pastPrepayGrace: false,
     showAdvanced: true,
     walletConnected: true,
     ...over,
@@ -111,6 +121,86 @@ describe('getLoanActionAvailability', () => {
       getLoanActionAvailability(mkCtx({ role: 'lender', assetType: AssetType.ERC721 }))
         .earlyWithdrawal,
     ).toBe(false);
+  });
+
+  describe('prepayListing — T-086 step 13', () => {
+    // The Seaport prepay-listing flow targets the active-borrower
+    // on an ERC20-principal/NFT-collateral loan when the lender has
+    // pre-consented. The cancel path stays callable post-grace, so
+    // the availability flag intentionally DOESN'T gate on
+    // `!pastPrepayGrace`; the child component switches to cancel-only
+    // mode based on the prop. Tests below mirror each on-chain gate.
+
+    it('offers prepayListing to the borrower on an active ERC20 NFT-collateral loan with consent', () => {
+      const a = getLoanActionAvailability(mkCtx());
+      expect(a.prepayListing).toBe(true);
+    });
+
+    it('hides prepayListing when the wallet is disconnected', () => {
+      expect(
+        getLoanActionAvailability(mkCtx({ walletConnected: false })).prepayListing,
+      ).toBe(false);
+    });
+
+    it('hides prepayListing from the lender + third parties', () => {
+      expect(getLoanActionAvailability(mkCtx({ role: 'lender' })).prepayListing).toBe(false);
+      expect(getLoanActionAvailability(mkCtx({ role: 'none' })).prepayListing).toBe(false);
+    });
+
+    it('hides prepayListing once the loan transitions away from Active', () => {
+      for (const status of [
+        LoanStatus.Repaid,
+        LoanStatus.Defaulted,
+        LoanStatus.Settled,
+      ]) {
+        expect(getLoanActionAvailability(mkCtx({ status })).prepayListing).toBe(false);
+      }
+    });
+
+    it('hides prepayListing when the principal is not ERC20', () => {
+      // NFT-rental loans (ERC721/ERC1155 principal) can't fill via
+      // Seaport prepay — the executor's `_assertOrderContent` rejects.
+      expect(
+        getLoanActionAvailability(mkCtx({ assetType: AssetType.ERC721 })).prepayListing,
+      ).toBe(false);
+      expect(
+        getLoanActionAvailability(mkCtx({ assetType: AssetType.ERC1155 })).prepayListing,
+      ).toBe(false);
+    });
+
+    it('hides prepayListing when the collateral is not an NFT', () => {
+      // ERC20 collateral has no NFT identifier to list on Seaport.
+      expect(
+        getLoanActionAvailability(mkCtx({ collateralAssetType: AssetType.ERC20 })).prepayListing,
+      ).toBe(false);
+    });
+
+    it('hides prepayListing when the lender did not pre-consent', () => {
+      // `Offer.allowsPrepayListing = false` → snapshotted onto the
+      // loan; the diamond reverts `PrepayListingNotAllowed` on post.
+      expect(
+        getLoanActionAvailability(mkCtx({ allowsPrepayListing: false })).prepayListing,
+      ).toBe(false);
+    });
+
+    it('KEEPS prepayListing visible past grace — cancel must stay reachable', () => {
+      // `cancelPrepayListing` is callable both pre- and post-grace
+      // (only `cancelExpiredPrepayListing` is permissionless-post-grace).
+      // The availability flag intentionally ignores `pastPrepayGrace`
+      // so a stale listing can always be wound down. The child
+      // component handles the post/update vs cancel-only branching.
+      const a = getLoanActionAvailability(mkCtx({ pastPrepayGrace: true }));
+      expect(a.prepayListing).toBe(true);
+    });
+
+    it('hides prepayListing on FallbackPending (only Active loans can list)', () => {
+      // The on-chain `postPrepayListing` requires `LoanStatus.Active`.
+      expect(
+        getLoanActionAvailability(
+          mkCtx({ status: LoanStatus.FallbackPending }),
+        ).prepayListing,
+      ).toBe(false);
+    });
   });
 
   it('offers preclose + refinance only to the borrower on ERC-20 active loans in advanced mode', () => {
