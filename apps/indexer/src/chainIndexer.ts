@@ -1333,38 +1333,46 @@ async function processLoanLogs(
       // terminal Repaid still applies.
       const r = await flipLoanStatus(env, chainId, a, log, 'repaid');
       if (r) statusUpdates++;
+      // T-086 step 12 — clear any live prepay-listing row.
+      await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'LoanPreclosedDirect') {
       // Preclose Option 1 — borrower closes early. Transition Active→Repaid.
       const r = await flipLoanStatus(env, chainId, a, log, 'repaid');
       if (r) statusUpdates++;
+      await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'OffsetCompleted') {
       // Preclose Option 3 — offsetWithNewOffer + completeOffset. The
       // *original* loan transitions Active→Repaid (the new loan emits
       // its own LoanInitiated). Keyed by `originalLoanId`, not `loanId`.
+      const origLoanId = Number(a.originalLoanId as bigint);
       const r = await flipLoanStatus(
         env,
         chainId,
         a,
         log,
         'repaid',
-        Number(a.originalLoanId as bigint),
+        origLoanId,
       );
       if (r) statusUpdates++;
+      await _deletePrepayListing(env, chainId, origLoanId);
     } else if (log.eventName === 'LoanRefinanced') {
       // Refinance — the *old* loan transitions Active→Repaid (the new
       // loan emits its own LoanInitiated). Keyed by `oldLoanId`.
+      const oldLoanId = Number(a.oldLoanId as bigint);
       const r = await flipLoanStatus(
         env,
         chainId,
         a,
         log,
         'repaid',
-        Number(a.oldLoanId as bigint),
+        oldLoanId,
       );
       if (r) statusUpdates++;
+      await _deletePrepayListing(env, chainId, oldLoanId);
     } else if (log.eventName === 'PartialRepaid') {
       // Partial repayment — loan stays Active, but `principal` shrinks.
       // The event carries the post-state `newPrincipal`, so mirror it.
+      const loanId = Number(a.loanId as bigint);
       await env.DB.prepare(
         `UPDATE loans SET principal = ?, updated_at = ?
          WHERE chain_id = ? AND loan_id = ?`,
@@ -1373,9 +1381,30 @@ async function processLoanLogs(
           String(a.newPrincipal as bigint),
           Math.floor(Date.now() / 1000),
           chainId,
-          Number(a.loanId as bigint),
+          loanId,
         )
         .run();
+      // T-086 step 12 — refresh `prepay_listings.grace_period_end`
+      // if the loan has a live listing. Partial repayment can
+      // reset `startTime` (ERC20 loans) or reduce `durationDays`
+      // (NFT rentals), both of which move the grace boundary.
+      // Skip the RPC read when there's no live listing to refresh
+      // (most loans aren't listed). Codex P2 round-3 on PR #304.
+      const hasListing = await env.DB.prepare(
+        `SELECT 1 FROM prepay_listings WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(chainId, loanId)
+        .first<{ '1': number } | null>();
+      if (hasListing) {
+        const refreshedGraceEnd = await _resolveGraceEnd(client, diamond, loanId);
+        await env.DB.prepare(
+          `UPDATE prepay_listings
+             SET grace_period_end = ?, updated_at = ?
+           WHERE chain_id = ? AND loan_id = ?`,
+        )
+          .bind(refreshedGraceEnd, now, chainId, loanId)
+          .run();
+      }
     } else if (log.eventName === 'CollateralAdded') {
       // Borrower topped up collateral — loan stays Active, but
       // `collateral_amount` grows. The event carries `newCollateralAmount`.
@@ -1412,9 +1441,11 @@ async function processLoanLogs(
     } else if (log.eventName === 'LoanDefaulted') {
       const r = await flipLoanStatus(env, chainId, a, log, 'defaulted');
       if (r) statusUpdates++;
+      await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'LoanLiquidated') {
       const r = await flipLoanStatus(env, chainId, a, log, 'liquidated');
       if (r) statusUpdates++;
+      await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'LoanSettled') {
       // LoanSettled fires when both sides have claimed and the loan
       // is fully wound down. We re-flip whatever the prior terminal
@@ -1523,6 +1554,13 @@ async function processLoanLogs(
             )
             .run();
           statusUpdates++;
+          // T-086 step 12 / Codex P2 round-5 — internal-match
+          // terminal also clears the listing. The on-chain loan
+          // is no longer Active so any subsequent Seaport fill
+          // would revert at the executor's `getPrepayContext`
+          // check, but the indexed projection needs to mirror
+          // the terminal state immediately.
+          await _deletePrepayListing(env, chainId, loanId);
         } else {
           await env.DB.prepare(
             `UPDATE loans SET principal = ?, collateral_amount = ?, updated_at = ? WHERE chain_id = ? AND loan_id = ?`,
@@ -1546,6 +1584,169 @@ async function processLoanLogs(
         await applyMatch(loanIdA, nA, nB);
         await applyMatch(loanIdB, nB, nA);
       }
+    } else if (log.eventName === 'PrepayListingPosted') {
+      // T-086 step 12 — Seaport prepay-listing INSERT.
+      const loanId = Number(a.loanId as bigint);
+      const orderHash = String(a.orderHash as `0x${string}`).toLowerCase();
+      const askPrice = String(a.askPrice as bigint);
+      const conduit = String(a.conduit as Address).toLowerCase();
+      const lister = String(a.lister as Address).toLowerCase();
+      // Resolve `grace_period_end` via a fresh RPC read of
+      // `getLoanDetails(loanId)`. The on-chain start_time +
+      // durationDays are mutated by RepayFacet.repayPartial
+      // (ERC20 rate-reset) and the auto-deduct path; the
+      // indexer's `loans` row currently only mirrors `principal`
+      // on PartialRepaid so a SQL read could surface stale
+      // boundaries. The RPC read is fine on this rare hot-path
+      // event. Codex P2 round-2 on PR #304.
+      const graceEnd = await _resolveGraceEnd(
+        client, diamond, loanId,
+      );
+      // Use the log's block timestamp (chain-time) for posted_at /
+      // updated_at — backfills processed minutes later still
+      // anchor to when the listing actually went on-chain. Codex
+      // P3 round-1 on PR #304.
+      const blockAt = blockTimestamps.get(log.blockNumber) ?? now;
+      await env.DB.prepare(
+        `INSERT OR REPLACE INTO prepay_listings
+           (chain_id, loan_id, order_hash, ask_price, conduit,
+            lister, posted_at, updated_at, grace_period_end,
+            block_number, tx_hash, log_index)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+        .bind(
+          chainId,
+          loanId,
+          orderHash,
+          askPrice,
+          conduit,
+          lister,
+          blockAt,
+          blockAt,
+          graceEnd,
+          Number(log.blockNumber),
+          String(log.transactionHash as `0x${string}`).toLowerCase(),
+          Number(log.logIndex),
+        )
+        .run();
+    } else if (log.eventName === 'PrepayListingUpdated') {
+      // Update is a re-sign. UPSERT (not UPDATE) so a re-sign
+      // observed AFTER an indexer-rollout boundary — where the
+      // original `PrepayListingPosted` was missed — still
+      // materialises the row from the event payload. Codex P2
+      // round-1 on PR #304.
+      const loanId = Number(a.loanId as bigint);
+      const newOrderHash = String(a.newOrderHash as `0x${string}`).toLowerCase();
+      const newAskPrice = String(a.newAskPrice as bigint);
+      const conduit = String(a.conduit as Address).toLowerCase();
+      const lister = String(a.lister as Address).toLowerCase();
+      const blockAt = blockTimestamps.get(log.blockNumber) ?? now;
+      // RPC-resolve fresh grace_period_end for the
+      // backfill-INSERT case. Same reasoning as the Posted
+      // handler — start_time + duration_days can drift after
+      // partial repayment / auto-deduct.
+      const graceEnd = await _resolveGraceEnd(
+        client, diamond, loanId,
+      );
+      // Try a `posted_at`-preserving UPDATE first (the common
+      // case — the row exists from a prior Posted event); fall
+      // back to an INSERT when no row exists (the rollout-
+      // backfill case).
+      // Updated path now ALSO refreshes `grace_period_end` (Codex
+      // P2 round-3): a re-sign typically follows a partial
+      // repayment that mutated startTime / durationDays, so the
+      // grace boundary moved. Include the freshly RPC-resolved
+      // value in the UPDATE.
+      const upd = await env.DB.prepare(
+        `UPDATE prepay_listings
+           SET order_hash = ?, ask_price = ?, conduit = ?, lister = ?,
+               updated_at = ?, grace_period_end = ?,
+               block_number = ?, tx_hash = ?, log_index = ?
+         WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(
+          newOrderHash,
+          newAskPrice,
+          conduit,
+          lister,
+          blockAt,
+          graceEnd,
+          Number(log.blockNumber),
+          String(log.transactionHash as `0x${string}`).toLowerCase(),
+          Number(log.logIndex),
+          chainId,
+          loanId,
+        )
+        .run();
+      if ((upd.meta?.changes ?? 0) === 0) {
+        // No row to update — the Posted event must have been
+        // missed (rollout window). Materialise from the Updated
+        // payload, anchoring `posted_at` to the current event's
+        // blockAt as a best-effort proxy (the true post time
+        // isn't recoverable without an RPC scan).
+        await env.DB.prepare(
+          `INSERT OR REPLACE INTO prepay_listings
+             (chain_id, loan_id, order_hash, ask_price, conduit,
+              lister, posted_at, updated_at, grace_period_end,
+              block_number, tx_hash, log_index)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+          .bind(
+            chainId,
+            loanId,
+            newOrderHash,
+            newAskPrice,
+            conduit,
+            lister,
+            blockAt,
+            blockAt,
+            graceEnd,
+            Number(log.blockNumber),
+            String(log.transactionHash as `0x${string}`).toLowerCase(),
+            Number(log.logIndex),
+          )
+          .run();
+      }
+    } else if (log.eventName === 'PrepayListingCanceled') {
+      // Cancel (borrower / grace-expired) terminates the listing
+      // WITHOUT closing the loan — loan stays Active until a
+      // separate terminal (repay / default / liquidation) fires.
+      const loanId = Number(a.loanId as bigint);
+      await env.DB.prepare(
+        `DELETE FROM prepay_listings WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(chainId, loanId)
+        .run();
+    } else if (log.eventName === 'PrepayCollateralSaleSettled') {
+      // Successful Seaport fill: loan went Active → Settled
+      // ATOMICALLY in `PrepayListingFacet.executorFinalizePrepaySale`
+      // — there is no separate claim step nor a follow-up
+      // `LoanSettled` event the indexer can wait for. So we flip
+      // directly to `settled` here (NOT `repaid`); otherwise the
+      // claimables query (`status IN ('repaid','defaulted','liquidated')`)
+      // would treat the loan as forever-claimable. Codex P1
+      // round-1 on PR #304.
+      const loanId = Number(a.loanId as bigint);
+      await env.DB.prepare(
+        `DELETE FROM prepay_listings WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(chainId, loanId)
+        .run();
+      const blockAt = blockTimestamps.get(log.blockNumber) ?? now;
+      const r = await env.DB.prepare(
+        `UPDATE loans
+           SET status = 'settled', terminal_block = ?, terminal_at = ?, updated_at = ?
+         WHERE chain_id = ? AND loan_id = ? AND status = 'active'`,
+      )
+        .bind(
+          Number(log.blockNumber),
+          blockAt,
+          now,
+          chainId,
+          loanId,
+        )
+        .run();
+      if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
     }
     // Notes on events deliberately not state-mutating here:
     //  - LoanSettlementBreakdown / PeriodicSlippageOverBuffer /
@@ -1670,6 +1871,90 @@ async function recordActivityEvents(
 /** Map a decoded event to the cross-domain reference columns the
  *  activity_events ledger denormalizes for fast filtering. The full
  *  args bag is preserved separately in `args_json`. */
+/// @dev Minimal ABI for the on-chain
+///      `ConfigFacet.getEffectiveGraceSeconds(durationDays)` view.
+///      Inlined here (not pulled in via the full ConfigFacet ABI)
+///      because the indexer only needs this one function. Honors
+///      the governance-tunable grace schedule
+///      (`ConfigFacet.setGraceBuckets`) — fixes the "default-only"
+///      drift Codex round-3 P2 flagged.
+const GRACE_SECONDS_ABI = [
+  {
+    type: 'function',
+    name: 'getEffectiveGraceSeconds',
+    stateMutability: 'view',
+    // On-chain signature is `uint256 durationDays` (per
+    // ConfigFacet.sol:1969). A mismatch here would compile a
+    // different 4-byte selector and the RPC would 404 silently,
+    // falling back to the `graceEnd = 0` sentinel. Codex P2
+    // round-4 on PR #304.
+    inputs: [{ name: 'durationDays', type: 'uint256' }],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+] as const;
+
+/// @dev RPC-read the loan's CURRENT `startTime + durationDays`
+///      AND the on-chain effective grace-seconds for that
+///      durationDays. Reading from RPC (not the indexer's cached
+///      `loans` row) is the correct source — `RepayFacet.repayPartial`
+///      resets `startTime` for ERC20 loans and reduces
+///      `durationDays` for NFT rentals; governance can also flip
+///      the grace schedule via `ConfigFacet.setGraceBuckets`.
+///      Falls back to `0` (sentinel) on RPC failure, with a
+///      console.error.
+async function _resolveGraceEnd(
+  client: PublicClient,
+  diamond: Address,
+  loanId: number,
+): Promise<number> {
+  try {
+    const detail = (await client.readContract({
+      address: diamond,
+      abi: DIAMOND_LOAN_DETAILS_ABI,
+      functionName: 'getLoanDetails',
+      args: [BigInt(loanId)],
+    })) as { startTime: bigint; durationDays: number | bigint };
+    const startTime = Number(detail.startTime);
+    const durationDays = Number(detail.durationDays);
+    const graceSeconds = Number(
+      (await client.readContract({
+        address: diamond,
+        abi: GRACE_SECONDS_ABI,
+        functionName: 'getEffectiveGraceSeconds',
+        args: [BigInt(durationDays)],
+      })) as bigint,
+    );
+    return startTime + durationDays * 86_400 + graceSeconds;
+  } catch (err) {
+    console.error(`[chainIndexer] _resolveGraceEnd(${loanId}) failed`, err);
+    return 0; // Sentinel — the frontend treats 0 as "unknown grace end".
+  }
+}
+
+/// @dev T-086 step 12 / Codex P2 round-2: delete any live
+///      prepay-listing row for `loanId` on EVERY terminal-event
+///      handler that closes the loan (LoanRepaid /
+///      LoanPreclosedDirect / OffsetCompleted / LoanRefinanced /
+///      LoanDefaulted / LoanLiquidated). The Seaport executor's
+///      zone callback already gates on `loan.status == Active`,
+///      so a later fill against the stale orderHash would revert
+///      on-chain — but the indexer's `prepay_listings` row
+///      would still show the listing as live to the frontend
+///      until someone explicitly cancelled. This cleanup keeps
+///      the indexed projection consistent with the on-chain
+///      truth as soon as the closing event lands.
+async function _deletePrepayListing(
+  env: Env,
+  chainId: number,
+  loanId: number,
+): Promise<void> {
+  await env.DB.prepare(
+    `DELETE FROM prepay_listings WHERE chain_id = ? AND loan_id = ?`,
+  )
+    .bind(chainId, loanId)
+    .run();
+}
+
 function pluckActivityRefs(
   eventName: string,
   args: Record<string, unknown>,
@@ -1797,6 +2082,30 @@ function pluckActivityRefs(
       return {
         actor: (args.to as string)?.toLowerCase() ?? null,
         loanId: null,
+        offerId: null,
+      };
+    // T-086 step 12 — prepay-listing events. The on-chain payloads
+    // use slightly different field names: Posted carries `lister`,
+    // Updated carries `lister`, Canceled carries `caller`,
+    // PrepayCollateralSaleSettled carries `executor`. The loan_id is
+    // present on all four. Codex P2 round-2 on PR #304.
+    case 'PrepayListingPosted':
+    case 'PrepayListingUpdated':
+      return {
+        actor: (args.lister as string)?.toLowerCase() ?? null,
+        loanId: Number(args.loanId as bigint),
+        offerId: null,
+      };
+    case 'PrepayListingCanceled':
+      return {
+        actor: (args.caller as string)?.toLowerCase() ?? null,
+        loanId: Number(args.loanId as bigint),
+        offerId: null,
+      };
+    case 'PrepayCollateralSaleSettled':
+      return {
+        actor: (args.executor as string)?.toLowerCase() ?? null,
+        loanId: Number(args.loanId as bigint),
         offerId: null,
       };
     default:
