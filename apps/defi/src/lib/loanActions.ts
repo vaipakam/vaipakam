@@ -20,6 +20,16 @@ export interface LoanActionContext {
   isOverdue: boolean;
   /** `AssetType` enum for the principal leg. */
   assetType: number;
+  /** `AssetType` enum for the collateral leg — gates NFT-only flows
+   *  like the T-086 Seaport prepay listing. */
+  collateralAssetType: number;
+  /** Lender-set consent flag from the originating offer, mirrored onto
+   *  the loan struct as `loan.allowsPrepayListing`. Gates the T-086
+   *  prepay-listing surface. */
+  allowsPrepayListing: boolean;
+  /** True when the loan is past `endTime + gracePeriod` — the strict
+   *  `<` upper bound the diamond's `postPrepayListing` enforces. */
+  pastPrepayGrace: boolean;
   /** UI mode gate — many strategic actions are advanced-only. */
   showAdvanced: boolean;
   /** True when a wallet is connected. */
@@ -39,6 +49,9 @@ export interface LoanActionAvailability {
   preclose: boolean;
   /** Borrower-only lender-swap flow. ERC-20-only, advanced-mode. */
   refinance: boolean;
+  /** Borrower-only Seaport prepay listing — NFT collateral, lender
+   *  pre-consented, pre-grace, active. T-086. */
+  prepayListing: boolean;
 }
 
 /**
@@ -54,6 +67,9 @@ export function getLoanActionAvailability(ctx: LoanActionContext): LoanActionAva
   const isBorrower = ctx.role === 'borrower';
   const isLender = ctx.role === 'lender';
   const isErc20 = ctx.assetType === AssetType.ERC20;
+  const isNftCollateral =
+    ctx.collateralAssetType === AssetType.ERC721 ||
+    ctx.collateralAssetType === AssetType.ERC1155;
 
   // All actions render inside the top-level `{canAct && address && ...}`
   // wrapper in LoanDetails.tsx — so every gate below inherits that AND.
@@ -73,5 +89,15 @@ export function getLoanActionAvailability(ctx: LoanActionContext): LoanActionAva
     earlyWithdrawal: canAct && isLender && !ctx.isOverdue && isActive && isErc20,
     preclose: canAct && isBorrower && !ctx.isOverdue && isActive && ctx.showAdvanced && isErc20,
     refinance: canAct && isBorrower && !ctx.isOverdue && isActive && ctx.showAdvanced && isErc20,
+    // T-086 prepay listing — NFT collateral, lender pre-consent flag,
+    // pre-grace, active. Mirrors the on-chain gates so the UI doesn't
+    // render an entry point that would revert at submit.
+    prepayListing:
+      canAct &&
+      isBorrower &&
+      isActive &&
+      isNftCollateral &&
+      ctx.allowsPrepayListing &&
+      !ctx.pastPrepayGrace,
   };
 }

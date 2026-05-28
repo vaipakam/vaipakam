@@ -103,6 +103,13 @@ export interface LoanDetails {
    *  Dashboard's near-internal-match banner. Zero on illiquid
    *  loans that never enter the HF path. */
   liquidationLtvBpsAtInit: bigint;
+  /** T-086 step 4 — lender's prepay-listing consent flag snapshotted
+   *  from the source `Offer.allowsPrepayListing` at loan-init.
+   *  Immutable for the loan's lifetime. The
+   *  `NFTPrepayListingFacet.postPrepayListing` borrower entry-point
+   *  reverts `PrepayListingNotAllowed` when this is false, so the
+   *  frontend gates the action surface on the same flag. */
+  allowsPrepayListing: boolean;
 }
 
 export type LoanRole = 'lender' | 'borrower';

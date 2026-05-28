@@ -47,6 +47,9 @@ import { LoanTimeline } from "../components/app/LoanTimeline";
 import { SanctionsBanner } from "../components/app/SanctionsBanner";
 import { CardInfo } from "../components/CardInfo";
 import { PeriodicInterestCheckpointCard } from "../components/loanDetails/PeriodicInterestCheckpointCard";
+import { PrepayListingBanner } from "../components/loanDetails/PrepayListingBanner";
+import { PrepayListingActions } from "../components/loanDetails/PrepayListingActions";
+import { useNFTPrepayListing } from "../hooks/useNFTPrepayListing";
 import "./LoanDetails.css";
 
 export default function LoanDetails() {
@@ -186,11 +189,61 @@ export default function LoanDetails() {
     role,
   };
 
+  // T-086 step 13 — indexer-backed listing state. Owned by the page so a
+  // single fetch feeds both the banner (everyone) and the action group
+  // (borrower). The `PrepayListingActions` component below also opens
+  // its own copy of the hook for tx state; both calls memoize across
+  // their own `loanId` arg and share the indexer-cached HTTP response
+  // when both fire on the same loan-details mount.
+  const { listing: prepayListingState } = useNFTPrepayListing(loanId);
+
+  // T-086 — read live grace seconds for the loan's duration tier so we
+  // can render the prepay-listing action up to (and including) the grace
+  // window, matching `NFTPrepayListingFacet.postPrepayListing`'s strict
+  // `block.timestamp < endTime + gracePeriod(durationDays)` upper bound.
+  // A read failure (older deploy / RPC blip) leaves `graceSeconds` null;
+  // the gate then collapses to `!isOverdue`, hiding the surface the
+  // moment the loan goes overdue — a safe default that just causes a
+  // small UX miss inside the grace window.
+  const [prepayGraceSeconds, setPrepayGraceSeconds] = useState<bigint | null>(
+    null,
+  );
+  useEffect(() => {
+    let cancelled = false;
+    if (!loan) return;
+    (async () => {
+      try {
+        const d = diamond as unknown as {
+          getEffectiveGraceSeconds: (durationDays: bigint) => Promise<bigint>;
+        };
+        const g = await d.getEffectiveGraceSeconds(BigInt(loan.durationDays));
+        if (!cancelled) setPrepayGraceSeconds(g);
+      } catch {
+        if (!cancelled) setPrepayGraceSeconds(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [diamond, loan]);
+  const pastPrepayGrace =
+    !!loan &&
+    prepayGraceSeconds !== null &&
+    BigInt(Math.floor(Date.now() / 1000)) >=
+      BigInt(endTime) + prepayGraceSeconds;
+
   const availability = getLoanActionAvailability({
     status: loan ? Number(loan.status) : -1,
     role: role ?? "none",
     isOverdue,
     assetType: loan ? Number(loan.assetType) : -1,
+    collateralAssetType: loan ? Number(loan.collateralAssetType) : -1,
+    allowsPrepayListing: !!loan && Boolean(loan.allowsPrepayListing),
+    pastPrepayGrace:
+      prepayGraceSeconds === null
+        ? // Fallback: collapse to `isOverdue` when the live read failed.
+          isOverdue
+        : pastPrepayGrace,
     showAdvanced,
     walletConnected: !!address,
   });
@@ -461,6 +514,18 @@ export default function LoanDetails() {
         blockExplorer={activeBlockExplorer}
         onClaimed={loadLoan}
       />
+
+      {/* T-086 step 13 — live prepay-listing state. Visible to everyone
+          (lender/borrower/third-party) when a Seaport listing is live; the
+          borrower's management surface (update/cancel) lives in the
+          Actions card below. */}
+      {prepayListingState && (
+        <PrepayListingBanner
+          listing={prepayListingState}
+          principalAsset={loan.principalAsset}
+          blockExplorer={activeBlockExplorer}
+        />
+      )}
 
       {isLender && Number(loan.assetType) === AssetType.ERC20 && (
         <div style={{ marginBottom: 16 }}>
@@ -1028,6 +1093,19 @@ export default function LoanDetails() {
                 </div>
               </div>
             </>
+          )}
+
+          {/* T-086 step 13 — Seaport prepay listing surface. NFT-collateral
+              loans where the lender pre-consented can post a Seaport order
+              priced above live floor; fill at OpenSea pays lender +
+              treasury + refunds borrower in a single tx. */}
+          {availability.prepayListing && (
+            <PrepayListingActions
+              loanId={BigInt(loanId!)}
+              principalAsset={loan.principalAsset}
+              hasLiveListing={!!prepayListingState}
+              onActionSuccess={loadLoan}
+            />
           )}
         </div>
       )}
