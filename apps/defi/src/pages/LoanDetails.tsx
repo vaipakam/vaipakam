@@ -545,6 +545,9 @@ export default function LoanDetails() {
         <PrepayListingBanner
           listing={prepayListingState}
           principalAsset={loan.principalAsset}
+          chainId={chainId ?? DEFAULT_CHAIN.chainId}
+          collateralAsset={loan.collateralAsset}
+          collateralTokenId={loan.collateralTokenId}
         />
       )}
 

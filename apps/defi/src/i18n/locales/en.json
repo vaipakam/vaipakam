@@ -870,7 +870,8 @@
       "graceLeftHours": "in {{hours}}h",
       "graceClosed": "closed — order no longer fillable",
       "graceClosedHint": "The grace window has closed. The executor rejects fills past grace, so the order is no longer executable on-chain — even though it may still be visible on OpenSea until someone (you, the borrower, or a permissionless caller) cancels it.",
-      "viewOnExplorer": "View order on explorer"
+      "viewOnExplorer": "View order on explorer",
+      "viewOnOpenSea": "View on OpenSea"
     },
     "actions": {
       "postTitle": "List collateral for sale (prepay)",

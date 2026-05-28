@@ -1,7 +1,8 @@
-import { Tag, Clock } from 'lucide-react';
+import { Tag, Clock, ExternalLink } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { TokenAmount } from '../app/TokenAmount';
 import { AddressDisplay } from '../app/AddressDisplay';
+import { openSeaAssetUrl } from '@vaipakam/lib/prepayOrderShape';
 import type { IndexedPrepayListing } from '../../lib/indexerClient';
 
 interface Props {
@@ -9,6 +10,16 @@ interface Props {
   /** Principal asset (loan.principalAsset) — controls TokenAmount decimals
    *  and symbol the ask-price renders against. */
   principalAsset: string;
+  /** Active chain id — drives the OpenSea deep-link host + slug. */
+  chainId: number;
+  /** Collateral NFT contract address — `loan.collateralAsset`. The
+   *  OpenSea asset URL points at the marketplace page for this
+   *  contract + token id, where the live listing surfaces once
+   *  OpenSea has ingested it (frontend-direct path: ~3-10s after
+   *  tx-confirm; indexer-autonomous fallback: ~30-90s). */
+  collateralAsset: string;
+  /** Collateral NFT token id — `loan.collateralTokenId`. */
+  collateralTokenId: bigint;
 }
 
 /**
@@ -23,7 +34,13 @@ interface Props {
  * grace window has closed (permissionless cancelExpired is now callable
  * but the listing hasn't been swept yet).
  */
-export function PrepayListingBanner({ listing, principalAsset }: Props) {
+export function PrepayListingBanner({
+  listing,
+  principalAsset,
+  chainId,
+  collateralAsset,
+  collateralTokenId,
+}: Props) {
   const { t } = useTranslation();
   const now = Math.floor(Date.now() / 1000);
   // Strict `>` to match `CollateralListingExecutor`'s boundary
@@ -41,6 +58,14 @@ export function PrepayListingBanner({ listing, principalAsset }: Props) {
   const stateBg = graceClosed
     ? 'rgba(160,160,160,0.08)'
     : 'rgba(0,255,136,0.08)';
+
+  // T-086 step 14 — OpenSea asset URL is deterministic from the
+  // collateral contract + token id; the listing surfaces here once
+  // OpenSea has ingested the publish (frontend-direct path: seconds;
+  // indexer-autonomous fallback: ~minute). Returns null when the
+  // active chain isn't on OpenSea's supported chain list — banner
+  // then omits the link without breaking.
+  const openseaUrl = openSeaAssetUrl(chainId, collateralAsset, collateralTokenId);
 
   return (
     <div
@@ -130,6 +155,32 @@ export function PrepayListingBanner({ listing, principalAsset }: Props) {
         >
           {t('prepayListing.banner.graceClosedHint')}
         </p>
+      )}
+
+      {/* T-086 step 14 — OpenSea marketplace deep-link. Visible
+          whenever a listing is live + the active chain is on
+          OpenSea's supported chain set. The link lands on the
+          collateral asset's marketplace page; the live listing
+          appears once OpenSea has ingested the publish (frontend
+          push: seconds; indexer fallback: minute). */}
+      {!graceClosed && openseaUrl && (
+        <div style={{ marginTop: 12 }}>
+          <a
+            href={openseaUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn-secondary btn-sm"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: '0.85rem',
+            }}
+          >
+            {t('prepayListing.banner.viewOnOpenSea')}
+            <ExternalLink size={14} />
+          </a>
+        </div>
       )}
     </div>
   );

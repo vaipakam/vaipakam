@@ -1,10 +1,21 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useDiamondContract } from '../contracts/useDiamond';
+import { useDiamondContract, useDiamondPublicClient } from '../contracts/useDiamond';
 import { useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { fetchLoanById, type IndexedPrepayListing } from '../lib/indexerClient';
 import { decodeContractError } from '@vaipakam/lib/decodeContractError';
 import { beginStep } from '../lib/journeyLog';
+import { publishPrepayListingToOpenSea } from '../lib/openseaPublish';
+import type { Hex } from 'viem';
+
+/** Minimal subset of viem's `TransactionReceipt` the OpenSea publish
+ *  path consumes — kept structural so a stricter / future viem
+ *  shape change doesn't break the hook's contract. */
+interface WriteReceipt {
+  transactionHash: string;
+  blockNumber: bigint;
+  logs: ReadonlyArray<{ address: string; topics: readonly Hex[]; data: Hex }>;
+}
 
 /**
  * T-086 step 13 — borrower-side controller for the Seaport prepay-listing flow.
@@ -37,6 +48,7 @@ export interface UseNFTPrepayListingResult {
   actionLoading: boolean;
   actionError: string | null;
   txHash: string | null;
+
 
   /** Returns `true` when the tx confirmed AND the post-write refresh
    *  (indexer + optional `onAfterSuccess`) ran cleanly; `false` on any
@@ -75,6 +87,7 @@ export function useNFTPrepayListing(
   options?: UseNFTPrepayListingOptions,
 ): UseNFTPrepayListingResult {
   const diamond = useDiamondContract();
+  const publicClient = useDiamondPublicClient();
   const chain = useReadChain();
   const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
   const onAfterSuccess = options?.onAfterSuccess;
@@ -194,7 +207,7 @@ export function useNFTPrepayListing(
       flow: 'postPrepayListing' | 'updatePrepayListing' | 'cancelPrepayListing',
       loanIdArg: bigint,
       submit: () => Promise<{ hash: string; wait: () => Promise<unknown> }>,
-    ): Promise<boolean> => {
+    ): Promise<{ success: boolean; receipt?: WriteReceipt }> => {
       setActionLoading(true);
       setActionError(null);
       setTxHash(null);
@@ -208,10 +221,15 @@ export function useNFTPrepayListing(
       // poll can detect a transition (especially for update, where a
       // row already exists pre-write — Codex round-3 P2 fix).
       const prior = listing;
+      let receipt: WriteReceipt | undefined;
       try {
         const tx = await submit();
         setTxHash(tx.hash);
-        await tx.wait();
+        // viem's `wait()` returns the receipt; capture it so the
+        // callers that need the post-tx block.timestamp + event
+        // logs (i.e. the OpenSea publish path for post / update)
+        // don't have to re-fetch by hash.
+        receipt = (await tx.wait()) as WriteReceipt;
         // Poll the indexer for the expected transition; this writes
         // the freshest listing into `listing` state so the banner
         // and child action mode flip atomically with the tx.
@@ -250,7 +268,7 @@ export function useNFTPrepayListing(
       } catch (err) {
         setActionError(decodeContractError(err, `${flow} failed`));
         step.failure(err);
-        return false;
+        return { success: false };
       } finally {
         setActionLoading(false);
       }
@@ -273,9 +291,56 @@ export function useNFTPrepayListing(
           );
         }
       }
-      return true;
+      return { success: true, receipt };
     },
     [waitForIndexer, onAfterSuccess, listing],
+  );
+
+  /** Best-effort fire-and-forget OpenSea publish after a successful
+   *  post / update tx. The indexer's autonomous PrepayListingPosted /
+   *  Updated handlers are the canonical safety net (they also
+   *  publish via the same shared `prepayOrderShape` reconstruction);
+   *  this frontend path exists purely for UX-latency — borrower
+   *  sees the listing on OpenSea within seconds of tx-confirm
+   *  rather than waiting for the indexer's next scan tick. Errors
+   *  are diagnostic-only (console.warn) so a transient agent /
+   *  OpenSea outage never rolls back the post-tx UI. */
+  const runOpenSeaPublish = useCallback(
+    async (
+      receipt: WriteReceipt,
+      lid: bigint,
+      askPrice: bigint,
+      salt: bigint,
+      conduitKey: `0x${string}`,
+    ): Promise<void> => {
+      if (!chain.diamondAddress) return;
+      let agentOrigin: string | null = null;
+      try {
+        agentOrigin =
+          (import.meta.env.VITE_AGENT_ORIGIN as string | undefined) ?? null;
+      } catch {
+        agentOrigin = null;
+      }
+      const result = await publishPrepayListingToOpenSea({
+        publicClient,
+        agentOrigin,
+        diamondAddress: chain.diamondAddress as `0x${string}`,
+        chainId,
+        txReceipt: receipt,
+        loanId: lid,
+        askPrice,
+        salt,
+        conduitKey,
+      });
+      if (!result.published) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[useNFTPrepayListing] frontend-direct OpenSea publish failed (${result.error}); ` +
+            `indexer-side autonomous republish will retry on its next event scan`,
+        );
+      }
+    },
+    [chain.diamondAddress, chainId, publicClient],
   );
 
   const postPrepayListing = useCallback(
@@ -284,11 +349,16 @@ export function useNFTPrepayListing(
       askPrice: bigint,
       salt: bigint,
       conduitKey: `0x${string}`,
-    ): Promise<boolean> =>
-      runWrite('postPrepayListing', lid, () =>
+    ): Promise<boolean> => {
+      const r = await runWrite('postPrepayListing', lid, () =>
         diamond.postPrepayListing(lid, askPrice, salt, conduitKey),
-      ),
-    [diamond, runWrite],
+      );
+      if (r.success && r.receipt) {
+        await runOpenSeaPublish(r.receipt, lid, askPrice, salt, conduitKey);
+      }
+      return r.success;
+    },
+    [diamond, runWrite, runOpenSeaPublish],
   );
 
   const updatePrepayListing = useCallback(
@@ -297,18 +367,30 @@ export function useNFTPrepayListing(
       newAskPrice: bigint,
       newSalt: bigint,
       newConduitKey: `0x${string}`,
-    ): Promise<boolean> =>
-      runWrite('updatePrepayListing', lid, () =>
+    ): Promise<boolean> => {
+      const r = await runWrite('updatePrepayListing', lid, () =>
         diamond.updatePrepayListing(lid, newAskPrice, newSalt, newConduitKey),
-      ),
-    [diamond, runWrite],
+      );
+      if (r.success && r.receipt) {
+        await runOpenSeaPublish(r.receipt, lid, newAskPrice, newSalt, newConduitKey);
+      }
+      return r.success;
+    },
+    [diamond, runWrite, runOpenSeaPublish],
   );
 
   const cancelPrepayListing = useCallback(
-    async (lid: bigint): Promise<boolean> =>
-      runWrite('cancelPrepayListing', lid, () =>
+    async (lid: bigint): Promise<boolean> => {
+      const r = await runWrite('cancelPrepayListing', lid, () =>
         diamond.cancelPrepayListing(lid),
-      ),
+      );
+      // Cancel doesn't push to OpenSea — the vault's ERC-1271
+      // stops authorising the orderHash, so OpenSea drops the
+      // listing on its next validation pass (minutes). See
+      // `apps/agent/src/openseaProxy.ts` for the rationale on not
+      // exposing a /cancel proxy endpoint.
+      return r.success;
+    },
     [diamond, runWrite],
   );
 

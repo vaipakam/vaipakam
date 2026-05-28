@@ -72,6 +72,13 @@
     { "binding": "RPC_OP_SEPOLIA",   "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_OP_SEPOLIA" },
     { "binding": "RPC_BNB_TESTNET",  "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_BNB_TESTNET" },
     { "binding": "RPC_POLYGON_AMOY", "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_POLYGON_AMOY" },
+    // T-086 step 14 — OpenSea Listings API key used by the
+    // autonomous republish path in `chainIndexer.ts`'s
+    // PrepayListingPosted / Updated handlers. The indexer holds
+    // its own key (separate from the agent Worker's) so the
+    // close-browser edge case is covered even if the
+    // frontend-direct push didn't fire.
+    { "binding": "OPENSEA_API_KEY",  "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "OPENSEA_API_KEY" },
   ],
 
   // Custom-domain binding for the public read-API. Cloudflare

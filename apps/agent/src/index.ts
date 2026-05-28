@@ -32,6 +32,8 @@
  *   GET  /frames/active-loans/image         — Frame SVG image
  *   POST /quote/0x                          — 0x v2 aggregator proxy
  *   POST /quote/1inch                       — 1inch v6 aggregator proxy
+ *   POST /opensea/listing                   — OpenSea Listings API proxy
+ *                                             (T-086 step 14)
  *   ANY  /diag/record                       — diagnostics record capture
  *   POST /diag/erasure                      — frontend → erase own records
  *   POST /diag/erasure/status               — frontend → erasure status check
@@ -64,6 +66,7 @@ import { resolveEnv, type Env, type WorkerEnv } from './env';
 import { runPeriodicPreNotify } from './periodicPreNotify';
 import { runBuyWatchdog } from './buyWatchdog';
 import { handle0xQuote, handle1inchQuote } from './quoteProxy';
+import { handleOpenSeaListingPost } from './openseaProxy';
 import { handleDiagRecord, pruneOldDiagErrors } from './diagRecord';
 import {
   handleDiagErasure,
@@ -154,6 +157,14 @@ export default {
     }
     if (url.pathname === '/quote/1inch' && req.method === 'POST') {
       return handle1inchQuote(req, resolved);
+    }
+    // T-086 step 14 — OpenSea Listings API proxy. The frontend POSTs
+    // the canonical Seaport OrderComponents the diamond just locked
+    // on-chain; this proxy forwards to OpenSea with the server-side
+    // API key. See `openseaProxy.ts` for the full request/response
+    // contract.
+    if (url.pathname === '/opensea/listing' && req.method === 'POST') {
+      return handleOpenSeaListingPost(req, resolved);
     }
 
     // Diagnostics record. CORS-locked + per-IP rate-limited inside

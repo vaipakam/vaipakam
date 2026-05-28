@@ -45,6 +45,7 @@ import { getChainConfigs } from './env';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { DIAMOND_OFFER_DETAILS_ABI, DIAMOND_LOAN_DETAILS_ABI } from './diamondAbi';
+import { indexerPublishPrepayListing } from './openseaPublish';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -1586,11 +1587,16 @@ async function processLoanLogs(
       }
     } else if (log.eventName === 'PrepayListingPosted') {
       // T-086 step 12 — Seaport prepay-listing INSERT.
+      // T-086 step 14 — also persist `conduitKey` + `salt` (event
+      // grew two args) and trigger the autonomous OpenSea
+      // republish.
       const loanId = Number(a.loanId as bigint);
       const orderHash = String(a.orderHash as `0x${string}`).toLowerCase();
       const askPrice = String(a.askPrice as bigint);
       const conduit = String(a.conduit as Address).toLowerCase();
       const lister = String(a.lister as Address).toLowerCase();
+      const conduitKey = String(a.conduitKey as `0x${string}`).toLowerCase();
+      const salt = String(a.salt as bigint);
       // Resolve `grace_period_end` via a fresh RPC read of
       // `getLoanDetails(loanId)`. The on-chain start_time +
       // durationDays are mutated by RepayFacet.repayPartial
@@ -1607,12 +1613,32 @@ async function processLoanLogs(
       // anchor to when the listing actually went on-chain. Codex
       // P3 round-1 on PR #304.
       const blockAt = blockTimestamps.get(log.blockNumber) ?? now;
+      // T-086 step 14 — try the autonomous OpenSea publish BEFORE
+      // the INSERT so the `opensea_published_at` flag can be set
+      // in the same row write. The publish call is best-effort —
+      // failure populates the row with NULL `opensea_published_at`,
+      // which a future cron tick can sweep + retry (#311 covers
+      // the retry loop).
+      const publishResult = await _maybePublishToOpenSea(
+        env,
+        client,
+        diamond,
+        chainId,
+        loanId,
+        String(log.transactionHash as `0x${string}`).toLowerCase() as `0x${string}`,
+        BigInt(askPrice),
+        BigInt(salt),
+        conduitKey as `0x${string}`,
+        orderHash as `0x${string}`,
+      );
+      const publishedAt = publishResult.published ? blockAt : null;
       await env.DB.prepare(
         `INSERT OR REPLACE INTO prepay_listings
            (chain_id, loan_id, order_hash, ask_price, conduit,
             lister, posted_at, updated_at, grace_period_end,
-            block_number, tx_hash, log_index)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            block_number, tx_hash, log_index,
+            conduit_key, salt, opensea_published_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
         .bind(
           chainId,
@@ -1627,6 +1653,9 @@ async function processLoanLogs(
           Number(log.blockNumber),
           String(log.transactionHash as `0x${string}`).toLowerCase(),
           Number(log.logIndex),
+          conduitKey,
+          salt,
+          publishedAt,
         )
         .run();
     } else if (log.eventName === 'PrepayListingUpdated') {
@@ -1635,11 +1664,17 @@ async function processLoanLogs(
       // original `PrepayListingPosted` was missed — still
       // materialises the row from the event payload. Codex P2
       // round-1 on PR #304.
+      // T-086 step 14 — also persist the fresh `newConduitKey` +
+      // `newSalt` (event grew two args) and re-run the
+      // autonomous OpenSea publish; reset `opensea_published_at`
+      // to NULL since the orderHash rotated.
       const loanId = Number(a.loanId as bigint);
       const newOrderHash = String(a.newOrderHash as `0x${string}`).toLowerCase();
       const newAskPrice = String(a.newAskPrice as bigint);
       const conduit = String(a.conduit as Address).toLowerCase();
       const lister = String(a.lister as Address).toLowerCase();
+      const newConduitKey = String(a.newConduitKey as `0x${string}`).toLowerCase();
+      const newSalt = String(a.newSalt as bigint);
       const blockAt = blockTimestamps.get(log.blockNumber) ?? now;
       // RPC-resolve fresh grace_period_end for the
       // backfill-INSERT case. Same reasoning as the Posted
@@ -1648,6 +1683,21 @@ async function processLoanLogs(
       const graceEnd = await _resolveGraceEnd(
         client, diamond, loanId,
       );
+      // T-086 step 14 — try the autonomous publish for the
+      // rotated orderHash. Failure stays NULL on the row.
+      const publishResult = await _maybePublishToOpenSea(
+        env,
+        client,
+        diamond,
+        chainId,
+        loanId,
+        String(log.transactionHash as `0x${string}`).toLowerCase() as `0x${string}`,
+        BigInt(newAskPrice),
+        BigInt(newSalt),
+        newConduitKey as `0x${string}`,
+        newOrderHash as `0x${string}`,
+      );
+      const publishedAt = publishResult.published ? blockAt : null;
       // Try a `posted_at`-preserving UPDATE first (the common
       // case — the row exists from a prior Posted event); fall
       // back to an INSERT when no row exists (the rollout-
@@ -1661,7 +1711,8 @@ async function processLoanLogs(
         `UPDATE prepay_listings
            SET order_hash = ?, ask_price = ?, conduit = ?, lister = ?,
                updated_at = ?, grace_period_end = ?,
-               block_number = ?, tx_hash = ?, log_index = ?
+               block_number = ?, tx_hash = ?, log_index = ?,
+               conduit_key = ?, salt = ?, opensea_published_at = ?
          WHERE chain_id = ? AND loan_id = ?`,
       )
         .bind(
@@ -1674,6 +1725,9 @@ async function processLoanLogs(
           Number(log.blockNumber),
           String(log.transactionHash as `0x${string}`).toLowerCase(),
           Number(log.logIndex),
+          newConduitKey,
+          newSalt,
+          publishedAt,
           chainId,
           loanId,
         )
@@ -1688,8 +1742,9 @@ async function processLoanLogs(
           `INSERT OR REPLACE INTO prepay_listings
              (chain_id, loan_id, order_hash, ask_price, conduit,
               lister, posted_at, updated_at, grace_period_end,
-              block_number, tx_hash, log_index)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              block_number, tx_hash, log_index,
+              conduit_key, salt, opensea_published_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
           .bind(
             chainId,
@@ -1704,6 +1759,9 @@ async function processLoanLogs(
             Number(log.blockNumber),
             String(log.transactionHash as `0x${string}`).toLowerCase(),
             Number(log.logIndex),
+            newConduitKey,
+            newSalt,
+            publishedAt,
           )
           .run();
       }
@@ -1928,6 +1986,56 @@ async function _resolveGraceEnd(
   } catch (err) {
     console.error(`[chainIndexer] _resolveGraceEnd(${loanId}) failed`, err);
     return 0; // Sentinel — the frontend treats 0 as "unknown grace end".
+  }
+}
+
+/// @dev T-086 step 14 — best-effort autonomous OpenSea republish
+///      called from the `PrepayListingPosted` and
+///      `PrepayListingUpdated` handlers. Never throws — failures
+///      land in console.error and leave `opensea_published_at`
+///      NULL on the prepay_listings row so a future cron tick can
+///      retry (#311 covers the explicit retry loop). Returns
+///      `{ published: true }` when OpenSea returned 2xx so the
+///      handler can flip the persisted flag.
+async function _maybePublishToOpenSea(
+  env: Env,
+  client: PublicClient,
+  diamond: Address,
+  chainId: number,
+  loanId: number,
+  txHash: `0x${string}`,
+  askPrice: bigint,
+  salt: bigint,
+  conduitKey: `0x${string}`,
+  expectedOrderHash: `0x${string}`,
+): Promise<{ published: boolean }> {
+  try {
+    const result = await indexerPublishPrepayListing(
+      {
+        publicClient: client,
+        diamondAddress: diamond as `0x${string}`,
+        chainId,
+        loanId: BigInt(loanId),
+        txHash,
+        askPrice,
+        salt,
+        conduitKey,
+        expectedOrderHash,
+      },
+      env,
+    );
+    if (!result.published) {
+      console.warn(
+        `[chainIndexer] OpenSea publish failed loan=${loanId} chain=${chainId}: ${result.error}`,
+      );
+    }
+    return { published: result.published };
+  } catch (err) {
+    console.error(
+      `[chainIndexer] _maybePublishToOpenSea(${loanId}) threw`,
+      err,
+    );
+    return { published: false };
   }
 }
 
