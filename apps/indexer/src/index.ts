@@ -40,7 +40,7 @@
  */
 
 import { resolveEnv, type WorkerEnv } from './env';
-import { runChainIndexer } from './chainIndexer';
+import { runChainIndexer, sweepUnpublishedListings } from './chainIndexer';
 import { pruneOldCancelledOffers } from './cancelledOfferRetention';
 import {
   handleOffersStats,
@@ -86,6 +86,17 @@ export default {
       pruneOldCancelledOffers(resolved).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[indexer] pruneOldCancelledOffers pass failed:', err);
+      }),
+    );
+    // T-086 step 14 round 2 — retry the OpenSea publish for rows
+    // whose inline publish at event-ingest time failed (e.g.
+    // transient OpenSea outage). Codex round-1 P2 fix on PR #312.
+    // The sweep is capped at a small batch per tick so it can't
+    // monopolise the schedule budget.
+    ctx.waitUntil(
+      sweepUnpublishedListings(resolved).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[indexer] sweepUnpublishedListings pass failed:', err);
       }),
     );
   },

@@ -103,13 +103,21 @@ export async function publishPrepayListingToOpenSea(
       startTime,
     );
 
-    // 3. Resolve the executor + its Seaport + the vault's Seaport
-    //    counter — these go into the canonical components verbatim.
-    const executor = await publicClient.readContract({
-      address: diamondAddress,
-      abi: DIAMOND_ABI_VIEM,
-      functionName: 'getCollateralListingExecutor',
-    }) as `0x${string}`;
+    // 3. Resolve the pinned-executor + its Seaport + the vault's
+    //    Seaport counter — these go into the canonical components
+    //    verbatim. The executor address is taken from the event
+    //    payload (it's emitted on `PrepayListingPosted` /
+    //    `PrepayListingUpdated` from T-086 step 14 round 2) so the
+    //    JS recompute stays correct across a governance executor
+    //    rotation between the post tx and this publish call.
+    const executor = findEventExecutor(txReceipt, diamondAddress);
+    if (!executor) {
+      return {
+        published: false,
+        assetUrl: null,
+        error: 'no-executor-in-event',
+      };
+    }
 
     const seaport = await publicClient.readContract({
       address: executor,
@@ -190,7 +198,16 @@ export async function publishPrepayListingToOpenSea(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chainId,
-        parameters: components as unknown as Record<string, unknown>,
+        // OpenSea Listings API requires `totalOriginalConsiderationItems`
+        // on the parameters envelope. NOT part of the EIP-712
+        // `OrderComponents` Seaport hashes — we keep `components`
+        // intact for the local `getOrderHash` verify above and add
+        // the field only when serialising for the API POST. Codex
+        // round-1 P2 fix on PR #312.
+        parameters: {
+          ...(components as unknown as Record<string, unknown>),
+          totalOriginalConsiderationItems: components.consideration.length,
+        },
         // Empty signature — OpenSea calls `isValidSignature` on the
         // vault (the offerer), which returns the magic value for the
         // bound orderHash; no off-chain signing happens.
@@ -299,6 +316,38 @@ function findPostedOrderHash(
       }
       if (decoded.eventName === 'PrepayListingUpdated') {
         return args.newOrderHash as Hex;
+      }
+    } catch {
+      // Not one of our diamond's events — skip.
+    }
+  }
+  return null;
+}
+
+/** Find the executor address pinned on `PrepayListingPosted` /
+ *  `PrepayListingUpdated`. T-086 step 14 round 2 — we read the
+ *  executor from the event rather than the current
+ *  `getCollateralListingExecutor()` so the JS reconstruction stays
+ *  correct across a governance executor rotation between post and
+ *  publish. */
+function findEventExecutor(
+  receipt: OpenSeaPublishInput['txReceipt'],
+  diamondAddress: `0x${string}`,
+): `0x${string}` | null {
+  for (const log of receipt.logs) {
+    if (log.address.toLowerCase() !== diamondAddress.toLowerCase()) continue;
+    try {
+      const decoded = decodeEventLog({
+        abi: DIAMOND_ABI_VIEM,
+        data: log.data,
+        topics: log.topics as [Hex, ...Hex[]],
+      });
+      const args = decoded.args as unknown as Record<string, unknown>;
+      if (
+        decoded.eventName === 'PrepayListingPosted' ||
+        decoded.eventName === 'PrepayListingUpdated'
+      ) {
+        return args.executor as `0x${string}`;
       }
     } catch {
       // Not one of our diamond's events — skip.

@@ -85,16 +85,23 @@ const OPENSEA_CHAINS: Record<number, { host: string; slug: string }> = {
 export async function handleOpenSeaListingPost(
   req: Request,
   env: Env,
+  /** CORS origin to echo on the response. Caller resolves via
+   *  `resolveAllowedOrigin(req, env)` — the request's own Origin
+   *  iff it's in `FRONTEND_ORIGIN`, else the first allow-list entry
+   *  for non-browser callers. Codex round-1 P2 fix on PR #312. */
+  corsOrigin: string,
 ): Promise<Response> {
   if (!(await checkRateLimit(req, env.OPENSEA_LISTING_RATELIMIT))) {
-    return jsonErr(env, 429, 'rate-limited');
+    return jsonErr(corsOrigin, 429, 'rate-limited');
   }
   const body = await parseBody(req);
-  if (!body) return jsonErr(env, 400, 'invalid-payload');
-  if (!env.OPENSEA_API_KEY) return jsonErr(env, 503, 'opensea-not-configured');
+  if (!body) return jsonErr(corsOrigin, 400, 'invalid-payload');
+  if (!env.OPENSEA_API_KEY) {
+    return jsonErr(corsOrigin, 503, 'opensea-not-configured');
+  }
 
   const chain = OPENSEA_CHAINS[body.chainId];
-  if (!chain) return jsonErr(env, 400, 'unsupported-chain');
+  if (!chain) return jsonErr(corsOrigin, 400, 'unsupported-chain');
 
   const url = `https://${chain.host}/api/v2/orders/${chain.slug}/seaport/listings`;
   const upstream = await fetch(url, {
@@ -110,7 +117,7 @@ export async function handleOpenSeaListingPost(
       protocol_address: body.protocol_address,
     }),
   });
-  return passthrough(upstream, env);
+  return passthrough(upstream, corsOrigin);
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────
@@ -163,7 +170,10 @@ async function parseBody(req: Request): Promise<OpenSeaListingRequest | null> {
   };
 }
 
-async function passthrough(upstream: Response, env: Env): Promise<Response> {
+async function passthrough(
+  upstream: Response,
+  corsOrigin: string,
+): Promise<Response> {
   let body: unknown;
   try {
     body = await upstream.json();
@@ -174,17 +184,17 @@ async function passthrough(upstream: Response, env: Env): Promise<Response> {
     status: upstream.status,
     headers: {
       'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': env.FRONTEND_ORIGIN.split(',')[0] ?? '*',
+      'Access-Control-Allow-Origin': corsOrigin,
     },
   });
 }
 
-function jsonErr(env: Env, status: number, code: string): Response {
+function jsonErr(corsOrigin: string, status: number, code: string): Response {
   return new Response(JSON.stringify({ error: code }), {
     status,
     headers: {
       'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': env.FRONTEND_ORIGIN.split(',')[0] ?? '*',
+      'Access-Control-Allow-Origin': corsOrigin,
     },
   });
 }

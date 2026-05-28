@@ -158,14 +158,6 @@ export default {
     if (url.pathname === '/quote/1inch' && req.method === 'POST') {
       return handle1inchQuote(req, resolved);
     }
-    // T-086 step 14 — OpenSea Listings API proxy. The frontend POSTs
-    // the canonical Seaport OrderComponents the diamond just locked
-    // on-chain; this proxy forwards to OpenSea with the server-side
-    // API key. See `openseaProxy.ts` for the full request/response
-    // contract.
-    if (url.pathname === '/opensea/listing' && req.method === 'POST') {
-      return handleOpenSeaListingPost(req, resolved);
-    }
 
     // Diagnostics record. CORS-locked + per-IP rate-limited inside
     // `handleDiagRecord` itself, which reads `FRONTEND_ORIGIN` and
@@ -210,6 +202,23 @@ export default {
     // handler verifies the signer holds the on-chain ADMIN_ROLE.
     if (url.pathname === '/diag/legal-hold' && req.method === 'POST') {
       return handleDiagLegalHold(
+        req,
+        resolved,
+        resolveAllowedOrigin(req, resolved),
+      );
+    }
+
+    // T-086 step 14 — OpenSea Listings API proxy. The frontend POSTs
+    // the canonical Seaport OrderComponents the diamond just locked
+    // on-chain; this proxy forwards to OpenSea with the server-side
+    // API key. Placed below the Origin gate above (Codex round-1 P2
+    // fix on PR #312) — only the dapp should be reaching this; a
+    // non-allowed origin would otherwise be able to drain our
+    // OpenSea API quota before the CORS rejection bites. CORS
+    // origin is resolved + echoed so any FRONTEND_ORIGIN entry
+    // works (Codex round-1 P2 on the same PR).
+    if (url.pathname === '/opensea/listing' && req.method === 'POST') {
+      return handleOpenSeaListingPost(
         req,
         resolved,
         resolveAllowedOrigin(req, resolved),

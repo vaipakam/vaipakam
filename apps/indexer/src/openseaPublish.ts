@@ -80,6 +80,14 @@ export interface IndexerPublishInput {
   askPrice: bigint;
   salt: bigint;
   conduitKey: `0x${string}`;
+  /** Executor address pinned to THIS order at post/update time —
+   *  read from the event's `executor` arg (T-086 step 14 round 2).
+   *  Using the current `getCollateralListingExecutor()` would race
+   *  a governance rotation between post and indexer-ingest: the
+   *  diamond's storage gets updated, the indexer reads the new
+   *  one, the JS recompute hashes to a different orderHash, and
+   *  the defensive comparison rejects a perfectly valid listing. */
+  executor: `0x${string}`;
   /** Expected canonical orderHash from the event — we defensively
    *  recompute via Seaport.getOrderHash and abort the POST when
    *  the JS reconstruction diverges (would silently fail
@@ -138,15 +146,13 @@ export async function indexerPublishPrepayListing(
       args: [input.loanId, startTime],
     })) as PrepayContextOnChain;
 
-    // 3. Resolve executor + Seaport + the vault's Seaport counter.
-    const executor = (await input.publicClient.readContract({
-      address: input.diamondAddress,
-      abi: DIAMOND_ABI_VIEM,
-      functionName: 'getCollateralListingExecutor',
-    })) as `0x${string}`;
-
+    // 3. Resolve Seaport + the vault's Seaport counter. The
+    //    `executor` for THIS order was pinned at post/update time
+    //    and emitted on the event — we use the caller-supplied
+    //    value to stay safe across a governance executor rotation
+    //    between the post tx and this indexer-ingest pass.
     const seaport = (await input.publicClient.readContract({
-      address: executor,
+      address: input.executor,
       abi: SEAPORT_ABI_FRAGMENT,
       functionName: 'seaport',
     })) as `0x${string}`;
@@ -162,7 +168,7 @@ export async function indexerPublishPrepayListing(
     //    construction can't diverge.
     const components = buildPrepayOrderComponents({
       vault: ctx.borrowerVault,
-      executor,
+      executor: input.executor,
       collateralAssetType: Number(ctx.collateralAssetType),
       collateralAsset: ctx.collateralAsset,
       collateralTokenId: ctx.collateralTokenId,
@@ -203,7 +209,11 @@ export async function indexerPublishPrepayListing(
 
     // 6. POST to OpenSea. Empty signature `0x` — OpenSea calls
     //    `isValidSignature` on the offerer (vault) which returns
-    //    the magic value for the bound orderHash.
+    //    the magic value for the bound orderHash. OpenSea's
+    //    Listings API also requires `totalOriginalConsiderationItems`
+    //    on the parameters envelope (it is NOT part of the EIP-712
+    //    `OrderComponents` Seaport hashes, but the API uses it to
+    //    validate the payload). Codex round-1 P2 fix on PR #312.
     const url = `https://${chain.host}/api/v2/orders/${chain.slug}/seaport/listings`;
     const res = await fetch(url, {
       method: 'POST',
@@ -213,7 +223,10 @@ export async function indexerPublishPrepayListing(
         Accept: 'application/json',
       },
       body: JSON.stringify({
-        parameters: components,
+        parameters: {
+          ...components,
+          totalOriginalConsiderationItems: components.consideration.length,
+        },
         signature: '0x',
         protocol_address: seaport,
       }),

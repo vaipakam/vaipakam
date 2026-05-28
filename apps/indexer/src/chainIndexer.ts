@@ -186,6 +186,100 @@ export async function runChainIndexer(env: Env): Promise<ChainIndexerResult[]> {
   return results;
 }
 
+/**
+ * T-086 step 14 round 2 — retry the OpenSea publish for
+ * `prepay_listings` rows whose inline event-ingest publish failed
+ * (transient OpenSea outage, RPC blip, etc.) and whose
+ * `opensea_published_at` is still NULL.
+ *
+ * Codex round-1 P2 fix on PR #312 — without this sweep, the
+ * autonomous safety-net the design depends on can get permanently
+ * stuck on its first failure. The retry is intentionally narrow:
+ * one batch of up to `SWEEP_BATCH` rows per scheduled tick, scoped
+ * to rows whose `posted_at` is at least `SWEEP_MIN_AGE_S` old (so
+ * the inline event-ingest publish gets a chance to land first).
+ *
+ * Subrequest budget: per row we spend ~6 calls (getReceipt +
+ * getBlock + getPrepayContext + 2 readContract + 1 OpenSea fetch),
+ * so a batch of 5 fits well under the 50/tick free-tier ceiling
+ * alongside the normal scan + offer prune.
+ */
+export async function sweepUnpublishedListings(env: Env): Promise<void> {
+  const SWEEP_BATCH = 5;
+  const SWEEP_MIN_AGE_S = 60; // give the inline publish a minute.
+  const cutoff = Math.floor(Date.now() / 1000) - SWEEP_MIN_AGE_S;
+  // Cap by the union of supported chain ids — a row whose chain_id
+  // is no longer in the operator's RPC set gets skipped (we can't
+  // build a client for it).
+  const chains = getChainConfigs(env);
+  if (chains.length === 0) return;
+  const chainById = new Map(chains.map((c) => [c.id, c]));
+
+  const rows = await env.DB.prepare(
+    `SELECT chain_id, loan_id, order_hash, ask_price, conduit_key,
+            salt, executor, tx_hash
+       FROM prepay_listings
+      WHERE opensea_published_at IS NULL
+        AND posted_at <= ?
+      ORDER BY posted_at ASC
+      LIMIT ?`,
+  )
+    .bind(cutoff, SWEEP_BATCH)
+    .all<{
+      chain_id: number;
+      loan_id: number;
+      order_hash: string;
+      ask_price: string;
+      conduit_key: string | null;
+      salt: string | null;
+      executor: string | null;
+      tx_hash: string;
+    }>();
+
+  if (!rows.results || rows.results.length === 0) return;
+
+  for (const row of rows.results) {
+    const chain = chainById.get(row.chain_id);
+    if (!chain) continue;
+    // Backfill rows from before step-14 won't have conduit_key /
+    // salt / executor — skip them. The proper migration window for
+    // those is the original-tx redrive, which is out of scope here.
+    if (!row.conduit_key || !row.salt || !row.executor) continue;
+    const client = createPublicClient({ transport: http(chain.rpc) });
+    const result = await indexerPublishPrepayListing(
+      {
+        publicClient: client,
+        diamondAddress: chain.diamond as `0x${string}`,
+        chainId: chain.id,
+        loanId: BigInt(row.loan_id),
+        txHash: row.tx_hash as `0x${string}`,
+        askPrice: BigInt(row.ask_price),
+        salt: BigInt(row.salt),
+        conduitKey: row.conduit_key as `0x${string}`,
+        executor: row.executor as `0x${string}`,
+        expectedOrderHash: row.order_hash as `0x${string}`,
+      },
+      env,
+    );
+    if (result.published) {
+      const now = Math.floor(Date.now() / 1000);
+      await env.DB.prepare(
+        `UPDATE prepay_listings
+           SET opensea_published_at = ?
+         WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(now, chain.id, row.loan_id)
+        .run();
+    } else {
+      // Leave NULL — next tick retries.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[chainIndexer] sweep retry failed loan=${row.loan_id} chain=${chain.id}: ${result.error}`,
+      );
+    }
+  }
+}
+
 async function runChainIndexerForChain(
   env: Env,
   chain: ChainConfig,
@@ -1597,6 +1691,7 @@ async function processLoanLogs(
       const lister = String(a.lister as Address).toLowerCase();
       const conduitKey = String(a.conduitKey as `0x${string}`).toLowerCase();
       const salt = String(a.salt as bigint);
+      const pinnedExecutor = String(a.executor as Address).toLowerCase();
       // Resolve `grace_period_end` via a fresh RPC read of
       // `getLoanDetails(loanId)`. The on-chain start_time +
       // durationDays are mutated by RepayFacet.repayPartial
@@ -1629,6 +1724,7 @@ async function processLoanLogs(
         BigInt(askPrice),
         BigInt(salt),
         conduitKey as `0x${string}`,
+        pinnedExecutor as `0x${string}`,
         orderHash as `0x${string}`,
       );
       const publishedAt = publishResult.published ? blockAt : null;
@@ -1637,8 +1733,8 @@ async function processLoanLogs(
            (chain_id, loan_id, order_hash, ask_price, conduit,
             lister, posted_at, updated_at, grace_period_end,
             block_number, tx_hash, log_index,
-            conduit_key, salt, opensea_published_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            conduit_key, salt, opensea_published_at, executor)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
         .bind(
           chainId,
@@ -1656,6 +1752,7 @@ async function processLoanLogs(
           conduitKey,
           salt,
           publishedAt,
+          pinnedExecutor,
         )
         .run();
     } else if (log.eventName === 'PrepayListingUpdated') {
@@ -1675,6 +1772,7 @@ async function processLoanLogs(
       const lister = String(a.lister as Address).toLowerCase();
       const newConduitKey = String(a.newConduitKey as `0x${string}`).toLowerCase();
       const newSalt = String(a.newSalt as bigint);
+      const newPinnedExecutor = String(a.executor as Address).toLowerCase();
       const blockAt = blockTimestamps.get(log.blockNumber) ?? now;
       // RPC-resolve fresh grace_period_end for the
       // backfill-INSERT case. Same reasoning as the Posted
@@ -1695,6 +1793,7 @@ async function processLoanLogs(
         BigInt(newAskPrice),
         BigInt(newSalt),
         newConduitKey as `0x${string}`,
+        newPinnedExecutor as `0x${string}`,
         newOrderHash as `0x${string}`,
       );
       const publishedAt = publishResult.published ? blockAt : null;
@@ -1712,7 +1811,8 @@ async function processLoanLogs(
            SET order_hash = ?, ask_price = ?, conduit = ?, lister = ?,
                updated_at = ?, grace_period_end = ?,
                block_number = ?, tx_hash = ?, log_index = ?,
-               conduit_key = ?, salt = ?, opensea_published_at = ?
+               conduit_key = ?, salt = ?, opensea_published_at = ?,
+               executor = ?
          WHERE chain_id = ? AND loan_id = ?`,
       )
         .bind(
@@ -1728,6 +1828,7 @@ async function processLoanLogs(
           newConduitKey,
           newSalt,
           publishedAt,
+          newPinnedExecutor,
           chainId,
           loanId,
         )
@@ -1743,8 +1844,8 @@ async function processLoanLogs(
              (chain_id, loan_id, order_hash, ask_price, conduit,
               lister, posted_at, updated_at, grace_period_end,
               block_number, tx_hash, log_index,
-              conduit_key, salt, opensea_published_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              conduit_key, salt, opensea_published_at, executor)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
           .bind(
             chainId,
@@ -1762,6 +1863,7 @@ async function processLoanLogs(
             newConduitKey,
             newSalt,
             publishedAt,
+            newPinnedExecutor,
           )
           .run();
       }
@@ -2007,6 +2109,7 @@ async function _maybePublishToOpenSea(
   askPrice: bigint,
   salt: bigint,
   conduitKey: `0x${string}`,
+  executor: `0x${string}`,
   expectedOrderHash: `0x${string}`,
 ): Promise<{ published: boolean }> {
   try {
@@ -2020,6 +2123,7 @@ async function _maybePublishToOpenSea(
         askPrice,
         salt,
         conduitKey,
+        executor,
         expectedOrderHash,
       },
       env,

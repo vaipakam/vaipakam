@@ -23,6 +23,13 @@
 ALTER TABLE prepay_listings ADD COLUMN conduit_key TEXT;
 ALTER TABLE prepay_listings ADD COLUMN salt TEXT;
 ALTER TABLE prepay_listings ADD COLUMN opensea_published_at INTEGER;
+-- The pinned executor address used to build the order. Emitted on
+-- the new step-14 event payload; persisted here so the retry-sweep
+-- path (see `_sweepUnpublishedListings` in `chainIndexer.ts`) has
+-- the value it needs to reconstruct the canonical components even
+-- after a governance executor rotation invalidates
+-- `getCollateralListingExecutor()` for this order's purposes.
+ALTER TABLE prepay_listings ADD COLUMN executor TEXT;
 
 -- For the autonomous republish loop's "rows that still need to push"
 -- query: scan by chain + null-published. Without an index the

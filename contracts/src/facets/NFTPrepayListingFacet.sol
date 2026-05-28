@@ -95,12 +95,17 @@ contract NFTPrepayListingFacet is
     // ─── Events ─────────────────────────────────────────────────────────
 
     /// @notice Emitted when the borrower posts a new prepay listing.
-    /// @dev    T-086 step 14 — `conduitKey` and `salt` are emitted
-    ///         so the off-chain indexer fallback (#311) can
-    ///         autonomously reconstruct the canonical Seaport
-    ///         `OrderComponents` and republish to OpenSea even
-    ///         when the borrower's browser closed between
-    ///         tx-confirm and the dapp's immediate POST. The
+    /// @dev    T-086 step 14 — `conduitKey`, `salt`, and `executor`
+    ///         are emitted so the off-chain indexer fallback (#311)
+    ///         can autonomously reconstruct the canonical Seaport
+    ///         `OrderComponents` and republish to OpenSea even when
+    ///         the borrower's browser closed between tx-confirm and
+    ///         the dapp's immediate POST. `executor` is the pinned
+    ///         address used as the order's `zone` — emitting it
+    ///         (rather than relying on `s.collateralListingExecutor`
+    ///         being still-current at indexer-ingest time) makes the
+    ///         reconstruction robust to a governance executor
+    ///         rotation between post and indexer ingest. The
     ///         resolved `conduit` address stays for backward
     ///         compatibility + cheap reads (the indexer doesn't
     ///         have to re-call the ConduitController to map back).
@@ -112,7 +117,8 @@ contract NFTPrepayListingFacet is
         uint256 askPrice,
         address conduit,
         bytes32 conduitKey,
-        uint256 salt
+        uint256 salt,
+        address executor
     );
 
     /// @notice Emitted when the borrower updates an existing
@@ -120,10 +126,12 @@ contract NFTPrepayListingFacet is
     ///         live floor, typically a few hours into the listing
     ///         once interest has eaten through the buffer).
     /// @dev    T-086 step 14 — see {PrepayListingPosted} for why
-    ///         `conduitKey` and `salt` are emitted. The update
-    ///         path's `newSalt` is the borrower's fresh random for
-    ///         this re-sign; the new conduitKey may equal the
-    ///         old one or change.
+    ///         `conduitKey`, `salt`, and `executor` are emitted.
+    ///         The update path's `newSalt` is the borrower's fresh
+    ///         random for this re-sign; the new conduitKey may
+    ///         equal the old one or change; the executor is the
+    ///         current executor at the update tx (governance may
+    ///         have rotated between post and update).
     /// @custom:event-category state-change/loan-mutation
     event PrepayListingUpdated(
         uint256 indexed loanId,
@@ -133,7 +141,8 @@ contract NFTPrepayListingFacet is
         uint256 newAskPrice,
         address conduit,
         bytes32 newConduitKey,
-        uint256 newSalt
+        uint256 newSalt,
+        address executor
     );
 
     /// @notice Emitted on every listing cancel — by the borrower
@@ -339,11 +348,15 @@ contract NFTPrepayListingFacet is
         // different shape.
         orderHash = _buildAndRecord(s, loan, loanId, askPrice, salt, conduitKey, executor);
 
-        // T-086 step 14 — emit `conduitKey` + `salt` so the indexer
-        // can reconstruct the canonical Seaport OrderComponents
-        // off-chain and autonomously republish to OpenSea even if
-        // the borrower's browser closed between tx-confirm and the
-        // dapp's immediate proxy POST. See #311.
+        // T-086 step 14 — emit `conduitKey` + `salt` + `executor`
+        // so the indexer can reconstruct the canonical Seaport
+        // OrderComponents off-chain and autonomously republish to
+        // OpenSea even if the borrower's browser closed between
+        // tx-confirm and the dapp's immediate proxy POST. Emitting
+        // `executor` (rather than relying on the current global
+        // `s.collateralListingExecutor` at indexer-ingest time) makes
+        // the reconstruction safe across a governance executor
+        // rotation between post and ingest. See #311.
         emit PrepayListingPosted(
             loanId,
             msg.sender,
@@ -351,7 +364,8 @@ contract NFTPrepayListingFacet is
             askPrice,
             _resolveConduit(executor, conduitKey),
             conduitKey,
-            salt
+            salt,
+            address(executor)
         );
     }
 
@@ -490,9 +504,9 @@ contract NFTPrepayListingFacet is
             s, loan, loanId, newAskPrice, newSalt, newConduitKey, currentExecutor
         );
 
-        // T-086 step 14 — same `conduitKey` + `salt` emit shape as
-        // `PrepayListingPosted` so the indexer fallback can republish
-        // an update verbatim (see #311).
+        // T-086 step 14 — same `conduitKey` + `salt` + `executor`
+        // emit shape as `PrepayListingPosted` so the indexer
+        // fallback can republish an update verbatim (see #311).
         emit PrepayListingUpdated(
             loanId,
             msg.sender,
@@ -501,7 +515,8 @@ contract NFTPrepayListingFacet is
             newAskPrice,
             _resolveConduit(currentExecutor, newConduitKey),
             newConduitKey,
-            newSalt
+            newSalt,
+            address(currentExecutor)
         );
     }
 
