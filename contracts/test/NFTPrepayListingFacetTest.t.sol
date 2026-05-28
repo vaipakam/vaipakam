@@ -167,9 +167,11 @@ contract NFTPrepayListingFacetTest is SetupTest {
     }
 
     function test_postPrepayListing_revertsUnsupportedCollateralForV1() public {
-        // Build an Active loan with ERC1155 collateral (step 6 = ERC721 only).
+        // Step 15: ERC721 + ERC1155 both supported now. ERC20
+        // collateral remains unsupported (no NFT identifier
+        // for the Seaport offer item).
         LibVaipakam.Loan memory loan = _baseLoan();
-        loan.collateralAssetType = LibVaipakam.AssetType.ERC1155;
+        loan.collateralAssetType = LibVaipakam.AssetType.ERC20;
         loan.allowsPrepayListing = true;
         TestMutatorFacet(address(diamond)).setLoan(LOAN_ID, loan);
 
@@ -177,7 +179,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         vm.expectRevert(
             abi.encodeWithSelector(
                 NFTPrepayListingFacet.UnsupportedCollateralForV1.selector,
-                LibVaipakam.AssetType.ERC1155
+                LibVaipakam.AssetType.ERC20
             )
         );
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(

@@ -271,8 +271,19 @@ contract NFTPrepayListingFacet is
         if (!loan.allowsPrepayListing) {
             revert PrepayListingNotAllowed(loanId);
         }
-        // v1 = ERC721 only (design doc §7 + §13 step 15 ERC1155 deferral).
-        if (loan.collateralAssetType != LibVaipakam.AssetType.ERC721) {
+        // T-086 step 15 — ERC721 + ERC1155 both supported now.
+        // ERC20 collateral isn't listable on Seaport in this flow
+        // (no NFT identifier to put in the offer item). The vault
+        // wiring branches on `collateralAssetType` below — ERC721
+        // uses `IERC721.approve(conduit, tokenId)`, ERC1155 uses
+        // `IERC1155.setApprovalForAll(conduit, approved)` (operator-
+        // wide; safe because the Seaport order is FULL_RESTRICTED
+        // and the executor's content gate enforces full-balance
+        // fills).
+        if (
+            loan.collateralAssetType != LibVaipakam.AssetType.ERC721 &&
+            loan.collateralAssetType != LibVaipakam.AssetType.ERC1155
+        ) {
             revert UnsupportedCollateralForV1(loan.collateralAssetType);
         }
 
@@ -448,9 +459,17 @@ contract NFTPrepayListingFacet is
         VaipakamVaultImplementation vault = _userVault(s, loan.borrower);
         vault.revokeListingOrderHash(oldOrderHash);
         vault.registerListingOrderHash(newOrderHash, address(currentExecutor));
-        vault.setCollateralOperatorApproval(
-            loan.collateralAsset, loan.collateralTokenId, conduit, true
-        );
+        // T-086 step 15 — branch on asset type (same shape as
+        // {_wireVaultForListing} on the post path).
+        if (loan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
+            vault.setCollateralOperatorApproval(
+                loan.collateralAsset, loan.collateralTokenId, conduit, true
+            );
+        } else {
+            vault.setCollateralOperatorApprovalERC1155(
+                loan.collateralAsset, conduit, true
+            );
+        }
 
         emit PrepayListingUpdated(loanId, msg.sender, oldOrderHash, newOrderHash, newAskPrice, conduit);
     }
@@ -679,9 +698,35 @@ contract NFTPrepayListingFacet is
         address vaultAddr = s.userVaipakamVaults[loan.borrower];
         if (vaultAddr != address(0)) {
             VaipakamVaultImplementation vault = VaipakamVaultImplementation(vaultAddr);
-            vault.setCollateralOperatorApproval(
-                loan.collateralAsset, loan.collateralTokenId, address(0), false
-            );
+            // T-086 step 15 — branch on asset type (same as post / update).
+            if (loan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
+                vault.setCollateralOperatorApproval(
+                    loan.collateralAsset, loan.collateralTokenId, address(0), false
+                );
+            } else if (loan.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
+                // We don't know which conduit was originally approved
+                // for the ERC1155 collection (the operator approval
+                // is operator-wide, not per-conduit-keyed in storage).
+                // The cancel here can't `setApprovalForAll(originalConduit,
+                // false)` without that information. Acceptable because:
+                // (a) the FULL_RESTRICTED order + the executor's content
+                //     gate already prevent a buyer from acquiring less
+                //     than the full vaulted balance, AND
+                // (b) `revokeListingOrderHash` below invalidates the
+                //     vault's ERC-1271 sign-verification path so the
+                //     conduit can't fill the cancelled order regardless
+                //     of the operator approval state.
+                // Leaving the operator approval in place is the same
+                // shape Seaport's standard ERC1155 conduit pattern
+                // uses across protocols — a stale approval is
+                // unfillable without a fresh signed order.
+                //
+                // Future enhancement (Codex-anticipated v2): store the
+                // (collection, conduit) pair on the diamond at post
+                // time so cancel can explicitly revoke the operator
+                // approval. Bookkeeping cost vs. defence-in-depth
+                // trade-off; tracked as a follow-up.
+            }
             vault.revokeListingOrderHash(orderHash);
         }
 
@@ -706,9 +751,21 @@ contract NFTPrepayListingFacet is
         address vaultAddr = s.userVaipakamVaults[loan.borrower];
         if (vaultAddr == address(0)) revert ExecutorNotSet();
         VaipakamVaultImplementation vault = VaipakamVaultImplementation(vaultAddr);
-        vault.setCollateralOperatorApproval(
-            loan.collateralAsset, loan.collateralTokenId, conduit, true
-        );
+        // T-086 step 15 — branch on asset type. ERC721 grants a
+        // per-token approval; ERC1155 grants operator-wide
+        // approval (the ERC1155 standard has no per-token approve).
+        // The FULL_RESTRICTED Seaport order + the executor's
+        // content gate (full-balance only on ERC1155) bound the
+        // operator-wide approval's blast radius.
+        if (loan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
+            vault.setCollateralOperatorApproval(
+                loan.collateralAsset, loan.collateralTokenId, conduit, true
+            );
+        } else {
+            vault.setCollateralOperatorApprovalERC1155(
+                loan.collateralAsset, conduit, true
+            );
+        }
         vault.registerListingOrderHash(orderHash, executor);
     }
 

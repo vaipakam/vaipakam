@@ -85,9 +85,18 @@ library LibPrepayCleanup {
         address vaultAddr = s.userVaipakamVaults[loan.borrower];
         if (vaultAddr != address(0)) {
             VaipakamVaultImplementation vault = VaipakamVaultImplementation(vaultAddr);
-            vault.setCollateralOperatorApproval(
-                loan.collateralAsset, loan.collateralTokenId, address(0), false
-            );
+            // T-086 step 15 — branch on asset type. ERC721 has a
+            // per-token approval to revoke; ERC1155 has only an
+            // operator-wide approval (left in place — invalidating
+            // the orderHash binding via `revokeListingOrderHash`
+            // below is the actual safety primitive, per the
+            // matching note in
+            // `NFTPrepayListingFacet._cancel`).
+            if (loan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
+                vault.setCollateralOperatorApproval(
+                    loan.collateralAsset, loan.collateralTokenId, address(0), false
+                );
+            }
             vault.revokeListingOrderHash(orderHash);
         }
     }

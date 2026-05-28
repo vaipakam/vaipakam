@@ -336,6 +336,43 @@ contract VaipakamVaultImplementation is
     }
 
     /**
+     * @notice Set / unset a Seaport conduit's operator-level
+     *         approval on an ERC1155 collateral collection held by
+     *         this vault.
+     * @dev    Diamond-gated. T-086 step 15 extension — ERC1155
+     *         doesn't have a per-token `approve` (the ERC1155
+     *         standard's only approval surface is operator-wide
+     *         `setApprovalForAll(operator, approved)`). So for
+     *         ERC1155 collateral the conduit gets a SHARED approval
+     *         over every token id of the collection held by this
+     *         vault. The design doc §6 + §7 require the listing's
+     *         Seaport order to be `FULL_RESTRICTED` (full vaulted
+     *         balance only — no partial-quantity fills) precisely
+     *         because of this — without the partial-fill ban, a
+     *         buyer could acquire only some of the collateral
+     *         while triggering the settled-loan callback, closing
+     *         the loan against partial payment.
+     *
+     *         The conduit allow-list discipline (governance-set on
+     *         the `CollateralListingExecutor` singleton) is the
+     *         operator-trust anchor: only conduits the protocol
+     *         has explicitly approved can be passed here.
+     */
+    function setCollateralOperatorApprovalERC1155(
+        address nftContract,
+        address conduit,
+        bool approved
+    ) external onlyDiamond {
+        IERC1155(nftContract).setApprovalForAll(conduit, approved);
+        emit CollateralOperatorApprovalSet(
+            nftContract,
+            0, // tokenId placeholder — ERC1155 approval is operator-wide
+            conduit,
+            approved
+        );
+    }
+
+    /**
      * @notice Pin a Seaport `orderHash → executor` binding so this
      *         vault's ERC-1271 {isValidSignature} can delegate to
      *         that executor's `isOrderValid` at sign-verification
