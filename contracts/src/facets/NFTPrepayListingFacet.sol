@@ -234,20 +234,30 @@ contract NFTPrepayListingFacet is
     ///           • `conduit` ∈ executor allow-list      → {ConduitNotApproved}
     ///           • `askPrice ≥ floor × (1 + bufferBps)` → {AskBelowFloor}
     ///           • `cfgPrepayListingBufferBps > 0`      → {PrepayListingBufferNotConfigured}
-    /// @param loanId      Loan being listed against.
-    /// @param askPrice    Total sale price in the order's payment
-    ///                    token. The off-chain order constructor
-    ///                    derives the three consideration leg
-    ///                    amounts from this; on-chain we only
-    ///                    enforce the total floor.
-    /// @param orderHash   Seaport's computed order hash for the
-    ///                    listing's full struct (computed by the
-    ///                    frontend using Seaport's standard
-    ///                    `getOrderHash` derivation against the
-    ///                    canonical Seaport contract).
-    /// @param conduit     The Seaport conduit the order will pull
-    ///                    the NFT through. MUST be in the
-    ///                    executor's `approvedConduits` allow-list.
+    /// @param loanId       Loan being listed against.
+    /// @param askPrice     Total sale price in the loan's principal
+    ///                     token. The diamond constructs the
+    ///                     Seaport order's consideration legs
+    ///                     (lender + treasury + borrower) from
+    ///                     this + the live floor.
+    /// @param salt         Borrower-supplied nonce included in the
+    ///                     Seaport order's `OrderComponents.salt`
+    ///                     field. Ensures hash uniqueness across
+    ///                     repeated re-signs of similar shapes;
+    ///                     opaque to the diamond.
+    /// @param conduitKey   The 32-byte Seaport conduit identifier
+    ///                     (NOT the conduit address). The diamond
+    ///                     resolves the key to its deployed
+    ///                     address via Seaport's
+    ///                     `ConduitController.getConduit(key)` and
+    ///                     verifies the address is in the
+    ///                     executor's `approvedConduits` allow-list.
+    /// @return orderHash   The Seaport orderHash the frontend
+    ///                     publishes to OpenSea / a Seaport order
+    ///                     book. Identical to what
+    ///                     `seaport.getOrderHash(components)`
+    ///                     would return for the diamond-
+    ///                     constructed `OrderComponents`.
     function postPrepayListing(
         uint256 loanId,
         uint256 askPrice,
@@ -393,18 +403,13 @@ contract NFTPrepayListingFacet is
     function updatePrepayListing(
         uint256 loanId,
         uint256 newAskPrice,
-        bytes32 newOrderHash,
-        address conduit
-    ) external whenNotPaused {
-        if (newOrderHash == bytes32(0)) revert ZeroOrderHash();
-
+        uint256 newSalt,
+        bytes32 newConduitKey
+    ) external whenNotPaused returns (bytes32 newOrderHash) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
-        // Same master-kill-switch gate as `post`: governance can
-        // disable BOTH post AND update without disabling cancels.
         if (!s.cfgPrepayListingEnabled) revert PrepayListingDisabled();
-
         if (loan.status != LibVaipakam.LoanStatus.Active) {
             revert PrepayLoanNotActive(loanId, loan.status);
         }
@@ -430,39 +435,81 @@ contract NFTPrepayListingFacet is
         IListingExecutorRecorder currentExecutor = _requireExecutor(s);
         _requireAskCoversFloor(loanId, newAskPrice, s.cfgPrepayListingBufferBps);
 
-        if (!currentExecutor.approvedConduits(conduit)) {
-            revert ConduitNotApproved(conduit);
-        }
-
-        // Clear the old order on the executor that ORIGINALLY
+        // Clear the old order on the EXECUTOR THAT ORIGINALLY
         // recorded it — survives a governance rotation between
-        // post and update (Codex P2 round-2 fix). If the pinned
-        // executor is the same as the current one, this is a
-        // no-op duplicate clear; otherwise we're clearing the old
-        // executor's orderContext while recording on the new one.
+        // post and update (Codex P2 round-2 fix on PR #300).
         address pinnedExecutor = s.prepayListingExecutor[loanId];
         if (pinnedExecutor != address(0)) {
             IListingExecutorRecorder(pinnedExecutor).clearOrder(oldOrderHash);
         }
 
-        s.prepayListingOrderHash[loanId] = newOrderHash;
-        s.prepayListingExecutor[loanId] = address(currentExecutor);
-        currentExecutor.recordOrder(newOrderHash, loanId, conduit);
+        // Vault-side: revoke the old orderHash → executor binding
+        // BEFORE building the new one (so the vault's ERC-1271
+        // can't briefly authorise BOTH the old and new hashes in
+        // any half-state).
+        address vaultAddr = s.userVaipakamVaults[loan.borrower];
+        if (vaultAddr == address(0)) revert ExecutorNotSet();
+        VaipakamVaultImplementation(vaultAddr).revokeListingOrderHash(oldOrderHash);
 
-        // T-086 step 7 — vault-side rotation. Revoke the old
-        // orderHash → executor binding, register the new one;
-        // re-grant the conduit approval (idempotent if conduit
-        // unchanged; updates the per-token approval target if
-        // the borrower picked a different conduit on the new
-        // signing).
-        VaipakamVaultImplementation vault = _userVault(s, loan.borrower);
-        vault.revokeListingOrderHash(oldOrderHash);
-        vault.registerListingOrderHash(newOrderHash, address(currentExecutor));
-        vault.setCollateralOperatorApproval(
-            loan.collateralAsset, loan.collateralTokenId, conduit, true
+        // Build + record the new order with the canonical shape
+        // (same construction as `postPrepayListing` — `LibPrepayOrder`
+        // staticcalls Seaport's `getOrderHash` over verified
+        // OrderComponents). #306 architectural fix.
+        newOrderHash = _buildAndRecordUpdate(
+            s, loan, loanId, newAskPrice, newSalt, newConduitKey, currentExecutor
         );
 
-        emit PrepayListingUpdated(loanId, msg.sender, oldOrderHash, newOrderHash, newAskPrice, conduit);
+        emit PrepayListingUpdated(
+            loanId, msg.sender, oldOrderHash, newOrderHash, newAskPrice,
+            _resolveConduit(currentExecutor, newConduitKey)
+        );
+    }
+
+    /// @dev Heavy-lifting helper for `updatePrepayListing` that
+    ///      writes the post-rotation state (mirror of
+    ///      `_buildAndRecord` minus the lock — lock stays on
+    ///      across an update, only the orderHash + executor +
+    ///      vault binding rotate).
+    function _buildAndRecordUpdate(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.Loan storage loan,
+        uint256 loanId,
+        uint256 askPrice,
+        uint256 salt,
+        bytes32 conduitKey,
+        IListingExecutorRecorder executor
+    ) private returns (bytes32 newOrderHash) {
+        address conduit = _resolveConduit(executor, conduitKey);
+        if (!executor.approvedConduits(conduit)) {
+            revert ConduitNotApproved(conduit);
+        }
+
+        IVaipakamPrepayContext.PrepayContext memory pctx =
+            IVaipakamPrepayContext(address(this)).getPrepayContext(loanId, block.timestamp);
+        address vaultAddr = s.userVaipakamVaults[loan.borrower];
+        newOrderHash = LibPrepayOrder.buildAndHash(
+            pctx,
+            vaultAddr,
+            address(executor),
+            CollateralListingExecutor(address(executor)).seaport(),
+            askPrice,
+            pctx.lenderLeg,
+            pctx.treasuryLeg,
+            salt,
+            conduitKey
+        );
+
+        s.prepayListingOrderHash[loanId] = newOrderHash;
+        s.prepayListingExecutor[loanId] = address(executor);
+        executor.recordOrder(newOrderHash, loanId, conduit);
+
+        // Vault rotation: register the new orderHash binding +
+        // re-grant the conduit approval (idempotent if conduit
+        // unchanged; updates target if the borrower picked a
+        // different conduitKey for the re-sign).
+        VaipakamVaultImplementation vault = VaipakamVaultImplementation(vaultAddr);
+        vault.registerListingOrderHash(newOrderHash, address(executor));
+        _grantConduitApproval(vault, loan, conduit);
     }
 
     // ─── Borrower entry: cancelPrepayListing ────────────────────────────
@@ -678,20 +725,22 @@ contract NFTPrepayListingFacet is
         delete s.prepayListingExecutor[loanId];
         IListingExecutorRecorder(pinnedExecutor).clearOrder(orderHash);
 
-        // T-086 step 7 — vault-side cleanup. Revoke the conduit's
-        // per-token approval AND the orderHash → executor binding
-        // so a previously-signed Seaport order can no longer fill
-        // even if it's already posted to the conduit's order book.
-        // The vault must exist for the loan to have made it
-        // through `postPrepayListing` in the first place; we still
-        // guard defensively against a future migration window
-        // where the mapping could be out of sync.
+        // T-086 step 7 — vault-side cleanup. ERC721 explicitly
+        // revokes the per-token approval; ERC1155 leaves the
+        // operator approval in place — `revokeListingOrderHash`
+        // is the authoritative safety primitive (orderHash
+        // binding invalidated → vault.isValidSignature returns
+        // INVALID → no fill regardless of operator approval
+        // state). Matches the standard Seaport ERC1155 conduit
+        // pattern.
         address vaultAddr = s.userVaipakamVaults[loan.borrower];
         if (vaultAddr != address(0)) {
             VaipakamVaultImplementation vault = VaipakamVaultImplementation(vaultAddr);
-            vault.setCollateralOperatorApproval(
-                loan.collateralAsset, loan.collateralTokenId, address(0), false
-            );
+            if (loan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
+                vault.setCollateralOperatorApproval(
+                    loan.collateralAsset, loan.collateralTokenId, address(0), false
+                );
+            }
             vault.revokeListingOrderHash(orderHash);
         }
 
@@ -699,27 +748,46 @@ contract NFTPrepayListingFacet is
     }
 
     /// @dev Shared helper for `postPrepayListing`'s vault wiring.
-    ///      Looks up the borrower's vault, grants the Seaport
-    ///      conduit a per-token approval on the collateral NFT,
-    ///      and pins the orderHash → executor binding on the
-    ///      vault's ERC-1271 mapping. Factored out so the post
-    ///      path body stays focused on the diamond-side state
-    ///      mutations.
+    ///      Looks up the borrower's vault, grants the conduit
+    ///      approval (per-token for ERC721, operator-wide for
+    ///      ERC1155), and pins the orderHash → executor binding
+    ///      on the vault's ERC-1271 mapping.
     function _wireVaultForListing(
         LibVaipakam.Storage storage s,
         LibVaipakam.Loan storage loan,
         bytes32 orderHash,
         address conduit,
-        address executor,
-        bool /* approve */
+        address executor
     ) private {
         address vaultAddr = s.userVaipakamVaults[loan.borrower];
         if (vaultAddr == address(0)) revert ExecutorNotSet();
         VaipakamVaultImplementation vault = VaipakamVaultImplementation(vaultAddr);
-        vault.setCollateralOperatorApproval(
-            loan.collateralAsset, loan.collateralTokenId, conduit, true
-        );
+        _grantConduitApproval(vault, loan, conduit);
         vault.registerListingOrderHash(orderHash, executor);
+    }
+
+    /// @dev Asset-type-aware approval grant. ERC721 uses
+    ///      per-token `approve`; ERC1155's only approval surface
+    ///      is operator-wide `setApprovalForAll`. Shared by the
+    ///      post + update paths. The FULL_RESTRICTED order +
+    ///      the executor's content gate bound the operator-wide
+    ///      approval's blast radius for ERC1155.
+    function _grantConduitApproval(
+        VaipakamVaultImplementation vault,
+        LibVaipakam.Loan storage loan,
+        address conduit
+    ) private {
+        if (loan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
+            vault.setCollateralOperatorApproval(
+                loan.collateralAsset, loan.collateralTokenId, conduit, true
+            );
+        } else {
+            // ERC1155 — supported per step 15. Asset-type guard
+            // in postPrepayListing already rejected ERC20.
+            vault.setCollateralOperatorApprovalERC1155(
+                loan.collateralAsset, conduit, true
+            );
+        }
     }
 
     /// @dev Read-only borrower-vault lookup. Reverts via

@@ -54,6 +54,13 @@ interface IVaipakamPrepayContext {
         address lenderNftOwner;  // VaipakamNFTFacet.ownerOf(loan.lenderTokenId)
         address borrowerNftOwner;// VaipakamNFTFacet.ownerOf(loan.borrowerTokenId)
         address treasury;        // AdminFacet.getTreasury()
+        // #306 architectural fix — borrower's per-user vault
+        // address (the Seaport order's expected offerer). The
+        // executor's zone callback verifies
+        // `params.offerer == borrowerVault` as defense-in-depth
+        // alongside the canonical-hash construction (which
+        // already binds the hash to a vault-offerer order shape).
+        address borrowerVault;   // s.userVaipakamVaults[loan.borrower]
     }
 
     /// @notice Bundle every value the executor needs into a single view

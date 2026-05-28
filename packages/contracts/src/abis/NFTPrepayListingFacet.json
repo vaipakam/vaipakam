@@ -72,17 +72,23 @@
         "internalType": "uint256"
       },
       {
+        "name": "salt",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "conduitKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
         "name": "orderHash",
         "type": "bytes32",
         "internalType": "bytes32"
-      },
-      {
-        "name": "conduit",
-        "type": "address",
-        "internalType": "address"
       }
     ],
-    "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
@@ -100,17 +106,23 @@
         "internalType": "uint256"
       },
       {
+        "name": "newSalt",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "newConduitKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
         "name": "newOrderHash",
         "type": "bytes32",
         "internalType": "bytes32"
-      },
-      {
-        "name": "conduit",
-        "type": "address",
-        "internalType": "address"
       }
     ],
-    "outputs": [],
     "stateMutability": "nonpayable"
   },
   {

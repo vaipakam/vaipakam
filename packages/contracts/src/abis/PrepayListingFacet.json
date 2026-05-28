@@ -110,6 +110,11 @@
             "name": "treasury",
             "type": "address",
             "internalType": "address"
+          },
+          {
+            "name": "borrowerVault",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       }

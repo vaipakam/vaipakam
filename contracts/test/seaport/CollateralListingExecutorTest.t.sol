@@ -112,13 +112,19 @@ contract CollateralListingExecutorTest is Test {
         c.lenderNftOwner = lenderHolder;
         c.borrowerNftOwner = borrowerHolder;
         c.treasury = treasury;
+        // #306 fix — executor's _checkOrderPreconditions verifies
+        // `params.offerer == pctx.borrowerVault`. Test's
+        // `_validZoneParams` sets `p.offerer` to this same address.
+        c.borrowerVault = makeAddr("mockBorrowerVault");
         diamond.setContext(c);
     }
 
-    function _validZoneParams() internal view returns (ZoneParameters memory p) {
+    function _validZoneParams() internal returns (ZoneParameters memory p) {
         p.orderHash = TEST_ORDER_HASH;
         p.fulfiller = buyer;
-        p.offerer = address(executor);
+        // #306 fix — must match `pctx.borrowerVault` set in
+        // `_setDefaultContext`. Same makeAddr seed.
+        p.offerer = makeAddr("mockBorrowerVault");
 
         // Single ERC721 offered item matching loan's collateral.
         p.offer = new SpentItem[](1);
@@ -413,6 +419,7 @@ contract CollateralListingExecutorTest is Test {
         c.lenderNftOwner = lenderHolder;
         c.borrowerNftOwner = borrowerHolder;
         c.treasury = treasury;
+        c.borrowerVault = makeAddr("mockBorrowerVault");
         diamond.setContext(c);
 
         ZoneParameters memory p = _validZoneParams();

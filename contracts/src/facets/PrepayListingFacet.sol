@@ -132,6 +132,14 @@ contract PrepayListingFacet is
         // time, so a governance rotation between sign + fill is
         // reflected immediately).
         ctx.treasury = s.treasury;
+
+        // #306 architectural fix — borrower's per-user vault.
+        // The diamond's `NFTPrepayListingFacet.postPrepayListing`
+        // consumes this when constructing the canonical Seaport
+        // order shape (offerer = vault); the executor's zone
+        // callback re-verifies `params.offerer == borrowerVault`
+        // at fill time as defense-in-depth.
+        ctx.borrowerVault = s.userVaipakamVaults[loan.borrower];
     }
 
     // ─── Callback: executorFinalizePrepaySale ───────────────────────────
