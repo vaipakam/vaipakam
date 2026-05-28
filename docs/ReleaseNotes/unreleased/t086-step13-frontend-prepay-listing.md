@@ -116,11 +116,70 @@ Three reasons.
 ### Tests + verification
 
 - `pnpm --filter @vaipakam/defi exec tsc -b --noEmit` — clean.
+- `pnpm --filter @vaipakam/{keeper,indexer,agent} exec tsc -p . --noEmit` —
+  all four ABI consumers green after the new
+  `getPrepayListingEnabled()` view landed in the synced bundle.
 - Manual flow verification deferred to a connected wallet against
   the testnet deploy once step 14 lands (so the OpenSea
   side-channel exists to validate the end-to-end purchase).
   Until then the page renders, the action submits, the banner
   reflects the indexer's view.
+
+### Round-3 hardening (Codex review on PR #308)
+
+The first review on this PR caught a blocking dual-hook divergence
+(banner state could drift from child action mode after a successful
+write); round 2 lifted hook ownership to `LoanDetails` so a single
+`useNFTPrepayListing` instance feeds both surfaces, with a new
+`onAfterSuccess` option that the parent wires to `loadLoan` for the
+on-chain refresh. Round 3 then addressed the remaining surfaced
+findings:
+
+- **Master kill-switch + buffer + NFT-lock gating.** A new
+  `NFTPrepayListingFacet.getPrepayListingEnabled()` view exposes the
+  `cfgPrepayListingEnabled` master switch to the frontend; combined
+  with the existing `getPrepayListingBufferBps()` and
+  `VaipakamNFTFacet.positionLock(tokenId)` reads, the action surface
+  now renders a "feature unavailable" / "buffer unconfigured" / "NFT
+  locked by another flow" notice instead of a form that would revert
+  at submit. The cancel path stays open in every unavailable case so
+  a borrower can always wind down a stale listing.
+- **Cancel-stays-open past grace.** The action-availability gate
+  used to require `!pastPrepayGrace`, which hid the entire surface
+  once the listing window closed — stranding the borrower with a
+  live listing and no UI cancel button. The gate now mirrors only
+  the *post / update* preconditions; the component itself switches
+  to a cancel-only mode when `pastPrepayGrace` is true and a listing
+  is live.
+- **Stale-state guards.** The hook now clears `listing` to `null`
+  immediately on a `loanId` / `chainId` change before starting the
+  new fetch, so navigating between two loans can't briefly show the
+  previous loan's listing for the new id. After a successful write,
+  the hook also polls the indexer with a 1 / 2 / 3 / 4 / 5 second
+  backoff (up to ~15 s) for the expected post/update/cancel
+  transition before settling the new listing — so the worker's
+  event-ingest lag can't leave the UI in the pre-write banner mode.
+- **Grace-boundary tick.** `LoanDetails` now bumps a `nowSec` state
+  every minute so the `pastPrepayGrace` comparison re-evaluates if
+  the user leaves the page mounted across the boundary crossing.
+  Without it, the action surface could keep showing post / update
+  CTAs that the diamond now rejects.
+- **Form validation.** Salt input now parses inside a try/catch
+  (and against uint256 bounds), with the same inline-error UX the
+  conduit-key check already had — `BigInt('abc')` can't throw out
+  of the submit handler. The conduit-key prefill on update mode
+  was also broken (always reset to OpenSea regardless of the live
+  listing's conduit); the input is now cleared on entering update
+  mode and the advanced expander auto-opens with a hint showing
+  the on-record conduit address, so the borrower consciously
+  re-enters the conduitKey they used.
+- **Banner link.** Dropped the `/tx/<orderHash>` block-explorer
+  link from the banner — `orderHash` is a Seaport EIP-712 digest,
+  not a transaction hash, and explorers would 404 on it. The order
+  hash now renders as plain text with a tooltip; surfacing the
+  posting transaction hash (which the indexer's `prepay_listings`
+  table does store under `tx_hash`) on the `/loans/:id` response
+  is a small follow-up.
 
 ### Closes
 

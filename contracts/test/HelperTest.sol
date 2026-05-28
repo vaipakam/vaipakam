@@ -1259,13 +1259,14 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](6);
+        selectors = new bytes4[](7);
         selectors[0] = NFTPrepayListingFacet.postPrepayListing.selector;
         selectors[1] = NFTPrepayListingFacet.updatePrepayListing.selector;
         selectors[2] = NFTPrepayListingFacet.cancelPrepayListing.selector;
         selectors[3] = NFTPrepayListingFacet.cancelExpiredPrepayListing.selector;
         selectors[4] = NFTPrepayListingFacet.getPrepayListingOrderHash.selector;
         selectors[5] = NFTPrepayListingFacet.getPrepayListingBufferBps.selector;
+        selectors[6] = NFTPrepayListingFacet.getPrepayListingEnabled.selector;
         return selectors;
     }
 }

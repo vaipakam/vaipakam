@@ -90,14 +90,21 @@ export function getLoanActionAvailability(ctx: LoanActionContext): LoanActionAva
     preclose: canAct && isBorrower && !ctx.isOverdue && isActive && ctx.showAdvanced && isErc20,
     refinance: canAct && isBorrower && !ctx.isOverdue && isActive && ctx.showAdvanced && isErc20,
     // T-086 prepay listing — NFT collateral, lender pre-consent flag,
-    // pre-grace, active. Mirrors the on-chain gates so the UI doesn't
-    // render an entry point that would revert at submit.
+    // active. Note we intentionally DO NOT gate on `!pastPrepayGrace`
+    // here: `cancelPrepayListing` is callable both before and after
+    // the grace window (the on-chain `NFTPrepayListingFacet.cancelPrepayListing`
+    // has no grace check, only `cancelExpiredPrepayListing` is
+    // permissionless-post-grace). Hiding the entire surface past
+    // grace would strand the borrower with a live listing they
+    // couldn't cancel from the UI. The child component reads
+    // `pastPrepayGrace` directly and switches between post / update
+    // / cancel-only modes accordingly. Codex round-2 P2 fix on PR
+    // #308.
     prepayListing:
       canAct &&
       isBorrower &&
       isActive &&
       isNftCollateral &&
-      ctx.allowsPrepayListing &&
-      !ctx.pastPrepayGrace,
+      ctx.allowsPrepayListing,
   };
 }

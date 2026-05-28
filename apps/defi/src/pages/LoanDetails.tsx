@@ -231,11 +231,21 @@ export default function LoanDetails() {
       cancelled = true;
     };
   }, [diamond, loan]);
+  // Tick state — bumps `nowSec` once per minute (cheap) so the
+  // grace-boundary comparison below re-evaluates if the user leaves
+  // the page mounted across the boundary crossing. Without this, a
+  // page opened pre-grace would keep showing the action surface
+  // forever even after `now >= endTime + gracePeriod`. Codex P3 fix
+  // round 3 on PR #308.
+  const [nowSec, setNowSec] = useState(Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    const id = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 60_000);
+    return () => clearInterval(id);
+  }, []);
   const pastPrepayGrace =
     !!loan &&
     prepayGraceSeconds !== null &&
-    BigInt(Math.floor(Date.now() / 1000)) >=
-      BigInt(endTime) + prepayGraceSeconds;
+    BigInt(nowSec) >= BigInt(endTime) + prepayGraceSeconds;
 
   const availability = getLoanActionAvailability({
     status: loan ? Number(loan.status) : -1,
@@ -528,7 +538,6 @@ export default function LoanDetails() {
         <PrepayListingBanner
           listing={prepayListingState}
           principalAsset={loan.principalAsset}
-          blockExplorer={activeBlockExplorer}
         />
       )}
 
@@ -1110,8 +1119,10 @@ export default function LoanDetails() {
             <PrepayListingActions
               loanId={BigInt(loanId!)}
               principalAsset={loan.principalAsset}
+              borrowerTokenId={loan.borrowerTokenId}
               prepayListing={prepayListing}
               hasLiveListing={!!prepayListingState}
+              pastPrepayGrace={pastPrepayGrace}
             />
           )}
         </div>

@@ -1,4 +1,4 @@
-import { Tag, Clock, ExternalLink } from 'lucide-react';
+import { Tag, Clock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { TokenAmount } from '../app/TokenAmount';
 import { AddressDisplay } from '../app/AddressDisplay';
@@ -9,10 +9,6 @@ interface Props {
   /** Principal asset (loan.principalAsset) — controls TokenAmount decimals
    *  and symbol the ask-price renders against. */
   principalAsset: string;
-  /** Block explorer base URL for the active chain. Used to deep-link the
-   *  orderHash to an explorer "see this Seaport order" lookup. Pass `null`
-   *  to suppress the link. */
-  blockExplorer: string | null;
 }
 
 /**
@@ -27,7 +23,7 @@ interface Props {
  * grace window has closed (permissionless cancelExpired is now callable
  * but the listing hasn't been swept yet).
  */
-export function PrepayListingBanner({ listing, principalAsset, blockExplorer }: Props) {
+export function PrepayListingBanner({ listing, principalAsset }: Props) {
   const { t } = useTranslation();
   const now = Math.floor(Date.now() / 1000);
   const graceClosed = now >= listing.gracePeriodEnd;
@@ -72,19 +68,18 @@ export function PrepayListingBanner({ listing, principalAsset, blockExplorer }: 
 
       <div className="data-row">
         <span className="data-label">{t('prepayListing.banner.orderHash')}</span>
-        <span className="data-value" style={{ fontFamily: 'monospace', fontSize: '0.85em' }}>
+        {/* Plain text — the orderHash is a Seaport-internal EIP-712
+            digest, NOT a transaction hash. Block explorers won't
+            resolve it under `/tx/`; linking there would 404 every
+            time. The posting transaction hash isn't carried on the
+            indexer payload yet (separate follow-up — see release-note
+            fragment), so we render the order hash without a link. */}
+        <span
+          className="data-value"
+          style={{ fontFamily: 'monospace', fontSize: '0.85em' }}
+          title={listing.orderHash}
+        >
           {listing.orderHash.slice(0, 10)}…{listing.orderHash.slice(-8)}
-          {blockExplorer && (
-            <a
-              href={`${blockExplorer}/tx/${listing.orderHash}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ marginLeft: 6, verticalAlign: 'middle' }}
-              aria-label={t('prepayListing.banner.viewOnExplorer')}
-            >
-              <ExternalLink size={12} />
-            </a>
-          )}
         </span>
       </div>
 

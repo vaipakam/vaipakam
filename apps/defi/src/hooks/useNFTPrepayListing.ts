@@ -101,6 +101,12 @@ export function useNFTPrepayListing(
 
   useEffect(() => {
     let cancelled = false;
+    // Clear stale state from the previous loan / chain immediately —
+    // BEFORE the new fetch starts — so the banner + action mode for
+    // the new (loanId, chainId) tuple can't briefly inherit the
+    // previous loan's listing while the indexer request is in flight.
+    // Codex round-2 P2 fix on PR #308.
+    setListing(null);
     void (async () => {
       if (!loanId) {
         setLoading(false);
@@ -125,6 +131,50 @@ export function useNFTPrepayListing(
   // surfaces both kinds of failure (signer rejection + on-chain revert)
   // through `actionError` in the user-friendly decoded form.
 
+  /** After a successful tx, the indexer worker is event-driven and
+   *  may not have ingested the write by the time we hit `/loans/:id`.
+   *  Poll up to ~15 s for the listing JOIN to reflect the expected
+   *  transition (post → listing exists; cancel → listing gone), with
+   *  a short backoff. Returns the final indexer view (which the
+   *  caller writes into `listing` state). If the indexer never
+   *  catches up within the budget we return whatever it last gave us
+   *  — the on-chain tx already succeeded, so this is a UI freshness
+   *  guarantee, not a correctness one. Codex round-2 P2 fix on PR
+   *  #308. */
+  const waitForIndexer = useCallback(
+    async (
+      flow: 'postPrepayListing' | 'updatePrepayListing' | 'cancelPrepayListing',
+    ): Promise<IndexedPrepayListing | null | undefined> => {
+      if (!loanId) return undefined;
+      // 1 s, 2 s, 3 s, 4 s, 5 s → ~15 s total worst case. Short enough
+      // to keep the user in-flow; long enough for a healthy indexer
+      // (block-time-aligned scans) to catch up.
+      const delays = [1000, 2000, 3000, 4000, 5000];
+      let lastRow: IndexedPrepayListing | null | undefined = undefined;
+      for (const d of delays) {
+        await new Promise((r) => setTimeout(r, d));
+        const row = await fetchLoanById(chainId, Number(loanId));
+        if (!row) continue;
+        lastRow = row.prepayListing;
+        // For `cancel`, expected state is "listing gone" (undefined).
+        // For `post` / `update`, expected state is "listing present" —
+        // we don't know the new orderHash by the time the diamond
+        // call resolves (it returns the hash but we don't thread it
+        // through this helper), so "present" is good enough; the next
+        // user-driven action will fetch the up-to-date hash. The
+        // alternative — passing newOrderHash down — couples the hook
+        // tighter to the diamond return shape without a real benefit.
+        if (flow === 'cancelPrepayListing') {
+          if (!row.prepayListing) return undefined;
+        } else {
+          if (row.prepayListing) return row.prepayListing;
+        }
+      }
+      return lastRow;
+    },
+    [chainId, loanId],
+  );
+
   const runWrite = useCallback(
     async (
       flow: 'postPrepayListing' | 'updatePrepayListing' | 'cancelPrepayListing',
@@ -144,11 +194,15 @@ export function useNFTPrepayListing(
         const tx = await submit();
         setTxHash(tx.hash);
         await tx.wait();
-        await reload();
-        // Fire the parent's refresh hook AFTER the indexer reload — so
-        // the parent's on-chain `getLoanDetails` read and the indexer's
-        // listing JOIN both reflect the post-write reality by the time
-        // any sibling re-render kicks in.
+        // Poll the indexer for the expected transition; this writes
+        // the freshest listing into `listing` state so the banner
+        // and child action mode flip atomically with the tx.
+        const fresh = await waitForIndexer(flow);
+        setListing(fresh);
+        // Fire the parent's refresh hook AFTER the indexer poll — so
+        // the parent's on-chain `getLoanDetails` read and the
+        // indexer's listing JOIN both reflect the post-write reality
+        // by the time any sibling re-render kicks in.
         if (onAfterSuccess) await onAfterSuccess();
         step.success({ note: `tx ${tx.hash}` });
         return true;
@@ -160,7 +214,7 @@ export function useNFTPrepayListing(
         setActionLoading(false);
       }
     },
-    [reload, onAfterSuccess],
+    [waitForIndexer, onAfterSuccess],
   );
 
   const postPrepayListing = useCallback(

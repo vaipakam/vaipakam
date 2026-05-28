@@ -40,6 +40,19 @@
   },
   {
     "type": "function",
+    "name": "getPrepayListingEnabled",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getPrepayListingOrderHash",
     "inputs": [
       {
