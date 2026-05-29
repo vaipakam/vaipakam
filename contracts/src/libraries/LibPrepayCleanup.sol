@@ -12,10 +12,13 @@ import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
  * @author Vaipakam Developer Team
  * @notice T-086 step 10: shared cleanup helper for terminal paths
  *         that close a loan while a prepay-collateral-listing is
- *         live (DefaultedFacet.triggerDefault, RiskFacet.triggerLiquidation*,
- *         and — eventually — RepayFacet.repayLoan / PrecloseFacet
- *         direct-close / RefinanceFacet, when those bring the same
- *         integration in).
+ *         live. Called from every loan-terminal path:
+ *           • `DefaultedFacet.triggerDefault`
+ *           • `RiskFacet.triggerLiquidation*` (three HF-liquidation entry points)
+ *           • `RepayFacet.repayLoan` (T-086 follow-up to step 14)
+ *           • `PrecloseFacet.precloseDirect` (ERC20 path, follow-up to step 14)
+ *           • `PrecloseFacet.offsetCompleted` (defensive, follow-up to step 14)
+ *           • `RefinanceFacet.refinanceLoan` (follow-up to step 14)
  *
  *         The design-doc §5.4 directive is "default-flow lock-
  *         bypass": markDefaulted / triggerLiquidation must NOT

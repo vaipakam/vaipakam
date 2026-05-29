@@ -7,6 +7,7 @@ import {LibCollateralSettlement} from "../libraries/LibCollateralSettlement.sol"
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
+import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IListingExecutorRecorder} from "../seaport/IListingExecutorRecorder.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
@@ -89,6 +90,7 @@ import {PrepayListingFacet} from "./PrepayListingFacet.sol";
  */
 contract NFTPrepayListingFacet is
     DiamondPausable,
+    DiamondReentrancyGuard,
     DiamondAccessControl,
     IVaipakamErrors
 {
@@ -208,6 +210,14 @@ contract NFTPrepayListingFacet is
     ///         deferral).
     error UnsupportedCollateralForV1(LibVaipakam.AssetType collateralType);
 
+    /// @notice The loan's principal isn't ERC20. T-086 Seaport prepay
+    ///         flow emits ERC20 consideration legs unconditionally
+    ///         (`LibPrepayOrder._components`) and the executor's
+    ///         `_assertOrderContent` rejects non-ERC20 lendingAsset
+    ///         at fill time; recording a listing on an NFT-rental
+    ///         loan would create orphan bookkeeping.
+    error UnsupportedPrincipalForV1(LibVaipakam.AssetType principalType);
+
     /// @notice Buffer-bps not configured yet. The first ADMIN call
     ///         to `ConfigFacet.setPrepayListingBufferBps` enables
     ///         the path; the storage default 0 is the
@@ -290,7 +300,7 @@ contract NFTPrepayListingFacet is
         uint256 askPrice,
         uint256 salt,
         bytes32 conduitKey
-    ) external whenNotPaused returns (bytes32 orderHash) {
+    ) external nonReentrant whenNotPaused returns (bytes32 orderHash) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
@@ -308,6 +318,19 @@ contract NFTPrepayListingFacet is
             loan.collateralAssetType != LibVaipakam.AssetType.ERC1155
         ) {
             revert UnsupportedCollateralForV1(loan.collateralAssetType);
+        }
+        // Codex round-1 P2 fix on PR #317 — gate on ERC20 principal.
+        // The executor's `_assertOrderContent` rejects non-ERC20
+        // lendingAsset at fill time; `LibPrepayOrder._components`
+        // emits ERC20 consideration legs unconditionally. An
+        // NFT-rental loan with `allowsPrepayListing=true` would
+        // therefore record an UNFILLABLE listing here while still
+        // taking the borrower-NFT lock + executor + vault binding —
+        // creating orphan state until manual cancel. Hard-reject
+        // at the facet boundary instead of relying on the executor
+        // and the frontend availability gate to keep this invariant.
+        if (loan.assetType != LibVaipakam.AssetType.ERC20) {
+            revert UnsupportedPrincipalForV1(loan.assetType);
         }
 
         // Listing-already-exists check fires BEFORE the lock check
@@ -450,7 +473,7 @@ contract NFTPrepayListingFacet is
         uint256 newAskPrice,
         uint256 newSalt,
         bytes32 newConduitKey
-    ) external whenNotPaused returns (bytes32 newOrderHash) {
+    ) external nonReentrant whenNotPaused returns (bytes32 newOrderHash) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
@@ -460,6 +483,15 @@ contract NFTPrepayListingFacet is
         }
         if (!loan.allowsPrepayListing) {
             revert PrepayListingNotAllowed(loanId);
+        }
+        // Codex round-2 P2 fix on PR #317 — same principal-type gate
+        // as `postPrepayListing`. Without it, a pre-PR orphan
+        // listing on an NFT-rental loan (from before round-1's
+        // post-time check landed) could still be re-signed via
+        // `update` — recreating the orphan bookkeeping until manual
+        // cancel.
+        if (loan.assetType != LibVaipakam.AssetType.ERC20) {
+            revert UnsupportedPrincipalForV1(loan.assetType);
         }
 
         uint256 gracePeriodEnd = _gracePeriodEnd(loan);
@@ -577,29 +609,22 @@ contract NFTPrepayListingFacet is
     ///         {cancelExpiredPrepayListing}. We release the lock
     ///         + clear the diamond bookkeeping + tell the executor
     ///         to clear the orderHash.
-    function cancelPrepayListing(uint256 loanId) external whenNotPaused {
+    function cancelPrepayListing(uint256 loanId) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
         // INTENTIONALLY no loan-status gate (Codex P2 round-2 fix).
-        // If a live prepay-listed loan gets repaid via
-        // `RepayFacet.repayLoan` (or precloseped via PrecloseFacet,
-        // refinanced via RefinanceFacet), those terminals currently
-        // don't clear the prepay-listing bookkeeping — so the
-        // borrower's only escape from a stale listing without this
-        // would be the post-grace permissionless path. Letting the
-        // current position-NFT holder always cancel keeps the
-        // cleanup immediate; the operation is no-fund-movement
-        // (lock release + bookkeeping clear), safe across every
-        // terminal state.
-        //
-        // Follow-up: the Repay / Preclose / Refinance terminals
-        // SHOULD eventually call into a shared `_clearPrepayListing`
-        // helper themselves so the bookkeeping clears atomically
-        // with the close. That cross-facet wiring is tracked
-        // alongside the design-doc §13 step-10 default-flow
-        // integration; until that lands, this borrower escape
-        // hatch is the safety net.
+        // No-status-gate retained — even though `RepayFacet.repayLoan`,
+        // `PrecloseFacet` (direct + offset), and `RefinanceFacet` now
+        // call `LibPrepayCleanup.clearActiveListing` atomically with
+        // their Active→Repaid transition (T-086 follow-up to step
+        // 14), this borrower escape hatch remains the safety net for
+        // any pre-PR row that may have slipped through OR any future
+        // close path that forgets to wire the cleanup. The operation
+        // is no-fund-movement (lock release + bookkeeping clear),
+        // safe across every terminal state. Cancel is idempotent;
+        // calling it after the terminal already swept is a cheap
+        // no-op via the orderHash early-return.
 
         address holder = VaipakamNFTFacet(address(this)).ownerOf(loan.borrowerTokenId);
         if (holder != msg.sender) {
@@ -645,7 +670,7 @@ contract NFTPrepayListingFacet is
     ///            unpause. The cancel is a no-fund-movement
     ///            operation (just releases a lock + clears a
     ///            mapping); it's safe to run while paused.
-    function cancelExpiredPrepayListing(uint256 loanId) external {
+    function cancelExpiredPrepayListing(uint256 loanId) external nonReentrant {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 

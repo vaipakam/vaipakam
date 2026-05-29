@@ -7,6 +7,7 @@ import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
+import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {LibLoan} from "../libraries/LibLoan.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -246,6 +247,10 @@ contract PrecloseFacet is
             });
 
             _setLoanClaimable(loan, loanId);
+            // T-086 follow-up to step 14 — clear any active prepay
+            // listing atomically with the Active→Repaid flip. See
+            // {RepayFacet.repayLoan} for the full rationale. Idempotent.
+            LibPrepayCleanup.clearActiveListing(loan, loanId);
             LibLifecycle.transition(
                 loan,
                 LibVaipakam.LoanStatus.Active,
@@ -351,6 +356,13 @@ contract PrecloseFacet is
             _resetNftRenter(loan);
 
             _setLoanClaimable(loan, loanId);
+            // T-086 — defensive sweep on the NFT-rental preclose
+            // branch. NFTPrepayListingFacet now rejects non-ERC20
+            // principals at post time (Codex round-1 P2 fix on PR
+            // #317), but any rental loan that had a listing recorded
+            // BEFORE that gate landed would otherwise leave orphan
+            // bookkeeping when precloseped via this branch. Idempotent.
+            LibPrepayCleanup.clearActiveListing(loan, loanId);
             LibLifecycle.transition(
                 loan,
                 LibVaipakam.LoanStatus.Active,
@@ -1024,6 +1036,16 @@ contract PrecloseFacet is
         if (loan.assetType != LibVaipakam.AssetType.ERC20) {
             _resetNftRenter(loan);
         }
+
+        // T-086 follow-up to step 14 — defensive prepay-listing cleanup.
+        // In normal flow this is a no-op (the borrower must cancel the
+        // listing before initiating an offset, because the borrower-NFT
+        // lock-overwrite-protection from step 6 round 2 blocks
+        // `_lock(PrecloseOffset)` over a live `_lock(PrepayCollateralListing)`).
+        // The call stays as belt-and-suspenders so any future change
+        // that loosens the lock-overwrite invariant doesn't silently
+        // leave stale listing bookkeeping behind. Idempotent.
+        LibPrepayCleanup.clearActiveListing(loan, originalLoanId);
 
         // Close original loan — offset completion transitions Active -> Repaid.
         _setLoanClaimable(loan, originalLoanId);

@@ -10,6 +10,7 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
+import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -250,6 +251,28 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             quantity: 0,
             claimed: false
         });
+
+        // T-086 follow-up to step 14 — clear any active prepay listing on
+        // the OLD loan BEFORE the collateral withdrawal below. Placement
+        // matters here: `LibPrepayCleanup.clearActiveListing` calls
+        // `vault.setCollateralOperatorApproval(..., approved=false)` on
+        // ERC721 collateral, which performs `IERC721.approve(address(0),
+        // tokenId)` from the vault. After the collateral has been
+        // withdrawn out of the vault (lines below), the vault is no
+        // longer the token owner and standard ERC721s revert that approve
+        // call — leaving refinance permanently broken for ERC721
+        // collateral loans that carry a live listing.
+        //
+        // Refinance is gated on `oldLoan.assetType == ERC20` upstream
+        // (line ~109) so rental loans never reach here; for the
+        // ERC20-principal + NFT-collateral case this is the right
+        // moment: principal-asset payments to the old lender have
+        // already committed (so we know the borrower paid), no
+        // collateral has been touched yet, and the listing's
+        // bookkeeping can be cleared while the vault still owns the
+        // NFT. Idempotent no-op when no listing is live.
+        // Codex round-1 P1 fix on PR #317.
+        LibPrepayCleanup.clearActiveListing(oldLoan, oldLoanId);
 
         // ── Release old collateral ────────────────────────────────────────
         // The borrower's vault currently holds the old collateral deposited

@@ -1002,6 +1002,11 @@
   },
   {
     "type": "error",
+    "name": "ReentrancyGuardReentrantCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RefinanceRequiresPeriodSettle",
     "inputs": [
       {
@@ -1072,6 +1077,17 @@
     "inputs": [
       {
         "name": "collateralType",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.AssetType"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnsupportedPrincipalForV1",
+    "inputs": [
+      {
+        "name": "principalType",
         "type": "uint8",
         "internalType": "enum LibVaipakam.AssetType"
       }

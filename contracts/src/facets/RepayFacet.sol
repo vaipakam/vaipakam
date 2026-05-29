@@ -13,6 +13,7 @@ import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
+import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -532,6 +533,21 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             ),
             NFTStatusUpdateFailed.selector
         );
+
+        // T-086 follow-up to step 14 — atomically clear any active prepay
+        // listing for this loan BEFORE flipping the status. This:
+        //   • revokes the vault's ERC-1271 binding for the listing's
+        //     orderHash (any subsequent `Seaport.fulfillOrder` reverts)
+        //   • releases the borrower-position-NFT lock
+        //   • clears the diamond / executor / vault bookkeeping
+        // Idempotent no-op when no listing is live. Closes the
+        // acknowledged tech-debt comment in
+        // {NFTPrepayListingFacet.cancelPrepayListing}: terminals
+        // previously left stale listing bookkeeping that only the
+        // borrower-side cancel-anytime escape could mop up. Placement
+        // is after every safeTransferFrom has committed, so we know
+        // the lender is paid before declaring the listing dead.
+        LibPrepayCleanup.clearActiveListing(loan, loanId);
 
         // Active or FallbackPending both legally transition to Repaid here
         // (normal close or cure-by-repay). LibLifecycle validates the edge.
