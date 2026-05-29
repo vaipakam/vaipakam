@@ -7,6 +7,7 @@ import {LibCollateralSettlement} from "../libraries/LibCollateralSettlement.sol"
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
+import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IListingExecutorRecorder} from "../seaport/IListingExecutorRecorder.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
@@ -89,6 +90,7 @@ import {PrepayListingFacet} from "./PrepayListingFacet.sol";
  */
 contract NFTPrepayListingFacet is
     DiamondPausable,
+    DiamondReentrancyGuard,
     DiamondAccessControl,
     IVaipakamErrors
 {
@@ -298,7 +300,7 @@ contract NFTPrepayListingFacet is
         uint256 askPrice,
         uint256 salt,
         bytes32 conduitKey
-    ) external whenNotPaused returns (bytes32 orderHash) {
+    ) external nonReentrant whenNotPaused returns (bytes32 orderHash) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
@@ -471,7 +473,7 @@ contract NFTPrepayListingFacet is
         uint256 newAskPrice,
         uint256 newSalt,
         bytes32 newConduitKey
-    ) external whenNotPaused returns (bytes32 newOrderHash) {
+    ) external nonReentrant whenNotPaused returns (bytes32 newOrderHash) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
@@ -481,6 +483,15 @@ contract NFTPrepayListingFacet is
         }
         if (!loan.allowsPrepayListing) {
             revert PrepayListingNotAllowed(loanId);
+        }
+        // Codex round-2 P2 fix on PR #317 — same principal-type gate
+        // as `postPrepayListing`. Without it, a pre-PR orphan
+        // listing on an NFT-rental loan (from before round-1's
+        // post-time check landed) could still be re-signed via
+        // `update` — recreating the orphan bookkeeping until manual
+        // cancel.
+        if (loan.assetType != LibVaipakam.AssetType.ERC20) {
+            revert UnsupportedPrincipalForV1(loan.assetType);
         }
 
         uint256 gracePeriodEnd = _gracePeriodEnd(loan);
@@ -598,7 +609,7 @@ contract NFTPrepayListingFacet is
     ///         {cancelExpiredPrepayListing}. We release the lock
     ///         + clear the diamond bookkeeping + tell the executor
     ///         to clear the orderHash.
-    function cancelPrepayListing(uint256 loanId) external whenNotPaused {
+    function cancelPrepayListing(uint256 loanId) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
@@ -659,7 +670,7 @@ contract NFTPrepayListingFacet is
     ///            unpause. The cancel is a no-fund-movement
     ///            operation (just releases a lock + clears a
     ///            mapping); it's safe to run while paused.
-    function cancelExpiredPrepayListing(uint256 loanId) external {
+    function cancelExpiredPrepayListing(uint256 loanId) external nonReentrant {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
