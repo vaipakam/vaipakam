@@ -695,10 +695,36 @@ Permissionless actions available to anyone regardless of role:
 - **Refinance** — post a borrower offer for new terms; once a
   lender accepts, complete refinance swaps the loans
   atomically with the collateral never leaving your vault.
+- **List collateral on OpenSea (prepay sale)** — if the loan has
+  an NFT as collateral and the lender opted in at offer time, you
+  can post your collateral on OpenSea via Vaipakam at any price
+  above the live floor (principal + accrued interest + treasury
+  cut + a safety buffer). When a buyer fills, the sale waterfall
+  pays the lender, the treasury fee, and the remainder lands in
+  your vault — atomically, in one Seaport transaction, no extra
+  step from you. Cancellable any time before the grace window
+  closes. The listing surfaces on OpenSea's marketplace UI
+  automatically; you don't sign anything off-chain.
 - **Claim as borrower** — terminal-only. Returns collateral on
   full repayment, or the unused VPFI Loan Initiation Fee
   rebate on default / liquidation. Burns the borrower position
   NFT.
+
+> **If your repay tx reverts while you have a live OpenSea
+> listing** — a buyer's `Seaport.fulfillOrder` may have landed
+> in the same block, EVM-ordered before your repay. Both txes
+> are competing terminal flows; only one can win. If the buyer's
+> tx wins, your loan is **already settled**: the lender + treasury
+> got paid from the sale proceeds, and your remainder (sale price
+> minus those two legs) is sitting in your vault ready to claim.
+> Your repay's revert just means there was nothing left to repay
+> — no funds left your wallet. The Vaipakam dapp detects this
+> case and surfaces a tailored message linking straight to the
+> Claim Center; if you ever see a generic revert and you had a
+> live listing at the time, check your loan status on the
+> Dashboard first. This is the only case where a borrower-
+> initiated repay can fail "harmlessly" without something
+> actually going wrong.
 
 ---
 
