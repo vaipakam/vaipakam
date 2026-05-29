@@ -208,6 +208,14 @@ contract NFTPrepayListingFacet is
     ///         deferral).
     error UnsupportedCollateralForV1(LibVaipakam.AssetType collateralType);
 
+    /// @notice The loan's principal isn't ERC20. T-086 Seaport prepay
+    ///         flow emits ERC20 consideration legs unconditionally
+    ///         (`LibPrepayOrder._components`) and the executor's
+    ///         `_assertOrderContent` rejects non-ERC20 lendingAsset
+    ///         at fill time; recording a listing on an NFT-rental
+    ///         loan would create orphan bookkeeping.
+    error UnsupportedPrincipalForV1(LibVaipakam.AssetType principalType);
+
     /// @notice Buffer-bps not configured yet. The first ADMIN call
     ///         to `ConfigFacet.setPrepayListingBufferBps` enables
     ///         the path; the storage default 0 is the
@@ -308,6 +316,19 @@ contract NFTPrepayListingFacet is
             loan.collateralAssetType != LibVaipakam.AssetType.ERC1155
         ) {
             revert UnsupportedCollateralForV1(loan.collateralAssetType);
+        }
+        // Codex round-1 P2 fix on PR #317 — gate on ERC20 principal.
+        // The executor's `_assertOrderContent` rejects non-ERC20
+        // lendingAsset at fill time; `LibPrepayOrder._components`
+        // emits ERC20 consideration legs unconditionally. An
+        // NFT-rental loan with `allowsPrepayListing=true` would
+        // therefore record an UNFILLABLE listing here while still
+        // taking the borrower-NFT lock + executor + vault binding —
+        // creating orphan state until manual cancel. Hard-reject
+        // at the facet boundary instead of relying on the executor
+        // and the frontend availability gate to keep this invariant.
+        if (loan.assetType != LibVaipakam.AssetType.ERC20) {
+            revert UnsupportedPrincipalForV1(loan.assetType);
         }
 
         // Listing-already-exists check fires BEFORE the lock check

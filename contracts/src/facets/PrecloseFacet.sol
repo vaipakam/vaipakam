@@ -356,6 +356,13 @@ contract PrecloseFacet is
             _resetNftRenter(loan);
 
             _setLoanClaimable(loan, loanId);
+            // T-086 — defensive sweep on the NFT-rental preclose
+            // branch. NFTPrepayListingFacet now rejects non-ERC20
+            // principals at post time (Codex round-1 P2 fix on PR
+            // #317), but any rental loan that had a listing recorded
+            // BEFORE that gate landed would otherwise leave orphan
+            // bookkeeping when precloseped via this branch. Idempotent.
+            LibPrepayCleanup.clearActiveListing(loan, loanId);
             LibLifecycle.transition(
                 loan,
                 LibVaipakam.LoanStatus.Active,
