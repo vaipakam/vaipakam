@@ -43,19 +43,20 @@ import type { Env } from './env';
 
 /**
  * OpenSea chain map — identical to the agent-side proxy's
- * `OPENSEA_CHAINS` map. Kept duplicated for now since the agent
- * and indexer maintain their own env types; if the list grows
- * we'll extract to `@vaipakam/lib`.
+ * `OPENSEA_CHAINS` map. Mainnet only — OpenSea sunset their
+ * testnet API + marketplace UI on 2025-07-23
+ * (`support.opensea.io/en/articles/11833955-farewell-testnets`).
+ * For testnet chains the indexer's republish path returns
+ * `unsupported-chain-<id>` and the row's `opensea_published_at`
+ * stays NULL forever; the on-chain order is still valid + fillable.
+ * Kept duplicated from the agent-side map for now since the two
+ * Workers maintain their own env types.
  */
 const OPENSEA_CHAINS: Record<number, { host: string; slug: string }> = {
   1: { host: 'api.opensea.io', slug: 'ethereum' },
   8453: { host: 'api.opensea.io', slug: 'base' },
   42161: { host: 'api.opensea.io', slug: 'arbitrum' },
   10: { host: 'api.opensea.io', slug: 'optimism' },
-  11155111: { host: 'testnets-api.opensea.io', slug: 'sepolia' },
-  84532: { host: 'testnets-api.opensea.io', slug: 'base_sepolia' },
-  421614: { host: 'testnets-api.opensea.io', slug: 'arbitrum_sepolia' },
-  11155420: { host: 'testnets-api.opensea.io', slug: 'optimism_sepolia' },
 };
 
 const SEAPORT_ABI_FRAGMENT = [

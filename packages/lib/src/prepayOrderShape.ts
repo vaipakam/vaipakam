@@ -231,19 +231,21 @@ export function buildPrepayOrderComponents(
   };
 }
 
-/** OpenSea chain slugs — one per chain id the proxy accepts. Kept
- *  identical to `apps/agent/src/openseaProxy.ts:OPENSEA_CHAINS` so
- *  the frontend deep-link points at the same surface the proxy
- *  POSTs to. */
+/** OpenSea chain slugs — one per chain id the proxy accepts.
+ *  Mainnet only — OpenSea sunset their testnet marketplace UI on
+ *  2025-07-23
+ *  (`support.opensea.io/en/articles/11833955-farewell-testnets`).
+ *  `openSeaAssetUrl(chainId, …)` returns `null` for testnet chain
+ *  ids so the banner's "View on OpenSea" deep-link is suppressed
+ *  cleanly — without this filter the link would 404. Kept aligned
+ *  with `apps/agent/src/openseaProxy.ts:OPENSEA_CHAINS` and
+ *  `apps/indexer/src/openseaPublish.ts:OPENSEA_CHAINS` so all three
+ *  producers gate on the same set. */
 const OPENSEA_CHAIN_SLUGS: Record<number, { host: string; slug: string }> = {
   1: { host: 'opensea.io', slug: 'ethereum' },
   8453: { host: 'opensea.io', slug: 'base' },
   42161: { host: 'opensea.io', slug: 'arbitrum' },
   10: { host: 'opensea.io', slug: 'optimism' },
-  11155111: { host: 'testnets.opensea.io', slug: 'sepolia' },
-  84532: { host: 'testnets.opensea.io', slug: 'base_sepolia' },
-  421614: { host: 'testnets.opensea.io', slug: 'arbitrum_sepolia' },
-  11155420: { host: 'testnets.opensea.io', slug: 'optimism_sepolia' },
 };
 
 /**

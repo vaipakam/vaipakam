@@ -64,22 +64,23 @@ const HEX_ADDR = /^0x[0-9a-fA-F]{40}$/;
 const HEX_ANY = /^0x[0-9a-fA-F]*$/;
 
 /**
- * OpenSea chain slug + API host per supported chain id. The
- * mainnet API and testnet API are separate domains; the slug is the
- * path component the Listings endpoint expects. Chains not in this
- * map are rejected at the proxy with a 400 — adding a new chain
- * means landing both the deployment artifact AND a new entry here.
+ * OpenSea chain slug + API host per supported chain id. Mainnet
+ * only — OpenSea sunset the testnet API + marketplace UI on
+ * 2025-07-23 (`support.opensea.io/en/articles/11833955-farewell-testnets`).
+ * Testnet borrowers' publish attempts now fail-fast with the
+ * `unsupported-chain` error here instead of timing out against a
+ * dead endpoint or surfacing OpenSea's 404 as a generic publish
+ * failure. The on-chain order still stands on every testnet —
+ * just no marketplace-UI discoverability there.
+ *
+ * Adding a new mainnet chain means landing both the deployment
+ * artifact AND a new entry here.
  */
 const OPENSEA_CHAINS: Record<number, { host: string; slug: string }> = {
   1: { host: 'api.opensea.io', slug: 'ethereum' },
   8453: { host: 'api.opensea.io', slug: 'base' },
   42161: { host: 'api.opensea.io', slug: 'arbitrum' },
   10: { host: 'api.opensea.io', slug: 'optimism' },
-  // Testnets.
-  11155111: { host: 'testnets-api.opensea.io', slug: 'sepolia' },
-  84532: { host: 'testnets-api.opensea.io', slug: 'base_sepolia' },
-  421614: { host: 'testnets-api.opensea.io', slug: 'arbitrum_sepolia' },
-  11155420: { host: 'testnets-api.opensea.io', slug: 'optimism_sepolia' },
 };
 
 export async function handleOpenSeaListingPost(

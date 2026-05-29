@@ -11,12 +11,12 @@ import { getChainByChainId } from '../contracts/config';
  *      cross-checked against the on-chain loan struct. Marketplaces
  *      (OpenSea / etc.) can render the NFT image, but only the verifier
  *      can prove the position is current and not transferred.
- *   2. **OpenSea** — for chains where OpenSea has a v2 surface, route to
- *      the marketplace listing. Better UX than chain explorers (image,
- *      traits, owner history, listings, floor) for any third-party NFT.
+ *   2. **OpenSea** — mainnet only. OpenSea sunset their testnet
+ *      marketplace UI on 2025-07-23
+ *      (`support.opensea.io/en/articles/11833955-farewell-testnets`),
+ *      so testnet chains fall through to the explorer.
  *   3. **Chain explorer NFT page** — fallback for chains OpenSea doesn't
- *      support (BNB Chain, Polygon zkEVM, all testnets except those in
- *      the testnet OpenSea list).
+ *      support (BNB Chain, Polygon zkEVM) AND every testnet.
  *
  * Pure helper — no React hooks, no async I/O. Callers pass the chain id
  * and the helper consults the chain registry directly.
@@ -33,15 +33,6 @@ const OPENSEA_MAINNET_SLUG: Record<number, string> = {
   8453: 'base',
   10: 'optimism',
   42161: 'arbitrum',
-};
-
-/** Testnet chain-id → testnets.opensea.io URL slug. OpenSea splits
- *  testnet listings under a separate hostname. */
-const OPENSEA_TESTNET_SLUG: Record<number, string> = {
-  11155111: 'sepolia',
-  84532: 'base_sepolia',
-  421614: 'arbitrum_sepolia',
-  11155420: 'optimism_sepolia',
 };
 
 export type NftLinkKind = 'verifier' | 'opensea' | 'explorer';
@@ -84,17 +75,17 @@ export function nftLinkFor(
     };
   }
 
-  // 2. OpenSea where supported.
-  const slug = chain.testnet
-    ? OPENSEA_TESTNET_SLUG[chainId]
-    : OPENSEA_MAINNET_SLUG[chainId];
-  if (slug) {
-    const host = chain.testnet ? 'testnets.opensea.io' : 'opensea.io';
-    return {
-      href: `https://${host}/assets/${slug}/${contract}/${tokenIdStr}`,
-      kind: 'opensea',
-      external: true,
-    };
+  // 2. OpenSea where supported — mainnet only (testnet sunset
+  //    2025-07-23). Testnet chains skip straight to the explorer.
+  if (!chain.testnet) {
+    const slug = OPENSEA_MAINNET_SLUG[chainId];
+    if (slug) {
+      return {
+        href: `https://opensea.io/assets/${slug}/${contract}/${tokenIdStr}`,
+        kind: 'opensea',
+        external: true,
+      };
+    }
   }
 
   // 3. Chain explorer fallback.

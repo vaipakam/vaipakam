@@ -270,8 +270,22 @@ export async function sweepUnpublishedListings(env: Env): Promise<void> {
       )
         .bind(now, chain.id, row.loan_id)
         .run();
+    } else if (result.error?.startsWith('unsupported-chain')) {
+      // Terminal sentinel — chain isn't in `OPENSEA_CHAINS` (post
+      // 2025-07-23 testnet sunset). Set `opensea_published_at = 0`
+      // so the row stops appearing in the NULL-only sweep query
+      // and doesn't starve real mainnet retries by occupying the
+      // batch budget every tick (Codex P1 on PR #315).
+      await env.DB.prepare(
+        `UPDATE prepay_listings
+           SET opensea_published_at = 0
+         WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(chain.id, row.loan_id)
+        .run();
     } else {
-      // Leave NULL — next tick retries.
+      // Transient publish failure on a supported chain — leave
+      // NULL so the next tick retries.
       // eslint-disable-next-line no-console
       console.warn(
         `[chainIndexer] sweep retry failed loan=${row.loan_id} chain=${chain.id}: ${result.error}`,
@@ -1711,9 +1725,12 @@ async function processLoanLogs(
       // T-086 step 14 — try the autonomous OpenSea publish BEFORE
       // the INSERT so the `opensea_published_at` flag can be set
       // in the same row write. The publish call is best-effort —
-      // failure populates the row with NULL `opensea_published_at`,
-      // which a future cron tick can sweep + retry (#311 covers
-      // the retry loop).
+      // a transient failure populates the row with NULL
+      // `opensea_published_at`, which a future cron tick (the
+      // sweep) retries. The `unsupported-chain` branch is
+      // terminal — we set `0` instead of NULL so the sweep skips
+      // the row forever (no quota burn after the 2025-07-23
+      // OpenSea testnet sunset). Codex P1 on PR #315.
       const publishResult = await _maybePublishToOpenSea(
         env,
         client,
@@ -1727,7 +1744,11 @@ async function processLoanLogs(
         pinnedExecutor as `0x${string}`,
         orderHash as `0x${string}`,
       );
-      const publishedAt = publishResult.published ? blockAt : null;
+      const publishedAt = publishResult.published
+        ? blockAt
+        : publishResult.unsupportedChain
+          ? 0
+          : null;
       await env.DB.prepare(
         `INSERT OR REPLACE INTO prepay_listings
            (chain_id, loan_id, order_hash, ask_price, conduit,
@@ -1782,7 +1803,9 @@ async function processLoanLogs(
         client, diamond, loanId,
       );
       // T-086 step 14 — try the autonomous publish for the
-      // rotated orderHash. Failure stays NULL on the row.
+      // rotated orderHash. Transient failure stays NULL (sweep
+      // retries); unsupported-chain is terminal so we set 0 to
+      // skip the sweep. Codex P1 on PR #315.
       const publishResult = await _maybePublishToOpenSea(
         env,
         client,
@@ -1796,7 +1819,11 @@ async function processLoanLogs(
         newPinnedExecutor as `0x${string}`,
         newOrderHash as `0x${string}`,
       );
-      const publishedAt = publishResult.published ? blockAt : null;
+      const publishedAt = publishResult.published
+        ? blockAt
+        : publishResult.unsupportedChain
+          ? 0
+          : null;
       // Try a `posted_at`-preserving UPDATE first (the common
       // case — the row exists from a prior Posted event); fall
       // back to an INSERT when no row exists (the rollout-
@@ -2111,7 +2138,7 @@ async function _maybePublishToOpenSea(
   conduitKey: `0x${string}`,
   executor: `0x${string}`,
   expectedOrderHash: `0x${string}`,
-): Promise<{ published: boolean }> {
+): Promise<{ published: boolean; unsupportedChain: boolean }> {
   try {
     const result = await indexerPublishPrepayListing(
       {
@@ -2133,13 +2160,19 @@ async function _maybePublishToOpenSea(
         `[chainIndexer] OpenSea publish failed loan=${loanId} chain=${chainId}: ${result.error}`,
       );
     }
-    return { published: result.published };
+    // Surface the unsupported-chain case to the handler so it can
+    // mark the row terminal (`opensea_published_at = 0`) and stop
+    // the sweep from re-trying it forever (Codex P1 on PR #315).
+    const unsupportedChain =
+      !result.published &&
+      (result.error?.startsWith('unsupported-chain') ?? false);
+    return { published: result.published, unsupportedChain };
   } catch (err) {
     console.error(
       `[chainIndexer] _maybePublishToOpenSea(${loanId}) threw`,
       err,
     );
-    return { published: false };
+    return { published: false, unsupportedChain: false };
   }
 }
 
