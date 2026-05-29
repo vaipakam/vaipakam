@@ -10,6 +10,7 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
+import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -365,6 +366,11 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             ),
             NFTStatusUpdateFailed.selector
         );
+
+        // T-086 follow-up to step 14 — clear any active prepay listing
+        // on the OLD loan atomically with the Active→Repaid flip. See
+        // {RepayFacet.repayLoan} for the full rationale. Idempotent.
+        LibPrepayCleanup.clearActiveListing(oldLoan, oldLoanId);
 
         // Mark old loan closed — refinance only operates on Active loans.
         LibLifecycle.transition(

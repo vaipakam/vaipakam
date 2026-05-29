@@ -582,24 +582,17 @@ contract NFTPrepayListingFacet is
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
         // INTENTIONALLY no loan-status gate (Codex P2 round-2 fix).
-        // If a live prepay-listed loan gets repaid via
-        // `RepayFacet.repayLoan` (or precloseped via PrecloseFacet,
-        // refinanced via RefinanceFacet), those terminals currently
-        // don't clear the prepay-listing bookkeeping — so the
-        // borrower's only escape from a stale listing without this
-        // would be the post-grace permissionless path. Letting the
-        // current position-NFT holder always cancel keeps the
-        // cleanup immediate; the operation is no-fund-movement
-        // (lock release + bookkeeping clear), safe across every
-        // terminal state.
-        //
-        // Follow-up: the Repay / Preclose / Refinance terminals
-        // SHOULD eventually call into a shared `_clearPrepayListing`
-        // helper themselves so the bookkeeping clears atomically
-        // with the close. That cross-facet wiring is tracked
-        // alongside the design-doc §13 step-10 default-flow
-        // integration; until that lands, this borrower escape
-        // hatch is the safety net.
+        // No-status-gate retained — even though `RepayFacet.repayLoan`,
+        // `PrecloseFacet` (direct + offset), and `RefinanceFacet` now
+        // call `LibPrepayCleanup.clearActiveListing` atomically with
+        // their Active→Repaid transition (T-086 follow-up to step
+        // 14), this borrower escape hatch remains the safety net for
+        // any pre-PR row that may have slipped through OR any future
+        // close path that forgets to wire the cleanup. The operation
+        // is no-fund-movement (lock release + bookkeeping clear),
+        // safe across every terminal state. Cancel is idempotent;
+        // calling it after the terminal already swept is a cheap
+        // no-op via the orderHash early-return.
 
         address holder = VaipakamNFTFacet(address(this)).ownerOf(loan.borrowerTokenId);
         if (holder != msg.sender) {
