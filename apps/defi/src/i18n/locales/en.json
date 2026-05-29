@@ -817,6 +817,8 @@
     "repayLoan": "Repay Loan",
     "repayInFull": "Repay in Full",
     "confirmAndRepay": "Confirm & Repay",
+    "repayPrepaySaleMessage": "Your loan has already been settled — a buyer filled your OpenSea prepay listing in the same block, paying the lender + treasury and refunding the remainder to your vault. Your repay didn't go through (no funds moved), and you don't need to retry.",
+    "repayPrepaySaleClaimsLink": "View claimables →",
     "loanLabel": "Loan",
     "addCollateral": "Add Collateral",
     "amountToAdd": "Amount to add",

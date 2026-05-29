@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
 import { L as Link } from "../components/L";
 import { useTranslation } from "react-i18next";
@@ -92,7 +92,7 @@ export default function LoanDetails() {
 
   // Action state
   const [actionLoading, setActionLoading] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<ReactNode | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [repayConfirming, setRepayConfirming] = useState(false);
   const [addCollateralAmt, setAddCollateralAmt] = useState("");
@@ -312,10 +312,63 @@ export default function LoanDetails() {
       loadLoan();
       step.success({ note: `tx ${tx.hash}` });
     } catch (err) {
-      setActionError(decodeContractError(err, "Repayment failed"));
+      // T-086 — when the borrower's repay races a buyer's
+      // Seaport.fulfillOrder in the same block and the buyer's tx wins
+      // EVM ordering, the loan flips to Settled (prepay sale waterfall
+      // already paid the lender + treasury + borrower vault). The
+      // borrower's repay reverts `InvalidLoanStatus()` from RepayFacet;
+      // the generic decode would surface "loan not Active" which
+      // doesn't tell the borrower what actually happened. Detect the
+      // prepay-sale case by re-reading the loan status and show a
+      // tailored message + a link to the claimables center so the
+      // borrower can grab their refunded remainder.
+      const friendly = await maybeDecodePrepaySaleSettlement(err);
+      setActionError(friendly ?? decodeContractError(err, "Repayment failed"));
       step.failure(err);
+      // Refresh the page-level loan state so the banner + actions
+      // card switch to the post-Settled view.
+      loadLoan();
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  /** Detect the "loan was settled via Seaport prepay sale" terminal
+   *  outcome. Returns a rich JSX message on hit, `null` otherwise so
+   *  the caller falls through to the generic `decodeContractError`.
+   *
+   *  The detection is conservative: we re-fetch the loan from the
+   *  diamond AFTER the revert, then check `status === Settled`. The
+   *  Settled status is exclusively the prepay-sale terminal in T-086
+   *  — every other close path uses Repaid / Defaulted / Liquidated /
+   *  FallbackPending. A false positive would require a status flip
+   *  to Settled with the borrower's repay still in flight, which
+   *  only happens via the prepay-sale executor callback.
+   */
+  const maybeDecodePrepaySaleSettlement = async (
+    _err: unknown,
+  ): Promise<ReactNode | null> => {
+    try {
+      const refreshed = (await diamond.getLoanDetails(
+        BigInt(loanId!),
+      )) as { status: bigint };
+      if (Number(refreshed.status) !== LoanStatus.Settled) return null;
+      return (
+        <span>
+          {t('loanDetails.repayPrepaySaleMessage')}{' '}
+          <Link
+            to="/claims"
+            style={{ textDecoration: 'underline', whiteSpace: 'nowrap' }}
+          >
+            {t('loanDetails.repayPrepaySaleClaimsLink')}
+          </Link>
+        </span>
+      );
+    } catch {
+      // Fall through to the generic decode if the read fails. Users
+      // would see the generic "Repayment failed" message and can
+      // refresh manually.
+      return null;
     }
   };
 
