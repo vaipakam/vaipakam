@@ -42,6 +42,6 @@
     "viem": "^2.0.0"
   },
   "devDependencies": {
-    "viem": "^2.48.4"
+    "viem": "^2.52.0"
   }
 }
