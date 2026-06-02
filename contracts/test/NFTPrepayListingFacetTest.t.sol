@@ -289,9 +289,13 @@ contract NFTPrepayListingFacetTest is SetupTest {
         uint256 minAsk = (floor * (10_000 + TEST_BUFFER_BPS)) / 10_000;
 
         vm.prank(borrowerHolder);
+        // Round-5 Block A (#313): the path now goes through
+        // `_requireAskCoversFloorWithFees` even when feeLegs is
+        // empty. The error type and the third arg (required ask)
+        // are unchanged; the error label is more precise.
         vm.expectRevert(
             abi.encodeWithSelector(
-                NFTPrepayListingFacet.AskBelowFloor.selector,
+                NFTPrepayListingFacet.AskBelowFloorPlusFees.selector,
                 LOAN_ID,
                 minAsk - 1,
                 minAsk
