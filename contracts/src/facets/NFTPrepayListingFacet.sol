@@ -10,7 +10,11 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IListingExecutorRecorder} from "../seaport/IListingExecutorRecorder.sol";
-import {FeeLeg, MAX_FEE_LEGS} from "../seaport/PrepayTypes.sol";
+import {
+    FeeLeg,
+    MAX_FEE_LEGS,
+    PREPAY_MODE_FIXED_PRICE
+} from "../seaport/PrepayTypes.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 import {IVaipakamPrepayContext} from "../seaport/IVaipakamPrepayContext.sol";
@@ -117,6 +121,13 @@ contract NFTPrepayListingFacet is
     ///       autonomous-publish fallback path can populate
     ///       `prepay_listings.fee_legs_json` from chain logs alone.
     ///       See §14.6 of the merged design + the Round-5.1 errata.
+    /// @dev T-086 Round-5 Block B (#309) — extended with Dutch
+    ///       fields: `endAskPrice`, `auctionEndTime`, `mode` (= 0
+    ///       for fixed-price, 1 for Dutch). The single shared event
+    ///       shape keeps the indexer's event-coverage allowlist
+    ///       tight + lets the `auction_mode` D1 column be a single
+    ///       discriminator on the same row. For fixed-price posts
+    ///       `endAskPrice == askPrice` and `auctionEndTime == 0`.
     /// @custom:event-category state-change/loan-mutation
     event PrepayListingPosted(
         uint256 indexed loanId,
@@ -127,6 +138,9 @@ contract NFTPrepayListingFacet is
         bytes32 conduitKey,
         uint256 salt,
         address executor,
+        uint256 endAskPrice,
+        uint256 auctionEndTime,
+        uint8 mode,
         FeeLeg[] feeLegs
     );
 
@@ -143,6 +157,10 @@ contract NFTPrepayListingFacet is
     ///         have rotated between post and update).
     /// @dev T-086 Round-5 Block A (#313) — same FeeLeg[] tail as
     ///       {PrepayListingPosted}. See §14.6 + Round-5.1 errata.
+    /// @dev T-086 Round-5 Block B (#309) — same Dutch-fields
+    ///       extension as {PrepayListingPosted}. For fixed-price
+    ///       updates `newEndAskPrice == newAskPrice` and
+    ///       `newAuctionEndTime == 0`.
     /// @custom:event-category state-change/loan-mutation
     event PrepayListingUpdated(
         uint256 indexed loanId,
@@ -154,6 +172,9 @@ contract NFTPrepayListingFacet is
         bytes32 newConduitKey,
         uint256 newSalt,
         address executor,
+        uint256 newEndAskPrice,
+        uint256 newAuctionEndTime,
+        uint8 mode,
         FeeLeg[] feeLegs
     );
 
@@ -292,6 +313,13 @@ contract NFTPrepayListingFacet is
     ///         (after the buffer-bps margin on the protocol legs)
     ///         must be ≥ 0.
     error AskBelowFloorPlusFees(uint256 loanId, uint256 askPrice, uint256 required);
+
+    // Round-5 Block B (#309) — Dutch-mode entry points + their
+    // mode-specific errors live on the sibling facet
+    // {NFTPrepayDutchListingFacet}. Shared storage (LibVaipakam) +
+    // the same recorder interface keep both facets coherent on the
+    // wire; the split is purely a bytecode-budget concern (see the
+    // Dutch facet's natspec for the "Tag too large" rationale).
 
     // ─── Cancel-reason enum ─────────────────────────────────────────────
 
@@ -441,6 +469,9 @@ contract NFTPrepayListingFacet is
             conduitKey,
             salt,
             address(executor),
+            askPrice,                    // endAskPrice (fixed-price → start)
+            0,                           // auctionEndTime sentinel
+            PREPAY_MODE_FIXED_PRICE,
             feeLegs
         );
     }
@@ -495,12 +526,15 @@ contract NFTPrepayListingFacet is
         LibERC721._lock(loan.borrowerTokenId, LibERC721.LockReason.PrepayCollateralListing);
         s.prepayListingOrderHash[loanId] = orderHash;
         s.prepayListingExecutor[loanId] = address(executor);
-        // T-086 #316 + Round-5 Block A (#313) — recordOrder pins
-        // the sign-time inputs (conduitKey, salt, startTime,
-        // askPrice, feeLegs) alongside (loanId, conduit) so the
-        // executor can rebuild the canonical OrderComponents at
-        // cleanup time and forward Seaport.cancel for fast
-        // OpenSea catalog refresh.
+        // T-086 #316 + Round-5 Block A (#313) + Round-5 Block B (#309) —
+        // recordOrder pins every sign-time input + the auction-mode
+        // tag. Fixed-price stamps `endAskPrice == askPrice` and
+        // `auctionEndTime == 0` so cancel-time reconstruction reads
+        // `pctx.graceEnd` as Seaport endTime (matching the Round-4
+        // shape verbatim). Block B's Dutch entry points pass
+        // `mode = PREPAY_MODE_DUTCH` + the auction-end-time +
+        // end-ask values; the executor's cancel-time dispatcher
+        // picks the right component builder.
         executor.recordOrder(
             orderHash,
             loanId,
@@ -509,6 +543,9 @@ contract NFTPrepayListingFacet is
             salt,
             block.timestamp,
             askPrice,
+            askPrice,                    // endAskPrice = askPrice
+            0,                           // auctionEndTime = 0 sentinel
+            PREPAY_MODE_FIXED_PRICE,
             feeLegs
         );
         _wireVaultForListing(s, loan, orderHash, conduit, address(executor));
@@ -621,6 +658,9 @@ contract NFTPrepayListingFacet is
             newConduitKey,
             newSalt,
             address(currentExecutor),
+            newAskPrice,                 // newEndAskPrice (fixed-price → start)
+            0,                           // newAuctionEndTime sentinel
+            PREPAY_MODE_FIXED_PRICE,
             feeLegs
         );
     }
@@ -663,12 +703,10 @@ contract NFTPrepayListingFacet is
 
         s.prepayListingOrderHash[loanId] = newOrderHash;
         s.prepayListingExecutor[loanId] = address(executor);
-        // T-086 #316 + Round-5 Block A (#313) — same sign-time-input
-        // pinning as the post path including fee legs. The update
-        // flow's preceding clearOrder() on the OLD hash already
-        // forwarded Seaport.cancel for the previous OrderComponents;
-        // this records the NEW shape so a future cancel / cleanup
-        // can do the same for the rotated order.
+        // T-086 #316 + Round-5 Block A (#313) + Round-5 Block B (#309) —
+        // same sign-time-input pinning as the post path including
+        // fee legs + the auction-mode tag. Fixed-price stamps
+        // `endAskPrice == askPrice` and `auctionEndTime == 0`.
         executor.recordOrder(
             newOrderHash,
             loanId,
@@ -677,6 +715,9 @@ contract NFTPrepayListingFacet is
             salt,
             block.timestamp,
             askPrice,
+            askPrice,                    // endAskPrice = askPrice
+            0,                           // auctionEndTime = 0 sentinel
+            PREPAY_MODE_FIXED_PRICE,
             feeLegs
         );
 
@@ -1062,4 +1103,5 @@ contract NFTPrepayListingFacet is
         if (vaultAddr == address(0)) revert ExecutorNotSet();
         return VaipakamVaultImplementation(vaultAddr);
     }
+
 }

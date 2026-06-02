@@ -35,6 +35,7 @@ import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {NFTPrepayListingFacet} from "../src/facets/NFTPrepayListingFacet.sol";
+import {NFTPrepayDutchListingFacet} from "../src/facets/NFTPrepayDutchListingFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {MetricsDashboardFacet} from "../src/facets/MetricsDashboardFacet.sol";
@@ -138,6 +139,7 @@ contract DeployDiamond is Script {
         PrecloseFacet precloseFacet = new PrecloseFacet();
         PrepayListingFacet prepayListingFacet = new PrepayListingFacet();
         NFTPrepayListingFacet nftPrepayListingFacet = new NFTPrepayListingFacet();
+        NFTPrepayDutchListingFacet nftPrepayDutchListingFacet = new NFTPrepayDutchListingFacet();
         RefinanceFacet refinanceFacet = new RefinanceFacet();
         MetricsFacet metricsFacet = new MetricsFacet();
         MetricsDashboardFacet metricsDashboardFacet = new MetricsDashboardFacet();
@@ -173,7 +175,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 36 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](39);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](40);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -235,10 +237,17 @@ contract DeployDiamond is Script {
         );
         // T-086 step 6 — `NFTPrepayListingFacet` (borrower-facing
         // post / update / cancel / cancelExpired entry points for
-        // the Seaport prepay listing flow + two view helpers).
+        // the FIXED-PRICE Seaport prepay listing flow + view helpers).
         cuts[38] = _buildCut(
             address(nftPrepayListingFacet),
             _getNFTPrepayListingSelectors()
+        );
+        // T-086 Round-5 Block B (#309) — `NFTPrepayDutchListingFacet`
+        // (Dutch-decay post + update entry points, sibling facet
+        // sharing LibVaipakam storage with NFTPrepayListingFacet).
+        cuts[39] = _buildCut(
+            address(nftPrepayDutchListingFacet),
+            _getNFTPrepayDutchListingSelectors()
         );
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
@@ -594,6 +603,7 @@ contract DeployDiamond is Script {
         console.log("PrecloseFacet:        ", address(precloseFacet));
         console.log("PrepayListingFacet:   ", address(prepayListingFacet));
         console.log("NFTPrepayListingFacet:", address(nftPrepayListingFacet));
+        console.log("NFTPrepayDutchListingFacet:", address(nftPrepayDutchListingFacet));
         console.log("RefinanceFacet:       ", address(refinanceFacet));
         console.log("MetricsFacet:         ", address(metricsFacet));
         console.log("MetricsDashboardFacet:", address(metricsDashboardFacet));
@@ -1150,10 +1160,16 @@ contract DeployDiamond is Script {
 
     /// @dev T-086 step 6 — `NFTPrepayListingFacet` selectors. Hosts the
     ///      borrower-facing post / update / cancel / cancelExpired
-    ///      entry points for the Seaport prepay listing flow, plus
-    ///      two view helpers (`getPrepayListingOrderHash` +
-    ///      `getPrepayListingBufferBps`) read by the frontend +
-    ///      indexer when rendering listing status.
+    ///      entry points for the FIXED-PRICE Seaport prepay listing
+    ///      flow, plus three view helpers (`getPrepayListingOrderHash`,
+    ///      `getPrepayListingBufferBps`, `getPrepayListingEnabled`)
+    ///      read by the frontend + indexer when rendering listing
+    ///      status.
+    ///      Round-5 Block B (#309) — the Dutch entry points live on
+    ///      a sibling facet ({NFTPrepayDutchListingFacet}, see
+    ///      {_getNFTPrepayDutchListingSelectors}) to keep this
+    ///      facet's bytecode within solc's jump-table reservation
+    ///      budget.
     function _getNFTPrepayListingSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](7);
         s[0] = NFTPrepayListingFacet.postPrepayListing.selector;
@@ -1167,6 +1183,20 @@ contract DeployDiamond is Script {
         // "unavailable on this chain" instead of a form that reverts at
         // submit with `PrepayListingDisabled`.
         s[6] = NFTPrepayListingFacet.getPrepayListingEnabled.selector;
+    }
+
+    /// @dev T-086 Round-5 Block B (#309) — `NFTPrepayDutchListingFacet`
+    ///      selectors. Dutch-decay entry points sharing
+    ///      {LibVaipakam} storage + the same recorder interface as
+    ///      {NFTPrepayListingFacet}. The split is bytecode-budget
+    ///      driven (see facet natspec); the indexer + dapp see the
+    ///      same canonical `PrepayListingPosted` /
+    ///      `PrepayListingUpdated` event-topic hashes regardless of
+    ///      which facet emitted.
+    function _getNFTPrepayDutchListingSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = NFTPrepayDutchListingFacet.postPrepayDutchListing.selector;
+        s[1] = NFTPrepayDutchListingFacet.updatePrepayDutchListing.selector;
     }
 
     function _getRefinanceSelectors() internal pure returns (bytes4[] memory s) {

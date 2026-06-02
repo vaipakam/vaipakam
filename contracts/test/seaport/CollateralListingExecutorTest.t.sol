@@ -7,7 +7,11 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 
 import {CollateralListingExecutor} from "../../src/seaport/CollateralListingExecutor.sol";
-import {FeeLeg} from "../../src/seaport/PrepayTypes.sol";
+import {
+    FeeLeg,
+    PREPAY_MODE_FIXED_PRICE,
+    PREPAY_MODE_DUTCH
+} from "../../src/seaport/PrepayTypes.sol";
 import {
     ISeaportZone,
     ZoneParameters,
@@ -219,7 +223,7 @@ contract CollateralListingExecutorTest is Test {
             uint256(0),
             uint256(block.timestamp),
             TEST_ASK_PRICE
-        , _emptyFeeLegs());
+        , TEST_ASK_PRICE, 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs());
     }
 
     // ─── Admin: conduit allow-list ──────────────────────────────────────
@@ -255,7 +259,7 @@ contract CollateralListingExecutorTest is Test {
         executor.recordOrder(
             TEST_ORDER_HASH, TEST_LOAN_ID, conduit,
             bytes32(0), uint256(0), uint256(block.timestamp), uint256(0)
-        , _emptyFeeLegs());
+        , uint256(0), 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs());
     }
 
     function test_recordOrder_rejectsUnapprovedConduit() public {
@@ -267,7 +271,7 @@ contract CollateralListingExecutorTest is Test {
         executor.recordOrder(
             TEST_ORDER_HASH, TEST_LOAN_ID, rogue,
             bytes32(0), uint256(0), uint256(block.timestamp), uint256(0)
-        , _emptyFeeLegs());
+        , uint256(0), 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs());
     }
 
     function test_recordOrder_alreadyRecorded() public {
@@ -281,7 +285,7 @@ contract CollateralListingExecutorTest is Test {
         executor.recordOrder(
             TEST_ORDER_HASH, TEST_LOAN_ID, conduit,
             bytes32(0), uint256(0), uint256(block.timestamp), uint256(0)
-        , _emptyFeeLegs());
+        , uint256(0), 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs());
     }
 
     function test_recordOrder_uint96Overflow() public {
@@ -293,7 +297,7 @@ contract CollateralListingExecutorTest is Test {
         executor.recordOrder(
             TEST_ORDER_HASH, tooBig, conduit,
             bytes32(0), uint256(0), uint256(block.timestamp), uint256(0)
-        , _emptyFeeLegs());
+        , uint256(0), 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs());
     }
 
     /// @dev T-086 #316 — bounds check on the new `startTime` narrowing
@@ -311,7 +315,7 @@ contract CollateralListingExecutorTest is Test {
         executor.recordOrder(
             TEST_ORDER_HASH, TEST_LOAN_ID, conduit,
             bytes32(0), uint256(0), tooBig, uint256(0)
-        , _emptyFeeLegs());
+        , uint256(0), 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs());
     }
 
     /// @dev T-086 #316 — bounds check on the new `askPrice` narrowing
@@ -329,20 +333,25 @@ contract CollateralListingExecutorTest is Test {
         executor.recordOrder(
             TEST_ORDER_HASH, TEST_LOAN_ID, conduit,
             bytes32(0), uint256(0), uint256(block.timestamp), tooBig
-        , _emptyFeeLegs());
+        , tooBig, 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs());
     }
 
     function test_recordOrder_happyPath() public {
         _recordValidOrder();
-        // T-086 #316 — extended OrderContext returns the full
-        // 6-tuple via the auto-generated public getter.
+        // T-086 #316 + Round-5 Block B (#309) — OrderContext returns a
+        // 9-tuple via the auto-generated public getter. The Block B
+        // fields default to fixed-price stamps: `endAskPrice == askPrice`,
+        // `auctionEndTime == 0`, `mode == PREPAY_MODE_FIXED_PRICE`.
         (
             uint96 storedLoanId,
             address storedConduit,
             bytes32 storedConduitKey,
             uint256 storedSalt,
             uint64 storedStartTime,
-            uint192 storedAskPrice
+            uint192 storedAskPrice,
+            uint128 storedEndAskPrice,
+            uint64 storedAuctionEndTime,
+            uint8 storedMode
         ) = executor.orderContext(TEST_ORDER_HASH);
         assertEq(uint256(storedLoanId), TEST_LOAN_ID);
         assertEq(storedConduit, conduit);
@@ -350,6 +359,9 @@ contract CollateralListingExecutorTest is Test {
         assertEq(storedSalt, 0);
         assertEq(uint256(storedStartTime), block.timestamp);
         assertEq(uint256(storedAskPrice), TEST_ASK_PRICE);
+        assertEq(uint256(storedEndAskPrice), TEST_ASK_PRICE);
+        assertEq(uint256(storedAuctionEndTime), 0);
+        assertEq(storedMode, PREPAY_MODE_FIXED_PRICE);
     }
 
     // ─── clearOrder ─────────────────────────────────────────────────────
@@ -365,7 +377,7 @@ contract CollateralListingExecutorTest is Test {
         _recordValidOrder();
         vm.prank(address(diamond));
         executor.clearOrder(TEST_ORDER_HASH);
-        (uint96 storedLoanId, , , , , ) = executor.orderContext(TEST_ORDER_HASH);
+        (uint96 storedLoanId, , , , , , , , ) = executor.orderContext(TEST_ORDER_HASH);
         assertEq(uint256(storedLoanId), 0);
     }
 
@@ -427,7 +439,7 @@ contract CollateralListingExecutorTest is Test {
         vm.prank(address(diamond));
         executor.clearOrder(TEST_ORDER_HASH);
         // And the binding is still cleared regardless.
-        (uint96 storedLoanId, , , , , ) = executor.orderContext(TEST_ORDER_HASH);
+        (uint96 storedLoanId, , , , , , , , ) = executor.orderContext(TEST_ORDER_HASH);
         assertEq(uint256(storedLoanId), 0);
     }
 
@@ -702,7 +714,7 @@ contract CollateralListingExecutorTest is Test {
 
         // orderContext entry MUST be cleared so a Seaport-validated
         // re-fill on the same hash can't slip through.
-        (uint96 storedLoanId, , , , , ) = executor.orderContext(TEST_ORDER_HASH);
+        (uint96 storedLoanId, , , , , , , , ) = executor.orderContext(TEST_ORDER_HASH);
         assertEq(uint256(storedLoanId), 0);
     }
     /// @dev Round-5 Block A (#313) — most executor tests don't care

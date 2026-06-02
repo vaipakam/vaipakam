@@ -119,6 +119,7 @@ import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {NFTPrepayListingFacet} from "../src/facets/NFTPrepayListingFacet.sol";
+import {NFTPrepayDutchListingFacet} from "../src/facets/NFTPrepayDutchListingFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 
 contract SetupTest is Test {
@@ -215,6 +216,7 @@ contract SetupTest is Test {
     PrecloseFacet precloseFacet;
     PrepayListingFacet prepayListingFacet;
     NFTPrepayListingFacet nftPrepayListingFacet;
+    NFTPrepayDutchListingFacet nftPrepayDutchListingFacet;
     RefinanceFacet refinanceFacet;
     // #229 — final 9-facet superset closure.
     DiamondLoupeFacet diamondLoupeFacet;
@@ -296,6 +298,7 @@ contract SetupTest is Test {
         precloseFacet = new PrecloseFacet();
         prepayListingFacet = new PrepayListingFacet();
         nftPrepayListingFacet = new NFTPrepayListingFacet();
+        nftPrepayDutchListingFacet = new NFTPrepayDutchListingFacet();
         refinanceFacet = new RefinanceFacet();
         // #229 — final 9-facet superset closure (cut below).
         diamondLoupeFacet = new DiamondLoupeFacet();
@@ -335,7 +338,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](40);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](41);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -555,11 +558,18 @@ contract SetupTest is Test {
         });
         // T-086 step 6 — NFTPrepayListingFacet (borrower-facing
         // post / update / cancel / cancelExpired entry points +
-        // two view helpers for the prepay listing flow).
+        // view helpers for the FIXED-PRICE prepay listing flow).
         cuts[39] = IDiamondCut.FacetCut({
             facetAddress: address(nftPrepayListingFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getNFTPrepayListingFacetSelectors()
+        });
+        // T-086 Round-5 Block B (#309) — NFTPrepayDutchListingFacet
+        // (Dutch-decay post + update sibling facet).
+        cuts[40] = IDiamondCut.FacetCut({
+            facetAddress: address(nftPrepayDutchListingFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getNFTPrepayDutchListingFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

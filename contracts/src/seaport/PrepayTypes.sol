@@ -25,6 +25,41 @@ pragma solidity ^0.8.29;
 // follow-up. See §14.5 of the design doc.
 uint256 constant MAX_FEE_LEGS = 4;
 
+// Round-5 Block B (Issue #309) — auction-mode discriminator the
+// executor's recordOrder + cancel-time reconstruction dispatch on.
+// Kept as plain uint8 constants (not a Solidity enum) so the
+// recorder interface, the executor storage layout, and every
+// off-chain consumer (TS, JSON ABI) all see the same wire-level
+// shape with no implicit casting surface.
+//
+// `PREPAY_MODE_FIXED_PRICE` — the Round-4 / Block A path. The
+// borrower-leg and every fee-leg have `startAmount == endAmount`;
+// the Seaport `OrderComponents.endTime` is `loan.gracePeriodEnd`
+// and Seaport's amount-interpolation collapses to the constant.
+//
+// `PREPAY_MODE_DUTCH` — the Block B path. The borrower-leg decays
+// from `startAskPrice − projectedLender − projectedTreasury −
+// sum(feeLegs.startAmount)` down to `endAskPrice − projectedLender
+// − projectedTreasury − sum(feeLegs.endAmount)` over the window
+// `[startTime, auctionEndTime]`. Lender + treasury legs stay
+// pinned at the projected-max floor at `auctionEndTime` (see
+// design doc §15.2). The Seaport `OrderComponents.endTime` is
+// `auctionEndTime`, NOT `gracePeriodEnd` — past `auctionEndTime`,
+// Seaport rejects fills as expired and the protocol-side cleanup
+// path (`cancelPrepayListing` / `cancelExpiredPrepayListing`)
+// handles the still-locked NFT.
+uint8 constant PREPAY_MODE_FIXED_PRICE = 0;
+uint8 constant PREPAY_MODE_DUTCH = 1;
+
+// Minimum auction window for Dutch listings, enforced at the facet
+// boundary. Protects against accidentally posting a sub-block-window
+// auction that locks the borrower's NFT but can never fill (the
+// pinned lender + treasury legs would over-cover any fill at
+// t < auctionEndTime, but the borrower's UI would never see a
+// usable price band). One hour is the conservative v1 floor —
+// design doc §15.2.
+uint256 constant MIN_AUCTION_WINDOW = 1 hours;
+
 /// @notice One marketplace-required fee leg in a prepay-collateral
 ///         listing. Borrower-supplied at post time, sourced from
 ///         OpenSea's Collection API by the dapp.

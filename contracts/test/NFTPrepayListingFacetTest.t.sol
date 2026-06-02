@@ -6,7 +6,13 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibERC721} from "../src/libraries/LibERC721.sol";
 import {NFTPrepayListingFacet} from "../src/facets/NFTPrepayListingFacet.sol";
-import {FeeLeg} from "../src/seaport/PrepayTypes.sol";
+import {NFTPrepayDutchListingFacet} from "../src/facets/NFTPrepayDutchListingFacet.sol";
+import {
+    FeeLeg,
+    PREPAY_MODE_FIXED_PRICE,
+    PREPAY_MODE_DUTCH,
+    MIN_AUCTION_WINDOW
+} from "../src/seaport/PrepayTypes.sol";
 import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
@@ -1159,6 +1165,202 @@ contract NFTPrepayListingFacetTest is SetupTest {
         );
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
             LOAN_ID, minProtocolAsk, TEST_SALT_A, conduitKey, legs
+        );
+    }
+
+    // ─── Round-5 Block B (#309) — Dutch posting integration tests ───────
+
+    /// @dev v1 baseline projected-floor at any `auctionEndTime` ≤
+    ///      `gracePeriodEnd` is approximated by the test's pctx mock
+    ///      to be the same as the live floor (the mock returns a
+    ///      constant pctx — see `_scaffoldActiveLoan`). For Dutch
+    ///      math the projected lender+treasury ≈ 100e18 + 0 (mock
+    ///      has lenderLeg=100e18, treasuryLeg=0 in the default scaffold).
+    function _dutchAuctionEnd() internal view returns (uint256) {
+        // 6h into the future — safely > MIN_AUCTION_WINDOW (1h) and
+        // safely < gracePeriodEnd (30 days). Reads block.timestamp
+        // at call time so the timestamp's relativity to the scaffold's
+        // pctx graceEnd is preserved.
+        return block.timestamp + 6 hours;
+    }
+
+    function test_postPrepayDutchListing_happyPath() public {
+        _scaffoldActiveLoan({allowsPrepay: true});
+        // Dutch: startAsk=110e18 → endAsk=104e18; lender=100e18 +
+        // treasury=0 + zero fees → borrower decays from 10e18 → 4e18.
+        uint256 startAsk = 110 ether;
+        uint256 endAsk = 104 ether;
+        uint256 auctionEndTime = _dutchAuctionEnd();
+
+        vm.prank(borrowerHolder);
+        bytes32 derivedHash = NFTPrepayDutchListingFacet(address(diamond)).postPrepayDutchListing(
+            LOAN_ID, startAsk, endAsk, auctionEndTime, TEST_SALT_A, conduitKey, _emptyFeeLegs()
+        );
+
+        assertEq(
+            NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
+            derivedHash,
+            "diamond stores active orderHash"
+        );
+        assertTrue(derivedHash != bytes32(0), "derived hash non-zero");
+
+        // Executor recorded the order with Dutch fields.
+        assertEq(mockExecutor.recordCallCount(), 1, "recordOrder called once");
+        MockListingExecutorRecorder.RecordedCall memory call = mockExecutor.recordedCallAt(0);
+        assertEq(call.orderHash, derivedHash, "right orderHash");
+        assertEq(call.askPrice, startAsk, "startAskPrice recorded as ctx.askPrice");
+        assertEq(call.endAskPrice, endAsk, "endAskPrice recorded");
+        assertEq(call.auctionEndTime, auctionEndTime, "auctionEndTime recorded");
+        assertEq(call.mode, PREPAY_MODE_DUTCH, "mode tag = DUTCH");
+
+        // Lock active under PrepayCollateralListing.
+        assertEq(
+            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
+            uint8(LibERC721.LockReason.PrepayCollateralListing),
+            "borrower NFT locked"
+        );
+    }
+
+    function test_postPrepayDutchListing_revertsAuctionWindowTooShort() public {
+        _scaffoldActiveLoan({allowsPrepay: true});
+        // auctionEndTime exactly == block.timestamp + MIN_AUCTION_WINDOW —
+        // facet uses strict `<=` so this hits the revert boundary.
+        uint256 tooSoon = block.timestamp + MIN_AUCTION_WINDOW;
+        vm.prank(borrowerHolder);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NFTPrepayDutchListingFacet.AuctionWindowTooShort.selector,
+                LOAN_ID,
+                tooSoon,
+                MIN_AUCTION_WINDOW
+            )
+        );
+        NFTPrepayDutchListingFacet(address(diamond)).postPrepayDutchListing(
+            LOAN_ID, 110 ether, 104 ether, tooSoon, TEST_SALT_A, conduitKey, _emptyFeeLegs()
+        );
+    }
+
+    function test_postPrepayDutchListing_revertsAuctionExceedsGrace() public {
+        _scaffoldActiveLoan({allowsPrepay: true});
+        // Scaffold loan duration = 30 days; gracePeriod() adds a few
+        // more days on top. Picking 90 days out comfortably exceeds
+        // any realistic configuration of the grace window.
+        uint256 tooLate = block.timestamp + 90 days;
+        vm.prank(borrowerHolder);
+        // Don't pin the exact gracePeriodEnd value — the scaffold's
+        // computation of `loan.startTime + duration*1d + gracePeriod`
+        // depends on internal config defaults. Use selector-only match.
+        vm.expectRevert();
+        NFTPrepayDutchListingFacet(address(diamond)).postPrepayDutchListing(
+            LOAN_ID, 110 ether, 104 ether, tooLate, TEST_SALT_A, conduitKey, _emptyFeeLegs()
+        );
+    }
+
+    function test_postPrepayDutchListing_revertsAskNotMonotonic() public {
+        _scaffoldActiveLoan({allowsPrepay: true});
+        // Inverted: end > start.
+        uint256 startAsk = 105 ether;
+        uint256 endAsk = 110 ether;
+        vm.prank(borrowerHolder);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NFTPrepayDutchListingFacet.AskNotMonotonic.selector,
+                startAsk,
+                endAsk
+            )
+        );
+        NFTPrepayDutchListingFacet(address(diamond)).postPrepayDutchListing(
+            LOAN_ID, startAsk, endAsk, _dutchAuctionEnd(), TEST_SALT_A, conduitKey, _emptyFeeLegs()
+        );
+    }
+
+    function test_postPrepayDutchListing_revertsDutchEndAskBelowProjectedFloor() public {
+        _scaffoldActiveLoan({allowsPrepay: true});
+        // Lender=100, treasury=0, no fees → endMin=100. Pick endAsk=99
+        // to trip the end-state solvency revert. startAsk=110 keeps the
+        // start-state solvency check passing so the end-state path is
+        // reached.
+        uint256 startAsk = 110 ether;
+        uint256 endAsk = 99 ether;
+        vm.prank(borrowerHolder);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NFTPrepayDutchListingFacet.DutchEndAskBelowProjectedFloorPlusFees.selector,
+                LOAN_ID,
+                endAsk,
+                100 ether  // protocolLegs (lender + treasury, no fees)
+            )
+        );
+        NFTPrepayDutchListingFacet(address(diamond)).postPrepayDutchListing(
+            LOAN_ID, startAsk, endAsk, _dutchAuctionEnd(), TEST_SALT_A, conduitKey, _emptyFeeLegs()
+        );
+    }
+
+    function test_postPrepayDutchListing_revertsBorrowerLegNotMonotonic() public {
+        _scaffoldActiveLoan({allowsPrepay: true});
+        // Total ask decays slowly (1 wei), fees decay fast (5 ether) —
+        // borrower remainder INVERTS (endRemainder > startRemainder)
+        // even though startAsk > endAsk by 1 wei.
+        // startBorrower = 110e - 100e - 10e = 0
+        // endBorrower   = 110e - 1 - 100e - 5e = ~5e (positive, larger)
+        // → BorrowerLegNotMonotonic.
+        uint256 startAsk = 110 ether;
+        uint256 endAsk = startAsk - 1; // monotonic by 1 wei
+        FeeLeg[] memory legs = new FeeLeg[](1);
+        legs[0] = FeeLeg({
+            recipient: makeAddr("fast-decay-fee"),
+            startAmount: uint96(10 ether),
+            endAmount: uint96(5 ether)
+        });
+        vm.prank(borrowerHolder);
+        vm.expectRevert();  // BorrowerLegNotMonotonic with specific values
+        NFTPrepayDutchListingFacet(address(diamond)).postPrepayDutchListing(
+            LOAN_ID, startAsk, endAsk, _dutchAuctionEnd(), TEST_SALT_A, conduitKey, legs
+        );
+    }
+
+    function test_updatePrepayDutchListing_happyPath() public {
+        _scaffoldActiveLoan({allowsPrepay: true});
+        // Initial Dutch post.
+        vm.prank(borrowerHolder);
+        bytes32 oldHash = NFTPrepayDutchListingFacet(address(diamond)).postPrepayDutchListing(
+            LOAN_ID, 110 ether, 104 ether, _dutchAuctionEnd(),
+            TEST_SALT_A, conduitKey, _emptyFeeLegs()
+        );
+
+        // Update with a fresh shape.
+        uint256 newStart = 115 ether;
+        uint256 newEnd = 108 ether;
+        uint256 newEndTime = block.timestamp + 12 hours;
+        vm.prank(borrowerHolder);
+        bytes32 newHash = NFTPrepayDutchListingFacet(address(diamond)).updatePrepayDutchListing(
+            LOAN_ID, newStart, newEnd, newEndTime,
+            TEST_SALT_A + 1, conduitKey, _emptyFeeLegs()
+        );
+
+        assertTrue(newHash != oldHash, "fresh hash on rotation");
+        assertEq(
+            NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
+            newHash,
+            "diamond points at rotated hash"
+        );
+
+        // Executor saw clearOrder(old) + recordOrder(new); the lock
+        // stayed continuous (no _unlock between post and update).
+        assertEq(mockExecutor.clearCallCount(), 1, "old hash cleared");
+        assertEq(mockExecutor.lastClearedOrderHash(), oldHash, "right hash cleared");
+        assertEq(mockExecutor.recordCallCount(), 2, "two records (post + update)");
+
+        MockListingExecutorRecorder.RecordedCall memory call = mockExecutor.recordedCallAt(1);
+        assertEq(call.mode, PREPAY_MODE_DUTCH, "update preserved Dutch mode");
+        assertEq(call.endAskPrice, newEnd, "new endAsk recorded");
+        assertEq(call.auctionEndTime, newEndTime, "new auctionEnd recorded");
+
+        // Lock stayed PrepayCollateralListing across the rotation.
+        assertEq(
+            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
+            uint8(LibERC721.LockReason.PrepayCollateralListing),
+            "lock continuous"
         );
     }
 }

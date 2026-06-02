@@ -16,6 +16,7 @@ import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {NFTPrepayListingFacet} from "../src/facets/NFTPrepayListingFacet.sol";
+import {NFTPrepayDutchListingFacet} from "../src/facets/NFTPrepayDutchListingFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -1267,6 +1268,19 @@ contract HelperTest {
         selectors[4] = NFTPrepayListingFacet.getPrepayListingOrderHash.selector;
         selectors[5] = NFTPrepayListingFacet.getPrepayListingBufferBps.selector;
         selectors[6] = NFTPrepayListingFacet.getPrepayListingEnabled.selector;
+        return selectors;
+    }
+
+    /// @dev T-086 Round-5 Block B (#309) — `NFTPrepayDutchListingFacet`
+    ///      selectors. Mirrors `DeployDiamond._getNFTPrepayDutchListingSelectors`.
+    function getNFTPrepayDutchListingFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](2);
+        selectors[0] = NFTPrepayDutchListingFacet.postPrepayDutchListing.selector;
+        selectors[1] = NFTPrepayDutchListingFacet.updatePrepayDutchListing.selector;
         return selectors;
     }
 }

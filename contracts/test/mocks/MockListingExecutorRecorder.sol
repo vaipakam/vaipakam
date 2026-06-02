@@ -17,11 +17,10 @@ import {FeeLeg} from "../../src/seaport/PrepayTypes.sol";
  *         Seaport + UUPS-proxy + governance executor.
  */
 contract MockListingExecutorRecorder is IListingExecutorRecorder {
-    /// @dev T-086 #316 + Round-5 Block A (#313) — extended to mirror
-    ///      the recorder's new shape so facet tests can assert the
-    ///      diamond passed the sign-time inputs (conduitKey, salt,
-    ///      startTime, askPrice, feeLegs) alongside (orderHash,
-    ///      loanId, conduit).
+    /// @dev T-086 #316 + Round-5 Block A (#313) + Round-5 Block B
+    ///      (#309) — mirrors the recorder's multi-mode shape so
+    ///      facet tests can assert the diamond passed every sign-
+    ///      time input alongside the mode tag + Dutch fields.
     struct RecordedCall {
         bytes32 orderHash;
         uint256 loanId;
@@ -30,6 +29,9 @@ contract MockListingExecutorRecorder is IListingExecutorRecorder {
         uint256 salt;
         uint256 startTime;
         uint256 askPrice;
+        uint256 endAskPrice;
+        uint256 auctionEndTime;
+        uint8 mode;
         FeeLeg[] feeLegs;
     }
 
@@ -66,6 +68,9 @@ contract MockListingExecutorRecorder is IListingExecutorRecorder {
         uint256 salt,
         uint256 startTime,
         uint256 askPrice,
+        uint256 endAskPrice,
+        uint256 auctionEndTime,
+        uint8 mode,
         FeeLeg[] calldata feeLegs
     ) external override {
         // Push an empty entry first, then copy each FeeLeg field
@@ -81,6 +86,9 @@ contract MockListingExecutorRecorder is IListingExecutorRecorder {
         call.salt = salt;
         call.startTime = startTime;
         call.askPrice = askPrice;
+        call.endAskPrice = endAskPrice;
+        call.auctionEndTime = auctionEndTime;
+        call.mode = mode;
         for (uint256 i = 0; i < feeLegs.length; ) {
             call.feeLegs.push(feeLegs[i]);
             unchecked { ++i; }

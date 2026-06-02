@@ -78,7 +78,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
     function test_DeployDiamond_RoutesEveryFacetSelector() public {
         _populateRoutedSet();
 
-        string[39] memory facets = cutFacetNames();
+        string[40] memory facets = cutFacetNames();
         uint256 missing;
         for (uint256 i; i < facets.length; ++i) {
             string memory name = facets[i];
@@ -108,7 +108,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
     ///         4-byte selector — such a collision makes `diamondCut`
     ///         revert and the Diamond undeployable.
     function test_NoSelectorCollisionAcrossFacets() public {
-        string[39] memory facets = cutFacetNames();
+        string[40] memory facets = cutFacetNames();
         uint256 collisions;
         for (uint256 i; i < facets.length; ++i) {
             collisions += _recordAndCountCollisions(facets[i]);
@@ -218,8 +218,11 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
         _addAll(_getPrepayListingSelectors());
         // T-086 step 6 — `NFTPrepayListingFacet` (borrower-facing
         // post / update / cancel / cancelExpired entry points for
-        // the Seaport prepay listing flow).
+        // the FIXED-PRICE Seaport prepay listing flow).
         _addAll(_getNFTPrepayListingSelectors());
+        // T-086 Round-5 Block B (#309) — `NFTPrepayDutchListingFacet`
+        // (Dutch-decay sibling facet).
+        _addAll(_getNFTPrepayDutchListingSelectors());
     }
 
     /// @dev Add a selector list to the routed set, rejecting two faults:
