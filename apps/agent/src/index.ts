@@ -68,6 +68,7 @@ import { runBuyWatchdog } from './buyWatchdog';
 import { handle0xQuote, handle1inchQuote } from './quoteProxy';
 import { handleOpenSeaListingPost } from './openseaProxy';
 import { handleOpenSeaCollection } from './openseaCollectionProxy';
+import { handleOpenSeaOffers } from './openseaOffersProxy';
 import { handleFeeRecipientPreflight } from './feeRecipientPreflight';
 import { handleDiagRecord, pruneOldDiagErrors } from './diagRecord';
 import {
@@ -247,6 +248,22 @@ export default {
       req.method === 'POST'
     ) {
       return handleFeeRecipientPreflight(
+        req,
+        resolved,
+        resolveAllowedOrigin(req, resolved),
+      );
+    }
+    // T-086 Round-5 Block C (#309 Mode B) — OpenSea Offers proxy.
+    // The borrower's loan card polls this while open to surface
+    // incoming OpenSea offers; the borrower can then "Match" an
+    // acceptable offer via `updatePrepayListing`. Pure pass-
+    // through: rate-limit + CORS + aggregate (item + collection)
+    // offers in one round-trip; the dapp does the threshold filter.
+    if (
+      url.pathname.startsWith('/opensea/offers/') &&
+      req.method === 'GET'
+    ) {
+      return handleOpenSeaOffers(
         req,
         resolved,
         resolveAllowedOrigin(req, resolved),

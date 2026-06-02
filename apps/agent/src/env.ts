@@ -131,6 +131,11 @@ interface BaseEnv {
   // the OPENSEA_API_KEY quota. Same Cloudflare built-in binding
   // pattern + key-by-IP as the listing rate-limit.
   OPENSEA_COLLECTION_RATELIMIT?: RateLimitBinding;
+  // T-086 Round-5 Block C (#309 Mode B) — rate-limit for the
+  // GET /opensea/offers/{chainId}/{contract}/{tokenId} proxy. The
+  // dapp polls every ~30s while the loan card is open, so the
+  // limit needs headroom (60 req/min/IP starting value).
+  OPENSEA_OFFERS_RATELIMIT?: RateLimitBinding;
 
   // Diagnostics sampling (0.0–1.0; default 1.0 = write every accepted POST).
   // Coerced from string to float at read time. Out-of-range values
@@ -346,6 +351,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     DIAG_RECORD_RATELIMIT: raw.DIAG_RECORD_RATELIMIT,
     OPENSEA_LISTING_RATELIMIT: raw.OPENSEA_LISTING_RATELIMIT,
     OPENSEA_COLLECTION_RATELIMIT: raw.OPENSEA_COLLECTION_RATELIMIT,
+    OPENSEA_OFFERS_RATELIMIT: raw.OPENSEA_OFFERS_RATELIMIT,
     DIAG_SAMPLE_RATE: raw.DIAG_SAMPLE_RATE,
     DIAG_RETENTION_DAYS: raw.DIAG_RETENTION_DAYS,
     DIAG_LEGAL_DOCS: raw.DIAG_LEGAL_DOCS,
