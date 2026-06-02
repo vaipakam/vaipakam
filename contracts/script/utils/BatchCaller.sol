@@ -38,6 +38,20 @@ pragma solidity ^0.8.29;
  *         orchestration.
  */
 contract BatchCaller {
+    /// @notice Operator key set once at deploy. **The BatchCaller is
+    ///         callable ONLY by this address** — without this gate,
+    ///         a mempool observer could front-run the operator's
+    ///         intended rehearsal batch during the window when
+    ///         BatchCaller temporarily owns the diamond/executor
+    ///         and execute any owner-only action (malicious
+    ///         diamondCut, executor upgrade, ownership transfer)
+    ///         before the operator reverses ownership.
+    ///         Codex P1 catch on PR #324 review.
+    address public immutable operator;
+
+    /// @notice Caller is not the configured operator.
+    error NotOperator(address caller);
+
     /// @notice One sub-call's outcome failed. We bubble up the
     ///         original revert reason via the assembly block so
     ///         the operator sees the underlying error (rather than
@@ -48,10 +62,19 @@ contract BatchCaller {
     ///         iterate.
     error LengthMismatch(uint256 targets, uint256 calldatas);
 
+    constructor(address _operator) {
+        operator = _operator;
+    }
+
     /// @notice Atomic batched call. All sub-calls execute in this
     ///         transaction; any sub-call revert reverts the whole
     ///         batch (Solidity's standard semantics — no try/catch).
-    /// @dev    Reentrancy is structurally bounded: the BatchCaller
+    ///
+    /// @dev    `onlyOperator`-gated: the BatchCaller's transient
+    ///         ownership of the diamond/executor would otherwise be
+    ///         a front-runnable elevation surface.
+    ///
+    ///         Reentrancy is structurally bounded: the BatchCaller
     ///         holds no state across calls, so a re-entered
     ///         `batch` would simply run another batch with no
     ///         shared mutable surface. The operator's deploy
@@ -63,6 +86,7 @@ contract BatchCaller {
         external
         returns (bytes[] memory results)
     {
+        if (msg.sender != operator) revert NotOperator(msg.sender);
         if (targets.length != calldatas.length) {
             revert LengthMismatch(targets.length, calldatas.length);
         }

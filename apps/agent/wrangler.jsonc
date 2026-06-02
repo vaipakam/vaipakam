@@ -101,6 +101,18 @@
         "namespace_id": "1005",
         "simple": { "limit": 30, "period": 60 },
       },
+      {
+        // T-086 Round-5 Block A (#313) — GET /opensea/collection/{slug}
+        // is hit by the dapp once per post / update flow on a fee-
+        // enforced collection (rare; only those collections need the
+        // schedule fetch). Per-IP limit lets normal use through while
+        // closing the "spoof an allowed Origin + iterate slugs to
+        // drain quota" vector Codex P2 line 75 flagged on PR #324.
+        "name": "OPENSEA_COLLECTION_RATELIMIT",
+        "type": "ratelimit",
+        "namespace_id": "1006",
+        "simple": { "limit": 30, "period": 60 },
+      },
     ],
   },
 
