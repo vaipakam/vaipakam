@@ -437,6 +437,17 @@ Round 5 changes to `CollateralListingExecutor._assertOrderContent`:
 
 The executor's job is to protect the protocol's economics (lender + treasury + grace + lock). Whether the borrower's remainder is paid as one leg or split across self-attributed fee legs is a borrower-side detail with no protocol consequence.
 
+**Known griefing vector — "ghost listing" via reverting fee recipient.** A borrower can set a fee recipient to a contract address whose `receive()` / token transfer hooks revert. Such a listing PASSES every sign-time check (`_assertOrderContent` doesn't transact; it just verifies shape) AND publishes on OpenSea (OpenSea's API doesn't simulate transfers). Any `Seaport.fulfillOrder` attempt reverts during the fee-transfer phase, leaving the listing "visible but unfillable." A malicious borrower could use this to grief buyers (waste their simulation gas) or to force their loan toward a default outcome the lender prefers — e.g., a lender who specifically wants the underlying NFT can collude with a borrower-controlled "fee" address to deliberately stall the sale path.
+
+The protocol's safety invariants hold regardless: the borrower-position-NFT lock + the default-flow lock-bypass (§5.4) ensure `DefaultedFacet.markDefaulted` runs at grace expiry, the lender receives the NFT, and the failed-fill state has no residual effect. So this is a UX / discovery-cost vector, not a solvency vector.
+
+Mitigation surface (dapp-side, NOT contract-side):
+
+- The `apps/agent` `/opensea/collection/{slug}/fees` proxy SHOULD optionally execute a sim-transfer pre-flight check (use `eth_call` to simulate a 1-wei transfer to each fee recipient via the principalAsset). Recipients that revert get flagged "Warning: this collection's fee recipient does not accept transfers — your listing will be unfillable."
+- The `apps/defi` post UI surfaces the warning + lets the borrower choose to publish anyway (their right) or pick a fee-free collection alternative.
+
+Contract-side hard-gates (e.g., "fee recipients must be EOAs") are explicitly rejected — most legitimate royalty recipients are contracts (multisigs, 0xSplits, OpenSea's fee collector). Banning contract recipients would break legitimate fees on most royalty-respecting collections.
+
 ### 14.5 Contract surface changes
 
 **`NFTPrepayListingFacet`** — extended posting signature:
@@ -468,9 +479,18 @@ Backwards compatibility: callers passing an empty `feeLegs` array get the Round-
 
 **`LibPrepayOrder`** — `_components` accepts an optional `feeLegs` array, appends them to the `consideration` array after the borrower leg.
 
-**`CollateralListingExecutor.OrderContext`** — extended to record the fee-leg total (for the `_tryCancelOnSeaport` reconstruction added in #316). The individual fee legs are reconstructable from the orderHash + Seaport's `getOrderHash` view; the executor only needs to know the COUNT (1 byte) + the SUM (uint192) to verify total askPrice. Storage cost: +1 slot beyond #316's 4-slot layout = 5 slots total per recorded listing.
+**`CollateralListingExecutor.OrderContext`** — extended to record the **full `FeeLeg[]` array** (recipient + amount per leg). The #316 `_tryCancelOnSeaport` path rebuilds the canonical `OrderComponents` at cleanup time and forwards `Seaport.cancel`; that reconstruction needs every signed input that fed into the original hash — including each fee leg's recipient + amount, since Seaport's `getOrderHash` is a one-way cryptographic digest and cannot be inverted.
 
-**Hard cap on fee legs.** `MAX_FEE_LEGS = 2` enforced by the facet's validation. Two is a deliberate trade-off — it covers OpenSea's typical (1 protocol + 1 creator) schedule without opening the executor's iteration surface to DoS by long-array griefing. If OpenSea adds a third required fee category in the future, lift the cap in a follow-up.
+The naive layout is 2 slots per fee leg (address + uint256 amount). Pack-tight option: 1 slot per leg using `address` (20 bytes) + `uint96` amount (12 bytes); `uint96` covers any realistic fee amount in any ERC20 (max 7.9 × 10^28 wei). Storage cost per recorded listing:
+
+| Mode | Layout | Total slots (MAX_FEE_LEGS = 4) |
+| --- | --- | --- |
+| Fixed-price, 0 fee legs | #316 baseline | 4 |
+| Fixed-price, 4 fee legs | +1 length slot + 4 packed leg slots | 9 |
+| Dutch, 0 fee legs | #316 baseline + `auctionEndTime` packing | 4 |
+| Dutch, 4 fee legs | +1 length slot + 4 legs × 2 slots (start + end amounts can't share a packed slot with the recipient + each other) | 13 |
+
+**Hard cap on fee legs.** `MAX_FEE_LEGS = 4` enforced by the facet's validation. Four covers the realistic worst case — collections with artist splits or DAO shares typically have 3+ royalty recipients in addition to OpenSea's protocol fee; OpenSea's Collection API returns the full required-fees array, and a cap of 2 (the original sketch) would exclude legitimate collections from the OpenSea-UI surface. The executor's iteration cost (linear scan, ~3K gas per extra leg) is dwarfed by Seaport's per-consideration-transfer cost; the cap is primarily a DoS bound, not a gas-budget bound. If OpenSea's schedule ever requires more than 4 required legs, lift the cap in a follow-up.
 
 ### 14.6 Dapp + agent + indexer changes
 
@@ -584,6 +604,32 @@ Issue #309's open Q5: Seaport's native interpolation is linear (item amount = st
 - Multi-collateral auctions (one listing for several NFT lots). Deferred to a separate card.
 - Cross-chain auction relay. Out of scope by §12 (no cross-chain NFT sales in v1).
 - Lender-side veto of auction price within the grace window. v2 design choice.
+
+### 15.10 Known UX-fragility points for auction modes
+
+The Round-4 fixed-price flow's two-percent buffer absorbs small floor drifts within a single block. Auction modes' longer fillability windows (hours to days) expand the surface for **external-state changes to silently invalidate a signed listing**. None of these break protocol safety — they break UX. Calling them out so the dapp surfaces them honestly:
+
+**(A) Governance-induced under-coverage (Dutch only).** §15.2 fixes lender + treasury legs at the projected-max-floor at `auctionEndTime` based on the `treasuryFeeBps` (and any other fee bps) CURRENT at sign time. If governance bumps those parameters mid-auction, the live floor at fill time can exceed the signed leg amounts → executor reverts the fill (`Lender short-paid` / `Treasury short-paid`). The Dutch listing becomes unfillable until the borrower pays gas to `updatePrepayListing` with new projections.
+
+Same risk exists today for fixed-price listings, but the surface is smaller — fixed-price asks are usually filled within hours, so the mid-listing-governance-bump window is narrow. Dutch auctions configured close to grace-end widen the window proportionally.
+
+Mitigation: the dapp surfaces a banner "governance has bumped treasuryFeeBps since this listing was posted; click to re-sign" on the loan card whenever it detects a mismatch between the signed pctx and a fresh read.
+
+**(B) Implicit borrower over-payment on early Dutch fills.** §15.2 fixes lender + treasury at the projected-max-floor at `auctionEndTime`. A buyer who fills the Dutch listing at `t = startTime` (before any decay) pays the lender + treasury MAX projection — i.e., the borrower's loan settles paying as if it had run to grace-end, even though it didn't. The over-coverage flows to lender + treasury (not refunded to the borrower).
+
+For a 7-day grace with 8% APR, the over-payment is ~0.15% of principal — small in absolute terms but real. The dapp's Dutch posting UI MUST surface this: "If your listing fills today, you'll pay $X more than today's live floor as a safety margin. The margin shrinks as the auction approaches its end time." The borrower CAN choose to shorten the auction window (`auctionEndTime` closer to `block.timestamp`) to reduce the over-coverage; this is a borrower-controlled trade-off.
+
+**(C) Lender-position-NFT rotation invalidates the recipient binding.** §5.1 invariant: the executor re-derives `consideration[0].recipient = lenderNftOwner` at fill time. If the lender transfers their position-NFT mid-auction (whether innocently as a portfolio rotation or maliciously to grief the borrower), the signed order's stored `lenderRecipient` no longer matches the current holder → executor reverts the fill.
+
+For fixed-price this is a single-block rotation race; for Dutch + English it's a longer window. A malicious lender who specifically wants the underlying NFT (and would prefer the default path) can deliberately rotate their position-NFT during a borrower's auction window to force-revert all fills.
+
+The protocol's safety holds: the borrower can `cancelPrepayListing` + `updatePrepayListing` (rotating the executor's recorded `lenderRecipient`); the lock + grace boundary prevent a stuck state. But the borrower pays gas + loses fillability time.
+
+Mitigation: the dapp watches `Transfer(lenderNftId)` events on the lender-position-NFT contract for any loan with a live prepay listing. On a detected rotation, the borrower sees an alert + a one-click "re-sign listing" action. v2 could add an executor-side automatic re-derivation, but that breaks Seaport's signature-vs-order-shape immutability assumption and is rejected for v1.
+
+**(D) Treasury rotation invalidates the recipient binding.** Same mechanism as (C) but for the treasury address. Governance rotation is rare; flagged here for symmetry.
+
+These four cases are *known* and *acknowledged*; the dapp's role is to surface them clearly so borrowers aren't surprised. The Round-4 §316 cleanup machinery (PR #321) already handles cancel-time drift gracefully by emitting `SeaportCancelSkipped` — these new UX-fragility cases just produce that breadcrumb a few more times.
 
 ## 16. Round 5 sequencing
 
