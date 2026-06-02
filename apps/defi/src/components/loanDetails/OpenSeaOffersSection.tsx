@@ -38,6 +38,15 @@ export interface OpenSeaOffersSectionProps {
   principalAsset: string;
   collateralAsset: string;
   collateralTokenId: bigint;
+  /** Codex round-7 P2 review #328 — needed for the ERC1155
+   *  defer gate. `0` = ERC20 (rejected upstream), `1` = ERC721,
+   *  `2` = ERC1155. The Match flow currently rotates against
+   *  the full vaulted `collateralQuantity`; a one-unit OpenSea
+   *  offer would mark acceptable then revert on-chain at fill
+   *  time. v1 ships ERC721-only; ERC1155 English-match arrives
+   *  in a follow-up with a quantity gate inside the hook's
+   *  normalizer. */
+  collateralAssetType: number;
   prepayListing: UseNFTPrepayListingResult;
 }
 
@@ -47,6 +56,7 @@ export function OpenSeaOffersSection({
   principalAsset,
   collateralAsset,
   collateralTokenId,
+  collateralAssetType,
   prepayListing,
 }: OpenSeaOffersSectionProps) {
   const diamond = useDiamondRead();
@@ -221,31 +231,58 @@ export function OpenSeaOffersSection({
   // a previous loan could carry over (the `slug` change resets
   // back to `unknown` via the effect's slug dependency).
   type FeeEnforcement = 'unknown' | 'fee-free' | 'fee-enforced';
-  const [feeEnforcement, setFeeEnforcement] = useState<FeeEnforcement>('unknown');
+  // Codex round-7 P2 review #328 — pair the enforcement verdict
+  // with the slug it was computed against. The derived
+  // `feeEnforcement` only resolves to `'fee-free'` (Match
+  // unlocked) when the recorded slug strictly equals the CURRENT
+  // `offersResult.slug`. This closes the one-painted-frame
+  // window where a navigation-between-loans render could see
+  // the previous loan's `'fee-free'` state before the
+  // slug-change effect resets it.
+  const [feeCheck, setFeeCheck] = useState<{
+    slug: string | null;
+    enforcement: FeeEnforcement;
+  }>({ slug: null, enforcement: 'unknown' });
+  const feeEnforcement: FeeEnforcement =
+    feeCheck.slug !== null && feeCheck.slug === offersResult.slug
+      ? feeCheck.enforcement
+      : 'unknown';
   useEffect(() => {
-    // Reset on every slug change so a navigation-between-loans
-    // can't surface stale `fee-free` from the previous loan
-    // before the current loan's check completes.
-    setFeeEnforcement('unknown');
+    // Reset on slug change so the next-pass check runs against
+    // the new collection. The render-time derivation above is
+    // the synchronous safety against the effect-runs-after-paint
+    // race.
+    setFeeCheck({ slug: null, enforcement: 'unknown' });
     if (!agentOrigin || !offersResult.slug) return;
+    const slugForThisFetch = offersResult.slug;
     let cancelled = false;
     fetch(
-      `${agentOrigin}/opensea/collection/${encodeURIComponent(offersResult.slug)}?chainId=${chainId}`,
+      `${agentOrigin}/opensea/collection/${encodeURIComponent(slugForThisFetch)}?chainId=${chainId}`,
     )
       .then(r => (r.ok ? r.json() : null))
       .then(body => {
         if (cancelled || body === null) return;
+        // Codex round-7 P2 review #328 — the OpenSea Collection
+        // API documents fee rows as `{recipient, basis_points,
+        // required}` (per design doc §14.3 + Round-5.1 errata),
+        // NOT `{recipient, fee, required}`. Reading `.fee` here
+        // silently classifies every fee-enforced collection as
+        // `fee-free`, re-enabling the empty-feeLegs[] Match path
+        // this gate exists to prevent. Read `basis_points`.
         const fees = ((body as { fees?: unknown[] }).fees ?? []) as Array<{
-          fee?: number;
+          basis_points?: number;
           required?: boolean;
         }>;
         const enforced = fees.some(
           f =>
             f.required === true &&
-            typeof f.fee === 'number' &&
-            f.fee > 0,
+            typeof f.basis_points === 'number' &&
+            f.basis_points > 0,
         );
-        setFeeEnforcement(enforced ? 'fee-enforced' : 'fee-free');
+        setFeeCheck({
+          slug: slugForThisFetch,
+          enforcement: enforced ? 'fee-enforced' : 'fee-free',
+        });
       })
       .catch(() => {
         // Transient failure — leave the gate at `unknown` so
@@ -258,6 +295,36 @@ export function OpenSeaOffersSection({
   }, [agentOrigin, offersResult.slug, chainId]);
 
   if (!agentOrigin) return null;
+
+  // Codex round-7 P2 review #328 — ERC1155 collateral defer
+  // gate. The Match callback rotates against `live.askPrice`
+  // which the on-chain order pins to the FULL vaulted
+  // `collateralQuantity`; a one-unit OpenSea collection offer
+  // would mark acceptable in the threshold check then revert at
+  // fill time when the buyer pays the unit-priced offer for the
+  // whole-quantity NFT. v1 hides the surface; the proper
+  // quantity gate (require `offer.consideration[i].amount ==
+  // collateralQuantity` inside `normalize`) is the v1.1
+  // follow-up.
+  if (collateralAssetType === 2) {
+    return (
+      <div
+        id={`opensea-offers-erc1155-deferred-${loanId}`}
+        className="card loan-actions-card"
+      >
+        <div className="action-group">
+          <div className="action-title">OpenSea Offers (English mode)</div>
+          <div className="alert alert-info">
+            English-mode matching against ERC1155 collateral is
+            coming in v1.1. The prepay-listing surface still works
+            (post / update / cancel via the actions card above);
+            only the OpenSea offer-matching shortcut is gated for
+            now.
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (feeEnforcement === 'fee-enforced') {
     return (
