@@ -91,14 +91,15 @@ mounting wrapper).
   PrepayListingUpdated` already logs every rotation; analytics
   on "which offer was matched" can be added without a contract
   change. Deferred.
-- **Pagination through OpenSea's offer-list responses.** Both
-  `/collection/{slug}/all` and `/collection/{slug}/nfts/{tokenId}`
-  expose `limit`/`next` pagination; the agent proxy fetches only
-  the first page. In high-volume collections this can miss a
-  lower acceptable offer beyond the first page. v1 ships
-  first-page-only because the borrower-UX optimisation (top
-  offers first → most likely to be matchable) covers the common
-  case; pagination is a v1.1 follow-up.
+- **Pagination beyond ~300 offers per endpoint.** The agent
+  proxy follows OpenSea's `next` cursor for up to 3 pages
+  (≈300 offers per leg). For hyper-active collections where
+  there are still more acceptable offers beyond page 3, the
+  borrower sees the top portion only. The 3-page cap was
+  chosen to bound the proxy's upstream call budget (worst case
+  6 round-trips per poll: 3 collection + 3 item); higher
+  caps land as a v1.1 follow-up if production signal shows
+  the cap matters.
 
 ### Verification
 

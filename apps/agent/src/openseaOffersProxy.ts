@@ -174,18 +174,63 @@ export async function handleOpenSeaOffers(
     ? `https://${host}/api/v2/offers/collection/${encodeURIComponent(slug)}/nfts/${tokenId}`
     : null;
 
-  const fetchUpstream = async (
-    url: string | null,
+  // Codex round-15 P2 review #328 — follow OpenSea's `next`
+  // pagination cursor for up to 3 pages (≈300 offers per leg at
+  // `limit=100`). The new chain/contract/criteria/payment-token
+  // filters on the dapp side can drop large fractions of any
+  // single page; without pagination an acceptable offer sitting
+  // on page 2+ would never reach the panel even if the borrower
+  // refreshes. 3 pages caps the upstream cost (worst case
+  // 6 round-trips per poll: 3 collection + 3 item) while
+  // covering hot collections that easily exceed a single page.
+  // Concatenates all returned offers into one synthetic
+  // `{ offers: [...] }` body so the dapp normalizer doesn't
+  // need a paginated shape.
+  const MAX_PAGES = 3;
+  const fetchPaginated = async (
+    initialUrl: string | null,
   ): Promise<{ status: number; body: string } | null> => {
-    if (!url) return null;
-    return fetch(url, { headers })
-      .then(r => r.text().then(body => ({ status: r.status, body })))
-      .catch(err => ({ status: 0, body: String(err) }));
+    if (!initialUrl) return null;
+    const all: unknown[] = [];
+    let lastStatus = 0;
+    let url: string | null = initialUrl.includes('?')
+      ? `${initialUrl}&limit=100`
+      : `${initialUrl}?limit=100`;
+    for (let i = 0; i < MAX_PAGES && url; i++) {
+      const page = await fetch(url, { headers })
+        .then(r => r.text().then(body => ({ status: r.status, body })))
+        .catch(err => ({ status: 0, body: String(err) }));
+      lastStatus = page.status;
+      if (page.status < 200 || page.status >= 300) {
+        // Non-2xx → return what we have (could be 0 pages) so
+        // the dapp's normalizer treats this as an empty list.
+        break;
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(page.body);
+      } catch {
+        break;
+      }
+      const offers = (parsed as { offers?: unknown[] }).offers;
+      if (Array.isArray(offers)) all.push(...offers);
+      const next = (parsed as { next?: string | null }).next;
+      if (typeof next === 'string' && next.length > 0) {
+        const sep = initialUrl.includes('?') ? '&' : '?';
+        url = `${initialUrl}${sep}limit=100&next=${encodeURIComponent(next)}`;
+      } else {
+        url = null;
+      }
+    }
+    return {
+      status: lastStatus,
+      body: JSON.stringify({ offers: all }),
+    };
   };
 
   const [collectionRes, itemRes] = await Promise.all([
-    fetchUpstream(collectionOffersUrl),
-    fetchUpstream(itemOffersUrl),
+    fetchPaginated(collectionOffersUrl),
+    fetchPaginated(itemOffersUrl),
   ]);
 
   // Compose the aggregated response. Dapp consumes

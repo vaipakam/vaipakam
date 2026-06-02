@@ -423,17 +423,25 @@ function normalize(
   const value = BigInt(liveValueString);
   const endTime = Number(r.protocol_data?.parameters?.endTime ?? '0');
 
-  // Codex round-13 + round-14 P2 review #328 — the
-  // `/collection/{slug}/all` endpoint can return item offers
-  // for OTHER tokens in the collection alongside true
-  // collection-wide offers. Seaport's `consideration[0]` carries
-  // both the NFT TOKEN (contract address) and the NFT
-  // IDENTIFIER the offer was placed against. We check BOTH:
-  //   - token MUST match `collateralAsset` (otherwise an offer
-  //     on a different contract under the same slug would pass)
-  //   - identifier is either `0` (collection-wide /
-  //     criteria-based) or the specific tokenId; non-zero +
-  //     non-matching specific identifiers are dropped.
+  // Codex rounds 13 + 14 + 15 P2 review #328 — the
+  // `/collection/{slug}/all` endpoint can return offers that
+  // don't apply to this specific NFT. Seaport's
+  // `consideration[0]` carries the NFT token (contract), an
+  // `itemType` and the `identifierOrCriteria` field; we use all
+  // three to filter:
+  //   - `token` MUST match `collateralAsset` (drops offers on a
+  //     different contract under the same slug)
+  //   - `itemType` 2 = ERC721, 3 = ERC1155 (concrete), 4 =
+  //     ERC721_WITH_CRITERIA, 5 = ERC1155_WITH_CRITERIA
+  //   - For concrete (itemType 2/3): identifier MUST equal
+  //     `collateralTokenId`
+  //   - For criteria (itemType 4/5): identifier `0` is a
+  //     collection-wide offer (safe). Non-zero identifier on a
+  //     criteria offer is a TRAIT/MERKLE-ROOT-validated offer
+  //     that we drop — v1 doesn't do merkle-proof validation, so
+  //     a borrower clicking Match on a trait offer the NFT
+  //     doesn't have would rotate to a price no bidder can
+  //     fulfill.
   const consideration = r.protocol_data?.parameters?.consideration?.[0];
   if (consideration) {
     if (
@@ -442,12 +450,21 @@ function normalize(
     ) {
       return null;
     }
-    if (consideration.identifierOrCriteria) {
-      const ident = consideration.identifierOrCriteria.toString();
-      if (ident !== '0' && ident !== collateralTokenId.toString()) {
-        return null;
-      }
+    const ident = (consideration.identifierOrCriteria ?? '0').toString();
+    const itemType = consideration.itemType;
+    const isCriteriaType = itemType === 4 || itemType === 5;
+    if (isCriteriaType) {
+      // Trait/criteria offer: only collection-wide (identifier
+      // '0') is matchable in v1; non-zero requires merkle
+      // validation we don't do.
+      if (ident !== '0') return null;
+    } else if (itemType === 2 || itemType === 3) {
+      // Concrete item offer: identifier MUST equal our tokenId.
+      if (ident !== collateralTokenId.toString()) return null;
     }
+    // Other itemTypes (ETH/ERC20 considerations etc.) shouldn't
+    // appear at consideration[0] for an NFT offer; pass through
+    // defensively without filtering on them.
   }
 
   const verdict = computeAcceptable(value, paymentToken, endTime);

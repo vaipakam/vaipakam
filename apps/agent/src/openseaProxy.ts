@@ -81,6 +81,14 @@ const OPENSEA_CHAINS: Record<number, { host: string; slug: string }> = {
   8453: { host: 'api.opensea.io', slug: 'base' },
   42161: { host: 'api.opensea.io', slug: 'arbitrum' },
   10: { host: 'api.opensea.io', slug: 'optimism' },
+  // Codex round-15 P2 review #328 — keep this listing-publish
+  // chain set aligned with the offers proxy's
+  // `OPENSEA_CHAIN_SLUG` map. Without 137 here, a Polygon match
+  // would rotate on-chain but the publish step (this surface)
+  // would return `unsupported-chain` — the bidder would see no
+  // OpenSea listing despite the borrower being told to notify
+  // them.
+  137: { host: 'api.opensea.io', slug: 'matic' },
 };
 
 export async function handleOpenSeaListingPost(
