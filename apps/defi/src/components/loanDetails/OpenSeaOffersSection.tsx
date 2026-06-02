@@ -114,13 +114,21 @@ export function OpenSeaOffersSection({
     // against the OLD loan's floor/principal — either hiding
     // valid offers or enabling a match that reverts on-chain.
     setThreshold(null);
-    // Codex round-8 P2 review #328 — record the loanId this
-    // pctx fetch is for. The render gate above (`stateMatchesLoan`)
-    // returns null when this hasn't caught up to the current
-    // loanId yet, suppressing stale panel renders on loan
-    // navigation.
-    setRecordedLoanId(loanId);
+    // Codex round-8 + round-9 P2 review #328 — DO NOT set
+    // `recordedLoanId` here. Setting it at the LEADING edge
+    // would let `stateMatchesLoan` flip true on the next paint
+    // while the offers hook still has the previous loan's
+    // offers/slug cached (the hook's paused-branch clears them
+    // only after `paused` has actually flipped true in render —
+    // which requires `threshold === null` to have rendered
+    // first, AND the hook's effect to fire after that paint).
+    // Defer the recordedLoanId update until the threshold has
+    // RESOLVED for this loan; by that point `paused` has been
+    // true for at least one full render cycle, the offers
+    // hook's paused branch has run + cleared offers, and the
+    // panel can safely surface the new loan's state.
     let cancelled = false;
+    const targetLoanId = loanId;
     (async () => {
       try {
         const d = diamond as unknown as {
@@ -145,7 +153,7 @@ export function OpenSeaOffersSection({
         // reverts `PrepayListingBufferNotConfigured`) as "no usable
         // threshold" so the panel renders the disabled state.
         const [ctx, buf, enabled] = await Promise.all([
-          d.getPrepayContext(loanId, asOf),
+          d.getPrepayContext(targetLoanId, asOf),
           d.getPrepayListingBufferBps(),
           d.getPrepayListingEnabled(),
         ]);
@@ -155,6 +163,7 @@ export function OpenSeaOffersSection({
         const bufferBps = Number(buf);
         if (!enabled || bufferBps === 0) {
           setThreshold(null);
+          setRecordedLoanId(targetLoanId);
           return;
         }
         setThreshold({
@@ -163,6 +172,7 @@ export function OpenSeaOffersSection({
           bufferBps,
           principalAsset,
         });
+        setRecordedLoanId(targetLoanId);
       } catch {
         // Older deploy or transient RPC blip — leave threshold null;
         // the hook will treat every offer as unacceptable until pctx

@@ -14,14 +14,17 @@ ships entirely as polling + UI + a thin agent proxy.
 ### What this PR ships
 
 **Agent proxy — `GET /opensea/offers/{chainId}/{contract}/{tokenId}`.**
-Aggregates OpenSea's two offers endpoints (item-specific +
-collection-wide) in a single round-trip. Per-IP rate-limited via the
-new `OPENSEA_OFFERS_RATELIMIT` binding (60 req/min/IP — matches the
-dapp's 30 s poll cadence with headroom). CORS-locked to the
-resolved single origin from `FRONTEND_ORIGIN`. The dapp does the
-threshold filter + sort client-side; the proxy is intentionally
-stateless. Slug resolution for collection-offers falls back
-gracefully — item-specific offers are returned regardless.
+Aggregates OpenSea's two slug-keyed offers endpoints (item-specific
+at `/api/v2/offers/collection/{slug}/nfts/{tokenId}` + collection-
+wide at `/api/v2/offers/collection/{slug}`) in a single round-trip.
+Per-IP rate-limited via the new `OPENSEA_OFFERS_RATELIMIT` binding
+(60 req/min/IP — matches the dapp's 30 s poll cadence with
+headroom). CORS-locked to the resolved single origin from
+`FRONTEND_ORIGIN`. The dapp does the threshold filter + sort
+client-side; the proxy is intentionally stateless. Both legs are
+slug-keyed, so a slug-resolution failure skips both fetches and
+the proxy returns `null` for each — the panel renders the
+empty-offers state cleanly.
 
 **`useOpenSeaOffers` hook.** Polls the agent proxy every 30 s while
 mounted, normalizes the OpenSea v2 response shape, and classifies
