@@ -18,6 +18,19 @@ pragma solidity ^0.8.29;
  *         `docs/DesignsAndPlans/NFTCollateralSaleAndAuction.md` §14.5.
  */
 
+/// @notice Hard cap on the number of marketplace-required fee legs
+///         allowed per prepay-collateral listing. Round-5 Block A
+///         (#313) sets this at 4 — covering the realistic worst
+///         case of OpenSea's protocol fee + up to 3 creator-side
+///         recipients for collections with artist splits / DAO
+///         shares. The executor's `_assertOrderContent` length
+///         cap is `3 + MAX_FEE_LEGS = 7` (3 protocol legs + up to
+///         4 fee legs); the facet's posting validations enforce
+///         the same bound at sign time. If OpenSea's schedule ever
+///         requires more than 4 required legs the cap is lifted in
+///         a follow-up. See §14.5 of the design doc.
+uint256 constant MAX_FEE_LEGS = 4;
+
 /// @notice One marketplace-required fee leg in a prepay-collateral
 ///         listing. Borrower-supplied at post time, sourced from
 ///         OpenSea's Collection API by the dapp.
