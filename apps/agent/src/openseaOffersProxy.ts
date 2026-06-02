@@ -193,6 +193,13 @@ export async function handleOpenSeaOffers(
     if (!initialUrl) return null;
     const all: unknown[] = [];
     let lastStatus = 0;
+    // Codex round-16 P2 review #328 — track whether ANY page
+    // succeeded. If page 1 succeeds and page 2 fails, we want
+    // to return the page-1 offers + a synthetic 200 status so
+    // the dapp's `extractOrders` doesn't drop them as "non-2xx
+    // upstream". Only set the failure status when NO page
+    // succeeded.
+    let anyPageSucceeded = false;
     let url: string | null = initialUrl.includes('?')
       ? `${initialUrl}&limit=100`
       : `${initialUrl}?limit=100`;
@@ -200,12 +207,15 @@ export async function handleOpenSeaOffers(
       const page = await fetch(url, { headers })
         .then(r => r.text().then(body => ({ status: r.status, body })))
         .catch(err => ({ status: 0, body: String(err) }));
-      lastStatus = page.status;
       if (page.status < 200 || page.status >= 300) {
-        // Non-2xx → return what we have (could be 0 pages) so
-        // the dapp's normalizer treats this as an empty list.
+        // Page failed. If no page has succeeded yet, surface
+        // the failure status; otherwise keep `lastStatus` at
+        // whatever page-1's 200 was.
+        if (!anyPageSucceeded) lastStatus = page.status;
         break;
       }
+      anyPageSucceeded = true;
+      lastStatus = page.status;
       let parsed: unknown;
       try {
         parsed = JSON.parse(page.body);

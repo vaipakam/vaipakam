@@ -491,6 +491,7 @@ export function OpenSeaOffersSection({
         // updated listing). Refresh + re-evaluate before the
         // rotation tx fires.
         if (offersResult.slug) {
+          let rechecked = false;
           try {
             const recheck = await fetch(
               `${agentOrigin}/opensea/collection/${encodeURIComponent(offersResult.slug)}?chainId=${chainId}`,
@@ -517,15 +518,27 @@ export function OpenSeaOffersSection({
                 });
                 return false;
               }
+              rechecked = true;
             }
-            // Recheck failure (non-2xx OR network blip): keep
-            // the cached verdict + proceed. The on-chain
-            // rotation will succeed; OpenSea may reject the
-            // publish but the borrower's listing is still
-            // valid + the buyer can fulfill directly via
-            // Seaport.
+            // Non-2xx falls through to the fail-closed branch
+            // below.
           } catch {
-            // Same fall-through reasoning.
+            // Network error → fail closed.
+          }
+          // Codex round-16 P2 review #328 — fail closed when
+          // the confirm-time fee recheck didn't return a
+          // positive `fee-free` verdict. Without that
+          // confirmation we can't be sure OpenSea will accept
+          // the rotated listing's publish (the on-chain
+          // rotation would succeed; the bidder couldn't
+          // discover via marketplace). Invalidate cached
+          // verdict + abort the Match.
+          if (!rechecked) {
+            setFeeCheck({
+              slug: offersResult.slug,
+              enforcement: 'unknown',
+            });
+            return false;
           }
         }
         return prepayListing.updatePrepayListing(

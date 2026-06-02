@@ -346,6 +346,15 @@ const OPENSEA_CHAIN_SLUGS: Record<number, { host: string; slug: string }> = {
   8453: { host: 'opensea.io', slug: 'base' },
   42161: { host: 'opensea.io', slug: 'arbitrum' },
   10: { host: 'opensea.io', slug: 'optimism' },
+  // Codex round-16 P3 review #328 — keep this deep-link map in
+  // sync with the publish + offers chain sets across
+  // `apps/agent/src/openseaProxy.ts` +
+  // `apps/agent/src/openseaOffersProxy.ts` +
+  // `apps/indexer/src/openseaPublish.ts`. Without 137 here, a
+  // Polygon listing's publish succeeds but the banner's "View
+  // on OpenSea" deep link returns null — borrowers can't send
+  // bidders to the marketplace URL.
+  137: { host: 'opensea.io', slug: 'matic' },
 };
 
 /**

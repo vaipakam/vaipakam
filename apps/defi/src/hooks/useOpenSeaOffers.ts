@@ -423,48 +423,47 @@ function normalize(
   const value = BigInt(liveValueString);
   const endTime = Number(r.protocol_data?.parameters?.endTime ?? '0');
 
-  // Codex rounds 13 + 14 + 15 P2 review #328 — the
+  // Codex rounds 13 + 14 + 15 + 16 P2 review #328 — the
   // `/collection/{slug}/all` endpoint can return offers that
-  // don't apply to this specific NFT. Seaport's
-  // `consideration[0]` carries the NFT token (contract), an
-  // `itemType` and the `identifierOrCriteria` field; we use all
-  // three to filter:
-  //   - `token` MUST match `collateralAsset` (drops offers on a
-  //     different contract under the same slug)
-  //   - `itemType` 2 = ERC721, 3 = ERC1155 (concrete), 4 =
-  //     ERC721_WITH_CRITERIA, 5 = ERC1155_WITH_CRITERIA
-  //   - For concrete (itemType 2/3): identifier MUST equal
-  //     `collateralTokenId`
-  //   - For criteria (itemType 4/5): identifier `0` is a
-  //     collection-wide offer (safe). Non-zero identifier on a
-  //     criteria offer is a TRAIT/MERKLE-ROOT-validated offer
-  //     that we drop — v1 doesn't do merkle-proof validation, so
-  //     a borrower clicking Match on a trait offer the NFT
-  //     doesn't have would rotate to a price no bidder can
-  //     fulfill.
+  // don't apply to this specific NFT. Round-16's tightening:
+  // OpenSea's criteria-offer surface (`post_criteria_offer_v2`
+  // docs) can carry hidden trait criteria validated SERVER-SIDE
+  // by OpenSea — even `identifier === '0'` on a criteria-type
+  // item is NOT a guaranteed collection-wide offer.
+  // v1 doesn't do trait / merkle-proof validation, so we accept
+  // ONLY:
+  //   - `token` matches `collateralAsset` AND
+  //   - itemType 2 (ERC721) or 3 (ERC1155) (concrete) AND
+  //   - identifier equals `collateralTokenId`
+  // Collection-wide / criteria-type offers stay visible on
+  // OpenSea's marketplace for the borrower to fulfill there;
+  // they just don't pass the dapp's Match surface (fail-closed).
   const consideration = r.protocol_data?.parameters?.consideration?.[0];
-  if (consideration) {
-    if (
-      consideration.token &&
-      consideration.token.toLowerCase() !== collateralAsset.toLowerCase()
-    ) {
-      return null;
-    }
-    const ident = (consideration.identifierOrCriteria ?? '0').toString();
-    const itemType = consideration.itemType;
-    const isCriteriaType = itemType === 4 || itemType === 5;
-    if (isCriteriaType) {
-      // Trait/criteria offer: only collection-wide (identifier
-      // '0') is matchable in v1; non-zero requires merkle
-      // validation we don't do.
-      if (ident !== '0') return null;
-    } else if (itemType === 2 || itemType === 3) {
-      // Concrete item offer: identifier MUST equal our tokenId.
-      if (ident !== collateralTokenId.toString()) return null;
-    }
-    // Other itemTypes (ETH/ERC20 considerations etc.) shouldn't
-    // appear at consideration[0] for an NFT offer; pass through
-    // defensively without filtering on them.
+  if (!consideration) return null;
+  if (
+    consideration.token &&
+    consideration.token.toLowerCase() !== collateralAsset.toLowerCase()
+  ) {
+    return null;
+  }
+  const itemType = consideration.itemType;
+  if (itemType !== 2 && itemType !== 3) {
+    // Drop criteria-types (4/5) AND any anomalous types
+    // (ETH/ERC20) — only concrete NFT considerations qualify.
+    return null;
+  }
+  const ident = (consideration.identifierOrCriteria ?? '0').toString();
+  if (ident !== collateralTokenId.toString()) return null;
+
+  // Codex round-16 P2 #2 — drop rows whose top-level `status`
+  // is present and not `ACTIVE`. OpenSea offer responses carry
+  // a status enum (`ACTIVE`, `INACTIVE`, `FULFILLED`,
+  // `EXPIRED`, `CANCELLED`); a future-`endTime` row could still
+  // be cancelled/fulfilled and the on-chain rotation would
+  // succeed against an offer no bidder can fulfill.
+  const offerStatus = (r as { status?: string }).status;
+  if (typeof offerStatus === 'string' && offerStatus !== 'ACTIVE') {
+    return null;
   }
 
   const verdict = computeAcceptable(value, paymentToken, endTime);
