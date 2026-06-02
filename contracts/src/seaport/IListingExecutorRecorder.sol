@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {FeeLeg} from "./PrepayTypes.sol";
+
 /**
  * @title IListingExecutorRecorder
  * @author Vaipakam Developer Team
@@ -50,12 +52,18 @@ pragma solidity ^0.8.29;
  *         order-record surface.
  */
 interface IListingExecutorRecorder {
-    /// @notice Pin a Seaport `orderHash → (loanId, conduit, …)` binding.
-    ///         T-086 #316 extended the recorded shape with `conduitKey`,
-    ///         `salt`, `startTime`, and `askPrice` so the executor can
-    ///         rebuild the canonical `OrderComponents` at cleanup time
-    ///         (used to forward `Seaport.cancel` for fast OpenSea
-    ///         catalog refresh).
+    /// @notice Pin a Seaport `orderHash → (loanId, conduit, …, feeLegs)`
+    ///         binding. T-086 #316 extended the recorded shape with
+    ///         `conduitKey`, `salt`, `startTime`, and `askPrice` so
+    ///         the executor can rebuild the canonical `OrderComponents`
+    ///         at cleanup time (used to forward `Seaport.cancel` for
+    ///         fast OpenSea catalog refresh). T-086 Round-5 / #313
+    ///         (Block A) additionally records the full `FeeLeg[]`
+    ///         array so the same cancel-time reconstruction works
+    ///         for fee-enforced collections — the fee legs cannot be
+    ///         derived from the orderHash alone (Seaport's
+    ///         `getOrderHash` is a one-way digest), so the recorder
+    ///         is the only place this data can live before cleanup.
     ///         See {CollateralListingExecutor.recordOrder}.
     function recordOrder(
         bytes32 orderHash,
@@ -64,7 +72,8 @@ interface IListingExecutorRecorder {
         bytes32 conduitKey,
         uint256 salt,
         uint256 startTime,
-        uint256 askPrice
+        uint256 askPrice,
+        FeeLeg[] calldata feeLegs
     ) external;
 
     /// @notice Remove a binding. Idempotent. T-086 #316: while the

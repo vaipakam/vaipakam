@@ -13,6 +13,7 @@ import {
     OrderType
 } from "../seaport/ISeaportOrderHash.sol";
 import {ItemType} from "../seaport/ISeaportZone.sol";
+import {FeeLeg} from "../seaport/PrepayTypes.sol";
 
 /**
  * @title LibPrepayOrder
@@ -53,6 +54,13 @@ library LibPrepayOrder {
     ///      derive its Seaport orderHash. Single source of truth
     ///      consumed by `NFTPrepayListingFacet.postPrepayListing` +
     ///      `updatePrepayListing`.
+    ///
+    ///      Round-5 Block A (#313): accepts an optional `feeLegs`
+    ///      array (length 0..MAX_FEE_LEGS=4). Each fee leg is
+    ///      appended after the borrower leg, in the order the
+    ///      caller provides — the dapp orders them per the
+    ///      OpenSea Collection API response so OpenSea's
+    ///      submission-time enforcement sees the expected shape.
     function buildAndHash(
         IVaipakamPrepayContext.PrepayContext memory pctx,
         address vault,
@@ -62,7 +70,8 @@ library LibPrepayOrder {
         uint256 lenderLeg,
         uint256 treasuryLeg,
         uint256 salt,
-        bytes32 conduitKey
+        bytes32 conduitKey,
+        FeeLeg[] calldata feeLegs
     ) internal view returns (bytes32 orderHash) {
         OrderComponents memory components = _components(
             pctx,
@@ -73,7 +82,8 @@ library LibPrepayOrder {
             treasuryLeg,
             salt,
             conduitKey,
-            ISeaportOrderHash(seaport).getCounter(vault)
+            ISeaportOrderHash(seaport).getCounter(vault),
+            feeLegs
         );
         orderHash = ISeaportOrderHash(seaport).getOrderHash(components);
     }
@@ -124,9 +134,10 @@ library LibPrepayOrder {
         bytes32 conduitKey,
         uint256 salt,
         uint256 startTime,
-        uint256 counter
+        uint256 counter,
+        FeeLeg[] memory feeLegs
     ) internal pure returns (OrderComponents memory) {
-        return _componentsAt(
+        return _componentsAtMemory(
             pctx,
             pctx.borrowerVault,
             executor,
@@ -136,7 +147,8 @@ library LibPrepayOrder {
             salt,
             conduitKey,
             startTime,
-            counter
+            counter,
+            feeLegs
         );
     }
 
@@ -151,9 +163,10 @@ library LibPrepayOrder {
         uint256 treasuryLeg,
         uint256 salt,
         bytes32 conduitKey,
-        uint256 counter
+        uint256 counter,
+        FeeLeg[] calldata feeLegs
     ) private view returns (OrderComponents memory) {
-        return _componentsAt(
+        return _componentsAtCalldata(
             pctx,
             vault,
             executor,
@@ -163,17 +176,14 @@ library LibPrepayOrder {
             salt,
             conduitKey,
             block.timestamp,
-            counter
+            counter,
+            feeLegs
         );
     }
 
-    /// @dev Pure body of {_components}, parameterized on `startTime`
-    ///      so the cancel-reconstruction path can pin the original
-    ///      sign-time stamp instead of the current block. The
-    ///      `block.timestamp` form lives in {_components}; the
-    ///      explicit-`startTime` form is what {componentsForCancel}
-    ///      forwards to.
-    function _componentsAt(
+    /// @dev Pure body for the calldata-feeLegs flavour (the sign-time
+    ///      path through {buildAndHash} → {_components}).
+    function _componentsAtCalldata(
         IVaipakamPrepayContext.PrepayContext memory pctx,
         address vault,
         address executor,
@@ -183,7 +193,51 @@ library LibPrepayOrder {
         uint256 salt,
         bytes32 conduitKey,
         uint256 startTime,
-        uint256 counter
+        uint256 counter,
+        FeeLeg[] calldata feeLegs
+    ) private pure returns (OrderComponents memory components) {
+        // Copy fee legs into memory so {_componentsCore} can iterate
+        // them with a single data-location-agnostic loop. Length is
+        // bounded by `MAX_FEE_LEGS = 4` in the facet so the copy
+        // cost is trivial.
+        FeeLeg[] memory feeLegsMem = new FeeLeg[](feeLegs.length);
+        for (uint256 i = 0; i < feeLegs.length; ) {
+            feeLegsMem[i] = feeLegs[i];
+            unchecked { ++i; }
+        }
+        return _componentsAtMemory(
+            pctx,
+            vault,
+            executor,
+            askPrice,
+            lenderLeg,
+            treasuryLeg,
+            salt,
+            conduitKey,
+            startTime,
+            counter,
+            feeLegsMem
+        );
+    }
+
+    /// @dev Pure body for the memory-feeLegs flavour (the cancel-time
+    ///      reconstruction path through {componentsForCancel}, where
+    ///      the executor reads the fee legs out of storage into
+    ///      memory before calling). Parameterised on `startTime`
+    ///      so the cancel-reconstruction can pin the ORIGINAL
+    ///      sign-time stamp instead of the current block.
+    function _componentsAtMemory(
+        IVaipakamPrepayContext.PrepayContext memory pctx,
+        address vault,
+        address executor,
+        uint256 askPrice,
+        uint256 lenderLeg,
+        uint256 treasuryLeg,
+        uint256 salt,
+        bytes32 conduitKey,
+        uint256 startTime,
+        uint256 counter,
+        FeeLeg[] memory feeLegs
     ) private pure returns (OrderComponents memory components) {
         // ─── Offer (one item: the collateral NFT) ──────────────
         OfferItem[] memory offer = new OfferItem[](1);
@@ -206,8 +260,8 @@ library LibPrepayOrder {
             });
         }
 
-        // ─── Consideration (3 legs: lender, treasury, borrower) ──
-        ConsiderationItem[] memory consideration = new ConsiderationItem[](3);
+        // ─── Consideration (3 protocol legs + N fee legs) ──────
+        ConsiderationItem[] memory consideration = new ConsiderationItem[](3 + feeLegs.length);
         consideration[0] = ConsiderationItem({
             itemType: ItemType.ERC20,
             token: pctx.principalAsset,
@@ -224,19 +278,45 @@ library LibPrepayOrder {
             endAmount: treasuryLeg,
             recipient: payable(pctx.treasury)
         });
-        // Borrower remainder. `askPrice ≥ liveFloor` is enforced by
-        // the facet's `_requireAskCoversFloor` check before this
-        // helper runs; the underflow is therefore guarded by the
-        // earlier revert, not by `unchecked`.
-        uint256 borrowerLeg = askPrice - lenderLeg - treasuryLeg;
+        // Borrower remainder. Round 5 (#313) deducts the sum of
+        // fee-leg start amounts in addition to lender + treasury.
+        // The facet's `_requireAskCoversFloor` + start-state-
+        // solvency check (§14.5 + §15.2) ensure the underflow is
+        // guarded by the earlier revert, not by `unchecked`.
+        // Block A is fixed-price-only, so `startAmount == endAmount`
+        // for every fee leg (enforced by the facet); the
+        // borrower leg therefore has the same property naturally.
+        // Block B will introduce decay on the borrower leg via the
+        // Dutch entry points + the unified `FeeLeg` shape already
+        // carries `(startAmount, endAmount)` for forward
+        // compatibility.
+        uint256 feeSumStart = 0;
+        uint256 feeSumEnd = 0;
+        for (uint256 i = 0; i < feeLegs.length; ) {
+            feeSumStart += uint256(feeLegs[i].startAmount);
+            feeSumEnd += uint256(feeLegs[i].endAmount);
+            unchecked { ++i; }
+        }
         consideration[2] = ConsiderationItem({
             itemType: ItemType.ERC20,
             token: pctx.principalAsset,
             identifierOrCriteria: 0,
-            startAmount: borrowerLeg,
-            endAmount: borrowerLeg,
+            startAmount: askPrice - lenderLeg - treasuryLeg - feeSumStart,
+            endAmount: askPrice - lenderLeg - treasuryLeg - feeSumEnd,
             recipient: payable(pctx.borrowerNftOwner)
         });
+        // Append fee legs (Round 5 #313).
+        for (uint256 i = 0; i < feeLegs.length; ) {
+            consideration[3 + i] = ConsiderationItem({
+                itemType: ItemType.ERC20,
+                token: pctx.principalAsset,
+                identifierOrCriteria: 0,
+                startAmount: uint256(feeLegs[i].startAmount),
+                endAmount: uint256(feeLegs[i].endAmount),
+                recipient: payable(feeLegs[i].recipient)
+            });
+            unchecked { ++i; }
+        }
 
         components = OrderComponents({
             offerer: vault,
