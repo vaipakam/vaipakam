@@ -77,6 +77,13 @@ export interface UseOpenSeaOffersOptions {
 
 export interface UseOpenSeaOffersResult {
   offers: NormalizedOffer[];
+  /** The OpenSea collection slug the agent resolved for this NFT
+   *  (or `null` when resolution failed). Surfaced to the
+   *  consumer so the section can run a one-time
+   *  `/opensea/collection/{slug}` fee-enforcement gate at mount
+   *  time without re-resolving the slug — Codex round-5 P2
+   *  review #328. */
+  slug: string | null;
   /** True while the FIRST fetch is in flight (later refreshes
    *  silently update the array). Lets the UI render a spinner on
    *  initial mount without flashing on every refresh. */
@@ -128,6 +135,7 @@ export function useOpenSeaOffers(
 ): UseOpenSeaOffersResult {
   const { paused = false, pollIntervalMs = 30_000 } = options;
   const [offers, setOffers] = useState<NormalizedOffer[]>([]);
+  const [slug, setSlug] = useState<string | null>(null);
   const [loadingInitial, setLoadingInitial] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const fetchRef = useRef(0);
@@ -172,6 +180,7 @@ export function useOpenSeaOffers(
     // review #328.
     if (paused) {
       setOffers([]);
+      setSlug(null);
       setLoadingInitial(false);
       setError(null);
       return [];
@@ -196,16 +205,20 @@ export function useOpenSeaOffers(
         return [];
       }
       const body = (await res.json()) as {
-        item_offers?: { status: number; body: unknown };
+        item_offers?: { status: number; body: unknown } | null;
         collection_offers?: { status: number; body: unknown } | null;
+        slug?: string | null;
       };
+      if (myFetch === fetchRef.current) {
+        setSlug(body.slug ?? null);
+      }
 
       // The OpenSea v2 response wraps offers in `{ offers: [...] }`
       // (current) or `{ orders: [...] }` (legacy). `extractOrders`
       // accepts both shapes. We tag each entry's kind and
       // concatenate; v1 only fetches collection offers (see
       // openseaOffersProxy.ts commentary).
-      const itemRaw = extractOrders(body.item_offers);
+      const itemRaw = extractOrders(body.item_offers ?? undefined);
       const collectionRaw = extractOrders(body.collection_offers ?? undefined);
       const normalized: NormalizedOffer[] = [
         ...itemRaw.map(o => normalize(o, 'item', computeAcceptable)),
@@ -245,15 +258,24 @@ export function useOpenSeaOffers(
   ]);
 
   useEffect(() => {
-    if (paused) return;
+    // Codex round-5 P2 review #328 — ALWAYS invoke `doFetch` so
+    // the paused branch (which clears `offers` / `loadingInitial`
+    // / `error`) runs even when `paused` flips true after the
+    // previous render had unpaused offers. Without this, the
+    // effect's `if (paused) return` skipped `doFetch` entirely
+    // and the panel could keep showing stale acceptable offers
+    // OR sit on the initial "Loading offers…" spinner. The
+    // setInterval polling is still gated on `!paused` — the
+    // single mount-time `doFetch` call is enough to reset state.
     void doFetch();
+    if (paused) return;
     const id = setInterval(() => {
       void doFetch();
     }, pollIntervalMs);
     return () => clearInterval(id);
   }, [doFetch, paused, pollIntervalMs]);
 
-  return { offers, loadingInitial, error, refresh: doFetch };
+  return { offers, slug, loadingInitial, error, refresh: doFetch };
 }
 
 /** Pluck the offers array from an OpenSea v2 response — both the

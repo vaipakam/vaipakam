@@ -202,7 +202,73 @@ export function OpenSeaOffersSection({
     { paused: threshold === null || !canMatch },
   );
 
+  // Codex round-5 P2 review #328 — fee-enforced collection gate.
+  // The Match path passes empty `feeLegs[]` to
+  // `updatePrepayListing`; per design §15.3 step 5 + Round-5.1
+  // errata, fee-enforced collections need the dapp to re-derive
+  // `FeeLeg[]` from a FRESH OpenSea collection-fees response at
+  // match time. v1 ships fee-free only; we gate at the section
+  // by fetching `/opensea/collection/{slug}` once per loan and
+  // showing a v1.1-deferred banner when any required fee > 0.
+  // `null` = check not run yet (or no slug); `false` = fee-free;
+  // `true` = fee-enforced.
+  const [feeEnforced, setFeeEnforced] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!agentOrigin || !offersResult.slug) return;
+    let cancelled = false;
+    fetch(
+      `${agentOrigin}/opensea/collection/${encodeURIComponent(offersResult.slug)}?chainId=${chainId}`,
+    )
+      .then(r => (r.ok ? r.json() : null))
+      .then(body => {
+        if (cancelled || body === null) return;
+        const fees = ((body as { fees?: unknown[] }).fees ?? []) as Array<{
+          fee?: number;
+          required?: boolean;
+        }>;
+        const enforced = fees.some(
+          f =>
+            f.required === true &&
+            typeof f.fee === 'number' &&
+            f.fee > 0,
+        );
+        setFeeEnforced(enforced);
+      })
+      .catch(() => {
+        // Transient failure — leave the gate at its current
+        // value rather than incorrectly flipping it to fee-free.
+        // Without a confirmed schedule we treat the collection
+        // as "unknown" (the panel still renders; the user can
+        // attempt Match; the on-chain check is the backstop).
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [agentOrigin, offersResult.slug, chainId]);
+
   if (!agentOrigin) return null;
+
+  if (feeEnforced === true) {
+    return (
+      <div
+        id={`opensea-offers-fee-enforced-${loanId}`}
+        className="card loan-actions-card"
+      >
+        <div className="action-group">
+          <div className="action-title">OpenSea Offers (English mode)</div>
+          <div className="alert alert-info">
+            This collection enforces creator or marketplace fees on
+            every fill. Matching against a fee-enforced collection
+            needs the dapp to re-derive the fee schedule at match
+            time, which is coming in v1.1. For now, offers are
+            visible on OpenSea's marketplace UI; matching from the
+            dapp is disabled to prevent guaranteed-to-revert
+            rotations.
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (listingPreMigration) {
     return (
