@@ -156,11 +156,20 @@ export async function handleFeeRecipientPreflight(
   // simulateContract wiring. The signature + contract are
   // specified here; the operator deploy-script lands the
   // production sim wiring per the §14.4 spec.
-  // For Block A this returns "passed" / "passed_sender_specific"
-  // as the optimistic case until the sim wiring is enabled.
+  //
+  // Honesty discipline (Codex P2 + Raja review on PR #324):
+  // until the sim is actually wired in, returning "passed" for a
+  // recipient we haven't tested would be a FALSE-CONFIDENT
+  // signal — the dapp's UI would render a ✓ on a recipient that
+  // could revert at Seaport-fill time. Return `not_applicable`
+  // for all recipients on allowlisted tokens until the sim ships;
+  // the dapp surfaces that as the same "we can't validate this
+  // token's recipients" signal an off-allowlist token already
+  // produces, so borrowers don't see a green check that hasn't
+  // been earned.
   const verdicts: VerdictEntry[] = feeLegs.map((l) => ({
     recipient: l.recipient,
-    verdict: entry.hookEnabled ? 'passed_sender_specific' : 'passed',
+    verdict: 'not_applicable',
   }));
   return jsonResponse({ verdicts }, 200, resolvedOrigin);
 }

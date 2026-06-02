@@ -1745,28 +1745,13 @@ async function processLoanLogs(
           endAmount: String(l.endAmount),
         })),
       );
-      // T-086 Round-5 Block A (#313) — Codex P2 (PR #324 review):
-      // store the POST-FEE TOTAL (askPrice − sum(feeLegs)), NOT
-      // the true borrower remainder. The true remainder is
-      // `askPrice − lenderLeg − treasuryLeg − sum(feeLegs)` but
-      // the event doesn't carry the protocol legs, so we'd need
-      // an extra `getPrepayContext` RPC to derive them.
-      // Pragmatic for now: persist the figure that IS derivable
-      // from the event payload alone (= the gross going to
-      // protocol + borrower after fees are routed). The column is
-      // not consumer-read in this PR; the proper-remainder
-      // computation is a polish follow-up that also updates the
-      // migration's column-comment math. Stored as TEXT
-      // (BigInt-as-decimal-string) so uint96 fee amounts don't
-      // truncate through JS Number's 2^53 limit.
-      const feeSumStart = feeLegsRaw.reduce(
-        (s, l) => s + BigInt(l.startAmount), 0n,
-      );
-      const postFeeTotal = String(BigInt(askPrice) - feeSumStart);
-      // Naming kept as `borrowerRemainder` for now to match the
-      // column name; renamed semantically in the follow-up PR
-      // alongside the proper-math fix.
-      const borrowerRemainder = postFeeTotal;
+      // T-086 Round-5 Block A (#313) — the `borrower_remainder`
+      // column was intentionally NOT added in migration 0017 (see
+      // its NOTE block). Computing it correctly needs an extra
+      // `getPrepayContext` RPC for lender/treasury legs the event
+      // doesn't carry; rather than persist a wrong value (PR #324
+      // Codex + Raja review both flagged this as blocking), we
+      // skip the write until a follow-up does the proper math.
       // Resolve `grace_period_end` via a fresh RPC read of
       // `getLoanDetails(loanId)`. The on-chain start_time +
       // durationDays are mutated by RepayFacet.repayPartial
@@ -1823,8 +1808,8 @@ async function processLoanLogs(
             lister, posted_at, updated_at, grace_period_end,
             block_number, tx_hash, log_index,
             conduit_key, salt, opensea_published_at, executor,
-            fee_legs_json, borrower_remainder)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            fee_legs_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
         .bind(
           chainId,
@@ -1844,7 +1829,6 @@ async function processLoanLogs(
           publishedAt,
           pinnedExecutor,
           feeLegsJson,
-          borrowerRemainder,
         )
         .run();
     } else if (log.eventName === 'PrepayListingUpdated') {
@@ -1881,10 +1865,9 @@ async function processLoanLogs(
           endAmount: String(l.endAmount),
         })),
       );
-      const feeSumStart = feeLegsRaw.reduce(
-        (s, l) => s + BigInt(l.startAmount), 0n,
-      );
-      const borrowerRemainder = String(BigInt(newAskPrice) - feeSumStart);
+      // T-086 Round-5 Block A (#313) — see Posted-handler note;
+      // the borrower_remainder column is intentionally NOT
+      // written here either.
       // RPC-resolve fresh grace_period_end for the
       // backfill-INSERT case. Same reasoning as the Posted
       // handler — start_time + duration_days can drift after
@@ -1938,7 +1921,7 @@ async function processLoanLogs(
                updated_at = ?, grace_period_end = ?,
                block_number = ?, tx_hash = ?, log_index = ?,
                conduit_key = ?, salt = ?, opensea_published_at = ?,
-               executor = ?, fee_legs_json = ?, borrower_remainder = ?
+               executor = ?, fee_legs_json = ?
          WHERE chain_id = ? AND loan_id = ?`,
       )
         .bind(
@@ -1956,7 +1939,6 @@ async function processLoanLogs(
           publishedAt,
           newPinnedExecutor,
           feeLegsJson,
-          borrowerRemainder,
           chainId,
           loanId,
         )
@@ -1973,8 +1955,8 @@ async function processLoanLogs(
               lister, posted_at, updated_at, grace_period_end,
               block_number, tx_hash, log_index,
               conduit_key, salt, opensea_published_at, executor,
-              fee_legs_json, borrower_remainder)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              fee_legs_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
           .bind(
             chainId,
@@ -1994,7 +1976,6 @@ async function processLoanLogs(
             publishedAt,
             newPinnedExecutor,
             feeLegsJson,
-            borrowerRemainder,
           )
           .run();
       }

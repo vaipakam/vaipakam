@@ -1,6 +1,5 @@
 -- 2026-06-02 — T-086 Round-5 Block A (#313): extend `prepay_listings`
--- with the borrower-supplied fee legs + the denormalized borrower
--- remainder for analytics.
+-- with the borrower-supplied fee legs.
 --
 -- The on-chain `PrepayListingPosted` / `PrepayListingUpdated`
 -- events now emit a `FeeLeg[] feeLegs` data tail (Round-5
@@ -11,12 +10,6 @@
 -- `chainIndexer.ts:_handlePrepayListingPosted` /
 -- `_handlePrepayListingUpdated` and persists them as the JSON
 -- text representation here.
---
--- `borrower_remainder` is the denormalized
--- `ask_price − lender_leg − treasury_leg − sum(feeLegs.amount)`
--- amount. Kept here so the analytics queries don't need to
--- re-derive it on every read (the indexer computes once at
--- write-time from the live floor + the emitted event).
 --
 -- The autonomous OpenSea republish path
 -- (`openseaPublish.ts:publishToOpenSea`) reads `fee_legs_json`
@@ -35,6 +28,19 @@
 -- haven't decoded yet"; tools/queries downstream can rely on
 -- the column being present-and-shaped on every Posted row from
 -- this migration forward.
+--
+-- NOTE on the originally-proposed `borrower_remainder` column:
+-- the design called for a denormalized borrower-remainder figure
+-- here, but the on-chain event only carries `askPrice` + the
+-- fee legs — not the lender/treasury legs (those are derived from
+-- the live floor via `getPrepayContext` at post time). Computing
+-- the proper remainder
+-- (`askPrice − lender_leg − treasury_leg − sum(feeLegs.amount)`)
+-- requires an additional `getPrepayContext` RPC the indexer
+-- doesn't currently issue per event. Rather than persist a wrong
+-- column (PR #324 Codex + Raja review both flagged this as
+-- blocking), the column is INTENTIONALLY NOT ADDED in this
+-- migration. A follow-up migration after the proper RPC
+-- plumbing lands will re-introduce it with correct semantics.
 
 ALTER TABLE prepay_listings ADD COLUMN fee_legs_json TEXT;
-ALTER TABLE prepay_listings ADD COLUMN borrower_remainder TEXT;

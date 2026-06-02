@@ -705,6 +705,14 @@ contract CollateralListingExecutor is
         // on the same order, but defense-in-depth).
         IVaipakamPrepayCallbacks(vaipakamDiamond).executorFinalizePrepaySale(loanId);
         delete orderContext[params.orderHash];
+        // T-086 Round-5 Block A (#313) — Codex P2 round-1 cleanup
+        // (PR #324 Raja review): also clear the per-order fee-leg
+        // storage. The successful-fill path was leaking
+        // _orderFeeLegs entries while clearOrder + the explicit
+        // cancel paths cleared them; this brings validateOrder in
+        // line. `delete` on a dynamic-array mapping value clears
+        // length + every element (Solidity standard semantics).
+        delete _orderFeeLegs[params.orderHash];
 
         emit OrderFilled(params.orderHash, loanId);
         return ISeaportZone.validateOrder.selector;
