@@ -419,8 +419,8 @@ Fresh-fetch trade-offs considered:
 - On-chain (ERC-2981 `royaltyInfo`) — rejected for v1 because OpenSea's protocol fee leg isn't ERC-2981-derivable; it's an OpenSea policy parameter. Could land as a defense-in-depth cross-check in v2 (compare borrower-supplied royalty leg against ERC-2981 read; reject if recipients diverge).
 
 The dapp's pre-flight on a fee-enforced collection:
-1. Fetch `/api/v2/collections/{slug}/fees` via the agent Worker proxy (CORS-blocked direct browser call → routes through `apps/agent` with `OPENSEA_API_KEY` server-side).
-2. Filter to `required: true` entries — Round 5 v1 includes only required fees; optional fees are skipped to keep the borrower's remainder maximal.
+1. Fetch `/api/v2/collections/{slug}` via the agent Worker proxy (CORS-blocked direct browser call → routes through `apps/agent` with `OPENSEA_API_KEY` server-side). The fee schedule is in the response body's `fees` array (per OpenSea's current Collection API shape — NOT a separate `/fees` sub-endpoint).
+2. Filter to entries where the marketplace enforces a non-zero `basis_points` — Round 5 v1 includes only required fees; optional fees are skipped to keep the borrower's remainder maximal.
 3. Compute leg amounts: `feeAmount[i] = askPrice * feeBps[i] / 10000`.
 4. Construct the canonical order with `consideration[3..]` = fee legs.
 5. Post on-chain via `postPrepayListing` (extended signature, §14.5).
@@ -430,10 +430,10 @@ The dapp's pre-flight on a fee-enforced collection:
 
 Round 5 changes to `CollateralListingExecutor._assertOrderContent`:
 
-- **Length check relaxed.** Was: `consideration.length == 3`. Now: `3 ≤ consideration.length ≤ 5`.
+- **Length check relaxed.** Was: `consideration.length == 3`. Now: `3 ≤ consideration.length ≤ 3 + MAX_FEE_LEGS = 7`.
 - **Lender + treasury coverage checks unchanged.** Indices 0 + 1 remain the lender + treasury legs; their recipients + minimum amounts validate against live floor exactly as in Round 4 §5.7.
 - **Borrower leg index unchanged.** Index 2 remains the borrower-remainder leg routed to `borrowerNftOwner`.
-- **Fee legs at indices 3–4.** Each MUST use the loan's `principalAsset` (same ERC20 as the protocol legs). Each MUST have a non-zero amount. **Recipients are NOT validated against an on-chain allowlist** — this is the key simplification. A borrower who lies about fee recipients (e.g., routes a "fake" royalty leg back to themselves) gains nothing economically (the leg is paid from their own remainder; they receive what they would've received anyway minus the extra ERC20-transfer gas), and gains nothing on the OpenSea side (OpenSea's submission-time fee enforcement is what catches mis-stated fees, not the on-chain executor).
+- **Fee legs at indices 3 … (3 + feeLegsCount - 1).** Each MUST use the loan's `principalAsset` (same ERC20 as the protocol legs). Each MUST have a non-zero amount. **Recipients are NOT validated against an on-chain allowlist** — this is the key simplification. A borrower who lies about fee recipients (e.g., routes a "fake" royalty leg back to themselves) gains nothing economically (the leg is paid from their own remainder; they receive what they would've received anyway minus the extra ERC20-transfer gas), and gains nothing on the OpenSea side (OpenSea's submission-time fee enforcement is what catches mis-stated fees, not the on-chain executor).
 
 The executor's job is to protect the protocol's economics (lender + treasury + grace + lock). Whether the borrower's remainder is paid as one leg or split across self-attributed fee legs is a borrower-side detail with no protocol consequence.
 
@@ -450,12 +450,13 @@ Contract-side hard-gates (e.g., "fee recipients must be EOAs") are explicitly re
 
 ### 14.5 Contract surface changes
 
-**`NFTPrepayListingFacet`** — extended posting signature:
+**`NFTPrepayListingFacet`** — extended posting signature. One unified `FeeLeg` struct works for both fixed-price and Dutch modes; fixed-price callers pass `startAmount == endAmount` and Seaport's amount interpolation collapses to a constant. Dutch callers (§15.2) pass `startAmount > endAmount` for proportional decay.
 
 ```solidity
 struct FeeLeg {
     address recipient;
-    uint256 amount;     // denominated in principalAsset; non-zero
+    uint96 startAmount;     // amount at order.startTime;  non-zero
+    uint96 endAmount;       // amount at order.endTime;    non-zero
 }
 
 function postPrepayListing(
@@ -463,7 +464,9 @@ function postPrepayListing(
     uint256 askPrice,
     uint256 salt,
     bytes32 conduitKey,
-    FeeLeg[] calldata feeLegs       // NEW — 0 to MAX_FEE_LEGS (=2) entries
+    FeeLeg[] calldata feeLegs       // NEW — 0 to MAX_FEE_LEGS (=4) entries
+                                    //       for fixed-price, callers set
+                                    //       startAmount == endAmount.
 ) external returns (bytes32 orderHash);
 
 function updatePrepayListing(
@@ -471,24 +474,43 @@ function updatePrepayListing(
     uint256 newAskPrice,
     uint256 newSalt,
     bytes32 newConduitKey,
-    FeeLeg[] calldata feeLegs       // NEW
+    FeeLeg[] calldata feeLegs       // NEW — same shape; same MAX cap
 ) external returns (bytes32 newOrderHash);
 ```
 
-Backwards compatibility: callers passing an empty `feeLegs` array get the Round-4 3-leg behaviour exactly. The empty case is the default for fee-free collections.
+**Why uint96 amounts.** Each fee leg fits in 2 storage slots with `(address recipient: 20B) + (uint96 startAmount: 12B)` packing into slot 0 and `(uint96 endAmount: 12B) + (20B pad)` in slot 1. `uint96` covers 7.9 × 10^28 wei per leg — vastly above any realistic fee amount for any ERC20. The facet's bounds-checked narrowing cast on input mirrors the existing `LoanIdOverflow` / `AskPriceOverflow` pattern from `CollateralListingExecutor`.
 
-**`LibPrepayOrder`** — `_components` accepts an optional `feeLegs` array, appends them to the `consideration` array after the borrower leg.
+**Buffer + fees math precision (Grok finding B).** The Round-4 facet's `_requireAskCoversFloor(askPrice, lenderLeg, treasuryLeg, cfgPrepayListingBufferBps)` was written against the 3-leg world: it checks `askPrice ≥ (lenderLeg + treasuryLeg) × (1 + bufferBps/10000)`, i.e. the gross ask covers protocol legs PLUS the 2% fillability buffer (so a tiny floor drift doesn't immediately fail the order's coverage check). Under N-leg, the validation rule the facet MUST enforce is:
 
-**`CollateralListingExecutor.OrderContext`** — extended to record the **full `FeeLeg[]` array** (recipient + amount per leg). The #316 `_tryCancelOnSeaport` path rebuilds the canonical `OrderComponents` at cleanup time and forwards `Seaport.cancel`; that reconstruction needs every signed input that fed into the original hash — including each fee leg's recipient + amount, since Seaport's `getOrderHash` is a one-way cryptographic digest and cannot be inverted.
+- `lenderLeg + treasuryLeg + sum(feeLegs.startAmount) + borrowerLeg.startAmount == askPrice` (sum-of-considerations equality for the start state),
+- `lenderLeg × (1 + bufferBps/10000) + treasuryLeg × (1 + bufferBps/10000) + sum(feeLegs.startAmount) ≤ askPrice`, equivalently `borrowerLeg.startAmount ≥ (lenderLeg + treasuryLeg) × bufferBps / 10000`. The buffer applies ONLY to the protocol legs — fee legs are fixed amounts the borrower agreed to pay; they're not subject to drift like the live-floor protocol legs are.
+- `borrowerLeg.startAmount ≥ 0` after the buffer math (already implied by the above; spelled out so the facet error message is clean).
 
-The naive layout is 2 slots per fee leg (address + uint256 amount). Pack-tight option: 1 slot per leg using `address` (20 bytes) + `uint96` amount (12 bytes); `uint96` covers any realistic fee amount in any ERC20 (max 7.9 × 10^28 wei). Storage cost per recorded listing:
+Naively applying the old `_requireAskCoversFloor` to gross ask and THEN deducting fees can produce a negative borrower remainder. The Block A facet validation step (A.2) explicitly enforces the above rule, not a copy of the 3-leg formula.
 
-| Mode | Layout | Total slots (MAX_FEE_LEGS = 4) |
+**Backwards compatibility — explicit selector replacement (Codex P1, line 644).** Adding `FeeLeg[]` to `postPrepayListing` / `updatePrepayListing` changes both Solidity selectors. The diamondCut sequencing CANNOT treat this as "no new selectors":
+
+1. The new selectors (with `FeeLeg[]`) must be ADDED via `diamondCut(.., FacetCutAction.Add)`.
+2. The old selectors (without `FeeLeg[]`) must be REMOVED via `diamondCut(.., FacetCutAction.Remove)`. Old four-argument callers are NOT ABI-compatible with the new shape.
+3. `DiamondFacetNames.cutFacetNames()` is unchanged (same facet), but `DeployDiamond.s.sol._getNFTPrepayListingFacetSelectors()` MUST be updated to emit the new selectors; `SelectorCoverageTest._populateRoutedSet()` mirrors it.
+4. Frontend ABI re-export (`exportFrontendAbis.sh`) + consumer typecheck cycle picks up the breaking signature change as a TS compile error — consumers (apps/defi, apps/indexer, apps/agent) are co-updated.
+
+No wrapper functions retained for old callers — the only on-chain consumer was the Round-4 dapp + indexer, both being co-updated. A clean ABI break is cleaner than a permanent legacy selector.
+
+**`LibPrepayOrder`** — `_components` accepts an optional `feeLegs` array, appends them to the `consideration` array after the borrower leg. Each fee leg's `(startAmount, endAmount)` flows directly into the corresponding `ConsiderationItem.startAmount / endAmount` so Seaport's native interpolation handles Dutch decay without any custom executor math.
+
+**`CollateralListingExecutor.OrderContext`** — extended to record the **full `FeeLeg[]` array** AND the auction-mode-specific fields (`endAskPrice`, `auctionEndTime`, mode tag). The #316 `_tryCancelOnSeaport` path rebuilds the canonical `OrderComponents` at cleanup time and forwards `Seaport.cancel`; that reconstruction needs every signed input that fed into the original hash — including each fee leg's recipient + start + end amounts AND the Dutch decay parameters, since Seaport's `getOrderHash` is a one-way cryptographic digest and cannot be inverted.
+
+Storage cost per recorded listing (each FeeLeg = 2 slots, see "Why uint96 amounts" above):
+
+| Mode | Fields added beyond #316's 4-slot baseline | Total slots (MAX_FEE_LEGS = 4) |
 | --- | --- | --- |
-| Fixed-price, 0 fee legs | #316 baseline | 4 |
-| Fixed-price, 4 fee legs | +1 length slot + 4 packed leg slots | 9 |
-| Dutch, 0 fee legs | #316 baseline + `auctionEndTime` packing | 4 |
-| Dutch, 4 fee legs | +1 length slot + 4 legs × 2 slots (start + end amounts can't share a packed slot with the recipient + each other) | 13 |
+| Fixed-price, 0 fee legs | none — `FeeLeg[]` length slot reads zero | 4 |
+| Fixed-price, 4 fee legs | +1 length slot + 4 legs × 2 slots = +9 | 13 |
+| Dutch, 0 fee legs | +1 slot (`endAskPrice uint128 \| auctionEndTime uint64 \| mode flag uint8`) | 5 |
+| Dutch, 4 fee legs | Dutch +1 + fee +9 | 14 |
+
+Worst-case 14 slots × ~20K gas per cold SSTORE ≈ 280K gas added to the post path. Acceptable for a pre-launch architecture; if this proves too costly at scale, v2 can move fee-leg storage to a separate keccak256-keyed sub-mapping (one SLOAD per leg at cancel time) instead of the inline dynamic-array layout.
 
 **Hard cap on fee legs.** `MAX_FEE_LEGS = 4` enforced by the facet's validation. Four covers the realistic worst case — collections with artist splits or DAO shares typically have 3+ royalty recipients in addition to OpenSea's protocol fee; OpenSea's Collection API returns the full required-fees array, and a cap of 2 (the original sketch) would exclude legitimate collections from the OpenSea-UI surface. The executor's iteration cost (linear scan, ~3K gas per extra leg) is dwarfed by Seaport's per-consideration-transfer cost; the cap is primarily a DoS bound, not a gas-budget bound. If OpenSea's schedule ever requires more than 4 required legs, lift the cap in a follow-up.
 
@@ -496,7 +518,7 @@ The naive layout is 2 slots per fee leg (address + uint256 amount). Pack-tight o
 
 - **`apps/agent`** — new `/opensea/collection/{slug}/fees` proxy endpoint (CORS-locked, rate-limited, uses server-side `OPENSEA_API_KEY`).
 - **`apps/defi`** — `useNFTPrepayListing` hook fetches the fee schedule at post time; pre-fills the post UI with computed fee amounts + the resulting borrower remainder. Borrower can NOT override the fees (would cause OpenSea rejection); the UI is read-only on fee fields.
-- **`apps/indexer`** — `prepay_listings` table grows two columns: `fee_legs_json` (the recorded fee schedule) + `borrower_remainder` (denormalized for analytics). `PrepayListingPosted` event grows a `feeLegsRoot` indexed field (keccak256 of the encoded fee legs) so the indexer can index without decoding the full array on hot paths.
+- **`apps/indexer`** — `prepay_listings` table grows two columns: `fee_legs_json` (the recorded fee schedule) + `borrower_remainder` (denormalized for analytics). `PrepayListingPosted` event payload carries the **full `FeeLeg[]` array as event data** (NOT just an indexed `feeLegsRoot` hash) — the indexer needs the recipient + amounts to populate `fee_legs_json` from the chain log in the autonomous-fallback publish path (when the borrower's browser closed between tx-confirm and the dapp's POST). A hashed root would force a separate fetch + decode trip and break the indexer's "self-contained log" invariant. The legs are NOT indexed (no topic-hash filtering needed); they ride as ABI-encoded data.
 - **OpenSea API publish** — `apps/agent`'s `POST /opensea/listing` accepts the extended consideration array as-is; the indexer's `openseaPublish.ts` fallback path same.
 
 ### 14.7 Out of scope for Round 5 fee-legs
@@ -520,9 +542,11 @@ Round 5 adds two auction modes that coexist with Round 4's fixed-price flow. The
 Seaport's `OrderComponents` natively supports linear price decay across the order's `startTime → endTime` window via `startAmount > endAmount` on each consideration item. Round 5 uses this to decay the **borrower-remainder leg** linearly from `startAmount = borrower_max` down to `endAmount = borrower_min` while keeping lender + treasury legs FIXED at the projected-max floor at `endTime`.
 
 Why fix lender + treasury at the projected-max-floor:
-- Lender + treasury legs must cover live floor at fill time (Round-4 invariant). Live floor monotonically increases with accrued interest.
+- Lender + treasury legs must cover live floor at fill time (Round-4 invariant). Live floor monotonically increases with accrued interest **assuming the floor formula's governance inputs (treasuryFeeBps, precloseFeeBps, etc.) stay fixed.**
 - If those legs decayed alongside the borrower leg, a late fill would under-pay lender + treasury — executor-revert.
-- Fixing them at the floor projected at `endTime` (the latest possible fill) guarantees lender + treasury are always over-covered. The over-coverage is absorbed by the borrower remainder (smaller decayed payout).
+- Fixing them at the floor projected at `endTime` (the latest possible fill, under sign-time governance config) guarantees lender + treasury are always over-covered **for any t < endTime where governance params haven't moved.** The over-coverage is absorbed by the borrower remainder (smaller decayed payout).
+
+**Governance-mutation qualifier.** This coverage guarantee holds ONLY while the floor formula's governance inputs (treasuryFeeBps, precloseFeeBps, the live floor formula itself) stay unchanged between signing and fill. A mid-auction `setTreasuryFeeBps` raises the live floor; the signed `lenderLeg + treasuryLeg` may then under-cover, and the executor's fill-time check reverts (`Lender short-paid` / `Treasury short-paid`). Protocol safety is preserved — there's no under-payment, just an unfillable auction — but the listing is effectively frozen until the borrower pays gas to `updatePrepayListing` with new projections. v1 explicitly ACCEPTS this trade-off (freezing governance params in the order shape would mean storing them in OrderContext and re-deriving floor against the stored params at fill time, which would let a listing keep filling at obsolete floors after governance changes — worse outcome). See §15.10(A) for the dapp-side mitigation.
 
 Posting interface:
 
@@ -538,19 +562,31 @@ function postPrepayDutchListing(
 ) external returns (bytes32 orderHash);
 ```
 
-Per-leg derivation at sign time:
-- `lenderLeg.startAmount = lenderLeg.endAmount = liveFloor.lenderShare(loanId, auctionEndTime)` (projected lender share at `endTime`)
+Per-leg derivation at sign time (Codex P2 line 546 — fee legs need explicit start/end amounts, NOT bps; the unified `FeeLeg` shape in §14.5 already carries both):
+- `lenderLeg.startAmount = lenderLeg.endAmount = liveFloor.lenderShare(loanId, auctionEndTime)` (projected lender share at `endTime` under sign-time governance config)
 - `treasuryLeg.startAmount = treasuryLeg.endAmount = liveFloor.treasuryShare(loanId, auctionEndTime)`
-- `borrowerLeg.startAmount = startAskPrice - lenderLeg.startAmount - treasuryLeg.startAmount - sum(feeLegs.startAmount)`
-- `borrowerLeg.endAmount = endAskPrice - lenderLeg.endAmount - treasuryLeg.endAmount - sum(feeLegs.endAmount)`
-- Fee legs (per §14) decay proportionally to the total askPrice: `feeLeg[i].startAmount = startAskPrice * bps[i] / 10000`; same shape on `endAmount`.
+- Each `FeeLeg[i]` is borrower-supplied (computed by the dapp from `bps[i] × startAskPrice / 10000` and `bps[i] × endAskPrice / 10000` for OpenSea-required fee schedules) and flows through unchanged. The executor recomputes nothing here — Seaport's native interpolation between `feeLegs[i].startAmount` and `feeLegs[i].endAmount` produces the live amount at fill time, and OpenSea's marketplace UI accepts the order if its fee enforcement sees the right `bps × currentPrice` ratio at submission. The contract surface carries amounts, not bps, because amounts are what Seaport hashes into the order.
+- `borrowerLeg.startAmount = startAskPrice - lenderLeg.startAmount - treasuryLeg.startAmount - sum(feeLegs[i].startAmount)`
+- `borrowerLeg.endAmount = endAskPrice - lenderLeg.endAmount - treasuryLeg.endAmount - sum(feeLegs[i].endAmount)`
 
-Open invariant: `borrowerLeg.endAmount ≥ 0` is enforced at sign time. If `endAskPrice < lenderLeg + treasuryLeg + sum(feeLegs)`, the facet reverts before any state mutation.
+Sign-time invariants the facet enforces before any state mutation:
+- `auctionEndTime > block.timestamp + MIN_AUCTION_WINDOW` (with `MIN_AUCTION_WINDOW = 1 hour` as the starting v1 floor — protects against accidentally posting an already-expired or sub-block-window auction that locks the borrower's NFT but can never fill).
+- `auctionEndTime ≤ loan.gracePeriodEnd` — auction window cannot extend past grace.
+- `endAskPrice ≥ lenderLeg + treasuryLeg + sum(feeLegs.endAmount)` — borrower remainder at `endTime` must be ≥ 0.
+- `startAskPrice ≥ endAskPrice` — Seaport's interpolation requires `startAmount ≥ endAmount` per leg; violating this means an item's amount would INCREASE over time, breaking Dutch decay semantics.
+- `feeLegs[i].startAmount ≥ feeLegs[i].endAmount` for every fee leg — same Seaport monotonicity rule.
+
+**Seaport order `endTime` for Dutch (Grok finding C).** The signed `OrderComponents.endTime` for a Dutch listing MUST be `auctionEndTime`, NOT `loan.gracePeriodEnd`. This is what stops Seaport's native amount interpolation at the intended auction close — past `auctionEndTime`, Seaport rejects the order at submission as expired and no fill is possible. The on-chain `prepayListingOrderHash` binding + the borrower-position-NFT lock persist until explicit cancel or `cancelExpiredPrepayListing` (callable after `gracePeriodEnd`). This means the Dutch listing has TWO terminal-time boundaries layered:
+
+- **Seaport-side `auctionEndTime`** — interpolation stops, no further fills accepted by Seaport regardless of zone state.
+- **Protocol-side `gracePeriodEnd`** — the lock + listing bookkeeping persist; the borrower can `cancelPrepayListing` or re-list with a new Dutch shape at any t < gracePeriodEnd; permissionless `cancelExpiredPrepayListing` becomes callable at gracePeriodEnd.
+
+The facet's post-time check still enforces `auctionEndTime ≤ loan.gracePeriodEnd` so the Seaport boundary never exceeds the protocol boundary. The dapp's loan-card UI surfaces both boundaries: "Auction ends in 3h (no more fills); grace ends in 18h (cancel available)."
 
 Executor validation at fill time:
-- Same `_assertOrderContent` as §14.4 (length 3–5, types, recipients, lender + treasury coverage).
-- Coverage check compares lender + treasury legs against `liveFloor(block.timestamp)`, NOT against the projected-max. Since the projected-max ≥ live floor at any t < endTime, coverage is always satisfied.
-- Grace check unchanged: `block.timestamp < loan.gracePeriodEnd`. The facet also requires `auctionEndTime ≤ loan.gracePeriodEnd` at post time.
+- Same `_assertOrderContent` as §14.4 (length 3–7 — up to 3 protocol legs + up to 4 fee legs, types, recipients, lender + treasury coverage).
+- Coverage check compares lender + treasury legs against `liveFloor(block.timestamp)`, NOT against the projected-max. Since the projected-max ≥ live floor at any t < endTime AND governance config stayed unchanged, coverage is always satisfied. Under a mid-auction governance bump, the check correctly reverts (see "Governance-mutation qualifier" above + §15.10(A)).
+- Grace check unchanged: `block.timestamp < loan.gracePeriodEnd` — preserved as belt-and-braces against any future Seaport boundary semantics change.
 
 UX surfacing: the dapp shows the borrower the current decayed price ("price right now: $X; in 6h: $Y; ends at: $Z"), updated live from a one-second ticker. Banner on the loan card shows the time-remaining + current price.
 
@@ -563,11 +599,17 @@ Round 5 ships a **pragmatic English path** that reuses the existing fixed-price 
 1. Borrower posts a **regular fixed-price listing** at `startAskPrice` (could be projected max value, could be a deliberately-high reserve).
 2. Bidders see the listing on OpenSea and place **collection offers** or **item offers** below the ask. Standard OpenSea UX — no Vaipakam-specific surface needed.
 3. The dapp polls OpenSea's offers API for the loan's NFT and surfaces incoming offers to the borrower (banner on the loan card, sortable by amount).
-4. When the borrower likes an offer, they click **"Accept (re-list at offer price)"** in the dapp. The dapp calls `updatePrepayListing(loanId, newAskPrice = offer_value, ...)` to rotate the canonical order to the offer's price.
-5. The borrower (or the bidder, via OpenSea's standard one-click fulfillment of a now-matching listing) calls `Seaport.fulfillOrder` — the loan settles via the existing executor zone path.
+4. **Buffer + floor filter (Codex P2 line 566).** The dapp only marks an offer as "Acceptable" when `offer_value ≥ liveFloor × (1 + cfgPrepayListingBufferBps / 10000)`. Offers below this threshold are surfaced but greyed out — accepting them would revert at re-sign because `_requireAskCoversFloor` enforces the listing buffer on every `updatePrepayListing` call, not just on the initial post. Surfacing the buffer in the UI is what prevents a borrower from clicking "Accept" on an offer that would just bounce.
+5. When the borrower likes an acceptable offer, they click **"Match offer"** in the dapp. The dapp calls `updatePrepayListing(loanId, newAskPrice = offer_value, …)` to rotate the canonical order to the offer's price.
+
+   **Fee-leg re-derivation on fee-enforced collections (Grok finding 4).** If the collateral collection enforces fees, the dapp MUST RE-FETCH the OpenSea fee schedule against the NEW gross ask (`offer_value`) before calling `updatePrepayListing` — applying the original high-fixed-price fee amounts to a lower offer-matched ask would either:
+   - over-state the fees (lender + treasury + stale-fees > offer_value → reverts at the sum-equality check), or
+   - mismatch what the OpenSea API expects (bps × current_price), causing the re-listed order to be rejected at submission.
+   The dapp's `useNFTPrepayListing` hook recomputes `feeAmount[i] = offer_value × feeBps[i] / 10000` from the same Collection API response cached earlier in the session (one fetch per collection per session is enough since fee schedules rarely change intra-session), then passes the freshly-computed `FeeLeg[]` to `updatePrepayListing`.
+6. **The bidder fulfills (Codex P2 line 567).** After the rotation lands on-chain, the dapp surfaces a sharable link OR notifies the bidder out-of-band ("the seller has matched your offer at $X; complete the purchase here"). The BIDDER calls `Seaport.fulfillOrder` on the rotated listing — they are the buyer providing the listing's multi-leg consideration. The bidder's original OpenSea OFFER is NOT the order being settled; only the rotated LISTING settles. (Bidders are the ones who supply the multi-leg consideration; if the borrower fulfilled their own rotated listing they'd be buying their own collateral and funding the lender + treasury split from their own wallet — economic nonsense.)
 
 What this gives up:
-- Not a strict "accept this specific buyer's offer" — any buyer can race-fill at the rotated price between the `updatePrepayListing` and the targeted bidder's fulfillment. Same race window as today's `updatePrepayListing`.
+- **Race window.** Between the borrower's `updatePrepayListing` (step 5) and the bidder's `Seaport.fulfillOrder` (step 6), ANY buyer can fulfill the rotated listing — the offer-acceptance is NOT bound to the originating bidder. Sniping the bidder out of the price they bid is a real possibility. The dapp UI MUST warn ("Once you match, any buyer can fulfill at the matched price within ~N minutes. Notify your bidder before clicking Match.") and v2 could add a custom-zone or matched-orders flow that atomically rotates + fulfills in one tx, binding to the specific bidder. v1 explicitly accepts the race for shipping-velocity reasons.
 - Not on-chain bid auditability — the dapp's offer ranking is OpenSea-API-derived.
 
 What it gives:
@@ -575,7 +617,7 @@ What it gives:
 - **Real price discovery.** Borrower sees actual market interest before committing to a price.
 - **Same atomicity** as fixed-price — Seaport's atomic offer-and-consideration fulfillment, executor's zone callback for state finalization.
 
-This is the "English mode" the user picked. If the race-window UX proves painful in production, v2 can add a tighter bidder-binding via a custom-zone or matched-orders flow.
+This is the "English mode" the user picked. If the race-window UX proves painful in production, v2 can add a tighter bidder-binding via a custom-zone or matched-orders flow (atomic match-rotation in a single tx, eliminating the snipe window).
 
 ### 15.4 Reserve-tracks-floor — resolved
 
@@ -637,26 +679,33 @@ Three step blocks; each block can ship independently — fee-legs (§14) and auc
 
 **Block A — Fee-legs extension (#313)**
 
-A.1. **`LibPrepayOrder._components` accepts an optional `feeLegs[]` array**, appends them to consideration after the borrower leg.
-A.2. **`NFTPrepayListingFacet`** — extend `postPrepayListing` / `updatePrepayListing` signatures with `FeeLeg[]`. Validate `0 ≤ feeLegs.length ≤ MAX_FEE_LEGS (=2)`; each `recipient != address(0)`, `amount > 0`; sum-of-considerations equality check.
-A.3. **`CollateralListingExecutor._assertOrderContent`** — relax length cap to `[3, 5]`; preserve every other check.
-A.4. **`OrderContext`** — extend to record fee-leg total (+1 slot → 5 slots) for #316 cancel-time reconstruction. Update `_tryCancelOnSeaport` to pass through the fee legs.
-A.5. **ABI sync + Diamond facet wiring** unchanged (no new facet, no new selectors).
-A.6. **`apps/agent`** — new `/opensea/collection/{slug}/fees` proxy.
-A.7. **`apps/defi`** — `useNFTPrepayListing` fee fetch + pre-flight; pre-filled fee UI.
-A.8. **`apps/indexer`** — new D1 columns `fee_legs_json` + `borrower_remainder`; extend `PrepayListingPosted` handler to record them.
-A.9. **Tests** — facet unit tests for fee-leg validation; executor tests for length 3 / 4 / 5; integration test for end-to-end fee-enforced collection flow.
+A.1. **`LibPrepayOrder._components` accepts an optional `feeLegs[]` array**, appends each as a `ConsiderationItem` with `startAmount = feeLeg.startAmount` and `endAmount = feeLeg.endAmount`. For fixed-price callers the two values are equal.
+A.2. **`NFTPrepayListingFacet`** — extend `postPrepayListing` / `updatePrepayListing` signatures with `FeeLeg[]`. Validate `0 ≤ feeLegs.length ≤ MAX_FEE_LEGS (=4)`; each `recipient != address(0)`, `startAmount > 0`, `endAmount > 0`, `startAmount ≥ endAmount`; sum-of-considerations equality check (`startAskPrice == lender + treasury + borrower.startAmount + sum(feeLegs.startAmount)`; same for endAmount).
+A.3. **`CollateralListingExecutor._assertOrderContent`** — relax length cap to `[3, 3 + MAX_FEE_LEGS] = [3, 7]`; preserve every other check (recipient indices 0+1, principalAsset, lender/treasury coverage).
+A.4. **`OrderContext` extension** — record the full `FeeLeg[]` array (2 slots per leg) + the fee-legs length slot for #316 cancel-time reconstruction. Update `_tryCancelOnSeaport` to rebuild the canonical `OrderComponents` including the fee legs.
+A.5. **Selector replacement via diamondCut.** Adding `FeeLeg[]` to `postPrepayListing` / `updatePrepayListing` changes both Solidity selectors. The deploy script's diamondCut step (or a follow-up cut on already-deployed networks) MUST:
+- ADD the new selectors via `FacetCutAction.Add`,
+- REMOVE the old selectors via `FacetCutAction.Remove`.
+Update `DeployDiamond.s.sol._getNFTPrepayListingFacetSelectors()` and `SelectorCoverageTest._populateRoutedSet()` to emit the new shape. `DiamondFacetNames.cutFacetNames()` is unchanged (same facet).
+A.6. **ABI re-export + consumer typecheck.** Run `exportFrontendAbis.sh`; `pnpm --filter @vaipakam/{defi,indexer,agent} exec tsc -b --noEmit` MUST fail at consumer call sites — co-update the apps in the same PR.
+A.7. **`apps/agent`** — new `/opensea/collection/{slug}` proxy returning the full Collection API body (fees array lives inside the response, NOT a separate `/fees` endpoint).
+A.8. **`apps/defi`** — `useNFTPrepayListing` fee fetch + pre-flight; pre-filled fee UI; ghost-recipient sim-transfer pre-flight check (§14.4).
+A.9. **`apps/indexer`** — new D1 columns `fee_legs_json` + `borrower_remainder`; extend `PrepayListingPosted` handler to decode the full `FeeLeg[]` from event data (NOT just an indexed root) and persist them.
+A.10. **`IListingExecutorRecorder` interface extension (Grok finding D).** The `recordOrder` signature on `IListingExecutorRecorder.sol` AND on `CollateralListingExecutor` MUST grow a `FeeLeg[] feeLegs` parameter alongside the existing `(orderHash, loanId, conduit, conduitKey, salt, startTime, askPrice)` shape from PR #321. The executor is a UUPS singleton — the upgrade is an `_authorizeUpgrade`-gated proxy implementation swap, NOT a re-deploy. Block A includes this UUPS upgrade step. The mock `MockListingExecutorRecorder.sol` in the test corpus is co-updated.
+A.11. **Indexer event-coverage guardrail (Grok finding F).** Run `pnpm --filter @vaipakam/indexer check-event-coverage` after the extended `PrepayListingPosted` event lands; either handle the new shape OR add a deliberate `DELIBERATELY_NOT_HANDLED` entry with a one-line reason (per CLAUDE.md's event-coverage discipline).
+A.12. **Tests** — facet unit tests for fee-leg validation (length cap, sum equality, buffer math); executor tests for length 3 / 4 / 5 / 6 / 7; integration test for end-to-end fee-enforced collection flow; UUPS upgrade rehearsal test for the executor swap.
 
 **Block B — Dutch decay (#309 Mode A)**
 
-B.1. **`LibPrepayOrder._componentsDutch`** — new builder that takes `startAskPrice` + `endAskPrice` + `auctionEndTime`; computes per-leg `startAmount` / `endAmount` per §15.2.
-B.2. **`NFTPrepayListingFacet`** — new `postPrepayDutchListing` entry point. Same conduit + ERC1271 + lock semantics as `postPrepayListing`.
-B.3. **`CollateralListingExecutor`** — no changes. Existing `_assertOrderContent` works as-is (Seaport's amount interpolation happens before the zone callback; the executor sees the resolved amounts at fill time).
-B.4. **`OrderContext`** — extend to record `auctionEndTime` (≤ uint64) for #316 cancel-time reconstruction. +0 slots if packed alongside existing uint64 startTime; +1 otherwise.
-B.5. **ABI sync** for the new facet selector.
-B.6. **`apps/defi`** — Dutch posting UI; live decayed-price banner.
-B.7. **`apps/indexer`** — new D1 columns `auction_mode` (enum: fixed/dutch) + `auction_end_time` + `end_ask_price`. Extend `PrepayListingPosted` shape.
-B.8. **Tests** — facet unit tests; integration test for sign-mid-decay fill.
+B.1. **`LibPrepayOrder._componentsDutch`** — new builder that takes `startAskPrice` + `endAskPrice` + `auctionEndTime` + `FeeLeg[]`; computes per-leg `startAmount` / `endAmount` per §15.2. Lender + treasury legs get fixed `(start, end) == (projectedMax, projectedMax)`. Borrower leg gets `(startAskPrice - …, endAskPrice - …)`. Fee legs flow through with their own `(startAmount, endAmount)` so OpenSea-required-fee percentages are honoured at every block of the auction.
+B.2. **`NFTPrepayListingFacet`** — new `postPrepayDutchListing` entry point. Same conduit + ERC1271 + lock semantics as `postPrepayListing`. Validate `auctionEndTime > block.timestamp + MIN_AUCTION_WINDOW (=1h)`, `auctionEndTime ≤ loan.gracePeriodEnd`, `endAskPrice ≥ projectedLenderLeg + projectedTreasuryLeg + sum(feeLegs.endAmount)`, `startAskPrice ≥ endAskPrice`, every `feeLegs[i].startAmount ≥ feeLegs[i].endAmount`.
+B.3. **`CollateralListingExecutor`** — no changes to fill-time validation. Existing `_assertOrderContent` works as-is (Seaport's amount interpolation happens before the zone callback; the executor sees the resolved amounts at fill time, and the relaxed length cap from Block A.3 already covers Dutch's 3-7 leg range).
+B.4. **`OrderContext`** — extend to record `endAskPrice` + `auctionEndTime` + auction-mode tag for #316 cancel-time reconstruction. Mode tag distinguishes "rebuild as fixed-price" from "rebuild as Dutch" — without it, the cancel path can't know whether to pass `startAmount == endAmount` or `startAmount > endAmount` to `LibPrepayOrder.componentsForCancel`. Packed into one slot: uint128 endAskPrice + uint64 auctionEndTime + uint8 mode flag + 56-bit padding.
+B.5. **Selector wiring** — `postPrepayDutchListing` is a new selector added via diamondCut. `DeployDiamond.s.sol._getNFTPrepayListingFacetSelectors()` extended; `SelectorCoverageTest._populateRoutedSet()` mirrors. New facet event `PrepayDutchListingPosted` (or extend the existing `PrepayListingPosted` shape — TBD at implementation; affects indexer migration).
+B.6. **ABI re-export + consumer typecheck** for the new selector.
+B.7. **`apps/defi`** — Dutch posting UI; live decayed-price banner with current price ticker; over-payment surface per §15.10(B).
+B.8. **`apps/indexer`** — new D1 columns `auction_mode` (enum: fixed/dutch) + `auction_end_time` + `end_ask_price`. Extend `PrepayListingPosted` handler (or add a new `PrepayDutchListingPosted` handler) for the Dutch shape.
+B.9. **Tests** — facet unit tests (sign-time validation including `MIN_AUCTION_WINDOW` + monotonicity); integration test for sign-mid-decay fill; sniper-snipe test for the open Dutch window.
 
 **Block C — English via OpenSea offers (#309 Mode B)**
 
@@ -669,3 +718,5 @@ C.5. **Tests** — dapp integration test for fetch-offers + re-list flow.
 Each block lands as 1–3 PRs depending on size. Block A is the largest (contracts + dapp + indexer + worker proxy). Block B is contracts + dapp + indexer. Block C is dapp-only.
 
 **Ordering recommendation:** A → B → C. Block A unblocks fee-enforced collections (a real coverage gap pre-launch); Block B adds the most value for unique NFTs; Block C is a small dapp polish on top.
+
+**Alternative: parallelize C with A (Grok finding 6).** Block C reuses the existing `updatePrepayListing` end-to-end with zero new contract selectors, zero `OrderContext` changes, zero ABI churn, and zero indexer storage additions. It can ship in parallel with (or even slightly ahead of) Block A — the bidder-fetching dapp UX gives early production signal on whether the race-window UX (§15.3) is painful enough to justify v2's tighter bidder-binding before investing heavily in Dutch (B). The dependency is weak: Block C only needs Block A's fee-re-derivation surface (§15.3 step 5) for fee-enforced collections; on fee-free collections it ships independently. Worth considering if the team wants real-world feedback on English UX sooner.
