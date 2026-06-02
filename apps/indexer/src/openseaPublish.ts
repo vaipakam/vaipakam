@@ -105,6 +105,25 @@ export interface IndexerPublishInput {
     startAmount: bigint;
     endAmount: bigint;
   }>;
+  /** T-086 Round-5 Block B (#309) — Dutch-decay parameters. When
+   *  `undefined` (fixed-price post), the JS reconstruction uses
+   *  the Round-4 + Block A shape with `endAskPrice == askPrice`
+   *  and the Seaport `endTime == graceEnd`. When defined, the
+   *  borrower leg decays + the Seaport `endTime` is
+   *  `auctionEndTime`. The indexer reads these from the event's
+   *  `endAskPrice` / `auctionEndTime` / `mode` non-indexed
+   *  fields; on `mode == PREPAY_MODE_FIXED_PRICE (0)` it omits
+   *  this struct entirely (passes `undefined`). The two extra
+   *  projected legs (`projectedLenderLeg` / `projectedTreasuryLeg`)
+   *  come from an RPC `getPrepayContext(loanId, auctionEndTime)`
+   *  the indexer makes for the Dutch path. */
+  dutch?: {
+    startAskPrice: bigint;
+    endAskPrice: bigint;
+    projectedLenderLeg: bigint;
+    projectedTreasuryLeg: bigint;
+    auctionEndTime: bigint;
+  };
 }
 
 export interface IndexerPublishResult {
@@ -151,11 +170,16 @@ export async function indexerPublishPrepayListing(
     // 2. Pull the diamond's snapshot context the post call
     //    consumed — `getPrepayContext(loanId, asOfTimestamp)`
     //    re-runs the live-floor math at the post-tx block.
+    //    Round-5 Block B (#309): for Dutch posts, the on-chain
+    //    builder reads pctx at `auctionEndTime` (so the projected
+    //    lender + treasury legs match what was signed). For fixed-
+    //    price posts, pctx is read at `startTime` as before.
+    const ctxLookupTime = input.dutch?.auctionEndTime ?? startTime;
     const ctx = (await input.publicClient.readContract({
       address: input.diamondAddress,
       abi: DIAMOND_ABI_VIEM,
       functionName: 'getPrepayContext',
-      args: [input.loanId, startTime],
+      args: [input.loanId, ctxLookupTime],
     })) as PrepayContextOnChain;
 
     // 3. Resolve Seaport + the vault's Seaport counter. The
@@ -203,6 +227,27 @@ export async function indexerPublishPrepayListing(
       // collections. Empty for fee-free posts; the call collapses
       // to the Round-4 3-leg shape.
       feeLegs: input.feeLegs,
+      // T-086 Round-5 Block B (#309) — pass the recorded Dutch
+      // params through to the shape builder. When `input.dutch`
+      // is undefined the builder falls back to the fixed-price
+      // shape verbatim. When defined, the builder uses
+      // `dutch.startAskPrice` / `dutch.endAskPrice` for the
+      // borrower leg decay, `dutch.projectedLenderLeg` /
+      // `dutch.projectedTreasuryLeg` for the pinned protocol
+      // legs, and `dutch.auctionEndTime` for the Seaport
+      // `endTime`. We re-derive the projected legs from the
+      // pctx read at `auctionEndTime` above so the caller
+      // doesn't have to (the caller only supplies the three
+      // event-derived values).
+      dutch: input.dutch
+        ? {
+            startAskPrice: input.dutch.startAskPrice,
+            endAskPrice: input.dutch.endAskPrice,
+            projectedLenderLeg: ctx.lenderLeg,
+            projectedTreasuryLeg: ctx.treasuryLeg,
+            auctionEndTime: input.dutch.auctionEndTime,
+          }
+        : undefined,
     });
 
     // 5. Defensive — recompute the orderHash via Seaport, compare

@@ -120,6 +120,32 @@ export interface PrepayOrderInput {
     startAmount: bigint;
     endAmount: bigint;
   }>;
+  /** T-086 Round-5 Block B (#309) — Dutch decay parameters. When
+   *  `undefined`, the builder emits the Round-4 + Block A fixed-
+   *  price shape (no decay, Seaport `endTime == graceEnd`). When
+   *  set, the borrower remainder leg decays linearly from
+   *  `(startAskPrice − projectedLenderLeg − projectedTreasuryLeg −
+   *  sum(feeLegs.startAmount))` at `startTime` down to
+   *  `(endAskPrice − projectedLenderLeg − projectedTreasuryLeg −
+   *  sum(feeLegs.endAmount))` at `auctionEndTime`. Lender +
+   *  treasury legs are pinned at the **projected** values at
+   *  `auctionEndTime` under sign-time governance config (the
+   *  facet reads them from `getPrepayContext(loanId,
+   *  auctionEndTime)`). Seaport's native amount interpolation
+   *  handles the per-block decay. The Seaport
+   *  `OrderComponents.endTime` is `auctionEndTime` (not
+   *  `graceEnd`) — past that tick Seaport rejects the order as
+   *  expired and the protocol-side cleanup path handles the
+   *  still-locked NFT.
+   *
+   *  Mirror of {LibPrepayOrder.buildAndHashDutch} on-chain. */
+  dutch?: {
+    startAskPrice: bigint;
+    endAskPrice: bigint;
+    projectedLenderLeg: bigint;
+    projectedTreasuryLeg: bigint;
+    auctionEndTime: bigint;
+  };
 }
 
 /** Canonical Seaport `OrderComponents` shape — keys + ordering MUST
@@ -193,16 +219,30 @@ export function buildPrepayOrderComponents(
   }
 
   // Consideration — N legs, in this exact order (matches
-  // `LibPrepayOrder._componentsAt*`):
+  // `LibPrepayOrder._componentsAtMemory` on-chain):
   //   [0]      lender ERC20         → lenderNftOwner
   //   [1]      treasury ERC20       → treasury
   //   [2]      borrower-remainder   → borrowerNftOwner
   //   [3..N-1] borrower-supplied fee legs (Round-5 Block A #313)
   //
-  // Borrower leg = askPrice − lender − treasury − sum(feeLegs.amount).
-  // Fixed-price has start == end on every fee leg; for the start /
-  // end accumulators we use the two halves independently so this
-  // helper is Block-B-ready when Dutch decay arrives.
+  // Mode resolution (Round-5 Block B #309):
+  //   - `input.dutch` undefined → fixed-price. `startAskPrice` ==
+  //     `endAskPrice` == `input.askPrice`; lender / treasury legs
+  //     use `input.lenderLeg` / `input.treasuryLeg`; Seaport
+  //     `endTime` = `input.graceEnd`.
+  //   - `input.dutch` defined → Dutch. The two ask values come
+  //     from the dutch tuple; lender / treasury legs are the
+  //     projected-max values stamped at sign-time; Seaport
+  //     `endTime` = `input.dutch.auctionEndTime`.
+  // The amount arithmetic is identical between the two modes —
+  // only the four input quantities (start/end ask, projected
+  // protocol legs) and the Seaport `endTime` differ.
+  const startAskPrice = input.dutch?.startAskPrice ?? input.askPrice;
+  const endAskPrice = input.dutch?.endAskPrice ?? input.askPrice;
+  const lenderLeg = input.dutch?.projectedLenderLeg ?? input.lenderLeg;
+  const treasuryLeg = input.dutch?.projectedTreasuryLeg ?? input.treasuryLeg;
+  const seaportEndTime = input.dutch?.auctionEndTime ?? input.graceEnd;
+
   const feeLegs = input.feeLegs ?? [];
   let feeSumStart = 0n;
   let feeSumEnd = 0n;
@@ -211,15 +251,23 @@ export function buildPrepayOrderComponents(
     feeSumEnd += f.endAmount;
   }
   const borrowerLegStart =
-    input.askPrice - input.lenderLeg - input.treasuryLeg - feeSumStart;
+    startAskPrice - lenderLeg - treasuryLeg - feeSumStart;
   const borrowerLegEnd =
-    input.askPrice - input.lenderLeg - input.treasuryLeg - feeSumEnd;
+    endAskPrice - lenderLeg - treasuryLeg - feeSumEnd;
   if (borrowerLegStart < 0n || borrowerLegEnd < 0n) {
-    // Mirrors the on-chain `_requireAskCoversFloorWithFees` revert
-    // path; if the JS reconstruction underflowed here the on-chain
-    // tx would have already reverted.
+    // Mirrors the on-chain `_requireAskCoversFloorWithFees` (fixed-
+    // price) and `_assertDutchSolvency` (Dutch) revert paths; if the
+    // JS reconstruction underflowed here the on-chain tx would have
+    // already reverted.
     throw new Error(
-      'prepayOrderShape: askPrice below lender+treasury+feeLegs; the diamond would have reverted',
+      'prepayOrderShape: ask below lender+treasury+feeLegs; the diamond would have reverted',
+    );
+  }
+  if (borrowerLegStart < borrowerLegEnd) {
+    // Dutch derived-monotonicity guard (Codex P2 line 577 / 740).
+    // For fixed-price callers this is unreachable (start == end).
+    throw new Error(
+      'prepayOrderShape: borrower leg decays inverted (Dutch monotonicity violated); the diamond would have reverted',
     );
   }
   const consideration: SeaportConsiderationItem[] = [
@@ -227,16 +275,16 @@ export function buildPrepayOrderComponents(
       itemType: SEAPORT_ITEM_TYPE_ERC20,
       token: input.principalAsset,
       identifierOrCriteria: '0',
-      startAmount: input.lenderLeg.toString(),
-      endAmount: input.lenderLeg.toString(),
+      startAmount: lenderLeg.toString(),
+      endAmount: lenderLeg.toString(),
       recipient: input.lenderNftOwner,
     },
     {
       itemType: SEAPORT_ITEM_TYPE_ERC20,
       token: input.principalAsset,
       identifierOrCriteria: '0',
-      startAmount: input.treasuryLeg.toString(),
-      endAmount: input.treasuryLeg.toString(),
+      startAmount: treasuryLeg.toString(),
+      endAmount: treasuryLeg.toString(),
       recipient: input.treasury,
     },
     {
@@ -264,7 +312,7 @@ export function buildPrepayOrderComponents(
     consideration,
     orderType: SEAPORT_ORDER_TYPE_FULL_RESTRICTED,
     startTime: input.startTime.toString(),
-    endTime: input.graceEnd.toString(),
+    endTime: seaportEndTime.toString(),
     // No zone-side payload — the executor reads loan state directly.
     zoneHash:
       '0x0000000000000000000000000000000000000000000000000000000000000000',
@@ -273,6 +321,15 @@ export function buildPrepayOrderComponents(
     counter: input.counter.toString(),
   };
 }
+
+/** T-086 Round-5 Block B (#309) — exported mode tag constants
+ *  matching the on-chain {PrepayTypes.sol}. The indexer + dapp use
+ *  these to discriminate `PrepayListingPosted` /
+ *  `PrepayListingUpdated` events by the `mode` field's numeric
+ *  value. */
+export const PREPAY_MODE_FIXED_PRICE = 0 as const;
+export const PREPAY_MODE_DUTCH = 1 as const;
+export type PrepayMode = typeof PREPAY_MODE_FIXED_PRICE | typeof PREPAY_MODE_DUTCH;
 
 /** OpenSea chain slugs — one per chain id the proxy accepts.
  *  Mainnet only — OpenSea sunset their testnet marketplace UI on
