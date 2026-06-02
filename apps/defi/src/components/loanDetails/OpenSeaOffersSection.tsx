@@ -93,19 +93,35 @@ export function OpenSeaOffersSection({
             treasuryLeg: bigint;
           } | unknown[]>;
           getPrepayListingBufferBps: () => Promise<bigint>;
+          getPrepayListingEnabled: () => Promise<boolean>;
         };
         const asOf = BigInt(Math.floor(Date.now() / 1000));
-        const [ctx, buf] = await Promise.all([
+        // Codex round-3 P2 review #328 — also check the master
+        // kill-switch (`getPrepayListingEnabled`). The actions
+        // card already gates on it; if governance has flipped the
+        // feature off (or hasn't enabled it yet on a fresh deploy),
+        // `updatePrepayListing` reverts `PrepayListingDisabled` and
+        // a Match click would always fail. Treat the kill-switch
+        // off OR buffer = 0 (storage-default unconfigured state,
+        // reverts `PrepayListingBufferNotConfigured`) as "no usable
+        // threshold" so the panel renders the disabled state.
+        const [ctx, buf, enabled] = await Promise.all([
           d.getPrepayContext(loanId, asOf),
           d.getPrepayListingBufferBps(),
+          d.getPrepayListingEnabled(),
         ]);
         if (cancelled) return;
         const lenderLeg = (ctx as { lenderLeg?: bigint }).lenderLeg ?? 0n;
         const treasuryLeg = (ctx as { treasuryLeg?: bigint }).treasuryLeg ?? 0n;
+        const bufferBps = Number(buf);
+        if (!enabled || bufferBps === 0) {
+          setThreshold(null);
+          return;
+        }
         setThreshold({
           lenderLeg,
           treasuryLeg,
-          bufferBps: Number(buf),
+          bufferBps,
           principalAsset,
         });
       } catch {
@@ -129,42 +145,54 @@ export function OpenSeaOffersSection({
     (import.meta.env.VITE_AGENT_ORIGIN as string | undefined) ?? null;
 
   const live = prepayListing.listing;
+  // Codex P2 review #328 + round-3 P2 review — the hook is
+  // mounted before the early-return banners for Dutch + pre-
+  // migration rows. Compute the "can match" predicate up front so
+  // the same boolean drives BOTH the pause flag AND the early
+  // returns; otherwise the hook keeps polling for rows that will
+  // only ever render an informational banner.
+  const listingPreMigration =
+    live !== null &&
+    live !== undefined &&
+    (live.salt === null || live.conduitKey === null);
+  const listingIsDutch =
+    live !== null && live !== undefined && live.auctionMode === 1;
+  const canMatch =
+    live !== null &&
+    live !== undefined &&
+    !listingPreMigration &&
+    !listingIsDutch;
+
   const offersResult = useOpenSeaOffers(
     agentOrigin,
     chainId,
     collateralAsset,
     collateralTokenId,
     threshold ?? {
-      lenderLeg: 0n,
+      // Codex round-3 P2 review #328 — sentinel: when threshold
+      // hasn't resolved, mark every offer unacceptable by setting
+      // `lenderLeg` to the uint256 max. The hook is also paused
+      // in this state (so polling doesn't fire), and `refresh()`
+      // is a no-op while paused (so the panel's "Refresh now"
+      // button can't manually surface offers either) — this
+      // sentinel is defense-in-depth in case a future refactor
+      // reads `threshold` without honouring the pause flag.
+      lenderLeg:
+        0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffn,
       treasuryLeg: 0n,
       bufferBps: 0,
       principalAsset,
     },
     // Codex P2 review #328 — pause polling when there's no live
-    // listing OR threshold hasn't resolved. Without this, the loan
-    // card's mounting gate keeps the section visible (with a
-    // "Post a fixed-price listing first" hint) but the hook keeps
-    // burning the shared OpenSea quota every 30 s on rows the UI
-    // will never render. Pausing also avoids surfacing offers
-    // before the threshold is known (which would always classify
-    // as unacceptable).
-    { paused: threshold === null || live === null || live === undefined },
+    // listing OR threshold hasn't resolved OR the listing can't
+    // be matched (Dutch / pre-migration). Without this, the loan
+    // card's mounting gate keeps the section visible (with an
+    // informational banner) but the hook keeps burning the shared
+    // OpenSea quota every 30 s on rows the UI will never render.
+    { paused: threshold === null || !canMatch },
   );
 
   if (!agentOrigin) return null;
-
-  // Pre-migration-0016 rows never had `conduit_key` / `salt`
-  // populated on the indexer's `prepay_listings` row. Without them
-  // the JS reconstruction can't hash to the on-chain orderHash,
-  // so a `updatePrepayListing` rotation would have the vault's
-  // ERC-1271 reject the rotated order (Raja review #328: surface
-  // this BEFORE the borrower clicks Match instead of a silent
-  // no-op on click). `live` was already pulled at the top of the
-  // body so the `useOpenSeaOffers` pause flag could consult it.
-  const listingPreMigration =
-    live !== null &&
-    live !== undefined &&
-    (live.salt === null || live.conduitKey === null);
 
   if (listingPreMigration) {
     return (
@@ -193,8 +221,9 @@ export function OpenSeaOffersSection({
   // the release note's "deferred" framing. Hide the section + show
   // a banner instead. Matching against a Dutch listing lands as a
   // follow-up that calls `updatePrepayDutchListing` with the
-  // offer's value + fresh decay parameters.
-  const listingIsDutch = live !== null && live !== undefined && live.auctionMode === 1;
+  // offer's value + fresh decay parameters. `listingIsDutch` was
+  // already computed at the top of the body so the hook's pause
+  // flag could consult it.
   if (listingIsDutch) {
     return (
       <div

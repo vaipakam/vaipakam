@@ -178,8 +178,18 @@ export function OpenSeaOffersPanel({
             // sit open longer than that). A stale match would
             // rotate the listing down to a price no one can
             // fulfill at — only an unrelated sniper could.
-            await offersResult.refresh();
-            const fresh = offersResult.offers.find(
+            //
+            // Codex round-3 P1 review #328 — read the refreshed
+            // offers array directly from the `refresh()` return
+            // value, NOT `offersResult.offers`. The latter is the
+            // render-closure capture from when this modal opened;
+            // React doesn't mutate it synchronously when
+            // `refresh()` calls setState. Without the direct
+            // return-value read, the stale-offer guard would
+            // happily find the now-removed/changed row and let
+            // the rotation tx fire.
+            const refreshed = await offersResult.refresh();
+            const fresh = refreshed.find(
               (o) => o.orderHash === target.orderHash,
             );
             if (

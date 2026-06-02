@@ -87,8 +87,14 @@ export interface UseOpenSeaOffersResult {
    *  but returned an empty array. */
   error: string | null;
   /** Manual refresh trigger — bound to a "refresh now" affordance
-   *  on the panel header. */
-  refresh: () => Promise<void>;
+   *  on the panel header. Codex round-3 P1 review #328: returns
+   *  the refreshed offers array directly so the panel's
+   *  pre-match revalidation can compare against the post-refresh
+   *  shape WITHOUT racing the React render closure that
+   *  `offersResult.offers` was captured in. Returns an empty
+   *  array when the hook is paused (the refresh is a no-op in
+   *  that state — same shape as `offers` would expose). */
+  refresh: () => Promise<NormalizedOffer[]>;
 }
 
 /**
@@ -153,12 +159,20 @@ export function useOpenSeaOffers(
     [threshold.lenderLeg, threshold.treasuryLeg, threshold.bufferBps, threshold.principalAsset],
   );
 
-  const doFetch = useCallback(async (): Promise<void> => {
+  const doFetch = useCallback(async (): Promise<NormalizedOffer[]> => {
+    // Codex round-3 P2 review #328 — manual refreshes (via the
+    // returned `refresh()`) must NOT bypass the `paused` gate.
+    // Otherwise the panel's "Refresh now" button + the confirm-
+    // time revalidation would run against a (potentially zero)
+    // fallback threshold and classify offers as acceptable
+    // against an unknown floor. Paused → return the empty list
+    // without touching state.
+    if (paused) return [];
     if (!agentOrigin) {
       setOffers([]);
       setLoadingInitial(false);
       setError(null);
-      return;
+      return [];
     }
     const myFetch = ++fetchRef.current;
     try {
@@ -171,15 +185,18 @@ export function useOpenSeaOffers(
           setError(`fetch failed: HTTP ${res.status}`);
           setLoadingInitial(false);
         }
-        return;
+        return [];
       }
       const body = (await res.json()) as {
         item_offers?: { status: number; body: unknown };
         collection_offers?: { status: number; body: unknown } | null;
       };
 
-      // The OpenSea v2 response wraps offers in `{ orders: [...] }`.
-      // We pull both arrays, tag each entry's kind, and concatenate.
+      // The OpenSea v2 response wraps offers in `{ offers: [...] }`
+      // (current) or `{ orders: [...] }` (legacy). `extractOrders`
+      // accepts both shapes. We tag each entry's kind and
+      // concatenate; v1 only fetches collection offers (see
+      // openseaOffersProxy.ts commentary).
       const itemRaw = extractOrders(body.item_offers);
       const collectionRaw = extractOrders(body.collection_offers ?? undefined);
       const normalized: NormalizedOffer[] = [
@@ -202,14 +219,17 @@ export function useOpenSeaOffers(
         setError(null);
         setLoadingInitial(false);
       }
+      return normalized;
     } catch (err) {
       if (myFetch === fetchRef.current) {
         setError(err instanceof Error ? err.message : String(err));
         setLoadingInitial(false);
       }
+      return [];
     }
   }, [
     agentOrigin,
+    paused,
     chainId,
     collateralAsset,
     collateralTokenId,
