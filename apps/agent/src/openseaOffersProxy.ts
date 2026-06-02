@@ -158,17 +158,20 @@ export async function handleOpenSeaOffers(
   })();
 
   const slug = await slugP;
-  // Codex round-4 P2 review #328 — item-specific offers ARE
-  // available in the v2 surface, at
-  // `GET /api/v2/offers/collection/{slug}/nfts/{token_id}` (the
-  // slug-based per-NFT endpoint). The previous v1 dropped this
-  // leg on the floor; restoring it so bidders who place
-  // single-NFT offers show up in the borrower's panel.
+  // Codex review #328 (rounds 4 + 12) — use the LIST endpoint
+  // for item-specific offers, not `/best`. The `/best` endpoint
+  // returns only the top item offer, so the panel would miss
+  // lower offers that might still pass the threshold when the
+  // best one is filtered (wrong payment token, expired, etc.).
+  // The list endpoint returns all NFT offers and natively
+  // returns the `{ offers: [...] }` shape the dapp's
+  // normalizer expects, so no special wrapping is needed.
+  // Docs: https://docs.opensea.io/reference/get_offers_nft
   const collectionOffersUrl = slug
     ? `https://${host}/api/v2/offers/collection/${encodeURIComponent(slug)}/all`
     : null;
   const itemOffersUrl = slug
-    ? `https://${host}/api/v2/offers/collection/${encodeURIComponent(slug)}/nfts/${tokenId}/best`
+    ? `https://${host}/api/v2/offers/collection/${encodeURIComponent(slug)}/nfts/${tokenId}`
     : null;
 
   const fetchUpstream = async (
@@ -185,39 +188,16 @@ export async function handleOpenSeaOffers(
     fetchUpstream(itemOffersUrl),
   ]);
 
-  // Codex round-11 P2 review #328 — the documented
-  // `/api/v2/offers/collection/{slug}/nfts/{tokenId}/best`
-  // endpoint returns a SINGLE offer object with top-level
-  // fields (`order_hash`, `protocol_data`, etc.), NOT a list.
-  // The dapp's `extractOrders` accepts arrays or `body.offers` /
-  // `body.orders` wrappers; without re-shaping, the item-
-  // specific best offer is silently dropped. Wrap it as a one-
-  // element `offers` array so the normalizer sees it.
-  const itemBody = itemRes ? tryParseUpstream(itemRes) : null;
-  let normalizedItemBody = itemBody;
-  if (
-    itemBody !== null &&
-    itemBody.status >= 200 &&
-    itemBody.status < 300 &&
-    itemBody.body !== null &&
-    typeof itemBody.body === 'object' &&
-    !Array.isArray(itemBody.body) &&
-    !Array.isArray((itemBody.body as { offers?: unknown[] }).offers) &&
-    !Array.isArray((itemBody.body as { orders?: unknown[] }).orders)
-  ) {
-    normalizedItemBody = {
-      status: itemBody.status,
-      body: { offers: [itemBody.body] },
-    };
-  }
-
   // Compose the aggregated response. Dapp consumes
   //   { item_offers: { status, body? } | null, collection_offers: { status, body? } | null }
   // and applies the threshold filter + sorts. Either source is
   // null when the slug couldn't be resolved (rare — falls back to
   // an empty panel, which the panel renders cleanly).
+  // Both endpoints return `{ offers: [...] }` shapes (round-12
+  // switched the item endpoint from `/best` to the list path),
+  // so no per-source wrapping is needed.
   const aggregated = {
-    item_offers: normalizedItemBody,
+    item_offers: itemRes ? tryParseUpstream(itemRes) : null,
     collection_offers: collectionRes ? tryParseUpstream(collectionRes) : null,
     slug,
   };
