@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
 import { L as Link } from "../components/L";
 import { useTranslation } from "react-i18next";
@@ -92,7 +92,7 @@ export default function LoanDetails() {
 
   // Action state
   const [actionLoading, setActionLoading] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<ReactNode | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [repayConfirming, setRepayConfirming] = useState(false);
   const [addCollateralAmt, setAddCollateralAmt] = useState("");
@@ -296,6 +296,19 @@ export default function LoanDetails() {
       flow: "repayLoan",
       step: "submit-tx",
     });
+    // T-086 — gate the prepay-sale friendly-error detection on
+    // BOTH the post-revert Settled status AND the fact that the
+    // page-level state knew about a live OpenSea listing for this
+    // loan at the moment of the repay click. Codex round-1 P2 fix
+    // on PR #318 — without this guard, ANY repay attempt on an
+    // already-Settled loan (e.g. user navigated to a stale tab
+    // after the loan was claimed and Settled by another flow)
+    // would surface the OpenSea sale message. ClaimFacet,
+    // LibLifecycle's Repaid→Settled / Defaulted→Settled / InternalMatched→Settled
+    // edges all use Settled too. Gating on the live listing
+    // snapshot ensures the message only fires for the actual
+    // race scenario the user is most likely encountering.
+    const hadLiveListing = !!prepayListingState;
     try {
       // ERC-20 loans: principal + interest (+ lateFee) are pulled from the
       // caller at repay time. NFT rental loans use prepay and generally
@@ -312,10 +325,66 @@ export default function LoanDetails() {
       loadLoan();
       step.success({ note: `tx ${tx.hash}` });
     } catch (err) {
-      setActionError(decodeContractError(err, "Repayment failed"));
+      // T-086 — when the borrower's repay races a buyer's
+      // Seaport.fulfillOrder in the same block and the buyer's tx wins
+      // EVM ordering, the loan flips to Settled (prepay sale waterfall
+      // routed the proceeds directly to the lender + treasury + the
+      // wallet holding the borrower-position NFT — Seaport
+      // consideration[2].recipient). The borrower's repay reverts
+      // `InvalidLoanStatus()` from RepayFacet; the generic decode
+      // would surface "loan not Active" which doesn't tell the
+      // borrower what actually happened.
+      const friendly = await maybeDecodePrepaySaleSettlement(hadLiveListing);
+      setActionError(friendly ?? decodeContractError(err, "Repayment failed"));
       step.failure(err);
+      // Refresh the page-level loan state so the banner + actions
+      // card switch to the post-Settled view.
+      loadLoan();
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  /** Detect the "loan was settled via Seaport prepay sale" terminal
+   *  outcome. Returns the tailored JSX message on hit, `null`
+   *  otherwise so the caller falls through to the generic
+   *  `decodeContractError`.
+   *
+   *  Two-pronged gate (Codex round-1 P2 on PR #318):
+   *    1. `hadLiveListing` — the page-level prepay-listing snapshot
+   *       was non-null when the repay click started. Without this,
+   *       any stale-tab repay on an already-Settled loan (e.g.
+   *       reached Settled via ClaimFacet / a LibLifecycle edge from
+   *       Repaid / Defaulted / InternalMatched) would mis-attribute
+   *       the outcome to a prepay sale.
+   *    2. Post-revert chain read confirms `status === Settled`.
+   *
+   *  Combined, the gate is essentially deterministic for the actual
+   *  race scenario this PR addresses.
+   */
+  const maybeDecodePrepaySaleSettlement = async (
+    hadLiveListing: boolean,
+  ): Promise<ReactNode | null> => {
+    if (!hadLiveListing) return null;
+    try {
+      const refreshed = (await diamond.getLoanDetails(
+        BigInt(loanId!),
+      )) as { status: bigint };
+      if (Number(refreshed.status) !== LoanStatus.Settled) return null;
+      // No /claims link — the Seaport order routes the borrower
+      // remainder DIRECTLY to the wallet currently holding the
+      // borrower-position NFT (`pctx.borrowerNftOwner` in
+      // `LibPrepayOrder._components.consideration[2].recipient`).
+      // `ClaimFacet.claimAsBorrower` also rejects Settled loans, so
+      // sending the user to /claims would show nothing for them to
+      // collect. The message instead explains the direct-route.
+      // Codex round-1 P2 fix on PR #318.
+      return <span>{t('loanDetails.repayPrepaySaleMessage')}</span>;
+    } catch {
+      // Fall through to the generic decode if the read fails. Users
+      // would see the generic "Repayment failed" message and can
+      // refresh manually.
+      return null;
     }
   };
 
