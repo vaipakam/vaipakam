@@ -81,6 +81,16 @@ export function OpenSeaOffersSection({
   }, []);
 
   useEffect(() => {
+    // Codex round-4 P2 review #328 — reset the threshold to null
+    // BEFORE starting the async pctx read. If the section is
+    // reused for a different loan (navigation between loan
+    // cards, or the listing row's `updatedAt` changes), the
+    // previous loan's threshold lingers in state until the new
+    // fetch resolves. During that window the hook stays unpaused
+    // and can classify or confirm-match the new loan's offers
+    // against the OLD loan's floor/principal — either hiding
+    // valid offers or enabling a match that reverts on-chain.
+    setThreshold(null);
     let cancelled = false;
     (async () => {
       try {

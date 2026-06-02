@@ -115,23 +115,20 @@ export async function handleOpenSeaOffers(
     Accept: 'application/json',
   };
 
-  // Codex P1 review #328 — OpenSea v2 removed the legacy
+  // Codex review #328 (round-1 P1 + round-4 P2) — OpenSea v2
+  // removed the legacy
   // `GET /api/v2/orders/{chain}/seaport/offers?asset_contract_address=...&token_ids=...`
-  // endpoint, so the item-specific offers half of the aggregation
-  // was returning a non-2xx silently. v1 of Block C ships
-  // collection-offers-only for two reasons:
-  //   1. Collection offers cover the bulk of incoming bids — most
-  //      bidders use OpenSea's "make collection offer" UX, which
-  //      applies to ANY token in the collection (including this
-  //      specific tokenId).
-  //   2. The current v2 surface for item-specific offers is
-  //      embedded inside the NFT-detail body
-  //      (`/api/v2/chain/{chain}/contract/{addr}/nfts/{id}`); the
-  //      response shape isn't pinned in OpenSea's public docs as
-  //      a stable list endpoint, so v1 explicitly drops it rather
-  //      than misrepresenting the data shape.
-  // Follow-up: add item-specific offer pull once the v2 surface
-  // stabilises (or once OpenSea republishes a list endpoint).
+  // endpoint. The current v2 surface has two slug-based
+  // endpoints we aggregate:
+  //   - Collection offers (apply to ANY token in the collection):
+  //     `GET /api/v2/offers/collection/{slug}`
+  //   - Item-specific offers (on a specific tokenId):
+  //     `GET /api/v2/offers/collection/{slug}/nfts/{token_id}`
+  // We fetch both in parallel after resolving the slug. Slug
+  // resolution itself fails closed: if OpenSea's NFT-detail
+  // lookup doesn't surface a slug, BOTH offer fetches are
+  // skipped and the response carries `null` for each (the panel
+  // treats this as an empty list cleanly).
   const slugP = (async () => {
     try {
       const slugRes = await fetch(
@@ -149,23 +146,40 @@ export async function handleOpenSeaOffers(
   })();
 
   const slug = await slugP;
+  // Codex round-4 P2 review #328 — item-specific offers ARE
+  // available in the v2 surface, at
+  // `GET /api/v2/offers/collection/{slug}/nfts/{token_id}` (the
+  // slug-based per-NFT endpoint). The previous v1 dropped this
+  // leg on the floor; restoring it so bidders who place
+  // single-NFT offers show up in the borrower's panel.
   const collectionOffersUrl = slug
     ? `https://${host}/api/v2/offers/collection/${encodeURIComponent(slug)}`
     : null;
-  const collectionRes: { status: number; body: string } | null =
-    collectionOffersUrl
-      ? await fetch(collectionOffersUrl, { headers })
-          .then(r => r.text().then(body => ({ status: r.status, body })))
-          .catch(err => ({ status: 0, body: String(err) }))
-      : null;
+  const itemOffersUrl = slug
+    ? `https://${host}/api/v2/offers/collection/${encodeURIComponent(slug)}/nfts/${tokenId}`
+    : null;
+
+  const fetchUpstream = async (
+    url: string | null,
+  ): Promise<{ status: number; body: string } | null> => {
+    if (!url) return null;
+    return fetch(url, { headers })
+      .then(r => r.text().then(body => ({ status: r.status, body })))
+      .catch(err => ({ status: 0, body: String(err) }));
+  };
+
+  const [collectionRes, itemRes] = await Promise.all([
+    fetchUpstream(collectionOffersUrl),
+    fetchUpstream(itemOffersUrl),
+  ]);
 
   // Compose the aggregated response. Dapp consumes
-  //   { item_offers: null | { status, body? }, collection_offers: { status, body? | null } }
-  // and applies the threshold filter + sorts. `item_offers: null`
-  // is the v1 "intentionally not fetched" sentinel; the normalizer
-  // skips it without surfacing a fetch error.
+  //   { item_offers: { status, body? } | null, collection_offers: { status, body? } | null }
+  // and applies the threshold filter + sorts. Either source is
+  // null when the slug couldn't be resolved (rare — falls back to
+  // an empty panel, which the panel renders cleanly).
   const aggregated = {
-    item_offers: null,
+    item_offers: itemRes ? tryParseUpstream(itemRes) : null,
     collection_offers: collectionRes ? tryParseUpstream(collectionRes) : null,
     slug,
   };

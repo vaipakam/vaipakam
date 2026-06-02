@@ -166,8 +166,16 @@ export function useOpenSeaOffers(
     // time revalidation would run against a (potentially zero)
     // fallback threshold and classify offers as acceptable
     // against an unknown floor. Paused → return the empty list
-    // without touching state.
-    if (paused) return [];
+    // without touching state — EXCEPT clear `loadingInitial` and
+    // any stale offers so the panel renders the disabled state
+    // instead of the "Loading offers…" spinner. Codex round-4 P2
+    // review #328.
+    if (paused) {
+      setOffers([]);
+      setLoadingInitial(false);
+      setError(null);
+      return [];
+    }
     if (!agentOrigin) {
       setOffers([]);
       setLoadingInitial(false);
