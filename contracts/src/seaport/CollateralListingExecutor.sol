@@ -174,6 +174,21 @@ contract CollateralListingExecutor is
     ///             cancel-time dispatch and the canonical-shape
     ///             reconstruction in `LibPrepayOrder` use this to
     ///             pick the right component builder.
+    ///
+    ///         **What is NOT in `OrderContext` (Round-5 Block B):**
+    ///         The projected lender + treasury legs the facet
+    ///         signed against at post time are NOT pinned here.
+    ///         For Dutch mode, the executor re-derives them at
+    ///         cancel time via `getPrepayContext(loanId,
+    ///         auctionEndTime)` — same lookup the facet did at
+    ///         sign time. Under stable governance config the
+    ///         re-read matches; under drift the existing
+    ///         `SeaportCancelSkipped` fallback fires. See
+    ///         {LibPrepayOrder.componentsForCancelDutch} natspec
+    ///         for the per-input-source breakdown and the design
+    ///         rationale (§15.2 "Alternative considered + rejected"
+    ///         box — pinning the projected legs creates a worse
+    ///         problem on fee-curve DECREASES).
     struct OrderContext {
         uint96 loanId;
         address conduit;
