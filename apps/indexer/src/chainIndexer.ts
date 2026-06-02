@@ -215,6 +215,16 @@ export async function sweepUnpublishedListings(env: Env): Promise<void> {
   if (chains.length === 0) return;
   const chainById = new Map(chains.map((c) => [c.id, c]));
 
+  // T-086 Round-5 Block B (#309) post-merge polish — Codex P2:
+  // skip expired Dutch rows in the sweep. After `auctionEndTime`,
+  // Seaport rejects the order as expired and OpenSea will refuse
+  // the publish; without this filter the sweep keeps re-trying
+  // the same dead rows on every tick, starving newer publishable
+  // listings out of the `LIMIT ?` batch. Fixed-price rows have
+  // `auction_mode != 1` so they're left untouched. The
+  // `auction_end_time IS NULL` branch covers pre-Block-B rows
+  // (migration 0018 added the column nullable).
+  const nowSec = Math.floor(Date.now() / 1000);
   const rows = await env.DB.prepare(
     `SELECT chain_id, loan_id, order_hash, ask_price, conduit_key,
             salt, executor, tx_hash, fee_legs_json,
@@ -222,10 +232,12 @@ export async function sweepUnpublishedListings(env: Env): Promise<void> {
        FROM prepay_listings
       WHERE opensea_published_at IS NULL
         AND posted_at <= ?
+        AND (auction_mode IS NULL OR auction_mode != 1
+             OR auction_end_time IS NULL OR auction_end_time > ?)
       ORDER BY posted_at ASC
       LIMIT ?`,
   )
-    .bind(cutoff, SWEEP_BATCH)
+    .bind(cutoff, nowSec, SWEEP_BATCH)
     .all<{
       chain_id: number;
       loan_id: number;

@@ -940,6 +940,64 @@ contract NFTPrepayListingFacetTest is SetupTest {
         );
     }
 
+    /// @dev Round-5 Block B (#309) post-merge polish — Codex P2:
+    ///      Dutch listings whose `auctionEndTime` has passed are
+    ///      cleanable via the permissionless path WITHOUT waiting
+    ///      for grace expiry. The mock recorder's
+    ///      `setOrderContextMode` stamps the per-orderHash mode +
+    ///      auctionEndTime so the facet's cleanup branch fires.
+    function test_cancelExpiredPrepayListing_dutchPathAtAuctionEnd() public {
+        _scaffoldActiveLoan({allowsPrepay: true});
+
+        // Post a fixed-price listing first so the facet's
+        // bookkeeping is populated (the mock executor will not
+        // record a Dutch order through the facet; we instead
+        // overlay a Dutch context onto the same orderHash).
+        vm.prank(borrowerHolder);
+        bytes32 orderHash = NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey, _emptyFeeLegs()
+        );
+
+        // Stamp Dutch metadata onto the mock for this orderHash:
+        // mode = 1, auctionEndTime in the near future.
+        uint64 auctionEnd = uint64(block.timestamp + 1 hours);
+        mockExecutor.setOrderContextMode(orderHash, 1, auctionEnd);
+
+        // Before auctionEnd: cleanup must revert with
+        // AuctionWindowStillOpen (NOT GraceNotExpired — Dutch
+        // listings bypass the grace gate entirely).
+        vm.prank(randomCaller);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NFTPrepayListingFacet.AuctionWindowStillOpen.selector,
+                LOAN_ID,
+                block.timestamp,
+                uint256(auctionEnd)
+            )
+        );
+        NFTPrepayListingFacet(address(diamond)).cancelExpiredPrepayListing(LOAN_ID);
+
+        // Warp past auctionEnd. Note we DO NOT warp past grace.
+        vm.warp(uint256(auctionEnd) + 1);
+
+        // Now any caller can clean up even though grace hasn't
+        // expired yet — proving the mode-aware branch fires.
+        assertLt(block.timestamp, _graceEnd(), "grace must still be open");
+        vm.prank(randomCaller);
+        NFTPrepayListingFacet(address(diamond)).cancelExpiredPrepayListing(LOAN_ID);
+
+        assertEq(
+            NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
+            bytes32(0),
+            "orderHash cleared on Dutch-expiry cleanup"
+        );
+        assertEq(
+            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
+            uint8(LibERC721.LockReason.None),
+            "borrower NFT unlocked"
+        );
+    }
+
     // ─── Internal helpers ───────────────────────────────────────────────
 
     /// @dev Build a Loan struct with the minimal fields the facet

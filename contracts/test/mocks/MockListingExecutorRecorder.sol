@@ -103,6 +103,51 @@ contract MockListingExecutorRecorder is IListingExecutorRecorder {
         return _approvedConduits[conduit];
     }
 
+    /// @notice Round-5 Block B (#309) post-merge polish — Codex P2
+    ///         (mode-aware cleanup): per-orderHash stub for the
+    ///         real executor's `orderContext` getter. Defaults to
+    ///         the FIXED-PRICE sentinel (mode=0, auctionEndTime=0)
+    ///         so unit tests of the cancel path keep falling
+    ///         through to the existing grace-window logic. Tests
+    ///         that need to exercise the Dutch cleanup branch
+    ///         configure the per-orderHash mode + auctionEndTime
+    ///         via {setOrderContextMode}.
+    struct OrderContextStub {
+        uint64 auctionEndTime;
+        uint8 mode;
+    }
+    mapping(bytes32 => OrderContextStub) internal _orderContextStubs;
+
+    function setOrderContextMode(
+        bytes32 orderHash,
+        uint8 mode,
+        uint64 auctionEndTime
+    ) external {
+        _orderContextStubs[orderHash] = OrderContextStub({
+            auctionEndTime: auctionEndTime,
+            mode: mode
+        });
+    }
+
+    function orderContext(bytes32 orderHash)
+        external
+        view
+        returns (
+            uint96 loanId,
+            address conduit,
+            bytes32 conduitKey,
+            uint256 salt,
+            uint64 startTime,
+            uint192 askPrice,
+            uint128 endAskPrice,
+            uint64 auctionEndTime,
+            uint8 mode
+        )
+    {
+        OrderContextStub memory stub = _orderContextStubs[orderHash];
+        return (0, address(0), bytes32(0), 0, 0, 0, 0, stub.auctionEndTime, stub.mode);
+    }
+
     // ─── Test inspection helpers ───────────────────────────────────────
 
     function recordCallCount() external view returns (uint256) {

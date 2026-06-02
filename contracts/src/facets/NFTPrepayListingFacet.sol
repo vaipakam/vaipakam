@@ -13,7 +13,8 @@ import {IListingExecutorRecorder} from "../seaport/IListingExecutorRecorder.sol"
 import {
     FeeLeg,
     MAX_FEE_LEGS,
-    PREPAY_MODE_FIXED_PRICE
+    PREPAY_MODE_FIXED_PRICE,
+    PREPAY_MODE_DUTCH
 } from "../seaport/PrepayTypes.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
@@ -128,6 +129,28 @@ contract NFTPrepayListingFacet is
     ///       tight + lets the `auction_mode` D1 column be a single
     ///       discriminator on the same row. For fixed-price posts
     ///       `endAskPrice == askPrice` and `auctionEndTime == 0`.
+    ///
+    ///       **Topic-hash change vs Round-4 / Block A.** Appending
+    ///       the three trailing fields rotates the event's keccak256
+    ///       topic-hash. The indexer's decoder derives its event-
+    ///       coverage allowlist from the current ABI bundle; an
+    ///       indexer redeployment whose cursor or backfill range
+    ///       crosses a pre-Block-B emission would SILENTLY SKIP the
+    ///       old-shape log (viem returns `eventName: undefined` and
+    ///       the handler's `else if` chain falls through).
+    ///
+    ///       Pre-live discipline (`memory/project_platform_prelive.md`):
+    ///       no production deployment exists today, so no legacy
+    ///       on-chain emissions persist anywhere except short-lived
+    ///       testnet rehearsals. The operator's rollout rule for
+    ///       mainnet (and any new testnet) is to deploy the indexer
+    ///       with a **fresh cursor that starts at the deploy block
+    ///       of the new diamond** — pre-Block-B logs from old
+    ///       diamonds aren't replayed. Adding a legacy-ABI fallback
+    ///       decoder to the indexer was considered + rejected as
+    ///       unnecessary for the pre-live case + a footgun (the
+    ///       legacy decoder would silently mask any future event
+    ///       shape regression).
     /// @custom:event-category state-change/loan-mutation
     event PrepayListingPosted(
         uint256 indexed loanId,
@@ -221,6 +244,15 @@ contract NFTPrepayListingFacet is
     ///         action is only valid after grace expiry
     ///         ({cancelExpiredPrepayListing}).
     error GraceNotExpired(uint256 loanId, uint256 nowTime, uint256 gracePeriodEnd);
+
+    /// @notice Round-5 Block B (#309) post-merge polish — Codex P2:
+    ///         Dutch listings can be cleaned up once their
+    ///         `auctionEndTime` has passed (Seaport rejects fills
+    ///         after that tick, so the borrower's NFT is locked
+    ///         to a dead order). This revert fires when a caller
+    ///         tries to clean up a Dutch listing whose
+    ///         `auctionEndTime` hasn't yet passed.
+    error AuctionWindowStillOpen(uint256 loanId, uint256 nowTime, uint256 auctionEndTime);
 
     /// @notice Trying to post / update at or after grace expiry.
     ///         Borrower must close via {DefaultedFacet} from here
@@ -817,21 +849,65 @@ contract NFTPrepayListingFacet is
         // operation is no-fund-movement (just lock release +
         // bookkeeping clear); safe across every terminal state.
 
-        // Permissionless gate — strict `>` matches the step-5
-        // executor's reject condition (`block.timestamp >
-        // pctx.graceEnd → GraceExpired`). At exactly
-        // `block.timestamp == gracePeriodEnd` the executor still
-        // permits a fill, so we MUST NOT race that path with a
-        // cancel here. Cleanup is only valid at strict
-        // `block.timestamp > gracePeriodEnd`.
-        uint256 gracePeriodEnd = _gracePeriodEnd(loan);
-        if (block.timestamp <= gracePeriodEnd) {
-            revert GraceNotExpired(loanId, block.timestamp, gracePeriodEnd);
-        }
-
         bytes32 orderHash = s.prepayListingOrderHash[loanId];
         if (orderHash == bytes32(0)) {
             revert PrepayListingNotFound(loanId);
+        }
+
+        // Round-5 Block B (#309) post-merge polish — Codex P2 (mode-
+        // aware permissionless cleanup):
+        //   - Fixed-price listings (or no recorded mode):
+        //     cleanup is valid at strict `block.timestamp >
+        //     gracePeriodEnd`. Matches the existing semantics +
+        //     the executor's `block.timestamp > pctx.graceEnd →
+        //     GraceExpired` reject.
+        //   - Dutch listings: cleanup is valid at strict
+        //     `block.timestamp > auctionEndTime`. Seaport rejects
+        //     fills past `OrderComponents.endTime` (which the
+        //     facet stamped as `auctionEndTime` for Dutch), so the
+        //     order is functionally dead at that tick + the
+        //     borrower-position NFT shouldn't have to wait until
+        //     grace to be unlocked. The facet enforces
+        //     `auctionEndTime <= gracePeriodEnd` at post-time, so
+        //     the Dutch cleanup window opens earlier than (or at
+        //     the same tick as) the grace cleanup window.
+        // Resolve the recorded executor + mode + auctionEndTime by
+        // calling the executor's auto-generated public getter for
+        // `orderContext`. We discard most fields with named-
+        // variable assignment to keep the destructure compact.
+        address pinnedExecutor = s.prepayListingExecutor[loanId];
+        uint8 mode = PREPAY_MODE_FIXED_PRICE;
+        uint64 auctionEndTime = 0;
+        if (pinnedExecutor != address(0)) {
+            (
+                ,                       // loanId
+                ,                       // conduit
+                ,                       // conduitKey
+                ,                       // salt
+                ,                       // startTime
+                ,                       // askPrice
+                ,                       // endAskPrice
+                uint64 storedAuctionEnd,
+                uint8 storedMode
+            ) = CollateralListingExecutor(pinnedExecutor).orderContext(orderHash);
+            mode = storedMode;
+            auctionEndTime = storedAuctionEnd;
+        }
+
+        if (mode == PREPAY_MODE_DUTCH) {
+            if (block.timestamp <= uint256(auctionEndTime)) {
+                revert AuctionWindowStillOpen(
+                    loanId,
+                    block.timestamp,
+                    uint256(auctionEndTime)
+                );
+            }
+        } else {
+            // Fixed-price (or pre-Block-B record): require grace.
+            uint256 gracePeriodEnd = _gracePeriodEnd(loan);
+            if (block.timestamp <= gracePeriodEnd) {
+                revert GraceNotExpired(loanId, block.timestamp, gracePeriodEnd);
+            }
         }
 
         _cancel(s, loan, loanId, orderHash, CancelReason.GraceExpired);

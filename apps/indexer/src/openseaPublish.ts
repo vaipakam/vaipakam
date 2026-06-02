@@ -174,12 +174,26 @@ export async function indexerPublishPrepayListing(
     //    builder reads pctx at `auctionEndTime` (so the projected
     //    lender + treasury legs match what was signed). For fixed-
     //    price posts, pctx is read at `startTime` as before.
+    //    Round-5 Block B (#309) post-merge polish — Codex P2: pin
+    //    the eth_call to the post-tx's block number so the
+    //    governance config (`cfgTreasuryFeeBps` etc.) reads as it
+    //    was at sign time, not as it is now. The `asOfTimestamp`
+    //    arg only affects the live-floor interest-accrual math;
+    //    governance config reads from storage at the current
+    //    block unless we override `blockNumber`. Without this, a
+    //    mid-window treasury-fee bump between post and indexer-
+    //    ingest would cause the JS reconstruction to hash to a
+    //    different orderHash than the on-chain signed one, and
+    //    the defensive `expectedOrderHash` compare would skip
+    //    the publish even though the on-chain order is still
+    //    validly signed + fillable.
     const ctxLookupTime = input.dutch?.auctionEndTime ?? startTime;
     const ctx = (await input.publicClient.readContract({
       address: input.diamondAddress,
       abi: DIAMOND_ABI_VIEM,
       functionName: 'getPrepayContext',
       args: [input.loanId, ctxLookupTime],
+      blockNumber: receipt.blockNumber,
     })) as PrepayContextOnChain;
 
     // 3. Resolve Seaport + the vault's Seaport counter. The
@@ -187,10 +201,17 @@ export async function indexerPublishPrepayListing(
     //    and emitted on the event — we use the caller-supplied
     //    value to stay safe across a governance executor rotation
     //    between the post tx and this indexer-ingest pass.
+    //    Round-5 Block B (#309) post-merge polish — Codex P2:
+    //    pin the eth_call to the post-tx's block so a vault that
+    //    called `Seaport.incrementCounter(vault)` between the
+    //    post tx and indexer-ingest doesn't shift the counter we
+    //    feed into the canonical-shape reconstruction. Same
+    //    reasoning as the pctx pin above.
     const seaport = (await input.publicClient.readContract({
       address: input.executor,
       abi: SEAPORT_ABI_FRAGMENT,
       functionName: 'seaport',
+      blockNumber: receipt.blockNumber,
     })) as `0x${string}`;
 
     const counter = (await input.publicClient.readContract({
@@ -198,6 +219,7 @@ export async function indexerPublishPrepayListing(
       abi: SEAPORT_VERIFY_ABI,
       functionName: 'getCounter',
       args: [ctx.borrowerVault],
+      blockNumber: receipt.blockNumber,
     })) as bigint;
 
     // 4. Build canonical components — shared with frontend so the
