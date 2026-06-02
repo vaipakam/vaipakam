@@ -239,15 +239,20 @@ function extractOrders(
 ): unknown[] {
   if (!source) return [];
   if (source.status < 200 || source.status >= 300) return [];
-  const body = source.body as { orders?: unknown[] } | unknown[] | unknown;
+  // Codex P1 review #328 — the **current** collection-offers
+  // endpoint returns the list under `offers`, not `orders`. Legacy
+  // item-offers responses (now deferred — see agent proxy) used
+  // `orders`. Accept BOTH so a future re-enablement of the item
+  // path doesn't need a second pass.
+  const body = source.body as
+    | { offers?: unknown[]; orders?: unknown[] }
+    | unknown[]
+    | unknown;
   if (Array.isArray(body)) return body;
-  if (
-    body &&
-    typeof body === 'object' &&
-    'orders' in body &&
-    Array.isArray((body as { orders: unknown[] }).orders)
-  ) {
-    return (body as { orders: unknown[] }).orders;
+  if (body && typeof body === 'object') {
+    const obj = body as { offers?: unknown[]; orders?: unknown[] };
+    if (Array.isArray(obj.offers)) return obj.offers;
+    if (Array.isArray(obj.orders)) return obj.orders;
   }
   return [];
 }
@@ -274,16 +279,25 @@ function normalize(
       parameters?: {
         offer?: Array<{ token?: string; startAmount?: string }>;
         endTime?: string;
+        offerer?: string;
       };
     };
   };
 
   const orderHash = r.order_hash ?? '';
   if (!orderHash) return null;
+  // Codex P1 review #328 — current OpenSea offer objects identify
+  // the bidder via `protocol_data.parameters.offerer` (the Seaport
+  // order's `offerer`); the top-level `maker` field is no longer
+  // populated on every response shape. Fall back to the Seaport
+  // parameters' `offerer` field so current-shape offers aren't
+  // discarded as `null` here.
   const bidder =
-    typeof r.maker === 'string'
+    (typeof r.maker === 'string'
       ? r.maker
-      : r.maker?.address ?? '';
+      : r.maker?.address ?? '') ||
+    r.protocol_data?.parameters?.offerer ||
+    '';
   if (!bidder) return null;
 
   // Payment-token / value extraction: the bidder's offer item is

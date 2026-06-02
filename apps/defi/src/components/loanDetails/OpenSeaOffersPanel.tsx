@@ -46,6 +46,15 @@ export interface OpenSeaOffersPanelProps {
    *  before offers can be matched, instead of an empty offers
    *  list with no explanation. */
   hasActiveListing: boolean;
+  /** Codex P2 review #328 — decimals of the loan's principal token.
+   *  v1 fee-free flow expects every acceptable offer to be paid in
+   *  the loan's principal (the hook flags wrong-token offers as
+   *  unacceptable), so a single decimals number drives the
+   *  amount-rendering for both the row and the confirm modal.
+   *  Without this, the panel formats every amount as if it were
+   *  18-decimals — a 1,000 USDC offer (1e9 base units) shows as
+   *  `0.000000` and looks worthless. */
+  decimals: number;
 }
 
 export function OpenSeaOffersPanel({
@@ -54,9 +63,11 @@ export function OpenSeaOffersPanel({
   onMatchOffer,
   actionLoading,
   hasActiveListing,
+  decimals,
 }: OpenSeaOffersPanelProps) {
   const { offers, loadingInitial, error, refresh } = offersResult;
   const [confirming, setConfirming] = useState<NormalizedOffer | null>(null);
+  const [staleNotice, setStaleNotice] = useState<string | null>(null);
 
   return (
     <div
@@ -101,7 +112,7 @@ export function OpenSeaOffersPanel({
               >
                 <div style={offerRowBodyStyle}>
                   <div>
-                    <strong>{formatBigInt(offer.value)}</strong>{' '}
+                    <strong>{formatBigInt(offer.value, decimals)}</strong>{' '}
                     <span>{offer.paymentToken.slice(0, 10)}…</span>
                   </div>
                   <div style={offerMetaStyle}>
@@ -154,14 +165,44 @@ export function OpenSeaOffersPanel({
       {confirming && (
         <RaceWindowModal
           offer={confirming}
+          decimals={decimals}
           onCancel={() => setConfirming(null)}
           onConfirm={async () => {
             const target = confirming;
             setConfirming(null);
+            // Codex P1 review #328 — revalidate before sending the
+            // rotation tx. Between the borrower opening the modal
+            // and clicking Match, the offer can be cancelled /
+            // filled / expired / drained from the bidder's wallet
+            // (the polling refreshes every 30 s, but the modal can
+            // sit open longer than that). A stale match would
+            // rotate the listing down to a price no one can
+            // fulfill at — only an unrelated sniper could.
+            await offersResult.refresh();
+            const fresh = offersResult.offers.find(
+              (o) => o.orderHash === target.orderHash,
+            );
+            if (
+              !fresh ||
+              !fresh.acceptable ||
+              fresh.value !== target.value
+            ) {
+              setStaleNotice(
+                fresh
+                  ? `Offer at ${fresh.value} no longer matches the previewed value (${target.value}). Reopen Match to confirm.`
+                  : 'Offer is no longer available. Refreshing the list.',
+              );
+              return;
+            }
             await onMatchOffer(target);
           }}
           actionLoading={actionLoading}
         />
+      )}
+      {staleNotice && (
+        <div className="alert alert-warning" style={{ marginTop: 8 }}>
+          {staleNotice}
+        </div>
       )}
     </div>
   );
@@ -169,6 +210,7 @@ export function OpenSeaOffersPanel({
 
 interface RaceWindowModalProps {
   offer: NormalizedOffer;
+  decimals: number;
   onCancel: () => void;
   onConfirm: () => Promise<void>;
   actionLoading: boolean;
@@ -181,6 +223,7 @@ interface RaceWindowModalProps {
  *  goes through. */
 function RaceWindowModal({
   offer,
+  decimals,
   onCancel,
   onConfirm,
   actionLoading,
@@ -194,7 +237,7 @@ function RaceWindowModal({
     >
       <div className="card" style={modalCardStyle}>
         <h3 id="race-window-modal-title">
-          Match this offer at {formatBigInt(offer.value)}?
+          Match this offer at {formatBigInt(offer.value, decimals)}?
         </h3>
         <p>
           Once you match, your listing rotates to this offer's
@@ -231,16 +274,22 @@ function RaceWindowModal({
   );
 }
 
-function formatBigInt(v: bigint): string {
-  // Quick & cheap rendering — the loan card already imports a
-  // formatter via the format module, but pulling it in here would
-  // add a Vite-coupled dep to the offers panel for very little
-  // gain. Tens-of-Eth precision is fine for the offer-comparison
-  // surface.
+function formatBigInt(v: bigint, decimals: number): string {
+  // Codex P2 review #328 — caller passes the loan's principal-token
+  // decimals so non-18-decimal ERC20s (USDC = 6, USDT = 6, WBTC = 8)
+  // render correctly. Without this, a 1,000 USDC offer
+  // (1_000_000_000 base units) shows as `0.000000` and looks
+  // worthless to the borrower. Quick & cheap rendering — pulling
+  // in the loan card's `format` module would add a Vite-coupled
+  // dep to the offers panel; this six-fractional-digit form is
+  // fine for the offer-comparison surface.
   const s = v.toString();
-  if (s.length <= 18) return `0.${s.padStart(18, '0').slice(0, 6)}`;
-  const whole = s.slice(0, s.length - 18);
-  const frac = s.slice(s.length - 18, s.length - 18 + 6);
+  if (s.length <= decimals) {
+    const padded = s.padStart(decimals, '0');
+    return `0.${padded.slice(0, Math.min(6, decimals))}`;
+  }
+  const whole = s.slice(0, s.length - decimals);
+  const frac = s.slice(s.length - decimals, s.length - decimals + Math.min(6, decimals));
   return `${whole}.${frac}`;
 }
 

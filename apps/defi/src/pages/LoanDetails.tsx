@@ -1231,11 +1231,21 @@ export default function LoanDetails() {
           the fee-free path; fee-enforced collection support is a
           follow-up that re-fetches the OpenSea schedule at match
           time. */}
+      {/* Codex P2 review #328 — also gate on !pastPrepayGrace.
+          `availability.prepayListing` intentionally stays true
+          post-grace so the borrower can still CANCEL stale
+          listings, but `updatePrepayListing` reverts once
+          `block.timestamp >= gracePeriodEnd`. Showing an enabled
+          Match button after grace would produce guaranteed-to-
+          revert transactions; we drop the offers section entirely
+          + let the borrower use the cancel path inside the
+          actions card. */}
       {address &&
         isBorrower &&
         !prepayListing.loading &&
         prepayListingState !== null &&
         availability.prepayListing &&
+        !pastPrepayGrace &&
         typeof chainId === 'number' && (
           <OpenSeaOffersSection
             loanId={BigInt(loanId!)}

@@ -115,20 +115,23 @@ export async function handleOpenSeaOffers(
     Accept: 'application/json',
   };
 
-  // Two parallel fetches: item offers (always available) +
-  // collection offers (requires slug resolution; failures degrade
-  // gracefully to "no collection offers surfaced").
-  const itemOffersUrl =
-    `https://${host}/api/v2/orders/${chainSlug}/seaport/offers` +
-    `?asset_contract_address=${contract.toLowerCase()}` +
-    `&token_ids=${tokenId}`;
-  const itemOffersP = fetch(itemOffersUrl, { headers })
-    .then(r => r.text().then(body => ({ status: r.status, body })))
-    .catch(err => ({ status: 0, body: String(err) }));
-
-  // Slug resolution + collection offers. Done lazily: if the slug
-  // lookup fails or the upstream returns no slug, we just skip the
-  // collection-offers fetch.
+  // Codex P1 review #328 — OpenSea v2 removed the legacy
+  // `GET /api/v2/orders/{chain}/seaport/offers?asset_contract_address=...&token_ids=...`
+  // endpoint, so the item-specific offers half of the aggregation
+  // was returning a non-2xx silently. v1 of Block C ships
+  // collection-offers-only for two reasons:
+  //   1. Collection offers cover the bulk of incoming bids — most
+  //      bidders use OpenSea's "make collection offer" UX, which
+  //      applies to ANY token in the collection (including this
+  //      specific tokenId).
+  //   2. The current v2 surface for item-specific offers is
+  //      embedded inside the NFT-detail body
+  //      (`/api/v2/chain/{chain}/contract/{addr}/nfts/{id}`); the
+  //      response shape isn't pinned in OpenSea's public docs as
+  //      a stable list endpoint, so v1 explicitly drops it rather
+  //      than misrepresenting the data shape.
+  // Follow-up: add item-specific offer pull once the v2 surface
+  // stabilises (or once OpenSea republishes a list endpoint).
   const slugP = (async () => {
     try {
       const slugRes = await fetch(
@@ -149,25 +152,20 @@ export async function handleOpenSeaOffers(
   const collectionOffersUrl = slug
     ? `https://${host}/api/v2/offers/collection/${encodeURIComponent(slug)}`
     : null;
-  const collectionOffersP = collectionOffersUrl
-    ? fetch(collectionOffersUrl, { headers })
-        .then(r => r.text().then(body => ({ status: r.status, body })))
-        .catch(err => ({ status: 0, body: String(err) }))
-    : Promise.resolve(null);
-
-  const [itemRes, collectionRes] = await Promise.all([
-    itemOffersP,
-    collectionOffersP,
-  ]);
+  const collectionRes: { status: number; body: string } | null =
+    collectionOffersUrl
+      ? await fetch(collectionOffersUrl, { headers })
+          .then(r => r.text().then(body => ({ status: r.status, body })))
+          .catch(err => ({ status: 0, body: String(err) }))
+      : null;
 
   // Compose the aggregated response. Dapp consumes
-  //   { item_offers: { status, body? }, collection_offers: { status, body? | null } }
-  // and applies the threshold filter + sorts.
-  // Returning the raw upstream bodies (parsed as JSON where
-  // possible, raw text otherwise) keeps the proxy stateless +
-  // future-proof against OpenSea schema additions.
+  //   { item_offers: null | { status, body? }, collection_offers: { status, body? | null } }
+  // and applies the threshold filter + sorts. `item_offers: null`
+  // is the v1 "intentionally not fetched" sentinel; the normalizer
+  // skips it without surfacing a fetch error.
   const aggregated = {
-    item_offers: tryParseUpstream(itemRes),
+    item_offers: null,
     collection_offers: collectionRes ? tryParseUpstream(collectionRes) : null,
     slug,
   };

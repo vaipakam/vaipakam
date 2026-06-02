@@ -28,6 +28,7 @@
 import { useEffect, useState } from 'react';
 import type { UseNFTPrepayListingResult } from '../../hooks/useNFTPrepayListing';
 import { useDiamondRead } from '../../contracts/useDiamond';
+import { useTokenMeta } from '../../lib/tokenMeta';
 import { OpenSeaOffersPanel } from './OpenSeaOffersPanel';
 import { useOpenSeaOffers } from '../../hooks/useOpenSeaOffers';
 
@@ -49,6 +50,12 @@ export function OpenSeaOffersSection({
   prepayListing,
 }: OpenSeaOffersSectionProps) {
   const diamond = useDiamondRead();
+  // Codex P2 review #328 — fetch the principal-token decimals so
+  // the panel renders non-18-decimal offers (USDC=6, USDT=6,
+  // WBTC=8) correctly. Match `PrepayListingActions`' pattern: the
+  // panel-side decimals default to 18 until `meta` resolves.
+  const meta = useTokenMeta(principalAsset);
+  const decimals = meta?.decimals ?? 18;
 
   const [threshold, setThreshold] = useState<{
     lenderLeg: bigint;
@@ -56,6 +63,22 @@ export function OpenSeaOffersSection({
     bufferBps: number;
     principalAsset: string;
   } | null>(null);
+
+  // Codex P2 review #328 — refresh the floor on a timer, not just
+  // when the listing row changes. For pro-rata loans left open
+  // across a whole-day accrual boundary, `lenderLeg` /
+  // `treasuryLeg` shift as interest accrues but the listing row's
+  // `updatedAt` doesn't tick. Without a periodic refresh the panel
+  // would let the borrower click Match on an offer that was
+  // acceptable yesterday but reverts on-chain today with
+  // `AskBelowFloorPlusFees`. 60 s is the same cadence
+  // `PrepayListingActions`'s floor refresh uses for the same
+  // reason.
+  const [floorTick, setFloorTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setFloorTick((n) => n + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -95,7 +118,7 @@ export function OpenSeaOffersSection({
     return () => {
       cancelled = true;
     };
-  }, [diamond, loanId, principalAsset, prepayListing.listing?.updatedAt]);
+  }, [diamond, loanId, principalAsset, prepayListing.listing?.updatedAt, floorTick]);
 
   // VITE_AGENT_ORIGIN is the agent Worker's public URL (e.g.
   // `https://agent.vaipakam.com`). If unset, the panel renders the
@@ -105,6 +128,7 @@ export function OpenSeaOffersSection({
   const agentOrigin =
     (import.meta.env.VITE_AGENT_ORIGIN as string | undefined) ?? null;
 
+  const live = prepayListing.listing;
   const offersResult = useOpenSeaOffers(
     agentOrigin,
     chainId,
@@ -116,7 +140,15 @@ export function OpenSeaOffersSection({
       bufferBps: 0,
       principalAsset,
     },
-    { paused: threshold === null },
+    // Codex P2 review #328 — pause polling when there's no live
+    // listing OR threshold hasn't resolved. Without this, the loan
+    // card's mounting gate keeps the section visible (with a
+    // "Post a fixed-price listing first" hint) but the hook keeps
+    // burning the shared OpenSea quota every 30 s on rows the UI
+    // will never render. Pausing also avoids surfacing offers
+    // before the threshold is known (which would always classify
+    // as unacceptable).
+    { paused: threshold === null || live === null || live === undefined },
   );
 
   if (!agentOrigin) return null;
@@ -127,8 +159,8 @@ export function OpenSeaOffersSection({
   // so a `updatePrepayListing` rotation would have the vault's
   // ERC-1271 reject the rotated order (Raja review #328: surface
   // this BEFORE the borrower clicks Match instead of a silent
-  // no-op on click).
-  const live = prepayListing.listing;
+  // no-op on click). `live` was already pulled at the top of the
+  // body so the `useOpenSeaOffers` pause flag could consult it.
   const listingPreMigration =
     live !== null &&
     live !== undefined &&
@@ -189,6 +221,7 @@ export function OpenSeaOffersSection({
       offersResult={offersResult}
       hasActiveListing={live !== null && live !== undefined}
       actionLoading={prepayListing.actionLoading}
+      decimals={decimals}
       onMatchOffer={async (offer) => {
         // v1 ships fee-free: empty `feeLegs[]` rotation. The borrower
         // is taking the offer's value as the new ask; the existing
