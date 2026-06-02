@@ -73,6 +73,19 @@ export function OpenSeaOffersSection({
     bufferBps: number;
     principalAsset: string;
   } | null>(null);
+  // Codex round-8 P2 review #328 — track which loanId the
+  // current threshold + offers state belongs to. React Router
+  // reuses `LoanDetails` across loan navigations, so the section
+  // re-renders with NEW props (loanId, collateral, principal)
+  // while the hook + threshold state still hold the PREVIOUS
+  // loan's values until the relevant effects re-run after paint.
+  // Rendering the panel during that window would let a fast
+  // Match click submit `updatePrepayListing` for the new loanId
+  // using stale offer data. Synchronous gate: only render the
+  // panel when `recordedLoanId === loanId`. Each effect updates
+  // this at its leading edge.
+  const [recordedLoanId, setRecordedLoanId] = useState<bigint | null>(null);
+  const stateMatchesLoan = recordedLoanId === loanId;
 
   // Codex P2 review #328 — refresh the floor on a timer, not just
   // when the listing row changes. For pro-rata loans left open
@@ -101,6 +114,12 @@ export function OpenSeaOffersSection({
     // against the OLD loan's floor/principal — either hiding
     // valid offers or enabling a match that reverts on-chain.
     setThreshold(null);
+    // Codex round-8 P2 review #328 — record the loanId this
+    // pctx fetch is for. The render gate above (`stateMatchesLoan`)
+    // returns null when this hasn't caught up to the current
+    // loanId yet, suppressing stale panel renders on loan
+    // navigation.
+    setRecordedLoanId(loanId);
     let cancelled = false;
     (async () => {
       try {
@@ -177,11 +196,18 @@ export function OpenSeaOffersSection({
     (live.salt === null || live.conduitKey === null);
   const listingIsDutch =
     live !== null && live !== undefined && live.auctionMode === 1;
+  // Codex round-8 P2 review #328 — also include the ERC1155
+  // defer gate in `canMatch`. Without this, the hook mounts +
+  // polls every 30 s for ERC1155 loans even though the UI's
+  // later early-return shows only the v1.1-deferred banner.
+  // `2` is the on-chain `AssetType.ERC1155` enum value.
+  const collateralIsERC1155 = collateralAssetType === 2;
   const canMatch =
     live !== null &&
     live !== undefined &&
     !listingPreMigration &&
-    !listingIsDutch;
+    !listingIsDutch &&
+    !collateralIsERC1155;
 
   const offersResult = useOpenSeaOffers(
     agentOrigin,
@@ -262,22 +288,25 @@ export function OpenSeaOffersSection({
       .then(r => (r.ok ? r.json() : null))
       .then(body => {
         if (cancelled || body === null) return;
-        // Codex round-7 P2 review #328 — the OpenSea Collection
-        // API documents fee rows as `{recipient, basis_points,
-        // required}` (per design doc §14.3 + Round-5.1 errata),
-        // NOT `{recipient, fee, required}`. Reading `.fee` here
-        // silently classifies every fee-enforced collection as
-        // `fee-free`, re-enabling the empty-feeLegs[] Match path
-        // this gate exists to prevent. Read `basis_points`.
+        // Codex review #328 rounds 7 + 8 disagreed on the field
+        // name (`basis_points` vs `fee`) — the agent proxy
+        // passes OpenSea's collection response through
+        // unchanged, and OpenSea has shipped BOTH shapes at
+        // different times. Be permissive: a required fee row
+        // with EITHER a non-zero `basis_points` OR a non-zero
+        // `fee` field classifies the collection as
+        // `fee-enforced`. Same fail-closed posture either way —
+        // any positive required fee gates the Match surface.
         const fees = ((body as { fees?: unknown[] }).fees ?? []) as Array<{
           basis_points?: number;
+          fee?: number;
           required?: boolean;
         }>;
         const enforced = fees.some(
           f =>
             f.required === true &&
-            typeof f.basis_points === 'number' &&
-            f.basis_points > 0,
+            ((typeof f.basis_points === 'number' && f.basis_points > 0) ||
+              (typeof f.fee === 'number' && f.fee > 0)),
         );
         setFeeCheck({
           slug: slugForThisFetch,
@@ -295,6 +324,14 @@ export function OpenSeaOffersSection({
   }, [agentOrigin, offersResult.slug, chainId]);
 
   if (!agentOrigin) return null;
+
+  // Codex round-8 P2 review #328 — synchronous loan-key gate.
+  // On client-side navigation between two borrower loan pages,
+  // React Router reuses `LoanDetails`; this section re-renders
+  // with NEW props while the hook + threshold state still hold
+  // the previous loan's values. Suppress the panel until the
+  // effects have re-run and `recordedLoanId` catches up.
+  if (!stateMatchesLoan) return null;
 
   // Codex round-7 P2 review #328 — ERC1155 collateral defer
   // gate. The Match callback rotates against `live.askPrice`
