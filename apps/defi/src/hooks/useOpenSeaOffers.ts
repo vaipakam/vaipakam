@@ -179,6 +179,15 @@ export function useOpenSeaOffers(
     // instead of the "Loading offers…" spinner. Codex round-4 P2
     // review #328.
     if (paused) {
+      // Codex round-6 P2 review #328 — bump the fetch generation
+      // BEFORE clearing state. Any in-flight request from before
+      // the pause flip will observe `myFetch !== fetchRef.current`
+      // in its resolution branch and skip its state writes, so a
+      // stale response can't repopulate `offers` / `slug` after
+      // the reset. Without this, the per-minute floor-refresh
+      // race (or the listing-becomes-unmatchable race) could
+      // re-enable Match rows against a stale threshold.
+      fetchRef.current++;
       setOffers([]);
       setSlug(null);
       setLoadingInitial(false);

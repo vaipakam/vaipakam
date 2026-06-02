@@ -210,10 +210,23 @@ export function OpenSeaOffersSection({
   // match time. v1 ships fee-free only; we gate at the section
   // by fetching `/opensea/collection/{slug}` once per loan and
   // showing a v1.1-deferred banner when any required fee > 0.
-  // `null` = check not run yet (or no slug); `false` = fee-free;
-  // `true` = fee-enforced.
-  const [feeEnforced, setFeeEnforced] = useState<boolean | null>(null);
+  //
+  // **Tri-state**: `'unknown'` = check not run yet (or no slug
+  // available, or fetch failed), `'fee-free'` = confirmed safe
+  // to Match, `'fee-enforced'` = confirmed needs v1.1 surface.
+  // Codex round-6 P2 review #328: the Match surface stays
+  // disabled until the check resolves positively to `fee-free`
+  // for the CURRENT slug. Otherwise a borrower could click
+  // Match in the in-flight window AND a stale `fee-free` from
+  // a previous loan could carry over (the `slug` change resets
+  // back to `unknown` via the effect's slug dependency).
+  type FeeEnforcement = 'unknown' | 'fee-free' | 'fee-enforced';
+  const [feeEnforcement, setFeeEnforcement] = useState<FeeEnforcement>('unknown');
   useEffect(() => {
+    // Reset on every slug change so a navigation-between-loans
+    // can't surface stale `fee-free` from the previous loan
+    // before the current loan's check completes.
+    setFeeEnforcement('unknown');
     if (!agentOrigin || !offersResult.slug) return;
     let cancelled = false;
     fetch(
@@ -232,14 +245,12 @@ export function OpenSeaOffersSection({
             typeof f.fee === 'number' &&
             f.fee > 0,
         );
-        setFeeEnforced(enforced);
+        setFeeEnforcement(enforced ? 'fee-enforced' : 'fee-free');
       })
       .catch(() => {
-        // Transient failure — leave the gate at its current
-        // value rather than incorrectly flipping it to fee-free.
-        // Without a confirmed schedule we treat the collection
-        // as "unknown" (the panel still renders; the user can
-        // attempt Match; the on-chain check is the backstop).
+        // Transient failure — leave the gate at `unknown` so
+        // Match stays disabled rather than incorrectly flipping
+        // to fee-free without a confirmed schedule.
       });
     return () => {
       cancelled = true;
@@ -248,7 +259,7 @@ export function OpenSeaOffersSection({
 
   if (!agentOrigin) return null;
 
-  if (feeEnforced === true) {
+  if (feeEnforcement === 'fee-enforced') {
     return (
       <div
         id={`opensea-offers-fee-enforced-${loanId}`}
@@ -325,7 +336,16 @@ export function OpenSeaOffersSection({
       loanId={loanId}
       offersResult={offersResult}
       hasActiveListing={live !== null && live !== undefined}
-      actionLoading={prepayListing.actionLoading}
+      // Codex round-6 P2 review #328 — block Match clicks until
+      // the fee gate has POSITIVELY resolved to `fee-free` for
+      // the current slug. During the in-flight `unknown` window
+      // (and on transient fetch failures that leave the gate at
+      // `unknown`), Match stays disabled — the disabled-button
+      // state piggybacks on `actionLoading` to keep the panel's
+      // disable-buttons logic in one place.
+      actionLoading={
+        prepayListing.actionLoading || feeEnforcement !== 'fee-free'
+      }
       decimals={decimals}
       onMatchOffer={async (offer) => {
         // v1 ships fee-free: empty `feeLegs[]` rotation. The borrower
