@@ -7,6 +7,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 
 import {CollateralListingExecutor} from "../../src/seaport/CollateralListingExecutor.sol";
+import {FeeLeg} from "../../src/seaport/PrepayTypes.sol";
 import {
     ISeaportZone,
     ZoneParameters,
@@ -218,7 +219,7 @@ contract CollateralListingExecutorTest is Test {
             uint256(0),
             uint256(block.timestamp),
             TEST_ASK_PRICE
-        );
+        , _emptyFeeLegs());
     }
 
     // ─── Admin: conduit allow-list ──────────────────────────────────────
@@ -254,7 +255,7 @@ contract CollateralListingExecutorTest is Test {
         executor.recordOrder(
             TEST_ORDER_HASH, TEST_LOAN_ID, conduit,
             bytes32(0), uint256(0), uint256(block.timestamp), uint256(0)
-        );
+        , _emptyFeeLegs());
     }
 
     function test_recordOrder_rejectsUnapprovedConduit() public {
@@ -266,7 +267,7 @@ contract CollateralListingExecutorTest is Test {
         executor.recordOrder(
             TEST_ORDER_HASH, TEST_LOAN_ID, rogue,
             bytes32(0), uint256(0), uint256(block.timestamp), uint256(0)
-        );
+        , _emptyFeeLegs());
     }
 
     function test_recordOrder_alreadyRecorded() public {
@@ -280,7 +281,7 @@ contract CollateralListingExecutorTest is Test {
         executor.recordOrder(
             TEST_ORDER_HASH, TEST_LOAN_ID, conduit,
             bytes32(0), uint256(0), uint256(block.timestamp), uint256(0)
-        );
+        , _emptyFeeLegs());
     }
 
     function test_recordOrder_uint96Overflow() public {
@@ -292,7 +293,7 @@ contract CollateralListingExecutorTest is Test {
         executor.recordOrder(
             TEST_ORDER_HASH, tooBig, conduit,
             bytes32(0), uint256(0), uint256(block.timestamp), uint256(0)
-        );
+        , _emptyFeeLegs());
     }
 
     /// @dev T-086 #316 — bounds check on the new `startTime` narrowing
@@ -310,7 +311,7 @@ contract CollateralListingExecutorTest is Test {
         executor.recordOrder(
             TEST_ORDER_HASH, TEST_LOAN_ID, conduit,
             bytes32(0), uint256(0), tooBig, uint256(0)
-        );
+        , _emptyFeeLegs());
     }
 
     /// @dev T-086 #316 — bounds check on the new `askPrice` narrowing
@@ -328,7 +329,7 @@ contract CollateralListingExecutorTest is Test {
         executor.recordOrder(
             TEST_ORDER_HASH, TEST_LOAN_ID, conduit,
             bytes32(0), uint256(0), uint256(block.timestamp), tooBig
-        );
+        , _emptyFeeLegs());
     }
 
     function test_recordOrder_happyPath() public {
@@ -704,4 +705,11 @@ contract CollateralListingExecutorTest is Test {
         (uint96 storedLoanId, , , , , ) = executor.orderContext(TEST_ORDER_HASH);
         assertEq(uint256(storedLoanId), 0);
     }
+    /// @dev Round-5 Block A (#313) — most executor tests don't care
+    ///      about the new feeLegs arg; this helper supplies an empty
+    ///      array for back-compat with the pre-#313 call shape.
+    function _emptyFeeLegs() internal pure returns (FeeLeg[] memory) {
+        return new FeeLeg[](0);
+    }
+
 }

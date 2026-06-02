@@ -10,6 +10,7 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IListingExecutorRecorder} from "../seaport/IListingExecutorRecorder.sol";
+import {FeeLeg, MAX_FEE_LEGS} from "../seaport/PrepayTypes.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 import {IVaipakamPrepayContext} from "../seaport/IVaipakamPrepayContext.sol";
@@ -243,6 +244,46 @@ contract NFTPrepayListingFacet is
     ///         bypass) are wired end-to-end.
     error PrepayListingDisabled();
 
+    // ─── Round-5 Block A (#313) errors ──────────────────────────────────
+
+    /// @notice Borrower supplied more fee legs than the protocol cap
+    ///         (`MAX_FEE_LEGS = 4`). The cap exists primarily as a
+    ///         DoS bound on the executor's per-leg iteration; bumping
+    ///         it requires a coordinated executor + facet update.
+    error FeeLegsExceedCap(uint256 supplied, uint256 cap);
+
+    /// @notice One of the supplied fee legs has a zero recipient
+    ///         (would route the leg's tokens into oblivion at fill
+    ///         time, defeating the OpenSea-fee-enforcement model
+    ///         this surface exists to support).
+    error FeeLegInvalidRecipient(uint256 idx);
+
+    /// @notice One of the supplied fee legs has a zero amount on
+    ///         either the start or end side. Zero legs clutter the
+    ///         order shape without economic effect; the dapp should
+    ///         pass a shorter array instead.
+    error FeeLegInvalidAmount(uint256 idx);
+
+    /// @notice Round-5 Block A: fixed-price posts MUST set
+    ///         `startAmount == endAmount` on every fee leg. The
+    ///         `≥` form is reserved for Dutch entry points
+    ///         (Block B); accepting a decaying fee leg on the
+    ///         fixed-price path would produce a hybrid order whose
+    ///         cancel-time reconstruction (no auction-mode tag)
+    ///         couldn't rebuild the original shape.
+    error FeeLegDecayNotAllowedOnFixedPrice(uint256 idx);
+
+    /// @notice Round-5 Block A: the sum-of-considerations equality
+    ///         (`askPrice == lenderLeg + treasuryLeg + borrowerLeg +
+    ///         sum(feeLegs.amount)`) failed. Either the dapp
+    ///         miscomputed the fee amounts against the gross
+    ///         askPrice, the schedule it queried changed mid-flight,
+    ///         or `askPrice` doesn't cover the protocol legs plus
+    ///         the buffer plus fees. The borrower's remainder
+    ///         (after the buffer-bps margin on the protocol legs)
+    ///         must be ≥ 0.
+    error AskBelowFloorPlusFees(uint256 loanId, uint256 askPrice, uint256 required);
+
     // ─── Cancel-reason enum ─────────────────────────────────────────────
 
     /// @dev `Borrower` — current borrower-position holder cancelled
@@ -299,7 +340,8 @@ contract NFTPrepayListingFacet is
         uint256 loanId,
         uint256 askPrice,
         uint256 salt,
-        bytes32 conduitKey
+        bytes32 conduitKey,
+        FeeLeg[] calldata feeLegs
     ) external nonReentrant whenNotPaused returns (bytes32 orderHash) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
@@ -358,18 +400,19 @@ contract NFTPrepayListingFacet is
             revert NotPositionHolder(loanId, msg.sender, holder);
         }
 
-        // Live-floor + buffer check.
+        // Live-floor + buffer + fee-legs validation.
         IListingExecutorRecorder executor = _requireExecutor(s);
-        _requireAskCoversFloor(loanId, askPrice, s.cfgPrepayListingBufferBps);
+        _validateFeeLegsFixedPrice(feeLegs);
+        _requireAskCoversFloorWithFees(loanId, askPrice, s.cfgPrepayListingBufferBps, feeLegs);
 
         // #306 architectural fix — diamond CONSTRUCTS the Seaport
         // order from verified loan parameters + derives the
         // orderHash via Seaport's own `getOrderHash` view. The
         // borrower-controlled inputs (`askPrice`, `salt`,
-        // `conduitKey`) are bound to a known canonical order
-        // shape; the vault's ERC-1271 can never authorise a
+        // `conduitKey`, `feeLegs`) are bound to a known canonical
+        // order shape; the vault's ERC-1271 can never authorise a
         // different shape.
-        orderHash = _buildAndRecord(s, loan, loanId, askPrice, salt, conduitKey, executor);
+        orderHash = _buildAndRecord(s, loan, loanId, askPrice, salt, conduitKey, executor, feeLegs);
 
         // T-086 step 14 — emit `conduitKey` + `salt` + `executor`
         // so the indexer can reconstruct the canonical Seaport
@@ -406,7 +449,8 @@ contract NFTPrepayListingFacet is
         uint256 askPrice,
         uint256 salt,
         bytes32 conduitKey,
-        IListingExecutorRecorder executor
+        IListingExecutorRecorder executor,
+        FeeLeg[] calldata feeLegs
     ) private returns (bytes32 orderHash) {
         // Resolve conduit address from key via Seaport's
         // ConduitController; bind (key, address) on-chain so a
@@ -430,7 +474,8 @@ contract NFTPrepayListingFacet is
             pctx.lenderLeg,
             pctx.treasuryLeg,
             salt,
-            conduitKey
+            conduitKey,
+            feeLegs
         );
 
         // Atomic state mutations — lock → bookkeep → record →
@@ -440,11 +485,12 @@ contract NFTPrepayListingFacet is
         LibERC721._lock(loan.borrowerTokenId, LibERC721.LockReason.PrepayCollateralListing);
         s.prepayListingOrderHash[loanId] = orderHash;
         s.prepayListingExecutor[loanId] = address(executor);
-        // T-086 #316 — recordOrder now pins the sign-time inputs
-        // (conduitKey, salt, startTime = block.timestamp, askPrice)
-        // alongside (loanId, conduit) so the executor can rebuild
-        // the canonical OrderComponents at cleanup time and forward
-        // Seaport.cancel for fast OpenSea catalog refresh.
+        // T-086 #316 + Round-5 Block A (#313) — recordOrder pins
+        // the sign-time inputs (conduitKey, salt, startTime,
+        // askPrice, feeLegs) alongside (loanId, conduit) so the
+        // executor can rebuild the canonical OrderComponents at
+        // cleanup time and forward Seaport.cancel for fast
+        // OpenSea catalog refresh.
         executor.recordOrder(
             orderHash,
             loanId,
@@ -452,7 +498,8 @@ contract NFTPrepayListingFacet is
             conduitKey,
             salt,
             block.timestamp,
-            askPrice
+            askPrice,
+            feeLegs
         );
         _wireVaultForListing(s, loan, orderHash, conduit, address(executor));
     }
@@ -485,7 +532,8 @@ contract NFTPrepayListingFacet is
         uint256 loanId,
         uint256 newAskPrice,
         uint256 newSalt,
-        bytes32 newConduitKey
+        bytes32 newConduitKey,
+        FeeLeg[] calldata feeLegs
     ) external nonReentrant whenNotPaused returns (bytes32 newOrderHash) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
@@ -523,7 +571,8 @@ contract NFTPrepayListingFacet is
         }
 
         IListingExecutorRecorder currentExecutor = _requireExecutor(s);
-        _requireAskCoversFloor(loanId, newAskPrice, s.cfgPrepayListingBufferBps);
+        _validateFeeLegsFixedPrice(feeLegs);
+        _requireAskCoversFloorWithFees(loanId, newAskPrice, s.cfgPrepayListingBufferBps, feeLegs);
 
         // Clear the old order on the EXECUTOR THAT ORIGINALLY
         // recorded it — survives a governance rotation between
@@ -546,7 +595,7 @@ contract NFTPrepayListingFacet is
         // staticcalls Seaport's `getOrderHash` over verified
         // OrderComponents). #306 architectural fix.
         newOrderHash = _buildAndRecordUpdate(
-            s, loan, loanId, newAskPrice, newSalt, newConduitKey, currentExecutor
+            s, loan, loanId, newAskPrice, newSalt, newConduitKey, currentExecutor, feeLegs
         );
 
         // T-086 step 14 — same `conduitKey` + `salt` + `executor`
@@ -577,7 +626,8 @@ contract NFTPrepayListingFacet is
         uint256 askPrice,
         uint256 salt,
         bytes32 conduitKey,
-        IListingExecutorRecorder executor
+        IListingExecutorRecorder executor,
+        FeeLeg[] calldata feeLegs
     ) private returns (bytes32 newOrderHash) {
         address conduit = _resolveConduit(executor, conduitKey);
         if (!executor.approvedConduits(conduit)) {
@@ -596,16 +646,18 @@ contract NFTPrepayListingFacet is
             pctx.lenderLeg,
             pctx.treasuryLeg,
             salt,
-            conduitKey
+            conduitKey,
+            feeLegs
         );
 
         s.prepayListingOrderHash[loanId] = newOrderHash;
         s.prepayListingExecutor[loanId] = address(executor);
-        // T-086 #316 — same sign-time-input pinning as the post path.
-        // The update flow's preceding clearOrder() on the OLD hash
-        // already forwarded Seaport.cancel for the previous
-        // OrderComponents; this records the NEW shape so a future
-        // cancel / cleanup can do the same for the rotated order.
+        // T-086 #316 + Round-5 Block A (#313) — same sign-time-input
+        // pinning as the post path including fee legs. The update
+        // flow's preceding clearOrder() on the OLD hash already
+        // forwarded Seaport.cancel for the previous OrderComponents;
+        // this records the NEW shape so a future cancel / cleanup
+        // can do the same for the rotated order.
         executor.recordOrder(
             newOrderHash,
             loanId,
@@ -613,7 +665,8 @@ contract NFTPrepayListingFacet is
             conduitKey,
             salt,
             block.timestamp,
-            askPrice
+            askPrice,
+            feeLegs
         );
 
         // Vault rotation: register the new orderHash binding +
@@ -811,6 +864,80 @@ contract NFTPrepayListingFacet is
         // well below 2^256, so no overflow guard needed.
         uint256 minAsk = (floor * (10_000 + bufferBps)) / 10_000;
         if (askPrice < minAsk) revert AskBelowFloor(loanId, askPrice, minAsk);
+    }
+
+    /// @dev Round-5 Block A (#313) — fee-leg shape validation for
+    ///      fixed-price posts. Per §14.5 of the design + the
+    ///      Round-5.1 errata, the fixed-price path REQUIRES
+    ///      `startAmount == endAmount` on every leg (the `≥` form
+    ///      is reserved for Dutch entry points). The other
+    ///      invariants — cap, non-zero recipient, non-zero amounts
+    ///      — are also enforced again at the executor's
+    ///      `recordOrder` boundary, but fail-fast at the facet
+    ///      gives the borrower the most specific error.
+    function _validateFeeLegsFixedPrice(FeeLeg[] calldata feeLegs) private pure {
+        if (feeLegs.length > MAX_FEE_LEGS) {
+            revert FeeLegsExceedCap(feeLegs.length, MAX_FEE_LEGS);
+        }
+        for (uint256 i = 0; i < feeLegs.length; ) {
+            if (feeLegs[i].recipient == address(0)) {
+                revert FeeLegInvalidRecipient(i);
+            }
+            if (feeLegs[i].startAmount == 0 || feeLegs[i].endAmount == 0) {
+                revert FeeLegInvalidAmount(i);
+            }
+            if (feeLegs[i].startAmount != feeLegs[i].endAmount) {
+                revert FeeLegDecayNotAllowedOnFixedPrice(i);
+            }
+            unchecked { ++i; }
+        }
+    }
+
+    /// @dev Round-5 Block A (#313) + Round-5.1 errata — replacement
+    ///      for the Round-4 `_requireAskCoversFloor` that also folds
+    ///      fee legs into the coverage check.
+    ///
+    ///      Per the merged Round-5 design §14.5 + errata Codex P2
+    ///      line 740: the borrower-leg derivation is
+    ///        `borrowerLeg = askPrice − lenderLeg − treasuryLeg − sum(feeLegs.amount)`
+    ///      and the borrower must still earn ≥ 0 after the protocol-
+    ///      legs buffer is applied. The buffer applies ONLY to the
+    ///      protocol legs (lender + treasury); fee legs are fixed-
+    ///      amount obligations not subject to drift.
+    ///
+    ///      Concretely, the invariant we enforce is:
+    ///        `askPrice ≥ (lender + treasury) × (1 + bufferBps/10000)
+    ///                    + sum(feeLegs.amount)`
+    ///      For fixed-price `feeLegs[i].startAmount == endAmount`
+    ///      (validated separately) so the sum is unambiguous.
+    function _requireAskCoversFloorWithFees(
+        uint256 loanId,
+        uint256 askPrice,
+        uint256 bufferBps,
+        FeeLeg[] calldata feeLegs
+    ) private view {
+        if (bufferBps == 0) revert PrepayListingBufferNotConfigured();
+
+        uint256 floor = LibCollateralSettlement.liveFloor(loanId, block.timestamp);
+        uint256 feeSum = 0;
+        for (uint256 i = 0; i < feeLegs.length; ) {
+            // Fixed-price invariant ensures `start == end`; either
+            // value works for the sum. We read `startAmount` so the
+            // helper is forward-compatible with a future caller
+            // that has validated monotonicity differently.
+            feeSum += uint256(feeLegs[i].startAmount);
+            unchecked { ++i; }
+        }
+
+        // Buffered floor on protocol legs + raw fee total. The
+        // protocol-leg buffer is the fillability headroom against
+        // mid-listing interest accrual; fee legs are sign-time
+        // obligations the borrower signed for and not subject to
+        // drift, so they get added at face value.
+        uint256 minAsk = (floor * (10_000 + bufferBps)) / 10_000 + feeSum;
+        if (askPrice < minAsk) {
+            revert AskBelowFloorPlusFees(loanId, askPrice, minAsk);
+        }
     }
 
     /// @dev Shared finalization for {cancelPrepayListing} +
