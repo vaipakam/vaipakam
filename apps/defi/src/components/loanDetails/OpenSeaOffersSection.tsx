@@ -121,11 +121,43 @@ export function OpenSeaOffersSection({
 
   if (!agentOrigin) return null;
 
+  // Pre-migration-0016 rows never had `conduit_key` / `salt`
+  // populated on the indexer's `prepay_listings` row. Without them
+  // the JS reconstruction can't hash to the on-chain orderHash,
+  // so a `updatePrepayListing` rotation would have the vault's
+  // ERC-1271 reject the rotated order (Raja review #328: surface
+  // this BEFORE the borrower clicks Match instead of a silent
+  // no-op on click).
+  const live = prepayListing.listing;
+  const listingPreMigration =
+    live !== null &&
+    live !== undefined &&
+    (live.salt === null || live.conduitKey === null);
+
+  if (listingPreMigration) {
+    return (
+      <div
+        id={`opensea-offers-pre-migration-${loanId}`}
+        className="card loan-actions-card"
+      >
+        <div className="action-group">
+          <div className="action-title">OpenSea Offers (English mode)</div>
+          <div className="alert alert-warning">
+            This listing was posted before the offer-matching surface
+            was added. Cancel the current listing and re-post via the
+            actions card above to enable matching against incoming
+            OpenSea offers.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <OpenSeaOffersPanel
       loanId={loanId}
       offersResult={offersResult}
-      hasActiveListing={prepayListing.listing !== null && prepayListing.listing !== undefined}
+      hasActiveListing={live !== null && live !== undefined}
       actionLoading={prepayListing.actionLoading}
       onMatchOffer={async (offer) => {
         // v1 ships fee-free: empty `feeLegs[]` rotation. The borrower
@@ -134,14 +166,10 @@ export function OpenSeaOffersSection({
         // updatePrepayListing call. The bidder is told out-of-band
         // before the borrower clicks Match (per §15.3's race-window
         // warning, rendered inside the panel's confirm modal).
-        const live = prepayListing.listing;
+        // The pre-migration short-circuit above guarantees `live`
+        // is non-null + both fields are populated by the time this
+        // callback fires.
         if (!live || live.salt === null || live.conduitKey === null) {
-          // Pre-Block-A row that never got conduit_key / salt
-          // populated. Without them the JS reconstruction can't
-          // hash to the on-chain orderHash, so the executor's
-          // ERC-1271 rejects the rotated order. Refuse the match
-          // and let the borrower cancel + re-post via the normal
-          // post flow.
           return false;
         }
         return prepayListing.updatePrepayListing(
