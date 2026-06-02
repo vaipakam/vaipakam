@@ -10,8 +10,10 @@ import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import {ISeaportZone, ZoneParameters, ReceivedItem, ItemType} from "./ISeaportZone.sol";
 import {IVaipakamPrepayCallbacks} from "./IVaipakamPrepayCallbacks.sol";
 import {IVaipakamPrepayContext} from "./IVaipakamPrepayContext.sol";
+import {ISeaportOrderHash, ISeaportCancel, OrderComponents} from "./ISeaportOrderHash.sol";
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibPrepayOrder} from "../libraries/LibPrepayOrder.sol";
 
 /**
  * @title CollateralListingExecutor
@@ -118,15 +120,41 @@ contract CollateralListingExecutor is
     ///         in this map is rejected (defends against forged
     ///         off-chain signatures that don't correspond to a
     ///         legitimate Vaipakam listing).
-    /// @dev    `loanId` is `uint96` so the struct packs in one slot
-    ///         (uint96 + address = 32 bytes). Diamond's `loans` mapping
-    ///         is keyed by `uint256`; the cast back is lossless because
-    ///         no protocol-issued loanId will exceed 2^96 in the
-    ///         foreseeable lifetime (one nextLoanId increment per loan
-    ///         creation; 2^96 ≈ 7.9 × 10^28, vs ~10^9 max realistic).
+    /// @dev    T-086 #316 extended the recorded shape from
+    ///         `(loanId, conduit)` (1 slot) to the full sign-time
+    ///         input set (4 slots). The extra three slots let
+    ///         {clearOrder} REBUILD the canonical `OrderComponents` at
+    ///         cleanup time and forward `Seaport.cancel` for the same
+    ///         orderHash — OpenSea's marketplace catalog refreshes
+    ///         within ~30s of the on-chain event instead of waiting
+    ///         hours for OpenSea's lazy stale-listing detection.
+    ///
+    ///         Storage packing (4 × 32 bytes = 4 slots):
+    ///           slot 0: uint96 loanId | address conduit
+    ///           slot 1: bytes32 conduitKey
+    ///           slot 2: uint256 salt
+    ///           slot 3: uint64 startTime | uint192 askPrice
+    ///
+    ///         Width choices:
+    ///           - `loanId` uint96 (2^96 ≈ 7.9 × 10^28, vs ~10^9
+    ///             realistic): lossless round-trip from the
+    ///             diamond's `uint256` loanId key.
+    ///           - `startTime` uint64: block.timestamp pinned at
+    ///             post-time. uint32 would overflow in 2106; uint64
+    ///             buys ~580 billion years. The explicit bounds
+    ///             check in {recordOrder} guards against an oddly-
+    ///             large value silently narrowing.
+    ///           - `askPrice` uint192 (2^192 ≈ 6.3 × 10^57 wei, vs
+    ///             realistic max ~10^28 wei for any conceivable
+    ///             NFT-collateral floor): same bounds-checked
+    ///             narrowing pattern.
     struct OrderContext {
         uint96 loanId;
         address conduit;
+        bytes32 conduitKey;
+        uint256 salt;
+        uint64 startTime;
+        uint192 askPrice;
     }
     mapping(bytes32 orderHash => OrderContext) public orderContext;
 
@@ -137,6 +165,26 @@ contract CollateralListingExecutor is
     event OrderRecorded(bytes32 indexed orderHash, uint256 indexed loanId, address conduit);
     event OrderFilled(bytes32 indexed orderHash, uint256 indexed loanId);
     event OrderCanceled(bytes32 indexed orderHash, uint256 indexed loanId);
+    /// @notice T-086 #316: emitted when {clearOrder} successfully
+    ///         forwarded `Seaport.cancel` for the matching orderHash.
+    ///         OpenSea's marketplace indexer watches Seaport's own
+    ///         `OrderCancelled` event — this Vaipakam-side event is
+    ///         the operator-side breadcrumb that the fast-cancel
+    ///         path actually fired (vs. fell back to the no-op
+    ///         drift branch).
+    event SeaportCancelEmitted(bytes32 indexed orderHash, uint256 indexed loanId);
+    /// @notice T-086 #316: emitted when {clearOrder} skipped the
+    ///         `Seaport.cancel` emit because the cancel-time
+    ///         reconstructed `OrderComponents` hashed to something
+    ///         other than the originally-recorded `orderHash`. Real-
+    ///         world causes: position-NFT holder transferred between
+    ///         sign and cleanup; Seaport `incrementCounter(vault)`
+    ///         was called; treasury address rotated. The cleanup is
+    ///         still safe — the executor's binding + vault
+    ///         `revokeListingOrderHash` already invalidate fills —
+    ///         we just can't accelerate OpenSea's catalog refresh
+    ///         in those edge cases.
+    event SeaportCancelSkipped(bytes32 indexed orderHash, uint256 indexed loanId);
 
     // ─── Errors ─────────────────────────────────────────────────────────
 
@@ -171,6 +219,14 @@ contract CollateralListingExecutor is
     error ZeroAddress();
     error AlreadyRecorded(bytes32 orderHash);
     error LoanIdOverflow(uint256 loanId);
+    /// @notice T-086 #316 width checks on the extended OrderContext —
+    ///         see the `struct OrderContext` natspec for the chosen
+    ///         widths and why each overflow is unreachable today.
+    ///         Made explicit so a future caller passing a malformed
+    ///         value reverts loudly instead of silently corrupting
+    ///         the record.
+    error StartTimeOverflow(uint256 startTime);
+    error AskPriceOverflow(uint256 askPrice);
 
     // ─── Initializer / UUPS ─────────────────────────────────────────────
 
@@ -229,44 +285,194 @@ contract CollateralListingExecutor is
 
     // ─── Order context recording (diamond-only entry) ───────────────────
 
-    /// @notice Stamp the `orderHash → (loanId, conduit)` binding before
-    ///         Seaport processes the signed order. Called exclusively
-    ///         by the diamond's step-6 `NFTPrepayListingFacet.postPrepayListing`.
+    /// @notice Stamp the `orderHash → (loanId, conduit, conduitKey,
+    ///         salt, startTime, askPrice)` binding before Seaport
+    ///         processes the signed order. Called exclusively by the
+    ///         diamond's step-6 `NFTPrepayListingFacet.postPrepayListing`
+    ///         / `updatePrepayListing`.
     /// @dev    Access-gated to the diamond — an arbitrary EOA can't
     ///         seed phantom orderContext entries to forge a future
     ///         sign. Also asserts the conduit is currently approved;
     ///         a conduit removed between record + sign would still
     ///         have a valid context but the zone callback's conduit
     ///         re-check catches it.
-    function recordOrder(bytes32 orderHash, uint256 loanId, address conduit) external {
+    ///
+    ///         T-086 #316 — the four extra args (`conduitKey`, `salt`,
+    ///         `startTime`, `askPrice`) capture the borrower-controlled
+    ///         + sign-time inputs that are NOT recoverable from the
+    ///         loan record alone. The executor uses them in
+    ///         {clearOrder} to rebuild the canonical `OrderComponents`
+    ///         and forward `Seaport.cancel` for fast OpenSea catalog
+    ///         refresh. All four bound-check before the narrowing
+    ///         casts to fail-loud on a malformed input rather than
+    ///         silently truncate.
+    function recordOrder(
+        bytes32 orderHash,
+        uint256 loanId,
+        address conduit,
+        bytes32 conduitKey,
+        uint256 salt,
+        uint256 startTime,
+        uint256 askPrice
+    ) external {
         if (msg.sender != vaipakamDiamond) revert NotDiamond();
         if (!approvedConduits[conduit]) revert ConduitNotApproved(conduit);
         if (orderContext[orderHash].loanId != 0) revert AlreadyRecorded(orderHash);
-        // Explicit bounds check before the narrowing uint96 cast (Codex
-        // L242 P2 on Round 1). Silent narrowing would let a loanId
-        // exceeding 2^96 wrap into a different valid loan record at
-        // fill time, causing mis-settlement. With 2^96 ≈ 7.9 × 10^28
-        // and one nextLoanId increment per loan, the bound is
-        // comfortably above any realistic protocol lifetime — but
-        // explicit > silent.
+        // Explicit bounds checks before the narrowing casts. Silent
+        // narrowing would let a value exceeding the recorded width
+        // wrap into a different valid context entry at fill / cleanup
+        // time, causing mis-settlement (loanId), mis-pctx
+        // reconstruction (startTime), or mis-floor reconstruction
+        // (askPrice). With 2^96 / 2^64 / 2^192 all vastly exceeding
+        // any realistic value, these reverts are unreachable today —
+        // but explicit > silent.
         if (loanId > type(uint96).max) revert LoanIdOverflow(loanId);
+        if (startTime > type(uint64).max) revert StartTimeOverflow(startTime);
+        if (askPrice > type(uint192).max) revert AskPriceOverflow(askPrice);
         orderContext[orderHash] = OrderContext({
             loanId: uint96(loanId),
-            conduit: conduit
+            conduit: conduit,
+            conduitKey: conduitKey,
+            salt: salt,
+            startTime: uint64(startTime),
+            askPrice: uint192(askPrice)
         });
         emit OrderRecorded(orderHash, loanId, conduit);
     }
 
     /// @notice Clear an orderHash binding. Called by the diamond's
-    ///         `cancelPrepayListing` (step 6) so a previously-signed
-    ///         order can no longer fill once the borrower has
-    ///         cancelled. Idempotent: clearing an already-cleared
-    ///         orderHash is a no-op.
+    ///         `cancelPrepayListing` (step 6), the update flow's
+    ///         old-hash retire, and `LibPrepayCleanup.clearActiveListing`
+    ///         (step 10 terminal sweep) so a previously-signed order
+    ///         can no longer fill. Idempotent: clearing an already-
+    ///         cleared orderHash is a no-op.
+    /// @dev    T-086 #316 — while the binding is still live, the
+    ///         executor REBUILDS the canonical `OrderComponents` from
+    ///         the recorded sign-time inputs + the current vault
+    ///         counter, hashes them through Seaport, and forwards
+    ///         `Seaport.cancel` for the matching orderHash. Seaport's
+    ///         own `OrderCancelled(orderHash, offerer, zone)` event
+    ///         is what OpenSea's marketplace indexer watches; the
+    ///         cancel-on-Seaport accelerates OpenSea's catalog
+    ///         refresh from ~hours (lazy stale-listing detection) to
+    ///         ~30s (event-driven).
+    ///
+    ///         The cancel emit is **best-effort**, NEVER load-bearing
+    ///         for safety. The cleanup proper (binding delete +
+    ///         vault-side `revokeListingOrderHash` in the diamond)
+    ///         is what actually prevents fills. The cancel emit
+    ///         gracefully falls back to no-op in three cases:
+    ///           (a) the recorded loanId is zero (binding never
+    ///               existed; this branch isn't taken),
+    ///           (b) the cancel-time reconstructed hash mismatches
+    ///               the recorded hash (sign-time data drift —
+    ///               position-NFT holder transferred, treasury
+    ///               rotated, Seaport `incrementCounter` was called),
+    ///               or
+    ///           (c) the `ISeaportCancel.cancel` call itself reverts
+    ///               (defensive — Seaport's `cancel` should not
+    ///               revert in any reachable path today, but a
+    ///               future Seaport upgrade is wrapped in try/catch
+    ///               so cleanup isn't blocked).
+    ///         Cases (b) and (c) emit `SeaportCancelSkipped` so
+    ///         operators have a per-cleanup breadcrumb.
     function clearOrder(bytes32 orderHash) external {
         if (msg.sender != vaipakamDiamond) revert NotDiamond();
-        uint256 loanId = uint256(orderContext[orderHash].loanId);
+        OrderContext memory ctx = orderContext[orderHash];
+
+        // T-086 #316: try to emit Seaport.cancel while ctx still has
+        // the data needed to rebuild the canonical OrderComponents.
+        // No-op (silent) if the binding never existed; the existing
+        // idempotent contract of {clearOrder} is preserved.
+        if (ctx.loanId != 0) {
+            _tryCancelOnSeaport(orderHash, ctx);
+        }
+
+        uint256 loanId = uint256(ctx.loanId);
         delete orderContext[orderHash];
         emit OrderCanceled(orderHash, loanId);
+    }
+
+    /// @dev T-086 #316 — best-effort Seaport.cancel emit. Reconstructs
+    ///      the canonical `OrderComponents` from the recorded
+    ///      sign-time inputs + a fresh vault-counter read, verifies
+    ///      Seaport hashes them to the same `orderHash` we have on
+    ///      file, and only then forwards `Seaport.cancel`. The hash
+    ///      re-check is the safety lever: a mismatch means the
+    ///      cancel-time view of the loan / NFT-holder / vault state
+    ///      has drifted from sign-time. We can't re-derive what
+    ///      Seaport would consider the original orderHash without
+    ///      that match, so we no-op instead of canceling a different
+    ///      orderHash (which would be wrong — would leave the real
+    ///      orderHash live on Seaport AND register a phantom cancel
+    ///      for an unrelated hash).
+    function _tryCancelOnSeaport(bytes32 orderHash, OrderContext memory ctx) private {
+        // Sign-time pctx — getPrepayContext(loanId, ctx.startTime)
+        // re-derives the floor legs evaluated at the ORIGINAL post
+        // timestamp, so the lender / treasury / borrower
+        // consideration amounts match what was signed. The reads
+        // (loan.principal, durationDays, lenderTokenId,
+        // borrowerTokenId, etc.) are status-agnostic — the diamond's
+        // {getPrepayContext} is a pure view and the loan record
+        // persists past the status flip to Settled / Defaulted /
+        // Refinanced, so calling this from terminal cleanup is safe.
+        IVaipakamPrepayContext.PrepayContext memory pctx =
+            IVaipakamPrepayContext(vaipakamDiamond).getPrepayContext(
+                uint256(ctx.loanId),
+                uint256(ctx.startTime)
+            );
+
+        // Defensive floor-coverage check. `LibPrepayOrder._componentsAt`
+        // computes `borrowerLeg = askPrice - lenderLeg - treasuryLeg`;
+        // if the cancel-time floor reads HIGHER than the recorded
+        // sign-time `askPrice`, the unchecked subtraction would panic
+        // with arithmetic underflow and revert the entire cleanup
+        // path. Two realistic ways for this to happen:
+        //   (a) Governance bumped `treasuryFeeBps` between sign and
+        //       cancel → `pctx.treasuryLeg` is now higher than the
+        //       value the facet validated against at post time.
+        //   (b) Governance flipped a related fee curve.
+        // In any such case the original order is functionally already
+        // "stale" — it could never have been filled at the new floor —
+        // so the right behaviour is to fall back to the no-op skip
+        // branch (the proper cleanup still completes; we just don't
+        // get the OpenSea catalog refresh acceleration).
+        if (uint256(ctx.askPrice) < pctx.lenderLeg + pctx.treasuryLeg) {
+            emit SeaportCancelSkipped(orderHash, uint256(ctx.loanId));
+            return;
+        }
+
+        OrderComponents memory components = LibPrepayOrder.componentsForCancel(
+            pctx,
+            address(this),
+            uint256(ctx.askPrice),
+            ctx.conduitKey,
+            uint256(ctx.salt),
+            uint256(ctx.startTime),
+            ISeaportOrderHash(seaport).getCounter(pctx.borrowerVault)
+        );
+
+        bytes32 reconstructed = ISeaportOrderHash(seaport).getOrderHash(components);
+        if (reconstructed != orderHash) {
+            // Drift — emit skip breadcrumb and let the proper cleanup
+            // (binding delete + vault revoke) carry the safety
+            // invariant alone.
+            emit SeaportCancelSkipped(orderHash, uint256(ctx.loanId));
+            return;
+        }
+
+        OrderComponents[] memory orders = new OrderComponents[](1);
+        orders[0] = components;
+        // Defensive try/catch around Seaport. The canonical Seaport 1.6
+        // {cancel} path doesn't revert when (caller == zone) AND the
+        // order is already filled / cancelled (it's effectively a
+        // boolean-returning no-op there), so this is purely a
+        // future-proof guard against a Seaport version change.
+        try ISeaportCancel(seaport).cancel(orders) returns (bool /* cancelled */) {
+            emit SeaportCancelEmitted(orderHash, uint256(ctx.loanId));
+        } catch {
+            emit SeaportCancelSkipped(orderHash, uint256(ctx.loanId));
+        }
     }
 
     // ─── ERC-1271 sign-time signature delegate ──────────────────────────

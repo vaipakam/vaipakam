@@ -99,6 +99,47 @@ library LibPrepayOrder {
         require(conduit != address(0), "conduit key resolves to zero");
     }
 
+    /// @dev Rebuild the canonical `OrderComponents` for a previously
+    ///      recorded listing, using the sign-time inputs the executor
+    ///      pinned in {CollateralListingExecutor.OrderContext}.
+    ///
+    ///      T-086 #316: the executor calls this from `clearOrder` to
+    ///      reconstruct the order it originally authorised so it can
+    ///      forward `Seaport.cancel` at terminal cleanup. We CAN'T
+    ///      reuse {buildAndHash} for this: it stamps
+    ///      `startTime = block.timestamp` (only correct AT SIGN TIME)
+    ///      and re-derives the live floor at the CURRENT block (only
+    ///      correct if the floor hasn't drifted). Cancel-time
+    ///      reconstruction needs the original `startTime` + the
+    ///      sign-time pctx (the caller derives `pctx` by calling
+    ///      `getPrepayContext(loanId, ctx.startTime)` so the floor
+    ///      legs evaluate as-of the original timestamp).
+    ///
+    ///      Pure function: the executor's `clearOrder` is the
+    ///      single internal consumer.
+    function componentsForCancel(
+        IVaipakamPrepayContext.PrepayContext memory pctx,
+        address executor,
+        uint256 askPrice,
+        bytes32 conduitKey,
+        uint256 salt,
+        uint256 startTime,
+        uint256 counter
+    ) internal pure returns (OrderComponents memory) {
+        return _componentsAt(
+            pctx,
+            pctx.borrowerVault,
+            executor,
+            askPrice,
+            pctx.lenderLeg,
+            pctx.treasuryLeg,
+            salt,
+            conduitKey,
+            startTime,
+            counter
+        );
+    }
+
     // ── Internal helpers ────────────────────────────────────────────
 
     function _components(
@@ -111,7 +152,39 @@ library LibPrepayOrder {
         uint256 salt,
         bytes32 conduitKey,
         uint256 counter
-    ) private view returns (OrderComponents memory components) {
+    ) private view returns (OrderComponents memory) {
+        return _componentsAt(
+            pctx,
+            vault,
+            executor,
+            askPrice,
+            lenderLeg,
+            treasuryLeg,
+            salt,
+            conduitKey,
+            block.timestamp,
+            counter
+        );
+    }
+
+    /// @dev Pure body of {_components}, parameterized on `startTime`
+    ///      so the cancel-reconstruction path can pin the original
+    ///      sign-time stamp instead of the current block. The
+    ///      `block.timestamp` form lives in {_components}; the
+    ///      explicit-`startTime` form is what {componentsForCancel}
+    ///      forwards to.
+    function _componentsAt(
+        IVaipakamPrepayContext.PrepayContext memory pctx,
+        address vault,
+        address executor,
+        uint256 askPrice,
+        uint256 lenderLeg,
+        uint256 treasuryLeg,
+        uint256 salt,
+        bytes32 conduitKey,
+        uint256 startTime,
+        uint256 counter
+    ) private pure returns (OrderComponents memory components) {
         // ─── Offer (one item: the collateral NFT) ──────────────
         OfferItem[] memory offer = new OfferItem[](1);
         if (pctx.collateralAssetType == LibVaipakam.AssetType.ERC721) {
@@ -175,7 +248,7 @@ library LibPrepayOrder {
             // depends on this for the full-balance ERC1155
             // invariant + Seaport's restricted-order routing.
             orderType: OrderType.FULL_RESTRICTED,
-            startTime: block.timestamp,
+            startTime: startTime,
             endTime: pctx.graceEnd,
             zoneHash: bytes32(0),
             salt: salt,

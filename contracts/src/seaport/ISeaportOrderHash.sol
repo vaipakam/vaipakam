@@ -138,3 +138,29 @@ interface IConduitController {
         view
         returns (address conduit, bool exists);
 }
+
+/**
+ * @title ISeaportCancel
+ * @notice Minimal Seaport mutation surface for canceling a previously
+ *         signed prepay-listing order on-chain.
+ *
+ *         T-086 #316: the `CollateralListingExecutor` is the zone
+ *         on every prepay-listing order it records — Seaport's
+ *         `cancel` accepts the caller iff `msg.sender == offerer ||
+ *         msg.sender == zone`. The executor uses that authorization
+ *         to fast-cancel the order at terminal cleanup so OpenSea's
+ *         catalog refreshes within ~30s of the on-chain event
+ *         instead of waiting for OpenSea's lazy stale-listing
+ *         detection (~hours).
+ *
+ * @dev    `cancel` accepts an array so that multiple orders can be
+ *         canceled in one Seaport tx; the executor calls it with a
+ *         length-1 array per cleanup site. Seaport's per-order
+ *         cancel records `_orderStatus[orderHash].isCancelled = true`
+ *         and emits `OrderCancelled(orderHash, offerer, zone)`.
+ */
+interface ISeaportCancel {
+    function cancel(OrderComponents[] calldata orders)
+        external
+        returns (bool cancelled);
+}
