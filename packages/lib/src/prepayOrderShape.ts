@@ -104,6 +104,22 @@ export interface PrepayOrderInput {
   conduitKey: `0x${string}`;
   /** Vault's Seaport counter at post time (= `seaport.getCounter(vault)`). */
   counter: bigint;
+  /** T-086 Round-5 Block A (#313) — marketplace-required fee legs
+   *  appended after the borrower remainder. Empty array (or
+   *  omitted) yields the Round-4 3-leg shape. For fixed-price posts
+   *  `startAmount == endAmount` on every leg (the executor's
+   *  `_assertOrderContent` doesn't check that equality but the
+   *  facet does, so a divergent leg would never have been recorded
+   *  on-chain).
+   *
+   *  The borrower remainder derivation here is
+   *    `borrowerLeg = askPrice − lenderLeg − treasuryLeg − sum(feeLegs.amount)`
+   *  matching `LibPrepayOrder._componentsAt*` exactly. */
+  feeLegs?: ReadonlyArray<{
+    recipient: string;
+    startAmount: bigint;
+    endAmount: bigint;
+  }>;
 }
 
 /** Canonical Seaport `OrderComponents` shape — keys + ordering MUST
@@ -176,15 +192,34 @@ export function buildPrepayOrderComponents(
     );
   }
 
-  // Consideration — three legs, in this exact order:
-  //   [0] lender ERC20 → lenderNftOwner
-  //   [1] treasury ERC20 → treasury
-  //   [2] borrower-remainder ERC20 → borrowerNftOwner
-  const borrowerLeg = input.askPrice - input.lenderLeg - input.treasuryLeg;
-  if (borrowerLeg < 0n) {
-    // Mirrors the on-chain `_requireAskCoversFloor` revert path.
+  // Consideration — N legs, in this exact order (matches
+  // `LibPrepayOrder._componentsAt*`):
+  //   [0]      lender ERC20         → lenderNftOwner
+  //   [1]      treasury ERC20       → treasury
+  //   [2]      borrower-remainder   → borrowerNftOwner
+  //   [3..N-1] borrower-supplied fee legs (Round-5 Block A #313)
+  //
+  // Borrower leg = askPrice − lender − treasury − sum(feeLegs.amount).
+  // Fixed-price has start == end on every fee leg; for the start /
+  // end accumulators we use the two halves independently so this
+  // helper is Block-B-ready when Dutch decay arrives.
+  const feeLegs = input.feeLegs ?? [];
+  let feeSumStart = 0n;
+  let feeSumEnd = 0n;
+  for (const f of feeLegs) {
+    feeSumStart += f.startAmount;
+    feeSumEnd += f.endAmount;
+  }
+  const borrowerLegStart =
+    input.askPrice - input.lenderLeg - input.treasuryLeg - feeSumStart;
+  const borrowerLegEnd =
+    input.askPrice - input.lenderLeg - input.treasuryLeg - feeSumEnd;
+  if (borrowerLegStart < 0n || borrowerLegEnd < 0n) {
+    // Mirrors the on-chain `_requireAskCoversFloorWithFees` revert
+    // path; if the JS reconstruction underflowed here the on-chain
+    // tx would have already reverted.
     throw new Error(
-      'prepayOrderShape: askPrice below lender+treasury legs; the diamond would have reverted',
+      'prepayOrderShape: askPrice below lender+treasury+feeLegs; the diamond would have reverted',
     );
   }
   const consideration: SeaportConsiderationItem[] = [
@@ -208,10 +243,18 @@ export function buildPrepayOrderComponents(
       itemType: SEAPORT_ITEM_TYPE_ERC20,
       token: input.principalAsset,
       identifierOrCriteria: '0',
-      startAmount: borrowerLeg.toString(),
-      endAmount: borrowerLeg.toString(),
+      startAmount: borrowerLegStart.toString(),
+      endAmount: borrowerLegEnd.toString(),
       recipient: input.borrowerNftOwner,
     },
+    ...feeLegs.map((f): SeaportConsiderationItem => ({
+      itemType: SEAPORT_ITEM_TYPE_ERC20,
+      token: input.principalAsset,
+      identifierOrCriteria: '0',
+      startAmount: f.startAmount.toString(),
+      endAmount: f.endAmount.toString(),
+      recipient: f.recipient,
+    })),
   ];
 
   return {

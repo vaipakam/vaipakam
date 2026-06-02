@@ -336,6 +336,12 @@ export function useNFTPrepayListing(
       askPrice: bigint,
       salt: bigint,
       conduitKey: `0x${string}`,
+      // T-086 Round-5 Block A (#313) — Codex P1: thread the
+      // borrower's fee legs through to the JS reconstruction so the
+      // canonical hash matches the on-chain hash on fee-enforced
+      // collections. Empty array for fee-free posts collapses to the
+      // Round-4 3-leg shape unchanged.
+      feeLegs: ReadonlyArray<FeeLegInput>,
     ): Promise<void> => {
       if (!chain.diamondAddress) return;
       let agentOrigin: string | null = null;
@@ -355,6 +361,7 @@ export function useNFTPrepayListing(
         askPrice,
         salt,
         conduitKey,
+        feeLegs,
       });
       if (!result.published) {
         // eslint-disable-next-line no-console
@@ -382,7 +389,7 @@ export function useNFTPrepayListing(
         diamond.postPrepayListing(lid, askPrice, salt, conduitKey, feeLegs),
       );
       if (r.success && r.receipt) {
-        await runOpenSeaPublish(r.receipt, lid, askPrice, salt, conduitKey);
+        await runOpenSeaPublish(r.receipt, lid, askPrice, salt, conduitKey, feeLegs);
       }
       return r.success;
     },
@@ -401,7 +408,7 @@ export function useNFTPrepayListing(
         diamond.updatePrepayListing(lid, newAskPrice, newSalt, newConduitKey, feeLegs),
       );
       if (r.success && r.receipt) {
-        await runOpenSeaPublish(r.receipt, lid, newAskPrice, newSalt, newConduitKey);
+        await runOpenSeaPublish(r.receipt, lid, newAskPrice, newSalt, newConduitKey, feeLegs);
       }
       return r.success;
     },

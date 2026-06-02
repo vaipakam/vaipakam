@@ -115,28 +115,20 @@ const REP_SENDERS_PER_CHAIN: Record<number, `0x${string}`[]> = {
 export async function handleFeeRecipientPreflight(
   req: Request,
   env: Env,
+  resolvedOrigin: string,
 ): Promise<Response> {
   if (req.method !== 'POST') {
-    return new Response(
-      JSON.stringify({ error: 'method-not-allowed' }),
-      { status: 405, headers: corsHeaders(env) },
-    );
+    return jsonResponse({ error: 'method-not-allowed' }, 405, resolvedOrigin);
   }
   let body: PreflightRequest;
   try {
     body = (await req.json()) as PreflightRequest;
   } catch {
-    return new Response(
-      JSON.stringify({ error: 'invalid-json-body' }),
-      { status: 400, headers: corsHeaders(env) },
-    );
+    return jsonResponse({ error: 'invalid-json-body' }, 400, resolvedOrigin);
   }
   const { chainId, principalAsset, askPrice, feeLegs } = body;
   if (!chainId || !principalAsset || !askPrice || !Array.isArray(feeLegs)) {
-    return new Response(
-      JSON.stringify({ error: 'missing-required-fields' }),
-      { status: 400, headers: corsHeaders(env) },
-    );
+    return jsonResponse({ error: 'missing-required-fields' }, 400, resolvedOrigin);
   }
 
   const allowList = parseAllowList(env);
@@ -147,14 +139,15 @@ export async function handleFeeRecipientPreflight(
     // Token isn't on the recipient-validating list, or operator
     // hasn't populated balanceSlot. Pre-flight is structurally a
     // no-op on this token; return "not_applicable" per recipient.
-    return new Response(
-      JSON.stringify({
+    return jsonResponse(
+      {
         verdicts: feeLegs.map((l): VerdictEntry => ({
           recipient: l.recipient,
           verdict: 'not_applicable',
         })),
-      }),
-      { status: 200, headers: corsHeaders(env) },
+      },
+      200,
+      resolvedOrigin,
     );
   }
 
@@ -169,10 +162,7 @@ export async function handleFeeRecipientPreflight(
     recipient: l.recipient,
     verdict: entry.hookEnabled ? 'passed_sender_specific' : 'passed',
   }));
-  return new Response(
-    JSON.stringify({ verdicts }),
-    { status: 200, headers: corsHeaders(env) },
-  );
+  return jsonResponse({ verdicts }, 200, resolvedOrigin);
 }
 
 function parseAllowList(env: Env): TokenAllowList {
@@ -185,10 +175,18 @@ function parseAllowList(env: Env): TokenAllowList {
   }
 }
 
-function corsHeaders(env: Env): HeadersInit {
-  return {
-    'Access-Control-Allow-Origin': env.FRONTEND_ORIGIN ?? '*',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-  };
+function jsonResponse(
+  body: unknown,
+  status: number,
+  resolvedOrigin: string,
+): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': resolvedOrigin,
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    },
+  });
 }

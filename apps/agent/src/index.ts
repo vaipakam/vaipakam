@@ -236,13 +236,21 @@ export default {
       url.pathname.startsWith('/opensea/collection/') &&
       req.method === 'GET'
     ) {
-      return handleOpenSeaCollection(req, resolved);
+      return handleOpenSeaCollection(
+        req,
+        resolved,
+        resolveAllowedOrigin(req, resolved),
+      );
     }
     if (
       url.pathname === '/opensea/feeRecipientPreflight' &&
       req.method === 'POST'
     ) {
-      return handleFeeRecipientPreflight(req, resolved);
+      return handleFeeRecipientPreflight(
+        req,
+        resolved,
+        resolveAllowedOrigin(req, resolved),
+      );
     }
 
     return new Response('Not found', { status: 404 });

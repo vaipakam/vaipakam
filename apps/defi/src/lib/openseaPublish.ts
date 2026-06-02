@@ -53,6 +53,17 @@ export interface OpenSeaPublishInput {
   askPrice: bigint;
   salt: bigint;
   conduitKey: `0x${string}`;
+  /** T-086 Round-5 Block A (#313) — the fee legs the borrower
+   *  signed with at post / update time. Same shape the diamond
+   *  recorded; threading them here is what keeps the JS-rebuilt
+   *  canonical components in lockstep with the on-chain orderHash
+   *  when the listing is on a fee-enforced collection. Empty for
+   *  fee-free collections. */
+  feeLegs?: ReadonlyArray<{
+    recipient: string;
+    startAmount: bigint;
+    endAmount: bigint;
+  }>;
 }
 
 /**
@@ -147,6 +158,10 @@ export async function publishPrepayListingToOpenSea(
       askPrice,
       lenderNftOwner: ctx.lenderNftOwner,
       borrowerNftOwner: ctx.borrowerNftOwner,
+      // T-086 Round-5 Block A (#313) — pass through the caller's
+      // fee legs so the JS reconstruction matches the on-chain
+      // orderHash for fee-enforced collections. Empty for fee-free.
+      feeLegs: input.feeLegs,
       treasury: ctx.treasury,
       startTime,
       graceEnd: ctx.graceEnd,

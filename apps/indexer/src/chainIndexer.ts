@@ -217,7 +217,7 @@ export async function sweepUnpublishedListings(env: Env): Promise<void> {
 
   const rows = await env.DB.prepare(
     `SELECT chain_id, loan_id, order_hash, ask_price, conduit_key,
-            salt, executor, tx_hash
+            salt, executor, tx_hash, fee_legs_json
        FROM prepay_listings
       WHERE opensea_published_at IS NULL
         AND posted_at <= ?
@@ -234,6 +234,7 @@ export async function sweepUnpublishedListings(env: Env): Promise<void> {
       salt: string | null;
       executor: string | null;
       tx_hash: string;
+      fee_legs_json: string | null;
     }>();
 
   if (!rows.results || rows.results.length === 0) return;
@@ -246,6 +247,27 @@ export async function sweepUnpublishedListings(env: Env): Promise<void> {
     // those is the original-tx redrive, which is out of scope here.
     if (!row.conduit_key || !row.salt || !row.executor) continue;
     const client = createPublicClient({ transport: http(chain.rpc) });
+    // T-086 Round-5 Block A (#313) — decode the recorded fee
+    // legs from D1 back into the shape the JS reconstruction
+    // needs. Rows from before this migration have NULL
+    // fee_legs_json (= treat as fee-free for sweep purposes).
+    let feeLegs: { recipient: string; startAmount: bigint; endAmount: bigint }[] = [];
+    if (row.fee_legs_json) {
+      try {
+        const parsed = JSON.parse(row.fee_legs_json) as Array<{
+          recipient: string; startAmount: string; endAmount: string;
+        }>;
+        feeLegs = parsed.map((l) => ({
+          recipient: l.recipient,
+          startAmount: BigInt(l.startAmount),
+          endAmount: BigInt(l.endAmount),
+        }));
+      } catch {
+        // Malformed JSON should never happen (we wrote it), but
+        // fall back to fee-free rather than crashing the sweep.
+        feeLegs = [];
+      }
+    }
     const result = await indexerPublishPrepayListing(
       {
         publicClient: client,
@@ -258,6 +280,7 @@ export async function sweepUnpublishedListings(env: Env): Promise<void> {
         conduitKey: row.conduit_key as `0x${string}`,
         executor: row.executor as `0x${string}`,
         expectedOrderHash: row.order_hash as `0x${string}`,
+        feeLegs,
       },
       env,
     );
@@ -1722,15 +1745,28 @@ async function processLoanLogs(
           endAmount: String(l.endAmount),
         })),
       );
-      // Borrower remainder = askPrice − sum(feeLegs.startAmount).
-      // Stored as TEXT (BigInt-as-decimal-string) so the column
-      // doesn't truncate on uint96 fee amounts that overflow JS
-      // Number's 2^53 limit. Block A is fixed-price so start ==
-      // end; using startAmount is unambiguous.
+      // T-086 Round-5 Block A (#313) — Codex P2 (PR #324 review):
+      // store the POST-FEE TOTAL (askPrice − sum(feeLegs)), NOT
+      // the true borrower remainder. The true remainder is
+      // `askPrice − lenderLeg − treasuryLeg − sum(feeLegs)` but
+      // the event doesn't carry the protocol legs, so we'd need
+      // an extra `getPrepayContext` RPC to derive them.
+      // Pragmatic for now: persist the figure that IS derivable
+      // from the event payload alone (= the gross going to
+      // protocol + borrower after fees are routed). The column is
+      // not consumer-read in this PR; the proper-remainder
+      // computation is a polish follow-up that also updates the
+      // migration's column-comment math. Stored as TEXT
+      // (BigInt-as-decimal-string) so uint96 fee amounts don't
+      // truncate through JS Number's 2^53 limit.
       const feeSumStart = feeLegsRaw.reduce(
         (s, l) => s + BigInt(l.startAmount), 0n,
       );
-      const borrowerRemainder = String(BigInt(askPrice) - feeSumStart);
+      const postFeeTotal = String(BigInt(askPrice) - feeSumStart);
+      // Naming kept as `borrowerRemainder` for now to match the
+      // column name; renamed semantically in the follow-up PR
+      // alongside the proper-math fix.
+      const borrowerRemainder = postFeeTotal;
       // Resolve `grace_period_end` via a fresh RPC read of
       // `getLoanDetails(loanId)`. The on-chain start_time +
       // durationDays are mutated by RepayFacet.repayPartial
@@ -1768,6 +1804,13 @@ async function processLoanLogs(
         conduitKey as `0x${string}`,
         pinnedExecutor as `0x${string}`,
         orderHash as `0x${string}`,
+        // T-086 Round-5 Block A (#313) — Codex P1 (PR #324 review):
+        // thread feeLegs through to the JS reconstruction.
+        feeLegsRaw.map(l => ({
+          recipient: String(l.recipient),
+          startAmount: BigInt(l.startAmount),
+          endAmount: BigInt(l.endAmount),
+        })),
       );
       const publishedAt = publishResult.published
         ? blockAt
@@ -1865,6 +1908,15 @@ async function processLoanLogs(
         newConduitKey as `0x${string}`,
         newPinnedExecutor as `0x${string}`,
         newOrderHash as `0x${string}`,
+        // T-086 Round-5 Block A (#313) — same feeLegs threading
+        // as the Posted handler. The update path's fee schedule
+        // can differ from the original post's (per §15.3 errata's
+        // re-fetch rule on fee-enforced collections).
+        feeLegsRaw.map(l => ({
+          recipient: String(l.recipient),
+          startAmount: BigInt(l.startAmount),
+          endAmount: BigInt(l.endAmount),
+        })),
       );
       const publishedAt = publishResult.published
         ? blockAt
@@ -2190,6 +2242,11 @@ async function _maybePublishToOpenSea(
   conduitKey: `0x${string}`,
   executor: `0x${string}`,
   expectedOrderHash: `0x${string}`,
+  // T-086 Round-5 Block A (#313) — pass the recorded fee legs
+  // through so the autonomous-publish JS reconstruction matches
+  // the on-chain hash on fee-enforced collections. Empty for
+  // fee-free posts.
+  feeLegs: ReadonlyArray<{ recipient: string; startAmount: bigint; endAmount: bigint }>,
 ): Promise<{ published: boolean; unsupportedChain: boolean }> {
   try {
     const result = await indexerPublishPrepayListing(
@@ -2204,6 +2261,7 @@ async function _maybePublishToOpenSea(
         conduitKey,
         executor,
         expectedOrderHash,
+        feeLegs,
       },
       env,
     );

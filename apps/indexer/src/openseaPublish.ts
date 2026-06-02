@@ -94,6 +94,17 @@ export interface IndexerPublishInput {
    *  the JS reconstruction diverges (would silently fail
    *  OpenSea's downstream ERC-1271 check). */
   expectedOrderHash: `0x${string}`;
+  /** T-086 Round-5 Block A (#313) — the fee legs recorded with
+   *  this listing. Threaded through `buildPrepayOrderComponents`
+   *  so the JS reconstruction matches the on-chain hash for fee-
+   *  enforced collections. The chain indexer reads them straight
+   *  out of the event's `feeLegs` data tail and passes them
+   *  through. Empty for fee-free posts. */
+  feeLegs?: ReadonlyArray<{
+    recipient: string;
+    startAmount: bigint;
+    endAmount: bigint;
+  }>;
 }
 
 export interface IndexerPublishResult {
@@ -186,6 +197,12 @@ export async function indexerPublishPrepayListing(
       salt: input.salt,
       conduitKey: input.conduitKey,
       counter,
+      // T-086 Round-5 Block A (#313) — Codex P1 (PR #324 review):
+      // thread the recorded fee legs through so the JS
+      // reconstruction matches the on-chain hash on fee-enforced
+      // collections. Empty for fee-free posts; the call collapses
+      // to the Round-4 3-leg shape.
+      feeLegs: input.feeLegs,
     });
 
     // 5. Defensive — recompute the orderHash via Seaport, compare

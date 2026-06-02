@@ -125,6 +125,12 @@ interface BaseEnv {
   // postPrepayListing / updatePrepayListing tx, so a tight budget
   // is plenty; the binding exists mainly as an abuse safety net.
   OPENSEA_LISTING_RATELIMIT?: RateLimitBinding;
+  // T-086 Round-5 Block A (#313) — per-IP rate-limit on the new
+  // GET /opensea/collection/{slug} proxy. Without this, anyone
+  // can spoof an allowed Origin and iterate slugs/chains to drain
+  // the OPENSEA_API_KEY quota. Same Cloudflare built-in binding
+  // pattern + key-by-IP as the listing rate-limit.
+  OPENSEA_COLLECTION_RATELIMIT?: RateLimitBinding;
 
   // Diagnostics sampling (0.0–1.0; default 1.0 = write every accepted POST).
   // Coerced from string to float at read time. Out-of-range values
@@ -339,6 +345,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     QUOTE_1INCH_RATELIMIT: raw.QUOTE_1INCH_RATELIMIT,
     DIAG_RECORD_RATELIMIT: raw.DIAG_RECORD_RATELIMIT,
     OPENSEA_LISTING_RATELIMIT: raw.OPENSEA_LISTING_RATELIMIT,
+    OPENSEA_COLLECTION_RATELIMIT: raw.OPENSEA_COLLECTION_RATELIMIT,
     DIAG_SAMPLE_RATE: raw.DIAG_SAMPLE_RATE,
     DIAG_RETENTION_DAYS: raw.DIAG_RETENTION_DAYS,
     DIAG_LEGAL_DOCS: raw.DIAG_LEGAL_DOCS,

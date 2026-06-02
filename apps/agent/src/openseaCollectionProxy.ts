@@ -15,6 +15,14 @@
  * the fees live inside the Collection API body. There is no
  * separate `/collections/{slug}/fees` endpoint on OpenSea's v2 API.
  *
+ * **Rate-limit + CORS** (Codex P2 line 75 + line 193 on PR #324):
+ * the proxy MUST rate-limit per-IP (otherwise anyone can spoof an
+ * allowed Origin and iterate slugs/chains to drain the
+ * `OPENSEA_API_KEY` quota). The CORS response MUST echo the
+ * RESOLVED single origin from the request, NOT the raw
+ * `FRONTEND_ORIGIN` CSV (browsers reject a CSV
+ * `Access-Control-Allow-Origin`).
+ *
  * The sim-transfer pre-flight (per §14.4 of the merged design +
  * the Round-5.1 errata) lives on a SEPARATE endpoint
  * (`POST /opensea/feeRecipientPreflight`) so this proxy stays
@@ -35,14 +43,27 @@ const OPENSEA_HOST: Record<number, string> = {
 export async function handleOpenSeaCollection(
   req: Request,
   env: Env,
+  resolvedOrigin: string,
 ): Promise<Response> {
   const url = new URL(req.url);
   // /opensea/collection/{slug}
   const slug = url.pathname.split('/').pop() ?? '';
   if (!slug || !/^[a-z0-9-]+$/.test(slug)) {
-    return new Response(
-      JSON.stringify({ error: 'invalid collection slug' }),
-      { status: 400, headers: corsHeaders(env) },
+    return jsonResponse(
+      { error: 'invalid collection slug' },
+      400,
+      resolvedOrigin,
+    );
+  }
+  // Per-IP rate-limit BEFORE the upstream call, otherwise a
+  // scripted iterator could drain our OpenSea quota even though
+  // the response would be a 400. Same Cloudflare RateLimitBinding
+  // pattern as /opensea/listing.
+  if (!(await checkRateLimit(req, env.OPENSEA_COLLECTION_RATELIMIT))) {
+    return jsonResponse(
+      { error: 'rate-limited' },
+      429,
+      resolvedOrigin,
     );
   }
   // Chain selection: the dapp passes ?chainId=<id> for chains
@@ -51,18 +72,20 @@ export async function handleOpenSeaCollection(
   const chainId = Number(url.searchParams.get('chainId') ?? '1');
   const host = OPENSEA_HOST[chainId];
   if (!host) {
-    return new Response(
-      JSON.stringify({ error: 'unsupported chain', chainId }),
-      { status: 400, headers: corsHeaders(env) },
+    return jsonResponse(
+      { error: 'unsupported chain', chainId },
+      400,
+      resolvedOrigin,
     );
   }
 
   const apiUrl = `https://${host}/api/v2/collections/${encodeURIComponent(slug)}`;
   const apiKey = env.OPENSEA_API_KEY;
   if (!apiKey) {
-    return new Response(
-      JSON.stringify({ error: 'opensea-api-key-not-configured' }),
-      { status: 503, headers: corsHeaders(env) },
+    return jsonResponse(
+      { error: 'opensea-api-key-not-configured' },
+      503,
+      resolvedOrigin,
     );
   }
 
@@ -77,16 +100,44 @@ export async function handleOpenSeaCollection(
   return new Response(body, {
     status: upstream.status,
     headers: {
-      ...corsHeaders(env),
+      'Access-Control-Allow-Origin': resolvedOrigin,
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
       'Content-Type': upstream.headers.get('Content-Type') ?? 'application/json',
     },
   });
 }
 
-function corsHeaders(env: Env): HeadersInit {
-  return {
-    'Access-Control-Allow-Origin': env.FRONTEND_ORIGIN ?? '*',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-  };
+function jsonResponse(
+  body: unknown,
+  status: number,
+  resolvedOrigin: string,
+): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': resolvedOrigin,
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    },
+  });
+}
+
+/**
+ * Pattern from quoteProxy.ts: Cloudflare's RateLimitBinding
+ * exposes `limit({ key })` returning `{ success: boolean }`.
+ * Key by client IP (`CF-Connecting-IP`). If the binding isn't
+ * configured the limit defaults to allow (the binding is the only
+ * defense; the deploy adds it intentionally and a missing binding
+ * is an operator-config issue rather than a per-request fail-closed).
+ */
+async function checkRateLimit(
+  req: Request,
+  binding: undefined | { limit: (args: { key: string }) => Promise<{ success: boolean }> },
+): Promise<boolean> {
+  if (!binding) return true;
+  const ip = req.headers.get('CF-Connecting-IP') ?? 'unknown';
+  const r = await binding.limit({ key: ip });
+  return r.success;
 }
