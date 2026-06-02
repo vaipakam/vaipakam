@@ -24,10 +24,12 @@ pragma solidity ^0.8.29;
  *         could drift).
  */
 abstract contract DiamondFacetNames {
-    /// @dev The 39 facets cut into the Diamond by `DeployDiamond.run()`.
+    /// @dev The 40 facets cut into the Diamond by `DeployDiamond.run()`.
     ///      (37 → 38 in T-086 step 5 with `PrepayListingFacet`;
-    ///      38 → 39 in T-086 step 6 with `NFTPrepayListingFacet`.)
-    function cutFacetNames() internal pure returns (string[39] memory) {
+    ///      38 → 39 in T-086 step 6 with `NFTPrepayListingFacet`;
+    ///      39 → 40 in T-086 Round-5 Block B with
+    ///      `NFTPrepayDutchListingFacet`.)
+    function cutFacetNames() internal pure returns (string[40] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -60,6 +62,12 @@ abstract contract DiamondFacetNames {
             "PrecloseFacet",
             "PrepayListingFacet",
             "NFTPrepayListingFacet",
+            // T-086 Round-5 Block B (#309) — Dutch-decay entry points
+            // live on a sibling facet so the combined facet bytecode
+            // stays within solc's jump-table reservation budget. See
+            // {NFTPrepayDutchListingFacet.sol} natspec for the split
+            // rationale.
+            "NFTPrepayDutchListingFacet",
             "ProfileFacet",
             "RefinanceFacet",
             "RepayFacet",

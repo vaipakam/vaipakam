@@ -11,7 +11,12 @@ import {ISeaportZone, ZoneParameters, ReceivedItem, ItemType} from "./ISeaportZo
 import {IVaipakamPrepayCallbacks} from "./IVaipakamPrepayCallbacks.sol";
 import {IVaipakamPrepayContext} from "./IVaipakamPrepayContext.sol";
 import {ISeaportOrderHash, ISeaportCancel, OrderComponents} from "./ISeaportOrderHash.sol";
-import {FeeLeg, MAX_FEE_LEGS} from "./PrepayTypes.sol";
+import {
+    FeeLeg,
+    MAX_FEE_LEGS,
+    PREPAY_MODE_FIXED_PRICE,
+    PREPAY_MODE_DUTCH
+} from "./PrepayTypes.sol";
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibPrepayOrder} from "../libraries/LibPrepayOrder.sol";
@@ -130,11 +135,13 @@ contract CollateralListingExecutor is
     ///         within ~30s of the on-chain event instead of waiting
     ///         hours for OpenSea's lazy stale-listing detection.
     ///
-    ///         Storage packing (4 × 32 bytes = 4 slots):
+    ///         Storage packing (5 × 32 bytes = 5 slots):
     ///           slot 0: uint96 loanId | address conduit
     ///           slot 1: bytes32 conduitKey
     ///           slot 2: uint256 salt
     ///           slot 3: uint64 startTime | uint192 askPrice
+    ///           slot 4: uint128 endAskPrice | uint64 auctionEndTime |
+    ///                   uint8 mode | 56-bit pad
     ///
     ///         Width choices:
     ///           - `loanId` uint96 (2^96 ≈ 7.9 × 10^28, vs ~10^9
@@ -148,7 +155,40 @@ contract CollateralListingExecutor is
     ///           - `askPrice` uint192 (2^192 ≈ 6.3 × 10^57 wei, vs
     ///             realistic max ~10^28 wei for any conceivable
     ///             NFT-collateral floor): same bounds-checked
-    ///             narrowing pattern.
+    ///             narrowing pattern. For Dutch listings this is the
+    ///             `startAskPrice`; for fixed-price it's the
+    ///             constant ask.
+    ///           - `endAskPrice` uint128 (2^128 ≈ 3.4 × 10^38 wei):
+    ///             well above any realistic askPrice. uint128 leaves
+    ///             room for the remaining auctionEndTime + mode in
+    ///             the same slot. Fixed-price stamps this with the
+    ///             same value as `askPrice` so cancel-time
+    ///             reconstruction is mode-agnostic on the consideration
+    ///             builder side.
+    ///           - `auctionEndTime` uint64: matches `startTime`. For
+    ///             fixed-price the executor stamps 0 as a sentinel and
+    ///             the cancel-time dispatch reads `pctx.graceEnd`
+    ///             instead.
+    ///           - `mode` uint8: `PREPAY_MODE_FIXED_PRICE (0)` or
+    ///             `PREPAY_MODE_DUTCH (1)`. The executor's
+    ///             cancel-time dispatch and the canonical-shape
+    ///             reconstruction in `LibPrepayOrder` use this to
+    ///             pick the right component builder.
+    ///
+    ///         **What is NOT in `OrderContext` (Round-5 Block B):**
+    ///         The projected lender + treasury legs the facet
+    ///         signed against at post time are NOT pinned here.
+    ///         For Dutch mode, the executor re-derives them at
+    ///         cancel time via `getPrepayContext(loanId,
+    ///         auctionEndTime)` — same lookup the facet did at
+    ///         sign time. Under stable governance config the
+    ///         re-read matches; under drift the existing
+    ///         `SeaportCancelSkipped` fallback fires. See
+    ///         {LibPrepayOrder.componentsForCancelDutch} natspec
+    ///         for the per-input-source breakdown and the design
+    ///         rationale (§15.2 "Alternative considered + rejected"
+    ///         box — pinning the projected legs creates a worse
+    ///         problem on fee-curve DECREASES).
     struct OrderContext {
         uint96 loanId;
         address conduit;
@@ -156,6 +196,11 @@ contract CollateralListingExecutor is
         uint256 salt;
         uint64 startTime;
         uint192 askPrice;
+        // Round-5 Block B (#309) — Dutch fields. See per-field
+        // commentary above.
+        uint128 endAskPrice;
+        uint64 auctionEndTime;
+        uint8 mode;
     }
     mapping(bytes32 orderHash => OrderContext) public orderContext;
 
@@ -274,6 +319,31 @@ contract CollateralListingExecutor is
     ///         the record.
     error StartTimeOverflow(uint256 startTime);
     error AskPriceOverflow(uint256 askPrice);
+    /// @notice Round-5 Block B (#309) — width-check parity for the
+    ///         Dutch-mode fields. `endAskPrice` uses uint128 (vs
+    ///         askPrice's uint192) because the storage layout
+    ///         shares a slot with `auctionEndTime` + `mode`; the
+    ///         narrower width still covers >10^38 wei.
+    error EndAskPriceOverflow(uint256 endAskPrice);
+    error AuctionEndTimeOverflow(uint256 auctionEndTime);
+    /// @notice Round-5 Block B (#309) — caller passed a `mode`
+    ///         outside the `{PREPAY_MODE_FIXED_PRICE,
+    ///         PREPAY_MODE_DUTCH}` allow-set. Mode tags are
+    ///         enum-like uint8 constants in {PrepayTypes}; a
+    ///         future v2 mode (e.g. English-via-zone) would extend
+    ///         this set + the dispatch in `_tryCancelOnSeaport`.
+    error UnknownPrepayMode(uint8 mode);
+    /// @notice Round-5 Block B (#309) — fixed-price mode's invariant
+    ///         (`endAskPrice == askPrice` AND `auctionEndTime == 0`)
+    ///         was violated. The facet enforces this at the entry
+    ///         point; the executor re-asserts so a malformed
+    ///         diamond-side caller can't seed a hybrid record.
+    error FixedPriceModeShapeViolation();
+    /// @notice Round-5 Block B (#309) — Dutch mode's invariants
+    ///         (`endAskPrice > 0`, `endAskPrice ≤ askPrice`,
+    ///         `auctionEndTime > startTime`, `auctionEndTime` non-
+    ///         zero) were violated at the executor boundary.
+    error DutchModeShapeViolation();
 
     // ─── Initializer / UUPS ─────────────────────────────────────────────
 
@@ -361,6 +431,9 @@ contract CollateralListingExecutor is
         uint256 salt,
         uint256 startTime,
         uint256 askPrice,
+        uint256 endAskPrice,
+        uint256 auctionEndTime,
+        uint8 mode,
         FeeLeg[] calldata feeLegs
     ) external {
         if (msg.sender != vaipakamDiamond) revert NotDiamond();
@@ -371,12 +444,45 @@ contract CollateralListingExecutor is
         // wrap into a different valid context entry at fill / cleanup
         // time, causing mis-settlement (loanId), mis-pctx
         // reconstruction (startTime), or mis-floor reconstruction
-        // (askPrice). With 2^96 / 2^64 / 2^192 all vastly exceeding
-        // any realistic value, these reverts are unreachable today —
-        // but explicit > silent.
+        // (askPrice). With 2^96 / 2^64 / 2^192 / 2^128 all vastly
+        // exceeding any realistic value, these reverts are unreachable
+        // today — but explicit > silent.
         if (loanId > type(uint96).max) revert LoanIdOverflow(loanId);
         if (startTime > type(uint64).max) revert StartTimeOverflow(startTime);
         if (askPrice > type(uint192).max) revert AskPriceOverflow(askPrice);
+        if (endAskPrice > type(uint128).max) revert EndAskPriceOverflow(endAskPrice);
+        if (auctionEndTime > type(uint64).max) revert AuctionEndTimeOverflow(auctionEndTime);
+
+        // Round-5 Block B (#309) — mode-tag dispatch + per-mode shape
+        // assertion. The diamond facet has already enforced the
+        // borrower-leg monotonicity + `MIN_AUCTION_WINDOW` + grace-
+        // window checks against the live pctx (which the executor
+        // doesn't see directly); here we re-assert the storage-shape
+        // invariants the executor depends on for cancel-time
+        // reconstruction.
+        if (mode == PREPAY_MODE_FIXED_PRICE) {
+            // Fixed-price: `endAskPrice` MUST equal `askPrice` (no
+            // decay); `auctionEndTime` MUST be 0 (cancel-time
+            // dispatch reads `pctx.graceEnd` instead).
+            if (endAskPrice != askPrice || auctionEndTime != 0) {
+                revert FixedPriceModeShapeViolation();
+            }
+        } else if (mode == PREPAY_MODE_DUTCH) {
+            // Dutch: `endAskPrice` MUST be non-zero AND ≤ `askPrice`
+            // (where `askPrice` is the start ask). `auctionEndTime`
+            // MUST be > `startTime` (a Dutch window of zero duration
+            // would have no valid fill price band).
+            if (
+                endAskPrice == 0 ||
+                endAskPrice > askPrice ||
+                auctionEndTime <= startTime
+            ) {
+                revert DutchModeShapeViolation();
+            }
+        } else {
+            revert UnknownPrepayMode(mode);
+        }
+
         // T-086 Round-5 Block A (#313) — fee-leg validation. The
         // facet's `_assertOrderContent` re-checks shape at fill time;
         // here we only enforce sign-time invariants that protect the
@@ -405,7 +511,10 @@ contract CollateralListingExecutor is
             conduitKey: conduitKey,
             salt: salt,
             startTime: uint64(startTime),
-            askPrice: uint192(askPrice)
+            askPrice: uint192(askPrice),
+            endAskPrice: uint128(endAskPrice),
+            auctionEndTime: uint64(auctionEndTime),
+            mode: mode
         });
         emit OrderRecorded(orderHash, loanId, conduit);
     }
@@ -483,66 +592,39 @@ contract CollateralListingExecutor is
     ///      orderHash live on Seaport AND register a phantom cancel
     ///      for an unrelated hash).
     function _tryCancelOnSeaport(bytes32 orderHash, OrderContext memory ctx) private {
-        // Sign-time pctx — getPrepayContext(loanId, ctx.startTime)
-        // re-derives the floor legs evaluated at the ORIGINAL post
-        // timestamp, so the lender / treasury / borrower
-        // consideration amounts match what was signed. The reads
-        // (loan.principal, durationDays, lenderTokenId,
-        // borrowerTokenId, etc.) are status-agnostic — the diamond's
-        // {getPrepayContext} is a pure view and the loan record
-        // persists past the status flip to Settled / Defaulted /
-        // Refinanced, so calling this from terminal cleanup is safe.
-        IVaipakamPrepayContext.PrepayContext memory pctx =
-            IVaipakamPrepayContext(vaipakamDiamond).getPrepayContext(
-                uint256(ctx.loanId),
-                uint256(ctx.startTime)
-            );
-
-        // Defensive floor-coverage check. `LibPrepayOrder._componentsAt`
-        // computes `borrowerLeg = askPrice - lenderLeg - treasuryLeg`;
-        // if the cancel-time floor reads HIGHER than the recorded
-        // sign-time `askPrice`, the unchecked subtraction would panic
-        // with arithmetic underflow and revert the entire cleanup
-        // path. Two realistic ways for this to happen:
-        //   (a) Governance bumped `treasuryFeeBps` between sign and
-        //       cancel → `pctx.treasuryLeg` is now higher than the
-        //       value the facet validated against at post time.
-        //   (b) Governance flipped a related fee curve.
-        // In any such case the original order is functionally already
-        // "stale" — it could never have been filled at the new floor —
-        // so the right behaviour is to fall back to the no-op skip
-        // branch (the proper cleanup still completes; we just don't
-        // get the OpenSea catalog refresh acceleration).
         // T-086 Round-5 Block A (#313) — read fee legs back from
         // storage for the canonical-shape reconstruction.
         FeeLeg[] memory feeLegs = _orderFeeLegs[orderHash];
 
-        // Extend the start-state solvency check to include fee legs:
-        // the borrower leg derivation in `LibPrepayOrder` subtracts
-        // `sum(feeLegs.startAmount)` in addition to lender + treasury.
-        // If the cancel-time floor + fees together exceed the recorded
-        // sign-time askPrice, the canonical-shape construction would
-        // panic on the borrower-leg underflow; fall back cleanly.
-        uint256 feeSumStart = 0;
-        for (uint256 i = 0; i < feeLegs.length; ) {
-            feeSumStart += uint256(feeLegs[i].startAmount);
-            unchecked { ++i; }
-        }
-        if (uint256(ctx.askPrice) < pctx.lenderLeg + pctx.treasuryLeg + feeSumStart) {
+        // Round-5 Block B (#309) — mode-aware dispatch. The
+        // fixed-price path keeps the existing sign-time-pctx
+        // reconstruction. The Dutch path reads pctx at
+        // `auctionEndTime` (so `pctx.lenderLeg` / `pctx.treasuryLeg`
+        // resolve to the projected-max values that were signed at
+        // post time, under sign-time governance config — assuming
+        // governance hasn't drifted; if it has, the hash recompute
+        // mismatches and we emit `SeaportCancelSkipped`).
+        OrderComponents memory components;
+        if (ctx.mode == PREPAY_MODE_FIXED_PRICE) {
+            components = _buildFixedPriceCancelComponents(orderHash, ctx, feeLegs);
+            if (components.offerer == address(0)) {
+                // Skip-fallback sentinel: helper returned an empty
+                // shell because the cancel-time solvency check
+                // tripped (governance drift). Breadcrumb already
+                // emitted inside the helper.
+                return;
+            }
+        } else if (ctx.mode == PREPAY_MODE_DUTCH) {
+            components = _buildDutchCancelComponents(orderHash, ctx, feeLegs);
+            if (components.offerer == address(0)) {
+                return;
+            }
+        } else {
+            // Unknown mode — should be unreachable (recordOrder
+            // rejects this), but defense-in-depth: skip + breadcrumb.
             emit SeaportCancelSkipped(orderHash, uint256(ctx.loanId));
             return;
         }
-
-        OrderComponents memory components = LibPrepayOrder.componentsForCancel(
-            pctx,
-            address(this),
-            uint256(ctx.askPrice),
-            ctx.conduitKey,
-            uint256(ctx.salt),
-            uint256(ctx.startTime),
-            ISeaportOrderHash(seaport).getCounter(pctx.borrowerVault),
-            feeLegs
-        );
 
         bytes32 reconstructed = ISeaportOrderHash(seaport).getOrderHash(components);
         if (reconstructed != orderHash) {
@@ -565,6 +647,118 @@ contract CollateralListingExecutor is
         } catch {
             emit SeaportCancelSkipped(orderHash, uint256(ctx.loanId));
         }
+    }
+
+    /// @dev Round-5 Block B (#309) — fixed-price cancel-time
+    ///      reconstruction. Returns `(components, offerer != 0)`;
+    ///      the caller treats `offerer == address(0)` as the
+    ///      "skip + breadcrumb already emitted" signal so the
+    ///      reconstruction helpers don't need a separate boolean
+    ///      return shape.
+    function _buildFixedPriceCancelComponents(
+        bytes32 orderHash,
+        OrderContext memory ctx,
+        FeeLeg[] memory feeLegs
+    ) private returns (OrderComponents memory components) {
+        // Sign-time pctx — getPrepayContext(loanId, ctx.startTime)
+        // re-derives the floor legs evaluated at the ORIGINAL post
+        // timestamp.
+        IVaipakamPrepayContext.PrepayContext memory pctx =
+            IVaipakamPrepayContext(vaipakamDiamond).getPrepayContext(
+                uint256(ctx.loanId),
+                uint256(ctx.startTime)
+            );
+
+        // Defensive floor-coverage check. `LibPrepayOrder._componentsAtMemory`
+        // computes `borrowerLeg = askPrice - lenderLeg - treasuryLeg`;
+        // if the cancel-time floor reads HIGHER than the recorded
+        // sign-time `askPrice`, the unchecked subtraction would panic
+        // with arithmetic underflow and revert the entire cleanup
+        // path. Realistic causes:
+        //   (a) Governance bumped `treasuryFeeBps` between sign and
+        //       cancel → `pctx.treasuryLeg` is now higher than the
+        //       value the facet validated against at post time.
+        //   (b) Governance flipped a related fee curve.
+        // In any such case the original order is functionally already
+        // "stale" — it could never have been filled at the new floor —
+        // so the right behaviour is to fall back to the no-op skip
+        // branch (the proper cleanup still completes; we just don't
+        // get the OpenSea catalog refresh acceleration).
+        uint256 feeSumStart = 0;
+        for (uint256 i = 0; i < feeLegs.length; ) {
+            feeSumStart += uint256(feeLegs[i].startAmount);
+            unchecked { ++i; }
+        }
+        if (uint256(ctx.askPrice) < pctx.lenderLeg + pctx.treasuryLeg + feeSumStart) {
+            emit SeaportCancelSkipped(orderHash, uint256(ctx.loanId));
+            // Sentinel: `offerer == address(0)` indicates caller-side
+            // skip — the empty OrderComponents struct is returned
+            // unmodified from its zero-value default.
+            return components;
+        }
+
+        components = LibPrepayOrder.componentsForCancel(
+            pctx,
+            address(this),
+            uint256(ctx.askPrice),
+            ctx.conduitKey,
+            uint256(ctx.salt),
+            uint256(ctx.startTime),
+            ISeaportOrderHash(seaport).getCounter(pctx.borrowerVault),
+            feeLegs
+        );
+    }
+
+    /// @dev Round-5 Block B (#309) — Dutch cancel-time
+    ///      reconstruction. Reads pctx at `auctionEndTime` so the
+    ///      lender + treasury legs resolve to the projected-max
+    ///      values that were signed at post-time (under sign-time
+    ///      governance config). If governance has bumped between
+    ///      sign + cancel, the projected values shift and the hash
+    ///      recompute mismatches → `_tryCancelOnSeaport` emits
+    ///      `SeaportCancelSkipped` and the cleanup proper (binding
+    ///      delete + vault revoke) carries the safety invariant.
+    function _buildDutchCancelComponents(
+        bytes32 orderHash,
+        OrderContext memory ctx,
+        FeeLeg[] memory feeLegs
+    ) private returns (OrderComponents memory components) {
+        IVaipakamPrepayContext.PrepayContext memory pctx =
+            IVaipakamPrepayContext(vaipakamDiamond).getPrepayContext(
+                uint256(ctx.loanId),
+                uint256(ctx.auctionEndTime)
+            );
+
+        // Same defensive coverage check as the fixed-price path,
+        // but using `endAskPrice` (the floor must be coverable at
+        // the END of the auction window for the order to have been
+        // signable; if cancel-time projected legs + fee endAmounts
+        // exceed `endAskPrice`, the canonical-shape rebuild would
+        // underflow on the borrower-end leg).
+        uint256 feeSumEnd = 0;
+        for (uint256 i = 0; i < feeLegs.length; ) {
+            feeSumEnd += uint256(feeLegs[i].endAmount);
+            unchecked { ++i; }
+        }
+        if (uint256(ctx.endAskPrice) < pctx.lenderLeg + pctx.treasuryLeg + feeSumEnd) {
+            emit SeaportCancelSkipped(orderHash, uint256(ctx.loanId));
+            return components;
+        }
+
+        components = LibPrepayOrder.componentsForCancelDutch(
+            pctx,
+            address(this),
+            uint256(ctx.askPrice),         // startAskPrice
+            uint256(ctx.endAskPrice),
+            pctx.lenderLeg,                // projectedLenderLeg
+            pctx.treasuryLeg,              // projectedTreasuryLeg
+            ctx.conduitKey,
+            uint256(ctx.salt),
+            uint256(ctx.startTime),
+            uint256(ctx.auctionEndTime),
+            ISeaportOrderHash(seaport).getCounter(pctx.borrowerVault),
+            feeLegs
+        );
     }
 
     // ─── ERC-1271 sign-time signature delegate ──────────────────────────

@@ -41,8 +41,12 @@ import LegalFacetABI from './LegalFacet.json';
 // prepay collateral sales (see contracts/src/seaport/CollateralListingExecutor.sol).
 import PrepayListingFacetABI from './PrepayListingFacet.json';
 // T-086 step 6 — borrower-facing post / update / cancel / cancelExpired
-// entry points for the Seaport prepay listing flow.
+// entry points for the FIXED-PRICE prepay listing flow.
 import NFTPrepayListingFacetABI from './NFTPrepayListingFacet.json';
+// T-086 Round-5 Block B (#309) — Dutch-decay post + update sibling
+// facet. Shares LibVaipakam storage with NFTPrepayListingFacet;
+// split for solc jump-table budget reasons (see facet natspec).
+import NFTPrepayDutchListingFacetABI from './NFTPrepayDutchListingFacet.json';
 // FlashLoanLiquidationPath.md Phase 3 — standalone reference
 // receiver. Named export only; deliberately NOT spread into
 // DIAMOND_ABI below (it's not part of the diamond's selector set).
@@ -87,6 +91,7 @@ export {
   LegalFacetABI,
   PrepayListingFacetABI,
   NFTPrepayListingFacetABI,
+  NFTPrepayDutchListingFacetABI,
   FlashLoanLiquidatorABI,
 };
 
@@ -136,6 +141,7 @@ export const DIAMOND_ABI = [
   ...LegalFacetABI,
   ...PrepayListingFacetABI,
   ...NFTPrepayListingFacetABI,
+  ...NFTPrepayDutchListingFacetABI,
 ];
 
 /** Viem-typed alias for hooks using `encodeFunctionData` /

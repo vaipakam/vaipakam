@@ -92,6 +92,39 @@ export interface UseNFTPrepayListingResult {
      *  rotation, not from a session cache. */
     feeLegs: ReadonlyArray<FeeLegInput>,
   ) => Promise<boolean>;
+  /** T-086 Round-5 Block B (#309) — Dutch-decay post. The borrower
+   *  remainder leg decays linearly from `startAskPrice` at
+   *  block.timestamp down to `endAskPrice` at `auctionEndTime`.
+   *  Lender + treasury legs stay fixed at the projected-max under
+   *  sign-time governance config (the diamond reads them at
+   *  `auctionEndTime`). Fee legs follow the same shape with their
+   *  own start/end decay. The Seaport `endTime` is
+   *  `auctionEndTime` (not `gracePeriodEnd`) — past that tick the
+   *  listing becomes Seaport-unfillable.
+   *  See {NFTPrepayDutchListingFacet.postPrepayDutchListing}. */
+  postPrepayDutchListing: (
+    loanId: bigint,
+    startAskPrice: bigint,
+    endAskPrice: bigint,
+    auctionEndTime: bigint,
+    salt: bigint,
+    conduitKey: `0x${string}`,
+    feeLegs: ReadonlyArray<FeeLegInput>,
+  ) => Promise<boolean>;
+  /** T-086 Round-5 Block B (#309) — Dutch-decay update. Atomic
+   *  rotation of the live listing's parameters; lock stays
+   *  continuous so no re-locking race opens. Can rotate a
+   *  fixed-price listing into Dutch (the lock semantics are
+   *  mode-agnostic). */
+  updatePrepayDutchListing: (
+    loanId: bigint,
+    newStartAskPrice: bigint,
+    newEndAskPrice: bigint,
+    newAuctionEndTime: bigint,
+    newSalt: bigint,
+    newConduitKey: `0x${string}`,
+    feeLegs: ReadonlyArray<FeeLegInput>,
+  ) => Promise<boolean>;
   cancelPrepayListing: (loanId: bigint) => Promise<boolean>;
 }
 
@@ -186,7 +219,7 @@ export function useNFTPrepayListing(
    *  post + update, and listing-disappearance for cancel. */
   const waitForIndexer = useCallback(
     async (
-      flow: 'postPrepayListing' | 'updatePrepayListing' | 'cancelPrepayListing',
+      flow: 'postPrepayListing' | 'postPrepayDutchListing' | 'updatePrepayListing' | 'updatePrepayDutchListing' | 'cancelPrepayListing',
       prior: IndexedPrepayListing | null | undefined,
     ): Promise<{
       /** True iff a poll observed the expected transition. */
@@ -210,9 +243,10 @@ export function useNFTPrepayListing(
         latest = row.prepayListing;
         if (flow === 'cancelPrepayListing') {
           if (!row.prepayListing) return { sawTransition: true, latest: undefined };
-        } else if (flow === 'postPrepayListing') {
+        } else if (flow === 'postPrepayListing' || flow === 'postPrepayDutchListing') {
           if (row.prepayListing) return { sawTransition: true, latest: row.prepayListing };
         } else {
+          // update path (fixed or Dutch) — wait for orderHash to rotate
           if (
             row.prepayListing &&
             (!prior || row.prepayListing.orderHash !== prior.orderHash)
@@ -228,7 +262,7 @@ export function useNFTPrepayListing(
 
   const runWrite = useCallback(
     async (
-      flow: 'postPrepayListing' | 'updatePrepayListing' | 'cancelPrepayListing',
+      flow: 'postPrepayListing' | 'postPrepayDutchListing' | 'updatePrepayListing' | 'updatePrepayDutchListing' | 'cancelPrepayListing',
       loanIdArg: bigint,
       submit: () => Promise<{ hash: string; wait: () => Promise<unknown> }>,
     ): Promise<{ success: boolean; receipt?: WriteReceipt }> => {
@@ -430,6 +464,56 @@ export function useNFTPrepayListing(
     [diamond, runWrite],
   );
 
+  // T-086 Round-5 Block B (#309) — Dutch posting + update entries.
+  // v1 ships with NO frontend-direct OpenSea publish for the Dutch
+  // path — the indexer's autonomous `PrepayListingPosted` /
+  // `PrepayListingUpdated` handler does the OpenSea push using the
+  // event's Dutch fields (`endAskPrice`, `auctionEndTime`, `mode`).
+  // A future iteration can mirror the fixed-price's
+  // `runOpenSeaPublish` here; for now the autonomous path covers
+  // both modes uniformly.
+  const postPrepayDutchListing = useCallback(
+    async (
+      lid: bigint,
+      startAskPrice: bigint,
+      endAskPrice: bigint,
+      auctionEndTime: bigint,
+      salt: bigint,
+      conduitKey: `0x${string}`,
+      feeLegs: ReadonlyArray<FeeLegInput>,
+    ): Promise<boolean> => {
+      const r = await runWrite('postPrepayDutchListing', lid, () =>
+        diamond.postPrepayDutchListing(
+          lid, startAskPrice, endAskPrice, auctionEndTime,
+          salt, conduitKey, feeLegs,
+        ),
+      );
+      return r.success;
+    },
+    [diamond, runWrite],
+  );
+
+  const updatePrepayDutchListing = useCallback(
+    async (
+      lid: bigint,
+      newStartAskPrice: bigint,
+      newEndAskPrice: bigint,
+      newAuctionEndTime: bigint,
+      newSalt: bigint,
+      newConduitKey: `0x${string}`,
+      feeLegs: ReadonlyArray<FeeLegInput>,
+    ): Promise<boolean> => {
+      const r = await runWrite('updatePrepayDutchListing', lid, () =>
+        diamond.updatePrepayDutchListing(
+          lid, newStartAskPrice, newEndAskPrice, newAuctionEndTime,
+          newSalt, newConduitKey, feeLegs,
+        ),
+      );
+      return r.success;
+    },
+    [diamond, runWrite],
+  );
+
   return {
     listing,
     loading,
@@ -439,6 +523,8 @@ export function useNFTPrepayListing(
     txHash,
     postPrepayListing,
     updatePrepayListing,
+    postPrepayDutchListing,
+    updatePrepayDutchListing,
     cancelPrepayListing,
   };
 }

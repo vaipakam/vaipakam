@@ -52,19 +52,39 @@ import {FeeLeg} from "./PrepayTypes.sol";
  *         order-record surface.
  */
 interface IListingExecutorRecorder {
-    /// @notice Pin a Seaport `orderHash → (loanId, conduit, …, feeLegs)`
-    ///         binding. T-086 #316 extended the recorded shape with
-    ///         `conduitKey`, `salt`, `startTime`, and `askPrice` so
-    ///         the executor can rebuild the canonical `OrderComponents`
-    ///         at cleanup time (used to forward `Seaport.cancel` for
-    ///         fast OpenSea catalog refresh). T-086 Round-5 / #313
-    ///         (Block A) additionally records the full `FeeLeg[]`
-    ///         array so the same cancel-time reconstruction works
-    ///         for fee-enforced collections — the fee legs cannot be
-    ///         derived from the orderHash alone (Seaport's
-    ///         `getOrderHash` is a one-way digest), so the recorder
-    ///         is the only place this data can live before cleanup.
-    ///         See {CollateralListingExecutor.recordOrder}.
+    /// @notice Pin a Seaport `orderHash → (loanId, conduit, ...,
+    ///         feeLegs, mode)` binding. The recorded shape captures
+    ///         every borrower-controlled + sign-time input so the
+    ///         executor can rebuild the canonical `OrderComponents`
+    ///         at cleanup time and forward `Seaport.cancel` for fast
+    ///         OpenSea catalog refresh.
+    ///
+    ///         **Mode-tag semantics (Round-5 Block B, Issue #309):**
+    ///           - `mode == PREPAY_MODE_FIXED_PRICE (0)` — the
+    ///             Round-4 / Block A path. `endAskPrice` MUST equal
+    ///             `askPrice`; `auctionEndTime` MUST be zero (the
+    ///             Seaport `endTime` is the loan's `gracePeriodEnd`
+    ///             and is re-derived from the diamond view at cancel
+    ///             time, not from this field). Fee legs MUST satisfy
+    ///             `startAmount == endAmount` per-leg.
+    ///           - `mode == PREPAY_MODE_DUTCH (1)` — the Block B
+    ///             path. `endAskPrice ≤ askPrice` (where `askPrice`
+    ///             is interpreted as the start ask); `auctionEndTime`
+    ///             > `startTime + MIN_AUCTION_WINDOW` AND ≤
+    ///             `loan.gracePeriodEnd`. The Seaport `endTime` is
+    ///             `auctionEndTime`. Fee legs MAY decay
+    ///             (`startAmount ≥ endAmount` per-leg).
+    ///
+    ///         The executor's `recordOrder` validates the mode tag +
+    ///         every cross-field consistency rule. The diamond facet
+    ///         performs the richer borrower-leg-monotonicity check
+    ///         that requires reading the live pctx; the executor
+    ///         doesn't duplicate that — it trusts the diamond, then
+    ///         re-checks every fill-time invariant in the zone
+    ///         callback.
+    ///
+    ///         See {CollateralListingExecutor.recordOrder} for the
+    ///         full check stack + storage layout.
     function recordOrder(
         bytes32 orderHash,
         uint256 loanId,
@@ -73,6 +93,9 @@ interface IListingExecutorRecorder {
         uint256 salt,
         uint256 startTime,
         uint256 askPrice,
+        uint256 endAskPrice,
+        uint256 auctionEndTime,
+        uint8 mode,
         FeeLeg[] calldata feeLegs
     ) external;
 

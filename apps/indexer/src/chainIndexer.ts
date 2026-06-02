@@ -217,7 +217,8 @@ export async function sweepUnpublishedListings(env: Env): Promise<void> {
 
   const rows = await env.DB.prepare(
     `SELECT chain_id, loan_id, order_hash, ask_price, conduit_key,
-            salt, executor, tx_hash, fee_legs_json
+            salt, executor, tx_hash, fee_legs_json,
+            end_ask_price, auction_end_time, auction_mode
        FROM prepay_listings
       WHERE opensea_published_at IS NULL
         AND posted_at <= ?
@@ -235,6 +236,9 @@ export async function sweepUnpublishedListings(env: Env): Promise<void> {
       executor: string | null;
       tx_hash: string;
       fee_legs_json: string | null;
+      end_ask_price: string | null;
+      auction_end_time: number | null;
+      auction_mode: number | null;
     }>();
 
   if (!rows.results || rows.results.length === 0) return;
@@ -268,6 +272,19 @@ export async function sweepUnpublishedListings(env: Env): Promise<void> {
         feeLegs = [];
       }
     }
+    // T-086 Round-5 Block B (#309) — Dutch params from D1. Rows
+    // from before migration 0018 have NULL columns; treat them
+    // as fixed-price (mode=0 sentinel) for sweep purposes.
+    const dutch =
+      row.auction_mode === 1 && row.end_ask_price && row.auction_end_time
+        ? {
+            startAskPrice: BigInt(row.ask_price),
+            endAskPrice: BigInt(row.end_ask_price),
+            projectedLenderLeg: 0n,
+            projectedTreasuryLeg: 0n,
+            auctionEndTime: BigInt(row.auction_end_time),
+          }
+        : undefined;
     const result = await indexerPublishPrepayListing(
       {
         publicClient: client,
@@ -281,6 +298,7 @@ export async function sweepUnpublishedListings(env: Env): Promise<void> {
         executor: row.executor as `0x${string}`,
         expectedOrderHash: row.order_hash as `0x${string}`,
         feeLegs,
+        dutch,
       },
       env,
     );
@@ -1745,6 +1763,14 @@ async function processLoanLogs(
           endAmount: String(l.endAmount),
         })),
       );
+      // T-086 Round-5 Block B (#309) — Dutch-decay fields. The
+      // event always carries them (mode=0 stub on fixed-price
+      // posts); the `auction_mode` D1 column is the single
+      // discriminator the dapp + the cancel-time reconstruction
+      // dispatch on.
+      const endAskPrice = String(a.endAskPrice as bigint);
+      const auctionEndTime = Number(a.auctionEndTime as bigint);
+      const auctionMode = Number(a.mode as number);
       // T-086 Round-5 Block A (#313) — the `borrower_remainder`
       // column was intentionally NOT added in migration 0017 (see
       // its NOTE block). Computing it correctly needs an extra
@@ -1796,6 +1822,16 @@ async function processLoanLogs(
           startAmount: BigInt(l.startAmount),
           endAmount: BigInt(l.endAmount),
         })),
+        // T-086 Round-5 Block B (#309) — Dutch params on the
+        // posted path. `mode == 0` skips this (publisher takes
+        // fixed-price branch).
+        auctionMode === 1
+          ? {
+              startAskPrice: BigInt(askPrice),
+              endAskPrice: BigInt(endAskPrice),
+              auctionEndTime: BigInt(auctionEndTime),
+            }
+          : undefined,
       );
       const publishedAt = publishResult.published
         ? blockAt
@@ -1808,8 +1844,8 @@ async function processLoanLogs(
             lister, posted_at, updated_at, grace_period_end,
             block_number, tx_hash, log_index,
             conduit_key, salt, opensea_published_at, executor,
-            fee_legs_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            fee_legs_json, end_ask_price, auction_end_time, auction_mode)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
         .bind(
           chainId,
@@ -1829,6 +1865,9 @@ async function processLoanLogs(
           publishedAt,
           pinnedExecutor,
           feeLegsJson,
+          endAskPrice,
+          auctionEndTime,
+          auctionMode,
         )
         .run();
     } else if (log.eventName === 'PrepayListingUpdated') {
@@ -1865,6 +1904,15 @@ async function processLoanLogs(
           endAmount: String(l.endAmount),
         })),
       );
+      // T-086 Round-5 Block B (#309) — Dutch-decay fields. The
+      // update event uses `newEndAskPrice` / `newAuctionEndTime`
+      // for the rotated stamps; the mode tag is still `mode` (no
+      // prefix). For fixed-price updates `mode==0` and
+      // `newAuctionEndTime==0`; for Dutch updates the values are
+      // the freshly-signed Dutch params.
+      const endAskPrice = String(a.newEndAskPrice as bigint);
+      const auctionEndTime = Number(a.newAuctionEndTime as bigint);
+      const auctionMode = Number(a.mode as number);
       // T-086 Round-5 Block A (#313) — see Posted-handler note;
       // the borrower_remainder column is intentionally NOT
       // written here either.
@@ -1900,6 +1948,15 @@ async function processLoanLogs(
           startAmount: BigInt(l.startAmount),
           endAmount: BigInt(l.endAmount),
         })),
+        // T-086 Round-5 Block B (#309) — Dutch params on the
+        // update path. Mirror of the Posted handler.
+        auctionMode === 1
+          ? {
+              startAskPrice: BigInt(newAskPrice),
+              endAskPrice: BigInt(endAskPrice),
+              auctionEndTime: BigInt(auctionEndTime),
+            }
+          : undefined,
       );
       const publishedAt = publishResult.published
         ? blockAt
@@ -1921,7 +1978,8 @@ async function processLoanLogs(
                updated_at = ?, grace_period_end = ?,
                block_number = ?, tx_hash = ?, log_index = ?,
                conduit_key = ?, salt = ?, opensea_published_at = ?,
-               executor = ?, fee_legs_json = ?
+               executor = ?, fee_legs_json = ?,
+               end_ask_price = ?, auction_end_time = ?, auction_mode = ?
          WHERE chain_id = ? AND loan_id = ?`,
       )
         .bind(
@@ -1939,6 +1997,9 @@ async function processLoanLogs(
           publishedAt,
           newPinnedExecutor,
           feeLegsJson,
+          endAskPrice,
+          auctionEndTime,
+          auctionMode,
           chainId,
           loanId,
         )
@@ -1955,8 +2016,8 @@ async function processLoanLogs(
               lister, posted_at, updated_at, grace_period_end,
               block_number, tx_hash, log_index,
               conduit_key, salt, opensea_published_at, executor,
-              fee_legs_json)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              fee_legs_json, end_ask_price, auction_end_time, auction_mode)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
           .bind(
             chainId,
@@ -1976,6 +2037,9 @@ async function processLoanLogs(
             publishedAt,
             newPinnedExecutor,
             feeLegsJson,
+            endAskPrice,
+            auctionEndTime,
+            auctionMode,
           )
           .run();
       }
@@ -2228,6 +2292,16 @@ async function _maybePublishToOpenSea(
   // the on-chain hash on fee-enforced collections. Empty for
   // fee-free posts.
   feeLegs: ReadonlyArray<{ recipient: string; startAmount: bigint; endAmount: bigint }>,
+  // T-086 Round-5 Block B (#309) — Dutch params. Undefined for
+  // fixed-price posts (the publish helper falls back to the
+  // Round-4 fixed-price shape verbatim). Defined when the event's
+  // `mode == PREPAY_MODE_DUTCH (1)`; the publish helper reads
+  // pctx at `auctionEndTime` to get the projected protocol legs
+  // that match the on-chain signed hash. `projectedLenderLeg` and
+  // `projectedTreasuryLeg` are derived inside the helper from
+  // that pctx read — the caller only supplies the three event-
+  // derived values.
+  dutch?: { startAskPrice: bigint; endAskPrice: bigint; auctionEndTime: bigint },
 ): Promise<{ published: boolean; unsupportedChain: boolean }> {
   try {
     const result = await indexerPublishPrepayListing(
@@ -2243,6 +2317,18 @@ async function _maybePublishToOpenSea(
         executor,
         expectedOrderHash,
         feeLegs,
+        dutch: dutch
+          ? {
+              startAskPrice: dutch.startAskPrice,
+              endAskPrice: dutch.endAskPrice,
+              // The helper re-derives these from its pctx read at
+              // `auctionEndTime`; we pass 0n stubs here and the
+              // helper overwrites them.
+              projectedLenderLeg: 0n,
+              projectedTreasuryLeg: 0n,
+              auctionEndTime: dutch.auctionEndTime,
+            }
+          : undefined,
       },
       env,
     );
