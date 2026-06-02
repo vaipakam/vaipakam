@@ -185,13 +185,39 @@ export async function handleOpenSeaOffers(
     fetchUpstream(itemOffersUrl),
   ]);
 
+  // Codex round-11 P2 review #328 — the documented
+  // `/api/v2/offers/collection/{slug}/nfts/{tokenId}/best`
+  // endpoint returns a SINGLE offer object with top-level
+  // fields (`order_hash`, `protocol_data`, etc.), NOT a list.
+  // The dapp's `extractOrders` accepts arrays or `body.offers` /
+  // `body.orders` wrappers; without re-shaping, the item-
+  // specific best offer is silently dropped. Wrap it as a one-
+  // element `offers` array so the normalizer sees it.
+  const itemBody = itemRes ? tryParseUpstream(itemRes) : null;
+  let normalizedItemBody = itemBody;
+  if (
+    itemBody !== null &&
+    itemBody.status >= 200 &&
+    itemBody.status < 300 &&
+    itemBody.body !== null &&
+    typeof itemBody.body === 'object' &&
+    !Array.isArray(itemBody.body) &&
+    !Array.isArray((itemBody.body as { offers?: unknown[] }).offers) &&
+    !Array.isArray((itemBody.body as { orders?: unknown[] }).orders)
+  ) {
+    normalizedItemBody = {
+      status: itemBody.status,
+      body: { offers: [itemBody.body] },
+    };
+  }
+
   // Compose the aggregated response. Dapp consumes
   //   { item_offers: { status, body? } | null, collection_offers: { status, body? } | null }
   // and applies the threshold filter + sorts. Either source is
   // null when the slug couldn't be resolved (rare — falls back to
   // an empty panel, which the panel renders cleanly).
   const aggregated = {
-    item_offers: itemRes ? tryParseUpstream(itemRes) : null,
+    item_offers: normalizedItemBody,
     collection_offers: collectionRes ? tryParseUpstream(collectionRes) : null,
     slug,
   };
