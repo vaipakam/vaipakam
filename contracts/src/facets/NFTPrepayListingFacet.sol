@@ -112,6 +112,11 @@ contract NFTPrepayListingFacet is
     ///         resolved `conduit` address stays for backward
     ///         compatibility + cheap reads (the indexer doesn't
     ///         have to re-call the ConduitController to map back).
+    /// @dev T-086 Round-5 Block A (#313) — emits the full `FeeLeg[]`
+    ///       as event data (NOT a hashed root) so the indexer's
+    ///       autonomous-publish fallback path can populate
+    ///       `prepay_listings.fee_legs_json` from chain logs alone.
+    ///       See §14.6 of the merged design + the Round-5.1 errata.
     /// @custom:event-category state-change/loan-mutation
     event PrepayListingPosted(
         uint256 indexed loanId,
@@ -121,7 +126,8 @@ contract NFTPrepayListingFacet is
         address conduit,
         bytes32 conduitKey,
         uint256 salt,
-        address executor
+        address executor,
+        FeeLeg[] feeLegs
     );
 
     /// @notice Emitted when the borrower updates an existing
@@ -135,6 +141,8 @@ contract NFTPrepayListingFacet is
     ///         equal the old one or change; the executor is the
     ///         current executor at the update tx (governance may
     ///         have rotated between post and update).
+    /// @dev T-086 Round-5 Block A (#313) — same FeeLeg[] tail as
+    ///       {PrepayListingPosted}. See §14.6 + Round-5.1 errata.
     /// @custom:event-category state-change/loan-mutation
     event PrepayListingUpdated(
         uint256 indexed loanId,
@@ -145,7 +153,8 @@ contract NFTPrepayListingFacet is
         address conduit,
         bytes32 newConduitKey,
         uint256 newSalt,
-        address executor
+        address executor,
+        FeeLeg[] feeLegs
     );
 
     /// @notice Emitted on every listing cancel — by the borrower
@@ -431,7 +440,8 @@ contract NFTPrepayListingFacet is
             _resolveConduit(executor, conduitKey),
             conduitKey,
             salt,
-            address(executor)
+            address(executor),
+            feeLegs
         );
     }
 
@@ -610,7 +620,8 @@ contract NFTPrepayListingFacet is
             _resolveConduit(currentExecutor, newConduitKey),
             newConduitKey,
             newSalt,
-            address(currentExecutor)
+            address(currentExecutor),
+            feeLegs
         );
     }
 
