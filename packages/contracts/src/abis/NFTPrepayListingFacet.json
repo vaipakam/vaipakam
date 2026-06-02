@@ -466,6 +466,27 @@
   },
   {
     "type": "error",
+    "name": "AuctionWindowStillOpen",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "nowTime",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "auctionEndTime",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "BaseChainIdNotSet",
     "inputs": []
   },
