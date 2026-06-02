@@ -91,6 +91,14 @@ mounting wrapper).
   PrepayListingUpdated` already logs every rotation; analytics
   on "which offer was matched" can be added without a contract
   change. Deferred.
+- **Pagination through OpenSea's offer-list responses.** Both
+  `/collection/{slug}/all` and `/collection/{slug}/nfts/{tokenId}`
+  expose `limit`/`next` pagination; the agent proxy fetches only
+  the first page. In high-volume collections this can miss a
+  lower acceptable offer beyond the first page. v1 ships
+  first-page-only because the borrower-UX optimisation (top
+  offers first → most likely to be matchable) covers the common
+  case; pagination is a v1.1 follow-up.
 
 ### Verification
 

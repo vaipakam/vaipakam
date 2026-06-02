@@ -200,10 +200,16 @@ export function OpenSeaOffersSection({
   // the same boolean drives BOTH the pause flag AND the early
   // returns; otherwise the hook keeps polling for rows that will
   // only ever render an informational banner.
+  // Codex round-13 P2 review #328 — use nullish (`== null`) so
+  // that an indexer response with omitted-key (undefined) AND
+  // explicit-null both classify as pre-migration. A rolling
+  // deploy or stale indexer could serve a row without these
+  // anchors; without the nullish check, Match could fire and
+  // hit `BigInt(undefined)` at the actual onMatchOffer call.
   const listingPreMigration =
     live !== null &&
     live !== undefined &&
-    (live.salt === null || live.conduitKey === null);
+    (live.salt == null || live.conduitKey == null);
   const listingIsDutch =
     live !== null && live !== undefined && live.auctionMode === 1;
   // Codex round-8 P2 review #328 — also include the ERC1155
@@ -471,8 +477,56 @@ export function OpenSeaOffersSection({
         // The pre-migration short-circuit above guarantees `live`
         // is non-null + both fields are populated by the time this
         // callback fires.
-        if (!live || live.salt === null || live.conduitKey === null) {
+        if (!live || live.salt == null || live.conduitKey == null) {
           return false;
+        }
+        // Codex round-13 P2 review #328 — re-check the
+        // collection's fee schedule at confirm time. The
+        // one-time fee-free check on section mount can stale
+        // out if OpenSea publishes a fee-schedule change while
+        // the borrower watches the panel; a subsequent Match
+        // would rotate the listing with empty `feeLegs[]` and
+        // OpenSea would reject the publish (the on-chain
+        // rotation succeeds; the bidder can't discover the
+        // updated listing). Refresh + re-evaluate before the
+        // rotation tx fires.
+        if (offersResult.slug) {
+          try {
+            const recheck = await fetch(
+              `${agentOrigin}/opensea/collection/${encodeURIComponent(offersResult.slug)}?chainId=${chainId}`,
+            );
+            if (recheck.ok) {
+              const body = (await recheck.json()) as { fees?: unknown[] };
+              const fees = (body.fees ?? []) as Array<{
+                basis_points?: number;
+                fee?: number;
+                required?: boolean;
+              }>;
+              const stillFeeEnforced = fees.some(
+                f =>
+                  f.required === true &&
+                  ((typeof f.basis_points === 'number' && f.basis_points > 0) ||
+                    (typeof f.fee === 'number' && f.fee > 0)),
+              );
+              if (stillFeeEnforced) {
+                // Invalidate the cached fee-free verdict; the
+                // section's banner will render on next paint.
+                setFeeCheck({
+                  slug: offersResult.slug,
+                  enforcement: 'fee-enforced',
+                });
+                return false;
+              }
+            }
+            // Recheck failure (non-2xx OR network blip): keep
+            // the cached verdict + proceed. The on-chain
+            // rotation will succeed; OpenSea may reject the
+            // publish but the borrower's listing is still
+            // valid + the buyer can fulfill directly via
+            // Seaport.
+          } catch {
+            // Same fall-through reasoning.
+          }
         }
         return prepayListing.updatePrepayListing(
           loanId,

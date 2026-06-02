@@ -230,8 +230,8 @@ export function useOpenSeaOffers(
       const itemRaw = extractOrders(body.item_offers ?? undefined);
       const collectionRaw = extractOrders(body.collection_offers ?? undefined);
       const normalized: NormalizedOffer[] = [
-        ...itemRaw.map(o => normalize(o, 'item', computeAcceptable)),
-        ...collectionRaw.map(o => normalize(o, 'collection', computeAcceptable)),
+        ...itemRaw.map(o => normalize(o, 'item', collateralTokenId, computeAcceptable)),
+        ...collectionRaw.map(o => normalize(o, 'collection', collateralTokenId, computeAcceptable)),
       ].filter((o): o is NormalizedOffer => o !== null);
 
       // Sort by acceptability, then descending value. The panel
@@ -323,6 +323,7 @@ function extractOrders(
 function normalize(
   raw: unknown,
   kind: 'item' | 'collection',
+  collateralTokenId: bigint,
   computeAcceptable: (
     value: bigint,
     paymentToken: string,
@@ -337,6 +338,10 @@ function normalize(
     protocol_data?: {
       parameters?: {
         offer?: Array<{ token?: string; startAmount?: string }>;
+        consideration?: Array<{
+          itemType?: number;
+          identifierOrCriteria?: string;
+        }>;
         endTime?: string;
         offerer?: string;
       };
@@ -370,6 +375,30 @@ function normalize(
     offerItem?.startAmount ?? r.current_price ?? '0',
   );
   const endTime = Number(r.protocol_data?.parameters?.endTime ?? '0');
+
+  // Codex round-13 P2 review #328 — the `/collection/{slug}/all`
+  // endpoint can return item offers for OTHER tokens in the
+  // collection alongside true collection-wide offers (Seaport's
+  // `consideration[0]` carries the NFT identifier the offer was
+  // placed against). For a true collection-wide offer, the
+  // identifier is `0`; for a trait or item-specific offer, it's
+  // either a specific tokenId or the criteria-merkle root. Drop
+  // any row whose consideration identifier is a non-zero
+  // explicit tokenId that doesn't match our `collateralTokenId`
+  // — the borrower clicking Match on such a row would rotate
+  // the listing to a price the bidder cannot fulfill (their
+  // offer is for a different NFT).
+  const consideration = r.protocol_data?.parameters?.consideration?.[0];
+  if (consideration && consideration.identifierOrCriteria) {
+    const ident = consideration.identifierOrCriteria.toString();
+    // Identifier of "0" is a collection-wide / criteria-based
+    // offer that applies to any token in the collection. Any
+    // non-zero identifier must equal the collateralTokenId for
+    // this loan; otherwise drop.
+    if (ident !== '0' && ident !== collateralTokenId.toString()) {
+      return null;
+    }
+  }
 
   const verdict = computeAcceptable(value, paymentToken, endTime);
   return {
