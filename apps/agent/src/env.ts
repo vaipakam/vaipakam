@@ -146,6 +146,12 @@ interface BaseEnv {
   // (`/thresholds`, `/link/telegram`, `/diag/record`). Set in
   // wrangler.jsonc:vars.
   FRONTEND_ORIGIN: string;
+
+  // T-086 Round-5 Block A (#313) — recipient-validating-token
+  // allow-list (JSON-encoded). See the `Env` interface comment
+  // below for the shape; set in wrangler.jsonc:vars per chain
+  // post-deploy.
+  RECIPIENT_VALIDATING_TOKENS?: string;
 }
 
 /**
@@ -220,6 +226,15 @@ export interface Env extends BaseEnv {
   ONEINCH_API_KEY?: string;
   // T-086 step 14 — resolved OpenSea Listings API key.
   OPENSEA_API_KEY?: string;
+
+  // T-086 Round-5 Block A (#313) — per-chain allow-list of tokens
+  // whose `transfer` can revert based on recipient (USDC OFAC
+  // blocklist, ERC777/ERC1363 hook-enabled tokens, etc.). JSON-
+  // encoded; keys are `${chainId}:${tokenAddressLower}`. Each entry
+  // carries the `balanceSlot` identifier (resolved at config-time
+  // per the §14.4 errata recipe) + a `hookEnabled` flag. Unset =
+  // pre-flight returns "not_applicable" for every recipient.
+  RECIPIENT_VALIDATING_TOKENS?: string;
 
   // T-075 — server secret for the per-wallet deletion key.
   // `wallet_hash = HMAC-SHA256(fullWallet, DIAG_WALLET_HMAC_KEY)`.
@@ -328,6 +343,8 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     DIAG_RETENTION_DAYS: raw.DIAG_RETENTION_DAYS,
     DIAG_LEGAL_DOCS: raw.DIAG_LEGAL_DOCS,
     FRONTEND_ORIGIN: raw.FRONTEND_ORIGIN,
+    // T-086 Round-5 Block A (#313) — pass through verbatim.
+    RECIPIENT_VALIDATING_TOKENS: raw.RECIPIENT_VALIDATING_TOKENS,
     // Resolved secrets.
     RPC_BASE: base,
     RPC_ETH: eth,
