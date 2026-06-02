@@ -1,0 +1,46 @@
+-- 2026-06-02 — T-086 Round-5 Block A (#313): extend `prepay_listings`
+-- with the borrower-supplied fee legs.
+--
+-- The on-chain `PrepayListingPosted` / `PrepayListingUpdated`
+-- events now emit a `FeeLeg[] feeLegs` data tail (Round-5
+-- design §14.6; the Round-5.1 errata corrected the spec to
+-- carry the full array as event data rather than a hashed root
+-- so the indexer can populate this column from chain logs alone,
+-- without a secondary fetch). The indexer decodes the legs in
+-- `chainIndexer.ts:_handlePrepayListingPosted` /
+-- `_handlePrepayListingUpdated` and persists them as the JSON
+-- text representation here.
+--
+-- The autonomous OpenSea republish path
+-- (`openseaPublish.ts:publishToOpenSea`) reads `fee_legs_json`
+-- straight back into a `FeeLeg[]` shape it can fold into the
+-- `consideration` array of the canonical Seaport order it
+-- rebuilds — closing the previous round of "we couldn't republish
+-- a fee-enforced listing because we didn't persist the schedule"
+-- failure mode for fee-enforced collections.
+--
+-- D1 column-add is `ALTER TABLE ADD COLUMN` — sqlite-compatible,
+-- no rewrite needed; existing rows get the default NULL.
+--
+-- For fee-FREE listings (vast majority pre-Block A), the column
+-- is the literal JSON string '[]' (empty array) — NOT NULL.
+-- That distinguishes "no fees on this collection" from "we
+-- haven't decoded yet"; tools/queries downstream can rely on
+-- the column being present-and-shaped on every Posted row from
+-- this migration forward.
+--
+-- NOTE on the originally-proposed `borrower_remainder` column:
+-- the design called for a denormalized borrower-remainder figure
+-- here, but the on-chain event only carries `askPrice` + the
+-- fee legs — not the lender/treasury legs (those are derived from
+-- the live floor via `getPrepayContext` at post time). Computing
+-- the proper remainder
+-- (`askPrice − lender_leg − treasury_leg − sum(feeLegs.amount)`)
+-- requires an additional `getPrepayContext` RPC the indexer
+-- doesn't currently issue per event. Rather than persist a wrong
+-- column (PR #324 Codex + Raja review both flagged this as
+-- blocking), the column is INTENTIONALLY NOT ADDED in this
+-- migration. A follow-up migration after the proper RPC
+-- plumbing lands will re-introduce it with correct semantics.
+
+ALTER TABLE prepay_listings ADD COLUMN fee_legs_json TEXT;

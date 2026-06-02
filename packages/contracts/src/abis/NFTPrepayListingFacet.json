@@ -93,6 +93,28 @@
         "name": "conduitKey",
         "type": "bytes32",
         "internalType": "bytes32"
+      },
+      {
+        "name": "feeLegs",
+        "type": "tuple[]",
+        "internalType": "struct FeeLeg[]",
+        "components": [
+          {
+            "name": "recipient",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "startAmount",
+            "type": "uint96",
+            "internalType": "uint96"
+          },
+          {
+            "name": "endAmount",
+            "type": "uint96",
+            "internalType": "uint96"
+          }
+        ]
       }
     ],
     "outputs": [
@@ -127,6 +149,28 @@
         "name": "newConduitKey",
         "type": "bytes32",
         "internalType": "bytes32"
+      },
+      {
+        "name": "feeLegs",
+        "type": "tuple[]",
+        "internalType": "struct FeeLeg[]",
+        "components": [
+          {
+            "name": "recipient",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "startAmount",
+            "type": "uint96",
+            "internalType": "uint96"
+          },
+          {
+            "name": "endAmount",
+            "type": "uint96",
+            "internalType": "uint96"
+          }
+        ]
       }
     ],
     "outputs": [
@@ -220,6 +264,29 @@
         "type": "address",
         "indexed": false,
         "internalType": "address"
+      },
+      {
+        "name": "feeLegs",
+        "type": "tuple[]",
+        "indexed": false,
+        "internalType": "struct FeeLeg[]",
+        "components": [
+          {
+            "name": "recipient",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "startAmount",
+            "type": "uint96",
+            "internalType": "uint96"
+          },
+          {
+            "name": "endAmount",
+            "type": "uint96",
+            "internalType": "uint96"
+          }
+        ]
       }
     ],
     "anonymous": false
@@ -281,6 +348,29 @@
         "type": "address",
         "indexed": false,
         "internalType": "address"
+      },
+      {
+        "name": "feeLegs",
+        "type": "tuple[]",
+        "indexed": false,
+        "internalType": "struct FeeLeg[]",
+        "components": [
+          {
+            "name": "recipient",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "startAmount",
+            "type": "uint96",
+            "internalType": "uint96"
+          },
+          {
+            "name": "endAmount",
+            "type": "uint96",
+            "internalType": "uint96"
+          }
+        ]
       }
     ],
     "anonymous": false
@@ -301,6 +391,27 @@
       },
       {
         "name": "minAsk",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "AskBelowFloorPlusFees",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "askPrice",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "required",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -452,6 +563,55 @@
     "type": "error",
     "name": "ExecutorNotSet",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FeeLegDecayNotAllowedOnFixedPrice",
+    "inputs": [
+      {
+        "name": "idx",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "FeeLegInvalidAmount",
+    "inputs": [
+      {
+        "name": "idx",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "FeeLegInvalidRecipient",
+    "inputs": [
+      {
+        "name": "idx",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "FeeLegsExceedCap",
+    "inputs": [
+      {
+        "name": "supplied",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cap",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

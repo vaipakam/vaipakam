@@ -342,14 +342,24 @@ export function PrepayListingActions({
     if (!ask || !conduitKeyValid) return;
     const salt = parseSalt();
     if (salt === null) return;
-    await postPrepayListing(loanId, ask, salt, conduitKey as `0x${string}`);
+    // T-086 Round-5 Block A (#313) — empty feeLegs default. Fee-
+    // enforced collections will populate this from the agent's
+    // /opensea/collection/{slug} response in a follow-up UI pass
+    // (the dapp's collection-aware fee picker is tracked
+    // separately; the hook's typed array makes the contract right
+    // today so the UX layer can land independently without
+    // breaking the post path).
+    await postPrepayListing(loanId, ask, salt, conduitKey as `0x${string}`, []);
   };
 
   const handleUpdate = async () => {
     if (!ask || !conduitKeyValid) return;
     const salt = parseSalt();
     if (salt === null) return;
-    await updatePrepayListing(loanId, ask, salt, conduitKey as `0x${string}`);
+    // T-086 Round-5 Block A (#313) — same empty-default rationale
+    // as the post path. The §15.3 errata's "re-fetch fees against
+    // newAskPrice" rule applies once the fee picker UI lands.
+    await updatePrepayListing(loanId, ask, salt, conduitKey as `0x${string}`, []);
   };
 
   const handleCancel = async () => {

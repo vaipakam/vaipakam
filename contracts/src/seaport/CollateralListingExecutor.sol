@@ -11,6 +11,7 @@ import {ISeaportZone, ZoneParameters, ReceivedItem, ItemType} from "./ISeaportZo
 import {IVaipakamPrepayCallbacks} from "./IVaipakamPrepayCallbacks.sol";
 import {IVaipakamPrepayContext} from "./IVaipakamPrepayContext.sol";
 import {ISeaportOrderHash, ISeaportCancel, OrderComponents} from "./ISeaportOrderHash.sol";
+import {FeeLeg, MAX_FEE_LEGS} from "./PrepayTypes.sol";
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibPrepayOrder} from "../libraries/LibPrepayOrder.sol";
@@ -157,6 +158,52 @@ contract CollateralListingExecutor is
         uint192 askPrice;
     }
     mapping(bytes32 orderHash => OrderContext) public orderContext;
+
+    /// @notice T-086 Round-5 Block A (#313) — full `FeeLeg[]` per
+    ///         recorded orderHash. Kept as a separate mapping (rather
+    ///         than packed into `OrderContext`) so the fixed-size
+    ///         OrderContext slot layout stays clean while the variable-
+    ///         length leg array lives where dynamic-array storage is
+    ///         natural. Reconstruction at cancel time
+    ///         (`_tryCancelOnSeaport`) reads the legs back out into
+    ///         memory before invoking `LibPrepayOrder.componentsForCancel`.
+    /// @dev    Per §14.5 of the design doc, storage cost = 2 slots per
+    ///         leg (`address recipient | uint96 startAmount` packed in
+    ///         slot 0; `uint96 endAmount` in slot 1 with 20 B padding).
+    ///         With `MAX_FEE_LEGS = 4` the worst-case storage cost is
+    ///         +1 length slot + 8 leg slots = +9 slots beyond the
+    ///         #316 baseline 4 slots = 13 slots per recorded listing.
+    mapping(bytes32 orderHash => FeeLeg[]) internal _orderFeeLegs;
+
+    /// @notice Read accessor for `_orderFeeLegs[orderHash]` — Solidity
+    ///         doesn't auto-generate array-returning getters for nested
+    ///         dynamic-type mappings, so this is the canonical entry
+    ///         point for tests + indexer-side reconstruction. Returns
+    ///         the empty array for an unknown or fee-free orderHash.
+    function orderFeeLegs(bytes32 orderHash) external view returns (FeeLeg[] memory) {
+        return _orderFeeLegs[orderHash];
+    }
+
+    /// @notice T-086 Round-5 Block A (#313) — fee-leg overflow guard,
+    ///         mirroring the existing `LoanIdOverflow` pattern. Triggers
+    ///         on `feeLegs.length > MAX_FEE_LEGS` at record time before
+    ///         any storage write.
+    error FeeLegsTooMany(uint256 supplied, uint256 max);
+
+    /// @notice T-086 Round-5 Block A (#313) — fee-leg recipient
+    ///         validation: the recipient cannot be the zero address
+    ///         (would route the leg's tokens into oblivion at fill
+    ///         time, contradicting OpenSea's fee-enforcement model
+    ///         this surface exists to support).
+    error FeeLegZeroRecipient(uint256 idx);
+
+    /// @notice T-086 Round-5 Block A (#313) — both `startAmount` and
+    ///         `endAmount` MUST be > 0 per leg. A zero leg is
+    ///         indistinguishable from "no leg" + clutters the order
+    ///         shape unnecessarily; if the dapp wants to omit a leg
+    ///         it should pass a shorter `FeeLeg[]`, not a zero-amount
+    ///         entry.
+    error FeeLegZeroAmount(uint256 idx);
 
     // ─── Events ─────────────────────────────────────────────────────────
 
@@ -313,7 +360,8 @@ contract CollateralListingExecutor is
         bytes32 conduitKey,
         uint256 salt,
         uint256 startTime,
-        uint256 askPrice
+        uint256 askPrice,
+        FeeLeg[] calldata feeLegs
     ) external {
         if (msg.sender != vaipakamDiamond) revert NotDiamond();
         if (!approvedConduits[conduit]) revert ConduitNotApproved(conduit);
@@ -329,6 +377,28 @@ contract CollateralListingExecutor is
         if (loanId > type(uint96).max) revert LoanIdOverflow(loanId);
         if (startTime > type(uint64).max) revert StartTimeOverflow(startTime);
         if (askPrice > type(uint192).max) revert AskPriceOverflow(askPrice);
+        // T-086 Round-5 Block A (#313) — fee-leg validation. The
+        // facet's `_assertOrderContent` re-checks shape at fill time;
+        // here we only enforce sign-time invariants that protect the
+        // storage layout (`MAX_FEE_LEGS` cap) + canonical-shape
+        // construction in `LibPrepayOrder` (non-zero recipient + non-
+        // zero start / end amounts). The borrower-supplied `bps` and
+        // OpenSea's submission-time enforcement of the right schedule
+        // are the dapp's concern, not the executor's.
+        if (feeLegs.length > MAX_FEE_LEGS) {
+            revert FeeLegsTooMany(feeLegs.length, MAX_FEE_LEGS);
+        }
+        for (uint256 i = 0; i < feeLegs.length; ) {
+            if (feeLegs[i].recipient == address(0)) {
+                revert FeeLegZeroRecipient(i);
+            }
+            if (feeLegs[i].startAmount == 0 || feeLegs[i].endAmount == 0) {
+                revert FeeLegZeroAmount(i);
+            }
+            // Persist the leg into the per-orderHash dynamic array.
+            _orderFeeLegs[orderHash].push(feeLegs[i]);
+            unchecked { ++i; }
+        }
         orderContext[orderHash] = OrderContext({
             loanId: uint96(loanId),
             conduit: conduit,
@@ -390,6 +460,12 @@ contract CollateralListingExecutor is
 
         uint256 loanId = uint256(ctx.loanId);
         delete orderContext[orderHash];
+        // T-086 Round-5 Block A (#313) — also clear the fee-legs
+        // entry. `delete` on a dynamic array clears length and ALL
+        // elements (Solidity's standard semantics); the cost scales
+        // with `feeLegs.length` (≤ MAX_FEE_LEGS = 4) so it stays
+        // bounded.
+        delete _orderFeeLegs[orderHash];
         emit OrderCanceled(orderHash, loanId);
     }
 
@@ -437,7 +513,22 @@ contract CollateralListingExecutor is
         // so the right behaviour is to fall back to the no-op skip
         // branch (the proper cleanup still completes; we just don't
         // get the OpenSea catalog refresh acceleration).
-        if (uint256(ctx.askPrice) < pctx.lenderLeg + pctx.treasuryLeg) {
+        // T-086 Round-5 Block A (#313) — read fee legs back from
+        // storage for the canonical-shape reconstruction.
+        FeeLeg[] memory feeLegs = _orderFeeLegs[orderHash];
+
+        // Extend the start-state solvency check to include fee legs:
+        // the borrower leg derivation in `LibPrepayOrder` subtracts
+        // `sum(feeLegs.startAmount)` in addition to lender + treasury.
+        // If the cancel-time floor + fees together exceed the recorded
+        // sign-time askPrice, the canonical-shape construction would
+        // panic on the borrower-leg underflow; fall back cleanly.
+        uint256 feeSumStart = 0;
+        for (uint256 i = 0; i < feeLegs.length; ) {
+            feeSumStart += uint256(feeLegs[i].startAmount);
+            unchecked { ++i; }
+        }
+        if (uint256(ctx.askPrice) < pctx.lenderLeg + pctx.treasuryLeg + feeSumStart) {
             emit SeaportCancelSkipped(orderHash, uint256(ctx.loanId));
             return;
         }
@@ -449,7 +540,8 @@ contract CollateralListingExecutor is
             ctx.conduitKey,
             uint256(ctx.salt),
             uint256(ctx.startTime),
-            ISeaportOrderHash(seaport).getCounter(pctx.borrowerVault)
+            ISeaportOrderHash(seaport).getCounter(pctx.borrowerVault),
+            feeLegs
         );
 
         bytes32 reconstructed = ISeaportOrderHash(seaport).getOrderHash(components);
@@ -613,6 +705,14 @@ contract CollateralListingExecutor is
         // on the same order, but defense-in-depth).
         IVaipakamPrepayCallbacks(vaipakamDiamond).executorFinalizePrepaySale(loanId);
         delete orderContext[params.orderHash];
+        // T-086 Round-5 Block A (#313) — Codex P2 round-1 cleanup
+        // (PR #324 Raja review): also clear the per-order fee-leg
+        // storage. The successful-fill path was leaking
+        // _orderFeeLegs entries while clearOrder + the explicit
+        // cancel paths cleared them; this brings validateOrder in
+        // line. `delete` on a dynamic-array mapping value clears
+        // length + every element (Solidity standard semantics).
+        delete _orderFeeLegs[params.orderHash];
 
         emit OrderFilled(params.orderHash, loanId);
         return ISeaportZone.validateOrder.selector;
@@ -724,21 +824,44 @@ contract CollateralListingExecutor is
         }
 
         // ── Consideration shape check ───────────────────────────────────
-        // Three legs in fixed order: [lender, treasury, borrower] per
-        // design doc §5.5. Each must be in the loan's lending asset
-        // (ERC20 only for v1 — NFT-rental loans don't fit the prepay
-        // sale flow). Without these checks, a fill could route the
-        // right amounts in the WRONG token (Codex / Grok blocker on
-        // Round 1).
-        if (params.consideration.length != 3) {
-            revert WrongConsiderationCount(3, params.consideration.length);
+        // Three protocol legs in fixed order: [lender, treasury, borrower]
+        // per design doc §5.5. T-086 Round-5 Block A (#313) allows
+        // additional fee legs at indices 3 … (3 + feeLegsCount - 1) up
+        // to `MAX_FEE_LEGS = 4` total. Each leg (protocol or fee) must
+        // be in the loan's lending asset (ERC20 only for v1 — NFT-rental
+        // loans don't fit the prepay sale flow). Without these checks,
+        // a fill could route the right amounts in the WRONG token
+        // (Codex / Grok blocker on Round 1).
+        if (
+            params.consideration.length < 3 ||
+            params.consideration.length > 3 + MAX_FEE_LEGS
+        ) {
+            revert WrongConsiderationCount(3 + MAX_FEE_LEGS, params.consideration.length);
         }
         if (pctx.assetType != LibVaipakam.AssetType.ERC20) {
             revert UnsupportedLendingAssetType();
         }
+        // Protocol legs — itemType + token + identifier shape, plus
+        // amount + recipient checks below.
         _assertConsiderationItem(params.consideration[0], 0, pctx.principalAsset, params.orderHash);
         _assertConsiderationItem(params.consideration[1], 1, pctx.principalAsset, params.orderHash);
         _assertConsiderationItem(params.consideration[2], 2, pctx.principalAsset, params.orderHash);
+        // T-086 Round-5 Block A (#313) — per-fee-leg shape loop. Same
+        // ERC20 + principalAsset + zero-identifier checks the protocol
+        // legs get. Recipient is NOT validated against an on-chain
+        // allowlist (per §14.4: economically neutral for the borrower
+        // to lie since the fees come out of their own remainder; OpenSea
+        // submission-time enforcement is the forcing function for
+        // correctness). Amount > 0 IS validated here so a fill can't
+        // record a zero-amount fee leg that clutters the indexer's
+        // record without economic effect.
+        for (uint256 i = 3; i < params.consideration.length; ) {
+            _assertConsiderationItem(params.consideration[i], i, pctx.principalAsset, params.orderHash);
+            if (params.consideration[i].amount == 0) {
+                revert FeeLegZeroAmount(i);
+            }
+            unchecked { ++i; }
+        }
 
         // ── Live-floor leg checks (read from the diamond view) ─────────
         // Lender + treasury legs compared against the live floor as

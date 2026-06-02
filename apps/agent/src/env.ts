@@ -125,6 +125,12 @@ interface BaseEnv {
   // postPrepayListing / updatePrepayListing tx, so a tight budget
   // is plenty; the binding exists mainly as an abuse safety net.
   OPENSEA_LISTING_RATELIMIT?: RateLimitBinding;
+  // T-086 Round-5 Block A (#313) — per-IP rate-limit on the new
+  // GET /opensea/collection/{slug} proxy. Without this, anyone
+  // can spoof an allowed Origin and iterate slugs/chains to drain
+  // the OPENSEA_API_KEY quota. Same Cloudflare built-in binding
+  // pattern + key-by-IP as the listing rate-limit.
+  OPENSEA_COLLECTION_RATELIMIT?: RateLimitBinding;
 
   // Diagnostics sampling (0.0–1.0; default 1.0 = write every accepted POST).
   // Coerced from string to float at read time. Out-of-range values
@@ -146,6 +152,12 @@ interface BaseEnv {
   // (`/thresholds`, `/link/telegram`, `/diag/record`). Set in
   // wrangler.jsonc:vars.
   FRONTEND_ORIGIN: string;
+
+  // T-086 Round-5 Block A (#313) — recipient-validating-token
+  // allow-list (JSON-encoded). See the `Env` interface comment
+  // below for the shape; set in wrangler.jsonc:vars per chain
+  // post-deploy.
+  RECIPIENT_VALIDATING_TOKENS?: string;
 }
 
 /**
@@ -220,6 +232,15 @@ export interface Env extends BaseEnv {
   ONEINCH_API_KEY?: string;
   // T-086 step 14 — resolved OpenSea Listings API key.
   OPENSEA_API_KEY?: string;
+
+  // T-086 Round-5 Block A (#313) — per-chain allow-list of tokens
+  // whose `transfer` can revert based on recipient (USDC OFAC
+  // blocklist, ERC777/ERC1363 hook-enabled tokens, etc.). JSON-
+  // encoded; keys are `${chainId}:${tokenAddressLower}`. Each entry
+  // carries the `balanceSlot` identifier (resolved at config-time
+  // per the §14.4 errata recipe) + a `hookEnabled` flag. Unset =
+  // pre-flight returns "not_applicable" for every recipient.
+  RECIPIENT_VALIDATING_TOKENS?: string;
 
   // T-075 — server secret for the per-wallet deletion key.
   // `wallet_hash = HMAC-SHA256(fullWallet, DIAG_WALLET_HMAC_KEY)`.
@@ -324,10 +345,13 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     QUOTE_1INCH_RATELIMIT: raw.QUOTE_1INCH_RATELIMIT,
     DIAG_RECORD_RATELIMIT: raw.DIAG_RECORD_RATELIMIT,
     OPENSEA_LISTING_RATELIMIT: raw.OPENSEA_LISTING_RATELIMIT,
+    OPENSEA_COLLECTION_RATELIMIT: raw.OPENSEA_COLLECTION_RATELIMIT,
     DIAG_SAMPLE_RATE: raw.DIAG_SAMPLE_RATE,
     DIAG_RETENTION_DAYS: raw.DIAG_RETENTION_DAYS,
     DIAG_LEGAL_DOCS: raw.DIAG_LEGAL_DOCS,
     FRONTEND_ORIGIN: raw.FRONTEND_ORIGIN,
+    // T-086 Round-5 Block A (#313) — pass through verbatim.
+    RECIPIENT_VALIDATING_TOKENS: raw.RECIPIENT_VALIDATING_TOKENS,
     // Resolved secrets.
     RPC_BASE: base,
     RPC_ETH: eth,

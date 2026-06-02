@@ -217,7 +217,7 @@ export async function sweepUnpublishedListings(env: Env): Promise<void> {
 
   const rows = await env.DB.prepare(
     `SELECT chain_id, loan_id, order_hash, ask_price, conduit_key,
-            salt, executor, tx_hash
+            salt, executor, tx_hash, fee_legs_json
        FROM prepay_listings
       WHERE opensea_published_at IS NULL
         AND posted_at <= ?
@@ -234,6 +234,7 @@ export async function sweepUnpublishedListings(env: Env): Promise<void> {
       salt: string | null;
       executor: string | null;
       tx_hash: string;
+      fee_legs_json: string | null;
     }>();
 
   if (!rows.results || rows.results.length === 0) return;
@@ -246,6 +247,27 @@ export async function sweepUnpublishedListings(env: Env): Promise<void> {
     // those is the original-tx redrive, which is out of scope here.
     if (!row.conduit_key || !row.salt || !row.executor) continue;
     const client = createPublicClient({ transport: http(chain.rpc) });
+    // T-086 Round-5 Block A (#313) — decode the recorded fee
+    // legs from D1 back into the shape the JS reconstruction
+    // needs. Rows from before this migration have NULL
+    // fee_legs_json (= treat as fee-free for sweep purposes).
+    let feeLegs: { recipient: string; startAmount: bigint; endAmount: bigint }[] = [];
+    if (row.fee_legs_json) {
+      try {
+        const parsed = JSON.parse(row.fee_legs_json) as Array<{
+          recipient: string; startAmount: string; endAmount: string;
+        }>;
+        feeLegs = parsed.map((l) => ({
+          recipient: l.recipient,
+          startAmount: BigInt(l.startAmount),
+          endAmount: BigInt(l.endAmount),
+        }));
+      } catch {
+        // Malformed JSON should never happen (we wrote it), but
+        // fall back to fee-free rather than crashing the sweep.
+        feeLegs = [];
+      }
+    }
     const result = await indexerPublishPrepayListing(
       {
         publicClient: client,
@@ -258,6 +280,7 @@ export async function sweepUnpublishedListings(env: Env): Promise<void> {
         conduitKey: row.conduit_key as `0x${string}`,
         executor: row.executor as `0x${string}`,
         expectedOrderHash: row.order_hash as `0x${string}`,
+        feeLegs,
       },
       env,
     );
@@ -1706,6 +1729,29 @@ async function processLoanLogs(
       const conduitKey = String(a.conduitKey as `0x${string}`).toLowerCase();
       const salt = String(a.salt as bigint);
       const pinnedExecutor = String(a.executor as Address).toLowerCase();
+      // T-086 Round-5 Block A (#313) — the event now carries the
+      // full `FeeLeg[]` as data per §14.6. Decode + persist the
+      // schedule + the derived borrower remainder for analytics.
+      // For fee-free posts the array is length 0; we still write
+      // '[]' (not NULL) so downstream tools can distinguish
+      // "fee-free collection" from "haven't decoded yet."
+      const feeLegsRaw = (a.feeLegs ?? []) as ReadonlyArray<{
+        recipient: Address; startAmount: bigint; endAmount: bigint;
+      }>;
+      const feeLegsJson = JSON.stringify(
+        feeLegsRaw.map(l => ({
+          recipient: String(l.recipient).toLowerCase(),
+          startAmount: String(l.startAmount),
+          endAmount: String(l.endAmount),
+        })),
+      );
+      // T-086 Round-5 Block A (#313) — the `borrower_remainder`
+      // column was intentionally NOT added in migration 0017 (see
+      // its NOTE block). Computing it correctly needs an extra
+      // `getPrepayContext` RPC for lender/treasury legs the event
+      // doesn't carry; rather than persist a wrong value (PR #324
+      // Codex + Raja review both flagged this as blocking), we
+      // skip the write until a follow-up does the proper math.
       // Resolve `grace_period_end` via a fresh RPC read of
       // `getLoanDetails(loanId)`. The on-chain start_time +
       // durationDays are mutated by RepayFacet.repayPartial
@@ -1743,6 +1789,13 @@ async function processLoanLogs(
         conduitKey as `0x${string}`,
         pinnedExecutor as `0x${string}`,
         orderHash as `0x${string}`,
+        // T-086 Round-5 Block A (#313) — Codex P1 (PR #324 review):
+        // thread feeLegs through to the JS reconstruction.
+        feeLegsRaw.map(l => ({
+          recipient: String(l.recipient),
+          startAmount: BigInt(l.startAmount),
+          endAmount: BigInt(l.endAmount),
+        })),
       );
       const publishedAt = publishResult.published
         ? blockAt
@@ -1754,8 +1807,9 @@ async function processLoanLogs(
            (chain_id, loan_id, order_hash, ask_price, conduit,
             lister, posted_at, updated_at, grace_period_end,
             block_number, tx_hash, log_index,
-            conduit_key, salt, opensea_published_at, executor)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            conduit_key, salt, opensea_published_at, executor,
+            fee_legs_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
         .bind(
           chainId,
@@ -1774,6 +1828,7 @@ async function processLoanLogs(
           salt,
           publishedAt,
           pinnedExecutor,
+          feeLegsJson,
         )
         .run();
     } else if (log.eventName === 'PrepayListingUpdated') {
@@ -1795,6 +1850,24 @@ async function processLoanLogs(
       const newSalt = String(a.newSalt as bigint);
       const newPinnedExecutor = String(a.executor as Address).toLowerCase();
       const blockAt = blockTimestamps.get(log.blockNumber) ?? now;
+      // T-086 Round-5 Block A (#313) — decode the new fee legs +
+      // re-derive borrower remainder (same shape as the Posted
+      // handler above; the update path re-signs the order with a
+      // potentially-changed fee schedule per §15.3 step 5 + Round-
+      // 5.1 errata's English re-derivation rule).
+      const feeLegsRaw = (a.feeLegs ?? []) as ReadonlyArray<{
+        recipient: Address; startAmount: bigint; endAmount: bigint;
+      }>;
+      const feeLegsJson = JSON.stringify(
+        feeLegsRaw.map(l => ({
+          recipient: String(l.recipient).toLowerCase(),
+          startAmount: String(l.startAmount),
+          endAmount: String(l.endAmount),
+        })),
+      );
+      // T-086 Round-5 Block A (#313) — see Posted-handler note;
+      // the borrower_remainder column is intentionally NOT
+      // written here either.
       // RPC-resolve fresh grace_period_end for the
       // backfill-INSERT case. Same reasoning as the Posted
       // handler — start_time + duration_days can drift after
@@ -1818,6 +1891,15 @@ async function processLoanLogs(
         newConduitKey as `0x${string}`,
         newPinnedExecutor as `0x${string}`,
         newOrderHash as `0x${string}`,
+        // T-086 Round-5 Block A (#313) — same feeLegs threading
+        // as the Posted handler. The update path's fee schedule
+        // can differ from the original post's (per §15.3 errata's
+        // re-fetch rule on fee-enforced collections).
+        feeLegsRaw.map(l => ({
+          recipient: String(l.recipient),
+          startAmount: BigInt(l.startAmount),
+          endAmount: BigInt(l.endAmount),
+        })),
       );
       const publishedAt = publishResult.published
         ? blockAt
@@ -1839,7 +1921,7 @@ async function processLoanLogs(
                updated_at = ?, grace_period_end = ?,
                block_number = ?, tx_hash = ?, log_index = ?,
                conduit_key = ?, salt = ?, opensea_published_at = ?,
-               executor = ?
+               executor = ?, fee_legs_json = ?
          WHERE chain_id = ? AND loan_id = ?`,
       )
         .bind(
@@ -1856,6 +1938,7 @@ async function processLoanLogs(
           newSalt,
           publishedAt,
           newPinnedExecutor,
+          feeLegsJson,
           chainId,
           loanId,
         )
@@ -1871,8 +1954,9 @@ async function processLoanLogs(
              (chain_id, loan_id, order_hash, ask_price, conduit,
               lister, posted_at, updated_at, grace_period_end,
               block_number, tx_hash, log_index,
-              conduit_key, salt, opensea_published_at, executor)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              conduit_key, salt, opensea_published_at, executor,
+              fee_legs_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
           .bind(
             chainId,
@@ -1891,6 +1975,7 @@ async function processLoanLogs(
             newSalt,
             publishedAt,
             newPinnedExecutor,
+            feeLegsJson,
           )
           .run();
       }
@@ -2138,6 +2223,11 @@ async function _maybePublishToOpenSea(
   conduitKey: `0x${string}`,
   executor: `0x${string}`,
   expectedOrderHash: `0x${string}`,
+  // T-086 Round-5 Block A (#313) — pass the recorded fee legs
+  // through so the autonomous-publish JS reconstruction matches
+  // the on-chain hash on fee-enforced collections. Empty for
+  // fee-free posts.
+  feeLegs: ReadonlyArray<{ recipient: string; startAmount: bigint; endAmount: bigint }>,
 ): Promise<{ published: boolean; unsupportedChain: boolean }> {
   try {
     const result = await indexerPublishPrepayListing(
@@ -2152,6 +2242,7 @@ async function _maybePublishToOpenSea(
         conduitKey,
         executor,
         expectedOrderHash,
+        feeLegs,
       },
       env,
     );

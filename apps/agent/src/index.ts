@@ -67,6 +67,8 @@ import { runPeriodicPreNotify } from './periodicPreNotify';
 import { runBuyWatchdog } from './buyWatchdog';
 import { handle0xQuote, handle1inchQuote } from './quoteProxy';
 import { handleOpenSeaListingPost } from './openseaProxy';
+import { handleOpenSeaCollection } from './openseaCollectionProxy';
+import { handleFeeRecipientPreflight } from './feeRecipientPreflight';
 import { handleDiagRecord, pruneOldDiagErrors } from './diagRecord';
 import {
   handleDiagErasure,
@@ -219,6 +221,32 @@ export default {
     // works (Codex round-1 P2 on the same PR).
     if (url.pathname === '/opensea/listing' && req.method === 'POST') {
       return handleOpenSeaListingPost(
+        req,
+        resolved,
+        resolveAllowedOrigin(req, resolved),
+      );
+    }
+    // T-086 Round-5 Block A (#313) — Collection API proxy + fee-
+    // recipient pre-flight. The collection proxy is GET (stateless,
+    // cacheable); the pre-flight is POST (carries the dapp's
+    // computed fee schedule + loan context, returns per-recipient
+    // verdicts). Both CORS-locked via the same FRONTEND_ORIGIN
+    // resolver every other dapp-facing endpoint uses.
+    if (
+      url.pathname.startsWith('/opensea/collection/') &&
+      req.method === 'GET'
+    ) {
+      return handleOpenSeaCollection(
+        req,
+        resolved,
+        resolveAllowedOrigin(req, resolved),
+      );
+    }
+    if (
+      url.pathname === '/opensea/feeRecipientPreflight' &&
+      req.method === 'POST'
+    ) {
+      return handleFeeRecipientPreflight(
         req,
         resolved,
         resolveAllowedOrigin(req, resolved),

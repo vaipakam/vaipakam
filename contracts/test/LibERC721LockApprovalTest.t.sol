@@ -110,16 +110,24 @@ contract LibERC721LockApprovalTest is SetupTest {
         TestMutatorFacet(address(diamond)).lockNFTRaw(
             TEST_TOKEN_A, LibERC721.LockReason.PrecloseOffset
         );
-        // Re-lock with a different reason (defensive — today's facet
-        // design doesn't trigger this, but the storage invariant must
-        // hold). Counter must NOT double-count.
+        // Re-lock with the SAME reason — the idempotent restamp path
+        // explicitly preserved by `_lock` (see the inline comment in
+        // libraries/LibERC721.sol#_lock). Counter must NOT double-count.
+        //
+        // The cross-reason case (which an earlier version of this test
+        // exercised) is now hard-rejected by `_lock` via
+        // `LockReasonConflict` per PR #317 (T-086 step 6 round 2 —
+        // Codex P1 cross-flow collision guard). That revert is covered
+        // by the prepay-listing facet's `BorrowerNFTAlreadyLocked`
+        // suite, so the regression-counter test here narrows to the
+        // path that's actually supported.
         TestMutatorFacet(address(diamond)).lockNFTRaw(
-            TEST_TOKEN_A, LibERC721.LockReason.EarlyWithdrawalSale
+            TEST_TOKEN_A, LibERC721.LockReason.PrecloseOffset
         );
         assertEq(
             TestMutatorFacet(address(diamond)).getLockedTokenCount(nftOwner),
             1,
-            "counter must not double-count on re-lock"
+            "counter must not double-count on same-reason re-lock"
         );
     }
 
@@ -480,9 +488,14 @@ contract LibERC721LockApprovalTest is SetupTest {
     }
 
     /// @notice Each fresh `_lock` (None→non-None) bumps the epoch.
-    ///         Re-locking a token that is ALREADY locked (defensive — not
-    ///         today's facet design but the storage invariant must hold)
-    ///         must NOT bump again.
+    ///         A same-reason re-lock is the idempotent restamp path
+    ///         (see `_lock` inline comment) and must NOT bump again.
+    ///
+    ///         The cross-reason case is now hard-rejected by
+    ///         `LockReasonConflict` per PR #317 — the
+    ///         BorrowerNFTAlreadyLocked surface covers that revert
+    ///         in the prepay-listing facet test suite. This test
+    ///         narrows to the supported idempotent path.
     function test_lockEpoch_doesNotBumpOnRelock() public {
         TestMutatorFacet(address(diamond)).lockNFTRaw(
             TEST_TOKEN_A, LibERC721.LockReason.PrecloseOffset
@@ -492,14 +505,14 @@ contract LibERC721LockApprovalTest is SetupTest {
             1
         );
 
-        // Re-lock same token with a different reason — must not double-bump.
+        // Re-lock same token with the SAME reason — must not double-bump.
         TestMutatorFacet(address(diamond)).lockNFTRaw(
-            TEST_TOKEN_A, LibERC721.LockReason.EarlyWithdrawalSale
+            TEST_TOKEN_A, LibERC721.LockReason.PrecloseOffset
         );
         assertEq(
             TestMutatorFacet(address(diamond)).getOperatorApprovalEpoch(nftOwner),
             1,
-            "epoch must not double-bump on re-lock"
+            "epoch must not double-bump on same-reason re-lock"
         );
 
         // A second DISTINCT token entering a lock DOES bump again — every

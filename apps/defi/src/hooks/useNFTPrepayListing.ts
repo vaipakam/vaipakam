@@ -8,6 +8,19 @@ import { beginStep } from '../lib/journeyLog';
 import { publishPrepayListingToOpenSea } from '../lib/openseaPublish';
 import type { Hex } from 'viem';
 
+/** T-086 Round-5 Block A (#313) — borrower-supplied fee leg
+ *  passed to `postPrepayListing` / `updatePrepayListing`. Maps
+ *  one-to-one with the on-chain `FeeLeg` struct's calldata
+ *  shape. Block A is fixed-price so `startAmount == endAmount`
+ *  on every leg; the union type names both fields so Block B's
+ *  Dutch path can reuse the same shape with `startAmount >
+ *  endAmount`. */
+export interface FeeLegInput {
+  recipient: `0x${string}`;
+  startAmount: bigint;
+  endAmount: bigint;
+}
+
 /** Minimal subset of viem's `TransactionReceipt` the OpenSea publish
  *  path consumes — kept structural so a stricter / future viem
  *  shape change doesn't break the hook's contract. */
@@ -61,12 +74,23 @@ export interface UseNFTPrepayListingResult {
     askPrice: bigint,
     salt: bigint,
     conduitKey: `0x${string}`,
+    /** T-086 Round-5 Block A (#313) — fee schedule from OpenSea.
+     *  Empty array for fee-free collections. The dapp fetches
+     *  this from `/opensea/collection/{slug}` on the agent proxy
+     *  before posting and computes the amounts against the gross
+     *  askPrice. */
+    feeLegs: ReadonlyArray<FeeLegInput>,
   ) => Promise<boolean>;
   updatePrepayListing: (
     loanId: bigint,
     newAskPrice: bigint,
     newSalt: bigint,
     newConduitKey: `0x${string}`,
+    /** T-086 Round-5 Block A (#313) — re-derived fee schedule
+     *  against `newAskPrice`. Per the §15.3 errata: the dapp
+     *  re-fetches the OpenSea schedule on every match-offer
+     *  rotation, not from a session cache. */
+    feeLegs: ReadonlyArray<FeeLegInput>,
   ) => Promise<boolean>;
   cancelPrepayListing: (loanId: bigint) => Promise<boolean>;
 }
@@ -312,6 +336,12 @@ export function useNFTPrepayListing(
       askPrice: bigint,
       salt: bigint,
       conduitKey: `0x${string}`,
+      // T-086 Round-5 Block A (#313) — Codex P1: thread the
+      // borrower's fee legs through to the JS reconstruction so the
+      // canonical hash matches the on-chain hash on fee-enforced
+      // collections. Empty array for fee-free posts collapses to the
+      // Round-4 3-leg shape unchanged.
+      feeLegs: ReadonlyArray<FeeLegInput>,
     ): Promise<void> => {
       if (!chain.diamondAddress) return;
       let agentOrigin: string | null = null;
@@ -331,6 +361,7 @@ export function useNFTPrepayListing(
         askPrice,
         salt,
         conduitKey,
+        feeLegs,
       });
       if (!result.published) {
         // eslint-disable-next-line no-console
@@ -343,18 +374,22 @@ export function useNFTPrepayListing(
     [chain.diamondAddress, chainId, publicClient],
   );
 
+  // T-086 Round-5 Block A (#313) — see hook type comments above
+  // for why feeLegs is a calldata array passed in by the caller
+  // (computed against the live OpenSea Collection API response).
   const postPrepayListing = useCallback(
     async (
       lid: bigint,
       askPrice: bigint,
       salt: bigint,
       conduitKey: `0x${string}`,
+      feeLegs: ReadonlyArray<FeeLegInput>,
     ): Promise<boolean> => {
       const r = await runWrite('postPrepayListing', lid, () =>
-        diamond.postPrepayListing(lid, askPrice, salt, conduitKey),
+        diamond.postPrepayListing(lid, askPrice, salt, conduitKey, feeLegs),
       );
       if (r.success && r.receipt) {
-        await runOpenSeaPublish(r.receipt, lid, askPrice, salt, conduitKey);
+        await runOpenSeaPublish(r.receipt, lid, askPrice, salt, conduitKey, feeLegs);
       }
       return r.success;
     },
@@ -367,12 +402,13 @@ export function useNFTPrepayListing(
       newAskPrice: bigint,
       newSalt: bigint,
       newConduitKey: `0x${string}`,
+      feeLegs: ReadonlyArray<FeeLegInput>,
     ): Promise<boolean> => {
       const r = await runWrite('updatePrepayListing', lid, () =>
-        diamond.updatePrepayListing(lid, newAskPrice, newSalt, newConduitKey),
+        diamond.updatePrepayListing(lid, newAskPrice, newSalt, newConduitKey, feeLegs),
       );
       if (r.success && r.receipt) {
-        await runOpenSeaPublish(r.receipt, lid, newAskPrice, newSalt, newConduitKey);
+        await runOpenSeaPublish(r.receipt, lid, newAskPrice, newSalt, newConduitKey, feeLegs);
       }
       return r.success;
     },

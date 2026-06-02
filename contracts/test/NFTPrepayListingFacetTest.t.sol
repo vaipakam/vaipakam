@@ -6,6 +6,7 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibERC721} from "../src/libraries/LibERC721.sol";
 import {NFTPrepayListingFacet} from "../src/facets/NFTPrepayListingFacet.sol";
+import {FeeLeg} from "../src/seaport/PrepayTypes.sol";
 import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
@@ -161,7 +162,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
             )
         );
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, 1e18, TEST_SALT_A, conduitKey
+            LOAN_ID, 1e18, TEST_SALT_A, conduitKey, _emptyFeeLegs()
         );
     }
 
@@ -176,7 +177,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         );
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
-        );
+        , _emptyFeeLegs());
     }
 
     function test_postPrepayListing_revertsUnsupportedCollateralForV1() public {
@@ -197,7 +198,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         );
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
-        );
+        , _emptyFeeLegs());
     }
 
     function test_postPrepayListing_revertsGraceWindowClosed() public {
@@ -217,7 +218,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         );
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
-        );
+        , _emptyFeeLegs());
     }
 
     function test_postPrepayListing_revertsNotPositionHolder() public {
@@ -233,7 +234,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         );
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
-        );
+        , _emptyFeeLegs());
     }
 
     function test_postPrepayListing_revertsAlreadyExists() public {
@@ -242,7 +243,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         vm.prank(borrowerHolder);
         bytes32 firstHash = NFTPrepayListingFacet(address(diamond)).postPrepayListing(
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
-        );
+        , _emptyFeeLegs());
 
         // Second post — should fail with the first listing's hash.
         vm.prank(borrowerHolder);
@@ -255,7 +256,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         );
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_B, conduitKey
-        );
+        , _emptyFeeLegs());
     }
 
     function test_postPrepayListing_revertsConduitNotApproved() public {
@@ -278,7 +279,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         );
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, rogueConduitKey
-        );
+        , _emptyFeeLegs());
     }
 
     function test_postPrepayListing_revertsAskBelowFloor() public {
@@ -288,16 +289,20 @@ contract NFTPrepayListingFacetTest is SetupTest {
         uint256 minAsk = (floor * (10_000 + TEST_BUFFER_BPS)) / 10_000;
 
         vm.prank(borrowerHolder);
+        // Round-5 Block A (#313): the path now goes through
+        // `_requireAskCoversFloorWithFees` even when feeLegs is
+        // empty. The error type and the third arg (required ask)
+        // are unchanged; the error label is more precise.
         vm.expectRevert(
             abi.encodeWithSelector(
-                NFTPrepayListingFacet.AskBelowFloor.selector,
+                NFTPrepayListingFacet.AskBelowFloorPlusFees.selector,
                 LOAN_ID,
                 minAsk - 1,
                 minAsk
             )
         );
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, minAsk - 1, TEST_SALT_A, conduitKey
+            LOAN_ID, minAsk - 1, TEST_SALT_A, conduitKey, _emptyFeeLegs()
         );
     }
 
@@ -312,7 +317,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         vm.expectRevert(NFTPrepayListingFacet.ExecutorNotSet.selector);
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
-        );
+        , _emptyFeeLegs());
     }
 
     function test_postPrepayListing_revertsKillSwitchOff() public {
@@ -325,7 +330,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         vm.expectRevert(NFTPrepayListingFacet.PrepayListingDisabled.selector);
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
-        );
+        , _emptyFeeLegs());
     }
 
     function test_postPrepayListing_revertsBorrowerNFTAlreadyLocked() public {
@@ -351,7 +356,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         );
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
-        );
+        , _emptyFeeLegs());
     }
 
     function test_postPrepayListing_revertsBufferNotConfigured() public {
@@ -364,7 +369,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         vm.expectRevert(NFTPrepayListingFacet.PrepayListingBufferNotConfigured.selector);
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
-        );
+        , _emptyFeeLegs());
     }
 
     // ─── 2b. postPrepayListing — happy path ─────────────────────────────
@@ -375,7 +380,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
 
         vm.prank(borrowerHolder);
         bytes32 derivedHash = NFTPrepayListingFacet(address(diamond)).postPrepayListing(
-            LOAN_ID, ask, TEST_SALT_A, conduitKey
+            LOAN_ID, ask, TEST_SALT_A, conduitKey, _emptyFeeLegs()
         );
 
         // Diamond bookkeeping.
@@ -416,7 +421,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         );
         NFTPrepayListingFacet(address(diamond)).updatePrepayListing(
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_B, conduitKey
-        );
+        , _emptyFeeLegs());
     }
 
     function test_updatePrepayListing_happyPath() public {
@@ -426,13 +431,13 @@ contract NFTPrepayListingFacetTest is SetupTest {
         vm.prank(borrowerHolder);
         bytes32 hashA = NFTPrepayListingFacet(address(diamond)).postPrepayListing(
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
-        );
+        , _emptyFeeLegs());
 
         // 2. Update with salt B — capture derived hash.
         vm.prank(borrowerHolder);
         bytes32 hashB = NFTPrepayListingFacet(address(diamond)).updatePrepayListing(
             LOAN_ID, _floorPlusBuffer() + 1 ether, TEST_SALT_B, conduitKey
-        );
+        , _emptyFeeLegs());
         assertTrue(hashA != hashB, "different salts -> different hashes");
 
         // Bookkeeping points at the new hash.
@@ -465,7 +470,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         vm.prank(borrowerHolder);
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
-        );
+        , _emptyFeeLegs());
 
         vm.prank(randomCaller);
         vm.expectRevert(
@@ -504,7 +509,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         vm.prank(borrowerHolder);
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
-        );
+        , _emptyFeeLegs());
         uint256 aRecordCount = mockExecutor.recordCallCount();
 
         // Governance rotates to executor B.
@@ -551,7 +556,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         vm.prank(borrowerHolder);
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
-        );
+        , _emptyFeeLegs());
 
         // Simulate `repayLoan` finishing: flip status to Repaid
         // while keeping startTime + everything else intact.
@@ -580,7 +585,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         vm.prank(borrowerHolder);
         bytes32 derivedHash = NFTPrepayListingFacet(address(diamond)).postPrepayListing(
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
-        );
+        , _emptyFeeLegs());
 
         vm.prank(borrowerHolder);
         NFTPrepayListingFacet(address(diamond)).cancelPrepayListing(LOAN_ID);
@@ -621,7 +626,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         vm.prank(borrowerHolder);
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
-        );
+        , _emptyFeeLegs());
 
         // Post: the configured conduit is approved for the token.
         assertEq(
@@ -640,7 +645,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         vm.prank(borrowerHolder);
         bytes32 derivedHash = NFTPrepayListingFacet(address(diamond)).postPrepayListing(
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
-        );
+        , _emptyFeeLegs());
 
         assertEq(
             VaipakamVaultImplementation(borrowerVaultAddr).getListingExecutor(derivedHash),
@@ -655,7 +660,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         vm.prank(borrowerHolder);
         bytes32 derivedHash = NFTPrepayListingFacet(address(diamond)).postPrepayListing(
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
-        );
+        , _emptyFeeLegs());
 
         vm.prank(borrowerHolder);
         NFTPrepayListingFacet(address(diamond)).cancelPrepayListing(LOAN_ID);
@@ -704,7 +709,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         vm.prank(borrowerHolder);
         bytes32 derivedHash = NFTPrepayListingFacet(address(diamond)).postPrepayListing(
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
-        );
+        , _emptyFeeLegs());
 
         // Pre-condition: hash is recorded.
         assertEq(
@@ -757,7 +762,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         vm.prank(borrowerHolder);
         bytes32 derivedHash = NFTPrepayListingFacet(address(diamond)).postPrepayListing(
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
-        );
+        , _emptyFeeLegs());
 
         // Pre: everything is wired.
         assertEq(
@@ -813,7 +818,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         vm.prank(borrowerHolder);
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
-        );
+        , _emptyFeeLegs());
 
         // Pre-grace — permissionless cancel must refuse.
         uint256 graceEnd = _graceEnd();
@@ -840,7 +845,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         vm.prank(borrowerHolder);
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
-        );
+        , _emptyFeeLegs());
 
         uint256 graceEnd = _graceEnd();
         vm.warp(graceEnd); // exactly at the boundary
@@ -873,7 +878,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         vm.prank(borrowerHolder);
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
-        );
+        , _emptyFeeLegs());
 
         // Flip status to Defaulted while keeping startTime +
         // durationDays unchanged. Simulates the moment AFTER
@@ -906,7 +911,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         vm.prank(borrowerHolder);
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
-        );
+        , _emptyFeeLegs());
 
         // Warp PAST grace (strict — exactly `>= graceEnd + 1`).
         vm.warp(_graceEnd() + 1);
@@ -995,5 +1000,165 @@ contract NFTPrepayListingFacetTest is SetupTest {
     function _floorPlusBuffer() internal pure returns (uint256) {
         uint256 floor = _liveFloorViaContext();
         return (floor * (10_000 + TEST_BUFFER_BPS)) / 10_000;
+    }
+
+    /// @dev Round-5 Block A (#313) — most pre-existing tests are
+    ///      fee-free (no `feeLegs` semantics to assert), so they
+    ///      pass an empty array as the new last arg of
+    ///      `postPrepayListing` / `updatePrepayListing`. New tests
+    ///      that exercise the fee-leg surface build their own
+    ///      explicit arrays.
+    function _emptyFeeLegs() internal pure returns (FeeLeg[] memory) {
+        return new FeeLeg[](0);
+    }
+
+    // ─── Round-5 Block A (#313) — fee-leg integration tests ───────────
+
+    /// @dev Two-leg fee schedule (OpenSea protocol + creator royalty).
+    ///      Realistic shape — matches what the dapp would compute from
+    ///      a fee-enforced collection's OpenSea Collection API
+    ///      response. Total fees = 7.5% of askPrice.
+    function _twoFeeLegsForAsk(uint256 askPrice) internal returns (FeeLeg[] memory legs) {
+        legs = new FeeLeg[](2);
+        legs[0] = FeeLeg({
+            recipient: makeAddr("opensea-fee"),
+            startAmount: uint96((askPrice * 250) / 10_000),                  // 2.5%
+            endAmount: uint96((askPrice * 250) / 10_000)
+        });
+        legs[1] = FeeLeg({
+            recipient: makeAddr("creator-royalty"),
+            startAmount: uint96((askPrice * 500) / 10_000),                  // 5.0%
+            endAmount: uint96((askPrice * 500) / 10_000)
+        });
+    }
+
+    /// @dev Post + capture the orderHash on a fee-enforced collection.
+    ///      Asserts the executor recorded the legs in storage so the
+    ///      cancel-time reconstruction has them. (Posting via the mock
+    ///      executor; storage is on the mock's RecordedCall, not on the
+    ///      real CollateralListingExecutor — but the assertion shape
+    ///      mirrors what the real executor would do.)
+    function test_postPrepayListing_happyPath_withFeeLegs() public {
+        _scaffoldActiveLoan({allowsPrepay: true});
+        // Ask must cover (floor × 1.02) + 7.5% of ask in fees.
+        // floor=100e18, buffer=2% → minProtocol=102e18; fees=7.5% of ask.
+        // Solve ask >= 102e18 + 0.075 × ask  →  ask >= 102e18 / 0.925.
+        // 120e18 comfortably clears the threshold with headroom.
+        uint256 ask = 120 ether;
+        FeeLeg[] memory legs = _twoFeeLegsForAsk(ask);
+
+        vm.prank(borrowerHolder);
+        bytes32 hash = NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, ask, TEST_SALT_A, conduitKey, legs
+        );
+        assertNotEq(hash, bytes32(0), "hash recorded");
+
+        // Mock executor captured the FeeLeg[] verbatim — same length,
+        // same recipients, same amounts on every entry.
+        MockListingExecutorRecorder.RecordedCall memory call =
+            mockExecutor.recordedCallAt(0);
+        assertEq(call.feeLegs.length, 2, "2 fee legs recorded");
+        assertEq(call.feeLegs[0].recipient, legs[0].recipient);
+        assertEq(call.feeLegs[0].startAmount, legs[0].startAmount);
+        assertEq(call.feeLegs[1].recipient, legs[1].recipient);
+        assertEq(call.feeLegs[1].startAmount, legs[1].startAmount);
+    }
+
+    /// @dev `MAX_FEE_LEGS = 4`. A 5-leg array MUST revert at the
+    ///      facet boundary with `FeeLegsExceedCap`, before any
+    ///      state mutation.
+    function test_postPrepayListing_revertsFeeLegsExceedCap() public {
+        _scaffoldActiveLoan({allowsPrepay: true});
+        FeeLeg[] memory legs = new FeeLeg[](5);
+        for (uint256 i = 0; i < 5; i++) {
+            legs[i] = FeeLeg({
+                recipient: address(uint160(0xF0000 + i)),
+                startAmount: 1e18,
+                endAmount: 1e18
+            });
+        }
+        vm.prank(borrowerHolder);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NFTPrepayListingFacet.FeeLegsExceedCap.selector,
+                5,
+                4
+            )
+        );
+        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, _floorPlusBuffer() + 10e18, TEST_SALT_A, conduitKey, legs
+        );
+    }
+
+    /// @dev Zero recipient is rejected with the indexed error so the
+    ///      dapp can surface which entry was bad.
+    function test_postPrepayListing_revertsFeeLegInvalidRecipient() public {
+        _scaffoldActiveLoan({allowsPrepay: true});
+        FeeLeg[] memory legs = new FeeLeg[](1);
+        legs[0] = FeeLeg({
+            recipient: address(0),
+            startAmount: 1e18,
+            endAmount: 1e18
+        });
+        vm.prank(borrowerHolder);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NFTPrepayListingFacet.FeeLegInvalidRecipient.selector, 0
+            )
+        );
+        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, _floorPlusBuffer() + 1e18, TEST_SALT_A, conduitKey, legs
+        );
+    }
+
+    /// @dev Fixed-price MUST reject `startAmount != endAmount` — the
+    ///      `>=` form is reserved for Dutch entry points (Block B).
+    function test_postPrepayListing_revertsFeeLegDecayOnFixedPrice() public {
+        _scaffoldActiveLoan({allowsPrepay: true});
+        FeeLeg[] memory legs = new FeeLeg[](1);
+        legs[0] = FeeLeg({
+            recipient: address(0xFEE),
+            startAmount: 2e18,
+            endAmount: 1e18  // diverges from startAmount
+        });
+        vm.prank(borrowerHolder);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NFTPrepayListingFacet.FeeLegDecayNotAllowedOnFixedPrice.selector, 0
+            )
+        );
+        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, _floorPlusBuffer() + 5e18, TEST_SALT_A, conduitKey, legs
+        );
+    }
+
+    /// @dev With non-empty fees, the buffered-floor check
+    ///      `_requireAskCoversFloorWithFees` must reject an ask that
+    ///      covers protocol legs + buffer alone but not the fees on
+    ///      top. The error label is `AskBelowFloorPlusFees`.
+    function test_postPrepayListing_revertsAskBelowFloorPlusFees() public {
+        _scaffoldActiveLoan({allowsPrepay: true});
+        // Ask exactly equals floor × (1 + buffer) — no headroom for
+        // any fees. Adding a 1 wei fee leg pushes the required ask
+        // above the supplied value.
+        uint256 minProtocolAsk = _floorPlusBuffer();
+        FeeLeg[] memory legs = new FeeLeg[](1);
+        legs[0] = FeeLeg({
+            recipient: address(0xFEE),
+            startAmount: 1,
+            endAmount: 1
+        });
+        vm.prank(borrowerHolder);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NFTPrepayListingFacet.AskBelowFloorPlusFees.selector,
+                LOAN_ID,
+                minProtocolAsk,
+                minProtocolAsk + 1
+            )
+        );
+        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, minProtocolAsk, TEST_SALT_A, conduitKey, legs
+        );
     }
 }
