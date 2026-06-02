@@ -224,15 +224,43 @@ library LibPrepayOrder {
     ///      `_tryCancelOnSeaport` when the recorded order's `mode`
     ///      tag is `PREPAY_MODE_DUTCH`.
     ///
-    ///      Loop-closure rule: pin EVERY signed input as recorded
-    ///      at sign time (startAskPrice, endAskPrice,
-    ///      projectedLenderLeg, projectedTreasuryLeg, startTime,
-    ///      auctionEndTime, fee legs) so the hash recomputes
-    ///      identically. The executor stamps
-    ///      `projectedLenderLeg` / `projectedTreasuryLeg` into the
-    ///      `OrderContext` at sign time precisely so cancel-time
-    ///      reconstruction can replay the originally-signed
-    ///      consideration legs even if the live floor has drifted.
+    ///      Per-input source at cancel time:
+    ///        - `startAskPrice` / `endAskPrice` / `auctionEndTime`
+    ///          / `salt` / `conduitKey` / `startTime` / `fee legs`
+    ///          come from `OrderContext` + the per-orderHash
+    ///          fee-leg array — every borrower-controlled +
+    ///          sign-time value is stamped at `recordOrder` so
+    ///          cancel-time replays them verbatim.
+    ///        - `projectedLenderLeg` / `projectedTreasuryLeg` are
+    ///          NOT pinned in `OrderContext`. The caller reads
+    ///          pctx at `auctionEndTime` (the same lookup time
+    ///          the facet used at sign time) and supplies the
+    ///          freshly-resolved `pctx.lenderLeg` /
+    ///          `pctx.treasuryLeg` here.
+    ///
+    ///      Under STABLE governance config — the common case —
+    ///      the cancel-time pctx-at-`auctionEndTime` read returns
+    ///      the same values the facet signed against, the
+    ///      recomputed hash equals the recorded orderHash, and
+    ///      `Seaport.cancel` forwards cleanly. Under governance
+    ///      drift (e.g. a mid-auction `setFeesConfig` bump that
+    ///      moved `treasuryFeeBps`), the projected legs diverge,
+    ///      the hash recompute mismatches, and
+    ///      `_tryCancelOnSeaport` emits the existing
+    ///      `SeaportCancelSkipped` breadcrumb — matching the
+    ///      fixed-price path's drift-handling shape. The proper
+    ///      cleanup (binding delete + vault revoke) still
+    ///      completes; only the accelerated OpenSea catalog
+    ///      refresh is lost.
+    ///
+    ///      Pinning the projected legs explicitly into
+    ///      `OrderContext` (+2 slots) would eliminate the
+    ///      drift-skip, but the symmetric fee-curve-DECREASE
+    ///      case (treasuryFeeBps drops mid-auction) would let
+    ///      frozen-shape orders keep filling at above-current-
+    ///      policy treasury take — wrong protocol behaviour per
+    ///      design doc §15.2's "Alternative considered + rejected"
+    ///      box. v1 accepts the drift-skip trade-off.
     function componentsForCancelDutch(
         IVaipakamPrepayContext.PrepayContext memory pctx,
         address executor,

@@ -219,7 +219,7 @@ export function useNFTPrepayListing(
    *  post + update, and listing-disappearance for cancel. */
   const waitForIndexer = useCallback(
     async (
-      flow: 'postPrepayListing' | 'updatePrepayListing' | 'cancelPrepayListing',
+      flow: 'postPrepayListing' | 'postPrepayDutchListing' | 'updatePrepayListing' | 'updatePrepayDutchListing' | 'cancelPrepayListing',
       prior: IndexedPrepayListing | null | undefined,
     ): Promise<{
       /** True iff a poll observed the expected transition. */
@@ -243,9 +243,10 @@ export function useNFTPrepayListing(
         latest = row.prepayListing;
         if (flow === 'cancelPrepayListing') {
           if (!row.prepayListing) return { sawTransition: true, latest: undefined };
-        } else if (flow === 'postPrepayListing') {
+        } else if (flow === 'postPrepayListing' || flow === 'postPrepayDutchListing') {
           if (row.prepayListing) return { sawTransition: true, latest: row.prepayListing };
         } else {
+          // update path (fixed or Dutch) — wait for orderHash to rotate
           if (
             row.prepayListing &&
             (!prior || row.prepayListing.orderHash !== prior.orderHash)
@@ -261,7 +262,7 @@ export function useNFTPrepayListing(
 
   const runWrite = useCallback(
     async (
-      flow: 'postPrepayListing' | 'updatePrepayListing' | 'cancelPrepayListing',
+      flow: 'postPrepayListing' | 'postPrepayDutchListing' | 'updatePrepayListing' | 'updatePrepayDutchListing' | 'cancelPrepayListing',
       loanIdArg: bigint,
       submit: () => Promise<{ hash: string; wait: () => Promise<unknown> }>,
     ): Promise<{ success: boolean; receipt?: WriteReceipt }> => {
@@ -481,7 +482,7 @@ export function useNFTPrepayListing(
       conduitKey: `0x${string}`,
       feeLegs: ReadonlyArray<FeeLegInput>,
     ): Promise<boolean> => {
-      const r = await runWrite('postPrepayListing', lid, () =>
+      const r = await runWrite('postPrepayDutchListing', lid, () =>
         diamond.postPrepayDutchListing(
           lid, startAskPrice, endAskPrice, auctionEndTime,
           salt, conduitKey, feeLegs,
@@ -502,7 +503,7 @@ export function useNFTPrepayListing(
       newConduitKey: `0x${string}`,
       feeLegs: ReadonlyArray<FeeLegInput>,
     ): Promise<boolean> => {
-      const r = await runWrite('updatePrepayListing', lid, () =>
+      const r = await runWrite('updatePrepayDutchListing', lid, () =>
         diamond.updatePrepayDutchListing(
           lid, newStartAskPrice, newEndAskPrice, newAuctionEndTime,
           newSalt, newConduitKey, feeLegs,
