@@ -153,6 +153,36 @@ export function OpenSeaOffersSection({
     );
   }
 
+  // T-086 Round-5 Block C — fixed-price-only for v1 (Raja/Grok
+  // review #328 nit #2). The current Match callback calls
+  // `updatePrepayListing` which would rotate a live Dutch listing
+  // into fixed-price at the offer's value — a mode change is
+  // technically supported on-chain but surprises the borrower vs
+  // the release note's "deferred" framing. Hide the section + show
+  // a banner instead. Matching against a Dutch listing lands as a
+  // follow-up that calls `updatePrepayDutchListing` with the
+  // offer's value + fresh decay parameters.
+  const listingIsDutch = live !== null && live !== undefined && live.auctionMode === 1;
+  if (listingIsDutch) {
+    return (
+      <div
+        id={`opensea-offers-dutch-deferred-${loanId}`}
+        className="card loan-actions-card"
+      >
+        <div className="action-group">
+          <div className="action-title">OpenSea Offers (English mode)</div>
+          <div className="alert alert-info">
+            Matching incoming OpenSea offers against a live Dutch
+            listing is coming in v1.1. For now, the Dutch decay path
+            is the price-discovery mechanism — Seaport's native
+            interpolation handles the per-block decayed price, and
+            any buyer can fulfill at the current interpolated value.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <OpenSeaOffersPanel
       loanId={loanId}
