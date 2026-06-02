@@ -47,6 +47,7 @@ const OPENSEA_HOST: Record<number, string> = {
   8453: 'api.opensea.io',
   42161: 'api.opensea.io',
   10: 'api.opensea.io',
+  137: 'api.opensea.io',
 };
 
 const OPENSEA_CHAIN_SLUG: Record<number, string> = {
@@ -54,6 +55,10 @@ const OPENSEA_CHAIN_SLUG: Record<number, string> = {
   8453: 'base',
   42161: 'arbitrum',
   10: 'optimism',
+  // Codex round-10 P2 review #328 — Polygon was missing here even
+  // though `apps/agent/src/env.ts` lists it in the chain config
+  // and the sibling collection proxy already routes 137.
+  137: 'matic',
 };
 
 export async function handleOpenSeaOffers(
@@ -115,15 +120,22 @@ export async function handleOpenSeaOffers(
     Accept: 'application/json',
   };
 
-  // Codex review #328 (round-1 P1 + round-4 P2) — OpenSea v2
-  // removed the legacy
-  // `GET /api/v2/orders/{chain}/seaport/offers?asset_contract_address=...&token_ids=...`
-  // endpoint. The current v2 surface has two slug-based
-  // endpoints we aggregate:
-  //   - Collection offers (apply to ANY token in the collection):
-  //     `GET /api/v2/offers/collection/{slug}`
-  //   - Item-specific offers (on a specific tokenId):
-  //     `GET /api/v2/offers/collection/{slug}/nfts/{token_id}`
+  // Codex review #328 (rounds 1, 4, 10) — OpenSea's documented
+  // v2 surface for offers is slug-keyed and uses these two
+  // endpoints:
+  //   - Collection offers (apply to ANY token in the
+  //     collection):
+  //       `GET /api/v2/offers/collection/{slug}/all`
+  //     https://docs.opensea.io/reference/list_offers_collection_all
+  //   - Best item-specific offer (on a specific tokenId):
+  //       `GET /api/v2/offers/collection/{slug}/nfts/{tokenId}/best`
+  //     https://docs.opensea.io/reference/get_best_offer_nft
+  // The earlier `/offers/collection/{slug}` and
+  // `/offers/collection/{slug}/nfts/{tokenId}` paths return
+  // non-2xx for any valid slug and the dapp's `extractOrders`
+  // would silently treat that as an empty list — see the
+  // Codex round-10 P1 finding.
+  //
   // We fetch both in parallel after resolving the slug. Slug
   // resolution itself fails closed: if OpenSea's NFT-detail
   // lookup doesn't surface a slug, BOTH offer fetches are
@@ -153,10 +165,10 @@ export async function handleOpenSeaOffers(
   // leg on the floor; restoring it so bidders who place
   // single-NFT offers show up in the borrower's panel.
   const collectionOffersUrl = slug
-    ? `https://${host}/api/v2/offers/collection/${encodeURIComponent(slug)}`
+    ? `https://${host}/api/v2/offers/collection/${encodeURIComponent(slug)}/all`
     : null;
   const itemOffersUrl = slug
-    ? `https://${host}/api/v2/offers/collection/${encodeURIComponent(slug)}/nfts/${tokenId}`
+    ? `https://${host}/api/v2/offers/collection/${encodeURIComponent(slug)}/nfts/${tokenId}/best`
     : null;
 
   const fetchUpstream = async (

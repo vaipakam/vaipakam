@@ -74,10 +74,12 @@ mounting wrapper).
   every match-offer click" rule, fee-enforced collections need the
   dapp to re-fetch the OpenSea schedule against the offer's gross
   value at the moment of Match + thread the recomputed `FeeLeg[]`
-  through. v1 ships the fee-free path; fee-enforced collections
-  surface offers in the panel but the Match button shows a
-  "fee-enforced collections coming in v1.1" tooltip. Follow-up
-  card.
+  through. v1 ships the fee-free path; for fee-enforced
+  collections the section returns an informational banner BEFORE
+  the offers panel renders. No offers list + no Match buttons —
+  the banner explicitly says incoming offers stay visible on
+  OpenSea's marketplace UI but dapp-side matching is gated until
+  v1.1. Follow-up card.
 - **Dutch-listing match flow.** Offers can be matched against a
   fixed-price listing today; matching against a live Dutch listing
   would need `updatePrepayDutchListing` with the offer's value +
