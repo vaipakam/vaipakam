@@ -1,0 +1,40 @@
+-- 2026-06-02 — T-086 Round-5 Block A (#313): extend `prepay_listings`
+-- with the borrower-supplied fee legs + the denormalized borrower
+-- remainder for analytics.
+--
+-- The on-chain `PrepayListingPosted` / `PrepayListingUpdated`
+-- events now emit a `FeeLeg[] feeLegs` data tail (Round-5
+-- design §14.6; the Round-5.1 errata corrected the spec to
+-- carry the full array as event data rather than a hashed root
+-- so the indexer can populate this column from chain logs alone,
+-- without a secondary fetch). The indexer decodes the legs in
+-- `chainIndexer.ts:_handlePrepayListingPosted` /
+-- `_handlePrepayListingUpdated` and persists them as the JSON
+-- text representation here.
+--
+-- `borrower_remainder` is the denormalized
+-- `ask_price − lender_leg − treasury_leg − sum(feeLegs.amount)`
+-- amount. Kept here so the analytics queries don't need to
+-- re-derive it on every read (the indexer computes once at
+-- write-time from the live floor + the emitted event).
+--
+-- The autonomous OpenSea republish path
+-- (`openseaPublish.ts:publishToOpenSea`) reads `fee_legs_json`
+-- straight back into a `FeeLeg[]` shape it can fold into the
+-- `consideration` array of the canonical Seaport order it
+-- rebuilds — closing the previous round of "we couldn't republish
+-- a fee-enforced listing because we didn't persist the schedule"
+-- failure mode for fee-enforced collections.
+--
+-- D1 column-add is `ALTER TABLE ADD COLUMN` — sqlite-compatible,
+-- no rewrite needed; existing rows get the default NULL.
+--
+-- For fee-FREE listings (vast majority pre-Block A), the column
+-- is the literal JSON string '[]' (empty array) — NOT NULL.
+-- That distinguishes "no fees on this collection" from "we
+-- haven't decoded yet"; tools/queries downstream can rely on
+-- the column being present-and-shaped on every Posted row from
+-- this migration forward.
+
+ALTER TABLE prepay_listings ADD COLUMN fee_legs_json TEXT;
+ALTER TABLE prepay_listings ADD COLUMN borrower_remainder TEXT;
