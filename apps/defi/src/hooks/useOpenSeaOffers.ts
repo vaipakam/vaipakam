@@ -36,6 +36,22 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+/** Codex round-14 P2 review #328 — chainId → OpenSea chain slug
+ *  map. Mirrors the agent proxy's
+ *  `apps/agent/src/openseaOffersProxy.ts:OPENSEA_CHAIN_SLUG` so
+ *  the hook can drop offer rows whose `chain` field doesn't
+ *  match the current loan's chain. Unmapped chains return
+ *  `null` from the lookup; the normalizer then skips the
+ *  chain-mismatch filter (can't enforce something we don't have
+ *  a reference for). */
+const OPENSEA_CHAIN_SLUG: Record<number, string> = {
+  1: 'ethereum',
+  8453: 'base',
+  42161: 'arbitrum',
+  10: 'optimism',
+  137: 'matic',
+};
+
 /** Normalized offer surface the panel renders. The agent proxy
  *  returns the raw OpenSea JSON; the hook flattens to the
  *  borrower-relevant fields + classifies acceptability. */
@@ -229,9 +245,16 @@ export function useOpenSeaOffers(
       // openseaOffersProxy.ts commentary).
       const itemRaw = extractOrders(body.item_offers ?? undefined);
       const collectionRaw = extractOrders(body.collection_offers ?? undefined);
+      // Codex round-14 P2 review #328 — expected OpenSea chain
+      // string for this loan. Mirrors the agent proxy's map at
+      // `apps/agent/src/openseaOffersProxy.ts:OPENSEA_CHAIN_SLUG`.
+      // Null = unmapped chain; `normalize` then skips the
+      // chain-mismatch filter (can't enforce something we don't
+      // have a reference for).
+      const expectedChain = OPENSEA_CHAIN_SLUG[chainId] ?? null;
       const normalized: NormalizedOffer[] = [
-        ...itemRaw.map(o => normalize(o, 'item', collateralTokenId, computeAcceptable)),
-        ...collectionRaw.map(o => normalize(o, 'collection', collateralTokenId, computeAcceptable)),
+        ...itemRaw.map(o => normalize(o, 'item', collateralAsset, collateralTokenId, expectedChain, computeAcceptable)),
+        ...collectionRaw.map(o => normalize(o, 'collection', collateralAsset, collateralTokenId, expectedChain, computeAcceptable)),
       ].filter((o): o is NormalizedOffer => o !== null);
 
       // Sort by acceptability, then descending value. The panel
@@ -323,7 +346,9 @@ function extractOrders(
 function normalize(
   raw: unknown,
   kind: 'item' | 'collection',
+  collateralAsset: string,
   collateralTokenId: bigint,
+  expectedChain: string | null,
   computeAcceptable: (
     value: bigint,
     paymentToken: string,
@@ -333,13 +358,16 @@ function normalize(
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as {
     order_hash?: string;
+    chain?: string;
     maker?: { address?: string } | string;
     current_price?: string;
+    price?: { current?: { value?: string } };
     protocol_data?: {
       parameters?: {
-        offer?: Array<{ token?: string; startAmount?: string }>;
+        offer?: Array<{ token?: string; startAmount?: string; endAmount?: string }>;
         consideration?: Array<{
           itemType?: number;
+          token?: string;
           identifierOrCriteria?: string;
         }>;
         endTime?: string;
@@ -350,6 +378,20 @@ function normalize(
 
   const orderHash = r.order_hash ?? '';
   if (!orderHash) return null;
+
+  // Codex round-14 P2 review #328 — drop offers whose
+  // `chain` field doesn't match the loan's chain. For slugs
+  // that span multiple chains (rare but happens with bridged
+  // collections), an offer placed on chain X would otherwise
+  // pass through to a borrower viewing the loan on chain Y;
+  // Match would rotate the listing to a price that no chain-Y
+  // bidder can fulfill against the chain-Y NFT. Skip the check
+  // when `expectedChain` is null (e.g. unmapped chainId) — we
+  // can't enforce something we don't have a reference for.
+  if (expectedChain !== null && r.chain && r.chain !== expectedChain) {
+    return null;
+  }
+
   // Codex P1 review #328 — current OpenSea offer objects identify
   // the bidder via `protocol_data.parameters.offerer` (the Seaport
   // order's `offerer`); the top-level `maker` field is no longer
@@ -367,36 +409,44 @@ function normalize(
   // Payment-token / value extraction: the bidder's offer item is
   // `protocol_data.parameters.offer[0]` (single-leg per §15.3's
   // "OpenSea's make-offer UI only generates single-leg offers
-  // paying the seller-of-record"). Fall back to `current_price`
-  // when the wrapped order shape is incomplete.
+  // paying the seller-of-record").
+  //
+  // Codex round-14 P2 review #328 — for time-varying Seaport
+  // offers (start != end), `startAmount` is yesterday's value.
+  // OpenSea exposes the live value at `price.current.value` —
+  // use that when present, fall back to `startAmount` /
+  // `current_price` for fixed/legacy shapes.
   const offerItem = r.protocol_data?.parameters?.offer?.[0];
   const paymentToken = (offerItem?.token ?? '').toLowerCase();
-  const value = BigInt(
-    offerItem?.startAmount ?? r.current_price ?? '0',
-  );
+  const liveValueString =
+    r.price?.current?.value ?? offerItem?.startAmount ?? r.current_price ?? '0';
+  const value = BigInt(liveValueString);
   const endTime = Number(r.protocol_data?.parameters?.endTime ?? '0');
 
-  // Codex round-13 P2 review #328 — the `/collection/{slug}/all`
-  // endpoint can return item offers for OTHER tokens in the
-  // collection alongside true collection-wide offers (Seaport's
-  // `consideration[0]` carries the NFT identifier the offer was
-  // placed against). For a true collection-wide offer, the
-  // identifier is `0`; for a trait or item-specific offer, it's
-  // either a specific tokenId or the criteria-merkle root. Drop
-  // any row whose consideration identifier is a non-zero
-  // explicit tokenId that doesn't match our `collateralTokenId`
-  // — the borrower clicking Match on such a row would rotate
-  // the listing to a price the bidder cannot fulfill (their
-  // offer is for a different NFT).
+  // Codex round-13 + round-14 P2 review #328 — the
+  // `/collection/{slug}/all` endpoint can return item offers
+  // for OTHER tokens in the collection alongside true
+  // collection-wide offers. Seaport's `consideration[0]` carries
+  // both the NFT TOKEN (contract address) and the NFT
+  // IDENTIFIER the offer was placed against. We check BOTH:
+  //   - token MUST match `collateralAsset` (otherwise an offer
+  //     on a different contract under the same slug would pass)
+  //   - identifier is either `0` (collection-wide /
+  //     criteria-based) or the specific tokenId; non-zero +
+  //     non-matching specific identifiers are dropped.
   const consideration = r.protocol_data?.parameters?.consideration?.[0];
-  if (consideration && consideration.identifierOrCriteria) {
-    const ident = consideration.identifierOrCriteria.toString();
-    // Identifier of "0" is a collection-wide / criteria-based
-    // offer that applies to any token in the collection. Any
-    // non-zero identifier must equal the collateralTokenId for
-    // this loan; otherwise drop.
-    if (ident !== '0' && ident !== collateralTokenId.toString()) {
+  if (consideration) {
+    if (
+      consideration.token &&
+      consideration.token.toLowerCase() !== collateralAsset.toLowerCase()
+    ) {
       return null;
+    }
+    if (consideration.identifierOrCriteria) {
+      const ident = consideration.identifierOrCriteria.toString();
+      if (ident !== '0' && ident !== collateralTokenId.toString()) {
+        return null;
+      }
     }
   }
 
