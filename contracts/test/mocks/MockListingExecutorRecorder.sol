@@ -16,10 +16,18 @@ import {IListingExecutorRecorder} from "../../src/seaport/IListingExecutorRecord
  *         Seaport + UUPS-proxy + governance executor.
  */
 contract MockListingExecutorRecorder is IListingExecutorRecorder {
+    /// @dev T-086 #316 — extended to mirror the recorder's new
+    ///      shape so facet tests can assert the diamond passed the
+    ///      sign-time inputs (conduitKey, salt, startTime, askPrice)
+    ///      alongside (orderHash, loanId, conduit).
     struct RecordedCall {
         bytes32 orderHash;
         uint256 loanId;
         address conduit;
+        bytes32 conduitKey;
+        uint256 salt;
+        uint256 startTime;
+        uint256 askPrice;
     }
 
     RecordedCall[] public recordOrderCalls;
@@ -47,8 +55,24 @@ contract MockListingExecutorRecorder is IListingExecutorRecorder {
 
     // ─── IListingExecutorRecorder ───────────────────────────────────────
 
-    function recordOrder(bytes32 orderHash, uint256 loanId, address conduit) external override {
-        recordOrderCalls.push(RecordedCall({orderHash: orderHash, loanId: loanId, conduit: conduit}));
+    function recordOrder(
+        bytes32 orderHash,
+        uint256 loanId,
+        address conduit,
+        bytes32 conduitKey,
+        uint256 salt,
+        uint256 startTime,
+        uint256 askPrice
+    ) external override {
+        recordOrderCalls.push(RecordedCall({
+            orderHash: orderHash,
+            loanId: loanId,
+            conduit: conduit,
+            conduitKey: conduitKey,
+            salt: salt,
+            startTime: startTime,
+            askPrice: askPrice
+        }));
     }
 
     function clearOrder(bytes32 orderHash) external override {

@@ -440,7 +440,20 @@ contract NFTPrepayListingFacet is
         LibERC721._lock(loan.borrowerTokenId, LibERC721.LockReason.PrepayCollateralListing);
         s.prepayListingOrderHash[loanId] = orderHash;
         s.prepayListingExecutor[loanId] = address(executor);
-        executor.recordOrder(orderHash, loanId, conduit);
+        // T-086 #316 — recordOrder now pins the sign-time inputs
+        // (conduitKey, salt, startTime = block.timestamp, askPrice)
+        // alongside (loanId, conduit) so the executor can rebuild
+        // the canonical OrderComponents at cleanup time and forward
+        // Seaport.cancel for fast OpenSea catalog refresh.
+        executor.recordOrder(
+            orderHash,
+            loanId,
+            conduit,
+            conduitKey,
+            salt,
+            block.timestamp,
+            askPrice
+        );
         _wireVaultForListing(s, loan, orderHash, conduit, address(executor));
     }
 
@@ -588,7 +601,20 @@ contract NFTPrepayListingFacet is
 
         s.prepayListingOrderHash[loanId] = newOrderHash;
         s.prepayListingExecutor[loanId] = address(executor);
-        executor.recordOrder(newOrderHash, loanId, conduit);
+        // T-086 #316 — same sign-time-input pinning as the post path.
+        // The update flow's preceding clearOrder() on the OLD hash
+        // already forwarded Seaport.cancel for the previous
+        // OrderComponents; this records the NEW shape so a future
+        // cancel / cleanup can do the same for the rotated order.
+        executor.recordOrder(
+            newOrderHash,
+            loanId,
+            conduit,
+            conduitKey,
+            salt,
+            block.timestamp,
+            askPrice
+        );
 
         // Vault rotation: register the new orderHash binding +
         // re-grant the conduit approval (idempotent if conduit

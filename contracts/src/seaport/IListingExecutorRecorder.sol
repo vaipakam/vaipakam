@@ -14,19 +14,26 @@ pragma solidity ^0.8.29;
  *         API down to (so the borrower-facing facet's audit surface
  *         lists exactly the executor entry points it depends on):
  *
- *           1. **`recordOrder(orderHash, loanId, conduit)`** — pin a
- *              Seaport `orderHash → (loanId, conduit)` binding on
- *              the executor before Seaport processes a signed
- *              order. Diamond-gated on the executor side
+ *           1. **`recordOrder(orderHash, loanId, conduit, conduitKey,
+ *              salt, startTime, askPrice)`** — pin a Seaport
+ *              `orderHash → (loanId, conduit, …)` binding on the
+ *              executor before Seaport processes a signed order.
+ *              Diamond-gated on the executor side
  *              (`msg.sender == vaipakamDiamond`); the listing facet
  *              is the ONLY surface that legitimately calls it.
+ *              T-086 #316 extended the recorded shape so the
+ *              executor can rebuild the canonical `OrderComponents`
+ *              at cleanup time without re-fetching from the diamond.
  *
  *           2. **`clearOrder(orderHash)`** — remove the binding so a
  *              previously-signed order can no longer fill. Called on
  *              borrower cancel, on the permissionless grace-expired
  *              cancel, and as the first leg of an update (clear the
  *              old hash before recording the new one). Idempotent on
- *              the executor side.
+ *              the executor side. T-086 #316 extended this surface
+ *              to ALSO forward `Seaport.cancel` for the matching
+ *              orderHash (best-effort) so OpenSea's catalog refreshes
+ *              within ~30s.
  *
  *           3. **`approvedConduits(conduit)`** — view-only allow-list
  *              membership check. The facet uses it to fail-fast at
@@ -43,11 +50,31 @@ pragma solidity ^0.8.29;
  *         order-record surface.
  */
 interface IListingExecutorRecorder {
-    /// @notice Pin a Seaport `orderHash → (loanId, conduit)` binding.
+    /// @notice Pin a Seaport `orderHash → (loanId, conduit, …)` binding.
+    ///         T-086 #316 extended the recorded shape with `conduitKey`,
+    ///         `salt`, `startTime`, and `askPrice` so the executor can
+    ///         rebuild the canonical `OrderComponents` at cleanup time
+    ///         (used to forward `Seaport.cancel` for fast OpenSea
+    ///         catalog refresh).
     ///         See {CollateralListingExecutor.recordOrder}.
-    function recordOrder(bytes32 orderHash, uint256 loanId, address conduit) external;
+    function recordOrder(
+        bytes32 orderHash,
+        uint256 loanId,
+        address conduit,
+        bytes32 conduitKey,
+        uint256 salt,
+        uint256 startTime,
+        uint256 askPrice
+    ) external;
 
-    /// @notice Remove a binding. Idempotent.
+    /// @notice Remove a binding. Idempotent. T-086 #316: while the
+    ///         binding still exists, the executor reconstructs the
+    ///         canonical `OrderComponents` and forwards
+    ///         `Seaport.cancel` so OpenSea's marketplace catalog
+    ///         refreshes the listing within ~30s of the cleanup.
+    ///         The cancel emit is best-effort; reconstruction
+    ///         mismatch (NFT-holder transfer, counter increment,
+    ///         treasury rotation) gracefully falls back to no-op.
     ///         See {CollateralListingExecutor.clearOrder}.
     function clearOrder(bytes32 orderHash) external;
 

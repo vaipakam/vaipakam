@@ -16,6 +16,7 @@ import {
 } from "../../src/seaport/ISeaportZone.sol";
 import {IVaipakamPrepayContext} from "../../src/seaport/IVaipakamPrepayContext.sol";
 import {IVaipakamPrepayCallbacks} from "../../src/seaport/IVaipakamPrepayCallbacks.sol";
+import {ISeaportOrderHash, ISeaportCancel} from "../../src/seaport/ISeaportOrderHash.sol";
 
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 
@@ -93,6 +94,38 @@ contract CollateralListingExecutorTest is Test {
         executor.addApprovedConduit(conduit);
 
         _setDefaultContext();
+        _stubSeaport();
+    }
+
+    /// @dev T-086 #316 — the executor's new {clearOrder} reconstructs
+    ///      the canonical `OrderComponents` and calls
+    ///      `ISeaportOrderHash.getOrderHash` / `ISeaportOrderHash.getCounter`
+    ///      / `ISeaportCancel.cancel` on the `seaport` address. The
+    ///      test's `seaport` is a `makeAddr` EOA (no code), so stub
+    ///      those three calls so they don't revert with "Returned
+    ///      data is too short". The stubbed `getOrderHash` returns
+    ///      `bytes32(0)` — never equal to `TEST_ORDER_HASH` — so the
+    ///      "drift" branch of `_tryCancelOnSeaport` fires, emitting
+    ///      `SeaportCancelSkipped`. The `clearOrder` body then
+    ///      continues with the same `delete orderContext[hash]` +
+    ///      `emit OrderCanceled(...)` semantics as pre-#316, so the
+    ///      existing happy-path test still asserts the same thing.
+    function _stubSeaport() internal {
+        vm.mockCall(
+            seaport,
+            abi.encodeWithSelector(ISeaportOrderHash.getOrderHash.selector),
+            abi.encode(bytes32(0))
+        );
+        vm.mockCall(
+            seaport,
+            abi.encodeWithSelector(ISeaportOrderHash.getCounter.selector),
+            abi.encode(uint256(0))
+        );
+        vm.mockCall(
+            seaport,
+            abi.encodeWithSelector(ISeaportCancel.cancel.selector),
+            abi.encode(true)
+        );
     }
 
     // ─── Helpers ────────────────────────────────────────────────────────
@@ -163,9 +196,29 @@ contract CollateralListingExecutorTest is Test {
         p.endTime = block.timestamp + 1 days;
     }
 
+    /// @dev T-086 #316 — `askPrice` MUST be ≥ lenderLeg + treasuryLeg
+    ///      for the test fixture's pctx (set in `_setDefaultContext`:
+    ///      lenderLeg=100e18, treasuryLeg=1e18). Otherwise the
+    ///      cancel-time reconstruction in {clearOrder} would emit a
+    ///      `SeaportCancelSkipped` for "floor-drift" reasons instead
+    ///      of hitting the hash-match / hash-mismatch decision the
+    ///      tests assert on. The real facet's
+    ///      `_requireAskCoversFloor` enforces this invariant at
+    ///      post-time; here we just pick a value comfortably above
+    ///      the floor.
+    uint256 internal constant TEST_ASK_PRICE = 200e18;
+
     function _recordValidOrder() internal {
         vm.prank(address(diamond));
-        executor.recordOrder(TEST_ORDER_HASH, TEST_LOAN_ID, conduit);
+        executor.recordOrder(
+            TEST_ORDER_HASH,
+            TEST_LOAN_ID,
+            conduit,
+            bytes32(0),
+            uint256(0),
+            uint256(block.timestamp),
+            TEST_ASK_PRICE
+        );
     }
 
     // ─── Admin: conduit allow-list ──────────────────────────────────────
@@ -198,7 +251,10 @@ contract CollateralListingExecutorTest is Test {
     function test_recordOrder_onlyDiamond() public {
         vm.prank(buyer);
         vm.expectRevert(CollateralListingExecutor.NotDiamond.selector);
-        executor.recordOrder(TEST_ORDER_HASH, TEST_LOAN_ID, conduit);
+        executor.recordOrder(
+            TEST_ORDER_HASH, TEST_LOAN_ID, conduit,
+            bytes32(0), uint256(0), uint256(block.timestamp), uint256(0)
+        );
     }
 
     function test_recordOrder_rejectsUnapprovedConduit() public {
@@ -207,7 +263,10 @@ contract CollateralListingExecutorTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(CollateralListingExecutor.ConduitNotApproved.selector, rogue)
         );
-        executor.recordOrder(TEST_ORDER_HASH, TEST_LOAN_ID, rogue);
+        executor.recordOrder(
+            TEST_ORDER_HASH, TEST_LOAN_ID, rogue,
+            bytes32(0), uint256(0), uint256(block.timestamp), uint256(0)
+        );
     }
 
     function test_recordOrder_alreadyRecorded() public {
@@ -218,7 +277,10 @@ contract CollateralListingExecutorTest is Test {
                 CollateralListingExecutor.AlreadyRecorded.selector, TEST_ORDER_HASH
             )
         );
-        executor.recordOrder(TEST_ORDER_HASH, TEST_LOAN_ID, conduit);
+        executor.recordOrder(
+            TEST_ORDER_HASH, TEST_LOAN_ID, conduit,
+            bytes32(0), uint256(0), uint256(block.timestamp), uint256(0)
+        );
     }
 
     function test_recordOrder_uint96Overflow() public {
@@ -227,14 +289,66 @@ contract CollateralListingExecutorTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(CollateralListingExecutor.LoanIdOverflow.selector, tooBig)
         );
-        executor.recordOrder(TEST_ORDER_HASH, tooBig, conduit);
+        executor.recordOrder(
+            TEST_ORDER_HASH, tooBig, conduit,
+            bytes32(0), uint256(0), uint256(block.timestamp), uint256(0)
+        );
+    }
+
+    /// @dev T-086 #316 — bounds check on the new `startTime` narrowing
+    ///      cast. uint64 overflow won't happen with `block.timestamp`
+    ///      for ~580B years; the test passes a synthetic too-big
+    ///      value to assert the check fires loudly.
+    function test_recordOrder_uint64StartTimeOverflow() public {
+        uint256 tooBig = uint256(type(uint64).max) + 1;
+        vm.prank(address(diamond));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CollateralListingExecutor.StartTimeOverflow.selector, tooBig
+            )
+        );
+        executor.recordOrder(
+            TEST_ORDER_HASH, TEST_LOAN_ID, conduit,
+            bytes32(0), uint256(0), tooBig, uint256(0)
+        );
+    }
+
+    /// @dev T-086 #316 — bounds check on the new `askPrice` narrowing
+    ///      cast. uint192 is wider than any realistic NFT-floor wei
+    ///      amount; the test passes a synthetic too-big value to
+    ///      assert the check fires loudly.
+    function test_recordOrder_uint192AskPriceOverflow() public {
+        uint256 tooBig = uint256(type(uint192).max) + 1;
+        vm.prank(address(diamond));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CollateralListingExecutor.AskPriceOverflow.selector, tooBig
+            )
+        );
+        executor.recordOrder(
+            TEST_ORDER_HASH, TEST_LOAN_ID, conduit,
+            bytes32(0), uint256(0), uint256(block.timestamp), tooBig
+        );
     }
 
     function test_recordOrder_happyPath() public {
         _recordValidOrder();
-        (uint96 storedLoanId, address storedConduit) = executor.orderContext(TEST_ORDER_HASH);
+        // T-086 #316 — extended OrderContext returns the full
+        // 6-tuple via the auto-generated public getter.
+        (
+            uint96 storedLoanId,
+            address storedConduit,
+            bytes32 storedConduitKey,
+            uint256 storedSalt,
+            uint64 storedStartTime,
+            uint192 storedAskPrice
+        ) = executor.orderContext(TEST_ORDER_HASH);
         assertEq(uint256(storedLoanId), TEST_LOAN_ID);
         assertEq(storedConduit, conduit);
+        assertEq(storedConduitKey, bytes32(0));
+        assertEq(storedSalt, 0);
+        assertEq(uint256(storedStartTime), block.timestamp);
+        assertEq(uint256(storedAskPrice), TEST_ASK_PRICE);
     }
 
     // ─── clearOrder ─────────────────────────────────────────────────────
@@ -250,7 +364,69 @@ contract CollateralListingExecutorTest is Test {
         _recordValidOrder();
         vm.prank(address(diamond));
         executor.clearOrder(TEST_ORDER_HASH);
-        (uint96 storedLoanId, ) = executor.orderContext(TEST_ORDER_HASH);
+        (uint96 storedLoanId, , , , , ) = executor.orderContext(TEST_ORDER_HASH);
+        assertEq(uint256(storedLoanId), 0);
+    }
+
+    /// @dev T-086 #316 — the cancel-time hash reconstruction WILL
+    ///      mismatch in this test (the stubbed `seaport.getOrderHash`
+    ///      returns `bytes32(0)` ≠ `TEST_ORDER_HASH`), so the
+    ///      "drift" branch of `_tryCancelOnSeaport` fires. Expect
+    ///      `SeaportCancelSkipped` (and NOT `SeaportCancelEmitted`)
+    ///      to be emitted, then the existing cleanup proceeds.
+    function test_clearOrder_emitsSeaportCancelSkippedOnDrift() public {
+        _recordValidOrder();
+        vm.expectEmit(true, true, false, false);
+        emit CollateralListingExecutor.SeaportCancelSkipped(TEST_ORDER_HASH, TEST_LOAN_ID);
+        vm.prank(address(diamond));
+        executor.clearOrder(TEST_ORDER_HASH);
+    }
+
+    /// @dev T-086 #316 — when the cancel-time reconstruction hashes
+    ///      to the SAME orderHash on file, the cancel emit fires
+    ///      and Seaport is called. Test re-stubs `getOrderHash` to
+    ///      return `TEST_ORDER_HASH` so the match branch runs.
+    function test_clearOrder_emitsSeaportCancelEmittedOnHashMatch() public {
+        _recordValidOrder();
+        // Re-stub getOrderHash to return TEST_ORDER_HASH so the
+        // reconstruction matches and the cancel emit path fires.
+        vm.mockCall(
+            seaport,
+            abi.encodeWithSelector(ISeaportOrderHash.getOrderHash.selector),
+            abi.encode(TEST_ORDER_HASH)
+        );
+        vm.expectEmit(true, true, false, false);
+        emit CollateralListingExecutor.SeaportCancelEmitted(TEST_ORDER_HASH, TEST_LOAN_ID);
+        vm.prank(address(diamond));
+        executor.clearOrder(TEST_ORDER_HASH);
+    }
+
+    /// @dev T-086 #316 — if `Seaport.cancel` itself reverts (a
+    ///      future Seaport version change, an unexpected zone-
+    ///      caller-gate flip, etc.), the executor catches the
+    ///      revert and emits `SeaportCancelSkipped`. The cleanup
+    ///      proper still completes — binding is still cleared and
+    ///      `OrderCanceled` still fires.
+    function test_clearOrder_catchesSeaportCancelRevert() public {
+        _recordValidOrder();
+        // Same hash-match stub as the happy-cancel test...
+        vm.mockCall(
+            seaport,
+            abi.encodeWithSelector(ISeaportOrderHash.getOrderHash.selector),
+            abi.encode(TEST_ORDER_HASH)
+        );
+        // ...but make `cancel` revert.
+        vm.mockCallRevert(
+            seaport,
+            abi.encodeWithSelector(ISeaportCancel.cancel.selector),
+            abi.encode("seaport-cancel-reverted")
+        );
+        vm.expectEmit(true, true, false, false);
+        emit CollateralListingExecutor.SeaportCancelSkipped(TEST_ORDER_HASH, TEST_LOAN_ID);
+        vm.prank(address(diamond));
+        executor.clearOrder(TEST_ORDER_HASH);
+        // And the binding is still cleared regardless.
+        (uint96 storedLoanId, , , , , ) = executor.orderContext(TEST_ORDER_HASH);
         assertEq(uint256(storedLoanId), 0);
     }
 
@@ -525,7 +701,7 @@ contract CollateralListingExecutorTest is Test {
 
         // orderContext entry MUST be cleared so a Seaport-validated
         // re-fill on the same hash can't slip through.
-        (uint96 storedLoanId, ) = executor.orderContext(TEST_ORDER_HASH);
+        (uint96 storedLoanId, , , , , ) = executor.orderContext(TEST_ORDER_HASH);
         assertEq(uint256(storedLoanId), 0);
     }
 }
