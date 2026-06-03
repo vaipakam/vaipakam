@@ -62,18 +62,37 @@ parameters. The existing pre-migration banner covered missing
 salt / conduit; this adds the Dutch-specific case.
 
 **Race-window warning + fee-enforced support unchanged.** The
-`RaceWindowModal` from PR #338 and the fee-leg recompute from PR
-#339 both apply identically — the Match callback computes the
-fresh schedule + feeLegs first, then branches on
-`live.auctionMode` to pick the right write entry. Fee-enforced
+`RaceWindowModal` from PR #338 (with a new Dutch-specific
+two-tx-flow paragraph added in this PR) and the fee-leg recompute
+from PR #339 both apply identically — the Match callback computes
+the fresh schedule + feeLegs first, then branches on
+`live.auctionMode === 1` between fixed-price's single-tx in-place
+`updatePrepayListing` rotation and Dutch's two-tx
+`cancelPrepayListing` + `postPrepayListing` sequence. Fee-enforced
 Dutch collections settle through the same `feeLegs` calldata path
-as fixed-price ones, the only difference being which diamond
-selector the rotation hits.
+as fixed-price ones; the difference between the two modes is
+which sequence of diamond selectors runs, not which feeLegs they
+carry.
 
-**No contract surface changes.** Both `updatePrepayListing` and
-`updatePrepayDutchListing` already accept `feeLegs` per Block A's
-landing; this thread is purely the dapp wiring that picks between
-them. No new diamond storage, no migration, no operator action
+**Floor pre-flight before the cancel** (Codex round-2 P2 on this
+PR). The two-tx Dutch sequence has one structural risk the
+single-tx in-place rotation doesn't: if the post threshold moves
+above `offer.value` between the panel's last threshold refresh
+and the click (a pro-rata interest accrual boundary, a governance
+buffer-bps change), the cancel succeeds and the post then reverts
+`AskBelowFloorPlusFees`, leaving the borrower with no live
+listing. The Match callback now re-reads `getPrepayContext` +
+`getPrepayListingBufferBps` BEFORE the cancel, recomputes the
+closed-form threshold against the fresh schedule + offer's value,
+and aborts (preserving the live Dutch listing) when the offer no
+longer clears. The in-place fixed-price path doesn't need this
+guard because `updatePrepayListing` revalidates atomically.
+
+**No contract surface changes.** Both `cancelPrepayListing` and
+`postPrepayListing` are existing entry points that
+`PrepayListingActions` already drives manually; this PR is purely
+the dapp wiring that sequences them inside the Match callback. No
+new diamond storage, no migration, no operator action
 post-merge.
 
 **Out of scope** (intentional, tracked as follow-ups):

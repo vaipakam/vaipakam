@@ -225,8 +225,6 @@ export function OpenSeaOffersSection({
     live !== null &&
     live !== undefined &&
     (live.salt == null || live.conduitKey == null);
-  const listingIsDutch =
-    live !== null && live !== undefined && live.auctionMode === 1;
   // Codex round-8 P2 review #328 — also include the ERC1155
   // defer gate in `canMatch`. Without this, the hook mounts +
   // polls every 30 s for ERC1155 loans even though the UI's
@@ -234,18 +232,27 @@ export function OpenSeaOffersSection({
   // `2` is the on-chain `AssetType.ERC1155` enum value.
   const collateralIsERC1155 = collateralAssetType === 2;
   // #332 — Dutch listings are no longer excluded from `canMatch`;
-  // the Match flow now branches on `live.auctionMode` and calls
-  // `updatePrepayDutchListing` to rotate the live Dutch order to
-  // the offer's value (decay collapsed to a constant via
-  // `startAskPrice == endAskPrice`, original `auctionEndTime`
-  // preserved). Dutch listings without an `auctionEndTime` (a
-  // malformed indexer row) still pause + banner via the
-  // pre-migration gate.
+  // the Match flow now goes cancel + post-as-fixed-price (the
+  // in-place rotation was rejected per Codex round-1 P2 findings;
+  // see the `onMatchOffer` body for the structural reasoning).
+  // Dutch indexer rows missing `auctionEndTime` or `endAskPrice`
+  // are STILL excluded from `canMatch`, though — the section's
+  // malformed-Dutch banner short-circuit catches them BEFORE the
+  // panel renders, but without this check the offers hook would
+  // keep polling the agent proxy and the fee-schedule endpoint
+  // every interval even though nothing matchable can render
+  // (Codex round-2 P3 #340).
+  const dutchRowIsMalformed =
+    live !== null &&
+    live !== undefined &&
+    live.auctionMode === 1 &&
+    (live.auctionEndTime == null || live.endAskPrice == null);
   const canMatch =
     live !== null &&
     live !== undefined &&
     !listingPreMigration &&
-    !collateralIsERC1155;
+    !collateralIsERC1155 &&
+    !dutchRowIsMalformed;
 
   // #331 — fee-schedule cache (replaces round-5's tri-state
   // enforcement gate). The dapp polls `/opensea/collection/{slug}`
@@ -458,14 +465,10 @@ export function OpenSeaOffersSection({
   // instead of attempting a rotation that would either revert
   // on-chain or rotate the order with bad decay parameters. Pre-
   // migration short-circuit above covered missing salt/conduit;
-  // this covers missing Dutch-specific fields.
-  if (
-    listingIsDutch &&
-    (live === null ||
-      live === undefined ||
-      live.auctionEndTime == null ||
-      live.endAskPrice == null)
-  ) {
+  // this covers missing Dutch-specific fields. The same predicate
+  // also feeds `canMatch` above so the offers hook stops polling
+  // when this banner will render.
+  if (dutchRowIsMalformed) {
     return (
       <div
         id={`opensea-offers-dutch-pre-migration-${loanId}`}
@@ -489,6 +492,11 @@ export function OpenSeaOffersSection({
       loanId={loanId}
       offersResult={offersResult}
       hasActiveListing={live !== null && live !== undefined}
+      // #332 Codex round-2 P3 — pass the listing's mode to the
+      // panel so the race-window modal's Dutch-specific copy can
+      // warn the borrower about the two-tx Match flow before they
+      // approve the irreversible cancel.
+      listingMode={live?.auctionMode === 1 ? 'dutch' : 'fixed-price'}
       // #331 — block Match clicks until the schedule has been
       // fetched for the CURRENT slug. The disabled-button state
       // piggybacks on `actionLoading` to keep the panel's
@@ -635,6 +643,68 @@ export function OpenSeaOffersSection({
         // actions card above, but a degraded state worth
         // surfacing in the modal.
         if (live.auctionMode === 1) {
+          // #332 Codex round-2 P2 — pre-flight the post floor BEFORE
+          // canceling the live Dutch order. Without this, a pro-rata
+          // accrual boundary OR a governance buffer change between
+          // the panel's last threshold refresh and the click moment
+          // can push the post threshold above `offer.value`. The
+          // cancel succeeds → the post reverts `AskBelowFloorPlusFees`
+          // → the borrower is left with NO live listing. The
+          // fixed-price path's `updatePrepayListing` revalidates
+          // atomically so it doesn't have this problem; here we
+          // do the same revalidation by hand before the
+          // irreversible cancel.
+          try {
+            const d = diamond as unknown as {
+              getPrepayContext: (
+                id: bigint,
+                asOf: bigint,
+              ) => Promise<
+                | { lenderLeg: bigint; treasuryLeg: bigint }
+                | unknown[]
+              >;
+              getPrepayListingBufferBps: () => Promise<bigint>;
+            };
+            const asOf = BigInt(Math.floor(Date.now() / 1000));
+            const [ctxFresh, bufFresh] = await Promise.all([
+              d.getPrepayContext(loanId, asOf),
+              d.getPrepayListingBufferBps(),
+            ]);
+            const lenderFresh =
+              (ctxFresh as { lenderLeg?: bigint }).lenderLeg ?? 0n;
+            const treasuryFresh =
+              (ctxFresh as { treasuryLeg?: bigint }).treasuryLeg ?? 0n;
+            const bufferBpsFresh = Number(bufFresh);
+            const feeBpsFresh = freshSchedule.totalBps;
+            if (feeBpsFresh >= 10_000) return false;
+            const numFresh =
+              (lenderFresh + treasuryFresh) *
+              BigInt(10_000 + bufferBpsFresh);
+            const denFresh = BigInt(10_000 - feeBpsFresh);
+            const minByThresholdFresh =
+              denFresh === 0n ? 0n : (numFresh + denFresh - 1n) / denFresh;
+            const minByRoundingFresh =
+              freshSchedule.minBps > 0
+                ? (10_000n + BigInt(freshSchedule.minBps) - 1n) /
+                  BigInt(freshSchedule.minBps)
+                : 0n;
+            const minFresh =
+              minByThresholdFresh > minByRoundingFresh
+                ? minByThresholdFresh
+                : minByRoundingFresh;
+            if (offer.value < minFresh) {
+              // Floor moved up under us; the post would revert
+              // AskBelowFloorPlusFees. Abort BEFORE cancel; the
+              // panel re-classifies the offer on the next
+              // threshold tick.
+              return false;
+            }
+          } catch {
+            // RPC blip on the pre-flight read. Don't proceed —
+            // canceling the Dutch listing without a successful
+            // post would degrade the borrower's state.
+            return false;
+          }
           const cancelled = await prepayListing.cancelPrepayListing(loanId);
           if (!cancelled) return false;
           return prepayListing.postPrepayListing(
