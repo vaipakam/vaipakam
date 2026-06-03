@@ -278,15 +278,11 @@ export function OpenSeaOffersSection({
   //      now calls `runOpenSeaPublish` with those params after
   //      the rotation tx confirms.
   //
-  // Dutch indexer rows missing `auctionEndTime` or `endAskPrice`
-  // STILL pause the hook + render the malformed-Dutch banner —
-  // we can't compute the projected pctx or publish without those
-  // fields.
-  const dutchRowIsMalformed =
-    live !== null &&
-    live !== undefined &&
-    live.auctionMode === 1 &&
-    (live.auctionEndTime == null || live.endAskPrice == null);
+  // T-086 Round-6 / Block D (#345) — Codex PR #346 round-2 P2
+  // #511. `dutchRowIsMalformed` was kept across round-2 as a
+  // last-mile guard against indexer rows missing decay fields,
+  // but the atomic facet doesn't consume those fields either,
+  // so the predicate is no longer load-bearing. Removed.
 
   // #332 — Dutch grace runway: the diamond requires
   // `newAuctionEndTime > block.timestamp + MIN_AUCTION_WINDOW`
@@ -504,28 +500,13 @@ export function OpenSeaOffersSection({
   // banners that previously short-circuited the offers panel are
   // therefore stale and have been removed; the offers panel
   // renders for every loan with allowsPrepayListing=true.
-  // `dutchRowIsMalformed` is kept below because that case
-  // represents a truly-corrupt indexer row the panel can't
-  // contextualize.
-
-  if (dutchRowIsMalformed) {
-    return (
-      <div
-        id={`opensea-offers-dutch-pre-migration-${loanId}`}
-        className="card loan-actions-card"
-      >
-        <div className="action-group">
-          <div className="action-title">OpenSea Offers (English mode)</div>
-          <div className="alert alert-warning">
-            This Dutch listing is missing decay parameters in the
-            indexer. Cancel the current listing and re-post via the
-            actions card above to enable matching against incoming
-            OpenSea offers.
-          </div>
-        </div>
-      </div>
-    );
-  }
+  //
+  // Codex PR #346 round-2 P2 #511 — `dutchRowIsMalformed` was the
+  // last remaining v1-listing-state gate. The atomic facet
+  // doesn't consume `live.auctionEndTime` / `endAskPrice` either,
+  // so a borrower whose Dutch row is missing those fields can
+  // still match via §17.11 step 0's `existingHash` auto-clear
+  // path. Banner dropped.
 
   return (
     <OpenSeaOffersPanel

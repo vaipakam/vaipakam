@@ -157,6 +157,17 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
     ///         treasury + borrower payout is possible).
     error AtomicMatchInsufficientForBorrower();
 
+    /// @notice Codex PR #346 round-2 P2 #265 — protocol-side floor +
+    ///         buffer invariant mirrored from v1. The effective ask
+    ///         (= offer_value - bidderFeeTotal) must clear
+    ///         `(lenderLeg + treasuryLeg) × (1 + cfgPrepayListingBufferBps)`.
+    error AskBelowFloor(uint256 loanId, uint256 askPrice, uint256 minAsk);
+
+    /// @notice Same `PrepayListingBufferNotConfigured` symbol v1
+    ///         post/update use — surfaced here so external tooling
+    ///         can match-by-selector across both flows.
+    error PrepayListingBufferNotConfigured();
+
     /// @notice §17.9 defense-in-depth — pre-Seaport balance assert.
     ///         `Σ(consideration) != offer_value` means a routing
     ///         bug would silently leak the unspent ERC20 to the
@@ -268,6 +279,26 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
             revert AtomicMatchInsufficientForBorrower();
         }
         uint256 effectiveAsk = offerValue - bidderFeeTotal;
+
+        // Codex PR #346 round-2 P2 #265 — enforce the same floor +
+        // buffer invariant the v1 post/update paths require. Without
+        // this, `matchOpenSeaOffer` is externally callable and a
+        // borrower could bypass the UI threshold + settle an atomic
+        // match at the bare floor (effectively no lender-protection
+        // headroom). Matches v1
+        // `NFTPrepayListingFacet._requireAskCoversFloorWithFees`
+        // body: floor ≡ lenderLeg + treasuryLeg; min = floor × (1 +
+        // bufferBps); reject if effectiveAsk < min OR bufferBps is
+        // unconfigured. Bidder-side fees are NOT in the "floor"
+        // because they're paid out of the bidder's offer
+        // independently per §17.7.
+        uint16 bufferBps = uint16(s.cfgPrepayListingBufferBps);
+        if (bufferBps == 0) revert PrepayListingBufferNotConfigured();
+        uint256 floor = pctx.lenderLeg + pctx.treasuryLeg;
+        uint256 minAsk = (floor * (10_000 + bufferBps)) / 10_000;
+        if (effectiveAsk < minAsk) {
+            revert AskBelowFloor(loanId, effectiveAsk, minAsk);
+        }
 
         // ── §17.11 STEP 0: auto-clear pre-existing v1 listing ────────
         _autoClearPreExistingListing(s, loan, loanId);

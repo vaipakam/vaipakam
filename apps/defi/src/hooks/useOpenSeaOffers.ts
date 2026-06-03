@@ -544,31 +544,22 @@ function normalize(
     return null;
   }
   const itemType = consideration.itemType;
-  // T-086 Round-6 / Block D (#345) — Codex PR #346 round-1 P2.
-  // The atomic facet supports criteria types (4/5) via the
-  // `CriteriaResolver[]` passthrough — the agent's
-  // `/opensea/signed-offer/...` endpoint returns the bidder's
-  // signed Merkle proof in `criteriaResolvers`, and the on-chain
-  // `_assertBidderConsiderationNftItem` accepts
-  // `ERC721_WITH_CRITERIA` / `ERC1155_WITH_CRITERIA` itemTypes
-  // alongside the concrete ones. So the normalizer now passes
-  // criteria offers through; the panel can Match against them.
-  if (itemType !== 2 && itemType !== 3 && itemType !== 4 && itemType !== 5) {
-    // Drop anomalous types (ETH / ERC20 considerations); only
-    // NFT considerations qualify.
+  // T-086 Round-6 / Block D (#345) — Codex PR #346 round-2 P2 #247.
+  // Criteria itemTypes (4 = ERC721_WITH_CRITERIA, 5 =
+  // ERC1155_WITH_CRITERIA) are STRUCTURALLY supported by the
+  // atomic facet but currently rejected here as a v1 carry-
+  // over. Wiring them end-to-end needs the agent to fetch
+  // OpenSea's separate "Fulfillment Data" endpoint to construct
+  // a real `CriteriaResolver` with the token-specific Merkle
+  // proof — the single-order endpoint's `criteria_proof` is the
+  // RAW criteria, not the resolver Seaport needs. Tracked as a
+  // Block D follow-up; for now criteria offers stay visible on
+  // OpenSea but don't reach the Match panel (fail-closed).
+  if (itemType !== 2 && itemType !== 3) {
     return null;
   }
   const ident = (consideration.identifierOrCriteria ?? '0').toString();
-  // For concrete itemTypes (2/3), `identifier` MUST equal the
-  // loan's collateralTokenId — Seaport will only fulfill against
-  // that specific token. For criteria itemTypes (4/5), `identifier`
-  // is the Merkle root the bidder signed; the resolver supplies
-  // the proof for the specific tokenId at match-time, so we
-  // don't compare here (the on-chain criteria-resolver path is
-  // the load-bearing check).
-  if (itemType === 2 || itemType === 3) {
-    if (ident !== collateralTokenId.toString()) return null;
-  }
+  if (ident !== collateralTokenId.toString()) return null;
 
   // #336 — quantity check. ERC721 considerations are implicitly
   // unit-quantity (Seaport encodes `1` for both startAmount and
