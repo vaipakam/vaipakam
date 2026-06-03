@@ -980,20 +980,31 @@ export function handleLoansPreflight(): Response {
  *  as "matched via the manual repricing path" — the conservative
  *  interpretation.
  *
- *  **Idempotent on (`tx_hash`).** A re-POST of the same tx_hash
- *  is a no-op (`INSERT OR IGNORE`); the borrower retrying the
- *  POST after a transient failure doesn't double-record.
+ *  **Spoofing window — INSERT OR REPLACE + overwrite warning.**
+ *  The endpoint is unauthenticated; an attacker who observes a
+ *  real rotation tx hash on chain can POST a bogus breadcrumb
+ *  before (or after) the legitimate dapp does. Round-1 used
+ *  INSERT OR IGNORE, which would let the first-arriving writer
+ *  (potentially the attacker) win permanently — the legitimate
+ *  dapp's retry would silently no-op. Round-2 (Codex P2 #343)
+ *  switched to INSERT OR REPLACE so the legitimate dapp's retry
+ *  can override a spoof, and emits an operator-visible warning
+ *  whenever a row is overwritten with a DIFFERENT payload (so a
+ *  sustained spoof attack would show up in the indexer logs as
+ *  a tx_hash receiving multiple distinct (orderHash, bidder)
+ *  writes).
  *
- *  **Authentication.** None — the indexer is public-read by
- *  design. The endpoint is rate-limit-protected via Cloudflare's
- *  edge limits + the data it accepts is non-financial analytics
- *  (no on-chain state writes, no token transfers). The
- *  conservative-on-absence query semantics mean an attacker
- *  spamming false breadcrumbs would, at worst, inject "this
- *  match was from offer X" claims that operators can detect via
- *  the tx-hash → on-chain-event correlation (the breadcrumb's
- *  tx_hash must match a real PrepayListingUpdated event for the
- *  loan, which the indexer materialises independently). */
+ *  Full prevention would need EIP-712 signed claims from the
+ *  rotation tx's sender (the borrower) — v2 follow-up if
+ *  production signal shows the spoofing window mattering in
+ *  practice. For non-financial analytics metadata the
+ *  best-effort + replace + warn shape is the right v1.1 trade-
+ *  off.
+ *
+ *  **Multi-chain.** Loan IDs are scoped per chain. The
+ *  breadcrumb table's primary key is `(chain_id, tx_hash)`; the
+ *  endpoint accepts `chainId` from the query string (same
+ *  convention as the GET routes). */
 export async function handleLoanPrepayMatchSource(
   req: Request,
   env: Env,
@@ -1002,6 +1013,11 @@ export async function handleLoanPrepayMatchSource(
   const loanId = Number.parseInt(loanIdRaw, 10);
   if (!Number.isFinite(loanId) || loanId < 0) {
     return jsonResponse({ error: 'bad-loan-id' }, 400);
+  }
+  const url = new URL(req.url);
+  const chainId = parseChainId(url.searchParams.get('chainId'));
+  if (chainId === null) {
+    return jsonResponse({ error: 'bad-chain-id' }, 400);
   }
 
   let body: unknown;
@@ -1038,20 +1054,45 @@ export async function handleLoanPrepayMatchSource(
   }
 
   try {
-    // INSERT OR IGNORE handles the idempotent re-POST case. The
-    // `tx_hash` primary key ensures we don't double-count a
-    // single rotation if the dapp retries after a transient
-    // network failure mid-POST.
+    const txHash = o.txHash.toLowerCase();
+    const orderHash = o.orderHash.toLowerCase();
+    const bidder = o.bidder.toLowerCase();
+    // Pre-check: if a row already exists for this (chain_id, tx_hash)
+    // and the new payload differs from what's there, emit an
+    // operator-visible warning so a sustained spoof attack shows
+    // up in the indexer's logs. The legitimate dapp retry is
+    // idempotent (same fields); only an attacker would post a
+    // DIFFERENT (orderHash, bidder).
+    const existing = await env.DB.prepare(
+      `SELECT order_hash, bidder
+       FROM prepay_listing_match_breadcrumbs
+       WHERE chain_id = ? AND tx_hash = ?`,
+    )
+      .bind(chainId, txHash)
+      .first<{ order_hash: string; bidder: string }>();
+    if (
+      existing !== null &&
+      (existing.order_hash !== orderHash || existing.bidder !== bidder)
+    ) {
+      console.warn(
+        '[loanRoutes] match-source overwrite — possible spoof',
+        { chainId, txHash, was: existing, now: { orderHash, bidder } },
+      );
+    }
+    // INSERT OR REPLACE lets the legitimate dapp's retry override
+    // an attacker's first-arrival spoof. Legitimate-retry semantics
+    // are unchanged (same payload re-applied is a no-op writeback).
     await env.DB.prepare(
-      `INSERT OR IGNORE INTO prepay_listing_match_breadcrumbs
-         (tx_hash, loan_id, order_hash, bidder, matched_at)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT OR REPLACE INTO prepay_listing_match_breadcrumbs
+         (chain_id, tx_hash, loan_id, order_hash, bidder, matched_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
     )
       .bind(
-        o.txHash.toLowerCase(),
+        chainId,
+        txHash,
         loanId,
-        o.orderHash.toLowerCase(),
-        o.bidder.toLowerCase(),
+        orderHash,
+        bidder,
         Math.floor(o.matchedAt),
       )
       .run();

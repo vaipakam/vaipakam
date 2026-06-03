@@ -675,6 +675,7 @@ export function indexedToRawOffer(o: IndexedOffer): {
  *  Caller is expected to NOT branch on the return value — the
  *  bool is for telemetry / tests only. */
 export async function postPrepayMatchSource(
+  chainId: number,
   loanId: bigint,
   body: {
     txHash: `0x${string}`;
@@ -687,7 +688,7 @@ export async function postPrepayMatchSource(
   if (!root) return false;
   try {
     const res = await fetch(
-      `${root}/loans/${loanId.toString()}/prepay-listing/match-source`,
+      `${root}/loans/${loanId.toString()}/prepay-listing/match-source?chainId=${chainId}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },

@@ -10,10 +10,17 @@
 -- repricing" at analytics-query time, the dapp POSTs a breadcrumb
 -- here after the rotation tx confirms.
 --
--- Key shape: keyed by `tx_hash` since each rotation tx is unique.
+-- Key shape: composite primary key `(chain_id, tx_hash)`. Loan IDs
+-- in this codebase are scoped per chain (matching how
+-- `prepay_listings` keys rows by `(chain_id, loan_id)`); a
+-- tx_hash without chain_id would conflate breadcrumbs for the
+-- same numeric loan on different chains. Each rotation tx is
+-- unique within a chain, so the composite key admits one
+-- breadcrumb per rotation per chain.
 -- A single loan can rotate multiple times (different offers across
--- the loan's lifetime); each gets its own row. `loan_id` is
--- indexed separately so the loan-history join is cheap.
+-- the loan's lifetime); each gets its own row. `(chain_id,
+-- loan_id)` is separately indexed so the loan-history join is
+-- cheap.
 --
 -- This is best-effort analytics data — the breadcrumb is NOT a
 -- prerequisite for the Match flow. The dapp POSTs after the
@@ -29,7 +36,8 @@
 -- materialisation. The query-time join handles it.
 
 CREATE TABLE IF NOT EXISTS prepay_listing_match_breadcrumbs (
-    tx_hash    TEXT    PRIMARY KEY,
+    chain_id   INTEGER NOT NULL,
+    tx_hash    TEXT    NOT NULL,
     loan_id    INTEGER NOT NULL,
     -- The OpenSea offer's canonical order hash the dapp matched
     -- against. Same shape the OpenSea Listings API uses.
@@ -38,10 +46,11 @@ CREATE TABLE IF NOT EXISTS prepay_listing_match_breadcrumbs (
     bidder     TEXT    NOT NULL,
     -- Unix seconds at the moment the dapp posted the breadcrumb
     -- (client-side clock). Used purely for ordering / display;
-    -- correlation joins use `tx_hash` against the indexer's
-    -- materialised PrepayListingUpdated row.
-    matched_at INTEGER NOT NULL
+    -- correlation joins use `(chain_id, tx_hash)` against the
+    -- indexer's materialised PrepayListingUpdated row.
+    matched_at INTEGER NOT NULL,
+    PRIMARY KEY (chain_id, tx_hash)
 );
 
 CREATE INDEX IF NOT EXISTS prepay_listing_match_breadcrumbs_by_loan
-    ON prepay_listing_match_breadcrumbs(loan_id);
+    ON prepay_listing_match_breadcrumbs(chain_id, loan_id);

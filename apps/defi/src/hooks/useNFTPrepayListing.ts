@@ -472,21 +472,28 @@ export function useNFTPrepayListing(
         diamond.updatePrepayListing(lid, newAskPrice, newSalt, newConduitKey, feeLegs),
       );
       if (r.success && r.receipt) {
-        await runOpenSeaPublish(r.receipt, lid, newAskPrice, newSalt, newConduitKey, feeLegs);
-        // #335 — best-effort analytics breadcrumb. The rotation
-        // tx is already on-chain; this POST is fire-and-forget.
+        // #335 — fire the analytics breadcrumb BEFORE awaiting the
+        // OpenSea publish, with `void` (no await) so neither a
+        // stalled publish nor the breadcrumb's own RTT can block
+        // the Match-button's onClick from resolving (Codex P2 +
+        // P3 on PR #343). The rotation tx is already on-chain; the
+        // breadcrumb is non-financial analytics metadata, so a
+        // late/lost POST only affects the "which offer triggered
+        // this match" data, not the rotation itself.
         if (matchSource) {
-          await postPrepayMatchSource(lid, {
-            txHash: r.receipt.transactionHash as `0x${string}`,
+          const receiptForBreadcrumb = r.receipt;
+          void postPrepayMatchSource(chainId, lid, {
+            txHash: receiptForBreadcrumb.transactionHash as `0x${string}`,
             orderHash: matchSource.orderHash,
             bidder: matchSource.bidder,
             matchedAt: Math.floor(Date.now() / 1000),
           });
         }
+        await runOpenSeaPublish(r.receipt, lid, newAskPrice, newSalt, newConduitKey, feeLegs);
       }
       return r.success;
     },
-    [diamond, runWrite, runOpenSeaPublish],
+    [chainId, diamond, runWrite, runOpenSeaPublish],
   );
 
   const cancelPrepayListing = useCallback(
@@ -559,24 +566,26 @@ export function useNFTPrepayListing(
         ),
       );
       if (r.success && r.receipt) {
-        await runOpenSeaPublish(r.receipt, lid, newStartAskPrice, newSalt, newConduitKey, feeLegs, {
-          endAskPrice: newEndAskPrice,
-          auctionEndTime: newAuctionEndTime,
-        });
-        // #335 — same best-effort match-source breadcrumb as the
-        // fixed-price `updatePrepayListing` path.
+        // #335 — same fire-before-publish + fire-and-forget shape
+        // as the fixed-price path. See the analogous block in
+        // `updatePrepayListing` above for the rationale.
         if (matchSource) {
-          await postPrepayMatchSource(lid, {
-            txHash: r.receipt.transactionHash as `0x${string}`,
+          const receiptForBreadcrumb = r.receipt;
+          void postPrepayMatchSource(chainId, lid, {
+            txHash: receiptForBreadcrumb.transactionHash as `0x${string}`,
             orderHash: matchSource.orderHash,
             bidder: matchSource.bidder,
             matchedAt: Math.floor(Date.now() / 1000),
           });
         }
+        await runOpenSeaPublish(r.receipt, lid, newStartAskPrice, newSalt, newConduitKey, feeLegs, {
+          endAskPrice: newEndAskPrice,
+          auctionEndTime: newAuctionEndTime,
+        });
       }
       return r.success;
     },
-    [diamond, runWrite, runOpenSeaPublish],
+    [chainId, diamond, runWrite, runOpenSeaPublish],
   );
 
   return {
