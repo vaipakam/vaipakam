@@ -99,6 +99,7 @@ FACETS=(
   "PrepayListingFacet"
   "NFTPrepayListingFacet"
   "NFTPrepayDutchListingFacet"
+  "NFTPrepayListingAtomicFacet"
   "ProfileFacet"
   "RefinanceFacet"
   "RepayFacet"

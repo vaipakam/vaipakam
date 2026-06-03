@@ -78,7 +78,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
     function test_DeployDiamond_RoutesEveryFacetSelector() public {
         _populateRoutedSet();
 
-        string[40] memory facets = cutFacetNames();
+        string[41] memory facets = cutFacetNames();
         uint256 missing;
         for (uint256 i; i < facets.length; ++i) {
             string memory name = facets[i];
@@ -108,7 +108,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
     ///         4-byte selector — such a collision makes `diamondCut`
     ///         revert and the Diamond undeployable.
     function test_NoSelectorCollisionAcrossFacets() public {
-        string[40] memory facets = cutFacetNames();
+        string[41] memory facets = cutFacetNames();
         uint256 collisions;
         for (uint256 i; i < facets.length; ++i) {
             collisions += _recordAndCountCollisions(facets[i]);
@@ -223,6 +223,11 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
         // T-086 Round-5 Block B (#309) — `NFTPrepayDutchListingFacet`
         // (Dutch-decay sibling facet).
         _addAll(_getNFTPrepayDutchListingSelectors());
+        // T-086 Round-6 / Block D (#345) — `NFTPrepayListingAtomicFacet`
+        // (the new `matchOpenSeaOffer` entry point that kills the
+        // v1 English-mode race window via Seaport
+        // `matchAdvancedOrders`).
+        _addAll(_getNFTPrepayListingAtomicSelectors());
     }
 
     /// @dev Add a selector list to the routed set, rejecting two faults:

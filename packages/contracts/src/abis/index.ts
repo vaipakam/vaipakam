@@ -47,6 +47,11 @@ import NFTPrepayListingFacetABI from './NFTPrepayListingFacet.json';
 // facet. Shares LibVaipakam storage with NFTPrepayListingFacet;
 // split for solc jump-table budget reasons (see facet natspec).
 import NFTPrepayDutchListingFacetABI from './NFTPrepayDutchListingFacet.json';
+// T-086 Round-6 / Block D (#345) — atomic match-rotation entry
+// point via Seaport matchAdvancedOrders. Sibling facet sharing
+// LibVaipakam storage with NFTPrepayListingFacet; kills the v1
+// English-mode race window §15.3 deliberately accepted.
+import NFTPrepayListingAtomicFacetABI from './NFTPrepayListingAtomicFacet.json';
 // FlashLoanLiquidationPath.md Phase 3 — standalone reference
 // receiver. Named export only; deliberately NOT spread into
 // DIAMOND_ABI below (it's not part of the diamond's selector set).
@@ -92,6 +97,7 @@ export {
   PrepayListingFacetABI,
   NFTPrepayListingFacetABI,
   NFTPrepayDutchListingFacetABI,
+  NFTPrepayListingAtomicFacetABI,
   FlashLoanLiquidatorABI,
 };
 
@@ -142,6 +148,7 @@ export const DIAMOND_ABI = [
   ...PrepayListingFacetABI,
   ...NFTPrepayListingFacetABI,
   ...NFTPrepayDutchListingFacetABI,
+  ...NFTPrepayListingAtomicFacetABI,
 ];
 
 /** Viem-typed alias for hooks using `encodeFunctionData` /

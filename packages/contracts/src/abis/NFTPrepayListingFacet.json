@@ -1377,6 +1377,17 @@
   },
   {
     "type": "error",
+    "name": "VaultNotDeployed",
+    "inputs": [
+      {
+        "name": "borrower",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "VaultResolutionFailed",
     "inputs": []
   },

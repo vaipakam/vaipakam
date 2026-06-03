@@ -36,6 +36,7 @@ import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {NFTPrepayListingFacet} from "../src/facets/NFTPrepayListingFacet.sol";
 import {NFTPrepayDutchListingFacet} from "../src/facets/NFTPrepayDutchListingFacet.sol";
+import {NFTPrepayListingAtomicFacet} from "../src/facets/NFTPrepayListingAtomicFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {MetricsDashboardFacet} from "../src/facets/MetricsDashboardFacet.sol";
@@ -140,6 +141,7 @@ contract DeployDiamond is Script {
         PrepayListingFacet prepayListingFacet = new PrepayListingFacet();
         NFTPrepayListingFacet nftPrepayListingFacet = new NFTPrepayListingFacet();
         NFTPrepayDutchListingFacet nftPrepayDutchListingFacet = new NFTPrepayDutchListingFacet();
+        NFTPrepayListingAtomicFacet nftPrepayListingAtomicFacet = new NFTPrepayListingAtomicFacet();
         RefinanceFacet refinanceFacet = new RefinanceFacet();
         MetricsFacet metricsFacet = new MetricsFacet();
         MetricsDashboardFacet metricsDashboardFacet = new MetricsDashboardFacet();
@@ -175,7 +177,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 36 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](40);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](41);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -248,6 +250,16 @@ contract DeployDiamond is Script {
         cuts[39] = _buildCut(
             address(nftPrepayDutchListingFacet),
             _getNFTPrepayDutchListingSelectors()
+        );
+        // T-086 Round-6 / Block D (#345) — `NFTPrepayListingAtomicFacet`
+        // (atomic match-rotation entry point via Seaport
+        // `matchAdvancedOrders`; kills the v1 English-mode race
+        // window §15.3 deliberately accepted). Single selector +
+        // shares LibVaipakam storage with the two sibling listing
+        // facets.
+        cuts[40] = _buildCut(
+            address(nftPrepayListingAtomicFacet),
+            _getNFTPrepayListingAtomicSelectors()
         );
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
@@ -604,6 +616,7 @@ contract DeployDiamond is Script {
         console.log("PrepayListingFacet:   ", address(prepayListingFacet));
         console.log("NFTPrepayListingFacet:", address(nftPrepayListingFacet));
         console.log("NFTPrepayDutchListingFacet:", address(nftPrepayDutchListingFacet));
+        console.log("NFTPrepayListingAtomicFacet:", address(nftPrepayListingAtomicFacet));
         console.log("RefinanceFacet:       ", address(refinanceFacet));
         console.log("MetricsFacet:         ", address(metricsFacet));
         console.log("MetricsDashboardFacet:", address(metricsDashboardFacet));
@@ -1197,6 +1210,19 @@ contract DeployDiamond is Script {
         s = new bytes4[](2);
         s[0] = NFTPrepayDutchListingFacet.postPrepayDutchListing.selector;
         s[1] = NFTPrepayDutchListingFacet.updatePrepayDutchListing.selector;
+    }
+
+    /// @dev T-086 Round-6 / Block D (#345) — `NFTPrepayListingAtomicFacet`
+    ///      selector. ONE external entry point: `matchOpenSeaOffer`,
+    ///      the atomic match-rotation flow that closes the v1
+    ///      English-mode race window §15.3 deliberately accepted.
+    ///      Shares LibVaipakam storage with the two sibling listing
+    ///      facets; emits its own `PrepayListingMatched` event
+    ///      (distinct from `PrepayListingPosted` / `PrepayListingUpdated`)
+    ///      per the Round-6 design doc §17.7.
+    function _getNFTPrepayListingAtomicSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = NFTPrepayListingAtomicFacet.matchOpenSeaOffer.selector;
     }
 
     function _getRefinanceSelectors() internal pure returns (bytes4[] memory s) {
