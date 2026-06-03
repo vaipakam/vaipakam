@@ -94,6 +94,46 @@ library LibPrepayOrder {
         orderHash = ISeaportOrderHash(seaport).getOrderHash(components);
     }
 
+    /// @dev T-086 Round-6 / Block D (#345) — memory-typed sibling
+    ///      of {buildAndHash} used by {NFTPrepayListingAtomicFacet}.
+    ///      Solidity doesn't allow overloading internal library
+    ///      functions by data location alone, so a distinct name.
+    ///      The atomic facet constructs an in-memory empty
+    ///      `FeeLeg[]` at the call site (the Vaipakam counter-order
+    ///      has no fee legs per §17.7), so we expose a memory-
+    ///      typed entry point. v1 callers continue to use the
+    ///      calldata `buildAndHash`; both flow through
+    ///      `_componentsAtMemory`.
+    function buildAndHashMem(
+        IVaipakamPrepayContext.PrepayContext memory pctx,
+        address vault,
+        address executor,
+        address seaport,
+        uint256 askPrice,
+        uint256 lenderLeg,
+        uint256 treasuryLeg,
+        uint256 salt,
+        bytes32 conduitKey,
+        FeeLeg[] memory feeLegs
+    ) internal view returns (bytes32 orderHash) {
+        OrderComponents memory components = _componentsAtMemory(
+            pctx,
+            vault,
+            executor,
+            askPrice,
+            askPrice,           // fixed-price: end == start
+            lenderLeg,
+            treasuryLeg,
+            salt,
+            conduitKey,
+            block.timestamp,
+            pctx.graceEnd,      // fixed-price: Seaport endTime = grace
+            ISeaportOrderHash(seaport).getCounter(vault),
+            feeLegs
+        );
+        orderHash = ISeaportOrderHash(seaport).getOrderHash(components);
+    }
+
     /// @dev Round-5 Block B (#309): Dutch-mode variant of
     ///      {buildAndHash}. The borrower-leg decays from
     ///      `startAskPrice − projectedLenderLeg − projectedTreasuryLeg

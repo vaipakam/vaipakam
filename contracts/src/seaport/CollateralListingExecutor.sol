@@ -15,8 +15,12 @@ import {
     FeeLeg,
     MAX_FEE_LEGS,
     PREPAY_MODE_FIXED_PRICE,
-    PREPAY_MODE_DUTCH
+    PREPAY_MODE_DUTCH,
+    PREPAY_MODE_ATOMIC_MATCH
 } from "./PrepayTypes.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibPrepayOrder} from "../libraries/LibPrepayOrder.sol";
@@ -400,6 +404,70 @@ contract CollateralListingExecutor is
         emit ConduitRevoked(conduit);
     }
 
+    // ─── Stray-token recovery (T-086 Round-6 / Block D #345) ─────────────
+
+    /// @notice Emitted on every successful stray-token sweep — gives
+    ///         operators an on-chain trail of recovery events so a
+    ///         post-mortem can correlate the sweep against the
+    ///         specific match-tx that produced the leakage.
+    event StrayTokensSwept(address indexed token, address indexed to, uint256 amount);
+
+    /// @notice Emitted on every successful stray ERC721 sweep.
+    event StrayERC721Swept(address indexed token, uint256 indexed tokenId, address indexed to);
+
+    /**
+     * @notice Sweep stray ERC20 tokens accidentally deposited on the
+     *         executor. **Recovery surface, not a happy-path tool**:
+     *         the §17.9.bis recipient-redirection in
+     *         `NFTPrepayListingAtomicFacet.matchOpenSeaOffer` sets
+     *         `matchAdvancedOrders(recipient = executor)` so any
+     *         unspent ERC20 offer-item amount from a hypothetical
+     *         §17.5-bis shape-check bypass lands at the executor
+     *         instead of the borrower's EOA. This helper lets
+     *         governance recover the stranded tokens after the
+     *         operator post-mortem identifies what produced the
+     *         leakage.
+     *
+     * @dev    `onlyOwner` — the deploy multisig at deploy time, rotated
+     *         to the governance timelock post-handover. NO public
+     *         entry point.
+     *
+     *         The ERC20 transfer goes through SafeERC20.safeTransfer
+     *         (defends against tokens that don't return bool on
+     *         transfer, e.g. USDT).
+     */
+    function sweepStrayTokens(address token, address to, uint256 amount) external onlyOwner {
+        if (token == address(0)) revert ZeroAddress();
+        if (to == address(0)) revert ZeroAddress();
+        SafeERC20.safeTransfer(IERC20(token), to, amount);
+        emit StrayTokensSwept(token, to, amount);
+    }
+
+    /**
+     * @notice Sweep a stray ERC721 NFT accidentally lodged on the
+     *         executor. Per Round-6 design doc §17.9.bis, Seaport's
+     *         ERC721 execution path uses ordinary `transferFrom` (NOT
+     *         `safeTransferFrom`), so `onERC721Received` is NOT
+     *         called and an ERC721 can land on the executor even
+     *         though it isn't an `ERC721Holder`. Governance
+     *         recovery surface for that case.
+     *
+     * @dev    `onlyOwner` — same trust boundary as `sweepStrayTokens`.
+     *         No equivalent ERC1155 sweep exists: Seaport's ERC1155
+     *         transfer path uses `safeTransferFrom` which calls
+     *         `onERC1155Received`; the executor doesn't implement
+     *         that hook so any ERC1155 transfer attempt to the
+     *         executor reverts atomically → ERC1155 leakage is
+     *         fail-closed by construction (§17.9.bis three-tier
+     *         outcome).
+     */
+    function sweepStrayERC721(address token, uint256 tokenId, address to) external onlyOwner {
+        if (token == address(0)) revert ZeroAddress();
+        if (to == address(0)) revert ZeroAddress();
+        IERC721(token).transferFrom(address(this), to, tokenId);
+        emit StrayERC721Swept(token, tokenId, to);
+    }
+
     // ─── Order context recording (diamond-only entry) ───────────────────
 
     /// @notice Stamp the `orderHash → (loanId, conduit, conduitKey,
@@ -460,10 +528,18 @@ contract CollateralListingExecutor is
         // doesn't see directly); here we re-assert the storage-shape
         // invariants the executor depends on for cancel-time
         // reconstruction.
-        if (mode == PREPAY_MODE_FIXED_PRICE) {
-            // Fixed-price: `endAskPrice` MUST equal `askPrice` (no
+        if (mode == PREPAY_MODE_FIXED_PRICE || mode == PREPAY_MODE_ATOMIC_MATCH) {
+            // Fixed-price + atomic-match share the SAME storage-shape
+            // invariants: `endAskPrice` MUST equal `askPrice` (no
             // decay); `auctionEndTime` MUST be 0 (cancel-time
-            // dispatch reads `pctx.graceEnd` instead).
+            // dispatch reads `pctx.graceEnd` instead). For atomic-
+            // match the recorded `askPrice` is the EFFECTIVE ask
+            // (= bidder.offer[0].startAmount - bidderFeeTotal) per
+            // Round-6 design doc §17.11 step 4 — the Vaipakam
+            // counter-order's three consideration legs sum to this
+            // value; recording the gross bidder offer would make the
+            // cancel-reconstruction branch build a 3-leg order
+            // mismatched against the actual orderHash.
             if (endAskPrice != askPrice || auctionEndTime != 0) {
                 revert FixedPriceModeShapeViolation();
             }
@@ -605,7 +681,19 @@ contract CollateralListingExecutor is
         // governance hasn't drifted; if it has, the hash recompute
         // mismatches and we emit `SeaportCancelSkipped`).
         OrderComponents memory components;
-        if (ctx.mode == PREPAY_MODE_FIXED_PRICE) {
+        if (
+            ctx.mode == PREPAY_MODE_FIXED_PRICE ||
+            ctx.mode == PREPAY_MODE_ATOMIC_MATCH
+        ) {
+            // T-086 Round-6 / Block D (#345) — atomic-match orders
+            // share the fixed-price cancel-reconstruction path. The
+            // Vaipakam counter-order's storage shape is identical to
+            // fixed-price (endAskPrice == askPrice, auctionEndTime ==
+            // 0, empty feeLegs); the recorded `askPrice` is the
+            // EFFECTIVE ask = offer_value - bidderFeeTotal (§17.11
+            // step 4 + §17.7 of the Round-6 design doc) so the
+            // reconstruction summing to that ask is the correct
+            // 3-leg consideration that was signed at match-time.
             components = _buildFixedPriceCancelComponents(orderHash, ctx, feeLegs);
             if (components.offerer == address(0)) {
                 // Skip-fallback sentinel: helper returned an empty

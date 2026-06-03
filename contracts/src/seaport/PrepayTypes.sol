@@ -2,6 +2,13 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+// Round-6 / Block D (#345): the BidderOrder struct below carries a
+// typed Seaport `OrderComponents` so the atomic facet can pass it
+// directly to `Seaport.getOrderHash` without an on-chain decode
+// step. ISeaportOrderHash is a leaf file with no Vaipakam-specific
+// imports, so this one-way import is acyclic.
+import {OrderComponents} from "./ISeaportOrderHash.sol";
+
 // PrepayTypes — T-086 Round-5 Block A (Issue #313)
 //
 // Shared struct vocabulary for the extended N-leg prepay-listing
@@ -51,6 +58,18 @@ uint256 constant MAX_FEE_LEGS = 4;
 uint8 constant PREPAY_MODE_FIXED_PRICE = 0;
 uint8 constant PREPAY_MODE_DUTCH = 1;
 
+// T-086 Round-6 / Block D (#345) — atomic match-rotation via Seaport
+// matchAdvancedOrders. The new facet's matchOpenSeaOffer entry point
+// constructs a Vaipakam-side counter-order on-the-fly and matches it
+// atomically against the bidder's signed OpenSea Offer in a single tx,
+// killing the v1 English-mode race window (§15.3 → §17 of the design
+// doc). For the executor's mode-dispatch + cancel-time reconstruction,
+// atomic-match orders reuse the fixed-price COMPONENTS shape (3-leg
+// consideration: lender + treasury + borrower remainder; no fee legs
+// on the Vaipakam side — bidder's signed Offer carries any OpenSea /
+// creator fees in ITS consideration array, not ours, per §17.7).
+uint8 constant PREPAY_MODE_ATOMIC_MATCH = 2;
+
 // Minimum auction window for Dutch listings, enforced at the facet
 // boundary. Protects against accidentally posting a sub-block-window
 // auction that locks the borrower's NFT but can never fill (the
@@ -84,4 +103,66 @@ struct FeeLeg {
     address recipient;
     uint96 startAmount;
     uint96 endAmount;
+}
+
+// T-086 Round-6 / Block D (#345) — caps for the bidder-side calldata
+// surface on NFTPrepayListingAtomicFacet.matchOpenSeaOffer.
+
+// MAX_BIDDER_FEE_LEGS — distinct from the seller-side MAX_FEE_LEGS
+// (4, sized for Vaipakam's own listing construction). The bidder
+// cap must accommodate OpenSea's worst case: 1 marketplace fee leg
+// PLUS up to 4 creator-payout addresses (per OpenSea's fee docs),
+// so the bidder's consideration can carry up to 5 ERC20 fee legs
+// alongside the NFT leg = 6 consideration items total. Block D
+// reuses this cap in the Atomic facet's shape invariant + the
+// executor's atomic-mode dispatch. See §17.5-bis of the design doc.
+uint256 constant MAX_BIDDER_FEE_LEGS = 5;
+
+// MAX_RESOLVERS — calldata cap on the Seaport CriteriaResolver[]
+// array we pass into matchAdvancedOrders. In practice this is 0 for
+// item offers and 1 for collection-criteria offers; 4 is generous
+// headroom. Defended against gas-griefing payloads.
+uint256 constant MAX_RESOLVERS = 4;
+
+// MAX_BIDDER_EXTRADATA_BYTES — calldata cap on the bidder's signed
+// SIP-7 SignedZone extraData blob. OpenSea's SignedZone signatures
+// are under 256 bytes in practice; 1024 leaves 4× headroom.
+uint256 constant MAX_BIDDER_EXTRADATA_BYTES = 1024;
+
+// MAX_CRITERIA_PROOF_DEPTH — each CriteriaResolver carries a Merkle
+// proof; cap the depth to defend against deep-tree gas-griefing.
+// 32 covers million-NFT collections with margin (typical real-world
+// collections rarely exceed depth 16).
+uint256 constant MAX_CRITERIA_PROOF_DEPTH = 32;
+
+/// @notice The bidder's signed OpenSea Offer payload, as supplied
+///         to NFTPrepayListingAtomicFacet.matchOpenSeaOffer.
+///
+///         Decoded from the apps/agent GET /opensea/signed-offer/
+///         {chainId}/{contract}/{tokenId}/{orderHash} endpoint on
+///         the dapp side; passed as calldata. The facet runs the
+///         §17.5 bytes verification (Seaport.getOrderHash re-derive
+///         against the dapp-pinned expected hash) and the §17.5-bis
+///         shape invariant on these bytes BEFORE any state mutation.
+/// @dev    T-086 Round-6 / Block D (#345). `components` and
+///         `signature` are the standard Seaport bidder offer fields;
+///         `extraData` carries OpenSea's SIP-7 SignedZone
+///         authorisation for fee-enforced collections and MUST be
+///         passed through verbatim to AdvancedOrder.extraData on
+///         the bidder side (an empty extraData would revert at the
+///         SignedZone validation step for fee-enforced collections).
+struct BidderOrder {
+    // The Seaport OrderComponents shape — offerer, zone, offer items,
+    // consideration items, orderType, startTime, endTime, zoneHash,
+    // salt, conduitKey, counter. The dapp decodes this from the
+    // agent's signed-offer response and passes it through verbatim;
+    // the facet runs Seaport.getOrderHash on it to verify against
+    // the dapp-pinned expected hash (§17.5 of the design doc).
+    OrderComponents components;
+    // The bidder's ECDSA / ERC-1271 signature over the orderHash.
+    bytes signature;
+    // OpenSea SignedZone (SIP-7) extraData blob. Empty for collections
+    // without fee enforcement; carries the signed-zone authorisation
+    // for fee-enforced collections. Capped at MAX_BIDDER_EXTRADATA_BYTES.
+    bytes extraData;
 }
