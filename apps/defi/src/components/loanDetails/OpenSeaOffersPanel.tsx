@@ -115,6 +115,14 @@ export function OpenSeaOffersPanel({
                   <div>
                     <strong>{formatBigInt(offer.value, decimals)}</strong>{' '}
                     <span>{offer.paymentToken.slice(0, 10)}…</span>
+                    {/* #336 — surface the quantity when > 1
+                        (ERC1155). For ERC721 the value is always
+                        1 and the label adds noise. */}
+                    {offer.quantity > 1n && (
+                      <span style={offerMetaStyle}>
+                        {' '}× {offer.quantity.toString()} units
+                      </span>
+                    )}
                   </div>
                   <div style={offerMetaStyle}>
                     {offer.kind} · bidder{' '}
@@ -160,6 +168,21 @@ export function OpenSeaOffersPanel({
           >
             Refresh now
           </button>
+        </div>
+
+        {/* #336 — partial-fill filter footnote. Bidders can place
+            OpenSea offers for a partial number of ERC1155 units
+            (e.g. 1 of 5 locked); the dapp filters those because
+            the canonical Seaport order pins the full vaulted
+            quantity. The filter is silent (no rejected-with-
+            reason row), so this note tells the borrower why
+            their inbox of "offers visible on OpenSea" may be
+            larger than what the panel surfaces. */}
+        <div className="text-muted" style={partialFillNoteStyle}>
+          Note: partial-fill collection offers (different quantity
+          than your locked lot) stay on OpenSea's marketplace but
+          don't appear here — they can't be matched through the
+          dapp.
         </div>
       </div>
 
@@ -359,6 +382,11 @@ const offerRowBodyStyle = {
 const offerMetaStyle = {
   fontSize: '0.85em',
   color: 'var(--text-muted, #666)',
+};
+
+const partialFillNoteStyle = {
+  fontSize: '0.85em',
+  marginTop: '0.5rem',
 };
 
 const modalBackdropStyle = {

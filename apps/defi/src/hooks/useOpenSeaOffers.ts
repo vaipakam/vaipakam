@@ -71,6 +71,15 @@ const OPENSEA_CHAIN_SLUG: Record<number, string> = {
  *  returns the raw OpenSea JSON; the hook flattens to the
  *  borrower-relevant fields + classifies acceptability. */
 export interface NormalizedOffer {
+  /** #336 — quantity of NFT units this offer is asking for.
+   *  - ERC721 (`collateralAssetType === 1`): always `1n`.
+   *  - ERC1155 (`collateralAssetType === 2`): the
+   *    `consideration[0].startAmount` from the offer's Seaport
+   *    parameters. The normalizer accepts only offers whose
+   *    quantity matches the loan's `collateralQuantity` exactly —
+   *    partial-fill collection offers stay on OpenSea but don't
+   *    appear in the Match panel. */
+  quantity: bigint;
   /** Stable identity used as React key + sort tiebreaker. */
   orderHash: string;
   /** "item" = single-NFT offer, "collection" = floor offer for the
@@ -156,6 +165,12 @@ export function useOpenSeaOffers(
   chainId: number,
   collateralAsset: string,
   collateralTokenId: bigint,
+  /** #336 — locked NFT quantity. `1n` for ERC721; the vault's
+   *  `collateralQuantity` for ERC1155. The normalizer requires
+   *  each offer's `consideration[0].startAmount` to equal this
+   *  value — partial-fill collection offers (quantity ≠ locked)
+   *  get filtered. */
+  collateralQuantity: bigint,
   threshold: {
     lenderLeg: bigint;
     treasuryLeg: bigint;
@@ -324,8 +339,8 @@ export function useOpenSeaOffers(
       // have a reference for).
       const expectedChain = OPENSEA_CHAIN_SLUG[chainId] ?? null;
       const normalized: NormalizedOffer[] = [
-        ...itemRaw.map(o => normalize(o, 'item', collateralAsset, collateralTokenId, expectedChain, computeAcceptable)),
-        ...collectionRaw.map(o => normalize(o, 'collection', collateralAsset, collateralTokenId, expectedChain, computeAcceptable)),
+        ...itemRaw.map(o => normalize(o, 'item', collateralAsset, collateralTokenId, collateralQuantity, expectedChain, computeAcceptable)),
+        ...collectionRaw.map(o => normalize(o, 'collection', collateralAsset, collateralTokenId, collateralQuantity, expectedChain, computeAcceptable)),
       ].filter((o): o is NormalizedOffer => o !== null);
 
       // Sort by acceptability, then descending value. The panel
@@ -357,6 +372,7 @@ export function useOpenSeaOffers(
     chainId,
     collateralAsset,
     collateralTokenId,
+    collateralQuantity,
     computeAcceptable,
   ]);
 
@@ -419,6 +435,7 @@ function normalize(
   kind: 'item' | 'collection',
   collateralAsset: string,
   collateralTokenId: bigint,
+  collateralQuantity: bigint,
   expectedChain: string | null,
   computeAcceptable: (
     value: bigint,
@@ -440,6 +457,8 @@ function normalize(
           itemType?: number;
           token?: string;
           identifierOrCriteria?: string;
+          startAmount?: string;
+          endAmount?: string;
         }>;
         endTime?: string;
         offerer?: string;
@@ -526,6 +545,36 @@ function normalize(
   const ident = (consideration.identifierOrCriteria ?? '0').toString();
   if (ident !== collateralTokenId.toString()) return null;
 
+  // #336 — quantity check. ERC721 considerations are implicitly
+  // unit-quantity (Seaport encodes `1` for both startAmount and
+  // endAmount); ERC1155 considerations carry the actual quantity
+  // the bidder is willing to settle for. The on-chain Match
+  // rotation pins the FULL vaulted `collateralQuantity`, so an
+  // offer for a partial fill (quantity < locked) would let the
+  // panel mark Match-able then revert at fill time when the
+  // buyer pays the unit-priced offer for the whole-quantity NFT.
+  // Filter to exact-quantity matches; partial-fill collection
+  // offers stay visible on OpenSea but don't appear in the
+  // Match panel. The decoded quantity flows through to the
+  // panel so ERC1155 rows can surface "× N units" to the
+  // borrower.
+  let quantity: bigint;
+  if (itemType === 2) {
+    quantity = 1n;
+  } else {
+    // itemType === 3 (ERC1155). Seaport sets startAmount ==
+    // endAmount on fixed-price offers; we read startAmount and
+    // tolerate a malformed payload by failing closed.
+    const rawAmount = consideration.startAmount;
+    if (typeof rawAmount !== 'string' || rawAmount.length === 0) return null;
+    try {
+      quantity = BigInt(rawAmount);
+    } catch {
+      return null;
+    }
+    if (quantity !== collateralQuantity) return null;
+  }
+
   // Codex round-16 P2 #2 — drop rows whose top-level `status`
   // is present and not `ACTIVE`. OpenSea offer responses carry
   // a status enum (`ACTIVE`, `INACTIVE`, `FULFILLED`,
@@ -545,6 +594,7 @@ function normalize(
     paymentToken,
     value,
     endTime,
+    quantity,
     acceptable: verdict.acceptable,
     rejectReason: verdict.rejectReason,
   };
