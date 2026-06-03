@@ -233,11 +233,18 @@ export function OpenSeaOffersSection({
   // later early-return shows only the v1.1-deferred banner.
   // `2` is the on-chain `AssetType.ERC1155` enum value.
   const collateralIsERC1155 = collateralAssetType === 2;
+  // #332 — Dutch listings are no longer excluded from `canMatch`;
+  // the Match flow now branches on `live.auctionMode` and calls
+  // `updatePrepayDutchListing` to rotate the live Dutch order to
+  // the offer's value (decay collapsed to a constant via
+  // `startAskPrice == endAskPrice`, original `auctionEndTime`
+  // preserved). Dutch listings without an `auctionEndTime` (a
+  // malformed indexer row) still pause + banner via the
+  // pre-migration gate.
   const canMatch =
     live !== null &&
     live !== undefined &&
     !listingPreMigration &&
-    !listingIsDutch &&
     !collateralIsERC1155;
 
   // #331 — fee-schedule cache (replaces round-5's tri-state
@@ -446,31 +453,31 @@ export function OpenSeaOffersSection({
     );
   }
 
-  // T-086 Round-5 Block C — fixed-price-only for v1 (Raja/Grok
-  // review #328 nit #2). The current Match callback calls
-  // `updatePrepayListing` which would rotate a live Dutch listing
-  // into fixed-price at the offer's value — a mode change is
-  // technically supported on-chain but surprises the borrower vs
-  // the release note's "deferred" framing. Hide the section + show
-  // a banner instead. Matching against a Dutch listing lands as a
-  // follow-up that calls `updatePrepayDutchListing` with the
-  // offer's value + fresh decay parameters. `listingIsDutch` was
-  // already computed at the top of the body so the hook's pause
-  // flag could consult it.
-  if (listingIsDutch) {
+  // #332 — a Dutch listing without an `auctionEndTime` (or with a
+  // missing `endAskPrice`) is a malformed indexer row. Banner
+  // instead of attempting a rotation that would either revert
+  // on-chain or rotate the order with bad decay parameters. Pre-
+  // migration short-circuit above covered missing salt/conduit;
+  // this covers missing Dutch-specific fields.
+  if (
+    listingIsDutch &&
+    (live === null ||
+      live === undefined ||
+      live.auctionEndTime == null ||
+      live.endAskPrice == null)
+  ) {
     return (
       <div
-        id={`opensea-offers-dutch-deferred-${loanId}`}
+        id={`opensea-offers-dutch-pre-migration-${loanId}`}
         className="card loan-actions-card"
       >
         <div className="action-group">
           <div className="action-title">OpenSea Offers (English mode)</div>
-          <div className="alert alert-info">
-            Matching incoming OpenSea offers against a live Dutch
-            listing is coming in v1.1. For now, the Dutch decay path
-            is the price-discovery mechanism — Seaport's native
-            interpolation handles the per-block decayed price, and
-            any buyer can fulfill at the current interpolated value.
+          <div className="alert alert-warning">
+            This Dutch listing is missing decay parameters in the
+            indexer. Cancel the current listing and re-post via the
+            actions card above to enable matching against incoming
+            OpenSea offers.
           </div>
         </div>
       </div>
@@ -592,6 +599,34 @@ export function OpenSeaOffersSection({
         // next render (e.g. if Match was attempted on the borderline
         // case but the tx then reverts and the user retries).
         setFeeCheck({ slug: offersResult.slug, schedule: freshSchedule });
+
+        // #332 — branch on auction mode. Fixed-price (mode 0)
+        // rotates via `updatePrepayListing`; Dutch (mode 1)
+        // rotates via `updatePrepayDutchListing`, collapsing the
+        // decay window to a constant `offer.value` (start ==
+        // end) while preserving the original `auctionEndTime`.
+        // The Dutch order with constant start+end + the same
+        // window keeps Seaport's linear interpolation pinned at
+        // `offer.value` for the remaining window — same effective
+        // fixed-price-at-the-offer for any buyer to fulfill,
+        // without forcing a mode change that surprises the
+        // borrower vs the prior decay path.
+        //
+        // The malformed-Dutch banner short-circuit above
+        // guarantees `auctionEndTime` + `endAskPrice` are
+        // populated by the time this callback fires; the casts
+        // here are safe by construction.
+        if (live.auctionMode === 1) {
+          return prepayListing.updatePrepayDutchListing(
+            loanId,
+            offer.value,
+            offer.value,
+            BigInt(live.auctionEndTime as number),
+            BigInt(live.salt),
+            live.conduitKey as `0x${string}`,
+            feeLegs,
+          );
+        }
 
         return prepayListing.updatePrepayListing(
           loanId,
