@@ -1037,11 +1037,23 @@ The protections we actually need are:
   hash) → `BidderOrderHashMismatch` reverts. Same protection that
   catches a compromised bundle.
 - **On-chain cancellation** — bidder calling Seaport's `cancel(order)`
-  flips `isCancelled = true`. We DO check
-  `isCancelled || totalFilled >= totalSize` explicitly (not
-  `isValidated`); the facet reverts `BidderOrderNotFillable` if
-  either is true. This catches both on-chain cancellation and the
-  "this offer was already filled by someone else" race.
+  flips `isCancelled = true`. We DO check `isCancelled` explicitly,
+  but the `totalFilled >= totalSize` check needs a guard (Codex
+  round-2 P1 #344): for an off-chain-signed offer that's never been
+  touched on-chain, `getOrderStatus` returns
+  `(isValidated=false, isCancelled=false, totalFilled=0,
+  totalSize=0)`, which makes `0 >= 0` true and would reject every
+  normal offer. The correct check is:
+  ```
+  if (isCancelled) revert BidderOrderNotFillable(reason: Cancelled);
+  if (totalSize != 0 && totalFilled >= totalSize)
+      revert BidderOrderNotFillable(reason: FullyFilled);
+  ```
+  The `totalSize != 0` guard lets ordinary fresh offers through
+  (zero denominator means "never recorded on-chain", which Seaport's
+  own match-time path handles natively) while still catching the
+  "this offer was already filled by someone else" race once Seaport
+  has recorded the order.
 
 **No `Seaport.validate(bidderOrder)` call.** That would pre-register
 the order in Seaport's state. If our `matchOrders` then reverts
@@ -1069,6 +1081,35 @@ counter-order and BEFORE invoking `matchAdvancedOrders`:
   ∈ {ERC721, ERC1155, ERC721_WITH_CRITERIA, ERC1155_WITH_CRITERIA},
   `token == loan.collateralAsset`, and `recipient == bidder.offerer`
   (the bidder receives the NFT — not some attacker-supplied address).
+- **NFT quantity exact-match** (Codex round-2 P1 #344). The bidder's
+  consideration-item amount MUST equal the full collateral quantity
+  being settled:
+  - For ERC721 / ERC721_WITH_CRITERIA itemTypes:
+    `consideration[0].startAmount == endAmount == 1`. Standard ERC721
+    semantics; a bidder offer asking for `amount > 1` is malformed.
+  - For ERC1155 / ERC1155_WITH_CRITERIA itemTypes:
+    `consideration[0].startAmount == endAmount == loan.collateralQuantity`.
+    The full vaulted balance gets sold as one lot; the §17.9 fulfillment
+    pairs the Vaipakam offer item (NFT amount = `loan.collateralQuantity`)
+    with the bidder consideration item. Without this exact-match check,
+    OpenSea's common `amount = 1` ERC1155 collection offer would settle
+    the loan in full while only delivering 1 unit on the bidder side —
+    and the §17.9.bis `recipient = executor` defense-in-depth would
+    then receive the remaining `loan.collateralQuantity - 1` units as
+    "unspent offer items" (lost to the executor's sweep helper). Hard-
+    reverts `BidderOrderShapeMismatch(reason: NftAmountMismatch)`
+    before any state mutation.
+  - The startAmount + endAmount equality on the NFT item is also
+    asserted (no Dutch-decay NFT amount; matches the §17.5-bis
+    offer-side fixed-amount rule).
+- `bidder.consideration[0].identifierOrCriteria` semantics depend on
+  itemType: for ERC721/ERC1155 (item offer) it must equal
+  `loan.collateralTokenId`; for *_WITH_CRITERIA (collection offer)
+  it's a Merkle root, and §17.8's CriteriaResolver supplies the
+  proof + actual identifier at match time. The §17.5 hash-rederive
+  binds the criteria root to the bidder's signature, so the
+  resolver can only prove inclusion against the root the bidder
+  actually signed.
 
 **Why this matters.** `Seaport.matchAdvancedOrders` takes a
 `recipient` parameter; any offer items NOT consumed by a
@@ -1276,26 +1317,42 @@ Match button path is broken.
 The auto-clear runs the same effects as `cancelPrepayListing` against
 the existing listing, in this order:
 
-a. Read `existingHash = s.prepayListingOrderHash[loanId]`. If zero,
-   skip steps b-d (borrower clicked Match without ever posting first;
-   supported but rare — the offers list is normally only populated
-   for posted listings).
+a. Read `existingHash = s.prepayListingOrderHash[loanId]`. **If zero,
+   skip ALL of steps b–f** (borrower clicked Match without ever
+   posting first; supported but rare — the offers list is normally
+   only populated for posted listings). Codex round-2 P3 #344 —
+   emitting `PrepayListingCanceled(bytes32(0))` for a never-posted
+   listing creates a false cancellation row in the indexer history.
 b. `existingExecutor = s.prepayListingExecutor[loanId]`. Call
-   `existingExecutor.cancelOrder(existingHash)` — best-effort
-   on-Seaport cancel via the `_tryCancelOnSeaport` helper (emits
-   `SeaportCancelSkipped` on revert per the §316 pattern); this
-   prevents the dangling OpenSea listing from settling against
-   anyone after the atomic match.
-c. Clear storage: `delete s.prepayListingOrderHash[loanId]`,
+   `existingExecutor.clearOrder(existingHash)` — the existing
+   recorder cleanup method whose implementation runs the best-effort
+   on-Seaport cancel via `_tryCancelOnSeaport` (emits
+   `SeaportCancelSkipped` on revert per the §316 pattern). The
+   design draft's earlier `cancelOrder` was a method-name error;
+   `IListingExecutorRecorder.clearOrder` is the shipped surface
+   (Codex round-2 P2 #344).
+c. **Revoke the vault binding for `existingHash`** (Codex round-2
+   P3 #344). v1's `cancelPrepayListing` not only clears the diamond
+   state but also revokes the vault's ERC-1271 orderHash mapping
+   for the canceled hash AND revokes the per-(asset, id, conduit)
+   operator approval on the vault. The auto-clear MUST run both:
+   `vault.revokeListingOrderHash(existingHash)` and
+   `vault.revokeCollateralOperatorApproval(collateralAsset,
+   collateralTokenId, conduit)` — same helpers v1's
+   `_cancel` calls. Without this step, stale ERC-1271 listing
+   authorization for the replaced order survives the match, and the
+   vault still authorises `existingHash` for a future Seaport
+   replay attempt against the same NFT.
+d. Clear storage: `delete s.prepayListingOrderHash[loanId]`,
    `delete s.prepayListingExecutor[loanId]`.
-d. `LibERC721._unlock(borrowerTokenId)` — releases the v1 lock so
+e. `LibERC721._unlock(borrowerTokenId)` — releases the v1 lock so
    the upcoming step 3 lock-acquire succeeds.
-e. Emit `PrepayListingCanceled(loanId, msg.sender, existingHash,
+f. Emit `PrepayListingCanceled(loanId, msg.sender, existingHash,
    reason: ReplacedByMatch)` — new `CancelReason` enum value
    distinguishes this from manual / expired cancels for indexer
    semantics.
 
-Steps b–e are atomic with the rest of the match (whole tx reverts on
+Steps b–f are atomic with the rest of the match (whole tx reverts on
 any failure downstream); the existing listing is canceled if and only
 if the match settles. No "partial replacement" state is reachable.
 
