@@ -35,6 +35,14 @@
 
 import type { FeeLegInput } from '../hooks/useNFTPrepayListing';
 
+/** On-chain cap from `LibVaipakam.MAX_FEE_LEGS` (referenced in
+ *  `NFTPrepayListingFacet` + `NFTPrepayDutchListingFacet`). A schedule
+ *  with more required-fee recipients than this can't settle through
+ *  the diamond — `updatePrepayListing` reverts `FeeLegsExceedCap`. The
+ *  parser fails closed on such schedules so the Match panel doesn't
+ *  let the borrower reach a guaranteed-to-revert transaction. */
+export const MAX_FEE_LEGS = 4;
+
 export interface ParsedFeeScheduleEntry {
   /** Recipient address normalized to lowercase 0x-hex (matches the
    *  on-chain `FeeLeg.recipient` slot's case-insensitive comparison
@@ -89,12 +97,41 @@ function isHexAddress(s: unknown): s is `0x${string}` {
 
 /**
  * Parse an OpenSea-collection-body's `fees` array into the typed
- * schedule the dapp consumes. Empty or malformed input → fee-free
- * schedule (totalBps=0, fees=[]). This is the safe default:
- * downstream code treats `totalBps === 0` as "no fee-leg adjustment
- * needed", which matches the v1 Block C-on-fee-free path exactly.
+ * schedule the dapp consumes.
+ *
+ * **Return contract**:
+ * - `null` — the schedule is structurally unmatchable: a `required:
+ *   true` row had a missing / malformed recipient, or the count of
+ *   required-fee rows exceeds [`MAX_FEE_LEGS`](#max_fee_legs). Both
+ *   conditions would let the dapp greenlight a Match flow that can't
+ *   settle: missing-recipient would either drop a leg OpenSea's
+ *   marketplace expects (publish rejection) or send funds to
+ *   `address(0)` (lost); too-many-legs reverts `FeeLegsExceedCap`.
+ *   Caller treats `null` as fail-closed and gates Match.
+ * - `{ fees: [], totalBps: 0 }` — collection ships zero required
+ *   fees (fee-free). Caller proceeds with the v1 fee-free path
+ *   verbatim.
+ * - `{ fees: [...], totalBps > 0 }` — collection enforces one or
+ *   more required fees. Caller uses `totalBps` for threshold
+ *   scaling + [`computeFeeLegs`](#computefeelegs) at confirm time.
+ *
+ * **Optional-row handling**: non-required fee rows (creator
+ * royalties marked off-chain promotional, etc.) are silently
+ * ignored. They sit on OpenSea's marketplace UI but never enter the
+ * on-chain settlement; their presence + shape is irrelevant to the
+ * schedule's validity.
+ *
+ * **Malformed body handling**: a body that isn't a JSON object,
+ * doesn't carry a `fees` array, or carries an array of non-objects
+ * resolves to `{ fees: [], totalBps: 0 }` (treated as fee-free) —
+ * NOT `null`. The `null` return is reserved for "the response named
+ * a required fee row but its shape is unsafe to settle"; the
+ * absence of any `fees` field altogether is OpenSea's signal for "no
+ * fees apply".
  */
-export function parseOpenSeaFeeSchedule(body: unknown): ParsedFeeSchedule {
+export function parseOpenSeaFeeSchedule(
+  body: unknown,
+): ParsedFeeSchedule | null {
   if (body === null || typeof body !== 'object') {
     return { fees: [], totalBps: 0 };
   }
@@ -118,13 +155,28 @@ export function parseOpenSeaFeeSchedule(body: unknown): ParsedFeeSchedule {
     const bps = Math.floor(candidateBps);
     if (bps <= 0) continue;
 
-    if (!isHexAddress(entry.recipient)) continue;
+    // Codex round-1 P2 #339 — a required row with positive bps but
+    // missing / malformed recipient signals OpenSea WILL demand
+    // settlement to a recipient we can't name. Silently dropping
+    // this row would let the schedule classify as partially
+    // fee-free; the rotated listing would then either omit a leg
+    // OpenSea's marketplace expects (publish rejection) or send the
+    // amount to `address(0)` (lost). Fail closed on the whole
+    // schedule.
+    if (!isHexAddress(entry.recipient)) return null;
     const recipient = entry.recipient.toLowerCase() as `0x${string}`;
-    if (recipient === ZERO_ADDRESS) continue;
+    if (recipient === ZERO_ADDRESS) return null;
 
     fees.push({ recipient, basisPoints: bps });
     totalBps += bps;
   }
+
+  // Codex round-1 P2 #339 — schedules with more required-fee
+  // recipients than the diamond's `MAX_FEE_LEGS` cap structurally
+  // can't settle. `updatePrepayListing` reverts `FeeLegsExceedCap`,
+  // so a borrower reaching the Match flow on such a collection would
+  // hit a guaranteed-to-revert tx. Fail closed at parse time.
+  if (fees.length > MAX_FEE_LEGS) return null;
 
   return { fees, totalBps };
 }
@@ -143,22 +195,44 @@ export function parseOpenSeaFeeSchedule(body: unknown): ParsedFeeSchedule {
  * we over-promise. The borrower-remainder leg absorbs any rounding
  * drift, exactly matching the contract's settlement waterfall.
  *
- * **Empty schedule → empty FeeLegInput[].** That keeps fee-free
- * collections going through the same code path with no special-case
- * branching at the call site.
+ * **Return contract**:
+ * - `null` — the schedule + askPrice combination would produce one
+ *   or more zero-amount fee legs. The diamond reverts
+ *   `FeeLegInvalidAmount` on any zero entry, so admitting such a
+ *   schedule would let the borrower reach a guaranteed-to-revert
+ *   transaction. Caller treats `null` as fail-closed and aborts
+ *   the Match.
+ * - `[]` — schedule has no required fees (fee-free). Caller uses
+ *   the empty array verbatim; matches the v1 baseline.
+ * - non-empty `FeeLegInput[]` — every leg has a strictly positive
+ *   amount; safe to thread into `updatePrepayListing`.
+ *
+ * `askPrice <= 0` also returns `null` — a non-positive ask is
+ * structurally invalid and would produce zero amounts even on
+ * positive bps.
  */
 export function computeFeeLegs(
   schedule: ParsedFeeSchedule,
   askPrice: bigint,
-): FeeLegInput[] {
+): FeeLegInput[] | null {
   if (schedule.fees.length === 0) return [];
-  if (askPrice <= 0n) return [];
-  return schedule.fees.map((f) => {
+  if (askPrice <= 0n) return null;
+  const legs: FeeLegInput[] = [];
+  for (const f of schedule.fees) {
     const amount = (askPrice * BigInt(f.basisPoints)) / 10_000n;
-    return {
+    // Codex round-1 P2 #339 — fail closed on any zero-rounding leg.
+    // The diamond's `FeeLegInvalidAmount` revert would catch this
+    // on-chain, but greenlighting an offer that's guaranteed to
+    // revert wastes the borrower's gas + leaves the surface in a
+    // confusing "tried Match, no rotation" state. Better to abort
+    // pre-flight; the borrower sees a clean disabled state until
+    // the offer climbs above the per-leg-rounding floor.
+    if (amount <= 0n) return null;
+    legs.push({
       recipient: f.recipient,
       startAmount: amount,
       endAmount: amount,
-    };
-  });
+    });
+  }
+  return legs;
 }

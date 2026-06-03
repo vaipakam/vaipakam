@@ -280,7 +280,26 @@ export function OpenSeaOffersSection({
     collateralAsset,
     collateralTokenId,
     threshold !== null
-      ? { ...threshold, feeBpsTotal: feeCheck.schedule?.totalBps ?? 0 }
+      ? {
+          ...threshold,
+          // Codex round-1 P1 #339 — when the schedule hasn't been
+          // fetched for the current slug, pass the degenerate
+          // `feeBpsTotal: 10_000` sentinel so every offer
+          // classifies as below-threshold via the hook's
+          // degenerate-guard branch. This keeps the hook unpaused
+          // (so the offers fetch can resolve the slug and unblock
+          // the schedule effect) while still preventing
+          // misleadingly-acceptable rows from rendering. Once the
+          // schedule lands the value swaps to the real
+          // `totalBps` and re-classification kicks in on next
+          // render.
+          feeBpsTotal:
+            feeCheck.slug !== null &&
+            feeCheck.slug === offersResult.slug &&
+            feeCheck.schedule !== null
+              ? feeCheck.schedule.totalBps
+              : 10_000,
+        }
       : {
           // Codex round-3 P2 review #328 — sentinel: when threshold
           // hasn't resolved, mark every offer unacceptable by setting
@@ -295,15 +314,17 @@ export function OpenSeaOffersSection({
         },
     // Codex P2 review #328 — pause polling when there's no live
     // listing OR threshold hasn't resolved OR the listing can't
-    // be matched (Dutch / pre-migration). #331 — ALSO pause until
-    // the fee schedule has been fetched (`schedule !== null`);
-    // the section's later `feeScheduleMatchesSlug` post-hook
-    // derivation gates the Match flow on the slug pairing.
+    // be matched (Dutch / pre-migration). Codex round-1 P1 #339:
+    // DO NOT also pause on `feeCheck.schedule === null` — the slug
+    // is resolved by this very fetch, so gating the fetch on the
+    // schedule (which gates on the slug) creates a chicken-and-egg
+    // deadlock. Schedule-not-yet-fetched is handled via the
+    // `feeBpsTotal: 10_000` sentinel above; the Match button stays
+    // disabled via `actionLoading: effectiveFeeSchedule === null`.
     {
       paused:
         threshold === null ||
-        !canMatch ||
-        feeCheck.schedule === null,
+        !canMatch,
     },
   );
 
@@ -332,6 +353,12 @@ export function OpenSeaOffersSection({
       .then((r) => (r.ok ? r.json() : null))
       .then((body) => {
         if (cancelled || body === null) return;
+        // `parseOpenSeaFeeSchedule` returns `null` on a
+        // structurally-unsafe schedule (malformed required-fee
+        // recipient, or fee-leg count over `MAX_FEE_LEGS`). The
+        // section's slug-pairing + Match gate both treat
+        // `schedule: null` as "couldn't validate → keep Match
+        // disabled" — same effect as a transient fetch failure.
         const schedule = parseOpenSeaFeeSchedule(body);
         setFeeCheck({ slug: slugForThisFetch, schedule });
       })
@@ -498,12 +525,16 @@ export function OpenSeaOffersSection({
         // flip from acceptable to below-threshold under the new
         // scaling. Re-check the closed-form threshold against the
         // FRESH `feeBpsTotal` before committing to the rotation.
-        if (
-          freshSchedule.totalBps >=
-          10_000 - 1 /* leave at least 1 bp for protocol legs */
-        ) {
-          // Degenerate (fees consume the entire price). Refresh the
-          // cache + abort; the panel renders an unmatchable state.
+        //
+        // Codex round-1 P2 #339 — match the hook's `>= 10_000`
+        // degenerate threshold here. A 9999-bps schedule produces
+        // a finite (very large) min and the closed-form math
+        // stays well-defined; only `feeBpsTotal >= 10_000` is
+        // structurally unmatchable.
+        if (freshSchedule.totalBps >= 10_000) {
+          // Degenerate (fees consume the entire price OR more).
+          // Refresh the cache + abort; the panel renders an
+          // unmatchable state.
           setFeeCheck({ slug: offersResult.slug, schedule: freshSchedule });
           return false;
         }
@@ -527,7 +558,19 @@ export function OpenSeaOffersSection({
         // Build on-chain feeLegs from the FRESH schedule + offer's
         // value. Fee-free collections produce an empty array, which
         // matches the v1 Block C-on-fee-free path exactly.
+        //
+        // Codex round-1 P2 #339 — `computeFeeLegs` returns `null`
+        // when the schedule + askPrice combination would produce a
+        // zero-amount leg (diamond reverts `FeeLegInvalidAmount`).
+        // Treat the null as fail-closed: refresh the cache (so the
+        // panel re-classifies with the fresh schedule) and abort.
+        // The borrower's recourse is to wait for a higher offer
+        // that clears the per-leg-rounding floor.
         const feeLegs = computeFeeLegs(freshSchedule, offer.value);
+        if (feeLegs === null) {
+          setFeeCheck({ slug: offersResult.slug, schedule: freshSchedule });
+          return false;
+        }
 
         // Refresh the cache with the schedule we actually used —
         // keeps the section's threshold compare consistent on the
