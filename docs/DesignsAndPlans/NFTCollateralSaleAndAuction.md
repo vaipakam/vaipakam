@@ -1125,13 +1125,20 @@ counter-order and BEFORE invoking `matchAdvancedOrders`:
   [OpenSea's fee docs](https://docs.opensea.io/docs/opensea-fees#where-to-set-fees));
   rejecting `length > 1` would refuse every fee-enforced offer.
   Instead the facet validates the consideration's STRUCTURE:
-  - `bidder.consideration.length ∈ [1, 1 + MAX_FEE_LEGS]` where
-    `MAX_FEE_LEGS` is the **same `4` constant** from Block A's
-    `PrepayTypes.sol` (1 NFT + up to 4 fee legs = 5 consideration
-    items max; Codex round-7 P3 #344 reconciliation). Block D reuses
-    `MAX_FEE_LEGS` rather than introducing a parallel constant.
-    Reverts `BidderOrderShapeMismatch(reason: ExtraConsiderationItems)`
-    only if the length exceeds the cap.
+  - `bidder.consideration.length ∈ [1, 1 + MAX_BIDDER_FEE_LEGS]`
+    where `MAX_BIDDER_FEE_LEGS = 5` is a NEW Block D constant
+    (Codex round-11 P2 #344 correction). The seller-side
+    `MAX_FEE_LEGS = 4` from Block A's `PrepayTypes.sol` was the
+    wrong source: OpenSea documents up to 4 creator-payout
+    addresses PLUS OpenSea's own marketplace fee = up to 5 fee
+    consideration items on a bidder offer for a fee-enforced
+    collection. Block A's cap was sized for the seller-side
+    listing construction (where we choose the fee legs); the
+    bidder-side cap must accommodate whatever signed shape
+    OpenSea sized for the bidder, which can be wider. Distinct
+    constants for distinct concerns. Reverts
+    `BidderOrderShapeMismatch(reason: ExtraConsiderationItems)`
+    only if the length exceeds `1 + MAX_BIDDER_FEE_LEGS = 6`.
   - `bidder.consideration[0]` MUST match the expected NFT shape
     (item position 0 is positional in OpenSea's offer schema):
     itemType ∈ {ERC721, ERC1155, ERC721_WITH_CRITERIA,
@@ -1313,10 +1320,14 @@ The facet validates two unbounded calldata inputs in its prologue:
   `1024`; SIP-7 SignedZone signatures are well under 256 bytes in
   practice, so 1024 leaves 4× headroom). Reverts
   `BidderExtraDataTooLarge(supplied, cap)`.
-- `resolvers.length <= MAX_RESOLVERS` (set to `MAX_FEE_LEGS = 4`,
-  reusing the Block A constant; in practice resolvers.length is
-  0 for item offers and 1 for collection-criteria offers, so 4
-  is generous). Reverts `TooManyResolvers(supplied, cap)`.
+- `resolvers.length <= MAX_RESOLVERS = 4` (Block D constant; in
+  practice `resolvers.length` is 0 for item offers and 1 for
+  collection-criteria offers, so 4 is generous). Reverts
+  `TooManyResolvers(supplied, cap)`. (Round-9 reused Block A's
+  `MAX_FEE_LEGS` here; round-11 P2 separation made
+  `MAX_BIDDER_FEE_LEGS` a distinct constant, so this cap is now
+  its own Block D constant too — they happen to be the same value
+  4 but the concerns are unrelated.)
 
 Each `resolver.criteriaProof` is also length-checked at parse time
 against `MAX_CRITERIA_PROOF_DEPTH = 32` (OpenSea collections rarely
@@ -2136,9 +2147,11 @@ that worked for Round 5 Block A):
   which gets deleted in the same tx by the
   `PrepayCollateralSaleSettled` handler at
   `apps/indexer/src/chainIndexer.ts:2068-2079`). Schema migration
-  (D.4): add `match_mode TEXT CHECK IN ('v1-twostep', 'atomic')
-  NOT NULL DEFAULT 'v1-twostep'` column to the existing
+  (D.4): add `match_mode TEXT CHECK (match_mode IN ('v1-twostep',
+  'atomic')) NOT NULL DEFAULT 'v1-twostep'` column to the existing
   `prepay_listing_match_breadcrumbs` table introduced by #335.
+  (Codex round-11 P3 #344 — SQL syntax; round-10 D.1 had the
+  correct shape but D.3 used the invalid `CHECK IN`.)
 
 **D.4 — Tests.**
 - Foundry: 6-8 cases in
