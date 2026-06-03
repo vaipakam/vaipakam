@@ -365,9 +365,13 @@ jobs:
               '>' \
               "${GAPS_LIST%$'\n'}" \
               '>' \
-              "> The card has been added to the board but is left iteration-unassigned for the cadence(s) above. Seed the next iteration via the [Project board iteration settings](https://github.com/users/${GITHUB_REPOSITORY_OWNER}/projects/1/settings) (the iteration field auto-extends from its configured duration + start day) and manually assign this card to it." \
+              "> Iteration fields are **NOT** auto-extended by GitHub — the list grows only when the maintainer clicks **+ Add iteration** in the Projects settings UI. Seed the missing cadence here and assign this card to it:" \
               '>' \
-              "> Auto-creating iterations from this workflow is intentionally NOT done — the available GraphQL mutation (\`updateProjectV2Field\`) REPLACES the entire iterations array and orphans every prior card's iteration assignment on the field. The destructive-replace risk outweighs the convenience." \
+              "> - [Project iteration settings](https://github.com/users/${GITHUB_REPOSITORY_OWNER}/projects/1/settings) → pick the relevant field → **+ Add iteration**." \
+              '>' \
+              "> The runway target per [\`ProjectProcedures.md\` §5.7](https://github.com/${GITHUB_REPOSITORY}/blob/main/docs/internal/ProjectProcedures.md#57-iteration-kickoff-sync--fold-rules-into-the-handbook) is **~6 future iterations** (Iteration cadence) / **~4 future sprints** (Sprint cadence) — top this up while you're here so the next several Monday runs don't trip the same warning." \
+              '>' \
+              "> Auto-creating iterations from this workflow is intentionally NOT done: the public GraphQL surface (\`updateProjectV2Field\`) does a destructive replace that orphans every card's iteration assignment, and the internal \"memex\" REST endpoint the UI uses for the safe ID-keyed merge is not exposed to API clients." \
               '>' \
               "> 🤖 Posted by \`.github/workflows/iteration-kickoff-sync.yml\` on run \`${GITHUB_RUN_ID}\`.")
             gh issue comment "${ISSUE_NUMBER}" \
