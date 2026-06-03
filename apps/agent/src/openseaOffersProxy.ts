@@ -175,18 +175,28 @@ export async function handleOpenSeaOffers(
     : null;
 
   // Codex round-15 P2 review #328 — follow OpenSea's `next`
-  // pagination cursor for up to 3 pages (≈300 offers per leg at
-  // `limit=100`). The new chain/contract/criteria/payment-token
+  // pagination cursor for up to N pages (≈100 × N offers per leg
+  // at `limit=100`). The new chain/contract/criteria/payment-token
   // filters on the dapp side can drop large fractions of any
   // single page; without pagination an acceptable offer sitting
   // on page 2+ would never reach the panel even if the borrower
-  // refreshes. 3 pages caps the upstream cost (worst case
-  // 6 round-trips per poll: 3 collection + 3 item) while
-  // covering hot collections that easily exceed a single page.
-  // Concatenates all returned offers into one synthetic
+  // refreshes. Concatenates all returned offers into one synthetic
   // `{ offers: [...] }` body so the dapp normalizer doesn't
   // need a paginated shape.
-  const MAX_PAGES = 3;
+  //
+  // #334 — page cap is configurable via the wrangler-vars
+  // `OPENSEA_OFFERS_MAX_PAGES` env (string). Default 3 covers
+  // hot-but-not-degenerate collections (≈300 offers per leg);
+  // operators on hyper-active collections can raise. Worst-case
+  // upstream cost per inbound request is `2 × MAX_PAGES`
+  // round-trips (collection + item legs); paired with the
+  // `OPENSEA_OFFERS_RATELIMIT` inbound cap (60/min/IP) the
+  // total upstream cost stays bounded. Clamp to `[1, 25]` so a
+  // misconfigured value can't blow the OpenSea API quota
+  // (`MAX_PAGES = 25` ⇒ worst-case 50 round-trips per inbound,
+  // 60 inbound/min/IP ⇒ 3,000 upstream/min/IP — still within
+  // the typical OpenSea API tier).
+  const MAX_PAGES = parseMaxPages(env.OPENSEA_OFFERS_MAX_PAGES);
   const fetchPaginated = async (
     initialUrl: string | null,
   ): Promise<{ status: number; body: string } | null> => {
@@ -294,4 +304,28 @@ async function checkRateLimit(
   const ip = req.headers.get('CF-Connecting-IP') ?? 'unknown';
   const r = await binding.limit({ key: ip });
   return r.success;
+}
+
+/** #334 — parse the `OPENSEA_OFFERS_MAX_PAGES` wrangler var into a
+ *  bounded integer. Default 3; clamp to `[1, 25]` so a misconfigured
+ *  value can't blow the OpenSea API quota.
+ *
+ *  Values that fail integer parse (non-numeric strings, `NaN`,
+ *  Infinity) collapse to the default 3. Values below 1 clamp to 1
+ *  (zero/negative makes no sense; pagination needs at least one
+ *  page). Values above 25 clamp to 25. 25 was chosen as the upper
+ *  bound because at 60 inbound/min/IP × 2 legs × 25 pages = 3,000
+ *  upstream/min/IP, which fits within the typical OpenSea API tier
+ *  limit even under sustained load. Operators on higher tiers can
+ *  bump this constant if needed; it stays clamped to prevent foot-
+ *  guns from a one-character typo in the wrangler.jsonc. */
+const MAX_PAGES_DEFAULT = 3;
+const MAX_PAGES_CEILING = 25;
+function parseMaxPages(raw: string | undefined): number {
+  if (raw === undefined || raw === null || raw === '') return MAX_PAGES_DEFAULT;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) return MAX_PAGES_DEFAULT;
+  if (parsed < 1) return 1;
+  if (parsed > MAX_PAGES_CEILING) return MAX_PAGES_CEILING;
+  return parsed;
 }

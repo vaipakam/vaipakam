@@ -136,6 +136,18 @@ interface BaseEnv {
   // dapp polls every ~30s while the loan card is open, so the
   // limit needs headroom (60 req/min/IP starting value).
   OPENSEA_OFFERS_RATELIMIT?: RateLimitBinding;
+  // T-086 Round-5 Block C v1.1 (#334) — max pagination depth on
+  // the offers proxy. Default 3 pages (≈300 offers per leg at
+  // `limit=100`); operators on hyper-active collections can raise
+  // via the agent's wrangler.jsonc `vars` block. Worst-case
+  // upstream cost per inbound request is `2 × OPENSEA_OFFERS_MAX_PAGES`
+  // round-trips (collection + item legs each paginated); paired
+  // with the `OPENSEA_OFFERS_RATELIMIT` inbound cap (60/min/IP),
+  // total upstream cost stays bounded. String type matches the
+  // wrangler-vars JSON convention; coerced to int + clamped to
+  // `[1, 25]` at read time so a misconfigured value can't blow
+  // the OpenSea API quota.
+  OPENSEA_OFFERS_MAX_PAGES?: string;
 
   // Diagnostics sampling (0.0–1.0; default 1.0 = write every accepted POST).
   // Coerced from string to float at read time. Out-of-range values
