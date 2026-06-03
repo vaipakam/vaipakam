@@ -24,18 +24,25 @@ That single fact reshapes how PRs are scoped:
 - **ABI-breaking changes are cheap.** Renaming a function, dropping a
   struct field, changing an event signature — none of these need
   transition shims, deprecation overloads, or `_v2`-suffixed
-  duplicates. If a consumer (frontend, Worker, sibling keeper bot)
-  reads the symbol, co-update it in the same PR. The constraint is
-  source-tree consistency at merge time, not deploy-window race
-  protection.
+  duplicates. If an in-tree consumer (`apps/defi`, the Workers under
+  `apps/{keeper,indexer,agent}`) reads the symbol, co-update it in
+  the **same PR** — the monorepo's `pnpm` typecheck catches the
+  drift at merge time. The sibling `vaipakam-keeper-bot` repo is a
+  separate concern: same-PR co-update is structurally impossible
+  across repos, so it's ABI-sync'd via a **paired follow-up commit**
+  in the sibling repo using
+  [`contracts/script/exportAbis.sh`](../../contracts/script/exportAbis.sh)
+  (per the "Keeper-bot ABI sync" rule in `CLAUDE.md`).
+  The constraint, in both cases, is source-tree consistency at merge
+  time, not deploy-window race protection.
 - **Atomic-rollout maneuvers (UUPS upgrade + diamondCut in one tx via
-  Safe MultiSend, the multi-call deploy scripts under
-  `contracts/script/lib/MulticallDeploy.s.sol`, the governance
-  handover ceremony) are forward-looking scaffolding.** They exist
-  so they're ready for mainnet, but they are NOT per-PR gates today.
-  Block A/B/C of any feature can land as separate PRs without
-  rehearsing the atomic-rotation maneuver on a live chain — there's
-  no live chain to rotate.
+  Safe MultiSend, the multi-call deploy script
+  [`contracts/script/multicallDeploy.s.sol`](../../contracts/script/multicallDeploy.s.sol),
+  the governance handover ceremony) are forward-looking scaffolding.**
+  They exist so they're ready for mainnet, but they are NOT per-PR
+  gates today. Block A/B/C of any feature can land as separate PRs
+  without rehearsing the atomic-rotation maneuver on a live chain —
+  there's no live chain to rotate.
 - **Testnet rehearsals stay deployer/admin-owned.** Base-Sepolia,
   Sepolia, and the other testnets intentionally skip the multisig
   handover so flow tests keep working on EOA keys. The handover
@@ -485,9 +492,49 @@ notices it.
 
 If a field has no iteration covering today (last iteration ended,
 next not yet seeded by the maintainer in the Projects UI), that one
-field is skipped with a `::warning::` line in the workflow log; the
-card itself still lands, and the maintainer can fix the iteration
-gap manually.
+field is skipped AND the workflow drops a maintainer-ping comment on
+the just-created kickoff issue itself — `> [!WARNING]` callout naming
+the missing cadence and linking to the Projects iteration settings.
+The card still lands; only the missing cadence is left unassigned
+until the maintainer seeds it.
+
+**Maintainer-side seeding cadence — keep ~6 future iterations
+seeded on each iteration field.** Iteration fields in GitHub
+Projects v2 are NOT auto-extended (an earlier version of this
+section claimed they were — incorrect). The list grows only when
+the maintainer manually clicks "+ Add iteration" in the Projects
+settings UI:
+
+- https://github.com/users/vaipakam/projects/1/settings → Iteration
+- https://github.com/users/vaipakam/projects/1/settings → Sprint
+
+The "+ Add iteration" button hits an internal "memex" REST endpoint
+that supports ID-keyed merge (existing iterations preserve their
+IDs, new ones get fresh ones, card assignments stay intact). That
+endpoint is **NOT** available via the public GraphQL API — the public
+`updateProjectV2Field` mutation does a destructive replace that
+orphans every card's iteration field value. So the seeding step is
+maintainer-only and stays in the UI. Per-cadence runway target:
+
+| Cadence | Duration | Reseed when runway drops to | Add at a time |
+|---|---|---|---|
+| Iteration | 7d | 2-3 weeks ahead | 6 (≈6 weeks coverage) |
+| Sprint    | 14d | 1-2 sprints ahead | 4 (≈8 weeks coverage) |
+
+With those runway targets, the workflow's maintainer-ping fallback
+should effectively never fire — it exists as the loud reminder for
+when the maintainer slips a runway top-up.
+
+Why the cron itself doesn't try to auto-extend: it could call the
+public `updateProjectV2Field` with `[...existing, new]`, but that
+mutation regenerates every iteration ID and orphans every card's
+assignment on the field. We tested this empirically against the live
+API (creating a throwaway field, assigning a card, doing the no-op
+replace, observing the card go iteration-unassigned). The
+orphan-and-restore dance — snapshot every card's assignment, replace,
+remap by content, re-assign — is technically possible but too risky
+for an unattended Monday-morning cron. Manual seeding is the safe
+shape.
 
 The maintainer picks it up first thing Monday, performs the sync,
 lands a docs PR, and closes the card. If a card from the previous

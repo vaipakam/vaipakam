@@ -165,10 +165,17 @@ jobs:
         #   field/option ids embedded in this file. No
         #   `github.event.*` user-controlled string is interpolated
         #   into a shell command.
-        if: steps.issuebot.outputs.number != ''
+        # The `imjohnbo/issue-bot@v3` action exposes its created /
+        # matched issue number as `outputs.issue-number` (with the
+        # hyphen) — NOT `outputs.number`. Codex review on the original
+        # PR caught this: the wrong key resolves to an empty string,
+        # the `if:` guard below then evaluates to false, and the whole
+        # step silently no-ops every run. Verify against the action's
+        # tagged release before changing.
+        if: steps.issuebot.outputs.issue-number != ''
         env:
           GH_TOKEN: ${{ secrets.ADD_TO_PROJECT_PAT }}
-          ISSUE_NUMBER: ${{ steps.issuebot.outputs.number }}
+          ISSUE_NUMBER: ${{ steps.issuebot.outputs.issue-number }}
           # Project + field identifiers are stable across runs (the
           # @vaipakam-labs Project v2 has only ever been recreated
           # once, in the field-set bootstrap). If a future
@@ -273,17 +280,46 @@ jobs:
 
           # 5. Apply the iteration assignments. If a field has no
           #    iteration covering today (last iteration ended, next
-          #    not yet seeded) we skip that field with a warning —
-          #    the card still lands on the board and the maintainer
-          #    can fix the gap by adding the missing iteration via
-          #    the Projects UI. Soft-fail is preferred to hard-fail
-          #    here because the workflow's primary value is filing
-          #    the card; the iteration assignment is a UX
-          #    enhancement.
+          #    not yet seeded by the maintainer in the Projects UI),
+          #    we DON'T auto-create one: the only GraphQL surface
+          #    for that is `updateProjectV2Field`, which REPLACES
+          #    the entire iterations array and reissues IDs —
+          #    orphaning every prior card's iteration assignment on
+          #    the field. The risk of that destructive replace
+          #    firing automatically every Monday outweighs the
+          #    convenience of programmatic auto-creation.
+          #
+          #    Instead, when a gap is detected, the soft-fail leaves
+          #    the card iteration-unassigned for that field AND
+          #    drops a maintainer-ping comment on the just-created
+          #    kickoff issue itself (collected into MISSING_GAPS in
+          #    this step, posted in the next step) so the gap is
+          #    visible right on the card the maintainer reads on
+          #    Monday morning — not buried in the workflow Actions
+          #    log. The card still lands on the board; only the
+          #    iteration field for the missing cadence is left blank
+          #    until the maintainer seeds it in the Projects UI.
+          #
+          #    NOTE — iteration fields are NOT auto-extended by
+          #    GitHub. An earlier version of this comment claimed
+          #    "GitHub Projects v2 auto-extends iteration fields",
+          #    which is wrong: the iteration list grows only when
+          #    the maintainer manually adds entries in the Projects
+          #    UI (the "+ Add iteration" button on the Iteration /
+          #    Sprint settings page). The UI's add-iteration call
+          #    bypasses the public GraphQL surface entirely and
+          #    hits an internal "memex" REST endpoint that accepts
+          #    existing iteration IDs alongside new ones; no public
+          #    API can replicate that. See ProjectProcedures.md
+          #    §5.7 for the maintainer-side seeding-cadence rule
+          #    that keeps this fallback path from firing in
+          #    practice.
+          MISSING_GAPS=()
           assign_iteration() {
             local field_id="$1" iter_id="$2" label="$3"
             if [[ -z "$iter_id" ]]; then
-              echo "::warning::No ${label} iteration covers $(date -u +%F) — skipping ${label} assignment for issue #${ISSUE_NUMBER}"
+              MISSING_GAPS+=("${label}")
+              echo "::warning::No ${label} iteration covers $(date -u +%F) — skipping ${label} assignment for issue #${ISSUE_NUMBER}; will ping maintainer on the card."
               return 0
             fi
             gh api graphql \
@@ -307,3 +343,35 @@ jobs:
 
           assign_iteration "${ITERATION_FIELD_ID}" "${ITERATION_ID}" Iteration
           assign_iteration "${SPRINT_FIELD_ID}" "${SPRINT_ID}" Sprint
+
+          # 6. If any cadence had no covering iteration, post a
+          #    single comment listing every missing cadence on the
+          #    issue itself. One comment per workflow run (not one
+          #    per missing field) so a doubly-empty week doesn't
+          #    paste the same boilerplate twice.
+          #
+          #    The comment body is built with a single `printf` call
+          #    (not a heredoc) because column-1 `>` lines inside a
+          #    YAML `run: |` block scalar get re-parsed as YAML
+          #    folded-scalar indicators, kicking the heredoc body
+          #    out of the bash scope. Codex P2 review caught the
+          #    original heredoc-based version on PR #329.
+          if [[ ${#MISSING_GAPS[@]} -gt 0 ]]; then
+            GAPS_LIST=$(printf -- '> - **%s**\n' "${MISSING_GAPS[@]}")
+            TODAY_UTC=$(date -u +%F)
+            COMMENT_BODY=$(printf '%s\n' \
+              '> [!WARNING]' \
+              "> **Iteration auto-assignment incomplete** — the kickoff workflow could not auto-assign the following cadence(s) because no iteration covers \`${TODAY_UTC}\` (UTC):" \
+              '>' \
+              "${GAPS_LIST%$'\n'}" \
+              '>' \
+              "> The card has been added to the board but is left iteration-unassigned for the cadence(s) above. Seed the next iteration via the [Project board iteration settings](https://github.com/users/${GITHUB_REPOSITORY_OWNER}/projects/1/settings) (the iteration field auto-extends from its configured duration + start day) and manually assign this card to it." \
+              '>' \
+              "> Auto-creating iterations from this workflow is intentionally NOT done — the available GraphQL mutation (\`updateProjectV2Field\`) REPLACES the entire iterations array and orphans every prior card's iteration assignment on the field. The destructive-replace risk outweighs the convenience." \
+              '>' \
+              "> 🤖 Posted by \`.github/workflows/iteration-kickoff-sync.yml\` on run \`${GITHUB_RUN_ID}\`.")
+            gh issue comment "${ISSUE_NUMBER}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --body "${COMMENT_BODY}"
+            echo "Posted maintainer-ping comment for missing cadences: ${MISSING_GAPS[*]}"
+          fi

@@ -58,5 +58,30 @@ iteration-filtered views the moment the maintainer opens the board.
 The manual `gh api graphql` fix-up applied to #320 mid-week is the
 one-time backfill — it doesn't need to be repeated.
 
+**Investigation finding — iterations are NOT auto-extended by
+GitHub.** A natural question while building this — "what if no
+iteration covers today, can the workflow just create one?" — was
+investigated against three angles: (1) public GraphQL schema
+introspection (the `ProjectV2Iteration` input has no `id` field and
+the only mutation is the destructive `updateProjectV2Field`); (2)
+empirical test against the live API (created a throwaway iteration
+field, assigned a card, did a no-op replace passing back identical
+iterations — card was orphaned because IDs were regenerated); (3)
+browser DevTools capture of the UI's "+ Add iteration" Save click
+(the call bypasses GraphQL entirely and hits an internal "memex"
+REST endpoint with ID-keyed merge semantics that the public API
+genuinely doesn't expose). Community discussion
+[#157957](https://github.com/orgs/community/discussions/157957)
+documents the same gap and reports the reporter resorted to
+Puppeteer to drive the UI.
+
+The conclusion: programmatic iteration creation is left out of the
+workflow. The maintainer keeps ~6 future iterations seeded on each
+iteration field via the Projects UI (`+ Add iteration` button); the
+workflow's maintainer-ping fallback (a `> [!WARNING]` callout on the
+just-filed card) is the loud reminder when the maintainer slips a
+runway top-up. The seeding-cadence rule is documented in
+`docs/internal/ProjectProcedures.md` §5.7.
+
 No code paths in `contracts/`, `apps/`, or `packages/` are touched
 by this thread.
