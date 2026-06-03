@@ -704,8 +704,29 @@ export async function postPrepayMatchSource(
         // Same TIMEOUT_MS as the reads; the rotation tx already
         // landed, so dragging the UI on this POST is pointless.
         signal: controller.signal,
+        // Codex round-3 P3 #343 — `keepalive: true` lets the
+        // browser finish this small JSON POST during page
+        // unload (tab close / full-page navigation right after
+        // the receipt arrives). Without it, the browser is
+        // free to cancel non-keepalive fetches at unload, which
+        // is exactly the close-the-tab case the early-fire
+        // callback in `useNFTPrepayListing` is trying to cover.
+        keepalive: true,
       },
     );
+    if (!res.ok) {
+      // Codex round-3 P3 #343 — surface non-2xx breadcrumb
+      // failures (rate-limit 429, D1 500, payload-rejection
+      // 400) in the console. Both hook callers discard the
+      // boolean return with `void`, so without this log the
+      // failure is invisible even though the contract with
+      // the UI is "failures are logged".
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[postPrepayMatchSource] non-2xx response — breadcrumb dropped",
+        { status: res.status, statusText: res.statusText },
+      );
+    }
     return res.ok;
   } catch (err) {
     // eslint-disable-next-line no-console

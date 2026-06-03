@@ -43,13 +43,18 @@ options were:
   REPLACE`** (Codex round-1 P2 #343). Lets the legitimate dapp
   retry override an attacker's first-arrival spoof; emits an
   operator-visible warning whenever a row is overwritten with a
-  payload that differs from what's stored, so a sustained spoof
-  attack shows up in the indexer logs as a tx_hash receiving
-  multiple distinct `(orderHash, bidder)` writes. Full
-  prevention would need EIP-712 signed claims from the
-  borrower; documented as a v2 follow-up. For non-financial
-  analytics metadata the replace-and-warn shape is the right
-  v1.1 trade-off.
+  payload that differs from what's stored — that includes a
+  `loan_id` mismatch (Codex round-3 P2 #343), since the REPLACE
+  also overwrites the `loan_id` column and a spoofer POSTing to
+  a different `/loans/<wrong>/` URL with the same public
+  `(orderHash, bidder)` would otherwise silently move the
+  breadcrumb to another loan and corrupt the loan-history join.
+  A sustained spoof attack now shows up in the indexer logs as a
+  tx_hash receiving multiple distinct `(loan_id, orderHash,
+  bidder)` writes. Full prevention would need EIP-712 signed
+  claims from the borrower; documented as a v2 follow-up. For
+  non-financial analytics metadata the replace-and-warn shape is
+  the right v1.1 trade-off.
 - New `OPENSEA_OFFERS_MATCH_SOURCE_RATELIMIT` rate-limit binding
   on the indexer Worker (60 req/min/IP). Matches the per-IP
   rate-limit shape `apps/agent` uses; the indexer's existing
@@ -59,7 +64,16 @@ options were:
   `apps/defi/src/lib/indexerClient.ts` — best-effort POST that
   returns a boolean for telemetry/tests but callers don't
   branch on it (the rotation tx is already on-chain by the
-  time this fires).
+  time this fires). Sets `keepalive: true` on the fetch (Codex
+  round-3 P3 #343) so the small JSON POST survives a tab close
+  or full-page navigation immediately after the receipt arrives
+  — exactly the close-the-tab case the early-fire callback in
+  `useNFTPrepayListing` is trying to cover. Non-2xx responses
+  (rate-limit 429, D1 500, payload-rejection 400) log a console
+  warning before returning `false` (Codex round-3 P3 #343), so
+  the failure mode promised by the UI ("failures are logged") is
+  actually delivered rather than swallowed when the response
+  body is well-formed but the status code isn't.
 - `useNFTPrepayListing` extends `updatePrepayListing` +
   `updatePrepayDutchListing` with an optional `matchSource?:
   MatchSourceBreadcrumb` parameter. When set, after the

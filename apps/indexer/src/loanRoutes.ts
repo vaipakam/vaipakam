@@ -1077,21 +1077,36 @@ export async function handleLoanPrepayMatchSource(
     // operator-visible warning so a sustained spoof attack shows
     // up in the indexer's logs. The legitimate dapp retry is
     // idempotent (same fields); only an attacker would post a
-    // DIFFERENT (orderHash, bidder).
+    // DIFFERENT (orderHash, bidder, loan_id).
+    //
+    // Codex round-3 P2 — loan_id MUST be part of this check.
+    // INSERT OR REPLACE below also overwrites loan_id (it's a
+    // non-PK column on the same composite key), so a spoofer
+    // POSTing to a different /loans/<wrong-id>/... URL with the
+    // same public (orderHash, bidder) silently moves the
+    // breadcrumb onto a different loan and corrupts the
+    // loan-history join. Comparing loan_id surfaces that case.
     const existing = await env.DB.prepare(
-      `SELECT order_hash, bidder
+      `SELECT loan_id, order_hash, bidder
        FROM prepay_listing_match_breadcrumbs
        WHERE chain_id = ? AND tx_hash = ?`,
     )
       .bind(chainId, txHash)
-      .first<{ order_hash: string; bidder: string }>();
+      .first<{ loan_id: number; order_hash: string; bidder: string }>();
     if (
       existing !== null &&
-      (existing.order_hash !== orderHash || existing.bidder !== bidder)
+      (existing.order_hash !== orderHash ||
+        existing.bidder !== bidder ||
+        existing.loan_id !== loanId)
     ) {
       console.warn(
         '[loanRoutes] match-source overwrite — possible spoof',
-        { chainId, txHash, was: existing, now: { orderHash, bidder } },
+        {
+          chainId,
+          txHash,
+          was: existing,
+          now: { loanId, orderHash, bidder },
+        },
       );
     }
     // INSERT OR REPLACE lets the legitimate dapp's retry override
