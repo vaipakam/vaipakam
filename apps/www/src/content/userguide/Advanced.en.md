@@ -726,6 +726,8 @@ Permissionless actions available to anyone regardless of role:
 > initiated repay can fail "harmlessly" without something
 > actually going wrong.
 
+<a id="loan-details.opensea-offers"></a>
+
 ### Matching OpenSea offers on a prepay listing
 
 Once your prepay listing is live on OpenSea's marketplace,
@@ -740,13 +742,13 @@ market interest at every level but can only Match offers that
 the protocol will actually settle.
 
 On collections that enforce OpenSea protocol fees and/or
-creator royalties, the offers panel currently shows incoming
-offers but disables the Match buttons — the fee-enforced
-matching path is tracked separately under Issue #331 and
-will ship as a v1.1 follow-up. For now, those collections
-get visibility of demand without the dapp-side Match flow;
-nothing prevents the bidder from filling your listing
-directly on OpenSea at the listed ask.
+creator royalties, the dapp currently does NOT render the
+offers panel at all — it shows an informational banner in
+that slot instead. Incoming offers stay visible on OpenSea's
+marketplace UI (and the bidder can still fill your listing
+there at the listed ask), but the dapp-side Match flow is
+gated until v1.1. The fee-enforced matching path is tracked
+separately under Issue #331.
 
 When you find an acceptable offer and click **Match offer**,
 the dapp rotates your live OpenSea listing's price down to
