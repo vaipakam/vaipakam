@@ -77,6 +77,7 @@ jobs:
           echo "Resolved iteration label: $LABEL"
 
       - name: File the iteration-kickoff-sync card
+        id: issuebot
         # imjohnbo/issue-bot creates the Issue from a body that we
         # inline here (kept short — the substantive checklist lives in
         # the ISSUE_TEMPLATE file so contributors can also use it
@@ -137,3 +138,244 @@ jobs:
           # internal API client; keeping a fallback env for any
           # action step that reads from env-vars.
           GITHUB_TOKEN: ${{ secrets.ADD_TO_PROJECT_PAT }}
+
+      - name: Assign card to current Iteration + Sprint
+        # Why this step exists:
+        # - `imjohnbo/issue-bot` files the Issue; `add-to-project.yml`
+        #   auto-adds it to the @vaipakam-labs board with Status =
+        #   Backlog and Iteration + Sprint UNSET. That means the
+        #   maintainer doesn't see the card on iteration-filtered
+        #   board views (which is the surface they actually look at
+        #   on Monday morning), so the ritual gets missed for a week.
+        # - This step closes that gap: it resolves which Iteration +
+        #   Sprint cover today's date and assigns both fields on the
+        #   newly-filed card, so the card surfaces on iteration views
+        #   the moment Iteration N+1 begins.
+        # - Pre-conditions: the issue-bot step above must have either
+        #   created a fresh Issue (most common) OR been a no-op
+        #   because a prior card with the same title-prefix is still
+        #   open. In the no-op case we skip — that pre-existing card
+        #   was assigned to its own iteration on its original run.
+        # - Idempotent: the GraphQL mutations succeed even if the
+        #   target field already holds the same iteration id.
+        # Why the inputs aren't a workflow-injection surface:
+        # - The only inputs we consume here are
+        #   `steps.issuebot.outputs.{number,issue_url}` (workflow-
+        #   internal, set by a SHA-pinned action) and the static
+        #   field/option ids embedded in this file. No
+        #   `github.event.*` user-controlled string is interpolated
+        #   into a shell command.
+        # The `imjohnbo/issue-bot@v3` action exposes its created /
+        # matched issue number as `outputs.issue-number` (with the
+        # hyphen) — NOT `outputs.number`. Codex review on the original
+        # PR caught this: the wrong key resolves to an empty string,
+        # the `if:` guard below then evaluates to false, and the whole
+        # step silently no-ops every run. Verify against the action's
+        # tagged release before changing.
+        if: steps.issuebot.outputs.issue-number != ''
+        env:
+          GH_TOKEN: ${{ secrets.ADD_TO_PROJECT_PAT }}
+          ISSUE_NUMBER: ${{ steps.issuebot.outputs.issue-number }}
+          # Project + field identifiers are stable across runs (the
+          # @vaipakam-labs Project v2 has only ever been recreated
+          # once, in the field-set bootstrap). If a future
+          # reorganisation rotates these, regenerate via the
+          # ProjectV2 fields GraphQL query at the bottom of this
+          # workflow's design comment, then update both env values.
+          PROJECT_ID: PVT_kwHOEGh46c4BXvX7
+          ITERATION_FIELD_ID: PVTIF_lAHOEGh46c4BXvX7zhS6MgI
+          SPRINT_FIELD_ID: PVTIF_lAHOEGh46c4BXvX7zhS6okI
+        run: |
+          set -euo pipefail
+
+          # 1. Resolve the issue's GraphQL node id.
+          ISSUE_NODE_ID=$(gh api graphql \
+            -f query='
+              query($owner: String!, $repo: String!, $num: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  issue(number: $num) { id }
+                }
+              }' \
+            -f owner="${GITHUB_REPOSITORY_OWNER}" \
+            -f repo="${GITHUB_REPOSITORY#${GITHUB_REPOSITORY_OWNER}/}" \
+            -F num="${ISSUE_NUMBER}" \
+            --jq .data.repository.issue.id)
+          echo "Issue node id: ${ISSUE_NODE_ID}"
+
+          # 2. Add the issue to the project (idempotent — returns the
+          #    existing item id if `add-to-project.yml` got there first,
+          #    creates a fresh one otherwise). Race-safe vs. the
+          #    auto-add workflow: both calls reach the same
+          #    `addProjectV2ItemById` mutation which is exact-duplicate
+          #    aware.
+          ITEM_ID=$(gh api graphql \
+            -f query='
+              mutation($projectId: ID!, $contentId: ID!) {
+                addProjectV2ItemById(input: {
+                  projectId: $projectId, contentId: $contentId
+                }) { item { id } }
+              }' \
+            -f projectId="${PROJECT_ID}" \
+            -f contentId="${ISSUE_NODE_ID}" \
+            --jq .data.addProjectV2ItemById.item.id)
+          echo "Project item id: ${ITEM_ID}"
+
+          # 3. Read the Iteration + Sprint field configurations so we
+          #    can pick which iteration covers today.
+          FIELDS_JSON=$(gh api graphql \
+            -f query='
+              query($owner: String!, $num: Int!) {
+                user(login: $owner) {
+                  projectV2(number: $num) {
+                    fields(first: 50) {
+                      nodes {
+                        ... on ProjectV2IterationField {
+                          id
+                          configuration {
+                            iterations { id title startDate duration }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }' \
+            -f owner="${GITHUB_REPOSITORY_OWNER}" \
+            -F num=1)
+
+          # 4. Pick the iteration whose [startDate, startDate+duration)
+          #    covers today's date. Pure bash + jq + GNU date — no
+          #    custom Python deps. Iterations are returned in
+          #    chronological order; we pick the first one that brackets
+          #    today, so if iteration N+1 already exists alongside N (a
+          #    GitHub Projects quirk near boundaries), we pick the live
+          #    one. Today is computed in UTC to match GitHub's
+          #    iteration boundary semantics.
+          TODAY_EPOCH=$(date -u -d "$(date -u +%F)" +%s)
+          echo "Today (UTC): $(date -u +%F)"
+
+          pick_iteration_id() {
+            local field_id="$1"
+            local picked=""
+            while IFS=$'\t' read -r iter_id start_date duration; do
+              [[ -z "$iter_id" ]] && continue
+              local start_epoch end_epoch
+              start_epoch=$(date -u -d "${start_date}" +%s)
+              end_epoch=$((start_epoch + duration * 86400))
+              if (( TODAY_EPOCH >= start_epoch && TODAY_EPOCH < end_epoch )); then
+                picked="$iter_id"
+                break
+              fi
+            done < <(echo "${FIELDS_JSON}" | jq -r \
+              --arg fid "$field_id" '
+                .data.user.projectV2.fields.nodes[]
+                | select(.id == $fid)
+                | .configuration.iterations[]
+                | "\(.id)\t\(.startDate)\t\(.duration)"')
+            printf '%s' "$picked"
+          }
+
+          ITERATION_ID=$(pick_iteration_id "${ITERATION_FIELD_ID}")
+          SPRINT_ID=$(pick_iteration_id "${SPRINT_FIELD_ID}")
+
+          # 5. Apply the iteration assignments. If a field has no
+          #    iteration covering today (last iteration ended, next
+          #    not yet seeded by the maintainer in the Projects UI),
+          #    we DON'T auto-create one: the only GraphQL surface
+          #    for that is `updateProjectV2Field`, which REPLACES
+          #    the entire iterations array and reissues IDs —
+          #    orphaning every prior card's iteration assignment on
+          #    the field. The risk of that destructive replace
+          #    firing automatically every Monday outweighs the
+          #    convenience of programmatic auto-creation.
+          #
+          #    Instead, when a gap is detected, the soft-fail leaves
+          #    the card iteration-unassigned for that field AND
+          #    drops a maintainer-ping comment on the just-created
+          #    kickoff issue itself (collected into MISSING_GAPS in
+          #    this step, posted in the next step) so the gap is
+          #    visible right on the card the maintainer reads on
+          #    Monday morning — not buried in the workflow Actions
+          #    log. The card still lands on the board; only the
+          #    iteration field for the missing cadence is left blank
+          #    until the maintainer seeds it in the Projects UI.
+          #
+          #    NOTE — iteration fields are NOT auto-extended by
+          #    GitHub. An earlier version of this comment claimed
+          #    "GitHub Projects v2 auto-extends iteration fields",
+          #    which is wrong: the iteration list grows only when
+          #    the maintainer manually adds entries in the Projects
+          #    UI (the "+ Add iteration" button on the Iteration /
+          #    Sprint settings page). The UI's add-iteration call
+          #    bypasses the public GraphQL surface entirely and
+          #    hits an internal "memex" REST endpoint that accepts
+          #    existing iteration IDs alongside new ones; no public
+          #    API can replicate that. See ProjectProcedures.md
+          #    §5.7 for the maintainer-side seeding-cadence rule
+          #    that keeps this fallback path from firing in
+          #    practice.
+          MISSING_GAPS=()
+          assign_iteration() {
+            local field_id="$1" iter_id="$2" label="$3"
+            if [[ -z "$iter_id" ]]; then
+              MISSING_GAPS+=("${label}")
+              echo "::warning::No ${label} iteration covers $(date -u +%F) — skipping ${label} assignment for issue #${ISSUE_NUMBER}; will ping maintainer on the card."
+              return 0
+            fi
+            gh api graphql \
+              -f query='
+                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $iterationId: String!) {
+                  updateProjectV2ItemFieldValue(input: {
+                    projectId: $projectId,
+                    itemId: $itemId,
+                    fieldId: $fieldId,
+                    value: { iterationId: $iterationId }
+                  }) { projectV2Item { id } }
+                }' \
+              -f projectId="${PROJECT_ID}" \
+              -f itemId="${ITEM_ID}" \
+              -f fieldId="${field_id}" \
+              -f iterationId="${iter_id}" \
+              --jq .data.updateProjectV2ItemFieldValue.projectV2Item.id \
+              >/dev/null
+            echo "Assigned ${label} (${iter_id}) to issue #${ISSUE_NUMBER}"
+          }
+
+          assign_iteration "${ITERATION_FIELD_ID}" "${ITERATION_ID}" Iteration
+          assign_iteration "${SPRINT_FIELD_ID}" "${SPRINT_ID}" Sprint
+
+          # 6. If any cadence had no covering iteration, post a
+          #    single comment listing every missing cadence on the
+          #    issue itself. One comment per workflow run (not one
+          #    per missing field) so a doubly-empty week doesn't
+          #    paste the same boilerplate twice.
+          #
+          #    The comment body is built with a single `printf` call
+          #    (not a heredoc) because column-1 `>` lines inside a
+          #    YAML `run: |` block scalar get re-parsed as YAML
+          #    folded-scalar indicators, kicking the heredoc body
+          #    out of the bash scope. Codex P2 review caught the
+          #    original heredoc-based version on PR #329.
+          if [[ ${#MISSING_GAPS[@]} -gt 0 ]]; then
+            GAPS_LIST=$(printf -- '> - **%s**\n' "${MISSING_GAPS[@]}")
+            TODAY_UTC=$(date -u +%F)
+            COMMENT_BODY=$(printf '%s\n' \
+              '> [!WARNING]' \
+              "> **Iteration auto-assignment incomplete** — the kickoff workflow could not auto-assign the following cadence(s) because no iteration covers \`${TODAY_UTC}\` (UTC):" \
+              '>' \
+              "${GAPS_LIST%$'\n'}" \
+              '>' \
+              "> Iteration fields are **NOT** auto-extended by GitHub — the list grows only when the maintainer clicks **+ Add iteration** in the Projects settings UI. Seed the missing cadence here and assign this card to it:" \
+              '>' \
+              "> - [Project iteration settings](https://github.com/users/${GITHUB_REPOSITORY_OWNER}/projects/1/settings) → pick the relevant field → **+ Add iteration**." \
+              '>' \
+              "> The runway target per [\`ProjectProcedures.md\` §5.7](https://github.com/${GITHUB_REPOSITORY}/blob/main/docs/internal/ProjectProcedures.md#57-iteration-kickoff-sync--fold-rules-into-the-handbook) is **~6 future iterations** (Iteration cadence) / **~4 future sprints** (Sprint cadence) — top this up while you're here so the next several Monday runs don't trip the same warning." \
+              '>' \
+              "> Auto-creating iterations from this workflow is intentionally NOT done: the public GraphQL surface (\`updateProjectV2Field\`) does a destructive replace that orphans every card's iteration assignment, and the internal \"memex\" REST endpoint the UI uses for the safe ID-keyed merge is not exposed to API clients." \
+              '>' \
+              "> 🤖 Posted by \`.github/workflows/iteration-kickoff-sync.yml\` on run \`${GITHUB_RUN_ID}\`.")
+            gh issue comment "${ISSUE_NUMBER}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --body "${COMMENT_BODY}"
+            echo "Posted maintainer-ping comment for missing cadences: ${MISSING_GAPS[*]}"
+          fi

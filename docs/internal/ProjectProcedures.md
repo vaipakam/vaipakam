@@ -11,6 +11,66 @@ next interaction.
 
 ---
 
+## 0. Operating context — the platform is pre-live
+
+Vaipakam is **pre-live on every chain.** No production (or even
+testnet-operator-funded) deployment of the Diamond + executor + Worker
+stack is currently holding user funds or backing external integrations.
+Every PR today lands toward one coordinated mainnet cutover; nothing on
+chain is actively being served.
+
+That single fact reshapes how PRs are scoped:
+
+- **ABI-breaking changes are cheap.** Renaming a function, dropping a
+  struct field, changing an event signature — none of these need
+  transition shims, deprecation overloads, or `_v2`-suffixed
+  duplicates. If an in-tree consumer (`apps/defi`, the Workers under
+  `apps/{keeper,indexer,agent}`) reads the symbol, co-update it in
+  the **same PR** — the monorepo's `pnpm` typecheck catches the
+  drift at merge time. The sibling `vaipakam-keeper-bot` repo is a
+  separate concern: same-PR co-update is structurally impossible
+  across repos, so it's ABI-sync'd via a **paired follow-up commit**
+  in the sibling repo using
+  [`contracts/script/exportAbis.sh`](../../contracts/script/exportAbis.sh)
+  (per the "Keeper-bot ABI sync" rule in `CLAUDE.md`).
+  The constraint, in both cases, is source-tree consistency at merge
+  time, not deploy-window race protection.
+- **Atomic-rollout maneuvers (UUPS upgrade + diamondCut in one tx via
+  Safe MultiSend, the multi-call deploy script
+  [`contracts/script/multicallDeploy.s.sol`](../../contracts/script/multicallDeploy.s.sol),
+  the governance handover ceremony) are forward-looking scaffolding.**
+  They exist so they're ready for mainnet, but they are NOT per-PR
+  gates today. Block A/B/C of any feature can land as separate PRs
+  without rehearsing the atomic-rotation maneuver on a live chain —
+  there's no live chain to rotate.
+- **Testnet rehearsals stay deployer/admin-owned.** Base-Sepolia,
+  Sepolia, and the other testnets intentionally skip the multisig
+  handover so flow tests keep working on EOA keys. The handover
+  ceremony runs once, at mainnet cutover.
+- **Pre-live storage layout is repackable.** The `EC-006` card on
+  the board tracks a pre-audit storage-layout repack opportunity
+  that becomes impossible the moment user funds occupy any slot.
+
+What stays unchanged even pre-live:
+
+- **Sanctions oracle wiring** — `ProfileFacet.setSanctionsOracle(...)`
+  is still wired and tested. It's a mainnet-deploy step, not a
+  pre-live PR gate, but the contract surface stays present.
+- **Code-consistency discipline** — co-update consumers in the same
+  PR for type-system consistency, not for deploy-race protection.
+  Code that compiles after merge is the goal.
+- **Functional Specs + release notes per behaviour-changing PR** —
+  pre-live doesn't relax the documentation discipline; in fact it
+  makes the doc set authoritative since there's no production code
+  to read instead.
+
+The flip point — when this section retires and atomic-rotation
+maneuvers become per-PR gates — is the mainnet cutover. The
+[`mainnet-cutover`](#56-milestones--pinned-issues) milestone tracks
+the work that flips it.
+
+---
+
 ## 1. Repository topology
 
 Two repos work together:
@@ -279,11 +339,15 @@ If the merge changed behaviour (contracts/src/* or apps/*), also:
 
 ### 5.2 Sprint goals — encoded in iteration titles
 
-Themes live in the iteration title, NOT in a separate field. Example:
+Themes live in the iteration title, NOT in a separate field. Example
+(from the Iteration 2 / Sprint 2 cycle, kept as the canonical worked
+example):
 
-- `Iteration 2 — Harden the deploy gate` (current week)
-- `Sprint 2 — Harden the deploy gate` (current sprint, transitional 7-day)
-- `Sprint 3` (no theme yet — to be set at sprint planning)
+- `Iteration 2 — Harden the deploy gate` (week of 2026-05-18)
+- `Sprint 2 — Harden the deploy gate` (the transitional 7-day sprint
+  that preceded the 14-day cadence — see §5.1)
+- `Sprint 3` (no theme — left untitled when sprint planning didn't
+  surface one)
 
 To set a goal, rename the iteration. Cleanest: do it in the GitHub web
 UI (preserves iteration IDs). The API works but rebuilds the iteration
@@ -408,15 +472,74 @@ mornings UTC, the moment Iteration N+1 starts. Three reasons:
   being landed under deadline pressure; new ceremony there gets
   skipped.
 
-**Automation — the card is auto-filed.**
+**Automation — the card is auto-filed AND auto-iteration-assigned.**
 [`.github/workflows/iteration-kickoff-sync.yml`](../../.github/workflows/iteration-kickoff-sync.yml)
-fires on cron `5 0 * * MON` (Mondays 00:05 UTC) and files the
-"Iteration kickoff sync — <date>" card via `imjohnbo/issue-bot`.
-Auto-add-to-project routes it to the Backlog. The maintainer picks
-it up first thing Monday, performs the sync, lands a docs PR, and
-closes the card. If a card from the previous Monday is still open,
-the new card co-exists as Backlog (the maintainer closes the older
-one as duplicate when reviewing).
+fires on cron `5 0 * * MON` (Mondays 00:05 UTC) and:
+
+1. Files the "Iteration kickoff sync — <date>" card via
+   `imjohnbo/issue-bot`. Auto-add-to-project routes it to the
+   Backlog with Status = Backlog and no iteration set.
+2. Then in a second step, queries the Project v2 Iteration + Sprint
+   field configurations, picks the iterations whose date ranges
+   cover today (UTC), and assigns BOTH fields on the newly-filed
+   card via the `updateProjectV2ItemFieldValue` GraphQL mutation.
+
+The second step is what makes the ritual actually *land* — the card
+surfaces on iteration-filtered board views (the surface the
+maintainer reads on Monday morning) the moment Iteration N+1 begins,
+instead of sitting iteration-unassigned in Backlog until someone
+notices it.
+
+If a field has no iteration covering today (last iteration ended,
+next not yet seeded by the maintainer in the Projects UI), that one
+field is skipped AND the workflow drops a maintainer-ping comment on
+the just-created kickoff issue itself — `> [!WARNING]` callout naming
+the missing cadence and linking to the Projects iteration settings.
+The card still lands; only the missing cadence is left unassigned
+until the maintainer seeds it.
+
+**Maintainer-side seeding cadence — keep ~6 future iterations
+seeded on each iteration field.** Iteration fields in GitHub
+Projects v2 are NOT auto-extended (an earlier version of this
+section claimed they were — incorrect). The list grows only when
+the maintainer manually clicks "+ Add iteration" in the Projects
+settings UI:
+
+- https://github.com/users/vaipakam/projects/1/settings → Iteration
+- https://github.com/users/vaipakam/projects/1/settings → Sprint
+
+The "+ Add iteration" button hits an internal "memex" REST endpoint
+that supports ID-keyed merge (existing iterations preserve their
+IDs, new ones get fresh ones, card assignments stay intact). That
+endpoint is **NOT** available via the public GraphQL API — the public
+`updateProjectV2Field` mutation does a destructive replace that
+orphans every card's iteration field value. So the seeding step is
+maintainer-only and stays in the UI. Per-cadence runway target:
+
+| Cadence | Duration | Reseed when runway drops to | Add at a time |
+|---|---|---|---|
+| Iteration | 7d | 2-3 weeks ahead | 6 (≈6 weeks coverage) |
+| Sprint    | 14d | 1-2 sprints ahead | 4 (≈8 weeks coverage) |
+
+With those runway targets, the workflow's maintainer-ping fallback
+should effectively never fire — it exists as the loud reminder for
+when the maintainer slips a runway top-up.
+
+Why the cron itself doesn't try to auto-extend: it could call the
+public `updateProjectV2Field` with `[...existing, new]`, but that
+mutation regenerates every iteration ID and orphans every card's
+assignment on the field. We tested this empirically against the live
+API (creating a throwaway field, assigning a card, doing the no-op
+replace, observing the card go iteration-unassigned). The
+orphan-and-restore dance — snapshot every card's assignment, replace,
+remap by content, re-assign — is technically possible but too risky
+for an unattended Monday-morning cron. Manual seeding is the safe
+shape.
+
+The maintainer picks it up first thing Monday, performs the sync,
+lands a docs PR, and closes the card. If a card from the previous
+Monday is still open, the new card co-exists as Backlog (the
+maintainer closes the older one as duplicate when reviewing).
 
 **The ritual itself:**
 
