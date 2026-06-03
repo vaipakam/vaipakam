@@ -141,9 +141,15 @@ export async function handleOpenSeaSignedOffer(
   } catch (err) {
     // Network-level upstream failure (DNS, TCP, etc.). Surface as
     // 502 to distinguish from OpenSea-returned 4xx/5xx (which we
-    // pass through below).
+    // pass through below). DO NOT include the raw error in the
+    // response body — leaking stack traces is a CodeQL "Information
+    // exposure through a stack trace" finding. The dapp doesn't
+    // need the detail; operators can read it from the Worker's
+    // observability log.
+    // eslint-disable-next-line no-console
+    console.warn('[signed-offer] upstream fetch failed', err);
     return jsonResponse(
-      { error: 'upstream-unreachable', detail: String(err) },
+      { error: 'upstream-unreachable' },
       502,
       resolvedOrigin,
     );
