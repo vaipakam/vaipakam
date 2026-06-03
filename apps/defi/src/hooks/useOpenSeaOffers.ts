@@ -18,12 +18,27 @@
  * **Acceptable threshold (§15.3 step 4):**
  *   `offer.value >= (lenderLeg + treasuryLeg) * (1 + bufferBps/10000) + sum(feeLegs.amount)`
  *
- *   - Block-C-on-fee-FREE (v1 ships here): `feeLegs == []`, so the
- *     threshold collapses to `(lenderLeg + treasuryLeg) * (1 + bufferBps/10000)`.
- *   - Fee-enforced collections will plug a `requiredFees` arg in a
- *     follow-up that re-fetches `/opensea/collection/{slug}` to
- *     re-derive `feeLegs` at the offer's gross at match time
- *     (per §15.3's "re-fetch on every match-offer click" rule).
+ *   Block-C-on-fee-enforced (#331, this commit) reformulates that
+ *   constraint in closed form so the threshold compare doesn't need
+ *   to reconstruct on-chain feeLeg amounts: with
+ *   `feeAmount[i] = offer.value × feeBps[i] / 10000`, the
+ *   borrower-remainder-non-negative + protocol-leg-buffer
+ *   constraint becomes
+ *
+ *     `offer.value × (10000 - feeBpsTotal) ≥ (lenderLeg + treasuryLeg) × (10000 + bufferBps)`
+ *
+ *   i.e. `offer.value ≥ ceil((lenderLeg + treasuryLeg) × (10000 + bufferBps) / (10000 - feeBpsTotal))`.
+ *
+ *   - Block-C-on-fee-FREE: `feeBpsTotal == 0`, threshold collapses
+ *     to `ceil((lenderLeg + treasuryLeg) × (10000 + bufferBps) / 10000)`
+ *     which is the v1 baseline (modulo 1-wei rounding from ceil-
+ *     instead-of-floor, irrelevant to UX).
+ *   - Block-C-on-fee-enforced: `feeBpsTotal` carries the sum of
+ *     required-fee basis points from the parsed OpenSea collection
+ *     schedule. The Match flow then re-fetches the schedule at
+ *     confirm time and threads the recomputed `FeeLeg[]` through
+ *     `updatePrepayListing` (per §15.3's "re-fetch on every match-
+ *     offer click" rule).
  *
  * **Polling cadence**: every 30s while the consumer is mounted
  * (matches the agent's `OPENSEA_OFFERS_RATELIMIT` headroom of
@@ -146,6 +161,28 @@ export function useOpenSeaOffers(
     treasuryLeg: bigint;
     bufferBps: number;
     principalAsset: string;
+    /** #331 — sum of required-fee basis points from the parsed
+     *  OpenSea collection schedule for this slug. `0` on fee-free
+     *  collections (Block C v1 baseline). `>0` on fee-enforced
+     *  collections; the threshold check scales accordingly so the
+     *  panel only greenlights offers whose gross-minus-fees still
+     *  covers `(lenderLeg + treasuryLeg) × (1 + bufferBps/10000)`.
+     *  Caller-provided so the hook doesn't re-fetch the schedule
+     *  itself (the section already polls it for the Match-side
+     *  recompute). */
+    feeBpsTotal: number;
+    /** #339 round-2 — smallest required-fee basis points. Drives
+     *  the per-leg-rounding floor:
+     *  `floor(askPrice × bps / 10000) ≥ 1` requires
+     *  `askPrice ≥ ceil(10000 / bps)`. Without this, an offer
+     *  above the closed-form threshold but below the rounding
+     *  floor would classify as acceptable, light up the Match
+     *  button, and abort at confirm time because `computeFeeLegs`
+     *  would produce a zero-amount leg (diamond reverts
+     *  `FeeLegInvalidAmount`). Baking the floor into the
+     *  classification keeps the gate closed in the first place.
+     *  `0` on fee-free collections (no rounding constraint). */
+    minRequiredFeeBps: number;
   },
   options: UseOpenSeaOffersOptions = {},
 ): UseOpenSeaOffersResult {
@@ -161,12 +198,39 @@ export function useOpenSeaOffers(
       acceptable: boolean;
       rejectReason?: NormalizedOffer['rejectReason'];
     } => {
-      // Block-C-on-fee-free baseline: no fee legs. Threshold collapses
-      // to the protocol-leg buffer.
+      // #331 — closed-form acceptable threshold. Derivation in the
+      // hook's header docstring. Returns `ceil(num / den)` so the
+      // threshold rounds toward the conservative direction (rejects
+      // borderline-unacceptable instead of admitting them).
+      //
+      // Degenerate guard: `feeBpsTotal >= 10000` means required
+      // fees consume the entire askPrice, leaving nothing for the
+      // protocol legs. Treat every offer as below-threshold; the
+      // panel renders an unmatchable state, the borrower notices,
+      // the operator investigates the collection's fee config.
+      if (threshold.feeBpsTotal >= 10_000) {
+        return { acceptable: false, rejectReason: 'below-threshold' };
+      }
+      const num =
+        (threshold.lenderLeg + threshold.treasuryLeg) *
+        BigInt(10_000 + threshold.bufferBps);
+      const den = BigInt(10_000 - threshold.feeBpsTotal);
+      const minByThreshold = den === 0n ? 0n : (num + den - 1n) / den;
+      // #339 round-2 — per-leg-rounding floor. For a required-fee
+      // row with `bps`, the on-chain amount is
+      // `floor(askPrice × bps / 10000)`. For that to be ≥ 1 the
+      // askPrice must be ≥ ceil(10000 / bps). The smallest `bps`
+      // among required rows sets the binding constraint; offers
+      // below this floor would produce a zero-amount leg, which the
+      // diamond rejects. Fee-free schedules pass `minRequiredFeeBps =
+      // 0` and skip this branch entirely.
+      const minByRounding =
+        threshold.minRequiredFeeBps > 0
+          ? (10_000n + BigInt(threshold.minRequiredFeeBps) - 1n) /
+            BigInt(threshold.minRequiredFeeBps)
+          : 0n;
       const min =
-        ((threshold.lenderLeg + threshold.treasuryLeg) *
-          BigInt(10_000 + threshold.bufferBps)) /
-        10_000n;
+        minByThreshold > minByRounding ? minByThreshold : minByRounding;
       if (
         paymentToken.toLowerCase() !== threshold.principalAsset.toLowerCase()
       ) {
@@ -180,7 +244,14 @@ export function useOpenSeaOffers(
       }
       return { acceptable: true };
     },
-    [threshold.lenderLeg, threshold.treasuryLeg, threshold.bufferBps, threshold.principalAsset],
+    [
+      threshold.lenderLeg,
+      threshold.treasuryLeg,
+      threshold.bufferBps,
+      threshold.principalAsset,
+      threshold.feeBpsTotal,
+      threshold.minRequiredFeeBps,
+    ],
   );
 
   const doFetch = useCallback(async (): Promise<NormalizedOffer[]> => {
