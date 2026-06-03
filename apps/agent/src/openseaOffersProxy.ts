@@ -97,6 +97,15 @@ export async function handleOpenSeaOffers(
     return jsonResponse({ error: 'rate-limited' }, 429, resolvedOrigin);
   }
 
+  // Validate everything that determines whether an upstream call can
+  // actually happen BEFORE consuming the global upstream rate-limit
+  // budget. Without this ordering, a distributed flood of
+  // syntactically-valid-but-functionally-invalid requests (e.g.
+  // /opensea/offers/999/...) would burn the shared upstream cap
+  // even though no OpenSea request will be attempted, returning
+  // `upstream-quota` to valid borrowers — Codex round-2 P2 on
+  // #341. The unsupported-chain + API-key gates below MUST stay
+  // ahead of the upstream-rate-limit consumption.
   const host = OPENSEA_HOST[chainId];
   const chainSlug = OPENSEA_CHAIN_SLUG[chainId];
   if (!host || !chainSlug) {
@@ -113,6 +122,52 @@ export async function handleOpenSeaOffers(
       503,
       resolvedOrigin,
     );
+  }
+
+  // Parse the configurable pagination depth up front; we need
+  // it for the upstream-budget calculation below as well as the
+  // pagination loops further down.
+  const MAX_PAGES = parseMaxPages(env.OPENSEA_OFFERS_MAX_PAGES);
+
+  // #334 Codex round-1 P2 + round-3 P2 — global upstream rate-
+  // limit keyed by a constant. Caps aggregate calls to the
+  // shared `OPENSEA_API_KEY` across all caller IPs (the per-IP
+  // gate above caps each caller individually but doesn't bound
+  // the sum). Placed AFTER the validation gates so only requests
+  // that will actually reach OpenSea consume the upstream
+  // budget.
+  //
+  // Codex round-3 P2 — budget is consumed UPFRONT once per
+  // worst-case upstream RT this request will make (not once per
+  // inbound). With `MAX_PAGES = 24` that's `1 + 2 × 24 = 49`
+  // slots per inbound; with the binding's 3,000/min cap that
+  // sustains ~61 max-depth concurrent inbounds/min across all
+  // IPs combined — a hard ceiling on the OpenSea API key's RT
+  // volume. The single-call earlier rev consumed only 1 slot
+  // per inbound, so the cap was effectively `3,000 inbound/min
+  // × 49 RTs = 147k RTs/min`, blowing the intended guardrail.
+  // Per-RT consumption is the only way the aggregate cap
+  // actually bounds OpenSea calls.
+  //
+  // Cost trade-off (intentional): if pagination ends early
+  // (OpenSea's `next` cursor runs out before page MAX_PAGES),
+  // the reserved-but-unused slots are NOT released — Cloudflare
+  // rate-limit bindings don't have an undo. This makes the
+  // budget conservative under intermittent / non-paginated
+  // traffic, which is the safer side of the trade.
+  //
+  // When the binding isn't provisioned (operator hasn't added
+  // it yet) this is a no-op; per-IP gating still applies.
+  if (env.OPENSEA_OFFERS_UPSTREAM_RATELIMIT) {
+    const upstreamBudget = 1 + 2 * MAX_PAGES;
+    for (let i = 0; i < upstreamBudget; i++) {
+      const { success } = await env.OPENSEA_OFFERS_UPSTREAM_RATELIMIT.limit({
+        key: 'opensea-offers-upstream',
+      });
+      if (!success) {
+        return jsonResponse({ error: 'upstream-quota' }, 429, resolvedOrigin);
+      }
+    }
   }
 
   const headers = {
@@ -175,18 +230,18 @@ export async function handleOpenSeaOffers(
     : null;
 
   // Codex round-15 P2 review #328 — follow OpenSea's `next`
-  // pagination cursor for up to 3 pages (≈300 offers per leg at
-  // `limit=100`). The new chain/contract/criteria/payment-token
+  // pagination cursor for up to N pages (≈100 × N offers per leg
+  // at `limit=100`). The new chain/contract/criteria/payment-token
   // filters on the dapp side can drop large fractions of any
   // single page; without pagination an acceptable offer sitting
   // on page 2+ would never reach the panel even if the borrower
-  // refreshes. 3 pages caps the upstream cost (worst case
-  // 6 round-trips per poll: 3 collection + 3 item) while
-  // covering hot collections that easily exceed a single page.
-  // Concatenates all returned offers into one synthetic
+  // refreshes. Concatenates all returned offers into one synthetic
   // `{ offers: [...] }` body so the dapp normalizer doesn't
   // need a paginated shape.
-  const MAX_PAGES = 3;
+  //
+  // #334 — `MAX_PAGES` parsed up front above (needed for the
+  // upstream-budget calculation). See its parser docstring for
+  // the clamp + foot-gun-safety rationale.
   const fetchPaginated = async (
     initialUrl: string | null,
   ): Promise<{ status: number; body: string } | null> => {
@@ -294,4 +349,42 @@ async function checkRateLimit(
   const ip = req.headers.get('CF-Connecting-IP') ?? 'unknown';
   const r = await binding.limit({ key: ip });
   return r.success;
+}
+
+/** #334 — parse the `OPENSEA_OFFERS_MAX_PAGES` wrangler var into a
+ *  bounded integer. Default 3; clamp to `[1, 24]` so a misconfigured
+ *  value can't blow the OpenSea API quota.
+ *
+ *  **Strict parse** (Codex round-1 P3): the raw value must match
+ *  `/^\d+$/` to be accepted. `Number.parseInt('25oops', 10)` returns
+ *  25, which would silently change pagination depth on a wrangler
+ *  typo — exactly the foot-gun the configurable surface is supposed
+ *  to prevent. Any non-pure-digit string collapses to the default.
+ *
+ *  **Ceiling math** (Codex round-1 P3): the per-inbound worst-case
+ *  upstream cost is `1 + 2 × MAX_PAGES` round-trips (one NFT-detail
+ *  slug lookup + paginated collection leg + paginated item leg).
+ *  With the 60/min/IP inbound cap, ceiling 24 yields
+ *  `60 × (1 + 48) = 2,940` upstream/min/IP — under the 3,000-call
+ *  guardrail. Bumping the ceiling means either reducing the
+ *  inbound cap or accepting a wider upstream budget.
+ *
+ *  **Aggregate-key concern** (Codex round-1 P2): the per-IP cap
+ *  doesn't bound aggregate upstream load to the shared
+ *  `OPENSEA_API_KEY`. The new optional
+ *  `OPENSEA_OFFERS_UPSTREAM_RATELIMIT` binding (consumed below)
+ *  caps the global upstream rate; when present it gates the
+ *  proxy in addition to the per-IP rate-limit.
+ */
+const MAX_PAGES_DEFAULT = 3;
+const MAX_PAGES_CEILING = 24;
+const STRICT_DIGITS_RE = /^\d+$/;
+function parseMaxPages(raw: string | undefined): number {
+  if (raw === undefined || raw === null || raw === '') return MAX_PAGES_DEFAULT;
+  if (!STRICT_DIGITS_RE.test(raw)) return MAX_PAGES_DEFAULT;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) return MAX_PAGES_DEFAULT;
+  if (parsed < 1) return 1;
+  if (parsed > MAX_PAGES_CEILING) return MAX_PAGES_CEILING;
+  return parsed;
 }

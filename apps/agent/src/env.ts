@@ -136,6 +136,29 @@ interface BaseEnv {
   // dapp polls every ~30s while the loan card is open, so the
   // limit needs headroom (60 req/min/IP starting value).
   OPENSEA_OFFERS_RATELIMIT?: RateLimitBinding;
+  // T-086 Round-5 Block C v1.1 (#334) — max pagination depth on
+  // the offers proxy. Default 3 pages (≈300 offers per leg at
+  // `limit=100`); operators on hyper-active collections can raise
+  // via the agent's wrangler.jsonc `vars` block. Worst-case
+  // upstream cost per inbound request is `1 + 2 × OPENSEA_OFFERS_MAX_PAGES`
+  // round-trips (one NFT-detail slug lookup + collection leg +
+  // item leg paginated). String type matches the wrangler-vars
+  // JSON convention; coerced to int + clamped to `[1, 24]` at
+  // read time so a misconfigured value can't blow the OpenSea
+  // API quota — `parseMaxPages` in the proxy is the canonical
+  // clamp.
+  OPENSEA_OFFERS_MAX_PAGES?: string;
+  // #334 Codex round-1 P2 — global upstream rate-limit keyed by
+  // a constant ("upstream") rather than per-IP. Bounds aggregate
+  // upstream calls to the shared `OPENSEA_API_KEY` across all
+  // caller IPs. Without this binding the per-IP
+  // `OPENSEA_OFFERS_RATELIMIT` is the only gate, so two or more
+  // distinct caller IPs polling hot tokens at the raised
+  // `OPENSEA_OFFERS_MAX_PAGES` ceiling could each individually
+  // stay under the per-IP cap while in aggregate exceeding the
+  // OpenSea API tier. Optional — when absent the proxy falls
+  // back to per-IP-only gating + warns once at startup.
+  OPENSEA_OFFERS_UPSTREAM_RATELIMIT?: RateLimitBinding;
 
   // Diagnostics sampling (0.0–1.0; default 1.0 = write every accepted POST).
   // Coerced from string to float at read time. Out-of-range values
@@ -352,6 +375,12 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     OPENSEA_LISTING_RATELIMIT: raw.OPENSEA_LISTING_RATELIMIT,
     OPENSEA_COLLECTION_RATELIMIT: raw.OPENSEA_COLLECTION_RATELIMIT,
     OPENSEA_OFFERS_RATELIMIT: raw.OPENSEA_OFFERS_RATELIMIT,
+    // #334 — preserve the wrangler-vars config so the proxy
+    // can read it. Without this copy the proxy's
+    // `env.OPENSEA_OFFERS_MAX_PAGES` is always undefined and
+    // the configurable behaviour is unreachable.
+    OPENSEA_OFFERS_MAX_PAGES: raw.OPENSEA_OFFERS_MAX_PAGES,
+    OPENSEA_OFFERS_UPSTREAM_RATELIMIT: raw.OPENSEA_OFFERS_UPSTREAM_RATELIMIT,
     DIAG_SAMPLE_RATE: raw.DIAG_SAMPLE_RATE,
     DIAG_RETENTION_DAYS: raw.DIAG_RETENTION_DAYS,
     DIAG_LEGAL_DOCS: raw.DIAG_LEGAL_DOCS,

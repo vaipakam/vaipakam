@@ -126,6 +126,27 @@
         "namespace_id": "1007",
         "simple": { "limit": 60, "period": 60 },
       },
+      {
+        // T-086 Round-5 Block C v1.1 (#334) — global upstream
+        // rate-limit for the offers proxy, keyed by a constant
+        // string ('opensea-offers-upstream') rather than per-IP.
+        // The per-IP OPENSEA_OFFERS_RATELIMIT above bounds each
+        // caller individually but doesn't cap aggregate calls
+        // to the shared OPENSEA_API_KEY across many distinct
+        // IPs polling hot tokens at a raised
+        // OPENSEA_OFFERS_MAX_PAGES. At MAX_PAGES_CEILING = 24,
+        // worst-case is 1 + 2 × 24 = 49 upstream RTs per
+        // inbound. 60 requests/minute × 49 = 2,940 / min /
+        // single-IP — fits the typical OpenSea API tier. The
+        // aggregate cap below sets a hard ceiling at 3,000
+        // upstream RTs / minute across ALL caller IPs combined,
+        // so a multi-IP distributed scrape can't blow the
+        // shared key's tier limit even at peak.
+        "name": "OPENSEA_OFFERS_UPSTREAM_RATELIMIT",
+        "type": "ratelimit",
+        "namespace_id": "1008",
+        "simple": { "limit": 3000, "period": 60 },
+      },
     ],
   },
 
