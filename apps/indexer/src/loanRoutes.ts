@@ -1010,6 +1010,21 @@ export async function handleLoanPrepayMatchSource(
   env: Env,
   loanIdRaw: string,
 ): Promise<Response> {
+  // #335 — per-IP rate-limit BEFORE the validation gates so a
+  // scripted attacker spamming malformed payloads can't burn
+  // through the D1 query budget on invalid-input branches. When
+  // the binding isn't provisioned this is a no-op; the strict
+  // hex validation + INSERT OR REPLACE conflict policy still
+  // keep the endpoint defensible.
+  if (env.OPENSEA_OFFERS_MATCH_SOURCE_RATELIMIT) {
+    const ip = req.headers.get('CF-Connecting-IP') ?? 'unknown';
+    const { success } = await env.OPENSEA_OFFERS_MATCH_SOURCE_RATELIMIT.limit({
+      key: ip,
+    });
+    if (!success) {
+      return jsonResponse({ error: 'rate-limited' }, 429);
+    }
+  }
   const loanId = Number.parseInt(loanIdRaw, 10);
   if (!Number.isFinite(loanId) || loanId < 0) {
     return jsonResponse({ error: 'bad-loan-id' }, 400);

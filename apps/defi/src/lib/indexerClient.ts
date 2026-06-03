@@ -686,6 +686,14 @@ export async function postPrepayMatchSource(
 ): Promise<boolean> {
   const root = baseUrl();
   if (!root) return false;
+  // Codex round-2 P3 #343 — use AbortController + setTimeout
+  // instead of AbortSignal.timeout. The latter throws on
+  // browsers/runtimes that don't ship the newer static method,
+  // which would silently drop every breadcrumb in those clients
+  // (older WebViews, embedded iframes). Mirrors the existing
+  // `getJson` pattern in this file.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
     const res = await fetch(
       `${root}/loans/${loanId.toString()}/prepay-listing/match-source?chainId=${chainId}`,
@@ -695,7 +703,7 @@ export async function postPrepayMatchSource(
         body: JSON.stringify(body),
         // Same TIMEOUT_MS as the reads; the rotation tx already
         // landed, so dragging the UI on this POST is pointless.
-        signal: AbortSignal.timeout(TIMEOUT_MS),
+        signal: controller.signal,
       },
     );
     return res.ok;
@@ -703,5 +711,7 @@ export async function postPrepayMatchSource(
     // eslint-disable-next-line no-console
     console.warn("[postPrepayMatchSource] best-effort POST failed", err);
     return false;
+  } finally {
+    clearTimeout(timer);
   }
 }

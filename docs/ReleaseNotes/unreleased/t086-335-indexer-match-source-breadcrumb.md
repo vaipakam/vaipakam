@@ -27,34 +27,57 @@ options were:
 **What changed**
 
 - `apps/indexer/migrations/0019_prepay_listing_match_breadcrumbs.sql`
-  adds a new table keyed on `tx_hash` (rotation txes are unique;
-  each gets one breadcrumb). `loan_id` is separately indexed so
-  the loan-history join is cheap. No FK to `prepay_listings` or
-  `loans` — the indexer's reorg-windowed feed can serve the
-  pre-rotation row right up until the post tx lands, and a
-  strict FK at insert time would race the indexer's
-  materialisation; the query-time join handles it.
-- New `POST /loans/:loanId/prepay-listing/match-source` endpoint
-  in `apps/indexer/src/loanRoutes.ts`. Strict hex validation on
-  every field, idempotent on `tx_hash` (`INSERT OR IGNORE`), no
-  authentication (the breadcrumb is non-financial analytics data;
-  conservative-on-absence query semantics mean an attacker
-  spamming false breadcrumbs would be detectable via tx-hash →
-  on-chain-event correlation).
-- New `postPrepayMatchSource` helper in `apps/defi/src/lib/indexerClient.ts`
-  — best-effort POST that returns a boolean for telemetry/tests but
-  callers don't branch on it (the rotation tx is already on-chain
-  by the time this fires).
+  adds a new table keyed on `(chain_id, tx_hash)` (loan IDs are
+  scoped per chain in this codebase, matching how
+  `prepay_listings` keys rows; a tx_hash without chain_id would
+  conflate breadcrumbs across configured chains). `(chain_id,
+  loan_id)` is separately indexed so the loan-history join is
+  cheap. No FK to `prepay_listings` or `loans` — the indexer's
+  reorg-windowed feed can serve the pre-rotation row right up
+  until the post tx lands, and a strict FK at insert time would
+  race the indexer's materialisation; the query-time join
+  handles it.
+- New `POST /loans/:loanId/prepay-listing/match-source?chainId=N`
+  endpoint in `apps/indexer/src/loanRoutes.ts`. Strict hex
+  validation on every field. **Conflict policy: `INSERT OR
+  REPLACE`** (Codex round-1 P2 #343). Lets the legitimate dapp
+  retry override an attacker's first-arrival spoof; emits an
+  operator-visible warning whenever a row is overwritten with a
+  payload that differs from what's stored, so a sustained spoof
+  attack shows up in the indexer logs as a tx_hash receiving
+  multiple distinct `(orderHash, bidder)` writes. Full
+  prevention would need EIP-712 signed claims from the
+  borrower; documented as a v2 follow-up. For non-financial
+  analytics metadata the replace-and-warn shape is the right
+  v1.1 trade-off.
+- New `OPENSEA_OFFERS_MATCH_SOURCE_RATELIMIT` rate-limit binding
+  on the indexer Worker (60 req/min/IP). Matches the per-IP
+  rate-limit shape `apps/agent` uses; the indexer's existing
+  read surface stays uncapped (read-only, cached, low cost) but
+  the new POST surface is opt-in to the same defensive posture.
+- New `postPrepayMatchSource(chainId, loanId, body)` helper in
+  `apps/defi/src/lib/indexerClient.ts` — best-effort POST that
+  returns a boolean for telemetry/tests but callers don't
+  branch on it (the rotation tx is already on-chain by the
+  time this fires).
 - `useNFTPrepayListing` extends `updatePrepayListing` +
   `updatePrepayDutchListing` with an optional `matchSource?:
-  MatchSourceBreadcrumb` parameter. When set, after the rotation
-  tx confirms (and the OpenSea publish step finishes), the hook
-  POSTs the breadcrumb. Manual repricings
-  (`PrepayListingActions`) omit the param and stay unchanged.
+  MatchSourceBreadcrumb` parameter. When set, after the
+  rotation tx confirms, the hook fires the breadcrumb POST
+  **before** awaiting the OpenSea publish step and **without
+  awaiting the POST itself** (`void` instead of `await`).
+  Codex round-1 P2 + P3 #343: a stalled publish can no longer
+  block the breadcrumb, and the breadcrumb's own RTT can no
+  longer block the Match-button's `onClick` from resolving.
+  Manual repricings (`PrepayListingActions`) omit the
+  `matchSource` param and stay unchanged.
 - `OpenSeaOffersSection`'s Match callback passes
   `{ orderHash: offer.orderHash, bidder: offer.bidder }` as
   `matchSource` on every Match — covering both fixed-price and
   Dutch rotations through the same path.
+- `apps/indexer/src/index.ts`'s header comment updated to note
+  the Worker now accepts the one breadcrumb POST in addition to
+  its public-read GETs.
 
 **Why hook-side and not section-side**
 
@@ -67,11 +90,12 @@ worse split-of-responsibility shapes than just having the hook
 fire the breadcrumb when it has the receipt directly.
 
 **No contract surface changes.** No new diamond storage, no
-migration on contract storage, no operator action — just the D1
-migration to apply (`wrangler d1 migrations apply vaipakam-archive
---remote` from inside `apps/indexer/`).
-
-**Operator action post-merge**: apply the D1 migration.
+migration on contract storage. Operator action: apply the D1
+migration (`wrangler d1 migrations apply vaipakam-archive
+--remote` from inside `apps/indexer/`) AND provision the new
+`OPENSEA_OFFERS_MATCH_SOURCE_RATELIMIT` binding via the
+`wrangler.jsonc` `unsafe.bindings` block (auto-deployed on next
+`wrangler deploy`).
 
 **Out of scope** (tracked for follow-ups):
 
@@ -81,5 +105,7 @@ migration to apply (`wrangler d1 migrations apply vaipakam-archive
   presentation is a separate UX card).
 - An analytics dashboard view that surfaces the
   offer-driven-vs-manual ratio (also separate UX work).
+- EIP-712-signed claims to fully prevent the spoofing window
+  the replace-and-warn shape only mitigates.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

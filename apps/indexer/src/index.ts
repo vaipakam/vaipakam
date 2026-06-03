@@ -36,7 +36,16 @@
  *
  * NO Telegram webhook, NO Frames, NO quote / scan proxies — those
  * live on apps/agent. NO HF watcher / liquidation — that's apps/keeper.
- * The indexer is intentionally read-only and operator-key-free.
+ * The indexer is operator-key-free.
+ *
+ * **Almost read-only.** As of #335 the Worker accepts ONE write
+ * surface — `POST /loans/:loanId/prepay-listing/match-source` —
+ * for best-effort analytics breadcrumbs from the dapp. That
+ * single endpoint is rate-limited per-IP via the
+ * `OPENSEA_OFFERS_MATCH_SOURCE_RATELIMIT` binding (matching the
+ * defensive posture apps/agent's POST proxies use) and stores
+ * non-financial metadata only (no signing keys, no on-chain
+ * state writes). The rest of the surface stays public-read.
  */
 
 import { resolveEnv, type WorkerEnv } from './env';
