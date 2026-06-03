@@ -119,16 +119,25 @@ export async function handleOpenSeaSignedOffer(
     );
   }
 
-  // OpenSea's v2 "fetch order by hash" surface returns the full
-  // protocol_data + extraData blob. The endpoint takes a chain
-  // slug + order_hash + side=offer query params.
+  // OpenSea's v2 "Get an order" single-order lookup. Codex PR #346
+  // round-1 P2 — earlier code targeted the legacy list-style
+  // `/api/v2/orders/{chain}/seaport/offers?order_hash=...` shape
+  // that doesn't match OpenSea's current docs; the documented
+  // single-order surface is keyed by (chain, protocol address,
+  // order_hash) and returns `{ order: {...} }` rather than
+  // `{ orders: [...] }`.
   //
   // Docs: https://docs.opensea.io/reference/get_order
-  // GET /api/v2/orders/{chain}/seaport?order_hash=...&side=offer
+  // GET /api/v2/orders/chain/{chain}/protocol/{protocol_address}/{order_hash}
+  //
+  // The Seaport 1.6 protocol address is the same on every supported
+  // chain (deterministic CREATE2 deploy by the Seaport team).
+  const SEAPORT_PROTOCOL_ADDRESS =
+    '0x0000000000000068F116a894984e2DB1123eB395';
   const upstreamUrl =
-    `https://${host}/api/v2/orders/${encodeURIComponent(chainSlug)}/seaport/offers` +
-    `?order_hash=${encodeURIComponent(orderHash.toLowerCase())}` +
-    `&include_invalid=false`;
+    `https://${host}/api/v2/orders/chain/${encodeURIComponent(chainSlug)}` +
+    `/protocol/${SEAPORT_PROTOCOL_ADDRESS}` +
+    `/${encodeURIComponent(orderHash.toLowerCase())}`;
 
   let upstream: Response;
   try {
@@ -176,30 +185,32 @@ export async function handleOpenSeaSignedOffer(
     );
   }
 
-  // OpenSea's response carries:
-  //   orders: [{
+  // OpenSea's single-order "Get an order" response carries:
+  //   order: {
   //     order_hash, protocol_data: { parameters, signature },
   //     ...
   //     // For SignedZone (fee-enforced collections):
   //     // protocol_data.extraData carries the SIP-7 blob.
-  //   }]
-  // We surface the first matching order's protocol_data fields.
-  // If no orders are returned the hash isn't on OpenSea (cancelled,
+  //   }
+  // If `order` is absent the hash isn't on OpenSea (cancelled,
   // expired, or hash typo) — surface as 404 so the dapp can show
-  // "this offer is no longer available".
-  const orders = (raw as { orders?: unknown[] }).orders;
-  if (!Array.isArray(orders) || orders.length === 0) {
+  // "this offer is no longer available". (Codex PR #346 round-1
+  // P2 — corrected from the legacy `{ orders: [...] }` wrapper to
+  // the documented single-order shape.)
+  const first = (raw as {
+    order?: {
+      order_hash?: string;
+      protocol_data?: {
+        parameters?: unknown;
+        signature?: string;
+        extraData?: string;
+      };
+      criteria_proof?: unknown[];
+    };
+  }).order;
+  if (!first || typeof first !== 'object') {
     return jsonResponse({ error: 'opensea-offer-not-found' }, 404, resolvedOrigin);
   }
-  const first = orders[0] as {
-    order_hash?: string;
-    protocol_data?: {
-      parameters?: unknown;
-      signature?: string;
-      extraData?: string;
-    };
-    criteria_proof?: unknown[];
-  };
   // Defense-in-depth: confirm OpenSea returned the orderHash we
   // requested. If they returned a different hash for any reason
   // (api drift, mis-routing), the on-chain §17.5 hash-rederive

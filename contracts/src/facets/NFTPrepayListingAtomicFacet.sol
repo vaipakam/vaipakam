@@ -506,6 +506,23 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
         if (components.consideration[0].recipient != components.offerer) {
             revert BidderOrderShapeMismatch(SHAPE_CONS0_WRONG_RECIPIENT);
         }
+        // Codex PR #346 round-1 P2 — concrete (non-criteria) item
+        // types MUST pin the specific tokenId. Without this, a
+        // same-collection offer for token B would pass the shape
+        // gate for a loan on token A; Seaport would reject the
+        // match at fulfillment time, but the better UX (and the
+        // documented §17.5-bis behavior) is a pre-Seaport SHAPE_*
+        // revert. Criteria items skip this check — the resolver
+        // is what proves the matched tokenId is in the bidder's
+        // signed criteria set.
+        if (t == ItemType.ERC721 || t == ItemType.ERC1155) {
+            if (
+                components.consideration[0].identifierOrCriteria !=
+                loan.collateralTokenId
+            ) {
+                revert BidderOrderShapeMismatch(SHAPE_CONS0_WRONG_TOKEN);
+            }
+        }
         // Raja PR #346 round-1 review — the "fixed amount" (no
         // Dutch decay on the NFT side) and the "amount equals
         // expected" checks were fused into one revert that always

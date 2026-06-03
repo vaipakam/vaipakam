@@ -286,7 +286,19 @@ export function useNFTPrepayListing(
         if (!row) continue;
         indexerEverResponded = true;
         latest = row.prepayListing;
-        if (flow === 'cancelPrepayListing') {
+        if (flow === 'cancelPrepayListing' || flow === 'matchOpenSeaOffer') {
+          // T-086 Round-6 / Block D (#345) — Codex PR #346 round-1
+          // P2. An atomic match settles the loan + deletes the
+          // listing row in the same on-chain tx (the
+          // `PrepayCollateralSaleSettled` handler runs
+          // executorFinalizePrepaySale → DELETE FROM
+          // prepay_listings). So the indexer's transition for
+          // `matchOpenSeaOffer` is the same as `cancelPrepayListing`:
+          // listing-row-disappearance. Falling through to the
+          // update-orderHash branch would either re-affirm the
+          // pre-match row (if the indexer lags) or never trigger
+          // (no new orderHash to compare against), leaving stale
+          // listing banners visible after a confirmed settlement.
           if (!row.prepayListing) return { sawTransition: true, latest: undefined };
         } else if (flow === 'postPrepayListing' || flow === 'postPrepayDutchListing') {
           if (row.prepayListing) return { sawTransition: true, latest: row.prepayListing };

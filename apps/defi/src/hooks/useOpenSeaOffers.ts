@@ -97,6 +97,13 @@ export interface NormalizedOffer {
   /** Linear decay end-time for the offer (Unix seconds). The
    *  borrower's match window is bounded by this. */
   endTime: number;
+  /** T-086 Round-6 / Block D (#345) — Codex PR #346 round-1 P2.
+   *  True when the bidder's signed Seaport offer has
+   *  `startAmount != endAmount` (a decaying / Dutch bidder Offer).
+   *  The Round-6 atomic facet's §17.5-bis shape gate rejects these
+   *  on-chain (`SHAPE_OFFER_NOT_FIXED_AMOUNT`); the Match button is
+   *  disabled for them so the borrower can't predictably revert. */
+  priceIsDecaying: boolean;
   /** Whether the offer meets the protocol-leg + buffer threshold.
    *  The panel greys out non-acceptable rows to prevent a
    *  guaranteed-to-revert `updatePrepayListing` click. */
@@ -537,13 +544,31 @@ function normalize(
     return null;
   }
   const itemType = consideration.itemType;
-  if (itemType !== 2 && itemType !== 3) {
-    // Drop criteria-types (4/5) AND any anomalous types
-    // (ETH/ERC20) — only concrete NFT considerations qualify.
+  // T-086 Round-6 / Block D (#345) — Codex PR #346 round-1 P2.
+  // The atomic facet supports criteria types (4/5) via the
+  // `CriteriaResolver[]` passthrough — the agent's
+  // `/opensea/signed-offer/...` endpoint returns the bidder's
+  // signed Merkle proof in `criteriaResolvers`, and the on-chain
+  // `_assertBidderConsiderationNftItem` accepts
+  // `ERC721_WITH_CRITERIA` / `ERC1155_WITH_CRITERIA` itemTypes
+  // alongside the concrete ones. So the normalizer now passes
+  // criteria offers through; the panel can Match against them.
+  if (itemType !== 2 && itemType !== 3 && itemType !== 4 && itemType !== 5) {
+    // Drop anomalous types (ETH / ERC20 considerations); only
+    // NFT considerations qualify.
     return null;
   }
   const ident = (consideration.identifierOrCriteria ?? '0').toString();
-  if (ident !== collateralTokenId.toString()) return null;
+  // For concrete itemTypes (2/3), `identifier` MUST equal the
+  // loan's collateralTokenId — Seaport will only fulfill against
+  // that specific token. For criteria itemTypes (4/5), `identifier`
+  // is the Merkle root the bidder signed; the resolver supplies
+  // the proof for the specific tokenId at match-time, so we
+  // don't compare here (the on-chain criteria-resolver path is
+  // the load-bearing check).
+  if (itemType === 2 || itemType === 3) {
+    if (ident !== collateralTokenId.toString()) return null;
+  }
 
   // #336 — quantity check. ERC721 considerations are implicitly
   // unit-quantity (Seaport encodes `1` for both startAmount and
@@ -587,6 +612,21 @@ function normalize(
   }
 
   const verdict = computeAcceptable(value, paymentToken, endTime);
+
+  // T-086 Round-6 / Block D (#345) — Codex PR #346 round-1 P2.
+  // Detect decaying (Dutch) bidder offers by comparing the offer
+  // item's start vs end amount. Round-6 atomic facet rejects
+  // these on-chain (`SHAPE_OFFER_NOT_FIXED_AMOUNT`); we surface
+  // the flag so the panel can grey out the Match button.
+  const offerStart = offerItem?.startAmount;
+  const offerEnd = offerItem?.endAmount;
+  const priceIsDecaying =
+    typeof offerStart === 'string' &&
+    typeof offerEnd === 'string' &&
+    offerStart.length > 0 &&
+    offerEnd.length > 0 &&
+    offerStart !== offerEnd;
+
   return {
     orderHash,
     kind,
@@ -594,6 +634,7 @@ function normalize(
     paymentToken,
     value,
     endTime,
+    priceIsDecaying,
     quantity,
     acceptable: verdict.acceptable,
     rejectReason: verdict.rejectReason,

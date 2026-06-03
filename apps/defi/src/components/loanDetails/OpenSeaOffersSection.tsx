@@ -43,7 +43,6 @@ import { OpenSeaOffersPanel } from './OpenSeaOffersPanel';
 import { useOpenSeaOffers } from '../../hooks/useOpenSeaOffers';
 import {
   parseOpenSeaFeeSchedule,
-  computeFeeLegs,
   type ParsedFeeSchedule,
 } from '../../lib/openseaFeeSchedule';
 
@@ -239,22 +238,14 @@ export function OpenSeaOffersSection({
     (import.meta.env.VITE_AGENT_ORIGIN as string | undefined) ?? null;
 
   const live = prepayListing.listing;
-  // Codex P2 review #328 + round-3 P2 review — the hook is
-  // mounted before the early-return banners for Dutch + pre-
-  // migration rows. Compute the "can match" predicate up front so
-  // the same boolean drives BOTH the pause flag AND the early
-  // returns; otherwise the hook keeps polling for rows that will
-  // only ever render an informational banner.
-  // Codex round-13 P2 review #328 — use nullish (`== null`) so
-  // that an indexer response with omitted-key (undefined) AND
-  // explicit-null both classify as pre-migration. A rolling
-  // deploy or stale indexer could serve a row without these
-  // anchors; without the nullish check, Match could fire and
-  // hit `BigInt(undefined)` at the actual onMatchOffer call.
-  const listingPreMigration =
-    live !== null &&
-    live !== undefined &&
-    (live.salt == null || live.conduitKey == null);
+  // T-086 Round-6 / Block D (#345) — Codex PR #346 round-1 P2.
+  // `listingPreMigration` (the "v1 row missing salt/conduitKey"
+  // gate) and `dutchRunwayTooShort` (the "Dutch listing under
+  // 1 hour" gate) are stale: the atomic match-rotation flow does
+  // NOT consume the v1 listing's salt / conduitKey / auctionEndTime
+  // (the facet picks its own at match time per §17.4). Both
+  // predicates have been removed from `canMatch` and from the
+  // banner short-circuits below.
   // #336 — ERC1155 banner gate removed. The normalizer now
   // enforces an exact-quantity match against `collateralQuantity`,
   // so partial-fill offers are filtered at the normalize step
@@ -311,23 +302,27 @@ export function OpenSeaOffersSection({
   // (`block.timestamp + 1h`), so a borrower clicking with
   // `live.auctionEndTime - now == 1h + 1s` would still revert
   // if the tx takes more than a second to mine.
-  const MIN_AUCTION_WINDOW_SECONDS = 60n * 60n;
-  const MATCH_SAFETY_SECONDS = 5n * 60n;
-  const nowSeconds = BigInt(Math.floor(Date.now() / 1000));
-  const dutchRunwayTooShort =
-    live !== null &&
-    live !== undefined &&
-    live.auctionMode === 1 &&
-    live.auctionEndTime != null &&
-    BigInt(live.auctionEndTime) - nowSeconds <=
-      MIN_AUCTION_WINDOW_SECONDS + MATCH_SAFETY_SECONDS;
+  // T-086 Round-6 / Block D (#345) — Codex PR #346 round-1 P2.
+  // The Dutch 1-hour-runway gate (`dutchRunwayTooShort`) is stale
+  // for the same reason as `listingPreMigration` above — atomic
+  // match doesn't consume the existing listing's auctionEndTime.
 
-  const canMatch =
-    live !== null &&
-    live !== undefined &&
-    !listingPreMigration &&
-    !dutchRowIsMalformed &&
-    !dutchRunwayTooShort;
+  // T-086 Round-6 / Block D (#345) — Codex PR #346 round-1 P2.
+  // Atomic match-rotation does NOT consume the live listing's
+  // `salt`, `conduitKey`, `auctionMode`, or `auctionEndTime` —
+  // the facet picks its own salt + conduit key + grace boundary
+  // for the freshly-constructed counter-order, and §17.11 step 0
+  // supports `existingHash == 0` (matching without a prior v1
+  // post). The historical v1-listing prerequisites (`listingPre
+  // Migration`, `dutchRowIsMalformed`, `dutchRunwayTooShort`)
+  // therefore no longer gate the Match button. A borrower with
+  // an allowsPrepayListing-true loan can match any acceptable
+  // OpenSea offer regardless of v1 listing state.
+  //
+  // We keep `live` reachable for the panel's banner / context
+  // text (so a borrower with a live v1 listing sees the existing
+  // status) — but the gating boolean is open.
+  const canMatch = true;
 
   // #331 — fee-schedule cache (replaces round-5's tri-state
   // enforcement gate). The dapp polls `/opensea/collection/{slug}`
@@ -501,61 +496,18 @@ export function OpenSeaOffersSection({
   // offers — Match rotates the canonical order to the offer's
   // value and the bidder fulfills for the whole locked lot.
 
-  if (listingPreMigration) {
-    return (
-      <div
-        id={`opensea-offers-pre-migration-${loanId}`}
-        className="card loan-actions-card"
-      >
-        <div className="action-group">
-          <div className="action-title">OpenSea Offers (English mode)</div>
-          <div className="alert alert-warning">
-            This listing was posted before the offer-matching surface
-            was added. Cancel the current listing and re-post via the
-            actions card above to enable matching against incoming
-            OpenSea offers.
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // T-086 Round-6 / Block D (#345) — Codex PR #346 round-1 P2.
+  // The atomic match-rotation flow does NOT consume the existing
+  // v1 listing's salt / conduitKey / auctionEndTime, and §17.11
+  // step 0 supports `existingHash == 0` (match without a prior
+  // post). The `listingPreMigration` + `dutchRunwayTooShort`
+  // banners that previously short-circuited the offers panel are
+  // therefore stale and have been removed; the offers panel
+  // renders for every loan with allowsPrepayListing=true.
+  // `dutchRowIsMalformed` is kept below because that case
+  // represents a truly-corrupt indexer row the panel can't
+  // contextualize.
 
-  // #332 — Dutch listing whose remaining auction window is too
-  // short for the diamond's `_assertDutchWindow` 1-hour minimum.
-  // The atomic `updatePrepayDutchListing` rotation preserves the
-  // existing `auctionEndTime` (the rotated order behaves like
-  // fixed-price-at-`offer.value` for the rest of that window),
-  // so if `auctionEndTime - now <= 1h + safety` the tx would
-  // revert `AuctionWindowTooShort`. Banner the panel instead of
-  // showing offers the borrower can't match.
-  if (dutchRunwayTooShort) {
-    return (
-      <div
-        id={`opensea-offers-dutch-runway-${loanId}`}
-        className="card loan-actions-card"
-      >
-        <div className="action-group">
-          <div className="action-title">OpenSea Offers (English mode)</div>
-          <div className="alert alert-info">
-            This Dutch listing's auction window is within its final
-            hour. Matching an OpenSea offer would rotate the order
-            past the diamond's minimum 1-hour window. Cancel and
-            re-post a fresh listing via the actions card above to
-            restart the match flow with a full window.
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // #332 — a Dutch listing without an `auctionEndTime` (or with a
-  // missing `endAskPrice`) is a malformed indexer row. Banner
-  // instead of attempting a rotation that would either revert
-  // on-chain or rotate the order with bad decay parameters. Pre-
-  // migration short-circuit above covered missing salt/conduit;
-  // this covers missing Dutch-specific fields. The same predicate
-  // also feeds `canMatch` above so the offers hook stops polling
-  // when this banner will render.
   if (dutchRowIsMalformed) {
     return (
       <div
@@ -592,104 +544,64 @@ export function OpenSeaOffersSection({
       decimals={decimals}
       onMatchOffer={async (offer) => {
         // The borrower is taking the offer's value as the new ask;
-        // the existing listing's salt + conduitKey are preserved
-        // through the updatePrepayListing call. The bidder is told
-        // out-of-band before the borrower clicks Match (per §15.3's
-        // race-window warning, rendered inside the panel's confirm
-        // modal). The pre-migration short-circuit above guarantees
-        // `live` is non-null + both fields are populated by the
-        // time this callback fires.
-        if (!live || live.salt == null || live.conduitKey == null) {
+        // T-086 Round-6 / Block D (#345) — atomic match-rotation
+        // does NOT need the v1 listing's `salt` or `conduitKey`
+        // (the facet picks its own fresh salt + OpenSea conduit
+        // key at match-time per §17.4). The borrower can match
+        // even without ever posting a v1 listing — §17.11 step 0
+        // supports `existingHash == 0` and skips auto-clear. The
+        // round-1 v1 prerequisite checks (`live.salt` / `live.
+        // conduitKey`) are dropped here.
+        //
+        // Codex PR #346 round-1 P2 — also reject decaying bidder
+        // offers (`offer.value` represents `price.current` but
+        // the on-chain shape gate requires `startAmount ==
+        // endAmount` on the bidder's offer item). If
+        // `offer.priceIsDecaying` is set, the Match button
+        // shouldn't have been clickable; defensively fail closed
+        // in case the section's filter missed it.
+        if (offer.priceIsDecaying) {
+          // eslint-disable-next-line no-console
+          console.warn('[onMatchOffer] declining decaying bidder offer (atomic shape gate)');
           return false;
         }
-        if (!offersResult.slug) return false;
 
-        // #331 — re-fetch the fee schedule at confirm time per
-        // §15.3 step 5. The panel-mount schedule can stale out if
-        // OpenSea publishes a fee-schedule change while the
-        // borrower watches the panel; a stale schedule could
-        // under-compute the now-required fee amount, causing
-        // OpenSea-side rejection at re-publish (the on-chain
-        // rotation succeeds, but the bidder can't discover the
-        // updated listing). Recomputing on every Match click trades
-        // one extra RTT for correctness.
+        // #331 — re-fetch the fee schedule at confirm time. For
+        // the v1 two-step path this was load-bearing (the dapp
+        // computed `feeLegs[]` from the schedule and passed it
+        // through). For the Round-6 atomic path the bidder's
+        // signed Offer carries the fees in its consideration and
+        // the on-chain facet asserts the sum invariant directly,
+        // so the schedule re-fetch is ADVISORY only — a transient
+        // /opensea/collection failure must NOT block an otherwise
+        // valid atomic Match (Codex PR #346 round-1 P2). We still
+        // refresh the cache so the panel's threshold compare stays
+        // honest on the next render, but a null result no longer
+        // aborts the click.
         let freshSchedule: ParsedFeeSchedule | null = null;
-        try {
-          const recheck = await fetch(
-            `${agentOrigin}/opensea/collection/${encodeURIComponent(offersResult.slug)}?chainId=${chainId}`,
-          );
-          if (recheck.ok) {
-            freshSchedule = parseOpenSeaFeeSchedule(await recheck.json());
-          }
-        } catch {
-          // Network error → freshSchedule stays null → fail closed below.
-        }
-        if (freshSchedule === null) {
-          // Couldn't validate the schedule. Invalidate the cached
-          // verdict so the gate closes on next paint + abort the
-          // Match. The borrower retries; transient failures resolve
-          // on the next click.
-          setFeeCheck({ slug: offersResult.slug, schedule: null });
-          return false;
-        }
-
-        // If the fresh schedule's totalBps changed materially since
-        // the panel-mount cache, the offer's classification could
-        // flip from acceptable to below-threshold under the new
-        // scaling. Re-check the closed-form threshold against the
-        // FRESH `feeBpsTotal` before committing to the rotation.
-        //
-        // Codex round-1 P2 #339 — match the hook's `>= 10_000`
-        // degenerate threshold here. A 9999-bps schedule produces
-        // a finite (very large) min and the closed-form math
-        // stays well-defined; only `feeBpsTotal >= 10_000` is
-        // structurally unmatchable.
-        if (freshSchedule.totalBps >= 10_000) {
-          // Degenerate (fees consume the entire price OR more).
-          // Refresh the cache + abort; the panel renders an
-          // unmatchable state.
-          setFeeCheck({ slug: offersResult.slug, schedule: freshSchedule });
-          return false;
-        }
-        if (threshold !== null) {
-          const num =
-            (threshold.lenderLeg + threshold.treasuryLeg) *
-            BigInt(10_000 + threshold.bufferBps);
-          const den = BigInt(10_000 - freshSchedule.totalBps);
-          const minAfterFresh = den === 0n ? 0n : (num + den - 1n) / den;
-          if (offer.value < minAfterFresh) {
-            // Fee schedule got more aggressive between panel-mount
-            // and click; the offer is no longer acceptable under
-            // the new scaling. Refresh the cache so the panel
-            // re-renders with the offer correctly greyed out, then
-            // abort the Match.
-            setFeeCheck({ slug: offersResult.slug, schedule: freshSchedule });
-            return false;
+        if (offersResult.slug) {
+          try {
+            const recheck = await fetch(
+              `${agentOrigin}/opensea/collection/${encodeURIComponent(offersResult.slug)}?chainId=${chainId}`,
+            );
+            if (recheck.ok) {
+              freshSchedule = parseOpenSeaFeeSchedule(await recheck.json());
+            }
+          } catch {
+            // Network blip — leave freshSchedule null; advisory only.
           }
         }
-
-        // Build on-chain feeLegs from the FRESH schedule + offer's
-        // value. Fee-free collections produce an empty array, which
-        // matches the v1 Block C-on-fee-free path exactly.
-        //
-        // Codex round-1 P2 #339 — `computeFeeLegs` returns `null`
-        // when the schedule + askPrice combination would produce a
-        // zero-amount leg (diamond reverts `FeeLegInvalidAmount`).
-        // Treat the null as fail-closed: refresh the cache (so the
-        // panel re-classifies with the fresh schedule) and abort.
-        // The borrower's recourse is to wait for a higher offer
-        // that clears the per-leg-rounding floor.
-        const feeLegs = computeFeeLegs(freshSchedule, offer.value);
-        if (feeLegs === null) {
+        if (freshSchedule !== null && offersResult.slug) {
           setFeeCheck({ slug: offersResult.slug, schedule: freshSchedule });
-          return false;
         }
 
-        // Refresh the cache with the schedule we actually used —
-        // keeps the section's threshold compare consistent on the
-        // next render (e.g. if Match was attempted on the borderline
-        // case but the tx then reverts and the user retries).
-        setFeeCheck({ slug: offersResult.slug, schedule: freshSchedule });
+        // For Round-6 atomic the per-leg `feeLegs` is no longer
+        // sent on-chain (the bidder's signed Offer carries them in
+        // its consideration). The legacy `freshSchedule >= 10_000`
+        // degenerate-rate gate + `computeFeeLegs` per-leg-rounding
+        // gate are therefore advisory threshold heuristics, not
+        // hard blocks (Codex PR #346 round-1 P2). The §17.5-bis
+        // on-chain sum invariant is the authoritative check.
 
         // #332 (round-5 PIVOT — single-tx in-place rotation for
         // both modes). Branch on the live listing's auctionMode:
@@ -721,13 +633,14 @@ export function OpenSeaOffersSection({
         // + bidder's separate `Seaport.fulfillOrder`) with a single
         // atomic tx — no race window for a third-party snipe.
         //
-        // `feeLegs` is computed above as a dapp-side safety check
-        // (the borrower shouldn't be allowed to click Match on an
-        // offer that wouldn't settle); the on-chain atomic facet
-        // does NOT take a feeLegs argument — the bidder's signed
-        // Offer carries the OpenSea / creator fees in ITS
-        // consideration array, and the facet asserts the sum
-        // invariant directly (Round-6 design doc §17.7 + §17.10).
+        // The on-chain atomic facet does NOT take a feeLegs
+        // argument — the bidder's signed Offer carries the
+        // OpenSea / creator fees in ITS consideration, and the
+        // facet asserts the sum invariant directly (Round-6 design
+        // doc §17.7 + §17.10). The dapp's fresh-fee-schedule
+        // re-fetch above stays as advisory polish (the threshold
+        // cache stays honest on next render) but does NOT gate
+        // the click.
         //
         // The atomic path does NOT fire the #335 dapp-side
         // breadcrumb POST — the indexer's `PrepayListingMatched`
@@ -736,7 +649,6 @@ export function OpenSeaOffersSection({
         // `live.salt` / `live.conduitKey` are no longer threaded
         // through (the atomic facet picks its own salt + conduit
         // key for the freshly-constructed counter-order).
-        void feeLegs; // computed for the dapp-side fee-schedule guard above
         return prepayListing.matchOpenSeaOffer(loanId, {
           orderHash: offer.orderHash as `0x${string}`,
           bidder: offer.bidder as `0x${string}`,
