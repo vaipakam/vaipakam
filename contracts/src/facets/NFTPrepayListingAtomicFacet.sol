@@ -506,10 +506,21 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
         if (components.consideration[0].recipient != components.offerer) {
             revert BidderOrderShapeMismatch(SHAPE_CONS0_WRONG_RECIPIENT);
         }
+        // Raja PR #346 round-1 review — the "fixed amount" (no
+        // Dutch decay on the NFT side) and the "amount equals
+        // expected" checks were fused into one revert that always
+        // surfaced as the amount-mismatch tag (8). Splitting them
+        // so the SHAPE_CONS0_NOT_FIXED_AMOUNT tag (9) is reachable
+        // and the reason tags map 1:1 to the conditions. Matches
+        // the design doc §17.5-bis NFT-quantity exact-match
+        // walkthrough (start==end first, then ==expected).
         if (
-            components.consideration[0].startAmount != expectedAmount ||
-            components.consideration[0].endAmount != expectedAmount
+            components.consideration[0].startAmount !=
+            components.consideration[0].endAmount
         ) {
+            revert BidderOrderShapeMismatch(SHAPE_CONS0_NOT_FIXED_AMOUNT);
+        }
+        if (components.consideration[0].startAmount != expectedAmount) {
             revert BidderOrderShapeMismatch(SHAPE_CONS0_NFT_AMOUNT_MISMATCH);
         }
     }

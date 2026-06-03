@@ -314,6 +314,26 @@ contract NFTPrepayListingAtomicFacetTest is SetupTest {
         _callMatch(bo, realHash);
     }
 
+    function test_matchOpenSeaOffer_revertsCons0NotFixedAmount() public {
+        // Raja PR #346 round-1 — the SHAPE_CONS0_NOT_FIXED_AMOUNT
+        // tag (9) was previously dead. After splitting the cons[0]
+        // fixed + amount-equals checks, this case now surfaces as
+        // tag 9 instead of tag 8.
+        _scaffoldActiveLoan({allowsPrepay: true});
+        BidderOrder memory bo = _validBidderOrder();
+        bo.components.consideration[0].endAmount = 999; // != startAmount (= 1)
+        bytes32 realHash = mockSeaport.getOrderHash(bo.components);
+
+        vm.prank(borrowerHolder);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NFTPrepayListingAtomicFacet.BidderOrderShapeMismatch.selector,
+                uint8(9) // SHAPE_CONS0_NOT_FIXED_AMOUNT
+            )
+        );
+        _callMatch(bo, realHash);
+    }
+
     function test_matchOpenSeaOffer_revertsTooManyConsiderationItems() public {
         _scaffoldActiveLoan({allowsPrepay: true});
         BidderOrder memory bo = _validBidderOrder();
