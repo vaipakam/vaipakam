@@ -989,6 +989,22 @@ Returns the Vaipakam-side counter-order's hash for indexer + dapp
 breadcrumb purposes (mirrors `postPrepayListing`'s `bytes32 orderHash`
 return).
 
+**Authority gate** (Codex round-4 P1 #344). The selector MUST also
+gate `msg.sender == VaipakamNFTFacet(address(this)).ownerOf(loan.
+borrowerTokenId)` — identical to v1 `postPrepayListing`'s
+`NotPositionHolder(loanId, msg.sender, holder)` check. Without it
+any third party who finds an acceptable OpenSea offer could
+force-settle a borrower's loan without the borrower's consent (the
+proceeds route correctly to the borrower's vault, but the borrower
+loses agency over WHEN their loan closes). The gate also subsumes
+sanctions screening on the borrower side (via `_assertNotSanctioned`
+on `msg.sender`, same shape v1 entry points use). Two reverts in
+the §17.4 surface:
+- `NotPositionHolder(loanId, msg.sender, holder)` — borrower lost
+  ownership of the position-NFT (sold / transferred).
+- `SanctionedAddress(msg.sender)` — borrower is on the sanctions
+  oracle (Tier-1 entry, same gate as v1 `postPrepayListing`).
+
 ### 17.5 Bidder-offer bytes verification
 
 **Ratified 2026-06-03 with user:** protocol re-derives the bidder's
@@ -1325,11 +1341,13 @@ The auto-clear runs the same effects as `cancelPrepayListing` against
 the existing listing, in this order:
 
 a. Read `existingHash = s.prepayListingOrderHash[loanId]`. **If zero,
-   skip ALL of steps b–f** (borrower clicked Match without ever
+   skip ALL of steps b–g** (borrower clicked Match without ever
    posting first; supported but rare — the offers list is normally
-   only populated for posted listings). Codex round-2 P3 #344 —
-   emitting `PrepayListingCanceled(bytes32(0))` for a never-posted
-   listing creates a false cancellation row in the indexer history.
+   only populated for posted listings). Codex round-2 + round-4 P3
+   #344 — emitting `PrepayListingCanceled(bytes32(0))` for a
+   never-posted listing creates a false cancellation row in the
+   indexer history. Step g (the canceled-event emit) is part of the
+   sequence being skipped, not "skip b-f and fall through to g".
 b. Resolve `pinnedExecutor = s.prepayListingExecutor[loanId]`.
    Defensive `revert ExecutorNotSet()` if zero (matches v1
    `_cancel:1090` — non-zero `existingHash` invariably pairs with
@@ -1345,24 +1363,22 @@ e. `pinnedExecutor.clearOrder(existingHash)` — the shipped
    `_tryCancelOnSeaport` (emits `SeaportCancelSkipped` on revert
    per the §316 pattern). Called AFTER the storage delete so a
    downstream revert can't leave a dangling executor entry.
-f. **Vault-side cleanup — mirrors v1 `_cancel:1111-1120` exactly**
-   (Codex round-3 P2 #344, correcting round-2's reply). Look up
-   `vaultAddr = s.userVaipakamVaults[loan.borrower]`; if non-zero,
-   construct the vault handle. Then:
+f. **Vault-side cleanup** — call
+   `LibPrepayListingWiring.unwire(s, loan, existingHash)` (Codex
+   round-4 P2 #344 — same library the new facet uses to wire on
+   step 5; the v1 `_cancel:1111-1120` block refactors to call this
+   helper too). The library performs:
    - **ERC721 only**: `vault.setCollateralOperatorApproval(
      loan.collateralAsset, loan.collateralTokenId, address(0),
-     false)` — clears the per-token approval that the prior
-     `_wireVaultForListing` granted. **ERC1155 deliberately leaves
-     the operator-wide approval in place** (v1 comment at line
-     1103-1110): for ERC1155 there's no per-token approval surface,
-     and the orderHash-binding revoke below is the authoritative
-     safety primitive (without ERC-1271 saying "yes, this hash is
-     mine", no fill can succeed regardless of operator-approval
-     state). This matches the shipped Seaport ERC1155 conduit
-     pattern. **Round-3 design draft's prior `vault.revokeCollateral
-     OperatorApproval(...)` was a method that doesn't exist** — the
-     v1 helper is `setCollateralOperatorApproval(..., approved =
-     false)`, and only on the ERC721 branch.
+     false)` — clears the per-token approval that the prior wiring
+     granted. **ERC1155 deliberately leaves the operator-wide
+     approval in place** (v1 comment at NFTPrepayListingFacet.sol
+     lines 1103-1110): for ERC1155 there's no per-token approval
+     surface, and the orderHash-binding revoke below is the
+     authoritative safety primitive (without ERC-1271 saying "yes,
+     this hash is mine", no fill can succeed regardless of
+     operator-approval state). This matches the shipped Seaport
+     ERC1155 conduit pattern.
    - **Both asset types**: `vault.revokeListingOrderHash(existingHash)`
      — invalidates the ERC-1271 binding. After this, the vault
      answers `INVALID` for any Seaport signature query against
@@ -1403,17 +1419,33 @@ slots** (Codex round-3 P2 #344). Three storage writes:
   with the orderHash restamp so the finalize path resolves the
   same executor the recordOrder pinned.
 
-**STEP 5 — Wire the vault** via `_wireVaultForListing(s, loan,
-vaipakamOrderHash, conduit, address(executor))` — same v1 helper.
-Two effects inside the helper:
-- `_grantConduitApproval(vault, loan, conduit)` — asset-type-aware
-  approval grant (per-token for ERC721 via
-  `setCollateralOperatorApproval`; operator-wide for ERC1155 via
-  `setCollateralOperatorApprovalERC1155`).
-- `vault.registerListingOrderHash(vaipakamOrderHash, address(executor))`
-  — pins the (orderHash → executor) ERC-1271 mapping. (Round-2
-  design draft's `bindListingOrderHash` was a method-name error;
-  the shipped method is `registerListingOrderHash`.)
+**STEP 5 — Wire the vault** (Codex round-4 P2 #344). The v1 helper
+`NFTPrepayListingFacet._wireVaultForListing` is `private` and
+therefore not callable from the new sibling facet. Block D extracts
+the helper body into a **new internal library
+`LibPrepayListingWiring`** (the small library naming convention v1
+already uses for `LibPrepayOrder`, `LibPrepayCleanup`) with two
+external `internal` entry points the new facet calls:
+
+- `LibPrepayListingWiring.wire(s, loan, orderHash, conduit, executor)`
+  — performs the asset-type-aware approval grant (per-token for
+  ERC721 via `setCollateralOperatorApproval`; operator-wide for
+  ERC1155 via `setCollateralOperatorApprovalERC1155`) AND calls
+  `vault.registerListingOrderHash(orderHash, executor)` to pin the
+  ERC-1271 mapping. Same effects as the v1 private helper, just
+  reachable from outside `NFTPrepayListingFacet`.
+- `LibPrepayListingWiring.unwire(s, loan, orderHash)` — the
+  symmetric cleanup the §17.11 step 0(f) auto-clear runs (ERC721-only
+  `setCollateralOperatorApproval(..., address(0), false)` + always
+  `vault.revokeListingOrderHash(orderHash)`).
+
+**v1 site update**: `NFTPrepayListingFacet._wireVaultForListing` +
+the `_cancel` vault-cleanup block (lines 1111-1120) refactor to call
+the library — same effects, new home. Adds a single library to the
+audit scope; saves duplicating the wiring logic in the new facet.
+
+(Round-2 design draft's `bindListingOrderHash` was a method-name
+error; the shipped vault method is `registerListingOrderHash`.)
 
 Without step 5 the vault returns the failure value when Seaport
 queries `isValidSignature` and `matchAdvancedOrders` reverts on the
@@ -1429,16 +1461,21 @@ check.
 Atomic effects: if step 6 reverts, every prior storage write reverts
 with it (Solidity tx semantics, including the step-0 auto-clear). If
 step 6 succeeds, the zone callback fired during the match runs
-`executorFinalizePrepaySale` which:
+`executorFinalizePrepaySale` which (matching the shipped v1 finalize
+path byte-for-byte — Codex round-4 P3 #344):
 1. Reads `s.prepayListingOrderHash[loanId]` (restamped at step 4 →
    `vaipakamOrderHash`) and `s.prepayListingExecutor[loanId]`.
-2. Calls `vault.revokeListingOrderHash(vaipakamOrderHash)` and the
-   ERC721-only `setCollateralOperatorApproval(..., address(0),
-   false)` for the new match's vault state — exact same cleanup
-   v1 fills get.
+2. Calls `vault.revokeListingOrderHash(vaipakamOrderHash)` —
+   invalidates the ERC-1271 binding.
 3. Deletes `s.prepayListingOrderHash[loanId]` +
    `s.prepayListingExecutor[loanId]`.
 4. Flips loan status, unlocks the borrower NFT, settles LIF.
+
+(Note: the shipped v1 finalize-path does NOT explicitly clear the
+per-token ERC721 operator approval — the NFT transfer to the bidder
+that Seaport just executed auto-clears the approval as a side effect
+of `IERC721.transferFrom`. Round-3 design draft listed this as a
+finalize-path effect; corrected here to match shipped behavior.)
 
 No orphan state. The restamp at step 4 is the load-bearing fix that
 keeps the new atomic-match's vault binding from leaking past
@@ -1461,34 +1498,50 @@ flow to `recipient`. Setting `recipient = executor` rather than
 with no `withdraw` surface, NOT at the borrower's EOA where it could
 be silently swept by a malicious tx in the same block.
 
-**Asymmetric outcome by leaked-item type** (Codex round-3 P3 #344):
+**Asymmetric outcome by leaked-item type** (Codex round-3 P3 + round-4
+P2 #344):
 
 - **ERC20 leakage** can land at the executor — ERC20 transfers don't
   call recipient hooks. The executor adds a simple
   `sweepStrayTokens(token, to)` helper restricted to `onlyOwner`
   (governance / timelock post-handover) so post-mortem recovery is
-  possible without re-deploying. Same trust-boundary shape v1's
-  governance helpers already use.
-- **ERC721 / ERC1155 leakage** **fails the entire match closed**.
-  The executor is **deliberately NOT an `ERC721Holder` / `ERC1155
-  Holder`** — its base contract doesn't implement
-  `onERC721Received` / `onERC1155Received`, so any Seaport-attempted
-  NFT transfer to the executor reverts at the receiver-hook
-  callsite. Because `matchAdvancedOrders` runs the transfers
-  atomically, the whole match reverts — no NFT leak, no settlement,
-  no orphan state. **Fail-closed by construction is preferred to a
-  recovery surface that would need ERC721 receiver hooks +
-  per-tokenId sweep parameters the executor can't safely audit.**
-  This means the §17.5-bis NFT-amount exact-match check (Codex
-  round-2 P1) and the §17.5-bis offer-side single-item check are the
-  primary defenses; the recipient-redirection is a backstop for the
-  ERC20 case only.
+  possible without re-deploying.
+- **ERC1155 leakage** **fails the entire match closed**. Seaport's
+  ERC1155 execution path uses `safeTransferFrom`, which calls
+  `onERC1155Received` on the recipient. The executor is
+  **deliberately NOT an `ERC1155Holder`** — its base contract
+  doesn't implement that hook, so any Seaport-attempted ERC1155
+  transfer to the executor reverts → whole match reverts (Solidity
+  tx atomicity). No leak, no settlement, no orphan state.
+- **ERC721 leakage CAN STRAND** (Codex round-4 P2 correction). Unlike
+  ERC1155, Seaport's ERC721 path uses ordinary `transferFrom`, NOT
+  `safeTransferFrom` — so `onERC721Received` is NOT called and
+  the NFT lands on the executor regardless of whether the executor
+  implements the hook. The "fail-closed by construction" claim I
+  made in round-3 was wrong for ERC721. To handle this case the
+  executor exposes a second sweep helper:
+  `sweepStrayERC721(token, tokenId, to) onlyOwner` for governance
+  recovery of stranded ERC721 items. (Recovery still requires
+  governance action; the recipient redirection just keeps the
+  stranded NFT off the borrower's EOA where it could be
+  attacker-swept.)
 
-Scope-of-claim: the §17.5-bis shape invariant + the receiver-hook-
-absence together close every leakage path; the `sweepStrayTokens`
-helper exists only to recover ERC20 amounts caught by the recipient
-redirection if a future hardfork or Seaport upgrade introduces a
-loophole the §17.5-bis check doesn't cover.
+**Primary defense is the §17.5-bis shape invariant** (offer-item
+single + correct token + correct NFT shape; round-2 P1 added the
+NFT-amount exact-match for ERC1155). The recipient-redirection +
+sweep helpers exist as recovery surfaces for the case where a future
+hardfork or Seaport upgrade introduces a loophole the shape check
+doesn't cover; they are NOT a substitute for the shape check.
+
+Scope-of-claim refined: §17.5-bis + ERC1155 receiver-hook absence
+close ERC20 + ERC1155 leakage paths by construction. ERC721 leakage
+relies on the §17.5-bis check + governance recovery via
+`sweepStrayERC721`; an ERC721 backstop "by construction" would need
+either a Seaport upgrade adding `safeTransferFrom` to its ERC721
+path (out of our control) OR a custom Vaipakam-side receiver wrapper
+on the executor that consumes ERC721 transfers — explicitly not
+worth the audit surface for a path that requires a §17.5-bis
+bypass to reach.
 
 ### 17.12 Bidder-side OpenSea state after matchOrders
 
@@ -1557,21 +1610,38 @@ helpers for bidder-bytes decoding + fulfillment layout. Estimated 400-
 600 LOC compiled → ~6-9 kB deployed runtime. Well under EIP-170's
 24,576-byte ceiling. `FacetSizeLimitTest` covers it once added.
 
-**Audit scope:** single new contract file + its tests. Auditors can
-focus on:
-- Bidder-bytes decoding correctness (no integer overflow, no untrusted-
-  call surface beyond `seaport.getOrderHash` + `seaport.getOrderStatus`
-  which are view-only).
-- Fulfillment layout — must route every bidder offer-item amount-share
-  to a Vaipakam consideration item, no leakage.
-- Token-identity invariant enforcement.
-- `executor.recordOrder` + `_wireVaultForListing` reuse from v1
-  (no new shapes — auditors verify same calling pattern as v1's
-  `_buildAndRecord`).
+**Audit scope:** the new facet + the touched-by-Block-D portions of
+the executor + the new library. Auditors focus on:
+- **New facet `NFTPrepayListingAtomicFacet`** — bidder-bytes decoding
+  correctness (no integer overflow, no untrusted-call surface beyond
+  `seaport.getOrderHash` + `seaport.getOrderStatus` which are
+  view-only); §17.5-bis shape invariant; fulfillment layout (must
+  route every bidder offer-item amount-share to a Vaipakam
+  consideration item, no leakage); token-identity invariant
+  enforcement; §17.11 step 0 + step 4 storage-ordering correctness;
+  borrower-holder gate + sanctions check.
+- **Executor diff** (Codex round-4 P2 #344 — IN scope, not excluded).
+  The Block D UUPS swap adds: `PREPAY_MODE_ATOMIC_MATCH` recognised
+  by `_assertOrderContent` mode-dispatch; cancel-time reconstruction
+  branch in `_componentsForCancel`; `sweepStrayTokens(token, to)`
+  + `sweepStrayERC721(token, tokenId, to)` `onlyOwner` recovery
+  helpers (§17.9.bis). Auditors verify the new mode-dispatch
+  branch matches the §17.7 counter-order shape, the cancel
+  reconstruction reuses fixed-price components, and the sweep
+  helpers can't be invoked outside `onlyOwner`.
+- **New library `LibPrepayListingWiring`** — `wire` + `unwire`
+  internal entry points; the v1 `NFTPrepayListingFacet._cancel`
+  vault-cleanup block + `_wireVaultForListing` body refactored
+  through this library (private→library extraction so the new
+  sibling facet can reuse). Auditors verify the refactor preserves
+  v1 behavior for the post / update / cancel paths byte-for-byte.
 
-The reused executor + diamond callback paths (`executorFinalizePrepaySale`,
-zone callback, conduit allow-list, ERC-1271 delegate) are NOT in
-audit scope for Round 6 — they're shipped + audited as part of v1.
+**Out of scope for Round 6 audit** — the executor's zone callback
+(`validateOrder`), the diamond's `executorFinalizePrepaySale`,
+conduit allow-list management, ERC-1271 delegate signature path,
+the vault's `registerListingOrderHash` / `revokeListingOrderHash`
+mappings. All shipped + audited as part of v1; Block D reuses them
+verbatim with no surface change.
 
 ### 17.16 Open questions for ratification
 
@@ -1607,14 +1677,12 @@ audit scope for Round 6 — they're shipped + audited as part of v1.
    every normal Match button press would revert. Full step sequence
    in §17.11 step 0.
 
-5. **Migration path for the dapp's `OpenSeaOffersSection`** — the
-   atomic-match selector replaces the v1 two-step Match call. Should
-   the dapp keep a v1 fallback for the first few weeks of v2 post-
-   merge in case the agent proxy's `signed-bundle` endpoint has bugs?
-   Lean: **no fallback** — v2 ships with the full agent + dapp + facet
-   in one atomic merge (same shape as Round 5 Block A's atomic-merge
-   constraint). A buggy agent endpoint either ships or doesn't; a
-   half-fallback creates a worse outage shape than a clean revert.
+5. **Dapp v1 fallback — RESOLVED 2026-06-03.** No fallback. v2 ships
+   the full agent + dapp + facet in one atomic merge (same shape as
+   Round 5 Block A's atomic-merge constraint). A half-fallback
+   creates a worse outage shape than a clean revert; the §17.18
+   atomic-merge constraint is now load-bearing for the rest of the
+   design.
 
 ### 17.17 Out of scope for Round 6
 
@@ -1646,17 +1714,27 @@ that worked for Round 5 Block A):
   helper) AND by the cancel-time reconstruction in
   `_componentsForCancel` (atomic-match paths reuse the same Seaport
   components shape as fixed-price for cancel purposes); new
-  `sweepStrayTokens(token, to) onlyOwner` helper (per §17.9.bis
-  defense-in-depth recipient redirection). Audit scope includes
-  the executor diff, not just the new facet.
-- **`VaipakamVaultImplementation` UUPS implementation swap** — no new
-  external surface, but the §17.11 step 5 + step 6 walk-through
-  confirms the existing `_wireVaultForListing` helper signature
-  carries (orderHash, executor); a documentation-only earlier draft
-  omitted those load-bearing args. The shipped vault already has the
-  binding mapping (per v1's `_wireVaultForListing`); no contract
-  change required, but Block D's audit confirms the wiring matches
-  the design.
+  `sweepStrayTokens(token, to)` + `sweepStrayERC721(token, tokenId,
+  to)` `onlyOwner` helpers (per §17.9.bis recovery surface — ERC20
+  + ERC721 leakage recovery; ERC1155 fails closed via receiver-hook
+  absence). Audit scope explicitly includes the executor diff.
+- **New library `LibPrepayListingWiring`** (Codex round-4 P2 #344):
+  extracts the v1 `NFTPrepayListingFacet._wireVaultForListing` body
+  (which is `private` and not callable from the new sibling facet)
+  + the cleanup half of `_cancel:1111-1120` into two `internal`
+  entry points: `wire(s, loan, orderHash, conduit, executor)` and
+  `unwire(s, loan, orderHash)`. v1 sites refactor to call the
+  library — same effects, new home. Both the new sibling facet
+  (§17.11 step 5 + step 0(f)) and v1 `NFTPrepayListingFacet`
+  consume the library; saves duplicating wiring logic. Audit verifies
+  the v1 refactor preserves behavior byte-for-byte.
+- **NO `VaipakamVaultImplementation` change** (Codex round-4 P3 #344
+  correction). The shipped vault already exposes
+  `registerListingOrderHash` / `revokeListingOrderHash` +
+  `setCollateralOperatorApproval` / `setCollateralOperatorApprovalERC1155`;
+  Block D consumes these unchanged. No UUPS proxy swap, no contract
+  change. The round-3 design draft scheduled a vault UUPS swap
+  unnecessarily; that line is removed.
 - Facet-addition 7-site checklist (see
   `feedback_facet_addition_checklist`): `DiamondFacetNames`,
   `SelectorCoverageTest` (×2 sites), `FacetSizeLimitTest`,
@@ -1666,14 +1744,18 @@ that worked for Round 5 Block A):
   allowlist for `PrepayListingMatched`.
 
 **D.2 — `apps/agent`.**
-- New `/opensea/offers/{loanId}/{orderHash}/signed-bundle` endpoint
-  returning the bidder's signed `OrderComponents` + signature + any
-  `CriteriaResolver[]`. Per-IP rate-limited (60 req/min/IP, same
-  shape as the other agent POSTs).
+- New `GET /opensea/signed-offer/{chainId}/{contract}/{tokenId}/{orderHash}`
+  endpoint (Codex round-4 P2 #344 — distinct top-level prefix from
+  the existing `/opensea/offers/{chainId}/{contract}/{tokenId}`
+  offers-list handler, so the broad `url.pathname.startsWith(
+  '/opensea/offers/')` GET branch in `apps/agent/src/index.ts`
+  doesn't swallow it). Returns the bidder's signed `OrderComponents`
+  + signature + any `CriteriaResolver[]`. Per-IP rate-limited
+  (60 req/min/IP, same shape as the other agent POSTs).
 - OpenSea API permission delta documentation — confirms the existing
   API tier returns `signature` on the order envelope (verified for
-  the dapp's read-only schedule + listings POST tier; the offers-
-  bundle endpoint uses the same tier).
+  the dapp's read-only schedule + listings POST tier; the
+  signed-offer endpoint uses the same tier).
 - Pricing impact note for the operator: the new endpoint hits the
   same OpenSea API quota as the existing offers list endpoint
   (1 RTT per Match-click; negligible).
