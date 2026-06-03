@@ -36,7 +36,16 @@
  *
  * NO Telegram webhook, NO Frames, NO quote / scan proxies — those
  * live on apps/agent. NO HF watcher / liquidation — that's apps/keeper.
- * The indexer is intentionally read-only and operator-key-free.
+ * The indexer is operator-key-free.
+ *
+ * **Almost read-only.** As of #335 the Worker accepts ONE write
+ * surface — `POST /loans/:loanId/prepay-listing/match-source` —
+ * for best-effort analytics breadcrumbs from the dapp. That
+ * single endpoint is rate-limited per-IP via the
+ * `OPENSEA_OFFERS_MATCH_SOURCE_RATELIMIT` binding (matching the
+ * defensive posture apps/agent's POST proxies use) and stores
+ * non-financial metadata only (no signing keys, no on-chain
+ * state writes). The rest of the surface stays public-read.
  */
 
 import { resolveEnv, type WorkerEnv } from './env';
@@ -62,6 +71,7 @@ import {
   handleActivity,
   handleClaimables,
   handleLoansPreflight,
+  handleLoanPrepayMatchSource,
 } from './loanRoutes';
 
 export default {
@@ -139,6 +149,20 @@ export default {
     // ─── /loans/* ───────────────────────────────────────────────
     if (url.pathname.startsWith('/loans')) {
       if (req.method === 'OPTIONS') return handleLoansPreflight();
+      // #335 — POST /loans/:loanId/prepay-listing/match-source.
+      // Dapp records the OpenSea offer that triggered a Match-
+      // rotation so analytics can distinguish offer-driven
+      // rotations from manual repricings. Match the regex BEFORE
+      // the GET tree below.
+      if (req.method === 'POST') {
+        const matchSource = url.pathname.match(
+          /^\/loans\/(\d+)\/prepay-listing\/match-source$/,
+        );
+        if (matchSource) {
+          return handleLoanPrepayMatchSource(req, resolved, matchSource[1]);
+        }
+        return new Response('Not found', { status: 404 });
+      }
       if (req.method === 'GET') {
         if (url.pathname === '/loans/active') {
           return handleLoansActive(req, resolved);

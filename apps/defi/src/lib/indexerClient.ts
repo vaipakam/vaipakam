@@ -661,3 +661,88 @@ export function indexedToRawOffer(o: IndexedOffer): {
     fillMode: o.fillMode ?? 0,
   };
 }
+
+
+/** #335 — record a Match-rotation breadcrumb. Called from
+ *  `OpenSeaOffersSection.onMatchOffer` after the rotation tx
+ *  receipt resolves. Best-effort: any failure (network blip,
+ *  indexer down, validation reject) is logged but never thrown
+ *  back to the caller — the rotation tx is already on-chain by
+ *  the time this fires.
+ *
+ *  Returns `true` on 2xx, `false` on every other outcome
+ *  (transport error / non-2xx / `VITE_INDEXER_ORIGIN` unset).
+ *  Caller is expected to NOT branch on the return value — the
+ *  bool is for telemetry / tests only. */
+export async function postPrepayMatchSource(
+  chainId: number,
+  loanId: bigint,
+  body: {
+    txHash: `0x${string}`;
+    orderHash: string;
+    bidder: string;
+    matchedAt: number;
+  },
+): Promise<boolean> {
+  const root = baseUrl();
+  if (!root) return false;
+  // Codex round-2 P3 #343 — use AbortController + setTimeout
+  // instead of AbortSignal.timeout. The latter throws on
+  // browsers/runtimes that don't ship the newer static method,
+  // which would silently drop every breadcrumb in those clients
+  // (older WebViews, embedded iframes). Mirrors the existing
+  // `getJson` pattern in this file.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(
+      `${root}/loans/${loanId.toString()}/prepay-listing/match-source?chainId=${chainId}`,
+      {
+        method: "POST",
+        // Codex round-4 P3 #343 — `text/plain` (a CORS-simple
+        // Content-Type) keeps the breadcrumb POST a "simple
+        // request" so the browser doesn't issue a preflight
+        // OPTIONS before the POST. During tab close / full
+        // navigation the preflight can fail to complete even
+        // with `keepalive: true` set, which would defeat the
+        // round-3 close-the-tab fix. The Worker calls
+        // `await req.json()` to parse the body — that's
+        // Content-Type-agnostic on the Workers runtime, so
+        // the parse stays correct.
+        headers: { "Content-Type": "text/plain;charset=UTF-8" },
+        body: JSON.stringify(body),
+        // Same TIMEOUT_MS as the reads; the rotation tx already
+        // landed, so dragging the UI on this POST is pointless.
+        signal: controller.signal,
+        // Codex round-3 P3 #343 — `keepalive: true` lets the
+        // browser finish this small JSON POST during page
+        // unload (tab close / full-page navigation right after
+        // the receipt arrives). Without it, the browser is
+        // free to cancel non-keepalive fetches at unload, which
+        // is exactly the close-the-tab case the early-fire
+        // callback in `useNFTPrepayListing` is trying to cover.
+        keepalive: true,
+      },
+    );
+    if (!res.ok) {
+      // Codex round-3 P3 #343 — surface non-2xx breadcrumb
+      // failures (rate-limit 429, D1 500, payload-rejection
+      // 400) in the console. Both hook callers discard the
+      // boolean return with `void`, so without this log the
+      // failure is invisible even though the contract with
+      // the UI is "failures are logged".
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[postPrepayMatchSource] non-2xx response — breadcrumb dropped",
+        { status: res.status, statusText: res.statusText },
+      );
+    }
+    return res.ok;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("[postPrepayMatchSource] best-effort POST failed", err);
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}

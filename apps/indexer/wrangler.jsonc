@@ -105,6 +105,24 @@
     "CANCELLED_OFFER_RETENTION_DAYS": "30",
   },
 
+  // #335 — per-IP rate-limit for the one POST surface this
+  // Worker exposes (`POST /loans/:loanId/prepay-listing/match-source`).
+  // The rest of the Worker stays public-read; the indexer
+  // doesn't otherwise need rate-limit bindings. 60 req/min/IP
+  // matches the inbound-cap pattern apps/agent's POST proxies
+  // use. namespace_id 2001 is the indexer's first rate-limit
+  // binding (the agent uses 1xxx).
+  "unsafe": {
+    "bindings": [
+      {
+        "name": "OPENSEA_OFFERS_MATCH_SOURCE_RATELIMIT",
+        "type": "ratelimit",
+        "namespace_id": "2001",
+        "simple": { "limit": 60, "period": 60 },
+      },
+    ],
+  },
+
   "observability": {
     "enabled": true,
   },

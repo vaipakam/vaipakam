@@ -715,6 +715,15 @@ export function OpenSeaOffersSection({
         // execution either commits or reverts the whole call.
         // On revert, the live listing stays unchanged (whether
         // Dutch or fixed-price).
+        // #335 — match-source breadcrumb: which OpenSea offer
+        // triggered this rotation. The hook fires the indexer
+        // POST best-effort after the rotation tx confirms;
+        // failures here are logged but don't fail the rotation.
+        const matchSource = {
+          orderHash: offer.orderHash,
+          bidder: offer.bidder,
+        };
+
         if (live.auctionMode === 1) {
           if (live.auctionEndTime == null) return false;
           return prepayListing.updatePrepayDutchListing(
@@ -725,6 +734,7 @@ export function OpenSeaOffersSection({
             BigInt(live.salt),
             live.conduitKey as `0x${string}`,
             feeLegs,
+            matchSource,
           );
         }
 
@@ -734,6 +744,7 @@ export function OpenSeaOffersSection({
           BigInt(live.salt),
           live.conduitKey as `0x${string}`,
           feeLegs,
+          matchSource,
         );
       }}
     />

@@ -6,6 +6,7 @@ import { fetchLoanById, type IndexedPrepayListing } from '../lib/indexerClient';
 import { decodeContractError } from '@vaipakam/lib/decodeContractError';
 import { beginStep } from '../lib/journeyLog';
 import { publishPrepayListingToOpenSea } from '../lib/openseaPublish';
+import { postPrepayMatchSource } from '../lib/indexerClient';
 import type { Hex } from 'viem';
 
 /** T-086 Round-5 Block A (#313) — borrower-supplied fee leg
@@ -19,6 +20,18 @@ export interface FeeLegInput {
   recipient: `0x${string}`;
   startAmount: bigint;
   endAmount: bigint;
+}
+
+/** #335 — payload the dapp passes through to the indexer's
+ *  `POST /loans/:loanId/prepay-listing/match-source` endpoint
+ *  after a successful Match-rotation tx. The fields name the
+ *  OpenSea offer that triggered the rotation so analytics
+ *  queries can distinguish offer-driven rotations from manual
+ *  repricings. Sent best-effort: any failure (network blip,
+ *  indexer down) is logged but doesn't fail the rotation. */
+export interface MatchSourceBreadcrumb {
+  orderHash: string;
+  bidder: string;
 }
 
 /** Minimal subset of viem's `TransactionReceipt` the OpenSea publish
@@ -91,6 +104,13 @@ export interface UseNFTPrepayListingResult {
      *  re-fetches the OpenSea schedule on every match-offer
      *  rotation, not from a session cache. */
     feeLegs: ReadonlyArray<FeeLegInput>,
+    /** #335 — when set, the hook POSTs an analytics breadcrumb to
+     *  the indexer after the rotation tx confirms so downstream
+     *  queries can distinguish offer-driven rotations from
+     *  manual repricings. Best-effort: failures here don't fail
+     *  the rotation. Manual repricings (PrepayListingActions's
+     *  handleUpdate) omit this param. */
+    matchSource?: MatchSourceBreadcrumb,
   ) => Promise<boolean>;
   /** T-086 Round-5 Block B (#309) — Dutch-decay post. The borrower
    *  remainder leg decays linearly from `startAskPrice` at
@@ -124,6 +144,8 @@ export interface UseNFTPrepayListingResult {
     newSalt: bigint,
     newConduitKey: `0x${string}`,
     feeLegs: ReadonlyArray<FeeLegInput>,
+    /** #335 — same shape as `updatePrepayListing` above. */
+    matchSource?: MatchSourceBreadcrumb,
   ) => Promise<boolean>;
   cancelPrepayListing: (loanId: bigint) => Promise<boolean>;
 }
@@ -265,6 +287,16 @@ export function useNFTPrepayListing(
       flow: 'postPrepayListing' | 'postPrepayDutchListing' | 'updatePrepayListing' | 'updatePrepayDutchListing' | 'cancelPrepayListing',
       loanIdArg: bigint,
       submit: () => Promise<{ hash: string; wait: () => Promise<unknown> }>,
+      /** #335 — fires SYNCHRONOUSLY after `tx.wait()` resolves but
+       *  BEFORE the ~15 s `waitForIndexer` poll + `onAfterSuccess`
+       *  parent refresh. Used to dispatch best-effort side-effects
+       *  (analytics breadcrumb POST) that should fire as soon as
+       *  the receipt is available — closing the window where the
+       *  borrower navigates away during the indexer-refresh wait
+       *  and loses the side-effect. Throws here are swallowed by
+       *  the caller's `void` so a stalled side-effect can't block
+       *  this function returning. */
+      onReceiptAvailable?: (receipt: WriteReceipt) => void,
     ): Promise<{ success: boolean; receipt?: WriteReceipt }> => {
       setActionLoading(true);
       setActionError(null);
@@ -288,6 +320,23 @@ export function useNFTPrepayListing(
         // logs (i.e. the OpenSea publish path for post / update)
         // don't have to re-fetch by hash.
         receipt = (await tx.wait()) as WriteReceipt;
+        // #335 — fire the early-side-effect callback (analytics
+        // breadcrumb) AS SOON as the receipt resolves, before the
+        // ~15 s waitForIndexer poll runs. Without this hook, a
+        // borrower who navigates away during the indexer-refresh
+        // wait would never have the breadcrumb POST kick off.
+        if (onReceiptAvailable && receipt) {
+          try {
+            onReceiptAvailable(receipt);
+          } catch (err) {
+            // eslint-disable-next-line no-console
+            console.warn(
+              `[useNFTPrepayListing] onReceiptAvailable threw after ${flow}; ` +
+                `swallowed because the rotation tx already confirmed.`,
+              err,
+            );
+          }
+        }
         // Poll the indexer for the expected transition; this writes
         // the freshest listing into `listing` state so the banner
         // and child action mode flip atomically with the tx.
@@ -444,16 +493,40 @@ export function useNFTPrepayListing(
       newSalt: bigint,
       newConduitKey: `0x${string}`,
       feeLegs: ReadonlyArray<FeeLegInput>,
+      matchSource?: MatchSourceBreadcrumb,
     ): Promise<boolean> => {
-      const r = await runWrite('updatePrepayListing', lid, () =>
-        diamond.updatePrepayListing(lid, newAskPrice, newSalt, newConduitKey, feeLegs),
+      const r = await runWrite(
+        'updatePrepayListing',
+        lid,
+        () =>
+          diamond.updatePrepayListing(
+            lid, newAskPrice, newSalt, newConduitKey, feeLegs,
+          ),
+        // #335 — fire the analytics breadcrumb AS SOON as the
+        // receipt resolves, BEFORE the ~15 s waitForIndexer
+        // poll + onAfterSuccess parent refresh (Codex round-2
+        // P3 on PR #343). The previous shape fired AFTER
+        // runWrite returned; a borrower who navigated away
+        // during the indexer-refresh wait would lose the
+        // breadcrumb. Fire-and-forget (`void`) so a stalled POST
+        // can't block runWrite itself.
+        matchSource
+          ? (receipt) => {
+              void postPrepayMatchSource(chainId, lid, {
+                txHash: receipt.transactionHash as `0x${string}`,
+                orderHash: matchSource.orderHash,
+                bidder: matchSource.bidder,
+                matchedAt: Math.floor(Date.now() / 1000),
+              });
+            }
+          : undefined,
       );
       if (r.success && r.receipt) {
         await runOpenSeaPublish(r.receipt, lid, newAskPrice, newSalt, newConduitKey, feeLegs);
       }
       return r.success;
     },
-    [diamond, runWrite, runOpenSeaPublish],
+    [chainId, diamond, runWrite, runOpenSeaPublish],
   );
 
   const cancelPrepayListing = useCallback(
@@ -517,12 +590,29 @@ export function useNFTPrepayListing(
       newSalt: bigint,
       newConduitKey: `0x${string}`,
       feeLegs: ReadonlyArray<FeeLegInput>,
+      matchSource?: MatchSourceBreadcrumb,
     ): Promise<boolean> => {
-      const r = await runWrite('updatePrepayDutchListing', lid, () =>
-        diamond.updatePrepayDutchListing(
-          lid, newStartAskPrice, newEndAskPrice, newAuctionEndTime,
-          newSalt, newConduitKey, feeLegs,
-        ),
+      const r = await runWrite(
+        'updatePrepayDutchListing',
+        lid,
+        () =>
+          diamond.updatePrepayDutchListing(
+            lid, newStartAskPrice, newEndAskPrice, newAuctionEndTime,
+            newSalt, newConduitKey, feeLegs,
+          ),
+        // #335 — fire-on-receipt-available, same shape as the
+        // fixed-price `updatePrepayListing` above. Closes the
+        // borrower-navigates-away window during waitForIndexer.
+        matchSource
+          ? (receipt) => {
+              void postPrepayMatchSource(chainId, lid, {
+                txHash: receipt.transactionHash as `0x${string}`,
+                orderHash: matchSource.orderHash,
+                bidder: matchSource.bidder,
+                matchedAt: Math.floor(Date.now() / 1000),
+              });
+            }
+          : undefined,
       );
       if (r.success && r.receipt) {
         await runOpenSeaPublish(r.receipt, lid, newStartAskPrice, newSalt, newConduitKey, feeLegs, {
@@ -532,7 +622,7 @@ export function useNFTPrepayListing(
       }
       return r.success;
     },
-    [diamond, runWrite, runOpenSeaPublish],
+    [chainId, diamond, runWrite, runOpenSeaPublish],
   );
 
   return {
