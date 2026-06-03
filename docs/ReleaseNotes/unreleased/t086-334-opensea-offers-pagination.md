@@ -51,15 +51,16 @@ change. Omitting the var preserves the default 3.
 
 **Out of scope** (deferred):
 
-- A separate `OPENSEA_OFFERS_UPSTREAM_RATELIMIT` binding to cap
-  the upstream-side load (rather than the inbound side). The
-  inbound rate-limit + ceiling clamp is sufficient for current
-  load patterns; the upstream binding is worth adding only if
-  production signal shows the upstream side approaching the
-  OpenSea API tier limit.
-- Cross-page deduplication at the proxy. The dapp already dedupes
-  by offer ID client-side; doing it server-side would reduce wire
-  bytes but adds proxy-side state. Defer until production signal
-  warrants.
+- Cross-page deduplication at the proxy. OpenSea can return the
+  same offer order across the collection-wide + item-specific
+  legs (and across pagination pages within a leg) under certain
+  query shapes. The dapp doesn't currently dedupe by `orderHash`
+  — `useOpenSeaOffers.normalize` just concatenates the two
+  legs' normalized arrays and sorts by amount — so a
+  higher-`MAX_PAGES` deploy can surface duplicate rows in
+  `OpenSeaOffersPanel`. The fix can land either at the proxy
+  (server-side dedupe, adds proxy-side state) or in the dapp
+  normalizer (cheaper but client-side). Defer until production
+  signal shows duplicates becoming a visible UX problem.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

@@ -140,13 +140,13 @@ interface BaseEnv {
   // the offers proxy. Default 3 pages (≈300 offers per leg at
   // `limit=100`); operators on hyper-active collections can raise
   // via the agent's wrangler.jsonc `vars` block. Worst-case
-  // upstream cost per inbound request is `2 × OPENSEA_OFFERS_MAX_PAGES`
-  // round-trips (collection + item legs each paginated); paired
-  // with the `OPENSEA_OFFERS_RATELIMIT` inbound cap (60/min/IP),
-  // total upstream cost stays bounded. String type matches the
-  // wrangler-vars JSON convention; coerced to int + clamped to
-  // `[1, 25]` at read time so a misconfigured value can't blow
-  // the OpenSea API quota.
+  // upstream cost per inbound request is `1 + 2 × OPENSEA_OFFERS_MAX_PAGES`
+  // round-trips (one NFT-detail slug lookup + collection leg +
+  // item leg paginated). String type matches the wrangler-vars
+  // JSON convention; coerced to int + clamped to `[1, 24]` at
+  // read time so a misconfigured value can't blow the OpenSea
+  // API quota — `parseMaxPages` in the proxy is the canonical
+  // clamp.
   OPENSEA_OFFERS_MAX_PAGES?: string;
   // #334 Codex round-1 P2 — global upstream rate-limit keyed by
   // a constant ("upstream") rather than per-IP. Bounds aggregate
