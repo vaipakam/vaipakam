@@ -30,6 +30,7 @@ import type {
   NormalizedOffer,
   UseOpenSeaOffersResult,
 } from '../../hooks/useOpenSeaOffers';
+import { marketingUrl } from '../../lib/marketingUrl';
 
 export interface OpenSeaOffersPanelProps {
   loanId: bigint;
@@ -258,6 +259,24 @@ function RaceWindowModal({
           Notify your bidder ({offer.bidder.slice(0, 12)}…) before
           clicking Match so they can complete the purchase before
           someone else snipes it.
+        </p>
+        <p>
+          {/* Issue #337 — cross-link to the Advanced User Guide
+              section that explains the race window in depth +
+              points forward to the v2 atomic-match track (#333).
+              `marketingUrl` resolves to https://vaipakam.com in
+              prod and respects the VITE_MARKETING_URL dev
+              override so local dev links to the local www
+              dev server. */}
+          <a
+            href={marketingUrl('/help/advanced#loan-details.opensea-offers')}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Learn more about the race window
+          </a>
+          {' '}— mitigation options + what the v2 atomic-match
+          fix will change.
         </p>
         <div className="action-row">
           <button

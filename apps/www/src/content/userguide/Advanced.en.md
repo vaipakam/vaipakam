@@ -726,6 +726,71 @@ Permissionless actions available to anyone regardless of role:
 > initiated repay can fail "harmlessly" without something
 > actually going wrong.
 
+<a id="loan-details.opensea-offers"></a>
+
+### Matching OpenSea offers on a prepay listing
+
+Once your prepay listing is live on OpenSea's marketplace,
+casual buyers will sometimes place **collection offers** or
+**item offers** below your ask. Vaipakam surfaces these on
+the Loan Details page in real time — a separate panel under
+"List collateral on OpenSea" with one row per incoming offer,
+sortable by amount. The panel applies a **buffer threshold**
+(principal + accrued interest + treasury cut + safety buffer,
+plus required marketplace fees on collections that enforce
+them) and **greys out** offers that don't clear it. You can
+see market interest at every level but can only Match offers
+that the protocol will actually settle.
+
+When you find an acceptable offer and click **Match offer**,
+the dapp rotates your live OpenSea listing's price down to
+the offer's value. This is a normal `updatePrepayListing`
+transaction — one signature, no off-chain coordination.
+
+> [!IMPORTANT]
+> **There is a race window between the price rotation and
+> the bidder's purchase.** Once your rotation transaction
+> confirms, *any* OpenSea buyer can fulfill at the matched
+> price — not only the bidder who placed the offer you
+> matched. In practice, sniping the bidder out of the price
+> they bid is possible during the small window between
+> your rotation and their `Seaport.fulfillOrder`.
+>
+> Before clicking Match, the dapp shows you a modal that
+> spells this out and names the bidder you're matching.
+> You must explicitly acknowledge it to proceed.
+
+**What you can do to mitigate the race window:**
+
+- **Notify the bidder out-of-band before clicking Match.**
+  OpenSea's message system, Discord, an introduction via
+  the marketplace's social channels, or whatever channel
+  you have. The bidder being ready to fulfill within
+  seconds of your rotation is the strongest mitigation
+  you can apply today.
+- **Match at favourable prices, not desperate ones.** The
+  buffer-threshold filter prevents the dapp from letting
+  you match at protocol-unprofitable prices, but the
+  buffer is a floor — the closer you sit to it, the
+  thinner the cushion against a snipe at a price the
+  bidder didn't intend to pay.
+- **Cancel the listing first if the bidder is unresponsive.**
+  If the bidder you wanted to match has gone quiet, the
+  safest path is to cancel the listing entirely and re-post
+  at the new price after re-engaging. Sniping is no longer
+  possible once there's no live order on the marketplace.
+
+**What's coming.** The race window is a v1 trade-off, not a
+permanent constraint. A v2 atomic match-rotation path — one
+transaction that simultaneously rotates the listing and
+settles against the originating bidder, with no window for a
+third party to step in — is tracked under [Issue #333](https://github.com/vaipakam/vaipakam/issues/333).
+That path requires a new contract surface and a deeper
+OpenSea API integration, so it has been deliberately deferred
+until production signal indicates the race window actually
+bites in practice. If you experience a snipe, please report
+it on Issue #333 so prioritisation has the data it needs.
+
 ---
 
 ## How Liquidation Actually Works
