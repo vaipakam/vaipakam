@@ -999,21 +999,51 @@ Returns the Vaipakam-side counter-order's hash for indexer + dapp
 breadcrumb purposes (mirrors `postPrepayListing`'s `bytes32 orderHash`
 return).
 
-**Authority gate** (Codex round-4 P1 #344). The selector MUST also
-gate `msg.sender == VaipakamNFTFacet(address(this)).ownerOf(loan.
-borrowerTokenId)` — identical to v1 `postPrepayListing`'s
-`NotPositionHolder(loanId, msg.sender, holder)` check. Without it
-any third party who finds an acceptable OpenSea offer could
-force-settle a borrower's loan without the borrower's consent (the
-proceeds route correctly to the borrower's vault, but the borrower
-loses agency over WHEN their loan closes). The gate also subsumes
-sanctions screening on the borrower side (via `_assertNotSanctioned`
-on `msg.sender`, same shape v1 entry points use). Two reverts in
-the §17.4 surface:
-- `NotPositionHolder(loanId, msg.sender, holder)` — borrower lost
-  ownership of the position-NFT (sold / transferred).
-- `SanctionedAddress(msg.sender)` — borrower is on the sanctions
-  oracle (Tier-1 entry, same gate as v1 `postPrepayListing`).
+**Entry gates — FULL v1 set re-applied** (Codex round-4 P1 + round-12
+P2 #344). The selector MUST repeat every gate `v1
+postPrepayListing` runs, in the same order. The §17.11 step 0 zero-
+existing-hash branch supports matching without a prior post, so
+none of the v1 invariants can be assumed to have been already
+checked at this entry. Without re-listing them here a borrower
+could call `matchOpenSeaOffer` directly and bypass the lender's
+opt-in consent on a loan whose `allowsPrepayListing == false`.
+The reverts in the §17.4 surface, in v1's order:
+
+- **`PrepayListingDisabled()`** if `!s.cfgPrepayListingEnabled`
+  (master kill switch; same `cfgPrepayListingEnabled` flag v1's
+  `postPrepayListing` reads — see
+  `NFTPrepayListingFacet.sol:418`).
+- **`PrepayLoanNotActive(loanId, loan.status)`** if
+  `loan.status != Active`.
+- **`PrepayListingNotAllowed(loanId)`** if
+  `!loan.allowsPrepayListing` — **the lender-consent gate**,
+  load-bearing for the round-12 P2 fix. The borrower opted into
+  prepay-listing at loan-init via the offer's flag; the lender
+  ratified it by accepting. A borrower can't override the
+  lender's frozen consent post-init by reaching the atomic-match
+  flow directly.
+- **`UnsupportedCollateralForV1(loan.collateralAssetType)`** if
+  collateral is not ERC721 or ERC1155 (ERC20 collateral isn't
+  listable on Seaport).
+- **`UnsupportedPrincipalForV1(loan.assetType)`** if principal is
+  not ERC20 (same gate v1 `postPrepayListing.sol:443` enforces).
+- **`PrepayGraceWindowClosed(loanId, block.timestamp, gracePeriodEnd)`**
+  if `block.timestamp >= gracePeriodEnd` (atomic-match makes no
+  sense after grace expires; the loan is already in the
+  default-flow window).
+- **`NotPositionHolder(loanId, msg.sender, holder)`** if
+  `msg.sender != VaipakamNFTFacet(address(this)).ownerOf(loan.
+  borrowerTokenId)`. Without it any third party who finds an
+  acceptable OpenSea offer could force-settle a borrower's loan
+  without their consent.
+- **`SanctionedAddress(msg.sender)`** — borrower is on the
+  sanctions oracle (Tier-1 entry, via `_assertNotSanctioned`,
+  same shape v1 entry points use).
+
+The pre-existing-listing path (`existingHash != 0` in §17.11 step 0)
+ALREADY ran these checks at v1 `postPrepayListing` time, but the
+zero-hash path doesn't run them anywhere else; re-applying them here
+covers both paths uniformly.
 
 ### 17.5 Bidder-offer bytes verification
 
@@ -1217,9 +1247,12 @@ silently receive tokens they didn't expect — which on its own is
 
 The shape invariant closes all of these — if the bidder's order
 doesn't match the relaxed shape (exactly 1 offer item AND
-`consideration ∈ [1, 1 + MAX_FEE_LEGS]` items with the
+`consideration ∈ [1, 1 + MAX_BIDDER_FEE_LEGS]` items with the
 positional + per-item constraints above), the facet reverts before
-any state is touched.
+any state is touched. (Codex round-12 P3 #344 — uses the bidder-
+side cap, NOT the seller-side `MAX_FEE_LEGS = 4` which would
+reject offers with OpenSea's 1 marketplace + 4 creator splits = 5
+fee consideration items.)
 
 ### 17.6 Token-identity invariant — bidder paymentToken == loan.principalAsset
 
@@ -1976,12 +2009,25 @@ the executor + the new library. Auditors focus on:
   sibling facet can reuse). Auditors verify the refactor preserves
   v1 behavior for the post / update / cancel paths byte-for-byte.
 
-**Out of scope for Round 6 audit** — the executor's zone callback
-(`validateOrder`), the diamond's `executorFinalizePrepaySale`,
-conduit allow-list management, ERC-1271 delegate signature path,
-the vault's `registerListingOrderHash` / `revokeListingOrderHash`
-mappings. All shipped + audited as part of v1; Block D reuses them
-verbatim with no surface change.
+**Out of scope for Round 6 audit** — the diamond's
+`executorFinalizePrepaySale`, conduit allow-list management,
+ERC-1271 delegate signature path, the vault's
+`registerListingOrderHash` / `revokeListingOrderHash` mappings, and
+the **outer shell** of the executor's zone callback
+(`validateOrder` arg parsing + mode-dispatch entry). All shipped +
+audited as part of v1; Block D reuses them verbatim.
+
+**The atomic-mode `_assertOrderContentAtomic` branch IS in
+scope** (Codex round-12 P3 #344 correction). It's a NEW
+precondition stack inside `validateOrder`'s dispatch path, called
+when `mode == PREPAY_MODE_ATOMIC_MATCH`, and is the load-bearing
+proof that the atomic counter-order has exactly the three protocol
+legs (lender + treasury + borrower remainder) and no seller-side
+fee legs (per §17.7). Skipping this in audit would miss the
+core validation that the round-7 fee-leg architectural revision
+relies on. Listed under "Executor diff" above for clarity; calling
+it out again here because the zone-callback outer shell IS
+unchanged — only the new mode's branch is in scope.
 
 ### 17.16 Open questions for ratification
 
