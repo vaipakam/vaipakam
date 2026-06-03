@@ -56,11 +56,6 @@ export interface OpenSeaOffersPanelProps {
    *  18-decimals — a 1,000 USDC offer (1e9 base units) shows as
    *  `0.000000` and looks worthless. */
   decimals: number;
-  /** #332 — listing mode of the loan's current prepay listing.
-   *  When `'dutch'`, the race-window modal adds a Dutch-specific
-   *  paragraph explaining the two-tx Match flow (cancel + post-
-   *  fixed-price). Defaults to `'fixed-price'`. */
-  listingMode?: 'fixed-price' | 'dutch';
 }
 
 export function OpenSeaOffersPanel({
@@ -70,7 +65,6 @@ export function OpenSeaOffersPanel({
   actionLoading,
   hasActiveListing,
   decimals,
-  listingMode = 'fixed-price',
 }: OpenSeaOffersPanelProps) {
   const { offers, loadingInitial, error, refresh } = offersResult;
   const [confirming, setConfirming] = useState<NormalizedOffer | null>(null);
@@ -173,7 +167,6 @@ export function OpenSeaOffersPanel({
         <RaceWindowModal
           offer={confirming}
           decimals={decimals}
-          listingMode={listingMode}
           onCancel={() => setConfirming(null)}
           onConfirm={async () => {
             const target = confirming;
@@ -232,13 +225,6 @@ interface RaceWindowModalProps {
   onCancel: () => void;
   onConfirm: () => Promise<void>;
   actionLoading: boolean;
-  /** #332 — Dutch listings go through a two-tx Match flow
-   *  (cancel + repost-as-fixed-price). When this is `'dutch'`,
-   *  the modal adds a Dutch-specific paragraph spelling out the
-   *  two wallet pop-ups + the "stopping after cancel leaves no
-   *  live listing" risk. Defaults to `'fixed-price'` (existing
-   *  Block C v1 single-tx rotation). */
-  listingMode?: 'fixed-price' | 'dutch';
 }
 
 /** The race-window warning is the dapp-side mitigation for the
@@ -252,7 +238,6 @@ function RaceWindowModal({
   onCancel,
   onConfirm,
   actionLoading,
-  listingMode = 'fixed-price',
 }: RaceWindowModalProps) {
   return (
     <div
@@ -265,21 +250,6 @@ function RaceWindowModal({
         <h3 id="race-window-modal-title">
           Match this offer at {formatBigInt(offer.value, decimals)}?
         </h3>
-        {listingMode === 'dutch' && (
-          <p>
-            <strong>This is a Dutch listing,</strong> so Match runs
-            two transactions:{' '}
-            <strong>(1) cancel</strong> the live Dutch order, then{' '}
-            <strong>(2) post</strong> a fresh fixed-price order at
-            this offer's price. You'll see <strong>two wallet
-            pop-ups</strong>. If you approve the first and then
-            close the wallet (or run out of gas) before approving
-            the second, your loan will have no live listing — the
-            Dutch is gone and the fixed-price isn't posted yet.
-            Recovery is via the actions card above (re-post a new
-            listing) but the matched offer is no longer reachable.
-          </p>
-        )}
         <p>
           Once you match, your listing rotates to this offer's
           price. <strong>Any buyer</strong> — not just this bidder —

@@ -7,100 +7,104 @@ in Dutch-decay mode (Block B). v1 (PR #328) shipped Match against
 fixed-price listings only; Dutch listings rendered an informational
 banner in the panel slot.
 
-**Match-shape decision: cancel + repost as fixed-price.** When the
-borrower clicks Match on an acceptable offer against a Dutch
-listing, the dapp now runs a two-tx sequence:
-`cancelPrepayListing(loanId)` followed by
-`postPrepayListing(loanId, offer.value, salt, conduit, feeLegs)`.
-The Dutch order is removed; a fresh fixed-price order at the
-offer's value takes its place. This is two wallet pop-ups for
-the borrower vs the single rotation a fixed-price Match takes,
-but it's the only shape that ships clean — see the Codex round-1
-findings on PR #340 for the structural reasons. Briefly:
+**Match-shape: single-tx in-place `updatePrepayDutchListing` rotation.**
+When the borrower clicks Match on an acceptable offer against a
+Dutch listing, the dapp now calls
+`updatePrepayDutchListing(loanId, offer.value, offer.value,
+live.auctionEndTime, salt, conduit, feeLegs)`. The Dutch order
+with `startAskPrice == endAskPrice` collapses Seaport's linear
+interpolation to a constant — the order behaves like fixed-price-
+at-`offer.value` for the rest of the original Dutch window.
+`auctionEndTime` is preserved (gated by the new `dutchRunwayTooShort`
+banner so it always satisfies the diamond's 1-hour
+`MIN_AUCTION_WINDOW`). One wallet pop-up; the diamond's atomic
+execution either commits or reverts the whole call — failure mode
+on revert is "nothing happened", live Dutch listing intact.
 
-- **In-place rotation via `updatePrepayDutchListing`** trips on
-  three Dutch-side facet constraints — `MIN_AUCTION_WINDOW`
-  (1 hour) rejects the preserved `auctionEndTime` near the
-  original window's end, `DutchEndAskBelowProjectedFloorPlusFees`
-  rejects the end-ask against projected-end-time floor not
-  current-time floor (interest accrual makes the projected floor
-  higher than the panel's classification floor), and the Dutch
-  update path doesn't currently call the
-  frontend-direct `runOpenSeaPublish` — the bidder would wait on
-  the autonomous indexer cron to surface the rotated order on
-  OpenSea, which is too slow for the Match flow's
-  bidder-notification window.
+**Why single-tx and not cancel+post.** An earlier rev of this PR
+shipped cancel+post-as-fixed-price as the Dutch Match shape. Codex
+review across 4 rounds surfaced a string of state-shift race
+windows between the cancel tx and the post tx (kill switch toggle,
+buffer-bps change, grace expiry, floor accrual, threshold
+headroom, indexer-stale-row). Each finding required a pre-flight
+check; even with all of them addressed, the failure mode was
+destructive — cancel succeeded + post reverted leaves the borrower
+with no live listing. User pushback ("why two transactions?")
+prompted the pivot to single-tx, which has the same on-chain
+checks but the failure mode collapses to "nothing happened" since
+the diamond's atomic execution either commits or reverts both
+state changes together. The 4 rounds of pre-flight cruft is gone.
 
-- **Cancel + repost-as-fixed-price** sidesteps all three. The
-  post path uses current-time pctx (no projected-floor concern),
-  doesn't go through `_assertDutchWindow` (no 1-hour gate), and
-  publishes through the existing `runOpenSeaPublish`. The
-  trade-offs the original card's "Cancel + repost" alternative
-  flagged (extra gas, mode change) are real but bounded; the
-  trade-offs the in-place rotation faces are structural and
-  would require extending the Dutch publish path to land
-  cleanly. Deferring that publish-path extension keeps #332's
-  scope tight + leaves the optimal in-place shape as a v1.2
-  follow-up.
+The three Codex round-1 concerns that originally pushed the
+implementation toward cancel+post are addressed structurally:
 
-The three shapes the Issue #332 card enumerated:
+1. **`MIN_AUCTION_WINDOW` (1 hour)** — `dutchRunwayTooShort`
+   banner gates the Match panel when
+   `live.auctionEndTime - now ≤ 1h + 5min` (the 5-minute safety
+   margin covers wallet sign + tx mining propagation). The
+   borrower sees "your Dutch listing is in its final hour —
+   cancel and re-post to restart the match flow"; the rotation
+   tx never fires under those conditions.
 
-- **Cancel + repost fixed-price** (chosen): two on-chain calls,
-  uses existing post path's well-tested publish + floor logic.
-- **In-place collapse** (rejected during PR review): one tx but
-  three structural Dutch-side constraints to address.
-- **Decay-to-offer** (rejected up front): keep the Dutch shape,
-  anchor `endAskPrice = offer.value`, let `startAskPrice` decay
-  TO the offer. Exposes the rotation to a snipe at the higher
-  decay-start price.
+2. **`DutchEndAskBelowProjectedFloorPlusFees`** — the section's
+   threshold effect now reads `getPrepayContext(loanId,
+   live.auctionEndTime)` (the future projected legs) for Dutch
+   rows instead of `getPrepayContext(loanId, now)` (current
+   legs). `computeAcceptable` classifies against the projected
+   floor the facet itself validates, so an offer that clears the
+   panel threshold is guaranteed to clear the
+   `DutchEndAskBelowProjectedFloorPlusFees` check at tx-mining
+   time. Fixed-price listings keep using current-time pctx.
 
-**Malformed-Dutch banner**: a Dutch row whose `auctionEndTime` or
-`endAskPrice` is missing from the indexer (pre-migration row
-predating the Block B publish) now renders a "decay parameters
-missing" banner instead of attempting a rotation with bad
-parameters. The existing pre-migration banner covered missing
-salt / conduit; this adds the Dutch-specific case.
+3. **Missing Dutch publish path** — extended
+   `publishPrepayListingToOpenSea` (`apps/defi/src/lib/openseaPublish.ts`)
+   to accept optional `dutch?: { endAskPrice, auctionEndTime }`
+   parameters. When set, it reads the projected pctx at
+   `auctionEndTime` and threads the Dutch shape through
+   `buildPrepayOrderComponents` (which already supports Dutch
+   per Block B's landing). `useNFTPrepayListing.updatePrepayDutchListing`
+   + `postPrepayDutchListing` both now call `runOpenSeaPublish`
+   with Dutch params after the rotation tx confirms, so the
+   bidder sees the rotated order on OpenSea's marketplace within
+   seconds — same UX as fixed-price Match. The autonomous
+   indexer-side publish stays as a safety net; the frontend
+   path is now the primary.
 
-**Race-window warning + fee-enforced support unchanged.** The
-`RaceWindowModal` from PR #338 (with a new Dutch-specific
-two-tx-flow paragraph added in this PR) and the fee-leg recompute
-from PR #339 both apply identically — the Match callback computes
-the fresh schedule + feeLegs first, then branches on
-`live.auctionMode === 1` between fixed-price's single-tx in-place
-`updatePrepayListing` rotation and Dutch's two-tx
-`cancelPrepayListing` + `postPrepayListing` sequence. Fee-enforced
-Dutch collections settle through the same `feeLegs` calldata path
-as fixed-price ones; the difference between the two modes is
-which sequence of diamond selectors runs, not which feeLegs they
-carry.
+**Fee-enforced support unchanged.** The fee-leg recompute from PR
+#339 applies identically — the Match callback fetches the fresh
+schedule + computes `feeLegs` before calling the rotation entry,
+and the rotation entry threads `feeLegs` through the publish call
+too (so the JS-rebuilt canonical orderHash matches the on-chain
+hash on fee-enforced collections in Dutch mode).
 
-**Floor pre-flight before the cancel** (Codex round-2 P2 on this
-PR). The two-tx Dutch sequence has one structural risk the
-single-tx in-place rotation doesn't: if the post threshold moves
-above `offer.value` between the panel's last threshold refresh
-and the click (a pro-rata interest accrual boundary, a governance
-buffer-bps change), the cancel succeeds and the post then reverts
-`AskBelowFloorPlusFees`, leaving the borrower with no live
-listing. The Match callback now re-reads `getPrepayContext` +
-`getPrepayListingBufferBps` BEFORE the cancel, recomputes the
-closed-form threshold against the fresh schedule + offer's value,
-and aborts (preserving the live Dutch listing) when the offer no
-longer clears. The in-place fixed-price path doesn't need this
-guard because `updatePrepayListing` revalidates atomically.
+**Race-window warning unchanged.** The `RaceWindowModal` from PR
+#338 fires identically for both modes — any buyer can fulfill the
+rotated listing between the borrower's tx and the bidder's
+`Seaport.fulfillOrder`. The Dutch-specific 2-tx warning paragraph
+that the round-3 cancel+post shape added is removed (single tx,
+no 2-tx flow to warn about).
 
-**No contract surface changes.** Both `cancelPrepayListing` and
-`postPrepayListing` are existing entry points that
-`PrepayListingActions` already drives manually; this PR is purely
-the dapp wiring that sequences them inside the Match callback. No
-new diamond storage, no migration, no operator action
-post-merge.
+**Malformed-Dutch banner.** A Dutch indexer row missing
+`auctionEndTime` or `endAskPrice` (a pre-migration row predating
+Block B's publish or a transient indexer issue) renders a "decay
+parameters missing" banner — same shape the pre-migration banner
+takes for fixed-price.
 
-**Out of scope** (intentional, tracked as follow-ups):
+**No contract surface changes.** `updatePrepayDutchListing` is
+existing Block B surface; `publishPrepayListingToOpenSea` +
+`runOpenSeaPublish` are dapp-side helpers. No new diamond storage,
+no migration, no operator action post-merge. The indexer's
+autonomous Dutch publish path is unchanged (it continues to run on
+its cron interval as a safety net for posts where the frontend-
+direct publish failed transiently — same role it played for
+fixed-price posts before this PR).
 
-- Atomic match-rotation via Seaport `matchOrders` (#333 — the v2
-  shape that eliminates the race window altogether).
+**Out of scope** (tracked as follow-ups):
+
+- Atomic match-rotation via Seaport `matchOrders` (#333 — the
+  v2 shape that eliminates the race window altogether).
 - The post-listing flow's empty-default `feeLegs[]` on Dutch
-  (`PrepayListingActions.handlePost` for the Dutch path) — same
-  shape as the fixed-price post-side gap noted on #331.
+  (`PrepayListingActions.handleDutchPost` for the Dutch path) —
+  same shape as the fixed-price post-side gap noted on #331.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

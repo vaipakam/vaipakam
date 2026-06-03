@@ -157,7 +157,22 @@ export function OpenSeaOffersSection({
           getPrepayListingBufferBps: () => Promise<bigint>;
           getPrepayListingEnabled: () => Promise<boolean>;
         };
-        const asOf = BigInt(Math.floor(Date.now() / 1000));
+        // #332 — Dutch listings get classified against the
+        // PROJECTED legs the facet itself validates against:
+        // `getPrepayContext(loanId, live.auctionEndTime)`. Without
+        // this, the threshold uses current-time legs (smaller),
+        // which would let `computeAcceptable` classify offers
+        // above-current-floor but below-projected-floor as
+        // acceptable — the rotation tx would then revert
+        // `DutchEndAskBelowProjectedFloorPlusFees`. Fixed-price
+        // listings keep using current-time pctx.
+        const asOf =
+          live !== null &&
+          live !== undefined &&
+          live.auctionMode === 1 &&
+          live.auctionEndTime != null
+            ? BigInt(live.auctionEndTime)
+            : BigInt(Math.floor(Date.now() / 1000));
         // Codex round-3 P2 review #328 — also check the master
         // kill-switch (`getPrepayListingEnabled`). The actions
         // card already gates on it; if governance has flipped the
@@ -198,7 +213,20 @@ export function OpenSeaOffersSection({
     return () => {
       cancelled = true;
     };
-  }, [diamond, loanId, principalAsset, prepayListing.listing?.updatedAt, floorTick]);
+  }, [
+    diamond,
+    loanId,
+    principalAsset,
+    prepayListing.listing?.updatedAt,
+    floorTick,
+    // #332 — re-fetch pctx when the auction mode or end time
+    // changes. Dutch rows classify against the projected legs at
+    // `auctionEndTime`; fixed-price rows classify against
+    // current-time legs. A mode flip (e.g. via Match) needs to
+    // re-resolve the right `asOf`.
+    prepayListing.listing?.auctionMode,
+    prepayListing.listing?.auctionEndTime,
+  ]);
 
   // VITE_AGENT_ORIGIN is the agent Worker's public URL (e.g.
   // `https://agent.vaipakam.com`). If unset, the panel renders the
@@ -231,28 +259,75 @@ export function OpenSeaOffersSection({
   // later early-return shows only the v1.1-deferred banner.
   // `2` is the on-chain `AssetType.ERC1155` enum value.
   const collateralIsERC1155 = collateralAssetType === 2;
-  // #332 — Dutch listings are no longer excluded from `canMatch`;
-  // the Match flow now goes cancel + post-as-fixed-price (the
-  // in-place rotation was rejected per Codex round-1 P2 findings;
-  // see the `onMatchOffer` body for the structural reasoning).
+  // #332 (final shape, post round-4 pivot to single-tx) — Dutch
+  // listings Match via the atomic `updatePrepayDutchListing`
+  // rotation rather than cancel+post-as-fixed-price. The 2-tx
+  // shape was abandoned mid-PR because every state-shift vector
+  // between the cancel and post (kill switch, buffer, grace,
+  // floor, threshold-headroom, indexer-stale-row) needed a
+  // separate pre-flight — and even then the failure mode was
+  // destructive ("listing destroyed" if cancel succeeded + post
+  // reverted). The atomic single-tx shape has the same on-chain
+  // checks but its failure mode is "nothing happened" — the live
+  // Dutch listing stays intact on revert.
+  //
+  // The Dutch Match's three original Codex concerns are
+  // structurally addressed by:
+  //   1. MIN_AUCTION_WINDOW (1h): banner Match when
+  //      `live.auctionEndTime - now ≤ MIN_AUCTION_WINDOW +
+  //      MATCH_SAFETY` (computed below; `dutchRunwayTooShort`).
+  //   2. Projected-end-time floor: threshold effect reads pctx
+  //      at `live.auctionEndTime` (not `now`) for Dutch rows,
+  //      so `computeAcceptable` classifies against the projected
+  //      legs the facet itself validates.
+  //   3. Missing Dutch publish path: extended
+  //      `publishPrepayListingToOpenSea` (this PR) to accept
+  //      Dutch params; `useNFTPrepayListing.updatePrepayDutchListing`
+  //      now calls `runOpenSeaPublish` with those params after
+  //      the rotation tx confirms.
+  //
   // Dutch indexer rows missing `auctionEndTime` or `endAskPrice`
-  // are STILL excluded from `canMatch`, though — the section's
-  // malformed-Dutch banner short-circuit catches them BEFORE the
-  // panel renders, but without this check the offers hook would
-  // keep polling the agent proxy and the fee-schedule endpoint
-  // every interval even though nothing matchable can render
-  // (Codex round-2 P3 #340).
+  // STILL pause the hook + render the malformed-Dutch banner —
+  // we can't compute the projected pctx or publish without those
+  // fields.
   const dutchRowIsMalformed =
     live !== null &&
     live !== undefined &&
     live.auctionMode === 1 &&
     (live.auctionEndTime == null || live.endAskPrice == null);
+
+  // #332 — Dutch grace runway: the diamond requires
+  // `newAuctionEndTime > block.timestamp + MIN_AUCTION_WINDOW`
+  // (1 hour). When the borrower preserves `live.auctionEndTime`
+  // (which is what the Match callback does — see the
+  // `onMatchOffer` body), the tx will revert
+  // `AuctionWindowTooShort` if `auctionEndTime - now <= 1h`.
+  // Banner the panel instead of letting the tx fire.
+  //
+  // Safety margin on top of the bare 1h floor: 5 minutes covers
+  // wallet sign delay + tx mining propagation. The exact
+  // boundary is enforced inside the diamond at tx-mining time
+  // (`block.timestamp + 1h`), so a borrower clicking with
+  // `live.auctionEndTime - now == 1h + 1s` would still revert
+  // if the tx takes more than a second to mine.
+  const MIN_AUCTION_WINDOW_SECONDS = 60n * 60n;
+  const MATCH_SAFETY_SECONDS = 5n * 60n;
+  const nowSeconds = BigInt(Math.floor(Date.now() / 1000));
+  const dutchRunwayTooShort =
+    live !== null &&
+    live !== undefined &&
+    live.auctionMode === 1 &&
+    live.auctionEndTime != null &&
+    BigInt(live.auctionEndTime) - nowSeconds <=
+      MIN_AUCTION_WINDOW_SECONDS + MATCH_SAFETY_SECONDS;
+
   const canMatch =
     live !== null &&
     live !== undefined &&
     !listingPreMigration &&
     !collateralIsERC1155 &&
-    !dutchRowIsMalformed;
+    !dutchRowIsMalformed &&
+    !dutchRunwayTooShort;
 
   // #331 — fee-schedule cache (replaces round-5's tri-state
   // enforcement gate). The dapp polls `/opensea/collection/{slug}`
@@ -460,6 +535,34 @@ export function OpenSeaOffersSection({
     );
   }
 
+  // #332 — Dutch listing whose remaining auction window is too
+  // short for the diamond's `_assertDutchWindow` 1-hour minimum.
+  // The atomic `updatePrepayDutchListing` rotation preserves the
+  // existing `auctionEndTime` (the rotated order behaves like
+  // fixed-price-at-`offer.value` for the rest of that window),
+  // so if `auctionEndTime - now <= 1h + safety` the tx would
+  // revert `AuctionWindowTooShort`. Banner the panel instead of
+  // showing offers the borrower can't match.
+  if (dutchRunwayTooShort) {
+    return (
+      <div
+        id={`opensea-offers-dutch-runway-${loanId}`}
+        className="card loan-actions-card"
+      >
+        <div className="action-group">
+          <div className="action-title">OpenSea Offers (English mode)</div>
+          <div className="alert alert-info">
+            This Dutch listing's auction window is within its final
+            hour. Matching an OpenSea offer would rotate the order
+            past the diamond's minimum 1-hour window. Cancel and
+            re-post a fresh listing via the actions card above to
+            restart the match flow with a full window.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // #332 — a Dutch listing without an `auctionEndTime` (or with a
   // missing `endAskPrice`) is a malformed indexer row. Banner
   // instead of attempting a rotation that would either revert
@@ -492,11 +595,6 @@ export function OpenSeaOffersSection({
       loanId={loanId}
       offersResult={offersResult}
       hasActiveListing={live !== null && live !== undefined}
-      // #332 Codex round-2 P3 — pass the listing's mode to the
-      // panel so the race-window modal's Dutch-specific copy can
-      // warn the borrower about the two-tx Match flow before they
-      // approve the irreversible cancel.
-      listingMode={live?.auctionMode === 1 ? 'dutch' : 'fixed-price'}
       // #331 — block Match clicks until the schedule has been
       // fetched for the CURRENT slug. The disabled-button state
       // piggybacks on `actionLoading` to keep the panel's
@@ -608,160 +706,41 @@ export function OpenSeaOffersSection({
         // case but the tx then reverts and the user retries).
         setFeeCheck({ slug: offersResult.slug, schedule: freshSchedule });
 
-        // #332 — branch on auction mode. Fixed-price (mode 0)
-        // rotates in place via `updatePrepayListing`. Dutch
-        // (mode 1) does cancel-then-post-as-fixed-price:
-        // `cancelPrepayListing` removes the live Dutch order,
-        // then `postPrepayListing` creates a fresh fixed-price
-        // order at the offer's value. The two-tx shape is
-        // deliberately chosen over an in-place
-        // `updatePrepayDutchListing` rotation per Codex round-1
-        // P2 review on PR #340 — the in-place rotation collides
-        // with three structural Dutch-side constraints (the
-        // facet's `MIN_AUCTION_WINDOW` 1-hour gate on the
-        // preserved `auctionEndTime`; the
-        // `DutchEndAskBelowProjectedFloorPlusFees` check that
-        // validates the end-ask against the projected-end-time
-        // floor not the current-time floor; the missing
-        // frontend-direct OpenSea publish path on
-        // `updatePrepayDutchListing` that today's autonomous
-        // indexer cron is supposed to cover but isn't fast
-        // enough for the Match flow's bidder-notification
-        // window). Cancel-then-post-fixed-price sidesteps all
-        // three by going through the well-trodden fixed-price
-        // post path that already validates against current-
-        // time floor + publishes through `runOpenSeaPublish`
-        // immediately.
+        // #332 (round-5 PIVOT — single-tx in-place rotation for
+        // both modes). Branch on the live listing's auctionMode:
         //
-        // UX trade-off: 2 wallet pop-ups instead of 1. The
-        // `RaceWindowModal` copy + the panel's diagnostics
-        // collapse-section both spell this out to the borrower
-        // before the first click. If the cancel succeeds but
-        // the post fails (user closes wallet between txes /
-        // out of gas / chain reorgs), the borrower ends up with
-        // no live listing — recoverable via re-posting via the
-        // actions card above, but a degraded state worth
-        // surfacing in the modal.
+        //   - Fixed-price (mode 0): `updatePrepayListing` rotates
+        //     the order atomically in one tx. All revert paths
+        //     (kill switch, buffer, grace, floor, fees) leave the
+        //     listing intact.
+        //
+        //   - Dutch (mode 1): `updatePrepayDutchListing` rotates
+        //     the order atomically with `startAskPrice ==
+        //     endAskPrice == offer.value`, collapsing Seaport's
+        //     decay to a constant. `live.auctionEndTime` is
+        //     preserved (gated above by `dutchRunwayTooShort` so
+        //     it always satisfies `MIN_AUCTION_WINDOW`), so the
+        //     bidder gets the same remaining window the original
+        //     Dutch listing had. Threshold classification used
+        //     pctx at `auctionEndTime` (projected legs) so the
+        //     diamond's `DutchEndAskBelowProjectedFloorPlusFees`
+        //     check is pre-satisfied at the panel level.
+        //
+        // No multi-tx pre-flight needed — the diamond's atomic
+        // execution either commits or reverts the whole call.
+        // On revert, the live listing stays unchanged (whether
+        // Dutch or fixed-price).
         if (live.auctionMode === 1) {
-          // #332 Codex round-2 + round-3 P2 — pre-flight every
-          // condition the post path will check BEFORE issuing the
-          // irreversible cancel. The two-tx Dutch sequence has a
-          // window between cancel and post where global state can
-          // shift, and every revert on the post leaves the borrower
-          // with no live listing. The atomic in-place
-          // `updatePrepayListing` rotation doesn't have this
-          // problem; here we replicate the diamond's pre-flight
-          // checks against fresh on-chain state before the cancel.
-          //
-          // Pre-flight covers (Codex round-3):
-          //   - Kill switch (`getPrepayListingEnabled`) —
-          //     `PrepayListingDisabled` revert on post.
-          //   - Buffer-bps configured (non-zero) —
-          //     `PrepayListingBufferNotConfigured` revert.
-          //   - Grace window still open —
-          //     `PrepayGraceWindowClosed` revert.
-          //   - Floor / fees / buffer math against the FRESH
-          //     schedule + offer.value — `AskBelowFloorPlusFees`
-          //     revert.
-          //
-          // If any check fails, abort BEFORE cancel; the panel
-          // re-classifies the offer on the next threshold tick.
-          try {
-            const d = diamond as unknown as {
-              getPrepayContext: (
-                id: bigint,
-                asOf: bigint,
-              ) => Promise<
-                | {
-                    lenderLeg: bigint;
-                    treasuryLeg: bigint;
-                    graceEnd: bigint;
-                  }
-                | unknown[]
-              >;
-              getPrepayListingBufferBps: () => Promise<bigint>;
-              getPrepayListingEnabled: () => Promise<boolean>;
-            };
-            const asOf = BigInt(Math.floor(Date.now() / 1000));
-            const [ctxFresh, bufFresh, enabledFresh] = await Promise.all([
-              d.getPrepayContext(loanId, asOf),
-              d.getPrepayListingBufferBps(),
-              d.getPrepayListingEnabled(),
-            ]);
-            if (!enabledFresh) {
-              // Governance disabled prepay listings under us. Cancel
-              // would succeed but post would revert
-              // `PrepayListingDisabled`. Abort.
-              return false;
-            }
-            const bufferBpsFresh = Number(bufFresh);
-            if (bufferBpsFresh === 0) {
-              // Buffer unconfigured (storage-default). Post would
-              // revert `PrepayListingBufferNotConfigured`. Abort.
-              return false;
-            }
-            const lenderFresh =
-              (ctxFresh as { lenderLeg?: bigint }).lenderLeg ?? 0n;
-            const treasuryFresh =
-              (ctxFresh as { treasuryLeg?: bigint }).treasuryLeg ?? 0n;
-            const graceEnd =
-              (ctxFresh as { graceEnd?: bigint }).graceEnd ?? 0n;
-            if (graceEnd > 0n && asOf >= graceEnd) {
-              // Grace window closed under us. Post would revert
-              // `PrepayGraceWindowClosed`. Abort.
-              return false;
-            }
-            const feeBpsFresh = freshSchedule.totalBps;
-            if (feeBpsFresh >= 10_000) return false;
-            const numFresh =
-              (lenderFresh + treasuryFresh) *
-              BigInt(10_000 + bufferBpsFresh);
-            const denFresh = BigInt(10_000 - feeBpsFresh);
-            const minByThresholdFresh =
-              denFresh === 0n ? 0n : (numFresh + denFresh - 1n) / denFresh;
-            const minByRoundingFresh =
-              freshSchedule.minBps > 0
-                ? (10_000n + BigInt(freshSchedule.minBps) - 1n) /
-                  BigInt(freshSchedule.minBps)
-                : 0n;
-            const minFresh =
-              minByThresholdFresh > minByRoundingFresh
-                ? minByThresholdFresh
-                : minByRoundingFresh;
-            if (offer.value < minFresh) {
-              // Floor moved up under us; the post would revert
-              // AskBelowFloorPlusFees. Abort BEFORE cancel; the
-              // panel re-classifies the offer on the next
-              // threshold tick.
-              return false;
-            }
-          } catch {
-            // RPC blip on the pre-flight read. Don't proceed —
-            // canceling the Dutch listing without a successful
-            // post would degrade the borrower's state.
-            return false;
-          }
-          const cancelled = await prepayListing.cancelPrepayListing(loanId);
-          if (!cancelled) return false;
-          const posted = await prepayListing.postPrepayListing(
+          if (live.auctionEndTime == null) return false;
+          return prepayListing.updatePrepayDutchListing(
             loanId,
             offer.value,
+            offer.value,
+            BigInt(live.auctionEndTime),
             BigInt(live.salt),
             live.conduitKey as `0x${string}`,
             feeLegs,
           );
-          // #332 Codex round-3 P2 — force a fresh indexer read after
-          // both txes settle. Without this, the hook's internal
-          // waitForIndexer can settle on the stale pre-cancel Dutch
-          // row (the indexer's reorg-windowed feed can serve the
-          // pre-cancel state right up until the post tx lands), and
-          // the panel would continue rendering as if the listing
-          // is still Dutch — driving the borrower into another
-          // two-tx Match against the wrong mode if they retry.
-          if (posted) {
-            await prepayListing.reload();
-          }
-          return posted;
         }
 
         return prepayListing.updatePrepayListing(
