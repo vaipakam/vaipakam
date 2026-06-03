@@ -15,14 +15,15 @@ modal too quickly had no durable reference to come back to.
 "Matching OpenSea offers on a prepay listing" section was added to
 the Advanced User Guide under the Loan Details chapter
 (`apps/www/src/content/userguide/Advanced.en.md`, anchor
-`#loan-details.opensea-offers`). The section explains what the
-panel does, what the race window actually is, what the user can do
-to mitigate it (notify the bidder out-of-band before clicking
-Match; avoid matching at desperate prices that leave the buffer
-thin; cancel the listing if the bidder goes quiet), and what the v2
-atomic-match path will fix structurally (forward-link to Issue
-#333). Plain English at sophisticated-user altitude — deeper than
-the modal, shallower than the §15.3 design doc.
+`#matching-opensea-offers-on-a-prepay-listing`). The section
+explains what the panel does, what the race window actually is,
+what the user can do to mitigate it (notify the bidder out-of-band
+before clicking Match; avoid matching at desperate prices that
+leave the buffer thin; cancel the listing if the bidder goes
+quiet), and what the v2 atomic-match path will fix structurally
+(forward-link to Issue #333). Plain English at sophisticated-user
+altitude — deeper than the modal, shallower than the §15.3 design
+doc.
 
 The dapp's `RaceWindowModal` now carries a "Learn more about the
 race window" link that points at the new AUG section via the
@@ -39,5 +40,7 @@ EC-004's risk-disclosure translations). Non-en readers see the
 existing localised sections; the new section is missing from those
 files until the translation pass lands.
 
-No code or contract changes; docs-only thread plus the one-line
-modal link.
+No contract changes. The dapp surface change is small but real —
+one `<a href>` cross-link in `RaceWindowModal` plus a
+`marketingUrl` import in `OpenSeaOffersPanel.tsx` — so the thread
+is documentation-led + one-line dapp wire, not strictly docs-only.

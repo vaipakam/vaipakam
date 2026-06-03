@@ -736,12 +736,11 @@ on your token — bids tied to your specific collateral, not
 to any token in the collection. Vaipakam surfaces these item
 offers on the Loan Details page in real time — a separate
 panel under "List collateral on OpenSea" with one row per
-incoming offer, sortable by amount. The panel applies a
-**buffer threshold** (principal + accrued interest +
-treasury cut + safety buffer) and **greys out** offers that
-don't clear it. You can see market interest at every level
-but can only Match offers that the protocol will actually
-settle.
+incoming offer. The panel applies a **buffer threshold**
+(principal + accrued interest + treasury cut + safety
+buffer) and **greys out** offers that don't clear it. You
+can see market interest at every level but can only Match
+offers that the protocol will actually settle.
 
 Collection-wide / criteria offers (bids that any token in
 the collection can fulfill) stay on OpenSea but **don't
@@ -749,10 +748,13 @@ appear** in the dapp's Match panel — the multi-leg
 consideration the protocol settles into can't be
 reconstructed against a criteria offer without contract-side
 plumbing that isn't in v1. If your only inbound demand is
-collection-wide, you can still fulfill those offers directly
-on OpenSea's marketplace UI at any price ≥ the buffer
-threshold; the Vaipakam settlement waterfall handles the
-multi-leg split the moment the Seaport order fills.
+collection-wide, the practical path today is to wait for
+an item-specific bid OR to leave the listing at your fixed
+ask and let any buyer fulfill it directly. You cannot
+manually settle a collection-wide bid yourself — the
+collateral NFT lives in your Vaipakam vault, and Vaipakam-
+side Seaport orders are the only authorised settlement
+shape.
 
 On collections that enforce OpenSea protocol fees and/or
 creator royalties, the dapp currently does NOT render the
