@@ -30,6 +30,7 @@ import type {
   NormalizedOffer,
   UseOpenSeaOffersResult,
 } from '../../hooks/useOpenSeaOffers';
+import { marketingUrl } from '../../lib/marketingUrl';
 
 export interface OpenSeaOffersPanelProps {
   loanId: bigint;
@@ -258,6 +259,38 @@ function RaceWindowModal({
           Notify your bidder ({offer.bidder.slice(0, 12)}…) before
           clicking Match so they can complete the purchase before
           someone else snipes it.
+        </p>
+        <p>
+          {/* Issue #337 — cross-link to the Advanced User Guide
+              section that explains the race window in depth +
+              points forward to the v2 atomic-match track (#333).
+              `marketingUrl` resolves to https://vaipakam.com in
+              prod and respects the VITE_MARKETING_URL dev
+              override so local dev links to the local www
+              dev server.
+
+              The anchor uses the slug `markdownToc.headingComponents()`
+              auto-installs on every `<h3>` — slugify of the heading
+              text. The `<a id="..."></a>` inline anchor pattern used
+              elsewhere in the same file doesn't actually take effect
+              on H3s in the rendered DOM because the h3 component
+              overrides `id` with the slug (see Codex P2 round-1
+              finding on PR #338). The `/en/` prefix pins the link to
+              the English guide so users whose browser locale routes
+              them via `DefaultLocaleRedirect` to /<locale>/help/...
+              don't land on a localized guide that doesn't yet carry
+              this section (queued for translation, follow-up batch). */}
+          <a
+            href={marketingUrl(
+              '/en/help/advanced#matching-opensea-offers-on-a-prepay-listing',
+            )}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Learn more about the race window
+          </a>
+          {' '}— mitigation options + what the v2 atomic-match
+          fix will change.
         </p>
         <div className="action-row">
           <button
