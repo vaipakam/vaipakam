@@ -283,22 +283,29 @@ export function OpenSeaOffersSection({
       ? {
           ...threshold,
           // Codex round-1 P1 #339 — when the schedule hasn't been
-          // fetched for the current slug, pass the degenerate
-          // `feeBpsTotal: 10_000` sentinel so every offer
-          // classifies as below-threshold via the hook's
-          // degenerate-guard branch. This keeps the hook unpaused
-          // (so the offers fetch can resolve the slug and unblock
-          // the schedule effect) while still preventing
-          // misleadingly-acceptable rows from rendering. Once the
-          // schedule lands the value swaps to the real
+          // fetched, pass the degenerate `feeBpsTotal: 10_000`
+          // sentinel so every offer classifies as below-threshold
+          // via the hook's degenerate-guard branch. This keeps the
+          // hook unpaused (so the offers fetch can resolve the
+          // slug and unblock the schedule effect) while still
+          // preventing misleadingly-acceptable rows from rendering.
+          // Once the schedule lands the value swaps to the real
           // `totalBps` and re-classification kicks in on next
           // render.
-          feeBpsTotal:
-            feeCheck.slug !== null &&
-            feeCheck.slug === offersResult.slug &&
-            feeCheck.schedule !== null
-              ? feeCheck.schedule.totalBps
-              : 10_000,
+          //
+          // Slug-pairing happens POST-HOOK (see
+          // `feeScheduleMatchesSlug` + `effectiveFeeSchedule`
+          // below). Doing the pairing inside the hook input would
+          // create a self-reference to `offersResult.slug` —
+          // that's TDZ, both at runtime and at TypeScript's
+          // `block-scoped-used-before-declaration` check. The
+          // single-frame window where the previous loan's
+          // `feeBpsTotal` might leak into the new loan's
+          // classification is bounded by the section's
+          // `stateMatchesLoan` synchronous gate (returns null
+          // until `recordedLoanId` catches up), so no
+          // misleading row reaches the DOM.
+          feeBpsTotal: feeCheck.schedule?.totalBps ?? 10_000,
         }
       : {
           // Codex round-3 P2 review #328 — sentinel: when threshold
