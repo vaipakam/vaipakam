@@ -726,20 +726,33 @@ Permissionless actions available to anyone regardless of role:
 > initiated repay can fail "harmlessly" without something
 > actually going wrong.
 
-<a id="loan-details.opensea-offers"></a>
+<a id="matching-opensea-offers-on-a-prepay-listing"></a>
 
 ### Matching OpenSea offers on a prepay listing
 
 Once your prepay listing is live on OpenSea's marketplace,
-casual buyers will sometimes place **collection offers** or
-**item offers** below your ask. Vaipakam surfaces these on
-the Loan Details page in real time — a separate panel under
-"List collateral on OpenSea" with one row per incoming offer,
-sortable by amount. The panel applies a **buffer threshold**
-(principal + accrued interest + treasury cut + safety buffer)
-and **greys out** offers that don't clear it. You can see
-market interest at every level but can only Match offers that
-the protocol will actually settle.
+casual buyers will sometimes place **item offers** directly
+on your token — bids tied to your specific collateral, not
+to any token in the collection. Vaipakam surfaces these item
+offers on the Loan Details page in real time — a separate
+panel under "List collateral on OpenSea" with one row per
+incoming offer, sortable by amount. The panel applies a
+**buffer threshold** (principal + accrued interest +
+treasury cut + safety buffer) and **greys out** offers that
+don't clear it. You can see market interest at every level
+but can only Match offers that the protocol will actually
+settle.
+
+Collection-wide / criteria offers (bids that any token in
+the collection can fulfill) stay on OpenSea but **don't
+appear** in the dapp's Match panel — the multi-leg
+consideration the protocol settles into can't be
+reconstructed against a criteria offer without contract-side
+plumbing that isn't in v1. If your only inbound demand is
+collection-wide, you can still fulfill those offers directly
+on OpenSea's marketplace UI at any price ≥ the buffer
+threshold; the Vaipakam settlement waterfall handles the
+multi-leg split the moment the Seaport order fills.
 
 On collections that enforce OpenSea protocol fees and/or
 creator royalties, the dapp currently does NOT render the
