@@ -77,6 +77,7 @@ jobs:
           echo "Resolved iteration label: $LABEL"
 
       - name: File the iteration-kickoff-sync card
+        id: issuebot
         # imjohnbo/issue-bot creates the Issue from a body that we
         # inline here (kept short — the substantive checklist lives in
         # the ISSUE_TEMPLATE file so contributors can also use it
@@ -137,3 +138,172 @@ jobs:
           # internal API client; keeping a fallback env for any
           # action step that reads from env-vars.
           GITHUB_TOKEN: ${{ secrets.ADD_TO_PROJECT_PAT }}
+
+      - name: Assign card to current Iteration + Sprint
+        # Why this step exists:
+        # - `imjohnbo/issue-bot` files the Issue; `add-to-project.yml`
+        #   auto-adds it to the @vaipakam-labs board with Status =
+        #   Backlog and Iteration + Sprint UNSET. That means the
+        #   maintainer doesn't see the card on iteration-filtered
+        #   board views (which is the surface they actually look at
+        #   on Monday morning), so the ritual gets missed for a week.
+        # - This step closes that gap: it resolves which Iteration +
+        #   Sprint cover today's date and assigns both fields on the
+        #   newly-filed card, so the card surfaces on iteration views
+        #   the moment Iteration N+1 begins.
+        # - Pre-conditions: the issue-bot step above must have either
+        #   created a fresh Issue (most common) OR been a no-op
+        #   because a prior card with the same title-prefix is still
+        #   open. In the no-op case we skip — that pre-existing card
+        #   was assigned to its own iteration on its original run.
+        # - Idempotent: the GraphQL mutations succeed even if the
+        #   target field already holds the same iteration id.
+        # Why the inputs aren't a workflow-injection surface:
+        # - The only inputs we consume here are
+        #   `steps.issuebot.outputs.{number,issue_url}` (workflow-
+        #   internal, set by a SHA-pinned action) and the static
+        #   field/option ids embedded in this file. No
+        #   `github.event.*` user-controlled string is interpolated
+        #   into a shell command.
+        if: steps.issuebot.outputs.number != ''
+        env:
+          GH_TOKEN: ${{ secrets.ADD_TO_PROJECT_PAT }}
+          ISSUE_NUMBER: ${{ steps.issuebot.outputs.number }}
+          # Project + field identifiers are stable across runs (the
+          # @vaipakam-labs Project v2 has only ever been recreated
+          # once, in the field-set bootstrap). If a future
+          # reorganisation rotates these, regenerate via the
+          # ProjectV2 fields GraphQL query at the bottom of this
+          # workflow's design comment, then update both env values.
+          PROJECT_ID: PVT_kwHOEGh46c4BXvX7
+          ITERATION_FIELD_ID: PVTIF_lAHOEGh46c4BXvX7zhS6MgI
+          SPRINT_FIELD_ID: PVTIF_lAHOEGh46c4BXvX7zhS6okI
+        run: |
+          set -euo pipefail
+
+          # 1. Resolve the issue's GraphQL node id.
+          ISSUE_NODE_ID=$(gh api graphql \
+            -f query='
+              query($owner: String!, $repo: String!, $num: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  issue(number: $num) { id }
+                }
+              }' \
+            -f owner="${GITHUB_REPOSITORY_OWNER}" \
+            -f repo="${GITHUB_REPOSITORY#${GITHUB_REPOSITORY_OWNER}/}" \
+            -F num="${ISSUE_NUMBER}" \
+            --jq .data.repository.issue.id)
+          echo "Issue node id: ${ISSUE_NODE_ID}"
+
+          # 2. Add the issue to the project (idempotent — returns the
+          #    existing item id if `add-to-project.yml` got there first,
+          #    creates a fresh one otherwise). Race-safe vs. the
+          #    auto-add workflow: both calls reach the same
+          #    `addProjectV2ItemById` mutation which is exact-duplicate
+          #    aware.
+          ITEM_ID=$(gh api graphql \
+            -f query='
+              mutation($projectId: ID!, $contentId: ID!) {
+                addProjectV2ItemById(input: {
+                  projectId: $projectId, contentId: $contentId
+                }) { item { id } }
+              }' \
+            -f projectId="${PROJECT_ID}" \
+            -f contentId="${ISSUE_NODE_ID}" \
+            --jq .data.addProjectV2ItemById.item.id)
+          echo "Project item id: ${ITEM_ID}"
+
+          # 3. Read the Iteration + Sprint field configurations so we
+          #    can pick which iteration covers today.
+          FIELDS_JSON=$(gh api graphql \
+            -f query='
+              query($owner: String!, $num: Int!) {
+                user(login: $owner) {
+                  projectV2(number: $num) {
+                    fields(first: 50) {
+                      nodes {
+                        ... on ProjectV2IterationField {
+                          id
+                          configuration {
+                            iterations { id title startDate duration }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }' \
+            -f owner="${GITHUB_REPOSITORY_OWNER}" \
+            -F num=1)
+
+          # 4. Pick the iteration whose [startDate, startDate+duration)
+          #    covers today's date. Pure bash + jq + GNU date — no
+          #    custom Python deps. Iterations are returned in
+          #    chronological order; we pick the first one that brackets
+          #    today, so if iteration N+1 already exists alongside N (a
+          #    GitHub Projects quirk near boundaries), we pick the live
+          #    one. Today is computed in UTC to match GitHub's
+          #    iteration boundary semantics.
+          TODAY_EPOCH=$(date -u -d "$(date -u +%F)" +%s)
+          echo "Today (UTC): $(date -u +%F)"
+
+          pick_iteration_id() {
+            local field_id="$1"
+            local picked=""
+            while IFS=$'\t' read -r iter_id start_date duration; do
+              [[ -z "$iter_id" ]] && continue
+              local start_epoch end_epoch
+              start_epoch=$(date -u -d "${start_date}" +%s)
+              end_epoch=$((start_epoch + duration * 86400))
+              if (( TODAY_EPOCH >= start_epoch && TODAY_EPOCH < end_epoch )); then
+                picked="$iter_id"
+                break
+              fi
+            done < <(echo "${FIELDS_JSON}" | jq -r \
+              --arg fid "$field_id" '
+                .data.user.projectV2.fields.nodes[]
+                | select(.id == $fid)
+                | .configuration.iterations[]
+                | "\(.id)\t\(.startDate)\t\(.duration)"')
+            printf '%s' "$picked"
+          }
+
+          ITERATION_ID=$(pick_iteration_id "${ITERATION_FIELD_ID}")
+          SPRINT_ID=$(pick_iteration_id "${SPRINT_FIELD_ID}")
+
+          # 5. Apply the iteration assignments. If a field has no
+          #    iteration covering today (last iteration ended, next
+          #    not yet seeded) we skip that field with a warning —
+          #    the card still lands on the board and the maintainer
+          #    can fix the gap by adding the missing iteration via
+          #    the Projects UI. Soft-fail is preferred to hard-fail
+          #    here because the workflow's primary value is filing
+          #    the card; the iteration assignment is a UX
+          #    enhancement.
+          assign_iteration() {
+            local field_id="$1" iter_id="$2" label="$3"
+            if [[ -z "$iter_id" ]]; then
+              echo "::warning::No ${label} iteration covers $(date -u +%F) — skipping ${label} assignment for issue #${ISSUE_NUMBER}"
+              return 0
+            fi
+            gh api graphql \
+              -f query='
+                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $iterationId: String!) {
+                  updateProjectV2ItemFieldValue(input: {
+                    projectId: $projectId,
+                    itemId: $itemId,
+                    fieldId: $fieldId,
+                    value: { iterationId: $iterationId }
+                  }) { projectV2Item { id } }
+                }' \
+              -f projectId="${PROJECT_ID}" \
+              -f itemId="${ITEM_ID}" \
+              -f fieldId="${field_id}" \
+              -f iterationId="${iter_id}" \
+              --jq .data.updateProjectV2ItemFieldValue.projectV2Item.id \
+              >/dev/null
+            echo "Assigned ${label} (${iter_id}) to issue #${ISSUE_NUMBER}"
+          }
+
+          assign_iteration "${ITERATION_FIELD_ID}" "${ITERATION_ID}" Iteration
+          assign_iteration "${SPRINT_FIELD_ID}" "${SPRINT_ID}" Sprint
