@@ -972,14 +972,20 @@ prior offers-list response.
 ```solidity
 function matchOpenSeaOffer(
     uint256 loanId,
-    BidderOrder calldata bidder,        // decoded OrderComponents + sig
+    BidderOrder calldata bidder,        // decoded OrderComponents + sig + extraData
     bytes32 expectedBidderOrderHash,    // dapp-supplied; must match re-derived
     CriteriaResolver[] calldata resolvers, // empty for item offers
-    FeeLeg[] calldata feeLegs,          // freshly re-fetched at click time
     uint256 salt,
     bytes32 conduitKey
 ) external nonReentrant whenNotPaused returns (bytes32 vaipakamOrderHash);
 ```
+
+(Codex round-8 P3 #344 — the round-6 `FeeLeg[] feeLegs` argument
+was dropped after round-7 moved OpenSea/creator fees exclusively
+into `bidder.consideration[1..]`. The Vaipakam counter-order has
+no fee legs; threading a `feeLegs` argument through the dapp hook +
+selector would invite implementations to treat borrower-supplied
+fee legs as part of the atomic order again.)
 
 The `BidderOrder` struct is the Seaport `OrderComponents` shape (offer
 items, consideration items, offerer, zone, orderType, startTime,
@@ -1385,14 +1391,19 @@ Fulfillments — computed on-chain in the facet:
 n_bidderFees = bidder.consideration.length - 1   // positions [1..]
 
 // (A) Bidder offer-item amount → bidder's own fee legs.
-for i in 1..bidder.consideration.length:
+//     i ranges over [1, bidder.consideration.length) — half-open;
+//     when length == 1 (no fee legs) this loop produces zero
+//     fulfillments. (Codex round-8 P3 #344.)
+for i in [1, bidder.consideration.length):
   Fulfillment {
     offerComponents: [{ orderIndex: 0, itemIndex: 0 }],
     considerationComponents: [{ orderIndex: 0, itemIndex: i }],
   }
 
 // (B) Bidder offer-item amount → Vaipakam's three protocol legs.
-for j in 0..3:
+//     j ranges over [0, 3) — half-open; produces exactly 3
+//     fulfillments for items 0, 1, 2 (lender, treasury, borrower).
+for j in [0, 3):
   Fulfillment {
     offerComponents: [{ orderIndex: 0, itemIndex: 0 }],
     considerationComponents: [{ orderIndex: 1, itemIndex: j }],
@@ -1977,8 +1988,12 @@ that worked for Round 5 Block A):
   `SelectorCoverageTest` (×2 sites), `FacetSizeLimitTest`,
   `DeployDiamondIntegrationTest`, `DeployDiamond.s.sol`, `SetupTest`,
   `HelperTest`, `exportFrontendAbis.sh` `FACETS=()`,
-  `packages/contracts/src/abis/index.ts` re-export, indexer event-coverage
-  allowlist for `PrepayListingMatched`.
+  `packages/contracts/src/abis/index.ts` re-export, **and an
+  ACTUAL `chainIndexer.ts` handler for `PrepayListingMatched`**
+  (Codex round-8 P3 #344 — NOT an event-coverage allowlist entry,
+  which would skip ingestion of the new state-change event). The
+  handler writes to `prepay_listings.matched_via = 'atomic'` per
+  D.3.
 
 **D.2 — `apps/agent`.**
 - New `GET /opensea/signed-offer/{chainId}/{contract}/{tokenId}/{orderHash}`
@@ -1987,8 +2002,10 @@ that worked for Round 5 Block A):
   offers-list handler, so the broad `url.pathname.startsWith(
   '/opensea/offers/')` GET branch in `apps/agent/src/index.ts`
   doesn't swallow it). Returns the bidder's signed `OrderComponents`
-  + signature + any `CriteriaResolver[]`. Per-IP rate-limited
-  (60 req/min/IP, same shape as the other agent POSTs).
+  + signature + **SIP-7 SignedZone `extraData` blob** (Codex round-8
+  P3 #344) + any `CriteriaResolver[]` for collection-criteria
+  offers. Per-IP rate-limited (60 req/min/IP, same shape as the
+  other agent POSTs).
 - OpenSea API permission delta documentation — confirms the existing
   API tier returns `signature` on the order envelope (verified for
   the dapp's read-only schedule + listings POST tier; the
@@ -1998,8 +2015,13 @@ that worked for Round 5 Block A):
   (1 RTT per Match-click; negligible).
 
 **D.3 — `apps/defi`.**
-- `useNFTPrepayListing.matchOpenSeaOffer(loanId, offer, freshFeeLegs)`
-  hook method — fetches signed-bundle from agent, calls the new
+- `useNFTPrepayListing.matchOpenSeaOffer(loanId, offer)` hook
+  method (Codex round-8 P3 #344 — no `freshFeeLegs` argument; the
+  bidder's signed Offer carries fees in its consideration, and the
+  dapp verifies them via the §17.10 per-recipient aggregate check
+  BEFORE the hook call — the on-chain selector doesn't need a fee
+  argument). The hook fetches the signed bundle (components +
+  signature + extraData + resolvers) from the agent, calls the new
   selector, fires the #335 indexer breadcrumb POST in the same
   `onReceiptAvailable` callback shape Round 5 PR #343 established.
 - `OpenSeaOffersSection` Match callback rewires to the new method.
