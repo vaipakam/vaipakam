@@ -601,27 +601,45 @@ export function OpenSeaOffersSection({
         setFeeCheck({ slug: offersResult.slug, schedule: freshSchedule });
 
         // #332 — branch on auction mode. Fixed-price (mode 0)
-        // rotates via `updatePrepayListing`; Dutch (mode 1)
-        // rotates via `updatePrepayDutchListing`, collapsing the
-        // decay window to a constant `offer.value` (start ==
-        // end) while preserving the original `auctionEndTime`.
-        // The Dutch order with constant start+end + the same
-        // window keeps Seaport's linear interpolation pinned at
-        // `offer.value` for the remaining window — same effective
-        // fixed-price-at-the-offer for any buyer to fulfill,
-        // without forcing a mode change that surprises the
-        // borrower vs the prior decay path.
+        // rotates in place via `updatePrepayListing`. Dutch
+        // (mode 1) does cancel-then-post-as-fixed-price:
+        // `cancelPrepayListing` removes the live Dutch order,
+        // then `postPrepayListing` creates a fresh fixed-price
+        // order at the offer's value. The two-tx shape is
+        // deliberately chosen over an in-place
+        // `updatePrepayDutchListing` rotation per Codex round-1
+        // P2 review on PR #340 — the in-place rotation collides
+        // with three structural Dutch-side constraints (the
+        // facet's `MIN_AUCTION_WINDOW` 1-hour gate on the
+        // preserved `auctionEndTime`; the
+        // `DutchEndAskBelowProjectedFloorPlusFees` check that
+        // validates the end-ask against the projected-end-time
+        // floor not the current-time floor; the missing
+        // frontend-direct OpenSea publish path on
+        // `updatePrepayDutchListing` that today's autonomous
+        // indexer cron is supposed to cover but isn't fast
+        // enough for the Match flow's bidder-notification
+        // window). Cancel-then-post-fixed-price sidesteps all
+        // three by going through the well-trodden fixed-price
+        // post path that already validates against current-
+        // time floor + publishes through `runOpenSeaPublish`
+        // immediately.
         //
-        // The malformed-Dutch banner short-circuit above
-        // guarantees `auctionEndTime` + `endAskPrice` are
-        // populated by the time this callback fires; the casts
-        // here are safe by construction.
+        // UX trade-off: 2 wallet pop-ups instead of 1. The
+        // `RaceWindowModal` copy + the panel's diagnostics
+        // collapse-section both spell this out to the borrower
+        // before the first click. If the cancel succeeds but
+        // the post fails (user closes wallet between txes /
+        // out of gas / chain reorgs), the borrower ends up with
+        // no live listing — recoverable via re-posting via the
+        // actions card above, but a degraded state worth
+        // surfacing in the modal.
         if (live.auctionMode === 1) {
-          return prepayListing.updatePrepayDutchListing(
+          const cancelled = await prepayListing.cancelPrepayListing(loanId);
+          if (!cancelled) return false;
+          return prepayListing.postPrepayListing(
             loanId,
             offer.value,
-            offer.value,
-            BigInt(live.auctionEndTime as number),
             BigInt(live.salt),
             live.conduitKey as `0x${string}`,
             feeLegs,

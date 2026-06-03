@@ -7,33 +7,52 @@ in Dutch-decay mode (Block B). v1 (PR #328) shipped Match against
 fixed-price listings only; Dutch listings rendered an informational
 banner in the panel slot.
 
-**Match-shape decision: collapse the decay window in place.** When
-the borrower clicks Match on an acceptable offer against a Dutch
-listing, the dapp now calls
-`updatePrepayDutchListing(loanId, offer.value, offer.value,
-live.auctionEndTime, salt, conduit, feeLegs)`. The Dutch order
-with `startAskPrice == endAskPrice` collapses Seaport's linear
-interpolation to a constant value — the order behaves like a
-fixed-price-at-`offer.value` for the rest of the window. The
-**`auctionEndTime` is preserved** rather than reset to a fresh
-short window: the original Dutch order's end was set against
-`loan.gracePeriodEnd` per §15.5, and the same window remains valid
-for the rotated order. The bidder gets the full remaining window
-to fulfill — same race-window UX as fixed-price Match, no harder
-deadline.
+**Match-shape decision: cancel + repost as fixed-price.** When the
+borrower clicks Match on an acceptable offer against a Dutch
+listing, the dapp now runs a two-tx sequence:
+`cancelPrepayListing(loanId)` followed by
+`postPrepayListing(loanId, offer.value, salt, conduit, feeLegs)`.
+The Dutch order is removed; a fresh fixed-price order at the
+offer's value takes its place. This is two wallet pop-ups for
+the borrower vs the single rotation a fixed-price Match takes,
+but it's the only shape that ships clean — see the Codex round-1
+findings on PR #340 for the structural reasons. Briefly:
 
-This is the simplest of the three shapes the Issue #332 card
-enumerated:
+- **In-place rotation via `updatePrepayDutchListing`** trips on
+  three Dutch-side facet constraints — `MIN_AUCTION_WINDOW`
+  (1 hour) rejects the preserved `auctionEndTime` near the
+  original window's end, `DutchEndAskBelowProjectedFloorPlusFees`
+  rejects the end-ask against projected-end-time floor not
+  current-time floor (interest accrual makes the projected floor
+  higher than the panel's classification floor), and the Dutch
+  update path doesn't currently call the
+  frontend-direct `runOpenSeaPublish` — the bidder would wait on
+  the autonomous indexer cron to surface the rotated order on
+  OpenSea, which is too slow for the Match flow's
+  bidder-notification window.
 
-- **Collapse in place** (chosen): one Dutch order rotation, no
-  mode change, no extra on-chain calls.
-- **Decay-to-offer**: keep the Dutch shape, anchor
-  `endAskPrice = offer.value`, let `startAskPrice` decay TO the
-  offer. Rejected — exposes the rotation to a snipe at the higher
+- **Cancel + repost-as-fixed-price** sidesteps all three. The
+  post path uses current-time pctx (no projected-floor concern),
+  doesn't go through `_assertDutchWindow` (no 1-hour gate), and
+  publishes through the existing `runOpenSeaPublish`. The
+  trade-offs the original card's "Cancel + repost" alternative
+  flagged (extra gas, mode change) are real but bounded; the
+  trade-offs the in-place rotation faces are structural and
+  would require extending the Dutch publish path to land
+  cleanly. Deferring that publish-path extension keeps #332's
+  scope tight + leaves the optimal in-place shape as a v1.2
+  follow-up.
+
+The three shapes the Issue #332 card enumerated:
+
+- **Cancel + repost fixed-price** (chosen): two on-chain calls,
+  uses existing post path's well-tested publish + floor logic.
+- **In-place collapse** (rejected during PR review): one tx but
+  three structural Dutch-side constraints to address.
+- **Decay-to-offer** (rejected up front): keep the Dutch shape,
+  anchor `endAskPrice = offer.value`, let `startAskPrice` decay
+  TO the offer. Exposes the rotation to a snipe at the higher
   decay-start price.
-- **Cancel + repost fixed-price**: cleaner semantically; two
-  on-chain calls. Rejected for v1.1 — adds gas + complexity to a
-  Match flow that already accepts the §15.3 race window.
 
 **Malformed-Dutch banner**: a Dutch row whose `auctionEndTime` or
 `endAskPrice` is missing from the indexer (pre-migration row
