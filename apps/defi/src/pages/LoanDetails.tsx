@@ -1253,7 +1253,7 @@ export default function LoanDetails() {
             principalAsset={loan.principalAsset}
             collateralAsset={loan.collateralAsset}
             collateralTokenId={loan.collateralTokenId}
-            collateralAssetType={Number(loan.collateralAssetType)}
+            collateralQuantity={loan.collateralQuantity}
             prepayListing={prepayListing}
           />
         )}

@@ -53,15 +53,17 @@ export interface OpenSeaOffersSectionProps {
   principalAsset: string;
   collateralAsset: string;
   collateralTokenId: bigint;
-  /** Codex round-7 P2 review #328 — needed for the ERC1155
-   *  defer gate. `0` = ERC20 (rejected upstream), `1` = ERC721,
-   *  `2` = ERC1155. The Match flow currently rotates against
-   *  the full vaulted `collateralQuantity`; a one-unit OpenSea
-   *  offer would mark acceptable then revert on-chain at fill
-   *  time. v1 ships ERC721-only; ERC1155 English-match arrives
-   *  in a follow-up with a quantity gate inside the hook's
-   *  normalizer. */
-  collateralAssetType: number;
+  /** #336 — vault's locked NFT quantity. ERC721: always `1n`.
+   *  ERC1155: the on-chain `collateralQuantity` from the loan
+   *  struct. The normalizer enforces an exact-quantity match
+   *  for ERC1155 offers — partial-fill collection offers stay
+   *  on OpenSea but don't appear in the Match panel. Pre-#336
+   *  the panel banner-gated ERC1155 collateral entirely
+   *  (round-7 P2 #328); the gate was lifted along with the
+   *  normalizer's quantity check + the previously-required
+   *  `collateralAssetType` prop was dropped (only `2` mattered
+   *  and that case is now handled inside the hook). */
+  collateralQuantity: bigint;
   prepayListing: UseNFTPrepayListingResult;
 }
 
@@ -71,7 +73,7 @@ export function OpenSeaOffersSection({
   principalAsset,
   collateralAsset,
   collateralTokenId,
-  collateralAssetType,
+  collateralQuantity,
   prepayListing,
 }: OpenSeaOffersSectionProps) {
   const diamond = useDiamondRead();
@@ -253,12 +255,11 @@ export function OpenSeaOffersSection({
     live !== null &&
     live !== undefined &&
     (live.salt == null || live.conduitKey == null);
-  // Codex round-8 P2 review #328 — also include the ERC1155
-  // defer gate in `canMatch`. Without this, the hook mounts +
-  // polls every 30 s for ERC1155 loans even though the UI's
-  // later early-return shows only the v1.1-deferred banner.
-  // `2` is the on-chain `AssetType.ERC1155` enum value.
-  const collateralIsERC1155 = collateralAssetType === 2;
+  // #336 — ERC1155 banner gate removed. The normalizer now
+  // enforces an exact-quantity match against `collateralQuantity`,
+  // so partial-fill offers are filtered at the normalize step
+  // rather than gating the whole panel away. ERC1155 loans now
+  // poll + classify offers identically to ERC721.
   // #332 (final shape, post round-4 pivot to single-tx) — Dutch
   // listings Match via the atomic `updatePrepayDutchListing`
   // rotation rather than cancel+post-as-fixed-price. The 2-tx
@@ -325,7 +326,6 @@ export function OpenSeaOffersSection({
     live !== null &&
     live !== undefined &&
     !listingPreMigration &&
-    !collateralIsERC1155 &&
     !dutchRowIsMalformed &&
     !dutchRunwayTooShort;
 
@@ -368,6 +368,7 @@ export function OpenSeaOffersSection({
     chainId,
     collateralAsset,
     collateralTokenId,
+    collateralQuantity,
     threshold !== null
       ? {
           ...threshold,
@@ -492,29 +493,13 @@ export function OpenSeaOffersSection({
   // `collateralQuantity`; a one-unit OpenSea collection offer
   // would mark acceptable in the threshold check then revert at
   // fill time when the buyer pays the unit-priced offer for the
-  // whole-quantity NFT. v1 hides the surface; the proper
-  // quantity gate (require `offer.consideration[i].amount ==
-  // collateralQuantity` inside `normalize`) is the v1.1
-  // follow-up.
-  if (collateralAssetType === 2) {
-    return (
-      <div
-        id={`opensea-offers-erc1155-deferred-${loanId}`}
-        className="card loan-actions-card"
-      >
-        <div className="action-group">
-          <div className="action-title">OpenSea Offers (English mode)</div>
-          <div className="alert alert-info">
-            English-mode matching against ERC1155 collateral is
-            coming in v1.1. The prepay-listing surface still works
-            (post / update / cancel via the actions card above);
-            only the OpenSea offer-matching shortcut is gated for
-            now.
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // #336 — ERC1155 banner short-circuit removed. The normalizer
+  // enforces an exact-quantity match against `collateralQuantity`,
+  // so partial-fill collection offers are filtered at the
+  // normalize step (stay visible on OpenSea but don't reach the
+  // panel). Full-quantity offers behave exactly like ERC721
+  // offers — Match rotates the canonical order to the offer's
+  // value and the bidder fulfills for the whole locked lot.
 
   if (listingPreMigration) {
     return (
