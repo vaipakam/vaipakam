@@ -258,7 +258,9 @@ export async function handleLoanById(
     if (!row) return jsonResponse({ error: 'not-found' }, 404);
     const listing = await env.DB.prepare(
       `SELECT order_hash, ask_price, conduit, lister,
-              posted_at, updated_at, grace_period_end
+              posted_at, updated_at, grace_period_end,
+              conduit_key, salt, executor,
+              end_ask_price, auction_end_time, auction_mode
        FROM prepay_listings
        WHERE chain_id = ? AND loan_id = ?`,
     )
@@ -271,9 +273,24 @@ export async function handleLoanById(
         posted_at: number;
         updated_at: number;
         grace_period_end: number;
+        conduit_key: string | null;
+        salt: string | null;
+        executor: string | null;
+        end_ask_price: string | null;
+        auction_end_time: number | null;
+        auction_mode: number | null;
       }>();
     const payload: Record<string, unknown> = loanToJson(row);
     if (listing) {
+      // T-086 Round-5 Block C (#309 Mode B) — surface conduit_key /
+      // salt / executor / auction_mode / end_ask_price /
+      // auction_end_time to the dapp. The Offers panel + the
+      // match-offer rotation need these to reconstruct the
+      // canonical order shape + decide which mode's update path
+      // to call. `conduit_key` / `salt` / `executor` were added in
+      // migration 0016 (Block A) but not previously surfaced over
+      // the API; `auction_mode` / `end_ask_price` /
+      // `auction_end_time` came with migration 0018 (Block B).
       payload.prepayListing = {
         orderHash: listing.order_hash,
         askPrice: listing.ask_price,
@@ -282,6 +299,12 @@ export async function handleLoanById(
         postedAt: listing.posted_at,
         updatedAt: listing.updated_at,
         gracePeriodEnd: listing.grace_period_end,
+        conduitKey: listing.conduit_key,
+        salt: listing.salt,
+        executor: listing.executor,
+        endAskPrice: listing.end_ask_price,
+        auctionEndTime: listing.auction_end_time,
+        auctionMode: listing.auction_mode,
       };
     }
     return jsonResponse(payload);

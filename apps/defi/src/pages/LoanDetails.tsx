@@ -49,6 +49,7 @@ import { CardInfo } from "../components/CardInfo";
 import { PeriodicInterestCheckpointCard } from "../components/loanDetails/PeriodicInterestCheckpointCard";
 import { PrepayListingBanner } from "../components/loanDetails/PrepayListingBanner";
 import { PrepayListingActions } from "../components/loanDetails/PrepayListingActions";
+import { OpenSeaOffersSection } from "../components/loanDetails/OpenSeaOffersSection";
 import { useNFTPrepayListing } from "../hooks/useNFTPrepayListing";
 import "./LoanDetails.css";
 
@@ -1217,6 +1218,43 @@ export default function LoanDetails() {
             hasLiveListing={!!prepayListingState}
             pastPrepayGrace={pastPrepayGrace}
             loanIsActive={isActive}
+          />
+        )}
+
+      {/* T-086 Round-5 Block C (#309 Mode B) — OpenSea Offers
+          section for the pragmatic English-auction flow. Mounted
+          right after the prepay-listing actions card so the borrower
+          sees the actions surface AND the live offers panel on the
+          same scroll. Read-side polling lives inside the section
+          itself; matching an offer rotates the canonical Seaport
+          order via `prepayListing.updatePrepayListing`. v1 ships
+          the fee-free path; fee-enforced collection support is a
+          follow-up that re-fetches the OpenSea schedule at match
+          time. */}
+      {/* Codex P2 review #328 — also gate on !pastPrepayGrace.
+          `availability.prepayListing` intentionally stays true
+          post-grace so the borrower can still CANCEL stale
+          listings, but `updatePrepayListing` reverts once
+          `block.timestamp >= gracePeriodEnd`. Showing an enabled
+          Match button after grace would produce guaranteed-to-
+          revert transactions; we drop the offers section entirely
+          + let the borrower use the cancel path inside the
+          actions card. */}
+      {address &&
+        isBorrower &&
+        !prepayListing.loading &&
+        prepayListingState !== null &&
+        availability.prepayListing &&
+        !pastPrepayGrace &&
+        typeof chainId === 'number' && (
+          <OpenSeaOffersSection
+            loanId={BigInt(loanId!)}
+            chainId={chainId}
+            principalAsset={loan.principalAsset}
+            collateralAsset={loan.collateralAsset}
+            collateralTokenId={loan.collateralTokenId}
+            collateralAssetType={Number(loan.collateralAssetType)}
+            prepayListing={prepayListing}
           />
         )}
 

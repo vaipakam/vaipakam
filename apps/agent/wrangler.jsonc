@@ -113,6 +113,19 @@
         "namespace_id": "1006",
         "simple": { "limit": 30, "period": 60 },
       },
+      {
+        // T-086 Round-5 Block C (#309 Mode B) —
+        // GET /opensea/offers/{chainId}/{contract}/{tokenId}.
+        // The dapp polls every ~30s while the loan card is open
+        // so an active borrower can see fresh bids land. 60
+        // requests/minute/IP gives ~2 calls per poll cycle of
+        // headroom (one for the page, one for a background tab)
+        // while still capping a scripted scraper.
+        "name": "OPENSEA_OFFERS_RATELIMIT",
+        "type": "ratelimit",
+        "namespace_id": "1007",
+        "simple": { "limit": 60, "period": 60 },
+      },
     ],
   },
 

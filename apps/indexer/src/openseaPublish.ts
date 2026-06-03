@@ -57,6 +57,10 @@ const OPENSEA_CHAINS: Record<number, { host: string; slug: string }> = {
   8453: { host: 'api.opensea.io', slug: 'base' },
   42161: { host: 'api.opensea.io', slug: 'arbitrum' },
   10: { host: 'api.opensea.io', slug: 'optimism' },
+  // Codex round-15 P2 review #328 — keep this autonomous-publish
+  // chain set aligned with the offers proxy. See the agent's
+  // openseaProxy.ts for the matching note.
+  137: { host: 'api.opensea.io', slug: 'matic' },
 };
 
 const SEAPORT_ABI_FRAGMENT = [

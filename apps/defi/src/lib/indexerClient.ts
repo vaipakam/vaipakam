@@ -188,6 +188,18 @@ export interface IndexedPrepayListing {
   postedAt: number;        // unix seconds (block timestamp)
   updatedAt: number;       // unix seconds (re-sign anchor; equals postedAt until first update)
   gracePeriodEnd: number;  // unix seconds; permissionless cancelExpired becomes callable at strict `>`
+  // T-086 Round-5 Block A (#313) — borrower-controlled sign-time
+  // inputs the indexer persists from the post/update event payload.
+  // Nullable for pre-migration rows where the columns hadn't been
+  // populated yet.
+  conduitKey: string | null; // 0x-prefixed bytes32 — Seaport conduit key (NOT the conduit address)
+  salt: string | null;       // string-uint256 — borrower's per-sign nonce
+  executor: string | null;   // 0x-prefixed lowercase — pinned at post time, survives governance rotation
+  // T-086 Round-5 Block B (#309) — Dutch-decay fields.
+  // `auctionMode == 0` = fixed-price, `1` = Dutch.
+  endAskPrice: string | null;    // string-uint256 — Dutch decay floor; equals askPrice for fixed-price
+  auctionEndTime: number | null; // unix seconds — Dutch Seaport endTime; 0/null for fixed-price
+  auctionMode: number | null;    // 0 = fixed-price, 1 = Dutch
 }
 
 export interface IndexedLoan {
