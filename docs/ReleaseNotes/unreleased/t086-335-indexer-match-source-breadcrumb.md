@@ -68,7 +68,14 @@ options were:
   round-3 P3 #343) so the small JSON POST survives a tab close
   or full-page navigation immediately after the receipt arrives
   — exactly the close-the-tab case the early-fire callback in
-  `useNFTPrepayListing` is trying to cover. Non-2xx responses
+  `useNFTPrepayListing` is trying to cover. Uses a CORS-simple
+  `Content-Type: text/plain;charset=UTF-8` instead of
+  `application/json` (Codex round-4 P3 #343); the Worker's
+  `req.json()` parse is Content-Type-agnostic on Cloudflare, so
+  the parse stays correct, but the request avoids the
+  preflight OPTIONS round-trip that would otherwise need to
+  complete before the POST itself — which `keepalive: true`
+  cannot guarantee during tab close. Non-2xx responses
   (rate-limit 429, D1 500, payload-rejection 400) log a console
   warning before returning `false` (Codex round-3 P3 #343), so
   the failure mode promised by the UI ("failures are logged") is

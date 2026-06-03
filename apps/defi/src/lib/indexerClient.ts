@@ -699,7 +699,17 @@ export async function postPrepayMatchSource(
       `${root}/loans/${loanId.toString()}/prepay-listing/match-source?chainId=${chainId}`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        // Codex round-4 P3 #343 — `text/plain` (a CORS-simple
+        // Content-Type) keeps the breadcrumb POST a "simple
+        // request" so the browser doesn't issue a preflight
+        // OPTIONS before the POST. During tab close / full
+        // navigation the preflight can fail to complete even
+        // with `keepalive: true` set, which would defeat the
+        // round-3 close-the-tab fix. The Worker calls
+        // `await req.json()` to parse the body — that's
+        // Content-Type-agnostic on the Workers runtime, so
+        // the parse stays correct.
+        headers: { "Content-Type": "text/plain;charset=UTF-8" },
         body: JSON.stringify(body),
         // Same TIMEOUT_MS as the reads; the rotation tx already
         // landed, so dragging the UI on this POST is pointless.
