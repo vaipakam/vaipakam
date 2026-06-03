@@ -306,6 +306,13 @@ export function OpenSeaOffersSection({
           // until `recordedLoanId` catches up), so no
           // misleading row reaches the DOM.
           feeBpsTotal: feeCheck.schedule?.totalBps ?? 10_000,
+          // Codex round-2 P2 #339 — bake the per-leg-rounding
+          // floor into the classification so offers below the
+          // smallest-fee row's rounding boundary classify as
+          // below-threshold automatically. Without this, the
+          // Match button would light up for an offer that
+          // `computeFeeLegs` then refuses to settle.
+          minRequiredFeeBps: feeCheck.schedule?.minBps ?? 0,
         }
       : {
           // Codex round-3 P2 review #328 — sentinel: when threshold
@@ -318,6 +325,7 @@ export function OpenSeaOffersSection({
           bufferBps: 0,
           principalAsset,
           feeBpsTotal: 0,
+          minRequiredFeeBps: 0,
         },
     // Codex P2 review #328 — pause polling when there's no live
     // listing OR threshold hasn't resolved OR the listing can't

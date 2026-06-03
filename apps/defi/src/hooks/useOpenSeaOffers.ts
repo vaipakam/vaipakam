@@ -171,6 +171,18 @@ export function useOpenSeaOffers(
      *  itself (the section already polls it for the Match-side
      *  recompute). */
     feeBpsTotal: number;
+    /** #339 round-2 — smallest required-fee basis points. Drives
+     *  the per-leg-rounding floor:
+     *  `floor(askPrice × bps / 10000) ≥ 1` requires
+     *  `askPrice ≥ ceil(10000 / bps)`. Without this, an offer
+     *  above the closed-form threshold but below the rounding
+     *  floor would classify as acceptable, light up the Match
+     *  button, and abort at confirm time because `computeFeeLegs`
+     *  would produce a zero-amount leg (diamond reverts
+     *  `FeeLegInvalidAmount`). Baking the floor into the
+     *  classification keeps the gate closed in the first place.
+     *  `0` on fee-free collections (no rounding constraint). */
+    minRequiredFeeBps: number;
   },
   options: UseOpenSeaOffersOptions = {},
 ): UseOpenSeaOffersResult {
@@ -203,7 +215,22 @@ export function useOpenSeaOffers(
         (threshold.lenderLeg + threshold.treasuryLeg) *
         BigInt(10_000 + threshold.bufferBps);
       const den = BigInt(10_000 - threshold.feeBpsTotal);
-      const min = den === 0n ? 0n : (num + den - 1n) / den;
+      const minByThreshold = den === 0n ? 0n : (num + den - 1n) / den;
+      // #339 round-2 — per-leg-rounding floor. For a required-fee
+      // row with `bps`, the on-chain amount is
+      // `floor(askPrice × bps / 10000)`. For that to be ≥ 1 the
+      // askPrice must be ≥ ceil(10000 / bps). The smallest `bps`
+      // among required rows sets the binding constraint; offers
+      // below this floor would produce a zero-amount leg, which the
+      // diamond rejects. Fee-free schedules pass `minRequiredFeeBps =
+      // 0` and skip this branch entirely.
+      const minByRounding =
+        threshold.minRequiredFeeBps > 0
+          ? (10_000n + BigInt(threshold.minRequiredFeeBps) - 1n) /
+            BigInt(threshold.minRequiredFeeBps)
+          : 0n;
+      const min =
+        minByThreshold > minByRounding ? minByThreshold : minByRounding;
       if (
         paymentToken.toLowerCase() !== threshold.principalAsset.toLowerCase()
       ) {
@@ -223,6 +250,7 @@ export function useOpenSeaOffers(
       threshold.bufferBps,
       threshold.principalAsset,
       threshold.feeBpsTotal,
+      threshold.minRequiredFeeBps,
     ],
   );
 

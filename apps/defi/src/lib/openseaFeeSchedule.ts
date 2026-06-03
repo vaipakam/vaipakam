@@ -60,6 +60,16 @@ export interface ParsedFeeSchedule {
    *  scaling in `useOpenSeaOffers.computeAcceptable`. Zero on
    *  fee-free collections; non-zero on fee-enforced ones. */
   totalBps: number;
+  /** Smallest required-fee basis points across all rows. Drives
+   *  the **per-leg-rounding floor** in `useOpenSeaOffers.computeAcceptable`:
+   *  `floor(askPrice × bps / 10000) ≥ 1` requires
+   *  `askPrice ≥ ceil(10000 / bps)`. The smallest-bps row sets the
+   *  binding constraint; offers below that floor produce a
+   *  zero-amount fee leg, which the diamond rejects with
+   *  `FeeLegInvalidAmount`. Baking this into the classification
+   *  keeps the Match button disabled for such offers. `0` on
+   *  fee-free collections (no rounding constraint). */
+  minBps: number;
 }
 
 /** Shape we accept from the agent proxy. The proxy is a pass-through
@@ -133,27 +143,39 @@ export function parseOpenSeaFeeSchedule(
   body: unknown,
 ): ParsedFeeSchedule | null {
   if (body === null || typeof body !== 'object') {
-    return { fees: [], totalBps: 0 };
+    return { fees: [], totalBps: 0, minBps: 0 };
   }
   const raw = (body as OpenSeaCollectionResponse).fees;
-  if (!Array.isArray(raw)) return { fees: [], totalBps: 0 };
+  if (!Array.isArray(raw)) return { fees: [], totalBps: 0, minBps: 0 };
 
   const fees: ParsedFeeScheduleEntry[] = [];
   let totalBps = 0;
+  let minBps = Number.POSITIVE_INFINITY;
 
   for (const entryRaw of raw) {
     if (entryRaw === null || typeof entryRaw !== 'object') continue;
     const entry = entryRaw as OpenSeaFeeRow;
     if (entry.required !== true) continue;
 
-    // Permissive read: accept either field name; zero / negative /
-    // non-finite → skip the row.
+    // Codex round-2 P2 #339 — a required row whose bps field is
+    // missing / renamed / non-finite / encoded as a string would
+    // silently drop here under the original `continue` branch,
+    // turning a fee-enforced collection into a fake fee-free at
+    // the parser. The rotated order would publish without a leg
+    // OpenSea's marketplace still expects (publish rejection). Fail
+    // closed on the whole schedule; the section's null-handling
+    // surfaces this to the borrower as the same "couldn't validate"
+    // gate a malformed recipient produces.
     const candidateBps = entry.basis_points ?? entry.fee;
     if (typeof candidateBps !== 'number' || !Number.isFinite(candidateBps)) {
-      continue;
+      return null;
     }
     const bps = Math.floor(candidateBps);
-    if (bps <= 0) continue;
+    // Codex round-2 P2 #339 — zero / negative / NaN-floored bps on a
+    // required row is also structurally unsafe (OpenSea named a fee
+    // but didn't give us a workable amount). Same fail-closed
+    // posture.
+    if (bps <= 0) return null;
 
     // Codex round-1 P2 #339 — a required row with positive bps but
     // missing / malformed recipient signals OpenSea WILL demand
@@ -169,6 +191,7 @@ export function parseOpenSeaFeeSchedule(
 
     fees.push({ recipient, basisPoints: bps });
     totalBps += bps;
+    if (bps < minBps) minBps = bps;
   }
 
   // Codex round-1 P2 #339 — schedules with more required-fee
@@ -178,7 +201,11 @@ export function parseOpenSeaFeeSchedule(
   // hit a guaranteed-to-revert tx. Fail closed at parse time.
   if (fees.length > MAX_FEE_LEGS) return null;
 
-  return { fees, totalBps };
+  return {
+    fees,
+    totalBps,
+    minBps: Number.isFinite(minBps) ? minBps : 0,
+  };
 }
 
 /**
