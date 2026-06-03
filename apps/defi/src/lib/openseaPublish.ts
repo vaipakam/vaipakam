@@ -21,6 +21,7 @@ import {
   buildPrepayOrderComponents,
   openSeaAssetUrl,
   SEAPORT_VERIFY_ABI,
+  type PrepayOrderInput,
   type SeaportOrderComponents,
 } from '@vaipakam/lib/prepayOrderShape';
 
@@ -64,6 +65,24 @@ export interface OpenSeaPublishInput {
     startAmount: bigint;
     endAmount: bigint;
   }>;
+  /** T-086 Round-5 Block C v1.1 (#332) — Dutch decay parameters
+   *  for the canonical-order rebuild. When set, this helper also
+   *  reads `getPrepayContext(loanId, dutch.auctionEndTime)` to
+   *  resolve the projected lender + treasury legs (matching the
+   *  facet's `LibPrepayOrder.buildAndHashDutch` flow) and threads
+   *  them into `buildPrepayOrderComponents`'s `dutch` field. The
+   *  Seaport `OrderComponents.endTime` then becomes
+   *  `auctionEndTime` rather than `graceEnd`, and the consideration
+   *  legs Seaport interpolates between span the Dutch decay
+   *  (start: offer.value-derived; end: same as the fixed-price
+   *  shape applied at the projected legs).
+   *
+   *  Omitting this field (default) keeps the helper on the
+   *  fixed-price + Block A multi-leg shape. */
+  dutch?: {
+    endAskPrice: bigint;
+    auctionEndTime: bigint;
+  };
 }
 
 /**
@@ -143,7 +162,28 @@ export async function publishPrepayListingToOpenSea(
       args: [ctx.borrowerVault],
     }) as bigint;
 
-    // 4. Build canonical components. Field order, item ordering,
+    // 4. For Dutch listings — resolve the projected lender +
+    //    treasury legs at `auctionEndTime` (matching what the
+    //    facet's `LibPrepayOrder.buildAndHashDutch` reads via
+    //    `getPrepayContext(loanId, auctionEndTime)`).
+    let dutchInput: PrepayOrderInput['dutch'] | undefined;
+    if (input.dutch) {
+      const projectedCtx = await readGetPrepayContext(
+        publicClient,
+        diamondAddress,
+        loanId,
+        input.dutch.auctionEndTime,
+      );
+      dutchInput = {
+        startAskPrice: askPrice,
+        endAskPrice: input.dutch.endAskPrice,
+        projectedLenderLeg: projectedCtx.lenderLeg,
+        projectedTreasuryLeg: projectedCtx.treasuryLeg,
+        auctionEndTime: input.dutch.auctionEndTime,
+      };
+    }
+
+    // 5. Build canonical components. Field order, item ordering,
     //    and units must mirror `LibPrepayOrder._components` exactly.
     const components = buildPrepayOrderComponents({
       vault: ctx.borrowerVault,
@@ -168,6 +208,7 @@ export async function publishPrepayListingToOpenSea(
       salt,
       conduitKey,
       counter,
+      dutch: dutchInput,
     });
 
     // 5. Defensive — verify JS-recomputed orderHash matches the

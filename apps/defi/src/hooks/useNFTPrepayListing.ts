@@ -376,6 +376,12 @@ export function useNFTPrepayListing(
       // collections. Empty array for fee-free posts collapses to the
       // Round-4 3-leg shape unchanged.
       feeLegs: ReadonlyArray<FeeLegInput>,
+      // T-086 Round-5 Block C v1.1 (#332) — Dutch decay parameters.
+      // When set, the publish helper rebuilds the Dutch shape via
+      // `LibPrepayOrder.buildAndHashDutch` (Seaport `endTime ==
+      // auctionEndTime`, projected legs at `auctionEndTime`).
+      // Omitted on fixed-price posts/updates and on cancel paths.
+      dutch?: { endAskPrice: bigint; auctionEndTime: bigint },
     ): Promise<void> => {
       if (!chain.diamondAddress) return;
       let agentOrigin: string | null = null;
@@ -396,6 +402,7 @@ export function useNFTPrepayListing(
         salt,
         conduitKey,
         feeLegs,
+        dutch,
       });
       if (!result.published) {
         // eslint-disable-next-line no-console
@@ -465,13 +472,15 @@ export function useNFTPrepayListing(
   );
 
   // T-086 Round-5 Block B (#309) — Dutch posting + update entries.
-  // v1 ships with NO frontend-direct OpenSea publish for the Dutch
-  // path — the indexer's autonomous `PrepayListingPosted` /
-  // `PrepayListingUpdated` handler does the OpenSea push using the
-  // event's Dutch fields (`endAskPrice`, `auctionEndTime`, `mode`).
-  // A future iteration can mirror the fixed-price's
+  // T-086 Round-5 Block C v1.1 (#332) — frontend-direct OpenSea
+  // publish ON for the Dutch path. Original Block B comment said
+  // "A future iteration can mirror the fixed-price's
   // `runOpenSeaPublish` here; for now the autonomous path covers
-  // both modes uniformly.
+  // both modes uniformly" — that "future iteration" landed in
+  // PR #340 because the English-match-on-Dutch flow needs the
+  // rotated order published immediately for the bidder to fulfill
+  // within the race window (the autonomous indexer cron's
+  // ~10-30 s latency is too slow for that surface).
   const postPrepayDutchListing = useCallback(
     async (
       lid: bigint,
@@ -488,9 +497,15 @@ export function useNFTPrepayListing(
           salt, conduitKey, feeLegs,
         ),
       );
+      if (r.success && r.receipt) {
+        await runOpenSeaPublish(r.receipt, lid, startAskPrice, salt, conduitKey, feeLegs, {
+          endAskPrice,
+          auctionEndTime,
+        });
+      }
       return r.success;
     },
-    [diamond, runWrite],
+    [diamond, runWrite, runOpenSeaPublish],
   );
 
   const updatePrepayDutchListing = useCallback(
@@ -509,9 +524,15 @@ export function useNFTPrepayListing(
           newSalt, newConduitKey, feeLegs,
         ),
       );
+      if (r.success && r.receipt) {
+        await runOpenSeaPublish(r.receipt, lid, newStartAskPrice, newSalt, newConduitKey, feeLegs, {
+          endAskPrice: newEndAskPrice,
+          auctionEndTime: newAuctionEndTime,
+        });
+      }
       return r.success;
     },
-    [diamond, runWrite],
+    [diamond, runWrite, runOpenSeaPublish],
   );
 
   return {
