@@ -69,6 +69,7 @@ import { handle0xQuote, handle1inchQuote } from './quoteProxy';
 import { handleOpenSeaListingPost } from './openseaProxy';
 import { handleOpenSeaCollection } from './openseaCollectionProxy';
 import { handleOpenSeaOffers } from './openseaOffersProxy';
+import { handleOpenSeaSignedOffer } from './openseaSignedOfferProxy';
 import { handleFeeRecipientPreflight } from './feeRecipientPreflight';
 import { handleDiagRecord, pruneOldDiagErrors } from './diagRecord';
 import {
@@ -264,6 +265,24 @@ export default {
       req.method === 'GET'
     ) {
       return handleOpenSeaOffers(
+        req,
+        resolved,
+        resolveAllowedOrigin(req, resolved),
+      );
+    }
+    // T-086 Round-6 / Block D (#345) — OpenSea signed-offer fetch.
+    // Hit by the dapp at Match-click time to retrieve the bidder's
+    // signed `OrderComponents + signature + SIP-7 extraData +
+    // CriteriaResolver[]` payload for atomic match-rotation via
+    // `NFTPrepayListingAtomicFacet.matchOpenSeaOffer`. Distinct
+    // top-level prefix so the broader `/opensea/offers/` GET
+    // branch above doesn't accidentally swallow it (design doc
+    // §17.3 + §17.18 D.2).
+    if (
+      url.pathname.startsWith('/opensea/signed-offer/') &&
+      req.method === 'GET'
+    ) {
+      return handleOpenSeaSignedOffer(
         req,
         resolved,
         resolveAllowedOrigin(req, resolved),

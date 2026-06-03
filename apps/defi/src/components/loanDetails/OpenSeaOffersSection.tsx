@@ -715,37 +715,34 @@ export function OpenSeaOffersSection({
         // execution either commits or reverts the whole call.
         // On revert, the live listing stays unchanged (whether
         // Dutch or fixed-price).
-        // #335 — match-source breadcrumb: which OpenSea offer
-        // triggered this rotation. The hook fires the indexer
-        // POST best-effort after the rotation tx confirms;
-        // failures here are logged but don't fail the rotation.
-        const matchSource = {
-          orderHash: offer.orderHash,
-          bidder: offer.bidder,
-        };
-
-        if (live.auctionMode === 1) {
-          if (live.auctionEndTime == null) return false;
-          return prepayListing.updatePrepayDutchListing(
-            loanId,
-            offer.value,
-            offer.value,
-            BigInt(live.auctionEndTime),
-            BigInt(live.salt),
-            live.conduitKey as `0x${string}`,
-            feeLegs,
-            matchSource,
-          );
-        }
-
-        return prepayListing.updatePrepayListing(
-          loanId,
-          offer.value,
-          BigInt(live.salt),
-          live.conduitKey as `0x${string}`,
-          feeLegs,
-          matchSource,
-        );
+        // T-086 Round-6 / Block D (#345) — atomic match-rotation
+        // via Seaport `matchAdvancedOrders`. Replaces the v1 two-
+        // step Match flow (`updatePrepayListing(newAsk = offer_value)`
+        // + bidder's separate `Seaport.fulfillOrder`) with a single
+        // atomic tx — no race window for a third-party snipe.
+        //
+        // `feeLegs` is computed above as a dapp-side safety check
+        // (the borrower shouldn't be allowed to click Match on an
+        // offer that wouldn't settle); the on-chain atomic facet
+        // does NOT take a feeLegs argument — the bidder's signed
+        // Offer carries the OpenSea / creator fees in ITS
+        // consideration array, and the facet asserts the sum
+        // invariant directly (Round-6 design doc §17.7 + §17.10).
+        //
+        // The atomic path does NOT fire the #335 dapp-side
+        // breadcrumb POST — the indexer's `PrepayListingMatched`
+        // event handler writes it from on-chain (race-window
+        // prevention per §17.13). The v1 `live.auctionMode` /
+        // `live.salt` / `live.conduitKey` are no longer threaded
+        // through (the atomic facet picks its own salt + conduit
+        // key for the freshly-constructed counter-order).
+        void feeLegs; // computed for the dapp-side fee-schedule guard above
+        return prepayListing.matchOpenSeaOffer(loanId, {
+          orderHash: offer.orderHash as `0x${string}`,
+          bidder: offer.bidder as `0x${string}`,
+          collateralContract: collateralAsset as `0x${string}`,
+          collateralTokenId,
+        });
       }}
     />
   );

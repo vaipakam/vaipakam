@@ -147,6 +147,25 @@
         "namespace_id": "1008",
         "simple": { "limit": 3000, "period": 60 },
       },
+      {
+        // T-086 Round-6 / Block D (#345) — per-IP rate-limit on
+        // the GET /opensea/signed-offer/{chainId}/{contract}/{tokenId}/
+        // {orderHash} endpoint. Hit by the dapp at Match-click
+        // time to fetch the bidder's signed OpenSea Offer
+        // (components + signature + SIP-7 extraData + resolvers)
+        // for atomic match-rotation via
+        // NFTPrepayListingAtomicFacet.matchOpenSeaOffer. One RTT
+        // per inbound (no pagination), so per-IP gates aggregate
+        // upstream load directly — no separate upstream binding
+        // needed. 60 req/min/IP matches the per-IP shape of the
+        // other agent proxies and is generous for the real
+        // Match-click cadence (1 fetch per click, typically 1-2
+        // clicks per loan).
+        "name": "OPENSEA_SIGNED_OFFER_RATELIMIT",
+        "type": "ratelimit",
+        "namespace_id": "1009",
+        "simple": { "limit": 60, "period": 60 },
+      },
     ],
   },
 
