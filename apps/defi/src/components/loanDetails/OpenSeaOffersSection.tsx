@@ -17,12 +17,22 @@
  *      `prepayListing.updatePrepayListing` to rotate the
  *      canonical Seaport order to the offer's price.
  *
- * v1 ships the **fee-free** path: empty `feeLegs[]` passed to
- * `updatePrepayListing` + the threshold collapses to the
- * protocol-leg buffer. Fee-enforced collection support is a
- * follow-up that re-fetches the OpenSea collection schedule at
- * match time + threads recomputed `FeeLeg[]` (per §15.3 line ~310's
- * "re-fetch on every match-offer click" rule).
+ * Block C-on-fee-enforced (#331, this commit) extends the match
+ * surface to fee-enforced collections. The section polls
+ * `/opensea/collection/{slug}` once per loan, parses the response
+ * into a typed schedule, and uses it for two things:
+ *
+ *   1. Threshold scaling in `useOpenSeaOffers` so offers are
+ *      classified acceptable against the post-fee borrower
+ *      remainder, not the gross.
+ *   2. At Match-click, a confirm-time re-fetch + `computeFeeLegs`
+ *      to build the on-chain `FeeLegInput[]` for
+ *      `updatePrepayListing`'s `feeLegs` calldata (per §15.3 step
+ *      5's "re-fetch on every match-offer click" rule).
+ *
+ * Fee-free collections still work the same way — `totalBps === 0`
+ * collapses the scaling to the v1 baseline and `computeFeeLegs`
+ * returns `[]`.
  */
 
 import { useEffect, useState } from 'react';
@@ -31,6 +41,11 @@ import { useDiamondRead } from '../../contracts/useDiamond';
 import { useTokenMeta } from '../../lib/tokenMeta';
 import { OpenSeaOffersPanel } from './OpenSeaOffersPanel';
 import { useOpenSeaOffers } from '../../hooks/useOpenSeaOffers';
+import {
+  parseOpenSeaFeeSchedule,
+  computeFeeLegs,
+  type ParsedFeeSchedule,
+} from '../../lib/openseaFeeSchedule';
 
 export interface OpenSeaOffersSectionProps {
   loanId: bigint;
@@ -225,114 +240,105 @@ export function OpenSeaOffersSection({
     !listingIsDutch &&
     !collateralIsERC1155;
 
+  // #331 — fee-schedule cache (replaces round-5's tri-state
+  // enforcement gate). The dapp polls `/opensea/collection/{slug}`
+  // once per loan and parses the response into `ParsedFeeSchedule`.
+  // The schedule's `totalBps` then drives the threshold scaling
+  // inside `useOpenSeaOffers` so offers are classified acceptable
+  // against the post-fee borrower remainder, and `computeFeeLegs`
+  // turns the same schedule into on-chain `FeeLegInput[]` at
+  // confirm time.
+  //
+  // **Slug-paired state** (Codex round-7 P2 #328 — preserved):
+  // `feeCheck.slug` records which slug the cached `schedule` was
+  // fetched FOR. The slug-change effect below resets the cache on
+  // navigation between loans, and the post-hook derivation pairs
+  // `feeCheck.slug` against the offers feed's slug before unlocking
+  // the Match flow. That closes the one-frame window where a
+  // navigation re-render could surface the previous loan's
+  // schedule against the new loan's offers.
+  //
+  // **Fee-enforced is no longer a banner.** Round-5's banner
+  // short-circuit on fee-enforced collections is removed; the
+  // panel now renders the offers list with feeBpsTotal-scaled
+  // threshold and uses the schedule at Match time to thread fresh
+  // `FeeLegInput[]` through `updatePrepayListing`.
+  const [feeCheck, setFeeCheck] = useState<{
+    slug: string | null;
+    schedule: ParsedFeeSchedule | null;
+  }>({ slug: null, schedule: null });
+
+  // OFFERS RESULT (read pass) — feeBpsTotal scales the
+  // acceptability classification on fee-enforced collections. The
+  // hook is also paused until the schedule has been fetched (any
+  // flavor — totalBps=0 fee-free counts) so offers don't briefly
+  // render against the fee-free threshold on a collection that
+  // turns out to be fee-enforced.
   const offersResult = useOpenSeaOffers(
     agentOrigin,
     chainId,
     collateralAsset,
     collateralTokenId,
-    threshold ?? {
-      // Codex round-3 P2 review #328 — sentinel: when threshold
-      // hasn't resolved, mark every offer unacceptable by setting
-      // `lenderLeg` to the uint256 max. The hook is also paused
-      // in this state (so polling doesn't fire), and `refresh()`
-      // is a no-op while paused (so the panel's "Refresh now"
-      // button can't manually surface offers either) — this
-      // sentinel is defense-in-depth in case a future refactor
-      // reads `threshold` without honouring the pause flag.
-      lenderLeg:
-        0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffn,
-      treasuryLeg: 0n,
-      bufferBps: 0,
-      principalAsset,
-    },
+    threshold !== null
+      ? { ...threshold, feeBpsTotal: feeCheck.schedule?.totalBps ?? 0 }
+      : {
+          // Codex round-3 P2 review #328 — sentinel: when threshold
+          // hasn't resolved, mark every offer unacceptable by setting
+          // `lenderLeg` to the uint256 max. Defense-in-depth alongside
+          // the pause flag.
+          lenderLeg:
+            0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffn,
+          treasuryLeg: 0n,
+          bufferBps: 0,
+          principalAsset,
+          feeBpsTotal: 0,
+        },
     // Codex P2 review #328 — pause polling when there's no live
     // listing OR threshold hasn't resolved OR the listing can't
-    // be matched (Dutch / pre-migration). Without this, the loan
-    // card's mounting gate keeps the section visible (with an
-    // informational banner) but the hook keeps burning the shared
-    // OpenSea quota every 30 s on rows the UI will never render.
-    { paused: threshold === null || !canMatch },
+    // be matched (Dutch / pre-migration). #331 — ALSO pause until
+    // the fee schedule has been fetched (`schedule !== null`);
+    // the section's later `feeScheduleMatchesSlug` post-hook
+    // derivation gates the Match flow on the slug pairing.
+    {
+      paused:
+        threshold === null ||
+        !canMatch ||
+        feeCheck.schedule === null,
+    },
   );
 
-  // Codex round-5 P2 review #328 — fee-enforced collection gate.
-  // The Match path passes empty `feeLegs[]` to
-  // `updatePrepayListing`; per design §15.3 step 5 + Round-5.1
-  // errata, fee-enforced collections need the dapp to re-derive
-  // `FeeLeg[]` from a FRESH OpenSea collection-fees response at
-  // match time. v1 ships fee-free only; we gate at the section
-  // by fetching `/opensea/collection/{slug}` once per loan and
-  // showing a v1.1-deferred banner when any required fee > 0.
-  //
-  // **Tri-state**: `'unknown'` = check not run yet (or no slug
-  // available, or fetch failed), `'fee-free'` = confirmed safe
-  // to Match, `'fee-enforced'` = confirmed needs v1.1 surface.
-  // Codex round-6 P2 review #328: the Match surface stays
-  // disabled until the check resolves positively to `fee-free`
-  // for the CURRENT slug. Otherwise a borrower could click
-  // Match in the in-flight window AND a stale `fee-free` from
-  // a previous loan could carry over (the `slug` change resets
-  // back to `unknown` via the effect's slug dependency).
-  type FeeEnforcement = 'unknown' | 'fee-free' | 'fee-enforced';
-  // Codex round-7 P2 review #328 — pair the enforcement verdict
-  // with the slug it was computed against. The derived
-  // `feeEnforcement` only resolves to `'fee-free'` (Match
-  // unlocked) when the recorded slug strictly equals the CURRENT
-  // `offersResult.slug`. This closes the one-painted-frame
-  // window where a navigation-between-loans render could see
-  // the previous loan's `'fee-free'` state before the
-  // slug-change effect resets it.
-  const [feeCheck, setFeeCheck] = useState<{
-    slug: string | null;
-    enforcement: FeeEnforcement;
-  }>({ slug: null, enforcement: 'unknown' });
-  const feeEnforcement: FeeEnforcement =
-    feeCheck.slug !== null && feeCheck.slug === offersResult.slug
-      ? feeCheck.enforcement
-      : 'unknown';
+  // POST-HOOK pairing — the schedule cache must record the slug the
+  // hook is currently surfacing offers for. On loan navigation the
+  // effect resets the cache to {slug: null, schedule: null} before
+  // the next fetch lands; until that re-fetch completes for the new
+  // slug, the Match flow stays gated.
+  const feeScheduleMatchesSlug =
+    feeCheck.slug !== null &&
+    feeCheck.slug === offersResult.slug &&
+    feeCheck.schedule !== null;
+  const effectiveFeeSchedule: ParsedFeeSchedule | null =
+    feeScheduleMatchesSlug ? feeCheck.schedule : null;
+
   useEffect(() => {
-    // Reset on slug change so the next-pass check runs against
-    // the new collection. The render-time derivation above is
-    // the synchronous safety against the effect-runs-after-paint
-    // race.
-    setFeeCheck({ slug: null, enforcement: 'unknown' });
+    // Reset on slug change so the next-pass fetch runs against
+    // the new collection.
+    setFeeCheck({ slug: null, schedule: null });
     if (!agentOrigin || !offersResult.slug) return;
     const slugForThisFetch = offersResult.slug;
     let cancelled = false;
     fetch(
       `${agentOrigin}/opensea/collection/${encodeURIComponent(slugForThisFetch)}?chainId=${chainId}`,
     )
-      .then(r => (r.ok ? r.json() : null))
-      .then(body => {
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
         if (cancelled || body === null) return;
-        // Codex review #328 rounds 7 + 8 disagreed on the field
-        // name (`basis_points` vs `fee`) — the agent proxy
-        // passes OpenSea's collection response through
-        // unchanged, and OpenSea has shipped BOTH shapes at
-        // different times. Be permissive: a required fee row
-        // with EITHER a non-zero `basis_points` OR a non-zero
-        // `fee` field classifies the collection as
-        // `fee-enforced`. Same fail-closed posture either way —
-        // any positive required fee gates the Match surface.
-        const fees = ((body as { fees?: unknown[] }).fees ?? []) as Array<{
-          basis_points?: number;
-          fee?: number;
-          required?: boolean;
-        }>;
-        const enforced = fees.some(
-          f =>
-            f.required === true &&
-            ((typeof f.basis_points === 'number' && f.basis_points > 0) ||
-              (typeof f.fee === 'number' && f.fee > 0)),
-        );
-        setFeeCheck({
-          slug: slugForThisFetch,
-          enforcement: enforced ? 'fee-enforced' : 'fee-free',
-        });
+        const schedule = parseOpenSeaFeeSchedule(body);
+        setFeeCheck({ slug: slugForThisFetch, schedule });
       })
       .catch(() => {
-        // Transient failure — leave the gate at `unknown` so
-        // Match stays disabled rather than incorrectly flipping
-        // to fee-free without a confirmed schedule.
+        // Transient failure — leave the cache at null so Match
+        // stays disabled rather than incorrectly settling against
+        // an empty (= fee-free) default.
       });
     return () => {
       cancelled = true;
@@ -373,28 +379,6 @@ export function OpenSeaOffersSection({
             (post / update / cancel via the actions card above);
             only the OpenSea offer-matching shortcut is gated for
             now.
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (feeEnforcement === 'fee-enforced') {
-    return (
-      <div
-        id={`opensea-offers-fee-enforced-${loanId}`}
-        className="card loan-actions-card"
-      >
-        <div className="action-group">
-          <div className="action-title">OpenSea Offers (English mode)</div>
-          <div className="alert alert-info">
-            This collection enforces creator or marketplace fees on
-            every fill. Matching against a fee-enforced collection
-            needs the dapp to re-derive the fee schedule at match
-            time, which is coming in v1.1. For now, offers are
-            visible on OpenSea's marketplace UI; matching from the
-            dapp is disabled to prevent guaranteed-to-revert
-            rotations.
           </div>
         </div>
       </div>
@@ -456,97 +440,107 @@ export function OpenSeaOffersSection({
       loanId={loanId}
       offersResult={offersResult}
       hasActiveListing={live !== null && live !== undefined}
-      // Codex round-6 P2 review #328 — block Match clicks until
-      // the fee gate has POSITIVELY resolved to `fee-free` for
-      // the current slug. During the in-flight `unknown` window
-      // (and on transient fetch failures that leave the gate at
-      // `unknown`), Match stays disabled — the disabled-button
-      // state piggybacks on `actionLoading` to keep the panel's
-      // disable-buttons logic in one place.
+      // #331 — block Match clicks until the schedule has been
+      // fetched for the CURRENT slug. The disabled-button state
+      // piggybacks on `actionLoading` to keep the panel's
+      // disable-buttons logic in one place. `effectiveFeeSchedule`
+      // resolves non-null only when the cached slug matches the
+      // offers feed's slug; until then the gate stays closed.
       actionLoading={
-        prepayListing.actionLoading || feeEnforcement !== 'fee-free'
+        prepayListing.actionLoading || effectiveFeeSchedule === null
       }
       decimals={decimals}
       onMatchOffer={async (offer) => {
-        // v1 ships fee-free: empty `feeLegs[]` rotation. The borrower
-        // is taking the offer's value as the new ask; the existing
-        // listing's salt + conduitKey are preserved through the
-        // updatePrepayListing call. The bidder is told out-of-band
-        // before the borrower clicks Match (per §15.3's race-window
-        // warning, rendered inside the panel's confirm modal).
-        // The pre-migration short-circuit above guarantees `live`
-        // is non-null + both fields are populated by the time this
-        // callback fires.
+        // The borrower is taking the offer's value as the new ask;
+        // the existing listing's salt + conduitKey are preserved
+        // through the updatePrepayListing call. The bidder is told
+        // out-of-band before the borrower clicks Match (per §15.3's
+        // race-window warning, rendered inside the panel's confirm
+        // modal). The pre-migration short-circuit above guarantees
+        // `live` is non-null + both fields are populated by the
+        // time this callback fires.
         if (!live || live.salt == null || live.conduitKey == null) {
           return false;
         }
-        // Codex round-13 P2 review #328 — re-check the
-        // collection's fee schedule at confirm time. The
-        // one-time fee-free check on section mount can stale
-        // out if OpenSea publishes a fee-schedule change while
-        // the borrower watches the panel; a subsequent Match
-        // would rotate the listing with empty `feeLegs[]` and
-        // OpenSea would reject the publish (the on-chain
-        // rotation succeeds; the bidder can't discover the
-        // updated listing). Refresh + re-evaluate before the
-        // rotation tx fires.
-        if (offersResult.slug) {
-          let rechecked = false;
-          try {
-            const recheck = await fetch(
-              `${agentOrigin}/opensea/collection/${encodeURIComponent(offersResult.slug)}?chainId=${chainId}`,
-            );
-            if (recheck.ok) {
-              const body = (await recheck.json()) as { fees?: unknown[] };
-              const fees = (body.fees ?? []) as Array<{
-                basis_points?: number;
-                fee?: number;
-                required?: boolean;
-              }>;
-              const stillFeeEnforced = fees.some(
-                f =>
-                  f.required === true &&
-                  ((typeof f.basis_points === 'number' && f.basis_points > 0) ||
-                    (typeof f.fee === 'number' && f.fee > 0)),
-              );
-              if (stillFeeEnforced) {
-                // Invalidate the cached fee-free verdict; the
-                // section's banner will render on next paint.
-                setFeeCheck({
-                  slug: offersResult.slug,
-                  enforcement: 'fee-enforced',
-                });
-                return false;
-              }
-              rechecked = true;
-            }
-            // Non-2xx falls through to the fail-closed branch
-            // below.
-          } catch {
-            // Network error → fail closed.
+        if (!offersResult.slug) return false;
+
+        // #331 — re-fetch the fee schedule at confirm time per
+        // §15.3 step 5. The panel-mount schedule can stale out if
+        // OpenSea publishes a fee-schedule change while the
+        // borrower watches the panel; a stale schedule could
+        // under-compute the now-required fee amount, causing
+        // OpenSea-side rejection at re-publish (the on-chain
+        // rotation succeeds, but the bidder can't discover the
+        // updated listing). Recomputing on every Match click trades
+        // one extra RTT for correctness.
+        let freshSchedule: ParsedFeeSchedule | null = null;
+        try {
+          const recheck = await fetch(
+            `${agentOrigin}/opensea/collection/${encodeURIComponent(offersResult.slug)}?chainId=${chainId}`,
+          );
+          if (recheck.ok) {
+            freshSchedule = parseOpenSeaFeeSchedule(await recheck.json());
           }
-          // Codex round-16 P2 review #328 — fail closed when
-          // the confirm-time fee recheck didn't return a
-          // positive `fee-free` verdict. Without that
-          // confirmation we can't be sure OpenSea will accept
-          // the rotated listing's publish (the on-chain
-          // rotation would succeed; the bidder couldn't
-          // discover via marketplace). Invalidate cached
-          // verdict + abort the Match.
-          if (!rechecked) {
-            setFeeCheck({
-              slug: offersResult.slug,
-              enforcement: 'unknown',
-            });
+        } catch {
+          // Network error → freshSchedule stays null → fail closed below.
+        }
+        if (freshSchedule === null) {
+          // Couldn't validate the schedule. Invalidate the cached
+          // verdict so the gate closes on next paint + abort the
+          // Match. The borrower retries; transient failures resolve
+          // on the next click.
+          setFeeCheck({ slug: offersResult.slug, schedule: null });
+          return false;
+        }
+
+        // If the fresh schedule's totalBps changed materially since
+        // the panel-mount cache, the offer's classification could
+        // flip from acceptable to below-threshold under the new
+        // scaling. Re-check the closed-form threshold against the
+        // FRESH `feeBpsTotal` before committing to the rotation.
+        if (
+          freshSchedule.totalBps >=
+          10_000 - 1 /* leave at least 1 bp for protocol legs */
+        ) {
+          // Degenerate (fees consume the entire price). Refresh the
+          // cache + abort; the panel renders an unmatchable state.
+          setFeeCheck({ slug: offersResult.slug, schedule: freshSchedule });
+          return false;
+        }
+        if (threshold !== null) {
+          const num =
+            (threshold.lenderLeg + threshold.treasuryLeg) *
+            BigInt(10_000 + threshold.bufferBps);
+          const den = BigInt(10_000 - freshSchedule.totalBps);
+          const minAfterFresh = den === 0n ? 0n : (num + den - 1n) / den;
+          if (offer.value < minAfterFresh) {
+            // Fee schedule got more aggressive between panel-mount
+            // and click; the offer is no longer acceptable under
+            // the new scaling. Refresh the cache so the panel
+            // re-renders with the offer correctly greyed out, then
+            // abort the Match.
+            setFeeCheck({ slug: offersResult.slug, schedule: freshSchedule });
             return false;
           }
         }
+
+        // Build on-chain feeLegs from the FRESH schedule + offer's
+        // value. Fee-free collections produce an empty array, which
+        // matches the v1 Block C-on-fee-free path exactly.
+        const feeLegs = computeFeeLegs(freshSchedule, offer.value);
+
+        // Refresh the cache with the schedule we actually used —
+        // keeps the section's threshold compare consistent on the
+        // next render (e.g. if Match was attempted on the borderline
+        // case but the tx then reverts and the user retries).
+        setFeeCheck({ slug: offersResult.slug, schedule: freshSchedule });
+
         return prepayListing.updatePrepayListing(
           loanId,
           offer.value,
           BigInt(live.salt),
           live.conduitKey as `0x${string}`,
-          [],
+          feeLegs,
         );
       }}
     />
