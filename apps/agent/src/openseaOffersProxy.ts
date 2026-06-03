@@ -93,6 +93,22 @@ export async function handleOpenSeaOffers(
   }
   // Per-IP rate-limit BEFORE the upstream calls, so a scripted
   // iterator can't burn the OpenSea quota even on rejected inputs.
+  // #334 Codex round-1 P2 — global upstream rate-limit keyed by
+  // a constant. This caps aggregate calls to the shared
+  // `OPENSEA_API_KEY` across all caller IPs (the per-IP gate
+  // below caps each caller individually but doesn't bound the
+  // sum). When the binding isn't provisioned (operator hasn't
+  // added it yet) this is a no-op; per-IP gating still applies.
+  if (
+    env.OPENSEA_OFFERS_UPSTREAM_RATELIMIT &&
+    !(
+      await env.OPENSEA_OFFERS_UPSTREAM_RATELIMIT.limit({
+        key: 'opensea-offers-upstream',
+      })
+    ).success
+  ) {
+    return jsonResponse({ error: 'upstream-quota' }, 429, resolvedOrigin);
+  }
   if (!(await checkRateLimit(req, env.OPENSEA_OFFERS_RATELIMIT))) {
     return jsonResponse({ error: 'rate-limited' }, 429, resolvedOrigin);
   }
@@ -307,22 +323,36 @@ async function checkRateLimit(
 }
 
 /** #334 — parse the `OPENSEA_OFFERS_MAX_PAGES` wrangler var into a
- *  bounded integer. Default 3; clamp to `[1, 25]` so a misconfigured
+ *  bounded integer. Default 3; clamp to `[1, 24]` so a misconfigured
  *  value can't blow the OpenSea API quota.
  *
- *  Values that fail integer parse (non-numeric strings, `NaN`,
- *  Infinity) collapse to the default 3. Values below 1 clamp to 1
- *  (zero/negative makes no sense; pagination needs at least one
- *  page). Values above 25 clamp to 25. 25 was chosen as the upper
- *  bound because at 60 inbound/min/IP × 2 legs × 25 pages = 3,000
- *  upstream/min/IP, which fits within the typical OpenSea API tier
- *  limit even under sustained load. Operators on higher tiers can
- *  bump this constant if needed; it stays clamped to prevent foot-
- *  guns from a one-character typo in the wrangler.jsonc. */
+ *  **Strict parse** (Codex round-1 P3): the raw value must match
+ *  `/^\d+$/` to be accepted. `Number.parseInt('25oops', 10)` returns
+ *  25, which would silently change pagination depth on a wrangler
+ *  typo — exactly the foot-gun the configurable surface is supposed
+ *  to prevent. Any non-pure-digit string collapses to the default.
+ *
+ *  **Ceiling math** (Codex round-1 P3): the per-inbound worst-case
+ *  upstream cost is `1 + 2 × MAX_PAGES` round-trips (one NFT-detail
+ *  slug lookup + paginated collection leg + paginated item leg).
+ *  With the 60/min/IP inbound cap, ceiling 24 yields
+ *  `60 × (1 + 48) = 2,940` upstream/min/IP — under the 3,000-call
+ *  guardrail. Bumping the ceiling means either reducing the
+ *  inbound cap or accepting a wider upstream budget.
+ *
+ *  **Aggregate-key concern** (Codex round-1 P2): the per-IP cap
+ *  doesn't bound aggregate upstream load to the shared
+ *  `OPENSEA_API_KEY`. The new optional
+ *  `OPENSEA_OFFERS_UPSTREAM_RATELIMIT` binding (consumed below)
+ *  caps the global upstream rate; when present it gates the
+ *  proxy in addition to the per-IP rate-limit.
+ */
 const MAX_PAGES_DEFAULT = 3;
-const MAX_PAGES_CEILING = 25;
+const MAX_PAGES_CEILING = 24;
+const STRICT_DIGITS_RE = /^\d+$/;
 function parseMaxPages(raw: string | undefined): number {
   if (raw === undefined || raw === null || raw === '') return MAX_PAGES_DEFAULT;
+  if (!STRICT_DIGITS_RE.test(raw)) return MAX_PAGES_DEFAULT;
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed)) return MAX_PAGES_DEFAULT;
   if (parsed < 1) return 1;

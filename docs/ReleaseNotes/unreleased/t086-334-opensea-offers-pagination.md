@@ -17,27 +17,33 @@ This thread makes the cap **operator-configurable**.
 
 **`OPENSEA_OFFERS_MAX_PAGES`** — new optional string env var on
 the agent Worker. Read by `apps/agent/src/openseaOffersProxy.ts`,
-coerced to int + clamped to `[1, 25]`. Default 3 (preserves current
-behaviour exactly).
+coerced to int + clamped to `[1, 24]`. Default 3 (preserves current
+behaviour exactly). Parse is strict: only pure-digit strings are
+accepted, so `25oops` / `3.5` / `2e3` collapse to the default
+rather than silently changing pagination depth on a typo.
 
-The clamp ceiling of 25 is the upstream-cost guardrail. Worst-case
-upstream cost per inbound request is `2 × MAX_PAGES` round-trips
-(collection + item legs each paginated). Paired with the existing
-`OPENSEA_OFFERS_RATELIMIT` inbound cap (60/min/IP), the total
-upstream load stays bounded:
+The clamp ceiling of 24 is the upstream-cost guardrail. Worst-case
+upstream cost per inbound request is `1 + 2 × MAX_PAGES` round-trips
+(one NFT-detail slug lookup + paginated collection leg + paginated
+item leg). Paired with the existing `OPENSEA_OFFERS_RATELIMIT`
+inbound cap (60/min/IP), the per-IP upstream load stays bounded:
 
 | MAX_PAGES | Upstream RTs per inbound | Worst-case upstream/min/IP |
 |---|---|---|
-| 3 (default) | 6 | 360 |
-| 10 | 20 | 1,200 |
-| 25 (ceiling) | 50 | 3,000 |
+| 3 (default) | 7 | 420 |
+| 10 | 21 | 1,260 |
+| 24 (ceiling) | 49 | 2,940 |
 
-The 3,000 upstream/min/IP ceiling fits within the typical OpenSea
-API tier even under sustained load. Operators on higher tiers who
-need more depth can bump the `MAX_PAGES_CEILING` constant (a code
-change, not a wrangler edit) — the clamp stays as a guardrail
-against a one-character typo in `wrangler.jsonc` blowing the API
-quota.
+**Aggregate-key bounding** (Codex round-1 P2 on PR #341). The per-IP
+cap above doesn't bound aggregate upstream load to the shared
+`OPENSEA_API_KEY` — two or more caller IPs polling hot tokens each
+under their per-IP cap can in aggregate exceed the OpenSea API tier.
+This PR also adds an optional `OPENSEA_OFFERS_UPSTREAM_RATELIMIT`
+binding keyed by the constant `'opensea-offers-upstream'`. When
+provisioned by the operator in `wrangler.jsonc`, it caps the
+aggregate inbound rate across all IPs. When absent the per-IP
+gating stays in effect alone (same as before this PR; the binding
+is opt-in).
 
 **Operator setup**: add `OPENSEA_OFFERS_MAX_PAGES: "N"` to the
 agent's `wrangler.jsonc` `vars` block + `wrangler deploy`. No code
