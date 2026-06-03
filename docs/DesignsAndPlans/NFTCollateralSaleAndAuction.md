@@ -1631,18 +1631,30 @@ lock the v1 path uses. The lock releases at zone-callback time via
 
 **STEP 4 — Pin the order on the executor + restamp the diamond
 slots** (Codex round-3 P2 #344). Three storage writes:
-- `executor.recordOrder(vaipakamOrderHash, loanId, ...,
+- `executor.recordOrder(vaipakamOrderHash, loanId, conduit,
+  conduitKey, salt, block.timestamp,
+  /* askPrice= */ effectiveAsk,
+  /* endAskPrice= */ effectiveAsk,
+  /* auctionEndTime= */ 0,
   PREPAY_MODE_ATOMIC_MATCH, emptyFeeLegs)` — pins the counter-order
   in the executor's `orderContext` map so the executor's ERC-1271
   delegate returns true when Seaport queries via the vault.
-  **The `feeLegs` slot is passed as an empty array** (Codex round-7
-  P3 #344): the Vaipakam counter-order has NO fee legs per §17.7
-  (OpenSea/creator fees are in the bidder's signed order, not
-  Vaipakam's); recording non-empty `feeLegs` here would mis-record
-  legs that aren't part of the order hash being authorised, and the
-  executor's atomic-match cancel-reconstruction branch would build
-  a Vaipakam order shape that disagrees with the actual 3-leg
-  counter-order.
+  **`askPrice = endAskPrice = effectiveAsk =
+  bidder.offer[0].startAmount - bidderFeeTotal`** (Codex round-10
+  P3 #344). The Vaipakam counter-order's three consideration legs
+  sum to `effectiveAsk`, NOT to the gross `offer_value` — so the
+  executor records the EFFECTIVE ask. The cancel-reconstruction
+  branch in `_componentsForCancel` then builds an order whose
+  consideration sums to `effectiveAsk`, matching what was
+  on-chain. (Round-9 P3 #344's "empty feeLegs" guidance was
+  necessary but not sufficient; this round pins the askPrice
+  semantics too.) Recording the gross `offer_value` would make
+  the cancel-time reconstruction build a 3-leg order summing to
+  the gross amount — mismatched against the actual orderHash.
+  **The `feeLegs` slot is passed as an empty array** (Codex
+  round-7 P3 #344): the Vaipakam counter-order has NO fee legs per
+  §17.7 (OpenSea/creator fees are in the bidder's signed order,
+  not Vaipakam's).
 - `s.prepayListingOrderHash[loanId] = vaipakamOrderHash` — **the
   load-bearing restamp**. Step 0(d) cleared this slot for the
   pre-existing v1 listing; without the restamp the shipped
@@ -1887,11 +1899,24 @@ Post-merge of the contract PR + dapp PR:
   for the Match button.
 - The MEV race-window tooltip Phase 6 added on the Match button is
   removed — there is no race window.
-- The #335 indexer breadcrumb (PR #343, dapp-side POST after each
-  Match) stays — it's the analytics signal for "which offer the
-  borrower matched", which is meaningful regardless of whether the
-  fill was atomic or two-step. The match-source POST fires from the
-  same `onReceiptAvailable` callback after `matchOpenSeaOffer` lands.
+- **The #335 dapp-side match-source POST does NOT fire on the
+  atomic-match path** (Codex round-10 P3 #344 — race-window
+  prevention). The on-chain `PrepayListingMatched` event carries
+  everything the breadcrumb needs (`loanId`, `matcher`,
+  `vaipakamOrderHash`, `bidderOrderHash`, `bidder`, `offerValue`,
+  `bidderFeeTotal`, `paymentToken`, `conduit`, `conduitKey`,
+  `executor`); the indexer's new event handler writes the
+  breadcrumb row with `match_mode = 'atomic'` directly. Firing the
+  POST in parallel would race the event handler — the POST writes
+  `INSERT OR REPLACE` with the default `match_mode = 'v1-twostep'`,
+  so if it landed after the event handler it would overwrite the
+  event-sourced `'atomic'` value. The v1 two-step Match flow
+  continues to fire the POST (it's the only signal source for that
+  path); the atomic path skips it.
+- The dapp's `useNFTPrepayListing.matchOpenSeaOffer` hook
+  conditionally omits the `onReceiptAvailable → postMatchSource`
+  callback that the v1 `updatePrepayListing` Match path used. Same
+  hook surface, different post-tx side-effect.
 
 ### 17.14 Threat model — adversarial cases
 
@@ -2096,14 +2121,24 @@ that worked for Round 5 Block A):
   dapp verifies them via the §17.10 per-recipient aggregate check
   BEFORE the hook call — the on-chain selector doesn't need a fee
   argument). The hook fetches the signed bundle (components +
-  signature + extraData + resolvers) from the agent, calls the new
-  selector, fires the #335 indexer breadcrumb POST in the same
-  `onReceiptAvailable` callback shape Round 5 PR #343 established.
+  signature + extraData + resolvers) from the agent and calls the
+  new selector. **The hook does NOT fire the #335 dapp-side
+  match-source POST on the atomic path** (Codex round-10 P3 #344 —
+  race-window prevention; see §17.13). The on-chain
+  `PrepayListingMatched` event carries everything the breadcrumb
+  needs, and the indexer handler writes the row with
+  `match_mode = 'atomic'` directly.
 - `OpenSeaOffersSection` Match callback rewires to the new method.
 - MEV race-window tooltip removed (no more race window).
 - `apps/indexer` `chainIndexer.ts` handler for `PrepayListingMatched`
-  + `prepay_listings.matched_via` column (NULL = v1 fixed-price /
-  Dutch path, `'atomic'` = Round 6 match).
+  writes to **`prepay_listing_match_breadcrumbs.match_mode = 'atomic'`**
+  (Codex round-10 P3 #344 correction — NOT `prepay_listings.matched_via`,
+  which gets deleted in the same tx by the
+  `PrepayCollateralSaleSettled` handler at
+  `apps/indexer/src/chainIndexer.ts:2068-2079`). Schema migration
+  (D.4): add `match_mode TEXT CHECK IN ('v1-twostep', 'atomic')
+  NOT NULL DEFAULT 'v1-twostep'` column to the existing
+  `prepay_listing_match_breadcrumbs` table introduced by #335.
 
 **D.4 — Tests.**
 - Foundry: 6-8 cases in
@@ -2112,6 +2147,24 @@ that worked for Round 5 Block A):
   collection offers + ERC1155 collateral.
 - Frontend integration test for the Match-button rewire.
 - Indexer unit test for `PrepayListingMatched` ingestion.
+- **Block D implementation-time test reminders** (Raja's round-10
+  pass — design-merge-blockers, NOT this PR):
+  - Decode the emitted `PrepayListingMatched` payload + assert no
+    fee-leg array is accepted by `matchOpenSeaOffer` or emitted in
+    the event (defense against future refactor reintroducing the
+    spoofing surface).
+  - Indexer test proving `PrepayListingMatched` writes
+    `prepay_listing_match_breadcrumbs.match_mode = 'atomic'` AND
+    that the breadcrumb survives the same-tx
+    `PrepayCollateralSaleSettled` handler delete of the
+    `prepay_listings` row.
+  - Negative tests: unapproved conduit resolves through
+    `executor.approvedConduits`; oversized `bidder.extraData`
+    (> 1024 bytes); too many `resolvers` (> 4); too-deep
+    `criteriaProof` (> 32).
+  - The atomic path does NOT fire the dapp-side match-source POST
+    (test the `useNFTPrepayListing` hook to confirm no breadcrumb
+    POST is queued from the `matchOpenSeaOffer` callsite).
 
 **Atomic-merge constraint:** D.1 + D.2 + D.3 + D.4 land in ONE PR.
 Same shape as Round 5 Block A's no-consumer-split rule — the v1
