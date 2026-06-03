@@ -124,23 +124,50 @@ export async function handleOpenSeaOffers(
     );
   }
 
-  // #334 Codex round-1 P2 — global upstream rate-limit keyed by
-  // a constant. This caps aggregate calls to the shared
-  // `OPENSEA_API_KEY` across all caller IPs (the per-IP gate
-  // above caps each caller individually but doesn't bound the
-  // sum). Placed AFTER the validation gates so only requests
-  // that will actually reach OpenSea consume the upstream budget.
-  // When the binding isn't provisioned (operator hasn't added it
-  // yet) this is a no-op; per-IP gating still applies.
-  if (
-    env.OPENSEA_OFFERS_UPSTREAM_RATELIMIT &&
-    !(
-      await env.OPENSEA_OFFERS_UPSTREAM_RATELIMIT.limit({
+  // Parse the configurable pagination depth up front; we need
+  // it for the upstream-budget calculation below as well as the
+  // pagination loops further down.
+  const MAX_PAGES = parseMaxPages(env.OPENSEA_OFFERS_MAX_PAGES);
+
+  // #334 Codex round-1 P2 + round-3 P2 — global upstream rate-
+  // limit keyed by a constant. Caps aggregate calls to the
+  // shared `OPENSEA_API_KEY` across all caller IPs (the per-IP
+  // gate above caps each caller individually but doesn't bound
+  // the sum). Placed AFTER the validation gates so only requests
+  // that will actually reach OpenSea consume the upstream
+  // budget.
+  //
+  // Codex round-3 P2 — budget is consumed UPFRONT once per
+  // worst-case upstream RT this request will make (not once per
+  // inbound). With `MAX_PAGES = 24` that's `1 + 2 × 24 = 49`
+  // slots per inbound; with the binding's 3,000/min cap that
+  // sustains ~61 max-depth concurrent inbounds/min across all
+  // IPs combined — a hard ceiling on the OpenSea API key's RT
+  // volume. The single-call earlier rev consumed only 1 slot
+  // per inbound, so the cap was effectively `3,000 inbound/min
+  // × 49 RTs = 147k RTs/min`, blowing the intended guardrail.
+  // Per-RT consumption is the only way the aggregate cap
+  // actually bounds OpenSea calls.
+  //
+  // Cost trade-off (intentional): if pagination ends early
+  // (OpenSea's `next` cursor runs out before page MAX_PAGES),
+  // the reserved-but-unused slots are NOT released — Cloudflare
+  // rate-limit bindings don't have an undo. This makes the
+  // budget conservative under intermittent / non-paginated
+  // traffic, which is the safer side of the trade.
+  //
+  // When the binding isn't provisioned (operator hasn't added
+  // it yet) this is a no-op; per-IP gating still applies.
+  if (env.OPENSEA_OFFERS_UPSTREAM_RATELIMIT) {
+    const upstreamBudget = 1 + 2 * MAX_PAGES;
+    for (let i = 0; i < upstreamBudget; i++) {
+      const { success } = await env.OPENSEA_OFFERS_UPSTREAM_RATELIMIT.limit({
         key: 'opensea-offers-upstream',
-      })
-    ).success
-  ) {
-    return jsonResponse({ error: 'upstream-quota' }, 429, resolvedOrigin);
+      });
+      if (!success) {
+        return jsonResponse({ error: 'upstream-quota' }, 429, resolvedOrigin);
+      }
+    }
   }
 
   const headers = {
@@ -212,19 +239,9 @@ export async function handleOpenSeaOffers(
   // `{ offers: [...] }` body so the dapp normalizer doesn't
   // need a paginated shape.
   //
-  // #334 — page cap is configurable via the wrangler-vars
-  // `OPENSEA_OFFERS_MAX_PAGES` env (string). Default 3 covers
-  // hot-but-not-degenerate collections (≈300 offers per leg);
-  // operators on hyper-active collections can raise. Worst-case
-  // upstream cost per inbound request is `2 × MAX_PAGES`
-  // round-trips (collection + item legs); paired with the
-  // `OPENSEA_OFFERS_RATELIMIT` inbound cap (60/min/IP) the
-  // total upstream cost stays bounded. Clamp to `[1, 25]` so a
-  // misconfigured value can't blow the OpenSea API quota
-  // (`MAX_PAGES = 25` ⇒ worst-case 50 round-trips per inbound,
-  // 60 inbound/min/IP ⇒ 3,000 upstream/min/IP — still within
-  // the typical OpenSea API tier).
-  const MAX_PAGES = parseMaxPages(env.OPENSEA_OFFERS_MAX_PAGES);
+  // #334 — `MAX_PAGES` parsed up front above (needed for the
+  // upstream-budget calculation). See its parser docstring for
+  // the clamp + foot-gun-safety rationale.
   const fetchPaginated = async (
     initialUrl: string | null,
   ): Promise<{ status: number; body: string } | null> => {
