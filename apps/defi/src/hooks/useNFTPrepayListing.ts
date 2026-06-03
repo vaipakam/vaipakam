@@ -6,6 +6,7 @@ import { fetchLoanById, type IndexedPrepayListing } from '../lib/indexerClient';
 import { decodeContractError } from '@vaipakam/lib/decodeContractError';
 import { beginStep } from '../lib/journeyLog';
 import { publishPrepayListingToOpenSea } from '../lib/openseaPublish';
+import { postPrepayMatchSource } from '../lib/indexerClient';
 import type { Hex } from 'viem';
 
 /** T-086 Round-5 Block A (#313) — borrower-supplied fee leg
@@ -19,6 +20,18 @@ export interface FeeLegInput {
   recipient: `0x${string}`;
   startAmount: bigint;
   endAmount: bigint;
+}
+
+/** #335 — payload the dapp passes through to the indexer's
+ *  `POST /loans/:loanId/prepay-listing/match-source` endpoint
+ *  after a successful Match-rotation tx. The fields name the
+ *  OpenSea offer that triggered the rotation so analytics
+ *  queries can distinguish offer-driven rotations from manual
+ *  repricings. Sent best-effort: any failure (network blip,
+ *  indexer down) is logged but doesn't fail the rotation. */
+export interface MatchSourceBreadcrumb {
+  orderHash: string;
+  bidder: string;
 }
 
 /** Minimal subset of viem's `TransactionReceipt` the OpenSea publish
@@ -91,6 +104,13 @@ export interface UseNFTPrepayListingResult {
      *  re-fetches the OpenSea schedule on every match-offer
      *  rotation, not from a session cache. */
     feeLegs: ReadonlyArray<FeeLegInput>,
+    /** #335 — when set, the hook POSTs an analytics breadcrumb to
+     *  the indexer after the rotation tx confirms so downstream
+     *  queries can distinguish offer-driven rotations from
+     *  manual repricings. Best-effort: failures here don't fail
+     *  the rotation. Manual repricings (PrepayListingActions's
+     *  handleUpdate) omit this param. */
+    matchSource?: MatchSourceBreadcrumb,
   ) => Promise<boolean>;
   /** T-086 Round-5 Block B (#309) — Dutch-decay post. The borrower
    *  remainder leg decays linearly from `startAskPrice` at
@@ -124,6 +144,8 @@ export interface UseNFTPrepayListingResult {
     newSalt: bigint,
     newConduitKey: `0x${string}`,
     feeLegs: ReadonlyArray<FeeLegInput>,
+    /** #335 — same shape as `updatePrepayListing` above. */
+    matchSource?: MatchSourceBreadcrumb,
   ) => Promise<boolean>;
   cancelPrepayListing: (loanId: bigint) => Promise<boolean>;
 }
@@ -444,12 +466,23 @@ export function useNFTPrepayListing(
       newSalt: bigint,
       newConduitKey: `0x${string}`,
       feeLegs: ReadonlyArray<FeeLegInput>,
+      matchSource?: MatchSourceBreadcrumb,
     ): Promise<boolean> => {
       const r = await runWrite('updatePrepayListing', lid, () =>
         diamond.updatePrepayListing(lid, newAskPrice, newSalt, newConduitKey, feeLegs),
       );
       if (r.success && r.receipt) {
         await runOpenSeaPublish(r.receipt, lid, newAskPrice, newSalt, newConduitKey, feeLegs);
+        // #335 — best-effort analytics breadcrumb. The rotation
+        // tx is already on-chain; this POST is fire-and-forget.
+        if (matchSource) {
+          await postPrepayMatchSource(lid, {
+            txHash: r.receipt.transactionHash as `0x${string}`,
+            orderHash: matchSource.orderHash,
+            bidder: matchSource.bidder,
+            matchedAt: Math.floor(Date.now() / 1000),
+          });
+        }
       }
       return r.success;
     },
@@ -517,6 +550,7 @@ export function useNFTPrepayListing(
       newSalt: bigint,
       newConduitKey: `0x${string}`,
       feeLegs: ReadonlyArray<FeeLegInput>,
+      matchSource?: MatchSourceBreadcrumb,
     ): Promise<boolean> => {
       const r = await runWrite('updatePrepayDutchListing', lid, () =>
         diamond.updatePrepayDutchListing(
@@ -529,6 +563,16 @@ export function useNFTPrepayListing(
           endAskPrice: newEndAskPrice,
           auctionEndTime: newAuctionEndTime,
         });
+        // #335 — same best-effort match-source breadcrumb as the
+        // fixed-price `updatePrepayListing` path.
+        if (matchSource) {
+          await postPrepayMatchSource(lid, {
+            txHash: r.receipt.transactionHash as `0x${string}`,
+            orderHash: matchSource.orderHash,
+            bidder: matchSource.bidder,
+            matchedAt: Math.floor(Date.now() / 1000),
+          });
+        }
       }
       return r.success;
     },

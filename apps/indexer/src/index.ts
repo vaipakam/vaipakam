@@ -62,6 +62,7 @@ import {
   handleActivity,
   handleClaimables,
   handleLoansPreflight,
+  handleLoanPrepayMatchSource,
 } from './loanRoutes';
 
 export default {
@@ -139,6 +140,20 @@ export default {
     // ─── /loans/* ───────────────────────────────────────────────
     if (url.pathname.startsWith('/loans')) {
       if (req.method === 'OPTIONS') return handleLoansPreflight();
+      // #335 — POST /loans/:loanId/prepay-listing/match-source.
+      // Dapp records the OpenSea offer that triggered a Match-
+      // rotation so analytics can distinguish offer-driven
+      // rotations from manual repricings. Match the regex BEFORE
+      // the GET tree below.
+      if (req.method === 'POST') {
+        const matchSource = url.pathname.match(
+          /^\/loans\/(\d+)\/prepay-listing\/match-source$/,
+        );
+        if (matchSource) {
+          return handleLoanPrepayMatchSource(req, resolved, matchSource[1]);
+        }
+        return new Response('Not found', { status: 404 });
+      }
       if (req.method === 'GET') {
         if (url.pathname === '/loans/active') {
           return handleLoansActive(req, resolved);

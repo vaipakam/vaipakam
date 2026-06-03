@@ -661,3 +661,46 @@ export function indexedToRawOffer(o: IndexedOffer): {
     fillMode: o.fillMode ?? 0,
   };
 }
+
+
+/** #335 — record a Match-rotation breadcrumb. Called from
+ *  `OpenSeaOffersSection.onMatchOffer` after the rotation tx
+ *  receipt resolves. Best-effort: any failure (network blip,
+ *  indexer down, validation reject) is logged but never thrown
+ *  back to the caller — the rotation tx is already on-chain by
+ *  the time this fires.
+ *
+ *  Returns `true` on 2xx, `false` on every other outcome
+ *  (transport error / non-2xx / `VITE_INDEXER_ORIGIN` unset).
+ *  Caller is expected to NOT branch on the return value — the
+ *  bool is for telemetry / tests only. */
+export async function postPrepayMatchSource(
+  loanId: bigint,
+  body: {
+    txHash: `0x${string}`;
+    orderHash: string;
+    bidder: string;
+    matchedAt: number;
+  },
+): Promise<boolean> {
+  const root = baseUrl();
+  if (!root) return false;
+  try {
+    const res = await fetch(
+      `${root}/loans/${loanId.toString()}/prepay-listing/match-source`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        // Same TIMEOUT_MS as the reads; the rotation tx already
+        // landed, so dragging the UI on this POST is pointless.
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      },
+    );
+    return res.ok;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("[postPrepayMatchSource] best-effort POST failed", err);
+    return false;
+  }
+}

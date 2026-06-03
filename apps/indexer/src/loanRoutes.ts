@@ -943,11 +943,123 @@ export function handleLoansPreflight(): Response {
     status: 204,
     headers: {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      // #335 — `POST /loans/:loanId/prepay-listing/match-source`
+      // is the only POST entry under /loans/* today; allowed
+      // alongside the existing GETs.
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
       'Access-Control-Max-Age': '86400',
     },
   });
+}
+
+/** #335 — POST /loans/:loanId/prepay-listing/match-source
+ *
+ *  Records a breadcrumb mapping a successful Match-rotation tx to
+ *  the OpenSea offer that triggered it. The on-chain
+ *  `PrepayListingUpdated` event the rotation emits doesn't carry
+ *  the originating offer ID (the rotation is just an order-shape
+ *  update from the diamond's POV); the dapp posts the breadcrumb
+ *  after the tx confirms so analytics queries can later
+ *  distinguish "Match-from-OpenSea-offer rotation" from "manual
+ *  repricing".
+ *
+ *  Body shape:
+ *    {
+ *      txHash: \`0x\${string}\`     // rotation tx hash
+ *      orderHash: \`0x\${string}\`  // OpenSea offer's canonical hash
+ *      bidder: \`0x\${string}\`     // OpenSea offer's Seaport offerer
+ *      matchedAt: number          // Unix seconds, dapp clock
+ *    }
+ *
+ *  **Best-effort analytics surface.** The breadcrumb is NOT a
+ *  prerequisite for the Match flow. The rotation tx is already
+ *  on-chain by the time the dapp POSTs here; if the POST fails
+ *  (network blip, indexer down), the rotation is unaffected.
+ *  Downstream analytics queries treat the absence of a breadcrumb
+ *  as "matched via the manual repricing path" — the conservative
+ *  interpretation.
+ *
+ *  **Idempotent on (`tx_hash`).** A re-POST of the same tx_hash
+ *  is a no-op (`INSERT OR IGNORE`); the borrower retrying the
+ *  POST after a transient failure doesn't double-record.
+ *
+ *  **Authentication.** None — the indexer is public-read by
+ *  design. The endpoint is rate-limit-protected via Cloudflare's
+ *  edge limits + the data it accepts is non-financial analytics
+ *  (no on-chain state writes, no token transfers). The
+ *  conservative-on-absence query semantics mean an attacker
+ *  spamming false breadcrumbs would, at worst, inject "this
+ *  match was from offer X" claims that operators can detect via
+ *  the tx-hash → on-chain-event correlation (the breadcrumb's
+ *  tx_hash must match a real PrepayListingUpdated event for the
+ *  loan, which the indexer materialises independently). */
+export async function handleLoanPrepayMatchSource(
+  req: Request,
+  env: Env,
+  loanIdRaw: string,
+): Promise<Response> {
+  const loanId = Number.parseInt(loanIdRaw, 10);
+  if (!Number.isFinite(loanId) || loanId < 0) {
+    return jsonResponse({ error: 'bad-loan-id' }, 400);
+  }
+
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return jsonResponse({ error: 'invalid-json' }, 400);
+  }
+  if (body === null || typeof body !== 'object') {
+    return jsonResponse({ error: 'invalid-body' }, 400);
+  }
+  const o = body as Record<string, unknown>;
+
+  // Strict hex validation — the breadcrumb is keyed on tx_hash, so
+  // a malformed payload would just sit in the table forever; reject
+  // upfront so query-side joins stay clean.
+  const HEX64 = /^0x[0-9a-fA-F]{64}$/;
+  const HEX40 = /^0x[0-9a-fA-F]{40}$/;
+  if (typeof o.txHash !== 'string' || !HEX64.test(o.txHash)) {
+    return jsonResponse({ error: 'invalid-tx-hash' }, 400);
+  }
+  if (typeof o.orderHash !== 'string' || !HEX64.test(o.orderHash)) {
+    return jsonResponse({ error: 'invalid-order-hash' }, 400);
+  }
+  if (typeof o.bidder !== 'string' || !HEX40.test(o.bidder)) {
+    return jsonResponse({ error: 'invalid-bidder' }, 400);
+  }
+  if (
+    typeof o.matchedAt !== 'number' ||
+    !Number.isFinite(o.matchedAt) ||
+    o.matchedAt <= 0
+  ) {
+    return jsonResponse({ error: 'invalid-matched-at' }, 400);
+  }
+
+  try {
+    // INSERT OR IGNORE handles the idempotent re-POST case. The
+    // `tx_hash` primary key ensures we don't double-count a
+    // single rotation if the dapp retries after a transient
+    // network failure mid-POST.
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO prepay_listing_match_breadcrumbs
+         (tx_hash, loan_id, order_hash, bidder, matched_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+      .bind(
+        o.txHash.toLowerCase(),
+        loanId,
+        o.orderHash.toLowerCase(),
+        o.bidder.toLowerCase(),
+        Math.floor(o.matchedAt),
+      )
+      .run();
+    return jsonResponse({ ok: true });
+  } catch (err) {
+    console.error('[loanRoutes] match-source insert failed', err);
+    return jsonResponse({ error: 'insert-failed' }, 500);
+  }
 }
 
 function parseChainId(raw: string | null): number | null {
