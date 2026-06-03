@@ -267,9 +267,23 @@ function RaceWindowModal({
               `marketingUrl` resolves to https://vaipakam.com in
               prod and respects the VITE_MARKETING_URL dev
               override so local dev links to the local www
-              dev server. */}
+              dev server.
+
+              The anchor uses the slug `markdownToc.headingComponents()`
+              auto-installs on every `<h3>` — slugify of the heading
+              text. The `<a id="..."></a>` inline anchor pattern used
+              elsewhere in the same file doesn't actually take effect
+              on H3s in the rendered DOM because the h3 component
+              overrides `id` with the slug (see Codex P2 round-1
+              finding on PR #338). The `/en/` prefix pins the link to
+              the English guide so users whose browser locale routes
+              them via `DefaultLocaleRedirect` to /<locale>/help/...
+              don't land on a localized guide that doesn't yet carry
+              this section (queued for translation, follow-up batch). */}
           <a
-            href={marketingUrl('/help/advanced#loan-details.opensea-offers')}
+            href={marketingUrl(
+              '/en/help/advanced#matching-opensea-offers-on-a-prepay-listing',
+            )}
             target="_blank"
             rel="noopener noreferrer"
           >

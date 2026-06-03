@@ -726,8 +726,6 @@ Permissionless actions available to anyone regardless of role:
 > initiated repay can fail "harmlessly" without something
 > actually going wrong.
 
-<a id="loan-details.opensea-offers"></a>
-
 ### Matching OpenSea offers on a prepay listing
 
 Once your prepay listing is live on OpenSea's marketplace,
@@ -736,25 +734,31 @@ casual buyers will sometimes place **collection offers** or
 the Loan Details page in real time — a separate panel under
 "List collateral on OpenSea" with one row per incoming offer,
 sortable by amount. The panel applies a **buffer threshold**
-(principal + accrued interest + treasury cut + safety buffer,
-plus required marketplace fees on collections that enforce
-them) and **greys out** offers that don't clear it. You can
-see market interest at every level but can only Match offers
-that the protocol will actually settle.
+(principal + accrued interest + treasury cut + safety buffer)
+and **greys out** offers that don't clear it. You can see
+market interest at every level but can only Match offers that
+the protocol will actually settle.
+
+On collections that enforce OpenSea protocol fees and/or
+creator royalties, the offers panel currently shows incoming
+offers but disables the Match buttons — the fee-enforced
+matching path is tracked separately under Issue #331 and
+will ship as a v1.1 follow-up. For now, those collections
+get visibility of demand without the dapp-side Match flow;
+nothing prevents the bidder from filling your listing
+directly on OpenSea at the listed ask.
 
 When you find an acceptable offer and click **Match offer**,
 the dapp rotates your live OpenSea listing's price down to
 the offer's value. This is a normal `updatePrepayListing`
 transaction — one signature, no off-chain coordination.
 
-> [!IMPORTANT]
-> **There is a race window between the price rotation and
-> the bidder's purchase.** Once your rotation transaction
-> confirms, *any* OpenSea buyer can fulfill at the matched
-> price — not only the bidder who placed the offer you
-> matched. In practice, sniping the bidder out of the price
-> they bid is possible during the small window between
-> your rotation and their `Seaport.fulfillOrder`.
+> **The race window is real.** Once your rotation
+> transaction confirms, *any* OpenSea buyer can fulfill at
+> the matched price — not only the bidder who placed the
+> offer you matched. In practice, sniping the bidder out of
+> the price they bid is possible during the small window
+> between your rotation and their `Seaport.fulfillOrder`.
 >
 > Before clicking Match, the dapp shows you a modal that
 > spells this out and names the bidder you're matching.
@@ -763,11 +767,12 @@ transaction — one signature, no off-chain coordination.
 **What you can do to mitigate the race window:**
 
 - **Notify the bidder out-of-band before clicking Match.**
-  OpenSea's message system, Discord, an introduction via
-  the marketplace's social channels, or whatever channel
-  you have. The bidder being ready to fulfill within
-  seconds of your rotation is the strongest mitigation
-  you can apply today.
+  If you can reach the bidder by any channel they're
+  monitoring (Discord, X / Twitter DM, Telegram, an ENS
+  reverse-record contact field, a Farcaster ping), do that
+  before you click Match. The bidder being ready to fulfill
+  within seconds of your rotation is the strongest
+  mitigation you can apply today.
 - **Match at favourable prices, not desperate ones.** The
   buffer-threshold filter prevents the dapp from letting
   you match at protocol-unprofitable prices, but the
