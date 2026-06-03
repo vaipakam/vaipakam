@@ -643,38 +643,74 @@ export function OpenSeaOffersSection({
         // actions card above, but a degraded state worth
         // surfacing in the modal.
         if (live.auctionMode === 1) {
-          // #332 Codex round-2 P2 — pre-flight the post floor BEFORE
-          // canceling the live Dutch order. Without this, a pro-rata
-          // accrual boundary OR a governance buffer change between
-          // the panel's last threshold refresh and the click moment
-          // can push the post threshold above `offer.value`. The
-          // cancel succeeds → the post reverts `AskBelowFloorPlusFees`
-          // → the borrower is left with NO live listing. The
-          // fixed-price path's `updatePrepayListing` revalidates
-          // atomically so it doesn't have this problem; here we
-          // do the same revalidation by hand before the
-          // irreversible cancel.
+          // #332 Codex round-2 + round-3 P2 — pre-flight every
+          // condition the post path will check BEFORE issuing the
+          // irreversible cancel. The two-tx Dutch sequence has a
+          // window between cancel and post where global state can
+          // shift, and every revert on the post leaves the borrower
+          // with no live listing. The atomic in-place
+          // `updatePrepayListing` rotation doesn't have this
+          // problem; here we replicate the diamond's pre-flight
+          // checks against fresh on-chain state before the cancel.
+          //
+          // Pre-flight covers (Codex round-3):
+          //   - Kill switch (`getPrepayListingEnabled`) —
+          //     `PrepayListingDisabled` revert on post.
+          //   - Buffer-bps configured (non-zero) —
+          //     `PrepayListingBufferNotConfigured` revert.
+          //   - Grace window still open —
+          //     `PrepayGraceWindowClosed` revert.
+          //   - Floor / fees / buffer math against the FRESH
+          //     schedule + offer.value — `AskBelowFloorPlusFees`
+          //     revert.
+          //
+          // If any check fails, abort BEFORE cancel; the panel
+          // re-classifies the offer on the next threshold tick.
           try {
             const d = diamond as unknown as {
               getPrepayContext: (
                 id: bigint,
                 asOf: bigint,
               ) => Promise<
-                | { lenderLeg: bigint; treasuryLeg: bigint }
+                | {
+                    lenderLeg: bigint;
+                    treasuryLeg: bigint;
+                    graceEnd: bigint;
+                  }
                 | unknown[]
               >;
               getPrepayListingBufferBps: () => Promise<bigint>;
+              getPrepayListingEnabled: () => Promise<boolean>;
             };
             const asOf = BigInt(Math.floor(Date.now() / 1000));
-            const [ctxFresh, bufFresh] = await Promise.all([
+            const [ctxFresh, bufFresh, enabledFresh] = await Promise.all([
               d.getPrepayContext(loanId, asOf),
               d.getPrepayListingBufferBps(),
+              d.getPrepayListingEnabled(),
             ]);
+            if (!enabledFresh) {
+              // Governance disabled prepay listings under us. Cancel
+              // would succeed but post would revert
+              // `PrepayListingDisabled`. Abort.
+              return false;
+            }
+            const bufferBpsFresh = Number(bufFresh);
+            if (bufferBpsFresh === 0) {
+              // Buffer unconfigured (storage-default). Post would
+              // revert `PrepayListingBufferNotConfigured`. Abort.
+              return false;
+            }
             const lenderFresh =
               (ctxFresh as { lenderLeg?: bigint }).lenderLeg ?? 0n;
             const treasuryFresh =
               (ctxFresh as { treasuryLeg?: bigint }).treasuryLeg ?? 0n;
-            const bufferBpsFresh = Number(bufFresh);
+            const graceEnd =
+              (ctxFresh as { graceEnd?: bigint }).graceEnd ?? 0n;
+            if (graceEnd > 0n && asOf >= graceEnd) {
+              // Grace window closed under us. Post would revert
+              // `PrepayGraceWindowClosed`. Abort.
+              return false;
+            }
             const feeBpsFresh = freshSchedule.totalBps;
             if (feeBpsFresh >= 10_000) return false;
             const numFresh =
@@ -707,13 +743,25 @@ export function OpenSeaOffersSection({
           }
           const cancelled = await prepayListing.cancelPrepayListing(loanId);
           if (!cancelled) return false;
-          return prepayListing.postPrepayListing(
+          const posted = await prepayListing.postPrepayListing(
             loanId,
             offer.value,
             BigInt(live.salt),
             live.conduitKey as `0x${string}`,
             feeLegs,
           );
+          // #332 Codex round-3 P2 — force a fresh indexer read after
+          // both txes settle. Without this, the hook's internal
+          // waitForIndexer can settle on the stale pre-cancel Dutch
+          // row (the indexer's reorg-windowed feed can serve the
+          // pre-cancel state right up until the post tx lands), and
+          // the panel would continue rendering as if the listing
+          // is still Dutch — driving the borrower into another
+          // two-tx Match against the wrong mode if they retry.
+          if (posted) {
+            await prepayListing.reload();
+          }
+          return posted;
         }
 
         return prepayListing.updatePrepayListing(
