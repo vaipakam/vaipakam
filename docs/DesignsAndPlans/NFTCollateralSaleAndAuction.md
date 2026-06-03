@@ -954,7 +954,9 @@ settlement runs through the same code as a v1 fill.
 **Agent-proxy extension:** `apps/agent` gains a NEW top-level route
 `GET /opensea/signed-offer/{chainId}/{contract}/{tokenId}/{orderHash}`
 returning the bidder's full signed Seaport `OrderComponents` +
-signature + any `CriteriaResolver` needed for collection-criteria
+signature + the OpenSea `extraData` blob (SIP-7 SignedZone
+authorisation, required for fee-enforced collections — Codex round-7
+P3 #344) + any `CriteriaResolver` needed for collection-criteria
 offers (§17.8). The existing
 `GET /opensea/offers/{chainId}/{contract}/{tokenId}` (offers-list)
 endpoint stays untouched — it serves the "browse offers" pre-Match
@@ -1113,9 +1115,11 @@ counter-order and BEFORE invoking `matchAdvancedOrders`:
   [OpenSea's fee docs](https://docs.opensea.io/docs/opensea-fees#where-to-set-fees));
   rejecting `length > 1` would refuse every fee-enforced offer.
   Instead the facet validates the consideration's STRUCTURE:
-  - `bidder.consideration.length ∈ [1, 1 + MAX_BIDDER_FEE_LEGS]`
-    where `MAX_BIDDER_FEE_LEGS` is the same `5` cap Block A used
-    for the seller-side counter (1 NFT + up to 5 fee legs).
+  - `bidder.consideration.length ∈ [1, 1 + MAX_FEE_LEGS]` where
+    `MAX_FEE_LEGS` is the **same `4` constant** from Block A's
+    `PrepayTypes.sol` (1 NFT + up to 4 fee legs = 5 consideration
+    items max; Codex round-7 P3 #344 reconciliation). Block D reuses
+    `MAX_FEE_LEGS` rather than introducing a parallel constant.
     Reverts `BidderOrderShapeMismatch(reason: ExtraConsiderationItems)`
     only if the length exceeds the cap.
   - `bidder.consideration[0]` MUST match the expected NFT shape
@@ -1191,8 +1195,10 @@ silently receive tokens they didn't expect — which on its own is
   tokens.
 
 The shape invariant closes all of these — if the bidder's order
-isn't EXACTLY 1 offer item + 1 consideration item in the expected
-shape, the facet reverts before any state is touched.
+doesn't match the relaxed shape (exactly 1 offer item AND
+`consideration ∈ [1, 1 + MAX_FEE_LEGS]` items with the
+positional + per-item constraints above), the facet reverts before
+any state is touched.
 
 ### 17.6 Token-identity invariant — bidder paymentToken == loan.principalAsset
 
@@ -1344,10 +1350,16 @@ the SAME `FulfillmentComponent { orderIndex: 0, itemIndex: 0 }` MAY
 appear in multiple Fulfillments, with Seaport tracking the
 remaining balance.
 
-The match settles iff the FINAL balance on every offer item is
-exactly zero AND every consideration item is paid in full (the
-`OrderFulfilled` invariant). If any consideration is short-paid or
-any offer item is over-consumed, Seaport reverts the whole match.
+The match settles iff every consideration item is paid in full and
+no offer item is over-consumed. **Seaport does NOT require offer
+items to end at zero balance** (Codex round-7 P3 #344 correction);
+any unconsumed offer-side amount is aggregated and transferred to
+the call-level `recipient` (the §17.9.bis `executor` redirection).
+So the pre-Seaport balance assertion `AtomicMatchBalanceMismatch`
+below is **load-bearing**, not just a nicer error message — without
+it, an under-fulfillment would silently leak the unspent ERC20
+balance to the executor's `sweepStrayTokens` recovery surface
+instead of reverting at the facet boundary.
 
 For the atomic-match:
 - Order 0: bidder's existing OpenSea offer (offer items: ERC20
@@ -1436,10 +1448,22 @@ OpenSea collection-fee schedule:
 1. Dapp hits `GET /opensea/collection/{slug}` to fetch the live fee
    schedule (same shape as §15.3 step 5).
 2. Dapp computes expected fee amounts against `bidder.offer[0].
-   startAmount` and compares to `bidder.consideration[1..]`:
-   - Expected recipients must match exactly (set-equality).
-   - Each fee amount = `offer_value × feeBps[i] / 10000`; the
-     bidder's signed amount must equal that (no over-charge).
+   startAmount` and compares to `bidder.consideration[1..]` via a
+   **per-recipient aggregate check** (Codex round-7 P3 #344 —
+   set-equality loses multiplicity and would let a bidder bundle
+   split one recipient across duplicates pass while a different
+   split silently fails). The dapp:
+   - Aggregates expected fees from the live schedule into a
+     `Map<recipient, totalAmount>`.
+   - Aggregates bidder.consideration[1..] into the same shape.
+   - Compares the two maps for exact equality (keys + per-key
+     amounts). Ordering of items within `bidder.consideration[1..]`
+     does NOT need to match the schedule's order (Seaport doesn't
+     require it).
+   - Computed fees use `offer_value × feeBps[i] / 10000`; the
+     aggregated per-recipient totals must equal the live-schedule
+     aggregates exactly (no over-charge, no under-charge, no missing
+     recipient, no extra recipient).
 3. If verification fails, the dapp greys out the Match button with
    "this offer's fee structure doesn't match the live collection
    schedule — refresh"; the borrower cannot trigger
@@ -1541,9 +1565,17 @@ lock the v1 path uses. The lock releases at zone-callback time via
 **STEP 4 — Pin the order on the executor + restamp the diamond
 slots** (Codex round-3 P2 #344). Three storage writes:
 - `executor.recordOrder(vaipakamOrderHash, loanId, ...,
-  PREPAY_MODE_ATOMIC_MATCH, feeLegs)` — pins the counter-order in
-  the executor's `orderContext` map so the executor's ERC-1271
+  PREPAY_MODE_ATOMIC_MATCH, emptyFeeLegs)` — pins the counter-order
+  in the executor's `orderContext` map so the executor's ERC-1271
   delegate returns true when Seaport queries via the vault.
+  **The `feeLegs` slot is passed as an empty array** (Codex round-7
+  P3 #344): the Vaipakam counter-order has NO fee legs per §17.7
+  (OpenSea/creator fees are in the bidder's signed order, not
+  Vaipakam's); recording non-empty `feeLegs` here would mis-record
+  legs that aren't part of the order hash being authorised, and the
+  executor's atomic-match cancel-reconstruction branch would build
+  a Vaipakam order shape that disagrees with the actual 3-leg
+  counter-order.
 - `s.prepayListingOrderHash[loanId] = vaipakamOrderHash` — **the
   load-bearing restamp**. Step 0(d) cleared this slot for the
   pre-existing v1 listing; without the restamp the shipped
@@ -1796,7 +1828,7 @@ Post-merge of the contract PR + dapp PR:
 |---|---|---|
 | Bidder cancels OpenSea offer mid-flight (off-chain via OpenSea API) | OpenSea's offer book stops surfacing it; dapp filters it out on next refresh. If the borrower already clicked Match, the tx lands → `Seaport.getOrderStatus` returns `cancelled=false` (off-chain cancels don't on-chain-cancel) → match proceeds, bidder pays. (Off-chain cancels don't bind on-chain.) | Bidder accepted this risk by placing a signed on-chain-bindable offer. |
 | Bidder calls `Seaport.incrementCounter` between agent-fetch and Match-tx | The agent's bundle returned `OrderComponents` carrying the bidder's PRE-bump `counter` (decoded from the signed bytes at the agent's fetch moment). The on-chain re-derive hashes those same pre-bump components → matches the pinned hash → `BidderOrderHashMismatch` does NOT fire (Codex round-5 P3 correction). The revert actually comes from Seaport itself at `matchAdvancedOrders` time: Seaport reads the offerer's CURRENT counter and the order's bound counter no longer matches, so Seaport reverts the match with `InvalidSigner` / `BadSignatureV` / equivalent. Borrower's dapp surfaces "this offer is no longer valid; the bidder canceled it" and refreshes. (No facet-side revert needed — Seaport's own signature path catches it.) | Counter bump invalidates the bidder's signature at Seaport's validation step, AFTER our facet's hash check passes. |
-| Live floor drifts above `offer_value × (1 - buffer)` between offer-surface and Match-tx | Facet's `_requireAskCoversFloorWithFees(loanId, offer_value, buffer, freshFeeLegs)` reverts. Borrower's dapp shows "this offer is no longer acceptable; floor moved" and refreshes. | Same protection as v1 `updatePrepayListing`. |
+| Live floor drifts above `effectiveAsk × (1 - buffer)` between offer-surface and Match-tx | Facet's `_requireAskCoversFloorWithFees(loanId, effectiveAsk, buffer, /* freshFeeLegs */ emptyArr)` reverts, where `effectiveAsk = bidder.offer[0].startAmount - bidderFeeTotal` (Codex round-7 P3 #344 — Round 6's `offer_value` argument predated the bidder-fee passthrough; the floor check must run against the amount actually flowing to lender + treasury + borrower). The `freshFeeLegs` argument is empty for atomic matches since fees no longer live on the Vaipakam-side counter-order. Borrower's dapp shows "this offer is no longer acceptable; floor moved" and refreshes. | Same buffer math as v1 `updatePrepayListing`, applied to the post-bidder-fee effective ask. |
 | Compromised agent's signed-bundle endpoint returns a DIFFERENT valid bidder offer for the requested orderHash | The dapp's `expectedBidderOrderHash` was pinned from the EARLIER `/opensea/offers/{loanId}` LIST response (§17.5 step 1), NOT from the bundle response. The on-chain re-derive on the substitute bundle's `OrderComponents` produces a different hash than the pinned one → revert `BidderOrderHashMismatch`. | Pinning the expected hash from the list-step (not the bundle-step) is the load-bearing mitigation — see §17.5 expected-hash pinning. |
 | Compromised agent serves a maliciously-multi-item bidder bundle (extra offer items, extra consideration items, NFT-recipient address swap) | §17.5-bis bidder-shape invariant rejects: extra offer items / extra consideration items / wrong NFT recipient / non-ERC20 paymentToken / non-fixed-amount offer all revert `BidderOrderShapeMismatch` BEFORE `_lock` and BEFORE `matchAdvancedOrders`. The defense-in-depth fallback: even if a future bug bypassed the shape check, `matchAdvancedOrders(recipient = executor)` (§17.9.bis) catches any unspent leakage at a code-controlled address, not the borrower's EOA. | Shape invariant at the facet boundary + recipient-redirection on Seaport. |
 | Mismatched paymentToken (compromised agent surfaces a USDC offer for an ETH-principal loan) | Facet's `BidderPaymentTokenMismatch` revert (§17.6). | Token-identity invariant. |
@@ -1846,15 +1878,19 @@ verbatim with no surface change.
 
 ### 17.16 Open questions for ratification
 
-1. **Where does the bidder-side OpenSea platform fee belong?**
-   OpenSea collection offers don't include a buyer-side platform-fee
-   consideration item (the fee comes out of the seller side as part of
-   `feeLegs[]`). Confirming: the freshly-fetched `feeLegs` against
-   `offer_value` includes BOTH OpenSea's platform fee leg AND the
-   creator-royalty leg for fee-enforced collections, all sized to
-   `offer_value`. The agent proxy's `/opensea/collection/{slug}` fee
-   schedule already returns both (verified against the Block A path's
-   fee-re-derivation). **No change needed; flagging for completeness.**
+1. **OpenSea fee handling — RESOLVED 2026-06-03 (Codex round-6 P2 +
+   round-7 P3 #344).** The round-5 answer here was wrong. The
+   correct shape: OpenSea fee-enforced collections DO bake fee
+   consideration items into the BIDDER's signed offer at the
+   moment the bidder makes the offer. Round 7's architecture puts
+   those fee legs in `bidder.consideration[1..]` (signed by OpenSea's
+   SignedZone via `extraData`), and the Vaipakam counter-order
+   carries ONLY the three protocol legs (lender + treasury +
+   borrower remainder). The dapp verifies bidder fee legs against
+   the live `/opensea/collection/{slug}` schedule via the
+   per-recipient aggregate check in §17.10; the on-chain side
+   enforces the sum invariant `Σ(bidder fees) + protocol legs =
+   offer_value`. See §17.5-bis + §17.7 + §17.10.
 
 2. **Event shape — RESOLVED 2026-06-03 (Codex round-1 P3 #344).** The
    atomic-match path emits a NEW `PrepayListingMatched` event ONLY,
