@@ -93,26 +93,19 @@ export async function handleOpenSeaOffers(
   }
   // Per-IP rate-limit BEFORE the upstream calls, so a scripted
   // iterator can't burn the OpenSea quota even on rejected inputs.
-  // #334 Codex round-1 P2 — global upstream rate-limit keyed by
-  // a constant. This caps aggregate calls to the shared
-  // `OPENSEA_API_KEY` across all caller IPs (the per-IP gate
-  // below caps each caller individually but doesn't bound the
-  // sum). When the binding isn't provisioned (operator hasn't
-  // added it yet) this is a no-op; per-IP gating still applies.
-  if (
-    env.OPENSEA_OFFERS_UPSTREAM_RATELIMIT &&
-    !(
-      await env.OPENSEA_OFFERS_UPSTREAM_RATELIMIT.limit({
-        key: 'opensea-offers-upstream',
-      })
-    ).success
-  ) {
-    return jsonResponse({ error: 'upstream-quota' }, 429, resolvedOrigin);
-  }
   if (!(await checkRateLimit(req, env.OPENSEA_OFFERS_RATELIMIT))) {
     return jsonResponse({ error: 'rate-limited' }, 429, resolvedOrigin);
   }
 
+  // Validate everything that determines whether an upstream call can
+  // actually happen BEFORE consuming the global upstream rate-limit
+  // budget. Without this ordering, a distributed flood of
+  // syntactically-valid-but-functionally-invalid requests (e.g.
+  // /opensea/offers/999/...) would burn the shared upstream cap
+  // even though no OpenSea request will be attempted, returning
+  // `upstream-quota` to valid borrowers — Codex round-2 P2 on
+  // #341. The unsupported-chain + API-key gates below MUST stay
+  // ahead of the upstream-rate-limit consumption.
   const host = OPENSEA_HOST[chainId];
   const chainSlug = OPENSEA_CHAIN_SLUG[chainId];
   if (!host || !chainSlug) {
@@ -129,6 +122,25 @@ export async function handleOpenSeaOffers(
       503,
       resolvedOrigin,
     );
+  }
+
+  // #334 Codex round-1 P2 — global upstream rate-limit keyed by
+  // a constant. This caps aggregate calls to the shared
+  // `OPENSEA_API_KEY` across all caller IPs (the per-IP gate
+  // above caps each caller individually but doesn't bound the
+  // sum). Placed AFTER the validation gates so only requests
+  // that will actually reach OpenSea consume the upstream budget.
+  // When the binding isn't provisioned (operator hasn't added it
+  // yet) this is a no-op; per-IP gating still applies.
+  if (
+    env.OPENSEA_OFFERS_UPSTREAM_RATELIMIT &&
+    !(
+      await env.OPENSEA_OFFERS_UPSTREAM_RATELIMIT.limit({
+        key: 'opensea-offers-upstream',
+      })
+    ).success
+  ) {
+    return jsonResponse({ error: 'upstream-quota' }, 429, resolvedOrigin);
   }
 
   const headers = {
