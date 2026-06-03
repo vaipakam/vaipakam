@@ -1018,10 +1018,13 @@ decoded.
 **Expected-hash pinning — pinned from the offers LIST, not the
 signed-bundle response** (Codex round-1 P2 #344). The dapp's flow:
 
-1. Dapp displays the offers panel via `GET /opensea/offers/{loanId}`
-   — that response carries the orderHash for each offer. The dapp
-   pins the chosen offer's orderHash from THIS payload before any
-   subsequent fetch.
+1. Dapp displays the offers panel via the shipped agent route
+   `GET /opensea/offers/{chainId}/{contract}/{tokenId}` (Codex
+   round-5 P3 #344 — the dapp resolves `(chainId, contract, tokenId)`
+   from `loan.collateralAsset` + `loan.collateralTokenId` + the
+   active chain context). That response carries the orderHash for
+   each offer. The dapp pins the chosen offer's orderHash from THIS
+   payload before any subsequent fetch.
 2. Borrower clicks Match on offer with `pinnedOrderHash`.
 3. Dapp hits
    `GET /opensea/signed-offer/{chainId}/{contract}/{tokenId}/{pinnedOrderHash}`
@@ -1451,12 +1454,62 @@ Without step 5 the vault returns the failure value when Seaport
 queries `isValidSignature` and `matchAdvancedOrders` reverts on the
 Vaipakam-side signature check.
 
-**STEP 6 — Settle.** `seaport.matchAdvancedOrders([bidderOrder,
-vaipakamOrder], resolvers, fulfillments, recipient)` — where
-`recipient` is set to the **executor's address, not `msg.sender`**
-(see §17.9.bis below); this defangs any ERC20 leakage from a
-malformed bidder bundle that somehow gets past the §17.5-bis shape
-check.
+**STEP 6 — Settle** (Codex round-5 P2 #344 — full AdvancedOrder
+wrapping). `Seaport.matchAdvancedOrders` does NOT accept bare
+`OrderComponents + signature`; both sides must be wrapped as
+Seaport `AdvancedOrder { parameters, numerator, denominator,
+signature, extraData }` structs. The facet constructs the two
+AdvancedOrders inline:
+
+```solidity
+AdvancedOrder[] memory orders = new AdvancedOrder[](2);
+
+// Index 0 — bidder's order
+orders[0] = AdvancedOrder({
+    parameters: _toOrderParameters(bidder.components),  // OrderComponents minus counter
+    numerator:   1,                                      // full-fill
+    denominator: 1,
+    signature:   bidder.signature,
+    extraData:   ""                                      // no Seaport extension data
+});
+
+// Index 1 — Vaipakam counter-order
+orders[1] = AdvancedOrder({
+    parameters: _vaipakamOrderParameters(...),           // built from §17.7
+    numerator:   1,
+    denominator: 1,
+    signature:   "",                                     // ERC-1271 path; no off-chain sig
+    extraData:   ""
+});
+
+seaport.matchAdvancedOrders(orders, resolvers, fulfillments, recipient);
+```
+
+Where `recipient` is set to the **executor's address, not
+`msg.sender`** (see §17.9.bis below); this defangs ERC20 leakage
+from a malformed bidder bundle that somehow gets past the §17.5-bis
+shape check.
+
+**Why `numerator = denominator = 1`**: a full-fill on both orders.
+Seaport's partial-fill mechanic uses these as a fraction; passing
+1/1 settles each order to completion in one call. The bidder's
+single-leg offer + Vaipakam's single-NFT offer don't support
+partial fills under our shape invariant anyway.
+
+**Why `extraData = ""`**: Seaport's `extraData` is consumed by the
+`SIP-7` (signed-zone-data) extension; we use FULL_RESTRICTED with
+the zone callback path, not SIP-7. Empty `extraData` is correct
+for our zone shape.
+
+**`OrderParameters` vs `OrderComponents`**: identical fields EXCEPT
+`OrderComponents` carries `counter` (read by Seaport to validate
+the bidder's nonce-equivalent), while `OrderParameters` carries
+`totalOriginalConsiderationItems` (a length value Seaport uses for
+its consideration-array bounds check). The facet's
+`_toOrderParameters(components)` helper drops `counter`, sets
+`totalOriginalConsiderationItems = components.consideration.length`,
+and copies all other fields. Block D includes a unit test confirming
+the conversion is byte-stable.
 
 Atomic effects: if step 6 reverts, every prior storage write reverts
 with it (Solidity tx semantics, including the step-0 auto-clear). If
@@ -1594,7 +1647,7 @@ Post-merge of the contract PR + dapp PR:
 | Case | Outcome | Why safe |
 |---|---|---|
 | Bidder cancels OpenSea offer mid-flight (off-chain via OpenSea API) | OpenSea's offer book stops surfacing it; dapp filters it out on next refresh. If the borrower already clicked Match, the tx lands → `Seaport.getOrderStatus` returns `cancelled=false` (off-chain cancels don't on-chain-cancel) → match proceeds, bidder pays. (Off-chain cancels don't bind on-chain.) | Bidder accepted this risk by placing a signed on-chain-bindable offer. |
-| Bidder calls `Seaport.incrementCounter` between agent-fetch and Match-tx | The pinned `expectedBidderOrderHash` was hashed using the bidder's pre-bump `counter`; the on-chain re-derive from the decoded `OrderComponents` (which carry the bidder's CURRENT counter via the agent's bundle fetch) computes a different hash → `BidderOrderHashMismatch` revert. Borrower retries with a different offer. (The `getOrderStatus.isValidated` field is NOT used to gate fillability — see §17.5 sanity-check.) | Hash binding includes counter; counter bump moves the hash. |
+| Bidder calls `Seaport.incrementCounter` between agent-fetch and Match-tx | The agent's bundle returned `OrderComponents` carrying the bidder's PRE-bump `counter` (decoded from the signed bytes at the agent's fetch moment). The on-chain re-derive hashes those same pre-bump components → matches the pinned hash → `BidderOrderHashMismatch` does NOT fire (Codex round-5 P3 correction). The revert actually comes from Seaport itself at `matchAdvancedOrders` time: Seaport reads the offerer's CURRENT counter and the order's bound counter no longer matches, so Seaport reverts the match with `InvalidSigner` / `BadSignatureV` / equivalent. Borrower's dapp surfaces "this offer is no longer valid; the bidder canceled it" and refreshes. (No facet-side revert needed — Seaport's own signature path catches it.) | Counter bump invalidates the bidder's signature at Seaport's validation step, AFTER our facet's hash check passes. |
 | Live floor drifts above `offer_value × (1 - buffer)` between offer-surface and Match-tx | Facet's `_requireAskCoversFloorWithFees(loanId, offer_value, buffer, freshFeeLegs)` reverts. Borrower's dapp shows "this offer is no longer acceptable; floor moved" and refreshes. | Same protection as v1 `updatePrepayListing`. |
 | Compromised agent's signed-bundle endpoint returns a DIFFERENT valid bidder offer for the requested orderHash | The dapp's `expectedBidderOrderHash` was pinned from the EARLIER `/opensea/offers/{loanId}` LIST response (§17.5 step 1), NOT from the bundle response. The on-chain re-derive on the substitute bundle's `OrderComponents` produces a different hash than the pinned one → revert `BidderOrderHashMismatch`. | Pinning the expected hash from the list-step (not the bundle-step) is the load-bearing mitigation — see §17.5 expected-hash pinning. |
 | Compromised agent serves a maliciously-multi-item bidder bundle (extra offer items, extra consideration items, NFT-recipient address swap) | §17.5-bis bidder-shape invariant rejects: extra offer items / extra consideration items / wrong NFT recipient / non-ERC20 paymentToken / non-fixed-amount offer all revert `BidderOrderShapeMismatch` BEFORE `_lock` and BEFORE `matchAdvancedOrders`. The defense-in-depth fallback: even if a future bug bypassed the shape check, `matchAdvancedOrders(recipient = executor)` (§17.9.bis) catches any unspent leakage at a code-controlled address, not the borrower's EOA. | Shape invariant at the facet boundary + recipient-redirection on Seaport. |
