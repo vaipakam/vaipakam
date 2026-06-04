@@ -233,6 +233,71 @@ contract CollateralListingExecutor is
         return _orderFeeLegs[orderHash];
     }
 
+    /// @notice T-086 Round-7 (Issue #355) — signed-leg snapshot kept
+    ///         alongside `_orderFeeLegs` (parallel mapping pattern, same
+    ///         orderHash key). Records `consideration[0].amount`
+    ///         (lender) + `consideration[1].amount` (treasury) at sign
+    ///         time so the auto-list-at-floor B-cond-2 gate can decide
+    ///         rotation by reading the SIGNED amounts directly, not by
+    ///         deriving them from `askPrice` (which would treat the
+    ///         borrower-leg slack as protocol coverage and miss the
+    ///         unfillable-order case — see Round-7 design doc §18.5).
+    /// @dev    Storage cost = 1 slot per recorded order (two uint128s
+    ///         packed). Cleared by `clearOrder` alongside the rest of
+    ///         the per-order storage.
+    struct SignedProtocolLegs {
+        uint128 lender;
+        uint128 treasury;
+    }
+    mapping(bytes32 orderHash => SignedProtocolLegs) internal _orderProtocolLegs;
+
+    /// @notice Read accessor for `_orderProtocolLegs[orderHash]`. Returns
+    ///         the lender + treasury amounts recorded at `recordOrder`
+    ///         time; returns `(0, 0)` for an unknown or already-cleared
+    ///         orderHash (the default `SignedProtocolLegs` value).
+    function orderProtocolLegs(bytes32 orderHash) external view returns (uint128 lender, uint128 treasury) {
+        SignedProtocolLegs storage legs = _orderProtocolLegs[orderHash];
+        return (legs.lender, legs.treasury);
+    }
+
+    /// @notice T-086 Round-7 (Issue #355) — narrow auto-list-facing
+    ///         read of the per-order `OrderContext`. The full mapping
+    ///         auto-getter on `orderContext` returns nine fields; the
+    ///         auto-list path only needs the auction-mode + ask shape
+    ///         + Dutch timing fields, so this helper bundles those
+    ///         five into one external call that's directly typed on
+    ///         {IListingExecutorRecorder}.
+    function orderContextRead(bytes32 orderHash)
+        external
+        view
+        returns (
+            uint8 mode,
+            uint192 askPrice,
+            uint128 endAskPrice,
+            uint64 startTime,
+            uint64 auctionEndTime
+        )
+    {
+        OrderContext memory ctx = orderContext[orderHash];
+        return (ctx.mode, ctx.askPrice, ctx.endAskPrice, ctx.startTime, ctx.auctionEndTime);
+    }
+
+    /// @notice T-086 Round-7 follow-up (Codex round-12 P2 #1) —
+    ///         returns the conduit + key from the recorded
+    ///         `OrderContext`. The auto-list path's Case-B rotation
+    ///         reads these so a rotation reuses the borrower's
+    ///         original approved conduit choice (NOT the Case-A
+    ///         default), keeping the rotation faithful to what the
+    ///         executor's allow-list already accepts.
+    function orderContextConduit(bytes32 orderHash)
+        external
+        view
+        returns (address conduit, bytes32 conduitKey)
+    {
+        OrderContext memory ctx = orderContext[orderHash];
+        return (ctx.conduit, ctx.conduitKey);
+    }
+
     /// @notice T-086 Round-5 Block A (#313) — fee-leg overflow guard,
     ///         mirroring the existing `LoanIdOverflow` pattern. Triggers
     ///         on `feeLegs.length > MAX_FEE_LEGS` at record time before
@@ -330,6 +395,13 @@ contract CollateralListingExecutor is
     ///         narrower width still covers >10^38 wei.
     error EndAskPriceOverflow(uint256 endAskPrice);
     error AuctionEndTimeOverflow(uint256 auctionEndTime);
+    /// @notice T-086 Round-7 (Issue #355) — signed-leg snapshot
+    ///         overflow guards. Mirrors the existing narrowing-cast
+    ///         protection on `endAskPrice`. With realistic protocol-leg
+    ///         values well under 2^128 (~3.4e38), these reverts are
+    ///         unreachable in practice — explicit > silent.
+    error SignedLenderAmountOverflow(uint256 signedLenderAmount);
+    error SignedTreasuryAmountOverflow(uint256 signedTreasuryAmount);
     /// @notice Round-5 Block B (#309) — caller passed a `mode`
     ///         outside the `{PREPAY_MODE_FIXED_PRICE,
     ///         PREPAY_MODE_DUTCH}` allow-set. Mode tags are
@@ -502,7 +574,9 @@ contract CollateralListingExecutor is
         uint256 endAskPrice,
         uint256 auctionEndTime,
         uint8 mode,
-        FeeLeg[] calldata feeLegs
+        FeeLeg[] calldata feeLegs,
+        uint256 signedLenderAmount,
+        uint256 signedTreasuryAmount
     ) external {
         if (msg.sender != vaipakamDiamond) revert NotDiamond();
         if (!approvedConduits[conduit]) revert ConduitNotApproved(conduit);
@@ -520,6 +594,14 @@ contract CollateralListingExecutor is
         if (askPrice > type(uint192).max) revert AskPriceOverflow(askPrice);
         if (endAskPrice > type(uint128).max) revert EndAskPriceOverflow(endAskPrice);
         if (auctionEndTime > type(uint64).max) revert AuctionEndTimeOverflow(auctionEndTime);
+        // T-086 Round-7 (Issue #355) — signed-leg overflow guards
+        // mirror the existing pattern.
+        if (signedLenderAmount > type(uint128).max) {
+            revert SignedLenderAmountOverflow(signedLenderAmount);
+        }
+        if (signedTreasuryAmount > type(uint128).max) {
+            revert SignedTreasuryAmountOverflow(signedTreasuryAmount);
+        }
 
         // Round-5 Block B (#309) — mode-tag dispatch + per-mode shape
         // assertion. The diamond facet has already enforced the
@@ -592,6 +674,18 @@ contract CollateralListingExecutor is
             auctionEndTime: uint64(auctionEndTime),
             mode: mode
         });
+
+        // T-086 Round-7 (Issue #355) — pin the signed lender + treasury
+        // amounts so the auto-list-at-floor B-cond-2 gate can read them
+        // directly instead of deriving from `askPrice` (the borrower can
+        // pad askPrice with slack landing in consideration[2] without
+        // raising the signed lender/treasury, so an askPrice-derivation
+        // would miss the unfillable-order case).
+        _orderProtocolLegs[orderHash] = SignedProtocolLegs({
+            lender: uint128(signedLenderAmount),
+            treasury: uint128(signedTreasuryAmount)
+        });
+
         emit OrderRecorded(orderHash, loanId, conduit);
     }
 
@@ -651,6 +745,10 @@ contract CollateralListingExecutor is
         // with `feeLegs.length` (≤ MAX_FEE_LEGS = 4) so it stays
         // bounded.
         delete _orderFeeLegs[orderHash];
+        // T-086 Round-7 (Issue #355) — clear the parallel signed-leg
+        // snapshot alongside the rest of the per-order storage. Same
+        // single-slot bounded cost as the OrderContext delete.
+        delete _orderProtocolLegs[orderHash];
         emit OrderCanceled(orderHash, loanId);
     }
 
@@ -995,6 +1093,15 @@ contract CollateralListingExecutor is
         // line. `delete` on a dynamic-array mapping value clears
         // length + every element (Solidity standard semantics).
         delete _orderFeeLegs[params.orderHash];
+        // T-086 Round-7 follow-up (Codex round-13 P2 #1) — also clear
+        // the per-order signed-leg snapshot. Round-2 added
+        // `_orderProtocolLegs` writes in `recordOrder` + the
+        // `clearOrder` cleanup but missed this fill-path delete, so
+        // filled orders were leaking a packed-two-uint128s slot AND
+        // `orderProtocolLegs(orderHash)` was returning nonzero amounts
+        // for already-filled orders (the interface natspec promises
+        // `(0, 0)` for cleared/unknown orderHashes).
+        delete _orderProtocolLegs[params.orderHash];
 
         emit OrderFilled(params.orderHash, loanId);
         return ISeaportZone.validateOrder.selector;

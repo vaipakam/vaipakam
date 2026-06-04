@@ -70,6 +70,19 @@ library LibVaipakam {
     uint256 constant SECONDS_PER_YEAR = 365 days;
     uint256 constant DAYS_PER_YEAR = 365;
     uint256 constant ONE_DAY = 1 days;
+
+    /// @notice T-086 Round-7 (Issue #355) — the floor for any
+    ///         loan's grace duration. Used by the
+    ///         `cfgPrepayListingDutchGraceMarginSec` setter to bound
+    ///         the operator-set Dutch B-cond-3b safe-margin so a
+    ///         misset can't pin `t_safe` outside the grace window
+    ///         (see design doc §18.14). The on-chain saturating guard
+    ///         inside B-cond-3b is the runtime defense-in-depth
+    ///         fallback for legacy loans whose grace is shorter than
+    ///         the configured margin. `1 days` matches the minimum
+    ///         grace floor already enforced by `LibVaipakam.gracePeriod`
+    ///         for short-duration loans.
+    uint256 constant MIN_LOAN_GRACE_PERIOD = 1 days;
     // Pool-depth floor for classifying an asset as `Liquid` — 1,000,000
     // PAD units (the Predominantly Available Denominator: USD on the
     // retail deploy, whatever governance has rotated it to via T-048
@@ -2967,6 +2980,64 @@ library LibVaipakam {
         // (the cleanup path must always work, otherwise a flag-flip
         // window would strand whatever listings did get posted).
         bool cfgPrepayListingEnabled;
+
+        // ─── T-086 Round-7 (Issue #355) — grace-period auto-list ───
+        //
+        // The auto-list-at-floor path is a permissionless keeper-driven
+        // primitive that fires while a loan is in its grace window and
+        // either reposts a fresh fixed-price-at-floor listing (Case A —
+        // no live listing) or rotates an aspirationally-priced /
+        // stale-leg / late-decaying listing down to the protocol floor
+        // (Case B). See design doc §18.
+
+        // `prepayListingAutoListOptedOut[loanId]` — borrower-controlled
+        // sticky opt-out from the auto-list-at-floor path. Set
+        // AUTOMATICALLY by `cancelPrepayListing` when invoked during
+        // the grace window AND the cancel actually unwound a live
+        // listing (per §18.7); cleared explicitly by the borrower via
+        // `clearAutoListOptOut(loanId)`. Reset to `false` on every
+        // terminal-loan path (repay / default / refinance / preclose /
+        // executorFinalizePrepaySale per round-12 round-3 follow-up).
+        // Borrower posting a fresh listing post-cancel does NOT
+        // auto-clear the flag (round-3.11 sticky semantics).
+        mapping(uint256 => bool) prepayListingAutoListOptedOut;
+
+        // `prepayListingAutoListNonce[loanId]` — per-loan monotonically
+        // increasing counter that the auto-list-at-floor salt mixes in
+        // to defeat the same-block-cancel-and-relist salt collision
+        // surface (Codex round-1 P2 on PR #356). `uint64` is room for
+        // 18 quintillion relists per loan — overflow is structurally
+        // unreachable. Reset to `0` on every terminal-loan path
+        // alongside `prepayListingAutoListOptedOut`.
+        mapping(uint256 => uint64) prepayListingAutoListNonce;
+
+        // `cfgPrepayListingAutoListConduitKey` — the default Seaport
+        // conduit key the permissionless `autoListAtFloorOnGrace` path
+        // posts under for Case A (no existing listing) fresh posts.
+        // Case B (rotation) inherits the conduit / conduit-key from
+        // the existing listing's `OrderContext`. The keeper has no
+        // borrower-specific conduit preference, so the value is set
+        // once by governance to the protocol-blessed default (e.g.
+        // OpenSea's canonical conduit on the deployed chain).
+        // `bytes32(0)` while unset; the auto-list facet refuses to
+        // post Case A until governance has explicitly configured it
+        // (one-time post-deploy step).
+        bytes32 cfgPrepayListingAutoListConduitKey;
+
+        // `cfgPrepayListingDutchGraceMarginSec` — the Dutch B-cond-3b
+        // "decays to floor too late" safe-margin (`t_safe =
+        // gracePeriodEnd - safeMargin`). Default 3600 seconds = 1 hour
+        // (§18.5 B-cond-3b). Bounded at set time by
+        // `<= MIN_LOAN_GRACE_PERIOD - 60` so a misset can't pin
+        // `t_safe` outside the grace window. The on-chain saturating
+        // guard in B-cond-3b (`safeMargin = graceDuration >
+        // cfgPrepayListingDutchGraceMarginSec ?
+        // cfgPrepayListingDutchGraceMarginSec : graceDuration / 2`)
+        // is the runtime defense-in-depth fallback for legacy loans
+        // whose grace is shorter than the configured margin. Stored
+        // as `uint256` for slot-packing simplicity even though only
+        // the low 32 bits are used.
+        uint256 cfgPrepayListingDutchGraceMarginSec;
     }
 
     /// @dev One entry of the treasury-conversion target allocation
@@ -3730,6 +3801,28 @@ library LibVaipakam {
         // but if storage is somehow malformed return the last entry's
         // grace rather than reverting.
         return buckets[len - 1].graceSeconds;
+    }
+
+    /// @notice T-086 Round-7 (Issue #355) — canonical "is loan in its
+    ///         grace window" predicate: `loanEnd <= block.timestamp <
+    ///         gracePeriodEnd`. Used by `cancelPrepayListing` (sets the
+    ///         auto-list opt-out flag only on grace-window cancels)
+    ///         and by `autoListAtFloorOnGrace` (revert outside the
+    ///         window). Pulling the comparison into a single helper
+    ///         avoids the off-by-one risk of duplicating the
+    ///         `>=`/`<` pair at every call site.
+    /// @dev    `loanEnd = loan.startTime + loan.durationDays × 1 days`;
+    ///         `gracePeriodEnd = loanEnd + gracePeriod(durationDays)`.
+    ///         The lower bound is inclusive (`>=`) because the loan is
+    ///         "in grace" the moment it crosses its repayment deadline;
+    ///         the upper bound is exclusive (`<`) because
+    ///         `DefaultedFacet.markDefaulted` runs at strict equality
+    ///         `block.timestamp == gracePeriodEnd` (Codex round-1 P3
+    ///         fix on PR #356).
+    function isGraceWindow(Loan storage loan) internal view returns (bool) {
+        uint256 loanEnd = uint256(loan.startTime) + (uint256(loan.durationDays) * 1 days);
+        uint256 gracePeriodEnd = loanEnd + gracePeriod(loan.durationDays);
+        return block.timestamp >= loanEnd && block.timestamp < gracePeriodEnd;
     }
 
     /// @notice T-034 — interval-in-days lookup for a cadence enum value.

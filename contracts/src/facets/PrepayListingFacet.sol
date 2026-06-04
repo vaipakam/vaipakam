@@ -194,6 +194,18 @@ contract PrepayListingFacet is
         delete s.prepayListingOrderHash[loanId];
         delete s.prepayListingExecutor[loanId];
 
+        // T-086 Round-7 (Issue #355) — sale-settlement is a terminal
+        // loan path the same as repay / default / refinance / preclose;
+        // the per-loan auto-list state (opt-out flag + nonce) MUST be
+        // reset here too. `LibPrepayCleanup.clearActiveListing`
+        // (called by the other terminal facets) already performs this
+        // reset; this path doesn't route through it (it deletes the
+        // listing slots inline above), so we mirror the reset
+        // explicitly here. Without it, a future re-use of the loanId
+        // slot would inherit stale auto-list state.
+        delete s.prepayListingAutoListOptedOut[loanId];
+        delete s.prepayListingAutoListNonce[loanId];
+
         // T-086 step 7 — vault-side cleanup. Seaport's transferFrom
         // at fill time auto-clears the per-token approval (ERC-721
         // standard), so we only need to revoke the orderHash →

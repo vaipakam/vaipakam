@@ -18,6 +18,7 @@ import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {NFTPrepayListingFacet} from "../src/facets/NFTPrepayListingFacet.sol";
 import {NFTPrepayDutchListingFacet} from "../src/facets/NFTPrepayDutchListingFacet.sol";
 import {NFTPrepayListingAtomicFacet} from "../src/facets/NFTPrepayListingAtomicFacet.sol";
+import {NFTPrepayAutoListFacet} from "../src/facets/NFTPrepayAutoListFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -59,7 +60,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](75);
+        selectors = new bytes4[](79);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -203,6 +204,14 @@ contract HelperTest {
         selectors[73] = TestMutatorFacet.setTreasuryFeeBpsRaw.selector;
         // T-086 step 10 — test-only direct invoke of LibPrepayCleanup.
         selectors[74] = TestMutatorFacet.invokePrepayCleanup.selector;
+        // T-086 Round-7 (#355) — auto-list state mutators.
+        selectors[75] = TestMutatorFacet.setPrepayListingOrderHash.selector;
+        selectors[76] = TestMutatorFacet.setPrepayListingExecutor.selector;
+        selectors[77] = TestMutatorFacet.setPrepayListingAutoListOptedOut.selector;
+        // (getPrepayListingAutoListOptedOut removed — production reads
+        // it via NFTPrepayListingFacet.getPrepayListingAutoListOptedOut
+        // after the Codex round-13 P2 #3 follow-up.)
+        selectors[78] = TestMutatorFacet.getPrepayListingAutoListNonce.selector;
         return selectors;
     }
 
@@ -911,7 +920,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](83);
+        selectors = new bytes4[](85);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -1043,6 +1052,10 @@ contract HelperTest {
         selectors[81] = ConfigFacet.setPrepayListingBufferBps.selector;
         // T-086 step 6 — prepay-listing master kill-switch setter.
         selectors[82] = ConfigFacet.setPrepayListingEnabled.selector;
+        // T-086 Round-7 (#355) — Dutch B-cond-3b safe-margin + auto-list
+        // default conduit-key setters.
+        selectors[83] = ConfigFacet.setPrepayListingDutchGraceMarginSec.selector;
+        selectors[84] = ConfigFacet.setPrepayListingAutoListConduitKey.selector;
         return selectors;
     }
 
@@ -1261,7 +1274,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](7);
+        selectors = new bytes4[](9);
         selectors[0] = NFTPrepayListingFacet.postPrepayListing.selector;
         selectors[1] = NFTPrepayListingFacet.updatePrepayListing.selector;
         selectors[2] = NFTPrepayListingFacet.cancelPrepayListing.selector;
@@ -1269,6 +1282,11 @@ contract HelperTest {
         selectors[4] = NFTPrepayListingFacet.getPrepayListingOrderHash.selector;
         selectors[5] = NFTPrepayListingFacet.getPrepayListingBufferBps.selector;
         selectors[6] = NFTPrepayListingFacet.getPrepayListingEnabled.selector;
+        // T-086 Round-7 (#355) — borrower-only clearAutoListOptOut.
+        selectors[7] = NFTPrepayListingFacet.clearAutoListOptOut.selector;
+        // T-086 Round-7 follow-up (Codex round-13 P2 #3) — production
+        // getter for the auto-list opt-out flag.
+        selectors[8] = NFTPrepayListingFacet.getPrepayListingAutoListOptedOut.selector;
         return selectors;
     }
 
@@ -1296,6 +1314,19 @@ contract HelperTest {
     {
         selectors = new bytes4[](1);
         selectors[0] = NFTPrepayListingAtomicFacet.matchOpenSeaOffer.selector;
+        return selectors;
+    }
+
+    /// @dev T-086 Round-7 (#355) — `NFTPrepayAutoListFacet` selectors.
+    ///      ONE selector: `autoListAtFloorOnGrace`. Mirrors
+    ///      `DeployDiamond._getNFTPrepayAutoListSelectors`.
+    function getNFTPrepayAutoListFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](1);
+        selectors[0] = NFTPrepayAutoListFacet.autoListAtFloorOnGrace.selector;
         return selectors;
     }
 }

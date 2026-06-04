@@ -52,6 +52,10 @@ import NFTPrepayDutchListingFacetABI from './NFTPrepayDutchListingFacet.json';
 // LibVaipakam storage with NFTPrepayListingFacet; kills the v1
 // English-mode race window §15.3 deliberately accepted.
 import NFTPrepayListingAtomicFacetABI from './NFTPrepayListingAtomicFacet.json';
+// T-086 Round-7 (#355) — permissionless grace-period
+// `autoListAtFloorOnGrace` entry point. Sibling facet sharing
+// LibVaipakam storage with the other three prepay-listing facets.
+import NFTPrepayAutoListFacetABI from './NFTPrepayAutoListFacet.json';
 // FlashLoanLiquidationPath.md Phase 3 — standalone reference
 // receiver. Named export only; deliberately NOT spread into
 // DIAMOND_ABI below (it's not part of the diamond's selector set).
@@ -98,6 +102,7 @@ export {
   NFTPrepayListingFacetABI,
   NFTPrepayDutchListingFacetABI,
   NFTPrepayListingAtomicFacetABI,
+  NFTPrepayAutoListFacetABI,
   FlashLoanLiquidatorABI,
 };
 
@@ -149,6 +154,7 @@ export const DIAMOND_ABI = [
   ...NFTPrepayListingFacetABI,
   ...NFTPrepayDutchListingFacetABI,
   ...NFTPrepayListingAtomicFacetABI,
+  ...NFTPrepayAutoListFacetABI,
 ];
 
 /** Viem-typed alias for hooks using `encodeFunctionData` /

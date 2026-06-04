@@ -24,14 +24,16 @@ pragma solidity ^0.8.29;
  *         could drift).
  */
 abstract contract DiamondFacetNames {
-    /// @dev The 41 facets cut into the Diamond by `DeployDiamond.run()`.
+    /// @dev The 42 facets cut into the Diamond by `DeployDiamond.run()`.
     ///      (37 → 38 in T-086 step 5 with `PrepayListingFacet`;
     ///      38 → 39 in T-086 step 6 with `NFTPrepayListingFacet`;
     ///      39 → 40 in T-086 Round-5 Block B with
     ///      `NFTPrepayDutchListingFacet`;
     ///      40 → 41 in T-086 Round-6 / Block D (#345) with
-    ///      `NFTPrepayListingAtomicFacet`.)
-    function cutFacetNames() internal pure returns (string[41] memory) {
+    ///      `NFTPrepayListingAtomicFacet`;
+    ///      41 → 42 in T-086 Round-7 (#355) with
+    ///      `NFTPrepayAutoListFacet`.)
+    function cutFacetNames() internal pure returns (string[42] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -78,6 +80,14 @@ abstract contract DiamondFacetNames {
             // {NFTPrepayListingAtomicFacet.sol} contract-level
             // natspec for the §17 design-doc track.
             "NFTPrepayListingAtomicFacet",
+            // T-086 Round-7 (#355) — permissionless
+            // `autoListAtFloorOnGrace` entry point. Lives on its own
+            // facet so {LibAutoList}'s B-cond gate math + the Case A
+            // (fresh post) and Case B (rotation) orchestration stay
+            // within EIP-170 alongside the existing
+            // `NFTPrepayListingFacet` borrower-driven flow. See
+            // {NFTPrepayAutoListFacet.sol} natspec + design doc §18.
+            "NFTPrepayAutoListFacet",
             "ProfileFacet",
             "RefinanceFacet",
             "RepayFacet",

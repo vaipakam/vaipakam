@@ -146,4 +146,84 @@ Design-doc-only change in this PR. Contract implementation,
 keeper-bot scanner wiring, and dapp surface are tracked as separate
 follow-up Issues after the design ratifies.
 
+---
+
+**Round-12 follow-up (against Codex round-12 on PR #356 — folded
+into the implementation PR rather than a separate doc PR):** five
+internal-consistency fixes. (1) §17.11 atomic-match `recordOrder`
+snippet now passes the round-3.10 `signedLenderAmount` +
+`signedTreasuryAmount` args explicitly. (2) §18.16 reuse-table
+`orderFeeLegs` entry rewritten to reference the typed
+`FeeLeg[] memory` getter from round-3.10 instead of the round-3.6
+bytes-wrapped auto-getter that was already corrected in §18.5. (3)
+§18.15 open question on borrower-post-clears-opt-out resolved to the
+§18.7 sticky semantics that round-3.11 ratified — the working
+assumption from round-1 is dropped, the question marked resolved.
+(4) §18.14 terminal-cleanup checklist expanded to enumerate all
+five terminal sites including `PrepayListingFacet.executorFinalizePrepaySale`
+(round-3.10 against Codex round-10 P3 — the sale-settlement path
+doesn't route through `LibPrepayCleanup.clearActiveListing`, so the
+auto-list state reset is wired inline). (5) §18.16 reuse-table
+clarification that Case A reuses `_buildAndRecord` which already
+calls `LibPrepayListingWiring.wire` internally — the call site
+does NOT wire a second time.
+
+**Implementation track shipped in this same PR (per user direction
+2026-06-04 "fold into the implementation PR"):** the contract
+implementation, mock + test scaffolding, deploy-script wiring, and
+frontend ABI sync land alongside the design-doc round-12 fixes.
+See `feat/issue-355-auto-list-impl` for the full commit set:
+
+- `IListingExecutorRecorder` interface extended with
+  `signedLenderAmount` / `signedTreasuryAmount` on `recordOrder`,
+  new `orderProtocolLegs(bytes32)` / `orderFeeLegs(bytes32)` /
+  `orderContextRead(bytes32)` / `seaport()` views.
+- `CollateralListingExecutor` adds the `SignedProtocolLegs` struct
+  + `_orderProtocolLegs` mapping + write at `recordOrder` + clear
+  at `clearOrder` + the typed-array getter; 4 production call
+  sites (fixed-price post + update, Dutch post + update,
+  atomic-match) updated to forward the signed amounts.
+- `LibVaipakam.Storage` extended with `prepayListingAutoListOptedOut`,
+  `prepayListingAutoListNonce`, `cfgPrepayListingDutchGraceMarginSec`,
+  `cfgPrepayListingAutoListConduitKey` + new
+  `LibVaipakam.isGraceWindow(loan)` helper + `MIN_LOAN_GRACE_PERIOD`
+  constant.
+- `ConfigFacet` setters for the two new governance knobs.
+- `cancelPrepayListing` extended on `NFTPrepayListingFacet` to set
+  the sticky opt-out flag on grace-window cancels;
+  `clearAutoListOptOut` borrower-only setter added.
+- `LibPrepayCleanup.clearActiveListing` resets both auto-list slots
+  unconditionally (covers Repay / Defaulted / Refinance / Preclose /
+  Risk terminals); `PrepayListingFacet.executorFinalizePrepaySale`
+  resets them inline (the sale-settlement terminal path).
+- `LibAutoList` library carries the pure-math B-cond predicates
+  with all round-3.5 → round-3.10 algebra fixes baked in: bufferless
+  Dutch derivation, ceiling-division `t_floor`, strict-shortfall
+  predicate, B-cond-1 Dutch carve-out, fire-on-underflow guard.
+- `NFTPrepayAutoListFacet` ships the `autoListAtFloorOnGrace`
+  entry point with Case A (fresh post) + Case B (rotation +
+  fee-leg preservation + Dutch-to-fixed normalization).
+- Facet-addition 7-site checklist walked (`DiamondFacetNames`,
+  `DeployDiamond` + selector helper, `SelectorCoverageTest`,
+  `FacetSizeLimitTest`, `DeployDiamondIntegrationTest`,
+  `HelperTest`, `SetupTest`).
+- `MockListingExecutorRecorder` extended with the new read views
+  + a test-only `setOrderContext` staging helper.
+- `TestMutatorFacet` extended with auto-list-state mutators
+  (`setPrepayListingOrderHash` / `setPrepayListingExecutor` /
+  `setPrepayListingAutoListOptedOut` + matching getters).
+- `LibAutoList` pin-test suite: 22 / 22 pure-math regression
+  pins covering every round-3.5 → round-3.10 fix.
+- `NFTPrepayAutoListFacet` integration tests: 10 / 10 covering
+  precondition reverts (grace timing, eligibility, opt-out,
+  conduit config), Case A happy path (signed-leg invariant
+  byte-for-byte assertion), opt-out lifecycle (grace-only cancel
+  sets flag, clear is borrower-only).
+- Frontend ABI sync: facet added to `exportFrontendAbis.sh` +
+  `packages/contracts/src/abis/index.ts` barrel; typechecks
+  green across `@vaipakam/defi`, `@vaipakam/keeper`,
+  `@vaipakam/indexer`, `@vaipakam/agent`.
+
+Closes #355.
+
 Closes the design half of Issue #355.

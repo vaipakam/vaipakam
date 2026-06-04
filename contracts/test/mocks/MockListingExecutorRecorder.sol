@@ -33,7 +33,22 @@ contract MockListingExecutorRecorder is IListingExecutorRecorder {
         uint256 auctionEndTime;
         uint8 mode;
         FeeLeg[] feeLegs;
+        // T-086 Round-7 (Issue #355) — signed-leg snapshot fields so
+        // tests can assert each post path forwarded the new args.
+        uint256 signedLenderAmount;
+        uint256 signedTreasuryAmount;
     }
+
+    /// @notice T-086 Round-7 (Issue #355) — mirrors the executor's
+    ///         `_orderProtocolLegs` mapping so tests that exercise the
+    ///         auto-list-at-floor B-cond-2 read path can stage a
+    ///         `(lender, treasury)` snapshot independently of an actual
+    ///         `recordOrder` call.
+    struct SignedProtocolLegs {
+        uint128 lender;
+        uint128 treasury;
+    }
+    mapping(bytes32 => SignedProtocolLegs) internal _orderProtocolLegs;
 
     RecordedCall[] internal _recordOrderCalls;
     bytes32[] public clearOrderCalls;
@@ -71,7 +86,9 @@ contract MockListingExecutorRecorder is IListingExecutorRecorder {
         uint256 endAskPrice,
         uint256 auctionEndTime,
         uint8 mode,
-        FeeLeg[] calldata feeLegs
+        FeeLeg[] calldata feeLegs,
+        uint256 signedLenderAmount,
+        uint256 signedTreasuryAmount
     ) external override {
         // Push an empty entry first, then copy each FeeLeg field
         // explicitly — Solidity rejects a direct
@@ -93,14 +110,42 @@ contract MockListingExecutorRecorder is IListingExecutorRecorder {
             call.feeLegs.push(feeLegs[i]);
             unchecked { ++i; }
         }
+        call.signedLenderAmount = signedLenderAmount;
+        call.signedTreasuryAmount = signedTreasuryAmount;
+
+        // T-086 Round-7 (Issue #355) — mirror the executor's parallel
+        // snapshot so `orderProtocolLegs(orderHash)` reads from the
+        // same source the production executor uses.
+        _orderProtocolLegs[orderHash] = SignedProtocolLegs({
+            lender: uint128(signedLenderAmount),
+            treasury: uint128(signedTreasuryAmount)
+        });
     }
 
     function clearOrder(bytes32 orderHash) external override {
         clearOrderCalls.push(orderHash);
+        // T-086 Round-7 (Issue #355) — match the executor's clear path.
+        delete _orderProtocolLegs[orderHash];
     }
 
     function approvedConduits(address conduit) external view override returns (bool) {
         return _approvedConduits[conduit];
+    }
+
+    /// @inheritdoc IListingExecutorRecorder
+    function orderProtocolLegs(bytes32 orderHash) external view override returns (uint128 lender, uint128 treasury) {
+        SignedProtocolLegs storage legs = _orderProtocolLegs[orderHash];
+        return (legs.lender, legs.treasury);
+    }
+
+    /// @notice T-086 Round-7 (Issue #355) — test-only setter so unit
+    ///         tests can stage a `(lender, treasury)` snapshot
+    ///         independently of running a full `recordOrder` flow.
+    function setOrderProtocolLegs(bytes32 orderHash, uint128 lender, uint128 treasury) external {
+        _orderProtocolLegs[orderHash] = SignedProtocolLegs({
+            lender: lender,
+            treasury: treasury
+        });
     }
 
     /// @notice Round-5 Block B (#309) post-merge polish — Codex P2
@@ -172,5 +217,107 @@ contract MockListingExecutorRecorder is IListingExecutorRecorder {
     ///         one call. This helper returns the whole RecordedCall.
     function recordedCallAt(uint256 idx) external view returns (RecordedCall memory) {
         return _recordOrderCalls[idx];
+    }
+
+    // ─── T-086 Round-7 (Issue #355) — auto-list reads ───────────────────
+
+    function orderFeeLegs(bytes32 orderHash)
+        external
+        view
+        override
+        returns (FeeLeg[] memory)
+    {
+        for (uint256 i = _recordOrderCalls.length; i > 0; ) {
+            unchecked { --i; }
+            if (_recordOrderCalls[i].orderHash == orderHash) {
+                return _recordOrderCalls[i].feeLegs;
+            }
+        }
+        return new FeeLeg[](0);
+    }
+
+    /// @notice Per-order context staging used by the auto-list path's
+    ///         B-cond gates. Tests stage via {setOrderContext} then
+    ///         assert on the facet's rotation behavior; if not
+    ///         staged, falls back to the most recent matching
+    ///         `recordOrder` call so post-then-read tests don't need
+    ///         an explicit staging step.
+    struct StoredOrderContext {
+        uint8 mode;
+        uint192 askPrice;
+        uint128 endAskPrice;
+        uint64 startTime;
+        uint64 auctionEndTime;
+        bool isSet;
+    }
+    mapping(bytes32 => StoredOrderContext) internal _orderContexts;
+
+    function orderContextRead(bytes32 orderHash)
+        external
+        view
+        override
+        returns (
+            uint8 mode,
+            uint192 askPrice,
+            uint128 endAskPrice,
+            uint64 startTime,
+            uint64 auctionEndTime
+        )
+    {
+        StoredOrderContext storage ctx = _orderContexts[orderHash];
+        if (ctx.isSet) {
+            return (ctx.mode, ctx.askPrice, ctx.endAskPrice, ctx.startTime, ctx.auctionEndTime);
+        }
+        for (uint256 i = _recordOrderCalls.length; i > 0; ) {
+            unchecked { --i; }
+            if (_recordOrderCalls[i].orderHash == orderHash) {
+                RecordedCall storage rc = _recordOrderCalls[i];
+                return (
+                    rc.mode,
+                    uint192(rc.askPrice),
+                    uint128(rc.endAskPrice),
+                    uint64(rc.startTime),
+                    uint64(rc.auctionEndTime)
+                );
+            }
+        }
+        return (0, 0, 0, 0, 0);
+    }
+
+    function setOrderContext(
+        bytes32 orderHash,
+        uint8 mode,
+        uint192 askPrice,
+        uint128 endAskPrice,
+        uint64 startTime,
+        uint64 auctionEndTime
+    ) external {
+        _orderContexts[orderHash] = StoredOrderContext({
+            mode: mode,
+            askPrice: askPrice,
+            endAskPrice: endAskPrice,
+            startTime: startTime,
+            auctionEndTime: auctionEndTime,
+            isSet: true
+        });
+    }
+
+    /// @inheritdoc IListingExecutorRecorder
+    /// @notice T-086 Round-7 follow-up (Codex round-12 P2 #1) —
+    ///         returns the conduit + key from the most recent matching
+    ///         `recordOrder` call (or zeros for an unknown orderHash).
+    function orderContextConduit(bytes32 orderHash)
+        external
+        view
+        override
+        returns (address conduit, bytes32 conduitKey)
+    {
+        for (uint256 i = _recordOrderCalls.length; i > 0; ) {
+            unchecked { --i; }
+            if (_recordOrderCalls[i].orderHash == orderHash) {
+                return (_recordOrderCalls[i].conduit, _recordOrderCalls[i].conduitKey);
+            }
+        }
+        return (address(0), bytes32(0));
     }
 }

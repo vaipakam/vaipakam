@@ -78,7 +78,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
     function test_DeployDiamond_RoutesEveryFacetSelector() public {
         _populateRoutedSet();
 
-        string[41] memory facets = cutFacetNames();
+        string[42] memory facets = cutFacetNames();
         uint256 missing;
         for (uint256 i; i < facets.length; ++i) {
             string memory name = facets[i];
@@ -108,7 +108,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
     ///         4-byte selector — such a collision makes `diamondCut`
     ///         revert and the Diamond undeployable.
     function test_NoSelectorCollisionAcrossFacets() public {
-        string[41] memory facets = cutFacetNames();
+        string[42] memory facets = cutFacetNames();
         uint256 collisions;
         for (uint256 i; i < facets.length; ++i) {
             collisions += _recordAndCountCollisions(facets[i]);
@@ -228,6 +228,11 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
         // v1 English-mode race window via Seaport
         // `matchAdvancedOrders`).
         _addAll(_getNFTPrepayListingAtomicSelectors());
+        // T-086 Round-7 (#355) — `NFTPrepayAutoListFacet` (the new
+        // permissionless `autoListAtFloorOnGrace` entry point that
+        // posts / rotates listings down to the protocol floor while
+        // a loan is in its grace window).
+        _addAll(_getNFTPrepayAutoListSelectors());
     }
 
     /// @dev Add a selector list to the routed set, rejecting two faults:

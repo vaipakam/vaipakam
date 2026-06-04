@@ -64,6 +64,18 @@ library LibPrepayCleanup {
     function clearActiveListing(LibVaipakam.Loan storage loan, uint256 loanId) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
+        // T-086 Round-7 (Issue #355) — reset the per-loan auto-list
+        // state on every terminal regardless of whether there's a live
+        // listing right now. The opt-out flag is sticky and may have
+        // been set by an earlier `cancelPrepayListing` mid-grace
+        // BEFORE this terminal cleanup runs; without an unconditional
+        // reset here the flag would persist into a future re-use of
+        // the loanId slot. The nonce is similarly per-loan and gets
+        // returned to its zero baseline. Both writes are idempotent
+        // (zero → zero is a cheap no-op SSTORE).
+        delete s.prepayListingAutoListOptedOut[loanId];
+        delete s.prepayListingAutoListNonce[loanId];
+
         bytes32 orderHash = s.prepayListingOrderHash[loanId];
         if (orderHash == bytes32(0)) return; // no live listing — no-op.
 

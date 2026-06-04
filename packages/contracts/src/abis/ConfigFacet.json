@@ -1350,12 +1350,38 @@
   },
   {
     "type": "function",
+    "name": "setPrepayListingAutoListConduitKey",
+    "inputs": [
+      {
+        "name": "newConduitKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setPrepayListingBufferBps",
     "inputs": [
       {
         "name": "newBps",
         "type": "uint16",
         "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setPrepayListingDutchGraceMarginSec",
+    "inputs": [
+      {
+        "name": "newMarginSec",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "outputs": [],
@@ -2118,6 +2144,19 @@
   },
   {
     "type": "event",
+    "name": "PrepayListingAutoListConduitKeySet",
+    "inputs": [
+      {
+        "name": "newConduitKey",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "PrepayListingBufferBpsSet",
     "inputs": [
       {
@@ -2125,6 +2164,19 @@
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PrepayListingDutchGraceMarginSecSet",
+    "inputs": [
+      {
+        "name": "newMarginSec",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
       }
     ],
     "anonymous": false
@@ -2714,6 +2766,22 @@
         "name": "maxAllowed",
         "type": "uint16",
         "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidPrepayListingDutchGraceMarginSec",
+    "inputs": [
+      {
+        "name": "marginSec",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "maxAllowed",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ]
   },
