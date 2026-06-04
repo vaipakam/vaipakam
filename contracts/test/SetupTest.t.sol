@@ -121,6 +121,7 @@ import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {NFTPrepayListingFacet} from "../src/facets/NFTPrepayListingFacet.sol";
 import {NFTPrepayDutchListingFacet} from "../src/facets/NFTPrepayDutchListingFacet.sol";
 import {NFTPrepayListingAtomicFacet} from "../src/facets/NFTPrepayListingAtomicFacet.sol";
+import {NFTPrepayAutoListFacet} from "../src/facets/NFTPrepayAutoListFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 
 contract SetupTest is Test {
@@ -219,6 +220,7 @@ contract SetupTest is Test {
     NFTPrepayListingFacet nftPrepayListingFacet;
     NFTPrepayDutchListingFacet nftPrepayDutchListingFacet;
     NFTPrepayListingAtomicFacet nftPrepayListingAtomicFacet;
+    NFTPrepayAutoListFacet nftPrepayAutoListFacet;
     RefinanceFacet refinanceFacet;
     // #229 — final 9-facet superset closure.
     DiamondLoupeFacet diamondLoupeFacet;
@@ -302,6 +304,7 @@ contract SetupTest is Test {
         nftPrepayListingFacet = new NFTPrepayListingFacet();
         nftPrepayDutchListingFacet = new NFTPrepayDutchListingFacet();
         nftPrepayListingAtomicFacet = new NFTPrepayListingAtomicFacet();
+        nftPrepayAutoListFacet = new NFTPrepayAutoListFacet();
         refinanceFacet = new RefinanceFacet();
         // #229 — final 9-facet superset closure (cut below).
         diamondLoupeFacet = new DiamondLoupeFacet();
@@ -341,7 +344,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](42);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](43);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -582,6 +585,13 @@ contract SetupTest is Test {
             facetAddress: address(nftPrepayListingAtomicFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getNFTPrepayListingAtomicFacetSelectors()
+        });
+        // T-086 Round-7 (#355) — NFTPrepayAutoListFacet (permissionless
+        // grace-period autoListAtFloorOnGrace entry point).
+        cuts[42] = IDiamondCut.FacetCut({
+            facetAddress: address(nftPrepayAutoListFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getNFTPrepayAutoListFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

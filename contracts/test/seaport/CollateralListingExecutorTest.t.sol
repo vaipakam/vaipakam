@@ -223,7 +223,7 @@ contract CollateralListingExecutorTest is Test {
             uint256(0),
             uint256(block.timestamp),
             TEST_ASK_PRICE
-        , TEST_ASK_PRICE, 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs());
+        , TEST_ASK_PRICE, 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs(), uint256(0), uint256(0));
     }
 
     // ─── Admin: conduit allow-list ──────────────────────────────────────
@@ -259,7 +259,7 @@ contract CollateralListingExecutorTest is Test {
         executor.recordOrder(
             TEST_ORDER_HASH, TEST_LOAN_ID, conduit,
             bytes32(0), uint256(0), uint256(block.timestamp), uint256(0)
-        , uint256(0), 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs());
+        , uint256(0), 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs(), uint256(0), uint256(0));
     }
 
     function test_recordOrder_rejectsUnapprovedConduit() public {
@@ -271,7 +271,7 @@ contract CollateralListingExecutorTest is Test {
         executor.recordOrder(
             TEST_ORDER_HASH, TEST_LOAN_ID, rogue,
             bytes32(0), uint256(0), uint256(block.timestamp), uint256(0)
-        , uint256(0), 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs());
+        , uint256(0), 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs(), uint256(0), uint256(0));
     }
 
     function test_recordOrder_alreadyRecorded() public {
@@ -285,7 +285,7 @@ contract CollateralListingExecutorTest is Test {
         executor.recordOrder(
             TEST_ORDER_HASH, TEST_LOAN_ID, conduit,
             bytes32(0), uint256(0), uint256(block.timestamp), uint256(0)
-        , uint256(0), 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs());
+        , uint256(0), 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs(), uint256(0), uint256(0));
     }
 
     function test_recordOrder_uint96Overflow() public {
@@ -297,7 +297,7 @@ contract CollateralListingExecutorTest is Test {
         executor.recordOrder(
             TEST_ORDER_HASH, tooBig, conduit,
             bytes32(0), uint256(0), uint256(block.timestamp), uint256(0)
-        , uint256(0), 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs());
+        , uint256(0), 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs(), uint256(0), uint256(0));
     }
 
     /// @dev T-086 #316 — bounds check on the new `startTime` narrowing
@@ -315,7 +315,7 @@ contract CollateralListingExecutorTest is Test {
         executor.recordOrder(
             TEST_ORDER_HASH, TEST_LOAN_ID, conduit,
             bytes32(0), uint256(0), tooBig, uint256(0)
-        , uint256(0), 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs());
+        , uint256(0), 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs(), uint256(0), uint256(0));
     }
 
     /// @dev T-086 #316 — bounds check on the new `askPrice` narrowing
@@ -333,7 +333,7 @@ contract CollateralListingExecutorTest is Test {
         executor.recordOrder(
             TEST_ORDER_HASH, TEST_LOAN_ID, conduit,
             bytes32(0), uint256(0), uint256(block.timestamp), tooBig
-        , tooBig, 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs());
+        , tooBig, 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs(), uint256(0), uint256(0));
     }
 
     function test_recordOrder_happyPath() public {

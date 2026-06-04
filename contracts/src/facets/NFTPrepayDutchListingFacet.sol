@@ -412,7 +412,15 @@ contract NFTPrepayDutchListingFacet is
             endAskPrice,
             auctionEndTime,
             PREPAY_MODE_DUTCH,
-            feeLegs
+            feeLegs,
+            // T-086 Round-7 (Issue #355) — signed-leg snapshot. Dutch
+            // orders sign consideration[0/1].amount as the projected
+            // lender/treasury legs at auctionEndTime, which is exactly
+            // the pctx pulled at `getPrepayContext(loanId,
+            // auctionEndTime)` above; LibPrepayOrder.buildAndHashDutch
+            // forwards these as the signed amounts.
+            pctx.lenderLeg,
+            pctx.treasuryLeg
         );
 
         // Round-6 Block D #346: route through shared library so v1
@@ -475,7 +483,11 @@ contract NFTPrepayDutchListingFacet is
             endAskPrice,
             auctionEndTime,
             PREPAY_MODE_DUTCH,
-            feeLegs
+            feeLegs,
+            // T-086 Round-7 (Issue #355) — signed-leg snapshot. See
+            // _buildAndRecordDutch above for the parallel comment.
+            pctx.lenderLeg,
+            pctx.treasuryLeg
         );
 
         // Round-6 Block D #346: canonical wire helper. The vault

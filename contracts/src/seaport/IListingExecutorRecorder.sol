@@ -96,7 +96,9 @@ interface IListingExecutorRecorder {
         uint256 endAskPrice,
         uint256 auctionEndTime,
         uint8 mode,
-        FeeLeg[] calldata feeLegs
+        FeeLeg[] calldata feeLegs,
+        uint256 signedLenderAmount,
+        uint256 signedTreasuryAmount
     ) external;
 
     /// @notice Remove a binding. Idempotent. T-086 #316: while the
@@ -112,4 +114,64 @@ interface IListingExecutorRecorder {
 
     /// @notice Allow-list membership for `conduit`.
     function approvedConduits(address conduit) external view returns (bool);
+
+    /// @notice T-086 Round-7 (Issue #355) — typed read accessor for the
+    ///         per-order fee-leg snapshot. Returns the full
+    ///         `FeeLeg[]` recorded at `recordOrder` time; the empty
+    ///         array for an unknown or fee-free orderHash. Auto-list
+    ///         Case-B rotation reads this BEFORE `clearOrder` wipes
+    ///         the snapshot.
+    function orderFeeLegs(bytes32 orderHash) external view returns (FeeLeg[] memory);
+
+    /// @notice T-086 Round-7 (Issue #355) — narrow per-order read
+    ///         surface bundling the `OrderContext` fields the auto-
+    ///         list-at-floor B-cond gates read. Returns the
+    ///         auction-mode tag + ask shape + Dutch timing fields
+    ///         from the executor's `OrderContext` storage. Returns
+    ///         zero / default fields for an unknown orderHash.
+    /// @dev    Kept narrow on purpose — the executor's
+    ///         `OrderContext` includes loanId / conduit / conduitKey
+    ///         / salt that the auto-list path doesn't need (Case B
+    ///         inherits the conduit from the existing listing via
+    ///         the wired vault binding, NOT from this read).
+    function orderContextRead(bytes32 orderHash)
+        external
+        view
+        returns (
+            uint8 mode,
+            uint192 askPrice,
+            uint128 endAskPrice,
+            uint64 startTime,
+            uint64 auctionEndTime
+        );
+
+    /// @notice T-086 Round-7 (Issue #355) — the Seaport address bound
+    ///         at executor-init time. Read by the auto-list path so
+    ///         `LibPrepayOrder.buildAndHash` can construct the
+    ///         canonical order against the same Seaport the executor
+    ///         routes fills through.
+    function seaport() external view returns (address);
+
+    /// @notice T-086 Round-7 (Issue #355) — read accessor for the
+    ///         per-order signed-leg snapshot. Returns the
+    ///         `consideration[0].amount` (lender) and
+    ///         `consideration[1].amount` (treasury) recorded at sign
+    ///         time for `orderHash`. The auto-list-at-floor B-cond-2
+    ///         gate reads these directly to decide rotation: when live
+    ///         `pctx.lenderLeg` or `pctx.treasuryLeg` exceeds the
+    ///         signed amount the order is unfillable
+    ///         (CollateralListingExecutor._assertOrderContent reverts
+    ///         `LenderShortPaid` / `TreasuryShortPaid` at fill time),
+    ///         so the keeper rotates to a fresh fixed-price-at-floor
+    ///         listing.
+    ///
+    ///         Returns `(0, 0)` for an unknown or already-cleared
+    ///         orderHash.
+    ///
+    ///         Populated by `recordOrder` — signed amounts come in as
+    ///         the new `signedLenderAmount` + `signedTreasuryAmount`
+    ///         args, not re-derived from `askPrice` (which would
+    ///         silently treat borrower-leg slack as protocol coverage
+    ///         — see Round-7 §18.5 B-cond-2 rationale).
+    function orderProtocolLegs(bytes32 orderHash) external view returns (uint128 lender, uint128 treasury);
 }

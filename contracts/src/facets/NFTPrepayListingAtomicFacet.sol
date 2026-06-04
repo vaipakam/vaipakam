@@ -650,7 +650,15 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
             effectiveAsk,        // endAskPrice = askPrice (fixed)
             0,                   // auctionEndTime sentinel
             PREPAY_MODE_ATOMIC_MATCH,
-            emptyFeeLegs // empty — Vaipakam side has no fee legs (memory→calldata at external call boundary)
+            emptyFeeLegs, // empty — Vaipakam side has no fee legs (memory→calldata at external call boundary)
+            // T-086 Round-7 (Issue #355) — signed-leg snapshot. The
+            // Vaipakam counter-order's three consideration legs sum to
+            // `effectiveAsk` with leg[0] = pctx.lenderLeg, leg[1] =
+            // pctx.treasuryLeg, leg[2] = borrower-residual; the
+            // signed-lender / signed-treasury amounts mirror that
+            // construction.
+            pctx.lenderLeg,
+            pctx.treasuryLeg
         );
 
         // STEP 5 — Wire the vault.

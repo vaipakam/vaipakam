@@ -684,4 +684,34 @@ contract TestMutatorFacet {
     {
         return LibERC721._storage().operatorApprovalGrantEpoch[owner][operator];
     }
+
+    // ─── T-086 Round-7 (Issue #355) — auto-list state mutators ──────────
+
+    /// @notice Direct-set the diamond's pinned orderHash for `loanId`
+    ///         so auto-list integration tests can simulate "an
+    ///         existing listing is here" without running through the
+    ///         full borrower-driven post path.
+    function setPrepayListingOrderHash(uint256 loanId, bytes32 orderHash) external {
+        LibVaipakam.storageSlot().prepayListingOrderHash[loanId] = orderHash;
+    }
+
+    function setPrepayListingExecutor(uint256 loanId, address executor) external {
+        LibVaipakam.storageSlot().prepayListingExecutor[loanId] = executor;
+    }
+
+    /// @notice Direct-set the per-loan auto-list opt-out flag so tests
+    ///         can assert the auto-list path's `AutoListBorrowerOptedOut`
+    ///         gate without exercising the full cancel-during-grace
+    ///         flow that ordinarily sets the flag.
+    function setPrepayListingAutoListOptedOut(uint256 loanId, bool optedOut) external {
+        LibVaipakam.storageSlot().prepayListingAutoListOptedOut[loanId] = optedOut;
+    }
+
+    function getPrepayListingAutoListOptedOut(uint256 loanId) external view returns (bool) {
+        return LibVaipakam.storageSlot().prepayListingAutoListOptedOut[loanId];
+    }
+
+    function getPrepayListingAutoListNonce(uint256 loanId) external view returns (uint64) {
+        return LibVaipakam.storageSlot().prepayListingAutoListNonce[loanId];
+    }
 }

@@ -37,6 +37,7 @@ import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {NFTPrepayListingFacet} from "../src/facets/NFTPrepayListingFacet.sol";
 import {NFTPrepayDutchListingFacet} from "../src/facets/NFTPrepayDutchListingFacet.sol";
 import {NFTPrepayListingAtomicFacet} from "../src/facets/NFTPrepayListingAtomicFacet.sol";
+import {NFTPrepayAutoListFacet} from "../src/facets/NFTPrepayAutoListFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {MetricsDashboardFacet} from "../src/facets/MetricsDashboardFacet.sol";
@@ -142,6 +143,7 @@ contract DeployDiamond is Script {
         NFTPrepayListingFacet nftPrepayListingFacet = new NFTPrepayListingFacet();
         NFTPrepayDutchListingFacet nftPrepayDutchListingFacet = new NFTPrepayDutchListingFacet();
         NFTPrepayListingAtomicFacet nftPrepayListingAtomicFacet = new NFTPrepayListingAtomicFacet();
+        NFTPrepayAutoListFacet nftPrepayAutoListFacet = new NFTPrepayAutoListFacet();
         RefinanceFacet refinanceFacet = new RefinanceFacet();
         MetricsFacet metricsFacet = new MetricsFacet();
         MetricsDashboardFacet metricsDashboardFacet = new MetricsDashboardFacet();
@@ -177,7 +179,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 36 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](41);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](42);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -260,6 +262,14 @@ contract DeployDiamond is Script {
         cuts[40] = _buildCut(
             address(nftPrepayListingAtomicFacet),
             _getNFTPrepayListingAtomicSelectors()
+        );
+        // T-086 Round-7 (#355) — `NFTPrepayAutoListFacet`
+        // (permissionless `autoListAtFloorOnGrace` entry point;
+        // sibling facet sharing LibVaipakam storage with the other
+        // three prepay-listing facets). Single selector.
+        cuts[41] = _buildCut(
+            address(nftPrepayAutoListFacet),
+            _getNFTPrepayAutoListSelectors()
         );
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
@@ -1184,7 +1194,7 @@ contract DeployDiamond is Script {
     ///      facet's bytecode within solc's jump-table reservation
     ///      budget.
     function _getNFTPrepayListingSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](8);
         s[0] = NFTPrepayListingFacet.postPrepayListing.selector;
         s[1] = NFTPrepayListingFacet.updatePrepayListing.selector;
         s[2] = NFTPrepayListingFacet.cancelPrepayListing.selector;
@@ -1196,6 +1206,10 @@ contract DeployDiamond is Script {
         // "unavailable on this chain" instead of a form that reverts at
         // submit with `PrepayListingDisabled`.
         s[6] = NFTPrepayListingFacet.getPrepayListingEnabled.selector;
+        // T-086 Round-7 (#355) — borrower-only clear of the auto-list
+        // opt-out flag, counter-action to the sticky flag set by
+        // `cancelPrepayListing` during the grace window (§18.7).
+        s[7] = NFTPrepayListingFacet.clearAutoListOptOut.selector;
     }
 
     /// @dev T-086 Round-5 Block B (#309) — `NFTPrepayDutchListingFacet`
@@ -1223,6 +1237,17 @@ contract DeployDiamond is Script {
     function _getNFTPrepayListingAtomicSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](1);
         s[0] = NFTPrepayListingAtomicFacet.matchOpenSeaOffer.selector;
+    }
+
+    /// @dev T-086 Round-7 (#355) — `NFTPrepayAutoListFacet` selectors.
+    ///      Single permissionless entry point
+    ///      `autoListAtFloorOnGrace(uint256 loanId)`; the
+    ///      `clearAutoListOptOut` borrower-side counter-action lives
+    ///      on `NFTPrepayListingFacet` alongside `cancelPrepayListing`
+    ///      (the cancel path is where the opt-out flag gets set).
+    function _getNFTPrepayAutoListSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = NFTPrepayAutoListFacet.autoListAtFloorOnGrace.selector;
     }
 
     function _getRefinanceSelectors() internal pure returns (bytes4[] memory s) {
@@ -1334,7 +1359,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](83);
+        s = new bytes4[](85);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -1488,6 +1513,16 @@ contract DeployDiamond is Script {
         // false; ADMIN flips on once steps 7 (vault approval) + 10
         // (default-flow lock-bypass) are wired end-to-end.
         s[82] = ConfigFacet.setPrepayListingEnabled.selector;
+        // T-086 Round-7 (#355) — Dutch B-cond-3b "decays to floor too
+        // late" safe-margin in seconds. Bounded at set time by
+        // `MIN_LOAN_GRACE_PERIOD - 60`. Default 0 (B-cond-3b safe-
+        // margin policy disabled until governance configures).
+        s[83] = ConfigFacet.setPrepayListingDutchGraceMarginSec.selector;
+        // T-086 Round-7 (#355) — default Seaport conduit key the
+        // permissionless `autoListAtFloorOnGrace` Case A posts under.
+        // Default `bytes32(0)` (auto-list Case A blocked until
+        // governance configures).
+        s[84] = ConfigFacet.setPrepayListingAutoListConduitKey.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {

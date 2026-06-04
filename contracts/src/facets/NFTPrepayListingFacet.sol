@@ -593,7 +593,13 @@ contract NFTPrepayListingFacet is
             askPrice,                    // endAskPrice = askPrice
             0,                           // auctionEndTime = 0 sentinel
             PREPAY_MODE_FIXED_PRICE,
-            feeLegs
+            feeLegs,
+            // T-086 Round-7 (Issue #355) — signed-leg snapshot.
+            // Fixed-price orders set consideration[0].amount =
+            // pctx.lenderLeg, consideration[1].amount = pctx.treasuryLeg
+            // verbatim per LibPrepayOrder.buildAndHash.
+            pctx.lenderLeg,
+            pctx.treasuryLeg
         );
         _wireVaultForListing(s, loan, orderHash, conduit, address(executor));
     }
@@ -755,10 +761,14 @@ contract NFTPrepayListingFacet is
 
         s.prepayListingOrderHash[loanId] = newOrderHash;
         s.prepayListingExecutor[loanId] = address(executor);
-        // T-086 #316 + Round-5 Block A (#313) + Round-5 Block B (#309) —
-        // same sign-time-input pinning as the post path including
-        // fee legs + the auction-mode tag. Fixed-price stamps
-        // `endAskPrice == askPrice` and `auctionEndTime == 0`.
+        // T-086 #316 + Round-5 Block A (#313) + Round-5 Block B (#309) +
+        // Round-7 Issue #355 — same sign-time-input pinning as the post
+        // path including fee legs + the auction-mode tag + the signed-
+        // leg snapshot. Fixed-price stamps `endAskPrice == askPrice`
+        // and `auctionEndTime == 0`; the signed legs come from the live
+        // pctx since LibPrepayOrder.buildAndHash sets
+        // consideration[0/1].amount = pctx.lenderLeg / pctx.treasuryLeg
+        // verbatim.
         executor.recordOrder(
             newOrderHash,
             loanId,
@@ -770,7 +780,9 @@ contract NFTPrepayListingFacet is
             askPrice,                    // endAskPrice = askPrice
             0,                           // auctionEndTime = 0 sentinel
             PREPAY_MODE_FIXED_PRICE,
-            feeLegs
+            feeLegs,
+            pctx.lenderLeg,
+            pctx.treasuryLeg
         );
 
         // Vault rotation: register the new orderHash binding +
@@ -821,7 +833,60 @@ contract NFTPrepayListingFacet is
             revert PrepayListingNotFound(loanId);
         }
 
+        // T-086 Round-7 (Issue #355) — borrower's grace-window cancel is
+        // the escape hatch from the permissionless auto-list-at-floor
+        // path: SET the sticky opt-out flag so a same-block keeper can
+        // not immediately re-list after this cancel. Round-3.4 (Raja
+        // P2 #3): BOTH conditions must hold — we're in the grace
+        // window AND a live listing was actually unwound (the
+        // `orderHash != 0` check above already guarantees the second).
+        // Outside-grace cancels (during the active loan) don't set the
+        // flag — the borrower has time to repay or reconsider their
+        // listing plan; only the grace-window cancel is the
+        // "stop the auto-list" signal.
+        if (LibVaipakam.isGraceWindow(loan)) {
+            s.prepayListingAutoListOptedOut[loanId] = true;
+        }
+
         _cancel(s, loan, loanId, orderHash, CancelReason.Borrower);
+    }
+
+    // ─── T-086 Round-7 (Issue #355) — auto-list opt-out controls ─────────
+
+    /// @notice Emitted when the borrower clears the auto-list opt-out
+    ///         flag, re-enabling permissionless `autoListAtFloorOnGrace`
+    ///         calls for the loan.
+    /// @custom:event-category state-change/loan-mutation
+    event AutoListOptOutCleared(uint256 indexed loanId, address indexed clearedBy);
+
+    /// @notice Borrower-only clear of the per-loan auto-list opt-out
+    ///         flag. Counter-action to the sticky flag set by
+    ///         `cancelPrepayListing` when invoked during the grace
+    ///         window. Lets a borrower who changed their mind explicitly
+    ///         re-enable permissionless `autoListAtFloorOnGrace` rotation
+    ///         without canceling-and-not-cancelling games.
+    /// @dev    Gated on current borrower-position holder (same gate as
+    ///         `post` / `update` / `cancel`). `whenNotPaused` because
+    ///         the flag flip is a state-change op — operationally
+    ///         dormant while the diamond is paused, parallel to the
+    ///         post / update paths. `nonReentrant` for parity with
+    ///         every other position-holder-gated entry.
+    ///
+    ///         No-op semantics if the flag is already `false`: emits
+    ///         `AutoListOptOutCleared` regardless so a frontend's
+    ///         "I cleared this" UX confirmation can rely on the event.
+    /// @param loanId Loan whose opt-out to clear.
+    function clearAutoListOptOut(uint256 loanId) external nonReentrant whenNotPaused {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+
+        address holder = VaipakamNFTFacet(address(this)).ownerOf(loan.borrowerTokenId);
+        if (holder != msg.sender) {
+            revert NotPositionHolder(loanId, msg.sender, holder);
+        }
+
+        s.prepayListingAutoListOptedOut[loanId] = false;
+        emit AutoListOptOutCleared(loanId, msg.sender);
     }
 
     // ─── Permissionless entry: cancelExpiredPrepayListing ───────────────

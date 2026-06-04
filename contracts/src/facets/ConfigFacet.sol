@@ -278,6 +278,81 @@ contract ConfigFacet is DiamondAccessControl {
         emit PrepayListingEnabledSet(enabled);
     }
 
+    // ── T-086 Round-7 (Issue #355) — Dutch grace-margin knob ────────────
+
+    /// @notice Emitted on every update of
+    ///         `cfgPrepayListingDutchGraceMarginSec`.
+    /// @custom:event-category informational/config
+    event PrepayListingDutchGraceMarginSecSet(uint32 newMarginSec);
+
+    /// @notice Misset Dutch grace-margin (above the
+    ///         `MIN_LOAN_GRACE_PERIOD - 60` ceiling).
+    error InvalidPrepayListingDutchGraceMarginSec(uint32 marginSec, uint32 maxAllowed);
+
+    /**
+     * @notice Set the Dutch B-cond-3b "decays to floor too late"
+     *         safe-margin in seconds. Read by the auto-list-at-floor
+     *         path's `autoListAtFloorOnGrace` B-cond-3b gate as
+     *         `t_safe = gracePeriodEnd - safeMargin`, where
+     *         `safeMargin` saturates to `graceDuration / 2` on loans
+     *         whose grace is shorter than this configured value
+     *         (defense-in-depth, see design doc §18.5 B-cond-3b).
+     * @dev    ADMIN_ROLE-gated. Bounded at set time by
+     *         `MIN_LOAN_GRACE_PERIOD - 60` so a misset can't pin
+     *         `t_safe` outside the grace window for ANY loan whose
+     *         grace meets the protocol minimum. The on-chain saturating
+     *         guard inside B-cond-3b is the runtime fallback for
+     *         legacy loans whose grace is shorter than the configured
+     *         margin. Default storage value `0` means B-cond-3b's
+     *         safe-margin policy is effectively disabled until
+     *         governance has explicitly configured it.
+     * @param newMarginSec New margin in seconds, ≤
+     *                     `MIN_LOAN_GRACE_PERIOD - 60`. Stored on
+     *                     `Storage.cfgPrepayListingDutchGraceMarginSec`.
+     */
+    function setPrepayListingDutchGraceMarginSec(uint32 newMarginSec)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        // `MIN_LOAN_GRACE_PERIOD` is `1 days = 86400`; the cast to
+        // uint32 is structurally lossless (86340 fits in 17 bits).
+        uint32 maxAllowed = uint32(LibVaipakam.MIN_LOAN_GRACE_PERIOD - 60);
+        if (newMarginSec > maxAllowed) {
+            revert InvalidPrepayListingDutchGraceMarginSec(newMarginSec, maxAllowed);
+        }
+        LibVaipakam.storageSlot().cfgPrepayListingDutchGraceMarginSec = newMarginSec;
+        emit PrepayListingDutchGraceMarginSecSet(newMarginSec);
+    }
+
+    // ── T-086 Round-7 (Issue #355) — auto-list default conduit key ──────
+
+    /// @notice Emitted on every update of
+    ///         `cfgPrepayListingAutoListConduitKey`.
+    /// @custom:event-category informational/config
+    event PrepayListingAutoListConduitKeySet(bytes32 newConduitKey);
+
+    /**
+     * @notice Set the default Seaport conduit key the permissionless
+     *         `autoListAtFloorOnGrace` path posts under for Case A
+     *         (no existing listing) fresh posts. Case B rotation
+     *         inherits the conduit / conduit-key from the existing
+     *         listing's `OrderContext`, not this default.
+     * @dev    ADMIN_ROLE-gated. Default storage value `bytes32(0)`
+     *         means the auto-list facet refuses Case A until governance
+     *         has explicitly configured it (one-time post-deploy
+     *         step). The configured value MUST resolve to a conduit
+     *         address that the executor's `approvedConduits`
+     *         allow-list contains, otherwise the auto-list post
+     *         reverts `ConduitNotApproved` at `recordOrder` time.
+     */
+    function setPrepayListingAutoListConduitKey(bytes32 newConduitKey)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.storageSlot().cfgPrepayListingAutoListConduitKey = newConduitKey;
+        emit PrepayListingAutoListConduitKeySet(newConduitKey);
+    }
+
     // ── Treasury conversion (T-600) knobs ───────────────────────────────
 
     /// @notice Emitted when the treasury-conversion target allocation is

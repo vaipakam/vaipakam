@@ -1697,9 +1697,18 @@ slots** (Codex round-3 P2 #344). Three storage writes:
   /* askPrice= */ effectiveAsk,
   /* endAskPrice= */ effectiveAsk,
   /* auctionEndTime= */ 0,
-  PREPAY_MODE_ATOMIC_MATCH, emptyFeeLegs)` — pins the counter-order
-  in the executor's `orderContext` map so the executor's ERC-1271
-  delegate returns true when Seaport queries via the vault.
+  PREPAY_MODE_ATOMIC_MATCH, emptyFeeLegs,
+  /* signedLenderAmount= */ pctx.lenderLeg,
+  /* signedTreasuryAmount= */ pctx.treasuryLeg)` — pins the
+  counter-order in the executor's `orderContext` map so the
+  executor's ERC-1271 delegate returns true when Seaport queries
+  via the vault. The two trailing arguments are the Round-7 / §18.5
+  signed-leg snapshot that the auto-list path's B-cond-2 gate reads
+  back via `IListingExecutorRecorder.orderProtocolLegs(bytes32)` —
+  every post path (fixed-price, Dutch, atomic-match, auto-list Case A)
+  forwards `consideration[0].amount` / `consideration[1].amount`
+  verbatim, NOT a value re-derived from `askPrice` (which would
+  re-introduce the borrower-slack ambiguity §18.5 fixed).
   **`askPrice = endAskPrice = effectiveAsk =
   bidder.offer[0].startAmount - bidderFeeTotal`** (Codex round-10
   P3 #344). The Vaipakam counter-order's three consideration legs
@@ -3753,11 +3762,16 @@ implementation PR has a single source of truth:
      (`loanEnd <= block.timestamp < gracePeriodEnd`).
    - `_buildAndRecord` (private) — adds the per-loan-nonce salt
      for fresh-post auto-listings.
-   - Every terminal-loan-state path (RepayFacet, DefaultedFacet,
-     RefinanceFacet, PrecloseFacet) — clears
+   - Every terminal-loan-state path — clears
      `s.prepayListingAutoListOptedOut[loanId]` and
      `s.prepayListingAutoListNonce[loanId]` as part of the existing
-     terminal cleanup.
+     terminal cleanup. Five terminal sites: `RepayFacet`,
+     `DefaultedFacet`, `RefinanceFacet`, `PrecloseFacet` (the four
+     diamond facets that route through `LibPrepayCleanup.clearActiveListing`)
+     AND `PrepayListingFacet.executorFinalizePrepaySale` (round-3.10
+     against Codex round-10 P3 — the Seaport-sale-settlement terminal
+     path does NOT route through `clearActiveListing`, so the reset
+     is wired inline at that callback site too).
 
    **Two new storage slots on `LibVaipakam.Storage`:**
    - `mapping(uint256 => bool) prepayListingAutoListOptedOut`
@@ -3906,18 +3920,21 @@ ratification before implementation:
    v1?** Working assumption: v1 Tier-1 block; freeze-and-claim is a
    separate design round if/when needed.
 
-2. **Per-loan opt-out flag persistence across post-cancel actions
-   (Codex round-1 P2 secondary).** The §18.7 design says
-   `s.prepayListingAutoListOptedOut[loanId]` clears on terminal
-   events (repay, default, refinance, preclose). Does it ALSO clear
-   on borrower-driven `postPrepayListing` after a grace-window
-   cancel? Argument FOR clearing: borrower posting a fresh listing
-   signals they want a sale; the auto-list path's stale-leg refresh
-   should re-enable. Argument AGAINST: the borrower's cancel was
-   their signal, and the new post might be at an aspirational ask
-   the borrower doesn't want keepers to undercut. Working assumption:
-   clears on `postPrepayListing` / `postPrepayDutchListing` after
-   grace cancel — the new post is the new signal.
+2. **Per-loan opt-out flag persistence across post-cancel actions —
+   RESOLVED in round-3.11 against Codex round-11 P2 #3.** The
+   round-1 draft left this as an open question with a working
+   assumption that borrower-driven `postPrepayListing` after a
+   grace-window cancel would auto-clear the flag. §18.7 +
+   §18.12 round-3.11 SUPERSEDE that working assumption: the
+   opt-out flag is STICKY across borrower posts. The borrower
+   MUST call `clearAutoListOptOut(loanId)` explicitly to re-enable
+   the keeper-driven path. Rationale: the borrower's cancel was
+   the meaningful escape-hatch signal; making the flag implicitly
+   clear on a re-post would let an aspirational-priced re-list
+   be undercut by a keeper one block later, exactly the
+   misalignment §18.7 set out to prevent. The flag still resets
+   on terminal events (repay, default, refinance, preclose,
+   sale-settlement via `executorFinalizePrepaySale`).
 
 
 ### 18.16 Code-reuse posture (explicit)
@@ -3935,10 +3952,10 @@ sale path that needs its own settlement reasoning".
 | --- | --- |
 | `_buildAndRecord` (private on `NFTPrepayListingFacet`) | Case A step 7 — fresh-post path |
 | `_buildAndRecordUpdate` (private on same facet) | Case B rotation tail (steps 5–8) |
-| `LibPrepayListingWiring.wire` / `.unwire` | Case A step 8 + Case B steps 2 & 8 |
+| `LibPrepayListingWiring.wire` / `.unwire` | Case B steps 2 & 8. (Case A reuses `_buildAndRecord` which already calls `LibPrepayListingWiring.wire` internally — round-3.10 against Codex round-10 P3: Case A does NOT wire a second time at the call site.) |
 | `IListingExecutorRecorder.recordOrder(...)` | Both cases — same signature, same event |
 | `IListingExecutorRecorder.orderContext(orderHash)` view | Case B step 4 + B-cond gates (read existing ask, mode, timings) |
-| `CollateralListingExecutor.orderFeeLegs(orderHash)` public getter | Case B step 4 — read recorded feeLegs[] for preservation/normalization. Existing public surface, no interface change. |
+| `IListingExecutorRecorder.orderFeeLegs(bytes32) returns (FeeLeg[] memory)` typed getter | Case B step 4 — read recorded feeLegs[] for preservation/normalization. Round-3.10 / Codex round-10 P2 #1: this is the typed-array getter on the executor (added by T-086 #316), NOT the bytes-wrapped auto-getter the round-3.6 draft hypothesised. The round-3.10 / round-3.11 update widened `IListingExecutorRecorder` to include it explicitly so the auto-list path can call it without casting through `CollateralListingExecutor`. |
 | `IListingExecutorRecorder.clearOrder(...)` | Case B step 3 — best-effort cancel of old order |
 | `IListingExecutorRecorder.approvedConduits(...)` | Preconditions — same allow-list as Block A |
 | `IVaipakamPrepayContext.getPrepayContext(...)` | Floor formula — same view Block A / Block D use |
