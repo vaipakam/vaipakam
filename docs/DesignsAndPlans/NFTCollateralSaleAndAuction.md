@@ -2497,35 +2497,68 @@ askAtFloor" check into a three-condition test. The rotation MUST fire if
   the live floor of 1000, triggering false-positive rotation on a
   fresh listing.
 
-  **Dutch mode (round-3.5 against Codex round-5 P1)**: for Dutch
-  listings, `existingAsk` (the executor's recorded `askPrice`) is
-  the borrower's chosen `startAskPrice` — a value the auction
+  **Dutch mode (round-3.7 against Codex round-7 P2 #1; supersedes
+  round-3.5's buffered derivation)**: for Dutch listings,
+  `existingAsk` (the executor's recorded `askPrice`) is the
+  borrower's chosen `startAskPrice` — a value the auction
   intentionally decays AWAY from. Plugging `startAskPrice` into
-  the reverse formula derives an inflated recorded floor, so
-  B-cond-2 never fires for Dutch even when interest accrual
-  moves live legs above the original Dutch floor. The Dutch-
-  specific derivation uses the recorded `endAskPrice` (the Dutch
-  floor) + the Dutch end-fee sum (per the Dutch fee-leg
-  `endAmount` convention):
+  the fixed-price reverse formula derives an inflated recorded
+  floor, so B-cond-2 never fires for Dutch even when interest
+  accrual moves live legs above the original Dutch floor. The
+  Dutch-specific derivation uses the recorded `endAskPrice` (the
+  Dutch floor) + the Dutch end-fee sum.
+
+  **CRITICAL — Dutch invariant is BUFFERLESS.** The shipped
+  `NFTPrepayDutchListingFacet._assertDutchSolvency`
+  (`contracts/src/facets/NFTPrepayDutchListingFacet.sol:488-520`)
+  requires only `endAskPrice >= protocolLegs + feeSumEnd` — it
+  does NOT apply `cfgPrepayListingBufferBps` to the Dutch end
+  invariant the way the fixed-price flow does. Round-3.5 made
+  the round-3 mistake of mirroring the fixed-price buffer-
+  application in reverse; Codex round-7 P2 #1 caught it. The
+  correct derivation drops the buffer division entirely:
 
   ```
   if (auctionMode == PREPAY_MODE_DUTCH) {
       dutchFloorFeeSum = sum(recordedFeeLegs.endAmount)
       derivedRecordedProtocolFloor =
-          (endAskPrice - dutchFloorFeeSum) × 10_000
-          / (10_000 + cfgPrepayListingBufferBps)
+          endAskPrice - dutchFloorFeeSum   // NO buffer division
   } else {
-      // fixed-price formula above
+      // fixed-price formula above (buffered)
   }
   ```
 
-  This works because at Dutch post-time the implementation
-  computed `endAskPrice = (lenderLeg_projected_at_auctionEnd +
-  treasuryLeg_projected_at_auctionEnd) × (10000 + buffer) / 10000
-  + sum(endAmount)`. Reversing the multiplication recovers the
-  projected protocol floor at `auctionEndTime`. B-cond-2 fires
-  when live `(lenderLeg + treasuryLeg) > derivedFloor + 1` — same
-  rounding tolerance as the fixed-price case.
+  This works because at Dutch post-time the contract only
+  enforces `endAskPrice >= projectedProtocolLegs_at_auctionEnd +
+  endFeeSum`. The borrower MAY pad `endAskPrice` above that
+  bare floor (the borrower-leg slack), but B-cond-2 doesn't try
+  to recover the projected-floor exactly — it asks "does the
+  live protocol-leg total still fit under the recorded
+  endAskPrice once fees are accounted for?" If yes, the
+  listing is still solvent in the Dutch sense. B-cond-2 fires
+  only when live legs have grown past what the recorded
+  endAskPrice can cover:
+
+  ```
+  (pctx.lenderLeg + pctx.treasuryLeg) >
+      (endAskPrice - dutchFloorFeeSum) + 1
+  ```
+
+  Same `+1` rounding tolerance as the fixed-price case.
+
+  **Why this is the right notion of staleness for Dutch.** A
+  Dutch listing's economic floor IS its `endAskPrice` minus
+  fees — the borrower picks it, the contract enforces it, and
+  the auction decays to it. If the live protocol legs fit
+  under that floor, a sale at `endAskPrice` still makes
+  protocol whole, regardless of what `cfgPrepayListingBufferBps`
+  was at post-time. The buffer applied in B-cond-1 (live-leg
+  rotation) is a freshness margin for FUTURE accrual; for a
+  Dutch listing that already pre-committed to an end-floor, the
+  reasonable invariant is the bare end-floor — applying the
+  buffer in reverse would force false-positive rotation against
+  a freshly posted bufferless Dutch order (which Codex round-7
+  flagged).
 
   **1-wei rounding tolerance** (round-3.2 addition). Integer
   arithmetic on both sides allows ±1-wei boundary jitter. Without
@@ -2576,14 +2609,44 @@ askAtFloor" check into a three-condition test. The rotation MUST fire if
     the same threshold to actually fire when the auction
     reaches the fee-aware floor too late.
 
-    `t_floor` is the time the Dutch listing's linear decay
-    reaches the fee-aware floor `askAtFee = askAtFloor +
-    sum(recordedFeeLegs.endAmount)`:
+    `t_floor` is the FIRST time the Dutch listing's linear decay
+    reaches (i.e., is at-or-below) the fee-aware floor `askAtFee
+    = askAtFloor + sum(recordedFeeLegs.endAmount)`.
+
+    **Ceiling division (round-3.7 against Codex round-7 P2 #2)**.
+    Seaport's price-at-time function `_locateCurrentAmount`
+    (`lib/seaport-types/src/lib/AmountDeriver.sol`) computes the
+    decay amount with truncating integer division:
+
     ```
-    t_floor = startTime + (auctionEndTime - startTime)
-              × (startAskPrice - askAtFee)
-              / (startAskPrice - endAskPrice)
+    decay(t) = (startAmount - endAmount) × (t - startTime) / duration
+    price(t) = startAmount - decay(t)
     ```
+
+    Because `decay(t)` is floored, `price(t)` decreases in step-
+    function ticks — at boundary ticks, `price(t)` can still be
+    1 wei above the algebraic continuous value. The crossing
+    time MUST therefore use ceiling division, otherwise `t_floor`
+    is reported one tick too early and B-cond-3b no-ops in the
+    `t_floor == t_safe` boundary case even though the actual
+    listing only becomes fillable at `t_floor + 1`.
+
+    ```
+    duration = auctionEndTime - startTime
+    numerator = (startAskPrice - askAtFee) × duration
+    denominator = startAskPrice - endAskPrice
+    // ceiling division: (a + b - 1) / b for positive a, b
+    t_floor = startTime + (numerator + denominator - 1) / denominator
+    ```
+
+    Worked example: `startAskPrice = 1100`, `askAtFee = 1000`,
+    `endAskPrice = 800`, `duration = 10`. Floor-divide gives
+    `(100 × 10) / 300 = 3` — but at `t - startTime = 3`,
+    `decay = 300 × 3 / 10 = 90` and `price = 1100 - 90 = 1010`,
+    still strictly above `askAtFee = 1000`. The first tick where
+    `price <= 1000` is `t - startTime = 4` (decay 120, price
+    980). Ceiling division gives `(1000 + 299) / 300 = 4` —
+    correct.
 
     **Underflow guard (round-3.6 against Codex round-6 P2 #6)**.
     If interest or fee-config changes have pushed `askAtFee`
@@ -3212,6 +3275,35 @@ against on the implementation PR:
   accrual makes `recordedLenderLeg < liveLenderLeg`,
   `test_autoList_rotatesOnStaleLegs` verifies rotation even when ask
   is already at floor.
+- Dutch B-cond-2 bufferless derivation (round-3.7 against Codex
+  round-7 P2 #1): `test_autoList_dutchB2FiresAtBareEndFloor`
+  verifies a freshly-posted bufferless Dutch listing
+  (`endAskPrice == protocolLegs + endFeeSum`, NO buffer applied
+  per `_assertDutchSolvency`) is left alone by B-cond-2 at
+  grace start when no interest accrued — i.e., B-cond-2 does
+  NOT fire while `(lenderLeg + treasuryLeg) ==
+  (endAskPrice - dutchFloorFeeSum)`. Companion test
+  `test_autoList_dutchB2FiresAfterAccrualPastBareEndFloor`
+  verifies B-cond-2 DOES fire one wei past tolerance:
+  `(lenderLeg + treasuryLeg) == (endAskPrice -
+  dutchFloorFeeSum) + 2`. Together these pin the round-3.7
+  bufferless reverse-derivation against the round-3.5
+  buffered formula that would false-positive-rotate on the
+  freshly-posted case (Codex round-7 P2 #1).
+- Dutch B-cond-3b ceiling-division (round-3.7 against Codex
+  round-7 P2 #2): `test_autoList_dutchB3bUsesCeilDivisionAtBoundary`
+  picks numeric parameters where floor-division `t_floor` lands
+  one tick short of the actual Seaport-truncating crossing tick
+  (e.g., `startAskPrice=1100`, `askAtFee=1000`, `endAskPrice=800`,
+  `duration=10` — floor gives `t_floor - startTime = 3`,
+  but the listing's price is still 1010 at that tick; ceiling
+  gives `4` which is the first tick where price crosses to
+  980 ≤ 1000). Test asserts B-cond-3b's rotation gate uses
+  the ceiling result by configuring `t_safe` to land at the
+  algebraic-truncating value: floor-derivation would NO-OP
+  (B-cond-3b doesn't fire), ceiling-derivation DOES fire. The
+  test pins both the formula and the borderline favoring
+  rotation policy.
 - Dutch B-cond-3a — never reaches fee-aware floor (round-3.5 + 3.6
   against Codex round-5 P2 + round-6 P2 #1):
   `test_autoList_rotatesDutchThatNeverReachesFloor` verifies a

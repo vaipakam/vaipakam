@@ -22,6 +22,16 @@ lender in-kind at grace expiry if the listing hasn't filled. Round
 3's drop of Scenario B (post-grace protocol-controlled auction)
 stays in place. Round 7 lives entirely inside the grace window.
 
+Round-3.7 (against Codex round-7) corrects the Dutch B-cond-2
+reverse derivation to be bufferless — matching the shipped
+`NFTPrepayDutchListingFacet._assertDutchSolvency` invariant,
+which only enforces `endAskPrice >= protocolLegs + endFeeSum`
+(no buffer) — and switches B-cond-3b's Dutch floor-crossing
+time formula from floor- to ceiling-division so the
+Seaport-truncating price-at-tick semantics don't report
+`t_floor` one tick early at the boundary. Test obligations
+updated with the two pin tests.
+
 Design-doc-only change in this PR. Contract implementation,
 keeper-bot scanner wiring, and dapp surface are tracked as separate
 follow-up Issues after the design ratifies.
