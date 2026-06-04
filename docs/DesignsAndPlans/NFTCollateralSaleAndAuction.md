@@ -2572,65 +2572,69 @@ askAtFloor" check into a three-condition test. The rotation MUST fire if
   eventually reach floor). The B-cond-3a path is the cheap early-
   out for "never decays to floor"; B-cond-3b is the precise
   "decays too late" check.
-- **B-cond-4 — recipient drift (added in round-3.2; round-3.3
-  refined against Codex round-4 P2 — executor schema extension)**:
-  the executor's `_checkOrderPreconditions` rejects fills when the
-  signed consideration's lender or treasury recipient no longer
-  matches the live `ownerOf(loan.lenderTokenId)` or `s.treasury`.
-  If the lender-position NFT transfers after an at-floor listing
-  is posted, OR if governance rotates the treasury, none of
-  B-cond-1 / -2 / -3 / -5 catches the drift but the listing
-  becomes unfillable.
 
-  Codex round-4 P2 correctly observed that the current executor's
-  `OrderContext` struct doesn't persist the protocol-leg
-  recipients — only the loanId / conduit / salt / timing / prices
-  / mode. The recipients ARE part of the on-chain Seaport
-  `ConsiderationItem[]` payload but those aren't accessible from
-  `orderContext(orderHash)` alone. Round-3.3 resolution: extend
-  the executor `OrderContext` struct with two new fields:
+  **Rounding policy (round-3.4 against Raja P2 #2)**. All time
+  computations use truncating integer division as written.
+  B-cond-3b fires when `t_floor > t_safe` (post-saturation).
+  Because both sides truncate, the BORDERLINE case favors
+  rotation: when `t_floor == t_safe` exactly, the condition does
+  NOT fire (the listing reaches floor at the boundary tick,
+  which is acceptable — the fill window equals the configured
+  margin exactly). The implementation tests MUST cover these
+  numeric cases:
+  - Exact-division `t_floor` (`(startAskPrice - askAtFloor)` and
+    `(startAskPrice - endAskPrice)` share a common factor with
+    `(auctionEndTime - startTime)`).
+  - `(startAskPrice - askAtFloor)` with `+1` remainder.
+  - `(startAskPrice - endAskPrice)` denominator with `+1`
+    remainder.
+  - `startAskPrice == askAtFloor + 1` (single-wei aspirational
+    listing — `t_floor ≈ startTime`).
+  - Configured margin > graceDuration (saturating fallback path).
+- **B-cond-4 — recipient drift — REMOVED in round-3.4 (Raja
+  blocker on round-3.3)**. Rounds 3.2 + 3.3 had escalated this
+  case from a documented limitation to a mandatory rotation gate
+  with a proposed executor schema extension. Raja's adversarial
+  review against the live `CollateralListingExecutor.sol:196,584`
+  surfaced that the proposed extension contradicts §18.14's
+  "no executor schema change" commitment AND §18.16's "thin
+  wrapper" reuse posture — the recipients ARE validated against
+  `pctx` at record-time but never persisted for a later
+  third-party reader.
 
-  ```
-  struct OrderContext {
-      // ... existing fields ...
-      address recordedLenderRecipient;
-      address recordedTreasuryRecipient;
-  }
-  ```
+  Per Raja's preferred Option B + the user's standing direction
+  to keep the design thin: B-cond-4 is REMOVED from the
+  mandatory rotation gate. The recipient-drift scenario is
+  documented as a known v1 limitation in §18.13.
 
-  These are written by `recordOrder` at post-time from the
-  borrower's-supplied consideration data; they're a small additive
-  schema change. The executor's `IListingExecutorRecorder` view
-  gains the matching fields. Auto-list reads them via
-  `pinnedExecutor.orderContext(orderHash).recordedLenderRecipient`
-  / `recordedTreasuryRecipient`.
+  Operational handling of the drift case post-v1:
+  - The lender-position NFT transferring after an at-floor
+    auto-listing is posted is rare (lender-NFTs are typically
+    held by the original lender for the life of the loan).
+  - When it does happen, the specific Seaport order becomes
+    unfillable at match time (the executor's fill-time recipient
+    check rejects).
+  - The borrower retains cancel rights throughout grace, so
+    `cancelPrepayListing` + `clearAutoListOptOut` + a fresh
+    borrower-driven `postPrepayListing` recovers cleanly.
+  - An off-chain keeper watching NFT-Transfer events on the
+    lender-token + governance `TreasuryRotated` events can
+    detect the drift and call `cancelPrepayListing` on the
+    borrower's behalf if they have appropriate authority — or
+    surface a notification.
 
-  B-cond-4 fires when:
-
-  ```
-  recordedLenderRecipient != pctx.lenderNftOwner
-  OR
-  recordedTreasuryRecipient != s.treasury
-  ```
-
-  The rotation rebuilds the order with the live recipients so
-  subsequent fills can settle.
-
-  **Implementation surface adjustment** (also folds into §18.14
-  resolution #5): the executor schema extension adds two address
-  fields to `OrderContext`. This is the smallest-footprint
-  resolution; the alternative (a dapp-supplied claim of the
-  recorded recipients with proof) would add calldata complexity
-  + a verification surface. The two-field extension is additive,
-  doesn't change selector hashes, and the recipients are already
-  load-bearing data in the recordOrder payload.
+  This matches the trade-off Round-7 already accepted for
+  fee-enforced collections (post empty `feeLegs[]`, sit
+  unmatched, recover via borrower action). v1 is conservative
+  about new on-chain machinery; the bounded failure mode is
+  acceptable.
 - **B-cond-5 — expired Dutch listing (added in round-3.3 against
   Codex round-4 P2)**: an existing Dutch listing whose
   `block.timestamp > auctionEndTime` is dead — Seaport rejects
   any further fill regardless of the recorded `endAskPrice`. The
   listing still occupies the `s.prepayListingOrderHash[loanId]`
   slot, which means Case A's fresh-post path is blocked and
-  Cases B-cond-1/-2/-3/-4 may all no-op against a corpse. The
+  Cases B-cond-1/-2/-3 may all no-op against a corpse. The
   result: a Dutch borrower who lets the auction expire mid-grace
   ends up with no live listing on chain even though grace is
   still running. B-cond-5 catches this:
@@ -2645,7 +2649,7 @@ askAtFloor" check into a three-condition test. The rotation MUST fire if
   same `_buildAndRecord` private + feeLegs preservation
   semantics as the other B-conds.
 
-If **none** of B-cond-1 / -2 / -3 / -4 / -5 holds: revert
+If **none** of B-cond-1 / -2 / -3 / -5 holds: revert
 `AlreadyAtOrBelowFloor(loanId, existingAsk, askAtFloor)`. No-op.
 
 **Pinned-executor read** (Codex round-1 P2 fix): the orderContext
@@ -2678,22 +2682,27 @@ Rotation steps (after the B-cond gate fires):
    exception is fee-free collections (`feeLegs.length == 0` on the
    old order) — the new order is also `feeLegs: []`.
 
-   **`feeLegs` accessor (round-3.3 against Codex round-4 P2)** —
-   the executor's current `OrderContext` view does NOT return
-   `feeLegs[]`; the fee legs live in a separate
-   `_orderFeeLegs[orderHash]` mapping with a dedicated accessor:
+   **`feeLegs` accessor (round-3.3 against Codex round-4 P2;
+   round-3.4 interface revision)** — the executor's current
+   `OrderContext` view does NOT return `feeLegs[]`; the fee legs
+   live in a separate `_orderFeeLegs[orderHash]` mapping. The
+   public auto-getter on `CollateralListingExecutor` already
+   exposes it (no interface change needed):
 
    ```
-   bytes calldata legsCalldata = pinnedExecutor.orderFeeLegs(orderHash);
-   FeeLeg[] memory recordedFeeLegs = abi.decode(legsCalldata, (FeeLeg[]));
+   bytes memory legsCalldata = ICollateralListingExecutorFeeLegs(
+       pinnedExecutor
+   ).orderFeeLegs(orderHash);
+   FeeLeg[] memory recordedFeeLegs = abi.decode(
+       legsCalldata, (FeeLeg[])
+   );
    ```
 
-   Add `orderFeeLegs(bytes32 orderHash) external view returns
-   (bytes memory)` to the `IListingExecutorRecorder` interface
-   surface — the function is already implemented on
-   `CollateralListingExecutor`; the interface just needs to
-   expose it. This is a small additive interface change in line
-   with the OrderContext recipient extension under B-cond-4.
+   Auto-list uses a narrow interface alias
+   (`ICollateralListingExecutorFeeLegs` — one method) to call the
+   existing public getter — no addition to
+   `IListingExecutorRecorder`, no executor schema change. Block A
+   + Block D consumers stay untouched.
 
    **Dutch fee-leg normalization (round-3.3 against Codex
    round-4 P2 — `startAmount` not `endAmount`).** Dutch
@@ -2883,11 +2892,20 @@ defeating the escape. The fix is a borrower-controlled opt-out flag:
 
 - New storage slot `s.prepayListingAutoListOptedOut[loanId] : bool`.
 - `cancelPrepayListing(loanId)` sets the flag to `true` AUTOMATICALLY
-  when called during grace
-  (`block.timestamp >= loanEnd && block.timestamp < gracePeriodEnd`).
-  Outside-grace cancels (i.e. during the active loan) don't set the
-  flag — the borrower has time to repay or reconsider their listing
-  plan.
+  when called during grace AND the cancel actually unwound a live
+  listing. Round-3.4 against Raja P2 #3: both conditions must hold —
+  `LibVaipakam.isGraceWindow(loan)` is the single source-of-truth
+  predicate (canonical form
+  `block.timestamp >= loanEnd && block.timestamp < gracePeriodEnd`,
+  used everywhere instead of literal duplication to remove
+  off-by-one risk), AND the cancel's success path observed
+  `prepayListingOrderHash != 0` before clearing. A borrower who
+  calls cancel during grace with no active listing (a no-op cancel)
+  does NOT set the opt-out flag — the design intent is "this
+  borrower wants to stop the auto-listing they're aware of", which
+  requires there to BE one. Outside-grace cancels (during the active
+  loan) don't set the flag — the borrower has time to repay or
+  reconsider their listing plan.
 - `autoListAtFloorOnGrace(loanId)` reverts `AutoListBorrowerOptedOut(
   loanId)` when the flag is set.
 - The borrower can clear the flag explicitly via a new
@@ -3068,10 +3086,10 @@ against on the implementation PR:
 - Case A — fresh-post path: `test_autoList_postsAtFloorWhenNoListingExists`.
 - Case B — rotate-down path (B-cond-1 ask too high):
   `test_autoList_rotatesHighAskDownToFloor`.
-- Case C — no rotation needed (none of B-cond-1/-2/-3/-4 fires):
+- Case C — no rotation needed (none of B-cond-1/-2/-3/-5 fires):
   `test_autoList_revertsAlreadyAtFloor` (existingAsk == askAtFloor +
-  recorded floor matches live + recipients match + not stale-Dutch),
-  `_revertsAlreadyBelowFloor` (existingAsk < askAtFloor).
+  recorded floor matches live + not stale-Dutch + Dutch not
+  expired), `_revertsAlreadyBelowFloor` (existingAsk < askAtFloor).
 - Re-trigger ratchet behaviour (round-3.2 — Raja non-blocking #3
   fix): `test_autoList_rotatesOnFreshInterestAccrual` — after enough
   interest accrual, the second call DOES rotate via B-cond-2 instead
@@ -3117,13 +3135,21 @@ against on the implementation PR:
   `cfgPrepayListingDutchGraceMarginSec` is set higher than the
   loan's grace duration; the rotation effectively forces ANY
   Dutch listing on the short-grace loan to rotate.
-- Recipient drift (B-cond-4 — round-3.2 / Codex round-3.1 P2):
-  `test_autoList_rotatesOnLenderRecipientDrift` (transfer
-  lender-position NFT to a new owner; ensure auto-list rebuilds
-  the order with the new lenderNftOwner so subsequent fills
-  settle). `test_autoList_rotatesOnTreasuryRotation` (governance
-  rotates `s.treasury`; auto-list rebuilds with the new treasury
-  recipient).
+- Recipient drift case — **NO test obligation in v1** (B-cond-4
+  removed; see §18.5 + §18.13). Documented as a known v1
+  limitation. An optional negative test
+  `test_autoList_doesNotRotateOnLenderRecipientDrift` confirms
+  the documented behavior (rotation does NOT fire on drift
+  alone; borrower's cancel path remains the recovery).
+- Opt-out flag lifecycle (round-3.4 against Raja P3 #5 — §18.15
+  #2 working assumption ratification): when the working
+  assumption stands ("flag clears on borrower-driven
+  post-after-grace-cancel"), add
+  `test_autoList_postAfterGraceCancelClearsOptOut` (borrower
+  cancels during grace → opt-out flag SET → borrower posts a
+  fresh listing → opt-out flag CLEARS → keeper auto-list call
+  succeeds via Case A). If the working assumption is reversed
+  (sticky opt-out across borrower post), the test inverts.
 - Fee-aware listing preservation (Codex round-1 P2):
   `test_autoList_preservesFeeLegsOnRotation` verifies the new
   order copies the old `feeLegs[]` when rotating a fee-aware
@@ -3185,6 +3211,20 @@ against on the implementation PR:
   kickback in a follow-up.
 - **Multi-marketplace auto-listing.** Issue #281 is the home for cross-
   marketplace work; #355's auto-list path targets OpenSea (Seaport) only.
+- **Recipient drift mid-auto-listing** (added round-3.4 per
+  Raja's Option B). If the lender-position NFT transfers OR
+  governance rotates `s.treasury` AFTER an at-floor auto-listing
+  is posted, the specific Seaport order becomes unfillable at
+  match time (the executor's fill-time recipient check rejects).
+  The borrower retains cancel rights throughout grace; off-chain
+  keepers can watch `Transfer` events on the lender-token + the
+  governance `TreasuryRotated` event to surface the drift and
+  trigger borrower-side or operator-side cancel. v1 does NOT add
+  an on-chain rotation gate for this case — that would require
+  persisting recorded recipients on the executor (schema change),
+  which contradicts the §18.16 thin-wrapper reuse posture. The
+  v2 follow-up that adds executor schema persistence can
+  reintroduce B-cond-4.
 
 ### 18.14 Resolved design decisions (post-round-1)
 
@@ -3273,27 +3313,35 @@ implementation PR has a single source of truth:
      the on-chain saturating guard in §18.5 B-cond-3b is
      defense-in-depth.
 
-   **Executor (`CollateralListingExecutor`) — small additive
-   schema/interface change** (round-3.3 against Codex round-4 P2):
+   **Executor (`CollateralListingExecutor`) — NO schema change
+   (round-3.4 against Raja's Option B blocker)**. Earlier rounds
+   proposed two extensions (recipient address fields on
+   `OrderContext` for B-cond-4; `orderFeeLegs` accessor on
+   `IListingExecutorRecorder`). Both have been reverted:
 
-   - `OrderContext` struct gains two new address fields:
-     `recordedLenderRecipient` + `recordedTreasuryRecipient`. These
-     are written by `recordOrder` at post-time from the borrower's
-     consideration data. B-cond-4 reads them via the existing
-     `orderContext(orderHash)` view (no new view selector — the
-     return shape gets two extra fields, which is non-breaking
-     for ABI-decoders that read by field name; the storage layout
-     of `_orderContexts` extends by two slots).
-   - `IListingExecutorRecorder` interface gains:
-     `orderFeeLegs(bytes32 orderHash) external view returns (bytes
-     memory)` — the function is already implemented on
-     `CollateralListingExecutor`; the interface just needs to
-     expose it. Auto-list reads + decodes via the standard
-     `abi.decode(legsCalldata, (FeeLeg[]))` pattern.
+   - The `OrderContext` recipient extension is dropped with
+     B-cond-4 itself (§18.5 + §18.13 documented as v1 limitation).
+   - The `orderFeeLegs(bytes32)` view ALREADY exists as a public
+     accessor on `CollateralListingExecutor` (via the
+     `_orderFeeLegs[orderHash]` mapping's auto-getter). Auto-list
+     reads it via the existing public surface — no new interface
+     method needed. `IListingExecutorRecorder` stays unchanged.
 
-   Both are small, additive, and don't change `recordOrder`'s
-   selector. Block A's existing tests + Block D's atomic match
-   facet keep working unchanged.
+   The thin-wrapper reuse posture is preserved: zero executor
+   schema or interface changes. Block A's existing tests + Block
+   D's atomic match facet continue working untouched.
+
+   **`MIN_LOAN_GRACE_PERIOD` reference (round-3.4 against Raja
+   P3 #4)**. §18.5 B-cond-3b's
+   `cfgPrepayListingDutchGraceMarginSec` setter is bounded:
+   `require(value <= MIN_LOAN_GRACE_PERIOD - 60)`. This symbol
+   does NOT exist in the codebase today. The implementation PR
+   introduces it as `uint32 constant MIN_LOAN_GRACE_PERIOD = 1
+   days` in `LibVaipakam` (matching the minimum grace floor
+   already enforced by `LibVaipakam.gracePeriod` for short-
+   duration loans). The `-60` saturation margin is
+   defense-in-depth against operator misconfiguration; the
+   on-chain saturating guard in B-cond-3b is the runtime fallback.
 
    Dapp wiring + keeper bot wiring follow-up Issues open after
    contract PR merges; the contract surface stands alone (callable
@@ -3347,7 +3395,8 @@ sale path that needs its own settlement reasoning".
 | `_buildAndRecordUpdate` (private on same facet) | Case B rotation tail (steps 5–8) |
 | `LibPrepayListingWiring.wire` / `.unwire` | Case A step 8 + Case B steps 2 & 8 |
 | `IListingExecutorRecorder.recordOrder(...)` | Both cases — same signature, same event |
-| `IListingExecutorRecorder.orderContext(orderHash)` view | Case B step 4 + B-cond gates (read existing ask + feeLegs) |
+| `IListingExecutorRecorder.orderContext(orderHash)` view | Case B step 4 + B-cond gates (read existing ask, mode, timings) |
+| `CollateralListingExecutor.orderFeeLegs(orderHash)` public getter | Case B step 4 — read recorded feeLegs[] for preservation/normalization. Existing public surface, no interface change. |
 | `IListingExecutorRecorder.tryCancelOnSeaport(...)` | Case B step 3 — best-effort cancel of old order |
 | `IListingExecutorRecorder.approvedConduits(...)` | Preconditions — same allow-list as Block A |
 | `IVaipakamPrepayContext.getPrepayContext(...)` | Floor formula — same view Block A / Block D use |
@@ -3372,15 +3421,25 @@ sale path that needs its own settlement reasoning".
 - 2 storage slots in `LibVaipakam.Storage` (mappings — no struct
   changes).
 - 1 governance knob (`cfgPrepayListingDutchGraceMarginSec`) +
-  matching `AdminFacet` setter.
+  matching `AdminFacet` setter, bounded by `MIN_LOAN_GRACE_PERIOD
+  - 60` (introduce that constant in `LibVaipakam` as a small
+  side-effect — `uint32 constant MIN_LOAN_GRACE_PERIOD = 1 days`).
+- 1 new view helper `LibVaipakam.isGraceWindow(loan)` (Raja
+  round-3.4 P2 #3): single-source-of-truth predicate
+  `block.timestamp >= loanEnd && block.timestamp < gracePeriodEnd`
+  used by `cancelPrepayListing` flag-set + `autoListAtFloorOnGrace`
+  preconditions. Removes off-by-one risk from literal duplication
+  of the predicate across call sites.
 
 **Modified existing functions (additive — no behavior change to
 existing paths):**
 
-- `cancelPrepayListing` — adds the in-grace opt-out flag SET (~5
-  LOC: `if (block.timestamp >= loanEnd && block.timestamp <
-  gracePeriodEnd) { s.prepayListingAutoListOptedOut[loanId] =
-  true; }`).
+- `cancelPrepayListing` — adds the in-grace opt-out flag SET on
+  the success path only (~7 LOC; Raja round-3.4 P2 #3 — guarded
+  on `LibVaipakam.isGraceWindow(loan)` predicate AND the
+  observation that the cancel actually unwound a live listing):
+  `if (LibVaipakam.isGraceWindow(loan) && hadOrderHash) {
+  s.prepayListingAutoListOptedOut[loanId] = true; }`.
 - `_buildAndRecord` (private) — accepts the auto-list path's
   nonce-bearing salt via the existing salt parameter. NO body
   change; the salt is just chosen differently at the auto-list
@@ -3397,8 +3456,20 @@ existing paths):**
 Audit-time reasoning collapses to "two new selectors + a flag/nonce
 pair, both fanning out to audited primitives". The settlement math,
 the Seaport flow, the executor recordOrder semantics, the vault
-ERC-1271 binding — all already audited under Blocks A + D. The new
-surface adds:
+ERC-1271 binding — all already audited under Blocks A + D.
+
+**Note on the sanctions surface** (Raja round-3.4 non-blocking #6):
+the `LibVaipakam._assertNotSanctioned(...)` helper is now exercised
+from a third-party entry point that routes surplus to the CURRENT
+borrower-position-NFT holder. The same helper already protects the
+post/update/cancel and atomic-match paths under existing audits;
+auto-list re-uses the helper at the same surface, but its
+operational context (third-party trigger + surplus routing) is new.
+Audit teams reviewing the sanctions surface for Round 7 should
+treat this as a new audit context for the existing helper rather
+than as new helper logic.
+
+The new surface adds:
 - Precondition arithmetic (block.timestamp boundaries, the
   derived-recorded-floor + Dutch t_floor formulas).
 - The opt-out flag SET / CLEAR / RESET-on-terminal lifecycle.
