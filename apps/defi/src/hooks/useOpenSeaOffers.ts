@@ -110,7 +110,11 @@ export interface NormalizedOffer {
   acceptable: boolean;
   /** Reason a non-acceptable offer was rejected — for the inline
    *  tooltip on the greyed row. */
-  rejectReason?: 'below-threshold' | 'wrong-payment-token' | 'expired';
+  rejectReason?:
+    | 'below-threshold'
+    | 'wrong-payment-token'
+    | 'expired'
+    | 'decaying-bidder-offer';
 }
 
 export interface UseOpenSeaOffersOptions {
@@ -618,6 +622,19 @@ function normalize(
     offerEnd.length > 0 &&
     offerStart !== offerEnd;
 
+  // T-086 Block D / Codex round-4 #4 BUG (Raja, 2026-06-04): the
+  // panel's Match button is disabled by `!offer.acceptable`, so a
+  // decaying Dutch bidder offer that passes the threshold check
+  // would otherwise light up as Matchable and revert on-chain
+  // (`SHAPE_OFFER_NOT_FIXED_AMOUNT`). Roll `priceIsDecaying` into
+  // the `acceptable` verdict — and set a dedicated `rejectReason`
+  // so the row's tooltip explains why the Match is greyed.
+  const effectiveAcceptable = verdict.acceptable && !priceIsDecaying;
+  const effectiveRejectReason: NormalizedOffer['rejectReason'] =
+    verdict.acceptable && priceIsDecaying
+      ? 'decaying-bidder-offer'
+      : verdict.rejectReason;
+
   return {
     orderHash,
     kind,
@@ -627,7 +644,7 @@ function normalize(
     endTime,
     priceIsDecaying,
     quantity,
-    acceptable: verdict.acceptable,
-    rejectReason: verdict.rejectReason,
+    acceptable: effectiveAcceptable,
+    rejectReason: effectiveRejectReason,
   };
 }

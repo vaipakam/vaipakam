@@ -549,7 +549,10 @@ contract NFTPrepayListingFacet is
         IVaipakamPrepayContext.PrepayContext memory pctx =
             IVaipakamPrepayContext(address(this)).getPrepayContext(loanId, block.timestamp);
         address vaultAddr = s.userVaipakamVaults[loan.borrower];
-        if (vaultAddr == address(0)) revert ExecutorNotSet();
+        // T-086 Block D #346 round-8: standardised vault-missing
+        // symbol across postPrepayListing + updatePrepayListing +
+        // Dutch + atomic facets.
+        if (vaultAddr == address(0)) revert LibPrepayListingWiring.VaultNotDeployed(loan.borrower);
         orderHash = LibPrepayOrder.buildAndHash(
             pctx,
             vaultAddr,
@@ -1164,17 +1167,18 @@ contract NFTPrepayListingFacet is
     }
 
     /// @dev Read-only borrower-vault lookup. Reverts via
-    ///      {ExecutorNotSet} for the unset case to match the
-    ///      sister error already raised when the executor address
-    ///      isn't configured — both signal "the prepay path
-    ///      isn't fully wired for this loan", and surfacing a
-    ///      single error keeps the borrower's UX simple.
+    ///      {LibPrepayListingWiring.VaultNotDeployed} for the
+    ///      unset case. T-086 Block D #346 round-8 standardised
+    ///      the vault-missing symbol across all prepay-listing
+    ///      facets; the legitimate "executor address unset"
+    ///      precondition still reverts {ExecutorNotSet} from its
+    ///      own check site in `_requireExecutor`.
     function _userVault(
         LibVaipakam.Storage storage s,
         address user
     ) private view returns (VaipakamVaultImplementation) {
         address vaultAddr = s.userVaipakamVaults[user];
-        if (vaultAddr == address(0)) revert ExecutorNotSet();
+        if (vaultAddr == address(0)) revert LibPrepayListingWiring.VaultNotDeployed(user);
         return VaipakamVaultImplementation(vaultAddr);
     }
 
