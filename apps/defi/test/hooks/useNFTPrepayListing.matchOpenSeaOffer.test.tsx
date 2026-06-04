@@ -83,16 +83,22 @@ vi.mock('@vaipakam/lib/decodeContractError', () => ({
   decodeContractError: () => null,
 }));
 
-// `VITE_AGENT_ORIGIN` is statically replaced by Vite at build time
-// (the hook reads `import.meta.env.VITE_AGENT_ORIGIN`), so we can't
-// override it from the test scope. Capture whatever value the test
-// environment surfaces and assert URL shape against that.
-const AGENT_ORIGIN =
-  (import.meta.env.VITE_AGENT_ORIGIN as string | undefined) ??
-  'https://agent.example.test';
+// T-086 Block D #348 + Codex PR #352 round-1 P2 — the hook reads
+// `import.meta.env.VITE_AGENT_ORIGIN` synchronously and short-
+// circuits when it's empty. The repo doesn't ship a `.env.test`, so
+// without an explicit stub Vitest sees `undefined` and the URL /
+// fetch-failure tests never exercise the fetch path. Pin a known
+// value via `vi.stubEnv` in `beforeEach` so the assertions match.
+const AGENT_ORIGIN = 'https://agent.example.test';
 
 const fetchMock = vi.fn();
 beforeEach(() => {
+  // Pin VITE_AGENT_ORIGIN so the hook's `import.meta.env`
+  // short-circuit doesn't fire on a missing test env value. The
+  // global `afterEach` in test/setup.ts already clears stubs via
+  // `vi.unstubAllEnvs()` indirectly through `vi.clearAllMocks()`'s
+  // reset; explicit `vi.unstubAllEnvs()` here would be redundant.
+  vi.stubEnv('VITE_AGENT_ORIGIN', AGENT_ORIGIN);
   hoisted.wallet.address = BORROWER;
   hoisted.vault.vault = VAULT_ADDR;
   // Reset the matchOpenSeaOffer mock state + restore happy-path resolved
