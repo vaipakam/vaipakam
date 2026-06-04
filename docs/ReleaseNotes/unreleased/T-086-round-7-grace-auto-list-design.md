@@ -50,6 +50,37 @@ stale "all time computations use truncating integer division"
 sentence in the B-cond-3b rounding-policy paragraph that
 contradicted round-3.7's ceiling-division t_floor formula.
 
+Round-3.9 (against Codex round-9) fixes four follow-on issues
+the round-3.8 rewrite exposed. First, the round-3.8 B-cond-2
+predicate kept a `> recorded + 1` tolerance inherited from the
+fixed-price aggregate inverse — but the schema-extended read
+is direct (no arithmetic, no rounding) and the executor's
+fill-time check is strict, so a 1-wei shortfall makes the
+order unfillable while the tolerance no-ops; round-3.9 makes
+the predicate strict (`>`) on the direct read. Second, the
+round-3.8 claim that fixed-price doesn't have the borrower-
+slack-vs-signed-legs ambiguity was incorrect — the fixed-
+price post-time invariant only requires a buffered floor and
+allows the borrower to land the +1 slack in
+`consideration[2]`; round-3.9 upgrades the fixed-price
+B-cond-2 path to use the same signed-legs predicate as Dutch.
+Third, the round-3.3 B-cond-1 Dutch-current-ask variant fires
+on every block of a healthy Dutch listing's decay window
+above the floor, making B-cond-3a/b unreachable; round-3.9
+carves Dutch out of B-cond-1 entirely (rotation owned by
+B-cond-2 + B-cond-3a/b + B-cond-5). Fourth, the §18.14
+implementation checklist still said "NO schema change" —
+contradicting round-3.6's fee-leg snapshot AND round-3.8's
+protocol-leg snapshot; round-3.9 documents both additive
+extensions in the checklist with their accessors, storage
+shape, wiring sites, and clearOrder coupling.
+
+§18.12 test obligations renamed for the strict-shortfall
+predicate (round-3.8's `+2` short tests become round-3.9's
+`+1` short tests) and grown with four new fixed-price pin
+tests symmetric to the Dutch pins, plus two B-cond-1 Dutch
+carve-out tests.
+
 Design-doc-only change in this PR. Contract implementation,
 keeper-bot scanner wiring, and dapp surface are tracked as separate
 follow-up Issues after the design ratifies.

@@ -2446,32 +2446,49 @@ askAtFloor" check into a three-condition test. The rotation MUST fire if
 
     B-cond-1 (fixed-price) fires when
     `existingAsk > effectiveAskThreshold`.
-  - **Dutch false positive**: for Dutch listings, the executor's
-    recorded `askPrice` IS the `startAskPrice` (intentionally
-    high; the auction decays). The round-3 comparison fires for
-    almost every healthy Dutch listing, prematurely collapsing
-    them. Correction: for Dutch listings, B-cond-1 uses the
-    CURRENT interpolated price, not the recorded start:
+  - **Dutch carve-out (round-3.9 against Codex round-9 P2 #3 —
+    supersedes the round-3.3 Dutch-current-ask interpolation)**:
+    B-cond-1 DOES NOT APPLY to Dutch listings. Round-3.3
+    introduced a Dutch-current-ask interpolated variant of
+    B-cond-1 that compared the live decay price against
+    `effectiveAskThreshold`. The intent was to catch the case
+    where the auction's live price is still aspirationally
+    high; the consequence is that ANY healthy Dutch listing
+    that is still decaying above the floor immediately
+    rotates — which makes B-cond-3a/b's safe-margin policy
+    UNREACHABLE for non-expired Dutch orders (a healthy Dutch
+    listing reaching floor before `t_safe` would still trip
+    B-cond-1's `currentDutchAsk > effectiveAskThreshold` gate
+    on every block until it crossed the floor). Codex round-9
+    P2 #3 caught this.
+
+    Round-3.9 carve-out: for Dutch listings, the rotation
+    surface is owned entirely by the Dutch-aware gates —
+    B-cond-2 (stale signed legs, round-3.8), B-cond-3a/b
+    (decays to floor too late or never, round-3.5+), and
+    B-cond-5 (expired Dutch corpse, round-3.3+). B-cond-1
+    fires ONLY for fixed-price listings:
 
     ```
-    if (auctionMode == PREPAY_MODE_DUTCH) {
-        currentDutchAsk = startAskPrice
-            - (startAskPrice - endAskPrice)
-              × (block.timestamp - startTime)
-              / (auctionEndTime - startTime)
-            // clamped to [endAskPrice, startAskPrice]
-        compareAgainst = currentDutchAsk
-    } else {
-        compareAgainst = existingAsk
+    if (auctionMode == PREPAY_MODE_FIXED) {
+        if (existingAsk > effectiveAskThreshold) → B-cond-1 fires
     }
-    if (compareAgainst > effectiveAskThreshold) → B-cond-1 fires
+    // else (auctionMode == PREPAY_MODE_DUTCH): B-cond-1 skipped;
+    // rotation handled by B-cond-2 / B-cond-3a / B-cond-3b /
+    // B-cond-5.
     ```
 
-    For Dutch listings, B-cond-3 (decays to floor too late) and
-    B-cond-5 (expired Dutch) handle the Dutch-specific gates
-    cleanly; B-cond-1's Dutch-current-ask check picks up only the
-    case where the auction's live price is still aspirationally
-    high.
+    Aspirationally-high Dutch listings ARE still caught:
+    - If `startAskPrice` is high but the auction reaches the
+      fee-aware floor BEFORE `t_safe`, that's healthy — exactly
+      the Dutch use case, and B-cond-3a/b allow it.
+    - If the auction reaches the fee-aware floor AFTER `t_safe`
+      (or never), B-cond-3a/b fire.
+    - If the live signed legs are stale, B-cond-2 fires.
+    - If the order is expired, B-cond-5 fires.
+
+    There is no scenario where a Dutch listing is genuinely
+    "ask too high" yet none of B-cond-2/3a/3b/5 catch it.
 - **B-cond-2 — recorded protocol floor stale (derived, CORRECTED in
   round-3.2 against Codex round-3.1 P2 + Raja blocker #2)**: the
   executor's current `OrderContext` storage doesn't directly persist
@@ -2571,36 +2588,76 @@ askAtFloor" check into a three-condition test. The rotation MUST fire if
   share)` derived from the live `pctx`. Cleared by the same
   `clearOrder` path that wipes `_orderFeeLegs`.
 
-  **B-cond-2 Dutch derivation (round-3.8 final)**:
+  **B-cond-2 derivation (round-3.9 against Codex round-9 P2
+  #1 + P2 #2)** — applies to BOTH Dutch and fixed-price:
 
   ```
   (recordedLender, recordedTreasury) =
       IListingExecutorRecorder(pinnedExecutor).orderProtocolLegs(orderHash)
-  // fires when EITHER signed leg is now short of live:
-  rotate if pctx.lenderLeg   > uint256(recordedLender)   + 1
-        OR  pctx.treasuryLeg > uint256(recordedTreasury) + 1
+  // fires when EITHER signed leg is strictly short of live —
+  // mirrors CollateralListingExecutor._assertOrderContent at
+  // contracts/src/seaport/CollateralListingExecutor.sol:1155-1160:
+  rotate if pctx.lenderLeg   > uint256(recordedLender)
+        OR  pctx.treasuryLeg > uint256(recordedTreasury)
   ```
 
-  The disjunction matches the executor's fill-time check
-  exactly (each leg individually). The `+1` rounding tolerance
-  preserves the round-3.2 single-wei boundary policy for both
-  legs. Borrower-slack is now correctly ignored — only growth
-  past the SIGNED amounts triggers rotation, matching the
-  exact condition under which the order becomes unfillable.
+  **STRICT comparison (round-3.9 P2 #1 fix)**: round-3.8 used
+  `> recordedLender + 1` to mirror the round-3.2 single-wei
+  rounding tolerance. That tolerance was correct for the
+  fixed-price aggregate inverse (where integer arithmetic on
+  `(existingAsk - feeSum) × 10000 / (10000 + bufferBps)`
+  introduces single-wei boundary jitter), but with the
+  schema-extended derivation we read `recordedLender` /
+  `recordedTreasury` DIRECTLY from storage — no arithmetic,
+  no rounding. The executor's fill-time check is strict
+  (`consideration[i].amount < pctx.*Leg`), so a signed leg
+  exactly 1 wei short of live makes the order unfillable
+  while round-3.8's `+1` tolerance would no-op. Round-3.9
+  drops the tolerance for the direct-read derivation; the
+  `+1` only stays where rounding can actually happen (the
+  fixed-price aggregate-inverse fallback below).
 
-  **Fixed-price stays unchanged.** Fixed-price orders sign
-  lender + treasury + ALL fees with no Dutch decay; the
-  fixed-price B-cond-2 formula at the top of this section
-  (`(existingAsk - feeSum) × 10000 / (10000 + bufferBps)`)
-  derives the recorded protocol floor from the executor's
-  recorded `askPrice` directly. Fixed-price doesn't have the
-  borrower-slack-vs-signed-legs ambiguity because the signed
-  consideration items are pinned exactly by the fixed-price
-  invariant. The schema-extension `orderProtocolLegs` view
-  IS populated for fixed-price orders too — the executor's
-  recorder doesn't care about mode — but the fixed-price
-  rotation path doesn't need to read it (the existing formula
-  is exact).
+  **Fixed-price applies the SAME signed-legs derivation
+  (round-3.9 P2 #2 fix — supersedes round-3.8's "fixed-price
+  stays unchanged")**. Round-3.8 said fixed-price doesn't
+  have the borrower-slack-vs-signed-legs ambiguity because
+  the signed consideration items are pinned by the
+  fixed-price invariant. That was wrong: `LibPrepayOrder`
+  signs `consideration[0]` / `[1]` at post-time from the
+  THEN-current `pctx.lenderLeg` / `pctx.treasuryLeg`, and
+  the `_requireAskCoversFloorWithFees` invariant only checks
+  `askPrice >= protocolLegs × (10000+buffer)/10000 +
+  feeSum`. A borrower can post `askPrice = postFloorWithBuffer
+  + 1` and the +1 lands in `consideration[2]` (borrower leg);
+  signed lender + treasury stay at the post-time bare floor.
+  If live lender then grows by 1 wei, the order is
+  unfillable but the aggregate inverse with `+1` tolerance
+  could no-op — same shape as the Dutch case.
+
+  Since the schema extension populates `orderProtocolLegs`
+  for fixed-price orders too (the executor's recorder
+  doesn't care about mode), fixed-price uses the SAME
+  signed-legs derivation as Dutch — strict shortfall on
+  either leg fires rotation:
+
+  ```
+  // Fixed-price B-cond-2 PRIMARY (round-3.9 — same predicate
+  // as Dutch):
+  rotate if pctx.lenderLeg   > uint256(recordedLender)
+        OR  pctx.treasuryLeg > uint256(recordedTreasury)
+  ```
+
+  The aggregate-inverse fallback (`(existingAsk - feeSum)
+  × 10000 / (10000 + bufferBps)`) stays in the doc as a
+  belt-and-braces secondary check that catches the
+  buffer-rotation edge case (where governance rotates
+  `cfgPrepayListingBufferBps` between post and rotation —
+  the recorded protocol legs would not move, but the
+  buffer-derived ask threshold would). The aggregate-
+  inverse uses the round-3.2 `+1` tolerance because its
+  computation IS arithmetic. In normal operation the
+  signed-legs primary check fires first; the fallback is
+  defense in depth.
 
   **1-wei rounding tolerance** (round-3.2 addition). Integer
   arithmetic on both sides allows ±1-wei boundary jitter. Without
@@ -3333,32 +3390,56 @@ against on the implementation PR:
   accrual makes `recordedLenderLeg < liveLenderLeg`,
   `test_autoList_rotatesOnStaleLegs` verifies rotation even when ask
   is already at floor.
-- Dutch B-cond-2 signed-legs derivation (round-3.8 against
-  Codex round-8 P2 #2; supersedes the round-3.7 bufferless-
-  endAskPrice obligations).
-  `test_autoList_dutchB2DoesNotFireOnFreshBareSignedLegs`
+- B-cond-2 strict-shortfall + Dutch & fixed-price signed-legs
+  derivation (round-3.9 against Codex round-9 P2 #1 + P2 #2 —
+  supersedes round-3.8 test names). The B-cond-2 read is now
+  STRICT (`>`, not `> + 1`) since the schema-extended read is
+  direct from storage; the obligation set covers BOTH modes.
+  Dutch pins:
+  `test_autoList_dutchB2DoesNotFireOnFreshExactSignedLegs`
   verifies a freshly-posted Dutch listing whose recorded
   `orderProtocolLegs == (post_lender, post_treasury)` is left
-  alone at grace start when no accrual has happened (live legs
-  equal recorded). `test_autoList_dutchB2FiresOnLenderShortBy2`
-  verifies B-cond-2 fires when `pctx.lenderLeg == recordedLender
-  + 2` (1-wei past tolerance), even when `pctx.treasuryLeg ==
-  recordedTreasury`. Symmetric test
-  `test_autoList_dutchB2FiresOnTreasuryShortBy2` verifies the
-  treasury-leg branch fires independently. The critical pin
-  test for the round-3.8 fix is
+  alone at grace start when no accrual has happened
+  (`live == recorded`).
+  `test_autoList_dutchB2FiresOnLenderShortBy1` verifies the
+  strict `>` predicate: `pctx.lenderLeg == recordedLender + 1`
+  fires rotation (round-3.8's `> + 1` would have no-oped this;
+  the executor rejects the fill).
+  `test_autoList_dutchB2FiresOnTreasuryShortBy1` is the
+  symmetric per-leg test. The critical pin test for the
+  round-3.8+3.9 fix is
   `test_autoList_dutchB2FiresWhenBorrowerSlackHidesShortLeg`:
   borrower padded `endAskPrice` by 10 wei into
   `consideration[2]` (borrower leg), leaving signed lender +
-  treasury at the bare post-time minimum. After 1-wei interest
-  accrual on the lender leg, the order is unfillable
-  (executor reverts `LenderShortPaid`). B-cond-2 MUST rotate.
-  This case is exactly the one the round-3.7 derivation missed:
-  `endAskPrice - endFeeSum >= live_lender + live_treasury + 9`
-  (slack 10 minus accrual 1) so the round-3.7 threshold would
-  no-op while the order is unfillable. The signed-legs
-  derivation pin-fires because `live_lender > recordedLender +
-  1` on its own.
+  treasury at the bare post-time minimum; after 1-wei interest
+  accrual on the lender leg the order is unfillable
+  (`LenderShortPaid`) and B-cond-2 MUST rotate. Fixed-price
+  pins (round-3.9 P2 #2 — fixed-price was previously assumed
+  exempt from the borrower-slack case):
+  `test_autoList_fixedB2DoesNotFireOnFreshExactSignedLegs`,
+  `test_autoList_fixedB2FiresOnLenderShortBy1`,
+  `test_autoList_fixedB2FiresOnTreasuryShortBy1`, and the
+  shape-mirror pin
+  `test_autoList_fixedB2FiresWhenBorrowerSlackHidesShortLeg`
+  (borrower posted `askPrice = postFloorWithBuffer + 1`,
+  +1 lands in `consideration[2]`, signed lender + treasury
+  at bare post-time floor; 1-wei live-leg accrual makes the
+  order unfillable, B-cond-2 fires).
+- B-cond-1 Dutch carve-out (round-3.9 against Codex round-9
+  P2 #3): `test_autoList_dutchB1DoesNotFireOnHealthyDecay`
+  verifies a Dutch listing whose current decay price is
+  ABOVE the live `effectiveAskThreshold` (i.e., still in
+  the high half of the auction's decay envelope) but which
+  will reach the floor BEFORE `t_safe` is left alone by
+  B-cond-1 — rotation is owned by B-cond-3b (which doesn't
+  fire because t_floor < t_safe). Without the carve-out
+  the round-3.3 Dutch-current-ask variant would have fired
+  B-cond-1 on every block of the healthy decay window,
+  preventing B-cond-3b's safe-margin policy from being
+  reachable. Companion test
+  `test_autoList_dutchB3bStillFiresIndependentlyOfB1Carveout`
+  verifies B-cond-3b retains its full rotation gate (a
+  Dutch listing whose `t_floor > t_safe` still rotates).
 - Dutch B-cond-3b ceiling-division (round-3.7 against Codex
   round-7 P2 #2): `test_autoList_dutchB3bUsesCeilDivisionAtBoundary`
   picks numeric parameters where floor-division `t_floor` lands
@@ -3597,23 +3678,56 @@ implementation PR has a single source of truth:
      the on-chain saturating guard in §18.5 B-cond-3b is
      defense-in-depth.
 
-   **Executor (`CollateralListingExecutor`) — NO schema change
-   (round-3.4 against Raja's Option B blocker)**. Earlier rounds
-   proposed two extensions (recipient address fields on
-   `OrderContext` for B-cond-4; `orderFeeLegs` accessor on
-   `IListingExecutorRecorder`). Both have been reverted:
+   **Executor (`CollateralListingExecutor`) — TWO additive
+   schema extensions (round-3.9 against Codex round-9 P2 #4
+   — supersedes round-3.4's "NO schema change" position)**.
+   The round-3.4 position rejected ONE specific extension
+   (the recipient address fields on `OrderContext` for
+   B-cond-4, which would have changed the executor's
+   per-order context shape) — but TWO different, ADDITIVE
+   read-side extensions were introduced later and are
+   load-bearing for the auto-list path:
 
-   - The `OrderContext` recipient extension is dropped with
-     B-cond-4 itself (§18.5 + §18.13 documented as v1 limitation).
-   - The `orderFeeLegs(bytes32)` view ALREADY exists as a public
-     accessor on `CollateralListingExecutor` (via the
-     `_orderFeeLegs[orderHash]` mapping's auto-getter). Auto-list
-     reads it via the existing public surface — no new interface
-     method needed. `IListingExecutorRecorder` stays unchanged.
+   - **`_orderFeeLegs[orderHash]` snapshot + accessor
+     (round-3.6 against Codex round-6 P2 #4)**: a new
+     `mapping(bytes32 => FeeLeg[])` written on post,
+     read by the auto-list rotation path BEFORE
+     `clearOrder` (which wipes it). The accessor is
+     `ICollateralListingExecutorFeeLegs(executor).
+     orderFeeLegs(bytes32) returns (bytes memory)` —
+     calldata-encoded `FeeLeg[]`, decoded at the read
+     site. See §18.5 Case B step 2.
+   - **`_orderProtocolLegs[orderHash]` snapshot + accessor
+     (round-3.8 against Codex round-8 P2 #2)**: a new
+     `mapping(bytes32 => SignedProtocolLegs)` with
+     `struct SignedProtocolLegs { uint128 lender; uint128
+     treasury; }` written on post, read by B-cond-2 for
+     both Dutch and fixed-price rotation. Accessor is
+     `IListingExecutorRecorder.orderProtocolLegs(bytes32)
+     returns (uint128 lender, uint128 treasury)`. See
+     §18.5 B-cond-2.
 
-   The thin-wrapper reuse posture is preserved: zero executor
-   schema or interface changes. Block A's existing tests + Block
-   D's atomic match facet continue working untouched.
+   Neither extension changes the `OrderContext` struct or
+   the executor's per-order context shape — they are
+   parallel side-mappings keyed by `orderHash`. Existing
+   `_assertOrderContent`, `clearOrder`, `_tryCancelOnSeaport`,
+   and the Block D atomic match facet's surface stay
+   unchanged. The reuse-posture position from round-3.4
+   stands for `OrderContext` itself; the read-side
+   accessors above are the bounded, audited extensions
+   the auto-list path needs.
+
+   Storage cost: one slot per order for `_orderFeeLegs`
+   (length + heap), one slot per order for
+   `_orderProtocolLegs` (packed two-uint128s). Each is
+   cleared by `clearOrder`'s normal cleanup path.
+
+   Wiring sites: every post path (`postPrepayListing`,
+   `postPrepayDutchListing`, `updatePrepayListing`,
+   auto-list-at-floor) writes both mappings in the same
+   broadcast that records the order. The `clearOrder`
+   path wipes both. The auto-list-at-floor path reads
+   them via the two view accessors above.
 
    **`MIN_LOAN_GRACE_PERIOD` reference (round-3.4 against Raja
    P3 #4)**. §18.5 B-cond-3b's
