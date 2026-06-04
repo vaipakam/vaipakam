@@ -81,6 +81,42 @@ predicate (round-3.8's `+2` short tests become round-3.9's
 tests symmetric to the Dutch pins, plus two B-cond-1 Dutch
 carve-out tests.
 
+Round-3.10 (against Codex round-10) addresses five follow-on
+issues across the schema-extension and grace-end boundary
+surface. First, §18.5 Case B step 2's fee-leg snapshot was
+written as a `bytes`-wrapped `abi.decode` against the
+executor's `orderFeeLegs` accessor — but the accessor returns
+the typed `FeeLeg[]` array directly, so the bytes wrap would
+revert or corrupt the preserved legs and make fee-aware
+rotations unfillable; round-3.10 fixes the snippet to call
+the typed getter directly. Second, the §18.14 checklist said
+post paths populate the new `_orderProtocolLegs` mapping
+through the existing `IListingExecutorRecorder.recordOrder`
+broadcast — but that signature doesn't carry
+`consideration[0]` / `[1]` amounts, and deriving them from
+`askPrice` is the borrower-slack bug the snapshot exists to
+avoid; round-3.10 extends `recordOrder` to take
+`signedLenderAmount` and `signedTreasuryAmount` explicitly,
+forwarded by every post path. Third, round-3.6's B-cond-3b
+underflow-guard branch SKIPPED rotation and relied on
+B-cond-2 to catch the case; with round-3.8's switch to
+signed-legs derivation, a pure governance buffer-bump (no
+interest accrual) leaves a Dutch listing structurally
+insolvent through grace because B-cond-2 doesn't fire on
+unchanged legs; round-3.10 changes the guard semantics from
+SKIP to FIRE rotation. Fourth, the salt-collision test was
+written as a borrower-cancel-then-relist scenario — but §18.7
+locks the auto-list path via the opt-out flag on borrower
+cancel, so the test as written would either need to bypass
+the opt-out or fail; round-3.10 refits the scenario to a
+keeper post → diamond `updatePrepayListing` → keeper re-post
+sequence (cleanly mirrors borrower's own re-list flow without
+tripping the opt-out). Fifth, a stale "repay + Seaport fills"
+parenthetical at the grace-end boundary contradicted the §0
+table that already documents Seaport's `endTime` as exclusive
+at the boundary; round-3.10 corrects the parenthetical to
+repay-only.
+
 Design-doc-only change in this PR. Contract implementation,
 keeper-bot scanner wiring, and dapp surface are tracked as separate
 follow-up Issues after the design ratifies.
