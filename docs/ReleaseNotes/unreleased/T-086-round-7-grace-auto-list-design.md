@@ -22,15 +22,33 @@ lender in-kind at grace expiry if the listing hasn't filled. Round
 3's drop of Scenario B (post-grace protocol-controlled auction)
 stays in place. Round 7 lives entirely inside the grace window.
 
-Round-3.7 (against Codex round-7) corrects the Dutch B-cond-2
-reverse derivation to be bufferless — matching the shipped
-`NFTPrepayDutchListingFacet._assertDutchSolvency` invariant,
-which only enforces `endAskPrice >= protocolLegs + endFeeSum`
-(no buffer) — and switches B-cond-3b's Dutch floor-crossing
-time formula from floor- to ceiling-division so the
-Seaport-truncating price-at-tick semantics don't report
-`t_floor` one tick early at the boundary. Test obligations
-updated with the two pin tests.
+Round-3.7 (against Codex round-7) switched B-cond-3b's Dutch
+floor-crossing time formula from floor- to ceiling-division so
+the Seaport-truncating price-at-tick semantics don't report
+`t_floor` one tick early at the boundary, and corrected the
+B-cond-2 derivation to be bufferless. Round-3.7 added three
+B-cond pin tests: `test_autoList_dutchB2FiresAtBareEndFloor`,
+`test_autoList_dutchB2FiresAfterAccrualPastBareEndFloor`, and
+`test_autoList_dutchB3bUsesCeilDivisionAtBoundary`.
+
+Round-3.8 (against Codex round-8) supersedes round-3.7's
+B-cond-2 Dutch derivation: the round-3.7 formula compared live
+legs against `endAskPrice - endFeeSum`, which treats the
+borrower's signed slack as protocol coverage and misses the
+case where the borrower padded the slack entirely into
+`consideration[2]` (the borrower leg) — leaving lender +
+treasury at the bare post-time floor. Any live-leg increase
+past the signed amounts makes the order unfillable while
+B-cond-2 no-ops, leaving stale listings through grace.
+Round-3.8 introduces an executor schema extension — parallel
+to round-3.6's fee-leg snapshot — that records the signed
+lender + treasury amounts at sign time, and B-cond-2 compares
+live legs against those directly. The four B-cond-2 pin tests
+are updated to cover the borrower-slack case and the
+asymmetric per-leg rotation gates. Round-3.8 also corrects a
+stale "all time computations use truncating integer division"
+sentence in the B-cond-3b rounding-policy paragraph that
+contradicted round-3.7's ceiling-division t_floor formula.
 
 Design-doc-only change in this PR. Contract implementation,
 keeper-bot scanner wiring, and dapp surface are tracked as separate

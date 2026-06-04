@@ -2508,57 +2508,99 @@ askAtFloor" check into a three-condition test. The rotation MUST fire if
   Dutch-specific derivation uses the recorded `endAskPrice` (the
   Dutch floor) + the Dutch end-fee sum.
 
-  **CRITICAL — Dutch invariant is BUFFERLESS.** The shipped
+  **CRITICAL — read against SIGNED protocol legs, not
+  endAskPrice (round-3.8 against Codex round-8 P2 #2;
+  supersedes round-3.7's `endAskPrice - endFeeSum`
+  derivation).** Round-3.7 compared live legs against
+  `endAskPrice - sum(recordedFeeLegs.endAmount)`. That misses
+  the borrower-slack case Codex round-8 surfaced. The shipped
   `NFTPrepayDutchListingFacet._assertDutchSolvency`
   (`contracts/src/facets/NFTPrepayDutchListingFacet.sol:488-520`)
-  requires only `endAskPrice >= protocolLegs + feeSumEnd` — it
-  does NOT apply `cfgPrepayListingBufferBps` to the Dutch end
-  invariant the way the fixed-price flow does. Round-3.5 made
-  the round-3 mistake of mirroring the fixed-price buffer-
-  application in reverse; Codex round-7 P2 #1 caught it. The
-  correct derivation drops the buffer division entirely:
+  only enforces `endAskPrice >= protocolLegs_at_post +
+  endFeeSum`. A borrower MAY pad `endAskPrice` above that bare
+  floor — and the padding can land ENTIRELY in the borrower
+  leg (`consideration[2].amount`), with `consideration[0]`
+  (lender) and `consideration[1]` (treasury) held at the bare
+  post-time `pctx.lenderLeg / pctx.treasuryLeg`. At fill time
+  the executor's `CollateralListingExecutor._assertOrderContent`
+  (`contracts/src/seaport/CollateralListingExecutor.sol:1155-
+  1160`) checks the lender/treasury consideration amounts
+  INDIVIDUALLY against live `pctx`:
 
   ```
-  if (auctionMode == PREPAY_MODE_DUTCH) {
-      dutchFloorFeeSum = sum(recordedFeeLegs.endAmount)
-      derivedRecordedProtocolFloor =
-          endAskPrice - dutchFloorFeeSum   // NO buffer division
-  } else {
-      // fixed-price formula above (buffered)
+  if (params.consideration[0].amount < pctx.lenderLeg)   revert LenderShortPaid;
+  if (params.consideration[1].amount < pctx.treasuryLeg) revert TreasuryShortPaid;
+  ```
+
+  Round-3.7's bufferless `endAskPrice - endFeeSum` threshold
+  treats the borrower's slack as protocol coverage. It isn't.
+  With even a 1-wei live-leg increase past the SIGNED amounts,
+  the order is unfillable while `live (lender+treasury)` stays
+  below `endAskPrice - endFeeSum + 1` — B-cond-2 no-ops, keeper
+  leaves an unfillable listing through grace.
+
+  **Schema extension (parallel to round-3.6's fee-leg
+  snapshot)**: extend `IListingExecutorRecorder` to record
+  the signed lender/treasury legs at sign time, symmetric to
+  `_orderFeeLegs`:
+
+  ```solidity
+  // CollateralListingExecutor storage (round-3.8):
+  mapping(bytes32 orderHash => SignedProtocolLegs)
+      internal _orderProtocolLegs;
+
+  struct SignedProtocolLegs {
+      uint128 lender;     // consideration[0].amount at sign
+      uint128 treasury;   // consideration[1].amount at sign
   }
+
+  // IListingExecutorRecorder view (round-3.8):
+  function orderProtocolLegs(bytes32 orderHash)
+      external view returns (uint128 lender, uint128 treasury);
   ```
 
-  This works because at Dutch post-time the contract only
-  enforces `endAskPrice >= projectedProtocolLegs_at_auctionEnd +
-  endFeeSum`. The borrower MAY pad `endAskPrice` above that
-  bare floor (the borrower-leg slack), but B-cond-2 doesn't try
-  to recover the projected-floor exactly — it asks "does the
-  live protocol-leg total still fit under the recorded
-  endAskPrice once fees are accounted for?" If yes, the
-  listing is still solvent in the Dutch sense. B-cond-2 fires
-  only when live legs have grown past what the recorded
-  endAskPrice can cover:
+  Storage cost: one `bytes32 → (uint128, uint128)` slot per
+  order — identical packing to the existing fee-leg snapshot,
+  one extra SSTORE on post + one SLOAD on rotation read.
+
+  Wiring: every Dutch + fixed-price post path writes the entry
+  from `consideration[0].amount` and `consideration[1].amount`
+  in the same broadcast that records fee legs (round-3.6
+  precedent). Auto-list fixed-price-at-floor posts trivially
+  write `(askAtFloor's lender share, askAtFloor's treasury
+  share)` derived from the live `pctx`. Cleared by the same
+  `clearOrder` path that wipes `_orderFeeLegs`.
+
+  **B-cond-2 Dutch derivation (round-3.8 final)**:
 
   ```
-  (pctx.lenderLeg + pctx.treasuryLeg) >
-      (endAskPrice - dutchFloorFeeSum) + 1
+  (recordedLender, recordedTreasury) =
+      IListingExecutorRecorder(pinnedExecutor).orderProtocolLegs(orderHash)
+  // fires when EITHER signed leg is now short of live:
+  rotate if pctx.lenderLeg   > uint256(recordedLender)   + 1
+        OR  pctx.treasuryLeg > uint256(recordedTreasury) + 1
   ```
 
-  Same `+1` rounding tolerance as the fixed-price case.
+  The disjunction matches the executor's fill-time check
+  exactly (each leg individually). The `+1` rounding tolerance
+  preserves the round-3.2 single-wei boundary policy for both
+  legs. Borrower-slack is now correctly ignored — only growth
+  past the SIGNED amounts triggers rotation, matching the
+  exact condition under which the order becomes unfillable.
 
-  **Why this is the right notion of staleness for Dutch.** A
-  Dutch listing's economic floor IS its `endAskPrice` minus
-  fees — the borrower picks it, the contract enforces it, and
-  the auction decays to it. If the live protocol legs fit
-  under that floor, a sale at `endAskPrice` still makes
-  protocol whole, regardless of what `cfgPrepayListingBufferBps`
-  was at post-time. The buffer applied in B-cond-1 (live-leg
-  rotation) is a freshness margin for FUTURE accrual; for a
-  Dutch listing that already pre-committed to an end-floor, the
-  reasonable invariant is the bare end-floor — applying the
-  buffer in reverse would force false-positive rotation against
-  a freshly posted bufferless Dutch order (which Codex round-7
-  flagged).
+  **Fixed-price stays unchanged.** Fixed-price orders sign
+  lender + treasury + ALL fees with no Dutch decay; the
+  fixed-price B-cond-2 formula at the top of this section
+  (`(existingAsk - feeSum) × 10000 / (10000 + bufferBps)`)
+  derives the recorded protocol floor from the executor's
+  recorded `askPrice` directly. Fixed-price doesn't have the
+  borrower-slack-vs-signed-legs ambiguity because the signed
+  consideration items are pinned exactly by the fixed-price
+  invariant. The schema-extension `orderProtocolLegs` view
+  IS populated for fixed-price orders too — the executor's
+  recorder doesn't care about mode — but the fixed-price
+  rotation path doesn't need to read it (the existing formula
+  is exact).
 
   **1-wei rounding tolerance** (round-3.2 addition). Integer
   arithmetic on both sides allows ±1-wei boundary jitter. Without
@@ -2718,14 +2760,30 @@ askAtFloor" check into a three-condition test. The rotation MUST fire if
   to fee-aware floor"; B-cond-3b is the precise "decays too
   late" check.
 
-  **Rounding policy (round-3.4 against Raja P2 #2)**. All time
-  computations use truncating integer division as written.
-  B-cond-3b fires when `t_floor > t_safe` (post-saturation).
-  Because both sides truncate, the BORDERLINE case favors
-  rotation: when `t_floor == t_safe` exactly, the condition does
-  NOT fire (the listing reaches floor at the boundary tick,
-  which is acceptable — the fill window equals the configured
-  margin exactly). The implementation tests MUST cover these
+  **Rounding policy (round-3.8 against Codex round-8 P2 #1
+  — supersedes round-3.4)**. Round-3.7 changed `t_floor` to
+  ceiling division to mirror Seaport's truncating price-at-tick
+  (see the ceiling-division block above). The round-3.4 blanket
+  "all time computations use truncating integer division" was
+  stale once round-3.7 landed and must NOT be followed for
+  `t_floor`. Concretely:
+
+  - `t_floor` (Dutch crossing time): CEILING division per the
+    round-3.7 formula above. This guarantees `price(t_floor) ≤
+    askAtFee` matches Seaport's actual truncated `price(t)`,
+    not the algebraic continuous value.
+  - `t_safe` (grace margin boundary): truncating division on
+    `safeMargin = graceDuration / 2` for the saturating
+    fallback. Truncation here is acceptable — it favors
+    rotation at the borderline by making `t_safe` one tick
+    earlier when `graceDuration` is odd, which gives bidders
+    one extra tick of fill window.
+  - B-cond-3b fires when `t_floor > t_safe` (post-
+    saturation). With `t_floor` ceiling-derived and `t_safe`
+    floor-derived, the BORDERLINE case `t_floor == t_safe`
+    does NOT fire — Seaport will cross the floor at exactly
+    the safe boundary tick, which is acceptable (the fill
+    window equals the configured margin exactly). The implementation tests MUST cover these
   numeric cases:
   - Exact-division `t_floor` (`(startAskPrice - askAtFloor)` and
     `(startAskPrice - endAskPrice)` share a common factor with
@@ -3275,21 +3333,32 @@ against on the implementation PR:
   accrual makes `recordedLenderLeg < liveLenderLeg`,
   `test_autoList_rotatesOnStaleLegs` verifies rotation even when ask
   is already at floor.
-- Dutch B-cond-2 bufferless derivation (round-3.7 against Codex
-  round-7 P2 #1): `test_autoList_dutchB2FiresAtBareEndFloor`
-  verifies a freshly-posted bufferless Dutch listing
-  (`endAskPrice == protocolLegs + endFeeSum`, NO buffer applied
-  per `_assertDutchSolvency`) is left alone by B-cond-2 at
-  grace start when no interest accrued — i.e., B-cond-2 does
-  NOT fire while `(lenderLeg + treasuryLeg) ==
-  (endAskPrice - dutchFloorFeeSum)`. Companion test
-  `test_autoList_dutchB2FiresAfterAccrualPastBareEndFloor`
-  verifies B-cond-2 DOES fire one wei past tolerance:
-  `(lenderLeg + treasuryLeg) == (endAskPrice -
-  dutchFloorFeeSum) + 2`. Together these pin the round-3.7
-  bufferless reverse-derivation against the round-3.5
-  buffered formula that would false-positive-rotate on the
-  freshly-posted case (Codex round-7 P2 #1).
+- Dutch B-cond-2 signed-legs derivation (round-3.8 against
+  Codex round-8 P2 #2; supersedes the round-3.7 bufferless-
+  endAskPrice obligations).
+  `test_autoList_dutchB2DoesNotFireOnFreshBareSignedLegs`
+  verifies a freshly-posted Dutch listing whose recorded
+  `orderProtocolLegs == (post_lender, post_treasury)` is left
+  alone at grace start when no accrual has happened (live legs
+  equal recorded). `test_autoList_dutchB2FiresOnLenderShortBy2`
+  verifies B-cond-2 fires when `pctx.lenderLeg == recordedLender
+  + 2` (1-wei past tolerance), even when `pctx.treasuryLeg ==
+  recordedTreasury`. Symmetric test
+  `test_autoList_dutchB2FiresOnTreasuryShortBy2` verifies the
+  treasury-leg branch fires independently. The critical pin
+  test for the round-3.8 fix is
+  `test_autoList_dutchB2FiresWhenBorrowerSlackHidesShortLeg`:
+  borrower padded `endAskPrice` by 10 wei into
+  `consideration[2]` (borrower leg), leaving signed lender +
+  treasury at the bare post-time minimum. After 1-wei interest
+  accrual on the lender leg, the order is unfillable
+  (executor reverts `LenderShortPaid`). B-cond-2 MUST rotate.
+  This case is exactly the one the round-3.7 derivation missed:
+  `endAskPrice - endFeeSum >= live_lender + live_treasury + 9`
+  (slack 10 minus accrual 1) so the round-3.7 threshold would
+  no-op while the order is unfillable. The signed-legs
+  derivation pin-fires because `live_lender > recordedLender +
+  1` on its own.
 - Dutch B-cond-3b ceiling-division (round-3.7 against Codex
   round-7 P2 #2): `test_autoList_dutchB3bUsesCeilDivisionAtBoundary`
   picks numeric parameters where floor-division `t_floor` lands
