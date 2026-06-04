@@ -7,6 +7,8 @@ import { decodeContractError } from '@vaipakam/lib/decodeContractError';
 import { beginStep } from '../lib/journeyLog';
 import { publishPrepayListingToOpenSea } from '../lib/openseaPublish';
 import { postPrepayMatchSource } from '../lib/indexerClient';
+import { useWallet } from '../context/WalletContext';
+import { useUserVaultAddress } from './useUserVaultAddress';
 import type { Hex } from 'viem';
 
 /** T-086 Round-5 Block A (#313) — borrower-supplied fee leg
@@ -193,6 +195,18 @@ export function useNFTPrepayListing(
   const chain = useReadChain();
   const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
   const onAfterSuccess = options?.onAfterSuccess;
+  // T-086 Block D follow-up (#348): the agent's signed-offer proxy
+  // now wraps OpenSea Fulfillment Data, which requires the fulfiller
+  // (borrower's vault) address. The Match button only renders for
+  // the position-NFT holder == loan borrower, so `useWallet().address`
+  // IS the borrower; `useUserVaultAddress` resolves it to the
+  // per-user vault proxy via the diamond's `getUserVaultAddress`.
+  // Returns `null` until the read resolves OR if the user has no
+  // vault yet — both cases make Match impossible anyway (the
+  // diamond would revert `VaultNotDeployed`), so a null check at
+  // the call site short-circuits cleanly.
+  const wallet = useWallet();
+  const userVaultAddress = useUserVaultAddress(wallet.address);
 
   const [listing, setListing] = useState<IndexedPrepayListing | null | undefined>(null);
   const [loading, setLoading] = useState(true);
@@ -606,10 +620,30 @@ export function useNFTPrepayListing(
         return false;
       }
 
+      // T-086 Block D follow-up (#348): the agent's signed-offer
+      // proxy now wraps OpenSea Fulfillment Data, which requires
+      // the fulfiller address (the borrower's vault) in the
+      // upstream POST body. Without a resolved vault we can't ask
+      // OpenSea for the SIP-7 extraData / canonical CriteriaResolver
+      // shape — so short-circuit cleanly here. The diamond would
+      // anyway revert `VaultNotDeployed` for a borrower with no
+      // vault, and this code path is unreachable for non-borrowers
+      // (the Match button only renders for the position-NFT holder).
+      if (!userVaultAddress) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          '[matchOpenSeaOffer] borrower vault not yet resolved — Match aborted',
+        );
+        return false;
+      }
+
       // Fetch the bidder's signed payload. The agent already
       // validates the (chainId, contract, tokenId, orderHash)
       // tuple end-to-end against OpenSea + asserts the returned
-      // orderHash equals what we asked for.
+      // orderHash equals what we asked for. The `fulfiller` query
+      // param routes through OpenSea Fulfillment Data so the
+      // response carries SIP-7 extraData + canonical
+      // CriteriaResolver[].
       let bundle: {
         orderHash: string;
         parameters: unknown;
@@ -621,7 +655,8 @@ export function useNFTPrepayListing(
         const url =
           `${agentOrigin}/opensea/signed-offer/${chainId}/` +
           `${offer.collateralContract.toLowerCase()}/${offer.collateralTokenId.toString()}/` +
-          `${offer.orderHash.toLowerCase()}`;
+          `${offer.orderHash.toLowerCase()}` +
+          `?fulfiller=${userVaultAddress.toLowerCase()}`;
         const res = await fetch(url);
         if (!res.ok) {
           // eslint-disable-next-line no-console
@@ -689,7 +724,7 @@ export function useNFTPrepayListing(
       // canonical listing to push to OpenSea's catalog post-fill.
       return r.success;
     },
-    [chainId, diamond, runWrite],
+    [chainId, diamond, runWrite, userVaultAddress],
   );
 
   const cancelPrepayListing = useCallback(
