@@ -676,10 +676,15 @@ contract NFTPrepayListingFacet is
         // Vault-side: revoke the old orderHash → executor binding
         // BEFORE building the new one (so the vault's ERC-1271
         // can't briefly authorise BOTH the old and new hashes in
-        // any half-state).
+        // any half-state). Round-6 Block D #346: route through the
+        // shared `LibPrepayListingWiring.unwire` so v1 fixed +
+        // v1 Dutch + v2 atomic facets all clear vault state via
+        // the same primitive. The vault-existence precondition
+        // is enforced upfront so `_buildAndRecordUpdate` below
+        // sees a non-zero offerer.
         address vaultAddr = s.userVaipakamVaults[loan.borrower];
-        if (vaultAddr == address(0)) revert ExecutorNotSet();
-        VaipakamVaultImplementation(vaultAddr).revokeListingOrderHash(oldOrderHash);
+        if (vaultAddr == address(0)) revert LibPrepayListingWiring.VaultNotDeployed(loan.borrower);
+        LibPrepayListingWiring.unwire(s, loan, oldOrderHash);
 
         // Build + record the new order with the canonical shape
         // (same construction as `postPrepayListing` — `LibPrepayOrder`

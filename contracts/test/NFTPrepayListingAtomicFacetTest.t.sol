@@ -396,7 +396,7 @@ contract NFTPrepayListingAtomicFacetTest is SetupTest {
 
     /// @dev Minimally-valid bidder order. Tests mutate fields off
     ///      this base to trigger specific rejection paths.
-    function _validBidderOrder() internal returns (BidderOrder memory bo) {
+    function _validBidderOrder() internal view returns (BidderOrder memory bo) {
         OrderComponents memory c;
         c.offerer = bidder;
         c.zone = address(0);

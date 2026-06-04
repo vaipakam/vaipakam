@@ -346,11 +346,6 @@
   },
   {
     "type": "error",
-    "name": "AtomicMatchInsufficientForBorrower",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "BidderExtraDataTooLarge",
     "inputs": [
       {
@@ -465,6 +460,11 @@
   {
     "type": "error",
     "name": "ExecutorNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FeeLegsExceedAvailable",
     "inputs": []
   },
   {

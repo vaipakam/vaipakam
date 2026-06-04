@@ -16,9 +16,9 @@ import {
     MIN_AUCTION_WINDOW
 } from "../seaport/PrepayTypes.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
-import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 import {IVaipakamPrepayContext} from "../seaport/IVaipakamPrepayContext.sol";
 import {LibPrepayOrder} from "../libraries/LibPrepayOrder.sol";
+import {LibPrepayListingWiring} from "../libraries/LibPrepayListingWiring.sol";
 import {CollateralListingExecutor} from "../seaport/CollateralListingExecutor.sol";
 import {NFTPrepayListingFacet} from "./NFTPrepayListingFacet.sol";
 
@@ -243,9 +243,13 @@ contract NFTPrepayDutchListingFacet is
         if (pinnedExecutor != address(0)) {
             IListingExecutorRecorder(pinnedExecutor).clearOrder(oldOrderHash);
         }
+        // Round-6 Block D #346: canonical unwire helper. Reverts
+        // `VaultNotDeployed` if borrower has no vault (same precondition
+        // the old inline check enforced; the symbol now aligns across
+        // fixed/Dutch/atomic facets).
         address vaultAddr = s.userVaipakamVaults[loan.borrower];
-        if (vaultAddr == address(0)) revert ExecutorNotSet();
-        VaipakamVaultImplementation(vaultAddr).revokeListingOrderHash(oldOrderHash);
+        if (vaultAddr == address(0)) revert LibPrepayListingWiring.VaultNotDeployed(loan.borrower);
+        LibPrepayListingWiring.unwire(s, loan, oldOrderHash);
 
         newOrderHash = _buildAndRecordDutchUpdate(
             s, loan, loanId, newStartAskPrice, newEndAskPrice, newAuctionEndTime,
@@ -376,7 +380,7 @@ contract NFTPrepayDutchListingFacet is
         _assertDutchSolvency(loanId, startAskPrice, endAskPrice, pctx, feeLegs);
 
         address vaultAddr = s.userVaipakamVaults[loan.borrower];
-        if (vaultAddr == address(0)) revert ExecutorNotSet();
+        if (vaultAddr == address(0)) revert LibPrepayListingWiring.VaultNotDeployed(loan.borrower);
 
         orderHash = LibPrepayOrder.buildAndHashDutch(
             pctx,
@@ -410,7 +414,14 @@ contract NFTPrepayDutchListingFacet is
             PREPAY_MODE_DUTCH,
             feeLegs
         );
-        _wireVaultForListing(s, loan, orderHash, conduit, address(executor));
+
+        // Round-6 Block D #346: route through shared library so v1
+        // fixed + v1 Dutch + v2 atomic facets all hit the same wiring
+        // primitive. The `vaultAddr` precondition above is redundant
+        // with the library's own `VaultNotDeployed` revert; keeping
+        // the upfront check so the buildAndHashDutch call below sees
+        // a non-zero offerer.
+        LibPrepayListingWiring.wire(s, loan, orderHash, conduit, address(executor));
     }
 
     function _buildAndRecordDutchUpdate(
@@ -467,9 +478,11 @@ contract NFTPrepayDutchListingFacet is
             feeLegs
         );
 
-        VaipakamVaultImplementation vault = VaipakamVaultImplementation(vaultAddr);
-        vault.registerListingOrderHash(orderHash, address(executor));
-        _grantConduitApproval(vault, loan, conduit);
+        // Round-6 Block D #346: canonical wire helper. The vault
+        // existence was already asserted by the caller of this
+        // private — `updatePrepayDutchListing` upstream reverts
+        // `VaultNotDeployed` before reaching here.
+        LibPrepayListingWiring.wire(s, loan, orderHash, conduit, address(executor));
     }
 
     function _assertDutchSolvency(
@@ -506,33 +519,9 @@ contract NFTPrepayDutchListingFacet is
         }
     }
 
-    function _wireVaultForListing(
-        LibVaipakam.Storage storage s,
-        LibVaipakam.Loan storage loan,
-        bytes32 orderHash,
-        address conduit,
-        address executor
-    ) private {
-        address vaultAddr = s.userVaipakamVaults[loan.borrower];
-        if (vaultAddr == address(0)) revert ExecutorNotSet();
-        VaipakamVaultImplementation vault = VaipakamVaultImplementation(vaultAddr);
-        _grantConduitApproval(vault, loan, conduit);
-        vault.registerListingOrderHash(orderHash, executor);
-    }
-
-    function _grantConduitApproval(
-        VaipakamVaultImplementation vault,
-        LibVaipakam.Loan storage loan,
-        address conduit
-    ) private {
-        if (loan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
-            vault.setCollateralOperatorApproval(
-                loan.collateralAsset, loan.collateralTokenId, conduit, true
-            );
-        } else {
-            vault.setCollateralOperatorApprovalERC1155(
-                loan.collateralAsset, conduit, true
-            );
-        }
-    }
+    // Round-6 Block D #346: `_wireVaultForListing` + `_grantConduitApproval`
+    // moved into `LibPrepayListingWiring` so v1 fixed + v1 Dutch + v2
+    // atomic facets all share a single wiring primitive. The Dutch
+    // facet now invokes `LibPrepayListingWiring.wire` / `.unwire`
+    // directly at the call sites above.
 }

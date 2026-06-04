@@ -151,11 +151,12 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
     ///         on its own.
     error BidderPaymentTokenMismatch(address expected, address actual);
 
-    /// @notice §17.5-bis sum invariant. `Σ(bidder fees) +
-    ///         protocol legs > offer_value` — bidder's signed fees
-    ///         leave nothing for the protocol legs (no lender +
-    ///         treasury + borrower payout is possible).
-    error AtomicMatchInsufficientForBorrower();
+    /// @notice §17.5-bis sum invariant — symbol name aligned with the
+    ///         design doc. `Σ(bidder fees) + protocol legs > offer_value`
+    ///         means the bidder's signed fees leave nothing for the
+    ///         protocol legs (no lender + treasury + borrower payout
+    ///         is possible).
+    error FeeLegsExceedAvailable();
 
     /// @notice Codex PR #346 round-2 P2 #265 — protocol-side floor +
     ///         buffer invariant mirrored from v1. The effective ask
@@ -276,7 +277,7 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
         if (offerValue < pctx.lenderLeg + pctx.treasuryLeg + bidderFeeTotal) {
             // Bidder's fees + protocol legs leave nothing (or
             // negative) for the borrower remainder.
-            revert AtomicMatchInsufficientForBorrower();
+            revert FeeLegsExceedAvailable();
         }
         uint256 effectiveAsk = offerValue - bidderFeeTotal;
 
