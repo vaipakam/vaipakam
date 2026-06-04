@@ -2423,73 +2423,135 @@ askAtFloor" check into a three-condition test. The rotation MUST fire if
 
 - **B-cond-1 — ask too high**: `existingAsk > askAtFloor`. The original
   rotation case.
-- **B-cond-2 — recorded protocol floor stale (derived)**: the executor's
-  current `OrderContext` storage (per `IListingExecutorRecorder`)
-  doesn't directly persist `lenderLeg` / `treasuryLeg`. Codex round-2
-  P2 on PR #356 correctly flagged that extending the executor's storage
-  schema to add those fields would push the implementation surface past
-  §18.14's "two diamond storage slots" boundary. The cleanest fix —
-  no new schema field — is to **derive** the recorded protocol floor
-  from `existingAsk` and the recorded `feeLegs`:
+- **B-cond-2 — recorded protocol floor stale (derived, CORRECTED in
+  round-3.2 against Codex round-3.1 P2 + Raja blocker #2)**: the
+  executor's current `OrderContext` storage doesn't directly persist
+  `lenderLeg` / `treasuryLeg`. The cleanest fix — no new executor
+  schema field — is to **derive** the recorded protocol floor from
+  `existingAsk`, the recorded `feeLegs`, and the buffer. The round-3
+  draft had the wrong inverse: `existingAsk × 10000 / (10000 + buffer)
+  - sum(feeLegs)`. The deployed invariant
+  (`NFTPrepayListingFacet.sol:1058,1087`) buffers ONLY the protocol
+  legs and adds `feeSum` on top — `ask = protocolFloor × (10000 +
+  buffer)/10000 + sum(feeLegs)` — so the correct inverse is:
 
   ```
   derivedRecordedProtocolFloor =
-      existingAsk × 10_000 / (10_000 + cfgPrepayListingBufferBps)
-      - sum(recordedFeeLegs)
+      (existingAsk - sum(recordedFeeLegs)) × 10_000
+      / (10_000 + cfgPrepayListingBufferBps)
   ```
 
-  This works because at post time the implementation computed
-  `existingAsk = (lenderLeg_at_post + treasuryLeg_at_post +
-  sumFeeLegs_at_post) × (10_000 + buffer) / 10_000`. Reversing the
-  multiplication recovers the protocol-floor-at-post + feeLeg sum;
-  subtracting `sumFeeLegs` recovers the protocol-floor-at-post.
+  Concrete validation (Raja's example): `protocolFloor = 1000`,
+  `buffer = 200`, `feeSum = 50` → `ask = 1000 × 10200 / 10000 + 50 =
+  1070`. Reversed: `(1070 - 50) × 10000 / 10200 = 1000` ✓. The
+  round-3 formula gave `1070 × 10000 / 10200 - 50 ≈ 999.02` — below
+  the live floor of 1000, triggering false-positive rotation on a
+  fresh listing.
 
-  B-cond-2 fires when
-  `(pctx.lenderLeg + pctx.treasuryLeg) > derivedRecordedProtocolFloor`.
-  At that point the executor's `_checkOrderPreconditions` would reject
-  a fill (the order can't cover live legs), so the rotation rebuilds
-  with live legs even when the aggregate ask alone stays the same.
+  **1-wei rounding tolerance** (round-3.2 addition). Integer
+  arithmetic on both sides allows ±1-wei boundary jitter. Without
+  tolerance, B-cond-2 can fire against a freshly-rotated listing,
+  creating cancel/repost churn. B-cond-2 fires when:
 
-  The derivation requires `cfgPrepayListingBufferBps` to be the SAME
-  value used at post-time — if governance rotates the buffer between
-  post and rotation, the derivation is approximate. We accept that
-  edge case as "rotation may not fire when buffer-rotated but no
-  interest accrued"; the next interest-accrual tick will trigger
-  rotation via the standard B-cond-2 path. Documenting it here for
-  the implementation PR to handle as a tracked precision limitation.
-- **B-cond-3 — Dutch reaches floor too late (refined)**: existing
-  listing is Dutch (`auctionMode == PREPAY_MODE_DUTCH`). Two
-  sub-tests, EITHER of which fires the rotation:
-  - **B-cond-3a**: `endAskPrice > askAtFloor`. The Dutch auction never
-    decays to floor at all within `auctionEndTime`.
-  - **B-cond-3b**: `t_floor > gracePeriodEnd - GRACE_FILL_MARGIN`,
-    where `t_floor` is the time at which the Dutch listing's linear
-    decay reaches `askAtFloor`:
+  ```
+  (pctx.lenderLeg + pctx.treasuryLeg) > derivedRecordedProtocolFloor + 1
+  ```
+
+  The `+1` absorbs single-wei rounding without admitting meaningful
+  staleness (real interest-accrual deltas in 1 second on a non-zero
+  principal are many wei).
+
+  **Buffer-rotation edge case** (unchanged from round-3): the
+  derivation requires `cfgPrepayListingBufferBps` to be the same
+  value used at post-time. If governance rotates the buffer between
+  post and rotation, the derivation is approximate. Acceptable: the
+  next interest-accrual tick triggers rotation via the standard
+  B-cond-2 path; worst case is a one-cycle delay.
+- **B-cond-3 — Dutch reaches floor too late (refined, equality-
+  inclusive in round-3.2)**: existing listing is Dutch
+  (`auctionMode == PREPAY_MODE_DUTCH`). Two sub-tests, EITHER of
+  which fires the rotation:
+  - **B-cond-3a**: `endAskPrice > askAtFloor`. The Dutch auction
+    never decays to floor at all within `auctionEndTime`.
+  - **B-cond-3b** (Codex round-3.1 P2 corrected — equality case
+    now included): `endAskPrice <= askAtFloor` AND the Dutch
+    schedule reaches `askAtFloor` later than the safe boundary.
+    The round-3 strict inequality (`endAskPrice < askAtFloor`)
+    skipped the exact-equality case where `endAskPrice ==
+    askAtFloor` with `auctionEndTime ≈ gracePeriodEnd` — the
+    listing reaches floor only at its final tick. Round-3.2
+    treats `<=` so any Dutch listing that reaches floor only at
+    or near grace expiry is rotated.
+
+    `t_floor` is the time the Dutch listing's linear decay
+    reaches `askAtFloor`:
     ```
     t_floor = startTime + (auctionEndTime - startTime)
               × (startAskPrice - askAtFloor)
               / (startAskPrice - endAskPrice)
     ```
-    Codex round-2 P2 on PR #356 correctly observed that the
-    round-1 condition (B-cond-3 testing only `endAskPrice >
-    askAtFloor`) preserved the aspirational-ask failure mode if the
-    borrower set `endAskPrice <= askAtFloor` but `auctionEndTime` at
-    or near `gracePeriodEnd`: the listing was at floor only in the
-    last seconds of grace, by which point no bidder had time to match.
-    `GRACE_FILL_MARGIN` is a new governance knob
-    (`cfgPrepayListingDutchGraceMarginSec`, default 1 hour); the
-    rotation fires if the Dutch listing doesn't reach floor at least
-    `GRACE_FILL_MARGIN` before grace expiry, which gives bidders a
-    real fill window.
 
-  Both sub-tests use integer arithmetic; `t_floor` is computed only
-  when `endAskPrice < startAskPrice` AND `endAskPrice < askAtFloor`
-  (so the denominator is non-zero and the listing does eventually
-  reach floor). The B-cond-3a path is the cheap early-out for "never
-  decays to floor"; B-cond-3b is the precise "decays too late" check.
+    The rotation fires when `t_floor` is later than a safe
+    boundary `t_safe`:
 
-If **none** of B-cond-1 / -2 / -3 holds: revert `AlreadyAtOrBelowFloor(
-loanId, existingAsk, askAtFloor)`. No-op.
+    ```
+    t_safe = (gracePeriodEnd > cfgPrepayListingDutchGraceMarginSec
+              ? gracePeriodEnd - cfgPrepayListingDutchGraceMarginSec
+              : gracePeriodEnd)
+    ```
+
+    The `gracePeriodEnd > GRACE_MARGIN` guard is Codex round-3.1
+    P2's underflow fix — if governance configures
+    `cfgPrepayListingDutchGraceMarginSec` higher than the loan's
+    grace duration, the naive subtraction would underflow. The
+    saturating-to-`gracePeriodEnd` fallback means a too-large
+    margin effectively forces "rotate ANY Dutch listing on this
+    short loan" — the safe behavior on a precision-loss boundary.
+    (The AdminFacet setter for the knob will also `require(value
+    <= MIN_LOAN_GRACE_PERIOD - 60)` for clarity; the on-chain
+    saturating guard is defense-in-depth.)
+
+    `GRACE_FILL_MARGIN` (`cfgPrepayListingDutchGraceMarginSec`,
+    default 3600 seconds = 1 hour) gives bidders a real
+    fill window between when the listing reaches the floor and
+    when the loan defaults.
+
+  Both sub-tests use integer arithmetic; `t_floor` is computed
+  only when `endAskPrice < startAskPrice` (so the denominator is
+  non-zero) AND `endAskPrice <= askAtFloor` (so the listing does
+  eventually reach floor). The B-cond-3a path is the cheap early-
+  out for "never decays to floor"; B-cond-3b is the precise
+  "decays too late" check.
+- **B-cond-4 — recipient drift (added in round-3.2 against Codex
+  round-3.1 P2)**: the executor's `_checkOrderPreconditions`
+  rejects fills when the signed consideration's lender or
+  treasury recipient no longer matches the live
+  `ownerOf(loan.lenderTokenId)` or `s.treasury`. If the
+  lender-position NFT transfers after an at-floor listing is
+  posted, OR if governance rotates the treasury, none of
+  B-cond-1 / -2 / -3 catches the drift but the listing becomes
+  unfillable.
+
+  B-cond-4 fires when:
+
+  ```
+  recordedLenderRecipient != ownerOf(loan.lenderTokenId)
+  OR
+  recordedTreasuryRecipient != s.treasury
+  ```
+
+  The recipients are read from the pinned executor's
+  `orderContext(orderHash)` view. The rotation rebuilds the
+  order with live recipients (`pctx.lenderNftOwner`,
+  `pctx.treasury`) so subsequent fills can settle.
+
+  Note: the recorded recipients are stored as part of the
+  Seaport `ConsiderationItem[]` shape on the executor's per-
+  hash storage — they ARE persisted today (Block A laid them
+  down at post time). No executor schema change needed.
+
+If **none** of B-cond-1 / -2 / -3 / -4 holds: revert
+`AlreadyAtOrBelowFloor(loanId, existingAsk, askAtFloor)`. No-op.
 
 **Pinned-executor read** (Codex round-1 P2 fix): the orderContext
 storage that pins `existingAsk` and the recorded legs lives on the
@@ -2514,13 +2576,41 @@ Rotation steps (after the B-cond gate fires):
    sees the old order canceled and won't surface it to bidders. Already
    "best-effort" by Block-A semantics; any revert here is swallowed.
 4. **Preserve `feeLegs` from the old order's `orderContext`** (Codex
-   round-1 P2 fix). If the old listing was posted with `feeLegs` (a
-   fee-aware borrower listing on a fee-enforced collection), the
-   rotation MUST copy the same `feeLegs[]` into the new order rather
-   than posting with empty `feeLegs[]` that would render the new order
-   unfillable on SignedZone. The exception is fee-free collections
+   round-1 P2 fix; refined round-3.2 against Codex round-3.1 P2 on
+   Dutch fee-leg normalization). If the old listing was posted with
+   `feeLegs` (a fee-aware borrower listing on a fee-enforced
+   collection), the rotation MUST copy the same `feeLegs[]` into the
+   new order. The exception is fee-free collections
    (`feeLegs.length == 0` on the old order) — the new order is also
    `feeLegs: []`.
+
+   **Dutch fee-leg normalization (round-3.2 fix).** Dutch
+   `feeLegs[]` are stored with separate `startAmount` /
+   `endAmount` pairs (which legally decay; `startAmount >=
+   endAmount`). The fixed-price `feeLegs[]` shape that the
+   `_buildAndRecord` private records requires `startAmount ==
+   endAmount`. Naively copying decaying Dutch fee legs into a
+   fixed-price rotation would revert at the recorder. The
+   normalization rule: rotate-to-fixed copies the **projected-max
+   fee value** (= each leg's `endAmount`, since the Dutch fee
+   schedule was designed by the borrower to be the cap at
+   `auctionEndTime`):
+
+   ```
+   for each oldLeg in dutchOrder.feeLegs:
+       newLeg.recipient   = oldLeg.recipient
+       newLeg.startAmount = oldLeg.endAmount
+       newLeg.endAmount   = oldLeg.endAmount
+   ```
+
+   This is conservative for the borrower (fees are at the
+   Dutch-end maximum), and it preserves the recipient set the
+   borrower originally consented to. Fee-aware Dutch listings
+   rotated to fixed-price thus end up at
+   `rotatedAsk = askAtFloor + sum(endAmount)` per step 5.
+
+   For fee-free Dutch listings, `feeLegs.length == 0` and the
+   normalization is a no-op.
 5. Build the new order's ask price. Codex round-2 P2 on PR #356 flagged
    that the round-1 design priced the rotated order at `askAtFloor`
    regardless of `feeLegs[]` preservation — but the existing facet
@@ -2862,12 +2952,17 @@ against on the implementation PR:
   `_revertsWhenBufferZero`, `_revertsExecutorNotSet`,
   `_revertsVaultNotDeployed`, `_revertsBorrowerCannotCall`).
 - Case A — fresh-post path: `test_autoList_postsAtFloorWhenNoListingExists`.
-- Case B — rotate-down path: `test_autoList_rotatesHighAskDownToFloor`.
-- Case C — at-or-below floor no-op: `test_autoList_revertsAlreadyAtFloor`,
-  `_revertsAlreadyBelowFloor`.
-- Case D — Dutch already decays to floor: `_revertsDutchDecaysToFloor`.
-- Re-trigger ratchet behaviour:
-  `test_autoList_secondCallAtHigherInterestNoOps`.
+- Case B — rotate-down path (B-cond-1 ask too high):
+  `test_autoList_rotatesHighAskDownToFloor`.
+- Case C — no rotation needed (none of B-cond-1/-2/-3/-4 fires):
+  `test_autoList_revertsAlreadyAtFloor` (existingAsk == askAtFloor +
+  recorded floor matches live + recipients match + not stale-Dutch),
+  `_revertsAlreadyBelowFloor` (existingAsk < askAtFloor).
+- Re-trigger ratchet behaviour (round-3.2 — Raja non-blocking #3
+  fix): `test_autoList_rotatesOnFreshInterestAccrual` — after enough
+  interest accrual, the second call DOES rotate via B-cond-2 instead
+  of no-op'ing (round-3 expected no-op was wrong per the
+  derived-floor staleness check).
 - Match-time settlement: an integration test where after `autoList`, an
   OpenSea offer comes in + the atomic facet settles cleanly (lender +
   treasury + borrower paid the right amounts).
@@ -2892,18 +2987,48 @@ against on the implementation PR:
   accrual makes `recordedLenderLeg < liveLenderLeg`,
   `test_autoList_rotatesOnStaleLegs` verifies rotation even when ask
   is already at floor.
-- Dutch endAskPrice > floor (Codex round-1 P2):
+- Dutch B-cond-3a — never reaches floor (Codex round-1 P2):
   `test_autoList_rotatesDutchThatNeverReachesFloor` verifies a
-  borrower-posted Dutch listing whose `endAskPrice > askAtFloor` gets
-  canceled + replaced with a fixed-price-at-floor listing.
+  Dutch listing whose `endAskPrice > askAtFloor` gets canceled +
+  replaced with a fixed-price-at-floor listing.
+- Dutch B-cond-3b — reaches floor too late (round-3.2 / Codex
+  round-3.1 P2): `test_autoList_rotatesDutchThatReachesFloorTooLate`
+  verifies a Dutch listing with `endAskPrice <= askAtFloor` but
+  `t_floor > gracePeriodEnd - GRACE_FILL_MARGIN` gets rotated.
+  Includes the strict-equality edge case (`endAskPrice ==
+  askAtFloor`) per Codex round-3.1 P2 fix.
+- Dutch margin underflow guard (round-3.2 / Codex round-3.1 P2):
+  `test_autoList_dutchMarginUnderflowSaturatesToGraceEnd` verifies
+  the saturating-`gracePeriodEnd` fallback when
+  `cfgPrepayListingDutchGraceMarginSec` is set higher than the
+  loan's grace duration; the rotation effectively forces ANY
+  Dutch listing on the short-grace loan to rotate.
+- Recipient drift (B-cond-4 — round-3.2 / Codex round-3.1 P2):
+  `test_autoList_rotatesOnLenderRecipientDrift` (transfer
+  lender-position NFT to a new owner; ensure auto-list rebuilds
+  the order with the new lenderNftOwner so subsequent fills
+  settle). `test_autoList_rotatesOnTreasuryRotation` (governance
+  rotates `s.treasury`; auto-list rebuilds with the new treasury
+  recipient).
 - Fee-aware listing preservation (Codex round-1 P2):
-  `test_autoList_preservesFeeLegsOnRotation` verifies the new order
-  copies the old `feeLegs[]` when rotating a fee-aware listing on a
-  fee-enforced collection.
-- Fee-enforced collection fresh-post refusal (Codex round-1 P2):
-  `test_autoList_refusesFreshPostOnFeeEnforcedCollection` verifies the
-  `FeeEnforcedCollectionAutoListSkipped` revert when no listing
-  exists + the collection is fee-enforced.
+  `test_autoList_preservesFeeLegsOnRotation` verifies the new
+  order copies the old `feeLegs[]` when rotating a fee-aware
+  listing on a fee-enforced collection.
+- Dutch fee-leg normalization (round-3.2 / Codex round-3.1 P2):
+  `test_autoList_normalizesDutchFeeLegsOnRotation` verifies the
+  fee-aware Dutch → fixed-price rotation copies each leg's
+  `endAmount` into both `startAmount` and `endAmount` of the
+  fixed-price feeLegs (the projected-max conservative-for-borrower
+  convention).
+- Fee-agnostic fresh-post on fee-enforced collection (Codex
+  round-2 P2 + Raja round-3.1 blocker #1 — REVERSED from round-1's
+  refusal): `test_autoList_postsEmptyFeeLegsOnFeeEnforcedCollection`
+  verifies the auto-list path posts at floor with empty `feeLegs[]`
+  REGARDLESS of whether the collection is fee-enforced. The on-
+  chain path makes no distinction (there's no on-chain source of
+  truth for fee-enforcement). For fee-enforced collections the
+  resulting Seaport listing sits unmatched until the borrower
+  replaces it; this is a documented bounded v1 limitation.
 - Salt collision avoidance (Codex round-1 P2):
   `test_autoList_handlesSameBlockReListAfterCancel` posts → borrower
   cancels mid-block → auto-list re-posts in same block; the
@@ -2924,15 +3049,20 @@ against on the implementation PR:
 
 ### 18.13 Out of scope (Round 7 v1)
 
-- **Fee-enforced collection support in fresh-post auto-listing.**
-  Codex round-1 P2 ratified that v1 must REFUSE to fresh-post on
-  fee-enforced collections (revert
-  `FeeEnforcedCollectionAutoListSkipped`) rather than posting an
-  unfillable empty-feeLegs order. Adding the off-chain OpenSea
+- **Fee-aware fresh-post for fee-enforced collections** (REVERSED
+  from round-1 — see Raja round-3.1 blocker #1 + Codex round-3.1
+  P2). v1 auto-list does NOT distinguish fee-free from fee-enforced
+  collections (there's no on-chain source of truth for fee-
+  enforcement). Fresh-post on fee-enforced collections records an
+  empty-feeLegs Seaport listing that sits unmatched; borrower
+  recovery is `cancelPrepayListing` + `clearAutoListOptOut` +
+  posting a proper fee-aware listing. Adding the off-chain OpenSea
   Collection API fetch + `feeLegs[]` rebuild for the auto-listing
-  fresh-post path is a separate follow-up. Tracked. (Case-B rotations
-  on fee-enforced collections DO work in v1 — they preserve the
-  borrower's already-supplied feeLegs from the old order.)
+  fresh-post path is a separate follow-up. Tracked. (Case-B
+  rotations on fee-enforced collections DO work in v1 — they
+  preserve the borrower's already-supplied feeLegs from the old
+  order, including Dutch → fixed-price normalization per §18.5
+  Case B step 4.)
 - **Dutch / English auction modes in the auto-listing path.** Auto-listing
   is fixed-price-at-floor only. Borrower-initiated Dutch / English stay
   borrower-controlled.
@@ -2977,18 +3107,21 @@ implementation PR has a single source of truth:
    with distinct symbol.** Keeper bots filter on the symbol; gas waste
    is acceptable since the operation is a no-op anyway. Plus the new
    `AutoListExecutorMigrationStale`, `BorrowerSanctioned`,
-   `AutoListBorrowerOptedOut`, `FeeEnforcedCollectionAutoListSkipped`,
-   `NotEligibleAutoLister` revert symbols all share the same
-   "filter-by-symbol" pattern.
+   `AutoListBorrowerOptedOut`, and `NotEligibleAutoLister` revert
+   symbols all share the same "filter-by-symbol" pattern.
 
-4. **Fee-enforced collection v1 behaviour — RESOLVED as refuse-to-
-   fresh-post + preserve-feeLegs-on-rotation.** Per Codex round-1 P2:
-   posting empty `feeLegs[]` on a fee-enforced collection is strictly
-   worse than not posting (unfillable order locks the
-   `prepayListingOrderHash` slot, blocks subsequent calls). v1 reverts
-   `FeeEnforcedCollectionAutoListSkipped` on fresh-post. Case-B
-   rotations on already-fee-aware listings DO work in v1 by copying
-   the borrower's old `feeLegs[]` verbatim.
+4. **Fee-enforced collection v1 behaviour — RESOLVED as
+   fee-agnostic-on-fresh-post + preserve-feeLegs-on-rotation
+   (REVERSED from round-1; see Raja round-3.1 blocker #1).** v1's
+   on-chain auto-list path does NOT distinguish fee-free from
+   fee-enforced collections (there's no on-chain source of truth
+   for fee-enforcement on a collection). Fresh-post records an
+   empty-`feeLegs[]` Seaport listing regardless; for fee-enforced
+   collections the listing sits unmatched until the borrower
+   replaces it or grace expires. Case-B rotations on already-fee-
+   aware listings DO work in v1 by copying the borrower's old
+   `feeLegs[]` (with Dutch-to-fixed normalization per §18.5 Case
+   B step 4).
 
 5. **Implementation atomic-merge boundary — RESOLVED.** Contract +
    tests in ONE PR. The implementation surface (Codex round-2 P2
