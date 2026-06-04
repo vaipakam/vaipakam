@@ -2282,8 +2282,11 @@ Round 7 wires that into a single permissionless entry point.
 Round 2's Scenario B — protocol-controlled auction **after** grace expires,
 with the NFT-to-lender flow gated behind a no-taker fallback — was dropped in
 Round 3 and stays dropped. Post-grace flow keeps today's semantics: at
-`block.timestamp >= gracePeriodEnd`, `DefaultedFacet.markDefaulted` transfers
-the NFT to the lender. Round 7 does not change that.
+`block.timestamp > gracePeriodEnd` (strict — `>` not `>=`; matches
+`DefaultedFacet.sol:217`), `DefaultedFacet.markDefaulted` transfers
+the NFT to the lender. Round 7 does not change that. (Codex round-2 P3
+on PR #356 — keep the boundary semantics consistent with §18.9 in every
+mention.)
 
 Round 7's surface lives entirely **inside** the grace window
 (`loanEnd <= block.timestamp < gracePeriodEnd`). It uses the existing Block-A
@@ -2318,7 +2321,7 @@ the dapp / keeper UX can distinguish them):
 | Borrower's vault deployed | `VaultNotDeployed(borrower)` (reuse) |
 | Caller is NOT the current borrower-position-NFT holder (§18.7) | `NotEligibleAutoLister(caller)` |
 | Caller is NOT sanctioned (Tier-1) (§18.10) | `SanctionedAddress(msg.sender)` (reuse) |
-| Loan borrower is NOT sanctioned (Tier-1; surplus-routing safety, §18.10) | `BorrowerSanctioned(loanId, borrower)` |
+| Current borrower-position-NFT holder (the **surplus recipient**) is NOT sanctioned (Tier-1; §18.10) | `BorrowerSanctioned(loanId, currentHolder)` |
 | Borrower has NOT opted out via cancel-during-grace (§18.7) | `AutoListBorrowerOptedOut(loanId)` |
 
 `whenNotPaused`: the master kill-switch must be enabled. If governance has
@@ -2382,14 +2385,26 @@ Behave identically to `postPrepayListing` minus the
 1. Run the shared baseline preconditions (§18.3).
 2. Read `pctx = getPrepayContext(loanId, block.timestamp)`.
 3. Compute `askAtFloor = (pctx.lenderLeg + pctx.treasuryLeg) × (10_000 + cfgPrepayListingBufferBps) / 10_000`.
-4. Pick `salt = uint256(keccak256(abi.encode(loanId, block.timestamp, msg.sender)))`.
-   The caller's address in the salt prevents two simultaneous keeper-bot
-   calls landing on the same salt and one griefing the other; the
-   `block.timestamp` makes the salt unique per-block per-caller.
+4. Pick `salt = uint256(keccak256(abi.encode(loanId, block.timestamp, msg.sender, s.prepayListingAutoListNonce[loanId]++)))`.
+   Per §18.14 resolution: the per-loan nonce bump on every successful
+   auto-list call defeats the same-block-cancel-and-relist collision
+   where `(loanId, block.timestamp, msg.sender)` would otherwise produce
+   identical orderHashes a freshly-canceled Seaport order already claims.
+   (Codex round-2 P2 on PR #356 — the salt formula was correctly
+   resolved in §18.14 but the original Case A step 4 still showed the
+   collision-prone version. Cases A + B now use the same nonce formula.)
 5. Pick `conduitKey = OPENSEA_CONDUIT_KEY` (the same constant the dapp's
    `postPrepayListing` UI defaults to).
-6. Pass `feeLegs[]` as **empty** (v1; fee-enforced collections handled by
-   §18.13 follow-up).
+6. Pass `feeLegs[]` as **empty**. v1 auto-list is fee-agnostic — the
+   on-chain function does NOT distinguish fee-free from fee-enforced
+   collections (no on-chain registry / oracle source per Codex round-2
+   P2). For fee-enforced collections the resulting Seaport listing
+   sits unmatched until either the borrower replaces it via
+   `updatePrepayListing` with proper `feeLegs[]`, cancel it via
+   `cancelPrepayListing`, or another keeper-aware fee-rebuild path
+   lands (§18.13 follow-up). The on-chain auto-list path doesn't try
+   to be clever about this — it posts at the floor and lets the
+   bidder side report match-time mismatches.
 7. Resolve conduit + lock borrower NFT + `executor.recordOrder` + write
    `s.prepayListingOrderHash` + `s.prepayListingExecutor` exactly as
    `postPrepayListing` does (call the shared `_buildAndRecord` private).
@@ -2408,19 +2423,70 @@ askAtFloor" check into a three-condition test. The rotation MUST fire if
 
 - **B-cond-1 — ask too high**: `existingAsk > askAtFloor`. The original
   rotation case.
-- **B-cond-2 — recorded legs stale**: `recordedLenderLeg < liveLenderLeg`
-  OR `recordedTreasuryLeg < liveTreasuryLeg`. After enough interest
-  accrual the executor's `_checkOrderPreconditions` rejects a fill that
-  doesn't cover the live legs, so a "still at-floor" listing can become
-  unfillable. The rotation rebuilds the order with fresh legs even when
-  the aggregate ask stays the same.
-- **B-cond-3 — Dutch decay never reaches floor**: existing listing is
-  Dutch (`auctionMode == PREPAY_MODE_DUTCH`) AND its `endAskPrice >
-  askAtFloor`. The Dutch auction never decays to floor within
-  `auctionEndTime`, so an "always above floor" Dutch listing preserves
-  the exact aspirational-ask failure mode §18 is closing. The rotation
-  cancels the Dutch listing and replaces it with a fixed-price-at-floor
-  listing.
+- **B-cond-2 — recorded protocol floor stale (derived)**: the executor's
+  current `OrderContext` storage (per `IListingExecutorRecorder`)
+  doesn't directly persist `lenderLeg` / `treasuryLeg`. Codex round-2
+  P2 on PR #356 correctly flagged that extending the executor's storage
+  schema to add those fields would push the implementation surface past
+  §18.14's "two diamond storage slots" boundary. The cleanest fix —
+  no new schema field — is to **derive** the recorded protocol floor
+  from `existingAsk` and the recorded `feeLegs`:
+
+  ```
+  derivedRecordedProtocolFloor =
+      existingAsk × 10_000 / (10_000 + cfgPrepayListingBufferBps)
+      - sum(recordedFeeLegs)
+  ```
+
+  This works because at post time the implementation computed
+  `existingAsk = (lenderLeg_at_post + treasuryLeg_at_post +
+  sumFeeLegs_at_post) × (10_000 + buffer) / 10_000`. Reversing the
+  multiplication recovers the protocol-floor-at-post + feeLeg sum;
+  subtracting `sumFeeLegs` recovers the protocol-floor-at-post.
+
+  B-cond-2 fires when
+  `(pctx.lenderLeg + pctx.treasuryLeg) > derivedRecordedProtocolFloor`.
+  At that point the executor's `_checkOrderPreconditions` would reject
+  a fill (the order can't cover live legs), so the rotation rebuilds
+  with live legs even when the aggregate ask alone stays the same.
+
+  The derivation requires `cfgPrepayListingBufferBps` to be the SAME
+  value used at post-time — if governance rotates the buffer between
+  post and rotation, the derivation is approximate. We accept that
+  edge case as "rotation may not fire when buffer-rotated but no
+  interest accrued"; the next interest-accrual tick will trigger
+  rotation via the standard B-cond-2 path. Documenting it here for
+  the implementation PR to handle as a tracked precision limitation.
+- **B-cond-3 — Dutch reaches floor too late (refined)**: existing
+  listing is Dutch (`auctionMode == PREPAY_MODE_DUTCH`). Two
+  sub-tests, EITHER of which fires the rotation:
+  - **B-cond-3a**: `endAskPrice > askAtFloor`. The Dutch auction never
+    decays to floor at all within `auctionEndTime`.
+  - **B-cond-3b**: `t_floor > gracePeriodEnd - GRACE_FILL_MARGIN`,
+    where `t_floor` is the time at which the Dutch listing's linear
+    decay reaches `askAtFloor`:
+    ```
+    t_floor = startTime + (auctionEndTime - startTime)
+              × (startAskPrice - askAtFloor)
+              / (startAskPrice - endAskPrice)
+    ```
+    Codex round-2 P2 on PR #356 correctly observed that the
+    round-1 condition (B-cond-3 testing only `endAskPrice >
+    askAtFloor`) preserved the aspirational-ask failure mode if the
+    borrower set `endAskPrice <= askAtFloor` but `auctionEndTime` at
+    or near `gracePeriodEnd`: the listing was at floor only in the
+    last seconds of grace, by which point no bidder had time to match.
+    `GRACE_FILL_MARGIN` is a new governance knob
+    (`cfgPrepayListingDutchGraceMarginSec`, default 1 hour); the
+    rotation fires if the Dutch listing doesn't reach floor at least
+    `GRACE_FILL_MARGIN` before grace expiry, which gives bidders a
+    real fill window.
+
+  Both sub-tests use integer arithmetic; `t_floor` is computed only
+  when `endAskPrice < startAskPrice` AND `endAskPrice < askAtFloor`
+  (so the denominator is non-zero and the listing does eventually
+  reach floor). The B-cond-3a path is the cheap early-out for "never
+  decays to floor"; B-cond-3b is the precise "decays too late" check.
 
 If **none** of B-cond-1 / -2 / -3 holds: revert `AlreadyAtOrBelowFloor(
 loanId, existingAsk, askAtFloor)`. No-op.
@@ -2455,10 +2521,27 @@ Rotation steps (after the B-cond gate fires):
    unfillable on SignedZone. The exception is fee-free collections
    (`feeLegs.length == 0` on the old order) — the new order is also
    `feeLegs: []`.
-5. Build the new order with `askAtFloor` + `salt` (per §18.14
-   resolution: `keccak256(abi.encode(loanId, block.timestamp,
-   msg.sender, s.prepayListingAutoListNonce[loanId]++))`) + default
-   conduit key.
+5. Build the new order's ask price. Codex round-2 P2 on PR #356 flagged
+   that the round-1 design priced the rotated order at `askAtFloor`
+   regardless of `feeLegs[]` preservation — but the existing facet
+   validation (`_requireAskCoversFloorWithFees` /
+   `AskBelowFloor` gate) requires
+   `askPrice >= floor × (1 + buffer/10_000) + sum(feeLegs)`. The
+   round-1 spec would have made fee-aware rotations revert at the
+   record step. The corrected ask formula:
+
+   ```
+   rotatedAsk = askAtFloor + sum(preservedFeeLegs)
+   ```
+
+   where `preservedFeeLegs` is the `feeLegs[]` copied from the old
+   order (step 4). For fee-free collections the preserved feeLegs
+   array is empty and `rotatedAsk = askAtFloor`. For fee-aware
+   listings, `rotatedAsk` covers the protocol floor + buffer + the
+   already-disclosed fee surfaces. Salt formula:
+   `keccak256(abi.encode(loanId, block.timestamp, msg.sender,
+   s.prepayListingAutoListNonce[loanId]++))` (same nonce formula as
+   Case A; the nonce slot is shared per loan). Default conduit key.
 6. `executor.recordOrder(...)` on the CURRENT
    `s.collateralListingExecutor` (NOT the pinned-old one — the new
    listing pins fresh).
@@ -2480,24 +2563,45 @@ check again next grace window. Operationally important: the keeper's
 re-trigger loop MUST suppress this revert reason so the operator's
 alerts surface real failures only.
 
-**Case D — Fee-enforced collection, no existing listing.**
+**Case D — Fee-enforced collection handling.**
 
-For Case A (fresh post), the design MUST refuse to post for
-fee-enforced collections — Codex round-1 P2 fix. Posting with empty
-`feeLegs[]` records a Seaport listing that the SignedZone validation
-rejects at fill time; the listing exists in our storage + on OpenSea
-but can't be matched by anyone, which is strictly worse than no listing
-(it consumes the salt + locks the `prepayListingOrderHash` slot,
-blocking subsequent auto-list calls). Revert
-`FeeEnforcedCollectionAutoListSkipped(loanId, collection)` so the
-keeper bot can record + skip cleanly. The follow-up (§18.13) extends
-this v1 to support fee-enforced collections via off-chain feeLegs
-attestation; until then fee-enforced collections fall through to the
-existing default flow at grace expiry.
+Codex round-2 P2 on PR #356 correctly observed that round-1's
+`FeeEnforcedCollectionAutoListSkipped` revert is unimplementable on-
+chain without a source of truth for "is this collection fee-enforced".
+Options considered:
+
+1. A storage mapping `s.feeEnforcedCollections[address] -> bool` set
+   by governance — adds a config knob + ongoing admin maintenance.
+2. Self-bootstrapping from prior fee-aware listings on the same
+   collection — works for already-seen collections; doesn't help
+   the first-listing case.
+3. Off-chain caller attestation (out of scope per §18.13).
+4. **Trust the bidder-side check** — Round-7 v1 resolution.
+
+Round-7 v1 picks option 4: **the on-chain auto-list path does NOT
+distinguish fee-free from fee-enforced collections**. The function
+posts at the protocol-leg floor with empty `feeLegs[]`. If the
+collection turns out fee-enforced, the resulting Seaport listing
+sits unmatched (bidder's atomic-match-rotation would fail at the
+SignedZone check). The borrower can recover by `cancelPrepayListing`
++ `clearAutoListOptOut` + posting a proper fee-aware listing
+themselves; or another keeper-aware fee-rebuild path can replace it
+once §18.13's off-chain feeLegs follow-up lands.
+
+The unfillable-listing-blocks-slot risk Codex round-1 raised is
+bounded: the borrower retains their cancel rights, and the per-loan
+nonce defeats the same-block salt collision. The trade-off is real
+but acceptable for v1: a fee-enforced collection's auto-listing
+takes a slot until the borrower cancels or grace expires, but no
+value moves and no on-chain invariant is violated. The dapp/keeper
+side can detect fee-enforced collections off-chain and skip the
+auto-list call entirely; the contract just doesn't enforce.
 
 For Case B's `feeLegs`-preservation path (rotation of an existing
-fee-aware listing), the rotation is safe because the new order copies
-the old feeLegs verbatim.
+fee-aware listing), the rotation IS safe — the new order copies the
+old `feeLegs[]` verbatim AND the corrected `rotatedAsk` formula
+(step 5) adds `sum(preservedFeeLegs)` so the new order's askPrice
+satisfies the facet's `_requireAskCoversFloorWithFees` gate.
 
 ### 18.6 Re-trigger semantics & ratchet behaviour
 
@@ -2666,30 +2770,36 @@ re-classification:
   trigger the auto-list path. Liveness is preserved because **any**
   unflagged third party can still call — the keeper bot fleet doesn't
   rely on a specific sanctioned address.
-- **Codex round-1 P1 (borrower side)**: a sanctioned borrower whose
-  loan auto-lists fills on OpenSea pays the **surplus** (= offer.value -
-  floor - bidder fees) directly to the current borrower-position holder
-  via Seaport's consideration[N].recipient routing. That's a direct
-  value transfer to a sanctioned address — fundamentally incompatible
-  with the Tier-2 "frozen behind ClaimFacet" precedent that other
-  close-out paths use. The freeze-and-claim variant (route surplus to
-  `address(this)` and add a Claim path) is significant additional design
-  surface. For Round 7 v1, the simpler resolution is to **block the
-  path entirely when `loan.borrower` is sanctioned**: revert
-  `BorrowerSanctioned(loanId, borrower)`. The sanctioned-borrower loan
-  falls through to the existing default flow at grace expiry — NFT to
-  lender, no surplus surfaced. If a freeze-and-claim variant is added
-  later (separate design round), Tier-2 borrower-side classification
-  can be revisited.
+- **Codex round-1 P1 (borrower side) + round-2 P1 (current-holder
+  refinement)**: a sanctioned recipient of the surplus on OpenSea
+  fill — `offer.value - floor - bidder fees` routed to
+  `pctx.borrowerNftOwner` per `CollateralListingExecutor` — would
+  receive a direct value transfer. The borrower-position NFT can
+  transfer between post-time and fill-time, so the at-risk recipient
+  is the **current** position-NFT holder, NOT the snapshot
+  `loan.borrower`. Codex round-2 P1 on PR #356 correctly flagged
+  that round-1's `_assertNotSanctioned(loan.borrower)` gates the
+  wrong address — a sanctioned current holder slips through when
+  the snapshot borrower is clean, and conversely a sanctioned
+  snapshot borrower blocks a clean post-transfer current holder.
+  Resolution: gate on the live `ownerOf(loan.borrowerTokenId)` value
+  — which is exactly the same `pctx.borrowerNftOwner` the executor
+  routes surplus to. So the sanctions check pins to the same
+  address Seaport will pay.
 
 So both `_assertNotSanctioned(msg.sender)` AND
-`_assertNotSanctioned(loan.borrower)` gate the function. This is a
-strictly stronger surface than `markDefaulted` and `repayLoan` because
-those paths don't surface surplus to the borrower — they're pure debt
-settlement. The auto-list path's economic shape (surplus to borrower on
-fill) is closer to `acceptOffer` than to `markDefaulted`, so the Tier-1
-classification follows the economic-surplus-routing precedent of the
-other Tier-1 paths.
+`_assertNotSanctioned(VaipakamNFTFacet(address(this)).ownerOf(loan.borrowerTokenId))`
+gate the function. This is a strictly stronger surface than
+`markDefaulted` and `repayLoan` because those paths don't surface
+surplus to the borrower — they're pure debt settlement. The
+auto-list path's economic shape (surplus to current position holder
+on fill) is closer to `acceptOffer` than to `markDefaulted`, so the
+Tier-1 classification follows the economic-surplus-routing precedent
+of the other Tier-1 paths.
+
+The freeze-and-claim variant (route surplus to `address(this)` and
+add a Claim path) is a forward-looking follow-up for a separate
+design round, named in §18.15.
 
 ### 18.11 Failure-mode walkthrough
 
@@ -2874,13 +2984,41 @@ implementation PR has a single source of truth:
    the borrower's old `feeLegs[]` verbatim.
 
 5. **Implementation atomic-merge boundary — RESOLVED.** Contract +
-   tests in ONE PR. The smaller surface than Block D (one new
-   function + one new selector + one new storage slot for the opt-out
-   flag + one new storage slot for the per-loan nonce) doesn't justify
-   the D.1-D.4 atomic-merge constraint. Dapp wiring + keeper bot
-   wiring follow-up Issues open after contract PR merges; the contract
-   surface stands alone (callable from the cli for operator-driven
-   tests).
+   tests in ONE PR. The implementation surface (Codex round-2 P2
+   on PR #356 corrected the original "one selector" count):
+
+   **Two new selectors on `NFTPrepayListingFacet`:**
+   - `autoListAtFloorOnGrace(uint256 loanId)` — the primary
+     permissionless entry point (§18.3-§18.5).
+   - `clearAutoListOptOut(uint256 loanId)` — borrower-only
+     (position-holder-only) setter to clear the opt-out flag after
+     a grace-window cancel (§18.7).
+
+   **Modified existing functions:**
+   - `cancelPrepayListing(uint256 loanId)` — adds the opt-out flag
+     SET when called during grace
+     (`loanEnd <= block.timestamp < gracePeriodEnd`).
+   - `_buildAndRecord` (private) — adds the per-loan-nonce salt
+     for fresh-post auto-listings.
+   - Every terminal-loan-state path (RepayFacet, DefaultedFacet,
+     RefinanceFacet, PrecloseFacet) — clears
+     `s.prepayListingAutoListOptedOut[loanId]` and
+     `s.prepayListingAutoListNonce[loanId]` as part of the existing
+     terminal cleanup.
+
+   **Two new storage slots on `LibVaipakam.Storage`:**
+   - `mapping(uint256 => bool) prepayListingAutoListOptedOut`
+   - `mapping(uint256 => uint64) prepayListingAutoListNonce`
+     (uint64 is enough for any plausible re-list count per loan).
+
+   **One new governance knob:**
+   - `cfgPrepayListingDutchGraceMarginSec` (uint32, default 3600
+     seconds = 1 hour) — the B-cond-3b "Dutch reaches floor too
+     late" margin. Setter on `AdminFacet`.
+
+   Dapp wiring + keeper bot wiring follow-up Issues open after
+   contract PR merges; the contract surface stands alone (callable
+   from cli for operator-driven tests).
 
 ### 18.15 Open questions remaining (post-round-1)
 
