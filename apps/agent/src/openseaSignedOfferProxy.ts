@@ -3,6 +3,7 @@
  * proxy. Sibling of {handleOpenSeaOffers} (T-086 Round-5 Block C).
  *
  * GET /opensea/signed-offer/{chainId}/{contract}/{tokenId}/{orderHash}
+ *     ?fulfiller=<vaultAddress>&quantity=<lotSize>
  *
  * The dapp hits this endpoint at Match-button click time to fetch
  * the BIDDER's full signed OpenSea Offer (the
@@ -11,6 +12,17 @@
  * `NFTPrepayListingAtomicFacet.matchOpenSeaOffer` can re-derive the
  * orderHash, validate the §17.5-bis shape invariant, and pass the
  * bytes to `Seaport.matchAdvancedOrders` in one atomic tx.
+ *
+ * **#348 — converged on OpenSea Fulfillment Data.** The proxy now
+ * POSTs to `/api/v2/offers/fulfillment_data` (instead of the legacy
+ * single-order GET) because the single-order endpoint doesn't return
+ * SIP-7 `extraData` for fee-enforced (SignedZone) collections or a
+ * properly-shaped `CriteriaResolver[]` for criteria offers. The
+ * Fulfillment Data response is a superset, so retiring the
+ * single-order path collapses the proxy to one code branch. The
+ * required `?fulfiller=<vaultAddress>` query param carries the
+ * borrower's vault address — the dapp resolves that before the
+ * Match button is reachable.
  *
  * Distinct top-level path prefix (`/opensea/signed-offer/` vs
  * `/opensea/offers/`) so the existing
@@ -51,12 +63,19 @@ const OPENSEA_CHAIN_SLUG: Record<number, string> = {
   137: 'matic',
 };
 
+// Seaport 1.6 protocol address — deterministic CREATE2 deploy by the
+// Seaport team; same on every supported chain.
+const SEAPORT_PROTOCOL_ADDRESS =
+  '0x0000000000000068F116a894984e2DB1123eB395';
+
 export async function handleOpenSeaSignedOffer(
   req: Request,
   env: Env,
   resolvedOrigin: string,
 ): Promise<Response> {
-  // URL shape: /opensea/signed-offer/{chainId}/{contract}/{tokenId}/{orderHash}
+  // URL shape:
+  //   GET /opensea/signed-offer/{chainId}/{contract}/{tokenId}/{orderHash}
+  //       ?fulfiller=<vaultAddress>
   // Trailing-slash tolerant.
   const url = new URL(req.url);
   const segs = url.pathname.split('/').filter(Boolean);
@@ -65,7 +84,7 @@ export async function handleOpenSeaSignedOffer(
     return jsonResponse(
       {
         error:
-          'usage: GET /opensea/signed-offer/{chainId}/{contract}/{tokenId}/{orderHash}',
+          'usage: GET /opensea/signed-offer/{chainId}/{contract}/{tokenId}/{orderHash}?fulfiller=<vaultAddress>',
       },
       400,
       resolvedOrigin,
@@ -90,6 +109,53 @@ export async function handleOpenSeaSignedOffer(
   // obviously-malformed input.
   if (!/^0x[0-9a-f]{64}$/i.test(orderHash)) {
     return jsonResponse({ error: 'invalid orderHash' }, 400, resolvedOrigin);
+  }
+  // T-086 Block D follow-up (#348): the proxy now POSTs to OpenSea's
+  // Fulfillment Data endpoint, which REQUIRES the fulfiller's
+  // address in the request body. For the prepay-listing flow the
+  // fulfiller is the borrower's vault — the dapp resolves that
+  // before the Match button is reachable. Without it we can't fetch
+  // SIP-7 extraData for fee-enforced collections or the canonical
+  // CriteriaResolver[] for criteria offers.
+  const fulfiller = url.searchParams.get('fulfiller');
+  if (!fulfiller || !/^0x[0-9a-f]{40}$/i.test(fulfiller)) {
+    return jsonResponse(
+      {
+        error: 'missing-or-invalid-fulfiller',
+        hint:
+          'The signed-offer proxy now wraps OpenSea fulfillment_data, which ' +
+          'needs the fulfiller (borrower vault) address. Pass ' +
+          '`?fulfiller=<vaultAddress>` on the URL.',
+      },
+      400,
+      resolvedOrigin,
+    );
+  }
+  // T-086 Block D / Codex round-1 P2 on PR #349 — ERC1155 loans
+  // with `collateralQuantity > 1` need `units_to_fill` to match the
+  // locked lot. OpenSea defaults the field to 1 when omitted, so a
+  // multi-unit ERC1155 Match would otherwise get SignedZone /
+  // criteria fulfillment data signed for ONE unit and revert when
+  // the contract submits the full-lot `AdvancedOrder`. ERC721 +
+  // single-unit ERC1155 callers can either pass `?quantity=1` or
+  // omit the param entirely.
+  const quantityRaw = url.searchParams.get('quantity');
+  let unitsToFill = '1';
+  if (quantityRaw !== null) {
+    if (!/^\d+$/.test(quantityRaw) || quantityRaw === '0') {
+      return jsonResponse(
+        {
+          error: 'invalid-quantity',
+          hint:
+            '`quantity` must be a positive decimal integer matching the ' +
+            'collateral lot size (ERC721: 1; ERC1155: the locked ' +
+            '`collateralQuantity`).',
+        },
+        400,
+        resolvedOrigin,
+      );
+    }
+    unitsToFill = quantityRaw;
   }
 
   // Per-IP rate-limit BEFORE the upstream call.
@@ -119,33 +185,54 @@ export async function handleOpenSeaSignedOffer(
     );
   }
 
-  // OpenSea's v2 "Get an order" single-order lookup. Codex PR #346
-  // round-1 P2 — earlier code targeted the legacy list-style
-  // `/api/v2/orders/{chain}/seaport/offers?order_hash=...` shape
-  // that doesn't match OpenSea's current docs; the documented
-  // single-order surface is keyed by (chain, protocol address,
-  // order_hash) and returns `{ order: {...} }` rather than
-  // `{ orders: [...] }`.
+  // T-086 Block D follow-up (#348) — converge on OpenSea Fulfillment
+  // Data. The response is a superset of the single-order endpoint:
+  // it carries the canonical `advancedOrder.parameters`, `signature`,
+  // SIP-7 `extraData` (for fee-enforced collections), AND
+  // properly-shaped `criteriaResolvers` (for criteria offers).
+  // Switching to this endpoint as the sole upstream:
+  //   - retires the single-order `{ order: {...} }` GET that PR #346
+  //     round-1 corrected from the legacy `{ orders: [...] }` shape;
+  //   - retires the round-4 SignedZone 422 fail-closed (now reachable
+  //     iff OpenSea itself can't produce extraData for the order);
+  //   - gives criteria offers a real `CriteriaResolver[]` instead of
+  //     the raw `criteria_proof` the single-order endpoint exposes.
   //
-  // Docs: https://docs.opensea.io/reference/get_order
-  // GET /api/v2/orders/chain/{chain}/protocol/{protocol_address}/{order_hash}
-  //
-  // The Seaport 1.6 protocol address is the same on every supported
-  // chain (deterministic CREATE2 deploy by the Seaport team).
-  const SEAPORT_PROTOCOL_ADDRESS =
-    '0x0000000000000068F116a894984e2DB1123eB395';
-  const upstreamUrl =
-    `https://${host}/api/v2/orders/chain/${encodeURIComponent(chainSlug)}` +
-    `/protocol/${SEAPORT_PROTOCOL_ADDRESS}` +
-    `/${encodeURIComponent(orderHash.toLowerCase())}`;
+  // Docs: https://docs.opensea.io/reference/generate_offer_fulfillment_data_v2
+  // POST https://{host}/api/v2/offers/fulfillment_data
+  // body: {
+  //   offer: { hash, chain, protocol_address },
+  //   fulfiller: { address },
+  //   consideration: { asset_contract_address, token_id }
+  //   // consideration is REQUIRED for criteria offers; harmless to
+  //   // always send for concrete offers (OpenSea matches the
+  //   // identifier against the order's offer item).
+  // }
+  const upstreamUrl = `https://${host}/api/v2/offers/fulfillment_data`;
+  const upstreamBody = {
+    offer: {
+      hash: orderHash.toLowerCase(),
+      chain: chainSlug,
+      protocol_address: SEAPORT_PROTOCOL_ADDRESS,
+    },
+    fulfiller: { address: fulfiller.toLowerCase() },
+    consideration: {
+      asset_contract_address: contract.toLowerCase(),
+      token_id: tokenId,
+    },
+    units_to_fill: unitsToFill,
+  };
 
   let upstream: Response;
   try {
     upstream = await fetch(upstreamUrl, {
+      method: 'POST',
       headers: {
         'X-API-KEY': apiKey,
         Accept: 'application/json',
+        'Content-Type': 'application/json',
       },
+      body: JSON.stringify(upstreamBody),
     });
   } catch (err) {
     // Network-level upstream failure (DNS, TCP, etc.). Surface as
@@ -185,115 +272,110 @@ export async function handleOpenSeaSignedOffer(
     );
   }
 
-  // OpenSea's single-order "Get an order" response carries:
-  //   order: {
-  //     order_hash, protocol_data: { parameters, signature },
-  //     ...
+  // OpenSea Fulfillment Data response. Per the opensea-js SDK's
+  // `src/utils/case.ts` the wire format is snake_case ("Used by the
+  // API fetcher to expose camelCase responses to SDK consumers
+  // regardless of the snake_case wire format."), but Codex round-1
+  // on PR #349 flagged that some surfaces of the docs show
+  // camelCase (e.g. `input_data.advancedOrder`). Accept both shapes
+  // defensively rather than risk a wire-shape drift breaking every
+  // Match. The shape we ultimately use:
+  //   protocol,
+  //   fulfillment_data | fulfillmentData: {
+  //     transaction: {
+  //       input_data | inputData: {
+  //         advanced_order | advancedOrder: {
+  //           parameters: <OrderParameters — counter STRIPPED>,
+  //           signature, extra_data | extraData,
+  //         },
+  //         criteria_resolvers | criteriaResolvers: [...],
+  //       },
+  //     },
+  //     orders: [
+  //       {
+  //         parameters: <OrderComponents — counter PRESENT>,
+  //         signature,
+  //       },
+  //     ],
   //   }
-  // For SignedZone (fee-enforced collections) the SIP-7 extraData
-  // blob is NOT in this single-order response — it lives behind
-  // OpenSea's Fulfillment Data endpoint (POST
-  // /api/v2/offers/fulfillment_data) which needs the fulfiller's
-  // address as input. We don't yet plumb that through this proxy
-  // (Block D follow-up — adding `?fulfiller=<vaultAddress>` and a
-  // second upstream call). Until that lands we MUST fail closed on
-  // SignedZone offers: silently passing `extraData: '0x'` to the
-  // dapp would route a doomed match through to Seaport, which
-  // would then revert with an opaque SignedZone validation error.
-  // Surfacing a 422 here lets the dapp show a clear "fee-enforced
-  // collection — not yet supported" message instead.
-  // (Codex PR #346 round-1 P2 — corrected from the legacy
-  // `{ orders: [...] }` wrapper; round-4 P2 — SignedZone detect.)
-  const first = (raw as {
-    order?: {
-      order_hash?: string;
-      protocol_data?: {
-        parameters?: { zone?: string };
-        signature?: string;
-        extraData?: string;
-      };
-      criteria_proof?: unknown[];
-    };
-  }).order;
-  if (!first || typeof first !== 'object') {
-    return jsonResponse({ error: 'opensea-offer-not-found' }, 404, resolvedOrigin);
-  }
-  // Defense-in-depth: confirm OpenSea returned the orderHash we
-  // requested. If they returned a different hash for any reason
-  // (api drift, mis-routing), the on-chain §17.5 hash-rederive
-  // would reject the bytes anyway — but rejecting at the agent
-  // boundary is more informative.
+  // §17.5's on-chain hash re-derive needs OrderComponents (counter
+  // included). The transaction's `advanced_order.parameters` is
+  // `OrderParameters` (counter stripped, `totalOriginalConsiderationItems`
+  // added) so we MUST read `parameters` from `orders[0]` instead —
+  // Codex round-1 P1 #2.
+  const fulfillment =
+    pickKey(raw, ['fulfillment_data', 'fulfillmentData']) ?? {};
+  const transaction =
+    pickKey(fulfillment, ['transaction']) ?? {};
+  const inputData =
+    pickKey(transaction, ['input_data', 'inputData']) ?? {};
+  const advancedOrder =
+    pickKey(inputData, ['advanced_order', 'advancedOrder']) ?? {};
+  const ordersArray = pickKey(fulfillment, ['orders']);
+  const firstOrder = Array.isArray(ordersArray) ? ordersArray[0] : undefined;
+  // §17.5-driven shape: the components MUST carry `counter` so the
+  // facet's `seaport.getOrderHash(orderComponents)` re-hash matches
+  // the pinned `expectedBidderOrderHash`. `orders[0].parameters`
+  // carries OrderComponents-with-counter; the transaction-level
+  // `advanced_order.parameters` is OrderParameters-without-counter.
+  const components = pickKey(firstOrder, ['parameters']);
+  const signatureRaw =
+    pickKey(advancedOrder, ['signature']) ??
+    pickKey(firstOrder, ['signature']);
+  const extraDataRaw = pickKey(advancedOrder, ['extra_data', 'extraData']);
+  const criteriaResolversRaw =
+    pickKey(inputData, ['criteria_resolvers', 'criteriaResolvers']);
+
   if (
-    typeof first.order_hash !== 'string' ||
-    first.order_hash.toLowerCase() !== orderHash.toLowerCase()
+    !components ||
+    typeof components !== 'object' ||
+    typeof signatureRaw !== 'string'
   ) {
     return jsonResponse(
-      { error: 'opensea-orderhash-mismatch', requested: orderHash, returned: first.order_hash },
+      { error: 'opensea-malformed-fulfillment-data' },
       502,
-      resolvedOrigin,
-    );
-  }
-  if (!first.protocol_data || typeof first.protocol_data.signature !== 'string') {
-    return jsonResponse(
-      { error: 'opensea-missing-protocol-data' },
-      502,
-      resolvedOrigin,
-    );
-  }
-
-  // T-086 Block D / Codex PR #346 round-4 P2: fail-closed on
-  // SignedZone (fee-enforced collection) offers. The single-order
-  // endpoint above does NOT return the SIP-7 `extraData` — that
-  // requires the Fulfillment Data endpoint (POST
-  // /api/v2/offers/fulfillment_data, which needs the fulfiller's
-  // address). Until that path is wired here (tracked Block D
-  // follow-up), returning `extraData: '0x'` for a SignedZone offer
-  // would route a doomed match through to Seaport that reverts
-  // opaquely in SignedZone signature validation. Reject at the
-  // proxy boundary instead so the dapp's error surface shows the
-  // accurate reason.
-  const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
-  const zone = first.protocol_data.parameters?.zone;
-  const extraDataRaw = first.protocol_data.extraData;
-  const hasUsableExtraData =
-    typeof extraDataRaw === 'string' &&
-    extraDataRaw.length > 2 &&
-    extraDataRaw !== '0x' &&
-    extraDataRaw !== '0X';
-  const isSignedZone =
-    typeof zone === 'string' &&
-    zone.toLowerCase() !== ZERO_ADDRESS;
-  if (isSignedZone && !hasUsableExtraData) {
-    return jsonResponse(
-      {
-        error: 'opensea-fee-enforced-needs-fulfillment-data',
-        zone,
-        hint:
-          'This offer uses a Seaport SignedZone (fee-enforced collection). ' +
-          "Matching it needs SIP-7 extraData from OpenSea's fulfillment-data " +
-          'endpoint, which this proxy does not yet call. Tracked as a Block D ' +
-          'follow-up.',
-      },
-      422,
       resolvedOrigin,
     );
   }
 
   // Surface the dapp-facing payload — the dapp will ABI-encode
-  // `protocol_data.parameters` into the BidderOrder.components
-  // struct, pass through `signature` + `extraData`, and supply
-  // `resolvers` from `criteria_proof` when present.
+  // `parameters` into the BidderOrder.components struct, pass
+  // through `signature` + `extraData`, and forward `criteriaResolvers`
+  // verbatim for the on-chain Seaport call.
   return jsonResponse(
     {
-      orderHash: first.order_hash,
-      parameters: first.protocol_data.parameters,
-      signature: first.protocol_data.signature,
-      extraData: extraDataRaw ?? '0x',
-      criteriaResolvers: first.criteria_proof ?? [],
+      orderHash: orderHash.toLowerCase(),
+      parameters: components,
+      signature: signatureRaw,
+      extraData:
+        typeof extraDataRaw === 'string' ? extraDataRaw : '0x',
+      criteriaResolvers: Array.isArray(criteriaResolversRaw)
+        ? criteriaResolversRaw
+        : [],
     },
     200,
     resolvedOrigin,
   );
+}
+
+/**
+ * Read the first present key from `obj` against an aliases list.
+ * Used for the snake_case ↔ camelCase wire-shape drift defense in
+ * the Fulfillment Data response parser. Treats `null` / `undefined`
+ * obj as "no match" so callers can chain `pickKey(...) ?? {}` to
+ * walk nested shapes without explicit null-checking at each step.
+ */
+function pickKey(
+  obj: unknown,
+  aliases: readonly string[],
+): unknown {
+  if (obj === null || typeof obj !== 'object') return undefined;
+  for (const key of aliases) {
+    if (key in (obj as Record<string, unknown>)) {
+      return (obj as Record<string, unknown>)[key];
+    }
+  }
+  return undefined;
 }
 
 // ─── Shared helpers (mirror openseaOffersProxy patterns) ─────────────
