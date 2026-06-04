@@ -24,12 +24,14 @@ pragma solidity ^0.8.29;
  *         could drift).
  */
 abstract contract DiamondFacetNames {
-    /// @dev The 40 facets cut into the Diamond by `DeployDiamond.run()`.
+    /// @dev The 41 facets cut into the Diamond by `DeployDiamond.run()`.
     ///      (37 → 38 in T-086 step 5 with `PrepayListingFacet`;
     ///      38 → 39 in T-086 step 6 with `NFTPrepayListingFacet`;
     ///      39 → 40 in T-086 Round-5 Block B with
-    ///      `NFTPrepayDutchListingFacet`.)
-    function cutFacetNames() internal pure returns (string[40] memory) {
+    ///      `NFTPrepayDutchListingFacet`;
+    ///      40 → 41 in T-086 Round-6 / Block D (#345) with
+    ///      `NFTPrepayListingAtomicFacet`.)
+    function cutFacetNames() internal pure returns (string[41] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -68,6 +70,14 @@ abstract contract DiamondFacetNames {
             // {NFTPrepayDutchListingFacet.sol} natspec for the split
             // rationale.
             "NFTPrepayDutchListingFacet",
+            // T-086 Round-6 / Block D (#345) — atomic match-rotation
+            // via Seaport `matchAdvancedOrders`. Lives on its own
+            // sibling facet for the same EIP-170 budget reasons + so
+            // the new bidder-bytes verification + matchOrders surface
+            // is a focused audit pass. See
+            // {NFTPrepayListingAtomicFacet.sol} contract-level
+            // natspec for the §17 design-doc track.
+            "NFTPrepayListingAtomicFacet",
             "ProfileFacet",
             "RefinanceFacet",
             "RepayFacet",

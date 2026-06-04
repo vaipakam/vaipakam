@@ -1087,12 +1087,17 @@ export async function handleLoanPrepayMatchSource(
     // breadcrumb onto a different loan and corrupts the
     // loan-history join. Comparing loan_id surfaces that case.
     const existing = await env.DB.prepare(
-      `SELECT loan_id, order_hash, bidder
+      `SELECT loan_id, order_hash, bidder, match_mode
        FROM prepay_listing_match_breadcrumbs
        WHERE chain_id = ? AND tx_hash = ?`,
     )
       .bind(chainId, txHash)
-      .first<{ loan_id: number; order_hash: string; bidder: string }>();
+      .first<{
+        loan_id: number;
+        order_hash: string;
+        bidder: string;
+        match_mode: string;
+      }>();
     if (
       existing !== null &&
       (existing.order_hash !== orderHash ||
@@ -1109,13 +1114,50 @@ export async function handleLoanPrepayMatchSource(
         },
       );
     }
-    // INSERT OR REPLACE lets the legitimate dapp's retry override
-    // an attacker's first-arrival spoof. Legitimate-retry semantics
-    // are unchanged (same payload re-applied is a no-op writeback).
+    // T-086 Block D / Codex round-5 P2 on PR #346: the chainIndexer
+    // event-source writes `match_mode = 'atomic'` for every
+    // `PrepayListingMatched` event. A late or spoofed v1-style POST
+    // to this route must NOT silently downgrade an existing
+    // event-sourced atomic row to `v1-twostep` — that defeats the
+    // durable match-mode signal migration 0020 added. The ON CONFLICT
+    // clause below preserves an existing `atomic` match_mode while
+    // still letting a legitimate dapp's v1-twostep retry override an
+    // attacker's first-arrival v1-twostep spoof (the public-data
+    // race-conditioner pattern is unchanged for v1 rows).
+    //
+    // We also log + warn when an attempted v1-twostep POST tries to
+    // overwrite an atomic row so operators see the downgrade attempt.
+    if (existing !== null && existing.match_mode === 'atomic') {
+      console.warn(
+        '[loanRoutes] match-source POST blocked — atomic breadcrumb preserved',
+        {
+          chainId,
+          txHash,
+          existing: { match_mode: existing.match_mode },
+          attempted: { loanId, orderHash, bidder, match_mode: 'v1-twostep' },
+        },
+      );
+    }
     await env.DB.prepare(
-      `INSERT OR REPLACE INTO prepay_listing_match_breadcrumbs
-         (chain_id, tx_hash, loan_id, order_hash, bidder, matched_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO prepay_listing_match_breadcrumbs
+         (chain_id, tx_hash, loan_id, order_hash, bidder, matched_at, match_mode)
+       VALUES (?, ?, ?, ?, ?, ?, 'v1-twostep')
+       ON CONFLICT(chain_id, tx_hash) DO UPDATE SET
+         loan_id = CASE WHEN prepay_listing_match_breadcrumbs.match_mode = 'atomic'
+                        THEN prepay_listing_match_breadcrumbs.loan_id
+                        ELSE excluded.loan_id END,
+         order_hash = CASE WHEN prepay_listing_match_breadcrumbs.match_mode = 'atomic'
+                           THEN prepay_listing_match_breadcrumbs.order_hash
+                           ELSE excluded.order_hash END,
+         bidder = CASE WHEN prepay_listing_match_breadcrumbs.match_mode = 'atomic'
+                       THEN prepay_listing_match_breadcrumbs.bidder
+                       ELSE excluded.bidder END,
+         matched_at = CASE WHEN prepay_listing_match_breadcrumbs.match_mode = 'atomic'
+                           THEN prepay_listing_match_breadcrumbs.matched_at
+                           ELSE excluded.matched_at END,
+         match_mode = CASE WHEN prepay_listing_match_breadcrumbs.match_mode = 'atomic'
+                           THEN 'atomic'
+                           ELSE excluded.match_mode END`,
     )
       .bind(
         chainId,

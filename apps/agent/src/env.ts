@@ -159,6 +159,15 @@ interface BaseEnv {
   // OpenSea API tier. Optional — when absent the proxy falls
   // back to per-IP-only gating + warns once at startup.
   OPENSEA_OFFERS_UPSTREAM_RATELIMIT?: RateLimitBinding;
+  // T-086 Round-6 / Block D (#345) — per-IP rate-limit on the new
+  // GET /opensea/signed-offer/{chainId}/{contract}/{tokenId}/{orderHash}
+  // endpoint. One RTT to OpenSea per inbound (no pagination), so
+  // the per-IP gate directly bounds aggregate upstream load — no
+  // separate upstream-aggregate binding needed. 60 req/min/IP
+  // matches the per-IP shape of the other agent proxies and is
+  // generous for the real Match-click cadence (1 fetch per Match,
+  // typically 1-2 Matches per loan).
+  OPENSEA_SIGNED_OFFER_RATELIMIT?: RateLimitBinding;
 
   // Diagnostics sampling (0.0–1.0; default 1.0 = write every accepted POST).
   // Coerced from string to float at read time. Out-of-range values
@@ -381,6 +390,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     // the configurable behaviour is unreachable.
     OPENSEA_OFFERS_MAX_PAGES: raw.OPENSEA_OFFERS_MAX_PAGES,
     OPENSEA_OFFERS_UPSTREAM_RATELIMIT: raw.OPENSEA_OFFERS_UPSTREAM_RATELIMIT,
+    OPENSEA_SIGNED_OFFER_RATELIMIT: raw.OPENSEA_SIGNED_OFFER_RATELIMIT,
     DIAG_SAMPLE_RATE: raw.DIAG_SAMPLE_RATE,
     DIAG_RETENTION_DAYS: raw.DIAG_RETENTION_DAYS,
     DIAG_LEGAL_DOCS: raw.DIAG_LEGAL_DOCS,

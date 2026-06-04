@@ -58,4 +58,41 @@ contract MockSeaport is ISeaportOrderHash {
     function bumpCounter(address offerer) external {
         _counter[offerer] += 1;
     }
+
+    // ─── T-086 Round-6 / Block D (#345) — atomic-match-flow stubs ──
+
+    /// @dev Per-orderHash cancelled flag — test-controlled. Atomic
+    ///      facet calls `getOrderStatus` to early-reject cancelled
+    ///      bidder offers; tests can flip this to drive that branch.
+    mapping(bytes32 => bool) private _cancelled;
+
+    /// @dev Per-orderHash {totalFilled, totalSize}. For fresh
+    ///      off-chain-signed offers BOTH are 0 (Seaport's actual
+    ///      behaviour for orders never validated/filled on-chain).
+    ///      The atomic facet's check is `totalSize != 0 &&
+    ///      totalFilled >= totalSize`, so the default-zero pair
+    ///      passes through naturally.
+    mapping(bytes32 => uint256) private _filled;
+    mapping(bytes32 => uint256) private _size;
+
+    function setCancelled(bytes32 orderHash, bool flag) external {
+        _cancelled[orderHash] = flag;
+    }
+
+    function setFilled(bytes32 orderHash, uint256 filled, uint256 size) external {
+        _filled[orderHash] = filled;
+        _size[orderHash] = size;
+    }
+
+    /// @notice Match the `ISeaportMatch.getOrderStatus` shape.
+    function getOrderStatus(bytes32 orderHash)
+        external
+        view
+        returns (bool isValidated, bool isCancelled, uint256 totalFilled, uint256 totalSize)
+    {
+        // isValidated is the "the order has been pre-validated
+        // on-chain via Seaport.validate" flag. For off-chain-signed
+        // offers it's false; the atomic facet doesn't read this.
+        return (false, _cancelled[orderHash], _filled[orderHash], _size[orderHash]);
+    }
 }

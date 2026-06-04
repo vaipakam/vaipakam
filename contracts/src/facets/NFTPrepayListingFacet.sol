@@ -20,6 +20,7 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 import {IVaipakamPrepayContext} from "../seaport/IVaipakamPrepayContext.sol";
 import {LibPrepayOrder} from "../libraries/LibPrepayOrder.sol";
+import {LibPrepayListingWiring} from "../libraries/LibPrepayListingWiring.sol";
 import {CollateralListingExecutor} from "../seaport/CollateralListingExecutor.sol";
 import {PrepayListingFacet} from "./PrepayListingFacet.sol";
 
@@ -360,9 +361,20 @@ contract NFTPrepayListingFacet is
     ///      post-grace. Future reasons (e.g. lender-driven cancel
     ///      under default-flow lock-bypass — see design doc §5.4)
     ///      can append more enum values without renumbering.
+    /// @dev T-086 Round-6 / Block D (#345) — `ReplacedByMatch` is
+    ///      emitted by `NFTPrepayListingAtomicFacet`'s mandatory
+    ///      auto-clear (§17.11 step 0(g) of the Round-6 design
+    ///      doc) when a borrower clicks Match on a posted v1
+    ///      listing: the atomic-match facet clears the existing
+    ///      orderHash + lock as STEP 0 before constructing its
+    ///      own counter-order, and emits this canceled-event
+    ///      reason so the indexer can distinguish a
+    ///      replaced-by-atomic-match cancel from a borrower's
+    ///      manual cancel or a permissionless grace-expired one.
     enum CancelReason {
         Borrower,
-        GraceExpired
+        GraceExpired,
+        ReplacedByMatch
     }
 
     // ─── Borrower entry: postPrepayListing ──────────────────────────────
@@ -537,7 +549,10 @@ contract NFTPrepayListingFacet is
         IVaipakamPrepayContext.PrepayContext memory pctx =
             IVaipakamPrepayContext(address(this)).getPrepayContext(loanId, block.timestamp);
         address vaultAddr = s.userVaipakamVaults[loan.borrower];
-        if (vaultAddr == address(0)) revert ExecutorNotSet();
+        // T-086 Block D #346 round-8: standardised vault-missing
+        // symbol across postPrepayListing + updatePrepayListing +
+        // Dutch + atomic facets.
+        if (vaultAddr == address(0)) revert LibPrepayListingWiring.VaultNotDeployed(loan.borrower);
         orderHash = LibPrepayOrder.buildAndHash(
             pctx,
             vaultAddr,
@@ -664,10 +679,15 @@ contract NFTPrepayListingFacet is
         // Vault-side: revoke the old orderHash → executor binding
         // BEFORE building the new one (so the vault's ERC-1271
         // can't briefly authorise BOTH the old and new hashes in
-        // any half-state).
+        // any half-state). Round-6 Block D #346: route through the
+        // shared `LibPrepayListingWiring.unwire` so v1 fixed +
+        // v1 Dutch + v2 atomic facets all clear vault state via
+        // the same primitive. The vault-existence precondition
+        // is enforced upfront so `_buildAndRecordUpdate` below
+        // sees a non-zero offerer.
         address vaultAddr = s.userVaipakamVaults[loan.borrower];
-        if (vaultAddr == address(0)) revert ExecutorNotSet();
-        VaipakamVaultImplementation(vaultAddr).revokeListingOrderHash(oldOrderHash);
+        if (vaultAddr == address(0)) revert LibPrepayListingWiring.VaultNotDeployed(loan.borrower);
+        LibPrepayListingWiring.unwire(s, loan, oldOrderHash);
 
         // Build + record the new order with the canonical shape
         // (same construction as `postPrepayListing` — `LibPrepayOrder`
@@ -757,9 +777,11 @@ contract NFTPrepayListingFacet is
         // re-grant the conduit approval (idempotent if conduit
         // unchanged; updates target if the borrower picked a
         // different conduitKey for the re-sign).
-        VaipakamVaultImplementation vault = VaipakamVaultImplementation(vaultAddr);
-        vault.registerListingOrderHash(newOrderHash, address(executor));
-        _grantConduitApproval(vault, loan, conduit);
+        // T-086 Round-6 / Block D (#345) — delegated to the shared
+        // `LibPrepayListingWiring.wire` so both v1 post + update and
+        // the new atomic-match facet stay in lock-step. v1 behavior
+        // unchanged.
+        LibPrepayListingWiring.wire(s, loan, newOrderHash, conduit, address(executor));
     }
 
     // ─── Borrower entry: cancelPrepayListing ────────────────────────────
@@ -1108,16 +1130,16 @@ contract NFTPrepayListingFacet is
         // INVALID → no fill regardless of operator approval
         // state). Matches the standard Seaport ERC1155 conduit
         // pattern.
-        address vaultAddr = s.userVaipakamVaults[loan.borrower];
-        if (vaultAddr != address(0)) {
-            VaipakamVaultImplementation vault = VaipakamVaultImplementation(vaultAddr);
-            if (loan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
-                vault.setCollateralOperatorApproval(
-                    loan.collateralAsset, loan.collateralTokenId, address(0), false
-                );
-            }
-            vault.revokeListingOrderHash(orderHash);
-        }
+        //
+        // T-086 Round-6 / Block D (#345) — body extracted into
+        // `LibPrepayListingWiring.unwire` so the new sibling facet
+        // `NFTPrepayListingAtomicFacet`'s mandatory auto-clear
+        // step (§17.11 step 0(f) of the Round-6 design doc) can
+        // call the SAME cleanup. v1 behavior preserved byte-for-
+        // byte: silently no-ops for the unset-vault case; ERC721-
+        // only operator-approval revoke; both asset types get the
+        // orderHash binding revoke.
+        LibPrepayListingWiring.unwire(s, loan, orderHash);
 
         emit PrepayListingCanceled(loanId, msg.sender, orderHash, reason);
     }
@@ -1134,49 +1156,29 @@ contract NFTPrepayListingFacet is
         address conduit,
         address executor
     ) private {
-        address vaultAddr = s.userVaipakamVaults[loan.borrower];
-        if (vaultAddr == address(0)) revert ExecutorNotSet();
-        VaipakamVaultImplementation vault = VaipakamVaultImplementation(vaultAddr);
-        _grantConduitApproval(vault, loan, conduit);
-        vault.registerListingOrderHash(orderHash, executor);
-    }
-
-    /// @dev Asset-type-aware approval grant. ERC721 uses
-    ///      per-token `approve`; ERC1155's only approval surface
-    ///      is operator-wide `setApprovalForAll`. Shared by the
-    ///      post + update paths. The FULL_RESTRICTED order +
-    ///      the executor's content gate bound the operator-wide
-    ///      approval's blast radius for ERC1155.
-    function _grantConduitApproval(
-        VaipakamVaultImplementation vault,
-        LibVaipakam.Loan storage loan,
-        address conduit
-    ) private {
-        if (loan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
-            vault.setCollateralOperatorApproval(
-                loan.collateralAsset, loan.collateralTokenId, conduit, true
-            );
-        } else {
-            // ERC1155 — supported per step 15. Asset-type guard
-            // in postPrepayListing already rejected ERC20.
-            vault.setCollateralOperatorApprovalERC1155(
-                loan.collateralAsset, conduit, true
-            );
-        }
+        // T-086 Round-6 / Block D (#345) — body extracted into the
+        // shared `LibPrepayListingWiring` library so the new sibling
+        // facet `NFTPrepayListingAtomicFacet` can call the SAME
+        // wiring without duplicating the asset-type-aware approval
+        // grant + ERC-1271 binding logic. v1 behavior preserved
+        // byte-for-byte — the library's `wire` does exactly what the
+        // private body did before the refactor.
+        LibPrepayListingWiring.wire(s, loan, orderHash, conduit, executor);
     }
 
     /// @dev Read-only borrower-vault lookup. Reverts via
-    ///      {ExecutorNotSet} for the unset case to match the
-    ///      sister error already raised when the executor address
-    ///      isn't configured — both signal "the prepay path
-    ///      isn't fully wired for this loan", and surfacing a
-    ///      single error keeps the borrower's UX simple.
+    ///      {LibPrepayListingWiring.VaultNotDeployed} for the
+    ///      unset case. T-086 Block D #346 round-8 standardised
+    ///      the vault-missing symbol across all prepay-listing
+    ///      facets; the legitimate "executor address unset"
+    ///      precondition still reverts {ExecutorNotSet} from its
+    ///      own check site in `_requireExecutor`.
     function _userVault(
         LibVaipakam.Storage storage s,
         address user
     ) private view returns (VaipakamVaultImplementation) {
         address vaultAddr = s.userVaipakamVaults[user];
-        if (vaultAddr == address(0)) revert ExecutorNotSet();
+        if (vaultAddr == address(0)) revert LibPrepayListingWiring.VaultNotDeployed(user);
         return VaipakamVaultImplementation(vaultAddr);
     }
 

@@ -63,7 +63,14 @@ export function OpenSeaOffersPanel({
   offersResult,
   onMatchOffer,
   actionLoading,
-  hasActiveListing,
+  // T-086 Round-6 / Block D (#345) — Codex PR #346 round-2 P2 #325.
+  // `hasActiveListing` was previously the gate that hid the offers
+  // list when no v1 listing existed; the atomic match path doesn't
+  // require one (§17.11 step 0 handles `existingHash == 0`), so
+  // the prop is now informational only — kept on the props
+  // surface for any future caller that wants to show context
+  // text but no longer consumed inside the panel.
+  hasActiveListing: _hasActiveListing,
   decimals,
 }: OpenSeaOffersPanelProps) {
   const { offers, loadingInitial, error, refresh } = offersResult;
@@ -84,24 +91,25 @@ export function OpenSeaOffersPanel({
           buyer can then settle.
         </div>
 
-        {!hasActiveListing && (
-          <div className="alert alert-info">
-            Post a fixed-price listing first. Offers will surface
-            here once they land on OpenSea.
-          </div>
-        )}
-
-        {hasActiveListing && loadingInitial && (
+        {/* T-086 Round-6 / Block D (#345) — Codex PR #346 round-2
+            P2 #325. The atomic match-rotation flow doesn't require
+            a v1 listing (§17.11 step 0 supports `existingHash == 0`),
+            so the "Post a fixed-price listing first" hint is stale;
+            offers render whenever the loan is allowsPrepayListing.
+            `hasActiveListing` is kept as a prop (the caller still
+            knows whether a v1 listing is live for unrelated banners)
+            but no longer gates the offers list. */}
+        {loadingInitial && (
           <div className="action-row">Loading offers…</div>
         )}
 
-        {hasActiveListing && !loadingInitial && offers.length === 0 && (
+        {!loadingInitial && offers.length === 0 && (
           <div className="action-row">
             No active offers right now. Refresh in 30 s.
           </div>
         )}
 
-        {hasActiveListing && offers.length > 0 && (
+        {offers.length > 0 && (
           <ul className="opensea-offers-list" style={offerListStyle}>
             {offers.map((offer) => (
               <li

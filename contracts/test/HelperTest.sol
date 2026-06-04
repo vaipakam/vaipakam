@@ -17,6 +17,7 @@ import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {NFTPrepayListingFacet} from "../src/facets/NFTPrepayListingFacet.sol";
 import {NFTPrepayDutchListingFacet} from "../src/facets/NFTPrepayDutchListingFacet.sol";
+import {NFTPrepayListingAtomicFacet} from "../src/facets/NFTPrepayListingAtomicFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -1281,6 +1282,20 @@ contract HelperTest {
         selectors = new bytes4[](2);
         selectors[0] = NFTPrepayDutchListingFacet.postPrepayDutchListing.selector;
         selectors[1] = NFTPrepayDutchListingFacet.updatePrepayDutchListing.selector;
+        return selectors;
+    }
+
+    /// @dev T-086 Round-6 / Block D (#345) — `NFTPrepayListingAtomicFacet`
+    ///      selectors. ONE selector: `matchOpenSeaOffer`, the
+    ///      atomic match-rotation entry point. Mirrors
+    ///      `DeployDiamond._getNFTPrepayListingAtomicSelectors`.
+    function getNFTPrepayListingAtomicFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](1);
+        selectors[0] = NFTPrepayListingAtomicFacet.matchOpenSeaOffer.selector;
         return selectors;
     }
 }

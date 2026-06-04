@@ -2095,6 +2095,54 @@ async function processLoanLogs(
         )
         .run();
       if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
+    } else if (log.eventName === 'PrepayListingMatched') {
+      // T-086 Round-6 / Block D (#345) — atomic match-rotation
+      // settlement breadcrumb. The on-chain
+      // `NFTPrepayListingAtomicFacet.matchOpenSeaOffer` emits this
+      // alongside the standard `PrepayCollateralSaleSettled` in the
+      // SAME tx (the atomic match settles via
+      // `Seaport.matchAdvancedOrders` which fires the executor's
+      // zone callback → `executorFinalizePrepaySale` → loan flip).
+      // We write to `prepay_listing_match_breadcrumbs` with
+      // `match_mode = 'atomic'`, NOT to `prepay_listings.matched_via`,
+      // because the same-tx `PrepayCollateralSaleSettled` handler
+      // above deletes the `prepay_listings` row before any
+      // downstream reader sees it (Round-6 design doc §17.18 D.3 +
+      // Codex round-9 P3 #344 durability fix).
+      //
+      // The atomic path explicitly does NOT fire the #335 dapp-side
+      // POST (race-window prevention per §17.13), so this handler is
+      // the SOLE signal source for atomic matches — there is no
+      // overwrite race with the default 'v1-twostep' value.
+      //
+      // The bidder's per-fee-recipient breakdown comes from
+      // Seaport's canonical `OrderFulfilled(bidderOrderHash, ...)`
+      // event in the same tx; the bidder field on this event is the
+      // gross bidder identity (Seaport `offerer`).
+      const loanId = Number(a.loanId as bigint);
+      const bidderOrderHash = (a.bidderOrderHash as string).toLowerCase();
+      const bidder = (a.bidder as string).toLowerCase();
+      const matchedAt = blockTimestamps.get(log.blockNumber) ?? now;
+      await env.DB.prepare(
+        `INSERT INTO prepay_listing_match_breadcrumbs
+            (chain_id, tx_hash, loan_id, order_hash, bidder, matched_at, match_mode)
+         VALUES (?, ?, ?, ?, ?, ?, 'atomic')
+         ON CONFLICT(chain_id, tx_hash) DO UPDATE SET
+            match_mode = excluded.match_mode,
+            order_hash = excluded.order_hash,
+            bidder     = excluded.bidder,
+            loan_id    = excluded.loan_id,
+            matched_at = excluded.matched_at`,
+      )
+        .bind(
+          chainId,
+          log.transactionHash,
+          loanId,
+          bidderOrderHash,
+          bidder,
+          matchedAt,
+        )
+        .run();
     }
     // Notes on events deliberately not state-mutating here:
     //  - LoanSettlementBreakdown / PeriodicSlippageOverBuffer /
@@ -2539,6 +2587,15 @@ function pluckActivityRefs(
     case 'PrepayCollateralSaleSettled':
       return {
         actor: (args.executor as string)?.toLowerCase() ?? null,
+        loanId: Number(args.loanId as bigint),
+        offerId: null,
+      };
+    // T-086 Round-6 / Block D (#345) — atomic match-rotation event.
+    // The borrower (msg.sender) clicked Match; `matcher` is the
+    // canonical actor for activity-feed purposes.
+    case 'PrepayListingMatched':
+      return {
+        actor: (args.matcher as string)?.toLowerCase() ?? null,
         loanId: Number(args.loanId as bigint),
         offerId: null,
       };

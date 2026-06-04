@@ -148,6 +148,29 @@ export interface UseNFTPrepayListingResult {
     matchSource?: MatchSourceBreadcrumb,
   ) => Promise<boolean>;
   cancelPrepayListing: (loanId: bigint) => Promise<boolean>;
+  /**
+   * T-086 Round-6 / Block D (#345) — atomic match-rotation. Calls
+   * `NFTPrepayListingAtomicFacet.matchOpenSeaOffer` after fetching
+   * the bidder's signed OpenSea Offer from the agent's
+   * `/opensea/signed-offer/...` endpoint. Settles the loan in ONE
+   * atomic tx (no race window).
+   *
+   * Does NOT fire the #335 dapp-side match-source POST — the
+   * indexer's `PrepayListingMatched` event handler writes the
+   * breadcrumb with `match_mode = 'atomic'` from on-chain instead
+   * (race-window prevention; design doc §17.13).
+   *
+   * @returns `true` on success.
+   */
+  matchOpenSeaOffer: (
+    loanId: bigint,
+    offer: {
+      orderHash: `0x${string}`;
+      bidder: `0x${string}`;
+      collateralContract: `0x${string}`;
+      collateralTokenId: bigint;
+    },
+  ) => Promise<boolean>;
 }
 
 export interface UseNFTPrepayListingOptions {
@@ -241,7 +264,7 @@ export function useNFTPrepayListing(
    *  post + update, and listing-disappearance for cancel. */
   const waitForIndexer = useCallback(
     async (
-      flow: 'postPrepayListing' | 'postPrepayDutchListing' | 'updatePrepayListing' | 'updatePrepayDutchListing' | 'cancelPrepayListing',
+      flow: 'postPrepayListing' | 'postPrepayDutchListing' | 'updatePrepayListing' | 'updatePrepayDutchListing' | 'cancelPrepayListing' | 'matchOpenSeaOffer',
       prior: IndexedPrepayListing | null | undefined,
     ): Promise<{
       /** True iff a poll observed the expected transition. */
@@ -263,7 +286,19 @@ export function useNFTPrepayListing(
         if (!row) continue;
         indexerEverResponded = true;
         latest = row.prepayListing;
-        if (flow === 'cancelPrepayListing') {
+        if (flow === 'cancelPrepayListing' || flow === 'matchOpenSeaOffer') {
+          // T-086 Round-6 / Block D (#345) — Codex PR #346 round-1
+          // P2. An atomic match settles the loan + deletes the
+          // listing row in the same on-chain tx (the
+          // `PrepayCollateralSaleSettled` handler runs
+          // executorFinalizePrepaySale → DELETE FROM
+          // prepay_listings). So the indexer's transition for
+          // `matchOpenSeaOffer` is the same as `cancelPrepayListing`:
+          // listing-row-disappearance. Falling through to the
+          // update-orderHash branch would either re-affirm the
+          // pre-match row (if the indexer lags) or never trigger
+          // (no new orderHash to compare against), leaving stale
+          // listing banners visible after a confirmed settlement.
           if (!row.prepayListing) return { sawTransition: true, latest: undefined };
         } else if (flow === 'postPrepayListing' || flow === 'postPrepayDutchListing') {
           if (row.prepayListing) return { sawTransition: true, latest: row.prepayListing };
@@ -284,7 +319,7 @@ export function useNFTPrepayListing(
 
   const runWrite = useCallback(
     async (
-      flow: 'postPrepayListing' | 'postPrepayDutchListing' | 'updatePrepayListing' | 'updatePrepayDutchListing' | 'cancelPrepayListing',
+      flow: 'postPrepayListing' | 'postPrepayDutchListing' | 'updatePrepayListing' | 'updatePrepayDutchListing' | 'cancelPrepayListing' | 'matchOpenSeaOffer',
       loanIdArg: bigint,
       submit: () => Promise<{ hash: string; wait: () => Promise<unknown> }>,
       /** #335 — fires SYNCHRONOUSLY after `tx.wait()` resolves but
@@ -341,16 +376,19 @@ export function useNFTPrepayListing(
         // the freshest listing into `listing` state so the banner
         // and child action mode flip atomically with the tx.
         const { sawTransition, latest } = await waitForIndexer(flow, prior);
-        if (flow === 'cancelPrepayListing') {
-          // Cancel's on-chain final state is KNOWN once `tx.wait()`
-          // resolves: the listing is gone. Stale indexer rows
+        if (flow === 'cancelPrepayListing' || flow === 'matchOpenSeaOffer') {
+          // Cancel + atomic match both have KNOWN-terminal on-chain
+          // final state once `tx.wait()` resolves: the listing is
+          // gone (cancel) or the order has filled and the executor
+          // emitted `clearOrder` (match). Stale indexer rows
           // returned during the poll window (the worker hasn't
-          // ingested the cancel yet) must NOT override that. Codex
-          // round-6 P2 fix on PR #308 — without this short-circuit,
-          // a lagging-indexer cancel would settle the pre-cancel
-          // row back into `listing`, keeping the banner visible
-          // and making a second cancel attempt revert with
-          // `PrepayListingNotFound`.
+          // ingested the terminal event yet) must NOT override
+          // that. Codex round-6 P2 fix on PR #308 added cancel;
+          // Codex round-3 P2 on PR #346 extended to matchOpenSeaOffer
+          // — without this short-circuit, a lagging-indexer match
+          // would settle the pre-match row back into `listing`,
+          // keeping the banner visible and making a second action
+          // attempt revert against an already-terminal loan.
           setListing(undefined);
         } else if (sawTransition) {
           // Post / update: indexer caught up and confirmed the
@@ -529,6 +567,131 @@ export function useNFTPrepayListing(
     [chainId, diamond, runWrite, runOpenSeaPublish],
   );
 
+  /**
+   * T-086 Round-6 / Block D (#345) — atomic match-rotation entry
+   * point. Fetches the bidder's signed OpenSea Offer from the
+   * agent's `/opensea/signed-offer/...` endpoint, builds the
+   * `BidderOrder` struct, picks a fresh salt + OpenSea conduit
+   * key, and calls `matchOpenSeaOffer` on the new sibling facet.
+   * One atomic tx — no race window.
+   *
+   * Does NOT fire the #335 dapp-side match-source POST. The
+   * indexer's `PrepayListingMatched` event handler writes the
+   * breadcrumb (with `match_mode = 'atomic'`) directly from the
+   * on-chain event, so a dapp-side POST would race and could
+   * overwrite the event-sourced 'atomic' with the default
+   * 'v1-twostep' (Round-6 design doc §17.13).
+   */
+  const matchOpenSeaOffer = useCallback(
+    async (
+      lid: bigint,
+      offer: {
+        orderHash: `0x${string}`;
+        bidder: `0x${string}`;
+        collateralContract: `0x${string}`;
+        collateralTokenId: bigint;
+      },
+    ): Promise<boolean> => {
+      // Resolve the agent's signed-offer endpoint URL.
+      let agentOrigin: string | null = null;
+      try {
+        agentOrigin =
+          (import.meta.env.VITE_AGENT_ORIGIN as string | undefined) ?? null;
+      } catch {
+        agentOrigin = null;
+      }
+      if (!agentOrigin) {
+        // eslint-disable-next-line no-console
+        console.warn('[matchOpenSeaOffer] VITE_AGENT_ORIGIN not configured');
+        return false;
+      }
+
+      // Fetch the bidder's signed payload. The agent already
+      // validates the (chainId, contract, tokenId, orderHash)
+      // tuple end-to-end against OpenSea + asserts the returned
+      // orderHash equals what we asked for.
+      let bundle: {
+        orderHash: string;
+        parameters: unknown;
+        signature: `0x${string}`;
+        extraData: `0x${string}`;
+        criteriaResolvers: unknown[];
+      };
+      try {
+        const url =
+          `${agentOrigin}/opensea/signed-offer/${chainId}/` +
+          `${offer.collateralContract.toLowerCase()}/${offer.collateralTokenId.toString()}/` +
+          `${offer.orderHash.toLowerCase()}`;
+        const res = await fetch(url);
+        if (!res.ok) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            '[matchOpenSeaOffer] signed-offer fetch non-2xx',
+            res.status,
+          );
+          return false;
+        }
+        bundle = await res.json();
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('[matchOpenSeaOffer] signed-offer fetch failed', err);
+        return false;
+      }
+
+      // OpenSea v2's `protocol_data.parameters` field is the Seaport
+      // `OrderComponents` shape in JSON. Pass it through as the
+      // BidderOrder.components struct — viem encodes it into the
+      // calldata layout the facet expects.
+      const bidderOrder = {
+        components: bundle.parameters,
+        signature: bundle.signature,
+        extraData: bundle.extraData,
+      };
+
+      // Resolvers — OpenSea's API returns the Merkle proofs for
+      // collection-criteria offers; we pass them through verbatim.
+      // For item offers + wildcard collection offers the array is
+      // empty.
+      const resolvers = bundle.criteriaResolvers;
+
+      // Pick a fresh random salt for the Vaipakam-side counter-order.
+      // `crypto.getRandomValues` is available in every browser the
+      // dapp targets (no Node-shim needed in this code path).
+      const saltBytes = new Uint8Array(32);
+      crypto.getRandomValues(saltBytes);
+      let salt = 0n;
+      for (let i = 0; i < 32; i++) salt = (salt << 8n) | BigInt(saltBytes[i]);
+
+      // OpenSea conduit key on every supported chain — same key the
+      // existing post / update paths use.
+      const OPENSEA_CONDUIT_KEY =
+        '0x0000007b02230091a7ed01230072f7006a004d60a8d4e71d599b8104250f0000' as const;
+
+      const r = await runWrite(
+        'matchOpenSeaOffer',
+        lid,
+        () =>
+          diamond.matchOpenSeaOffer(
+            lid,
+            bidderOrder,
+            offer.orderHash,        // expectedBidderOrderHash (pinned from offers list)
+            resolvers,
+            salt,
+            OPENSEA_CONDUIT_KEY,
+          ),
+        // No onReceiptAvailable callback — the atomic path
+        // intentionally skips the #335 indexer POST (race-window
+        // prevention per §17.13).
+      );
+
+      // No runOpenSeaPublish — the atomic match settles the order
+      // via Seaport.matchAdvancedOrders in the same tx; there's no
+      // canonical listing to push to OpenSea's catalog post-fill.
+      return r.success;
+    },
+    [chainId, diamond, runWrite],
+  );
+
   const cancelPrepayListing = useCallback(
     async (lid: bigint): Promise<boolean> => {
       const r = await runWrite('cancelPrepayListing', lid, () =>
@@ -637,5 +800,6 @@ export function useNFTPrepayListing(
     postPrepayDutchListing,
     updatePrepayDutchListing,
     cancelPrepayListing,
+    matchOpenSeaOffer,
   };
 }

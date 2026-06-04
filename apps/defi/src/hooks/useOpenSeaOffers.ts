@@ -97,13 +97,24 @@ export interface NormalizedOffer {
   /** Linear decay end-time for the offer (Unix seconds). The
    *  borrower's match window is bounded by this. */
   endTime: number;
+  /** T-086 Round-6 / Block D (#345) — Codex PR #346 round-1 P2.
+   *  True when the bidder's signed Seaport offer has
+   *  `startAmount != endAmount` (a decaying / Dutch bidder Offer).
+   *  The Round-6 atomic facet's §17.5-bis shape gate rejects these
+   *  on-chain (`SHAPE_OFFER_NOT_FIXED_AMOUNT`); the Match button is
+   *  disabled for them so the borrower can't predictably revert. */
+  priceIsDecaying: boolean;
   /** Whether the offer meets the protocol-leg + buffer threshold.
    *  The panel greys out non-acceptable rows to prevent a
    *  guaranteed-to-revert `updatePrepayListing` click. */
   acceptable: boolean;
   /** Reason a non-acceptable offer was rejected — for the inline
    *  tooltip on the greyed row. */
-  rejectReason?: 'below-threshold' | 'wrong-payment-token' | 'expired';
+  rejectReason?:
+    | 'below-threshold'
+    | 'wrong-payment-token'
+    | 'expired'
+    | 'decaying-bidder-offer';
 }
 
 export interface UseOpenSeaOffersOptions {
@@ -537,9 +548,18 @@ function normalize(
     return null;
   }
   const itemType = consideration.itemType;
+  // T-086 Round-6 / Block D (#345) — Codex PR #346 round-2 P2 #247.
+  // Criteria itemTypes (4 = ERC721_WITH_CRITERIA, 5 =
+  // ERC1155_WITH_CRITERIA) are STRUCTURALLY supported by the
+  // atomic facet but currently rejected here as a v1 carry-
+  // over. Wiring them end-to-end needs the agent to fetch
+  // OpenSea's separate "Fulfillment Data" endpoint to construct
+  // a real `CriteriaResolver` with the token-specific Merkle
+  // proof — the single-order endpoint's `criteria_proof` is the
+  // RAW criteria, not the resolver Seaport needs. Tracked as a
+  // Block D follow-up; for now criteria offers stay visible on
+  // OpenSea but don't reach the Match panel (fail-closed).
   if (itemType !== 2 && itemType !== 3) {
-    // Drop criteria-types (4/5) AND any anomalous types
-    // (ETH/ERC20) — only concrete NFT considerations qualify.
     return null;
   }
   const ident = (consideration.identifierOrCriteria ?? '0').toString();
@@ -587,6 +607,34 @@ function normalize(
   }
 
   const verdict = computeAcceptable(value, paymentToken, endTime);
+
+  // T-086 Round-6 / Block D (#345) — Codex PR #346 round-1 P2.
+  // Detect decaying (Dutch) bidder offers by comparing the offer
+  // item's start vs end amount. Round-6 atomic facet rejects
+  // these on-chain (`SHAPE_OFFER_NOT_FIXED_AMOUNT`); we surface
+  // the flag so the panel can grey out the Match button.
+  const offerStart = offerItem?.startAmount;
+  const offerEnd = offerItem?.endAmount;
+  const priceIsDecaying =
+    typeof offerStart === 'string' &&
+    typeof offerEnd === 'string' &&
+    offerStart.length > 0 &&
+    offerEnd.length > 0 &&
+    offerStart !== offerEnd;
+
+  // T-086 Block D / Codex round-4 #4 BUG (Raja, 2026-06-04): the
+  // panel's Match button is disabled by `!offer.acceptable`, so a
+  // decaying Dutch bidder offer that passes the threshold check
+  // would otherwise light up as Matchable and revert on-chain
+  // (`SHAPE_OFFER_NOT_FIXED_AMOUNT`). Roll `priceIsDecaying` into
+  // the `acceptable` verdict — and set a dedicated `rejectReason`
+  // so the row's tooltip explains why the Match is greyed.
+  const effectiveAcceptable = verdict.acceptable && !priceIsDecaying;
+  const effectiveRejectReason: NormalizedOffer['rejectReason'] =
+    verdict.acceptable && priceIsDecaying
+      ? 'decaying-bidder-offer'
+      : verdict.rejectReason;
+
   return {
     orderHash,
     kind,
@@ -594,8 +642,9 @@ function normalize(
     paymentToken,
     value,
     endTime,
+    priceIsDecaying,
     quantity,
-    acceptable: verdict.acceptable,
-    rejectReason: verdict.rejectReason,
+    acceptable: effectiveAcceptable,
+    rejectReason: effectiveRejectReason,
   };
 }
