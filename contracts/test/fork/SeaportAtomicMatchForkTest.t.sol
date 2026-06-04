@@ -95,16 +95,17 @@ contract SeaportAtomicMatchForkTest is Test {
         vm.createSelectFork(url);
         forkEnabled = true;
 
-        // Codex round-1 P2: assert chain identity. Seaport 1.6 lives
-        // at the same canonical address on every supported chain,
-        // so a SEAPORT.code-length sanity check would silently pass
-        // even if the operator accidentally pointed
-        // FORK_URL_BASE_SEPOLIA at Ethereum mainnet or Base mainnet
-        // (Seaport at the same address there too). Base-Sepolia's
-        // chainId is 84532; assert it explicitly so a misconfigured
-        // fork URL fails loudly with an actionable message.
+        // Codex round-1 P2 (refined round-3): assert chain identity
+        // via `vm.getChainId()`, NOT `block.chainid`. Per
+        // forge-std's Vm.sol, `block.chainid` may be treated as
+        // constant after `vm.createSelectFork` and read the pre-
+        // fork chain id; `vm.getChainId()` is the cheatcode that
+        // returns the live forked chain id. Base-Sepolia's chainId
+        // is 84532; assert it explicitly so a misconfigured fork
+        // URL pointing at Ethereum / Base mainnet (where Seaport
+        // sits at the same address) fails loudly.
         require(
-            block.chainid == 84_532,
+            vm.getChainId() == 84_532,
             "FORK_URL_BASE_SEPOLIA must point at Base-Sepolia (chainId 84532)"
         );
         require(SEAPORT.code.length > 0, "Seaport 1.6 not deployed on this fork");
