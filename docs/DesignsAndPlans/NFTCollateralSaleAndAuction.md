@@ -2421,8 +2421,50 @@ Codex round-1 P2s on PR #356 refined the original draft's "rotate if ask >
 askAtFloor" check into a three-condition test. The rotation MUST fire if
 **any** of these holds:
 
-- **B-cond-1 — ask too high**: `existingAsk > askAtFloor`. The original
-  rotation case.
+- **B-cond-1 — ask too high (round-3.3 corrections against Codex
+  round-4)**. The round-3 plain `existingAsk > askAtFloor` test had
+  two false-positive paths. Both fixed:
+
+  - **Fee-aware false positive**: a fee-aware fixed-price listing
+    posted CORRECTLY at the protocol floor has `existingAsk ==
+    askAtFloor + sum(recordedFeeLegs)`. The round-3 comparison
+    against bare `askAtFloor` always fires for such listings,
+    causing cancel/repost churn against well-priced fee-aware
+    listings. Correction: the threshold includes the recorded fee
+    sum:
+
+    ```
+    effectiveAskThreshold = askAtFloor + sum(recordedFeeLegs)
+    ```
+
+    B-cond-1 (fixed-price) fires when
+    `existingAsk > effectiveAskThreshold`.
+  - **Dutch false positive**: for Dutch listings, the executor's
+    recorded `askPrice` IS the `startAskPrice` (intentionally
+    high; the auction decays). The round-3 comparison fires for
+    almost every healthy Dutch listing, prematurely collapsing
+    them. Correction: for Dutch listings, B-cond-1 uses the
+    CURRENT interpolated price, not the recorded start:
+
+    ```
+    if (auctionMode == PREPAY_MODE_DUTCH) {
+        currentDutchAsk = startAskPrice
+            - (startAskPrice - endAskPrice)
+              × (block.timestamp - startTime)
+              / (auctionEndTime - startTime)
+            // clamped to [endAskPrice, startAskPrice]
+        compareAgainst = currentDutchAsk
+    } else {
+        compareAgainst = existingAsk
+    }
+    if (compareAgainst > effectiveAskThreshold) → B-cond-1 fires
+    ```
+
+    For Dutch listings, B-cond-3 (decays to floor too late) and
+    B-cond-5 (expired Dutch) handle the Dutch-specific gates
+    cleanly; B-cond-1's Dutch-current-ask check picks up only the
+    case where the auction's live price is still aspirationally
+    high.
 - **B-cond-2 — recorded protocol floor stale (derived, CORRECTED in
   round-3.2 against Codex round-3.1 P2 + Raja blocker #2)**: the
   executor's current `OrderContext` storage doesn't directly persist
@@ -2492,24 +2534,32 @@ askAtFloor" check into a three-condition test. The rotation MUST fire if
     ```
 
     The rotation fires when `t_floor` is later than a safe
-    boundary `t_safe`:
+    boundary `t_safe`. Codex round-4 P2 corrected the round-3.1
+    margin guard — the round-3.1 spec compared the margin against
+    the absolute `gracePeriodEnd` Unix timestamp, not against the
+    loan's remaining grace duration. That made the saturating
+    branch unreachable in practice (the only way `gracePeriodEnd
+    < margin` is if `gracePeriodEnd < ~3600` which means the loan
+    is in 1970). The correct comparison is against the GRACE
+    DURATION:
 
     ```
-    t_safe = (gracePeriodEnd > cfgPrepayListingDutchGraceMarginSec
-              ? gracePeriodEnd - cfgPrepayListingDutchGraceMarginSec
-              : gracePeriodEnd)
+    graceDuration = gracePeriodEnd - loanEnd
+    safeMargin = graceDuration > cfgPrepayListingDutchGraceMarginSec
+                 ? cfgPrepayListingDutchGraceMarginSec
+                 : graceDuration / 2    // saturate to half-grace
+    t_safe = gracePeriodEnd - safeMargin
     ```
 
-    The `gracePeriodEnd > GRACE_MARGIN` guard is Codex round-3.1
-    P2's underflow fix — if governance configures
-    `cfgPrepayListingDutchGraceMarginSec` higher than the loan's
-    grace duration, the naive subtraction would underflow. The
-    saturating-to-`gracePeriodEnd` fallback means a too-large
-    margin effectively forces "rotate ANY Dutch listing on this
-    short loan" — the safe behavior on a precision-loss boundary.
-    (The AdminFacet setter for the knob will also `require(value
-    <= MIN_LOAN_GRACE_PERIOD - 60)` for clarity; the on-chain
-    saturating guard is defense-in-depth.)
+    On loans where the grace duration is shorter than the
+    governance-configured margin, the saturating fallback uses
+    `graceDuration / 2` as the safe-margin — gives bidders the
+    second half of the grace window to fill, regardless of how
+    short. The `/ 2` keeps the t_safe boundary strictly inside
+    the grace window even for 1-second graces (where the original
+    `gracePeriodEnd - graceDuration` would equal `loanEnd` and
+    the listing would have to reach floor BEFORE the grace
+    started, which is impossible).
 
     `GRACE_FILL_MARGIN` (`cfgPrepayListingDutchGraceMarginSec`,
     default 3600 seconds = 1 hour) gives bidders a real
@@ -2522,35 +2572,80 @@ askAtFloor" check into a three-condition test. The rotation MUST fire if
   eventually reach floor). The B-cond-3a path is the cheap early-
   out for "never decays to floor"; B-cond-3b is the precise
   "decays too late" check.
-- **B-cond-4 — recipient drift (added in round-3.2 against Codex
-  round-3.1 P2)**: the executor's `_checkOrderPreconditions`
-  rejects fills when the signed consideration's lender or
-  treasury recipient no longer matches the live
-  `ownerOf(loan.lenderTokenId)` or `s.treasury`. If the
-  lender-position NFT transfers after an at-floor listing is
-  posted, OR if governance rotates the treasury, none of
-  B-cond-1 / -2 / -3 catches the drift but the listing becomes
-  unfillable.
+- **B-cond-4 — recipient drift (added in round-3.2; round-3.3
+  refined against Codex round-4 P2 — executor schema extension)**:
+  the executor's `_checkOrderPreconditions` rejects fills when the
+  signed consideration's lender or treasury recipient no longer
+  matches the live `ownerOf(loan.lenderTokenId)` or `s.treasury`.
+  If the lender-position NFT transfers after an at-floor listing
+  is posted, OR if governance rotates the treasury, none of
+  B-cond-1 / -2 / -3 / -5 catches the drift but the listing
+  becomes unfillable.
+
+  Codex round-4 P2 correctly observed that the current executor's
+  `OrderContext` struct doesn't persist the protocol-leg
+  recipients — only the loanId / conduit / salt / timing / prices
+  / mode. The recipients ARE part of the on-chain Seaport
+  `ConsiderationItem[]` payload but those aren't accessible from
+  `orderContext(orderHash)` alone. Round-3.3 resolution: extend
+  the executor `OrderContext` struct with two new fields:
+
+  ```
+  struct OrderContext {
+      // ... existing fields ...
+      address recordedLenderRecipient;
+      address recordedTreasuryRecipient;
+  }
+  ```
+
+  These are written by `recordOrder` at post-time from the
+  borrower's-supplied consideration data; they're a small additive
+  schema change. The executor's `IListingExecutorRecorder` view
+  gains the matching fields. Auto-list reads them via
+  `pinnedExecutor.orderContext(orderHash).recordedLenderRecipient`
+  / `recordedTreasuryRecipient`.
 
   B-cond-4 fires when:
 
   ```
-  recordedLenderRecipient != ownerOf(loan.lenderTokenId)
+  recordedLenderRecipient != pctx.lenderNftOwner
   OR
   recordedTreasuryRecipient != s.treasury
   ```
 
-  The recipients are read from the pinned executor's
-  `orderContext(orderHash)` view. The rotation rebuilds the
-  order with live recipients (`pctx.lenderNftOwner`,
-  `pctx.treasury`) so subsequent fills can settle.
+  The rotation rebuilds the order with the live recipients so
+  subsequent fills can settle.
 
-  Note: the recorded recipients are stored as part of the
-  Seaport `ConsiderationItem[]` shape on the executor's per-
-  hash storage — they ARE persisted today (Block A laid them
-  down at post time). No executor schema change needed.
+  **Implementation surface adjustment** (also folds into §18.14
+  resolution #5): the executor schema extension adds two address
+  fields to `OrderContext`. This is the smallest-footprint
+  resolution; the alternative (a dapp-supplied claim of the
+  recorded recipients with proof) would add calldata complexity
+  + a verification surface. The two-field extension is additive,
+  doesn't change selector hashes, and the recipients are already
+  load-bearing data in the recordOrder payload.
+- **B-cond-5 — expired Dutch listing (added in round-3.3 against
+  Codex round-4 P2)**: an existing Dutch listing whose
+  `block.timestamp > auctionEndTime` is dead — Seaport rejects
+  any further fill regardless of the recorded `endAskPrice`. The
+  listing still occupies the `s.prepayListingOrderHash[loanId]`
+  slot, which means Case A's fresh-post path is blocked and
+  Cases B-cond-1/-2/-3/-4 may all no-op against a corpse. The
+  result: a Dutch borrower who lets the auction expire mid-grace
+  ends up with no live listing on chain even though grace is
+  still running. B-cond-5 catches this:
 
-If **none** of B-cond-1 / -2 / -3 / -4 holds: revert
+  ```
+  (auctionMode == PREPAY_MODE_DUTCH) AND
+  (block.timestamp > auctionEndTime)
+  ```
+
+  The rotation cancels the expired Dutch listing and posts a
+  fresh fixed-price-at-floor listing in its place, using the
+  same `_buildAndRecord` private + feeLegs preservation
+  semantics as the other B-conds.
+
+If **none** of B-cond-1 / -2 / -3 / -4 / -5 holds: revert
 `AlreadyAtOrBelowFloor(loanId, existingAsk, askAtFloor)`. No-op.
 
 **Pinned-executor read** (Codex round-1 P2 fix): the orderContext
@@ -2575,39 +2670,56 @@ Rotation steps (after the B-cond gate fires):
 3. Best-effort `executor.tryCancelOnSeaport(orderHash, ...)` so OpenSea
    sees the old order canceled and won't surface it to bidders. Already
    "best-effort" by Block-A semantics; any revert here is swallowed.
-4. **Preserve `feeLegs` from the old order's `orderContext`** (Codex
-   round-1 P2 fix; refined round-3.2 against Codex round-3.1 P2 on
-   Dutch fee-leg normalization). If the old listing was posted with
-   `feeLegs` (a fee-aware borrower listing on a fee-enforced
-   collection), the rotation MUST copy the same `feeLegs[]` into the
-   new order. The exception is fee-free collections
-   (`feeLegs.length == 0` on the old order) — the new order is also
-   `feeLegs: []`.
+4. **Preserve `feeLegs` from the old order** (Codex round-1 P2 fix;
+   refined round-3.2 + round-3.3 against Codex round-3.1 P2 + Codex
+   round-4 P2). If the old listing was posted with `feeLegs` (a
+   fee-aware borrower listing on a fee-enforced collection), the
+   rotation MUST copy the `feeLegs[]` into the new order. The
+   exception is fee-free collections (`feeLegs.length == 0` on the
+   old order) — the new order is also `feeLegs: []`.
 
-   **Dutch fee-leg normalization (round-3.2 fix).** Dutch
+   **`feeLegs` accessor (round-3.3 against Codex round-4 P2)** —
+   the executor's current `OrderContext` view does NOT return
+   `feeLegs[]`; the fee legs live in a separate
+   `_orderFeeLegs[orderHash]` mapping with a dedicated accessor:
+
+   ```
+   bytes calldata legsCalldata = pinnedExecutor.orderFeeLegs(orderHash);
+   FeeLeg[] memory recordedFeeLegs = abi.decode(legsCalldata, (FeeLeg[]));
+   ```
+
+   Add `orderFeeLegs(bytes32 orderHash) external view returns
+   (bytes memory)` to the `IListingExecutorRecorder` interface
+   surface — the function is already implemented on
+   `CollateralListingExecutor`; the interface just needs to
+   expose it. This is a small additive interface change in line
+   with the OrderContext recipient extension under B-cond-4.
+
+   **Dutch fee-leg normalization (round-3.3 against Codex
+   round-4 P2 — `startAmount` not `endAmount`).** Dutch
    `feeLegs[]` are stored with separate `startAmount` /
-   `endAmount` pairs (which legally decay; `startAmount >=
-   endAmount`). The fixed-price `feeLegs[]` shape that the
-   `_buildAndRecord` private records requires `startAmount ==
-   endAmount`. Naively copying decaying Dutch fee legs into a
-   fixed-price rotation would revert at the recorder. The
-   normalization rule: rotate-to-fixed copies the **projected-max
-   fee value** (= each leg's `endAmount`, since the Dutch fee
-   schedule was designed by the borrower to be the cap at
-   `auctionEndTime`):
+   `endAmount` pairs. The convention is `startAmount >=
+   endAmount` (fee decays alongside the borrower-leg decay). So
+   `startAmount` is the projected-MAX value the borrower agreed
+   to at `startTime`; `endAmount` is the projected-MIN at
+   `auctionEndTime`.
+
+   Round-3.2 had the polarity inverted — it copied `endAmount`
+   thinking that's the cap. The correct "conservative for the
+   borrower BUT high enough that fee-enforced collections accept
+   the fee" value is `startAmount`:
 
    ```
    for each oldLeg in dutchOrder.feeLegs:
        newLeg.recipient   = oldLeg.recipient
-       newLeg.startAmount = oldLeg.endAmount
-       newLeg.endAmount   = oldLeg.endAmount
+       newLeg.startAmount = oldLeg.startAmount
+       newLeg.endAmount   = oldLeg.startAmount
    ```
 
-   This is conservative for the borrower (fees are at the
-   Dutch-end maximum), and it preserves the recipient set the
-   borrower originally consented to. Fee-aware Dutch listings
-   rotated to fixed-price thus end up at
-   `rotatedAsk = askAtFloor + sum(endAmount)` per step 5.
+   Result: fee-aware Dutch → fixed-price rotation lands at
+   `rotatedAsk = askAtFloor + sum(startAmount)` per step 5. The
+   borrower pays the upper-bound fee they originally signed for,
+   and the fee-enforced collection's SignedZone check passes.
 
    For fee-free Dutch listings, `feeLegs.length == 0` and the
    normalization is a no-op.
@@ -2621,14 +2733,16 @@ Rotation steps (after the B-cond gate fires):
    record step. The corrected ask formula:
 
    ```
-   rotatedAsk = askAtFloor + sum(preservedFeeLegs)
+   rotatedAsk = askAtFloor + sum(preservedFeeLegs.startAmount)
    ```
 
    where `preservedFeeLegs` is the `feeLegs[]` copied from the old
-   order (step 4). For fee-free collections the preserved feeLegs
-   array is empty and `rotatedAsk = askAtFloor`. For fee-aware
-   listings, `rotatedAsk` covers the protocol floor + buffer + the
-   already-disclosed fee surfaces. Salt formula:
+   order (step 4 — with Dutch-to-fixed normalization using
+   `startAmount` as the basis per round-3.3 Codex round-4 P2 fix).
+   For fee-free collections the preserved feeLegs array is empty
+   and `rotatedAsk = askAtFloor`. For fee-aware listings,
+   `rotatedAsk` covers the protocol floor + buffer + the
+   already-disclosed fee surfaces at their projected-max value. Salt formula:
    `keccak256(abi.encode(loanId, block.timestamp, msg.sender,
    s.prepayListingAutoListNonce[loanId]++))` (same nonce formula as
    Case A; the nonce slot is shared per loan). Default conduit key.
@@ -3154,7 +3268,32 @@ implementation PR has a single source of truth:
    **One new governance knob:**
    - `cfgPrepayListingDutchGraceMarginSec` (uint32, default 3600
      seconds = 1 hour) — the B-cond-3b "Dutch reaches floor too
-     late" margin. Setter on `AdminFacet`.
+     late" margin. Setter on `AdminFacet`. The setter
+     `require(value <= MIN_LOAN_GRACE_PERIOD - 60)` for clarity;
+     the on-chain saturating guard in §18.5 B-cond-3b is
+     defense-in-depth.
+
+   **Executor (`CollateralListingExecutor`) — small additive
+   schema/interface change** (round-3.3 against Codex round-4 P2):
+
+   - `OrderContext` struct gains two new address fields:
+     `recordedLenderRecipient` + `recordedTreasuryRecipient`. These
+     are written by `recordOrder` at post-time from the borrower's
+     consideration data. B-cond-4 reads them via the existing
+     `orderContext(orderHash)` view (no new view selector — the
+     return shape gets two extra fields, which is non-breaking
+     for ABI-decoders that read by field name; the storage layout
+     of `_orderContexts` extends by two slots).
+   - `IListingExecutorRecorder` interface gains:
+     `orderFeeLegs(bytes32 orderHash) external view returns (bytes
+     memory)` — the function is already implemented on
+     `CollateralListingExecutor`; the interface just needs to
+     expose it. Auto-list reads + decodes via the standard
+     `abi.decode(legsCalldata, (FeeLeg[]))` pattern.
+
+   Both are small, additive, and don't change `recordOrder`'s
+   selector. Block A's existing tests + Block D's atomic match
+   facet keep working unchanged.
 
    Dapp wiring + keeper bot wiring follow-up Issues open after
    contract PR merges; the contract surface stands alone (callable
