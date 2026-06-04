@@ -2490,6 +2490,36 @@ askAtFloor" check into a three-condition test. The rotation MUST fire if
   the live floor of 1000, triggering false-positive rotation on a
   fresh listing.
 
+  **Dutch mode (round-3.5 against Codex round-5 P1)**: for Dutch
+  listings, `existingAsk` (the executor's recorded `askPrice`) is
+  the borrower's chosen `startAskPrice` — a value the auction
+  intentionally decays AWAY from. Plugging `startAskPrice` into
+  the reverse formula derives an inflated recorded floor, so
+  B-cond-2 never fires for Dutch even when interest accrual
+  moves live legs above the original Dutch floor. The Dutch-
+  specific derivation uses the recorded `endAskPrice` (the Dutch
+  floor) + the Dutch end-fee sum (per the Dutch fee-leg
+  `endAmount` convention):
+
+  ```
+  if (auctionMode == PREPAY_MODE_DUTCH) {
+      dutchFloorFeeSum = sum(recordedFeeLegs.endAmount)
+      derivedRecordedProtocolFloor =
+          (endAskPrice - dutchFloorFeeSum) × 10_000
+          / (10_000 + cfgPrepayListingBufferBps)
+  } else {
+      // fixed-price formula above
+  }
+  ```
+
+  This works because at Dutch post-time the implementation
+  computed `endAskPrice = (lenderLeg_projected_at_auctionEnd +
+  treasuryLeg_projected_at_auctionEnd) × (10000 + buffer) / 10000
+  + sum(endAmount)`. Reversing the multiplication recovers the
+  projected protocol floor at `auctionEndTime`. B-cond-2 fires
+  when live `(lenderLeg + treasuryLeg) > derivedFloor + 1` — same
+  rounding tolerance as the fixed-price case.
+
   **1-wei rounding tolerance** (round-3.2 addition). Integer
   arithmetic on both sides allows ±1-wei boundary jitter. Without
   tolerance, B-cond-2 can fire against a freshly-rotated listing,
@@ -2513,8 +2543,18 @@ askAtFloor" check into a three-condition test. The rotation MUST fire if
   inclusive in round-3.2)**: existing listing is Dutch
   (`auctionMode == PREPAY_MODE_DUTCH`). Two sub-tests, EITHER of
   which fires the rotation:
-  - **B-cond-3a**: `endAskPrice > askAtFloor`. The Dutch auction
-    never decays to floor at all within `auctionEndTime`.
+  - **B-cond-3a (round-3.5 fee-aware fix against Codex round-5
+    P2)**: `endAskPrice > askAtFloor + sum(recordedFeeLegs.endAmount)`.
+    The Dutch auction never decays to the fee-aware floor at all
+    within `auctionEndTime`. For fee-aware Dutch listings, the
+    recorded `endAskPrice` includes the projected-end fee sum
+    (per §18.5 Case B step 5 `rotatedAsk` derivation in reverse),
+    so a correctly-priced fee-aware Dutch where
+    `endAskPrice == askAtFloor + endFeeSum` MUST NOT trigger
+    B-cond-3a. The fee-aware comparison parallels the B-cond-1
+    fix: include the fee sum in the threshold. For fee-free
+    Dutch listings `endAmount` is empty and the comparison
+    collapses to `endAskPrice > askAtFloor`.
   - **B-cond-3b** (Codex round-3.1 P2 corrected — equality case
     now included): `endAskPrice <= askAtFloor` AND the Dutch
     schedule reaches `askAtFloor` later than the safe boundary.
@@ -2629,19 +2669,21 @@ askAtFloor" check into a three-condition test. The rotation MUST fire if
   about new on-chain machinery; the bounded failure mode is
   acceptable.
 - **B-cond-5 — expired Dutch listing (added in round-3.3 against
-  Codex round-4 P2)**: an existing Dutch listing whose
-  `block.timestamp > auctionEndTime` is dead — Seaport rejects
-  any further fill regardless of the recorded `endAskPrice`. The
-  listing still occupies the `s.prepayListingOrderHash[loanId]`
-  slot, which means Case A's fresh-post path is blocked and
-  Cases B-cond-1/-2/-3 may all no-op against a corpse. The
-  result: a Dutch borrower who lets the auction expire mid-grace
-  ends up with no live listing on chain even though grace is
-  still running. B-cond-5 catches this:
+  Codex round-4 P2; round-3.5 boundary fix against Codex round-5
+  P3)**: an existing Dutch listing at-or-past `auctionEndTime`
+  is dead — Seaport's `endTime` is exclusive, so at
+  `block.timestamp == auctionEndTime` the order is no longer
+  fillable. The listing still occupies the
+  `s.prepayListingOrderHash[loanId]` slot, which means Case A's
+  fresh-post path is blocked and Cases B-cond-1/-2/-3 may all
+  no-op against a corpse. The result: a Dutch borrower who lets
+  the auction expire mid-grace ends up with no live listing on
+  chain even though grace is still running. B-cond-5 catches
+  this (note: `>=`, not `>`, to capture the boundary tick):
 
   ```
   (auctionMode == PREPAY_MODE_DUTCH) AND
-  (block.timestamp > auctionEndTime)
+  (block.timestamp >= auctionEndTime)
   ```
 
   The rotation cancels the expired Dutch listing and posts a
@@ -2671,9 +2713,14 @@ Rotation steps (after the B-cond gate fires):
    read above.
 2. Run `LibPrepayListingWiring.unwire(s, loan, orderHash)` to clear the
    vault binding for the old order (mirrors `updatePrepayListing`).
-3. Best-effort `executor.tryCancelOnSeaport(orderHash, ...)` so OpenSea
-   sees the old order canceled and won't surface it to bidders. Already
-   "best-effort" by Block-A semantics; any revert here is swallowed.
+3. `pinnedExecutor.clearOrder(orderHash)` — the canonical
+   diamond-facing primitive (round-3.5 against Codex round-5 P2;
+   `tryCancelOnSeaport` is private on the executor; the public
+   surface is `clearOrder`, the same one
+   `updatePrepayListing` / `cancelPrepayListing` use). The
+   internal `_tryCancelOnSeaport` bubble is invoked by
+   `clearOrder` automatically (best-effort; any Seaport revert
+   is swallowed inside the executor).
 4. **Preserve `feeLegs` from the old order** (Codex round-1 P2 fix;
    refined round-3.2 + round-3.3 against Codex round-3.1 P2 + Codex
    round-4 P2). If the old listing was posted with `feeLegs` (a
@@ -3397,7 +3444,7 @@ sale path that needs its own settlement reasoning".
 | `IListingExecutorRecorder.recordOrder(...)` | Both cases — same signature, same event |
 | `IListingExecutorRecorder.orderContext(orderHash)` view | Case B step 4 + B-cond gates (read existing ask, mode, timings) |
 | `CollateralListingExecutor.orderFeeLegs(orderHash)` public getter | Case B step 4 — read recorded feeLegs[] for preservation/normalization. Existing public surface, no interface change. |
-| `IListingExecutorRecorder.tryCancelOnSeaport(...)` | Case B step 3 — best-effort cancel of old order |
+| `IListingExecutorRecorder.clearOrder(...)` | Case B step 3 — best-effort cancel of old order |
 | `IListingExecutorRecorder.approvedConduits(...)` | Preconditions — same allow-list as Block A |
 | `IVaipakamPrepayContext.getPrepayContext(...)` | Floor formula — same view Block A / Block D use |
 | `LibPrepayOrder.buildAndHash` | Transitively via `_buildAndRecord` |
