@@ -1,28 +1,28 @@
 /**
- * T-086 Round-5 Block C (#309 Mode B) — OpenSea Offers panel for
- * the loan card. The pragmatic English-auction surface.
+ * T-086 Round-5 Block C (#309 Mode B) + Round-6 Block D (#345) —
+ * OpenSea Offers panel for the loan card. The English-auction surface
+ * the borrower uses to match an off-chain signed Offer against their
+ * locked collateral.
  *
  * Renders the polled offers list from `useOpenSeaOffers` and gives
  * the borrower a "Match offer" affordance per acceptable row.
- * "Match" goes through `useNFTPrepayListing.updatePrepayListing`
- * which rotates the canonical Seaport order to the offer's price —
- * any buyer can then call `Seaport.fulfillOrder` against the new
- * order to settle.
+ * "Match" goes through `useNFTPrepayListing.matchOpenSeaOffer` which
+ * calls `NFTPrepayListingAtomicFacet.matchOpenSeaOffer` — a single
+ * Seaport `matchAdvancedOrders` invocation that settles the bidder's
+ * offer + the Vaipakam counter-order atomically inside the diamond.
  *
- * **Race-window warning (§15.3 line ~480, Codex P2):** the borrower
- * is told upfront that the matched order is fulfillable by ANY
- * buyer between `updatePrepayListing` and the bidder's
- * `fulfillOrder`. The warning copy is the dapp-side mitigation
- * (the v2 escape hatch is the atomic match-rotation flow; v1 ships
- * with the visible race).
+ * **No race window (Round-6 Block D):** pre-Round-6 the v1 flow ran
+ * a two-step rotate-listing + fulfillOrder dance with a window during
+ * which any buyer could front-run the matched bidder. Atomic
+ * match-rotation closed that window structurally (PR #346) — the
+ * borrower no longer needs to acknowledge a race warning before
+ * Match; the modal just confirms intent.
  *
- * **Fee-free scope (this PR ships):** the threshold computed by
- * the hook collapses to `(lenderLeg + treasuryLeg) × (1 +
- * bufferBps/10000)`. The "Match offer" call passes empty
- * `feeLegs[]`. Fee-enforced collections will plug a follow-up that
- * fetches the OpenSea collection schedule at match time + threads
- * the recomputed `feeLegs` through (per §15.3's "re-fetch on every
- * match-offer click" rule).
+ * **Fee-enforced collections (PR #349 follow-up):** the agent's
+ * signed-offer proxy wraps OpenSea Fulfillment Data so the panel can
+ * Match SignedZone (fee-enforced) collections + criteria offers
+ * end-to-end. The facet does the authoritative fee-sum check on-chain
+ * at match time; the panel's threshold scaling is advisory polish.
  */
 
 import { useState } from 'react';
@@ -30,14 +30,14 @@ import type {
   NormalizedOffer,
   UseOpenSeaOffersResult,
 } from '../../hooks/useOpenSeaOffers';
-import { marketingUrl } from '../../lib/marketingUrl';
 
 export interface OpenSeaOffersPanelProps {
   loanId: bigint;
   offersResult: UseOpenSeaOffersResult;
   /** Called when the borrower clicks "Match offer" + confirms the
-   *  race-window warning. Wired to
-   *  `useNFTPrepayListing.updatePrepayListing` by the parent. */
+   *  atomic-match modal. Wired to
+   *  `useNFTPrepayListing.matchOpenSeaOffer` by the parent (T-086
+   *  Round-6 Block D). */
   onMatchOffer: (offer: NormalizedOffer) => Promise<boolean>;
   /** Disables every "Match" button while another tx is mid-flight
    *  (parent passes `useNFTPrepayListing.actionLoading`). */
@@ -87,8 +87,9 @@ export function OpenSeaOffersPanel({
         <div className="action-subtitle">
           Bidders' offers for your collateral. Acceptable rows cover
           the protocol-leg floor plus your configured buffer.
-          Matching rotates your listing to the offer's price — any
-          buyer can then settle.
+          Matching settles the offer atomically — the diamond's
+          single transaction either delivers the collateral + pays
+          out all the legs, or nothing changes on-chain.
         </div>
 
         {/* T-086 Round-6 / Block D (#345) — Codex PR #346 round-2
@@ -195,7 +196,7 @@ export function OpenSeaOffersPanel({
       </div>
 
       {confirming && (
-        <RaceWindowModal
+        <ConfirmMatchModal
           offer={confirming}
           decimals={decimals}
           onCancel={() => setConfirming(null)}
@@ -250,7 +251,7 @@ export function OpenSeaOffersPanel({
   );
 }
 
-interface RaceWindowModalProps {
+interface ConfirmMatchModalProps {
   offer: NormalizedOffer;
   decimals: number;
   onCancel: () => void;
@@ -258,71 +259,51 @@ interface RaceWindowModalProps {
   actionLoading: boolean;
 }
 
-/** The race-window warning is the dapp-side mitigation for the
- *  §15.3 v1 trade-off: any buyer can fulfill the matched listing
- *  between the borrower's `updatePrepayListing` and the bidder's
- *  `fulfillOrder`. The borrower must acknowledge before the call
- *  goes through. */
-function RaceWindowModal({
+/** Confirm dialog for matching an OpenSea offer atomically.
+ *
+ *  Pre-Round-6 this surfaced a "race-window warning" — the v1
+ *  two-step cancel + post left a window during which any buyer
+ *  (not just the matched bidder) could fulfill the rotated listing.
+ *  Round-6 Block D's atomic match-rotation closed that window
+ *  structurally (single Seaport `matchAdvancedOrders` call settles
+ *  cancel + replacement + bidder fill in one tx); see #348
+ *  follow-up for the modal copy refresh that retired the
+ *  race-window framing. The modal now just confirms the borrower
+ *  intends to match at the offer's price. */
+function ConfirmMatchModal({
   offer,
   decimals,
   onCancel,
   onConfirm,
   actionLoading,
-}: RaceWindowModalProps) {
+}: ConfirmMatchModalProps) {
   return (
     <div
       role="dialog"
       aria-modal="true"
-      aria-labelledby="race-window-modal-title"
+      aria-labelledby="confirm-match-modal-title"
       style={modalBackdropStyle}
     >
       <div className="card" style={modalCardStyle}>
-        <h3 id="race-window-modal-title">
+        <h3 id="confirm-match-modal-title">
           Match this offer at {formatBigInt(offer.value, decimals)}?
         </h3>
         <p>
-          Once you match, your listing rotates to this offer's
-          price. <strong>Any buyer</strong> — not just this bidder —
-          can fulfill at the matched price for the next few minutes.
+          The whole rotation — cancel any live listing, settle this
+          bidder's offer, deliver the collateral, pay the protocol
+          legs, return the remainder to you — runs in a single
+          transaction. Either every step succeeds together, or
+          nothing changes on-chain.
         </p>
-        <p>
-          Notify your bidder ({offer.bidder.slice(0, 12)}…) before
-          clicking Match so they can complete the purchase before
-          someone else snipes it.
-        </p>
-        <p>
-          {/* Issue #337 — cross-link to the Advanced User Guide
-              section that explains the race window in depth +
-              points forward to the v2 atomic-match track (#333).
-              `marketingUrl` resolves to https://vaipakam.com in
-              prod and respects the VITE_MARKETING_URL dev
-              override so local dev links to the local www
-              dev server.
-
-              The anchor uses the slug `markdownToc.headingComponents()`
-              auto-installs on every `<h3>` — slugify of the heading
-              text. The `<a id="..."></a>` inline anchor pattern used
-              elsewhere in the same file doesn't actually take effect
-              on H3s in the rendered DOM because the h3 component
-              overrides `id` with the slug (see Codex P2 round-1
-              finding on PR #338). The `/en/` prefix pins the link to
-              the English guide so users whose browser locale routes
-              them via `DefaultLocaleRedirect` to /<locale>/help/...
-              don't land on a localized guide that doesn't yet carry
-              this section (queued for translation, follow-up batch). */}
-          <a
-            href={marketingUrl(
-              '/en/help/advanced#matching-opensea-offers-on-a-prepay-listing',
-            )}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Learn more about the race window
-          </a>
-          {' '}— mitigation options + what the v2 atomic-match
-          fix will change.
-        </p>
+        {/* T-086 Block D follow-up (#348) — the cross-link to the
+            Advanced User Guide's "Matching OpenSea offers" section
+            is dropped here. That section still describes the v1
+            race-window flow this PR retired; pointing borrowers at
+            it from the new atomic confirm dialog would surface
+            conflicting instructions. The user guide refresh +
+            re-translate across the 9 supported locales is tracked
+            as a separate Block D follow-up; until that lands the
+            modal stays a clean confirm-only dialog. */}
         <div className="action-row">
           <button
             type="button"
