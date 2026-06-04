@@ -628,6 +628,16 @@ export function OpenSeaOffersSection({
           bidder: offer.bidder as `0x${string}`,
           collateralContract: collateralAsset as `0x${string}`,
           collateralTokenId,
+          // T-086 Block D follow-up (#348) + Codex round-1 P2 on
+          // PR #349 — thread the locked lot size through so the
+          // agent forwards `units_to_fill` to OpenSea Fulfillment
+          // Data. ERC721 always 1; ERC1155 carries the loan's
+          // `collateralQuantity` so multi-unit ERC1155 Matches get
+          // SignedZone / criteria fulfillment data signed for the
+          // full lot. The normalizer's exact-quantity gate
+          // already filtered offers to full-lot only at the panel
+          // surface.
+          collateralQuantity,
         });
       }}
     />

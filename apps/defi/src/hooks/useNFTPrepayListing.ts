@@ -171,6 +171,13 @@ export interface UseNFTPrepayListingResult {
       bidder: `0x${string}`;
       collateralContract: `0x${string}`;
       collateralTokenId: bigint;
+      /** T-086 Block D follow-up (#348) + Codex round-1 P2 on
+       *  PR #349. ERC1155 lots need the locked
+       *  `collateralQuantity` to thread through as `units_to_fill`
+       *  on the OpenSea Fulfillment Data POST so SignedZone /
+       *  criteria fulfillment data is signed for the full lot.
+       *  ERC721 + single-unit ERC1155 pass `1n`. */
+      collateralQuantity: bigint;
     },
   ) => Promise<boolean>;
 }
@@ -604,6 +611,13 @@ export function useNFTPrepayListing(
         bidder: `0x${string}`;
         collateralContract: `0x${string}`;
         collateralTokenId: bigint;
+        /** T-086 Block D follow-up (#348) + Codex round-1 P2 on
+         *  PR #349. ERC1155 lots need the locked
+         *  `collateralQuantity`; ERC721 + single-unit ERC1155 pass
+         *  `1n`. The agent forwards this as `units_to_fill` so
+         *  OpenSea signs SignedZone / criteria fulfillment data
+         *  for the full lot rather than defaulting to 1. */
+        collateralQuantity: bigint;
       },
     ): Promise<boolean> => {
       // Resolve the agent's signed-offer endpoint URL.
@@ -656,7 +670,8 @@ export function useNFTPrepayListing(
           `${agentOrigin}/opensea/signed-offer/${chainId}/` +
           `${offer.collateralContract.toLowerCase()}/${offer.collateralTokenId.toString()}/` +
           `${offer.orderHash.toLowerCase()}` +
-          `?fulfiller=${userVaultAddress.toLowerCase()}`;
+          `?fulfiller=${userVaultAddress.toLowerCase()}` +
+          `&quantity=${offer.collateralQuantity.toString()}`;
         const res = await fetch(url);
         if (!res.ok) {
           // eslint-disable-next-line no-console

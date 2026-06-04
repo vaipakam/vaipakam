@@ -3,7 +3,7 @@
  * proxy. Sibling of {handleOpenSeaOffers} (T-086 Round-5 Block C).
  *
  * GET /opensea/signed-offer/{chainId}/{contract}/{tokenId}/{orderHash}
- *     ?fulfiller=<vaultAddress>
+ *     ?fulfiller=<vaultAddress>&quantity=<lotSize>
  *
  * The dapp hits this endpoint at Match-button click time to fetch
  * the BIDDER's full signed OpenSea Offer (the
@@ -131,6 +131,32 @@ export async function handleOpenSeaSignedOffer(
       resolvedOrigin,
     );
   }
+  // T-086 Block D / Codex round-1 P2 on PR #349 — ERC1155 loans
+  // with `collateralQuantity > 1` need `units_to_fill` to match the
+  // locked lot. OpenSea defaults the field to 1 when omitted, so a
+  // multi-unit ERC1155 Match would otherwise get SignedZone /
+  // criteria fulfillment data signed for ONE unit and revert when
+  // the contract submits the full-lot `AdvancedOrder`. ERC721 +
+  // single-unit ERC1155 callers can either pass `?quantity=1` or
+  // omit the param entirely.
+  const quantityRaw = url.searchParams.get('quantity');
+  let unitsToFill = '1';
+  if (quantityRaw !== null) {
+    if (!/^\d+$/.test(quantityRaw) || quantityRaw === '0') {
+      return jsonResponse(
+        {
+          error: 'invalid-quantity',
+          hint:
+            '`quantity` must be a positive decimal integer matching the ' +
+            'collateral lot size (ERC721: 1; ERC1155: the locked ' +
+            '`collateralQuantity`).',
+        },
+        400,
+        resolvedOrigin,
+      );
+    }
+    unitsToFill = quantityRaw;
+  }
 
   // Per-IP rate-limit BEFORE the upstream call.
   if (!(await checkRateLimit(req, env.OPENSEA_SIGNED_OFFER_RATELIMIT))) {
@@ -194,6 +220,7 @@ export async function handleOpenSeaSignedOffer(
       asset_contract_address: contract.toLowerCase(),
       token_id: tokenId,
     },
+    units_to_fill: unitsToFill,
   };
 
   let upstream: Response;
@@ -245,48 +272,64 @@ export async function handleOpenSeaSignedOffer(
     );
   }
 
-  // OpenSea Fulfillment Data response (per opensea-js types.ts):
-  //   {
-  //     protocol: 'seaport_1_6',
-  //     fulfillment_data: {
-  //       transaction: {
-  //         function: 'fulfillAdvancedOrder(...)',
-  //         chain, to, value,
-  //         input_data: {
-  //           advanced_order: {
-  //             parameters: { offerer, zone, offer[], consideration[], ... },
-  //             numerator, denominator,
-  //             signature, extraData,
-  //           },
-  //           criteria_resolvers: [...],
-  //           fulfiller_conduit_key, recipient,
-  //         }
+  // OpenSea Fulfillment Data response. Per the opensea-js SDK's
+  // `src/utils/case.ts` the wire format is snake_case ("Used by the
+  // API fetcher to expose camelCase responses to SDK consumers
+  // regardless of the snake_case wire format."), but Codex round-1
+  // on PR #349 flagged that some surfaces of the docs show
+  // camelCase (e.g. `input_data.advancedOrder`). Accept both shapes
+  // defensively rather than risk a wire-shape drift breaking every
+  // Match. The shape we ultimately use:
+  //   protocol,
+  //   fulfillment_data | fulfillmentData: {
+  //     transaction: {
+  //       input_data | inputData: {
+  //         advanced_order | advancedOrder: {
+  //           parameters: <OrderParameters — counter STRIPPED>,
+  //           signature, extra_data | extraData,
+  //         },
+  //         criteria_resolvers | criteriaResolvers: [...],
   //       },
-  //       orders: [...],
-  //     }
+  //     },
+  //     orders: [
+  //       {
+  //         parameters: <OrderComponents — counter PRESENT>,
+  //         signature,
+  //       },
+  //     ],
   //   }
-  const inputData = (
-    raw as {
-      fulfillment_data?: {
-        transaction?: {
-          input_data?: {
-            advanced_order?: {
-              parameters?: { offerer?: string };
-              signature?: string;
-              extraData?: string;
-            };
-            criteria_resolvers?: unknown[];
-          };
-        };
-      };
-    }
-  ).fulfillment_data?.transaction?.input_data;
-  const advancedOrder = inputData?.advanced_order;
+  // §17.5's on-chain hash re-derive needs OrderComponents (counter
+  // included). The transaction's `advanced_order.parameters` is
+  // `OrderParameters` (counter stripped, `totalOriginalConsiderationItems`
+  // added) so we MUST read `parameters` from `orders[0]` instead —
+  // Codex round-1 P1 #2.
+  const fulfillment =
+    pickKey(raw, ['fulfillment_data', 'fulfillmentData']) ?? {};
+  const transaction =
+    pickKey(fulfillment, ['transaction']) ?? {};
+  const inputData =
+    pickKey(transaction, ['input_data', 'inputData']) ?? {};
+  const advancedOrder =
+    pickKey(inputData, ['advanced_order', 'advancedOrder']) ?? {};
+  const ordersArray = pickKey(fulfillment, ['orders']);
+  const firstOrder = Array.isArray(ordersArray) ? ordersArray[0] : undefined;
+  // §17.5-driven shape: the components MUST carry `counter` so the
+  // facet's `seaport.getOrderHash(orderComponents)` re-hash matches
+  // the pinned `expectedBidderOrderHash`. `orders[0].parameters`
+  // carries OrderComponents-with-counter; the transaction-level
+  // `advanced_order.parameters` is OrderParameters-without-counter.
+  const components = pickKey(firstOrder, ['parameters']);
+  const signatureRaw =
+    pickKey(advancedOrder, ['signature']) ??
+    pickKey(firstOrder, ['signature']);
+  const extraDataRaw = pickKey(advancedOrder, ['extra_data', 'extraData']);
+  const criteriaResolversRaw =
+    pickKey(inputData, ['criteria_resolvers', 'criteriaResolvers']);
+
   if (
-    !advancedOrder ||
-    typeof advancedOrder !== 'object' ||
-    typeof advancedOrder.signature !== 'string' ||
-    !advancedOrder.parameters
+    !components ||
+    typeof components !== 'object' ||
+    typeof signatureRaw !== 'string'
   ) {
     return jsonResponse(
       { error: 'opensea-malformed-fulfillment-data' },
@@ -302,17 +345,37 @@ export async function handleOpenSeaSignedOffer(
   return jsonResponse(
     {
       orderHash: orderHash.toLowerCase(),
-      parameters: advancedOrder.parameters,
-      signature: advancedOrder.signature,
+      parameters: components,
+      signature: signatureRaw,
       extraData:
-        typeof advancedOrder.extraData === 'string'
-          ? advancedOrder.extraData
-          : '0x',
-      criteriaResolvers: inputData?.criteria_resolvers ?? [],
+        typeof extraDataRaw === 'string' ? extraDataRaw : '0x',
+      criteriaResolvers: Array.isArray(criteriaResolversRaw)
+        ? criteriaResolversRaw
+        : [],
     },
     200,
     resolvedOrigin,
   );
+}
+
+/**
+ * Read the first present key from `obj` against an aliases list.
+ * Used for the snake_case ↔ camelCase wire-shape drift defense in
+ * the Fulfillment Data response parser. Treats `null` / `undefined`
+ * obj as "no match" so callers can chain `pickKey(...) ?? {}` to
+ * walk nested shapes without explicit null-checking at each step.
+ */
+function pickKey(
+  obj: unknown,
+  aliases: readonly string[],
+): unknown {
+  if (obj === null || typeof obj !== 'object') return undefined;
+  for (const key of aliases) {
+    if (key in (obj as Record<string, unknown>)) {
+      return (obj as Record<string, unknown>)[key];
+    }
+  }
+  return undefined;
 }
 
 // ─── Shared helpers (mirror openseaOffersProxy patterns) ─────────────
