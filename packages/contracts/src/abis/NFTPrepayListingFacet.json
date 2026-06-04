@@ -40,6 +40,25 @@
   },
   {
     "type": "function",
+    "name": "getPrepayListingAutoListOptedOut",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getPrepayListingBufferBps",
     "inputs": [],
     "outputs": [

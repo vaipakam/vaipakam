@@ -344,7 +344,7 @@ contract NFTPrepayAutoListFacetTest is SetupTest {
         vm.prank(borrowerHolder);
         NFTPrepayListingFacet(address(diamond)).cancelPrepayListing(LOAN_ID);
         assertFalse(
-            TestMutatorFacet(address(diamond))
+            NFTPrepayListingFacet(address(diamond))
                 .getPrepayListingAutoListOptedOut(LOAN_ID),
             "outside grace: cancel does NOT set opt-out"
         );
@@ -358,7 +358,7 @@ contract NFTPrepayAutoListFacetTest is SetupTest {
         vm.prank(borrowerHolder);
         NFTPrepayListingFacet(address(diamond)).cancelPrepayListing(LOAN_ID);
         assertTrue(
-            TestMutatorFacet(address(diamond))
+            NFTPrepayListingFacet(address(diamond))
                 .getPrepayListingAutoListOptedOut(LOAN_ID),
             "in grace: cancel SETS the sticky opt-out flag"
         );
@@ -389,7 +389,7 @@ contract NFTPrepayAutoListFacetTest is SetupTest {
         vm.prank(borrowerHolder);
         NFTPrepayListingFacet(address(diamond)).clearAutoListOptOut(LOAN_ID);
         assertFalse(
-            TestMutatorFacet(address(diamond))
+            NFTPrepayListingFacet(address(diamond))
                 .getPrepayListingAutoListOptedOut(LOAN_ID),
             "clear sets flag to false"
         );

@@ -1009,6 +1009,19 @@ contract NFTPrepayListingFacet is
         return LibVaipakam.storageSlot().prepayListingOrderHash[loanId];
     }
 
+    /// @notice T-086 Round-7 (#355) follow-up (Codex round-13 P2 #3) —
+    ///         production read of the per-loan auto-list opt-out flag.
+    ///         `true` means the borrower has cancelled mid-grace + has
+    ///         NOT yet called `clearAutoListOptOut`; permissionless
+    ///         `autoListAtFloorOnGrace` reverts `AutoListBorrowerOptedOut`
+    ///         while the flag is set. Indexer + frontend read this so
+    ///         the keeper UI / "auto-list enabled?" banner can render
+    ///         live state without optimistic-retry guesswork against
+    ///         the auto-list reverts.
+    function getPrepayListingAutoListOptedOut(uint256 loanId) external view returns (bool) {
+        return LibVaipakam.storageSlot().prepayListingAutoListOptedOut[loanId];
+    }
+
     /// @notice Current configured prepay-listing buffer in BPS.
     ///         Frontend reads this to compute "minimum ask" in the
     ///         post-listing UI without an extra cross-facet call.

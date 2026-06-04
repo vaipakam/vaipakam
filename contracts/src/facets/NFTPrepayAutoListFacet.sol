@@ -437,13 +437,25 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
         FeeLeg[] memory recordedFeeLegs,
         uint256 askAtFloor_
     ) private {
+        // Step 2.5 — snapshot the recorded conduit + conduitKey from
+        // the OLD `OrderContext` BEFORE `clearOrder` wipes them.
+        // Round-2 against Codex round-13 P2 #2 fix: the previous
+        // round-2 code read these AFTER clearOrder, which returned
+        // (0, 0) for every rotation and broke Case B end-to-end.
+        // Mirrors the round-3.6 fee-leg snapshot reordering done in
+        // the caller (`_caseBRotate`).
+        IListingExecutorRecorder executor = IListingExecutorRecorder(pinnedExecutor);
+        (address conduit, bytes32 conduitKey) = executor.orderContextConduit(oldOrderHash);
+        if (!executor.approvedConduits(conduit)) revert AutoListConduitNotConfigured();
+
         // Step 3 — clear the vault's per-orderHash binding.
         LibPrepayListingWiring.unwire(s, loan, oldOrderHash);
 
         // Step 4 — clear the executor's pinned binding (also wipes
         // _orderFeeLegs + _orderProtocolLegs for `oldOrderHash`;
-        // we already snapshotted both).
-        IListingExecutorRecorder(pinnedExecutor).clearOrder(oldOrderHash);
+        // we already snapshotted both, AND the OrderContext-conduit
+        // pair above).
+        executor.clearOrder(oldOrderHash);
 
         // Step 5 — normalize the preserved feeLegs from Dutch decay
         // shape (`startAmount > endAmount` allowed) into fixed-price
@@ -468,22 +480,9 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
 
         // Step 7 — recordOrder on the CURRENT executor (== pinned
         // here per the migration-staleness gate in the caller).
-        //
-        // T-086 Round-7 follow-up (Codex round-12 P2 #1): INHERIT the
-        // OLD listing's conduit + conduitKey from the recorded
-        // `OrderContext` — NOT the Case-A default. The borrower's
-        // original conduit choice was already approved by the
-        // executor's allow-list and committed to the order; rotating
-        // to a different conduit would (a) fail
-        // `executor.approvedConduits` if the default isn't approved
-        // OR not configured at all, and (b) silently change the
-        // borrower's signed conduit choice out from under them. The
-        // recorded `OrderContext.conduit` / `conduitKey` are exactly
-        // the values the executor itself uses for cancel-time
-        // reconstruction; reusing them keeps the rotation faithful.
-        IListingExecutorRecorder executor = IListingExecutorRecorder(pinnedExecutor);
-        (address conduit, bytes32 conduitKey) = executor.orderContextConduit(oldOrderHash);
-        if (!executor.approvedConduits(conduit)) revert AutoListConduitNotConfigured();
+        // Conduit + conduitKey were snapshotted from the OLD
+        // `OrderContext` at the top of this helper, before
+        // `clearOrder` wiped them.
 
         bytes32 newOrderHash = LibPrepayOrder.buildAndHashMem(
             pctx,

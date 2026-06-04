@@ -1093,6 +1093,15 @@ contract CollateralListingExecutor is
         // line. `delete` on a dynamic-array mapping value clears
         // length + every element (Solidity standard semantics).
         delete _orderFeeLegs[params.orderHash];
+        // T-086 Round-7 follow-up (Codex round-13 P2 #1) — also clear
+        // the per-order signed-leg snapshot. Round-2 added
+        // `_orderProtocolLegs` writes in `recordOrder` + the
+        // `clearOrder` cleanup but missed this fill-path delete, so
+        // filled orders were leaking a packed-two-uint128s slot AND
+        // `orderProtocolLegs(orderHash)` was returning nonzero amounts
+        // for already-filled orders (the interface natspec promises
+        // `(0, 0)` for cleared/unknown orderHashes).
+        delete _orderProtocolLegs[params.orderHash];
 
         emit OrderFilled(params.orderHash, loanId);
         return ISeaportZone.validateOrder.selector;

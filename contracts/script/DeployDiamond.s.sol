@@ -1194,7 +1194,7 @@ contract DeployDiamond is Script {
     ///      facet's bytecode within solc's jump-table reservation
     ///      budget.
     function _getNFTPrepayListingSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](8);
+        s = new bytes4[](9);
         s[0] = NFTPrepayListingFacet.postPrepayListing.selector;
         s[1] = NFTPrepayListingFacet.updatePrepayListing.selector;
         s[2] = NFTPrepayListingFacet.cancelPrepayListing.selector;
@@ -1210,6 +1210,11 @@ contract DeployDiamond is Script {
         // opt-out flag, counter-action to the sticky flag set by
         // `cancelPrepayListing` during the grace window (§18.7).
         s[7] = NFTPrepayListingFacet.clearAutoListOptOut.selector;
+        // T-086 Round-7 follow-up (Codex round-13 P2 #3) — production
+        // getter for the auto-list opt-out flag, so the indexer / UI
+        // can render the live state without optimistic-retry against
+        // the auto-list reverts.
+        s[8] = NFTPrepayListingFacet.getPrepayListingAutoListOptedOut.selector;
     }
 
     /// @dev T-086 Round-5 Block B (#309) — `NFTPrepayDutchListingFacet`

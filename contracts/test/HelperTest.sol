@@ -60,7 +60,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](80);
+        selectors = new bytes4[](79);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -208,8 +208,10 @@ contract HelperTest {
         selectors[75] = TestMutatorFacet.setPrepayListingOrderHash.selector;
         selectors[76] = TestMutatorFacet.setPrepayListingExecutor.selector;
         selectors[77] = TestMutatorFacet.setPrepayListingAutoListOptedOut.selector;
-        selectors[78] = TestMutatorFacet.getPrepayListingAutoListOptedOut.selector;
-        selectors[79] = TestMutatorFacet.getPrepayListingAutoListNonce.selector;
+        // (getPrepayListingAutoListOptedOut removed — production reads
+        // it via NFTPrepayListingFacet.getPrepayListingAutoListOptedOut
+        // after the Codex round-13 P2 #3 follow-up.)
+        selectors[78] = TestMutatorFacet.getPrepayListingAutoListNonce.selector;
         return selectors;
     }
 
@@ -1272,7 +1274,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](9);
         selectors[0] = NFTPrepayListingFacet.postPrepayListing.selector;
         selectors[1] = NFTPrepayListingFacet.updatePrepayListing.selector;
         selectors[2] = NFTPrepayListingFacet.cancelPrepayListing.selector;
@@ -1282,6 +1284,9 @@ contract HelperTest {
         selectors[6] = NFTPrepayListingFacet.getPrepayListingEnabled.selector;
         // T-086 Round-7 (#355) — borrower-only clearAutoListOptOut.
         selectors[7] = NFTPrepayListingFacet.clearAutoListOptOut.selector;
+        // T-086 Round-7 follow-up (Codex round-13 P2 #3) — production
+        // getter for the auto-list opt-out flag.
+        selectors[8] = NFTPrepayListingFacet.getPrepayListingAutoListOptedOut.selector;
         return selectors;
     }
 

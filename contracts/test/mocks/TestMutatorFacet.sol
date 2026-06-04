@@ -707,9 +707,10 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().prepayListingAutoListOptedOut[loanId] = optedOut;
     }
 
-    function getPrepayListingAutoListOptedOut(uint256 loanId) external view returns (bool) {
-        return LibVaipakam.storageSlot().prepayListingAutoListOptedOut[loanId];
-    }
+    // (`getPrepayListingAutoListOptedOut` removed in round-3 — the
+    // production read is now `NFTPrepayListingFacet.getPrepayListingAutoListOptedOut`
+    // and tests call that directly. Keeping a duplicate here would
+    // collide on the same selector.)
 
     function getPrepayListingAutoListNonce(uint256 loanId) external view returns (uint64) {
         return LibVaipakam.storageSlot().prepayListingAutoListNonce[loanId];
