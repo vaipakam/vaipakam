@@ -2549,11 +2549,18 @@ Rotation steps (after the B-cond gate fires):
    `s.prepayListingExecutor[loanId] = currentExecutor`.
 8. `LibPrepayListingWiring.wire(s, loan, newOrderHash, conduit,
    currentExecutor)`.
-9. Emit `PrepayListingUpdated(...)` — same event shape
-   `updatePrepayListing` emits. The `caller` field naturally identifies
-   a third-party rotation via the indexed address. Add a new
-   `autoListReason: uint8` field naming which B-cond fired (1, 2, or
-   3) so the indexer can pivot rotations by motivation.
+9. Emit `PrepayListingUpdated(...)` — **byte-for-byte identical event
+   shape** to what `updatePrepayListing` emits. The `caller` field
+   naturally identifies a third-party rotation via the indexed
+   address. No new fields, no ABI change. Per user direction on
+   round-3 PR #356: maximum reuse of the existing event surface; the
+   indexer pivots third-party rotations by checking
+   `caller != ownerOf(loan.borrowerTokenId)` against the loan's
+   borrower-position NFT. (The earlier round-3 draft had a
+   `autoListReason: uint8` field for B-cond pivoting; dropped to
+   keep every existing PrepayListingUpdated consumer untouched.
+   Per-B-cond categorisation can be derived off-chain from the
+   pre/post state delta if ever needed.)
 
 **Case C — Existing listing already at-or-below floor with live legs.**
 
@@ -2911,9 +2918,9 @@ against on the implementation PR:
 - Event correctness: `PrepayListingPosted` / `PrepayListingUpdated`'s
   `poster` / `caller` field identifies the third-party caller (not the
   current position holder) on the auto-list path; downstream indexer
-  pivots cleanly on the address. New `autoListReason: uint8` field on
-  `PrepayListingUpdated` distinguishes B-cond-1 vs B-cond-2 vs B-cond-3
-  rotations.
+  pivots cleanly on the address. Both events emit BYTE-FOR-BYTE
+  identical to the existing post / update paths — per user direction
+  on round-3 PR #356, no event ABI changes.
 
 ### 18.13 Out of scope (Round 7 v1)
 
@@ -3049,3 +3056,84 @@ ratification before implementation:
    the borrower doesn't want keepers to undercut. Working assumption:
    clears on `postPrepayListing` / `postPrepayDutchListing` after
    grace cancel — the new post is the new signal.
+
+
+### 18.16 Code-reuse posture (explicit)
+
+Per user direction on round-3 PR #356: Round-7's implementation
+surface is intentionally thin — the new code wraps + dispatches into
+existing primitives rather than duplicating them. The audit-time
+reasoning needs to be that "this is two new selectors that fan out to
+audited Block-A / Block-D primitives" rather than "this is a new
+sale path that needs its own settlement reasoning".
+
+**Reused as-is (no modification, no new variant):**
+
+| Existing primitive | Where Round-7 calls it |
+| --- | --- |
+| `_buildAndRecord` (private on `NFTPrepayListingFacet`) | Case A step 7 — fresh-post path |
+| `_buildAndRecordUpdate` (private on same facet) | Case B rotation tail (steps 5–8) |
+| `LibPrepayListingWiring.wire` / `.unwire` | Case A step 8 + Case B steps 2 & 8 |
+| `IListingExecutorRecorder.recordOrder(...)` | Both cases — same signature, same event |
+| `IListingExecutorRecorder.orderContext(orderHash)` view | Case B step 4 + B-cond gates (read existing ask + feeLegs) |
+| `IListingExecutorRecorder.tryCancelOnSeaport(...)` | Case B step 3 — best-effort cancel of old order |
+| `IListingExecutorRecorder.approvedConduits(...)` | Preconditions — same allow-list as Block A |
+| `IVaipakamPrepayContext.getPrepayContext(...)` | Floor formula — same view Block A / Block D use |
+| `LibPrepayOrder.buildAndHash` | Transitively via `_buildAndRecord` |
+| `LibVaipakam._assertNotSanctioned(...)` | Sanctions gate (Tier-1 — same helper) |
+| `VaipakamNFTFacet.ownerOf(loan.borrowerTokenId)` | Current-holder check + sanctions key |
+| `PrepayListingPosted` event | Case A emits the same event Block A emits — no new fields |
+| `PrepayListingUpdated` event | Case B emits the same event Block A emits — no new fields |
+| Existing revert symbols (~12 of them, table §18.3) | Preconditions reuse existing errors |
+
+**New code (minimal — ~150-200 LOC estimate for the full surface):**
+
+- `autoListAtFloorOnGrace(uint256 loanId)` — the entry-point
+  dispatcher. Body delegates to `_buildAndRecord` (Case A) or
+  `_buildAndRecordUpdate` (Case B) after running preconditions.
+- `clearAutoListOptOut(uint256 loanId)` — borrower-only setter
+  (`~5 LOC`: position-holder check + flag write).
+- 7 new revert symbols (declarations only; no behavior) —
+  `GraceNotStarted`, `GraceExpired`, `BorrowerSanctioned`,
+  `AutoListBorrowerOptedOut`, `AlreadyAtOrBelowFloor`,
+  `NotEligibleAutoLister`, `AutoListExecutorMigrationStale`.
+- 2 storage slots in `LibVaipakam.Storage` (mappings — no struct
+  changes).
+- 1 governance knob (`cfgPrepayListingDutchGraceMarginSec`) +
+  matching `AdminFacet` setter.
+
+**Modified existing functions (additive — no behavior change to
+existing paths):**
+
+- `cancelPrepayListing` — adds the in-grace opt-out flag SET (~5
+  LOC: `if (block.timestamp >= loanEnd && block.timestamp <
+  gracePeriodEnd) { s.prepayListingAutoListOptedOut[loanId] =
+  true; }`).
+- `_buildAndRecord` (private) — accepts the auto-list path's
+  nonce-bearing salt via the existing salt parameter. NO body
+  change; the salt is just chosen differently at the auto-list
+  call site.
+- Terminal-loan-state paths (`RepayFacet.repayLoan`,
+  `DefaultedFacet.markDefaulted`,
+  `RefinanceFacet.refinanceOffer`, `PrecloseFacet.precloseLoan`)
+  — clear the two new slots (`s.prepayListingAutoListOptedOut`,
+  `s.prepayListingAutoListNonce`) as part of the existing
+  terminal cleanup block.
+
+**What this means for audit scoping:**
+
+Audit-time reasoning collapses to "two new selectors + a flag/nonce
+pair, both fanning out to audited primitives". The settlement math,
+the Seaport flow, the executor recordOrder semantics, the vault
+ERC-1271 binding — all already audited under Blocks A + D. The new
+surface adds:
+- Precondition arithmetic (block.timestamp boundaries, the
+  derived-recorded-floor + Dutch t_floor formulas).
+- The opt-out flag SET / CLEAR / RESET-on-terminal lifecycle.
+- The per-loan-nonce bump.
+- The sanctions-on-current-holder fix (which also retroactively
+  applies to the post / update paths if the codebase wants to
+  unify; called out separately as a small follow-up to consider).
+
+No new settlement waterfall. No new claim path. No new vault
+operation. No new Seaport interaction shape.
