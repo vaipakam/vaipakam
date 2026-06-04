@@ -189,19 +189,26 @@ export async function handleOpenSeaSignedOffer(
   //   order: {
   //     order_hash, protocol_data: { parameters, signature },
   //     ...
-  //     // For SignedZone (fee-enforced collections):
-  //     // protocol_data.extraData carries the SIP-7 blob.
   //   }
-  // If `order` is absent the hash isn't on OpenSea (cancelled,
-  // expired, or hash typo) — surface as 404 so the dapp can show
-  // "this offer is no longer available". (Codex PR #346 round-1
-  // P2 — corrected from the legacy `{ orders: [...] }` wrapper to
-  // the documented single-order shape.)
+  // For SignedZone (fee-enforced collections) the SIP-7 extraData
+  // blob is NOT in this single-order response — it lives behind
+  // OpenSea's Fulfillment Data endpoint (POST
+  // /api/v2/offers/fulfillment_data) which needs the fulfiller's
+  // address as input. We don't yet plumb that through this proxy
+  // (Block D follow-up — adding `?fulfiller=<vaultAddress>` and a
+  // second upstream call). Until that lands we MUST fail closed on
+  // SignedZone offers: silently passing `extraData: '0x'` to the
+  // dapp would route a doomed match through to Seaport, which
+  // would then revert with an opaque SignedZone validation error.
+  // Surfacing a 422 here lets the dapp show a clear "fee-enforced
+  // collection — not yet supported" message instead.
+  // (Codex PR #346 round-1 P2 — corrected from the legacy
+  // `{ orders: [...] }` wrapper; round-4 P2 — SignedZone detect.)
   const first = (raw as {
     order?: {
       order_hash?: string;
       protocol_data?: {
-        parameters?: unknown;
+        parameters?: { zone?: string };
         signature?: string;
         extraData?: string;
       };
@@ -234,6 +241,44 @@ export async function handleOpenSeaSignedOffer(
     );
   }
 
+  // T-086 Block D / Codex PR #346 round-4 P2: fail-closed on
+  // SignedZone (fee-enforced collection) offers. The single-order
+  // endpoint above does NOT return the SIP-7 `extraData` — that
+  // requires the Fulfillment Data endpoint (POST
+  // /api/v2/offers/fulfillment_data, which needs the fulfiller's
+  // address). Until that path is wired here (tracked Block D
+  // follow-up), returning `extraData: '0x'` for a SignedZone offer
+  // would route a doomed match through to Seaport that reverts
+  // opaquely in SignedZone signature validation. Reject at the
+  // proxy boundary instead so the dapp's error surface shows the
+  // accurate reason.
+  const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+  const zone = first.protocol_data.parameters?.zone;
+  const extraDataRaw = first.protocol_data.extraData;
+  const hasUsableExtraData =
+    typeof extraDataRaw === 'string' &&
+    extraDataRaw.length > 2 &&
+    extraDataRaw !== '0x' &&
+    extraDataRaw !== '0X';
+  const isSignedZone =
+    typeof zone === 'string' &&
+    zone.toLowerCase() !== ZERO_ADDRESS;
+  if (isSignedZone && !hasUsableExtraData) {
+    return jsonResponse(
+      {
+        error: 'opensea-fee-enforced-needs-fulfillment-data',
+        zone,
+        hint:
+          'This offer uses a Seaport SignedZone (fee-enforced collection). ' +
+          "Matching it needs SIP-7 extraData from OpenSea's fulfillment-data " +
+          'endpoint, which this proxy does not yet call. Tracked as a Block D ' +
+          'follow-up.',
+      },
+      422,
+      resolvedOrigin,
+    );
+  }
+
   // Surface the dapp-facing payload — the dapp will ABI-encode
   // `protocol_data.parameters` into the BidderOrder.components
   // struct, pass through `signature` + `extraData`, and supply
@@ -243,7 +288,7 @@ export async function handleOpenSeaSignedOffer(
       orderHash: first.order_hash,
       parameters: first.protocol_data.parameters,
       signature: first.protocol_data.signature,
-      extraData: first.protocol_data.extraData ?? '0x',
+      extraData: extraDataRaw ?? '0x',
       criteriaResolvers: first.criteria_proof ?? [],
     },
     200,

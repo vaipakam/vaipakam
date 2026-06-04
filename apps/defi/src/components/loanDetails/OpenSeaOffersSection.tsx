@@ -158,22 +158,18 @@ export function OpenSeaOffersSection({
           getPrepayListingBufferBps: () => Promise<bigint>;
           getPrepayListingEnabled: () => Promise<boolean>;
         };
-        // #332 — Dutch listings get classified against the
-        // PROJECTED legs the facet itself validates against:
-        // `getPrepayContext(loanId, live.auctionEndTime)`. Without
-        // this, the threshold uses current-time legs (smaller),
-        // which would let `computeAcceptable` classify offers
-        // above-current-floor but below-projected-floor as
-        // acceptable — the rotation tx would then revert
-        // `DutchEndAskBelowProjectedFloorPlusFees`. Fixed-price
-        // listings keep using current-time pctx.
-        const asOf =
-          live !== null &&
-          live !== undefined &&
-          live.auctionMode === 1 &&
-          live.auctionEndTime != null
-            ? BigInt(live.auctionEndTime)
-            : BigInt(Math.floor(Date.now() / 1000));
+        // T-086 Round-6 / Block D (#345) + Codex PR #346 round-4 P2:
+        // every Match is now atomic — the atomic facet validates
+        // `effectiveAsk` against `getPrepayContext(loanId,
+        // block.timestamp)` regardless of whether the loan has a
+        // live v1 Dutch row beneath it. Pre-Block-D the Dutch
+        // branch used `live.auctionEndTime` because v1's
+        // `updatePrepayDutchListing` rotation validated against
+        // projected legs — but that's not the path borrowers reach
+        // through Match anymore. Always classify against
+        // current-time pctx so atomic-pass offers don't get
+        // false-rejected as `below-threshold`.
+        const asOf = BigInt(Math.floor(Date.now() / 1000));
         // Codex round-3 P2 review #328 — also check the master
         // kill-switch (`getPrepayListingEnabled`). The actions
         // card already gates on it; if governance has flipped the
@@ -220,13 +216,13 @@ export function OpenSeaOffersSection({
     principalAsset,
     prepayListing.listing?.updatedAt,
     floorTick,
-    // #332 — re-fetch pctx when the auction mode or end time
-    // changes. Dutch rows classify against the projected legs at
-    // `auctionEndTime`; fixed-price rows classify against
-    // current-time legs. A mode flip (e.g. via Match) needs to
-    // re-resolve the right `asOf`.
-    prepayListing.listing?.auctionMode,
-    prepayListing.listing?.auctionEndTime,
+    // T-086 Block D / Codex round-4 P2: the `asOf` is now always
+    // `block.timestamp` (computed inside the effect from
+    // `Date.now()` against `floorTick`), so auctionMode /
+    // auctionEndTick deps are no longer load-bearing for the
+    // pctx re-resolution. `floorTick` is still load-bearing — it
+    // re-runs the effect each tick so the current-time pctx
+    // stays fresh as legs accrue.
   ]);
 
   // VITE_AGENT_ORIGIN is the agent Worker's public URL (e.g.
@@ -363,31 +359,26 @@ export function OpenSeaOffersSection({
     threshold !== null
       ? {
           ...threshold,
-          // Codex round-1 P1 #339 — when the schedule hasn't been
-          // fetched, pass the degenerate `feeBpsTotal: 10_000`
-          // sentinel so every offer classifies as below-threshold
-          // via the hook's degenerate-guard branch. This keeps the
-          // hook unpaused (so the offers fetch can resolve the
-          // slug and unblock the schedule effect) while still
-          // preventing misleadingly-acceptable rows from rendering.
+          // T-086 Block D / Codex round-4 P2 on PR #346: when the
+          // advisory `/opensea/collection` schedule hasn't yet
+          // landed (or transient outage), DON'T pass the
+          // degenerate `feeBpsTotal: 10_000` sentinel — that
+          // marked every offer below-threshold and made the
+          // collection-fee fetch a hard gate on every Match.
+          // The atomic facet enforces the floor + buffer + bidder
+          // fee total on-chain, so over-acceptance here is bounded
+          // by the on-chain re-check. Default to 0 so classification
+          // collapses to the pure protocol-floor+buffer check
+          // (matches the atomic facet's invariant on `effectiveAsk`).
           // Once the schedule lands the value swaps to the real
-          // `totalBps` and re-classification kicks in on next
-          // render.
+          // `totalBps` and re-classification kicks in on next render.
           //
-          // The schedule cache (`feeCheck`) is paired with the
-          // CURRENT loan's slug at the post-hook block below — no
-          // self-reference to `offersResult.slug` inside the hook
-          // input. (TDZ would otherwise trip at runtime and at
-          // TypeScript's block-scoped-used-before-declaration
-          // check.) The single-frame window where the previous
-          // loan's `feeBpsTotal` might leak into the new loan's
-          // classification is bounded by the section's
-          // `stateMatchesLoan` synchronous gate (returns null until
-          // `recordedLoanId` catches up), so no misleading row
-          // reaches the DOM. T-086 Block D: the atomic facet's
-          // on-chain re-check is the authoritative fee gate at
-          // match time.
-          feeBpsTotal: feeCheck.schedule?.totalBps ?? 10_000,
+          // Slug-pairing happens POST-HOOK below to avoid a TDZ
+          // self-reference to `offersResult.slug`. The single-frame
+          // window where the previous loan's `feeBpsTotal` might
+          // leak into the new loan's classification is bounded by
+          // the section's `stateMatchesLoan` synchronous gate.
+          feeBpsTotal: feeCheck.schedule?.totalBps ?? 0,
           // Codex round-2 P2 #339 — bake the per-leg-rounding
           // floor into the classification so offers below the
           // smallest-fee row's rounding boundary classify as
