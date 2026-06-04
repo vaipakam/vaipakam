@@ -303,12 +303,26 @@ contract ConfigFacet is DiamondAccessControl {
      *         grace meets the protocol minimum. The on-chain saturating
      *         guard inside B-cond-3b is the runtime fallback for
      *         legacy loans whose grace is shorter than the configured
-     *         margin. Default storage value `0` means B-cond-3b's
-     *         safe-margin policy is effectively disabled until
-     *         governance has explicitly configured it.
+     *         margin.
+     *
+     *         Storage value `0` is NOT a "disabled" sentinel: the
+     *         B-cond-3b read in {LibAutoList.b_cond_3b_dutchReachesFloorTooLate}
+     *         applies a 3600-second (1 hour) protocol default when
+     *         the stored value is zero (Codex round-12 P2 #3 follow-
+     *         up — added so fresh deploys do not silently collapse
+     *         `t_safe` to `gracePeriodEnd`, leaving a Dutch listing
+     *         decaying to floor only in the final tick of grace
+     *         silently passing the gate). Operators wanting a
+     *         non-default margin set this knob explicitly; setting
+     *         it back to zero RESTORES the 3600-second protocol
+     *         default at the next read. There is no on-chain knob
+     *         that disables the safe-margin gate; B-cond-3b always
+     *         enforces at least the 3600-second margin floor.
      * @param newMarginSec New margin in seconds, ≤
      *                     `MIN_LOAN_GRACE_PERIOD - 60`. Stored on
      *                     `Storage.cfgPrepayListingDutchGraceMarginSec`.
+     *                     `0` resolves to the 3600-second protocol
+     *                     default at the {LibAutoList} read site.
      */
     function setPrepayListingDutchGraceMarginSec(uint32 newMarginSec)
         external
