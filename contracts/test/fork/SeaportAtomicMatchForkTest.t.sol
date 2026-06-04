@@ -205,8 +205,18 @@ contract SeaportAtomicMatchForkTest is Test {
     bytes32 internal constant CONSIDERATION_ITEM_TYPEHASH = keccak256(
         "ConsiderationItem(uint8 itemType,address token,uint256 identifierOrCriteria,uint256 startAmount,uint256 endAmount,address recipient)"
     );
+    // The order of sub-strings inside the ORDER_TYPEHASH source is
+    // load-bearing per EIP-712: sub-types are appended in
+    // alphabetical order. Canonical Seaport (per
+    // ConsiderationTypeHashes.sol) packs the partial
+    // OrderComponents string + considerationItemTypeString +
+    // offerItemTypeString in THAT order (alphabetical:
+    // ConsiderationItem before OfferItem). Getting it wrong means
+    // the computed hash won't match real Seaport. Codex round-2 P2
+    // on PR #353 flagged the original draft which had OfferItem
+    // first.
     bytes32 internal constant ORDER_TYPEHASH = keccak256(
-        "OrderComponents(address offerer,address zone,OfferItem[] offer,ConsiderationItem[] consideration,uint8 orderType,uint256 startTime,uint256 endTime,bytes32 zoneHash,uint256 salt,bytes32 conduitKey,uint256 counter)OfferItem(uint8 itemType,address token,uint256 identifierOrCriteria,uint256 startAmount,uint256 endAmount)ConsiderationItem(uint8 itemType,address token,uint256 identifierOrCriteria,uint256 startAmount,uint256 endAmount,address recipient)"
+        "OrderComponents(address offerer,address zone,OfferItem[] offer,ConsiderationItem[] consideration,uint8 orderType,uint256 startTime,uint256 endTime,bytes32 zoneHash,uint256 salt,bytes32 conduitKey,uint256 counter)ConsiderationItem(uint8 itemType,address token,uint256 identifierOrCriteria,uint256 startAmount,uint256 endAmount,address recipient)OfferItem(uint8 itemType,address token,uint256 identifierOrCriteria,uint256 startAmount,uint256 endAmount)"
     );
 
     /// @dev Replicates Seaport 1.6's EIP-712 typed-data digest for
@@ -287,19 +297,29 @@ contract SeaportAtomicMatchForkTest is Test {
         return structHash;
     }
 
-    /// @dev Reads `DOMAIN_SEPARATOR()` off real Seaport and
-    ///      asserts it's non-zero. Doesn't compare against a
-    ///      hardcoded value — that would couple the test to
-    ///      Seaport's nonce / chainId / EIP-712 version (the
-    ///      address+chainId vary across the supported chain set).
-    ///      Just confirms Seaport is alive at the canonical
-    ///      address and that DOMAIN_SEPARATOR() works.
+    /// @dev Reads Seaport's `information()` accessor — the
+    ///      canonical view that returns
+    ///      `(string version, bytes32 domainSeparator, address
+    ///      conduitController)`. Codex round-2 P2 on PR #353:
+    ///      Seaport 1.6 deliberately doesn't expose a plain
+    ///      `DOMAIN_SEPARATOR()` getter at the documented
+    ///      interface — `information()` is the canonical accessor.
+    ///      Asserts the domain separator is non-zero + the version
+    ///      string starts with "1." (Seaport 1.x family) so a
+    ///      half-working impostor at the canonical address fails
+    ///      loudly.
     function _assertSeaportDomainIsSane() internal view {
         (bool ok, bytes memory ret) =
-            SEAPORT.staticcall(abi.encodeWithSignature("DOMAIN_SEPARATOR()"));
-        require(ok && ret.length == 32, "Seaport.DOMAIN_SEPARATOR() must be callable");
-        bytes32 domain = abi.decode(ret, (bytes32));
-        require(domain != bytes32(0), "Seaport.DOMAIN_SEPARATOR() must be non-zero");
+            SEAPORT.staticcall(abi.encodeWithSignature("information()"));
+        require(ok, "Seaport.information() must be callable");
+        (string memory version, bytes32 domain, ) =
+            abi.decode(ret, (string, bytes32, address));
+        require(domain != bytes32(0), "Seaport.information().domainSeparator must be non-zero");
+        bytes memory verBytes = bytes(version);
+        require(
+            verBytes.length >= 2 && verBytes[0] == bytes1("1") && verBytes[1] == bytes1("."),
+            "Seaport version must be 1.x"
+        );
     }
 
     /// @dev Constructs a minimally-valid bidder OrderComponents
