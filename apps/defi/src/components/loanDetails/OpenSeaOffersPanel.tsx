@@ -36,8 +36,9 @@ export interface OpenSeaOffersPanelProps {
   loanId: bigint;
   offersResult: UseOpenSeaOffersResult;
   /** Called when the borrower clicks "Match offer" + confirms the
-   *  race-window warning. Wired to
-   *  `useNFTPrepayListing.updatePrepayListing` by the parent. */
+   *  atomic-match modal. Wired to
+   *  `useNFTPrepayListing.matchOpenSeaOffer` by the parent (T-086
+   *  Round-6 Block D). */
   onMatchOffer: (offer: NormalizedOffer) => Promise<boolean>;
   /** Disables every "Match" button while another tx is mid-flight
    *  (parent passes `useNFTPrepayListing.actionLoading`). */
@@ -195,7 +196,7 @@ export function OpenSeaOffersPanel({
       </div>
 
       {confirming && (
-        <RaceWindowModal
+        <ConfirmMatchModal
           offer={confirming}
           decimals={decimals}
           onCancel={() => setConfirming(null)}
@@ -250,7 +251,7 @@ export function OpenSeaOffersPanel({
   );
 }
 
-interface RaceWindowModalProps {
+interface ConfirmMatchModalProps {
   offer: NormalizedOffer;
   decimals: number;
   onCancel: () => void;
@@ -258,59 +259,49 @@ interface RaceWindowModalProps {
   actionLoading: boolean;
 }
 
-/** The race-window warning is the dapp-side mitigation for the
- *  §15.3 v1 trade-off: any buyer can fulfill the matched listing
- *  between the borrower's `updatePrepayListing` and the bidder's
- *  `fulfillOrder`. The borrower must acknowledge before the call
- *  goes through. */
-function RaceWindowModal({
+/** Confirm dialog for matching an OpenSea offer atomically.
+ *
+ *  Pre-Round-6 this surfaced a "race-window warning" — the v1
+ *  two-step cancel + post left a window during which any buyer
+ *  (not just the matched bidder) could fulfill the rotated listing.
+ *  Round-6 Block D's atomic match-rotation closed that window
+ *  structurally (single Seaport `matchAdvancedOrders` call settles
+ *  cancel + replacement + bidder fill in one tx); see #348
+ *  follow-up for the modal copy refresh that retired the
+ *  race-window framing. The modal now just confirms the borrower
+ *  intends to match at the offer's price. */
+function ConfirmMatchModal({
   offer,
   decimals,
   onCancel,
   onConfirm,
   actionLoading,
-}: RaceWindowModalProps) {
+}: ConfirmMatchModalProps) {
   return (
     <div
       role="dialog"
       aria-modal="true"
-      aria-labelledby="race-window-modal-title"
+      aria-labelledby="confirm-match-modal-title"
       style={modalBackdropStyle}
     >
       <div className="card" style={modalCardStyle}>
-        <h3 id="race-window-modal-title">
+        <h3 id="confirm-match-modal-title">
           Match this offer at {formatBigInt(offer.value, decimals)}?
         </h3>
         <p>
-          Once you match, your listing rotates to this offer's
-          price. <strong>Any buyer</strong> — not just this bidder —
-          can fulfill at the matched price for the next few minutes.
+          The whole rotation — cancel any live listing, settle this
+          bidder's offer, deliver the collateral, pay the protocol
+          legs, return the remainder to you — runs in a single
+          transaction. Either every step succeeds together, or
+          nothing changes on-chain.
         </p>
         <p>
-          Notify your bidder ({offer.bidder.slice(0, 12)}…) before
-          clicking Match so they can complete the purchase before
-          someone else snipes it.
-        </p>
-        <p>
-          {/* Issue #337 — cross-link to the Advanced User Guide
-              section that explains the race window in depth +
-              points forward to the v2 atomic-match track (#333).
-              `marketingUrl` resolves to https://vaipakam.com in
-              prod and respects the VITE_MARKETING_URL dev
-              override so local dev links to the local www
-              dev server.
-
-              The anchor uses the slug `markdownToc.headingComponents()`
-              auto-installs on every `<h3>` — slugify of the heading
-              text. The `<a id="..."></a>` inline anchor pattern used
-              elsewhere in the same file doesn't actually take effect
-              on H3s in the rendered DOM because the h3 component
-              overrides `id` with the slug (see Codex P2 round-1
-              finding on PR #338). The `/en/` prefix pins the link to
-              the English guide so users whose browser locale routes
-              them via `DefaultLocaleRedirect` to /<locale>/help/...
-              don't land on a localized guide that doesn't yet carry
-              this section (queued for translation, follow-up batch). */}
+          {/* Cross-link to the Advanced User Guide section that
+              explains the atomic match flow. The `/en/` prefix
+              pins the link to the English guide so users whose
+              browser locale routes them via `DefaultLocaleRedirect`
+              don't land on a localized guide that doesn't yet
+              carry this section. */}
           <a
             href={marketingUrl(
               '/en/help/advanced#matching-opensea-offers-on-a-prepay-listing',
@@ -318,10 +309,9 @@ function RaceWindowModal({
             target="_blank"
             rel="noopener noreferrer"
           >
-            Learn more about the race window
+            Learn more about atomic match-rotation
           </a>
-          {' '}— mitigation options + what the v2 atomic-match
-          fix will change.
+          .
         </p>
         <div className="action-row">
           <button

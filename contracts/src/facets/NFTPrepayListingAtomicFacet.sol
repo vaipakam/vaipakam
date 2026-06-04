@@ -169,13 +169,6 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
     ///         can match-by-selector across both flows.
     error PrepayListingBufferNotConfigured();
 
-    /// @notice §17.9 defense-in-depth — pre-Seaport balance assert.
-    ///         `Σ(consideration) != offer_value` means a routing
-    ///         bug would silently leak the unspent ERC20 to the
-    ///         executor's sweep surface. Reverting at the facet
-    ///         boundary is strictly more informative.
-    error AtomicMatchBalanceMismatch(uint256 consumed, uint256 available);
-
     /// @notice Raja's gas-griefing caps (§17.4 calldata caps).
     error BidderExtraDataTooLarge(uint256 supplied, uint256 cap);
     error TooManyResolvers(uint256 supplied, uint256 cap);
@@ -333,8 +326,6 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
             bidder,
             pctx,
             executor,
-            offerValue,
-            bidderFeeTotal,
             effectiveAsk,
             salt,
             conduitKey,
@@ -695,23 +686,23 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
         BidderOrder calldata bidder,
         IVaipakamPrepayContext.PrepayContext memory pctx,
         address executor,
-        uint256 offerValue,
-        uint256 bidderFeeTotal,
         uint256 effectiveAsk,
         uint256 salt,
         bytes32 conduitKey,
         CriteriaResolver[] calldata resolvers
     ) private {
-        // Pre-Seaport balance assertion (§17.9 load-bearing —
-        // Codex round-7 P3: Seaport doesn't require offer items
-        // to end at zero, so without this an under-fulfillment
-        // would silently leak the unspent ERC20 to the recipient
-        // sweep surface).
-        uint256 consumed = bidderFeeTotal + pctx.lenderLeg + pctx.treasuryLeg + (effectiveAsk - pctx.lenderLeg - pctx.treasuryLeg);
-        if (consumed != offerValue) {
-            revert AtomicMatchBalanceMismatch(consumed, offerValue);
-        }
-
+        // Pre-Seaport §17.9 balance assertion deleted in #348
+        // follow-up: the consumed-vs-offerValue check was
+        // algebraically tautological — `consumed = bidderFeeTotal +
+        // lenderLeg + treasuryLeg + (effectiveAsk - lenderLeg -
+        // treasuryLeg) = bidderFeeTotal + effectiveAsk`, and
+        // `effectiveAsk = offerValue - bidderFeeTotal` by upstream
+        // construction, so `consumed == offerValue` was true by
+        // identity. The AskBelowFloor + FeeLegsExceedAvailable
+        // gates upstream are the real protocol-leg + routing
+        // assertions; they're independent of the tautology and
+        // fire before reaching here. `offerValue` + `bidderFeeTotal`
+        // dropped from the signature with the guard.
         AdvancedOrder[] memory orders = new AdvancedOrder[](2);
         orders[0] = _wrapBidderOrder(bidder);
         orders[1] = _buildVaipakamAdvancedOrder(pctx, effectiveAsk, salt, conduitKey, executor);
