@@ -374,18 +374,19 @@ export function OpenSeaOffersSection({
           // `totalBps` and re-classification kicks in on next
           // render.
           //
-          // Slug-pairing happens POST-HOOK (see
-          // `feeScheduleMatchesSlug` + `effectiveFeeSchedule`
-          // below). Doing the pairing inside the hook input would
-          // create a self-reference to `offersResult.slug` —
-          // that's TDZ, both at runtime and at TypeScript's
-          // `block-scoped-used-before-declaration` check. The
-          // single-frame window where the previous loan's
-          // `feeBpsTotal` might leak into the new loan's
+          // The schedule cache (`feeCheck`) is paired with the
+          // CURRENT loan's slug at the post-hook block below — no
+          // self-reference to `offersResult.slug` inside the hook
+          // input. (TDZ would otherwise trip at runtime and at
+          // TypeScript's block-scoped-used-before-declaration
+          // check.) The single-frame window where the previous
+          // loan's `feeBpsTotal` might leak into the new loan's
           // classification is bounded by the section's
-          // `stateMatchesLoan` synchronous gate (returns null
-          // until `recordedLoanId` catches up), so no
-          // misleading row reaches the DOM.
+          // `stateMatchesLoan` synchronous gate (returns null until
+          // `recordedLoanId` catches up), so no misleading row
+          // reaches the DOM. T-086 Block D: the atomic facet's
+          // on-chain re-check is the authoritative fee gate at
+          // match time.
           feeBpsTotal: feeCheck.schedule?.totalBps ?? 10_000,
           // Codex round-2 P2 #339 — bake the per-leg-rounding
           // floor into the classification so offers below the
@@ -415,8 +416,10 @@ export function OpenSeaOffersSection({
     // is resolved by this very fetch, so gating the fetch on the
     // schedule (which gates on the slug) creates a chicken-and-egg
     // deadlock. Schedule-not-yet-fetched is handled via the
-    // `feeBpsTotal: 10_000` sentinel above; the Match button stays
-    // disabled via `actionLoading: effectiveFeeSchedule === null`.
+    // `feeBpsTotal: 10_000` sentinel above. T-086 Block D / Codex
+    // round-3 P2 on PR #346: the Match button is no longer gated
+    // on `effectiveFeeSchedule` — the atomic facet re-checks the
+    // bidder order's fee sum on-chain.
     {
       paused:
         threshold === null ||
@@ -424,17 +427,14 @@ export function OpenSeaOffersSection({
     },
   );
 
-  // POST-HOOK pairing — the schedule cache must record the slug the
-  // hook is currently surfacing offers for. On loan navigation the
-  // effect resets the cache to {slug: null, schedule: null} before
-  // the next fetch lands; until that re-fetch completes for the new
-  // slug, the Match flow stays gated.
-  const feeScheduleMatchesSlug =
-    feeCheck.slug !== null &&
-    feeCheck.slug === offersResult.slug &&
-    feeCheck.schedule !== null;
-  const effectiveFeeSchedule: ParsedFeeSchedule | null =
-    feeScheduleMatchesSlug ? feeCheck.schedule : null;
+  // T-086 Block D / Codex round-3 P2 on PR #346: the `feeCheck`
+  // cache still feeds `feeBpsTotal` + `minRequiredFeeBps` into
+  // `useOpenSeaOffers` for offer-side filtering, but no longer
+  // gates the Match button itself — `effectiveFeeSchedule` +
+  // `feeScheduleMatchesSlug` (which derived the render-time gate
+  // from `feeCheck.slug === offersResult.slug && feeCheck.schedule
+  // !== null`) were deleted with the gate. The atomic facet does
+  // the authoritative fee-sum check on-chain at match time.
 
   useEffect(() => {
     // Reset on slug change so the next-pass fetch runs against
@@ -513,15 +513,17 @@ export function OpenSeaOffersSection({
       loanId={loanId}
       offersResult={offersResult}
       hasActiveListing={live !== null && live !== undefined}
-      // #331 — block Match clicks until the schedule has been
-      // fetched for the CURRENT slug. The disabled-button state
-      // piggybacks on `actionLoading` to keep the panel's
-      // disable-buttons logic in one place. `effectiveFeeSchedule`
-      // resolves non-null only when the cached slug matches the
-      // offers feed's slug; until then the gate stays closed.
-      actionLoading={
-        prepayListing.actionLoading || effectiveFeeSchedule === null
-      }
+      // T-086 Round-6 / Block D (#345) + Codex PR #346 round-3 P2:
+      // Match must NOT be gated on the OpenSea fee-schedule fetch.
+      // The atomic match-rotation path no longer sends fee legs and
+      // the on-chain facet re-checks the bidder order's actual fee
+      // sum (`Σ(bidder fees) <= effectiveAsk`). #331's render-time
+      // gate is dropped — the schedule fetch is now advisory only,
+      // used for the optional preview in the UI rather than to
+      // disable Match. If `/opensea/collection` is briefly down or
+      // returns malformed data, Match stays clickable and the
+      // on-chain re-check is the authoritative gate.
+      actionLoading={prepayListing.actionLoading}
       decimals={decimals}
       onMatchOffer={async (offer) => {
         // The borrower is taking the offer's value as the new ask;

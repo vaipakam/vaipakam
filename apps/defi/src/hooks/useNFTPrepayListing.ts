@@ -376,16 +376,19 @@ export function useNFTPrepayListing(
         // the freshest listing into `listing` state so the banner
         // and child action mode flip atomically with the tx.
         const { sawTransition, latest } = await waitForIndexer(flow, prior);
-        if (flow === 'cancelPrepayListing') {
-          // Cancel's on-chain final state is KNOWN once `tx.wait()`
-          // resolves: the listing is gone. Stale indexer rows
+        if (flow === 'cancelPrepayListing' || flow === 'matchOpenSeaOffer') {
+          // Cancel + atomic match both have KNOWN-terminal on-chain
+          // final state once `tx.wait()` resolves: the listing is
+          // gone (cancel) or the order has filled and the executor
+          // emitted `clearOrder` (match). Stale indexer rows
           // returned during the poll window (the worker hasn't
-          // ingested the cancel yet) must NOT override that. Codex
-          // round-6 P2 fix on PR #308 — without this short-circuit,
-          // a lagging-indexer cancel would settle the pre-cancel
-          // row back into `listing`, keeping the banner visible
-          // and making a second cancel attempt revert with
-          // `PrepayListingNotFound`.
+          // ingested the terminal event yet) must NOT override
+          // that. Codex round-6 P2 fix on PR #308 added cancel;
+          // Codex round-3 P2 on PR #346 extended to matchOpenSeaOffer
+          // — without this short-circuit, a lagging-indexer match
+          // would settle the pre-match row back into `listing`,
+          // keeping the banner visible and making a second action
+          // attempt revert against an already-terminal loan.
           setListing(undefined);
         } else if (sawTransition) {
           // Post / update: indexer caught up and confirmed the
