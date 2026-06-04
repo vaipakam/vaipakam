@@ -145,6 +145,20 @@ interface IListingExecutorRecorder {
             uint64 auctionEndTime
         );
 
+    /// @notice T-086 Round-7 follow-up (Codex round-12 P2 #1) —
+    ///         return the per-order conduit address + key recorded at
+    ///         `recordOrder` time. Auto-list Case-B rotations MUST
+    ///         reuse the EXISTING listing's conduit (the borrower's
+    ///         original approved choice) rather than swap to the
+    ///         Case-A default; otherwise rotations on listings posted
+    ///         with a non-default conduit fail the executor's
+    ///         allow-list check (or silently change the conduit out
+    ///         from under the borrower).
+    function orderContextConduit(bytes32 orderHash)
+        external
+        view
+        returns (address conduit, bytes32 conduitKey);
+
     /// @notice T-086 Round-7 (Issue #355) — the Seaport address bound
     ///         at executor-init time. Read by the auto-list path so
     ///         `LibPrepayOrder.buildAndHash` can construct the

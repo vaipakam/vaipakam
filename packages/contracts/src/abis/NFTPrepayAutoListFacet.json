@@ -14,7 +14,7 @@
   },
   {
     "type": "event",
-    "name": "AutoListPosted",
+    "name": "PrepayListingPosted",
     "inputs": [
       {
         "name": "loanId",
@@ -23,7 +23,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "caller",
+        "name": "lister",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -63,13 +63,54 @@
         "type": "address",
         "indexed": false,
         "internalType": "address"
+      },
+      {
+        "name": "endAskPrice",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "auctionEndTime",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "mode",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "feeLegs",
+        "type": "tuple[]",
+        "indexed": false,
+        "internalType": "struct FeeLeg[]",
+        "components": [
+          {
+            "name": "recipient",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "startAmount",
+            "type": "uint96",
+            "internalType": "uint96"
+          },
+          {
+            "name": "endAmount",
+            "type": "uint96",
+            "internalType": "uint96"
+          }
+        ]
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "AutoListRotated",
+    "name": "PrepayListingUpdated",
     "inputs": [
       {
         "name": "loanId",
@@ -78,7 +119,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "caller",
+        "name": "lister",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -86,13 +127,13 @@
       {
         "name": "oldOrderHash",
         "type": "bytes32",
-        "indexed": true,
+        "indexed": false,
         "internalType": "bytes32"
       },
       {
         "name": "newOrderHash",
         "type": "bytes32",
-        "indexed": false,
+        "indexed": true,
         "internalType": "bytes32"
       },
       {
@@ -102,10 +143,69 @@
         "internalType": "uint256"
       },
       {
-        "name": "bCondReason",
+        "name": "conduit",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "newConduitKey",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "newSalt",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "executor",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "newEndAskPrice",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newAuctionEndTime",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "mode",
         "type": "uint8",
         "indexed": false,
         "internalType": "uint8"
+      },
+      {
+        "name": "feeLegs",
+        "type": "tuple[]",
+        "indexed": false,
+        "internalType": "struct FeeLeg[]",
+        "components": [
+          {
+            "name": "recipient",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "startAmount",
+            "type": "uint96",
+            "internalType": "uint96"
+          },
+          {
+            "name": "endAmount",
+            "type": "uint96",
+            "internalType": "uint96"
+          }
+        ]
       }
     ],
     "anonymous": false

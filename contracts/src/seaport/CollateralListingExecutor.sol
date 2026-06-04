@@ -282,6 +282,22 @@ contract CollateralListingExecutor is
         return (ctx.mode, ctx.askPrice, ctx.endAskPrice, ctx.startTime, ctx.auctionEndTime);
     }
 
+    /// @notice T-086 Round-7 follow-up (Codex round-12 P2 #1) —
+    ///         returns the conduit + key from the recorded
+    ///         `OrderContext`. The auto-list path's Case-B rotation
+    ///         reads these so a rotation reuses the borrower's
+    ///         original approved conduit choice (NOT the Case-A
+    ///         default), keeping the rotation faithful to what the
+    ///         executor's allow-list already accepts.
+    function orderContextConduit(bytes32 orderHash)
+        external
+        view
+        returns (address conduit, bytes32 conduitKey)
+    {
+        OrderContext memory ctx = orderContext[orderHash];
+        return (ctx.conduit, ctx.conduitKey);
+    }
+
     /// @notice T-086 Round-5 Block A (#313) — fee-leg overflow guard,
     ///         mirroring the existing `LoanIdOverflow` pattern. Triggers
     ///         on `feeLegs.length > MAX_FEE_LEGS` at record time before

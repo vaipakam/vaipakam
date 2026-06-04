@@ -64,43 +64,57 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
 
     // ─── Events ─────────────────────────────────────────────────────────
 
-    /// @notice Fires on every permissionless Case-A fresh post.
-    ///         Mirrors the borrower-post `PrepayListingPosted` event
-    ///         shape so the indexer can fold it through the same
-    ///         pipeline — the `caller` field differentiates auto-list
-    ///         from borrower-driven posts (caller != ownerOf).
+    /// @notice T-086 Round-7 follow-up (Codex round-12 P2 #2) — Case A
+    ///         emits the EXISTING `PrepayListingPosted` event (declared
+    ///         on `NFTPrepayListingFacet`) byte-for-byte. Solidity
+    ///         allows the same event signature on multiple contracts;
+    ///         the topic hash is identical so the indexer's existing
+    ///         `PrepayListingPosted` handler catches auto-list Case A
+    ///         posts without per-event-type branching. The `lister`
+    ///         field identifies the caller — for auto-list it is the
+    ///         keeper (caller != ownerOf), letting the indexer pivot
+    ///         third-party rotations by comparing `lister` to the
+    ///         loan's borrower-position holder.
     /// @custom:event-category state-change/loan-mutation
-    event AutoListPosted(
+    event PrepayListingPosted(
         uint256 indexed loanId,
-        address indexed caller,
+        address indexed lister,
         bytes32 indexed orderHash,
         uint256 askPrice,
         address conduit,
         bytes32 conduitKey,
         uint256 salt,
-        address executor
+        address executor,
+        uint256 endAskPrice,
+        uint256 auctionEndTime,
+        uint8 mode,
+        FeeLeg[] feeLegs
     );
 
-    /// @notice Fires on every permissionless Case-B rotation.
-    ///         Includes the old + new orderHash + the B-cond reason
-    ///         tag so off-chain monitoring can pivot on which gate
-    ///         fired the rotation.
+    /// @notice T-086 Round-7 follow-up (Codex round-12 P2 #2) — Case B
+    ///         emits the EXISTING `PrepayListingUpdated` event
+    ///         byte-for-byte. Same indexer-reuse rationale as
+    ///         `PrepayListingPosted` above. The B-cond reason tag the
+    ///         earlier `AutoListRotated` event surfaced is derivable
+    ///         off-chain from the recorded `OrderContext` of the OLD
+    ///         orderHash (mode + ask shape + Dutch timing) vs. the
+    ///         live pctx, so no on-chain event field is required.
     /// @custom:event-category state-change/loan-mutation
-    event AutoListRotated(
+    event PrepayListingUpdated(
         uint256 indexed loanId,
-        address indexed caller,
-        bytes32 indexed oldOrderHash,
-        bytes32 newOrderHash,
+        address indexed lister,
+        bytes32 oldOrderHash,
+        bytes32 indexed newOrderHash,
         uint256 newAskPrice,
-        uint8 bCondReason
+        address conduit,
+        bytes32 newConduitKey,
+        uint256 newSalt,
+        address executor,
+        uint256 newEndAskPrice,
+        uint256 newAuctionEndTime,
+        uint8 mode,
+        FeeLeg[] feeLegs
     );
-
-    /// @notice B-cond reason tags surfaced on `AutoListRotated`.
-    uint8 internal constant B_COND_1_FIXED_ABOVE_FLOOR = 1;
-    uint8 internal constant B_COND_2_SIGNED_LEGS_SHORT = 2;
-    uint8 internal constant B_COND_3A_DUTCH_NEVER_REACHES = 3;
-    uint8 internal constant B_COND_3B_DUTCH_TOO_LATE = 4;
-    uint8 internal constant B_COND_5_DUTCH_EXPIRED = 5;
 
     // ─── Public entry ───────────────────────────────────────────────────
 
@@ -260,7 +274,7 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
         );
         LibPrepayListingWiring.wire(s, loan, orderHash, conduit, address(executor));
 
-        emit AutoListPosted(
+        emit PrepayListingPosted(
             loanId,
             msg.sender,
             orderHash,
@@ -268,7 +282,11 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
             conduit,
             conduitKey,
             salt,
-            address(executor)
+            address(executor),
+            askPrice,                    // endAskPrice = askPrice
+            0,                           // auctionEndTime sentinel
+            PREPAY_MODE_FIXED_PRICE,
+            emptyFeeLegs
         );
     }
 
@@ -316,7 +334,7 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
 
         // ── Evaluate B-cond gates ──────────────────────────────────────
         uint256 askAtFloor_ = LibAutoList.askAtFloor(pctx, s.cfgPrepayListingBufferBps);
-        uint8 bCondReason = _pickBCondReason(
+        bool shouldRotate = _pickBCondReason(
             ctxMode,
             uint256(ctxAskPrice),
             uint256(ctxEndAskPrice),
@@ -331,7 +349,7 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
             loanEnd,
             s.cfgPrepayListingDutchGraceMarginSec
         );
-        if (bCondReason == 0) revert AutoListAlreadyAtOrBelowFloor(loanId);
+        if (!shouldRotate) revert AutoListAlreadyAtOrBelowFloor(loanId);
 
         // ── Rotation steps (per §18.5) ─────────────────────────────────
         _performRotation(
@@ -343,8 +361,7 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
             existingOrderHash,
             pinnedExecutor,
             recordedFeeLegs,
-            askAtFloor_,
-            bCondReason
+            askAtFloor_
         );
     }
 
@@ -368,22 +385,22 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
         uint256 gracePeriodEnd,
         uint256 loanEnd,
         uint256 dutchGraceMarginSec
-    ) private view returns (uint8) {
+    ) private view returns (bool) {
         if (LibAutoList.b_cond_5_dutchExpired(ctxMode, ctxAuctionEndTime)) {
-            return B_COND_5_DUTCH_EXPIRED;
+            return true;
         }
         if (LibAutoList.b_cond_1_fixedPriceAboveFloor(
             ctxMode, ctxAskPrice, askAtFloor_, recordedFeeLegs
         )) {
-            return B_COND_1_FIXED_ABOVE_FLOOR;
+            return true;
         }
         if (LibAutoList.b_cond_2_signedLegsShort(pctx, recordedLender, recordedTreasury)) {
-            return B_COND_2_SIGNED_LEGS_SHORT;
+            return true;
         }
         if (LibAutoList.b_cond_3a_dutchNeverReachesFee(
             ctxMode, ctxEndAskPrice, askAtFloor_, recordedFeeLegs
         )) {
-            return B_COND_3A_DUTCH_NEVER_REACHES;
+            return true;
         }
         if (LibAutoList.b_cond_3b_dutchReachesFloorTooLate(
             ctxMode,
@@ -397,9 +414,9 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
             loanEnd,
             dutchGraceMarginSec
         )) {
-            return B_COND_3B_DUTCH_TOO_LATE;
+            return true;
         }
-        return 0;
+        return false;
     }
 
     /// @dev Steps 2-9 from §18.5: snapshot already taken; unwire →
@@ -418,8 +435,7 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
         bytes32 oldOrderHash,
         address pinnedExecutor,
         FeeLeg[] memory recordedFeeLegs,
-        uint256 askAtFloor_,
-        uint8 bCondReason
+        uint256 askAtFloor_
     ) private {
         // Step 3 — clear the vault's per-orderHash binding.
         LibPrepayListingWiring.unwire(s, loan, oldOrderHash);
@@ -452,11 +468,21 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
 
         // Step 7 — recordOrder on the CURRENT executor (== pinned
         // here per the migration-staleness gate in the caller).
+        //
+        // T-086 Round-7 follow-up (Codex round-12 P2 #1): INHERIT the
+        // OLD listing's conduit + conduitKey from the recorded
+        // `OrderContext` — NOT the Case-A default. The borrower's
+        // original conduit choice was already approved by the
+        // executor's allow-list and committed to the order; rotating
+        // to a different conduit would (a) fail
+        // `executor.approvedConduits` if the default isn't approved
+        // OR not configured at all, and (b) silently change the
+        // borrower's signed conduit choice out from under them. The
+        // recorded `OrderContext.conduit` / `conduitKey` are exactly
+        // the values the executor itself uses for cancel-time
+        // reconstruction; reusing them keeps the rotation faithful.
         IListingExecutorRecorder executor = IListingExecutorRecorder(pinnedExecutor);
-        address conduit = LibPrepayOrder.resolveConduit(
-            executor.seaport(),
-            s.cfgPrepayListingAutoListConduitKey
-        );
+        (address conduit, bytes32 conduitKey) = executor.orderContextConduit(oldOrderHash);
         if (!executor.approvedConduits(conduit)) revert AutoListConduitNotConfigured();
 
         bytes32 newOrderHash = LibPrepayOrder.buildAndHashMem(
@@ -468,7 +494,7 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
             pctx.lenderLeg,
             pctx.treasuryLeg,
             salt,
-            s.cfgPrepayListingAutoListConduitKey,
+            conduitKey,
             recordedFeeLegs
         );
 
@@ -482,7 +508,7 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
             newOrderHash,
             loanId,
             conduit,
-            s.cfgPrepayListingAutoListConduitKey,
+            conduitKey,
             salt,
             block.timestamp,
             rotatedAsk,
@@ -497,6 +523,27 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
         // Step 9 — wire the new orderHash to the vault.
         LibPrepayListingWiring.wire(s, loan, newOrderHash, conduit, address(executor));
 
-        emit AutoListRotated(loanId, msg.sender, oldOrderHash, newOrderHash, rotatedAsk, bCondReason);
+        // T-086 Round-7 follow-up (Codex round-12 P2 #2) — emit the
+        // EXISTING `PrepayListingUpdated` event byte-for-byte. Indexers
+        // pivot third-party rotations off `lister != ownerOf`; no new
+        // event ABI required. The B-cond reason that the previous
+        // `AutoListRotated` event carried is derivable off-chain from
+        // the old `OrderContext` (mode + ask shape + Dutch timing) vs.
+        // the live pctx.
+        emit PrepayListingUpdated(
+            loanId,
+            msg.sender,
+            oldOrderHash,
+            newOrderHash,
+            rotatedAsk,
+            conduit,
+            conduitKey,
+            salt,
+            address(executor),
+            rotatedAsk,                  // newEndAskPrice = newAskPrice
+            0,                           // newAuctionEndTime sentinel
+            PREPAY_MODE_FIXED_PRICE,
+            recordedFeeLegs
+        );
     }
 }

@@ -252,10 +252,24 @@ library LibAutoList {
         // saturating `safeMargin` for loans whose grace duration is
         // shorter than the configured margin. `t_safe =
         // gracePeriodEnd - safeMargin`.
+        //
+        // T-086 Round-7 follow-up (Codex round-12 P2 #3): apply the
+        // 3600-second protocol default when the operator-set value is
+        // zero. Without this fallback the storage slot starts at 0 on
+        // a fresh deploy and B-cond-3b's t_safe collapses to
+        // `gracePeriodEnd`, so a Dutch listing decaying to the floor
+        // only in the final tick of grace silently passes the gate.
+        // That contradicts the design intent of the knob — the
+        // setter is bounded against `MIN_LOAN_GRACE_PERIOD - 60`
+        // precisely because the protocol expects a non-zero safe-
+        // margin. Defaulting in the read path means operators don't
+        // have to remember a one-time post-deploy config tx.
+        uint256 effectiveMarginSec =
+            dutchGraceMarginSec == 0 ? 3600 : dutchGraceMarginSec;
         uint256 graceDuration = loanGracePeriodEnd - loanEnd;
         uint256 safeMargin =
-            graceDuration > dutchGraceMarginSec
-                ? dutchGraceMarginSec
+            graceDuration > effectiveMarginSec
+                ? effectiveMarginSec
                 : graceDuration / 2;
         uint256 t_safe = loanGracePeriodEnd - safeMargin;
 

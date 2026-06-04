@@ -67,6 +67,8 @@ const DELIBERATELY_NOT_HANDLED = {
     'partial-liquidation companion event — surfaced via activity_events but the loans row keeps its Active status with reduced principal/collateral (read via live RPC getLoanDetails). Schema-side indexing is a follow-up.',
   LiquidationDiscounted:
     'discount-path companion event (flash-loan path, FlashLoanLiquidationPath.md) — surfaced via activity_events; the loan-status flip to Defaulted arrives via LoanDefaulted which IS handled.',
+  AutoListOptOutCleared:
+    'T-086 Round-7 (#355) — borrower-side opt-out clear is a UI-facing action signal, not a loans/offers row mutation. The opt-out flag itself is per-loan diamond storage read live via TestMutatorFacet.getPrepayListingAutoListOptedOut at render time; the indexer does not mirror it. Round-12 follow-up dropped the AutoListPosted / AutoListRotated events in favor of re-emitting the existing PrepayListingPosted / PrepayListingUpdated (those ARE handled), so this is the only auto-list signal that does not fold into an existing handler.',
 };
 
 /** Recursively collect every `.sol` file under a directory. */

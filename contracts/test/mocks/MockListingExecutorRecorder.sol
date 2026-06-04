@@ -301,4 +301,23 @@ contract MockListingExecutorRecorder is IListingExecutorRecorder {
             isSet: true
         });
     }
+
+    /// @inheritdoc IListingExecutorRecorder
+    /// @notice T-086 Round-7 follow-up (Codex round-12 P2 #1) —
+    ///         returns the conduit + key from the most recent matching
+    ///         `recordOrder` call (or zeros for an unknown orderHash).
+    function orderContextConduit(bytes32 orderHash)
+        external
+        view
+        override
+        returns (address conduit, bytes32 conduitKey)
+    {
+        for (uint256 i = _recordOrderCalls.length; i > 0; ) {
+            unchecked { --i; }
+            if (_recordOrderCalls[i].orderHash == orderHash) {
+                return (_recordOrderCalls[i].conduit, _recordOrderCalls[i].conduitKey);
+            }
+        }
+        return (address(0), bytes32(0));
+    }
 }
