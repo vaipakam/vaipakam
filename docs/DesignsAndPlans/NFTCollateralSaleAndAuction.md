@@ -2316,7 +2316,10 @@ the dapp / keeper UX can distinguish them):
 | `cfgPrepayListingBufferBps > 0` | `PrepayListingBufferNotConfigured()` (reuse) |
 | Collateral listing executor configured | `ExecutorNotSet()` (reuse) |
 | Borrower's vault deployed | `VaultNotDeployed(borrower)` (reuse) |
-| Caller is NOT the loan borrower (defense — see §18.7) | `NotEligibleAutoLister(caller)` |
+| Caller is NOT the current borrower-position-NFT holder (§18.7) | `NotEligibleAutoLister(caller)` |
+| Caller is NOT sanctioned (Tier-1) (§18.10) | `SanctionedAddress(msg.sender)` (reuse) |
+| Loan borrower is NOT sanctioned (Tier-1; surplus-routing safety, §18.10) | `BorrowerSanctioned(loanId, borrower)` |
+| Borrower has NOT opted out via cancel-during-grace (§18.7) | `AutoListBorrowerOptedOut(loanId)` |
 
 `whenNotPaused`: the master kill-switch must be enabled. If governance has
 paused prepay-listings the auto-list path stays paused too.
@@ -2325,9 +2328,14 @@ paused prepay-listings the auto-list path stays paused too.
 ERC-1271 binding) and calls into the executor + vault; reentrancy guard
 matches the existing post / update paths.
 
-The `caller != borrower` check is deliberate (§18.7). Borrowers retain
-`postPrepayListing` / `updatePrepayListing` / `cancelPrepayListing` rights
-throughout grace; the auto-list path is for **third parties** only.
+The "caller is NOT the current position-NFT holder" check
+(`msg.sender != VaipakamNFTFacet(address(this)).ownerOf(loan.borrowerTokenId)`)
+is deliberate (§18.7). Codex round-1 P2 on PR #356 ratified that the test
+must be against the CURRENT position-NFT holder — not the snapshot
+`loan.borrower` address — because every other prepay-listing surface
+(`post/update/cancel`) gates on `ownerOf(loan.borrowerTokenId)`. The current
+position holder retains those first-party paths; the auto-list path is for
+**third parties** only.
 
 ### 18.4 Floor formula — direct reuse of `AskBelowFloor`
 
@@ -2392,92 +2400,194 @@ Behave identically to `postPrepayListing` minus the
     same event shape Block A emits. The `poster` field naturally identifies
     a third-party caller via the indexed address.
 
-**Case B — Existing listing with ask > `askAtFloor`** (`orderHash != bytes32(0)`).
+**Case B — Existing listing exists, needs rotation** (`orderHash != bytes32(0)`).
 
-Behave identically to `updatePrepayListing` minus the position-holder
-check, plus a comparison of old vs new ask:
+Codex round-1 P2s on PR #356 refined the original draft's "rotate if ask >
+askAtFloor" check into a three-condition test. The rotation MUST fire if
+**any** of these holds:
 
-1. Run the shared baseline preconditions (§18.3).
-2. Load existing listing's ask via `executor.orderContext(orderHash).askPrice`.
-   (`recordOrder` already pins this on every post / update; the storage
-   read is one slot.)
-3. Recompute `askAtFloor` per §18.5 Case A step 3.
-4. **If `existingAsk <= askAtFloor`: revert `AlreadyAtOrBelowFloor(loanId,
-   existingAsk, askAtFloor)`.** No-op; the listing is already at or below
-   the floor. Distinct revert symbol so the keeper bot can suppress this as
-   "nothing to do" rather than treating it as an error.
-5. Else: run the same cancel + repost sequence `updatePrepayListing` runs.
-   That sequence (executor `clearOrder` + vault `revokeListingOrderHash` +
-   build new order + `executor.recordOrder` + vault wire) lives in
-   `_buildAndRecordUpdate` already. Pass the same defaults (salt, conduit
-   key, empty feeLegs) as Case A.
-6. Emit `PrepayListingUpdated(...)` — same event shape `updatePrepayListing`
-   emits. The `caller` field naturally identifies a third-party rotation via
-   the indexed address.
+- **B-cond-1 — ask too high**: `existingAsk > askAtFloor`. The original
+  rotation case.
+- **B-cond-2 — recorded legs stale**: `recordedLenderLeg < liveLenderLeg`
+  OR `recordedTreasuryLeg < liveTreasuryLeg`. After enough interest
+  accrual the executor's `_checkOrderPreconditions` rejects a fill that
+  doesn't cover the live legs, so a "still at-floor" listing can become
+  unfillable. The rotation rebuilds the order with fresh legs even when
+  the aggregate ask stays the same.
+- **B-cond-3 — Dutch decay never reaches floor**: existing listing is
+  Dutch (`auctionMode == PREPAY_MODE_DUTCH`) AND its `endAskPrice >
+  askAtFloor`. The Dutch auction never decays to floor within
+  `auctionEndTime`, so an "always above floor" Dutch listing preserves
+  the exact aspirational-ask failure mode §18 is closing. The rotation
+  cancels the Dutch listing and replaces it with a fixed-price-at-floor
+  listing.
 
-**Case C — Existing listing already at or below floor.**
+If **none** of B-cond-1 / -2 / -3 holds: revert `AlreadyAtOrBelowFloor(
+loanId, existingAsk, askAtFloor)`. No-op.
 
-Revert `AlreadyAtOrBelowFloor` (per §18.5 Case B step 4). The keeper bot
-treats this as the steady-state success: nothing to do; check again next
-grace window. Operationally important: the keeper's re-trigger loop MUST
-suppress this revert reason so the operator's alerts surface real failures
-only.
+**Pinned-executor read** (Codex round-1 P2 fix): the orderContext
+storage that pins `existingAsk` and the recorded legs lives on the
+EXECUTOR THAT RECORDED THE ORDER — not on whatever
+`s.collateralListingExecutor` happens to point at right now. Governance
+can rotate the executor between post-time and Round-7's call. Mirror
+`updatePrepayListing`'s read: load the pinned executor via
+`s.prepayListingExecutor[loanId]` and call `orderContext(orderHash)` on
+THAT address. If the pinned executor's view returns a zero ask or
+reverts, that's an indicator of a half-deployed migration; emit
+`AutoListExecutorMigrationStale(loanId, pinnedExecutor)` revert so the
+operator surfaces the migration gap rather than silently letting the
+auto-list path skip live listings.
 
-**Case D — Dutch listing exists.**
+Rotation steps (after the B-cond gate fires):
 
-`auctionMode == PREPAY_MODE_DUTCH` (1). Two sub-paths:
+1. Run the shared baseline preconditions (§18.3) + the pinned-executor
+   read above.
+2. Run `LibPrepayListingWiring.unwire(s, loan, orderHash)` to clear the
+   vault binding for the old order (mirrors `updatePrepayListing`).
+3. Best-effort `executor.tryCancelOnSeaport(orderHash, ...)` so OpenSea
+   sees the old order canceled and won't surface it to bidders. Already
+   "best-effort" by Block-A semantics; any revert here is swallowed.
+4. **Preserve `feeLegs` from the old order's `orderContext`** (Codex
+   round-1 P2 fix). If the old listing was posted with `feeLegs` (a
+   fee-aware borrower listing on a fee-enforced collection), the
+   rotation MUST copy the same `feeLegs[]` into the new order rather
+   than posting with empty `feeLegs[]` that would render the new order
+   unfillable on SignedZone. The exception is fee-free collections
+   (`feeLegs.length == 0` on the old order) — the new order is also
+   `feeLegs: []`.
+5. Build the new order with `askAtFloor` + `salt` (per §18.14
+   resolution: `keccak256(abi.encode(loanId, block.timestamp,
+   msg.sender, s.prepayListingAutoListNonce[loanId]++))`) + default
+   conduit key.
+6. `executor.recordOrder(...)` on the CURRENT
+   `s.collateralListingExecutor` (NOT the pinned-old one — the new
+   listing pins fresh).
+7. Write `s.prepayListingOrderHash[loanId] = newOrderHash` and
+   `s.prepayListingExecutor[loanId] = currentExecutor`.
+8. `LibPrepayListingWiring.wire(s, loan, newOrderHash, conduit,
+   currentExecutor)`.
+9. Emit `PrepayListingUpdated(...)` — same event shape
+   `updatePrepayListing` emits. The `caller` field naturally identifies
+   a third-party rotation via the indexed address. Add a new
+   `autoListReason: uint8` field naming which B-cond fired (1, 2, or
+   3) so the indexer can pivot rotations by motivation.
 
-- If the Dutch auction's `endAskPrice >= askAtFloor`: the auction will
-  decay TO at least the floor before its `auctionEndTime`. Revert
-  `DutchAlreadyDecaysToFloor(...)`. No-op.
-- If the Dutch auction's `endAskPrice < askAtFloor`: that should be
-  impossible by construction (`DutchEndAskBelowProjectedFloorPlusFees`
-  rejects post-time). Defense-in-depth revert
-  `DutchInvariantViolated(...)`.
+**Case C — Existing listing already at-or-below floor with live legs.**
 
-Effectively Round 7 leaves Dutch listings alone — they decay on their own
-schedule and the grace-period rotation isn't needed.
+Revert `AlreadyAtOrBelowFloor` (per §18.5 Case B no-fire branch). The
+keeper bot treats this as the steady-state success: nothing to do;
+check again next grace window. Operationally important: the keeper's
+re-trigger loop MUST suppress this revert reason so the operator's
+alerts surface real failures only.
+
+**Case D — Fee-enforced collection, no existing listing.**
+
+For Case A (fresh post), the design MUST refuse to post for
+fee-enforced collections — Codex round-1 P2 fix. Posting with empty
+`feeLegs[]` records a Seaport listing that the SignedZone validation
+rejects at fill time; the listing exists in our storage + on OpenSea
+but can't be matched by anyone, which is strictly worse than no listing
+(it consumes the salt + locks the `prepayListingOrderHash` slot,
+blocking subsequent auto-list calls). Revert
+`FeeEnforcedCollectionAutoListSkipped(loanId, collection)` so the
+keeper bot can record + skip cleanly. The follow-up (§18.13) extends
+this v1 to support fee-enforced collections via off-chain feeLegs
+attestation; until then fee-enforced collections fall through to the
+existing default flow at grace expiry.
+
+For Case B's `feeLegs`-preservation path (rotation of an existing
+fee-aware listing), the rotation is safe because the new order copies
+the old feeLegs verbatim.
 
 ### 18.6 Re-trigger semantics & ratchet behaviour
 
-`autoListAtFloorOnGrace` is intentionally **idempotent in the no-op case
-but ratchet-down in the actionable case**:
+`autoListAtFloorOnGrace` is intentionally **idempotent in the no-op case,
+ratchet-down on aspirational ask (B-cond-1), and refresh-on-stale-legs
+(B-cond-2)**:
 
 - A caller running it at hour 1 of grace posts (or rotates to) `askAtFloor(t=1)`.
 - A caller running it at hour 6 of grace finds `existingAsk == askAtFloor(t=1)`.
   Since `lenderLeg(t=6) > lenderLeg(t=1)` (interest accrued), `askAtFloor(t=6) >
-  askAtFloor(t=1)`. So `existingAsk < askAtFloor` and §18.5 Case B step 4
-  reverts `AlreadyAtOrBelowFloor`. The listing stays at the hour-1 ask.
+  askAtFloor(t=1)`. The aggregate-ask comparison (B-cond-1) would NOT fire
+  (`existingAsk < askAtFloor` means ask isn't aspirationally high).
+  HOWEVER — and this is the Codex round-1 P2 refinement — the recorded
+  legs on the hour-1 order are stale relative to live legs at hour 6, so
+  **B-cond-2 fires**: rotation rebuilds the order with fresh legs but the
+  same `askAtFloor` boundary semantics. The aggregate ask of the new
+  order is `askAtFloor(t=6)` — higher than the hour-1 order's
+  `askAtFloor(t=1)` — but the boundary still holds: the new order
+  matches when offers cover the live legs.
 
-This is the right behaviour: once the listing is at-or-below the floor a
-buyer would need to clear, the lender's protocol-leg + buffer is covered for
-**any** match within grace. Bumping the ask up to chase accrued interest
-would reduce the chance of sale and benefit nobody (the protocol-leg gate
-inside the atomic facet still enforces the live `lenderLeg + treasuryLeg`
-at match time, so a too-low listing match would revert there anyway).
+The "no upward re-rotate when ask only" invariant from the original
+draft is now expressed at the B-cond-1 layer only: if recorded legs
+match live legs (no interest accrued between calls), B-cond-2 doesn't
+fire and the lower-ask listing stays in place. The combined effect:
+- Borrower posted at aspirational ask → keeper rotates down (B-cond-1).
+- Keeper auto-listed at floor → grace tick passes → another keeper call
+  sees stale legs → rotates up to track live floor (B-cond-2).
+- Borrower posted at exact floor with live legs → keeper calls again
+  one block later → B-cond-1 no-fire (existingAsk == askAtFloor),
+  B-cond-2 no-fire (legs match) → revert `AlreadyAtOrBelowFloor`.
 
-### 18.7 Why `caller != borrower` is a precondition
+### 18.7 Why caller-is-not-current-position-holder is a precondition + borrower opt-out
 
-The auto-list path is for **third parties only**. The borrower already has
-three first-party paths to put the NFT up at the floor:
+The auto-list path is for **third parties only**. The current borrower-
+position-NFT holder — read via
+`VaipakamNFTFacet(address(this)).ownerOf(loan.borrowerTokenId)`, NOT the
+snapshot `loan.borrower` address — already has three first-party paths
+to put the NFT up at the floor:
 
 - `postPrepayListing(loanId, askAtFloor, salt, conduitKey, [])`.
 - `postPrepayDutchListing(loanId, askAtFloor, askAtFloor, auctionEndTime, salt, conduitKey, [])`.
 - `updatePrepayListing(loanId, askAtFloor, salt, conduitKey, [])` to rotate a
   prior aspirational ask.
 
-Routing the borrower through `autoListAtFloorOnGrace` would:
+Codex round-1 P2 on PR #356 flagged the original draft's use of
+`loan.borrower`: every other prepay-listing surface
+(`post/update/cancel`) keys authority off `ownerOf(loan.borrowerTokenId)`,
+not the snapshot address. If the borrower-position NFT has transferred
+(borrower sold their position via the NFT secondary market), the CURRENT
+holder is the effective borrower-authority — they should still get the
+first-party paths and be excluded from the third-party auto-list path.
+The snapshot `loan.borrower` is irrelevant to the live authority test.
 
-- Skip the `NotPositionHolder` check (the borrower IS the position holder,
+Routing the current position holder through `autoListAtFloorOnGrace` would:
+
+- Skip the `NotPositionHolder` check (they ARE the position holder,
   so this isn't a security issue, but it bypasses an audited gate).
-- Surface confusing event semantics: `PrepayListingPosted.poster == borrower`
-  via the auto-list path looks identical to a normal `postPrepayListing` in
-  the indexer, defeating the analytics value of distinguishing third-party
-  rotations from borrower-driven ones.
-- Bypass the borrower's freedom to set a custom salt / conduit key / feeLegs.
+- Surface confusing event semantics: `PrepayListingPosted.poster ==
+  positionHolder` via the auto-list path looks identical to a normal
+  `postPrepayListing` in the indexer, defeating the analytics value of
+  distinguishing third-party rotations from borrower-driven ones.
 
-So the `NotEligibleAutoLister(caller)` revert keeps the borrower out of this
-function. Their first-party paths stay open throughout grace.
+**Borrower opt-out via cancel (Codex round-1 P2 on PR #356).** The
+original draft claimed that "cancel + repay later" was a borrower escape
+hatch, but Codex correctly observed that any third-party keeper can
+immediately re-call `autoListAtFloorOnGrace` after the borrower cancels,
+defeating the escape. The fix is a borrower-controlled opt-out flag:
+
+- New storage slot `s.prepayListingAutoListOptedOut[loanId] : bool`.
+- `cancelPrepayListing(loanId)` sets the flag to `true` AUTOMATICALLY
+  when called during grace
+  (`block.timestamp >= loanEnd && block.timestamp < gracePeriodEnd`).
+  Outside-grace cancels (i.e. during the active loan) don't set the
+  flag — the borrower has time to repay or reconsider their listing
+  plan.
+- `autoListAtFloorOnGrace(loanId)` reverts `AutoListBorrowerOptedOut(
+  loanId)` when the flag is set.
+- The borrower can clear the flag explicitly via a new
+  `clearAutoListOptOut(loanId)` setter (position-holder-only,
+  whenNotPaused, nonReentrant). This lets the borrower change their
+  mind without canceling-and-not-cancelling games — they explicitly
+  signal "I'm OK with keepers auto-listing me at floor".
+- The opt-out flag is bounded in lifecycle: it's reset to `false` on
+  loan terminal events (repay, default, refinance, preclose). The
+  per-loan slot doesn't carry across loans because `loanId` is unique.
+
+This preserves the borrower's real escape hatch: cancel during grace,
+auto-list path is locked, borrower has the grace window to repay
+without keeper interference. If they choose to clear the opt-out flag
+they re-enable third-party rotation explicitly.
 
 ### 18.8 Borrower escape hatch & match-time semantics
 
@@ -2510,7 +2620,9 @@ for a follow-up if the volunteer-keeper model proves insufficient.
 ### 18.9 Default-fallthrough still owns post-grace
 
 Round 7 changes **nothing** about the post-grace flow. At
-`block.timestamp >= gracePeriodEnd`:
+`block.timestamp > gracePeriodEnd` (Codex round-1 P3 fix — `>`, not
+`>=`; matches the existing `DefaultedFacet.sol:217` boundary semantics
+that leave the grace-end tick itself open for repay + Seaport fills):
 
 - `DefaultedFacet.markDefaulted(loanId)` runs (anyone). The borrower-NFT
   lock release happens via the existing `LibERC721._unlock` path §5.4
@@ -2526,6 +2638,13 @@ auto-listing is more likely to fill (lower ask), so the
 `markDefaulted` + cleanup path runs less often in practice. When it does
 run, the semantics are unchanged.
 
+`autoListAtFloorOnGrace` itself uses `block.timestamp < gracePeriodEnd`
+(strict less-than) so the grace-end tick is the boundary at which the
+auto-list path closes AND `markDefaulted` opens — they don't overlap.
+The strict inequalities also mean a tx mining at exactly
+`gracePeriodEnd` is rejected by both functions; the next-block tx mining
+at `gracePeriodEnd + 1` goes through `markDefaulted` only.
+
 ### 18.10 Sanctions tier
 
 Per §6 of the existing doc + the retail-deploy policy in `CLAUDE.md`, the
@@ -2535,14 +2654,42 @@ EarlyWithdrawal, PrecloseFacet, RefinanceFacet, ClaimFacet). Tier-2
 close-out paths (`repayLoan`, `markDefaulted`, time-based liquidation) stay
 open so an unflagged counterparty can be made whole.
 
-`autoListAtFloorOnGrace` is a **Tier-2 path**: it's a third-party close-out
-helper that benefits the lender + the borrower (price discovery during
-grace) without giving the caller any position. A sanctioned third party
-calling this MAY be allowed through (gate off); a sanctioned borrower
-sitting in the loan-borrower slot SHOULD be reachable via this path so the
-loan can still be closed out cleanly. So the function gates on
-`_assertNotSanctioned(msg.sender)` only — NOT on `loan.borrower`. That
-matches `markDefaulted` and `repayLoan`'s Tier-2 sanctions handling.
+`autoListAtFloorOnGrace` is **Tier-1** on both the caller AND the borrower
+slots — a substantial revision of the original draft's "Tier-2"
+classification. Codex round-1 raised two findings that forced this
+re-classification:
+
+- **Codex round-1 P2 (caller side)**: the original draft text said
+  "sanctioned third party may be allowed through" but the precondition
+  table called `_assertNotSanctioned(msg.sender)`. Contradiction.
+  Resolution: caller IS Tier-1 (gated). A sanctioned keeper can't
+  trigger the auto-list path. Liveness is preserved because **any**
+  unflagged third party can still call — the keeper bot fleet doesn't
+  rely on a specific sanctioned address.
+- **Codex round-1 P1 (borrower side)**: a sanctioned borrower whose
+  loan auto-lists fills on OpenSea pays the **surplus** (= offer.value -
+  floor - bidder fees) directly to the current borrower-position holder
+  via Seaport's consideration[N].recipient routing. That's a direct
+  value transfer to a sanctioned address — fundamentally incompatible
+  with the Tier-2 "frozen behind ClaimFacet" precedent that other
+  close-out paths use. The freeze-and-claim variant (route surplus to
+  `address(this)` and add a Claim path) is significant additional design
+  surface. For Round 7 v1, the simpler resolution is to **block the
+  path entirely when `loan.borrower` is sanctioned**: revert
+  `BorrowerSanctioned(loanId, borrower)`. The sanctioned-borrower loan
+  falls through to the existing default flow at grace expiry — NFT to
+  lender, no surplus surfaced. If a freeze-and-claim variant is added
+  later (separate design round), Tier-2 borrower-side classification
+  can be revisited.
+
+So both `_assertNotSanctioned(msg.sender)` AND
+`_assertNotSanctioned(loan.borrower)` gate the function. This is a
+strictly stronger surface than `markDefaulted` and `repayLoan` because
+those paths don't surface surplus to the borrower — they're pure debt
+settlement. The auto-list path's economic shape (surplus to borrower on
+fill) is closer to `acceptOffer` than to `markDefaulted`, so the Tier-1
+classification follows the economic-surplus-routing precedent of the
+other Tier-1 paths.
 
 ### 18.11 Failure-mode walkthrough
 
@@ -2610,20 +2757,65 @@ against on the implementation PR:
 - Cancel-after-autoList: borrower retains cancel rights post-autoList.
 - Repay-after-autoList: borrower can still repay; subsequent stale-listing
   cleanup works.
-- Sanctions: caller-sanctioned blocks (Tier-1 wrt the **caller**);
-  borrower-sanctioned passes through (Tier-2).
+- Sanctions: caller-sanctioned blocks (Tier-1); borrower-sanctioned
+  blocks (Tier-1; Codex round-1 P1 fix to prevent direct surplus routing
+  to sanctioned address).
+- Borrower opt-out via grace-window `cancelPrepayListing`:
+  `test_autoList_blocksAfterBorrowerCancelDuringGrace` (set flag) +
+  `test_clearAutoListOptOut_borrowerOnly` (clear flag is
+  position-holder-only) + `test_clearAutoListOptOut_resetOnTerminal`
+  (flag clears on terminal events).
+- Pinned-executor read (Codex round-1 P2): after governance rotates
+  the executor between post-time and auto-list call,
+  `test_autoList_readsPinnedExecutorNotCurrent` verifies the old
+  order's askPrice + recorded legs are loaded from the pinned executor;
+  `test_autoList_revertsExecutorMigrationStale` verifies the explicit
+  revert when the pinned executor's view is unreadable.
+- Stale-recorded-legs rotation (Codex round-1 P2): after interest
+  accrual makes `recordedLenderLeg < liveLenderLeg`,
+  `test_autoList_rotatesOnStaleLegs` verifies rotation even when ask
+  is already at floor.
+- Dutch endAskPrice > floor (Codex round-1 P2):
+  `test_autoList_rotatesDutchThatNeverReachesFloor` verifies a
+  borrower-posted Dutch listing whose `endAskPrice > askAtFloor` gets
+  canceled + replaced with a fixed-price-at-floor listing.
+- Fee-aware listing preservation (Codex round-1 P2):
+  `test_autoList_preservesFeeLegsOnRotation` verifies the new order
+  copies the old `feeLegs[]` when rotating a fee-aware listing on a
+  fee-enforced collection.
+- Fee-enforced collection fresh-post refusal (Codex round-1 P2):
+  `test_autoList_refusesFreshPostOnFeeEnforcedCollection` verifies the
+  `FeeEnforcedCollectionAutoListSkipped` revert when no listing
+  exists + the collection is fee-enforced.
+- Salt collision avoidance (Codex round-1 P2):
+  `test_autoList_handlesSameBlockReListAfterCancel` posts → borrower
+  cancels mid-block → auto-list re-posts in same block; the
+  `s.prepayListingAutoListNonce[loanId]++` bump ensures the second
+  post's salt differs from the first's even with identical
+  `(loanId, block.timestamp, msg.sender)`.
+- Caller is current position holder (Codex round-1 P2): after the
+  borrower-position NFT transfers,
+  `test_autoList_revertsForCurrentHolderEvenIfNotOriginalBorrower`
+  verifies the precondition gates on `ownerOf(loan.borrowerTokenId)`,
+  not on `loan.borrower`.
 - Event correctness: `PrepayListingPosted` / `PrepayListingUpdated`'s
   `poster` / `caller` field identifies the third-party caller (not the
-  borrower) on the auto-list path; downstream indexer pivots cleanly on
-  the address.
+  current position holder) on the auto-list path; downstream indexer
+  pivots cleanly on the address. New `autoListReason: uint8` field on
+  `PrepayListingUpdated` distinguishes B-cond-1 vs B-cond-2 vs B-cond-3
+  rotations.
 
 ### 18.13 Out of scope (Round 7 v1)
 
-- **Fee-enforced collection support in auto-listing.** Empty `feeLegs[]`
-  v1; fee-enforced collections will fail to match via the existing
-  `FeeLegsExceedAvailable` gate inside the atomic facet. Adding the
-  off-chain OpenSea Collection API fetch + `feeLegs[]` rebuild for the
-  auto-listing path is a separate follow-up. Tracked.
+- **Fee-enforced collection support in fresh-post auto-listing.**
+  Codex round-1 P2 ratified that v1 must REFUSE to fresh-post on
+  fee-enforced collections (revert
+  `FeeEnforcedCollectionAutoListSkipped`) rather than posting an
+  unfillable empty-feeLegs order. Adding the off-chain OpenSea
+  Collection API fetch + `feeLegs[]` rebuild for the auto-listing
+  fresh-post path is a separate follow-up. Tracked. (Case-B rotations
+  on fee-enforced collections DO work in v1 — they preserve the
+  borrower's already-supplied feeLegs from the old order.)
 - **Dutch / English auction modes in the auto-listing path.** Auto-listing
   is fixed-price-at-floor only. Borrower-initiated Dutch / English stay
   borrower-controlled.
@@ -2633,40 +2825,89 @@ against on the implementation PR:
 - **Multi-marketplace auto-listing.** Issue #281 is the home for cross-
   marketplace work; #355's auto-list path targets OpenSea (Seaport) only.
 
-### 18.14 Open questions for ratification
+### 18.14 Resolved design decisions (post-round-1)
 
-1. **Salt derivation.** Round-7 draft uses
-   `keccak256(abi.encode(loanId, block.timestamp, msg.sender))`. Is the
-   `block.timestamp` field sufficient to disambiguate two callers in the
-   same block (post-race winner only), or do we need a `++_autoListNonce`
-   counter for stronger guarantees? Working assumption: timestamp + caller
-   is enough since the loser reverts at `s.prepayListingOrderHash != 0`
-   anyway.
+Codex round-1 adversarial review resolved the 5 originally open
+questions from this section. Documenting the resolutions here so the
+implementation PR has a single source of truth:
 
-2. **Conduit key default.** Hardcoded OpenSea conduit key in the function
-   body, OR a governance-set `cfgAutoListConduitKey` for future-proofing
-   (e.g., if OpenSea rotates conduits). Working assumption: hardcoded for
-   v1; storage-backed default is a small follow-up if needed.
+1. **Salt derivation — RESOLVED with stronger guarantees.** The
+   original `keccak256(abi.encode(loanId, block.timestamp, msg.sender))`
+   would collide if the same keeper auto-lists → borrower cancels →
+   same keeper re-auto-lists in the same block (Codex round-1 P2).
+   Seaport could then reject the second post because the orderHash
+   matches an already-canceled one. The resolved salt formula is:
 
-3. **`AlreadyAtOrBelowFloor` as revert vs no-op.** Reverting wastes the
-   caller's gas (which is fine since the operation was a no-op anyway)
-   but surfaces the state to keeper bots clearly. Alternative: return a
-   `bool didRotate` so the call always succeeds and the keeper checks the
-   return. Working assumption: revert with distinct symbol; keeper bots
-   filter on the symbol.
+   ```
+   salt = keccak256(abi.encode(
+       loanId,
+       block.timestamp,
+       msg.sender,
+       s.prepayListingAutoListNonce[loanId]++
+   ))
+   ```
 
-4. **Round-7 deferred-fee-enforced-collections design.** Should the v1
-   auto-listing skip fee-enforced collections (refuse to post AT ALL when
-   the collection has SignedZone) or post-with-empty-feeLegs (post anyway,
-   fail at match)? Working assumption: post anyway; a fee-enforced
-   collection's auto-listing will sit unmatched but doesn't actively break
-   anything. A bidder who tries to match will hit the SignedZone revert,
-   which is fine.
+   The per-loan nonce bump on every successful auto-list call
+   guarantees uniqueness across all paths (same-block-cancel-and-relist,
+   keeper-race winners, post-cancel re-posts). The nonce is bounded —
+   `loanId` is unique and the nonce only increments on this one path.
 
-5. **Implementation Issue's atomic-merge boundary.** Following Block D's
-   D.1+D.2+D.3+D.4 pattern: contract + tests + dapp wiring + keeper bot
-   wiring in ONE PR? Or contract + tests in one PR, dapp + keeper wiring
-   separate? Working assumption: contract + tests in one PR (smaller
-   surface than Block D); dapp wiring follow-up (the dapp doesn't strictly
-   need to call this — keeper bots are the primary caller); keeper bot
-   wiring in `vaipakam-keeper-bot` follow-up.
+2. **Conduit key default — RESOLVED as hardcoded OpenSea conduit key
+   for v1.** Storage-backed `cfgAutoListConduitKey` left as a small
+   follow-up if OpenSea rotates conduits.
+
+3. **`AlreadyAtOrBelowFloor` as revert vs no-op — RESOLVED as revert
+   with distinct symbol.** Keeper bots filter on the symbol; gas waste
+   is acceptable since the operation is a no-op anyway. Plus the new
+   `AutoListExecutorMigrationStale`, `BorrowerSanctioned`,
+   `AutoListBorrowerOptedOut`, `FeeEnforcedCollectionAutoListSkipped`,
+   `NotEligibleAutoLister` revert symbols all share the same
+   "filter-by-symbol" pattern.
+
+4. **Fee-enforced collection v1 behaviour — RESOLVED as refuse-to-
+   fresh-post + preserve-feeLegs-on-rotation.** Per Codex round-1 P2:
+   posting empty `feeLegs[]` on a fee-enforced collection is strictly
+   worse than not posting (unfillable order locks the
+   `prepayListingOrderHash` slot, blocks subsequent calls). v1 reverts
+   `FeeEnforcedCollectionAutoListSkipped` on fresh-post. Case-B
+   rotations on already-fee-aware listings DO work in v1 by copying
+   the borrower's old `feeLegs[]` verbatim.
+
+5. **Implementation atomic-merge boundary — RESOLVED.** Contract +
+   tests in ONE PR. The smaller surface than Block D (one new
+   function + one new selector + one new storage slot for the opt-out
+   flag + one new storage slot for the per-loan nonce) doesn't justify
+   the D.1-D.4 atomic-merge constraint. Dapp wiring + keeper bot
+   wiring follow-up Issues open after contract PR merges; the contract
+   surface stands alone (callable from the cli for operator-driven
+   tests).
+
+### 18.15 Open questions remaining (post-round-1)
+
+Codex round-1 surfaced one new question that needs explicit user
+ratification before implementation:
+
+1. **Sanctioned-borrower Tier-1 vs freeze-and-claim variant
+   (forward-looking).** Round-7 v1 blocks the auto-list path for
+   sanctioned borrowers (`BorrowerSanctioned` revert) so the path
+   can't route surplus directly. The future freeze-and-claim variant
+   would let the sanctioned-borrower loan auto-list with surplus
+   routed to `address(this)` and a Claim path that keeps the value
+   frozen until the sanctions are lifted. **Question for ratification:
+   is the v1 Tier-1 block sufficient, or does this surface a real
+   liveness problem the freeze-and-claim variant should address in
+   v1?** Working assumption: v1 Tier-1 block; freeze-and-claim is a
+   separate design round if/when needed.
+
+2. **Per-loan opt-out flag persistence across post-cancel actions
+   (Codex round-1 P2 secondary).** The §18.7 design says
+   `s.prepayListingAutoListOptedOut[loanId]` clears on terminal
+   events (repay, default, refinance, preclose). Does it ALSO clear
+   on borrower-driven `postPrepayListing` after a grace-window
+   cancel? Argument FOR clearing: borrower posting a fresh listing
+   signals they want a sale; the auto-list path's stale-leg refresh
+   should re-enable. Argument AGAINST: the borrower's cancel was
+   their signal, and the new post might be at an aspirational ask
+   the borrower doesn't want keepers to undercut. Working assumption:
+   clears on `postPrepayListing` / `postPrepayDutchListing` after
+   grace cancel — the new post is the new signal.
