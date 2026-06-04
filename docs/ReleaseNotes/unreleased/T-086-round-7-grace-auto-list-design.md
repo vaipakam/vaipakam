@@ -81,6 +81,31 @@ predicate (round-3.8's `+2` short tests become round-3.9's
 tests symmetric to the Dutch pins, plus two B-cond-1 Dutch
 carve-out tests.
 
+Round-3.11 (against Codex round-11) closes three internal-
+consistency issues round-3.10's edits exposed. First, §18.14's
+fee-leg accessor section still documented the round-3.6 shape
+`orderFeeLegs(bytes32) returns (bytes memory)` with calldata
+decoding, contradicting round-3.10's typed `FeeLeg[]` getter
+fix in §18.5 — implementers following the §18.14 checklist
+would have reintroduced the bytes-wrap revert. Round-3.11
+updates §18.14 to the corrected typed-getter shape. Second,
+the §17.7 Block D reuse table still claimed
+`IListingExecutorRecorder.recordOrder` was unchanged,
+contradicting round-3.10's signature extension in §18.14 —
+implementers would have missed updating the atomic-match
+facet's call site and mock-recorder co-update. Round-3.11
+documents the full extended signature in the Block D table.
+Third, §18.12's opt-out test obligation said the borrower
+posting a fresh listing auto-clears the opt-out flag, while
+§18.7 (canonical) says the flag is sticky and requires
+explicit `clearAutoListOptOut` — the round-3.4 wording left
+both branches as "working assumption" tests, an ambiguity
+round-3.11 resolves to §18.7's sticky semantics. The
+test obligation is renamed
+`test_autoList_requiresExplicitClearAfterBorrowerCancel`
+and round-3.10's salt-collision section reference is
+updated accordingly.
+
 Round-3.10 (against Codex round-10) addresses five follow-on
 issues across the schema-extension and grace-end boundary
 surface. First, §18.5 Case B step 2's fee-leg snapshot was

@@ -935,12 +935,29 @@ small ways** that Block D must carry as a UUPS implementation swap:
    recognise the new mode + dispatch to a `_assertOrderContentAtomic`
    helper (verifies the counter-order shape Block D commits to in
    §17.7).
-2. **`recordOrder` interface extension is NOT required** — the existing
-   `recordOrder(orderHash, loanId, conduit, conduitKey, salt,
-   startTime, askPrice, endAskPrice, auctionEndTime, mode, feeLegs)`
-   signature already carries everything the atomic-match path needs;
-   atomic-match calls pass `endAskPrice == askPrice` and
-   `auctionEndTime == 0` (same as fixed-price).
+2. **`recordOrder` interface extension IS required by Round 7
+   (round-3.11 correction against Codex round-11 P2 #2 —
+   supersedes the round-2 reuse-table claim).** §18.14
+   round-3.10 extends `IListingExecutorRecorder.recordOrder`
+   with `uint128 signedLenderAmount` + `uint128
+   signedTreasuryAmount` so the executor's new
+   `_orderProtocolLegs[orderHash]` snapshot (round-3.8) can
+   be populated from the about-to-be-signed Seaport
+   `consideration[0].amount` / `consideration[1].amount` —
+   NOT re-derived from `askPrice` (which is the borrower-
+   slack bug round-3.8's signed-legs snapshot exists to
+   avoid). The full extended signature is `recordOrder(
+   orderHash, loanId, conduit, conduitKey, salt, startTime,
+   askPrice, endAskPrice, auctionEndTime, mode, feeLegs,
+   signedLenderAmount, signedTreasuryAmount)`. The Block D
+   atomic-match facet (this section) MUST pass these two
+   amounts, same as every other post path. For atomic-match
+   posts the values come from the about-to-be-signed
+   counter-order `consideration[0/1].amount` resolved from
+   `pctx` at match-time. The interface bump propagates through
+   `MockListingExecutorRecorder.sol` co-update +
+   `exportFrontendAbis.sh` re-export + the dapp + keeper-bot
+   ABI sync per the facet-addition checklist.
 
 Executor changes are deployed via the standard UUPS upgrade flow (see
 the executor's `_authorizeUpgrade(onlyOwner)` path). The audit scope
@@ -3560,15 +3577,22 @@ against on the implementation PR:
   `test_autoList_doesNotRotateOnLenderRecipientDrift` confirms
   the documented behavior (rotation does NOT fire on drift
   alone; borrower's cancel path remains the recovery).
-- Opt-out flag lifecycle (round-3.4 against Raja P3 #5 — §18.15
-  #2 working assumption ratification): when the working
-  assumption stands ("flag clears on borrower-driven
-  post-after-grace-cancel"), add
-  `test_autoList_postAfterGraceCancelClearsOptOut` (borrower
-  cancels during grace → opt-out flag SET → borrower posts a
-  fresh listing → opt-out flag CLEARS → keeper auto-list call
-  succeeds via Case A). If the working assumption is reversed
-  (sticky opt-out across borrower post), the test inverts.
+- Opt-out flag lifecycle (round-3.4 + round-3.11 ratification
+  of §18.7's STICKY semantics — supersedes round-3.4's
+  working-assumption hedging language).
+  `test_autoList_requiresExplicitClearAfterBorrowerCancel`
+  (borrower cancels during grace → opt-out flag SET → borrower
+  posts a fresh listing → opt-out flag STAYS SET → keeper
+  `autoListAtFloorOnGrace` reverts `AutoListBorrowerOptedOut`
+  → borrower calls `clearAutoListOptOut(loanId)` → opt-out
+  flag CLEARS → keeper Case-A auto-list call succeeds).
+  This pins §18.7's "sticky opt-out, explicit clear required"
+  semantics: a borrower post does NOT auto-clear; only
+  `clearAutoListOptOut` does. Round-3.11 against Codex round-11
+  P2 — the round-3.4 wording left both branches as
+  "working assumption" tests, contradicting §18.7's resolved
+  flow. Round-3.11 collapses to the single sticky-semantics
+  test that the canonical spec describes.
 - Fee-aware listing preservation (Codex round-1 P2):
   `test_autoList_preservesFeeLegsOnRotation` verifies the new
   order copies the old `feeLegs[]` when rotating a fee-aware
@@ -3605,9 +3629,10 @@ against on the implementation PR:
   second post's salt differs from the first's even with
   identical `(loanId, block.timestamp, msg.sender)`. The
   borrower-cancel-then-relist variant is covered by
-  `test_autoList_postAfterGraceCancelClearsOptOut`
-  (the borrower must explicitly call `clearAutoListOptOut`
-  before auto-list can post again — that's the intended
+  `test_autoList_requiresExplicitClearAfterBorrowerCancel`
+  (sticky opt-out: borrower post does NOT clear the flag;
+  borrower must explicitly call `clearAutoListOptOut` before
+  keeper auto-list can post again — that's the intended
   escape-hatch semantics from §18.7).
 - Caller is current position holder (Codex round-1 P2): after the
   borrower-position NFT transfers,
@@ -3758,14 +3783,24 @@ implementation PR has a single source of truth:
    load-bearing for the auto-list path:
 
    - **`_orderFeeLegs[orderHash]` snapshot + accessor
-     (round-3.6 against Codex round-6 P2 #4)**: a new
+     (round-3.6 against Codex round-6 P2 #4; round-3.11
+     ABI corrected against Codex round-11 P2 #1)**: a new
      `mapping(bytes32 => FeeLeg[])` written on post,
      read by the auto-list rotation path BEFORE
-     `clearOrder` (which wipes it). The accessor is
-     `ICollateralListingExecutorFeeLegs(executor).
-     orderFeeLegs(bytes32) returns (bytes memory)` —
-     calldata-encoded `FeeLeg[]`, decoded at the read
-     site. See §18.5 Case B step 2.
+     `clearOrder` (which wipes it). The accessor is an
+     explicit Solidity getter on the executor
+     (`CollateralListingExecutor.orderFeeLegs(bytes32)
+     returns (FeeLeg[] memory)`) — the typed array is
+     returned directly. Round-3.10 originally documented
+     the accessor as `returns (bytes memory)` with
+     calldata decoding at the read site; that shape was
+     wrong (the auto-getter for `mapping(bytes32 =>
+     FeeLeg[])` only returns single items by `(bytes32,
+     uint256)` index, so the executor adds an explicit
+     typed-array getter — and a `bytes`-wrap path would
+     `abi.decode` an already-decoded return as bytes,
+     reverting). See §18.5 Case B step 2 for the call
+     site that uses the corrected getter.
    - **`_orderProtocolLegs[orderHash]` snapshot + accessor
      (round-3.8 against Codex round-8 P2 #2)**: a new
      `mapping(bytes32 => SignedProtocolLegs)` with
