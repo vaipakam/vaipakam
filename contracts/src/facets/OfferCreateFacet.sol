@@ -229,6 +229,13 @@ contract OfferCreateFacet is
     ///         to list on Seaport; ERC20 collateral is structurally
     ///         incompatible.
     error ParallelSaleRequiresNFTCollateral();
+    /// @notice T-086 Round-8 (#358) Codex round-8 P2 #4 — raised
+    ///         when `allowsParallelSale = true` is set on an offer
+    ///         whose `fillMode != Aon`. Partial / IOC fills create
+    ///         multiple loans against a single offer's collateral,
+    ///         incompatible with parallel-sale's single-loan split-
+    ///         on-fill assumption. Borrower must use Aon mode.
+    error ParallelSaleRequiresAonFillMode();
     // NotOfferCreator inherited from IVaipakamErrors
     error InsufficientAllowance();
     error LiquidityMismatch();
@@ -1219,6 +1226,18 @@ contract OfferCreateFacet is
                 offer.collateralAssetType != LibVaipakam.AssetType.ERC1155
             ) {
                 revert ParallelSaleRequiresNFTCollateral();
+            }
+            // Codex round-8 P2 #4 — mirror the post-time
+            // `ParallelSaleRequiresSingleFill` check at create time
+            // (`fillMode != Aon` is incompatible with parallel-sale's
+            // single-loan assumption). Without this gate, a borrower
+            // can stamp an offer as parallel-sale-enabled with
+            // `Partial` or `IOC` fillMode + finds out only at
+            // `postParallelSaleListing` time that the listing can never
+            // post — misleading UX, looks like a borrow-OR-sell
+            // option in the offer's terms but is unusable.
+            if (offer.fillMode != LibVaipakam.FillMode.Aon) {
+                revert ParallelSaleRequiresAonFillMode();
             }
         }
         offer.allowsParallelSale = params.allowsParallelSale;

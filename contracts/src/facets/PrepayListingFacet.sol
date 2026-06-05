@@ -495,6 +495,12 @@ contract PrepayListingFacet is
         // Seaport's transferFrom completes outside this validateOrder
         // callback per round-4 P1 #1).
         bytes32 loanKeyedHash = s.prepayListingOrderHash[loanId];
+        // Codex round-8 P2 #1 — capture the PINNED executor BEFORE
+        // we delete the storage slot. Per-loan pin (not the global
+        // `s.collateralListingExecutor`) so a governance rotation
+        // between post-time and now still forwards `clearOrder` to
+        // the executor that actually recorded the binding.
+        address loanKeyedExecutor = s.prepayListingExecutor[loanId];
         delete s.prepayListingOrderHash[loanId];
         delete s.prepayListingExecutor[loanId];
         delete s.prepayListingAutoListOptedOut[loanId];
@@ -504,19 +510,6 @@ contract PrepayListingFacet is
             if (loanVault != address(0)) {
                 VaipakamVaultImplementation(loanVault).revokeListingOrderHash(loanKeyedHash);
             }
-            // Codex round-7 P2 #2 — also clear the executor's loan-
-            // keyed `orderContext` + `_orderFeeLegs` + `_orderProtocolLegs`
-            // bindings. The existing loan-keyed `validateOrder` path
-            // does these clears AFTER calling `executorFinalizePrepaySale`
-            // — but my offer-keyed split path runs inside the OFFER-
-            // keyed `validateOrder`, which doesn't touch the loan-
-            // keyed bookkeeping. Forward to the executor's
-            // `clearOrder(bytes32)` which deletes those slots atomically.
-            // The executor's clearOrder gates on
-            // `msg.sender == vaipakamDiamond` — satisfied because
-            // we're calling from a diamond facet (msg.sender = diamond
-            // proxy address).
-            address loanKeyedExecutor = s.collateralListingExecutor;
             if (loanKeyedExecutor != address(0)) {
                 IListingExecutorRecorder(loanKeyedExecutor).clearOrder(loanKeyedHash);
             }
