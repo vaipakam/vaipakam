@@ -161,6 +161,17 @@ export interface OfferData {
    *  (0 = Partial / 1 = Aon / 2 = Ioc). Default 0 preserves
    *  backward-compat with every legacy offer. */
   fillMode?: number;
+  /** T-086 Round-8 §19.7e + Codex round-13 P2 #2 — NFT-collateral
+   *  asset type (0 = ERC20, 1 = ERC721, 2 = ERC1155). Surfaced
+   *  alongside `collateralTokenId` so the MyOffersTable "Sold" row
+   *  (and any other NFT-collateral-shape consumer) can render the
+   *  cell as "NFT #N" instead of falling back to an ERC20 amount.
+   *  Optional because legacy event-payload-derived OfferData shapes
+   *  predate the indexer-side wiring. */
+  collateralAssetType?: number;
+  /** T-086 Round-8 §19.7e + Codex round-13 P2 #2 — NFT collateral
+   *  token id. See {@link collateralAssetType} above. */
+  collateralTokenId?: bigint;
 }
 
 type TabFilter = 'both' | 'lender' | 'borrower';
@@ -248,6 +259,14 @@ export type RawOffer = {
   expiresAt?: bigint;
   /** #125 — fill-mode flavour: 0 Partial / 1 AON / 2 IOC. */
   fillMode?: bigint | number;
+  /** T-086 Round-8 §19.7e + Codex round-13 P2 #2 — NFT-collateral
+   *  asset type (0 = ERC20, 1 = ERC721, 2 = ERC1155). Bubbled up
+   *  through `indexedToRawOffer`; legacy event-payload shapes leave
+   *  it `undefined`. */
+  collateralAssetType?: number | bigint;
+  /** T-086 Round-8 §19.7e + Codex round-13 P2 #2 — NFT collateral
+   *  token id. See {@link collateralAssetType} above. */
+  collateralTokenId?: bigint;
 };
 
 export function toOfferData(r: RawOffer): OfferData {
@@ -284,6 +303,13 @@ export function toOfferData(r: RawOffer): OfferData {
     amountFilled: r.amountFilled,
     expiresAt: r.expiresAt,
     fillMode: r.fillMode === undefined ? undefined : Number(r.fillMode),
+    // T-086 Round-8 §19.7e + Codex round-13 P2 #2 — bubble NFT
+    // collateral type + token id through so the MyOffersTable "Sold"
+    // row can render proper NFT-shape collateral cells. Same
+    // undefined-defaulting pattern as the optional fields above.
+    collateralAssetType:
+      r.collateralAssetType === undefined ? undefined : Number(r.collateralAssetType),
+    collateralTokenId: r.collateralTokenId,
   };
 }
 

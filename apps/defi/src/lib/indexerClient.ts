@@ -637,6 +637,15 @@ export function indexedToRawOffer(o: IndexedOffer): {
   // (GTC + Partial) rendering identically.
   expiresAt: bigint;
   fillMode: number;
+  // T-086 Round-8 §19.7e (#358) + Codex round-13 P2 #2 — surfaced for
+  // the MyOffersTable "Sold" row's collateral cell, which renders
+  // NFT-shape collateral by reading `collateralAssetType` + `collateralTokenId`
+  // (NFT collateral is the only kind eligible for the
+  // `consumed_by_sale` parallel-sale terminal). The indexer already
+  // carries both fields on `IndexedOffer`; this entry just bubbles them
+  // up through the RawOffer → OfferData mapper.
+  collateralAssetType: number;
+  collateralTokenId: bigint;
 } {
   // Optional field narrowing for indexer/frontend version skew —
   // see the IndexedOffer doc-block. Each new-since-0014 field is
@@ -665,6 +674,8 @@ export function indexedToRawOffer(o: IndexedOffer): {
     amountFilled: BigInt(o.amountFilled),
     expiresAt: BigInt(o.expiresAt ?? 0),
     fillMode: o.fillMode ?? 0,
+    collateralAssetType: o.collateralAssetType,
+    collateralTokenId: BigInt(o.collateralTokenId ?? '0'),
   };
 }
 

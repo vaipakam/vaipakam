@@ -334,10 +334,21 @@ export function MyOffersTable({
                         {t('loanDetails.daysSuffix')}
                       </td>
                       <td>
+                        {/* Codex round-13 P2 #2 — sold-history rows
+                            always have NFT collateral (the
+                            `consumed_by_sale` terminal is only set
+                            by the parallel-sale path, which the
+                            contract restricts to borrower offers
+                            with ERC721 / ERC1155 collateral). Pass
+                            the real `collateralAssetType` +
+                            `collateralTokenId` so the cell renders
+                            "NFT #42" instead of a meaningless ERC20-
+                            amount fallback. */}
                         <PrincipalCell
-                          assetType={0}
+                          assetType={offer.collateralAssetType ?? 1}
                           asset={offer.collateralAsset}
                           amount={offer.collateralAmount}
+                          tokenId={offer.collateralTokenId ?? 0n}
                           chainId={chainId}
                         />
                       </td>

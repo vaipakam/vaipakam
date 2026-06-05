@@ -232,6 +232,31 @@ export default function CreateOffer() {
     setField,
   ]);
 
+  // T-086 Round-8 (#358) §19.5 — Codex round-13 P2 #1 — reset the
+  // `allowsParallelSale` opt-in to false the moment the form leaves
+  // the eligibility window (borrower offer + ERC721/ERC1155
+  // collateral). Without this reset the toggle stays `true` in state
+  // even though it's hidden from the UI; `toCreateOfferPayload`
+  // would then submit `allowsParallelSale: true` + `fillMode = 1` on
+  // a lender / ERC20-collateral offer, and `OfferCreateFacet` would
+  // reject the tx with `ParallelSaleRequiresBorrowerOffer` or
+  // `ParallelSaleRequiresNFTCollateral`. Defensive UX guard.
+  useEffect(() => {
+    if (!form.allowsParallelSale) return;
+    const eligible =
+      form.offerType === "borrower" &&
+      (form.collateralAssetType === "erc721" ||
+        form.collateralAssetType === "erc1155");
+    if (!eligible) {
+      setField("allowsParallelSale", false);
+    }
+  }, [
+    form.allowsParallelSale,
+    form.offerType,
+    form.collateralAssetType,
+    setField,
+  ]);
+
   // Live wallet-balance check. Compares the wallet's current balance
   // of the asset that will be pulled at offer-create time (lender →
   // lendingAsset, borrower-ERC20 → collateralAsset) against the
