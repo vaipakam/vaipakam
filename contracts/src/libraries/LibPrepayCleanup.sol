@@ -76,6 +76,23 @@ library LibPrepayCleanup {
         delete s.prepayListingAutoListOptedOut[loanId];
         delete s.prepayListingAutoListNonce[loanId];
 
+        // T-086 Round-8 (#358) Codex round-4 P2 #4 + Raja round-5 P2 —
+        // tear down any carried-through PARALLEL-SALE binding on the
+        // loan's parent offer BEFORE the loan-keyed early-return below.
+        // Pre-fix, this call sat AFTER `if (orderHash == bytes32(0)) return`
+        // — so for the common keep-listing-live path (where there's no
+        // LOAN-keyed prepay listing, only an OFFER-keyed parallel-sale
+        // listing carried through acceptance), the offer-keyed cleanup
+        // was unreachable. The result was that loan terminals left the
+        // parallel-sale binding visibly "live" on OpenSea, ERC-1271
+        // kept signing it, and every later fill reverted at
+        // `recordOfferSaleProceeds`'s `PrepayLoanNotActive` check.
+        // Moving the call ABOVE the early-return makes it run on every
+        // loan terminal regardless of whether a loan-keyed listing
+        // also exists. Idempotent (early-returns inside if no offer-
+        // keyed binding).
+        _clearOfferListing(uint96(loan.offerId), true);
+
         bytes32 orderHash = s.prepayListingOrderHash[loanId];
         if (orderHash == bytes32(0)) return; // no live listing — no-op.
 
@@ -114,24 +131,6 @@ library LibPrepayCleanup {
             vault.revokeListingOrderHash(orderHash);
         }
 
-        // T-086 Round-8 Codex round-4 P2 #4 — also tear down any
-        // carried-through PARALLEL-SALE binding on the loan's parent
-        // offer. The Round-8 keep-listing-live design lets a
-        // borrower's pre-loan parallel-sale order persist across
-        // acceptance + active loan; on every loan terminal
-        // (repay / preclose / refinance / default / HF-liquidation)
-        // we MUST tear it down too, otherwise the executor's
-        // ERC-1271 path keeps returning valid + every later fill
-        // would revert at `recordOfferSaleProceeds`'s
-        // `PrepayLoanNotActive` check — stale visible state on
-        // OpenSea + a misleading UX for buyers. Idempotent: the
-        // private helper early-returns if no offer-keyed binding is
-        // live. Loan terminals path the same cleanup the borrower-
-        // driven cancel + release paths use (with conduit revoke
-        // enabled because the NFT stays in the vault on these
-        // terminals — distinct from the sale-fill terminal which
-        // skips the revoke per round-4 P1 #1).
-        _clearOfferListing(uint96(loan.offerId), true);
     }
 
     /// @notice T-086 Round-8 (#358) §19.7c — clear any active
