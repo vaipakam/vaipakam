@@ -15,6 +15,7 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IVaipakamPrepayContext} from "../seaport/IVaipakamPrepayContext.sol";
 import {IVaipakamPrepayCallbacks} from "../seaport/IVaipakamPrepayCallbacks.sol";
+import {IListingExecutorRecorder} from "../seaport/IListingExecutorRecorder.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -272,9 +273,32 @@ contract PrepayListingFacet is
         // Scenario A only — stamping it on an accepted offer would
         // flip the indexer's offer row from `accepted` to
         // `consumed_by_sale` and lose the loan-acceptance history.
-        if (!s.offers[uint256(offerId)].accepted) {
+        LibVaipakam.Offer storage offerRow = s.offers[uint256(offerId)];
+        bool isScenarioA = !offerRow.accepted;
+        if (isScenarioA) {
+            // Codex round-7 P3 — burn the offer's position NFT on
+            // Scenario A terminal, mirroring `OfferCancelFacet.cancelOffer`'s
+            // posture. Without this, the position NFT keeps reporting
+            // `OfferCreated` status + `offerIds[tokenId]` metadata for
+            // a sold-through-OpenSea offer whose collateral no longer
+            // exists. Scenario B doesn't burn — the loan's borrower-
+            // position NFT is the active one and gets unlocked via
+            // `LibERC721._unlock` in `_settleLoanFromParallelSale`.
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    VaipakamNFTFacet.burnNFT.selector,
+                    offerRow.positionTokenId
+                ),
+                NFTBurnFailed.selector
+            );
+            // Idempotent — the `recordOfferSaleProceeds` Scenario A
+            // path already pre-stamps this terminal bit to defeat
+            // the P1 reentrancy. This write is the canonical place;
+            // the duplicate write here is a no-op SSTORE if the
+            // pre-stamp already ran (same call frame, same
+            // validateOrder callback).
             s.offerConsumedBySale[uint256(offerId)] = true;
-        }
+        } // /isScenarioA
         // Codex P2 round-1 — remove the sold offer from the active-
         // offer indexes (activeOfferIdsList / assetPairActiveOfferIds)
         // the same way the accept / cancel terminals do, so
@@ -308,7 +332,15 @@ contract PrepayListingFacet is
         // the transfer completes, the NFT is gone, so the stale
         // approval is meaningless.
         LibPrepayCleanup.clearOfferListingPostFill(offerId);
-        emit OfferConsumedBySale(offerId, msg.sender);
+        // Codex round-7 P2 #1 — `OfferConsumedBySale` event MUST only
+        // fire for Scenario A. For Scenario B the indexer treats this
+        // event as unconditional terminal-flip and would override the
+        // `accepted` row state, losing loan-acceptance history. Use
+        // the same `isScenarioA` flag the storage write above gates
+        // on.
+        if (isScenarioA) {
+            emit OfferConsumedBySale(offerId, msg.sender);
+        }
     }
 
     /// @inheritdoc IVaipakamPrepayCallbacks
@@ -347,6 +379,16 @@ contract PrepayListingFacet is
         // Seaport at fill time (recipient is the diamond, NOT the
         // vault directly, so this callback runs the credit through
         // the standard protocol-tracked-balance accountant).
+        //
+        // Codex round-7 P1 — stamp the consumed-by-sale terminal bit
+        // BEFORE the ERC20 transfer to defeat a reentrancy via a
+        // malicious principal asset's `transfer` hook. Without the
+        // pre-stamp, a reentrant `acceptOffer` could spin up a loan
+        // on this same offer (whose collateral NFT is gone in the
+        // Seaport sale) — catastrophic. With the stamp, the
+        // round-2 `OfferConsumedBySale` gate in `_acceptOffer`
+        // rejects the reentrant accept.
+        s.offerConsumedBySale[uint256(offerId)] = true;
         SafeERC20.safeTransfer(IERC20(principalAsset), vaultAddr, amount);
         LibVaipakam.recordVaultDeposit(borrower, principalAsset, amount);
         emit OfferSaleProceedsCredited(offerId, borrower, principalAsset, amount);
@@ -461,6 +503,22 @@ contract PrepayListingFacet is
             address loanVault = s.userVaipakamVaults[loan.borrower];
             if (loanVault != address(0)) {
                 VaipakamVaultImplementation(loanVault).revokeListingOrderHash(loanKeyedHash);
+            }
+            // Codex round-7 P2 #2 — also clear the executor's loan-
+            // keyed `orderContext` + `_orderFeeLegs` + `_orderProtocolLegs`
+            // bindings. The existing loan-keyed `validateOrder` path
+            // does these clears AFTER calling `executorFinalizePrepaySale`
+            // — but my offer-keyed split path runs inside the OFFER-
+            // keyed `validateOrder`, which doesn't touch the loan-
+            // keyed bookkeeping. Forward to the executor's
+            // `clearOrder(bytes32)` which deletes those slots atomically.
+            // The executor's clearOrder gates on
+            // `msg.sender == vaipakamDiamond` — satisfied because
+            // we're calling from a diamond facet (msg.sender = diamond
+            // proxy address).
+            address loanKeyedExecutor = s.collateralListingExecutor;
+            if (loanKeyedExecutor != address(0)) {
+                IListingExecutorRecorder(loanKeyedExecutor).clearOrder(loanKeyedHash);
             }
         }
 
