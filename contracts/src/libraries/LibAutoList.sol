@@ -223,9 +223,49 @@ library LibAutoList {
 
         // Round-3.10 against Codex round-10 P2 #5: underflow-guard
         // branch FIRES rotation. Either interest accrual or a
-        // governance buffer-bump pushed `askAtFee` at-or-above the
-        // Dutch listing's `startAskPrice` — the auction structurally
-        // cannot reach the live floor at any tick.
+        // governance buffer-bump pushed `askAtFee` strictly above
+        // the Dutch listing's `startAskPrice` — the auction
+        // structurally cannot reach the live floor at any tick.
+        //
+        // Round-3.5 against Codex round-5 P2 line 263 — REVERTS the
+        // round-3.13 strict-`>` correction back to inclusive `>=`.
+        //
+        // The round-3.13 design correction argued the `==` case was
+        // a "healthy at-floor Dutch" recoverable on the next call via
+        // b_cond_2 (signed-legs shortfall) once interest accrued. The
+        // round-3.4 natspec extended that argument with a "bounded
+        // one-block window" claim.
+        //
+        // Codex round-5 adversarial finding broke both:
+        //   - **Full-term loans**: interest is baked into the signed
+        //     `lenderLeg` once at sign-time and does NOT grow over
+        //     time (see `Loan.useFullTermInterest`). So signed-legs
+        //     == live-legs ALWAYS for the full-term path; b_cond_2
+        //     NEVER fires. An at-equality Dutch listing stays
+        //     unfillable until grace expiry (when DefaultedFacet
+        //     takes over) — many days, not one block.
+        //   - **Pro-rata loans**: `principalPlusAccruedInterest`
+        //     accrues on WHOLE-DAY boundaries, not per block. So
+        //     the b_cond_2 recovery window is up to 24h, not one
+        //     block.
+        //   - **Fill semantics at equality**: the auction is
+        //     fillable ONLY at the literal start tick (`block.timestamp
+        //     == startTime`); subsequent ticks have currentPrice <
+        //     askAtFee and fills revert at the executor's live
+        //     consideration check. Practically the borrower's at-
+        //     equality Dutch is a fill-or-kill at start with a
+        //     useless decay tail.
+        //
+        // Reverting to `>=` rotates eagerly at the equality boundary,
+        // replacing the degenerate Dutch shape with a fresh
+        // fixed-price-at-floor listing that is fillable across the
+        // remaining grace window. The cost is one extra rotation per
+        // at-equality call (bounded by the keeper's re-trigger
+        // cadence + the same-block nonce collision defenses); the
+        // benefit is no stranded listings on either loan-type path.
+        //
+        // Subtraction safety is still preserved at equality
+        // (`startAskPrice - askAtFee = 0`, no underflow).
         if (askAtFee >= startAskPrice) return true;
 
         // Sanity gates: caller (the facet) should already have ruled
