@@ -2788,14 +2788,34 @@ askAtFloor" check into a three-condition test. The rotation MUST fire if
     unsigned arithmetic. The implementation MUST guard:
 
     ```
-    if (askAtFee >= startAskPrice) {
-        // Dutch listing's start price is below the current
-        // fee-aware floor — the auction structurally cannot
-        // reach the live floor at any tick. Rotate
-        // immediately (round-3.10 fallback).
+    if (askAtFee > startAskPrice) {
+        // Dutch listing's start price is strictly below the
+        // current fee-aware floor — the auction structurally
+        // cannot reach the live floor at any tick. Rotate
+        // immediately (round-3.10 fallback;
+        // round-3.13 P2 against Codex round-12 P2 #1 —
+        // strict `>` instead of `>=` so a healthy Dutch
+        // listing whose start price equals the live floor
+        // is left alone instead of being spurious-rotated
+        // into a fixed-price re-post).
         FIRE B-cond-3b ROTATION
     }
     ```
+
+    **Why `>` and not `>=` (round-3.13 against Codex round-12
+    P2 #1)**. The `==` case (`askAtFee == startAskPrice`) is
+    a healthy Dutch listing: its start price IS the current
+    fee-aware floor, the auction begins AT the floor on tick
+    0, and decays from there. No rotation needed — that's
+    exactly the steady-state Round-7 wants to leave alone.
+    Including `==` in the rotate-immediately branch contradicted
+    the surrounding B-cond-3 policy (rotate only when the
+    Dutch listing reaches the floor too late or never).
+    Subtraction safety is preserved: at equality
+    `startAskPrice - askAtFee = 0`, no underflow, the
+    downstream `t_floor` formula proceeds normally (the
+    decay-tick calculation correctly returns 0 — the floor
+    is reached at the start tick).
 
     **Why fire instead of skip (round-3.10 fix supersedes
     round-3.6's "skip" semantics)**. Round-3.6 had this
@@ -2817,7 +2837,7 @@ askAtFloor" check into a three-condition test. The rotation MUST fire if
     fires only on expiry. The Dutch listing then sits
     through grace at a structurally-insolvent price.
 
-    Firing rotation when `askAtFee >= startAskPrice` is the
+    Firing rotation when `askAtFee > startAskPrice` is the
     correct semantics for both the original underflow case
     (interest moved the floor above the auction) and the
     buffer-rotation case (governance moved the floor above
@@ -2962,8 +2982,16 @@ askAtFloor" check into a three-condition test. The rotation MUST fire if
 
   The rotation cancels the expired Dutch listing and posts a
   fresh fixed-price-at-floor listing in its place, using the
-  same `_buildAndRecord` private + feeLegs preservation
-  semantics as the other B-conds.
+  same `_buildAndRecordUpdate` private + feeLegs preservation
+  semantics as the other B-conds (round-3.13 against Codex
+  round-12 P3 #2: B-cond-5 is a Case B rotation — the borrower
+  NFT's lock from the original Dutch post is still in place,
+  so the helper used MUST be `_buildAndRecordUpdate` (replaces
+  an already-locked listing), NOT `_buildAndRecord` (the
+  fresh-post helper that takes a new lock and would revert on
+  the residual lock). The §18.16 reuse-table row at line 4034
+  is the canonical statement; this sub-bullet is the matching
+  call-site spelling).
 
 If **none** of B-cond-1 / -2 / -3 / -5 holds: revert
 `AlreadyAtOrBelowFloor(loanId, existingAsk, askAtFloor)`. No-op.
@@ -3438,9 +3466,29 @@ against on the implementation PR:
   interest accrual, the second call DOES rotate via B-cond-2 instead
   of no-op'ing (round-3 expected no-op was wrong per the
   derived-floor staleness check).
-- Match-time settlement: an integration test where after `autoList`, an
-  OpenSea offer comes in + the atomic facet settles cleanly (lender +
-  treasury + borrower paid the right amounts).
+- Match-time settlement via the atomic facet: an integration test where
+  after `autoList`, an OpenSea offer comes in + the atomic facet
+  (`matchOpenSeaOffer`) settles cleanly (lender + treasury + borrower
+  paid the right amounts).
+- **Direct buyer-fill settlement of the auto-listed order** (round-3.13
+  against Codex round-12 P3 #3):
+  `test_autoList_directFillByBuyerSettles`. After
+  `autoListAtFloorOnGrace` posts (or rotates to) the floor listing, a
+  normal Seaport buyer fulfills the auto-listed order directly via
+  `Seaport.fulfillOrder` (or `fulfillAdvancedOrder` for fee-aware
+  variants). The test asserts the zone callback
+  (`executorFinalizePrepaySale`) settles cleanly through the executor:
+  ERC-1271 returns valid for the vault-signed order, the three protocol
+  consideration legs (lender + treasury + borrower remainder) all pay
+  the right amounts, the borrower NFT lock releases, the
+  `prepayListingOrderHash[loanId]` / `prepayListingExecutor[loanId]` /
+  the two new opt-out / nonce slots all clear, and the loan transitions
+  to `Settled`. Without this test a regression in the fresh-post
+  wiring (e.g. a missing `vault.registerListingOrderHash` call in
+  `_buildAndRecord` for the auto-list salt path) would slip past while
+  the unrelated atomic-match settlement test still passed — the
+  atomic-match facet's `recordOrder` does its own wiring before
+  settlement, so a Case A wiring regression is invisible to that test.
 - Cancel-after-autoList: borrower retains cancel rights post-autoList.
 - Repay-after-autoList: borrower can still repay; subsequent stale-listing
   cleanup works.
@@ -3546,11 +3594,16 @@ against on the implementation PR:
   round-10 P2 #5 — supersedes round-3.6's
   `test_autoList_dutchSkipsB3bWhenAskAboveStart`).
   `test_autoList_dutchFiresWhenAskAtFeeAboveStartPrice`
-  verifies that when `askAtFee >= startAskPrice` (interest
+  verifies that when `askAtFee > startAskPrice` (interest
   growth, fee-config change, or governance buffer-bump
-  pushed the live fee-aware floor at-or-above the Dutch
+  pushed the live fee-aware floor strictly above the Dutch
   listing's starting ask), B-cond-3b's underflow guard
-  branch FIRES rotation (not skips). Round-3.6 had the
+  branch FIRES rotation (not skips). The equality case
+  (`askAtFee == startAskPrice`) is intentionally a no-op
+  per round-3.13 against Codex round-12 P2 #1 — covered by
+  the new `test_autoList_dutchDoesNotRotateWhenAtFloorAtStart`
+  test which asserts B-cond-3b stays quiet at equality.
+  Round-3.6 had the
   branch fall through to B-cond-2; with round-3.8's switch
   to signed-legs derivation, B-cond-2 only fires on live-
   leg shortfall, so a pure governance buffer-bump with no
@@ -3559,11 +3612,17 @@ against on the implementation PR:
   fire-on-underflow-guard semantics close the gap. Companion
   test `test_autoList_dutchFiresOnBufferBumpAlone` covers
   the pure-buffer-rotation case explicitly: bump
-  `cfgPrepayListingBufferBps` enough that `askAtFee >=
-  startAskPrice` while live legs are exactly equal to the
-  signed amounts (B-cond-2 doesn't fire). Asserts rotation
+  `cfgPrepayListingBufferBps` enough that `askAtFee >
+  startAskPrice` strictly while live legs are exactly equal to
+  the signed amounts (B-cond-2 doesn't fire). Asserts rotation
   fires via the underflow-guard branch; no underflow / no
-  nonsensical t_floor.
+  nonsensical t_floor. Companion no-op test
+  `test_autoList_dutchDoesNotRotateWhenAtFloorAtStart`
+  (round-3.13 against Codex round-12 P2 #1): with
+  `askAtFee == startAskPrice` exactly (Dutch listing's start
+  price IS the live fee-aware floor), B-cond-3b stays quiet
+  AND every other B-cond reads no-fire — the Dutch listing
+  is left alone to run its decay from the floor.
 - Dutch margin saturating fallback (round-3.4 / Codex round-3.1
   P2 + round-3.6 / Codex round-6 P3 #5):
   `test_autoList_dutchMarginSaturatesToHalfGrace` verifies the
