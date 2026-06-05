@@ -69,6 +69,14 @@ const DELIBERATELY_NOT_HANDLED = {
     'discount-path companion event (flash-loan path, FlashLoanLiquidationPath.md) — surfaced via activity_events; the loan-status flip to Defaulted arrives via LoanDefaulted which IS handled.',
   AutoListOptOutCleared:
     'T-086 Round-7 (#355) — borrower-side opt-out clear is a UI-facing action signal, not a loans/offers row mutation. The opt-out flag is exposed as a live read via the production getter `NFTPrepayListingFacet.getPrepayListingAutoListOptedOut(uint256)` (Codex round-13 P2 #3 follow-up — added so the indexer / UI can render the live state without optimistic-retry against the auto-list reverts). Round-12 follow-up dropped the AutoListPosted / AutoListRotated events in favor of re-emitting the existing PrepayListingPosted / PrepayListingUpdated (those ARE handled), so this is the only auto-list signal that does not fold into an existing handler.',
+  PostParallelSaleListing:
+    'T-086 Round-8 (#358) §19.5 — UI-facing breadcrumb so the dapp can publish the order JSON to OpenSea + render the "this offer has a live OpenSea listing" banner. Not a loans/offers row mutation — the offer row stays Open (the §19.7e ConsumedBySale terminal flip only fires on actual sale fill). Indexer follow-up: surface the parallel-sale order hash in /offers/{id} via a fresh `getOffer` read-back, sourcing the row mutation from the eventual OfferConsumedBySale / OfferCanceled event instead.',
+  ParallelSaleLockReleased:
+    'T-086 Round-8 (#358) §19.7f — non-destructive unwind of the parallel-sale binding (offer stays Open). Mirrors the AutoListOptOutCleared rationale: UI-facing signal, no loans/offers row mutation.',
+  OfferConsumedBySale:
+    'T-086 Round-8 (#358) §19.7 — the executor calls into the diamond at sale-fill time; this companion event records the terminal flip + the executor that drove it. The terminal state itself is read via `s.offerConsumedBySale` (a `getOfferState` view returns OfferState.ConsumedBySale once set); the indexer surfaces it via a getOfferState read-back like the existing Cancelled path. Schema-side `offers.status` enum widening to include ConsumedBySale is a follow-up.',
+  OfferSaleProceedsCredited:
+    'T-086 Round-8 (#358) §19.7 — companion event recording the proceeds amount credited to the borrower\'s vault protocol-tracked balance. UI-facing breadcrumb so the borrower\'s "withdrawable balance" pane can refresh; no loans/offers row field for it directly (the proceeds land in `vaultProtocolTrackedBalance` which the standard `vaultWithdrawERC20` pulls from). Schema-side activity_events surfacing is a follow-up.',
 };
 
 /** Recursively collect every `.sol` file under a directory. */
