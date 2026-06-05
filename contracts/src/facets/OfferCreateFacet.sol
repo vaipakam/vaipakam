@@ -1276,4 +1276,5 @@ contract OfferCreateFacet is
     function getUserVault(address user) public returns (address proxy) {
         return LibUserVault.getOrCreate(user);
     }
+
 }

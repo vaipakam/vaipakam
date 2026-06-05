@@ -3,7 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {IListingExecutorRecorder} from "../../src/seaport/IListingExecutorRecorder.sol";
-import {FeeLeg} from "../../src/seaport/PrepayTypes.sol";
+import {FeeLeg, OfferContext} from "../../src/seaport/PrepayTypes.sol";
 
 /**
  * @title MockListingExecutorRecorder
@@ -319,5 +319,65 @@ contract MockListingExecutorRecorder is IListingExecutorRecorder {
             }
         }
         return (address(0), bytes32(0));
+    }
+
+    // ─── T-086 Round-8 (#358) — offer-keyed mock surface ───────────────
+
+    /// @dev Captured calls into `recordOfferOrder` (Round-8 test
+    ///      harness counterpart to `_recordOrderCalls` above).
+    struct RecordOfferOrderCall {
+        bytes32 orderHash;
+        OfferContext ctx;
+        FeeLeg[] feeLegs;
+    }
+    RecordOfferOrderCall[] internal _recordOfferOrderCalls;
+    bytes32[] public clearOfferOrderCalls;
+
+    function recordOfferOrder(
+        bytes32 orderHash,
+        OfferContext calldata ctx,
+        FeeLeg[] calldata feeLegs
+    ) external override {
+        RecordOfferOrderCall storage c = _recordOfferOrderCalls.push();
+        c.orderHash = orderHash;
+        c.ctx = ctx;
+        for (uint256 i = 0; i < feeLegs.length; ) {
+            c.feeLegs.push(feeLegs[i]);
+            unchecked { ++i; }
+        }
+    }
+
+    function clearOfferOrder(bytes32 orderHash) external override {
+        clearOfferOrderCalls.push(orderHash);
+    }
+
+    /// @inheritdoc IListingExecutorRecorder
+    function offerFeeLegs(bytes32 orderHash)
+        external
+        view
+        override
+        returns (FeeLeg[] memory)
+    {
+        for (uint256 i = _recordOfferOrderCalls.length; i > 0; ) {
+            unchecked { --i; }
+            if (_recordOfferOrderCalls[i].orderHash == orderHash) {
+                return _recordOfferOrderCalls[i].feeLegs;
+            }
+        }
+        return new FeeLeg[](0);
+    }
+
+    /// @notice Test inspection helper for the offer-keyed record path.
+    function recordOfferOrderCallCount() external view returns (uint256) {
+        return _recordOfferOrderCalls.length;
+    }
+
+    /// @notice Read the recorded OfferContext + feeLegs at index.
+    function recordedOfferOrderAt(uint256 idx)
+        external
+        view
+        returns (RecordOfferOrderCall memory)
+    {
+        return _recordOfferOrderCalls[idx];
     }
 }

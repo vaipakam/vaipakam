@@ -13,7 +13,7 @@ import {
     OrderType
 } from "../seaport/ISeaportOrderHash.sol";
 import {ItemType} from "../seaport/ISeaportZone.sol";
-import {FeeLeg} from "../seaport/PrepayTypes.sol";
+import {FeeLeg, OfferContext} from "../seaport/PrepayTypes.sol";
 
 /**
  * @title LibPrepayOrder
@@ -585,6 +585,162 @@ library LibPrepayOrder {
             zoneHash: bytes32(0),
             salt: salt,
             conduitKey: conduitKey,
+            counter: counter
+        });
+    }
+
+    // ─── T-086 Round-8 (#358) — No-loan-branch order builder ────────────
+
+    /// @notice T-086 Round-8 (#358) §19.6 — canonical Seaport
+    ///         `OrderComponents` builder + hash for the pre-loan
+    ///         (no-loan branch) parallel-sale listing. Mirror of
+    ///         {buildAndHashMem} for the offer-keyed surface; called
+    ///         from `OfferCreateFacet.postParallelSaleListing`.
+    /// @dev    The no-loan branch's consideration shape is
+    ///         dramatically simpler than the loan-keyed branch
+    ///         (§19.6b):
+    ///           - consideration[0] = single proceeds leg paid in
+    ///             `principalAsset` to `address(diamond)` (NOT
+    ///             directly to the vault — round-3.1 against Codex
+    ///             round-3 P1 #1 line 4390; the diamond receives the
+    ///             leg and routes it through `recordOfferSaleProceeds`
+    ///             which credits the protocol-tracked-balance for the
+    ///             borrower so they can `vaultWithdrawERC20` it).
+    ///           - consideration[1..N] = optional SELLER-baked fee
+    ///             legs (round-3.2 against Codex round-3.2 P2 #5
+    ///             line 4759; the vault is the offerer, so the fee
+    ///             legs are hashed into the SELLER's signed order at
+    ///             sign-time, NOT lifted from a bidder-side
+    ///             SignedZone).
+    ///
+    ///         No lender / treasury / borrower-remainder split: there
+    ///         is no loan, no lender accrual, no protocol-cut-of-
+    ///         interest to collect at this stage. The full
+    ///         `askPrice` lands as the single proceeds leg to the
+    ///         diamond.
+    ///
+    ///         Same FULL_RESTRICTED order-type + zone-vault offerer
+    ///         pattern as the loan-keyed builder. The executor's
+    ///         zone callback dispatches on whether the orderHash
+    ///         lives in `offerContext` vs `orderContext` (§19.6
+    ///         dispatch-disjoint invariant).
+    function buildAndHashOfferMem(
+        OfferContext memory ctx,
+        address collateralAsset,
+        LibVaipakam.AssetType collateralAssetType,
+        uint256 collateralTokenId,
+        uint256 collateralQuantity,
+        address diamond,
+        address executor,
+        address seaport,
+        FeeLeg[] memory feeLegs
+    ) internal view returns (bytes32 orderHash) {
+        OrderComponents memory components = _componentsOfferAtMemory(
+            ctx,
+            collateralAsset,
+            collateralAssetType,
+            collateralTokenId,
+            collateralQuantity,
+            diamond,
+            executor,
+            ISeaportOrderHash(seaport).getCounter(ctx.borrowerVault),
+            feeLegs
+        );
+        orderHash = ISeaportOrderHash(seaport).getOrderHash(components);
+    }
+
+    /// @dev T-086 Round-8 (#358) — private builder for the no-loan
+    ///      branch's `OrderComponents`. Single-proceeds-leg shape
+    ///      (no protocol-leg split). Seaport's amount interpolation
+    ///      is unused (start == end on the proceeds leg + every fee
+    ///      leg) because v1 is fixed-price only per §19.11.
+    function _componentsOfferAtMemory(
+        OfferContext memory ctx,
+        address collateralAsset,
+        LibVaipakam.AssetType collateralAssetType,
+        uint256 collateralTokenId,
+        uint256 collateralQuantity,
+        address diamond,
+        address executor,
+        uint256 counter,
+        FeeLeg[] memory feeLegs
+    ) private pure returns (OrderComponents memory components) {
+        // ─── Offer (one item: the collateral NFT) ──────────────
+        // Same shape as the loan-keyed `_componentsAtMemory` above.
+        OfferItem[] memory offer = new OfferItem[](1);
+        if (collateralAssetType == LibVaipakam.AssetType.ERC721) {
+            offer[0] = OfferItem({
+                itemType: ItemType.ERC721,
+                token: collateralAsset,
+                identifierOrCriteria: collateralTokenId,
+                startAmount: 1,
+                endAmount: 1
+            });
+        } else {
+            // ERC1155 — full pre-deposited quantity per design doc
+            // §7 (same convention the loan-keyed path uses).
+            offer[0] = OfferItem({
+                itemType: ItemType.ERC1155,
+                token: collateralAsset,
+                identifierOrCriteria: collateralTokenId,
+                startAmount: collateralQuantity,
+                endAmount: collateralQuantity
+            });
+        }
+
+        // ─── Consideration (1 proceeds leg + N fee legs) ───────
+        ConsiderationItem[] memory consideration =
+            new ConsiderationItem[](1 + feeLegs.length);
+        consideration[0] = ConsiderationItem({
+            itemType: ItemType.ERC20,
+            token: ctx.principalAsset,
+            identifierOrCriteria: 0,
+            startAmount: uint256(ctx.askPrice),
+            endAmount: uint256(ctx.askPrice),
+            // Round-3.1 against Codex round-3 P1 #1 line 4390 — the
+            // diamond is the consideration recipient (NOT the vault
+            // directly); the diamond credits the borrower's vault
+            // balance via `recordOfferSaleProceeds` ->
+            // `LibVaipakam.recordVaultDeposit` afterwards so the
+            // proceeds are withdrawable through the standard
+            // `vaultWithdrawERC20` path.
+            recipient: payable(diamond)
+        });
+
+        for (uint256 i = 0; i < feeLegs.length; ) {
+            consideration[1 + i] = ConsiderationItem({
+                itemType: ItemType.ERC20,
+                token: ctx.principalAsset,
+                identifierOrCriteria: 0,
+                startAmount: uint256(feeLegs[i].startAmount),
+                endAmount: uint256(feeLegs[i].endAmount),
+                recipient: payable(feeLegs[i].recipient)
+            });
+            unchecked { ++i; }
+        }
+
+        components = OrderComponents({
+            offerer: ctx.borrowerVault,
+            zone: executor,
+            offer: offer,
+            consideration: consideration,
+            // Same FULL_RESTRICTED routing as the loan-keyed path —
+            // the executor's zone callback owns content validation
+            // for both branches; the dispatch on `offerContext` vs
+            // `orderContext` happens INSIDE `validateOrder` (Step 7).
+            orderType: OrderType.FULL_RESTRICTED,
+            startTime: uint256(ctx.startTime),
+            // §19.6 — pre-loan order's Seaport `endTime` is
+            // `offer.expiresAt` if non-zero, else the
+            // `block.timestamp + GTC_SEAPORT_END_TIME` finite
+            // far-future value (round-3.2 against Raja round-3.2 P2
+            // #3; round-3.2 supersedes the round-3.1
+            // `type(uint64).max` mapping that several downstream
+            // indexers treat as malformed).
+            endTime: uint256(ctx.endTime),
+            zoneHash: bytes32(0),
+            salt: ctx.salt,
+            conduitKey: ctx.conduitKey,
             counter: counter
         });
     }
