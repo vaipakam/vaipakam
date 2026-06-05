@@ -388,7 +388,27 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         if (LibVaipakam.isSanctionedAddress(msg.sender)) {
             revert ProfileFacet.SanctionedAddress(msg.sender);
         }
+        // T-086 Round-8 (#358) §19.6 round-3.4 — parallel-sale lock.
+        // When an offer has a LIVE parallel-sale Seaport listing, any
+        // mutation of the 5 load-bearing fields (amount,
+        // interestRateBps, collateralAsset, collateralTokenId,
+        // expiresAt — all of which feed the canonical Seaport order
+        // hash via OfferContext + Offer struct fields) would
+        // invalidate the live order's hash invariant and let a buyer
+        // race a stale-priced fill. Every mutator on this facet
+        // touches at least one of those 5 fields, so the lock is
+        // applied universally here. Borrower MUST call
+        // `releaseParallelSaleLock(offerId)` first to non-destructively
+        // unwind, then re-post after the mutation.
+        if (offer.parallelSaleOrderHash != bytes32(0)) {
+            revert OfferLockedByParallelSale();
+        }
     }
+
+    /// @notice T-086 Round-8 (#358) §19.6 — raised by every mutator
+    ///         when a live parallel-sale Seaport listing is bound to
+    ///         the offer. Borrower must release the lock first.
+    error OfferLockedByParallelSale();
 
     /// @dev Reuses the OfferCreateFacet revert types so the modify
     ///      surface and the create surface speak the same revert ABI.

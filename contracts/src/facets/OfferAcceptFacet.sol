@@ -25,6 +25,7 @@ import {EarlyWithdrawalFacet} from "./EarlyWithdrawalFacet.sol";
 import {PrecloseFacet} from "./PrecloseFacet.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
 import {LibUserVault} from "../libraries/LibUserVault.sol";
+import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 
 /**
  * @title OfferAcceptFacet
@@ -153,6 +154,11 @@ contract OfferAcceptFacet is
     error InvalidOffer();
     error InvalidAssetType();
     error OfferAlreadyAccepted();
+    /// @notice T-086 Round-8 (#358) §19.7b — raised when accept is
+    ///         attempted against an offer whose parallel-sale already
+    ///         filled (Scenario A — buyer-side won the race). Parallel-
+    ///         mapping terminal pattern (same shape as `offerCancelled`).
+    error OfferConsumedBySale(uint96 offerId);
     /// @notice Reverts when a single address would land on both sides of
     ///         the loan — same-wallet direct-accept of one's own offer
     ///         OR a matchOffers between two offers from the same creator.
@@ -481,6 +487,14 @@ contract OfferAcceptFacet is
         LibVaipakam.Offer storage offer = s.offers[offerId];
         if (offer.creator == address(0)) revert InvalidOffer();
         if (offer.accepted) revert OfferAlreadyAccepted();
+        // T-086 Round-8 (#358) §19.7b — terminal-state gate. If the
+        // offer was already consumed by a parallel sale (Scenario A),
+        // refuse the accept — the collateral NFT is gone, no loan can
+        // be created. Same parallel-mapping pattern as `offerCancelled`
+        // (the Offer struct has no `status` field per LibVaipakam:1173).
+        if (s.offerConsumedBySale[offerId]) {
+            revert OfferConsumedBySale(uint96(offerId));
+        }
         // #195 — GTT / offer-expiry. Lazy-enforcement gate: the storage
         // row may still be in place after `expiresAt` (no keeper sweep)
         // but every fill / match path must refuse to bind it to a loan.
@@ -490,6 +504,20 @@ contract OfferAcceptFacet is
         if (LibVaipakam.isOfferExpired(offer)) {
             revert OfferExpired(offerId, offer.expiresAt);
         }
+
+        // T-086 Round-8 (#358) §19.7b Scenario B — parallel-sale
+        // teardown. If the borrower opted into a parallel-sale listing
+        // (allowsParallelSale + postParallelSaleListing executed) and
+        // the lender accepts FIRST, the parallel-sale listing must be
+        // structurally invalidated before the loan binding opens (so
+        // the buyer's Seaport fill attempt routes through the
+        // executor's no-loan-branch dispatch and reverts). Idempotent
+        // — no-op when no parallel-sale binding is live.
+        //
+        // Placed BEFORE any irreversible state mutation so a tx that
+        // reverts later in the function leaves the parallel-sale
+        // binding intact (atomicity preserved).
+        LibPrepayCleanup.clearOfferListing(uint96(offerId));
 
         // ── Range Orders Phase 1 — address-resolution override ────────
         // When matchOffers is in flight (matchOverride.active), msg.sender

@@ -8,6 +8,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 // see `cancelOffer` for the full rule.
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -160,6 +161,16 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         ) {
             revert CancelCooldownActive();
         }
+
+        // T-086 Round-8 (#358) §19.7c — parallel-sale teardown. If the
+        // borrower opted into a parallel-sale listing AND posted one,
+        // the executor + vault + diamond bindings must be cleared
+        // BEFORE the refund path attempts to interact with the
+        // collateral NFT (a stale executor binding would let a buyer's
+        // Seaport fill route around the cancel until the executor's
+        // dispatch-disjoint invariant catches it). Idempotent — no-op
+        // when no listing is live.
+        LibPrepayCleanup.clearOfferListing(uint96(offerId));
 
         // ── Strategic-flow NFT unlock on cancel ─────────────────────────────
         // requireOfferCreator above bound msg.sender to offer.creator.
