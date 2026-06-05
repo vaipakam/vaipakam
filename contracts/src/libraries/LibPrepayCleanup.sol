@@ -192,13 +192,39 @@ library LibPrepayCleanup {
         }
 
         // 3. Vault clear — ERC-1271 returns INVALID for the now-
-        //    cancelled hash. Defensive guard for a borrower whose
-        //    vault never existed (should be impossible if a listing
-        //    was posted, but defensive).
+        //    cancelled hash, AND for ERC721 we also revoke the per-
+        //    token conduit approval the post path granted (mirror of
+        //    {clearActiveListing}'s ERC721 approval revoke). Without
+        //    this, releaseParallelSaleLock / cancelOffer leave the
+        //    Seaport conduit's transfer authority alive on the NFT
+        //    inside the vault — harmless under Seaport's normal flow
+        //    (a different orderHash can't fill against the executor
+        //    without a fresh recorded binding), but unnecessary
+        //    standing authority and a deviation from the loan-keyed
+        //    cleanup posture. Raja round-3 review finding.
+        //
+        //    ERC1155 keeps the operator-wide setApprovalForAll
+        //    operator approval in place — same convention
+        //    {clearActiveListing} uses: orderHash invalidation via
+        //    `revokeListingOrderHash` is the authoritative safety
+        //    primitive for ERC1155, matching the standard Seaport
+        //    ERC1155 conduit pattern.
+        //
+        //    Defensive guard for a borrower whose vault never existed
+        //    (should be impossible if a listing was posted, but
+        //    defensive).
         if (borrower != address(0)) {
             address vaultAddr = s.userVaipakamVaults[borrower];
             if (vaultAddr != address(0)) {
-                VaipakamVaultImplementation(vaultAddr).revokeListingOrderHash(orderHash);
+                VaipakamVaultImplementation vault = VaipakamVaultImplementation(vaultAddr);
+                LibVaipakam.Offer storage offer = s.offers[uint256(offerId)];
+                if (offer.collateralAssetType == LibVaipakam.AssetType.ERC721) {
+                    vault.setCollateralOperatorApproval(
+                        offer.collateralAsset, offer.collateralTokenId,
+                        address(0), false
+                    );
+                }
+                vault.revokeListingOrderHash(orderHash);
             }
         }
     }
