@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {FeeLeg} from "./PrepayTypes.sol";
+import {FeeLeg, OfferContext} from "./PrepayTypes.sol";
 
 /**
  * @title IListingExecutorRecorder
@@ -188,4 +188,74 @@ interface IListingExecutorRecorder {
     ///         silently treat borrower-leg slack as protocol coverage
     ///         — see Round-7 §18.5 B-cond-2 rationale).
     function orderProtocolLegs(bytes32 orderHash) external view returns (uint128 lender, uint128 treasury);
+
+    // ─── T-086 Round-8 (#358) — Offer-keyed surface ────────────────────
+    //
+    // §19.6 introduced a DEDICATED offer-keyed binding (parallel to the
+    // loan-keyed `recordOrder` / `clearOrder` / `orderContext` above)
+    // because the executor's `ctx.loanId == 0` is the unrecorded-order
+    // revert sentinel. The pre-loan branch's binding lives in
+    // `offerContext[orderHash]` on the concrete executor; the
+    // interface widening below lets the diamond + tests reach it
+    // without casting through the concrete class.
+    //
+    // Three new members for the no-loan / parallel-sale path:
+    //   - `recordOfferOrder(orderHash, ctx, feeLegs)` — round-3.7
+    //     widened with `FeeLeg[]` per Codex round-7 P2 line 5015
+    //     (the seller-signed schedule MUST be persisted at record-time
+    //     so the zone callback can compare live consideration items to
+    //     the sign-time schedule).
+    //   - `clearOfferOrder(orderHash)` — symmetric cleanup; MUST invoke
+    //     `_tryCancelOnSeaportOffer` (round-3.9 against Codex round-9
+    //     P3 line 4724).
+    //   - `offerFeeLegs(orderHash)` — typed array getter for the
+    //     persisted seller-signed schedule (§19.7e).
+    //
+    // The `offerContext(orderHash)` view is the auto-generated
+    // public-mapping getter on `CollateralListingExecutor` and is
+    // intentionally NOT widened here — Solidity's auto-getter for a
+    // mapping to a struct with a nested dynamic type would force
+    // tuple-style returns; tests + the diamond callbacks read the
+    // typed struct directly off the concrete executor.
+
+    /// @notice T-086 Round-8 (#358) §19.6 — pin a pre-loan Seaport
+    ///         `orderHash → OfferContext` binding for the no-loan
+    ///         branch. Diamond-only. The fee-leg array is the
+    ///         SELLER-signed schedule (the vault, as Seaport offerer,
+    ///         binds these legs into the canonical order at
+    ///         offer-create time — see §19.4 Scenario A bullet 2).
+    ///
+    ///         The interface uses `CollateralListingExecutor.OfferContext`
+    ///         declared on the concrete executor; the diamond facet
+    ///         imports the struct alongside the interface so the
+    ///         calldata-shape matches at the ABI boundary.
+    ///
+    ///         See {CollateralListingExecutor.recordOfferOrder}.
+    function recordOfferOrder(
+        bytes32 orderHash,
+        OfferContext calldata ctx,
+        FeeLeg[] calldata feeLegs
+    ) external;
+
+    /// @notice T-086 Round-8 (#358) §19.6 — remove an offer-keyed
+    ///         binding. Diamond-only. Idempotent (no-op for an
+    ///         already-cleared or never-recorded orderHash). MUST
+    ///         invoke `_tryCancelOnSeaportOffer` (round-3.9 P3 line
+    ///         4724 dependency for the §19.4 Scenario C two-layer
+    ///         rejection claim).
+    ///
+    ///         See {CollateralListingExecutor.clearOfferOrder}.
+    function clearOfferOrder(bytes32 orderHash) external;
+
+    /// @notice T-086 Round-8 (#358) §19.7e — typed array getter for
+    ///         the per-offer-order fee-leg snapshot. Returns the full
+    ///         seller-signed `FeeLeg[]` recorded at `recordOfferOrder`
+    ///         time; the empty array for an unknown / fee-free
+    ///         orderHash.
+    ///
+    ///         The §19.3 offer-accept teardown step 3 reads this
+    ///         BEFORE `clearOfferOrder` wipes the snapshot so the
+    ///         fresh active-loan order can carry the same fee schedule
+    ///         (preserving `activeLoanAskWithFees` per round-3.7).
+    function offerFeeLegs(bytes32 orderHash) external view returns (FeeLeg[] memory);
 }

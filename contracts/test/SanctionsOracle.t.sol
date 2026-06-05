@@ -325,6 +325,7 @@ contract SanctionsOracleTest is RiskFacetTest {
             collateralQuantity: 0,
             allowsPartialRepay: false,
             allowsPrepayListing: false,
+            allowsParallelSale: false,
             amountMax: 1000 ether,
             interestRateBpsMax: 500,
             collateralAmountMax: 1800 ether,

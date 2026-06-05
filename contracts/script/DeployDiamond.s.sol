@@ -17,6 +17,7 @@ import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferParallelSaleFacet} from "../src/facets/OfferParallelSaleFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
@@ -113,6 +114,9 @@ contract DeployDiamond is Script {
         VaipakamNFTFacet nftFacet = new VaipakamNFTFacet();
         VaultFactoryFacet vaultFactoryFacet = new VaultFactoryFacet();
         OfferCreateFacet offerCreateFacet = new OfferCreateFacet();
+        // T-086 Round-8 (#358) — borrow-OR-sell parallel-sale facet
+        // (carved off OfferCreateFacet — see _getOfferParallelSaleSelectors).
+        OfferParallelSaleFacet offerParallelSaleFacet = new OfferParallelSaleFacet();
         OfferAcceptFacet offerAcceptFacet = new OfferAcceptFacet();
         // Range Orders Phase 1 EIP-170 split: matchOffers + previewMatch
         // live on a separate facet to keep OfferFacet under the
@@ -179,7 +183,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 36 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](42);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](43);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -270,6 +274,15 @@ contract DeployDiamond is Script {
         cuts[41] = _buildCut(
             address(nftPrepayAutoListFacet),
             _getNFTPrepayAutoListSelectors()
+        );
+        // T-086 Round-8 (#358) — `OfferParallelSaleFacet`
+        // (borrower-only `postParallelSaleListing` +
+        // `releaseParallelSaleLock` entry points for the no-loan
+        // borrow-OR-sell flow). Carved off OfferCreateFacet to stay
+        // under solc's viaIR jump-table reservation ceiling.
+        cuts[42] = _buildCut(
+            address(offerParallelSaleFacet),
+            _getOfferParallelSaleSelectors()
         );
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
@@ -555,6 +568,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("vaipakamNFTFacet",        address(nftFacet));
         Deployments.writeFacet("vaultFactoryFacet",      address(vaultFactoryFacet));
         Deployments.writeFacet("offerCreateFacet",        address(offerCreateFacet));
+        Deployments.writeFacet("offerParallelSaleFacet",  address(offerParallelSaleFacet));
         Deployments.writeFacet("offerAcceptFacet",        address(offerAcceptFacet));
         Deployments.writeFacet("offerMatchFacet",         address(offerMatchFacet));
         Deployments.writeFacet("offerCancelFacet",        address(offerCancelFacet));
@@ -607,6 +621,7 @@ contract DeployDiamond is Script {
         console.log("VaipakamNFTFacet:     ", address(nftFacet));
         console.log("VaultFactoryFacet:   ", address(vaultFactoryFacet));
         console.log("OfferCreateFacet:     ", address(offerCreateFacet));
+        console.log("OfferParallelSaleFacet:", address(offerParallelSaleFacet));
         console.log("OfferAcceptFacet:     ", address(offerAcceptFacet));
         console.log("OfferMatchFacet:      ", address(offerMatchFacet));
         console.log("OfferCancelFacet:     ", address(offerCancelFacet));
@@ -970,6 +985,16 @@ contract DeployDiamond is Script {
         s[3] = OfferCreateFacet.createOfferInternal.selector;
     }
 
+    /// @dev T-086 Round-8 (#358) — borrow-OR-sell parallel-sale facet
+    ///      selectors. Carved off `OfferCreateFacet` so solc's viaIR
+    ///      jump-table reservation stays under the "Tag too large" ICE
+    ///      ceiling.
+    function _getOfferParallelSaleSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = OfferParallelSaleFacet.postParallelSaleListing.selector;
+        s[1] = OfferParallelSaleFacet.releaseParallelSaleLock.selector;
+    }
+
     function _getOfferAcceptSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](4);
         s[0] = OfferAcceptFacet.acceptOffer.selector;
@@ -1174,11 +1199,17 @@ contract DeployDiamond is Script {
     ///      collateralListingExecutor gate), and the admin setter +
     ///      read-side for the executor address.
     function _getPrepayListingSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](7);
         s[0] = PrepayListingFacet.getPrepayContext.selector;
         s[1] = PrepayListingFacet.executorFinalizePrepaySale.selector;
         s[2] = PrepayListingFacet.setCollateralListingExecutor.selector;
         s[3] = PrepayListingFacet.getCollateralListingExecutor.selector;
+        // T-086 Round-8 (#358) §19.7 — 3 offer-keyed executor→diamond
+        // callbacks. Gated by `msg.sender ==
+        // s.offerPrepayListingExecutor[offerId]` inside the facet body.
+        s[4] = PrepayListingFacet.markOfferConsumedBySale.selector;
+        s[5] = PrepayListingFacet.recordOfferSaleProceeds.selector;
+        s[6] = PrepayListingFacet.assertOfferFillNotSanctioned.selector;
     }
 
     /// @dev T-086 step 6 — `NFTPrepayListingFacet` selectors. Hosts the

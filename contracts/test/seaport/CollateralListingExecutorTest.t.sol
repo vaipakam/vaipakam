@@ -53,6 +53,43 @@ contract MockVaipakamDiamond is IVaipakamPrepayContext, IVaipakamPrepayCallbacks
         finalizeLoanId = loanId;
         finalizeCaller = msg.sender;
     }
+
+    // T-086 Round-8 (#358) — offer-keyed callback stubs. Test harness
+    // for `CollateralListingExecutor` itself; the no-loan-branch
+    // dispatch lands in Step 7 (this commit only needs the interface
+    // to be satisfied so the executor compiles).
+    bool public markConsumedCalled;
+    uint96 public markConsumedOfferId;
+    bool public recordProceedsCalled;
+    uint96 public recordProceedsOfferId;
+    address public recordProceedsAsset;
+    uint256 public recordProceedsAmount;
+    bool public sanctionsCalled;
+    uint96 public sanctionsOfferId;
+    address public sanctionsWallet;
+
+    function markOfferConsumedBySale(uint96 offerId) external override {
+        markConsumedCalled = true;
+        markConsumedOfferId = offerId;
+    }
+    function recordOfferSaleProceeds(
+        uint96 offerId,
+        address principalAsset,
+        uint256 amount
+    ) external override {
+        recordProceedsCalled = true;
+        recordProceedsOfferId = offerId;
+        recordProceedsAsset = principalAsset;
+        recordProceedsAmount = amount;
+    }
+    function assertOfferFillNotSanctioned(uint96 offerId, address borrowerWallet)
+        external
+        override
+    {
+        sanctionsCalled = true;
+        sanctionsOfferId = offerId;
+        sanctionsWallet = borrowerWallet;
+    }
 }
 
 contract CollateralListingExecutorTest is Test {

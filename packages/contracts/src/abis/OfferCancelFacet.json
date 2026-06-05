@@ -226,6 +226,16 @@
             "name": "allowsPrepayListing",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "allowsParallelSale",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "parallelSaleOrderHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
           }
         ]
       }
@@ -412,6 +422,16 @@
             "name": "allowsPrepayListing",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "allowsParallelSale",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "parallelSaleOrderHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
           }
         ]
       }
@@ -929,6 +949,17 @@
     "type": "error",
     "name": "OfferAlreadyAccepted",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OfferAlreadyConsumedBySale",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint96",
+        "internalType": "uint96"
+      }
+    ]
   },
   {
     "type": "error",

@@ -1321,6 +1321,22 @@
   },
   {
     "type": "error",
+    "name": "SiblingParallelSaleListingLive",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "offerId",
+        "type": "uint96",
+        "internalType": "uint96"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SourceChainIdNotExpected",
     "inputs": []
   },

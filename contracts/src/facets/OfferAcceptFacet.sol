@@ -153,6 +153,11 @@ contract OfferAcceptFacet is
     error InvalidOffer();
     error InvalidAssetType();
     error OfferAlreadyAccepted();
+    /// @notice T-086 Round-8 (#358) §19.7b — raised when accept is
+    ///         attempted against an offer whose parallel-sale already
+    ///         filled (Scenario A — buyer-side won the race). Parallel-
+    ///         mapping terminal pattern (same shape as `offerCancelled`).
+    error OfferConsumedBySale(uint96 offerId);
     /// @notice Reverts when a single address would land on both sides of
     ///         the loan — same-wallet direct-accept of one's own offer
     ///         OR a matchOffers between two offers from the same creator.
@@ -481,6 +486,14 @@ contract OfferAcceptFacet is
         LibVaipakam.Offer storage offer = s.offers[offerId];
         if (offer.creator == address(0)) revert InvalidOffer();
         if (offer.accepted) revert OfferAlreadyAccepted();
+        // T-086 Round-8 (#358) §19.7b — terminal-state gate. If the
+        // offer was already consumed by a parallel sale (Scenario A),
+        // refuse the accept — the collateral NFT is gone, no loan can
+        // be created. Same parallel-mapping pattern as `offerCancelled`
+        // (the Offer struct has no `status` field per LibVaipakam:1173).
+        if (s.offerConsumedBySale[offerId]) {
+            revert OfferConsumedBySale(uint96(offerId));
+        }
         // #195 — GTT / offer-expiry. Lazy-enforcement gate: the storage
         // row may still be in place after `expiresAt` (no keeper sweep)
         // but every fill / match path must refuse to bind it to a loan.
@@ -490,6 +503,28 @@ contract OfferAcceptFacet is
         if (LibVaipakam.isOfferExpired(offer)) {
             revert OfferExpired(offerId, offer.expiresAt);
         }
+
+        // T-086 Round-8 (#358) §19.7b Scenario B — Codex round-3
+        // user-directed redesign: KEEP THE PARALLEL-SALE LISTING LIVE
+        // across acceptance.
+        //
+        // Pre-round-3, this site called `LibPrepayCleanup.clearOfferListing`
+        // to tear the listing down on accept. That preserved safety
+        // (no double-fill) but dropped the borrower's "borrow-OR-sell"
+        // intent — they'd have to manually re-list to keep selling.
+        //
+        // The new design lets the listing persist:
+        //   1. The pre-loan floor now hedges the FULL DURATION's
+        //      interest (capped at 1 year) instead of just 1 day, so
+        //      the ask price always covers the lender + treasury cut
+        //      at the worst-case fill-time accrual.
+        //   2. At sale-fill time, `recordOfferSaleProceeds` checks
+        //      `offer.accepted`; if true, it splits the proceeds
+        //      (lenderLeg + treasuryLeg + remainder to borrower) and
+        //      settles the loan atomically (Active → Settled, unlock
+        //      borrower NFT, Phase 5 LIF settle).
+        //
+        // No teardown call here; the listing carries through.
 
         // ── Range Orders Phase 1 — address-resolution override ────────
         // When matchOffers is in flight (matchOverride.active), msg.sender

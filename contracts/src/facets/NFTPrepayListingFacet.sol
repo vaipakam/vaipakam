@@ -224,6 +224,16 @@ contract NFTPrepayListingFacet is
     ///         loan-init from the offer; cannot be flipped on a
     ///         live loan.
     error PrepayListingNotAllowed(uint256 loanId);
+    /// @notice T-086 Round-8 (#358) Codex round-8 P2 #5 — raised
+    ///         when `postPrepayListing` or `updatePrepayListing` is
+    ///         called against a loan whose parent offer has a
+    ///         carried-through parallel-sale listing live. The two
+    ///         listings would share the ERC721 per-token conduit
+    ///         approval slot; the loan-keyed `wire` would overwrite
+    ///         the parallel-sale's approval. Borrower must call
+    ///         `OfferParallelSaleFacet.releaseParallelSaleLock(offerId)`
+    ///         first.
+    error SiblingParallelSaleListingLive(uint256 loanId, uint96 offerId);
 
     /// @notice Loan is not `Active` (already Settled / Repaid /
     ///         Defaulted / Liquidated).
@@ -433,6 +443,17 @@ contract NFTPrepayListingFacet is
         }
         if (!loan.allowsPrepayListing) {
             revert PrepayListingNotAllowed(loanId);
+        }
+        // T-086 Round-8 (#358) Codex round-8 P2 #5 — block loan-keyed
+        // listing while a carried-through PARALLEL-SALE listing is
+        // live on the loan's parent offer. For ERC721 collateral the
+        // conduit approval is a per-token single slot; if the loan-
+        // keyed listing uses a different conduit, its `wire` would
+        // OVERWRITE the parallel-sale listing's approval, leaving the
+        // parallel-sale order still ERC-1271-signable but unfillable.
+        // Borrower must `releaseParallelSaleLock(offerId)` first.
+        if (s.offerPrepayListingOrderHash[uint96(loan.offerId)] != bytes32(0)) {
+            revert SiblingParallelSaleListingLive(loanId, uint96(loan.offerId));
         }
         // ERC721 + ERC1155 supported (step 15 + #306 fix). ERC20
         // collateral isn't listable on Seaport (no NFT identifier).
@@ -644,6 +665,12 @@ contract NFTPrepayListingFacet is
         }
         if (!loan.allowsPrepayListing) {
             revert PrepayListingNotAllowed(loanId);
+        }
+        // Codex round-8 P2 #5 — same sibling-parallel-sale block
+        // as `postPrepayListing`. Update could rotate the conduit
+        // key, which would overwrite the parallel-sale's approval.
+        if (s.offerPrepayListingOrderHash[uint96(loan.offerId)] != bytes32(0)) {
+            revert SiblingParallelSaleListingLive(loanId, uint96(loan.offerId));
         }
         // Codex round-2 P2 fix on PR #317 — same principal-type gate
         // as `postPrepayListing`. Without it, a pre-PR orphan

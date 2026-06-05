@@ -248,6 +248,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 allowsPrepayListing: false,
+                allowsParallelSale: false,
                 amountMax: DAILY_FEE,
                 interestRateBpsMax: 0,
                 collateralAmountMax: TOTAL_PREPAY,

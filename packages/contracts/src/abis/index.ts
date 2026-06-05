@@ -3,6 +3,10 @@ import OfferAcceptFacetABI from './OfferAcceptFacet.json';
 import OfferCancelFacetABI from './OfferCancelFacet.json';
 import OfferMatchFacetABI from './OfferMatchFacet.json';
 import OfferMutateFacetABI from './OfferMutateFacet.json';
+// T-086 Round-8 (#358) — borrow-OR-sell parallel-sale entry +
+// non-destructive unwind. Carved off OfferCreateFacet so solc's viaIR
+// jump-table reservation stays under the "Tag too large" ICE ceiling.
+import OfferParallelSaleFacetABI from './OfferParallelSaleFacet.json';
 import LoanFacetABI from './LoanFacet.json';
 import RepayFacetABI from './RepayFacet.json';
 import DefaultedFacetABI from './DefaultedFacet.json';
@@ -67,6 +71,7 @@ export {
   OfferCancelFacetABI,
   OfferMatchFacetABI,
   OfferMutateFacetABI,
+  OfferParallelSaleFacetABI,
   LoanFacetABI,
   RepayFacetABI,
   DefaultedFacetABI,
@@ -121,6 +126,7 @@ export const DIAMOND_ABI = [
   ...OfferCancelFacetABI,
   ...OfferMatchFacetABI,
   ...OfferMutateFacetABI,
+  ...OfferParallelSaleFacetABI,
   ...LoanFacetABI,
   ...RepayFacetABI,
   ...DefaultedFacetABI,

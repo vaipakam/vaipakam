@@ -1,230 +1,192 @@
 [
   {
     "type": "function",
-    "name": "acceptOffer",
+    "name": "postParallelSaleListing",
     "inputs": [
       {
         "name": "offerId",
+        "type": "uint96",
+        "internalType": "uint96"
+      },
+      {
+        "name": "askPrice",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "acceptorRiskAndTermsConsent",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "acceptOfferInternal",
-    "inputs": [
-      {
-        "name": "offerId",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "conduitKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
       },
       {
-        "name": "acceptorRiskAndTermsConsent",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "acceptOfferWithPermit",
-    "inputs": [
-      {
-        "name": "offerId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "acceptorRiskAndTermsConsent",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "permit",
-        "type": "tuple",
-        "internalType": "struct ISignatureTransfer.PermitTransferFrom",
+        "name": "feeLegs",
+        "type": "tuple[]",
+        "internalType": "struct FeeLeg[]",
         "components": [
           {
-            "name": "permitted",
-            "type": "tuple",
-            "internalType": "struct ISignatureTransfer.TokenPermissions",
-            "components": [
-              {
-                "name": "token",
-                "type": "address",
-                "internalType": "address"
-              },
-              {
-                "name": "amount",
-                "type": "uint256",
-                "internalType": "uint256"
-              }
-            ]
+            "name": "recipient",
+            "type": "address",
+            "internalType": "address"
           },
           {
-            "name": "nonce",
-            "type": "uint256",
-            "internalType": "uint256"
+            "name": "startAmount",
+            "type": "uint96",
+            "internalType": "uint96"
           },
           {
-            "name": "deadline",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      },
-      {
-        "name": "signature",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "previewAccept",
-    "inputs": [
-      {
-        "name": "offerId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "acceptor",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "preview",
-        "type": "tuple",
-        "internalType": "struct OfferAcceptFacet.AcceptPreview",
-        "components": [
-          {
-            "name": "effectivePrincipal",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "interestRateBps",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "collateralAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "lifEstimate",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "collateralResidualRefund",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "errorCode",
-            "type": "uint8",
-            "internalType": "enum OfferAcceptFacet.AcceptError"
+            "name": "endAmount",
+            "type": "uint96",
+            "internalType": "uint96"
           }
         ]
       }
     ],
-    "stateMutability": "view"
+    "outputs": [
+      {
+        "name": "orderHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "releaseParallelSaleLock",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint96",
+        "internalType": "uint96"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "event",
-    "name": "OfferAccepted",
+    "name": "ParallelSaleLockReleased",
     "inputs": [
       {
         "name": "offerId",
-        "type": "uint256",
+        "type": "uint96",
         "indexed": true,
-        "internalType": "uint256"
+        "internalType": "uint96"
       },
       {
-        "name": "acceptor",
+        "name": "borrower",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PostParallelSaleListing",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint96",
+        "indexed": true,
+        "internalType": "uint96"
+      },
+      {
+        "name": "borrower",
         "type": "address",
         "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "loanId",
+        "name": "orderHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "askPrice",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "matchAmount",
+        "name": "executor",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "conduit",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "conduitKey",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "salt",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "newAmountFilled",
-        "type": "uint256",
+        "name": "feeLegs",
+        "type": "tuple[]",
         "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newAccepted",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
+        "internalType": "struct FeeLeg[]",
+        "components": [
+          {
+            "name": "recipient",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "startAmount",
+            "type": "uint96",
+            "internalType": "uint96"
+          },
+          {
+            "name": "endAmount",
+            "type": "uint96",
+            "internalType": "uint96"
+          }
+        ]
       }
     ],
     "anonymous": false
   },
   {
     "type": "error",
-    "name": "AonRequiresFullFill",
+    "name": "AskBelowPreLoanFloor",
     "inputs": [
       {
         "name": "offerId",
+        "type": "uint96",
+        "internalType": "uint96"
+      },
+      {
+        "name": "askPrice",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "required",
+        "name": "minAsk",
         "type": "uint256",
         "internalType": "uint256"
-      },
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "AskPriceOverflow",
+    "inputs": [
       {
-        "name": "provided",
+        "name": "askPrice",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -240,6 +202,16 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "AutoListConduitNotConfigured",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AutoListExecutorNotSet",
+    "inputs": []
   },
   {
     "type": "error",
@@ -336,12 +308,50 @@
   },
   {
     "type": "error",
-    "name": "GetUserVaultFailed",
+    "name": "FeeLegNotFixedPrice",
     "inputs": [
       {
-        "name": "reason",
-        "type": "string",
-        "internalType": "string"
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "FeeLegZeroAmountAtCreate",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "FeeLegZeroRecipient",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "FeeLegsExceedCap",
+    "inputs": [
+      {
+        "name": "supplied",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cap",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },
@@ -424,22 +434,12 @@
   },
   {
     "type": "error",
-    "name": "InvalidAssetType",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "InvalidKeeperActions",
     "inputs": []
   },
   {
     "type": "error",
     "name": "InvalidLoanStatus",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidOffer",
     "inputs": []
   },
   {
@@ -599,38 +599,17 @@
   },
   {
     "type": "error",
-    "name": "OfferAlreadyAccepted",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "OfferConsumedBySale",
-    "inputs": [
-      {
-        "name": "offerId",
-        "type": "uint96",
-        "internalType": "uint96"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "OfferCreationFailed",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "OfferExpired",
+    "name": "OfferTerminal",
     "inputs": [
       {
         "name": "offerId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "expiresAt",
-        "type": "uint64",
-        "internalType": "uint64"
+        "type": "uint96",
+        "internalType": "uint96"
       }
     ]
   },
@@ -652,6 +631,55 @@
         "name": "asset",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ParallelSaleListingAlreadyPosted",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint96",
+        "internalType": "uint96"
+      },
+      {
+        "name": "existingOrderHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ParallelSaleNotEnabled",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint96",
+        "internalType": "uint96"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ParallelSalePartialFillConflict",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint96",
+        "internalType": "uint96"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ParallelSaleRequiresSingleFill",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint96",
+        "internalType": "uint96"
       }
     ]
   },
@@ -763,6 +791,16 @@
   },
   {
     "type": "error",
+    "name": "PrepayListingBufferNotConfigured",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PrepayListingDisabled",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RecoveryAmountExceedsUnsolicited",
     "inputs": []
   },
@@ -829,33 +867,6 @@
   },
   {
     "type": "error",
-    "name": "SafeCastOverflowedUintDowncast",
-    "inputs": [
-      {
-        "name": "bits",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "value",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "SanctionedAddress",
-    "inputs": [
-      {
-        "name": "who",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "SanctionsOracleUnavailable",
     "inputs": []
   },
@@ -863,17 +874,6 @@
     "type": "error",
     "name": "SelfCollateralizedOffer",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SelfTradeForbidden",
-    "inputs": [
-      {
-        "name": "party",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
   },
   {
     "type": "error",
@@ -894,6 +894,28 @@
     "type": "error",
     "name": "UnauthorizedCrossFacetCall",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnsupportedCollateralForParallelSale",
+    "inputs": [
+      {
+        "name": "collateralType",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.AssetType"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnsupportedPrincipalForParallelSale",
+    "inputs": [
+      {
+        "name": "principalType",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.AssetType"
+      }
+    ]
   },
   {
     "type": "error",
@@ -959,6 +981,17 @@
     "type": "error",
     "name": "VaultDepositFailed",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultNotDeployed",
+    "inputs": [
+      {
+        "name": "borrower",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",

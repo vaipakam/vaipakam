@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferParallelSaleFacet} from "../src/facets/OfferParallelSaleFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
@@ -235,6 +236,21 @@ contract HelperTest {
         // Cross-facet entry consumed by PrecloseFacet.offsetWithNewOffer
         // (Option 3 offset flow) — address(this)-only gating.
         selectors[3] = OfferCreateFacet.createOfferInternal.selector;
+        return selectors;
+    }
+
+    /// @dev T-086 Round-8 (#358) — the two parallel-sale selectors live
+    ///      on `OfferParallelSaleFacet` (carved off OfferCreateFacet so
+    ///      solc's viaIR jump-table reservation stays under the
+    ///      "Tag too large" ICE ceiling).
+    function getOfferParallelSaleFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](2);
+        selectors[0] = OfferParallelSaleFacet.postParallelSaleListing.selector;
+        selectors[1] = OfferParallelSaleFacet.releaseParallelSaleLock.selector;
         return selectors;
     }
 
@@ -1255,11 +1271,16 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](7);
         selectors[0] = PrepayListingFacet.getPrepayContext.selector;
         selectors[1] = PrepayListingFacet.executorFinalizePrepaySale.selector;
         selectors[2] = PrepayListingFacet.setCollateralListingExecutor.selector;
         selectors[3] = PrepayListingFacet.getCollateralListingExecutor.selector;
+        // T-086 Round-8 (#358) §19.7 — 3 offer-keyed executor→diamond
+        // callbacks.
+        selectors[4] = PrepayListingFacet.markOfferConsumedBySale.selector;
+        selectors[5] = PrepayListingFacet.recordOfferSaleProceeds.selector;
+        selectors[6] = PrepayListingFacet.assertOfferFillNotSanctioned.selector;
         return selectors;
     }
 

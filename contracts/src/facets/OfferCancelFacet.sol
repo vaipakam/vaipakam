@@ -8,6 +8,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 // see `cancelOffer` for the full rule.
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -76,6 +77,12 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
 
     // ── Errors ──────────────────────────────────────────────────────
     error OfferAlreadyAccepted();
+    /// @notice T-086 Round-8 (#358) Codex round-2 P1 #1 — raised when
+    ///         cancelOffer is called on an offer already consumed by a
+    ///         parallel sale (Scenario A terminal). Without this gate
+    ///         an ERC1155 borrower could double-withdraw collateral
+    ///         that's already gone in the Seaport sale.
+    error OfferAlreadyConsumedBySale(uint96 offerId);
     /// Cancel fired before `MIN_OFFER_CANCEL_DELAY` elapsed since
     /// `Offer.createdAt` and `amountFilled == 0` (no match landed yet).
     /// Partial-filled offers can be cancelled immediately and don't
@@ -131,6 +138,18 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             revert NotCreatorOrNotExpired(creator, offer.expiresAt);
         }
         if (offer.accepted) revert OfferAlreadyAccepted();
+        // T-086 Round-8 (#358) Codex round-2 P1 #1 — block cancel of a
+        // sold offer. The §19.4 Scenario A terminal already marked the
+        // offer consumed (the collateral NFT is gone, proceeds credited
+        // to the borrower's vault). Without this gate, an ERC1155
+        // borrower whose vault still holds the same (collection, id)
+        // backing another open position could call cancelOffer to
+        // double-withdraw `collateralQuantity`, draining collateral
+        // from the OTHER offer / loan. The §19.7e ConsumedBySale
+        // terminal is final; subsequent cancel attempts MUST revert.
+        if (s.offerConsumedBySale[offerId]) {
+            revert OfferAlreadyConsumedBySale(uint96(offerId));
+        }
 
         // ── Range Orders Phase 1 — cancel cooldown ─────────────────
         // Active ONLY when the master `partialFillEnabled` flag is on.
@@ -160,6 +179,16 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         ) {
             revert CancelCooldownActive();
         }
+
+        // T-086 Round-8 (#358) §19.7c — parallel-sale teardown. If the
+        // borrower opted into a parallel-sale listing AND posted one,
+        // the executor + vault + diamond bindings must be cleared
+        // BEFORE the refund path attempts to interact with the
+        // collateral NFT (a stale executor binding would let a buyer's
+        // Seaport fill route around the cancel until the executor's
+        // dispatch-disjoint invariant catches it). Idempotent — no-op
+        // when no listing is live.
+        LibPrepayCleanup.clearOfferListing(uint96(offerId));
 
         // ── Strategic-flow NFT unlock on cancel ─────────────────────────────
         // requireOfferCreator above bound msg.sender to offer.creator.

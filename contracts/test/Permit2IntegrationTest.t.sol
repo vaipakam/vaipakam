@@ -319,6 +319,7 @@ contract Permit2IntegrationTest is SetupTest {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 allowsPrepayListing: false,
+                allowsParallelSale: false,
                 amountMax: principal,
                 interestRateBpsMax: 500,
                 collateralAmountMax: principal,

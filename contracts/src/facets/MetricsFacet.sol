@@ -1022,7 +1022,14 @@ contract MetricsFacet {
     /// @dev Offer lifecycle state used by {getUserOffersByStatePaginated}.
     ///      Open = created, not accepted, not cancelled; Accepted = a loan
     ///      was spun up; Cancelled = creator exited before acceptance.
-    enum OfferState { Open, Accepted, Cancelled }
+    ///      T-086 Round-8 (#358) §19.7e — `ConsumedBySale` is the
+    ///      no-loan-branch parallel-sale terminal (Scenario A: buyer-
+    ///      side won the race). Mirror of `Cancelled` but distinct so
+    ///      the frontend can render "Sold via OpenSea — no loan was
+    ///      opened" instead of the generic "Cancelled" copy. Added at
+    ///      the end of the enum so existing indexed value bindings are
+    ///      preserved.
+    enum OfferState { Open, Accepted, Cancelled, ConsumedBySale }
 
     /**
      * @notice Paginated slice of the user's offers filtered by lifecycle state.
@@ -1199,7 +1206,14 @@ contract MetricsFacet {
             // Include both live offers (offers[id].id != 0) and cancelled
             // offers (offers[id].id == 0 && offerCancelled[id] == true) so
             // indexers can reconstruct full history via a single view.
-            if (s.offers[id].id == 0 && !s.offerCancelled[id]) continue;
+            // T-086 Round-8 (#358) §19.7e — consumed-by-sale offers
+            // (Scenario A terminal) also belong in the indexer's full-
+            // history view, mirror of the cancelled branch.
+            if (
+                s.offers[id].id == 0
+                && !s.offerCancelled[id]
+                && !s.offerConsumedBySale[id]
+            ) continue;
             buf[filled] = id; filled += 1;
         }
         offerIds = new uint256[](filled);
@@ -1274,10 +1288,30 @@ contract MetricsFacet {
         view
         returns (OfferState)
     {
-        if (s.offerCancelled[offerId]) return OfferState.Cancelled;
+        // T-086 Round-8 (#358) §19.7e + Codex round-3 user-directed
+        // redesign — terminal-precedence order:
+        //
+        //   1. `offer.accepted` → Accepted (loan exists; that's the
+        //      primary state even if a parallel sale later settled
+        //      the loan — the loan's own status flip handles that).
+        //   2. `offer.id == 0` → Cancelled (legacy compat for never-
+        //      existed IDs + `cancelOffer`'s storage-delete behaviour;
+        //      both surface as id==0 to the reader).
+        //   3. `offerCancelled[id]` → Cancelled (creator-driven cancel
+        //      that stamped the parallel mapping; storage row may or
+        //      may not still exist).
+        //   4. `offerConsumedBySale[id]` → ConsumedBySale (true
+        //      Scenario A: sale fill closed an UNACCEPTED offer).
+        //
+        // Pre-round-3 ordering checked consumedBySale first, but the
+        // keep-listing-live design lets an offer be BOTH accepted AND
+        // sold — for that path the loan exists and "Accepted" is the
+        // right surface state.
         LibVaipakam.Offer storage o = s.offers[offerId];
-        if (o.id == 0) return OfferState.Cancelled; // treated as non-matchable
-        if (o.accepted) return OfferState.Accepted;
+        if (o.id != 0 && o.accepted) return OfferState.Accepted;
+        if (s.offerCancelled[offerId]) return OfferState.Cancelled;
+        if (o.id == 0) return OfferState.Cancelled; // never-existed OR cancel-deleted
+        if (s.offerConsumedBySale[offerId]) return OfferState.ConsumedBySale;
         return OfferState.Open;
     }
 

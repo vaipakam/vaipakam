@@ -92,6 +92,11 @@ FACETS=(
   "OfferAcceptFacet"
   "OfferMatchFacet"
   "OfferMutateFacet"
+  # T-086 Round-8 (#358) — borrow-OR-sell parallel-sale entry +
+  # non-destructive unwind. Carved off OfferCreateFacet so solc's
+  # viaIR jump-table reservation stays under the "Tag too large" ICE
+  # ceiling.
+  "OfferParallelSaleFacet"
   "OracleAdminFacet"
   "OracleFacet"
   "PartialWithdrawalFacet"

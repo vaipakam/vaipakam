@@ -539,6 +539,7 @@ contract AnvilNewPartialFlows is Script {
             collateralQuantity: 0,
             allowsPartialRepay: false,
             allowsPrepayListing: false,
+            allowsParallelSale: false,
             amountMax: 0,
             interestRateBpsMax: 0,
             collateralAmountMax: 0,

@@ -33,7 +33,7 @@ abstract contract DiamondFacetNames {
     ///      `NFTPrepayListingAtomicFacet`;
     ///      41 → 42 in T-086 Round-7 (#355) with
     ///      `NFTPrepayAutoListFacet`.)
-    function cutFacetNames() internal pure returns (string[42] memory) {
+    function cutFacetNames() internal pure returns (string[43] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -58,6 +58,12 @@ abstract contract DiamondFacetNames {
             // combined modifyOffer). Carved out into its own facet
             // mirroring the OfferCancel / OfferMatch precedent.
             "OfferMutateFacet",
+            // T-086 Round-8 (#358) — borrow-OR-sell parallel-sale
+            // entry points (postParallelSaleListing +
+            // releaseParallelSaleLock). Carved off OfferCreateFacet so
+            // solc's viaIR jump-table reservation stays under the
+            // "Tag too large" ICE ceiling.
+            "OfferParallelSaleFacet",
             "OracleAdminFacet",
             "OracleFacet",
             "OwnershipFacet",

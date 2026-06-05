@@ -264,6 +264,7 @@ contract PauseHandler is Test {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 allowsPrepayListing: false,
+                allowsParallelSale: false,
                 amountMax: amount,
                 interestRateBpsMax: rateBps,
                 collateralAmountMax: collateralAmount,

@@ -209,6 +209,7 @@ contract KYCTierEnforcementIntegration is SetupTest {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 allowsPrepayListing: false,
+                allowsParallelSale: false,
                 amountMax: principal,
                 interestRateBpsMax: RATE_BPS,
                 collateralAmountMax: COLLATERAL_ERC20,

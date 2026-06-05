@@ -597,7 +597,17 @@
   },
   {
     "type": "error",
+    "name": "OfferAlreadyConsumedBySaleMutate",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "OfferCreationFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OfferLockedByParallelSale",
     "inputs": []
   },
   {

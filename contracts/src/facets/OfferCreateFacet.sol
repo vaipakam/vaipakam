@@ -217,6 +217,25 @@ contract OfferCreateFacet is
     // Facet-specific errors (shared errors inherited from IVaipakamErrors)
     error InvalidOfferType();
     error InvalidAssetType();
+    /// @notice T-086 Round-8 (#358) §19.5 — raised when a lender offer
+    ///         is created with `allowsParallelSale = true` (the
+    ///         parallel-sale flow is a borrower-side option only — the
+    ///         borrower lists THEIR collateral NFT for sale; a lender
+    ///         has no collateral to list).
+    error ParallelSaleRequiresBorrowerOffer();
+    /// @notice T-086 Round-8 (#358) §19.5 — raised when a borrower
+    ///         offer with ERC20 collateral is created with
+    ///         `allowsParallelSale = true`. Parallel sale needs an NFT
+    ///         to list on Seaport; ERC20 collateral is structurally
+    ///         incompatible.
+    error ParallelSaleRequiresNFTCollateral();
+    /// @notice T-086 Round-8 (#358) Codex round-8 P2 #4 — raised
+    ///         when `allowsParallelSale = true` is set on an offer
+    ///         whose `fillMode != Aon`. Partial / IOC fills create
+    ///         multiple loans against a single offer's collateral,
+    ///         incompatible with parallel-sale's single-loan split-
+    ///         on-fill assumption. Borrower must use Aon mode.
+    error ParallelSaleRequiresAonFillMode();
     // NotOfferCreator inherited from IVaipakamErrors
     error InsufficientAllowance();
     error LiquidityMismatch();
@@ -1190,6 +1209,38 @@ contract OfferCreateFacet is
         // {CreateOfferParams.allowsPrepayListing} for full semantics.
         // Snapshotted to {Loan.allowsPrepayListing} at loan-init.
         offer.allowsPrepayListing = params.allowsPrepayListing;
+        // T-086 Round-8 (#358) §19.5 — borrower opt-in for parallel-sale
+        // listing. Only valid on Borrower offers with NFT collateral;
+        // the call to OfferParallelSaleFacet.postParallelSaleListing
+        // re-validates these constraints at post time, but we enforce
+        // the structurally-impossible cases at create time so the flag
+        // can't be stamped on an offer it'll never be usable on.
+        // Codex P1 round-1 #4 fix — the missing wiring made every
+        // production offer keep allowsParallelSale == false.
+        if (params.allowsParallelSale) {
+            if (offer.offerType != LibVaipakam.OfferType.Borrower) {
+                revert ParallelSaleRequiresBorrowerOffer();
+            }
+            if (
+                offer.collateralAssetType != LibVaipakam.AssetType.ERC721 &&
+                offer.collateralAssetType != LibVaipakam.AssetType.ERC1155
+            ) {
+                revert ParallelSaleRequiresNFTCollateral();
+            }
+            // Codex round-8 P2 #4 — mirror the post-time
+            // `ParallelSaleRequiresSingleFill` check at create time
+            // (`fillMode != Aon` is incompatible with parallel-sale's
+            // single-loan assumption). Without this gate, a borrower
+            // can stamp an offer as parallel-sale-enabled with
+            // `Partial` or `IOC` fillMode + finds out only at
+            // `postParallelSaleListing` time that the listing can never
+            // post — misleading UX, looks like a borrow-OR-sell
+            // option in the offer's terms but is unusable.
+            if (offer.fillMode != LibVaipakam.FillMode.Aon) {
+                revert ParallelSaleRequiresAonFillMode();
+            }
+        }
+        offer.allowsParallelSale = params.allowsParallelSale;
         // Phase 6: keeper access is per-keeper via
         // `offerKeeperEnabled[offerId][keeper]`. Creator enables specific
         // keepers post-create via `ProfileFacet.setOfferKeeperEnabled`.
@@ -1276,4 +1327,5 @@ contract OfferCreateFacet is
     function getUserVault(address user) public returns (address proxy) {
         return LibUserVault.getOrCreate(user);
     }
+
 }

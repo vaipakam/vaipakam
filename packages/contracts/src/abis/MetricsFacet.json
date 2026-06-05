@@ -1238,6 +1238,16 @@
             "name": "allowsPrepayListing",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "allowsParallelSale",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "parallelSaleOrderHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
           }
         ]
       },

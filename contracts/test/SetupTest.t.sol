@@ -7,6 +7,7 @@ import {console} from "forge-std/console.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferParallelSaleFacet} from "../src/facets/OfferParallelSaleFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -45,6 +46,7 @@ import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferParallelSaleFacet} from "../src/facets/OfferParallelSaleFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
@@ -176,6 +178,7 @@ contract SetupTest is Test {
     // Facet addresses
     DiamondCutFacet cutFacet;
     OfferCreateFacet offerCreateFacet;
+    OfferParallelSaleFacet offerParallelSaleFacet;
     OfferAcceptFacet offerAcceptFacet;
     OfferCancelFacet offerCancelFacet;
     // OfferMatchFacet — Range Orders Phase 1 matching surface (#46).
@@ -272,6 +275,7 @@ contract SetupTest is Test {
         diamond = new VaipakamDiamond(owner, address(cutFacet));
 
         offerCreateFacet = new OfferCreateFacet();
+        offerParallelSaleFacet = new OfferParallelSaleFacet();
         offerAcceptFacet = new OfferAcceptFacet();
         offerCancelFacet = new OfferCancelFacet();
         offerMatchFacet = new OfferMatchFacet();
@@ -344,7 +348,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](43);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](44);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -592,6 +596,14 @@ contract SetupTest is Test {
             facetAddress: address(nftPrepayAutoListFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getNFTPrepayAutoListFacetSelectors()
+        });
+        // T-086 Round-8 (#358) — OfferParallelSaleFacet (borrow-OR-sell
+        // postParallelSaleListing + releaseParallelSaleLock entry points;
+        // carved off OfferCreateFacet for viaIR jump-table headroom).
+        cuts[43] = IDiamondCut.FacetCut({
+            facetAddress: address(offerParallelSaleFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferParallelSaleFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
