@@ -469,6 +469,17 @@
   },
   {
     "type": "error",
+    "name": "GetUserVaultFailed",
+    "inputs": [
+      {
+        "name": "reason",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "HealthFactorCalculationFailed",
     "inputs": []
   },

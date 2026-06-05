@@ -6,6 +6,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
+import {LibUserVault} from "../libraries/LibUserVault.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {LibCollateralSettlement} from "../libraries/LibCollateralSettlement.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
@@ -469,29 +470,49 @@ contract PrepayListingFacet is
         // `treasuryBalances` for downstream analytics + payroll.
         LibFacet.recordTreasuryAccrual(principalAsset, treasuryLeg);
 
-        // Codex round-9 P1 #2 — route the remainder to the CURRENT
-        // borrower-position NFT holder (mirrors the loan-keyed prepay
-        // path's `pctx.borrowerNftOwner` resolution at fill time).
-        // Borrower-position NFTs are transferable on secondary
-        // markets; using `offer.creator` (the ORIGINAL borrower) would
-        // route the surplus to a stale address after the position
-        // changed hands. Credit the current holder's vault instead.
-        // Fallback to the original creator's vault for a current-
-        // holder that hasn't called `getOrCreateUserVault` yet
-        // (production secondary-market UX typically pairs a position
-        // purchase with a vault pre-warm).
+        // Codex round-9 P1 #2 + round-10 P1 — route the remainder to
+        // the CURRENT borrower-position NFT holder (mirrors the loan-
+        // keyed prepay path's `pctx.borrowerNftOwner` resolution at
+        // fill time). Borrower-position NFTs are transferable on
+        // secondary markets.
+        //
+        // Round-10 P1: if the current holder hasn't created a vault
+        // yet, lazily create one via `LibUserVault.getOrCreate` rather
+        // than falling back to the ORIGINAL borrower (which would
+        // strand the holder's economic surplus with the seller). The
+        // lazy-create path is the same one the offer-accept flow uses,
+        // so the holder's vault is provisioned as the same per-user
+        // proxy address Vaipakam already expects.
         address remainderRecipient = VaipakamNFTFacet(address(this))
             .ownerOf(loan.borrowerTokenId);
-        address remainderVault = s.userVaipakamVaults[remainderRecipient];
-        if (remainderVault == address(0)) {
-            remainderRecipient = borrower;
-            remainderVault = borrowerVault;
-        }
+        address remainderVault = LibUserVault.getOrCreate(remainderRecipient);
         uint256 remainder;
         unchecked { remainder = amount - lenderLeg - treasuryLeg; }
         if (remainder > 0) {
             SafeERC20.safeTransfer(IERC20(principalAsset), remainderVault, remainder);
             LibVaipakam.recordVaultDeposit(remainderRecipient, principalAsset, remainder);
+        }
+
+        // Codex round-10 P2 #2 — clean up any active PrecloseFacet
+        // offset linkage BEFORE the unlock. Unlike loan-keyed prepay
+        // listings, the carried offer-keyed parallel-sale listing
+        // doesn't take the borrower-position NFT lock; so the
+        // borrower CAN post a preclose-offset offer (which DOES lock
+        // the borrower-NFT) on top of the carried parallel-sale. If
+        // the parallel-sale then fills, the loan settles via sale
+        // proceeds and the offset offer becomes meaningless. Without
+        // this cleanup, the unconditional unlock below would release
+        // the offset's borrower-NFT lock without retiring the offset
+        // linkage, leaving a stale `loanToOffsetOfferId[loanId]` +
+        // `offsetOfferToLoanId[offsetOfferId]` that
+        // `PrecloseFacet.offsetCompleted` would later trip over.
+        // Stamp the offset offer cancelled + clear both reverse-map
+        // slots.
+        uint256 offsetOfferId = s.loanToOffsetOfferId[loanId];
+        if (offsetOfferId != 0) {
+            s.offerCancelled[offsetOfferId] = true;
+            delete s.loanToOffsetOfferId[loanId];
+            delete s.offsetOfferToLoanId[offsetOfferId];
         }
 
         // Proper-close finalization — identical to the loan-keyed

@@ -255,19 +255,21 @@ contract OfferParallelSaleFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[uint256(offerId)];
 
-        // Codex round-9 P2 #2 — authorize either:
-        //   (a) the offer's original creator (pre-acceptance, no loan
-        //       yet) — the only address with standing on the listing
-        //       before a loan exists.
-        //   (b) the CURRENT borrower-position NFT holder (post-
-        //       acceptance, keep-listing-live) — borrower-position
-        //       NFTs are transferable, and the current holder is the
-        //       party with economic exposure to whether the listing
-        //       carries on or not.
+        // Codex round-9 P2 #2 + round-10 P2 — authorize EXACTLY ONE
+        // party based on the offer's state:
+        //   - Pre-acceptance: only the offer's original creator. No
+        //     loan exists yet; creator is the only party with standing.
+        //   - Post-acceptance: ONLY the CURRENT borrower-position NFT
+        //     holder. The original creator no longer owns the economic
+        //     position (transferable NFT); leaving them authorized
+        //     would let them clear a listing the current holder
+        //     cannot recreate.
         // Mirrors the loan-keyed prepay-listing's cancel-authority
-        // posture.
-        bool callerAuthorized = (offer.creator == msg.sender);
-        if (!callerAuthorized && offer.accepted) {
+        // posture exactly (no dual-auth window).
+        bool callerAuthorized;
+        if (!offer.accepted) {
+            callerAuthorized = (offer.creator == msg.sender);
+        } else {
             uint256 loanId = s.offerIdToLoanId[uint256(offerId)];
             if (loanId != 0) {
                 uint256 borrowerTokenId = s.loans[loanId].borrowerTokenId;
@@ -275,12 +277,10 @@ contract OfferParallelSaleFacet is
                     try
                         IERC721(address(this)).ownerOf(borrowerTokenId)
                     returns (address currentHolder) {
-                        if (currentHolder == msg.sender) {
-                            callerAuthorized = true;
-                        }
+                        callerAuthorized = (currentHolder == msg.sender);
                     } catch {
-                        // NFT may have been burned at a prior terminal —
-                        // fall through to the revert below.
+                        // NFT burned at a prior terminal — fall through
+                        // to the revert below.
                     }
                 }
             }
