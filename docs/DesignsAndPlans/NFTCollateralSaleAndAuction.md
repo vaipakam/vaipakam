@@ -4664,14 +4664,26 @@ precise recorder-side surface calls (round-3.1 against Codex round-3 P1
    + `s.prepayListingExecutor[loanId] = address(executor)` +
    `s.offerPrepayListingOrderHash[offerId] = bytes32(0)`.
 9. Emit `PrepayListingPosted(loanId, poster, activeLoanHash,
-   activeLoanAsk, conduit, conduitKey, salt, executor,
-   activeLoanAsk, /* auctionEndTime */ 0,
+   activeLoanAskWithFees, conduit, conduitKey, salt, executor,
+   activeLoanAskWithFees, /* auctionEndTime */ 0,
    PREPAY_MODE_FIXED_PRICE, preservedFeeLegs)` — same event
    shape Round-7 §18.5 Case A uses (round-3.1 against Codex
    round-3 P2 #3 line 4322 — the existing OpenSea publish-
    fallback reconstructs orders from this event; without it,
    the off-chain publish step 10 has no source of truth for
    reconstruction if the dapp's first publish attempt fails).
+   **Round-3.8 against Codex round-8 P2 line 4668 —
+   supersedes the round-3.7 emit which carried bare
+   `activeLoanAsk` while the order was actually signed at
+   `activeLoanAskWithFees` (step 4).** For fee-aware
+   collections that mismatch would have rebuilt a different
+   orderHash than `activeLoanHash` during off-chain publish
+   reconstruction (the bidder/seller reconstructing the canonical
+   Seaport order from the event would compute a hash over a
+   different ask + same fee legs, producing a different
+   orderHash that no one signed). The event MUST emit the
+   fee-inclusive ask so the off-chain reconstruction matches
+   what was on-chain-recorded byte-for-byte.
 
 All NINE on-chain steps (round-3.6 against Codex round-6 P2 line
 4628 — count updated to match the post-round-3.4 step list above)
@@ -5068,12 +5080,36 @@ since it owns the offer lifecycle). Gated on
 `msg.sender == offer.creator` (the same gate
 `postParallelSaleListing` + `cancelOffer` enforce). The
 selector's effect is exactly the §19.7c
-`LibPrepayCleanup.clearOfferListing(offerId)` body (clears
-`s.offerPrepayListingOrderHash` + `clearOfferOrder` on the
-executor + `vault.revokeListingOrderHash` on the vault +
-emits `OfferListingCleared`), with one critical difference:
-it does NOT touch `s.offerCancelled[offerId]`,
-`s.offers[offerId].accepted`, or
+`LibPrepayCleanup.clearOfferListing(offerId)` body — round-3.8
+against Codex round-8 P2 line 5074 spells out the FULL slot
+set that must clear:
+
+- `s.offerPrepayListingOrderHash[offerId] = bytes32(0)` (the
+  diamond's order-hash mirror)
+- `s.offerPrepayListingExecutor[offerId] = address(0)`
+  (round-3.8 — without clearing this slot, the §19.7d
+  executor-gate on `markOfferConsumedBySale` /
+  `recordOfferSaleProceeds` / `assertOfferFillNotSanctioned`
+  would still authorize the OLD executor against the now-
+  released offer, leaving the released listing's executor
+  callbacks live)
+- `s.offers[offerId].parallelSaleOrderHash = bytes32(0)`
+  (round-3.8 — the `Offer.parallelSaleOrderHash` field from
+  §19.5 mirrors the diamond's storage slot; without clearing,
+  the offer would continue advertising a stale, revoked
+  orderHash to indexers / lenders reading the offer's terms)
+- `clearOfferOrder(orderHash)` on the executor (which also
+  wipes `_offerFeeLegs[orderHash]` per §19.7e)
+- `vault.revokeListingOrderHash(orderHash)` (ERC-1271 INVALID)
+
+After the full clear: the offer-keyed mirrors are bytes32(0)
+on EVERY slot, the executor's offer-keyed binding is gone,
+the vault's ERC-1271 binding is gone, and the released
+listing is structurally unfillable. Emits
+`OfferListingCleared(offerId)`.
+
+What stays untouched: `s.offerCancelled[offerId]`,
+`s.offers[offerId].accepted`, and
 `s.offerConsumedBySale[offerId]`. The offer itself stays
 alive — only the parallel-sale binding is unwound.
 
@@ -5611,14 +5647,21 @@ P2 #1):**
 - `cancelExpiredOffer` — same teardown for the expired-offer
   case.
 - `OfferMutateFacet.updateOffer` (and sibling mutation methods) —
-  reject ONLY floor-load-bearing field mutations (principal /
-  rate / collateralAsset / collateralTokenId) when
-  `s.offerPrepayListingOrderHash[offerId] != bytes32(0)` with
-  revert `OfferLockedByParallelSale(offerId, fieldKey)`
-  (round-3.4 against Codex round-3 P2 line 4892 — supersedes
-  the round-3.2 all-or-nothing framing; non-load-bearing field
-  mutations pass through). Borrower can call the new
-  `releaseParallelSaleLock(offerId)` selector to non-destructively
+  reject floor-load-bearing field mutations (principal /
+  rate / collateralAsset / collateralTokenId / **allowsParallelSale** —
+  round-3.8 against Codex round-8 P2 line 5616 supersedes the
+  round-3.4 summary which listed only the original four fields)
+  when `s.offerPrepayListingOrderHash[offerId] != bytes32(0)` with
+  revert `OfferLockedByParallelSale(offerId, fieldKey)` (round-3.4
+  against Codex round-3 P2 line 4892 — supersedes the round-3.2
+  all-or-nothing framing; round-3.7 against Codex round-7 P2 line
+  4979 added `allowsParallelSale` to the load-bearing set since
+  toggling it off without tearing down the executor + vault
+  bindings orphans a fillable Seaport order, contradicting the
+  borrower's updated intent). Non-load-bearing field mutations
+  (expiry extension, opt-in flags that don't affect the floor or
+  the parallel-sale binding) pass through. Borrower can call the
+  new `releaseParallelSaleLock(offerId)` selector to non-destructively
   unwind the listing first (preserves offer-discovery), then
   mutate the load-bearing field and re-post the listing.
 
