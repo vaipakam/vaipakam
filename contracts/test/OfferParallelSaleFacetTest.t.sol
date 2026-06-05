@@ -131,6 +131,11 @@ contract OfferParallelSaleFacetTest is SetupTest {
         o.durationDays = DURATION_DAYS;
         o.allowsParallelSale = true;
         o.expiresAt = uint64(block.timestamp + 7 days);
+        // Codex round-4 P1 #2 fix added a `fillMode != Partial` gate
+        // on postParallelSaleListing. Default-initialized enum value
+        // is 0 (= Partial); set to Aon (all-or-nothing) here so the
+        // happy-path tests reach the floor + record steps.
+        o.fillMode = LibVaipakam.FillMode.Aon;
     }
 
     function _scaffoldOffer(LibVaipakam.Offer memory o) internal {

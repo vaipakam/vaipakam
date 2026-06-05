@@ -86,6 +86,24 @@ contract OfferParallelSaleFacet is
     ///         `askPrice > type(uint192).max`. Mirrors the loan-keyed
     ///         executor's `AskPriceOverflow` guard.
     error AskPriceOverflow(uint256 askPrice);
+    /// @notice T-086 Round-8 (#358) Codex round-4 P1 #2 — raised when
+    ///         `postParallelSaleListing` is called against an offer
+    ///         that already had at least one partial fill via
+    ///         `OfferMatchFacet.matchOffers`. The partial-fill model
+    ///         creates multiple loans against a single offer's
+    ///         collateral, which the `s.offerIdToLoanId[offerId]`
+    ///         single-loan lookup my split-on-fill path uses cannot
+    ///         disambiguate. Catastrophic if allowed; explicitly
+    ///         rejected here.
+    error ParallelSalePartialFillConflict(uint96 offerId);
+    /// @notice T-086 Round-8 (#358) Codex round-4 P1 #2 — raised when
+    ///         `postParallelSaleListing` is called against an offer
+    ///         whose `fillMode` is `Partial`. Same root cause as
+    ///         {ParallelSalePartialFillConflict} but caught BEFORE
+    ///         any partial fill has happened so the borrower can
+    ///         switch to `Aon` (all-or-nothing) or `Ioc` (immediate-
+    ///         or-cancel) on a fresh offer if they want parallel-sale.
+    error ParallelSaleRequiresSingleFill(uint96 offerId);
     error ParallelSaleListingAlreadyPosted(uint96 offerId, bytes32 existingOrderHash);
     error OfferTerminal(uint96 offerId); // accepted / cancelled / consumed-by-sale
     error UnsupportedCollateralForParallelSale(LibVaipakam.AssetType collateralType);
@@ -266,6 +284,34 @@ contract OfferParallelSaleFacet is
             revert UnsupportedPrincipalForParallelSale(offer.assetType);
         }
 
+        // ── Partial-fill incompatibility gate (Codex round-4 P1 #2) ──
+        //
+        // When `partialFillEnabled` is on at the protocol level,
+        // borrower offers can have multiple lender-side fills landing
+        // sequentially via `OfferMatchFacet.matchOffers`. Each
+        // partial fill creates a SEPARATE loan against a SLICE of the
+        // offer's collateral; my `s.offerIdToLoanId[offerId]` lookup
+        // can only track one loanId. A later parallel-sale fill on
+        // such a partially-filled offer would either:
+        //   (a) hit the `Scenario A` branch (accepted == false) and
+        //       credit the FULL proceeds to the borrower, leaving the
+        //       partial loans completely unsettled while the
+        //       collateral leaves the vault to the Seaport buyer, OR
+        //   (b) hit the `Scenario B` branch picking up the FIRST loan
+        //       only and silently abandoning the subsequent ones.
+        // Both outcomes are catastrophic (lender funds stranded,
+        // collateral stolen). Reject parallel-sale entirely for any
+        // offer that already had a partial fill OR is marked as a
+        // partial-fill-mode offer (so future fills don't trigger the
+        // bug). Borrower can `releaseParallelSaleLock` + post a fresh
+        // single-fill-mode offer if they want both features.
+        if (offer.amountFilled > 0) {
+            revert ParallelSalePartialFillConflict(offerId);
+        }
+        if (offer.fillMode == LibVaipakam.FillMode.Partial) {
+            revert ParallelSaleRequiresSingleFill(offerId);
+        }
+
         // ── Config-gate ───────────────────────────────────────────
         // Codex round-2 P1 #3 — honor the master kill-switch that
         // governance flips during incidents / on chains where the
@@ -297,42 +343,45 @@ contract OfferParallelSaleFacet is
             revert VaultNotDeployed(offer.creator);
         }
 
-        // ── Pre-loan floor computation (§19.3, Codex round-3 + user
-        //    redesign) ──────────────────────────────────────────────
+        // ── Pre-loan floor computation (§19.3, Codex round-3 + 4 +
+        //    user-direction) ────────────────────────────────────────
         //
-        // The pre-loan floor hedges the FULL DURATION's interest so
-        // the listing stays valid for any fill time across the loan's
-        // entire term. This makes the pre-loan and active-loan floors
-        // converge: a buyer fill post-acceptance always covers the
-        // lender's settlement entitlement (which routes through
-        // `LibEntitlement.settlementInterest` — full coupon for
-        // `useFullTermInterest=true` loans, pro-rata max for
+        // The pre-loan floor hedges the FULL DURATION's interest +
+        // explicit treasury fee. This makes the pre-loan and active-
+        // loan floors converge: a buyer fill post-acceptance always
+        // covers the lender's settlement entitlement (which routes
+        // through `LibEntitlement.settlementInterest` — full coupon
+        // for `useFullTermInterest=true` loans, pro-rata max for
         // `useFullTermInterest=false` loans, both bounded by
         // `proRataInterest(amount, rateBps, durationDays)`).
         //
-        // No artificial cap on `hedgeDays` — Vaipakam's
-        // `MAX_OFFER_DURATION_DAYS_CEIL = 4385` (~12 years) is the
-        // structural upper bound, but operators may run with
-        // `maxOfferDurationDays` set to 3 years (the planned launch
-        // configuration) or beyond. Capping at 365 here would leave
-        // multi-year listings unfillable past year 1, which contradicts
-        // the platform ethos of "borrow OR sell, end-to-end across the
-        // loan's lifetime". The borrower's listing price scales with
-        // duration × rate; that's the correct economic price for
-        // committing to a long-term loan with sale optionality.
+        // **Why 365-day cap is the structural reality**: existing
+        // T-034 validation in `_validateCadence` rejects any loan with
+        // an illiquid leg (NFT collateral, NFT principal, illiquid
+        // ERC20 either side) AND `durationDays > 365` — because Filter
+        // 0 forces `cadence == None` for illiquid AND Filter 2 forces
+        // `cadence != None` for multi-year. The protocol structurally
+        // caps NFT-collateral loans (the parallel-sale collateral
+        // class) at 365 days. The 365-day cap here matches that
+        // ceiling exactly. Defensive guard for the structurally-
+        // impossible case rather than load-bearing.
         //
-        // Pre-fix (round-3 commit 1): `hedgeDays = 1` charged just one
-        // day — bare-minimum protection against the loan being accepted
-        // between sale-listing and sale-fill. That left listings stuck
-        // tearing down on accept instead of carrying through.
-        // Intermediate (round-3 commit 2): `hedgeDays = min(duration, 365)`
-        // — covered the 1-year default `MAX_OFFER_DURATION_DAYS_DEFAULT`
-        // but capped multi-year. User-directed final: full duration.
-        uint256 hedgeDays = offer.durationDays;
+        // **Why explicit treasury addend (Codex round-4 P2 #2)**: the
+        // protocol's `cfgTreasuryFeeBps` is governance-configurable
+        // beyond the typical 1% default; relying on `buffer` to absorb
+        // it would let a high-fee governance config push the floor
+        // below `lenderLeg + treasuryLeg` at fill time. Compute the
+        // treasury share explicitly on the hedged interest so the
+        // floor always covers it.
+        uint256 hedgeDays = offer.durationDays > 365 ? 365 : offer.durationDays;
+        uint256 interest = LibEntitlement.proRataInterest(
+            offer.amount, offer.interestRateBps, hedgeDays
+        );
+        uint256 treasuryCutOnInterest =
+            (interest * LibVaipakam.cfgTreasuryFeeBps()) / 10_000;
         uint256 floor = (
-            (offer.amount + LibEntitlement.proRataInterest(
-                offer.amount, offer.interestRateBps, hedgeDays
-            )) * (10_000 + s.cfgPrepayListingBufferBps)
+            (offer.amount + interest + treasuryCutOnInterest)
+                * (10_000 + s.cfgPrepayListingBufferBps)
         ) / 10_000;
         uint256 feeSum = 0;
         for (uint256 i = 0; i < feeLegs.length; ) {

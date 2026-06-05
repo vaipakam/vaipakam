@@ -275,18 +275,22 @@ contract PrepayListingFacet is
         // unrelated cleanup fires. Mirrors
         // `OfferCancelFacet.cancelOffer:411`.
         delete s.offerIdByPositionTokenId[s.offers[uint256(offerId)].positionTokenId];
-        // Codex round-3 P2 #2 — clear ALL 5 parallel-sale mirror slots
-        // (`offerPrepayListingOrderHash`, `offerPrepayListingExecutor`,
-        // `Offer.parallelSaleOrderHash`, executor's _offerFeeLegs,
-        // vault's listing-hash registration) atomically with the
-        // terminal-bit flip. Without this the sold offer keeps a
-        // live-looking parallel-sale order hash + vault registration
-        // until the borrower manually calls `releaseParallelSaleLock`
-        // (which they can't until they realize they need to — the
-        // round-2 `cancelOffer` gate now blocks that path too).
-        // `LibPrepayCleanup.clearOfferListing` is idempotent + handles
-        // the `clearOfferOrder` forward + the vault revoke.
-        LibPrepayCleanup.clearOfferListing(offerId);
+        // Codex round-3 P2 #2 + round-4 P1 #1 — clear ALL 5 parallel-
+        // sale mirror slots (`offerPrepayListingOrderHash`,
+        // `offerPrepayListingExecutor`, `Offer.parallelSaleOrderHash`,
+        // executor's _offerFeeLegs, vault's listing-hash registration)
+        // atomically with the terminal-bit flip. Without this the sold
+        // offer keeps a live-looking parallel-sale order hash + vault
+        // registration until the borrower manually calls
+        // `releaseParallelSaleLock` (which they can't until they
+        // realize they need to — the round-2 `cancelOffer` gate now
+        // blocks that path too). The post-fill variant SKIPS the ERC721
+        // conduit approval revoke because Seaport hasn't finished
+        // transferring the NFT out of the vault yet at this point;
+        // revoking would break the transfer (round-4 P1 #1). After
+        // the transfer completes, the NFT is gone, so the stale
+        // approval is meaningless.
+        LibPrepayCleanup.clearOfferListingPostFill(offerId);
         emit OfferConsumedBySale(offerId, msg.sender);
     }
 
@@ -396,6 +400,14 @@ contract PrepayListingFacet is
             offerId, loanId, lenderHolder, lenderLeg, treasury, treasuryLeg,
             borrower, remainder
         );
+        // Codex round-4 P2 #3 — also emit the loan-keyed terminal event
+        // the existing indexer (`chainIndexer.ts`) listens for to flip
+        // the D1 loan row to `settled`. Without this, accept-then-sold
+        // loans would stay `active` in the indexer even after the
+        // on-chain settle. Reuses the established
+        // `PrepayCollateralSaleSettled` event; the indexer's
+        // existing handler runs verbatim with no schema work.
+        emit PrepayCollateralSaleSettled(loanId, msg.sender);
     }
 
     /// @notice T-086 Round-8 (#358) Codex round-3 user-directed redesign

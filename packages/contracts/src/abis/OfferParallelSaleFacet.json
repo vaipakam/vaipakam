@@ -630,6 +630,28 @@
   },
   {
     "type": "error",
+    "name": "ParallelSalePartialFillConflict",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint96",
+        "internalType": "uint96"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ParallelSaleRequiresSingleFill",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint96",
+        "internalType": "uint96"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ParameterOutOfRange",
     "inputs": [
       {

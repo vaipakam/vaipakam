@@ -113,6 +113,25 @@ library LibPrepayCleanup {
             }
             vault.revokeListingOrderHash(orderHash);
         }
+
+        // T-086 Round-8 Codex round-4 P2 #4 — also tear down any
+        // carried-through PARALLEL-SALE binding on the loan's parent
+        // offer. The Round-8 keep-listing-live design lets a
+        // borrower's pre-loan parallel-sale order persist across
+        // acceptance + active loan; on every loan terminal
+        // (repay / preclose / refinance / default / HF-liquidation)
+        // we MUST tear it down too, otherwise the executor's
+        // ERC-1271 path keeps returning valid + every later fill
+        // would revert at `recordOfferSaleProceeds`'s
+        // `PrepayLoanNotActive` check — stale visible state on
+        // OpenSea + a misleading UX for buyers. Idempotent: the
+        // private helper early-returns if no offer-keyed binding is
+        // live. Loan terminals path the same cleanup the borrower-
+        // driven cancel + release paths use (with conduit revoke
+        // enabled because the NFT stays in the vault on these
+        // terminals — distinct from the sale-fill terminal which
+        // skips the revoke per round-4 P1 #1).
+        _clearOfferListing(uint96(loan.offerId), true);
     }
 
     /// @notice T-086 Round-8 (#358) §19.7c — clear any active
@@ -163,7 +182,29 @@ library LibPrepayCleanup {
     ///             per-token approval the same way; the
     ///             `revokeListingOrderHash` invalidation is the
     ///             authoritative safety primitive).
+    /// @notice Convenience wrapper: clears the listing AND revokes the
+    ///         ERC721 conduit approval. Use for the borrower-driven
+    ///         destructive paths (releaseParallelSaleLock, cancelOffer).
+    ///         Codex round-4 P1 #1 fix carved out the parameterized
+    ///         entry below so the sale-fill path can SKIP the revoke
+    ///         (Seaport needs the approval alive long enough to finish
+    ///         the NFT transfer).
     function clearOfferListing(uint96 offerId) internal {
+        _clearOfferListing(offerId, true);
+    }
+
+    /// @notice Sale-fill variant: clears listing state but DOES NOT
+    ///         revoke the ERC721 conduit approval. Used by
+    ///         PrepayListingFacet.markOfferConsumedBySale because the
+    ///         executor's `validateOrder` runs BEFORE Seaport finishes
+    ///         the NFT transfer — revoking would break the transfer.
+    ///         Once the transfer completes, the NFT is no longer in
+    ///         the vault, so the stale approval is meaningless.
+    function clearOfferListingPostFill(uint96 offerId) internal {
+        _clearOfferListing(offerId, false);
+    }
+
+    function _clearOfferListing(uint96 offerId, bool revokeConduitApproval) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
         bytes32 orderHash = s.offerPrepayListingOrderHash[offerId];
@@ -217,12 +258,21 @@ library LibPrepayCleanup {
             address vaultAddr = s.userVaipakamVaults[borrower];
             if (vaultAddr != address(0)) {
                 VaipakamVaultImplementation vault = VaipakamVaultImplementation(vaultAddr);
-                LibVaipakam.Offer storage offer = s.offers[uint256(offerId)];
-                if (offer.collateralAssetType == LibVaipakam.AssetType.ERC721) {
-                    vault.setCollateralOperatorApproval(
-                        offer.collateralAsset, offer.collateralTokenId,
-                        address(0), false
-                    );
+                // Codex round-4 P1 #1 — only revoke the ERC721 conduit
+                // approval on the borrower-driven destructive paths
+                // (release / cancel). On the sale-fill path the
+                // approval MUST stay alive long enough for Seaport to
+                // finish the NFT transfer out of the vault; revoking
+                // before would make the transfer revert and stall the
+                // fill entirely.
+                if (revokeConduitApproval) {
+                    LibVaipakam.Offer storage offer = s.offers[uint256(offerId)];
+                    if (offer.collateralAssetType == LibVaipakam.AssetType.ERC721) {
+                        vault.setCollateralOperatorApproval(
+                            offer.collateralAsset, offer.collateralTokenId,
+                            address(0), false
+                        );
+                    }
                 }
                 vault.revokeListingOrderHash(orderHash);
             }
