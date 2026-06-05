@@ -270,7 +270,9 @@
     },
     "marketWidgetBanner": "按此交易对当前市场利率(≈ {{rate}}% 年化)发布。请在确认前审查并调整下方条款。",
     "firstOfferBanner": "此交易对暂无市场利率 — 您将发布首个报价。请在下方设置利率。",
-    "marketWidgetIlliquidBanner": "⚠ 此交易对包含无流动市场的资产(无预言机价格)。协议无法在此自动计算最低抵押或执行标准的健康度 / LTV 检查 — 您和对手方需直接定价,双方均需同意。请在下方设置所有条款。"
+    "marketWidgetIlliquidBanner": "⚠ 此交易对包含无流动市场的资产(无预言机价格)。协议无法在此自动计算最低抵押或执行标准的健康度 / LTV 检查 — 您和对手方需直接定价,双方均需同意。请在下方设置所有条款。",
+    "allowsParallelSaleLabel": "Also list this NFT for sale on OpenSea",
+    "allowsParallelSaleHint": "Borrow OR sell — your NFT will be listed on OpenSea-compatible marketplaces at offer-create time. If a buyer fills the listing before any lender accepts, the sale proceeds land in your vault and the offer closes. If a lender accepts first, the listing carries through the loan and any later buyer fill automatically settles the loan from the sale proceeds (lender gets their promised interest, you keep the surplus). Only on Borrower offers with NFT collateral. Forces all-or-nothing fill mode."
   },
   "loanDetails": {
     "connectTitle": "连接您的钱包",
@@ -822,7 +824,9 @@
     "cancel": "取消",
     "cancelling": "取消中…",
     "assetTypeLegend": "资产类型：{{kinds}}",
-    "cancelPendingConfig": "正在检查链的匹配配置… 协议配置加载完成后，取消将启用。"
+    "cancelPendingConfig": "正在检查链的匹配配置… 协议配置加载完成后，取消将启用。",
+    "statusSold": "Sold",
+    "statusSoldTooltip": "Sold via OpenSea — the offer's NFT collateral was filled by a buyer before any lender accepted. Proceeds landed in your vault."
   },
   "hero": {
     "brand": "Vaipakam",

@@ -22,7 +22,12 @@ import { toOfferData, type OfferData, type RawOffer } from '../pages/OfferBook';
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 
 /** What kind of offer the caller wants to see. */
-export type MyOfferStatus = 'active' | 'filled' | 'cancelled' | 'all';
+export type MyOfferStatus =
+  | 'active'
+  | 'filled'
+  | 'cancelled'
+  | 'sold' // T-086 Round-8 §19.7e — parallel-sale Scenario A terminal
+  | 'all';
 
 /**
  * Status-tagged offer row. Cancelled rows carry only `id`, `creator`,
@@ -42,7 +47,7 @@ export type MyOfferStatus = 'active' | 'filled' | 'cancelled' | 'all';
  * localStorage cache; both are out of scope for the first cut.
  */
 export interface MyOfferRow {
-  status: 'active' | 'filled' | 'cancelled';
+  status: 'active' | 'filled' | 'cancelled' | 'sold';
   /** Full `OfferData` for active + filled rows. For cancelled rows,
    *  only `id`, `creator`, and `offerType` are meaningful — every
    *  other field is its zero-value default and must NOT be rendered
@@ -462,11 +467,11 @@ export function useMyOffers(
       const out: MyOfferRow[] = [];
       for (const o of indexerRaw) {
         const offer = toOfferData(indexedToRawOffer(o));
-        // Status mapping: indexer 'active'/'accepted'/'cancelled'
-        // map onto MyOfferRow's three buckets. 'expired' offers
-        // (created but never accepted before duration elapsed) are
-        // dropped here — they have no UI surface today; revisit if
-        // we ever build an "expired" tab.
+        // Status mapping: indexer 'active'/'accepted'/'cancelled'/
+        // 'consumed_by_sale' map onto MyOfferRow's four buckets.
+        // 'expired' offers (created but never accepted before
+        // duration elapsed) are dropped here — they have no UI
+        // surface today; revisit if we ever build an "expired" tab.
         if (o.status === 'active') {
           out.push({ status: 'active', offer });
         } else if (o.status === 'accepted') {
@@ -477,6 +482,12 @@ export function useMyOffers(
           });
         } else if (o.status === 'cancelled') {
           out.push({ status: 'cancelled', offer });
+        } else if (o.status === 'consumed_by_sale') {
+          // T-086 Round-8 §19.7e — Scenario A parallel-sale terminal
+          // (buyer won the race; no loan was created). Carries the
+          // full offer fields for display; the UI renders "Sold via
+          // OpenSea" instead of "Cancelled".
+          out.push({ status: 'sold', offer });
         }
       }
       out.sort((a, b) =>

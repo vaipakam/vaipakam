@@ -64,7 +64,13 @@ async function getJson<T>(path: string): Promise<T | null> {
 export interface IndexedOffer {
   chainId: number;
   offerId: number;
-  status: 'active' | 'accepted' | 'cancelled' | 'expired';
+  /** T-086 Round-8 (#358) §19.7e — added `consumed_by_sale` for the
+   *  no-loan-branch parallel-sale terminal (Scenario A: buyer-side
+   *  won the race). Distinct from `cancelled` so the frontend can
+   *  render "Sold via OpenSea" instead of the generic "Cancelled"
+   *  copy, and so the indexer's retention prune (which keys on
+   *  `cancelled`) preserves the sold-history rows. */
+  status: 'active' | 'accepted' | 'cancelled' | 'expired' | 'consumed_by_sale';
   creator: string;
   offerType: number;
   lendingAsset: string;

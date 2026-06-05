@@ -1480,6 +1480,50 @@ export default function CreateOffer() {
               </span>
             </label>
 
+            {/* T-086 Round-8 (#358) §19.5 — borrow-OR-sell parallel-sale
+                opt-in. Only valid on Borrower offers with NFT
+                collateral (ERC721 / ERC1155); the contract gate at
+                `OfferCreateFacet` rejects lender / non-NFT-collateral
+                cases at create time with
+                `ParallelSaleRequiresBorrowerOffer` /
+                `ParallelSaleRequiresNFTCollateral`. Toggle visibility
+                here mirrors that contract gate so the UX never offers
+                an opt-in the contract would reject.
+
+                Aon fill mode is forced automatically when this toggle
+                is on (see {@link toCreateOfferPayload} in offerSchema.ts
+                — `fillMode: s.allowsParallelSale ? 1 : 0`). The
+                contract's round-8 P2 #4 gate
+                (`ParallelSaleRequiresAonFillMode`) rejects Partial /
+                IOC offers with parallel-sale enabled because those
+                fill modes create multiple loans against a single
+                offer's collateral. */}
+            {form.offerType === 'borrower' &&
+              (form.collateralAssetType === 'erc721' ||
+                form.collateralAssetType === 'erc1155') && (
+                <label className="checkbox-row" style={{ marginTop: 12 }}>
+                  <input
+                    type="checkbox"
+                    checked={form.allowsParallelSale}
+                    onChange={(e) =>
+                      setField("allowsParallelSale", e.target.checked)
+                    }
+                  />
+                  <span>
+                    {t('createOffer.allowsParallelSaleLabel')}
+                    <small
+                      style={{
+                        display: "block",
+                        opacity: 0.75,
+                        marginTop: 2,
+                      }}
+                    >
+                      {t('createOffer.allowsParallelSaleHint')}
+                    </small>
+                  </span>
+                </label>
+              )}
+
             {/* T-034 — Periodic Interest Payment cadence dropdown.
                 Hidden entirely when the master kill-switch is off OR
                 either side is illiquid. The component handles the

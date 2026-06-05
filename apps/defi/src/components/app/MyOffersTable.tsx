@@ -299,6 +299,65 @@ export function MyOffersTable({
                   );
                 }
 
+                // T-086 Round-8 (#358) §19.7e — Scenario A parallel-
+                // sale terminal. Carries full data via the indexer so
+                // we render every column normally with the "Sold via
+                // OpenSea" badge. Distinct from `cancelled` so users
+                // can read sold-history rows in their "My Offers" view.
+                if (row.status === 'sold') {
+                  return (
+                    <tr key={offer.id.toString()} style={{ opacity: 0.85 }}>
+                      <td>
+                        <Link to={`/app/offers/${offer.id.toString()}`}>
+                          #{offer.id.toString()}
+                        </Link>
+                      </td>
+                      <td>
+                        <span className="badge badge-outline">
+                          {offer.offerType === 0
+                            ? t('common.lender')
+                            : t('common.borrower')}
+                        </span>
+                      </td>
+                      <td>
+                        <PrincipalCell
+                          assetType={offer.assetType}
+                          asset={offer.lendingAsset}
+                          amount={offer.amount}
+                          tokenId={offer.tokenId}
+                          chainId={chainId}
+                        />
+                      </td>
+                      <td>{bpsToPercent(offer.interestRateBps)}</td>
+                      <td>
+                        {offer.durationDays.toString()}{' '}
+                        {t('loanDetails.daysSuffix')}
+                      </td>
+                      <td>
+                        <PrincipalCell
+                          assetType={0}
+                          asset={offer.collateralAsset}
+                          amount={offer.collateralAmount}
+                          chainId={chainId}
+                        />
+                      </td>
+                      <td>
+                        <span
+                          className="status-badge"
+                          style={{
+                            background: 'var(--success-bg, var(--surface-2))',
+                            color: 'var(--success-fg, var(--text))',
+                          }}
+                          title={t('myOffersTable.statusSoldTooltip')}
+                        >
+                          {t('myOffersTable.statusSold')}
+                        </span>
+                      </td>
+                      <td></td>
+                    </tr>
+                  );
+                }
+
                 // Active or filled — full row.
                 const isActive = row.status === 'active';
                 const isFilled = row.status === 'filled';

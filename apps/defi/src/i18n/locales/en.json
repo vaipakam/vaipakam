@@ -762,6 +762,8 @@
     "allowsPartialRepayLabel": "Allow borrower-initiated partial repayment",
     "allowsPartialRepayHintLender": "When enabled, the borrower can call repayPartial on the resulting loan to pay down principal in chunks before the term ends. Default off — when off, only full repayment is accepted on-chain.",
     "allowsPartialRepayHintBorrower": "Request the right to repay this loan in partial chunks. The lender consents implicitly by accepting your offer; if they don't want partial repay they will skip it. Default off.",
+    "allowsParallelSaleLabel": "Also list this NFT for sale on OpenSea",
+    "allowsParallelSaleHint": "Borrow OR sell — your NFT will be listed on OpenSea-compatible marketplaces at offer-create time. If a buyer fills the listing before any lender accepts, the sale proceeds land in your vault and the offer closes. If a lender accepts first, the listing carries through the loan and any later buyer fill automatically settles the loan from the sale proceeds (lender gets their promised interest, you keep the surplus). Only on Borrower offers with NFT collateral. Forces all-or-nothing fill mode.",
     "periodicInterest": {
       "label": "Payment cadence",
       "disabledShort": "interval ≥ duration",
@@ -1387,7 +1389,9 @@
     "cancelPendingConfig": "Checking the chain's matching configuration… Cancel will enable once the protocol config resolves.",
     "cancel": "Cancel",
     "cancelling": "Cancelling…",
-    "assetTypeLegend": "Asset types: {{kinds}}"
+    "assetTypeLegend": "Asset types: {{kinds}}",
+    "statusSold": "Sold",
+    "statusSoldTooltip": "Sold via OpenSea — the offer's NFT collateral was filled by a buyer before any lender accepted. Proceeds landed in your vault."
   },
   "timeChip": {
     "cancellableIn": "Cancellable in {{delta}}",

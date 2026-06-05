@@ -270,7 +270,9 @@
     },
     "marketWidgetBanner": "이 페어의 현재 시장 금리(≈ {{rate}}% APR)로 게시합니다. 확정하기 전에 아래 조건을 검토하고 조정하세요.",
     "firstOfferBanner": "이 페어에는 아직 시장 금리가 없습니다 — 첫 오퍼를 게시하게 됩니다. 아래에서 이자율을 설정하세요.",
-    "marketWidgetIlliquidBanner": "⚠ 이 페어에는 유동성 시장이 없는 자산이 포함됩니다(오라클 가격 없음). 프로토콜은 여기서 최소 담보를 자동 계산하거나 표준 헬스 팩터 / LTV 검사를 실행할 수 없습니다 — 귀하와 거래 상대방이 직접 가격을 책정하며 양쪽 모두 동의해야 합니다. 아래에서 모든 조건을 설정하세요."
+    "marketWidgetIlliquidBanner": "⚠ 이 페어에는 유동성 시장이 없는 자산이 포함됩니다(오라클 가격 없음). 프로토콜은 여기서 최소 담보를 자동 계산하거나 표준 헬스 팩터 / LTV 검사를 실행할 수 없습니다 — 귀하와 거래 상대방이 직접 가격을 책정하며 양쪽 모두 동의해야 합니다. 아래에서 모든 조건을 설정하세요.",
+    "allowsParallelSaleLabel": "Also list this NFT for sale on OpenSea",
+    "allowsParallelSaleHint": "Borrow OR sell — your NFT will be listed on OpenSea-compatible marketplaces at offer-create time. If a buyer fills the listing before any lender accepts, the sale proceeds land in your vault and the offer closes. If a lender accepts first, the listing carries through the loan and any later buyer fill automatically settles the loan from the sale proceeds (lender gets their promised interest, you keep the surplus). Only on Borrower offers with NFT collateral. Forces all-or-nothing fill mode."
   },
   "loanDetails": {
     "connectTitle": "지갑을 연결하세요",
@@ -822,7 +824,9 @@
     "cancel": "취소",
     "cancelling": "취소 중…",
     "assetTypeLegend": "자산 유형: {{kinds}}",
-    "cancelPendingConfig": "체인의 매칭 구성을 확인 중… 프로토콜 구성이 로드되면 취소가 활성화됩니다."
+    "cancelPendingConfig": "체인의 매칭 구성을 확인 중… 프로토콜 구성이 로드되면 취소가 활성화됩니다.",
+    "statusSold": "Sold",
+    "statusSoldTooltip": "Sold via OpenSea — the offer's NFT collateral was filled by a buyer before any lender accepted. Proceeds landed in your vault."
   },
   "hero": {
     "brand": "Vaipakam",

@@ -437,6 +437,7 @@ export default function Dashboard() {
                     { value: 'active', label: t('myOffersTable.statusActive') },
                     { value: 'filled', label: t('myOffersTable.statusFilled') },
                     { value: 'cancelled', label: t('myOffersTable.statusCancelled') },
+                    { value: 'sold', label: t('myOffersTable.statusSold') },
                     { value: 'all', label: t('common.all') },
                   ]}
                 />

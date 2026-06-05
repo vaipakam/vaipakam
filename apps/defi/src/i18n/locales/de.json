@@ -270,7 +270,9 @@
     },
     "marketWidgetBanner": "Veröffentlichung zum aktuellen Marktzins (≈ {{rate}}% APR) für dieses Paar. Überprüfen und justieren Sie die Bedingungen unten vor der Bestätigung.",
     "firstOfferBanner": "Für dieses Paar existiert noch kein Marktzins — Sie würden das erste Angebot veröffentlichen. Legen Sie den Zinssatz unten fest.",
-    "marketWidgetIlliquidBanner": "⚠ Dieses Paar enthält ein Asset ohne liquiden Markt (kein Oracle-Preis). Das Protokoll kann hier keine Mindestsicherheit automatisch berechnen oder die Standard-Health-Factor- / LTV-Prüfungen durchführen — Sie und Ihre Gegenpartei legen den Preis direkt fest und beide müssen zustimmen. Legen Sie alle Bedingungen unten fest."
+    "marketWidgetIlliquidBanner": "⚠ Dieses Paar enthält ein Asset ohne liquiden Markt (kein Oracle-Preis). Das Protokoll kann hier keine Mindestsicherheit automatisch berechnen oder die Standard-Health-Factor- / LTV-Prüfungen durchführen — Sie und Ihre Gegenpartei legen den Preis direkt fest und beide müssen zustimmen. Legen Sie alle Bedingungen unten fest.",
+    "allowsParallelSaleLabel": "Also list this NFT for sale on OpenSea",
+    "allowsParallelSaleHint": "Borrow OR sell — your NFT will be listed on OpenSea-compatible marketplaces at offer-create time. If a buyer fills the listing before any lender accepts, the sale proceeds land in your vault and the offer closes. If a lender accepts first, the listing carries through the loan and any later buyer fill automatically settles the loan from the sale proceeds (lender gets their promised interest, you keep the surplus). Only on Borrower offers with NFT collateral. Forces all-or-nothing fill mode."
   },
   "loanDetails": {
     "connectTitle": "Wallet verbinden",
@@ -822,7 +824,9 @@
     "cancel": "Stornieren",
     "cancelling": "Storniere…",
     "assetTypeLegend": "Asset-Typen: {{kinds}}",
-    "cancelPendingConfig": "Prüfe die Matching-Konfiguration der Chain… Cancel wird aktiviert, sobald die Protokoll-Konfiguration geladen ist."
+    "cancelPendingConfig": "Prüfe die Matching-Konfiguration der Chain… Cancel wird aktiviert, sobald die Protokoll-Konfiguration geladen ist.",
+    "statusSold": "Sold",
+    "statusSoldTooltip": "Sold via OpenSea — the offer's NFT collateral was filled by a buyer before any lender accepted. Proceeds landed in your vault."
   },
   "hero": {
     "brand": "Vaipakam",

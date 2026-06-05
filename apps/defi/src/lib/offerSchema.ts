@@ -173,6 +173,16 @@ export interface CreateOfferPayload {
    *  through the createOffer ABI in commit `1938ba79`; the contract
    *  rejects the flag on lender / non-NFT-collateral offers. */
   allowsParallelSale: boolean;
+  /** #125 — DEX-style fill mode flavour
+   *    0 = Partial (default; today's behaviour)
+   *    1 = Aon (all-or-nothing)
+   *    2 = Ioc (immediate-or-cancel; paired with expiresAt)
+   *  Round-8 Codex round-8 P2 #4 forces Aon on parallel-sale offers —
+   *  partial / IOC fills create multiple loans against a single
+   *  offer's collateral, incompatible with parallel-sale's single-loan
+   *  split-on-fill assumption. {@link toCreateOfferPayload} sets this
+   *  automatically based on `allowsParallelSale`. */
+  fillMode: number;
 }
 
 /**
@@ -412,6 +422,13 @@ export function toCreateOfferPayload(
     // Contract gate (`OfferCreateFacet`) refuses lender + non-NFT-
     // collateral cases at create time; UI surface enforces the same.
     allowsParallelSale: s.allowsParallelSale,
+    // #125 + Round-8 Codex round-8 P2 #4 — force Aon (1) when
+    // `allowsParallelSale` is on; default to Partial (0) otherwise.
+    // The form's toggle visibility hides parallel-sale opt-in on
+    // offers where Aon would be inappropriate; this defensive coupling
+    // ensures the payload always matches the contract's
+    // `ParallelSaleRequiresAonFillMode` gate.
+    fillMode: s.allowsParallelSale ? 1 : 0,
   };
 }
 
