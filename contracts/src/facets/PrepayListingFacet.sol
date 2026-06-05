@@ -493,26 +493,32 @@ contract PrepayListingFacet is
             LibVaipakam.recordVaultDeposit(remainderRecipient, principalAsset, remainder);
         }
 
-        // Codex round-10 P2 #2 — clean up any active PrecloseFacet
-        // offset linkage BEFORE the unlock. Unlike loan-keyed prepay
+        // Codex round-10 P2 #2 + round-11 P1 — BLOCK fills while a
+        // PrecloseFacet offset offer is live. Unlike loan-keyed prepay
         // listings, the carried offer-keyed parallel-sale listing
-        // doesn't take the borrower-position NFT lock; so the
-        // borrower CAN post a preclose-offset offer (which DOES lock
-        // the borrower-NFT) on top of the carried parallel-sale. If
-        // the parallel-sale then fills, the loan settles via sale
-        // proceeds and the offset offer becomes meaningless. Without
-        // this cleanup, the unconditional unlock below would release
-        // the offset's borrower-NFT lock without retiring the offset
-        // linkage, leaving a stale `loanToOffsetOfferId[loanId]` +
-        // `offsetOfferToLoanId[offsetOfferId]` that
-        // `PrecloseFacet.offsetCompleted` would later trip over.
-        // Stamp the offset offer cancelled + clear both reverse-map
-        // slots.
-        uint256 offsetOfferId = s.loanToOffsetOfferId[loanId];
-        if (offsetOfferId != 0) {
-            s.offerCancelled[offsetOfferId] = true;
-            delete s.loanToOffsetOfferId[loanId];
-            delete s.offsetOfferToLoanId[offsetOfferId];
+        // doesn't take the borrower-position NFT lock, so the borrower
+        // CAN post a preclose-offset offer (which DOES lock the
+        // borrower-NFT) on top of the carried parallel-sale.
+        //
+        // The round-10 attempt to tear down the offset inline
+        // (stamping `offerCancelled` + deleting both reverse-maps) was
+        // incomplete: the offer row, active-offer indexes, position
+        // NFT, and vaulted principal stayed intact, and the
+        // OfferAcceptFacet doesn't consult `offerCancelled` for the
+        // accept path — so a "torn-down" offset offer could still be
+        // filled later as an ordinary lender offer, double-spending
+        // the lender's principal.
+        //
+        // The clean fix: require the borrower to cancel the offset
+        // offer FIRST via `OfferCancelFacet.cancelOffer` (which runs
+        // the full teardown — refund principal + burn position NFT +
+        // active-index removal). The buyer's fill reverts; borrower
+        // (or anyone on the lazy-clear path) cancels the offset; buyer
+        // re-tries the fill.
+        if (s.loanToOffsetOfferId[loanId] != 0) {
+            revert ParallelSaleBlockedByOpenOffsetOffer(
+                offerId, loanId, s.loanToOffsetOfferId[loanId]
+            );
         }
 
         // Proper-close finalization — identical to the loan-keyed
@@ -600,6 +606,15 @@ contract PrepayListingFacet is
     ///         `GraceExpired` and RepayFacet's
     ///         `RepaymentPastGracePeriod` posture.
     error ParallelSaleFillPastGrace(uint96 offerId, uint256 nowTimestamp, uint256 graceEnd);
+    /// @notice T-086 Round-8 (#358) Codex round-11 P1 — raised when a
+    ///         carried parallel-sale fill is attempted while the
+    ///         borrower has an active PrecloseFacet offset offer linked
+    ///         to the loan. Borrower must cancel the offset offer
+    ///         first (via `OfferCancelFacet.cancelOffer`, which runs
+    ///         the full teardown) before the buyer can fill.
+    error ParallelSaleBlockedByOpenOffsetOffer(
+        uint96 offerId, uint256 loanId, uint256 offsetOfferId
+    );
 
     /// @inheritdoc IVaipakamPrepayCallbacks
     function assertOfferFillNotSanctioned(uint96 offerId, address borrowerWallet)

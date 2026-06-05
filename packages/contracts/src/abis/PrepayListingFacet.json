@@ -796,6 +796,27 @@
   },
   {
     "type": "error",
+    "name": "ParallelSaleBlockedByOpenOffsetOffer",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint96",
+        "internalType": "uint96"
+      },
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "offsetOfferId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ParallelSaleFillPastGrace",
     "inputs": [
       {
