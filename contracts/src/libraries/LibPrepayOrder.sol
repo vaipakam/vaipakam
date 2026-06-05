@@ -649,6 +649,37 @@ library LibPrepayOrder {
         orderHash = ISeaportOrderHash(seaport).getOrderHash(components);
     }
 
+    /// @notice T-086 Round-8 (#358) Step 7 — public wrapper around
+    ///         {_componentsOfferAtMemory} used by the executor's
+    ///         `_tryCancelOnSeaportOffer` reconstruction path. The
+    ///         builder is deterministic from `(ctx, feeLegs, counter)`;
+    ///         the executor verifies the rebuilt hash matches the
+    ///         pinned `orderHash` (via {buildAndHashOfferMem}) before
+    ///         forwarding the rebuilt components to `Seaport.cancel`.
+    function componentsOfferForCancel(
+        OfferContext memory ctx,
+        address collateralAsset,
+        LibVaipakam.AssetType collateralAssetType,
+        uint256 collateralTokenId,
+        uint256 collateralQuantity,
+        address diamond,
+        address executor,
+        uint256 counter,
+        FeeLeg[] memory feeLegs
+    ) internal pure returns (OrderComponents memory) {
+        return _componentsOfferAtMemory(
+            ctx,
+            collateralAsset,
+            collateralAssetType,
+            collateralTokenId,
+            collateralQuantity,
+            diamond,
+            executor,
+            counter,
+            feeLegs
+        );
+    }
+
     /// @dev T-086 Round-8 (#358) — private builder for the no-loan
     ///      branch's `OrderComponents`. Single-proceeds-leg shape
     ///      (no protocol-leg split). Seaport's amount interpolation

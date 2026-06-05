@@ -925,12 +925,93 @@ contract CollateralListingExecutor is
     ///         safety invariant alone (same fallback as the existing
     ///         `_tryCancelOnSeaport`'s drift branch).
     function _tryCancelOnSeaportOffer(bytes32 orderHash, OfferContext memory ctx) private {
-        // Step 2 stub — full reconstruction lands in Step 7. The
-        // `OfferOrderCanceled` event above is the indexer breadcrumb
-        // for the binding-delete; this skip is the breadcrumb for the
-        // Seaport-side leg that Step 7 will replace with an actual
-        // reconstruction + `Seaport.cancel` forward.
-        emit OfferOrderSeaportCancelSkipped(orderHash, uint256(ctx.offerId));
+        // T-086 Round-8 (#358) Step 7 — full reconstruction. Mirror of
+        // the loan-keyed `_tryCancelOnSeaport` for the offer-keyed
+        // surface. The pre-loan branch is fixed-price only (§19.11
+        // out-of-scope for Dutch / English), so there's no mode-
+        // dispatch — single canonical OrderComponents shape via
+        // `LibPrepayOrder.buildAndHashOfferMem`'s underlying components
+        // builder.
+        FeeLeg[] memory feeLegs = _offerFeeLegs[orderHash];
+
+        // Recompute the canonical hash + verify it matches the
+        // stored orderHash. A drift means the cancel-time view of the
+        // offer / vault counter / governance has shifted from sign-
+        // time; we can't safely forward `Seaport.cancel` for a
+        // different hash (would leave the real hash live AND register
+        // a phantom cancel). Skip + breadcrumb.
+        bytes32 reconstructed = LibPrepayOrder.buildAndHashOfferMem(
+            ctx,
+            ctx.collateralAsset,
+            LibVaipakam.AssetType(ctx.collateralAssetType),
+            ctx.collateralTokenId,
+            ctx.collateralQuantity,
+            vaipakamDiamond,
+            address(this),
+            seaport,
+            feeLegs
+        );
+        if (reconstructed != orderHash) {
+            emit OfferOrderSeaportCancelSkipped(orderHash, uint256(ctx.offerId));
+            return;
+        }
+
+        // Rebuild the OrderComponents we just hashed-and-verified —
+        // share the helper that builds them. The helper reads via the
+        // recorded ctx so the rebuild is consistent.
+        OrderComponents memory components = _buildOfferOrderComponents(
+            ctx, feeLegs
+        );
+
+        OrderComponents[] memory orders = new OrderComponents[](1);
+        orders[0] = components;
+        // Defensive try/catch — same future-proof guard as the
+        // loan-keyed `_tryCancelOnSeaport` (Seaport 1.6 doesn't revert
+        // here in the happy path).
+        try ISeaportCancel(seaport).cancel(orders) returns (bool /* cancelled */) {
+            emit OfferOrderSeaportCancelEmitted(orderHash, uint256(ctx.offerId));
+        } catch {
+            emit OfferOrderSeaportCancelSkipped(orderHash, uint256(ctx.offerId));
+        }
+    }
+
+    /// @notice T-086 Round-8 (#358) Step 7 — emitted when the Seaport
+    ///         `cancel` forward succeeds. Mirror of
+    ///         `SeaportCancelEmitted` for the offer-keyed surface.
+    event OfferOrderSeaportCancelEmitted(bytes32 indexed orderHash, uint256 indexed offerId);
+
+    /// @dev Step 7 — rebuild the canonical `OrderComponents` from the
+    ///      recorded OfferContext + fee legs + a fresh vault-counter
+    ///      read. Used by `_tryCancelOnSeaportOffer` to feed
+    ///      `Seaport.cancel`. The result is identical to what
+    ///      `LibPrepayOrder._componentsOfferAtMemory` would produce —
+    ///      mirrored here to avoid making the library function
+    ///      external for one consumer.
+    function _buildOfferOrderComponents(
+        OfferContext memory ctx,
+        FeeLeg[] memory feeLegs
+    ) private view returns (OrderComponents memory) {
+        // We use the library's hash builder above for the hash check;
+        // for the components themselves we need to rebuild them
+        // identically. Easiest: call the library helper which returns
+        // the canonical components by re-running the same path.
+        // But the library only exposes the hash, not the components,
+        // so we need to construct them here matching the library's
+        // shape. To stay DRY: the library's helper IS internal-pure
+        // and produces deterministic output from `ctx + feeLegs + counter`.
+        // Reusing it here would mean exposing `_componentsOfferAtMemory`
+        // as `internal` (it already is). Re-call via the library:
+        return LibPrepayOrder.componentsOfferForCancel(
+            ctx,
+            ctx.collateralAsset,
+            LibVaipakam.AssetType(ctx.collateralAssetType),
+            ctx.collateralTokenId,
+            ctx.collateralQuantity,
+            vaipakamDiamond,
+            address(this),
+            ISeaportOrderHash(seaport).getCounter(ctx.borrowerVault),
+            feeLegs
+        );
     }
 
     /// @notice T-086 Round-8 (#358) — emitted by
@@ -1246,7 +1327,16 @@ contract CollateralListingExecutor is
         returns (bytes4)
     {
         if (msg.sender != seaport) revert NotSeaport();
-        _checkOrderPreconditions(params);
+        // T-086 Round-8 (#358) §19.6 — dispatch-disjoint invariant:
+        // an orderHash lives in EITHER `offerContext` (no-loan branch)
+        // OR `orderContext` (loan-keyed branch), never both
+        // (enforced by `recordOfferOrder` + `recordOrder`'s mutual
+        // existence checks). Route to the matching precondition stack.
+        if (offerContext[params.orderHash].offerId != 0) {
+            _checkOfferOrderPreconditions(params);
+        } else {
+            _checkOrderPreconditions(params);
+        }
         return ISeaportZone.authorizeOrder.selector;
     }
 
@@ -1256,6 +1346,13 @@ contract CollateralListingExecutor is
         returns (bytes4)
     {
         if (msg.sender != seaport) revert NotSeaport();
+
+        // T-086 Round-8 (#358) §19.6 — dispatch on the
+        // dispatch-disjoint invariant (see {authorizeOrder} above).
+        if (offerContext[params.orderHash].offerId != 0) {
+            _finalizeOfferSale(params);
+            return ISeaportZone.validateOrder.selector;
+        }
 
         // Re-run the full precondition stack — `Seaport.validate()`
         // pre-registration path SKIPS {authorizeOrder}, so the same
@@ -1293,6 +1390,155 @@ contract CollateralListingExecutor is
 
         emit OrderFilled(params.orderHash, loanId);
         return ISeaportZone.validateOrder.selector;
+    }
+
+    /// @notice T-086 Round-8 (#358) §19.7 — emitted on a successful
+    ///         no-loan-branch parallel-sale fill. Mirror of
+    ///         `OrderFilled` for the offer-keyed surface; the indexer
+    ///         derives the §19.7e "Sold via OpenSea" terminal-row
+    ///         render from this + the matching `OfferConsumedBySale`
+    ///         event on the diamond.
+    event OfferOrderFilled(
+        bytes32 indexed orderHash,
+        uint96 indexed offerId,
+        uint256 proceedsAmount
+    );
+
+    /// @dev T-086 Round-8 (#358) §19.4 Scenario A — finalize a
+    ///      no-loan-branch parallel-sale fill. Runs after the
+    ///      precondition stack (re-checked here per §5.7 +
+    ///      `Seaport.validate()` pre-registration skip), then calls
+    ///      the diamond's 2 finalization callbacks atomically:
+    ///        - `recordOfferSaleProceeds(offerId, principalAsset, askPrice)`
+    ///          credits the borrower's vault protocol-tracked balance
+    ///          so it's withdrawable via `vaultWithdrawERC20`.
+    ///        - `markOfferConsumedBySale(offerId)` sets the §19.7e
+    ///          terminal bit so subsequent accept / mutate paths
+    ///          revert.
+    ///      Both callbacks are gated by
+    ///      `msg.sender == s.offerPrepayListingExecutor[offerId]` on
+    ///      the diamond side (round-3.2 against Codex P1 #4).
+    function _finalizeOfferSale(ZoneParameters calldata params) private {
+        _checkOfferOrderPreconditions(params);
+
+        OfferContext memory ctx = offerContext[params.orderHash];
+
+        // Effects — clear executor-side bookkeeping FIRST so the
+        // diamond callbacks can't observe a double-fill window.
+        delete offerContext[params.orderHash];
+        delete _offerFeeLegs[params.orderHash];
+
+        // Interactions — diamond callbacks. The proceeds amount is the
+        // recorded `askPrice` (consideration[0].amount equals it under
+        // the fixed-price-only invariant pinned at sign time + the
+        // amount check in {_checkOfferOrderPreconditions}).
+        IVaipakamPrepayCallbacks(vaipakamDiamond).recordOfferSaleProceeds(
+            ctx.offerId,
+            ctx.principalAsset,
+            uint256(ctx.askPrice)
+        );
+        IVaipakamPrepayCallbacks(vaipakamDiamond).markOfferConsumedBySale(ctx.offerId);
+
+        emit OfferOrderFilled(params.orderHash, ctx.offerId, uint256(ctx.askPrice));
+    }
+
+    /// @dev T-086 Round-8 (#358) §19.7 — precondition stack for the
+    ///      no-loan branch's `validateOrder` / `authorizeOrder`.
+    ///      Mirror of `_checkOrderPreconditions` for the loan-keyed
+    ///      branch. Diverges on:
+    ///        - reads ctx from `offerContext[hash]` not
+    ///          `orderContext[hash]`
+    ///        - the diamond callback runs `assertOfferFillNotSanctioned`
+    ///          (live sanctions recheck — round-3 against Raja P1 #3),
+    ///          NOT a loan-status check (no loan exists)
+    ///        - consideration shape is 1 proceeds leg + N fee legs
+    ///          (not 3 protocol legs + N), and the recipient of
+    ///          consideration[0] is `address(diamond)` (not 3 distinct
+    ///          NFT-holder / treasury / borrower recipients)
+    function _checkOfferOrderPreconditions(ZoneParameters calldata params)
+        private
+    {
+        OfferContext memory ctx = offerContext[params.orderHash];
+        if (ctx.offerId == 0) revert UnknownOrder(params.orderHash);
+        if (!approvedConduits[ctx.conduit]) revert ConduitNotApproved(ctx.conduit);
+
+        // Diamond-side sanctions recheck — runs inside the diamond's
+        // storage slot so the oracle lookup hits the diamond-configured
+        // address (round-3 against Raja P1 #3 + Codex round-2 P1 #4).
+        IVaipakamPrepayCallbacks(vaipakamDiamond)
+            .assertOfferFillNotSanctioned(ctx.offerId, ctx.borrowerWallet);
+
+        // ── Offerer check ───────────────────────────────────────────
+        // Same defense-in-depth as the loan-keyed branch: the order's
+        // offerer MUST be the borrower's per-user vault (pinned at
+        // sign time). A different offerer can't structurally exist in
+        // `offerContext` but the explicit check catches future
+        // canonical-hash invariant loosening.
+        if (params.offerer != ctx.borrowerVault) {
+            revert WrongOfferer(ctx.borrowerVault, params.offerer);
+        }
+
+        // ── Offer-side schema check ─────────────────────────────────
+        // Exactly 1 offer item — the collateral NFT recorded in ctx.
+        if (params.offer.length != 1) {
+            revert WrongOfferCount(1, params.offer.length);
+        }
+        ItemType expectedOfferType;
+        if (ctx.collateralAssetType == uint8(LibVaipakam.AssetType.ERC721)) {
+            expectedOfferType = ItemType.ERC721;
+        } else if (ctx.collateralAssetType == uint8(LibVaipakam.AssetType.ERC1155)) {
+            expectedOfferType = ItemType.ERC1155;
+        } else {
+            revert UnsupportedCollateralAssetType();
+        }
+        if (params.offer[0].itemType != expectedOfferType) {
+            revert WrongOfferItemType(expectedOfferType, params.offer[0].itemType);
+        }
+        if (params.offer[0].token != ctx.collateralAsset) {
+            revert WrongOfferToken(ctx.collateralAsset, params.offer[0].token);
+        }
+        if (params.offer[0].identifier != ctx.collateralTokenId) {
+            revert WrongOfferIdentifier(ctx.collateralTokenId, params.offer[0].identifier);
+        }
+        uint256 expectedOfferAmount =
+            ctx.collateralAssetType == uint8(LibVaipakam.AssetType.ERC721)
+                ? 1
+                : ctx.collateralQuantity;
+        if (params.offer[0].amount != expectedOfferAmount) {
+            revert WrongOfferAmount(expectedOfferAmount, params.offer[0].amount);
+        }
+
+        // ── Consideration shape check ───────────────────────────────
+        // 1 proceeds leg + up to MAX_FEE_LEGS seller-baked fee legs.
+        if (
+            params.consideration.length < 1 ||
+            params.consideration.length > 1 + MAX_FEE_LEGS
+        ) {
+            revert WrongConsiderationCount(1 + MAX_FEE_LEGS, params.consideration.length);
+        }
+        _assertConsiderationItem(
+            params.consideration[0], 0, ctx.principalAsset, params.orderHash
+        );
+        // Proceeds leg: amount >= askPrice (fixed-price, so == is the
+        // intent; >= is defensive in case Seaport's interpolation
+        // routes a rounding edge), recipient = address(diamond).
+        if (params.consideration[0].amount < uint256(ctx.askPrice)) {
+            revert LenderShortPaid(params.orderHash);
+        }
+        if (params.consideration[0].recipient != address(vaipakamDiamond)) {
+            revert WrongLenderRecipient(params.orderHash);
+        }
+        // Per-fee-leg shape — same ERC20 + principalAsset + zero-
+        // identifier checks the loan-keyed path runs.
+        for (uint256 i = 1; i < params.consideration.length; ) {
+            _assertConsiderationItem(
+                params.consideration[i], i, ctx.principalAsset, params.orderHash
+            );
+            if (params.consideration[i].amount == 0) {
+                revert FeeLegZeroAmount(i);
+            }
+            unchecked { ++i; }
+        }
     }
 
     /// @notice The full precondition check stack shared by both

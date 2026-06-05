@@ -316,7 +316,16 @@ contract OfferParallelSaleFacet is
             principalAsset: offer.lendingAsset,
             mode: PREPAY_MODE_PRE_LOAN_FIXED_PRICE,
             borrowerVault: loc.vaultAddr,
-            borrowerWallet: offer.creator
+            borrowerWallet: offer.creator,
+            // T-086 Round-8 Step 7 — collateral content pinned at
+            // post-time. The parallel-sale lock guarantees these
+            // fields can't drift while the order is live, so the
+            // executor's fill-time content check reads them directly
+            // from the recorded OfferContext.
+            collateralAsset: offer.collateralAsset,
+            collateralAssetType: uint8(offer.collateralAssetType),
+            collateralTokenId: offer.collateralTokenId,
+            collateralQuantity: offer.quantity
         });
 
         orderHash = LibPrepayOrder.buildAndHashOfferMem(

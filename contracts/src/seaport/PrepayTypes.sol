@@ -197,6 +197,18 @@ struct OfferContext {
     uint8 mode;
     address borrowerVault;
     address borrowerWallet;
+    // T-086 Round-8 (#358) Step 7 — collateral content pinned at
+    // `postParallelSaleListing` time. The §19.6 parallel-sale lock in
+    // `OfferMutateFacet._assertMutableBy` guarantees these can't drift
+    // while a parallel-sale binding is live, so the executor's
+    // fill-time content check can read directly from this snapshot
+    // (no extra cross-contract call to the diamond). `collateralAssetType`
+    // is the `LibVaipakam.AssetType` enum cast to uint8 (0=ERC20,
+    // 1=ERC721, 2=ERC1155).
+    address collateralAsset;
+    uint8 collateralAssetType;
+    uint256 collateralTokenId;
+    uint256 collateralQuantity;
 }
 
 // T-086 Round-8 (#358) §19.6 — finite far-future Seaport endTime
