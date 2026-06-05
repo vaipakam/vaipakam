@@ -37,6 +37,7 @@ const KIND_LABELS: Record<ActivityEventKind, string> = {
   // for cancelled-row reconstruction. Hidden from the Activity feed
   // (filtered out below) so it doesn't show up as a duplicate row.
   OfferCanceledDetails: 'Offer canceled (detail)',
+  OfferConsumedBySale: 'Offer sold via OpenSea',
   LoanInitiated: 'Loan initiated',
   LoanRepaid: 'Loan repaid',
   LoanDefaulted: 'Loan defaulted',
@@ -66,6 +67,7 @@ const KIND_ACCENT: Record<ActivityEventKind, string> = {
   OfferAccepted: 'success',
   OfferCanceled: 'failure',
   OfferCanceledDetails: 'failure',
+  OfferConsumedBySale: 'success',
   LoanInitiated: 'success',
   LoanRepaid: 'success',
   LoanDefaulted: 'failure',

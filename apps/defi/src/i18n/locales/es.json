@@ -271,8 +271,8 @@
     "marketWidgetBanner": "Publicando a la tasa de mercado actual (≈ {{rate}}% APR) para este par. Revisa y ajusta los términos abajo antes de confirmar.",
     "firstOfferBanner": "Aún no existe una tasa de mercado para este par — publicarías la primera oferta. Define la tasa de interés abajo.",
     "marketWidgetIlliquidBanner": "⚠ Este par incluye un activo sin mercado líquido (sin precio de oráculo). El protocolo no puede calcular automáticamente una garantía mínima ni ejecutar las verificaciones estándar de factor de salud / LTV aquí — tú y tu contraparte fijan el precio directamente y ambos deben consentir. Define todos los términos abajo.",
-    "allowsParallelSaleLabel": "Also list this NFT for sale on OpenSea",
-    "allowsParallelSaleHint": "Borrow OR sell — your NFT will be listed on OpenSea-compatible marketplaces at offer-create time. If a buyer fills the listing before any lender accepts, the sale proceeds land in your vault and the offer closes. If a lender accepts first, the listing carries through the loan and any later buyer fill automatically settles the loan from the sale proceeds (lender gets their promised interest, you keep the surplus). Only on Borrower offers with NFT collateral. Forces all-or-nothing fill mode."
+    "allowsParallelSaleLabel": "Allow optional sale of this NFT on OpenSea",
+    "allowsParallelSaleHint": "Borrow OR sell — opting in marks this offer as eligible for a parallel-sale listing. You'll still need to publish the listing yourself (My Offers → \"Post sale listing\" once the offer is live). If a buyer fills the listing before any lender accepts, the sale proceeds land in your vault and the offer closes. If a lender accepts first, the listing (once published) carries through the loan and any later buyer fill automatically settles the loan from the sale proceeds (lender gets their promised interest, you keep the surplus). Only on Borrower offers with NFT collateral. Forces all-or-nothing fill mode."
   },
   "loanDetails": {
     "connectTitle": "Conecta tu billetera",
@@ -503,7 +503,8 @@
     "lblRetryOutcome": "Resultado del reintento",
     "retrySucceeded": "Exitoso",
     "retryFailed": "Falló — recurrió a división de colateral",
-    "lblRetryProceeds": "Ganancias devueltas"
+    "lblRetryProceeds": "Ganancias devueltas",
+    "offerConsumedBySale": "Offer sold via OpenSea"
   },
   "claimActionBar": {
     "readyToClaim": "Listo para reclamar",

@@ -183,6 +183,20 @@ export interface CreateOfferPayload {
    *  split-on-fill assumption. {@link toCreateOfferPayload} sets this
    *  automatically based on `allowsParallelSale`. */
   fillMode: number;
+  /** #195 — Good-Til-Time deadline as a uint64 unix-seconds stamp.
+   *  `0n` ⇒ Good-Til-Cancelled (GTC; today's default). The contract
+   *  enforces `expiresAt > block.timestamp` when non-zero. Surfaced
+   *  on the payload so the createOffer ABI tuple matches the
+   *  contract's `CreateOfferParams` shape exactly; the form has no
+   *  UI for it yet, so we always pass `0n`. */
+  expiresAt: bigint;
+  /** T-086 step 4 — lender opt-in for borrower-initiated prepay
+   *  collateral listing during the loan (distinct from the Round-8
+   *  borrow-OR-sell parallel-sale opt-in `allowsParallelSale` above).
+   *  See `LibVaipakam.CreateOfferParams.allowsPrepayListing` for
+   *  full semantics. Default `false` is the safe behaviour; the form
+   *  has no UI for it yet (Round-8 deferred; future enhancement). */
+  allowsPrepayListing: boolean;
 }
 
 /**
@@ -429,6 +443,16 @@ export function toCreateOfferPayload(
     // ensures the payload always matches the contract's
     // `ParallelSaleRequiresAonFillMode` gate.
     fillMode: s.allowsParallelSale ? 1 : 0,
+    // Codex round-14 P1 — add the remaining createOffer tuple fields
+    // so the payload matches the contract's `CreateOfferParams` shape
+    // exactly. `expiresAt = 0n` ⇒ GTC (today's behaviour);
+    // `allowsPrepayListing = false` ⇒ no borrower-initiated prepay
+    // listing during the loan (today's default). Form UI for both is
+    // a future enhancement; the explicit zeros here just keep the wire
+    // shape matching the ABI tuple instead of relying on the encoder
+    // to default missing keys.
+    expiresAt: 0n,
+    allowsPrepayListing: false,
   };
 }
 

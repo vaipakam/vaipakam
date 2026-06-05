@@ -30,7 +30,17 @@ import { PerThingKeeperToggles } from '../components/app/PerThingKeeperToggles';
 
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 
-type OfferStatus = 'active' | 'accepted' | 'cancelled' | 'expired' | 'unknown';
+/** T-086 Round-8 §19.7e — `consumed_by_sale` is the parallel-sale
+ *  Scenario A terminal (buyer fills the offer's NFT collateral before
+ *  any lender accepts). Routed here by the MyOffersTable "Sold" row
+ *  link via `Link to /app/offers/{offerId}` per Codex round-14 P2. */
+type OfferStatus =
+  | 'active'
+  | 'accepted'
+  | 'cancelled'
+  | 'expired'
+  | 'consumed_by_sale'
+  | 'unknown';
 
 /**
  * Per-offer detail surface, keyed by offer id. Mirrors `LoanDetails`:
@@ -789,6 +799,11 @@ function StatusBadge({
       label: t('offerDetails.statusExpired', { defaultValue: 'Expired' }),
       bg: 'var(--surface-2)',
       fg: 'var(--muted)',
+    },
+    consumed_by_sale: {
+      label: t('myOffersTable.statusSold', { defaultValue: 'Sold' }),
+      bg: 'var(--success-bg, var(--surface-2))',
+      fg: 'var(--success-fg, var(--text))',
     },
     unknown: {
       label: t('offerDetails.statusUnknown', { defaultValue: 'Unknown' }),

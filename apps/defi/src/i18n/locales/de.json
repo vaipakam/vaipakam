@@ -271,8 +271,8 @@
     "marketWidgetBanner": "Veröffentlichung zum aktuellen Marktzins (≈ {{rate}}% APR) für dieses Paar. Überprüfen und justieren Sie die Bedingungen unten vor der Bestätigung.",
     "firstOfferBanner": "Für dieses Paar existiert noch kein Marktzins — Sie würden das erste Angebot veröffentlichen. Legen Sie den Zinssatz unten fest.",
     "marketWidgetIlliquidBanner": "⚠ Dieses Paar enthält ein Asset ohne liquiden Markt (kein Oracle-Preis). Das Protokoll kann hier keine Mindestsicherheit automatisch berechnen oder die Standard-Health-Factor- / LTV-Prüfungen durchführen — Sie und Ihre Gegenpartei legen den Preis direkt fest und beide müssen zustimmen. Legen Sie alle Bedingungen unten fest.",
-    "allowsParallelSaleLabel": "Also list this NFT for sale on OpenSea",
-    "allowsParallelSaleHint": "Borrow OR sell — your NFT will be listed on OpenSea-compatible marketplaces at offer-create time. If a buyer fills the listing before any lender accepts, the sale proceeds land in your vault and the offer closes. If a lender accepts first, the listing carries through the loan and any later buyer fill automatically settles the loan from the sale proceeds (lender gets their promised interest, you keep the surplus). Only on Borrower offers with NFT collateral. Forces all-or-nothing fill mode."
+    "allowsParallelSaleLabel": "Allow optional sale of this NFT on OpenSea",
+    "allowsParallelSaleHint": "Borrow OR sell — opting in marks this offer as eligible for a parallel-sale listing. You'll still need to publish the listing yourself (My Offers → \"Post sale listing\" once the offer is live). If a buyer fills the listing before any lender accepts, the sale proceeds land in your vault and the offer closes. If a lender accepts first, the listing (once published) carries through the loan and any later buyer fill automatically settles the loan from the sale proceeds (lender gets their promised interest, you keep the surplus). Only on Borrower offers with NFT collateral. Forces all-or-nothing fill mode."
   },
   "loanDetails": {
     "connectTitle": "Wallet verbinden",
@@ -503,7 +503,8 @@
     "lblRetryOutcome": "Wiederholungsergebnis",
     "retrySucceeded": "Erfolgreich",
     "retryFailed": "Fehlgeschlagen — auf Sicherheits-Aufteilung zurückgefallen",
-    "lblRetryProceeds": "Erlöse zurückgegeben"
+    "lblRetryProceeds": "Erlöse zurückgegeben",
+    "offerConsumedBySale": "Offer sold via OpenSea"
   },
   "claimActionBar": {
     "readyToClaim": "Bereit zum Einlösen",

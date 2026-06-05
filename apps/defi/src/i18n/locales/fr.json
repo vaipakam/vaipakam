@@ -271,8 +271,8 @@
     "marketWidgetBanner": "Publication au taux du marché actuel (≈ {{rate}}% APR) pour cette paire. Vérifiez et ajustez les conditions ci-dessous avant de confirmer.",
     "firstOfferBanner": "Aucun taux du marché n'existe encore pour cette paire — vous publieriez la première offre. Définissez le taux d'intérêt ci-dessous.",
     "marketWidgetIlliquidBanner": "⚠ Cette paire inclut un actif sans marché liquide (pas de prix d'oracle). Le protocole ne peut pas calculer automatiquement une garantie minimale ni exécuter les vérifications standard de facteur de santé / LTV ici — vous et votre contrepartie fixez le prix directement et les deux doivent consentir. Définissez toutes les conditions ci-dessous.",
-    "allowsParallelSaleLabel": "Also list this NFT for sale on OpenSea",
-    "allowsParallelSaleHint": "Borrow OR sell — your NFT will be listed on OpenSea-compatible marketplaces at offer-create time. If a buyer fills the listing before any lender accepts, the sale proceeds land in your vault and the offer closes. If a lender accepts first, the listing carries through the loan and any later buyer fill automatically settles the loan from the sale proceeds (lender gets their promised interest, you keep the surplus). Only on Borrower offers with NFT collateral. Forces all-or-nothing fill mode."
+    "allowsParallelSaleLabel": "Allow optional sale of this NFT on OpenSea",
+    "allowsParallelSaleHint": "Borrow OR sell — opting in marks this offer as eligible for a parallel-sale listing. You'll still need to publish the listing yourself (My Offers → \"Post sale listing\" once the offer is live). If a buyer fills the listing before any lender accepts, the sale proceeds land in your vault and the offer closes. If a lender accepts first, the listing (once published) carries through the loan and any later buyer fill automatically settles the loan from the sale proceeds (lender gets their promised interest, you keep the surplus). Only on Borrower offers with NFT collateral. Forces all-or-nothing fill mode."
   },
   "loanDetails": {
     "connectTitle": "Connectez votre portefeuille",
@@ -503,7 +503,8 @@
     "lblRetryOutcome": "Résultat du réessai",
     "retrySucceeded": "Réussi",
     "retryFailed": "Échoué — bascule sur la répartition du collatéral",
-    "lblRetryProceeds": "Produits restitués"
+    "lblRetryProceeds": "Produits restitués",
+    "offerConsumedBySale": "Offer sold via OpenSea"
   },
   "claimActionBar": {
     "readyToClaim": "Prêt à retirer",

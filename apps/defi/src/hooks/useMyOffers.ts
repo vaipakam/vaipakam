@@ -199,6 +199,10 @@ export function useMyOffers(
       activeIds: [] as bigint[],
       filledIds: [] as { offerId: string; loanId: string }[],
       cancelledStubs: [] as MyOfferRow[],
+      // T-086 Round-8 §19.7e + Codex round-14 P2 — sold-via-OpenSea
+      // bucket for the fallback path. Same shape as `cancelledStubs`
+      // (full OfferData when available, identity-only stub otherwise).
+      soldStubs: [] as MyOfferRow[],
     };
     if (!address) return result;
     const lower = address.toLowerCase();
@@ -230,6 +234,12 @@ export function useMyOffers(
     const filledLoanByOffer = new Map<string, string>();
     const cancelledIds = new Set<string>();
     const cancelledDetailsByOffer = new Map<string, OfferData>();
+    // T-086 Round-8 §19.7e + Codex round-14 P2 — sold-via-OpenSea
+    // terminal ids. Parallel to `cancelledIds` but bucketed into
+    // `soldStubs` (status: 'sold') downstream so the user sees the
+    // sold-history row even when the worker is unreachable and the
+    // fallback path is in effect.
+    const soldIds = new Set<string>();
     for (const ev of events) {
       if (ev.kind === 'OfferAccepted') {
         const offerId = ev.args.offerId;
@@ -242,6 +252,14 @@ export function useMyOffers(
         if (typeof offerId !== 'string') continue;
         if (!myCreates.has(offerId)) continue;
         cancelledIds.add(offerId);
+      } else if (ev.kind === 'OfferConsumedBySale') {
+        // T-086 Round-8 §19.7e + Codex round-14 P2 — fallback path
+        // sold-bucket marker. Same myCreates-gate as cancelled +
+        // accepted: only my offers reach the bucket.
+        const offerId = ev.args.offerId;
+        if (typeof offerId !== 'string') continue;
+        if (!myCreates.has(offerId)) continue;
+        soldIds.add(offerId);
       } else if (ev.kind === 'OfferCanceledDetails') {
         const offerId = ev.args.offerId;
         if (typeof offerId !== 'string') continue;
@@ -349,6 +367,40 @@ export function useMyOffers(
             periodicInterestCadence: 0,
           };
         result.cancelledStubs.push({ status: 'cancelled', offer });
+      } else if (soldIds.has(offerId)) {
+        // T-086 Round-8 §19.7e + Codex round-14 P2 — sold bucket.
+        // The fallback path has no companion-details event for the
+        // sold terminal (the Round-8 contract only emits
+        // `OfferConsumedBySale(offerId, executor)` — no payload), so
+        // the hydrate priority simplifies to:
+        //   1. localStorage snapshot of the offer (written when the
+        //      offer was active in the same browser).
+        //   2. Identity-only stub (`—` cells for non-id fields).
+        const fromSnapshot = diamondAddrLc
+          ? readOfferSnapshot(activeReadChain.chainId, diamondAddrLc, offerId)
+          : null;
+        const offer: OfferData = fromSnapshot ?? {
+          id: BigInt(offerId),
+          creator: address,
+          offerType: meta.offerType,
+          lendingAsset: ZERO_ADDR,
+          amount: 0n,
+          amountMax: 0n,
+          interestRateBps: 0n,
+          interestRateBpsMax: 0n,
+          collateralAsset: ZERO_ADDR,
+          collateralAmount: 0n,
+          collateralAmountMax: 0n,
+          durationDays: 0n,
+          principalLiquidity: 0,
+          collateralLiquidity: 0,
+          accepted: false,
+          assetType: 0,
+          tokenId: 0n,
+          allowsPartialRepay: false,
+          periodicInterestCadence: 0,
+        };
+        result.soldStubs.push({ status: 'sold', offer });
       } else if (filledLoanByOffer.has(offerId)) {
         result.filledIds.push({
           offerId,
@@ -521,6 +573,12 @@ export function useMyOffers(
     }
     if (status === 'cancelled' || status === 'all') {
       out.push(...buckets.cancelledStubs);
+    }
+    // T-086 Round-8 §19.7e + Codex round-14 P2 — wire the new sold
+    // bucket into the fallback path. Filter parity with the indexer-
+    // first branch: a sold offer shows under `'sold'` and `'all'`.
+    if (status === 'sold' || status === 'all') {
+      out.push(...buckets.soldStubs);
     }
     out.sort((a, b) =>
       a.offer.id > b.offer.id ? -1 : a.offer.id < b.offer.id ? 1 : 0,

@@ -762,8 +762,8 @@
     "allowsPartialRepayLabel": "Allow borrower-initiated partial repayment",
     "allowsPartialRepayHintLender": "When enabled, the borrower can call repayPartial on the resulting loan to pay down principal in chunks before the term ends. Default off — when off, only full repayment is accepted on-chain.",
     "allowsPartialRepayHintBorrower": "Request the right to repay this loan in partial chunks. The lender consents implicitly by accepting your offer; if they don't want partial repay they will skip it. Default off.",
-    "allowsParallelSaleLabel": "Also list this NFT for sale on OpenSea",
-    "allowsParallelSaleHint": "Borrow OR sell — your NFT will be listed on OpenSea-compatible marketplaces at offer-create time. If a buyer fills the listing before any lender accepts, the sale proceeds land in your vault and the offer closes. If a lender accepts first, the listing carries through the loan and any later buyer fill automatically settles the loan from the sale proceeds (lender gets their promised interest, you keep the surplus). Only on Borrower offers with NFT collateral. Forces all-or-nothing fill mode.",
+    "allowsParallelSaleLabel": "Allow optional sale of this NFT on OpenSea",
+    "allowsParallelSaleHint": "Borrow OR sell — opting in marks this offer as eligible for a parallel-sale listing. You'll still need to publish the listing yourself (My Offers → \"Post sale listing\" once the offer is live). If a buyer fills the listing before any lender accepts, the sale proceeds land in your vault and the offer closes. If a lender accepts first, the listing (once published) carries through the loan and any later buyer fill automatically settles the loan from the sale proceeds (lender gets their promised interest, you keep the surplus). Only on Borrower offers with NFT collateral. Forces all-or-nothing fill mode.",
     "periodicInterest": {
       "label": "Payment cadence",
       "disabledShort": "interval ≥ duration",
@@ -1052,7 +1052,8 @@
     "lblRetryOutcome": "Retry outcome",
     "retrySucceeded": "Succeeded",
     "retryFailed": "Failed — fell back to collateral split",
-    "lblRetryProceeds": "Proceeds returned"
+    "lblRetryProceeds": "Proceeds returned",
+    "offerConsumedBySale": "Offer sold via OpenSea"
   },
   "claimActionBar": {
     "readyToClaim": "Ready to claim",

@@ -271,8 +271,8 @@
     "marketWidgetBanner": "इस जोड़ी के वर्तमान मार्केट रेट (≈ {{rate}}% APR) पर पोस्ट किया जा रहा है। पुष्टि से पहले नीचे की शर्तों की समीक्षा और समायोजन करें।",
     "firstOfferBanner": "इस जोड़ी के लिए अभी कोई मार्केट रेट नहीं है — आप पहला ऑफ़र पोस्ट करेंगे। नीचे ब्याज दर सेट करें।",
     "marketWidgetIlliquidBanner": "⚠ इस जोड़ी में बिना तरल बाज़ार वाली संपत्ति है (कोई ऑरेकल मूल्य नहीं)। प्रोटोकॉल यहाँ न्यूनतम संपार्श्विक की स्वचालित गणना नहीं कर सकता और न ही मानक हेल्थ फ़ैक्टर / LTV जाँच चला सकता है — आप और आपके प्रतिपक्ष सीधे मूल्य तय करते हैं और दोनों की सहमति आवश्यक है। नीचे सभी शर्तें सेट करें।",
-    "allowsParallelSaleLabel": "Also list this NFT for sale on OpenSea",
-    "allowsParallelSaleHint": "Borrow OR sell — your NFT will be listed on OpenSea-compatible marketplaces at offer-create time. If a buyer fills the listing before any lender accepts, the sale proceeds land in your vault and the offer closes. If a lender accepts first, the listing carries through the loan and any later buyer fill automatically settles the loan from the sale proceeds (lender gets their promised interest, you keep the surplus). Only on Borrower offers with NFT collateral. Forces all-or-nothing fill mode."
+    "allowsParallelSaleLabel": "Allow optional sale of this NFT on OpenSea",
+    "allowsParallelSaleHint": "Borrow OR sell — opting in marks this offer as eligible for a parallel-sale listing. You'll still need to publish the listing yourself (My Offers → \"Post sale listing\" once the offer is live). If a buyer fills the listing before any lender accepts, the sale proceeds land in your vault and the offer closes. If a lender accepts first, the listing (once published) carries through the loan and any later buyer fill automatically settles the loan from the sale proceeds (lender gets their promised interest, you keep the surplus). Only on Borrower offers with NFT collateral. Forces all-or-nothing fill mode."
   },
   "loanDetails": {
     "connectTitle": "अपना वॉलेट कनेक्ट करें",
@@ -503,7 +503,8 @@
     "lblRetryOutcome": "पुनः प्रयास परिणाम",
     "retrySucceeded": "सफल",
     "retryFailed": "विफल — collateral विभाजन पर वापस गिर गया",
-    "lblRetryProceeds": "लौटाए गए आय"
+    "lblRetryProceeds": "लौटाए गए आय",
+    "offerConsumedBySale": "Offer sold via OpenSea"
   },
   "claimActionBar": {
     "readyToClaim": "Claim के लिए तैयार",

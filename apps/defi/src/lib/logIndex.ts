@@ -52,6 +52,17 @@ const OFFER_CREATED_TOPIC0 = id('OfferCreated(uint256,address,uint8)');
 // `getOffer` round-trip.
 const OFFER_ACCEPTED_TOPIC0 = id('OfferAccepted(uint256,address,uint256)');
 const OFFER_CANCELED_TOPIC0 = id('OfferCanceled(uint256,address)');
+// T-086 Round-8 §19.7 + Codex round-14 P2 — `OfferConsumedBySale` is
+// the Scenario A parallel-sale terminal. Distinct from `OfferCanceled`
+// so the fallback path can map a sold-before-acceptance offer into
+// the `'sold'` bucket instead of leaving it stuck in the active set.
+// Event signature: `OfferConsumedBySale(uint96 indexed offerId,
+// address indexed executor)`. The uint96 still topic-encodes
+// canonically as a uint256 word, so the topic match shape is the
+// same as the other offer-keyed events.
+const OFFER_CONSUMED_BY_SALE_TOPIC0 = id(
+  'OfferConsumedBySale(uint96,address)',
+);
 // Companion of `OfferCanceled` that carries the full offer terms for
 // cancelled-row reconstruction (see OfferFacet.sol). The legacy
 // `OfferCanceled` keeps emitting for historical consumers; this one
@@ -166,6 +177,7 @@ export type ActivityEventKind =
   | 'OfferAccepted'
   | 'OfferCanceled'
   | 'OfferCanceledDetails'
+  | 'OfferConsumedBySale'
   | 'LoanInitiated'
   | 'LoanRepaid'
   | 'LoanDefaulted'
@@ -775,6 +787,7 @@ async function runScan(
             OFFER_CREATED_TOPIC0,
             OFFER_ACCEPTED_TOPIC0,
             OFFER_CANCELED_TOPIC0,
+            OFFER_CONSUMED_BY_SALE_TOPIC0,
             // OFFER_CANCELED_DETAILS_TOPIC0 intentionally omitted from
             // the filter array. publicnode (and other free-tier RPCs)
             // silently return empty results when the topic OR-list
@@ -882,6 +895,22 @@ async function runScan(
         const creator = ('0x' + topics[2].slice(26)).toLowerCase();
         closedOfferIdSet.add(offerId);
         addEvent('OfferCanceled', [creator], { offerId, creator });
+      } else if (topic0 === OFFER_CONSUMED_BY_SALE_TOPIC0) {
+        // T-086 Round-8 §19.7 + Codex round-14 P2 — parallel-sale
+        // Scenario A terminal. Mirror of the OfferCanceled branch:
+        // add to `closedOfferIdSet` so the offer drops from the live
+        // active set, and addEvent so `useMyOffers`' fallback path
+        // can bucket it as `'sold'`. The event's second indexed arg
+        // is the executor address (not the offer creator), so we
+        // address-tag the event under the diamond address — the
+        // `useMyOffers` filter keys on the OFFER ID (already cross-
+        // referenced against `myCreates`), not on the event's
+        // address tags.
+        if (topics.length < 3) continue;
+        const offerId = BigInt(topics[1]).toString();
+        const executor = ('0x' + topics[2].slice(26)).toLowerCase();
+        closedOfferIdSet.add(offerId);
+        addEvent('OfferConsumedBySale', [executor], { offerId, executor });
       } else if (topic0 === OFFER_CANCELED_DETAILS_TOPIC0) {
         // Companion to OfferCanceled — same offer, but with the full
         // financial terms folded into args. Decoded so `useMyOffers`

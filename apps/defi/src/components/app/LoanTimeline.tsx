@@ -48,6 +48,11 @@ const KIND_LABEL_KEY: Record<ActivityEventKind, string> = {
   // payload variant. Filtered out at render time so it doesn't show
   // up as a duplicate row, but the keymap stays exhaustive.
   OfferCanceledDetails: 'loanTimeline.offerCanceled',
+  // T-086 Round-8 §19.7e — Scenario A parallel-sale terminal. Not
+  // loan-scoped (the offer never became a loan), so filtered out at
+  // render time like the other non-loan-scoped kinds below; the entry
+  // stays here for the exhaustive type-check.
+  OfferConsumedBySale: 'loanTimeline.offerConsumedBySale',
   LoanInitiated: 'loanTimeline.loanInitiated',
   LoanRepaid: 'loanTimeline.loanRepaid',
   LoanDefaulted: 'loanTimeline.loanDefaulted',
@@ -79,6 +84,7 @@ const KIND_ACCENT: Record<ActivityEventKind, 'success' | 'failure' | 'info' | 'w
   OfferAccepted: 'success',
   OfferCanceled: 'failure',
   OfferCanceledDetails: 'failure',
+  OfferConsumedBySale: 'success',
   LoanInitiated: 'success',
   LoanRepaid: 'success',
   LoanDefaulted: 'failure',
