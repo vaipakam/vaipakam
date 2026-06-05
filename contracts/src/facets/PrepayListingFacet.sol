@@ -14,6 +14,8 @@ import {IVaipakamPrepayContext} from "../seaport/IVaipakamPrepayContext.sol";
 import {IVaipakamPrepayCallbacks} from "../seaport/IVaipakamPrepayCallbacks.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
  * @title PrepayListingFacet
@@ -81,6 +83,16 @@ contract PrepayListingFacet is
     error NotExecutor(address caller, address expected);
     error ExecutorNotSet();
     error PrepayLoanNotActive(uint256 loanId, LibVaipakam.LoanStatus actual);
+    /// @notice T-086 Round-8 (#358) §19.7d — the 3 new offer-keyed
+    ///         callbacks revert this when called from anyone other
+    ///         than the executor pinned at offer-create time
+    ///         (`s.offerPrepayListingExecutor[offerId]`). The gate is
+    ///         per-offer (not the global `collateralListingExecutor`
+    ///         singleton) so a governance rotation between
+    ///         offer-create and pre-loan fill can't authorize a
+    ///         different executor to call against an already-recorded
+    ///         offer.
+    error NotOfferExecutor(uint96 offerId, address caller);
 
     // ─── View: getPrepayContext (called by the executor) ────────────────
 
@@ -223,6 +235,97 @@ contract PrepayListingFacet is
 
         emit PrepayCollateralSaleSettled(loanId, msg.sender);
     }
+
+    // ─── T-086 Round-8 (#358) — Offer-keyed callbacks ──────────────────
+
+    /// @dev Internal gate: revert unless caller is the offer's pinned
+    ///      executor. Round-3.2 against Codex round-3.2 P1 #4 line 4803
+    ///      — per-offer pin (not the global singleton) so a governance
+    ///      rotation between offer-create and pre-loan fill can't
+    ///      authorize a different executor to call against an
+    ///      already-recorded offer.
+    function _assertOfferExecutor(uint96 offerId) private view {
+        address pinned = LibVaipakam.storageSlot().offerPrepayListingExecutor[offerId];
+        if (pinned == address(0) || msg.sender != pinned) {
+            revert NotOfferExecutor(offerId, msg.sender);
+        }
+    }
+
+    /// @inheritdoc IVaipakamPrepayCallbacks
+    function markOfferConsumedBySale(uint96 offerId) external override whenNotPaused {
+        _assertOfferExecutor(offerId);
+        LibVaipakam.storageSlot().offerConsumedBySale[uint256(offerId)] = true;
+        emit OfferConsumedBySale(offerId, msg.sender);
+    }
+
+    /// @inheritdoc IVaipakamPrepayCallbacks
+    function recordOfferSaleProceeds(
+        uint96 offerId,
+        address principalAsset,
+        uint256 amount
+    ) external override whenNotPaused {
+        _assertOfferExecutor(offerId);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // Resolve the borrower from the offer row so the credit lands
+        // against the right user. The offer creator is the borrower in
+        // the parallel-sale flow (offer.offerType is borrower).
+        address borrower = s.offers[uint256(offerId)].creator;
+        if (borrower == address(0)) revert NotOfferExecutor(offerId, msg.sender);
+
+        // Diamond received `consideration[0]` from Seaport at fill
+        // time (round-3.1 against Codex round-3 P1 #1 line 4390 —
+        // recipient is the diamond, NOT the vault directly, so this
+        // callback can run the credit through the standard
+        // protocol-tracked-balance accountant).
+        //
+        // Transfer the ERC20 from the diamond's balance to the
+        // borrower's vault contract address; THEN stamp the
+        // protocol-tracked balance counter so the borrower can
+        // withdraw via `vaultWithdrawERC20`.
+        address vaultAddr = s.userVaipakamVaults[borrower];
+        if (vaultAddr == address(0)) revert NotOfferExecutor(offerId, msg.sender);
+        SafeERC20.safeTransfer(IERC20(principalAsset), vaultAddr, amount);
+        LibVaipakam.recordVaultDeposit(borrower, principalAsset, amount);
+
+        emit OfferSaleProceedsCredited(offerId, borrower, principalAsset, amount);
+    }
+
+    /// @inheritdoc IVaipakamPrepayCallbacks
+    function assertOfferFillNotSanctioned(uint96 offerId, address borrowerWallet)
+        external
+        view
+        override
+    {
+        _assertOfferExecutor(offerId);
+        // Routes through the diamond's storage slot (this is the
+        // load-bearing reason the executor can't call
+        // `LibVaipakam._assertNotSanctioned` directly — that helper
+        // keys by `address(this)`, so an executor-context call would
+        // miss the diamond's sanctions oracle config).
+        LibVaipakam._assertNotSanctioned(borrowerWallet);
+    }
+
+    /// @notice T-086 Round-8 (#358) — emitted on every
+    ///         `markOfferConsumedBySale` call. Indexer breadcrumb so
+    ///         the offer-pending → ConsumedBySale terminal can be
+    ///         caught in the same ingest pass as `OfferCanceled` /
+    ///         `OfferAccepted`.
+    /// @custom:event-category state-change/offer-mutation
+    event OfferConsumedBySale(uint96 indexed offerId, address indexed executor);
+
+    /// @notice T-086 Round-8 (#358) — emitted on every successful
+    ///         `recordOfferSaleProceeds` credit. The amount is the
+    ///         net stamped onto `protocolTrackedVaultBalance[borrower]
+    ///         [principalAsset]`; the borrower's
+    ///         `vaultWithdrawERC20(principalAsset, amount)` becomes
+    ///         callable for this amount immediately.
+    /// @custom:event-category state-change/offer-mutation
+    event OfferSaleProceedsCredited(
+        uint96 indexed offerId,
+        address indexed borrower,
+        address indexed principalAsset,
+        uint256 amount
+    );
 
     // ─── Admin: setCollateralListingExecutor ────────────────────────────
 
