@@ -610,4 +610,72 @@ contract NFTPrepayAutoListFacetTest is SetupTest {
         );
         NFTPrepayAutoListFacet(address(diamond)).autoListAtFloorOnGrace(LOAN_ID);
     }
+
+    /// @notice §18.10 — borrower-sanctioned (current-holder leg of
+    ///         Tier-1). Mirror of `test_autoList_revertsCallerSanctioned`
+    ///         that pins the SURPLUS-RECIPIENT gate: the current
+    ///         borrower-position-NFT holder is the live surplus
+    ///         recipient at fill time, so the auto-list path must
+    ///         refuse to post for them when sanctioned even if the
+    ///         caller is clean. Reverts `BorrowerSanctioned(loanId,
+    ///         currentHolder)`.
+    function test_autoList_revertsBorrowerSanctioned() public {
+        _scaffoldActiveLoan();
+        _warpIntoGrace();
+
+        address sanctions = address(new MockSanctionsList());
+        vm.prank(owner);
+        ProfileFacet(address(diamond)).setSanctionsOracle(sanctions);
+        // Caller is clean; current holder (borrowerHolder) is flagged.
+        MockSanctionsList(sanctions).setFlagged(borrowerHolder, true);
+
+        vm.prank(keeperCaller);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NFTPrepayAutoListFacet.BorrowerSanctioned.selector,
+                LOAN_ID,
+                borrowerHolder
+            )
+        );
+        NFTPrepayAutoListFacet(address(diamond)).autoListAtFloorOnGrace(LOAN_ID);
+    }
+
+    /// @notice §18.5 — pinned-executor migration staleness. If
+    ///         governance has rotated `s.collateralListingExecutor`
+    ///         since the old listing was posted, the auto-list path
+    ///         MUST revert `AutoListExecutorMigrationStale` rather
+    ///         than silently calling `clearOrder` on a stale
+    ///         executor. The operator surfaces the migration gap
+    ///         instead of skipping live listings.
+    function test_autoList_revertsExecutorMigrationStale() public {
+        _scaffoldActiveLoan();
+        _warpIntoGrace();
+
+        // Pin the OLD executor on the loan slot, then rotate the
+        // global singleton to a fresh address.
+        bytes32 staleOrderHash = keccak256("listing-on-stale-executor");
+        TestMutatorFacet(address(diamond))
+            .setPrepayListingOrderHash(LOAN_ID, staleOrderHash);
+        TestMutatorFacet(address(diamond))
+            .setPrepayListingExecutor(LOAN_ID, address(mockExecutor));
+
+        // Rotate the singleton — fresh deployment of a second mock.
+        MockListingExecutorRecorder newExecutor = new MockListingExecutorRecorder();
+        newExecutor.setSeaport(address(mockSeaport));
+        newExecutor.setApprovedConduit(conduit, true);
+        vm.prank(owner);
+        PrepayListingFacet(address(diamond))
+            .setCollateralListingExecutor(address(newExecutor));
+
+        vm.prank(keeperCaller);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NFTPrepayAutoListFacet.AutoListExecutorMigrationStale.selector,
+                LOAN_ID,
+                address(mockExecutor),
+                address(newExecutor)
+            )
+        );
+        NFTPrepayAutoListFacet(address(diamond)).autoListAtFloorOnGrace(LOAN_ID);
+    }
 }
