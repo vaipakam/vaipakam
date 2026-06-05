@@ -16,7 +16,9 @@ import {
     MAX_FEE_LEGS,
     PREPAY_MODE_FIXED_PRICE,
     PREPAY_MODE_DUTCH,
-    PREPAY_MODE_ATOMIC_MATCH
+    PREPAY_MODE_ATOMIC_MATCH,
+    PREPAY_MODE_PRE_LOAN_FIXED_PRICE,
+    OfferContext
 } from "./PrepayTypes.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -207,6 +209,75 @@ contract CollateralListingExecutor is
         uint8 mode;
     }
     mapping(bytes32 orderHash => OrderContext) public orderContext;
+
+    // ─── T-086 Round-8 (#358) — Offer-keyed parallel-sale surface ──────
+    //
+    // §19.6 (NFTCollateralSaleAndAuction.md) introduced a DEDICATED
+    // offer-keyed `offerContext` mapping because the existing
+    // `orderContext` mapping treats `ctx.loanId == 0` as the
+    // unrecorded-order revert sentinel. Reusing that value for the
+    // pre-loan branch would either revert before any zone-callback
+    // branch can fire or require a global sentinel-semantics change
+    // touching every fill-time path.
+    //
+    // The pre-loan branch's offer-keyed binding lives here; the
+    // active-loan branch's `orderContext` above stays byte-for-byte
+    // unchanged. `validateOrder`'s zone-callback dispatch checks the
+    // offer-keyed mapping FIRST (no-loan branch) and falls through to
+    // the existing `orderContext` check (loan-keyed branch) so the
+    // two paths never collide.
+    //
+    // OfferContext fields per §19.6 (round-3 + round-3.4 borrowerWallet
+    // for the diamond-hosted sanctions callback gate). The struct
+    // itself is declared in {PrepayTypes} so the recorder interface
+    // and the diamond facet can reference the same wire-level shape
+    // without a library / interface cyclic-import.
+    //   - offerId          — primary key for the §19.7d executor-gate
+    //                        diamond callback reads
+    //                        (s.offerPrepayListingExecutor[offerId])
+    //   - conduit          — Seaport conduit address (allow-list checked)
+    //   - conduitKey       — Seaport conduit key (32-byte)
+    //   - salt             — order salt (nonce-mixed per §19.10 Q3)
+    //   - startTime        — order startTime (Seaport)
+    //   - askPrice         — pre-loan ask (includes seller-baked fee
+    //                        legs per §19.4 Scenario A bullet 2)
+    //   - endTime          — Seaport endTime (offer.expiresAt if
+    //                        nonzero; else block.timestamp +
+    //                        GTC_SEAPORT_END_TIME per round-3.2)
+    //   - principalAsset   — lending-asset constraint pin at sign-time
+    //   - borrowerVault    — diamond reads + credits via
+    //                        _creditUserVaultBalance at fill time
+    //                        (the diamond is consideration[0].recipient
+    //                        per §19.4 Scenario A bullet 1; round-3.1
+    //                        against Codex round-3 P1 #1 line 4390)
+    //   - borrowerWallet   — actual EOA (sanctions oracle keys by
+    //                        wallet, not vault); round-3 against Raja
+    //                        P1 #3 + Codex round-2 P1 #4
+    //   - mode             — PREPAY_MODE_PRE_LOAN_FIXED_PRICE (Round-8
+    //                        constant in {PrepayTypes})
+    mapping(bytes32 orderHash => OfferContext) public offerContext;
+
+    /// @notice T-086 Round-8 (#358) — full `FeeLeg[]` per offer-keyed
+    ///         orderHash. Parallel to the loan-keyed `_orderFeeLegs`
+    ///         mapping above. Round-3.2 against Codex round-3.2 P2 #6
+    ///         line 4793 — the seller-signed fee schedule MUST be
+    ///         persisted at `recordOfferOrder` time so the zone callback
+    ///         can compare live consideration items to the sign-time
+    ///         fee schedule AND so the §19.3 offer-accept flow's step 3
+    ///         can snapshot the array BEFORE `clearOfferOrder` wipes it.
+    /// @dev    Same storage cost shape as `_orderFeeLegs` above (2 slots
+    ///         per leg + 1 length slot). `clearOfferOrder` calls
+    ///         `delete _offerFeeLegs[orderHash]` to free the storage.
+    mapping(bytes32 orderHash => FeeLeg[]) internal _offerFeeLegs;
+
+    /// @notice Read accessor for `_offerFeeLegs[orderHash]` — typed
+    ///         `FeeLeg[]` getter parallel to `orderFeeLegs(bytes32)` for
+    ///         the loan-keyed mapping. Round-3.2 against Codex round-3.2
+    ///         P2 #6 line 4793 (§19.7e). Returns empty array if no
+    ///         legs were recorded.
+    function offerFeeLegs(bytes32 orderHash) external view returns (FeeLeg[] memory) {
+        return _offerFeeLegs[orderHash];
+    }
 
     /// @notice T-086 Round-5 Block A (#313) — full `FeeLeg[]` per
     ///         recorded orderHash. Kept as a separate mapping (rather
@@ -751,6 +822,123 @@ contract CollateralListingExecutor is
         delete _orderProtocolLegs[orderHash];
         emit OrderCanceled(orderHash, loanId);
     }
+
+    // ─── T-086 Round-8 (#358) — offer-keyed record + clear ────────────
+
+    /// @notice Pin a pre-loan Seaport `orderHash → OfferContext`
+    ///         binding for the parallel-sale path (§19.6). Mirror of
+    ///         {recordOrder} for the no-loan branch. Diamond-only.
+    /// @dev    Round-3.7 against Codex round-7 P2 line 5015 — widened
+    ///         signature with `FeeLeg[] feeLegs` so the seller-signed
+    ///         fee schedule is persisted at record-time (§19.7e).
+    ///         Without persistence the zone callback couldn't compare
+    ///         live consideration items to the sign-time schedule AND
+    ///         the §19.3 offer-accept teardown couldn't snapshot legs
+    ///         before `clearOfferOrder` wipes them.
+    /// @param  orderHash Canonical Seaport orderHash for the pre-loan order.
+    /// @param  ctx       Offer-keyed context. See `struct OfferContext`.
+    /// @param  feeLegs   Seller-baked fee schedule (per §19.4 Scenario A bullet 2).
+    function recordOfferOrder(
+        bytes32 orderHash,
+        OfferContext calldata ctx,
+        FeeLeg[] calldata feeLegs
+    ) external {
+        if (msg.sender != vaipakamDiamond) revert NotDiamond();
+        if (!approvedConduits[ctx.conduit]) revert ConduitNotApproved(ctx.conduit);
+        // The dispatch-disjoint invariant: a given orderHash cannot
+        // appear in BOTH `orderContext` AND `offerContext` (otherwise
+        // `validateOrder`'s dispatch order would silently prefer the
+        // offer-keyed binding even when the caller intended the
+        // loan-keyed one). The check below mirrors the loan-keyed
+        // path's `orderContext[orderHash].loanId != 0` revert with
+        // the analogous offer-keyed sentinel.
+        if (offerContext[orderHash].offerId != 0) revert AlreadyRecorded(orderHash);
+        // Defense-in-depth: an offerId of 0 would collide with the
+        // unrecorded-order revert sentinel below (`validateOrder`'s
+        // no-loan-branch dispatch reads
+        // `offerContext[orderHash].offerId != 0`).
+        if (ctx.offerId == 0) revert AlreadyRecorded(orderHash);
+
+        offerContext[orderHash] = ctx;
+
+        // T-086 Round-8 (#358) §19.7e — persist the seller-signed fee
+        // schedule alongside the OfferContext so the zone callback +
+        // offer-accept teardown can both read it back. Same shape as
+        // the loan-keyed `_orderFeeLegs` persistence in {recordOrder}
+        // above.
+        uint256 len = feeLegs.length;
+        for (uint256 i = 0; i < len; ) {
+            _offerFeeLegs[orderHash].push(feeLegs[i]);
+            unchecked { ++i; }
+        }
+
+        emit OfferOrderRecorded(orderHash, ctx.offerId);
+    }
+
+    /// @notice Remove an offer-keyed binding. Mirror of {clearOrder}
+    ///         for the no-loan branch. Diamond-only. MUST invoke
+    ///         `_tryCancelOnSeaportOffer` (the offer-keyed equivalent
+    ///         of `_tryCancelOnSeaport`) for the §19.4 Scenario C
+    ///         two-layer rejection (round-3.9 against Codex round-9
+    ///         P3 line 4724 — the orderStatus claim is belt-and-braces
+    ///         ONLY IF the best-effort Seaport.cancel forwards).
+    function clearOfferOrder(bytes32 orderHash) external {
+        if (msg.sender != vaipakamDiamond) revert NotDiamond();
+        OfferContext memory ctx = offerContext[orderHash];
+
+        if (ctx.offerId != 0) {
+            _tryCancelOnSeaportOffer(orderHash, ctx);
+        }
+
+        uint256 offerId = uint256(ctx.offerId);
+        delete offerContext[orderHash];
+        delete _offerFeeLegs[orderHash];
+        emit OfferOrderCanceled(orderHash, offerId);
+    }
+
+    /// @notice T-086 Round-8 (#358) — emitted on every successful
+    ///         {recordOfferOrder}. Mirror of {OrderRecorded} for the
+    ///         offer-keyed surface.
+    event OfferOrderRecorded(bytes32 indexed orderHash, uint96 indexed offerId);
+
+    /// @notice T-086 Round-8 (#358) — emitted on every {clearOfferOrder}
+    ///         call. Mirror of {OrderCanceled} for the offer-keyed
+    ///         surface. The `offerId` is captured BEFORE the binding
+    ///         delete so the breadcrumb is non-zero even for the
+    ///         idempotent clear-on-already-cleared no-op.
+    event OfferOrderCanceled(bytes32 indexed orderHash, uint256 indexed offerId);
+
+    /// @notice T-086 Round-8 (#358) — best-effort Seaport.cancel
+    ///         forwarding for the offer-keyed surface. Mirror of
+    ///         `_tryCancelOnSeaport`. Round-3.9 against Codex round-9
+    ///         P3 line 4724 — load-bearing for the §19.4 Scenario C
+    ///         two-layer rejection claim.
+    /// @dev    The pre-loan order's canonical reconstruction is
+    ///         simpler than the loan-keyed path: single proceeds leg
+    ///         to the diamond + optional fee legs (per §19.4 Scenario
+    ///         A bullet 1+2). Step 7 of the §19 implementation plan
+    ///         wires the full reconstruction alongside the
+    ///         `validateOrder` no-loan-branch dispatch + the new
+    ///         `PREPAY_MODE_PRE_LOAN_FIXED_PRICE` mode constant. For
+    ///         the Step 2 deliverable, emit the skip breadcrumb so
+    ///         the binding-delete + vault-revoke layer carries the
+    ///         safety invariant alone (same fallback as the existing
+    ///         `_tryCancelOnSeaport`'s drift branch).
+    function _tryCancelOnSeaportOffer(bytes32 orderHash, OfferContext memory ctx) private {
+        // Step 2 stub — full reconstruction lands in Step 7. The
+        // `OfferOrderCanceled` event above is the indexer breadcrumb
+        // for the binding-delete; this skip is the breadcrumb for the
+        // Seaport-side leg that Step 7 will replace with an actual
+        // reconstruction + `Seaport.cancel` forward.
+        emit OfferOrderSeaportCancelSkipped(orderHash, uint256(ctx.offerId));
+    }
+
+    /// @notice T-086 Round-8 (#358) — emitted by
+    ///         `_tryCancelOnSeaportOffer` when the Seaport.cancel
+    ///         forwarding is skipped (Step 2 stub OR Step 7 drift
+    ///         branch). Mirror of `SeaportCancelSkipped` for the
+    ///         offer-keyed surface.
+    event OfferOrderSeaportCancelSkipped(bytes32 indexed orderHash, uint256 indexed offerId);
 
     /// @dev T-086 #316 — best-effort Seaport.cancel emit. Reconstructs
     ///      the canonical `OrderComponents` from the recorded

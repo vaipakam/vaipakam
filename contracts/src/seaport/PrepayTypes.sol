@@ -166,3 +166,41 @@ struct BidderOrder {
     // for fee-enforced collections. Capped at MAX_BIDDER_EXTRADATA_BYTES.
     bytes extraData;
 }
+
+// T-086 Round-8 (#358) — parallel-sale mode tag for the no-loan
+// branch. Round-3.2 design ratification: pre-loan listings are
+// fixed-price only in v1 (Dutch / English on the pre-loan path is
+// §19.11 out-of-scope). Distinct mode constant so the executor's
+// `validateOrder` zone-callback dispatch + the `_assertOrderContent`
+// per-leg check can route to the no-loan branch without overloading
+// the existing `PREPAY_MODE_FIXED_PRICE` (which still means the
+// LOAN-keyed branch's fixed-price shape).
+uint8 constant PREPAY_MODE_PRE_LOAN_FIXED_PRICE = 4;
+
+// T-086 Round-8 (#358) §19.6 — offer-keyed equivalent of the
+// loan-keyed `OrderContext` declared on
+// `CollateralListingExecutor`. Mirror declarations live in
+// {CollateralListingExecutor}'s `offerContext` storage mapping AND
+// {IListingExecutorRecorder.recordOfferOrder}'s calldata shape;
+// declaring the struct here in `PrepayTypes` keeps both consumers
+// referencing the same wire-level shape without a library /
+// interface cyclic import.
+struct OfferContext {
+    uint96 offerId;
+    address conduit;
+    bytes32 conduitKey;
+    uint256 salt;
+    uint64 startTime;
+    uint192 askPrice;
+    uint64 endTime;
+    address principalAsset;
+    uint8 mode;
+    address borrowerVault;
+    address borrowerWallet;
+}
+
+// T-086 Round-8 (#358) §19.6 — finite far-future Seaport endTime
+// for GTC offers (`offer.expiresAt == 0`). Round-3.2 against Raja
+// round-3.2 P2 #3 supersedes the round-3.1 `type(uint64).max`
+// mapping.
+uint64 constant GTC_SEAPORT_END_TIME = 100 * 365 * 86400;
