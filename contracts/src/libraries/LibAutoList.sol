@@ -223,10 +223,24 @@ library LibAutoList {
 
         // Round-3.10 against Codex round-10 P2 #5: underflow-guard
         // branch FIRES rotation. Either interest accrual or a
-        // governance buffer-bump pushed `askAtFee` at-or-above the
-        // Dutch listing's `startAskPrice` — the auction structurally
-        // cannot reach the live floor at any tick.
-        if (askAtFee >= startAskPrice) return true;
+        // governance buffer-bump pushed `askAtFee` strictly above
+        // the Dutch listing's `startAskPrice` — the auction
+        // structurally cannot reach the live floor at any tick.
+        //
+        // Round-3.13 against Codex round-12 P2 #1: strict `>`
+        // (not `>=`). The `==` case is a healthy Dutch listing
+        // whose start price IS the live fee-aware floor — the
+        // auction begins AT the floor on tick 0 and decays from
+        // there. No rotation needed; including `==` in the
+        // rotate-immediately branch contradicted the surrounding
+        // B-cond-3 policy (rotate only when the Dutch listing
+        // reaches the floor too late or never). Subtraction
+        // safety is preserved: at equality
+        // `startAskPrice - askAtFee = 0`, no underflow, and the
+        // downstream `t_floor` formula proceeds normally (the
+        // decay-tick calculation correctly returns 0 — the floor
+        // is reached at the start tick).
+        if (askAtFee > startAskPrice) return true;
 
         // Sanity gates: caller (the facet) should already have ruled
         // out these shapes via B-cond-3a / B-cond-2 / executor's own
