@@ -210,75 +210,6 @@ contract CollateralListingExecutor is
     }
     mapping(bytes32 orderHash => OrderContext) public orderContext;
 
-    // ─── T-086 Round-8 (#358) — Offer-keyed parallel-sale surface ──────
-    //
-    // §19.6 (NFTCollateralSaleAndAuction.md) introduced a DEDICATED
-    // offer-keyed `offerContext` mapping because the existing
-    // `orderContext` mapping treats `ctx.loanId == 0` as the
-    // unrecorded-order revert sentinel. Reusing that value for the
-    // pre-loan branch would either revert before any zone-callback
-    // branch can fire or require a global sentinel-semantics change
-    // touching every fill-time path.
-    //
-    // The pre-loan branch's offer-keyed binding lives here; the
-    // active-loan branch's `orderContext` above stays byte-for-byte
-    // unchanged. `validateOrder`'s zone-callback dispatch checks the
-    // offer-keyed mapping FIRST (no-loan branch) and falls through to
-    // the existing `orderContext` check (loan-keyed branch) so the
-    // two paths never collide.
-    //
-    // OfferContext fields per §19.6 (round-3 + round-3.4 borrowerWallet
-    // for the diamond-hosted sanctions callback gate). The struct
-    // itself is declared in {PrepayTypes} so the recorder interface
-    // and the diamond facet can reference the same wire-level shape
-    // without a library / interface cyclic-import.
-    //   - offerId          — primary key for the §19.7d executor-gate
-    //                        diamond callback reads
-    //                        (s.offerPrepayListingExecutor[offerId])
-    //   - conduit          — Seaport conduit address (allow-list checked)
-    //   - conduitKey       — Seaport conduit key (32-byte)
-    //   - salt             — order salt (nonce-mixed per §19.10 Q3)
-    //   - startTime        — order startTime (Seaport)
-    //   - askPrice         — pre-loan ask (includes seller-baked fee
-    //                        legs per §19.4 Scenario A bullet 2)
-    //   - endTime          — Seaport endTime (offer.expiresAt if
-    //                        nonzero; else block.timestamp +
-    //                        GTC_SEAPORT_END_TIME per round-3.2)
-    //   - principalAsset   — lending-asset constraint pin at sign-time
-    //   - borrowerVault    — diamond reads + credits via
-    //                        _creditUserVaultBalance at fill time
-    //                        (the diamond is consideration[0].recipient
-    //                        per §19.4 Scenario A bullet 1; round-3.1
-    //                        against Codex round-3 P1 #1 line 4390)
-    //   - borrowerWallet   — actual EOA (sanctions oracle keys by
-    //                        wallet, not vault); round-3 against Raja
-    //                        P1 #3 + Codex round-2 P1 #4
-    //   - mode             — PREPAY_MODE_PRE_LOAN_FIXED_PRICE (Round-8
-    //                        constant in {PrepayTypes})
-    mapping(bytes32 orderHash => OfferContext) public offerContext;
-
-    /// @notice T-086 Round-8 (#358) — full `FeeLeg[]` per offer-keyed
-    ///         orderHash. Parallel to the loan-keyed `_orderFeeLegs`
-    ///         mapping above. Round-3.2 against Codex round-3.2 P2 #6
-    ///         line 4793 — the seller-signed fee schedule MUST be
-    ///         persisted at `recordOfferOrder` time so the zone callback
-    ///         can compare live consideration items to the sign-time
-    ///         fee schedule AND so the §19.3 offer-accept flow's step 3
-    ///         can snapshot the array BEFORE `clearOfferOrder` wipes it.
-    /// @dev    Same storage cost shape as `_orderFeeLegs` above (2 slots
-    ///         per leg + 1 length slot). `clearOfferOrder` calls
-    ///         `delete _offerFeeLegs[orderHash]` to free the storage.
-    mapping(bytes32 orderHash => FeeLeg[]) internal _offerFeeLegs;
-
-    /// @notice Read accessor for `_offerFeeLegs[orderHash]` — typed
-    ///         `FeeLeg[]` getter parallel to `orderFeeLegs(bytes32)` for
-    ///         the loan-keyed mapping. Round-3.2 against Codex round-3.2
-    ///         P2 #6 line 4793 (§19.7e). Returns empty array if no
-    ///         legs were recorded.
-    function offerFeeLegs(bytes32 orderHash) external view returns (FeeLeg[] memory) {
-        return _offerFeeLegs[orderHash];
-    }
-
     /// @notice T-086 Round-5 Block A (#313) — full `FeeLeg[]` per
     ///         recorded orderHash. Kept as a separate mapping (rather
     ///         than packed into `OrderContext`) so the fixed-size
@@ -329,6 +260,49 @@ contract CollateralListingExecutor is
     function orderProtocolLegs(bytes32 orderHash) external view returns (uint128 lender, uint128 treasury) {
         SignedProtocolLegs storage legs = _orderProtocolLegs[orderHash];
         return (legs.lender, legs.treasury);
+    }
+
+    // ─── T-086 Round-8 (#358) — Offer-keyed parallel-sale surface ──────
+    //
+    // Codex round-9 P1 #4 — these mappings are appended at the END of
+    // the executor's storage layout so the existing UUPS-upgradeable
+    // base-slot allocation for `_orderFeeLegs` + `_orderProtocolLegs`
+    // stays unchanged. Pre-round-9 these were inserted BEFORE
+    // `_orderFeeLegs`, which would have corrupted any existing
+    // deployment's storage at upgrade time. Platform is pre-live so
+    // no live data is at risk, but this is the correct append-only
+    // posture for forward compatibility.
+    //
+    // §19.6 (NFTCollateralSaleAndAuction.md) introduced a DEDICATED
+    // offer-keyed `offerContext` mapping because the existing
+    // `orderContext` mapping treats `ctx.loanId == 0` as the
+    // unrecorded-order revert sentinel. Reusing that value for the
+    // pre-loan branch would either revert before any zone-callback
+    // branch can fire or require a global sentinel-semantics change
+    // touching every fill-time path.
+    //
+    // OfferContext struct itself is declared in {PrepayTypes} so the
+    // recorder interface and the diamond facet can reference the same
+    // wire-level shape without a library / interface cyclic-import.
+    mapping(bytes32 orderHash => OfferContext) public offerContext;
+
+    /// @notice T-086 Round-8 (#358) — full `FeeLeg[]` per offer-keyed
+    ///         orderHash. Parallel to the loan-keyed `_orderFeeLegs`
+    ///         mapping. Round-3.2 against Codex round-3.2 P2 #6 line 4793
+    ///         — the seller-signed fee schedule MUST be persisted at
+    ///         `recordOfferOrder` time so the zone callback can compare
+    ///         live consideration items to the sign-time fee schedule
+    ///         AND so the §19.3 offer-accept flow's step 3 can snapshot
+    ///         the array BEFORE `clearOfferOrder` wipes it.
+    mapping(bytes32 orderHash => FeeLeg[]) internal _offerFeeLegs;
+
+    /// @notice Read accessor for `_offerFeeLegs[orderHash]` — typed
+    ///         `FeeLeg[]` getter parallel to `orderFeeLegs(bytes32)` for
+    ///         the loan-keyed mapping. Round-3.2 against Codex round-3.2
+    ///         P2 #6 line 4793 (§19.7e). Returns empty array if no
+    ///         legs were recorded.
+    function offerFeeLegs(bytes32 orderHash) external view returns (FeeLeg[] memory) {
+        return _offerFeeLegs[orderHash];
     }
 
     /// @notice T-086 Round-7 (Issue #355) — narrow auto-list-facing

@@ -6,6 +6,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
+import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {LibCollateralSettlement} from "../libraries/LibCollateralSettlement.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
@@ -70,6 +71,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 contract PrepayListingFacet is
     DiamondPausable,
     DiamondAccessControl,
+    DiamondReentrancyGuard,
     IVaipakamErrors,
     IVaipakamPrepayContext,
     IVaipakamPrepayCallbacks
@@ -256,7 +258,7 @@ contract PrepayListingFacet is
     }
 
     /// @inheritdoc IVaipakamPrepayCallbacks
-    function markOfferConsumedBySale(uint96 offerId) external override whenNotPaused {
+    function markOfferConsumedBySale(uint96 offerId) external override whenNotPaused nonReentrant {
         _assertOfferExecutor(offerId);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // Codex round-6 P2 #4 — only stamp `offerConsumedBySale` for
@@ -348,7 +350,7 @@ contract PrepayListingFacet is
         uint96 offerId,
         address principalAsset,
         uint256 amount
-    ) external override whenNotPaused {
+    ) external override whenNotPaused nonReentrant {
         _assertOfferExecutor(offerId);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // Resolve the borrower from the offer row so the credit lands
@@ -467,11 +469,29 @@ contract PrepayListingFacet is
         // `treasuryBalances` for downstream analytics + payroll.
         LibFacet.recordTreasuryAccrual(principalAsset, treasuryLeg);
 
+        // Codex round-9 P1 #2 — route the remainder to the CURRENT
+        // borrower-position NFT holder (mirrors the loan-keyed prepay
+        // path's `pctx.borrowerNftOwner` resolution at fill time).
+        // Borrower-position NFTs are transferable on secondary
+        // markets; using `offer.creator` (the ORIGINAL borrower) would
+        // route the surplus to a stale address after the position
+        // changed hands. Credit the current holder's vault instead.
+        // Fallback to the original creator's vault for a current-
+        // holder that hasn't called `getOrCreateUserVault` yet
+        // (production secondary-market UX typically pairs a position
+        // purchase with a vault pre-warm).
+        address remainderRecipient = VaipakamNFTFacet(address(this))
+            .ownerOf(loan.borrowerTokenId);
+        address remainderVault = s.userVaipakamVaults[remainderRecipient];
+        if (remainderVault == address(0)) {
+            remainderRecipient = borrower;
+            remainderVault = borrowerVault;
+        }
         uint256 remainder;
         unchecked { remainder = amount - lenderLeg - treasuryLeg; }
         if (remainder > 0) {
-            SafeERC20.safeTransfer(IERC20(principalAsset), borrowerVault, remainder);
-            LibVaipakam.recordVaultDeposit(borrower, principalAsset, remainder);
+            SafeERC20.safeTransfer(IERC20(principalAsset), remainderVault, remainder);
+            LibVaipakam.recordVaultDeposit(remainderRecipient, principalAsset, remainder);
         }
 
         // Proper-close finalization — identical to the loan-keyed
@@ -517,7 +537,7 @@ contract PrepayListingFacet is
 
         emit OfferSaleProceedsSplit(
             offerId, loanId, lenderHolder, lenderLeg, treasury, treasuryLeg,
-            borrower, remainder
+            remainderRecipient, remainder
         );
         // Codex round-4 P2 #3 — also emit the loan-keyed terminal event
         // the existing indexer (`chainIndexer.ts`) listens for to flip

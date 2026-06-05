@@ -11,6 +11,7 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IListingExecutorRecorder} from "../seaport/IListingExecutorRecorder.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {
     FeeLeg,
     MAX_FEE_LEGS,
@@ -253,7 +254,39 @@ contract OfferParallelSaleFacet is
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[uint256(offerId)];
-        if (offer.creator != msg.sender) revert NotOfferCreator();
+
+        // Codex round-9 P2 #2 — authorize either:
+        //   (a) the offer's original creator (pre-acceptance, no loan
+        //       yet) — the only address with standing on the listing
+        //       before a loan exists.
+        //   (b) the CURRENT borrower-position NFT holder (post-
+        //       acceptance, keep-listing-live) — borrower-position
+        //       NFTs are transferable, and the current holder is the
+        //       party with economic exposure to whether the listing
+        //       carries on or not.
+        // Mirrors the loan-keyed prepay-listing's cancel-authority
+        // posture.
+        bool callerAuthorized = (offer.creator == msg.sender);
+        if (!callerAuthorized && offer.accepted) {
+            uint256 loanId = s.offerIdToLoanId[uint256(offerId)];
+            if (loanId != 0) {
+                uint256 borrowerTokenId = s.loans[loanId].borrowerTokenId;
+                if (borrowerTokenId != 0) {
+                    try
+                        IERC721(address(this)).ownerOf(borrowerTokenId)
+                    returns (address currentHolder) {
+                        if (currentHolder == msg.sender) {
+                            callerAuthorized = true;
+                        }
+                    } catch {
+                        // NFT may have been burned at a prior terminal —
+                        // fall through to the revert below.
+                    }
+                }
+            }
+        }
+        if (!callerAuthorized) revert NotOfferCreator();
+
         LibPrepayCleanup.clearOfferListing(offerId);
         emit ParallelSaleLockReleased(offerId, msg.sender);
     }
