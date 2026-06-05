@@ -4338,8 +4338,22 @@ executes atomically:
    uses today), with `endTime = pctx.graceEnd`, three protocol
    consideration items (lender + treasury + borrower) + the
    `preservedFeeLegs` from step 3 for fee-aware collections, and
-   a per-loan-nonce-mixed salt. The signed order carries
-   `activeLoanAsk` from step 2.
+   a per-loan-nonce-mixed salt. **The signed order carries
+   `activeLoanAskWithFees = activeLoanAsk + sum(preservedFeeLegs.startAmount)`**
+   (round-3.7 against Codex round-7 P2 line 4342 — supersedes the
+   round-3 reference to bare `activeLoanAsk` from step 2). Bare
+   `activeLoanAsk` is the protocol-floor / borrower-preference
+   max(); the active-loan order's ask MUST also cover the
+   seller-baked fee legs or the existing
+   `_requireAskCoversFloorWithFees` invariant
+   (`NFTPrepayListingFacet.sol:1141-...`) would reject the
+   record at fill-time. Mirrors the §18.5 Case B round-3.3
+   `rotatedAsk = askAtFloor + preservedFeeSum` pattern: the
+   fee-aware floor INCLUDES the fee schedule on top of the
+   protocol-leg floor. For fee-free collections
+   `preservedFeeLegs` is empty and
+   `activeLoanAskWithFees == activeLoanAsk` (the no-fee path
+   collapses naturally).
 5. Calls `IListingExecutorRecorder.clearOfferOrder(
    preLoanOrderHash)` to atomically cancel the pre-loan order's
    `offerContext` binding on the executor. **Round-3 surface
@@ -4664,8 +4678,10 @@ All NINE on-chain steps (round-3.6 against Codex round-6 P2 line
 run atomically in the `acceptOffer` tx. The borrower is now in
 the EXISTING T-086 prepay-listing flow; the lifecycle transition
 is invisible to the borrower (no second tx required). Step 10
-(off-chain OpenSea publish) is described in
-§19.3 step 9. The Round-7 `autoListAtFloorOnGrace` rotation
+(off-chain OpenSea publish) is described in §19.3 step 10
+(round-3.7 against Codex round-7 P3 line 4668 — stale `§19.3
+step 9` reference corrected after the round-3.6 renumber). The
+Round-7 `autoListAtFloorOnGrace` rotation
 primitive operates on the active-loan orderHash through the rest
 of the loan + grace lifecycle, including the round-7-§18.5
 signed-legs + fee-aware-floor invariants unchanged.
@@ -4804,9 +4820,16 @@ claim). Two new interface members on
 `IListingExecutorRecorder`:
 
 ```solidity
+// Round-3.7 against Codex round-7 P2 line 5015 — supersedes the
+// round-3 narrow signature; widened with FeeLeg[] arg to match §19.7e
+// fee-leg persistence requirement. Without the array the no-loan
+// branch can't validate seller-signed fee legs at fill time AND
+// Scenario B can't snapshot the schedule before clearOfferOrder
+// wipes _offerFeeLegs.
 function recordOfferOrder(
     bytes32 orderHash,
-    OfferContext calldata ctx
+    OfferContext calldata ctx,
+    FeeLeg[] calldata feeLegs
 ) external;
 
 function clearOfferOrder(bytes32 orderHash) external;
@@ -4976,7 +4999,7 @@ existing call paths):**
 | `OfferAcceptFacet._acceptOffer` | Add the two-order tear-down + re-record sequence (Scenario B in §19.4): `clearOfferOrder(preLoanHash)` + `vault.revokeListingOrderHash(preLoanHash)` + sign fresh active-loan order + `recordOrder(activeLoanHash, ...)` + `vault.registerListingOrderHash(activeLoanHash, executor)` + `s.prepayListingOrderHash[loanId] = activeLoanHash`. |
 | `OfferCancelFacet.cancelOffer` | Add the offer-keyed listing teardown (round-3 against Codex round-1 P2 #5 line 4426): when an offer with an active parallel-sale listing is borrower-cancelled, also call `clearOfferOrder(preLoanHash)` + `vault.revokeListingOrderHash(preLoanHash)` + delete `s.offerPrepayListingOrderHash[offerId]`. The cancel-refund path's existing collateral-withdraw step runs after the listing teardown. |
 | `cancelExpiredOffer` (existing permissionless cleanup) | Same listing teardown as `cancelOffer` for the expired-offer case (per-offer parallel-sale listing must be cleared when the offer ages out). |
-| `OfferMutateFacet.updateOffer` (and sibling mutation methods) | **Round-3.4 against Codex round-3 P2 line 4892 — supersedes the round-3.2 "all-or-nothing cancel-first" framing**: only floor-load-bearing field mutations are blocked while a parallel-sale listing is live. Specifically, reject mutation of `principal` / `interestRateBps` / `collateralAsset` / `collateralTokenId` when `s.offerPrepayListingOrderHash[offerId] != bytes32(0)` with revert `OfferLockedByParallelSale(offerId, fieldKey)`. Non-load-bearing field mutations (e.g., expiry extension, `allowsParallelSale` toggle off-then-on cycle on the SAME offer, opt-in flags that don't affect the floor) are permitted because they don't invalidate the §19.3 pre-loan floor invariant. The borrower has two paths to mutate a locked field: (a) call the NEW non-destructive `releaseParallelSaleLock(offerId)` surface (see §19.7f) which clears `s.offerPrepayListingOrderHash` + tears down the executor/vault bindings WITHOUT touching `offerCancelled` / `accepted` / `offerConsumedBySale` (the offer itself stays alive — only the parallel-sale listing is unwound); the borrower can then mutate + later re-post the listing via `postParallelSaleListing`. (b) Call **`cancelOffer(offerId)`** for the destructive teardown if the borrower wants to abandon both the listing and the offer (round-3.5 against Codex round-5 P2 line 5346 — supersedes the round-3.4 reference to `cancelPrepayListing` here; that surface is loan-keyed by `uint256 loanId`, and the offer-pending parallel-sale flow has no loanId yet, so only `cancelOffer` is reachable in the pre-loan branch). The non-destructive path preserves offer-discovery (the offer's age + accumulated lender views stay) while letting the borrower repair a stale floor input. |
+| `OfferMutateFacet.updateOffer` (and sibling mutation methods) | **Round-3.4 against Codex round-3 P2 line 4892 — supersedes the round-3.2 "all-or-nothing cancel-first" framing**: only floor-load-bearing field mutations are blocked while a parallel-sale listing is live. Specifically, reject mutation of `principal` / `interestRateBps` / `collateralAsset` / `collateralTokenId` when `s.offerPrepayListingOrderHash[offerId] != bytes32(0)` with revert `OfferLockedByParallelSale(offerId, fieldKey)`. **Round-3.7 against Codex round-7 P2 line 4979 — `allowsParallelSale` is ALSO floor-load-bearing for this lock** (supersedes the round-3.4 "non-load-bearing" framing). Toggling `allowsParallelSale = false` while `s.offerPrepayListingOrderHash[offerId] != bytes32(0)` would leave the already-signed Seaport order + vault ERC-1271 binding live while the offer-level consent says parallel-sale is disabled — a buyer's `fulfillOrder` call against the live hash would still settle, consuming the NFT in violation of the borrower's updated intent. So `allowsParallelSale` mutation is also blocked with `OfferLockedByParallelSale(offerId, fieldKey)`. The borrower must non-destructively release the listing first via `releaseParallelSaleLock(offerId)` (which tears down the executor + vault bindings so the orphan-fill path closes), THEN toggle the flag off, THEN — if desired — re-post via `postParallelSaleListing`. Non-load-bearing mutations (e.g., expiry extension, opt-in flags that don't affect the floor or the parallel-sale binding) are still permitted. The borrower has two paths to mutate a locked field: (a) call the NEW non-destructive `releaseParallelSaleLock(offerId)` surface (see §19.7f) which clears `s.offerPrepayListingOrderHash` + tears down the executor/vault bindings WITHOUT touching `offerCancelled` / `accepted` / `offerConsumedBySale` (the offer itself stays alive — only the parallel-sale listing is unwound); the borrower can then mutate + later re-post the listing via `postParallelSaleListing`. (b) Call **`cancelOffer(offerId)`** for the destructive teardown if the borrower wants to abandon both the listing and the offer (round-3.5 against Codex round-5 P2 line 5346 — supersedes the round-3.4 reference to `cancelPrepayListing` here; that surface is loan-keyed by `uint256 loanId`, and the offer-pending parallel-sale flow has no loanId yet, so only `cancelOffer` is reachable in the pre-loan branch). The non-destructive path preserves offer-discovery (the offer's age + accumulated lender views stay) while letting the borrower repair a stale floor input. |
 
 ### 19.7e Fee-leg persistence at offer-record-time (round-3.2 against Codex round-3.2 P2 #6 line 4793)
 
@@ -4984,7 +5007,7 @@ The pre-loan branch's fee legs are SELLER-signed (the vault is
 the Seaport offerer; see §19.6b row + §19.4 Scenario A bullet
 2). For the no-loan branch's zone callback to enforce the
 fee-leg constraint at fill-time, AND for the post-accept publish
-step (§19.3 step 9) to reconstruct the order JSON, the fee-leg
+step (§19.3 step 10) to reconstruct the order JSON, the fee-leg
 array MUST be persisted at `recordOfferOrder` time alongside the
 `OfferContext`. The round-3 signature `recordOfferOrder(orderHash,
 OfferContext ctx)` recorded only the context; the seller-signed
