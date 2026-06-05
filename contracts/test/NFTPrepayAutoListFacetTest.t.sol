@@ -21,6 +21,7 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {FeeLeg, PREPAY_MODE_FIXED_PRICE, PREPAY_MODE_DUTCH} from "../src/seaport/PrepayTypes.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IVaipakamPrepayContext} from "../src/seaport/IVaipakamPrepayContext.sol";
+import {LibERC721} from "../src/libraries/LibERC721.sol";
 
 /**
  * @notice T-086 Round-7 (Issue #355) — facet-level integration tests
@@ -474,9 +475,24 @@ contract NFTPrepayAutoListFacetTest is SetupTest {
     ///         is strictly above the live `askAtFloor + sum(feeStart)`
     ///         must rotate down. With empty fee legs the threshold
     ///         collapses to `existingAsk > askAtFloor`.
+    ///
+    ///         Round-3.4 against Codex round-3.2 P2 line 529 — replaces
+    ///         the round-3.4 try/catch escape hatch with explicit
+    ///         end-to-end rotation assertion. Pre-establishes the
+    ///         borrower-NFT lock via `TestMutatorFacet.lockNFTRaw` so
+    ///         the rotation's unwire path doesn't revert at the
+    ///         lock-state check, and the rotation completes cleanly
+    ///         all the way through recordOrder + wire.
     function test_autoList_caseB_rotatesHighFixedPriceAsk() public {
         _scaffoldActiveLoan();
         _warpIntoGrace();
+
+        // Pre-establish the borrower-NFT lock the existing listing
+        // would have taken at post-time (round-3.4 P2 line 529 fix).
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
+            BORROWER_TOKEN_ID,
+            LibERC721.LockReason.PrepayCollateralListing
+        );
 
         // Compute the live floor to size the stale ask above it.
         IVaipakamPrepayContext.PrepayContext memory pctx =
@@ -487,48 +503,57 @@ contract NFTPrepayAutoListFacetTest is SetupTest {
         // Aspirational existing ask: 50% above the live floor.
         uint256 staleAsk = (askAtFloor * 3) / 2;
 
+        // Seed the mock with a realistic recordOrder for the stale
+        // hash so the conduit/conduitKey + askPrice + signed legs are
+        // ALL coherent at the auto-list path's read sites
+        // (`orderContextConduit` + `orderContextRead` + `orderFeeLegs` +
+        // `orderProtocolLegs`). Cheaper than 4 separate setters and
+        // mirrors the realistic state the borrower-post path would
+        // produce.
+        FeeLeg[] memory emptyFeeLegs = new FeeLeg[](0);
         bytes32 staleOrderHash = keccak256("aspirational-fixed-price");
+        mockExecutor.recordOrder(
+            staleOrderHash,
+            LOAN_ID,
+            conduit,
+            conduitKey,
+            /* salt */ 1,
+            uint64(block.timestamp - 1 days),
+            staleAsk,                        // existingAsk > askAtFloor ⇒ B-cond-1 fires
+            staleAsk,                        // fixed-price: end == start
+            0,                               // auctionEndTime sentinel
+            PREPAY_MODE_FIXED_PRICE,
+            emptyFeeLegs,
+            uint128(pctx.lenderLeg),         // signed legs == live legs ⇒ B-cond-2 quiet
+            uint128(pctx.treasuryLeg)
+        );
         TestMutatorFacet(address(diamond))
             .setPrepayListingOrderHash(LOAN_ID, staleOrderHash);
         TestMutatorFacet(address(diamond))
             .setPrepayListingExecutor(LOAN_ID, address(mockExecutor));
-        mockExecutor.setOrderContext(
-            staleOrderHash,
-            PREPAY_MODE_FIXED_PRICE,
-            uint192(staleAsk),               // existingAsk > askAtFloor ⇒ B-cond-1 fires
-            uint128(staleAsk),               // fixed-price: end == start
-            uint64(block.timestamp - 1 days),
-            0                                // auctionEndTime sentinel
-        );
-        // Signed legs == live legs ⇒ B-cond-2 wouldn't fire on its own;
-        // B-cond-1 carries the rotation.
-        mockExecutor.setOrderProtocolLegs(
-            staleOrderHash,
-            uint128(pctx.lenderLeg),
-            uint128(pctx.treasuryLeg)
-        );
 
         vm.prank(keeperCaller);
-        try NFTPrepayAutoListFacet(address(diamond)).autoListAtFloorOnGrace(LOAN_ID) {
-            bytes32 newHash =
-                NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID);
-            assertTrue(newHash != staleOrderHash, "rotation replaced the stale hash");
-            assertTrue(newHash != bytes32(0), "rotation pinned a fresh hash");
-        } catch (bytes memory revertData) {
-            // Acceptable failure: vault unwire reverts because the
-            // lock wasn't actually established. The REAL pin here is
-            // that B-cond-1 fires — if it didn't, the facet would
-            // revert AutoListAlreadyAtOrBelowFloor BEFORE reaching the
-            // vault interactions.
-            bytes4 selector;
-            assembly {
-                selector := mload(add(revertData, 32))
-            }
-            assertTrue(
-                selector != NFTPrepayAutoListFacet.AutoListAlreadyAtOrBelowFloor.selector,
-                "B-cond-1 must fire when existingAsk > askAtFloor"
-            );
-        }
+        NFTPrepayAutoListFacet(address(diamond)).autoListAtFloorOnGrace(LOAN_ID);
+
+        // Explicit end-to-end rotation assertions: new hash pinned,
+        // stale hash replaced, executor recorded the rotation as a
+        // fresh `recordOrder` call with the new askAtFloor amount.
+        bytes32 newHash =
+            NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID);
+        assertTrue(newHash != bytes32(0), "rotation pinned a fresh hash");
+        assertTrue(newHash != staleOrderHash, "rotation replaced the stale hash");
+
+        // The rotation's recordOrder call lands as the latest entry
+        // in the mock's history. Its mode must be fixed-price and the
+        // askPrice must collapse to the live askAtFloor (no fee-leg
+        // preservation in the empty-fee test).
+        MockListingExecutorRecorder.RecordedCall memory rc =
+            mockExecutor.recordedCallAt(mockExecutor.recordCallCount() - 1);
+        assertEq(rc.mode, PREPAY_MODE_FIXED_PRICE, "rotation re-posts as fixed-price");
+        assertEq(rc.askPrice, askAtFloor, "rotated askPrice == live askAtFloor");
+        assertEq(rc.endAskPrice, askAtFloor, "endAskPrice == askPrice on fixed-price rotation");
+        assertEq(rc.signedLenderAmount, pctx.lenderLeg, "signed lender from live pctx");
+        assertEq(rc.signedTreasuryAmount, pctx.treasuryLeg, "signed treasury from live pctx");
     }
 
     /// @notice §18.12 — B-cond-5 expired Dutch listing. A Dutch order

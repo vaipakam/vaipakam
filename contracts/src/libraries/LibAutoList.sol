@@ -240,6 +240,26 @@ library LibAutoList {
         // downstream `t_floor` formula proceeds normally (the
         // decay-tick calculation correctly returns 0 — the floor
         // is reached at the start tick).
+        //
+        // Round-3.4 against Codex round-3.2 P2 line 243 — the
+        // degenerate-shape adversarial finding: at equality the
+        // Dutch listing IS fillable only at the literal start tick;
+        // any later tick has `currentPrice < askAtFee` and fills
+        // would revert `LenderShortPaid` against the live legs.
+        // Codex argued this warrants eager rotation. The design
+        // sticks with strict `>` because b_cond_2 (signed-legs
+        // shortfall) catches the next state-change automatically —
+        // any interest accrual between the equality call and the
+        // following call shifts live legs above signed legs and
+        // b_cond_2 fires. A governance buffer-bump with no interest
+        // accrual would shift the live floor strictly above
+        // `startAskPrice`, at which point this guard (now strict
+        // `>`) fires. So the equality case is correctly handled by
+        // the COMBINATION of b_cond_2 + this guard on the very next
+        // call; eager rotation at equality would over-rotate
+        // borrower-intentional at-floor listings. The trade-off is
+        // bounded — at most one block of degenerate state, after
+        // which the next caller's b_cond gate fires.
         if (askAtFee > startAskPrice) return true;
 
         // Sanity gates: caller (the facet) should already have ruled
