@@ -720,14 +720,31 @@ library LibPrepayOrder {
         }
 
         // ─── Consideration (1 proceeds leg + N fee legs) ───────
+        // Codex round-3 P2 #6 — feeSum MUST be subtracted from the
+        // proceeds leg so the BUYER's total payment equals exactly
+        // `askPrice` (the displayed listing price), mirroring the
+        // loan-keyed `_componentsAtMemory` shape where the borrower
+        // remainder = startAskPrice - lenderLeg - treasuryLeg - feeSum.
+        // Pre-Codex round-3, the proceeds leg got the full askPrice +
+        // fee legs were appended on top — so buyers paid
+        // `askPrice + feeSum`, charging fees TWICE (once via the
+        // floor check's fee-inclusive minimum + again on-chain at
+        // fill time). v1 is fixed-price-only so feeSumStart ==
+        // feeSumEnd; named feeSum here for symmetry with the
+        // loan-keyed helper.
+        uint256 feeSum = 0;
+        for (uint256 i = 0; i < feeLegs.length; ) {
+            feeSum += uint256(feeLegs[i].startAmount);
+            unchecked { ++i; }
+        }
         ConsiderationItem[] memory consideration =
             new ConsiderationItem[](1 + feeLegs.length);
         consideration[0] = ConsiderationItem({
             itemType: ItemType.ERC20,
             token: ctx.principalAsset,
             identifierOrCriteria: 0,
-            startAmount: uint256(ctx.askPrice),
-            endAmount: uint256(ctx.askPrice),
+            startAmount: uint256(ctx.askPrice) - feeSum,
+            endAmount: uint256(ctx.askPrice) - feeSum,
             // Round-3.1 against Codex round-3 P1 #1 line 4390 — the
             // diamond is the consideration recipient (NOT the vault
             // directly); the diamond credits the borrower's vault

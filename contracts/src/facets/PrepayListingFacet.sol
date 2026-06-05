@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
+import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibCollateralSettlement} from "../libraries/LibCollateralSettlement.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
@@ -274,6 +275,18 @@ contract PrepayListingFacet is
         // unrelated cleanup fires. Mirrors
         // `OfferCancelFacet.cancelOffer:411`.
         delete s.offerIdByPositionTokenId[s.offers[uint256(offerId)].positionTokenId];
+        // Codex round-3 P2 #2 — clear ALL 5 parallel-sale mirror slots
+        // (`offerPrepayListingOrderHash`, `offerPrepayListingExecutor`,
+        // `Offer.parallelSaleOrderHash`, executor's _offerFeeLegs,
+        // vault's listing-hash registration) atomically with the
+        // terminal-bit flip. Without this the sold offer keeps a
+        // live-looking parallel-sale order hash + vault registration
+        // until the borrower manually calls `releaseParallelSaleLock`
+        // (which they can't until they realize they need to — the
+        // round-2 `cancelOffer` gate now blocks that path too).
+        // `LibPrepayCleanup.clearOfferListing` is idempotent + handles
+        // the `clearOfferOrder` forward + the vault revoke.
+        LibPrepayCleanup.clearOfferListing(offerId);
         emit OfferConsumedBySale(offerId, msg.sender);
     }
 
@@ -288,26 +301,127 @@ contract PrepayListingFacet is
         // Resolve the borrower from the offer row so the credit lands
         // against the right user. The offer creator is the borrower in
         // the parallel-sale flow (offer.offerType is borrower).
-        address borrower = s.offers[uint256(offerId)].creator;
+        LibVaipakam.Offer storage offer = s.offers[uint256(offerId)];
+        address borrower = offer.creator;
         if (borrower == address(0)) revert NotOfferExecutor(offerId, msg.sender);
-
-        // Diamond received `consideration[0]` from Seaport at fill
-        // time (round-3.1 against Codex round-3 P1 #1 line 4390 —
-        // recipient is the diamond, NOT the vault directly, so this
-        // callback can run the credit through the standard
-        // protocol-tracked-balance accountant).
-        //
-        // Transfer the ERC20 from the diamond's balance to the
-        // borrower's vault contract address; THEN stamp the
-        // protocol-tracked balance counter so the borrower can
-        // withdraw via `vaultWithdrawERC20`.
         address vaultAddr = s.userVaipakamVaults[borrower];
         if (vaultAddr == address(0)) revert NotOfferExecutor(offerId, msg.sender);
+
+        // T-086 Round-8 (#358) Codex round-3 user-directed redesign —
+        // post-acceptance branch (the borrower's offer was already
+        // accepted; a loan exists). The pre-loan floor formula (now
+        // including full-duration interest) guarantees the proceeds
+        // cover the lender + treasury cuts, so we split them here +
+        // settle the loan atomically. Listing carries through accept
+        // without a teardown step in `_acceptOffer`.
+        if (offer.accepted) {
+            _settleLoanFromParallelSale(
+                offerId, principalAsset, amount, vaultAddr, borrower
+            );
+            return;
+        }
+
+        // Scenario A (no loan ever existed) — credit the borrower's
+        // vault in full. Diamond received `consideration[0]` from
+        // Seaport at fill time (recipient is the diamond, NOT the
+        // vault directly, so this callback runs the credit through
+        // the standard protocol-tracked-balance accountant).
         SafeERC20.safeTransfer(IERC20(principalAsset), vaultAddr, amount);
         LibVaipakam.recordVaultDeposit(borrower, principalAsset, amount);
-
         emit OfferSaleProceedsCredited(offerId, borrower, principalAsset, amount);
     }
+
+    /// @dev T-086 Round-8 (#358) Codex round-3 user-directed redesign —
+    ///      atomic split + settle for the keep-listing-live design.
+    ///      Reads pctx via `LibCollateralSettlement` (identical shape to
+    ///      the loan-keyed `IVaipakamPrepayContext.getPrepayContext`),
+    ///      pays lender + treasury directly from the proceeds the
+    ///      diamond just received, credits remainder to the borrower's
+    ///      vault, then runs the standard proper-close finalization
+    ///      (status → Settled, unlock borrower NFT, Phase 5 LIF settle).
+    ///      Factored to keep `recordOfferSaleProceeds` under viaIR's
+    ///      stack budget.
+    function _settleLoanFromParallelSale(
+        uint96 offerId,
+        address principalAsset,
+        uint256 amount,
+        address borrowerVault,
+        address borrower
+    ) private {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 loanId = s.offerIdToLoanId[uint256(offerId)];
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        if (loan.status != LibVaipakam.LoanStatus.Active) {
+            revert PrepayLoanNotActive(loanId, loan.status);
+        }
+
+        // Defensive — the executor-side floor invariant guarantees
+        // proceeds >= lenderLeg + treasuryLeg via the pre-loan-floor's
+        // full-duration interest hedge, but re-check here as defense-
+        // in-depth (matches the active-loan path's lender/treasury
+        // short-paid revert posture).
+        uint256 lenderLeg =
+            LibCollateralSettlement.principalPlusAccruedInterest(loanId, block.timestamp);
+        uint256 treasuryLeg =
+            LibCollateralSettlement.treasuryAndPrecloseFee(loanId, block.timestamp);
+        if (amount < lenderLeg + treasuryLeg) {
+            revert ProceedsBelowLenderTreasury(
+                offerId, amount, lenderLeg + treasuryLeg
+            );
+        }
+
+        // Distribute proceeds.
+        address lenderHolder = VaipakamNFTFacet(address(this))
+            .ownerOf(loan.lenderTokenId);
+        address treasury = s.treasury;
+        SafeERC20.safeTransfer(IERC20(principalAsset), lenderHolder, lenderLeg);
+        SafeERC20.safeTransfer(IERC20(principalAsset), treasury, treasuryLeg);
+
+        uint256 remainder;
+        unchecked { remainder = amount - lenderLeg - treasuryLeg; }
+        if (remainder > 0) {
+            SafeERC20.safeTransfer(IERC20(principalAsset), borrowerVault, remainder);
+            LibVaipakam.recordVaultDeposit(borrower, principalAsset, remainder);
+        }
+
+        // Proper-close finalization — identical to the loan-keyed
+        // `executorFinalizePrepaySale` shape.
+        LibLifecycle.transition(
+            loan, LibVaipakam.LoanStatus.Active, LibVaipakam.LoanStatus.Settled
+        );
+        LibERC721._unlock(loan.borrowerTokenId);
+        LibVPFIDiscount.settleBorrowerLifProper(loan);
+
+        emit OfferSaleProceedsSplit(
+            offerId, loanId, lenderHolder, lenderLeg, treasury, treasuryLeg,
+            borrower, remainder
+        );
+    }
+
+    /// @notice T-086 Round-8 (#358) Codex round-3 user-directed redesign
+    ///         — emitted on the post-acceptance parallel-sale fill path.
+    ///         Distinct from `OfferSaleProceedsCredited` (Scenario A,
+    ///         full credit to borrower) so the indexer can render the
+    ///         split breakdown + the loan's terminal flip together.
+    /// @custom:event-category state-change/loan-mutation
+    event OfferSaleProceedsSplit(
+        uint96 indexed offerId,
+        uint256 indexed loanId,
+        address lender,
+        uint256 lenderAmount,
+        address treasury,
+        uint256 treasuryAmount,
+        address borrower,
+        uint256 borrowerRemainder
+    );
+
+    /// @notice T-086 Round-8 (#358) Codex round-3 — raised when a
+    ///         post-acceptance parallel-sale fill's proceeds don't
+    ///         cover the lender + treasury entitlements. Mirrors the
+    ///         loan-keyed `LenderShortPaid` / `TreasuryShortPaid`
+    ///         posture. The pre-loan floor formula prevents this
+    ///         under the happy path; the revert is defensive.
+    error ProceedsBelowLenderTreasury(uint96 offerId, uint256 amount, uint256 required);
 
     /// @inheritdoc IVaipakamPrepayCallbacks
     function assertOfferFillNotSanctioned(uint96 offerId, address borrowerWallet)

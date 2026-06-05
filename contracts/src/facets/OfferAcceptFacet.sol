@@ -25,7 +25,6 @@ import {EarlyWithdrawalFacet} from "./EarlyWithdrawalFacet.sol";
 import {PrecloseFacet} from "./PrecloseFacet.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
 import {LibUserVault} from "../libraries/LibUserVault.sol";
-import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 
 /**
  * @title OfferAcceptFacet
@@ -505,19 +504,27 @@ contract OfferAcceptFacet is
             revert OfferExpired(offerId, offer.expiresAt);
         }
 
-        // T-086 Round-8 (#358) §19.7b Scenario B — parallel-sale
-        // teardown. If the borrower opted into a parallel-sale listing
-        // (allowsParallelSale + postParallelSaleListing executed) and
-        // the lender accepts FIRST, the parallel-sale listing must be
-        // structurally invalidated before the loan binding opens (so
-        // the buyer's Seaport fill attempt routes through the
-        // executor's no-loan-branch dispatch and reverts). Idempotent
-        // — no-op when no parallel-sale binding is live.
+        // T-086 Round-8 (#358) §19.7b Scenario B — Codex round-3
+        // user-directed redesign: KEEP THE PARALLEL-SALE LISTING LIVE
+        // across acceptance.
         //
-        // Placed BEFORE any irreversible state mutation so a tx that
-        // reverts later in the function leaves the parallel-sale
-        // binding intact (atomicity preserved).
-        LibPrepayCleanup.clearOfferListing(uint96(offerId));
+        // Pre-round-3, this site called `LibPrepayCleanup.clearOfferListing`
+        // to tear the listing down on accept. That preserved safety
+        // (no double-fill) but dropped the borrower's "borrow-OR-sell"
+        // intent — they'd have to manually re-list to keep selling.
+        //
+        // The new design lets the listing persist:
+        //   1. The pre-loan floor now hedges the FULL DURATION's
+        //      interest (capped at 1 year) instead of just 1 day, so
+        //      the ask price always covers the lender + treasury cut
+        //      at the worst-case fill-time accrual.
+        //   2. At sale-fill time, `recordOfferSaleProceeds` checks
+        //      `offer.accepted`; if true, it splits the proceeds
+        //      (lenderLeg + treasuryLeg + remainder to borrower) and
+        //      settles the loan atomically (Active → Settled, unlock
+        //      borrower NFT, Phase 5 LIF settle).
+        //
+        // No teardown call here; the listing carries through.
 
         // ── Range Orders Phase 1 — address-resolution override ────────
         // When matchOffers is in flight (matchOverride.active), msg.sender

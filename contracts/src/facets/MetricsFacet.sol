@@ -1288,17 +1288,30 @@ contract MetricsFacet {
         view
         returns (OfferState)
     {
-        // T-086 Round-8 (#358) §19.7e — consumed-by-sale terminal must
-        // be checked BEFORE `offerCancelled` because Scenario A's
-        // teardown does NOT stamp `offerCancelled` (the offer never
-        // moved through the cancel facet; it was the sale fill that
-        // closed it). Order matters for readers that exit on the first
-        // terminal hit.
-        if (s.offerConsumedBySale[offerId]) return OfferState.ConsumedBySale;
-        if (s.offerCancelled[offerId]) return OfferState.Cancelled;
+        // T-086 Round-8 (#358) §19.7e + Codex round-3 user-directed
+        // redesign — terminal-precedence order:
+        //
+        //   1. `offer.accepted` → Accepted (loan exists; that's the
+        //      primary state even if a parallel sale later settled
+        //      the loan — the loan's own status flip handles that).
+        //   2. `offer.id == 0` → Cancelled (legacy compat for never-
+        //      existed IDs + `cancelOffer`'s storage-delete behaviour;
+        //      both surface as id==0 to the reader).
+        //   3. `offerCancelled[id]` → Cancelled (creator-driven cancel
+        //      that stamped the parallel mapping; storage row may or
+        //      may not still exist).
+        //   4. `offerConsumedBySale[id]` → ConsumedBySale (true
+        //      Scenario A: sale fill closed an UNACCEPTED offer).
+        //
+        // Pre-round-3 ordering checked consumedBySale first, but the
+        // keep-listing-live design lets an offer be BOTH accepted AND
+        // sold — for that path the loan exists and "Accepted" is the
+        // right surface state.
         LibVaipakam.Offer storage o = s.offers[offerId];
-        if (o.id == 0) return OfferState.Cancelled; // treated as non-matchable
-        if (o.accepted) return OfferState.Accepted;
+        if (o.id != 0 && o.accepted) return OfferState.Accepted;
+        if (s.offerCancelled[offerId]) return OfferState.Cancelled;
+        if (o.id == 0) return OfferState.Cancelled; // never-existed OR cancel-deleted
+        if (s.offerConsumedBySale[offerId]) return OfferState.ConsumedBySale;
         return OfferState.Open;
     }
 

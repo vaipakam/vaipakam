@@ -82,6 +82,10 @@ contract OfferParallelSaleFacet is
     ///         `s.cfgPrepayListingEnabled` is false at post time.
     ///         Mirrors `NFTPrepayListingFacet.PrepayListingDisabled`.
     error PrepayListingDisabled();
+    /// @notice T-086 Round-8 (#358) Codex round-3 P2 #3 — raised when
+    ///         `askPrice > type(uint192).max`. Mirrors the loan-keyed
+    ///         executor's `AskPriceOverflow` guard.
+    error AskPriceOverflow(uint256 askPrice);
     error ParallelSaleListingAlreadyPosted(uint96 offerId, bytes32 existingOrderHash);
     error OfferTerminal(uint96 offerId); // accepted / cancelled / consumed-by-sale
     error UnsupportedCollateralForParallelSale(LibVaipakam.AssetType collateralType);
@@ -278,15 +282,53 @@ contract OfferParallelSaleFacet is
             revert FeeLegsExceedCap(feeLegs.length, MAX_FEE_LEGS);
         }
 
+        // ── Ask-price bounds check (Codex round-3 P2 #3) ──────────
+        // `askPrice` is recorded in OfferContext as uint192 (3-slot
+        // packing); any value above `type(uint192).max` would silently
+        // truncate on the explicit downcast and let the order sign
+        // for far less than the displayed value. Mirrors the loan-
+        // keyed executor's `AskPriceOverflow` guard.
+        if (askPrice > type(uint192).max) {
+            revert AskPriceOverflow(askPrice);
+        }
+
         // ── Vault must be deployed ────────────────────────────────
         if (s.userVaipakamVaults[offer.creator] == address(0)) {
             revert VaultNotDeployed(offer.creator);
         }
 
-        // ── Pre-loan floor computation (§19.3 round-3.4 — reuses
-        //    LibEntitlement.proRataInterest per the
-        //    feedback_check_existing_primitives_before_coding rule)
-        uint256 hedgeDays = offer.durationDays >= 1 ? 1 : offer.durationDays;
+        // ── Pre-loan floor computation (§19.3, Codex round-3 + user
+        //    redesign) ──────────────────────────────────────────────
+        //
+        // The pre-loan floor hedges the FULL DURATION's interest so
+        // the listing stays valid for any fill time across the loan's
+        // entire term. This makes the pre-loan and active-loan floors
+        // converge: a buyer fill post-acceptance always covers the
+        // lender's settlement entitlement (which routes through
+        // `LibEntitlement.settlementInterest` — full coupon for
+        // `useFullTermInterest=true` loans, pro-rata max for
+        // `useFullTermInterest=false` loans, both bounded by
+        // `proRataInterest(amount, rateBps, durationDays)`).
+        //
+        // No artificial cap on `hedgeDays` — Vaipakam's
+        // `MAX_OFFER_DURATION_DAYS_CEIL = 4385` (~12 years) is the
+        // structural upper bound, but operators may run with
+        // `maxOfferDurationDays` set to 3 years (the planned launch
+        // configuration) or beyond. Capping at 365 here would leave
+        // multi-year listings unfillable past year 1, which contradicts
+        // the platform ethos of "borrow OR sell, end-to-end across the
+        // loan's lifetime". The borrower's listing price scales with
+        // duration × rate; that's the correct economic price for
+        // committing to a long-term loan with sale optionality.
+        //
+        // Pre-fix (round-3 commit 1): `hedgeDays = 1` charged just one
+        // day — bare-minimum protection against the loan being accepted
+        // between sale-listing and sale-fill. That left listings stuck
+        // tearing down on accept instead of carrying through.
+        // Intermediate (round-3 commit 2): `hedgeDays = min(duration, 365)`
+        // — covered the 1-year default `MAX_OFFER_DURATION_DAYS_DEFAULT`
+        // but capped multi-year. User-directed final: full duration.
+        uint256 hedgeDays = offer.durationDays;
         uint256 floor = (
             (offer.amount + LibEntitlement.proRataInterest(
                 offer.amount, offer.interestRateBps, hedgeDays

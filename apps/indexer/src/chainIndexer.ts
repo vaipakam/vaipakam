@@ -581,6 +581,14 @@ async function processOfferLogs(
   const created: { offerId: bigint; creator: Address; offerType: number; blockNumber: bigint }[] = [];
   const accepted: { offerId: bigint; loanId: bigint }[] = [];
   const cancelled: { offerId: bigint }[] = [];
+  // T-086 Round-8 (#358) §19.7e + Codex round-3 P2 #1 — distinct bucket
+  // for the no-loan parallel-sale terminal so the D1 row's status flips
+  // to 'consumed_by_sale' (NOT 'cancelled'), with its own
+  // `consumed_by_sale_at` timestamp. Without this distinction the
+  // cancelled-offer retention prune would eventually drop sold-offer
+  // history rows the user expects to keep, and the UI couldn't
+  // disambiguate "Sold via OpenSea" from a borrower-initiated cancel.
+  const consumedBySale: { offerId: bigint }[] = [];
   // Range-Orders Phase 1 — partial-fill ratchet + terminal close.
   // Both replace the prior cron-driven `OR status = 'active'` refresh
   // sweep with single-field event-driven UPDATEs.
@@ -639,15 +647,11 @@ async function processOfferLogs(
     } else if (log.eventName === 'OfferCanceled') {
       cancelled.push({ offerId: a.offerId as bigint });
     } else if (log.eventName === 'OfferConsumedBySale') {
-      // T-086 Round-8 (#358) §19.7e + Codex round-2 P2 — Scenario A
-      // terminal (buyer-side won the race). Reuse the `cancelled`
-      // bucket because the D1 row mutation is identical: offer leaves
-      // the active set; the row's terminal-state column is recorded
-      // via the activity_events lane below. The frontend
-      // `OfferState.ConsumedBySale` rendering is driven by the
-      // companion getOfferState read-back when the row's status is
-      // queried — distinct from "Cancelled" only at the read layer.
-      cancelled.push({ offerId: a.offerId as bigint });
+      // T-086 Round-8 (#358) §19.7e + Codex round-3 P2 #1 — Scenario A
+      // terminal (buyer-side won the race). Distinct from `cancelled`
+      // so the D1 row preserves the "Sold via OpenSea" terminal
+      // state + escapes the cancelled-offer retention prune.
+      consumedBySale.push({ offerId: a.offerId as bigint });
     } else if (log.eventName === 'OfferMatched') {
       // #193 / Codex round-1 P1 — flow into the log-order pass below
       // (interleaved with OfferModified) instead of the bucketed
@@ -876,6 +880,24 @@ async function processOfferLogs(
     // window.
     const r = await env.DB.prepare(
       `UPDATE offers SET status = 'cancelled', cancelled_at = ?, updated_at = ?
+       WHERE chain_id = ? AND offer_id = ?`,
+    )
+      .bind(now, now, chainId, Number(c.offerId))
+      .run();
+    if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
+  }
+  // T-086 Round-8 (#358) §19.7e + Codex round-3 P2 #1 — Scenario A
+  // terminal. Distinct UPDATE so the row's status is
+  // 'consumed_by_sale' (NOT 'cancelled'). Reuses the `cancelled_at`
+  // column for the timestamp (a migration to add a dedicated
+  // `consumed_by_sale_at` column is queued — for now the column name
+  // is a misnomer but the timestamp semantics are the same: when did
+  // the offer leave the active set). The retention prune skips
+  // consumed_by_sale rows so the sold-through-OpenSea history
+  // persists.
+  for (const c of consumedBySale) {
+    const r = await env.DB.prepare(
+      `UPDATE offers SET status = 'consumed_by_sale', cancelled_at = ?, updated_at = ?
        WHERE chain_id = ? AND offer_id = ?`,
     )
       .bind(now, now, chainId, Number(c.offerId))

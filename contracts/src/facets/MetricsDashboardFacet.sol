@@ -335,7 +335,17 @@ contract MetricsDashboardFacet {
         uint256 written;
         uint256 skipped;
         for (uint256 i = 0; i < total && written < limit; i++) {
-            LibVaipakam.Offer storage o = s.offers[userOffers[i]];
+            uint256 offerId = userOffers[i];
+            LibVaipakam.Offer storage o = s.offers[offerId];
+            // Codex round-3 P2 #5 — exclude offers that landed in the
+            // §19.7e ConsumedBySale terminal. They're not "open" (the
+            // collateral is gone in a Seaport sale) and not "filled"
+            // by an accept (no loan exists), so they don't belong in
+            // either bucket the dashboard surfaces. The §19.7e read
+            // path uses `MetricsFacet.getUserOffersByStatePaginated`
+            // with `OfferState.ConsumedBySale` to render the
+            // "Sold via OpenSea" history row.
+            if (s.offerConsumedBySale[offerId]) continue;
             if (o.accepted != filledOnly) continue;
             if (skipped < offset) {
                 skipped += 1;

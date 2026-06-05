@@ -1440,23 +1440,39 @@ contract CollateralListingExecutor is
 
         OfferContext memory ctx = offerContext[params.orderHash];
 
+        // Codex round-3 P2 #6 — the diamond's actual receipt is
+        // `askPrice - feeSum`, NOT the full askPrice. The proceeds
+        // leg routed to address(diamond) carries `askPrice - feeSum`
+        // (see LibPrepayOrder._componentsOfferAtMemory); fee
+        // recipients receive their own legs directly via Seaport's
+        // own routing. Crediting the borrower with the full askPrice
+        // would overstate their vault balance by feeSum.
+        FeeLeg[] memory feeLegs = _offerFeeLegs[params.orderHash];
+        uint256 feeSum = 0;
+        for (uint256 i = 0; i < feeLegs.length; ) {
+            feeSum += uint256(feeLegs[i].startAmount);
+            unchecked { ++i; }
+        }
+        uint256 netProceeds = uint256(ctx.askPrice) - feeSum;
+
         // Effects — clear executor-side bookkeeping FIRST so the
         // diamond callbacks can't observe a double-fill window.
         delete offerContext[params.orderHash];
         delete _offerFeeLegs[params.orderHash];
 
-        // Interactions — diamond callbacks. The proceeds amount is the
-        // recorded `askPrice` (consideration[0].amount equals it under
-        // the fixed-price-only invariant pinned at sign time + the
-        // amount check in {_checkOfferOrderPreconditions}).
+        // Interactions — diamond callbacks. The proceeds amount
+        // equals the netProceeds value the diamond's consideration[0]
+        // leg actually received under the fixed-price-only invariant
+        // pinned at sign time + the amount check in
+        // {_checkOfferOrderPreconditions}.
         IVaipakamPrepayCallbacks(vaipakamDiamond).recordOfferSaleProceeds(
             ctx.offerId,
             ctx.principalAsset,
-            uint256(ctx.askPrice)
+            netProceeds
         );
         IVaipakamPrepayCallbacks(vaipakamDiamond).markOfferConsumedBySale(ctx.offerId);
 
-        emit OfferOrderFilled(params.orderHash, ctx.offerId, uint256(ctx.askPrice));
+        emit OfferOrderFilled(params.orderHash, ctx.offerId, netProceeds);
     }
 
     /// @dev T-086 Round-8 (#358) §19.7 — precondition stack for the
@@ -1536,10 +1552,19 @@ contract CollateralListingExecutor is
         _assertConsiderationItem(
             params.consideration[0], 0, ctx.principalAsset, params.orderHash
         );
-        // Proceeds leg: amount >= askPrice (fixed-price, so == is the
-        // intent; >= is defensive in case Seaport's interpolation
-        // routes a rounding edge), recipient = address(diamond).
-        if (params.consideration[0].amount < uint256(ctx.askPrice)) {
+        // Proceeds leg amount: must equal `askPrice - feeSum` under
+        // the Codex round-3 P2 #6 fee-math fix. We re-derive feeSum
+        // from the stored `_offerFeeLegs[orderHash]` so the check is
+        // canonical (the builder writes those legs into the order at
+        // sign time, so they're the source of truth).
+        FeeLeg[] memory feeLegs = _offerFeeLegs[params.orderHash];
+        uint256 feeSum = 0;
+        for (uint256 i = 0; i < feeLegs.length; ) {
+            feeSum += uint256(feeLegs[i].startAmount);
+            unchecked { ++i; }
+        }
+        uint256 expectedProceeds = uint256(ctx.askPrice) - feeSum;
+        if (params.consideration[0].amount < expectedProceeds) {
             revert LenderShortPaid(params.orderHash);
         }
         if (params.consideration[0].recipient != address(vaipakamDiamond)) {
