@@ -1292,6 +1292,31 @@ library LibVaipakam {
         // `docs/DesignsAndPlans/NFTCollateralSaleAndAuction.md` §13
         // step 4 for the full lifecycle.
         bool allowsPrepayListing;
+        // ── T-086 Round-8 (#358) — borrow-OR-sell parallel-sale opt-in ──
+        // Slot 20 byte 2 (packed). Append-only field; borrower's
+        // explicit opt-in at offer-create that the offer's collateral
+        // NFT may sit on a Seaport pre-loan listing in parallel to
+        // the offer being open for lender acceptance. Whichever path
+        // fires first (lender-accept vs buyer-fill) wins; the other
+        // is structurally blocked. Round-3.7 against Codex round-7
+        // P2 line 4979 — this flag is floor-load-bearing for the
+        // §19.7 mutation lock (toggling it off mid-listing would
+        // orphan a fillable Seaport order; OfferMutateFacet.updateOffer
+        // rejects mutation when `s.offerPrepayListingOrderHash[offerId]
+        // != bytes32(0)`). See
+        // `docs/DesignsAndPlans/NFTCollateralSaleAndAuction.md` §19.5.
+        bool allowsParallelSale;
+        // Slot 21 — pre-loan Seaport orderHash, populated when
+        // `allowsParallelSale == true` AND the borrower has called
+        // `postParallelSaleListing` after offer-create. Mirrors the
+        // diamond's `s.offerPrepayListingOrderHash[offerId]` mapping
+        // for offer-terms visibility (indexers / lenders reading the
+        // offer's terms see this directly). Cleared on every offer-
+        // keyed cleanup path (sale-settle, lender-accept teardown,
+        // borrower-cancel, expired-offer, release-lock); the §19.7c
+        // shared `LibPrepayCleanup.clearOfferListing` primitive
+        // touches this slot AND the mapping in lockstep.
+        bytes32 parallelSaleOrderHash;
     }
 
     /**
@@ -2257,6 +2282,61 @@ library LibVaipakam {
         ///      terminal — either flag means the offer is no longer
         ///      matchable.
         mapping(uint256 => bool) offerCancelled;
+        // ─── T-086 Round-8 (#358) — borrow-OR-sell offer-keyed mappings ──
+        // Round-3 against Codex round-1 P1 #5 + Raja P1 #2 + round-3.4
+        // sanctions-callback widening + round-3.8 release-lock full slot
+        // clear: §19.6 introduced the dedicated offer-keyed surface
+        // because the executor's `ctx.loanId == 0` is the unrecorded-
+        // order revert sentinel (so the round-2 "reuse recordOrder with
+        // loanId = 0" claim was wrong). Four parallel mappings below
+        // mirror the existing loan-keyed pattern:
+        //
+        //   `prepayListingOrderHash`  ↔  `offerPrepayListingOrderHash`
+        //   `prepayListingExecutor`   ↔  `offerPrepayListingExecutor`
+        //   `prepayListingAutoListNonce` ↔ `parallelSaleNonce`
+        //   (no auto-list equivalent for the no-loan branch in v1; the
+        //    new `offerConsumedBySale` mapping is the terminal-bit
+        //    parallel to `offerCancelled` above.)
+        //
+        // See `docs/DesignsAndPlans/NFTCollateralSaleAndAuction.md` §19.13
+        // for the full inventory.
+        /// @dev Round-3.2 against Codex round-3.2 P1 #2 line 4802 — the
+        ///      no-loan-sale terminal bit. Set by `markOfferConsumedBySale`
+        ///      (executor → diamond callback gated on
+        ///      `msg.sender == s.offerPrepayListingExecutor[offerId]`
+        ///      per §19.7d). Observed by `OfferAcceptFacet._acceptOffer`
+        ///      AND every other offer-validity reader (`OfferMatch`,
+        ///      `ProfileFacet`, `EarlyWithdrawalFacet`,
+        ///      `VPFIDiscountFacet`, `MetricsDashboardFacet`) — symmetric
+        ///      with the `offerCancelled` gate. Distinct from
+        ///      `offerCancelled` because the no-loan-sale terminal does
+        ///      NOT trigger the collateral-refund flow (the NFT has
+        ///      already been transferred to the Seaport buyer).
+        mapping(uint256 => bool) offerConsumedBySale;
+        /// @dev Round-3 against Codex round-1 P1 #5 — pre-loan Seaport
+        ///      orderHash for the offer's parallel-sale listing.
+        ///      Populated by `postParallelSaleListing` at offer-create-
+        ///      time; cleared by the §19.7c shared
+        ///      `LibPrepayCleanup.clearOfferListing` primitive. Mirrors
+        ///      the `Offer.parallelSaleOrderHash` field for fast
+        ///      callback-path lookup without a full `Offer` struct
+        ///      read.
+        mapping(uint96 => bytes32) offerPrepayListingOrderHash;
+        /// @dev Round-3.4 against Codex round-3.2 P1 #4 line 4803 + §19.7d
+        ///      — pinned executor address for the offer's parallel-sale
+        ///      listing. Populated at `postParallelSaleListing`; cleared
+        ///      at `LibPrepayCleanup.clearOfferListing`. Load-bearing
+        ///      for the 3 new diamond callbacks' gate
+        ///      (`msg.sender == s.offerPrepayListingExecutor[offerId]`).
+        ///      Mirrors the existing `prepayListingExecutor[loanId]`
+        ///      pattern.
+        mapping(uint96 => address) offerPrepayListingExecutor;
+        /// @dev Round-3.2 against Raja round-3.2 P3 #2 + §19.10 Q3 —
+        ///      per-offer monotonically-increasing nonce that defeats
+        ///      same-block sale + recreate salt collisions. Mirrors
+        ///      `prepayListingAutoListNonce[loanId]` for the loan-keyed
+        ///      path.
+        mapping(uint96 => uint64) parallelSaleNonce;
         // ─── MetricsFacet O(1) analytics layer ──────────────────────────
         // Counters and active-set indices maintained by LibMetricsHooks
         // at every loan/offer lifecycle edge. Eliminates the MAX_ITER
