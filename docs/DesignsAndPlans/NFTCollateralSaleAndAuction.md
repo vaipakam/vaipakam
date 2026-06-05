@@ -2439,10 +2439,15 @@ Behave identically to `postPrepayListing` minus the
    to be clever about this — it posts at the floor and lets the
    bidder side report match-time mismatches.
 7. Resolve conduit + lock borrower NFT + `executor.recordOrder` + write
-   `s.prepayListingOrderHash` + `s.prepayListingExecutor` exactly as
-   `postPrepayListing` does (call the shared `_buildAndRecord` private).
-8. `LibPrepayListingWiring.wire` exactly as `postPrepayListing` does.
-9. Emit `PrepayListingPosted(loanId, /* poster */ msg.sender, orderHash,
+   `s.prepayListingOrderHash` + `s.prepayListingExecutor` + wire the vault
+   (`LibPrepayListingWiring.wire`) exactly as `postPrepayListing` does
+   (call the shared `_buildAndRecord` private — round-3.12 against
+   Codex round-11 P3 #1: this single call already performs the vault
+   wiring; the auto-list call site does NOT invoke
+   `LibPrepayListingWiring.wire` a second time. The §18.16 reuse-table
+   row is the canonical statement; this step is the matching call-site
+   spelling).
+8. Emit `PrepayListingPosted(loanId, /* poster */ msg.sender, orderHash,
     askAtFloor, conduit, conduitKey, salt, executor, askAtFloor,
     /* auctionEndTime */ 0, PREPAY_MODE_FIXED_PRICE, /* feeLegs */ [])` —
     same event shape Block A emits. The `poster` field naturally identifies
@@ -3864,6 +3869,33 @@ implementation PR has a single source of truth:
    ) external;
    ```
 
+   **Two views of the same interface — reconciliation note
+   (round-3.12 against Codex round-11 P2 #1).** The signature
+   above is the struct-wrapped declaration form: `OrderContext
+   calldata ctx` packages the nine per-order fields (`loanId`,
+   `conduit`, `conduitKey`, `salt`, `startTime`, `askPrice`,
+   `endAskPrice`, `auctionEndTime`, `mode`) into a single calldata
+   struct. The §17.3 architectural recap and the §17.11 step 4
+   call-site spelling both expand those nine fields inline,
+   yielding a 13-positional-argument call form:
+
+   ```
+   executor.recordOrder(
+       orderHash, loanId, conduit, conduitKey, salt, startTime,
+       askPrice, endAskPrice, auctionEndTime, mode, feeLegs,
+       signedLenderAmount, signedTreasuryAmount)
+   ```
+
+   Both spellings describe the SAME on-chain function. The
+   struct-wrapped form is the canonical declaration (matches
+   how the current `IListingExecutorRecorder` is defined); the
+   flat-positional form is the call-site spelling that makes
+   each named argument legible at the use point. §17.3 + §17.11
+   intentionally use the flat form to spell out which atomic-match
+   `pctx` field flows into which trailing parameter; readers
+   checking against the interface declaration here should not
+   read the flat form as a separate, contradictory signature.
+
    `signedLenderAmount` / `signedTreasuryAmount` are
    read by the diamond from the about-to-be-signed Seaport
    `consideration[0].amount` / `consideration[1].amount`
@@ -3876,7 +3908,12 @@ implementation PR has a single source of truth:
    The Block D atomic match facet's `recordOrder` call
    site needs to be updated to pass the new arguments
    too — it is the only other non-post-path call site
-   that records an order. The `IListingExecutorRecorder`
+   that records an order. The §17.11 step 4 spelling
+   already shows the extended-signature call (`PREPAY_MODE_ATOMIC_MATCH,
+   emptyFeeLegs, signedLenderAmount = pctx.lenderLeg,
+   signedTreasuryAmount = pctx.treasuryLeg`); implementers
+   building the atomic-match facet from §17.3 + §17.11 see
+   the extended call inline. The `IListingExecutorRecorder`
    ABI bump propagates through `exportFrontendAbis.sh`,
    the dapp, and the keeper bot per the existing
    facet-addition checklist.
@@ -3921,20 +3958,32 @@ ratification before implementation:
    separate design round if/when needed.
 
 2. **Per-loan opt-out flag persistence across post-cancel actions —
-   RESOLVED in round-3.11 against Codex round-11 P2 #3.** The
-   round-1 draft left this as an open question with a working
-   assumption that borrower-driven `postPrepayListing` after a
-   grace-window cancel would auto-clear the flag. §18.7 +
-   §18.12 round-3.11 SUPERSEDE that working assumption: the
-   opt-out flag is STICKY across borrower posts. The borrower
-   MUST call `clearAutoListOptOut(loanId)` explicitly to re-enable
-   the keeper-driven path. Rationale: the borrower's cancel was
-   the meaningful escape-hatch signal; making the flag implicitly
-   clear on a re-post would let an aspirational-priced re-list
-   be undercut by a keeper one block later, exactly the
-   misalignment §18.7 set out to prevent. The flag still resets
-   on terminal events (repay, default, refinance, preclose,
-   sale-settlement via `executorFinalizePrepaySale`).
+   RESOLVED 2026-06-04 in round-3.11 / round-3.12 (Codex round-11
+   P2 #3).** The opt-out flag is STICKY across borrower posts. A
+   borrower who cancels during the grace window and then calls
+   `postPrepayListing` (or `postPrepayDutchListing`) at an
+   aspirational ask remains opted out — the keeper-driven auto-list
+   path stays disabled. To re-enable keepers, the borrower MUST call
+   `clearAutoListOptOut(loanId)` explicitly. The flag resets
+   automatically only on terminal loan events: repay
+   (`RepayFacet.repayLoan`), default (`DefaultedFacet.markDefaulted`),
+   refinance (`RefinanceFacet.refinanceOffer`), preclose
+   (`PrecloseFacet.precloseLoan`), and sale-settlement
+   (`PrepayListingFacet.executorFinalizePrepaySale`).
+
+   Rationale: the borrower's cancel was the meaningful escape-hatch
+   signal; auto-clearing the flag on a subsequent `postPrepayListing`
+   would let an aspirational-priced re-list be undercut by a keeper
+   one block later, exactly the misalignment §18.7 set out to prevent.
+   Canonical specs are §18.7 (sticky semantics) and §18.12 (renamed
+   test `test_optOut_stickyAcrossBorrowerRepost`). Implementers
+   following this resolution must NOT add an opt-out reset to the
+   borrower post paths.
+
+   (Round-1 history note: the original round-1 draft had the working
+   assumption that the flag would auto-clear on a borrower-driven
+   post. That assumption is superseded — kept here only for reviewer
+   traceability between round-1 and round-3.12.)
 
 
 ### 18.16 Code-reuse posture (explicit)
@@ -3946,16 +3995,14 @@ reasoning needs to be that "this is two new selectors that fan out to
 audited Block-A / Block-D primitives" rather than "this is a new
 sale path that needs its own settlement reasoning".
 
-**Reused as-is (no modification, no new variant):**
+**Reused as-is (byte-for-byte unchanged surface):**
 
 | Existing primitive | Where Round-7 calls it |
 | --- | --- |
-| `_buildAndRecord` (private on `NFTPrepayListingFacet`) | Case A step 7 — fresh-post path |
+| `_buildAndRecord` (private on `NFTPrepayListingFacet`) | Case A step 7 — fresh-post path (already wires the vault internally — see Case A step 7 note + P3 #1 below). |
 | `_buildAndRecordUpdate` (private on same facet) | Case B rotation tail (steps 5–8) |
-| `LibPrepayListingWiring.wire` / `.unwire` | Case B steps 2 & 8. (Case A reuses `_buildAndRecord` which already calls `LibPrepayListingWiring.wire` internally — round-3.10 against Codex round-10 P3: Case A does NOT wire a second time at the call site.) |
-| `IListingExecutorRecorder.recordOrder(...)` | Both cases — same signature, same event |
+| `LibPrepayListingWiring.wire` / `.unwire` | Case B steps 2 & 8. (Case A reuses `_buildAndRecord` which already calls `LibPrepayListingWiring.wire` internally — round-3.10 against Codex round-10 P3 + round-3.12 against Codex round-11 P3 #1: Case A does NOT wire a second time at the call site, and §18.5 Case A step 7 now spells this out inline.) |
 | `IListingExecutorRecorder.orderContext(orderHash)` view | Case B step 4 + B-cond gates (read existing ask, mode, timings) |
-| `IListingExecutorRecorder.orderFeeLegs(bytes32) returns (FeeLeg[] memory)` typed getter | Case B step 4 — read recorded feeLegs[] for preservation/normalization. Round-3.10 / Codex round-10 P2 #1: this is the typed-array getter on the executor (added by T-086 #316), NOT the bytes-wrapped auto-getter the round-3.6 draft hypothesised. The round-3.10 / round-3.11 update widened `IListingExecutorRecorder` to include it explicitly so the auto-list path can call it without casting through `CollateralListingExecutor`. |
 | `IListingExecutorRecorder.clearOrder(...)` | Case B step 3 — best-effort cancel of old order |
 | `IListingExecutorRecorder.approvedConduits(...)` | Preconditions — same allow-list as Block A |
 | `IVaipakamPrepayContext.getPrepayContext(...)` | Floor formula — same view Block A / Block D use |
@@ -3965,6 +4012,21 @@ sale path that needs its own settlement reasoning".
 | `PrepayListingPosted` event | Case A emits the same event Block A emits — no new fields |
 | `PrepayListingUpdated` event | Case B emits the same event Block A emits — no new fields |
 | Existing revert symbols (~12 of them, table §18.3) | Preconditions reuse existing errors |
+
+**Interface widened (implementation already supports the new shape; no behaviour change to existing call paths — round-3.12 against Codex round-11 P2 #2):**
+
+These rows used to live in the "Reused as-is" table; moved here because
+the interface DOES change (a new surface member or a longer argument
+list), even though no existing concrete code path changes behaviour.
+The Block D atomic-match call site + every post-path call site needs
+the new argument shape; the round-3.10 / round-3.11 fixes documented
+the widening but left the rows mis-categorised.
+
+| Surface | Nature of change | Where Round-7 calls it |
+| --- | --- | --- |
+| `IListingExecutorRecorder.recordOrder(...)` | Signature extended in round-3.10 with `uint128 signedLenderAmount` + `uint128 signedTreasuryAmount` trailing args (§17.3 + §18.14). Every existing post-path call site (`postPrepayListing`, `postPrepayDutchListing`, `updatePrepayListing`, Block D `matchOpenSeaOffer`) MUST pass the two new args. Concrete executor implementation already accepts the new signature; no behaviour change to existing post / Match flows beyond carrying the two extra fields. | Case A step 7 (via `_buildAndRecord`) + Case B rotation tail. |
+| `IListingExecutorRecorder.orderFeeLegs(bytes32) returns (FeeLeg[] memory)` typed getter | New interface member added in round-3.10 / round-3.11. The typed-array getter exists on the concrete `CollateralListingExecutor` (added by T-086 #316); the `IListingExecutorRecorder` interface is widened to include it so the auto-list path can call it without casting through the concrete class. Not a bytes-wrapped auto-getter (the round-3.6 draft had that wrong — fixed in round-3.10 against Codex round-10 P2 #1). | Case B step 4 — read recorded feeLegs[] for preservation/normalization. |
+| `IListingExecutorRecorder.orderProtocolLegs(bytes32) returns (uint128 lender, uint128 treasury)` getter | New interface member added in round-3.8 — reads the `_orderProtocolLegs[orderHash]` snapshot written at post-time. | Case B B-cond-2 gate (both Dutch and fixed-price rotation). |
 
 **New code (minimal — ~150-200 LOC estimate for the full surface):**
 
@@ -4003,12 +4065,22 @@ existing paths):**
   nonce-bearing salt via the existing salt parameter. NO body
   change; the salt is just chosen differently at the auto-list
   call site.
-- Terminal-loan-state paths (`RepayFacet.repayLoan`,
-  `DefaultedFacet.markDefaulted`,
-  `RefinanceFacet.refinanceOffer`, `PrecloseFacet.precloseLoan`)
-  — clear the two new slots (`s.prepayListingAutoListOptedOut`,
-  `s.prepayListingAutoListNonce`) as part of the existing
-  terminal cleanup block.
+- Terminal-loan-state paths — clear the two new slots
+  (`s.prepayListingAutoListOptedOut`,
+  `s.prepayListingAutoListNonce`) as part of the existing terminal
+  cleanup block. Round-3.12 against Codex round-11 P3 #2 — the
+  checklist must include the Seaport sale-settlement terminal
+  (`PrepayListingFacet.executorFinalizePrepaySale`) explicitly, since
+  that path does NOT route through `LibPrepayCleanup.clearActiveListing`
+  and the inline reset call has to be wired at the callback site itself.
+  Five terminal sites in total:
+  - `RepayFacet.repayLoan`
+  - `DefaultedFacet.markDefaulted`
+  - `RefinanceFacet.refinanceOffer`
+  - `PrecloseFacet.precloseLoan`
+  - `PrepayListingFacet.executorFinalizePrepaySale` (sale-settlement —
+    wired inline at the zone callback per the §18.14 item 5
+    "Modified existing functions" enumeration).
 
 **What this means for audit scoping:**
 
