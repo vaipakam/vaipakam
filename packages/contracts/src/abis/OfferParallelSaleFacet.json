@@ -730,6 +730,11 @@
   },
   {
     "type": "error",
+    "name": "PrepayListingDisabled",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RecoveryAmountExceedsUnsolicited",
     "inputs": []
   },

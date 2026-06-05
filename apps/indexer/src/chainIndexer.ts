@@ -638,6 +638,16 @@ async function processOfferLogs(
       });
     } else if (log.eventName === 'OfferCanceled') {
       cancelled.push({ offerId: a.offerId as bigint });
+    } else if (log.eventName === 'OfferConsumedBySale') {
+      // T-086 Round-8 (#358) §19.7e + Codex round-2 P2 — Scenario A
+      // terminal (buyer-side won the race). Reuse the `cancelled`
+      // bucket because the D1 row mutation is identical: offer leaves
+      // the active set; the row's terminal-state column is recorded
+      // via the activity_events lane below. The frontend
+      // `OfferState.ConsumedBySale` rendering is driven by the
+      // companion getOfferState read-back when the row's status is
+      // queried — distinct from "Cancelled" only at the read layer.
+      cancelled.push({ offerId: a.offerId as bigint });
     } else if (log.eventName === 'OfferMatched') {
       // #193 / Codex round-1 P1 — flow into the log-order pass below
       // (interleaved with OfferModified) instead of the bucketed
@@ -2457,6 +2467,17 @@ function pluckActivityRefs(
     case 'OfferCanceled':
       return {
         actor: (args.creator as string)?.toLowerCase() ?? null,
+        loanId: null,
+        offerId: Number(args.offerId as bigint),
+      };
+    case 'OfferConsumedBySale':
+      // T-086 Round-8 (#358) §19.7 — Scenario A terminal. The event
+      // carries (offerId, executor); actor here is the executor that
+      // drove the sale fill (the Seaport-conformant executor singleton),
+      // distinct from a user-initiated cancel. No loanId — pre-loan
+      // branch.
+      return {
+        actor: (args.executor as string)?.toLowerCase() ?? null,
         loanId: null,
         offerId: Number(args.offerId as bigint),
       };

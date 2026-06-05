@@ -97,6 +97,11 @@ contract OfferParallelSaleFacetTest is SetupTest {
             .setCollateralListingExecutor(address(mockExecutor));
         ConfigFacet(address(diamond))
             .setPrepayListingBufferBps(TEST_BUFFER_BPS);
+        // Codex round-2 P1 #3 fix added a `cfgPrepayListingEnabled`
+        // gate to `postParallelSaleListing` — enable the master switch
+        // here so the happy-path tests reach the floor / record steps.
+        ConfigFacet(address(diamond))
+            .setPrepayListingEnabled(true);
         vm.stopPrank();
     }
 
@@ -117,7 +122,12 @@ contract OfferParallelSaleFacetTest is SetupTest {
         o.interestRateBps = INTEREST_RATE_BPS;
         o.collateralAsset = address(collateralNFT);
         o.collateralTokenId = COLLATERAL_TOKEN_ID;
-        o.quantity = 1; // ERC721
+        o.quantity = 1; // ERC721 — principal-side qty (unused for ERC20 principal)
+        // Codex round-2 P1 #2 fix routes the parallel-sale path through
+        // `offer.collateralQuantity` (NOT `offer.quantity`); set both
+        // to 1 for the ERC721 happy path so the new pin matches the
+        // executor's expected value.
+        o.collateralQuantity = 1;
         o.durationDays = DURATION_DAYS;
         o.allowsParallelSale = true;
         o.expiresAt = uint64(block.timestamp + 7 days);

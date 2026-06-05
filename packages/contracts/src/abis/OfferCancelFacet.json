@@ -952,6 +952,17 @@
   },
   {
     "type": "error",
+    "name": "OfferAlreadyConsumedBySale",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint96",
+        "internalType": "uint96"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "OfferCreationFailed",
     "inputs": []
   },

@@ -78,6 +78,10 @@ contract OfferParallelSaleFacet is
     // same shape OfferCreateFacet uses for its creator-only paths).
 
     error ParallelSaleNotEnabled(uint96 offerId);
+    /// @notice T-086 Round-8 (#358) Codex round-2 P1 #3 — raised when
+    ///         `s.cfgPrepayListingEnabled` is false at post time.
+    ///         Mirrors `NFTPrepayListingFacet.PrepayListingDisabled`.
+    error PrepayListingDisabled();
     error ParallelSaleListingAlreadyPosted(uint96 offerId, bytes32 existingOrderHash);
     error OfferTerminal(uint96 offerId); // accepted / cancelled / consumed-by-sale
     error UnsupportedCollateralForParallelSale(LibVaipakam.AssetType collateralType);
@@ -259,6 +263,12 @@ contract OfferParallelSaleFacet is
         }
 
         // ── Config-gate ───────────────────────────────────────────
+        // Codex round-2 P1 #3 — honor the master kill-switch that
+        // governance flips during incidents / on chains where the
+        // prepay-listing feature isn't open. Every loan-keyed post
+        // path (NFTPrepayListingFacet / Dutch / Atomic / AutoList)
+        // already gates on this; the no-loan branch must too.
+        if (!s.cfgPrepayListingEnabled) revert PrepayListingDisabled();
         if (s.cfgPrepayListingBufferBps == 0) revert PrepayListingBufferNotConfigured();
         if (s.collateralListingExecutor == address(0)) revert AutoListExecutorNotSet();
         if (conduitKey == bytes32(0)) revert AutoListConduitNotConfigured();
@@ -322,22 +332,35 @@ contract OfferParallelSaleFacet is
             // fields can't drift while the order is live, so the
             // executor's fill-time content check reads them directly
             // from the recorded OfferContext.
+            //
+            // Codex round-2 P1 #2 — for borrower offers with ERC1155
+            // collateral the stake count lives in
+            // `offer.collateralQuantity`, NOT `offer.quantity`
+            // (`offer.quantity` is the PRINCIPAL-side quantity, normally
+            // zero for ERC20-principal/NFT-collateral offers). The
+            // round-1 fix corrected the argument-order swap but left
+            // `offer.quantity` in place; this round-2 fix routes
+            // through `offer.collateralQuantity` for both the
+            // OfferContext pin AND the `buildAndHashOfferMem` call
+            // below. For ERC721 the field's default of 1 still works
+            // because `LibPrepayOrder._componentsOfferAtMemory`
+            // ignores quantity in the ERC721 branch (hard-coded to 1).
             collateralAsset: offer.collateralAsset,
             collateralAssetType: uint8(offer.collateralAssetType),
             collateralTokenId: offer.collateralTokenId,
-            collateralQuantity: offer.quantity
+            collateralQuantity: offer.collateralQuantity
         });
 
-        // Codex P1 round-1 #1 — argument order MUST be
-        // (collateralTokenId, collateralQuantity); the prior swap
-        // poisoned every ERC721 listing with tokenId != 1 and every
-        // ERC1155 listing with quantity != tokenId.
+        // Codex P1 round-1 #1 + Codex round-2 P1 #2 — argument order
+        // MUST be (collateralTokenId, collateralQuantity), AND the
+        // quantity field MUST be `offer.collateralQuantity` (NOT
+        // `offer.quantity` — that's the principal-side qty).
         orderHash = LibPrepayOrder.buildAndHashOfferMem(
             ctx,
             offer.collateralAsset,
             offer.collateralAssetType,
             offer.collateralTokenId,
-            offer.quantity,
+            offer.collateralQuantity,
             address(this),
             loc.executor,
             IListingExecutorRecorder(loc.executor).seaport(),

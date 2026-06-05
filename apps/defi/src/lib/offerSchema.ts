@@ -99,6 +99,13 @@ export interface OfferFormState {
    *  Advanced mode AND both legs are liquid AND
    *  `periodicInterestEnabled` is true on the protocol config. */
   periodicInterestCadence: number;
+  /** T-086 Round-8 (#358) §19.5 — borrower opt-in for parallel-sale
+   *  listing on OpenSea / Seaport-conformant marketplaces. Only valid
+   *  on Borrower offers with NFT collateral; the contract rejects the
+   *  flag on lender / non-NFT-collateral offers. Visible only in
+   *  Advanced mode when offerType=borrower AND collateralAssetType is
+   *  erc721 or erc1155. */
+  allowsParallelSale: boolean;
 }
 
 export const initialOfferForm: OfferFormState = {
@@ -123,6 +130,7 @@ export const initialOfferForm: OfferFormState = {
   interestRateMax: '',
   collateralAmountMax: '',
   periodicInterestCadence: 0, // None
+  allowsParallelSale: false, // T-086 Round-8 #358 — explicit opt-in
 };
 
 /** Payload shape expected by `Diamond.createOffer`. */
@@ -160,6 +168,11 @@ export interface CreateOfferPayload {
   collateralAmountMax: bigint;
   /** T-034 — Periodic Interest Payment cadence (0 = None ... 4 = Annual). */
   periodicInterestCadence: number;
+  /** T-086 Round-8 (#358) §19.5 — borrower opt-in for parallel-sale
+   *  listing on OpenSea / Seaport-conformant marketplaces. Wired
+   *  through the createOffer ABI in commit `1938ba79`; the contract
+   *  rejects the flag on lender / non-NFT-collateral offers. */
+  allowsParallelSale: boolean;
 }
 
 /**
@@ -395,6 +408,10 @@ export function toCreateOfferPayload(
     // until the frontend exposes a max-commit range).
     collateralAmountMax: collateralWei,
     periodicInterestCadence: s.periodicInterestCadence,
+    // T-086 Round-8 (#358) §19.5 — wire the borrower opt-in through.
+    // Contract gate (`OfferCreateFacet`) refuses lender + non-NFT-
+    // collateral cases at create time; UI surface enforces the same.
+    allowsParallelSale: s.allowsParallelSale,
   };
 }
 

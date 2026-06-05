@@ -255,7 +255,8 @@ contract PrepayListingFacet is
     /// @inheritdoc IVaipakamPrepayCallbacks
     function markOfferConsumedBySale(uint96 offerId) external override whenNotPaused {
         _assertOfferExecutor(offerId);
-        LibVaipakam.storageSlot().offerConsumedBySale[uint256(offerId)] = true;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.offerConsumedBySale[uint256(offerId)] = true;
         // Codex P2 round-1 — remove the sold offer from the active-
         // offer indexes (activeOfferIdsList / assetPairActiveOfferIds)
         // the same way the accept / cancel terminals do, so
@@ -266,6 +267,13 @@ contract PrepayListingFacet is
         // `onOfferAccepted`) because Scenario A is a fill-without-loan
         // — the indexer's loan-side counter shouldn't tick.
         LibMetricsHooks.onOfferCancelled(uint256(offerId));
+        // Codex round-2 P2 #3 — clear the position-NFT reverse map so
+        // `MetricsFacet.getUserPositionOffers` (which the docs
+        // promise only returns OPEN offers) stops surfacing the
+        // consumed offer to the borrower's frontend until some later
+        // unrelated cleanup fires. Mirrors
+        // `OfferCancelFacet.cancelOffer:411`.
+        delete s.offerIdByPositionTokenId[s.offers[uint256(offerId)].positionTokenId];
         emit OfferConsumedBySale(offerId, msg.sender);
     }
 
