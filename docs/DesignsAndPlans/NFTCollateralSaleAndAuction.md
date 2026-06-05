@@ -4262,7 +4262,7 @@ Round-7 §18.5 B-cond-2 enforces today).
 
 | Phase | Floor formula |
 | --- | --- |
-| **Pre-loan** (offer pending; no loan exists yet) | `offer.principal + projectedFirstPeriodInterest + treasuryFee + bufferAmount` where `projectedFirstPeriodInterest = offer.principal × offer.interestRateBps × min(1 day, offer.durationDays × 1 day) / (10000 × 365)` (charges day-1 interest as a hedge against the loan being accepted between sale-listing and sale-fill) and `bufferAmount = (offer.principal + projectedFirstPeriodInterest + treasuryFee) × cfgPrepayListingBufferBps / 10_000` (round-3.1 against Codex round-3 P2 #1 line 4265 — corrects the round-3 typo where the buffer computation used a different identifier `projectedInterest`; both names refer to the same `projectedFirstPeriodInterest` term defined above) (same buffer the existing prepay-listing path uses) |
+| **Pre-loan** (offer pending; no loan exists yet) | `offer.principal + projectedFirstPeriodInterest + treasuryFee + bufferAmount` where `projectedFirstPeriodInterest = offer.principal × offer.interestRateBps × min(1, offer.durationDays) / (10000 × 365)` (charges day-1 interest as a hedge against the loan being accepted between sale-listing and sale-fill) and `bufferAmount = (offer.principal + projectedFirstPeriodInterest + treasuryFee) × cfgPrepayListingBufferBps / 10_000` (round-3.2 against Codex round-3.2 P1 #3 line 4265 — supersedes the round-3 formula which multiplied by `1 day` = 86400 SECONDS while dividing by `365` DAYS, a units-mismatch that would have inflated the projected interest by ~86400×, blocking every multi-day offer from having a usable pre-loan floor; the corrected formula matches the shipped entitlement math at `LibCollateralSettlement.sol:72-78` which uses day counts: `principal × rateBps × dayCount / (10000 × 365)`. The `min(1, durationDays)` clamps the hedge to 1 day for normal multi-day offers OR the offer's own duration when shorter, so the pre-loan floor charges at-most-one day of interest as the hedge.) (same buffer the existing prepay-listing path uses) |
 | **Post-loan** (`loan.status == Active`, in repayment OR grace) | Existing Round-4 / Round-7 formula: `floor = (pctx.lenderLeg + pctx.treasuryLeg) × (10_000 + cfgPrepayListingBufferBps) / 10_000` |
 
 **Two-order construction at offer-accept (round-2 against Codex
@@ -4607,8 +4607,23 @@ level:
   dedicated bit. Cancel triggers collateral refund, which
   would double-withdraw the now-buyer-owned NFT).
 - If the lender-accept tx lands first, the sale-fill tx that
-  follows still succeeds — it just runs the post-loan waterfall
-  (Scenario B continuing into a T-086 fill).
+  follows MUST revert (round-3.2 against Codex round-3.2 P1 #1
+  line 4611 — supersedes the round-3 "still succeeds, runs the
+  post-loan waterfall" framing). The buyer's tx was constructed
+  against `preLoanOrderHash`, but the §19.3 accept-flow steps
+  3-5 atomically cleared the offer-context binding +
+  `vault.revokeListingOrderHash(preLoanHash)` + registered a
+  DIFFERENT `activeLoanHash`. The pre-loan hash is now
+  unfillable (Seaport's orderStatus check + the vault's
+  ERC-1271 path both reject it); the buyer's stale-hash tx
+  reverts cleanly with no funds movement. A buyer wanting to
+  fill the new active-loan listing must build a fresh tx
+  against `activeLoanHash`. The §19.9
+  `test_parallelSale_buyerFillRevertsAfterAcceptTeardown`
+  pins this revert behaviour. Critically, the buyer's tx does
+  NOT silently re-route to the active-loan hash (different
+  orderHash, different signed amounts) — the two-order
+  model's safety relies on the stale-hash tx failing fast.
 
 So there is NO race-window class to design against. The Block-D
 atomic-match-or-bust primitive does NOT need to be ported here;
@@ -4672,20 +4687,37 @@ mapping(bytes32 orderHash => OfferContext) public offerContext;
 
 **GTC offer expiry handling — `offer.expiresAt == 0` is the
 never-expires sentinel** (round-3 against Codex round-1 P2 #1
-line 4230). The existing `Offer` struct carries
-`expiresAt: uint64` where `0` means "good-til-cancelled" (no
-expiry). Seaport's `endTime`, by contrast, cannot be `0` — an
-order with `endTime == 0` would either be rejected by Seaport
-or fillable forever in an unbounded way. The implementation
-MUST map the GTC sentinel to a finite far-future Seaport
-endTime at sign time: `endTime = offer.expiresAt == 0 ?
-type(uint64).max : offer.expiresAt`. The diamond-side gate
-already uses `offer.expiresAt` directly for offer-validity
-checks; the executor pins the mapped value for the Seaport
-order. (Note: `type(uint64).max` is the year 5500-ish,
-effectively GTC for any practical horizon; the diamond's offer-
-expiry check uses the original `offer.expiresAt`, so the GTC
-sentinel preserves its semantics on the diamond side.)
+line 4230; round-3.2 against Raja round-3.2 P2 #3 — supersedes
+the `type(uint64).max` mapping). The existing `Offer` struct
+carries `expiresAt: uint64` where `0` means "good-til-cancelled"
+(no expiry). Seaport's `endTime`, by contrast, cannot be `0` —
+an order with `endTime == 0` would either be rejected by Seaport
+or fillable forever in an unbounded way. The implementation MUST
+map the GTC sentinel to a **finite far-future** Seaport endTime
+at sign time:
+
+```solidity
+uint64 constant GTC_SEAPORT_END_TIME = 100 * 365 days; // ~100 years, far-future
+endTime = offer.expiresAt == 0
+    ? uint64(block.timestamp) + GTC_SEAPORT_END_TIME
+    : offer.expiresAt;
+```
+
+The 100-year horizon is GTC for any practical purpose AND avoids
+the `type(uint64).max` pitfalls: downstream indexer / analytics /
+dashboard surfaces that compute `endTime - block.timestamp`
+overflow at `type(uint64).max`, and Seaport itself uses uint256
+arithmetic but third-party orderbook + ingest layers (OpenSea
+ingestion, Blur metadata, Reservoir indexer) historically choke
+on `uint64.max` as an unrealistic value (treated as malformed by
+some catalog filters). A finite 100-year value is interoperable
+with every downstream indexer + indistinguishable from GTC for
+the borrower's lifetime. The diamond-side gate uses the original
+`offer.expiresAt` (so the GTC sentinel semantics are preserved on
+the diamond side); only the Seaport `endTime` field is mapped to
+the finite far-future value. The constant `GTC_SEAPORT_END_TIME`
+lands in `LibPrepayOrder` alongside the rest of the order-shape
+constants.
 
 **Dedicated record / clear surface — distinct from
 `recordOrder`** (round-3 against Raja P1 #2 + Codex round-2 P1
@@ -4756,7 +4788,7 @@ mapping the orderHash matched (§19.6):
 
 | Branch | Branch identifier | Settlement waterfall |
 | --- | --- | --- |
-| **No-loan branch** (Scenario A — round-8 new path) | orderHash in `offerContext` | Diamond receives proceeds via `recordOfferSaleProceeds(offerId, principalAsset, amount)` callback (round-3 against Codex round-2 P1 #5 — proceeds credited to `offerContext.borrowerVault` through `LibVaipakam._creditUserVaultBalance(...)` so they are withdrawable through the standard vault-balance path; raw transfer to vault would strand them outside the borrower's withdrawable balance). Additional consideration items carry OpenSea protocol-fee / creator-royalty legs via the existing `FeeLeg[]` shape (round-3 against Codex round-2 P2 #8 line 4483 — fee-aware collections bake those legs into the bidder's signed order via SignedZone; the no-loan branch MUST permit a variable-length consideration array, NOT a single-item invariant). Live sanctions recheck via diamond-hosted `assertOfferFillNotSanctioned(borrowerWallet)` callback (round-3 against Raja P1 #3 + Codex round-2 P1 #4 — replaces the round-2 "executor calls LibVaipakam directly" which would read the executor's storage slot, not the diamond's oracle). |
+| **No-loan branch** (Scenario A — round-8 new path) | orderHash in `offerContext` | Diamond receives proceeds via `recordOfferSaleProceeds(offerId, principalAsset, amount)` callback (round-3 against Codex round-2 P1 #5 — proceeds credited to `offerContext.borrowerVault` through `LibVaipakam._creditUserVaultBalance(...)` so they are withdrawable through the standard vault-balance path; raw transfer to vault would strand them outside the borrower's withdrawable balance). Additional consideration items carry OpenSea protocol-fee / creator-royalty legs as **SELLER-baked** entries hashed into the vault's signed Seaport order at offer-create time (round-3.2 against Codex round-3.2 P2 #5 line 4759 — supersedes the round-3 "bake into the bidder's signed order via SignedZone" framing which was Block D §17.7's bidder-side pattern inverted for this branch; pre-loan is a fixed-price SELLER listing where the vault is the offerer and the buyer is the fulfiller via `Seaport.fulfillOrder`, so there is no bidder-side SignedZone validation to lean on — the fee schedule MUST be persisted at record-time on the executor's side via the `recordOfferOrder` surface so the zone callback can compare the live consideration items to the sign-time fee schedule, see §19.7 P2 #6 line 4793 row + §19.7e fee-leg persistence note). The no-loan branch MUST permit a variable-length consideration array, NOT a single-item invariant. Live sanctions recheck via diamond-hosted `assertOfferFillNotSanctioned(borrowerWallet)` callback (round-3 against Raja P1 #3 + Codex round-2 P1 #4 — replaces the round-2 "executor calls LibVaipakam directly" which would read the executor's storage slot, not the diamond's oracle). |
 | **Active-loan branch** (Round-4 v1 + Round-7 §18 + Round-8 Scenario B post-acceptance) | orderHash in `orderContext` | Existing T-086 waterfall: `lenderLeg → consideration[0]`, `treasuryLeg → consideration[1]`, remainder → `consideration[2]` (borrower). Three consideration items + optional fee legs. Existing sanctions Tier-1 gate at offer-create + Round-7's permissionless rotation. |
 
 The pre-loan branch's settlement is dramatically simpler than the
@@ -4790,28 +4822,119 @@ several rows. The corrected split:
 
 | Surface | Nature of change | Where Round-8 calls it |
 | --- | --- | --- |
-| `IListingExecutorRecorder.recordOfferOrder(orderHash, OfferContext ctx)` | NEW interface member + concrete impl. The round-2 "reuse `recordOrder` with `loanId = 0`" claim was wrong: the executor at `CollateralListingExecutor.sol:1128-1136` already uses `ctx.loanId == 0` as the unrecorded-order revert sentinel. The dedicated offer-keyed surface keeps the loan-keyed `recordOrder` semantics untouched. | Offer-create (Scenario A path). |
+| `IListingExecutorRecorder.recordOfferOrder(orderHash, OfferContext ctx, FeeLeg[] feeLegs)` | NEW interface member + concrete impl. The round-2 "reuse `recordOrder` with `loanId = 0`" claim was wrong: the executor at `CollateralListingExecutor.sol:1128-1136` already uses `ctx.loanId == 0` as the unrecorded-order revert sentinel. The dedicated offer-keyed surface keeps the loan-keyed `recordOrder` semantics untouched. **Round-3.2 against Codex round-3.2 P2 #6 line 4793 — supersedes the round-3 signature `recordOfferOrder(orderHash, OfferContext ctx)` which omitted the fee-leg array.** For fee-aware collections the borrower signs `FeeLeg[]` at offer-create (§19.4 Scenario A bullet 2); the executor MUST persist that array alongside the `OfferContext` so the zone callback can compare live consideration items to the sign-time fee schedule AND the post-accept publish step can reconstruct the order. The persistence pattern mirrors the executor's existing `_orderFeeLegs[orderHash]` slot for the loan-keyed surface — round-3.2 adds a parallel `_offerFeeLegs[orderHash]` mapping on the executor + a typed getter `offerFeeLegs(bytes32) returns (FeeLeg[])`. See §19.7e for the persistence rationale. | Offer-create (Scenario A path). |
 | `IListingExecutorRecorder.clearOfferOrder(bytes32 orderHash)` | NEW interface member + concrete impl — symmetric cleanup for the offer-keyed surface. | Offer-accept (Scenario B path, atomically before signing the fresh active-loan order). Borrower-cancel + expired-offer cleanup paths (§19.7b). |
 | `IListingExecutorRecorder.offerContext(bytes32 orderHash) returns (OfferContext memory)` view | NEW interface member — the typed-struct getter symmetric with the existing `orderContext(...)` view used by the loan-keyed surface. | Executor zone callback's no-loan-branch dispatch. |
 | Vault ERC-1271 binding lifecycle | Round-1 implicitly assumed a single binding spans the offer-accept transition. Round-3 ratifies: TWO bindings per offer lifecycle (`registerListingOrderHash(preLoanHash)` at offer-create + `registerListingOrderHash(activeLoanHash)` at offer-accept) + symmetric `revokeListingOrderHash(preLoanHash)` at offer-accept to invalidate the now-cancelled pre-loan order on the vault's signature path. | Offer-create + offer-accept. |
 
 **New diamond callbacks (executor → diamond):**
 
-| Callback | Purpose |
-| --- | --- |
-| `markOfferConsumedBySale(uint96 offerId)` | Flips `s.offers[offerId].status` to the new `OfferStatus.ConsumedBySale` terminal (round-3 against Raja P1 #1). Distinct from `OfferCancelFacet.cancelOffer` — the existing cancel-refund path attempts to withdraw the collateral NFT back to the borrower, which would either revert or double-withdraw after the Seaport buyer already received the NFT. |
-| `recordOfferSaleProceeds(uint96 offerId, address principalAsset, uint256 amount)` | Receives ERC20 proceeds on behalf of the borrower (the no-loan branch routes consideration[0] to the diamond, NOT directly to the vault) and credits them via `LibVaipakam._creditUserVaultBalance(borrowerWallet, principalAsset, amount)` so the borrower can withdraw through the standard vault-balance flow (round-3 against Codex round-2 P1 #5). |
-| `assertOfferFillNotSanctioned(address borrowerWallet)` | Live diamond-hosted sanctions recheck during pre-loan fill (round-3 against Raja P1 #3 + Codex round-2 P1 #4). Runs inside the diamond's storage slot so the sanctions oracle reads from the diamond's config, not the executor's. Reverts cleanly if the borrower has become sanctioned between offer-create and pre-loan fill. |
+| Callback | Caller-gate | Purpose |
+| --- | --- | --- |
+| `markOfferConsumedBySale(uint96 offerId)` | `msg.sender == s.offerPrepayListingExecutor[offerId]` — see §19.7d (round-3.2 against Codex round-3.2 P1 #4 line 4803). | Sets `s.offerConsumedBySale[offerId] = true` (round-3.2 against Codex round-3.2 P1 #2 line 4802 — supersedes the round-3 stale "flips `s.offers[offerId].status` to `OfferStatus.ConsumedBySale`" reference; there is no `status` enum field on `Offer` per §19.4 — the terminal is the parallel mapping). Distinct from `OfferCancelFacet.cancelOffer` — the existing cancel-refund path attempts to withdraw the collateral NFT back to the borrower, which would either revert or double-withdraw after the Seaport buyer already received the NFT. |
+| `recordOfferSaleProceeds(uint96 offerId, address principalAsset, uint256 amount)` | `msg.sender == s.offerPrepayListingExecutor[offerId]` — same load-bearing executor-gate `executorFinalizePrepaySale` uses (round-3.2 against Codex round-3.2 P1 #4 line 4803). Without this gate any caller could pass arbitrary `(offerId, asset, amount)` to mint protocol-tracked vault balance with NO matching Seaport transfer, letting the borrower withdraw against unrelated custody. The gate reads the executor address from the same offer-keyed slot that records the listing, so the gate is automatically tied to the right executor even after governance rotates the canonical executor mid-offer. | Receives ERC20 proceeds on behalf of the borrower (the no-loan branch routes consideration[0] to the diamond, NOT directly to the vault) and credits them via `LibVaipakam._creditUserVaultBalance(borrowerWallet, principalAsset, amount)` so the borrower can withdraw through the standard vault-balance flow (round-3 against Codex round-2 P1 #5). |
+| `assertOfferFillNotSanctioned(address borrowerWallet)` | `msg.sender == s.offerPrepayListingExecutor[offerId]` (same executor-gate; the call must originate from the offer's recorded executor so a third party can't grief the gate with an arbitrary wallet check). | Live diamond-hosted sanctions recheck during pre-loan fill (round-3 against Raja P1 #3 + Codex round-2 P1 #4). Runs inside the diamond's storage slot so the sanctions oracle reads from the diamond's config, not the executor's. Reverts cleanly if the borrower has become sanctioned between offer-create and pre-loan fill. |
+
+### 19.7d Executor-callback caller-gate (round-3.2 against Codex round-3.2 P1 #4 line 4803)
+
+All three new diamond callbacks above (`markOfferConsumedBySale`,
+`recordOfferSaleProceeds`, `assertOfferFillNotSanctioned`) MUST
+enforce `msg.sender == s.offerPrepayListingExecutor[offerId]`
+as their first check (revert `NotOfferExecutor(offerId, msg.sender)`
+otherwise). This mirrors the gate `executorFinalizePrepaySale`
+uses for the active-loan branch. The shape:
+
+```solidity
+function recordOfferSaleProceeds(uint96 offerId, address asset, uint256 amount) external {
+    LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+    address recordedExecutor = s.offerPrepayListingExecutor[offerId];
+    if (recordedExecutor == address(0) || msg.sender != recordedExecutor) {
+        revert NotOfferExecutor(offerId, msg.sender);
+    }
+    // ... rest of the callback ...
+}
+```
+
+The implementation also introduces a parallel storage slot
+`mapping(uint96 => address) offerPrepayListingExecutor` on
+`LibVaipakam.Storage` (symmetric with the existing
+`s.prepayListingExecutor[loanId]`) — populated at
+`postParallelSaleListing` (offer-create) and cleared at
+`LibPrepayCleanup.clearOfferListing(offerId)`. The §19.13
+inventory adds this slot.
+
+Without the gate, the catastrophic failure modes are:
+- **`recordOfferSaleProceeds`** without gate → anyone can mint
+  protocol-tracked vault balance for any borrower against any
+  asset, then have the borrower withdraw it against unrelated
+  custody balances (theft).
+- **`markOfferConsumedBySale`** without gate → anyone can flip
+  an arbitrary offer's `offerConsumedBySale[offerId]` bit,
+  blocking lender acceptance griefing-style. Recoverable (the
+  borrower can `cancelOffer` to refund collateral), but
+  degrades the offer-discovery surface.
+- **`assertOfferFillNotSanctioned`** without gate → minor — the
+  callback only does an oracle read + revert; griefing surface
+  is low, but consistency with the other two gates is the right
+  posture.
 
 **Modified existing functions (additive — no behavior change to
 existing call paths):**
 
 | Function | Change |
 | --- | --- |
-| `OfferAcceptFacet._acceptOffer` | Add accept-gate observation of the new `OfferStatus.ConsumedBySale` terminal (round-3 against Raja P1 #1). Without this, a lender accept tx landing after a sale-fill tx would proceed against a vault that no longer holds the NFT. Reverts `OfferConsumedBySale(offerId)`. |
+| `OfferAcceptFacet._acceptOffer` | Add accept-gate observation of `!s.offerConsumedBySale[offerId]` (round-3 against Raja P1 #1; round-3.2 against Codex round-3.2 P1 #2 line 4802 — terminal is the parallel mapping, NOT a phantom enum value). Without this, a lender accept tx landing after a sale-fill tx would proceed against a vault that no longer holds the NFT. Reverts `OfferConsumedBySale(offerId)`. Same gate must propagate to every offer-validity reader: `OfferMatch`, `ProfileFacet`, `EarlyWithdrawalFacet`, `VPFIDiscountFacet`, `MetricsDashboardFacet` (searchable as `OfferActiveCheck:` markers in the implementation PR). |
 | `OfferAcceptFacet._acceptOffer` | Add the two-order tear-down + re-record sequence (Scenario B in §19.4): `clearOfferOrder(preLoanHash)` + `vault.revokeListingOrderHash(preLoanHash)` + sign fresh active-loan order + `recordOrder(activeLoanHash, ...)` + `vault.registerListingOrderHash(activeLoanHash, executor)` + `s.prepayListingOrderHash[loanId] = activeLoanHash`. |
 | `OfferCancelFacet.cancelOffer` | Add the offer-keyed listing teardown (round-3 against Codex round-1 P2 #5 line 4426): when an offer with an active parallel-sale listing is borrower-cancelled, also call `clearOfferOrder(preLoanHash)` + `vault.revokeListingOrderHash(preLoanHash)` + delete `s.offerPrepayListingOrderHash[offerId]`. The cancel-refund path's existing collateral-withdraw step runs after the listing teardown. |
 | `cancelExpiredOffer` (existing permissionless cleanup) | Same listing teardown as `cancelOffer` for the expired-offer case (per-offer parallel-sale listing must be cleared when the offer ages out). |
+| `OfferMutateFacet.updateOffer` (and sibling mutation methods) | Reject mutation when `s.offerPrepayListingOrderHash[offerId] != bytes32(0)` with revert `OfferLockedByParallelSale(offerId)` (round-3.2 against Raja round-3.2 P2 #1 — §19.10 Q6 ratified the mutation-lock invariant; this row is the implementation requirement). A parallel-sale listing pins the pre-loan floor to `(offer.principal + projectedFirstPeriodInterest + treasuryFee + buffer)` per §19.3; mutating any of `principal` / `interestRateBps` / `collateralAsset` / `collateralTokenId` while the listing is live would invalidate the floor invariant and leave a structurally-unsolvent listing on Seaport. The borrower must cancel the listing first (via `cancelPrepayListing` or `cancelOffer`'s teardown) to mutate the offer. |
+
+### 19.7e Fee-leg persistence at offer-record-time (round-3.2 against Codex round-3.2 P2 #6 line 4793)
+
+The pre-loan branch's fee legs are SELLER-signed (the vault is
+the Seaport offerer; see §19.6b row + §19.4 Scenario A bullet
+2). For the no-loan branch's zone callback to enforce the
+fee-leg constraint at fill-time, AND for the post-accept publish
+step (§19.3 step 9) to reconstruct the order JSON, the fee-leg
+array MUST be persisted at `recordOfferOrder` time alongside the
+`OfferContext`. The round-3 signature `recordOfferOrder(orderHash,
+OfferContext ctx)` recorded only the context; the seller-signed
+fee schedule was lost.
+
+Round-3.2 adds:
+
+```solidity
+// CollateralListingExecutor — round-3.2 storage extension:
+mapping(bytes32 orderHash => FeeLeg[]) internal _offerFeeLegs;
+
+/// @notice Typed array getter for the offer-keyed fee schedule
+///         (parallel to the existing `_orderFeeLegs` for loan-keyed).
+function offerFeeLegs(bytes32 orderHash) external view returns (FeeLeg[] memory) {
+    return _offerFeeLegs[orderHash];
+}
+```
+
+Plus the corresponding interface widening on
+`IListingExecutorRecorder`:
+
+```solidity
+// IListingExecutorRecorder — round-3.2 widening:
+function recordOfferOrder(
+    bytes32 orderHash,
+    OfferContext calldata ctx,
+    FeeLeg[] calldata feeLegs
+) external;
+
+function offerFeeLegs(bytes32 orderHash) external view returns (FeeLeg[] memory);
+```
+
+The `clearOfferOrder(orderHash)` path also clears
+`_offerFeeLegs[orderHash]` (delete) so the storage doesn't
+persist after the offer is consumed / cancelled.
+
+This mirrors the existing loan-keyed `_orderFeeLegs[orderHash]`
+pattern on the same contract (`CollateralListingExecutor.sol:225`)
+— no novel storage shape, just parallel mapping.
 
 ### 19.7b Why `OfferCancelFacet.cancelOffer` is NOT the no-loan branch's settlement path
 
@@ -4922,11 +5045,11 @@ withdraw the proceeds through the standard
 `vaultWithdrawERC20` path; the `OfferSaleProceedsCredited`
 event is emitted (Codex round-2 P1 #5 — proof that proceeds
 aren't stranded as raw vault-contract balance invisible to the
-withdraw flow); offer status flips to `OfferStatus.ConsumedBySale`
-via `markOfferConsumedBySale`; NFT transfers to the buyer
-atomically; the diamond's
-`s.offerPrepayListingOrderHash[offerId]` slot clears via
-`LibPrepayCleanup.clearOfferListing`.
+withdraw flow); `s.offerConsumedBySale[offerId]` flips to
+`true` via the gated `markOfferConsumedBySale` callback (round-3.2
+against Codex round-3.2 P1 #2); NFT transfers to the buyer
+atomically; the diamond's `s.offerPrepayListingOrderHash[offerId]`
+slot clears via `LibPrepayCleanup.clearOfferListing`.
 
 **Pre-loan fee-aware happy path:** `test_parallelSale_preloanFillRoutesOpenSeaFees`
 — same as above but on a fee-aware collection where the
@@ -5223,35 +5346,31 @@ inventory:
 - `OfferCreateFacet.postParallelSaleListing(...)` — borrower-
   driven opt-in at offer-create.
 
-**New executor-side surface (3 members + 1 mapping):**
+**New executor-side surface (5 members + 2 mappings — updated round-3.2 against Codex round-3.2 P2 #6 line 4793 + Raja round-3.2 P2 #1 / P3 #2):**
 
-- `IListingExecutorRecorder.recordOfferOrder(orderHash, OfferContext)`
+- `IListingExecutorRecorder.recordOfferOrder(orderHash, OfferContext, FeeLeg[])` — round-3.2 widened with `FeeLeg[]` arg to persist seller-signed fee schedule at record-time (see §19.7e).
 - `IListingExecutorRecorder.clearOfferOrder(orderHash)`
 - `IListingExecutorRecorder.offerContext(orderHash) returns (OfferContext memory)` view
-- `mapping(bytes32 => OfferContext) offerContext` storage slot
-  on `CollateralListingExecutor` (parallel to the existing
-  loan-keyed `orderContext` mapping).
+- `IListingExecutorRecorder.offerFeeLegs(orderHash) returns (FeeLeg[] memory)` view — round-3.2 new (§19.7e parallel to the existing `orderFeeLegs(...)` for loan-keyed).
+- `mapping(bytes32 => OfferContext) offerContext` storage slot on `CollateralListingExecutor` (parallel to the existing loan-keyed `orderContext` mapping).
+- `mapping(bytes32 => FeeLeg[]) _offerFeeLegs` storage slot — round-3.2 new (§19.7e).
 
-**New diamond callbacks (3):**
+**New diamond callbacks (3 — all gated on `msg.sender == s.offerPrepayListingExecutor[offerId]` per §19.7d, round-3.2 against Codex round-3.2 P1 #4 line 4803):**
 
-- `markOfferConsumedBySale(offerId)` — flips offer status to
-  the new `OfferStatus.ConsumedBySale` terminal.
-- `recordOfferSaleProceeds(offerId, principalAsset, amount)` —
-  credits proceeds to the borrower's vault balance through
-  the standard credit path.
-- `assertOfferFillNotSanctioned(borrowerWallet)` — diamond-
-  hosted live sanctions recheck.
+- `markOfferConsumedBySale(offerId)` — sets `s.offerConsumedBySale[offerId] = true` (round-3.2 against Codex round-3.2 P1 #2 line 4802 — supersedes the round-3 "flips offer status to `OfferStatus.ConsumedBySale`" reference; there is no `status` enum field on `Offer`, the terminal is the parallel `s.offerConsumedBySale` mapping).
+- `recordOfferSaleProceeds(offerId, principalAsset, amount)` — credits proceeds to the borrower's vault balance through the standard credit path.
+- `assertOfferFillNotSanctioned(borrowerWallet)` — diamond-hosted live sanctions recheck.
 
-**New `OfferStatus` enum value (1):**
+**New `Offer`-validity sibling mapping (1, mirrors `s.offerCancelled` shape):**
 
-- `OfferStatus.ConsumedBySale` — distinct from `Cancelled`
-  (no collateral refund). Observed by
-  `OfferAcceptFacet._acceptOffer` to reject post-sale lender
-  acceptance with `OfferConsumedBySale(offerId)`.
+- `mapping(uint256 => bool) offerConsumedBySale` — the no-loan-sale terminal bit. Observed by `OfferAcceptFacet._acceptOffer` AND every other offer-validity reader (`OfferMatch`, `ProfileFacet`, `EarlyWithdrawalFacet`, `VPFIDiscountFacet`, `MetricsDashboardFacet`) to reject post-sale acceptance / matching with `OfferConsumedBySale(offerId)`. Round-3.2 against Codex round-3.2 P1 #2 line 4802 — supersedes the round-3 "new `OfferStatus.ConsumedBySale` enum value" framing; the current `Offer` storage model uses `Offer.accepted: bool` (struct field at `LibVaipakam.sol:1173`) + `s.offerCancelled[offerId]: bool` (mapping at `LibVaipakam.sol:2259`); declaring a new enum value would require a status-field migration that's out of scope for Round-8. The parallel-bit pattern matches what's already in the codebase.
 
-**New storage on `LibVaipakam.Storage` (1 mapping):**
+**New storage on `LibVaipakam.Storage` (4 mappings — updated round-3.2 against Raja round-3.2 P3 #2 + P2 #1 + Codex round-3.2 P1 #4 line 4803):**
 
-- `mapping(uint96 offerId => bytes32 orderHash) offerPrepayListingOrderHash`.
+- `mapping(uint256 => bool) offerConsumedBySale` — round-3.2 new (see above).
+- `mapping(uint96 offerId => bytes32 orderHash) offerPrepayListingOrderHash` — round-3.
+- `mapping(uint96 offerId => address executor) offerPrepayListingExecutor` — round-3.2 new (§19.7d — populated at `postParallelSaleListing`; cleared at `LibPrepayCleanup.clearOfferListing`; read by the executor-gate on every new diamond callback).
+- `mapping(uint96 offerId => uint64 nonce) parallelSaleNonce` — round-3.2 new (§19.10 Q3 ratified; per-offer monotonically-increasing nonce that defeats same-block sale + recreate salt collisions. Mirrors `prepayListingAutoListNonce` for the loan-keyed path).
 
 **New fields on the `Offer` struct (2 — round-3 against Codex
 round-2 P2 #1 line 4665):**
@@ -5276,15 +5395,31 @@ interaction pattern is new):** the vault's existing
 (pre-loan hash bound at offer-create; active-loan hash bound +
 pre-loan hash revoked at offer-accept).
 
-**Modified existing functions (3 — listed in §19.7 modified
-section):**
+**Modified existing functions (4 — listed in §19.7 modified
+section; round-3.2 added the `OfferMutateFacet` row per Raja
+P2 #1):**
 
 - `OfferAcceptFacet._acceptOffer` — accept-gate observation of
-  `ConsumedBySale` + two-order tear-down + re-record sequence.
+  `!s.offerConsumedBySale[offerId]` + two-order tear-down +
+  re-record sequence (round-3.2 against Codex round-3.2 P1 #2
+  — terminal is the parallel mapping, NOT a phantom enum value).
+  Same accept-gate must propagate to every offer-validity reader:
+  `OfferMatch`, `ProfileFacet`, `EarlyWithdrawalFacet`,
+  `VPFIDiscountFacet`, `MetricsDashboardFacet` (call sites
+  searchable as `OfferActiveCheck:` markers in the implementation
+  PR).
 - `OfferCancelFacet.cancelOffer` — offer-keyed listing teardown
   before the existing collateral-refund step.
 - `cancelExpiredOffer` — same teardown for the expired-offer
   case.
+- `OfferMutateFacet.updateOffer` (and sibling mutation methods) —
+  reject mutation when `s.offerPrepayListingOrderHash[offerId] !=
+  bytes32(0)` with revert `OfferLockedByParallelSale(offerId)`
+  (round-3.2 against Raja round-3.2 P2 #1 — §19.10 Q6 ratified
+  the mutation-lock invariant; mutating principal / rate /
+  collateral while a parallel-sale listing is live would
+  invalidate the §19.3 pre-loan floor invariant). The borrower
+  must cancel the listing first to mutate the offer.
 
 **Reused as-is (the audit-time win):** vault custody primitives,
 ERC-1271 signing path, Seaport order hash construction
