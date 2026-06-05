@@ -401,74 +401,13 @@ contract NFTPrepayAutoListFacetTest is SetupTest {
 
     // ─── 5. §18.5 B-cond completeness ───────────────────────────────────
 
-    /// @notice §18.12 round-3.13 against Codex round-12 P2 #1 — proves
-    ///         the LibAutoList strict-`>` correction. A Dutch listing
-    ///         whose `startAskPrice` equals the live fee-aware floor
-    ///         (`askAtFee == startAskPrice`) is healthy: the auction
-    ///         begins AT the floor on tick 0 and decays from there.
-    ///         B-cond-3b's underflow-guard branch must NOT fire on the
-    ///         equality case. Pre-round-3.13 the guard was `>=` which
-    ///         would have spurious-rotated this healthy listing.
-    function test_autoList_dutchDoesNotRotateWhenAtFloorAtStart() public {
-        _scaffoldActiveLoan();
-        _warpIntoGrace();
-
-        // Read live pctx so we can size the Dutch order's startAskPrice
-        // EXACTLY at the live fee-aware floor (no fee legs in this
-        // test, so askAtFee == askAtFloor).
-        IVaipakamPrepayContext.PrepayContext memory pctx =
-            IVaipakamPrepayContext(address(diamond))
-                .getPrepayContext(LOAN_ID, block.timestamp);
-        uint256 askAtFloor =
-            ((pctx.lenderLeg + pctx.treasuryLeg) * (10_000 + TEST_BUFFER_BPS)) / 10_000;
-
-        bytes32 dutchOrderHash = keccak256("dutch-at-floor-start");
-        TestMutatorFacet(address(diamond))
-            .setPrepayListingOrderHash(LOAN_ID, dutchOrderHash);
-        TestMutatorFacet(address(diamond))
-            .setPrepayListingExecutor(LOAN_ID, address(mockExecutor));
-
-        // Stage the Dutch order:
-        //  - startAskPrice == askAtFloor (equality case under test)
-        //  - endAskPrice strictly below startAskPrice so B-cond-3a
-        //    doesn't fire (endAskPrice <= askAtFee) and the denominator-
-        //    zero sanity gate passes.
-        //  - auctionEndTime far enough in the future that B-cond-5
-        //    doesn't fire AND the t_floor calculation lands well before
-        //    the dutchGraceMargin window (3600s margin per setUp).
-        // Grace-middle warp + auctionEndTime at gracePeriodEnd gives
-        // t_floor near the start tick (auction starts AT floor); t_safe
-        // = gracePeriodEnd - 3600s ⇒ t_floor < t_safe ⇒ B-cond-3b
-        // doesn't fire from the late-decay branch either.
-        LibVaipakam.Loan memory loanMem = _baseLoan();
-        uint256 loanEnd =
-            uint256(loanMem.startTime) + (uint256(loanMem.durationDays) * 1 days);
-        uint256 gracePeriodEnd = loanEnd + LibVaipakam.gracePeriod(loanMem.durationDays);
-        mockExecutor.setOrderContext(
-            dutchOrderHash,
-            PREPAY_MODE_DUTCH,
-            uint192(askAtFloor),           // startAskPrice = floor (the equality case)
-            uint128(askAtFloor / 2),       // endAskPrice well below floor
-            uint64(block.timestamp - 1),   // startTime just before now
-            uint64(gracePeriodEnd)         // auctionEndTime ≈ grace end
-        );
-        // Signed legs == live legs ⇒ B-cond-2 doesn't fire.
-        mockExecutor.setOrderProtocolLegs(
-            dutchOrderHash,
-            uint128(pctx.lenderLeg),
-            uint128(pctx.treasuryLeg)
-        );
-
-        // All five B-conds must return false ⇒ AlreadyAtOrBelowFloor.
-        vm.prank(keeperCaller);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                NFTPrepayAutoListFacet.AutoListAlreadyAtOrBelowFloor.selector,
-                LOAN_ID
-            )
-        );
-        NFTPrepayAutoListFacet(address(diamond)).autoListAtFloorOnGrace(LOAN_ID);
-    }
+    // (round-3.13's `test_autoList_dutchDoesNotRotateWhenAtFloorAtStart`
+    //  no-op test has been DROPPED in round-3.5 against Codex round-5
+    //  P2 line 263 — the strict-`>` design correction was reverted to
+    //  `>=` after the full-term-loan + 24h-pro-rata-tick adversarial
+    //  refutation. At equality the listing now SHOULD rotate, not
+    //  no-op. See `test_autoList_dutchRotatesAtEqualityWithStartAskPrice`
+    //  below for the new positive assertion.)
 
     /// @notice §18.12 — B-cond-1 fee-aware fixed-price ratchet. An
     ///         existing fixed-price listing whose recorded `askPrice`
@@ -562,50 +501,137 @@ contract NFTPrepayAutoListFacetTest is SetupTest {
     ///         listing. Seaport rejects fills past endTime, so the
     ///         expired order is dead-on-chain even though it still
     ///         occupies the `s.prepayListingOrderHash[loanId]` slot.
+    ///
+    ///         Round-3.5 against Codex round-5 P2 line 599 — same
+    ///         pre-lock + seeded-via-recordOrder pattern as the B-cond-1
+    ///         test; no try/catch escape hatch. Asserts end-to-end
+    ///         rotation completion with explicit recordedCall checks.
     function test_autoList_caseB_rotatesExpiredDutchListing() public {
         _scaffoldActiveLoan();
         _warpIntoGrace();
 
+        // Pre-establish the borrower-NFT lock the original Dutch post
+        // would have taken (round-3.5 P2 line 599 fix).
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
+            BORROWER_TOKEN_ID,
+            LibERC721.LockReason.PrepayCollateralListing
+        );
+
         IVaipakamPrepayContext.PrepayContext memory pctx =
             IVaipakamPrepayContext(address(diamond))
                 .getPrepayContext(LOAN_ID, block.timestamp);
+        uint256 askAtFloor =
+            ((pctx.lenderLeg + pctx.treasuryLeg) * (10_000 + TEST_BUFFER_BPS)) / 10_000;
 
+        // Seed the mock with a realistic recordOrder call for the
+        // expired Dutch listing. `auctionEndTime` in the past
+        // relative to current block ⇒ B-cond-5
+        // (`block.timestamp >= auctionEndTime`) fires.
+        FeeLeg[] memory emptyFeeLegs = new FeeLeg[](0);
         bytes32 expiredDutchHash = keccak256("expired-dutch");
+        mockExecutor.recordOrder(
+            expiredDutchHash,
+            LOAN_ID,
+            conduit,
+            conduitKey,
+            /* salt */ 1,
+            uint64(block.timestamp - 2 days),
+            pctx.lenderLeg * 2,              // startAskPrice (arbitrary above floor)
+            pctx.lenderLeg,                  // endAskPrice (below start, well-defined decay)
+            uint64(block.timestamp - 1 hours), // auctionEndTime EXPIRED ⇒ B-cond-5 fires
+            PREPAY_MODE_DUTCH,
+            emptyFeeLegs,
+            uint128(pctx.lenderLeg),         // signed lender == live ⇒ B-cond-2 quiet
+            uint128(pctx.treasuryLeg)
+        );
         TestMutatorFacet(address(diamond))
             .setPrepayListingOrderHash(LOAN_ID, expiredDutchHash);
         TestMutatorFacet(address(diamond))
             .setPrepayListingExecutor(LOAN_ID, address(mockExecutor));
-        // auctionEndTime in the past relative to current block ⇒
-        // B-cond-5 (`block.timestamp >= auctionEndTime`) fires.
-        mockExecutor.setOrderContext(
-            expiredDutchHash,
-            PREPAY_MODE_DUTCH,
-            uint192(pctx.lenderLeg * 2),
-            uint128(pctx.lenderLeg),         // arbitrary end below start
-            uint64(block.timestamp - 2 days),
-            uint64(block.timestamp - 1 hours) // expired 1 hour ago
-        );
-        mockExecutor.setOrderProtocolLegs(
-            expiredDutchHash,
-            uint128(pctx.lenderLeg),
-            uint128(pctx.treasuryLeg)
-        );
 
         vm.prank(keeperCaller);
-        try NFTPrepayAutoListFacet(address(diamond)).autoListAtFloorOnGrace(LOAN_ID) {
-            bytes32 newHash =
-                NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID);
-            assertTrue(newHash != expiredDutchHash, "rotation replaced the expired Dutch");
-        } catch (bytes memory revertData) {
-            bytes4 selector;
-            assembly {
-                selector := mload(add(revertData, 32))
-            }
-            assertTrue(
-                selector != NFTPrepayAutoListFacet.AutoListAlreadyAtOrBelowFloor.selector,
-                "B-cond-5 must fire on expired Dutch listing"
-            );
-        }
+        NFTPrepayAutoListFacet(address(diamond)).autoListAtFloorOnGrace(LOAN_ID);
+
+        // Explicit end-to-end rotation assertions.
+        bytes32 newHash =
+            NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID);
+        assertTrue(newHash != bytes32(0), "rotation pinned a fresh hash");
+        assertTrue(newHash != expiredDutchHash, "rotation replaced the expired Dutch hash");
+
+        // The rotation re-posts as fixed-price at the live floor with
+        // signed legs == live pctx legs.
+        MockListingExecutorRecorder.RecordedCall memory rc =
+            mockExecutor.recordedCallAt(mockExecutor.recordCallCount() - 1);
+        assertEq(rc.mode, PREPAY_MODE_FIXED_PRICE, "B-cond-5 rotation re-posts as fixed-price");
+        assertEq(rc.askPrice, askAtFloor, "rotated askPrice == live askAtFloor");
+        assertEq(rc.endAskPrice, askAtFloor, "endAskPrice == askPrice on fixed-price re-post");
+        assertEq(rc.signedLenderAmount, pctx.lenderLeg, "signed lender from live pctx");
+        assertEq(rc.signedTreasuryAmount, pctx.treasuryLeg, "signed treasury from live pctx");
+    }
+
+    /// @notice §18.12 round-3.5 against Codex round-5 P2 line 263 —
+    ///         REPLACES the round-3.13 no-op test. With the reverted
+    ///         `>=` semantics, an at-equality Dutch listing
+    ///         (`askAtFee == startAskPrice`) now SHOULD rotate to a
+    ///         fresh fixed-price-at-floor. The full-term-loan +
+    ///         pro-rata-24h-tick adversarial path means equality is
+    ///         a structurally degenerate shape that the eager
+    ///         rotation closes.
+    function test_autoList_dutchRotatesAtEqualityWithStartAskPrice() public {
+        _scaffoldActiveLoan();
+        _warpIntoGrace();
+
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
+            BORROWER_TOKEN_ID,
+            LibERC721.LockReason.PrepayCollateralListing
+        );
+
+        IVaipakamPrepayContext.PrepayContext memory pctx =
+            IVaipakamPrepayContext(address(diamond))
+                .getPrepayContext(LOAN_ID, block.timestamp);
+        uint256 askAtFloor =
+            ((pctx.lenderLeg + pctx.treasuryLeg) * (10_000 + TEST_BUFFER_BPS)) / 10_000;
+
+        LibVaipakam.Loan memory loanMem = _baseLoan();
+        uint256 loanEnd =
+            uint256(loanMem.startTime) + (uint256(loanMem.durationDays) * 1 days);
+        uint256 gracePeriodEnd = loanEnd + LibVaipakam.gracePeriod(loanMem.durationDays);
+
+        FeeLeg[] memory emptyFeeLegs = new FeeLeg[](0);
+        bytes32 dutchOrderHash = keccak256("dutch-at-floor-start-equality");
+        mockExecutor.recordOrder(
+            dutchOrderHash,
+            LOAN_ID,
+            conduit,
+            conduitKey,
+            /* salt */ 1,
+            uint64(block.timestamp - 1),
+            askAtFloor,                      // startAskPrice == askAtFee (equality case)
+            askAtFloor / 2,                  // endAskPrice well below floor
+            uint64(gracePeriodEnd),          // auctionEndTime ≈ grace end (B-cond-5 quiet)
+            PREPAY_MODE_DUTCH,
+            emptyFeeLegs,
+            uint128(pctx.lenderLeg),         // signed lender == live ⇒ B-cond-2 quiet
+            uint128(pctx.treasuryLeg)
+        );
+        TestMutatorFacet(address(diamond))
+            .setPrepayListingOrderHash(LOAN_ID, dutchOrderHash);
+        TestMutatorFacet(address(diamond))
+            .setPrepayListingExecutor(LOAN_ID, address(mockExecutor));
+
+        // Round-3.5 `>=` semantics: B-cond-3b's underflow-guard branch
+        // fires at equality and rotation completes.
+        vm.prank(keeperCaller);
+        NFTPrepayAutoListFacet(address(diamond)).autoListAtFloorOnGrace(LOAN_ID);
+
+        bytes32 newHash =
+            NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID);
+        assertTrue(newHash != bytes32(0), "equality rotation pinned a fresh hash");
+        assertTrue(newHash != dutchOrderHash, "equality rotation replaced the at-floor Dutch");
+        MockListingExecutorRecorder.RecordedCall memory rc =
+            mockExecutor.recordedCallAt(mockExecutor.recordCallCount() - 1);
+        assertEq(rc.mode, PREPAY_MODE_FIXED_PRICE, "equality rotation re-posts as fixed-price");
+        assertEq(rc.askPrice, askAtFloor, "rotated askPrice == live askAtFloor");
     }
 
     // ─── 6. Sanctions Tier-1 ────────────────────────────────────────────

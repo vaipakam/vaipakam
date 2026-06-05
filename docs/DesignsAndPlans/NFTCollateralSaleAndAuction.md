@@ -2788,34 +2788,60 @@ askAtFloor" check into a three-condition test. The rotation MUST fire if
     unsigned arithmetic. The implementation MUST guard:
 
     ```
-    if (askAtFee > startAskPrice) {
-        // Dutch listing's start price is strictly below the
-        // current fee-aware floor — the auction structurally
-        // cannot reach the live floor at any tick. Rotate
-        // immediately (round-3.10 fallback;
-        // round-3.13 P2 against Codex round-12 P2 #1 —
-        // strict `>` instead of `>=` so a healthy Dutch
-        // listing whose start price equals the live floor
-        // is left alone instead of being spurious-rotated
-        // into a fixed-price re-post).
+    if (askAtFee >= startAskPrice) {
+        // Dutch listing's start price is at-or-below the
+        // current fee-aware floor — the auction is
+        // effectively unfillable beyond the literal start
+        // tick (any later tick has currentPrice < askAtFee
+        // and fills revert at the executor's live
+        // consideration check). Rotate immediately
+        // (round-3.10 fallback; round-3.14 against Codex
+        // round-5 P2 line 263 REVERTS the round-3.13
+        // strict-`>` correction — see the "Why `>=` and
+        // not `>`" block below for the adversarial
+        // refutation of round-3.13's reasoning).
         FIRE B-cond-3b ROTATION
     }
     ```
 
-    **Why `>` and not `>=` (round-3.13 against Codex round-12
-    P2 #1)**. The `==` case (`askAtFee == startAskPrice`) is
-    a healthy Dutch listing: its start price IS the current
-    fee-aware floor, the auction begins AT the floor on tick
-    0, and decays from there. No rotation needed — that's
-    exactly the steady-state Round-7 wants to leave alone.
-    Including `==` in the rotate-immediately branch contradicted
-    the surrounding B-cond-3 policy (rotate only when the
-    Dutch listing reaches the floor too late or never).
-    Subtraction safety is preserved: at equality
-    `startAskPrice - askAtFee = 0`, no underflow, the
-    downstream `t_floor` formula proceeds normally (the
-    decay-tick calculation correctly returns 0 — the floor
-    is reached at the start tick).
+    **Why `>=` and not `>` (round-3.14 against Codex
+    round-5 P2 line 263 — REVERTS round-3.13)**. The
+    round-3.13 design correction argued the `==` case was a
+    "healthy at-floor Dutch" recoverable on the next call
+    via b_cond_2 (signed-legs shortfall) once interest
+    accrued. Round-3.14 reverts to `>=` because Codex
+    round-5's adversarial pass broke both legs of that
+    reasoning:
+
+    - **Full-term loans**: interest is baked into the
+      signed `lenderLeg` once at sign-time and does NOT
+      grow over time (see `Loan.useFullTermInterest`). So
+      signed-legs == live-legs ALWAYS for the full-term
+      path; b_cond_2 NEVER fires. An at-equality Dutch
+      listing stays unfillable until grace expiry (when
+      DefaultedFacet takes over) — many days, not one
+      block.
+    - **Pro-rata loans**:
+      `LibCollateralSettlement.principalPlusAccruedInterest`
+      accrues on WHOLE-DAY boundaries, not per block. So
+      the b_cond_2 recovery window is up to 24h, not one
+      block.
+    - **Fill semantics at equality**: the auction is
+      fillable ONLY at the literal start tick
+      (`block.timestamp == startTime`); subsequent ticks
+      have `currentPrice < askAtFee` and fills revert at
+      the executor's live consideration check. The
+      borrower's at-equality Dutch is practically a
+      fill-or-kill at start with a useless decay tail.
+
+    Reverting to `>=` rotates eagerly at the equality
+    boundary, replacing the degenerate Dutch shape with a
+    fresh fixed-price-at-floor listing fillable across the
+    remaining grace window. Cost is one extra rotation per
+    at-equality call; benefit is no stranded listings on
+    either loan-type path. Subtraction safety is still
+    preserved at equality (`startAskPrice - askAtFee = 0`,
+    no underflow).
 
     **Why fire instead of skip (round-3.10 fix supersedes
     round-3.6's "skip" semantics)**. Round-3.6 had this
@@ -3594,15 +3620,20 @@ against on the implementation PR:
   round-10 P2 #5 — supersedes round-3.6's
   `test_autoList_dutchSkipsB3bWhenAskAboveStart`).
   `test_autoList_dutchFiresWhenAskAtFeeAboveStartPrice`
-  verifies that when `askAtFee > startAskPrice` (interest
+  verifies that when `askAtFee >= startAskPrice` (interest
   growth, fee-config change, or governance buffer-bump
-  pushed the live fee-aware floor strictly above the Dutch
+  pushed the live fee-aware floor at-or-above the Dutch
   listing's starting ask), B-cond-3b's underflow guard
-  branch FIRES rotation (not skips). The equality case
-  (`askAtFee == startAskPrice`) is intentionally a no-op
-  per round-3.13 against Codex round-12 P2 #1 — covered by
-  the new `test_autoList_dutchDoesNotRotateWhenAtFloorAtStart`
-  test which asserts B-cond-3b stays quiet at equality.
+  branch FIRES rotation (not skips). **Round-3.14 against
+  Codex round-5 P2 line 263 — REVERTS the round-3.13
+  `test_autoList_dutchDoesNotRotateWhenAtFloorAtStart`
+  no-op test.** The equality case now SHOULD rotate (see
+  the §18.5 B-cond-3b "Why `>=` and not `>`" block for
+  the full-term-loan + 24h-pro-rata-tick refutation of
+  round-3.13's no-op rationale). The new test description
+  asserts that at-equality Dutch listings rotate to a
+  fresh fixed-price-at-floor immediately, NOT that they
+  sit through grace.
   Round-3.6 had the
   branch fall through to B-cond-2; with round-3.8's switch
   to signed-legs derivation, B-cond-2 only fires on live-
@@ -4811,10 +4842,20 @@ fail-fast checks reduce to (a) `consideration[0].token ==
 offerContext.principalAsset` (the lending-asset constraint),
 (b) `consideration[0].recipient == address(diamond)` (so the
 proceeds-credit callback owns the credit path), (c) every
-additional consideration item resolves to a fee leg the bidder
-signed acceptance of (same SignedZone gate as Block D §17.7
-inherits), (d) diamond-hosted sanctions recheck via
-`assertOfferFillNotSanctioned(borrowerWallet)`.
+additional consideration item matches a fee leg the SELLER
+(vault) signed at offer-create time, persisted at
+`_offerFeeLegs[orderHash]` and read via `executor.offerFeeLegs(orderHash)`
+at fill time (round-3.5 against Codex round-5 P2 line 4805 —
+supersedes the round-3 "same SignedZone gate as Block D §17.7"
+reference; the pre-loan branch is a direct seller-listing
+`fulfillOrder` path with no bidder-side SIP-7 zone, so the
+seller-baked schedule on the executor is the authoritative
+source — see §19.7e), (d) diamond-hosted sanctions recheck via
+`assertOfferFillNotSanctioned(offerId, borrowerWallet)`
+(round-3.5 against Codex round-5 P2 line 4805 — widened
+signature matching §19.7 callback table and §19.13 inventory;
+the round-3 narrow `(borrowerWallet)` shape made the executor-
+gate read `s.offerPrepayListingExecutor[offerId]` impossible).
 
 ### 19.7 Reuse posture (explicit, §18.16-style)
 
@@ -4903,7 +4944,7 @@ existing call paths):**
 | `OfferAcceptFacet._acceptOffer` | Add the two-order tear-down + re-record sequence (Scenario B in §19.4): `clearOfferOrder(preLoanHash)` + `vault.revokeListingOrderHash(preLoanHash)` + sign fresh active-loan order + `recordOrder(activeLoanHash, ...)` + `vault.registerListingOrderHash(activeLoanHash, executor)` + `s.prepayListingOrderHash[loanId] = activeLoanHash`. |
 | `OfferCancelFacet.cancelOffer` | Add the offer-keyed listing teardown (round-3 against Codex round-1 P2 #5 line 4426): when an offer with an active parallel-sale listing is borrower-cancelled, also call `clearOfferOrder(preLoanHash)` + `vault.revokeListingOrderHash(preLoanHash)` + delete `s.offerPrepayListingOrderHash[offerId]`. The cancel-refund path's existing collateral-withdraw step runs after the listing teardown. |
 | `cancelExpiredOffer` (existing permissionless cleanup) | Same listing teardown as `cancelOffer` for the expired-offer case (per-offer parallel-sale listing must be cleared when the offer ages out). |
-| `OfferMutateFacet.updateOffer` (and sibling mutation methods) | **Round-3.4 against Codex round-3 P2 line 4892 — supersedes the round-3.2 "all-or-nothing cancel-first" framing**: only floor-load-bearing field mutations are blocked while a parallel-sale listing is live. Specifically, reject mutation of `principal` / `interestRateBps` / `collateralAsset` / `collateralTokenId` when `s.offerPrepayListingOrderHash[offerId] != bytes32(0)` with revert `OfferLockedByParallelSale(offerId, fieldKey)`. Non-load-bearing field mutations (e.g., expiry extension, `allowsParallelSale` toggle off-then-on cycle on the SAME offer, opt-in flags that don't affect the floor) are permitted because they don't invalidate the §19.3 pre-loan floor invariant. The borrower has two paths to mutate a locked field: (a) call the NEW non-destructive `releaseParallelSaleLock(offerId)` surface (see §19.7f) which clears `s.offerPrepayListingOrderHash` + tears down the executor/vault bindings WITHOUT touching `offerCancelled` / `accepted` / `offerConsumedBySale` (the offer itself stays alive — only the parallel-sale listing is unwound); the borrower can then mutate + later re-post the listing via `postParallelSaleListing`. (b) Call `cancelPrepayListing` or `cancelOffer` for the destructive teardown if the borrower wants to abandon both the listing and the offer. The non-destructive path preserves offer-discovery (the offer's age + accumulated lender views stay) while letting the borrower repair a stale floor input. |
+| `OfferMutateFacet.updateOffer` (and sibling mutation methods) | **Round-3.4 against Codex round-3 P2 line 4892 — supersedes the round-3.2 "all-or-nothing cancel-first" framing**: only floor-load-bearing field mutations are blocked while a parallel-sale listing is live. Specifically, reject mutation of `principal` / `interestRateBps` / `collateralAsset` / `collateralTokenId` when `s.offerPrepayListingOrderHash[offerId] != bytes32(0)` with revert `OfferLockedByParallelSale(offerId, fieldKey)`. Non-load-bearing field mutations (e.g., expiry extension, `allowsParallelSale` toggle off-then-on cycle on the SAME offer, opt-in flags that don't affect the floor) are permitted because they don't invalidate the §19.3 pre-loan floor invariant. The borrower has two paths to mutate a locked field: (a) call the NEW non-destructive `releaseParallelSaleLock(offerId)` surface (see §19.7f) which clears `s.offerPrepayListingOrderHash` + tears down the executor/vault bindings WITHOUT touching `offerCancelled` / `accepted` / `offerConsumedBySale` (the offer itself stays alive — only the parallel-sale listing is unwound); the borrower can then mutate + later re-post the listing via `postParallelSaleListing`. (b) Call **`cancelOffer(offerId)`** for the destructive teardown if the borrower wants to abandon both the listing and the offer (round-3.5 against Codex round-5 P2 line 5346 — supersedes the round-3.4 reference to `cancelPrepayListing` here; that surface is loan-keyed by `uint256 loanId`, and the offer-pending parallel-sale flow has no loanId yet, so only `cancelOffer` is reachable in the pre-loan branch). The non-destructive path preserves offer-discovery (the offer's age + accumulated lender views stay) while letting the borrower repair a stale floor input. |
 
 ### 19.7e Fee-leg persistence at offer-record-time (round-3.2 against Codex round-3.2 P2 #6 line 4793)
 
@@ -5341,9 +5382,12 @@ wrong identifier.
      bindings without touching the offer itself; mutate; re-post via
      `postParallelSaleListing`. Preserves offer-discovery (age +
      lender views).
-   - **Destructive**: call `cancelPrepayListing` or `cancelOffer` to
-     abandon both the listing and (in the cancelOffer case) the
-     offer.
+   - **Destructive**: call `cancelOffer(offerId)` to abandon both
+     the listing and the offer (round-3.5 against Codex round-5 P2
+     line 5346 — the round-3.4 mention of `cancelPrepayListing`
+     was wrong here; that surface is loan-keyed by `uint256 loanId`
+     and the offer-pending flow has no loanId, so only
+     `cancelOffer` is reachable in the pre-loan branch).
    The round-3.2 "must cancel the listing first" framing was
    superseded — only the load-bearing-field subset triggers the
    lock, and the non-destructive release path preserves the

@@ -227,40 +227,46 @@ library LibAutoList {
         // the Dutch listing's `startAskPrice` — the auction
         // structurally cannot reach the live floor at any tick.
         //
-        // Round-3.13 against Codex round-12 P2 #1: strict `>`
-        // (not `>=`). The `==` case is a healthy Dutch listing
-        // whose start price IS the live fee-aware floor — the
-        // auction begins AT the floor on tick 0 and decays from
-        // there. No rotation needed; including `==` in the
-        // rotate-immediately branch contradicted the surrounding
-        // B-cond-3 policy (rotate only when the Dutch listing
-        // reaches the floor too late or never). Subtraction
-        // safety is preserved: at equality
-        // `startAskPrice - askAtFee = 0`, no underflow, and the
-        // downstream `t_floor` formula proceeds normally (the
-        // decay-tick calculation correctly returns 0 — the floor
-        // is reached at the start tick).
+        // Round-3.5 against Codex round-5 P2 line 263 — REVERTS the
+        // round-3.13 strict-`>` correction back to inclusive `>=`.
         //
-        // Round-3.4 against Codex round-3.2 P2 line 243 — the
-        // degenerate-shape adversarial finding: at equality the
-        // Dutch listing IS fillable only at the literal start tick;
-        // any later tick has `currentPrice < askAtFee` and fills
-        // would revert `LenderShortPaid` against the live legs.
-        // Codex argued this warrants eager rotation. The design
-        // sticks with strict `>` because b_cond_2 (signed-legs
-        // shortfall) catches the next state-change automatically —
-        // any interest accrual between the equality call and the
-        // following call shifts live legs above signed legs and
-        // b_cond_2 fires. A governance buffer-bump with no interest
-        // accrual would shift the live floor strictly above
-        // `startAskPrice`, at which point this guard (now strict
-        // `>`) fires. So the equality case is correctly handled by
-        // the COMBINATION of b_cond_2 + this guard on the very next
-        // call; eager rotation at equality would over-rotate
-        // borrower-intentional at-floor listings. The trade-off is
-        // bounded — at most one block of degenerate state, after
-        // which the next caller's b_cond gate fires.
-        if (askAtFee > startAskPrice) return true;
+        // The round-3.13 design correction argued the `==` case was
+        // a "healthy at-floor Dutch" recoverable on the next call via
+        // b_cond_2 (signed-legs shortfall) once interest accrued. The
+        // round-3.4 natspec extended that argument with a "bounded
+        // one-block window" claim.
+        //
+        // Codex round-5 adversarial finding broke both:
+        //   - **Full-term loans**: interest is baked into the signed
+        //     `lenderLeg` once at sign-time and does NOT grow over
+        //     time (see `Loan.useFullTermInterest`). So signed-legs
+        //     == live-legs ALWAYS for the full-term path; b_cond_2
+        //     NEVER fires. An at-equality Dutch listing stays
+        //     unfillable until grace expiry (when DefaultedFacet
+        //     takes over) — many days, not one block.
+        //   - **Pro-rata loans**: `principalPlusAccruedInterest`
+        //     accrues on WHOLE-DAY boundaries, not per block. So
+        //     the b_cond_2 recovery window is up to 24h, not one
+        //     block.
+        //   - **Fill semantics at equality**: the auction is
+        //     fillable ONLY at the literal start tick (`block.timestamp
+        //     == startTime`); subsequent ticks have currentPrice <
+        //     askAtFee and fills revert at the executor's live
+        //     consideration check. Practically the borrower's at-
+        //     equality Dutch is a fill-or-kill at start with a
+        //     useless decay tail.
+        //
+        // Reverting to `>=` rotates eagerly at the equality boundary,
+        // replacing the degenerate Dutch shape with a fresh
+        // fixed-price-at-floor listing that is fillable across the
+        // remaining grace window. The cost is one extra rotation per
+        // at-equality call (bounded by the keeper's re-trigger
+        // cadence + the same-block nonce collision defenses); the
+        // benefit is no stranded listings on either loan-type path.
+        //
+        // Subtraction safety is still preserved at equality
+        // (`startAskPrice - askAtFee = 0`, no underflow).
+        if (askAtFee >= startAskPrice) return true;
 
         // Sanity gates: caller (the facet) should already have ruled
         // out these shapes via B-cond-3a / B-cond-2 / executor's own
