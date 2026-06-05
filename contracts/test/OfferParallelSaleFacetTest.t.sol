@@ -81,6 +81,15 @@ contract OfferParallelSaleFacetTest is SetupTest {
         borrowerVaultAddr =
             VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrowerHolder);
 
+        // Codex P1 round-1 #2 fix added a vault-side
+        // `setCollateralOperatorApproval` call in
+        // `postParallelSaleListing` — the vault now needs to actually
+        // own the NFT for the approval to succeed. Mint + transfer to
+        // the vault here so the happy-path tests reach that call.
+        collateralNFT.mint(borrowerHolder, COLLATERAL_TOKEN_ID);
+        vm.prank(borrowerHolder);
+        collateralNFT.transferFrom(borrowerHolder, borrowerVaultAddr, COLLATERAL_TOKEN_ID);
+
         mockExecutor.setApprovedConduit(conduit, true);
 
         vm.startPrank(owner);

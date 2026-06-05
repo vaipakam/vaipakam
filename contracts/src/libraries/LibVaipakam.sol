@@ -1136,6 +1136,24 @@ library LibVaipakam {
         // entry. Default `false` is the safe behaviour: explicit
         // opt-in only.
         bool allowsPrepayListing;
+        // ── T-086 Round-8 (#358) §19.5 — `allowsParallelSale` opt-in ──
+        //
+        // Borrower-controlled gate for the offer's right to be exposed
+        // for parallel (pre-loan) sale on OpenSea / Seaport-conformant
+        // marketplaces. Codex P1 round-1 #4 caught the missing
+        // `CreateOfferParams` wiring on the initial Round-8 ship: every
+        // newly created offer kept `allowsParallelSale == false` so
+        // `postParallelSaleListing` always reverted in production
+        // (the §19.9 test suite only worked because it scaffolded
+        // offers via `TestMutatorFacet`).
+        //
+        // Default `false` keeps the existing-borrower posture safe —
+        // opting into a parallel sale is an explicit borrower action,
+        // mirroring the `allowsPrepayListing` lender-consent pattern.
+        // Only valid on `OfferType.Borrower` offers with NFT
+        // collateral; OfferCreateFacet rejects the flag on lender /
+        // non-NFT-collateral offers.
+        bool allowsParallelSale;
     }
 
     /// @notice #193 — input bundle for `OfferMutateFacet.modifyOffer`.

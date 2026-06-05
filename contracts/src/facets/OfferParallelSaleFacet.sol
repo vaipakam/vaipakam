@@ -328,12 +328,16 @@ contract OfferParallelSaleFacet is
             collateralQuantity: offer.quantity
         });
 
+        // Codex P1 round-1 #1 — argument order MUST be
+        // (collateralTokenId, collateralQuantity); the prior swap
+        // poisoned every ERC721 listing with tokenId != 1 and every
+        // ERC1155 listing with quantity != tokenId.
         orderHash = LibPrepayOrder.buildAndHashOfferMem(
             ctx,
             offer.collateralAsset,
             offer.collateralAssetType,
-            offer.quantity,
             offer.collateralTokenId,
+            offer.quantity,
             address(this),
             loc.executor,
             IListingExecutorRecorder(loc.executor).seaport(),
@@ -351,5 +355,35 @@ contract OfferParallelSaleFacet is
             orderHash,
             loc.executor
         );
+
+        // Codex P1 round-1 #2 — grant the Seaport conduit permission
+        // to move the collateral NFT on fill. Without this approval,
+        // Seaport's fulfill reverts even after the executor's content
+        // checks + ERC-1271 signature check pass. ERC721 takes a
+        // per-token approval; ERC1155 has no per-token approval surface
+        // so an operator-wide setApprovalForAll is used (same pattern
+        // the loan-keyed `LibPrepayListingWiring.wire` path applies).
+        // The teardown paths (`LibPrepayCleanup.clearOfferListing` +
+        // `releaseParallelSaleLock`) DON'T need to revoke for ERC1155
+        // because the orderHash invalidation via `revokeListingOrderHash`
+        // is the authoritative safety primitive (see
+        // VaipakamVaultImplementation.setCollateralOperatorApprovalERC1155
+        // natspec). For ERC721 we leave the per-token approval in place
+        // until cancel — the orderHash invalidation makes a stale fill
+        // impossible regardless of approval state.
+        if (offer.collateralAssetType == LibVaipakam.AssetType.ERC721) {
+            VaipakamVaultImplementation(loc.vaultAddr).setCollateralOperatorApproval(
+                offer.collateralAsset,
+                offer.collateralTokenId,
+                loc.conduit,
+                true
+            );
+        } else {
+            VaipakamVaultImplementation(loc.vaultAddr).setCollateralOperatorApprovalERC1155(
+                offer.collateralAsset,
+                loc.conduit,
+                true
+            );
+        }
     }
 }

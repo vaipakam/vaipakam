@@ -74,6 +74,7 @@ contract ScenarioFallbackClaimRaceTest is Test {
             collateralQuantity: 0,
             allowsPartialRepay: true,
             allowsPrepayListing: false,
+            allowsParallelSale: false,
             amountMax: amount,
             interestRateBpsMax: rateBps,
             collateralAmountMax: collateralAmount,

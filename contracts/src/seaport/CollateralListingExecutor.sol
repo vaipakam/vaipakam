@@ -1267,6 +1267,23 @@ contract CollateralListingExecutor is
     ///         (`authorizeOrder` + `validateOrder`); this 1271-side
     ///         view is the coarser membership gate.
     function isOrderValid(bytes32 hash) public view returns (bool) {
+        // T-086 Round-8 (#358) Codex P1 round-1 #3 — dispatch on the
+        // §19.6 dispatch-disjoint invariant. The 1271 path is
+        // executor's coarse membership gate for the vault's signature
+        // check; the loan-keyed branch reads orderContext, the no-loan
+        // branch reads offerContext. Without this widening, every
+        // parallel-sale order returns INVALID at Seaport's signature
+        // check + the zone callbacks never run.
+        OfferContext memory offerCtx = offerContext[hash];
+        if (offerCtx.offerId != 0) {
+            // No-loan branch — no loan-status check (no loan exists);
+            // just confirm the conduit is still approved. The rich
+            // fill-time content + sanctions recheck lives in
+            // _checkOfferOrderPreconditions.
+            if (!approvedConduits[offerCtx.conduit]) return false;
+            return true;
+        }
+
         OrderContext memory ctx = orderContext[hash];
         if (ctx.loanId == 0) return false;
         if (!approvedConduits[ctx.conduit]) return false;

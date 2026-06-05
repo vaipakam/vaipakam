@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibCollateralSettlement} from "../libraries/LibCollateralSettlement.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
@@ -255,6 +256,16 @@ contract PrepayListingFacet is
     function markOfferConsumedBySale(uint96 offerId) external override whenNotPaused {
         _assertOfferExecutor(offerId);
         LibVaipakam.storageSlot().offerConsumedBySale[uint256(offerId)] = true;
+        // Codex P2 round-1 — remove the sold offer from the active-
+        // offer indexes (activeOfferIdsList / assetPairActiveOfferIds)
+        // the same way the accept / cancel terminals do, so
+        // getActiveOffersPaginated / getCompatibleOffers / asset-pair
+        // views / protocol stats stop advertising an offer that direct
+        // accepts now reject with `OfferConsumedBySale`. The
+        // `onOfferCancelled` shape is reused here (NOT
+        // `onOfferAccepted`) because Scenario A is a fill-without-loan
+        // — the indexer's loan-side counter shouldn't tick.
+        LibMetricsHooks.onOfferCancelled(uint256(offerId));
         emit OfferConsumedBySale(offerId, msg.sender);
     }
 
