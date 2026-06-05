@@ -104,6 +104,19 @@ contract OfferParallelSaleFacet is
     ///         switch to `Aon` (all-or-nothing) or `Ioc` (immediate-
     ///         or-cancel) on a fresh offer if they want parallel-sale.
     error ParallelSaleRequiresSingleFill(uint96 offerId);
+    /// @notice Codex round-6 P2 #3 — raised when a fee leg's
+    ///         recipient is address(0). Would route fees to the burn
+    ///         address otherwise.
+    error FeeLegZeroRecipient(uint256 index);
+    /// @notice Codex round-6 P2 #3 — raised when a fee leg's
+    ///         startAmount is zero. Mirrors the loan-keyed
+    ///         FeeLegZeroAmount enforcement (which fires at fill time;
+    ///         this fires at create time so the borrower fails fast).
+    error FeeLegZeroAmountAtCreate(uint256 index);
+    /// @notice Codex round-6 P2 #3 — raised when a fee leg's
+    ///         startAmount != endAmount. v1 is fixed-price only per
+    ///         §19.11; Dutch decay is §19.11 out-of-scope.
+    error FeeLegNotFixedPrice(uint256 index);
     error ParallelSaleListingAlreadyPosted(uint96 offerId, bytes32 existingOrderHash);
     error OfferTerminal(uint96 offerId); // accepted / cancelled / consumed-by-sale
     error UnsupportedCollateralForParallelSale(LibVaipakam.AssetType collateralType);
@@ -328,9 +341,29 @@ contract OfferParallelSaleFacet is
         if (s.collateralListingExecutor == address(0)) revert AutoListExecutorNotSet();
         if (conduitKey == bytes32(0)) revert AutoListConduitNotConfigured();
 
-        // ── Fee-leg cap ───────────────────────────────────────────
+        // ── Fee-leg cap + per-leg shape (Codex round-6 P2 #3) ─────
+        //
+        // Mirrors the loan-keyed fixed-price listing path's per-leg
+        // checks. Without this, a borrower could record an order with
+        // a zero-recipient or zero-amount fee leg — Seaport / the
+        // executor's content gate would later reject the fill, OR a
+        // zero-recipient leg would route fees to address(0). v1 is
+        // fixed-price-only (§19.11), so startAmount must equal
+        // endAmount.
         if (feeLegs.length > MAX_FEE_LEGS) {
             revert FeeLegsExceedCap(feeLegs.length, MAX_FEE_LEGS);
+        }
+        for (uint256 i = 0; i < feeLegs.length; ) {
+            if (feeLegs[i].recipient == address(0)) {
+                revert FeeLegZeroRecipient(i);
+            }
+            if (feeLegs[i].startAmount == 0) {
+                revert FeeLegZeroAmountAtCreate(i);
+            }
+            if (feeLegs[i].startAmount != feeLegs[i].endAmount) {
+                revert FeeLegNotFixedPrice(i);
+            }
+            unchecked { ++i; }
         }
 
         // ── Ask-price bounds check (Codex round-3 P2 #3) ──────────
@@ -378,7 +411,18 @@ contract OfferParallelSaleFacet is
         // below `lenderLeg + treasuryLeg` at fill time. Compute the
         // treasury share explicitly on the hedged interest so the
         // floor always covers it.
-        uint256 hedgeDays = offer.durationDays > 365 ? 365 : offer.durationDays;
+        // Codex round-6 P2 #1 — keep-listing-live + the post-grace
+        // block (round-5 P1 #2) means fills can still happen up to
+        // `graceEnd = startTime + durationDays*1d + gracePeriod(durationDays)`.
+        // For pro-rata loans, `accruedInterestToTime` at graceEnd
+        // equals proRataInterest over `(durationDays + graceDays)`,
+        // which exceeds my prior `durationDays`-only hedge. Hedge the
+        // worst-case grace-window interest too. Cap at the same
+        // structural max (NFT loans are 365 days max via T-034 cadence
+        // rules; grace adds typically a few weeks; total stays well
+        // bounded).
+        uint256 graceDays = LibVaipakam.gracePeriod(offer.durationDays) / 1 days;
+        uint256 hedgeDays = offer.durationDays + graceDays;
         // Codex round-5 P2 #2 — borrower offers can be accepted (and
         // matched) at a rate up to `offer.interestRateBpsMax`, NOT
         // just `offer.interestRateBps`. The pre-loan floor MUST hedge

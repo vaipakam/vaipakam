@@ -258,7 +258,23 @@ contract PrepayListingFacet is
     function markOfferConsumedBySale(uint96 offerId) external override whenNotPaused {
         _assertOfferExecutor(offerId);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        s.offerConsumedBySale[uint256(offerId)] = true;
+        // Codex round-6 P2 #4 — only stamp `offerConsumedBySale` for
+        // TRUE Scenario A (no loan ever existed). For the keep-listing-
+        // live Scenario B (loan was accepted, sale-fill settled the
+        // loan), `_settleLoanFromParallelSale` has already transitioned
+        // the loan Active → Settled and emitted
+        // `PrepayCollateralSaleSettled`; the offer terminal stays as
+        // `Accepted` (which the round-3 user-directed redesign codified
+        // in `MetricsFacet.getOfferState`'s precedence order:
+        // accepted-first, then consumed-by-sale).
+        //
+        // Indexer + frontend cascades treat `ConsumedBySale` as
+        // Scenario A only — stamping it on an accepted offer would
+        // flip the indexer's offer row from `accepted` to
+        // `consumed_by_sale` and lose the loan-acceptance history.
+        if (!s.offers[uint256(offerId)].accepted) {
+            s.offerConsumedBySale[uint256(offerId)] = true;
+        }
         // Codex P2 round-1 — remove the sold offer from the active-
         // offer indexes (activeOfferIdsList / assetPairActiveOfferIds)
         // the same way the accept / cancel terminals do, so
@@ -423,6 +439,30 @@ contract PrepayListingFacet is
         );
         LibERC721._unlock(loan.borrowerTokenId);
         LibVPFIDiscount.settleBorrowerLifProper(loan);
+
+        // Codex round-6 P2 #2 — borrower could have ALSO posted a
+        // loan-keyed prepay listing on top of the carried-through
+        // parallel-sale listing (NFTPrepayListingFacet.postPrepayListing
+        // only gates on the borrower-position lock, which the
+        // offer-keyed binding doesn't take). If the offer-keyed sale
+        // wins, the loan-keyed listing's diamond + executor + vault
+        // state would be left dangling. Mirror the manual cleanup
+        // executorFinalizePrepaySale does (inline so we don't go
+        // through LibPrepayCleanup.clearActiveListing — that revokes
+        // the ERC721 conduit approval which we MUST preserve until
+        // Seaport's transferFrom completes outside this validateOrder
+        // callback per round-4 P1 #1).
+        bytes32 loanKeyedHash = s.prepayListingOrderHash[loanId];
+        delete s.prepayListingOrderHash[loanId];
+        delete s.prepayListingExecutor[loanId];
+        delete s.prepayListingAutoListOptedOut[loanId];
+        delete s.prepayListingAutoListNonce[loanId];
+        if (loanKeyedHash != bytes32(0)) {
+            address loanVault = s.userVaipakamVaults[loan.borrower];
+            if (loanVault != address(0)) {
+                VaipakamVaultImplementation(loanVault).revokeListingOrderHash(loanKeyedHash);
+            }
+        }
 
         emit OfferSaleProceedsSplit(
             offerId, loanId, lenderHolder, lenderLeg, treasury, treasuryLeg,

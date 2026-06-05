@@ -403,7 +403,29 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         if (offer.parallelSaleOrderHash != bytes32(0)) {
             revert OfferLockedByParallelSale();
         }
+        // Codex round-6 P2 #5 — after a Scenario A parallel sale,
+        // `markOfferConsumedBySale` clears `offer.parallelSaleOrderHash`
+        // via the cleanup helper, so the lock check above no longer
+        // blocks. But the offer is now in a terminal state (collateral
+        // is gone in the Seaport sale, proceeds credited to borrower
+        // vault). Mutating it would emit fresh `OfferModified` events
+        // and let the creator change terms for an offer whose
+        // collateral no longer exists. Block all mutations on consumed
+        // offers — same posture as the existing `accepted` block
+        // above.
+        uint256 offerId = offer.id;
+        if (
+            offerId != 0 &&
+            LibVaipakam.storageSlot().offerConsumedBySale[offerId]
+        ) revert OfferAlreadyConsumedBySaleMutate();
     }
+
+    /// @notice Codex round-6 P2 #5 — raised when a creator attempts
+    ///         to mutate an offer whose Scenario A parallel sale has
+    ///         already filled. Mirrors OfferAlreadyAccepted's
+    ///         posture: the offer is terminal, mutation makes no
+    ///         sense.
+    error OfferAlreadyConsumedBySaleMutate();
 
     /// @notice T-086 Round-8 (#358) §19.6 — raised by every mutator
     ///         when a live parallel-sale Seaport listing is bound to
