@@ -308,7 +308,12 @@ contract OfferParallelSaleFacet is
         if (offer.amountFilled > 0) {
             revert ParallelSalePartialFillConflict(offerId);
         }
-        if (offer.fillMode == LibVaipakam.FillMode.Partial) {
+        // Codex round-5 P1 #1 — IOC offers also leave `accepted == false`
+        // after OfferMatchFacet.matchOffers increments fill counters
+        // (only Aon gives clean single-fill semantics through the
+        // matcher). Reject IOC too — only `Aon` is compatible with
+        // parallel-sale's single-loan assumption.
+        if (offer.fillMode != LibVaipakam.FillMode.Aon) {
             revert ParallelSaleRequiresSingleFill(offerId);
         }
 
@@ -374,8 +379,21 @@ contract OfferParallelSaleFacet is
         // treasury share explicitly on the hedged interest so the
         // floor always covers it.
         uint256 hedgeDays = offer.durationDays > 365 ? 365 : offer.durationDays;
+        // Codex round-5 P2 #2 — borrower offers can be accepted (and
+        // matched) at a rate up to `offer.interestRateBpsMax`, NOT
+        // just `offer.interestRateBps`. The pre-loan floor MUST hedge
+        // for the WORST-case rate the lender could lock in, so a
+        // borrower can't list at a price valid only for the minimum
+        // rate and have a higher-rate accept then settle the loan
+        // under-collateralized. `interestRateBpsMax == 0` falls back
+        // to `interestRateBps` (the offer didn't set a range — single-
+        // rate offer; floor formula unchanged from the pre-fix
+        // single-rate case).
+        uint256 worstCaseRateBps = offer.interestRateBpsMax == 0
+            ? offer.interestRateBps
+            : offer.interestRateBpsMax;
         uint256 interest = LibEntitlement.proRataInterest(
-            offer.amount, offer.interestRateBps, hedgeDays
+            offer.amount, worstCaseRateBps, hedgeDays
         );
         uint256 treasuryCutOnInterest =
             (interest * LibVaipakam.cfgTreasuryFeeBps()) / 10_000;

@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibCollateralSettlement} from "../libraries/LibCollateralSettlement.sol";
@@ -358,6 +359,24 @@ contract PrepayListingFacet is
         if (loan.status != LibVaipakam.LoanStatus.Active) {
             revert PrepayLoanNotActive(loanId, loan.status);
         }
+        // Codex round-5 P1 #2 — block fills past graceEnd. Loans
+        // stay `Active` until someone explicitly calls
+        // DefaultedFacet.markDefaulted (or RiskFacet's HF-liquidation
+        // triggers), so a GTC parallel-sale order could otherwise
+        // fill after maturity + grace and settle a loan that's now
+        // operationally in default territory. Mirrors the loan-keyed
+        // executor's `if (block.timestamp > pctx.graceEnd) revert
+        // GraceExpired(loanId)` check and the RepayFacet
+        // `RepaymentPastGracePeriod` revert. After grace, the only
+        // valid terminal is default → NFT to lender; routing through
+        // the split path would let a borrower's stale-priced listing
+        // pre-empt a default that's already overdue.
+        uint256 graceEnd = uint256(loan.startTime)
+            + (uint256(loan.durationDays) * 1 days)
+            + LibVaipakam.gracePeriod(loan.durationDays);
+        if (block.timestamp > graceEnd) {
+            revert ParallelSaleFillPastGrace(offerId, block.timestamp, graceEnd);
+        }
 
         // Defensive — the executor-side floor invariant guarantees
         // proceeds >= lenderLeg + treasuryLeg via the pre-loan-floor's
@@ -380,6 +399,15 @@ contract PrepayListingFacet is
         address treasury = s.treasury;
         SafeERC20.safeTransfer(IERC20(principalAsset), lenderHolder, lenderLeg);
         SafeERC20.safeTransfer(IERC20(principalAsset), treasury, treasuryLeg);
+        // Codex round-5 P2 #3 — every treasury-fee site MUST pair the
+        // transfer with `LibFacet.recordTreasuryAccrual` so the
+        // `treasuryBalances` invariant holds (the Diamond-as-treasury
+        // deploy pattern only credits the accrual lane to the
+        // accountant, not to an external recipient). Without this,
+        // accept-then-sold loans's treasury cut would land at the
+        // configured treasury address but NOT be reflected in
+        // `treasuryBalances` for downstream analytics + payroll.
+        LibFacet.recordTreasuryAccrual(principalAsset, treasuryLeg);
 
         uint256 remainder;
         unchecked { remainder = amount - lenderLeg - treasuryLeg; }
@@ -434,6 +462,12 @@ contract PrepayListingFacet is
     ///         posture. The pre-loan floor formula prevents this
     ///         under the happy path; the revert is defensive.
     error ProceedsBelowLenderTreasury(uint96 offerId, uint256 amount, uint256 required);
+    /// @notice T-086 Round-8 (#358) Codex round-5 P1 #2 — raised when
+    ///         a post-acceptance parallel-sale fill is attempted past
+    ///         the loan's graceEnd. Mirrors the loan-keyed executor's
+    ///         `GraceExpired` and RepayFacet's
+    ///         `RepaymentPastGracePeriod` posture.
+    error ParallelSaleFillPastGrace(uint96 offerId, uint256 nowTimestamp, uint256 graceEnd);
 
     /// @inheritdoc IVaipakamPrepayCallbacks
     function assertOfferFillNotSanctioned(uint96 offerId, address borrowerWallet)

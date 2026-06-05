@@ -785,6 +785,27 @@
   },
   {
     "type": "error",
+    "name": "ParallelSaleFillPastGrace",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint96",
+        "internalType": "uint96"
+      },
+      {
+        "name": "nowTimestamp",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "graceEnd",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ParameterOutOfRange",
     "inputs": [
       {
