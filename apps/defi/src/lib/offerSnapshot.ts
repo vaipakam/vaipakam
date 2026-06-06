@@ -62,6 +62,13 @@ interface SerializedOffer {
   collateralAssetType?: number;
   /** T-086 Round-8 §19.7e + Codex round-15 P2 #6 — see {@link collateralAssetType} above. */
   collateralTokenId?: string;
+  /** T-086 Round-8 §19.7e + Codex round-17 P2 #4 — ERC1155 NFT
+   *  collateral "number of copies" persisted across page reloads.
+   *  Without this field, snapshot-recovered sold ERC1155 rows render
+   *  as `1 × NFT` even when the live offer was posted for multiple
+   *  copies. Optional same as the other NFT-shape fields; older
+   *  snapshots predate this and consumers default to `1n`. */
+  collateralQuantity?: string;
   /** Unix-seconds timestamp the snapshot was last written. Used for
    *  pruning when storage gets full. */
   capturedAt: number;
@@ -130,6 +137,11 @@ export function writeOfferSnapshot(
     collateralTokenId:
       offer.collateralTokenId !== undefined
         ? offer.collateralTokenId.toString()
+        : undefined,
+    // Codex round-17 P2 #4 — persist ERC1155 copy count.
+    collateralQuantity:
+      offer.collateralQuantity !== undefined
+        ? offer.collateralQuantity.toString()
         : undefined,
     capturedAt: Math.floor(Date.now() / 1000),
   };
@@ -202,6 +214,11 @@ export function readOfferSnapshot(
         typeof p.collateralAssetType === 'number' ? p.collateralAssetType : undefined,
       collateralTokenId:
         typeof p.collateralTokenId === 'string' ? BigInt(p.collateralTokenId) : undefined,
+      // Codex round-17 P2 #4 — undefined when the snapshot predates
+      // the field; MyOffersTable already defaults to `1n` for ERC1155
+      // when undefined.
+      collateralQuantity:
+        typeof p.collateralQuantity === 'string' ? BigInt(p.collateralQuantity) : undefined,
     };
   } catch {
     // Corrupted entry — clear it and move on.

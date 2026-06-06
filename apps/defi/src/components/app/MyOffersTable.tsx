@@ -376,7 +376,16 @@ export function MyOffersTable({
                           chainId={chainId}
                         />
                       </td>
-                      <td>{bpsToPercent(offer.interestRateBps)}</td>
+                      {/* Codex round-17 P2 #2 — sold rows are always
+                          borrower-side parallel-sale offers
+                          (consumed_by_sale is contract-gated to
+                          borrower offers). Borrower offers store the
+                          displayed APR CEILING in `interestRateBpsMax`,
+                          while `interestRateBps` is the canonical
+                          floor (`0`). Render the max here so sold
+                          history shows the rate the offer was posted
+                          at, not a misleading `0%`. */}
+                      <td>{bpsToPercent(offer.interestRateBpsMax ?? offer.interestRateBps)}</td>
                       <td>
                         {offer.durationDays.toString()}{' '}
                         {t('loanDetails.daysSuffix')}

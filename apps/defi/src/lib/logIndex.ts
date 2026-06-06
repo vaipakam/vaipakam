@@ -346,7 +346,15 @@ const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
  * forward, increment normally when invalidation is required.
  */
 function storageKey(chainId: number, diamond: string): string {
-  return `vaipakam:logIndex:v1:${chainId}:${diamond.toLowerCase()}`;
+  // T-086 Round-8 §19.7e + Codex round-17 P2 #1 — bumped `v1` → `v2`
+  // because the OfferConsumedBySale scan was added in this PR. Any
+  // existing browser whose cursor has already advanced past a block
+  // carrying a parallel-sale terminal would NEVER replay it under
+  // the same key — leaving sold offers stuck in `active` in the
+  // worker-down fallback path. The bump forces a one-time re-scan
+  // from the deploy block on next page load; correctness over the
+  // (one-time) extra cold-scan cost.
+  return `vaipakam:logIndex:v2:${chainId}:${diamond.toLowerCase()}`;
 }
 
 function emptyCache(deployBlock: number): CachedShape {
@@ -845,6 +853,7 @@ async function runScan(
     // below; the decoder branch matches by `topic0` so ordering is
     // irrelevant.
     let consumedLogs: RawLog[] = [];
+    let consumedScanOk = true;
     try {
       consumedLogs = await safeGetLogs(rpcUrl, {
         address: diamondAddress,
@@ -853,13 +862,27 @@ async function runScan(
         toBlock,
       });
     } catch (err) {
-      // Don't downshift on this secondary call — the bulk call's
-      // chunk size already adapted. Just log + carry on; missing
-      // sold-event capture is a degradation, not a hard failure.
+      // Codex round-17 P2 #3 — DON'T silently advance the cursor.
+      // If the secondary call fails after the bulk call succeeded,
+      // letting `cursor = toBlock + 1` run at the bottom of the loop
+      // means any sale terminal in this chunk's block range is
+      // permanently absent from `closedOfferIds`/events in the
+      // browser cache — leaving sold offers stuck on `active` until
+      // the user clears storage. Throw so the outer chunk retries
+      // (the bulk call's downshift path is engaged on retry too).
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(
-        `[logIndex] OfferConsumedBySale getLogs failed (sold-row capture degraded for this chunk): ${msg}`,
+        `[logIndex] OfferConsumedBySale getLogs failed (will retry chunk): ${msg}`,
       );
+      consumedScanOk = false;
+    }
+    if (!consumedScanOk) {
+      // Retry on next loop iteration WITHOUT advancing the cursor.
+      // Skip the inter-chunk pause + event loop below; the bulk
+      // call's RawLog[] is also dropped on the floor (the chunk is
+      // re-fetched on retry), which is fine — the next iteration
+      // re-fetches both.
+      continue;
     }
     if (consumedLogs.length > 0) {
       logs = logs.concat(consumedLogs);
