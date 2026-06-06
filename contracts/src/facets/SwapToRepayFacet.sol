@@ -300,13 +300,23 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         IERC20(loan.principalAsset).safeTransfer(lenderVault, plan.lenderDue);
         LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, plan.lenderDue);
 
-        // Surplus principal → borrower vault (§9 — borrower took the
-        // slippage risk, gets the upside).
+        // Surplus principal → CURRENT borrower-position NFT holder's
+        // vault (Codex round-2 P1 #1). Routing to `loan.borrower`
+        // (the latched field) after authorizing the current NFT
+        // owner would let the original borrower siphon the surplus
+        // by simply having their vault un-recorded for that asset.
+        // Resolve the current owner via `ownerOf(borrowerTokenId)`.
         uint256 surplusPrincipal = outputAmount - requiredPrincipal;
-        address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
+        address currentBorrowerHolder = IERC721(address(this))
+            .ownerOf(loan.borrowerTokenId);
         if (surplusPrincipal > 0) {
-            IERC20(loan.principalAsset).safeTransfer(borrowerVault, surplusPrincipal);
-            LibVaipakam.recordVaultDeposit(loan.borrower, loan.principalAsset, surplusPrincipal);
+            address holderVault = LibFacet.getOrCreateVault(currentBorrowerHolder);
+            IERC20(loan.principalAsset).safeTransfer(holderVault, surplusPrincipal);
+            LibVaipakam.recordVaultDeposit(
+                currentBorrowerHolder,
+                loan.principalAsset,
+                surplusPrincipal
+            );
         }
 
         // ── Claim slots ──────────────────────────────────────────────
@@ -323,6 +333,13 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // that was never withdrawn from the borrower's vault. The
         // borrower keeps `collateralAmount - maxCollateralIn`; the
         // ClaimFacet release path unlocks it on the Repaid transition.
+        // Codex round-2 P1 #2 — `claimed: false` regardless of
+        // residual=0 so the LIF VPFI rebate path
+        // (`settleBorrowerLifProper` below) can credit
+        // `borrowerLifRebate` for later claim. `ClaimFacet.claimAsBorrower`
+        // gates on `claim.claimed` BEFORE considering the LIF rebate;
+        // marking claimed=true at write time would lock the rebate
+        // surface entirely.
         uint256 residualCollateral = loan.collateralAmount - maxCollateralIn;
         s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
             asset: loan.collateralAsset,
@@ -330,7 +347,7 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             assetType: LibVaipakam.AssetType.ERC20,
             tokenId: 0,
             quantity: 0,
-            claimed: residualCollateral == 0
+            claimed: false
         });
 
         // ── Position-NFT status flip → LoanRepaid ────────────────────
@@ -429,6 +446,18 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         ) revert UnsupportedLoanShape();
         // Codex round-1 PR #390 P1 #3 (same fix as `swapToRepayFull`).
         LibAuth.requireBorrowerNftOwner(loan);
+
+        // Codex round-2 PR #390 P2 #1 — block lender self-repay on
+        // the partial path too. The full path had this guard from
+        // round-0; without the mirror, a lender who has acquired the
+        // borrower-side position NFT could consume claim-bearing
+        // collateral and route the partial principal + interest into
+        // their own lender vault while keeping the loan Active.
+        if (msg.sender == loan.lender) revert LenderCannotRepayOwnLoan();
+        if (
+            IERC721(address(this)).ownerOf(loan.lenderTokenId) == msg.sender
+        ) revert LenderCannotRepayOwnLoan();
+
         if (!loan.allowsPartialRepay) revert PartialRepayNotAllowed();
 
         if (collateralSwapAmount == 0 || collateralSwapAmount > loan.collateralAmount)
@@ -505,12 +534,20 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, lenderTotal);
 
         // Any leftover principal (above accrued + partialPrincipal) →
-        // borrower vault (same surplus treatment as the full path).
+        // current borrower-NFT holder's vault (Codex round-2 P1 #1
+        // mirror of the full-path fix). Resolves via
+        // `ownerOf(borrowerTokenId)` so the surplus follows the NFT.
         uint256 surplus = outputAmount - treasuryShare - lenderTotal;
         if (surplus > 0) {
-            address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
-            IERC20(loan.principalAsset).safeTransfer(borrowerVault, surplus);
-            LibVaipakam.recordVaultDeposit(loan.borrower, loan.principalAsset, surplus);
+            address currentBorrowerHolder = IERC721(address(this))
+                .ownerOf(loan.borrowerTokenId);
+            address holderVault = LibFacet.getOrCreateVault(currentBorrowerHolder);
+            IERC20(loan.principalAsset).safeTransfer(holderVault, surplus);
+            LibVaipakam.recordVaultDeposit(
+                currentBorrowerHolder,
+                loan.principalAsset,
+                surplus
+            );
         }
 
         // ── Loan state updates ───────────────────────────────────────
