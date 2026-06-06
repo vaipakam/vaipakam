@@ -1612,30 +1612,53 @@ async function processLoanLogs(
       // reduces both `loan.principal` (by `partialPrincipal`) and
       // `loan.collateralAmount` (by `collateralIn` =
       // `actualCollateralConsumed` — the partial-fill leftover was already
-      // refunded to the borrower vault). The loan stays Active.
+      // refunded to the borrower vault). Plus resets `loan.startTime` to
+      // `block.timestamp` (RepayFacet.repayPartial:663 pattern). The loan
+      // stays Active.
       //
       // The event doesn't carry post-state (`PartialRepaid` does;
-      // SwapToRepayPartialExecuted predates that pattern by design — the
-      // arithmetic is unambiguous and avoids a per-event RPC quota burn
-      // for the live `getLoanDetails` read other handlers fall back to).
-      // SQL delta update is idempotent against the indexer's cursor
-      // model (events are processed in scan order, one pass per tick).
+      // SwapToRepayPartialExecuted predates that pattern by design). Read
+      // the current row + parse with BigInt + write back as a decimal
+      // string. SQL-side `CAST(... AS INTEGER) - ?` would silently clamp
+      // any ERC20-sized value above 2^63 to `9223372036854775807` —
+      // schema stores amounts as TEXT specifically because real ERC20
+      // amounts blow past 64-bit signed (Codex round-1 P1 on PR #391).
+      // Mirrors the `InternalMatchExecuted` read-modify-write pattern.
       const loanId = Number(a.loanId as bigint);
-      await env.DB.prepare(
-        `UPDATE loans
-           SET principal = CAST(principal AS INTEGER) - ?,
-               collateral_amount = CAST(collateral_amount AS INTEGER) - ?,
-               updated_at = ?
-         WHERE chain_id = ? AND loan_id = ?`,
+      const cur = await env.DB.prepare(
+        `SELECT principal, collateral_amount
+           FROM loans WHERE chain_id = ? AND loan_id = ?`,
       )
-        .bind(
-          String(a.partialPrincipal as bigint),
-          String(a.collateralIn as bigint),
-          Math.floor(Date.now() / 1000),
-          chainId,
-          loanId,
+        .bind(chainId, loanId)
+        .first<{ principal: string; collateral_amount: string }>();
+      if (cur) {
+        const newPrincipal = BigInt(cur.principal) - (a.partialPrincipal as bigint);
+        const newCollateral = BigInt(cur.collateral_amount) - (a.collateralIn as bigint);
+        // Codex round-1 P2 #1 — refresh `start_time` from the event
+        // block. The contract resets `loan.startTime = block.timestamp`
+        // on partial swap-to-repay (RepayFacet.repayPartial:663
+        // pattern); without mirroring it here, `/loans` consumers
+        // calculate remaining term / grace / accrual against the stale
+        // pre-swap value until some unrelated full refresh hits.
+        const blockAt = blockTimestamps.get(log.blockNumber) ?? now;
+        await env.DB.prepare(
+          `UPDATE loans
+             SET principal = ?,
+                 collateral_amount = ?,
+                 start_time = ?,
+                 updated_at = ?
+           WHERE chain_id = ? AND loan_id = ?`,
         )
-        .run();
+          .bind(
+            newPrincipal.toString(),
+            newCollateral.toString(),
+            blockAt,
+            now,
+            chainId,
+            loanId,
+          )
+          .run();
+      }
       // Mirror PartialRepaid's grace-end refresh — the contract resets
       // `loan.startTime` on partial swap-to-repay too (RepayFacet:663
       // pattern), which moves the grace boundary for any live listing.
