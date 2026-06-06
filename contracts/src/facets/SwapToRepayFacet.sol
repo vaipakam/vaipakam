@@ -12,6 +12,9 @@ import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
+import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
+import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
+import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -99,6 +102,31 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         uint256 adapterUsed
     );
 
+    /// @notice Mirror of `RepayFacet.RepayPartialPeriodAdvanced` so the
+    ///         T-034 periodic-interest checkpoint-advance signal is
+    ///         observable on the swap-to-repay path too. Identical
+    ///         topic hash — indexers subscribing by topic catch both.
+    ///         (Codex round-1 PR #390 P2 #2.)
+    /// @custom:event-category state-change/loan-mutation
+    event RepayPartialPeriodAdvanced(
+        uint256 indexed loanId,
+        uint256 periodEndAt,
+        uint256 expected,
+        address indexed advancedBy
+    );
+
+    /// @notice Mirror of `RepayFacet.PeriodicInterestSettled`. Topic
+    ///         match — see {RepayPartialPeriodAdvanced}.
+    ///         (Codex round-1 PR #390 P2 #2.)
+    /// @custom:event-category state-change/loan-mutation
+    event PeriodicInterestSettled(
+        uint256 indexed loanId,
+        uint256 periodEndAt,
+        uint256 expected,
+        uint256 paidByBorrower,
+        address indexed settler
+    );
+
     /// @notice Pre-flight check failed: the slippage floor would not
     ///         cover the loan's required principal payoff. Borrower
     ///         must raise `maxCollateralIn` or wait for better price
@@ -176,13 +204,26 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // ── Pre-flight gates ─────────────────────────────────────────
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert InvalidLoanStatus();
-        if (loan.assetType != LibVaipakam.AssetType.ERC20)
-            revert UnsupportedLoanShape();
+        // Codex round-1 PR #390 P2 #4 — both PRINCIPAL and COLLATERAL
+        // must be ERC20. The v0 design checked `loan.assetType` (which
+        // is the principal asset type) but not `collateralAssetType` —
+        // letting an ERC20-loan with NFT collateral through the gate
+        // would have proceeded into ERC20 metadata calls + ERC20
+        // vault withdraw against the NFT contract, with unpredictable
+        // downstream reverts.
+        if (
+            loan.assetType != LibVaipakam.AssetType.ERC20 ||
+            loan.collateralAssetType != LibVaipakam.AssetType.ERC20
+        ) revert UnsupportedLoanShape();
         if (
             loan.collateralLiquidity != LibVaipakam.LiquidityStatus.Liquid ||
             loan.principalLiquidity != LibVaipakam.LiquidityStatus.Liquid
         ) revert UnsupportedLoanShape();
-        LibAuth.requireBorrower(loan);
+        // Codex round-1 PR #390 P1 #3 — borrower NFT ownership (not the
+        // latched `loan.borrower` field) is the authority root. Claim
+        // rights travel with the position NFT, so the current NFT
+        // holder must be the only caller able to spend pledged collateral.
+        LibAuth.requireBorrowerNftOwner(loan);
 
         // Block lender-side self-repay (mirrors RepayFacet:273-278).
         if (msg.sender == loan.lender) revert LenderCannotRepayOwnLoan();
@@ -292,12 +333,55 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             claimed: residualCollateral == 0
         });
 
-        // ── Transition + close phase-2 reward accrual ────────────────
+        // ── Position-NFT status flip → LoanRepaid ────────────────────
+        // Codex round-1 PR #390 P2 #3 — without this, marketplaces +
+        // dashboards reading the NFT metadata keep showing the loan
+        // as active during the claim window. Mirror RepayFacet:516-535.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                VaipakamNFTFacet.updateNFTStatus.selector,
+                loan.borrowerTokenId,
+                loanId,
+                LibVaipakam.LoanPositionStatus.LoanRepaid
+            ),
+            NFTStatusUpdateFailed.selector
+        );
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                VaipakamNFTFacet.updateNFTStatus.selector,
+                loan.lenderTokenId,
+                loanId,
+                LibVaipakam.LoanPositionStatus.LoanRepaid
+            ),
+            NFTStatusUpdateFailed.selector
+        );
+
+        // ── Active prepay listing cleanup ────────────────────────────
+        // Codex round-1 PR #390 P2 #1 — atomically revoke the vault's
+        // ERC-1271 binding for any live prepay listing on this loan,
+        // release the borrower-position-NFT lock, and clear the
+        // diamond / executor / vault bookkeeping. Idempotent on loans
+        // without a live listing. Placement mirrors RepayFacet:550:
+        // after every safeTransfer has committed, before the status
+        // flip declares the listing dead.
+        LibPrepayCleanup.clearActiveListing(loan, loanId);
+
+        // ── Transition + LIF VPFI settlement ─────────────────────────
         LibLifecycle.transition(
             loan,
             LibVaipakam.LoanStatus.Active,
             LibVaipakam.LoanStatus.Repaid
         );
+
+        // Codex round-1 PR #390 P1 #2 — Phase 5 / §5.2b proper-close
+        // settlement for the borrower LIF VPFI path. Splits any
+        // diamond-held VPFI between the borrower's claimable rebate
+        // (scaled by time-weighted avg discount BPS) and the
+        // treasury share. No-op on loans that took the lending-asset
+        // fee path at init (vpfiHeld == 0). Mirror RepayFacet:561.
+        LibVPFIDiscount.settleBorrowerLifProper(loan);
+
+        // ── Phase-2 reward accrual close ─────────────────────────────
         LibInteractionRewards.closeLoan(
             loanId,
             /* borrowerClean */ true,
@@ -334,13 +418,17 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // ── Pre-flight gates ─────────────────────────────────────────
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert InvalidLoanStatus();
-        if (loan.assetType != LibVaipakam.AssetType.ERC20)
-            revert UnsupportedLoanShape();
+        // Codex round-1 PR #390 P2 #4 (same fix as `swapToRepayFull`).
+        if (
+            loan.assetType != LibVaipakam.AssetType.ERC20 ||
+            loan.collateralAssetType != LibVaipakam.AssetType.ERC20
+        ) revert UnsupportedLoanShape();
         if (
             loan.collateralLiquidity != LibVaipakam.LiquidityStatus.Liquid ||
             loan.principalLiquidity != LibVaipakam.LiquidityStatus.Liquid
         ) revert UnsupportedLoanShape();
-        LibAuth.requireBorrower(loan);
+        // Codex round-1 PR #390 P1 #3 (same fix as `swapToRepayFull`).
+        LibAuth.requireBorrowerNftOwner(loan);
         if (!loan.allowsPartialRepay) revert PartialRepayNotAllowed();
 
         if (collateralSwapAmount == 0 || collateralSwapAmount > loan.collateralAmount)
@@ -442,7 +530,22 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             if (newPaid > type(uint128).max) newPaid = type(uint128).max;
             loan.interestPaidSinceLastPeriod = SafeCast.toUint128(newPaid);
             if (LibPeriodicInterest.canAdvanceCheckpointInline(loan)) {
+                // Codex round-1 PR #390 P2 #2 — emit the
+                // `RepayPartialPeriodAdvanced` + `PeriodicInterestSettled`
+                // events that off-chain accounting subscribes to. Both
+                // are topic-matched to the RepayFacet declarations so
+                // existing indexer / dashboard handlers fire here too.
+                uint256 boundary = LibPeriodicInterest.periodEndAt(loan);
+                uint256 expected = LibPeriodicInterest.expectedInterestForPeriod(loan);
                 LibPeriodicInterest.advanceCheckpoint(loan);
+                emit RepayPartialPeriodAdvanced(loanId, boundary, expected, msg.sender);
+                emit PeriodicInterestSettled(
+                    loanId,
+                    boundary,
+                    expected,
+                    newPaid,
+                    msg.sender
+                );
             }
         }
 

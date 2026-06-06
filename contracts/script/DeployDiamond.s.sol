@@ -1413,7 +1413,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](85);
+        s = new bytes4[](87);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -1577,6 +1577,12 @@ contract DeployDiamond is Script {
         // Default `bytes32(0)` (auto-list Case A blocked until
         // governance configures).
         s[84] = ConfigFacet.setPrepayListingAutoListConduitKey.selector;
+        // T-090 — Borrower-initiated swap-to-repay slippage cap (BPS).
+        // Default 300 (3%) via `cfgMaxSwapToRepaySlippageBps`'s zero
+        // fallback; setter is ADMIN_ROLE-only and bounded by
+        // `MAX_SLIPPAGE_BPS = 2500` (25%).
+        s[85] = ConfigFacet.setMaxSwapToRepaySlippageBps.selector;
+        s[86] = ConfigFacet.getMaxSwapToRepaySlippageBps.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {

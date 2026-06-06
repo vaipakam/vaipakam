@@ -375,8 +375,17 @@ contract SwapToRepayFacetTest is SetupTest {
 
     function test_swapToRepayFull_RevertWhen_LenderSelfRepay() public {
         _scaffoldLoan(1, /* allowsPartialRepay */ false, /* useFullTermInterest */ false);
-        // Set the borrower equal to lender via TestMutator — simulates
-        // the degenerate case where the lender owns the borrower NFT.
+        // Degenerate case: the lender ALSO owns the borrower-side
+        // position NFT (e.g. acquired it via secondary trade) AND
+        // is still the lender. The borrower-NFT-owner gate (Codex
+        // PR #390 P1 #3) passes for them, so the lender-self-repay
+        // guard is the load-bearing block here.
+        // Move the borrower NFT (tokenId 2) to lenderEoa via burn+mint
+        // (the test diamond doesn't cut `transferFrom`; the production
+        // diamond does) and flip `loan.borrower` to lenderEoa so both
+        // gates target the same address.
+        TestMutatorFacet(address(diamond)).burnNFTRaw(2);
+        TestMutatorFacet(address(diamond)).mintNFTRaw(lenderEoa, 2);
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(1);
         loan.borrower = lenderEoa;
         TestMutatorFacet(address(diamond)).setLoan(1, loan);

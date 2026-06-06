@@ -948,7 +948,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](85);
+        selectors = new bytes4[](87);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -1084,6 +1084,9 @@ contract HelperTest {
         // default conduit-key setters.
         selectors[83] = ConfigFacet.setPrepayListingDutchGraceMarginSec.selector;
         selectors[84] = ConfigFacet.setPrepayListingAutoListConduitKey.selector;
+        // T-090 — Borrower-initiated swap-to-repay slippage cap.
+        selectors[85] = ConfigFacet.setMaxSwapToRepaySlippageBps.selector;
+        selectors[86] = ConfigFacet.getMaxSwapToRepaySlippageBps.selector;
         return selectors;
     }
 
