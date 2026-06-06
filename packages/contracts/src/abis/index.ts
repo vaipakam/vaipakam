@@ -9,6 +9,10 @@ import OfferMutateFacetABI from './OfferMutateFacet.json';
 import OfferParallelSaleFacetABI from './OfferParallelSaleFacet.json';
 import LoanFacetABI from './LoanFacet.json';
 import RepayFacetABI from './RepayFacet.json';
+// T-090 — Borrower-initiated swap-to-repay surface. Swaps collateral
+// asset → principal asset and applies the proceeds to a full or partial
+// loan repay in one transaction.
+import SwapToRepayFacetABI from './SwapToRepayFacet.json';
 import DefaultedFacetABI from './DefaultedFacet.json';
 import RiskFacetABI from './RiskFacet.json';
 import RiskMatchLiquidationFacetABI from './RiskMatchLiquidationFacet.json';
@@ -74,6 +78,7 @@ export {
   OfferParallelSaleFacetABI,
   LoanFacetABI,
   RepayFacetABI,
+  SwapToRepayFacetABI,
   DefaultedFacetABI,
   RiskFacetABI,
   RiskMatchLiquidationFacetABI,
@@ -129,6 +134,7 @@ export const DIAMOND_ABI = [
   ...OfferParallelSaleFacetABI,
   ...LoanFacetABI,
   ...RepayFacetABI,
+  ...SwapToRepayFacetABI,
   ...DefaultedFacetABI,
   ...RiskFacetABI,
   ...RiskMatchLiquidationFacetABI,

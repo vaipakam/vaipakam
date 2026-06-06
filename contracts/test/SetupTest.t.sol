@@ -18,6 +18,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -66,6 +67,7 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {console} from "forge-std/console.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
@@ -203,6 +205,7 @@ contract SetupTest is Test {
     RiskFacet riskFacet; // Added
     RiskMatchLiquidationFacet riskMatchLiquidationFacet;
     RepayFacet repayFacet;
+    SwapToRepayFacet swapToRepayFacet;
     AdminFacet adminFacet;
     ClaimFacet claimFacet;
     AddCollateralFacet addCollateralFacet;
@@ -289,6 +292,7 @@ contract SetupTest is Test {
         riskFacet = new RiskFacet();
         riskMatchLiquidationFacet = new RiskMatchLiquidationFacet();
         repayFacet = new RepayFacet();
+        swapToRepayFacet = new SwapToRepayFacet();
         adminFacet = new AdminFacet();
         claimFacet = new ClaimFacet();
         addCollateralFacet = new AddCollateralFacet();
@@ -348,7 +352,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](44);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](45);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -604,6 +608,12 @@ contract SetupTest is Test {
             facetAddress: address(offerParallelSaleFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getOfferParallelSaleFacetSelectors()
+        });
+        // T-090 — Borrower-initiated swap-to-repay facet.
+        cuts[44] = IDiamondCut.FacetCut({
+            facetAddress: address(swapToRepayFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSwapToRepayFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

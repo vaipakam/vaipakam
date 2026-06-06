@@ -209,6 +209,12 @@ library LibVaipakam {
     uint256 constant VOLATILITY_LTV_THRESHOLD_BPS = 11000; // 110% LTV for fallback (1.1x loan value)
     uint256 constant MAX_LIQUIDATION_SLIPPAGE_BPS = 600; // 6% max slippage on DEX liquidation swaps (README §7)
     uint256 constant MAX_LIQUIDATOR_INCENTIVE_BPS = 300; // 3% cap on dynamic liquidator incentive (README §3)
+    // T-090 — Swap-to-Repay (borrower-initiated DEX swap from collateral
+    // to principal at repay time). Tighter than MAX_LIQUIDATION_SLIPPAGE_BPS
+    // because the caller is the borrower, not an adversarial liquidator
+    // on a clock — the borrower picks the moment and can abort if the
+    // chain has gapped against them, so a 3% cap is appropriate.
+    uint256 constant MAX_SWAP_TO_REPAY_SLIPPAGE_BPS = 300; // 3% max slippage on swap-to-repay (T-090)
     uint256 constant LIQUIDATION_HANDLING_FEE_BPS = 200; // 2% of proceeds to treasury on successful DEX liquidation (README §3)
     // ── Phase 4 of AutonomousLtvAndOracleFallback.md — tier-LTV cache constants ──
     //
@@ -1031,6 +1037,14 @@ library LibVaipakam {
         // eligibility gate (fires whichever comes first). 0 ⇒
         // TREASURY_CONVERT_MAX_INTERVAL_DAYS_DEFAULT (30).
         uint32 treasuryConvertMaxIntervalDays; // 0 ⇒ default
+        // T-090 — Borrower-initiated swap-to-repay slippage ceiling.
+        // 0 ⇒ MAX_SWAP_TO_REPAY_SLIPPAGE_BPS (300 = 3%). Sibling to
+        // `maxLiquidationSlippageBps` (default 600 = 6%); tighter cap
+        // because the caller is the borrower, not an adversarial
+        // liquidator on a clock. Bounded by `MAX_SLIPPAGE_BPS` (2500 =
+        // 25%) at the `ConfigFacet.setMaxSwapToRepaySlippageBps`
+        // setter — same ceiling that guards the liquidation knob.
+        uint16 maxSwapToRepaySlippageBps; // 0 ⇒ default
     }
 
     /// @dev Struct to store parameters of createOffer function, avoiding stack-too-deep.
@@ -3453,6 +3467,16 @@ library LibVaipakam {
     function cfgMaxLiquidationSlippageBps() internal view returns (uint256) {
         uint16 v = storageSlot().protocolCfg.maxLiquidationSlippageBps;
         return v == 0 ? MAX_LIQUIDATION_SLIPPAGE_BPS : uint256(v);
+    }
+
+    /// @notice Maximum slippage (BPS) the borrower-initiated
+    ///         {SwapToRepayFacet} swap may realize. Sibling to
+    ///         {cfgMaxLiquidationSlippageBps} with a tighter default
+    ///         (300 vs. 600) — the borrower is not on an adversarial
+    ///         clock and can wait for better price action.
+    function cfgMaxSwapToRepaySlippageBps() internal view returns (uint256) {
+        uint16 v = storageSlot().protocolCfg.maxSwapToRepaySlippageBps;
+        return v == 0 ? MAX_SWAP_TO_REPAY_SLIPPAGE_BPS : uint256(v);
     }
 
     function cfgMaxLiquidatorIncentiveBps() internal view returns (uint256) {

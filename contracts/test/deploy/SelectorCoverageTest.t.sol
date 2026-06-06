@@ -78,7 +78,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
     function test_DeployDiamond_RoutesEveryFacetSelector() public {
         _populateRoutedSet();
 
-        string[43] memory facets = cutFacetNames();
+        string[44] memory facets = cutFacetNames();
         uint256 missing;
         for (uint256 i; i < facets.length; ++i) {
             string memory name = facets[i];
@@ -108,7 +108,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
     ///         4-byte selector — such a collision makes `diamondCut`
     ///         revert and the Diamond undeployable.
     function test_NoSelectorCollisionAcrossFacets() public {
-        string[43] memory facets = cutFacetNames();
+        string[44] memory facets = cutFacetNames();
         uint256 collisions;
         for (uint256 i; i < facets.length; ++i) {
             collisions += _recordAndCountCollisions(facets[i]);
@@ -188,6 +188,8 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
         _addAll(_getOfferAcceptSelectors());
         _addAll(_getLoanSelectors());
         _addAll(_getRepaySelectors());
+        // T-090 — Borrower-initiated swap-to-repay surface.
+        _addAll(_getSwapToRepayFacetSelectors());
         _addAll(_getDefaultedSelectors());
         _addAll(_getRiskSelectors());
         _addAll(_getClaimSelectors());

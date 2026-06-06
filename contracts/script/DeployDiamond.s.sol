@@ -24,6 +24,7 @@ import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
@@ -132,6 +133,7 @@ contract DeployDiamond is Script {
         OfferMutateFacet offerMutateFacet = new OfferMutateFacet();
         LoanFacet loanFacet = new LoanFacet();
         RepayFacet repayFacet = new RepayFacet();
+        SwapToRepayFacet swapToRepayFacet = new SwapToRepayFacet();
         DefaultedFacet defaultedFacet = new DefaultedFacet();
         RiskFacet riskFacet = new RiskFacet();
         RiskMatchLiquidationFacet riskMatchLiquidationFacet =
@@ -182,8 +184,8 @@ contract DeployDiamond is Script {
         console.log("Diamond deployed at:", diamond);
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
-        // 36 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](43);
+        // 37 facets (DiamondCutFacet already added by constructor)
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](44);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -283,6 +285,13 @@ contract DeployDiamond is Script {
         cuts[42] = _buildCut(
             address(offerParallelSaleFacet),
             _getOfferParallelSaleSelectors()
+        );
+        // T-090 — Borrower-initiated swap-to-repay surface. Its own
+        // facet to keep RepayFacet bytecode under EIP-170 and to
+        // cleanly isolate the new LibSwap dependency surface.
+        cuts[43] = _buildCut(
+            address(swapToRepayFacet),
+            _getSwapToRepayFacetSelectors()
         );
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
@@ -577,6 +586,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("offerMutateFacet",        address(offerMutateFacet));
         Deployments.writeFacet("loanFacet",               address(loanFacet));
         Deployments.writeFacet("repayFacet",              address(repayFacet));
+        Deployments.writeFacet("swapToRepayFacet",        address(swapToRepayFacet));
         Deployments.writeFacet("defaultedFacet",          address(defaultedFacet));
         Deployments.writeFacet("riskFacet",               address(riskFacet));
         Deployments.writeFacet("riskMatchLiquidationFacet", address(riskMatchLiquidationFacet));
@@ -628,6 +638,7 @@ contract DeployDiamond is Script {
         console.log("OfferMutateFacet:     ", address(offerMutateFacet));
         console.log("LoanFacet:            ", address(loanFacet));
         console.log("RepayFacet:           ", address(repayFacet));
+        console.log("SwapToRepayFacet:     ", address(swapToRepayFacet));
         console.log("DefaultedFacet:       ", address(defaultedFacet));
         console.log("RiskFacet:            ", address(riskFacet));
         console.log("RiskMatchLiquidationFacet:", address(riskMatchLiquidationFacet));
@@ -1078,6 +1089,13 @@ contract DeployDiamond is Script {
         s[6] = RepayFacet.settlePeriodicInterest.selector;
     }
 
+    /// T-090 — Borrower-initiated swap-to-repay facet selectors.
+    function _getSwapToRepayFacetSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = SwapToRepayFacet.swapToRepayFull.selector;
+        s[1] = SwapToRepayFacet.swapToRepayPartial.selector;
+    }
+
     function _getDefaultedSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](2);
         s[0] = DefaultedFacet.triggerDefault.selector;
@@ -1395,7 +1413,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](85);
+        s = new bytes4[](87);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -1559,6 +1577,12 @@ contract DeployDiamond is Script {
         // Default `bytes32(0)` (auto-list Case A blocked until
         // governance configures).
         s[84] = ConfigFacet.setPrepayListingAutoListConduitKey.selector;
+        // T-090 — Borrower-initiated swap-to-repay slippage cap (BPS).
+        // Default 300 (3%) via `cfgMaxSwapToRepaySlippageBps`'s zero
+        // fallback; setter is ADMIN_ROLE-only and bounded by
+        // `MAX_SLIPPAGE_BPS = 2500` (25%).
+        s[85] = ConfigFacet.setMaxSwapToRepaySlippageBps.selector;
+        s[86] = ConfigFacet.getMaxSwapToRepaySlippageBps.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {

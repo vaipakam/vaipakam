@@ -351,6 +351,19 @@
   },
   {
     "type": "function",
+    "name": "getMaxSwapToRepaySlippageBps",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getMinPrincipalForFinerCadence",
     "inputs": [],
     "outputs": [
@@ -1183,6 +1196,19 @@
   },
   {
     "type": "function",
+    "name": "setMaxSwapToRepaySlippageBps",
+    "inputs": [
+      {
+        "name": "maxSlippageBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setMinPrincipalForFinerCadence",
     "inputs": [
       {
@@ -1982,6 +2008,19 @@
     "inputs": [
       {
         "name": "newBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MaxSwapToRepaySlippageBpsSet",
+    "inputs": [
+      {
+        "name": "maxSlippageBps",
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"

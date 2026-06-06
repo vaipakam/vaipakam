@@ -24,6 +24,7 @@ import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
@@ -548,6 +549,17 @@ contract HelperTest {
         selectors[6] = RepayFacet.settlePeriodicInterest.selector;
     }
 
+    /// T-090 — Borrower-initiated swap-to-repay facet selectors.
+    function getSwapToRepayFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](2);
+        selectors[0] = SwapToRepayFacet.swapToRepayFull.selector;
+        selectors[1] = SwapToRepayFacet.swapToRepayPartial.selector;
+    }
+
     function getDefaultedFacetSelectors()
         public
         pure
@@ -936,7 +948,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](85);
+        selectors = new bytes4[](87);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -1072,6 +1084,9 @@ contract HelperTest {
         // default conduit-key setters.
         selectors[83] = ConfigFacet.setPrepayListingDutchGraceMarginSec.selector;
         selectors[84] = ConfigFacet.setPrepayListingAutoListConduitKey.selector;
+        // T-090 — Borrower-initiated swap-to-repay slippage cap.
+        selectors[85] = ConfigFacet.setMaxSwapToRepaySlippageBps.selector;
+        selectors[86] = ConfigFacet.getMaxSwapToRepaySlippageBps.selector;
         return selectors;
     }
 
