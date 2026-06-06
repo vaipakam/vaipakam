@@ -50,6 +50,7 @@ import { PeriodicInterestCheckpointCard } from "../components/loanDetails/Period
 import { PrepayListingBanner } from "../components/loanDetails/PrepayListingBanner";
 import { PrepayListingActions } from "../components/loanDetails/PrepayListingActions";
 import { OpenSeaOffersSection } from "../components/loanDetails/OpenSeaOffersSection";
+import { SwapToRepayPanel } from "../components/loanDetails/SwapToRepayPanel";
 import { useNFTPrepayListing } from "../hooks/useNFTPrepayListing";
 import "./LoanDetails.css";
 
@@ -1069,6 +1070,26 @@ export default function LoanDetails() {
               </div>
             )}
           </div>
+
+          {/* T-090 #403 — borrower-initiated swap-to-repay. Renders
+              only for ERC20-on-ERC20 loans where the caller is the
+              current borrower-NFT owner. The on-chain
+              `SwapToRepayFacet.swapToRepayFull` enforces the same
+              gating server-side so this is purely a UX-quality
+              filter — hiding the panel when it would always revert. */}
+          {isBorrower &&
+            Number(loan.assetType) === AssetType.ERC20 &&
+            Number(loan.collateralAssetType) === AssetType.ERC20 &&
+            activeDiamondAddr && (
+              <SwapToRepayPanel
+                loanId={BigInt(loanId!)}
+                chainId={chainId ?? DEFAULT_CHAIN.chainId}
+                collateralAsset={loan.collateralAsset as Address}
+                collateralAmount={loan.collateralAmount}
+                principalAsset={loan.principalAsset as Address}
+                diamondAddress={activeDiamondAddr as Address}
+              />
+            )}
 
           {availability.addCollateral && (
             <div className="action-group">
