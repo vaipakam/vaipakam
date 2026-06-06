@@ -1529,6 +1529,14 @@ async function processLoanLogs(
       if (r) statusUpdates++;
       // T-086 step 12 — clear any live prepay-listing row.
       await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
+    } else if (log.eventName === 'SwapToRepayExecuted') {
+      // T-090 Sub 2 — borrower swap-to-repay full close. The contract
+      // path transitions Active→Repaid (same status flip as `LoanRepaid`)
+      // and atomically calls `LibPrepayCleanup.clearActiveListing`. Mirror
+      // the LoanRepaid handler exactly.
+      const r = await flipLoanStatus(env, chainId, a, log, 'repaid');
+      if (r) statusUpdates++;
+      await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'LoanPreclosedDirect') {
       // Preclose Option 1 — borrower closes early. Transition Active→Repaid.
       const r = await flipLoanStatus(env, chainId, a, log, 'repaid');
@@ -1590,6 +1598,53 @@ async function processLoanLogs(
         .bind(chainId, loanId)
         .first<{ '1': number } | null>();
       if (hasListing) {
+        const refreshedGraceEnd = await _resolveGraceEnd(client, diamond, loanId);
+        await env.DB.prepare(
+          `UPDATE prepay_listings
+             SET grace_period_end = ?, updated_at = ?
+           WHERE chain_id = ? AND loan_id = ?`,
+        )
+          .bind(refreshedGraceEnd, now, chainId, loanId)
+          .run();
+      }
+    } else if (log.eventName === 'SwapToRepayPartialExecuted') {
+      // T-090 Sub 2 — borrower swap-to-repay partial. The contract path
+      // reduces both `loan.principal` (by `partialPrincipal`) and
+      // `loan.collateralAmount` (by `collateralIn` =
+      // `actualCollateralConsumed` — the partial-fill leftover was already
+      // refunded to the borrower vault). The loan stays Active.
+      //
+      // The event doesn't carry post-state (`PartialRepaid` does;
+      // SwapToRepayPartialExecuted predates that pattern by design — the
+      // arithmetic is unambiguous and avoids a per-event RPC quota burn
+      // for the live `getLoanDetails` read other handlers fall back to).
+      // SQL delta update is idempotent against the indexer's cursor
+      // model (events are processed in scan order, one pass per tick).
+      const loanId = Number(a.loanId as bigint);
+      await env.DB.prepare(
+        `UPDATE loans
+           SET principal = CAST(principal AS INTEGER) - ?,
+               collateral_amount = CAST(collateral_amount AS INTEGER) - ?,
+               updated_at = ?
+         WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(
+          String(a.partialPrincipal as bigint),
+          String(a.collateralIn as bigint),
+          Math.floor(Date.now() / 1000),
+          chainId,
+          loanId,
+        )
+        .run();
+      // Mirror PartialRepaid's grace-end refresh — the contract resets
+      // `loan.startTime` on partial swap-to-repay too (RepayFacet:663
+      // pattern), which moves the grace boundary for any live listing.
+      const hasListing2 = await env.DB.prepare(
+        `SELECT 1 FROM prepay_listings WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(chainId, loanId)
+        .first<{ '1': number } | null>();
+      if (hasListing2) {
         const refreshedGraceEnd = await _resolveGraceEnd(client, diamond, loanId);
         await env.DB.prepare(
           `UPDATE prepay_listings
@@ -2586,6 +2641,16 @@ function pluckActivityRefs(
     case 'PartialRepaid':
       return {
         actor: null,
+        loanId: Number(args.loanId as bigint),
+        offerId: null,
+      };
+    // T-090 Sub 2 — `borrower` is `msg.sender` (current borrower-NFT
+    // owner), the load-bearing authority root for the swap-to-repay
+    // surface (see SwapToRepayFacet round-3 P2 #1).
+    case 'SwapToRepayExecuted':
+    case 'SwapToRepayPartialExecuted':
+      return {
+        actor: (args.borrower as string)?.toLowerCase() ?? null,
         loanId: Number(args.loanId as bigint),
         offerId: null,
       };
