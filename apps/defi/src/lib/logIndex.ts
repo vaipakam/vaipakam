@@ -760,8 +760,21 @@ async function runScan(
   // the local cache holds richer information and we keep scanning
   // from there.
   const baseFrom = Math.max(cached.lastBlock + 1, deployBlock);
+  // T-086 Round-8 §19.7e + Codex round-19 P2 #2 — when the cache is
+  // FRESH (lastBlock === deployBlock - 1), bypass the indexer hint
+  // and scan from the deploy block. Otherwise the v2 cache bump's
+  // historical rescan never actually happens: an empty cache + a
+  // healthy indexer would still fast-forward past every pre-existing
+  // OfferConsumedBySale log, leaving the worker-down fallback path
+  // permanently blind to sale terminals that landed before this
+  // build's first run. A full historical scan on first load is the
+  // accepted one-time cost — this platform is pre-live (per the
+  // doc-block above), so no existing user has a v1 cache to migrate
+  // gracefully. Subsequent scans see `cached.lastBlock > deployBlock - 1`
+  // and the fast-forward re-engages normally.
+  const isFreshCache = cached.lastBlock === deployBlock - 1;
   const fromBlock =
-    indexerLastBlockHint && indexerLastBlockHint + 1 > baseFrom
+    !isFreshCache && indexerLastBlockHint && indexerLastBlockHint + 1 > baseFrom
       ? indexerLastBlockHint + 1
       : baseFrom;
 
@@ -903,33 +916,31 @@ async function runScan(
         toBlock,
       });
     } catch (err) {
-      // Codex round-17 P2 #3 + round-18 P2 #2 — DON'T silently
-      // advance the cursor on failure. If the secondary call fails
-      // after the bulk call succeeded, advancing `cursor = toBlock + 1`
-      // means any sale terminal in this chunk's range is permanently
-      // absent from `closedOfferIds`/events. So we engage the SAME
-      // downshift-or-retry path the bulk call uses below: shrink the
-      // chunk size to half (down to 1) and re-run the loop iteration
-      // against the SAME cursor with the smaller window. Once the
-      // chunk is small enough that even the secondary call no longer
-      // fails (or it succeeds at chunk=1), the loop proceeds. If
-      // chunk is already 1 and the call STILL fails (genuinely broken
-      // RPC topic/provider), we accept the degradation and advance —
-      // sold-row capture is best-effort; the indexer-first path covers
-      // the common case.
+      // Codex round-17 P2 #3 + round-18 P2 #2 + round-19 P2 #1 —
+      // DON'T silently advance the cursor on failure. The bulk-call
+      // pattern (throw on non-range error) isn't right here either:
+      // we DON'T want a transient secondary-call failure to crash
+      // the whole `runScan`. So this branch downshifts on ANY
+      // failure (not just range errors) while `effectiveChunk > 1`,
+      // and only accepts the degradation + advances the cursor when
+      // chunk = 1 still fails. Transient 5xx / persistent 429 /
+      // provider-specific topic errors all get the same retry
+      // shrinkage; only a genuinely broken provider at chunk=1 falls
+      // through to "degrade + advance" (the same trade-off the
+      // existing `OfferCanceledDetails` omission accepts).
       const msg = err instanceof Error ? err.message : String(err);
-      if (isBlockRangeOrSizeError(msg) && effectiveChunk > 1) {
+      if (effectiveChunk > 1) {
         const next = Math.max(1, Math.floor(effectiveChunk / 2));
         console.warn(
-          `[logIndex] OfferConsumedBySale getLogs rejected ${effectiveChunk}-block chunk, downshifting to ${next}: ${msg}`,
+          `[logIndex] OfferConsumedBySale getLogs failed at ${effectiveChunk}-block chunk, downshifting to ${next}: ${msg}`,
         );
         effectiveChunk = next;
         continue; // retry same cursor with the smaller chunk
       }
-      // Non-rate-limit / non-range failure at chunk=1 — log and
-      // advance. Same cursor would just fail again indefinitely.
+      // At chunk = 1, repeated failures mean the provider just won't
+      // serve this topic. Advance + log + accept the gap.
       console.warn(
-        `[logIndex] OfferConsumedBySale getLogs failed at chunk=${effectiveChunk} (sold-row capture degraded for this chunk; advancing cursor to avoid infinite retry): ${msg}`,
+        `[logIndex] OfferConsumedBySale getLogs failed at chunk=1 (sold-row capture degraded for this chunk; advancing cursor): ${msg}`,
       );
       consumedScanOk = false;
     }

@@ -2537,13 +2537,24 @@ function pluckActivityRefs(
         offerId: Number(args.offerId as bigint),
       };
     case 'OfferConsumedBySale':
-      // T-086 Round-8 (#358) §19.7 — Scenario A terminal. The event
-      // carries (offerId, executor); actor here is the executor that
-      // drove the sale fill (the Seaport-conformant executor singleton),
-      // distinct from a user-initiated cancel. No loanId — pre-loan
-      // branch.
+      // T-086 Round-8 (#358) §19.7 + Codex round-19 P2 #3 — Scenario A
+      // terminal. The event carries (offerId, executor); `executor` is
+      // the protocol's Seaport-conformant executor singleton (never a
+      // real user), so it's useless as the `actor` filter target. The
+      // BORROWER (= offer creator) is who needs to see this row when
+      // querying `/activity?actor=<wallet>`. We rely on the
+      // `recordActivityEvents` enrichment pass having put the
+      // `creator` field into `args` (looked up from the `offers`
+      // table) before this mapper runs — `actor = creator` then
+      // makes server-side per-wallet filters surface the sold row to
+      // the borrower as expected. The `executor` address stays in
+      // `args.executor` for the unfiltered Activity feed's
+      // address-walk participant derivation.
       return {
-        actor: (args.executor as string)?.toLowerCase() ?? null,
+        actor:
+          (args.creator as string | undefined)?.toLowerCase() ??
+          (args.executor as string)?.toLowerCase() ??
+          null,
         loanId: null,
         offerId: Number(args.offerId as bigint),
       };

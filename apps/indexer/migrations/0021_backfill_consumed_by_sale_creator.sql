@@ -25,17 +25,31 @@
 -- exactly one row per match — no per-event index needed.
 
 UPDATE activity_events
-SET args_json = json_set(
-  activity_events.args_json,
-  '$.creator',
-  (
+SET
+  args_json = json_set(
+    activity_events.args_json,
+    '$.creator',
+    (
+      SELECT creator
+      FROM offers
+      WHERE offers.chain_id = activity_events.chain_id
+        AND offers.offer_id = activity_events.offer_id
+      LIMIT 1
+    )
+  ),
+  -- Codex round-19 P2 #3 — also rewrite the `actor` column from
+  -- `executor` (the protocol's Seaport executor singleton, useless
+  -- as a per-wallet filter target) to `creator` (the borrower) so
+  -- server-side `/activity?actor=<wallet>` queries return sold rows
+  -- to the borrower. Matches the new `pluckActivityRefs` behaviour
+  -- for fresh inserts.
+  actor = (
     SELECT creator
     FROM offers
     WHERE offers.chain_id = activity_events.chain_id
       AND offers.offer_id = activity_events.offer_id
     LIMIT 1
   )
-)
 WHERE kind = 'OfferConsumedBySale'
   AND json_extract(args_json, '$.creator') IS NULL
   AND EXISTS (
