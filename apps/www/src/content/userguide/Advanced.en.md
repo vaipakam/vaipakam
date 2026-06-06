@@ -173,7 +173,12 @@ as a filter chip on the My Offers page:
 
 - **Filled** — accepted by a counterparty; the offer's loan
   reference is the resulting loan id.
-- **Cancelled** — withdrawn by the creator before acceptance.
+- **Cancelled** — the offer reached the Cancelled state via
+  either path: withdrawn by the creator before acceptance,
+  OR cleaned up permissionlessly via `OfferCancelFacet.cancelOffer`
+  once `LibVaipakam.isOfferExpired(offer)` is true (the refund
+  still routes to the creator regardless of who initiated the
+  cancel call).
 - **Sold** — the offer was opted into the borrow-OR-sell
   parallel-sale flow (see Create Offer → Allow optional sale)
   and a marketplace buyer filled the NFT collateral listing
@@ -433,19 +438,27 @@ buyable listing onto OpenSea is a SEPARATE TWO-PART step
 the dapp does NOT automate today:
 
 1. **Record + wire on the diamond.** Call
-   `OfferParallelSaleFacet.postParallelSaleListing` with the
-   corresponding Seaport order shape. This records the order
-   hash and wires the vault's Seaport conduit approval so a
-   later fulfilment can settle — but it does NOT submit the
-   order JSON to OpenSea. By itself, no buyer on OpenSea can
-   see or fill anything.
-2. **Publish to OpenSea.** Submit the same signed Seaport
-   order JSON to OpenSea via the OpenSea API (or any other
-   Seaport-compatible marketplace UI). Only after this step
-   does the listing appear on OpenSea's marketplace UI and
-   become fillable by a buyer. Vaipakam does not currently
-   automate this submission — surfacing the listing publication
-   end-to-end is tracked as a follow-up.
+   `OfferParallelSaleFacet.postParallelSaleListing(uint96
+   offerId, uint256 askPrice, bytes32 conduitKey, FeeLeg[]
+   feeLegs)`. The facet internally builds the canonical
+   Seaport OrderComponents from those inputs, derives the
+   orderHash via `Seaport.getOrderHash`, returns it, and
+   wires the vault's Seaport conduit approval so a later
+   fulfilment can settle. By itself, this on-chain call does
+   NOT submit anything to OpenSea — no buyer can see or fill
+   the listing yet.
+2. **Publish to OpenSea.** Reconstruct the same OrderComponents
+   the facet built (offer = the NFT collateral, consideration
+   = ask + fee-leg recipients, salt + counter + endTime per
+   the facet's `LibPrepayListingWiring._buildOrderComponents`
+   shape), sign the order via the vault's ERC-1271
+   `isValidSignature`, and POST the JSON to the OpenSea
+   `protocol-orders` endpoint (or any other Seaport-compatible
+   marketplace UI). Only after this step does the listing
+   appear on OpenSea's marketplace UI and become fillable.
+   Vaipakam does not currently automate this submission —
+   surfacing the listing publication end-to-end is tracked
+   as a follow-up.
 
 Advanced users following the manual path today need BOTH steps;
 running step 1 alone produces an offer marked eligible with no
@@ -485,8 +498,12 @@ accidentally tick it on an ineligible offer.
   the **net proceeds** (sale price minus marketplace /
   creator fees) into the diamond's waterfall. The waterfall
   then routes that net amount: the lender receives their
-  settlement entitlement (full coupon for full-term loans,
-  pro-rata for partial-term), the treasury cut goes to
+  settlement entitlement (which `LibEntitlement.settlementInterest`
+  computes as the full coupon when the loan was created with
+  `useFullTermInterest = true`, or the pro-rata interest
+  accrued to the settlement timestamp otherwise — the gate is
+  the loan policy, not whether the sale happens before or
+  after scheduled maturity), the treasury cut goes to
   treasury, and the remainder is deposited DIRECTLY into
   the current borrower-position NFT holder's vault (via
   `LibUserVault.getOrCreate` + a vault deposit). No Claim
@@ -512,13 +529,18 @@ classes, surfaced at different protocol stages:
   `_settleLoanFromParallelSale` reverts with
   `ParallelSaleBlockedByOpenOffsetOffer`. The listing remains
   valid on OpenSea but any fill attempt reverts until the
-  offset is cancelled. The dapp does NOT currently surface a
-  dedicated banner / notification on the Loan Details page
+  offset link is cleared. The dapp does NOT currently surface
+  a dedicated banner / notification on the Loan Details page
   for this combination; users will see fills revert and may
-  need to inspect the revert reason on a block explorer (or
-  cancel the offset offer manually from PrecloseFacet) to
-  unblock the listing. A dedicated UI surface for the conflict
-  is queued as a separate UX follow-up.
+  need to inspect the revert reason on a block explorer to
+  diagnose. The cleanup path is the ordinary offer-cancel
+  surface — call `OfferCancelFacet.cancelOffer(offsetOfferId)`
+  to cancel the offset offer, which releases the offset link
+  and unblocks the parallel-sale fill (PrecloseFacet has no
+  separate cancellation entry point; the offset is bound to
+  the linked offer, so cancelling the linked offer clears it).
+  A dedicated UI surface for the conflict is queued as a
+  separate UX follow-up.
 
 ---
 
@@ -914,10 +936,14 @@ the fee-schedule fetch from the OpenSea API is treated as
 advisory; the actual fulfillment data is fetched at
 Match-click time. If that fulfillment-data fetch fails (rate
 limit, API outage, or unsupported collection shape), the
-Match click returns false rather than building a transaction
-the diamond would reject — so a fee-enforced collection's
-panel may show offers you can browse but not all of them are
-clickable-to-match in a given moment.
+dapp-side Match click handler ABORTS before any
+`NFTPrepayListingAtomicFacet.matchOpenSeaOffer` transaction
+is constructed — no calldata, no signature prompt, no
+revert. The on-chain function itself isn't a `bool`-returning
+selector; when it does run it returns a `bytes32` order hash
+or reverts. So a fee-enforced collection's panel may show
+offers you can browse but not all of them are clickable-
+to-match in a given moment.
 
 When you find an acceptable offer and click **Match offer**,
 the dapp opens the **Confirm Match** modal, which restates the
@@ -975,11 +1001,13 @@ buyer could step in at the matched price.
   CLICK TIME. The Match panel renders regardless of
   fee-schedule fetch status; the click-time fulfillment-data
   fetch is the gate. If that fetch fails (rate limit, API
-  outage, unsupported collection shape), `matchOpenSeaOffer`
-  returns false and nothing happens — no transaction is
-  submitted, no banner is shown in advance. You can retry the
-  click later, or fill the listing directly on OpenSea at the
-  listed ask in the meantime.
+  outage, unsupported collection shape), the dapp-side click
+  handler aborts before constructing the on-chain
+  `matchOpenSeaOffer` transaction — no calldata is built,
+  no signature prompt fires, no banner is shown in advance.
+  You can retry the click later (the fetch may have just
+  been a transient API blip), or fill the listing directly
+  on OpenSea at the listed ask in the meantime.
 
 ---
 
