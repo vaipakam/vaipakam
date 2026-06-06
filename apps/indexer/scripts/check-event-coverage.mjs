@@ -77,10 +77,6 @@ const DELIBERATELY_NOT_HANDLED = {
     'T-086 Round-8 (#358) §19.7 — companion event recording the proceeds amount credited to the borrower\'s vault protocol-tracked balance. UI-facing breadcrumb so the borrower\'s "withdrawable balance" pane can refresh; no loans/offers row field for it directly (the proceeds land in `vaultProtocolTrackedBalance` which the standard `vaultWithdrawERC20` pulls from). Schema-side activity_events surfacing is a follow-up.',
   OfferSaleProceedsSplit:
     'T-086 Round-8 (#358) Codex round-3 user-directed redesign — fires on the post-acceptance parallel-sale fill path (lender accepted first, buyer fills later, diamond splits proceeds + settles the loan atomically). The loan-side terminal flip is recorded via the `LoanRepaid` / `LoanSettled` event chain that the existing executorFinalizePrepaySale path emits via LibLifecycle; this companion event carries the per-recipient split breakdown for activity_events surfacing. Schema-side handler is a Round-9 follow-up.',
-  SwapToRepayExecuted:
-    'T-090 Sub 1 (#385) — borrower-initiated full swap-to-repay event. Handler tracked as Sub 2 (#386). After Sub 2 lands, REMOVE this entry — the dead-allowlist check will flag it if you forget the removal. Until then, the loan-status flip is OK to defer because the same call writes `lenderClaims` / `borrowerClaims` slots; the indexer\'s downstream UI will pick up the next event (e.g. `LenderFundsClaimed` / `BorrowerFundsClaimed`) and refresh the loan state via the production `getLoanDetails` read-back path.',
-  SwapToRepayPartialExecuted:
-    'T-090 Sub 1 (#385) — borrower-initiated partial swap-to-repay event. Handler tracked as Sub 2 (#386). After Sub 2 lands, REMOVE this entry. Until then, the partial principal / collateral reduction is observable via the standard `getLoanDetails` live read; the loan row stays Active.',
 };
 
 /** Recursively collect every `.sol` file under a directory. */

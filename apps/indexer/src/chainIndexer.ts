@@ -1529,6 +1529,14 @@ async function processLoanLogs(
       if (r) statusUpdates++;
       // T-086 step 12 — clear any live prepay-listing row.
       await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
+    } else if (log.eventName === 'SwapToRepayExecuted') {
+      // T-090 Sub 2 — borrower swap-to-repay full close. The contract
+      // path transitions Active→Repaid (same status flip as `LoanRepaid`)
+      // and atomically calls `LibPrepayCleanup.clearActiveListing`. Mirror
+      // the LoanRepaid handler exactly.
+      const r = await flipLoanStatus(env, chainId, a, log, 'repaid');
+      if (r) statusUpdates++;
+      await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'LoanPreclosedDirect') {
       // Preclose Option 1 — borrower closes early. Transition Active→Repaid.
       const r = await flipLoanStatus(env, chainId, a, log, 'repaid');
@@ -1591,6 +1599,99 @@ async function processLoanLogs(
         .first<{ '1': number } | null>();
       if (hasListing) {
         const refreshedGraceEnd = await _resolveGraceEnd(client, diamond, loanId);
+        await env.DB.prepare(
+          `UPDATE prepay_listings
+             SET grace_period_end = ?, updated_at = ?
+           WHERE chain_id = ? AND loan_id = ?`,
+        )
+          .bind(refreshedGraceEnd, now, chainId, loanId)
+          .run();
+      }
+    } else if (log.eventName === 'SwapToRepayPartialExecuted') {
+      // T-090 Sub 2 — borrower swap-to-repay partial. The contract path
+      // reduces `loan.principal` (by `partialPrincipal`), reduces
+      // `loan.collateralAmount` (by `collateralIn` =
+      // `actualCollateralConsumed`; partial-fill leftover refunded to
+      // borrower vault), and resets `loan.startTime = block.timestamp`
+      // (RepayFacet.repayPartial:663 pattern). The loan stays Active.
+      //
+      // Idempotency via canonical chain read (Codex round-2 P1 on
+      // PR #391): a delta-based UPDATE (`principal -= partialPrincipal`)
+      // would double-subtract if the cron pass retries this block range
+      // after the UPDATE landed but before `indexer_cursor` advances
+      // (recordActivityEvents / refreshStubLoans / cursor-write failure
+      // cases). Instead read the canonical post-state via
+      // `getLoanDetails(loanId)` and write absolute values — the same
+      // RPC quota the existing stub-loan refresh path spends, and
+      // identical reruns produce identical writes.
+      const loanId = Number(a.loanId as bigint);
+      // Codex round-3 P2 #1 — pin the read to the event's block so a
+      // later partial swap past `scanTo` can't bleed through and write
+      // unfinalized state for the older safe log we're handling now.
+      // Pass through any RPC error so the cron pass aborts and retries
+      // (Codex round-3 P1) — `refreshStubLoans` only heals `is_stub =
+      // 1` rows, so swallowing here would leave principal /
+      // collateral_amount / start_time stale on this normal Active row
+      // until some unrelated terminal event touches the loan.
+      const detail = (await client.readContract({
+        address: diamond,
+        abi: DIAMOND_LOAN_DETAILS_ABI,
+        functionName: 'getLoanDetails',
+        args: [BigInt(loanId)],
+        blockNumber: log.blockNumber,
+      })) as {
+        principal: bigint;
+        collateralAmount: bigint;
+        durationDays: bigint;
+        startTime: bigint;
+      };
+      await env.DB.prepare(
+        `UPDATE loans
+           SET principal = ?,
+               collateral_amount = ?,
+               start_time = ?,
+               updated_at = ?
+         WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(
+          detail.principal.toString(),
+          detail.collateralAmount.toString(),
+          Number(detail.startTime),
+          now,
+          chainId,
+          loanId,
+        )
+        .run();
+      // Mirror PartialRepaid's grace-end refresh — the contract resets
+      // `loan.startTime` on partial swap-to-repay too (RepayFacet:663
+      // pattern), which moves the grace boundary for any live listing.
+      const hasListing2 = await env.DB.prepare(
+        `SELECT 1 FROM prepay_listings WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(chainId, loanId)
+        .first<{ '1': number } | null>();
+      if (hasListing2) {
+        // Codex round-4 P2 — anchor the grace refresh to the SAME event
+        // block as the loan read above. `_resolveGraceEnd` calls
+        // `getLoanDetails` at the node's `latest` head; if there's a
+        // later partial repay or governance grace change past `scanTo`,
+        // we'd write a grace_period_end that contradicts the principal
+        // / collateral_amount we just wrote at log.blockNumber. Read
+        // `getEffectiveGraceSeconds` at the event block too and
+        // compute grace_period_end inline from the loan fields we
+        // already have — also saves one RPC call.
+        const graceSeconds = Number(
+          (await client.readContract({
+            address: diamond,
+            abi: GRACE_SECONDS_ABI,
+            functionName: 'getEffectiveGraceSeconds',
+            args: [detail.durationDays],
+            blockNumber: log.blockNumber,
+          })) as bigint,
+        );
+        const endTime =
+          Number(detail.startTime) + Number(detail.durationDays) * 86400;
+        const refreshedGraceEnd = endTime + graceSeconds;
         await env.DB.prepare(
           `UPDATE prepay_listings
              SET grace_period_end = ?, updated_at = ?
@@ -2586,6 +2687,16 @@ function pluckActivityRefs(
     case 'PartialRepaid':
       return {
         actor: null,
+        loanId: Number(args.loanId as bigint),
+        offerId: null,
+      };
+    // T-090 Sub 2 — `borrower` is `msg.sender` (current borrower-NFT
+    // owner), the load-bearing authority root for the swap-to-repay
+    // surface (see SwapToRepayFacet round-3 P2 #1).
+    case 'SwapToRepayExecuted':
+    case 'SwapToRepayPartialExecuted':
+      return {
+        actor: (args.borrower as string)?.toLowerCase() ?? null,
         loanId: Number(args.loanId as bigint),
         offerId: null,
       };
