@@ -50,6 +50,7 @@ import { PeriodicInterestCheckpointCard } from "../components/loanDetails/Period
 import { PrepayListingBanner } from "../components/loanDetails/PrepayListingBanner";
 import { PrepayListingActions } from "../components/loanDetails/PrepayListingActions";
 import { OpenSeaOffersSection } from "../components/loanDetails/OpenSeaOffersSection";
+import { SwapToRepayPanel } from "../components/loanDetails/SwapToRepayPanel";
 import { useNFTPrepayListing } from "../hooks/useNFTPrepayListing";
 import "./LoanDetails.css";
 
@@ -1069,6 +1070,54 @@ export default function LoanDetails() {
               </div>
             )}
           </div>
+
+          {/* T-090 #403 — borrower-initiated swap-to-repay. Mirrors
+              the on-chain `SwapToRepayFacet.swapToRepayFull` gating
+              EXACTLY so we never show a button that would always
+              revert:
+              - borrower-NFT-owner authority (Sub 1 Codex round-1 P1 #3)
+              - NOT also the lender-side holder OR the original
+                `loan.lender` (Codex PR #409 round-2 P2 #1 +
+                round-3 P2 #1 — the contract checks BOTH the current
+                lender-NFT holder AND `loan.lender` for the
+                self-repay guard; the original lender could have
+                transferred the lender NFT away and later landed on
+                the borrower NFT)
+              - Active status only (FallbackPending rejected on-chain)
+              - NOT past grace (contract reverts
+                `RepaymentPastGracePeriod`; round-2 P2 #3 + round-3
+                P2 #2 — the panel re-checks at submit-click time to
+                close the up-to-60s stale-minute-tick window)
+              - both asset types ERC20 (P2 #4 Sub 1)
+              - both legs Liquid (`UnsupportedLoanShape` otherwise) */}
+          {isBorrower &&
+            !isLender &&
+            !!loan.lender &&
+            !!address &&
+            address.toLowerCase() !== loan.lender.toLowerCase() &&
+            isActive &&
+            !pastPrepayGrace &&
+            !isIlliquidLoan &&
+            Number(loan.assetType) === AssetType.ERC20 &&
+            Number(loan.collateralAssetType) === AssetType.ERC20 &&
+            activeDiamondAddr && (
+              <SwapToRepayPanel
+                loanId={BigInt(loanId!)}
+                chainId={chainId ?? DEFAULT_CHAIN.chainId}
+                collateralAsset={loan.collateralAsset as Address}
+                collateralAmount={loan.collateralAmount}
+                principalAsset={loan.principalAsset as Address}
+                diamondAddress={activeDiamondAddr as Address}
+                graceUntilSec={
+                  prepayGraceSeconds === null
+                    ? endTime
+                    : endTime + Number(prepayGraceSeconds)
+                }
+                actionLoading={actionLoading}
+                onActionLoadingChange={setActionLoading}
+                onAfterSuccess={loadLoan}
+              />
+            )}
 
           {availability.addCollateral && (
             <div className="action-group">
