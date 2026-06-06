@@ -132,6 +132,19 @@ const LOAN_SETTLED_TOPIC0 = id('LoanSettled(uint256)');
 const PARTIAL_REPAID_TOPIC0 = id(
   'PartialRepaid(uint256,uint256,uint256)',
 );
+// T-090 Sub 3 — borrower swap-to-repay events for the worker-down
+// fallback scanner. Sigs match `apps/contracts/src/facets/SwapToRepayFacet.sol`:
+//   event SwapToRepayExecuted(uint256 indexed loanId, address indexed borrower,
+//       uint256 collateralIn, uint256 principalOut, uint256 adapterUsed);
+//   event SwapToRepayPartialExecuted(uint256 indexed loanId, address indexed borrower,
+//       uint256 collateralIn, uint256 principalOut, uint256 partialPrincipal,
+//       uint256 adapterUsed);
+const SWAP_TO_REPAY_EXECUTED_TOPIC0 = id(
+  'SwapToRepayExecuted(uint256,address,uint256,uint256,uint256)',
+);
+const SWAP_TO_REPAY_PARTIAL_EXECUTED_TOPIC0 = id(
+  'SwapToRepayPartialExecuted(uint256,address,uint256,uint256,uint256,uint256)',
+);
 const CLAIM_RETRY_EXECUTED_TOPIC0 = id(
   'ClaimRetryExecuted(uint256,bool,uint256)',
 );
@@ -191,6 +204,9 @@ export type ActivityEventKind =
   | 'LiquidationFallbackSplit'
   | 'LoanSettled'
   | 'PartialRepaid'
+  // T-090 Sub 3 — borrower-initiated swap-to-repay surface.
+  | 'SwapToRepayExecuted'
+  | 'SwapToRepayPartialExecuted'
   | 'ClaimRetryExecuted'
   | 'BorrowerLifRebateClaimed'
   | 'StakingRewardsClaimed'
@@ -368,7 +384,15 @@ function storageKey(chainId: number, diamond: string): string {
   // worker-down fallback path. The bump forces a one-time re-scan
   // from the deploy block on next page load; correctness over the
   // (one-time) extra cold-scan cost.
-  return `vaipakam:logIndex:v2:${chainId}:${diamond.toLowerCase()}`;
+  //
+  // T-090 Sub 3 + Codex PR #402 round-2 P2 #2 — bumped `v2` → `v3`
+  // because the SwapToRepay secondary scan was added in this PR. Same
+  // rationale: any existing browser cursor that has already advanced
+  // past a swap-to-repay block would never replay it under the same
+  // key, so SwapToRepayExecuted / SwapToRepayPartialExecuted rows
+  // would be missing from the worker-down fallback path. One-time
+  // re-scan from the deploy block on next page load.
+  return `vaipakam:logIndex:v3:${chainId}:${diamond.toLowerCase()}`;
 }
 
 function emptyCache(deployBlock: number): CachedShape {
@@ -1070,6 +1094,13 @@ async function runScan(
             LIQUIDATION_FALLBACK_SPLIT_TOPIC0,
             LOAN_SETTLED_TOPIC0,
             PARTIAL_REPAID_TOPIC0,
+            // T-090 Sub 3 — `SWAP_TO_REPAY_EXECUTED_TOPIC0` +
+            // `SWAP_TO_REPAY_PARTIAL_EXECUTED_TOPIC0` deliberately omitted
+            // here. The bulk topic OR-list must stay at ≤24 (publicnode /
+            // free-tier silent cap drops results once it crosses 25), and
+            // adding two more would push us to 26. Captured below in a
+            // dedicated secondary scan call, same pattern as
+            // `OFFER_CONSUMED_BY_SALE_TOPIC0`.
             CLAIM_RETRY_EXECUTED_TOPIC0,
             BORROWER_LIF_REBATE_CLAIMED_TOPIC0,
             STAKING_REWARDS_CLAIMED_TOPIC0,
@@ -1147,6 +1178,45 @@ async function runScan(
     void consumedScanOk;
     if (consumedLogs.length > 0) {
       logs = logs.concat(consumedLogs);
+    }
+
+    // T-090 Sub 3 — third `eth_getLogs` call dedicated to the two
+    // SwapToRepay topics, same rationale as the OfferConsumedBySale
+    // secondary scan: keeps the bulk call's topic OR-list at 24 (under
+    // the publicnode silent cap) while still capturing the new
+    // borrower-initiated swap-to-repay events on the worker-down
+    // fallback path. Logs merge into the main scan via concat; the
+    // decoder branch matches by `topic0` so ordering is irrelevant.
+    let swapLogs: RawLog[] = [];
+    try {
+      swapLogs = await safeGetLogs(rpcUrl, {
+        address: diamondAddress,
+        topics: [
+          [
+            SWAP_TO_REPAY_EXECUTED_TOPIC0,
+            SWAP_TO_REPAY_PARTIAL_EXECUTED_TOPIC0,
+          ],
+        ],
+        fromBlock: cursor,
+        toBlock,
+      });
+    } catch (err) {
+      // Same degradation policy as OfferConsumedBySale above.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (effectiveChunk > 1) {
+        const next = Math.max(1, Math.floor(effectiveChunk / 2));
+        console.warn(
+          `[logIndex] SwapToRepay getLogs failed at ${effectiveChunk}-block chunk, downshifting to ${next}: ${msg}`,
+        );
+        effectiveChunk = next;
+        continue;
+      }
+      console.warn(
+        `[logIndex] SwapToRepay getLogs failed at chunk=1 (swap-to-repay capture degraded for this chunk; advancing cursor): ${msg}`,
+      );
+    }
+    if (swapLogs.length > 0) {
+      logs = logs.concat(swapLogs);
     }
 
     // Small inter-chunk pause — keeps us under Alchemy free-tier CUPS without
@@ -1570,6 +1640,61 @@ async function runScan(
           loanId,
           amountRepaid,
           newPrincipal,
+        });
+      } else if (topic0 === SWAP_TO_REPAY_EXECUTED_TOPIC0) {
+        // T-090 Sub 3 — SwapToRepayExecuted(loanId indexed, borrower indexed,
+        // collateralIn, principalOut, adapterUsed). Both loanId and borrower
+        // are indexed (Sub 1 round-3 P2 #1 — `borrower` is `msg.sender`, the
+        // current borrower-NFT owner). Surface the row keyed by the borrower
+        // so wallet-filtered views catch it.
+        if (topics.length < 3) continue;
+        const loanId = BigInt(topics[1]).toString();
+        const borrower = ('0x' + topics[2].slice(26)).toLowerCase();
+        let collateralIn = '0';
+        let principalOut = '0';
+        try {
+          const [c, p] = decodeAbiParameters(
+            parseAbiParameters('uint256, uint256, uint256'),
+            event.data,
+          );
+          collateralIn = (c as bigint).toString();
+          principalOut = (p as bigint).toString();
+        } catch {
+          // Malformed data — keep defaults.
+        }
+        addEvent('SwapToRepayExecuted', [borrower], {
+          loanId,
+          borrower,
+          collateralIn,
+          principalOut,
+        });
+      } else if (topic0 === SWAP_TO_REPAY_PARTIAL_EXECUTED_TOPIC0) {
+        // T-090 Sub 3 — SwapToRepayPartialExecuted(loanId indexed,
+        // borrower indexed, collateralIn, principalOut, partialPrincipal,
+        // adapterUsed). Same topic layout as the full close.
+        if (topics.length < 3) continue;
+        const loanId = BigInt(topics[1]).toString();
+        const borrower = ('0x' + topics[2].slice(26)).toLowerCase();
+        let collateralIn = '0';
+        let principalOut = '0';
+        let partialPrincipal = '0';
+        try {
+          const [c, p, pp] = decodeAbiParameters(
+            parseAbiParameters('uint256, uint256, uint256, uint256'),
+            event.data,
+          );
+          collateralIn = (c as bigint).toString();
+          principalOut = (p as bigint).toString();
+          partialPrincipal = (pp as bigint).toString();
+        } catch {
+          // Malformed data — keep defaults.
+        }
+        addEvent('SwapToRepayPartialExecuted', [borrower], {
+          loanId,
+          borrower,
+          collateralIn,
+          principalOut,
+          partialPrincipal,
         });
       } else if (topic0 === CLAIM_RETRY_EXECUTED_TOPIC0) {
         // ClaimRetryExecuted(loanId indexed, succeeded, proceeds)

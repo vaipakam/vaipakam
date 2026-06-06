@@ -51,6 +51,9 @@ const KIND_LABELS: Record<ActivityEventKind, string> = {
   LiquidationFallbackSplit: 'Fallback collateral split',
   LoanSettled: 'Loan settled',
   PartialRepaid: 'Partial repayment',
+  // T-090 Sub 3 — borrower-initiated swap-to-repay surface.
+  SwapToRepayExecuted: 'Loan repaid via collateral swap',
+  SwapToRepayPartialExecuted: 'Partial repayment via collateral swap',
   ClaimRetryExecuted: 'Claim-time swap retry',
   BorrowerLifRebateClaimed: 'VPFI rebate claimed',
   StakingRewardsClaimed: 'VPFI staking rewards claimed',
@@ -81,6 +84,10 @@ const KIND_ACCENT: Record<ActivityEventKind, string> = {
   LiquidationFallbackSplit: 'failure',
   LoanSettled: 'success',
   PartialRepaid: 'info',
+  // T-090 Sub 3 — `success` for full close (Active → Repaid),
+  // `info` for partial (loan stays Active).
+  SwapToRepayExecuted: 'success',
+  SwapToRepayPartialExecuted: 'info',
   ClaimRetryExecuted: 'info',
   BorrowerLifRebateClaimed: 'info',
   StakingRewardsClaimed: 'success',
@@ -126,6 +133,16 @@ function shortHash(hash: string): string {
 const KIND_PRIORITY: ActivityEventKind[] = [
   'LoanDefaulted',
   'LoanRepaid',
+  'SwapToRepayExecuted',
+  // T-090 Sub 3 — periodic-interest loans emit
+  // `RepayPartialPeriodAdvanced` + `PeriodicInterestSettled` in the
+  // same tx as `swapToRepayPartial`. Without the partial kind in this
+  // priority list, `pickPrimary` would fall back to the first
+  // periodic event (which isn't in the priority list either) and
+  // surface a less-meaningful headline for the row. Put it just
+  // below the full-close kind so the partial reduction itself is
+  // the headline, not its periodic side-effect.
+  'SwapToRepayPartialExecuted',
   'LoanInitiated',
   'LoanSold',
   'LoanObligationTransferred',
@@ -178,6 +195,12 @@ function renderArgValue(key: string, value: string | number | boolean): string {
     'lateFeePaid',
     'vpfiAmount',
     'ethAmount',
+    // T-090 Sub 3 — swap-to-repay arg keys carry wei-sized token
+    // amounts that should render in the same `formatUnitsPretty` shape
+    // as the canonical repayment rows.
+    'collateralIn',
+    'principalOut',
+    'partialPrincipal',
   ]);
   if (amountKeys.has(key) && /^\d+$/.test(String(value))) {
     try {
@@ -212,6 +235,10 @@ const ARG_LABELS: Record<string, string> = {
   user: 'User',
   vpfiAmount: 'VPFI',
   ethAmount: 'ETH paid',
+  // T-090 Sub 3 — labels for swap-to-repay event args.
+  collateralIn: 'Collateral swapped',
+  principalOut: 'Principal received',
+  partialPrincipal: 'Principal retired',
 };
 
 /**

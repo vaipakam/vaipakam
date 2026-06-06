@@ -66,6 +66,9 @@ const KIND_LABEL_KEY: Record<ActivityEventKind, string> = {
   LiquidationFallbackSplit: 'loanTimeline.liquidationFallbackSplit',
   LoanSettled: 'loanTimeline.loanSettled',
   PartialRepaid: 'loanTimeline.partialRepaid',
+  // T-090 Sub 3 — borrower-initiated swap-to-repay surface.
+  SwapToRepayExecuted: 'loanTimeline.swapToRepayExecuted',
+  SwapToRepayPartialExecuted: 'loanTimeline.swapToRepayPartialExecuted',
   ClaimRetryExecuted: 'loanTimeline.claimRetryExecuted',
   BorrowerLifRebateClaimed: 'loanTimeline.lifRebateClaimed',
   // The following kinds aren't loan-scoped (no `args.loanId`) so they're
@@ -98,6 +101,10 @@ const KIND_ACCENT: Record<ActivityEventKind, 'success' | 'failure' | 'info' | 'w
   LiquidationFallbackSplit: 'warn',
   LoanSettled: 'success',
   PartialRepaid: 'info',
+  // T-090 Sub 3 — full close → success (terminal Repaid); partial →
+  // info (loan stays Active).
+  SwapToRepayExecuted: 'success',
+  SwapToRepayPartialExecuted: 'info',
   ClaimRetryExecuted: 'info',
   BorrowerLifRebateClaimed: 'info',
   StakingRewardsClaimed: 'success',
@@ -115,6 +122,10 @@ function iconForKind(kind: ActivityEventKind) {
     case 'LoanRepaid':
     case 'PartialRepaid':
     case 'LoanSettled':
+    // T-090 Sub 3 — swap-to-repay uses the same checkmark as the
+    // canonical repay paths.
+    case 'SwapToRepayExecuted':
+    case 'SwapToRepayPartialExecuted':
       return CheckCircle;
     case 'LoanDefaulted':
     case 'LiquidationFallback':
