@@ -173,8 +173,7 @@ as a filter chip on the My Offers page:
 
 - **Filled** — accepted by a counterparty; the offer's loan
   reference is the resulting loan id.
-- **Cancelled** — withdrawn by the creator before acceptance
-  (or auto-expired past the GTT deadline).
+- **Cancelled** — withdrawn by the creator before acceptance.
 - **Sold** — the offer was opted into the borrow-OR-sell
   parallel-sale flow (see Create Offer → Allow optional sale)
   and a marketplace buyer filled the NFT collateral listing
@@ -186,11 +185,12 @@ as a filter chip on the My Offers page:
   feed as `Offer sold via OpenSea` for the borrower (offer
   creator). The on-chain event itself is
   `OfferConsumedBySale(uint96 indexed offerId, address indexed executor)` —
-  only the executor address is indexed on-chain. The borrower's
+  both the offer id AND the executor address are indexed on-chain,
+  but the borrower / creator address is NOT. The borrower's
   wallet match for the Activity feed is added by the indexer at
   ingestion time (it joins the offer row to look up the creator),
-  so the per-wallet filter finds the borrower without needing the
-  event itself to index them.
+  so the per-wallet filter finds the borrower without the
+  event itself indexing them.
 
 Past-GTT (Good-Til-Time) offers that never reached a terminal
 event aren't yet exposed as a distinct status chip in the dapp;
@@ -408,8 +408,7 @@ Defaults are sensible for most users.
 
 <a id="create-offer.borrow-or-sell"></a>
 
-### Allow optional sale of this NFT on OpenSea (borrower
-NFT-collateral offers only)
+### Allow optional sale of this NFT on OpenSea (borrower NFT-collateral offers only)
 
 If you're posting a **borrower offer** with **ERC-721 or
 ERC-1155 collateral** and an **ERC-20 principal**, the dapp
@@ -479,14 +478,20 @@ accidentally tick it on an ineligible offer.
   carries through loan initiation — neither the borrower
   NFT lock nor the listing is torn down. A later buyer
   fill triggers the diamond's settlement waterfall in one
-  Seaport transaction: the lender receives their
-  settlement entitlement (full coupon for full-term
-  loans, pro-rata for partial-term), the treasury cut
-  goes to treasury, and the remainder is deposited
-  DIRECTLY into the current borrower-position NFT holder's
-  vault (via `LibUserVault.getOrCreate` + a vault deposit).
-  No Claim Center claim is created — check your vault
-  balance after the sale lands.
+  Seaport transaction. Same fee-leg note as Scenario A:
+  on fee-enforced collections, Seaport routes OpenSea
+  protocol-fee and creator-fee legs directly to their
+  configured recipients first, and the executor passes only
+  the **net proceeds** (sale price minus marketplace /
+  creator fees) into the diamond's waterfall. The waterfall
+  then routes that net amount: the lender receives their
+  settlement entitlement (full coupon for full-term loans,
+  pro-rata for partial-term), the treasury cut goes to
+  treasury, and the remainder is deposited DIRECTLY into
+  the current borrower-position NFT holder's vault (via
+  `LibUserVault.getOrCreate` + a vault deposit). No Claim
+  Center claim is created — check your vault balance after
+  the sale lands.
 
 **What you can't combine it with.** Two distinct conflict
 classes, surfaced at different protocol stages:
@@ -880,12 +885,14 @@ to any token in the collection. Vaipakam surfaces these item
 offers on the Loan Details page in real time — a separate
 panel under "List collateral on OpenSea" with one row per
 incoming offer. The panel applies a **buffer threshold** —
-principal plus the lender's settlement entitlement (full
-coupon for full-term-interest loans, pro-rata otherwise),
-plus the treasury cut, plus a safety buffer — and **greys
-out** offers that don't clear it. You can see market
-interest at every level but can only Match offers that the
-protocol will actually settle.
+the lender's settlement entitlement (which ALREADY INCLUDES
+principal plus the full coupon for full-term-interest loans
+or the pro-rata interest otherwise — see
+`PrepayListingFacet.getPrepayContext().lenderLeg`), plus the
+treasury cut, plus a safety buffer — and **greys out** offers
+that don't clear it. You can see market interest at every
+level but can only Match offers that the protocol will
+actually settle.
 
 Collection-wide / criteria offers (bids that any token in
 the collection can fulfill) stay on OpenSea but **don't
@@ -949,9 +956,10 @@ buyer could step in at the matched price.
   panel row (the row shows value, payment token, offer kind,
   truncated bidder, and end time). The split is enforced
   on-chain by the diamond at settlement — the protocol's
-  settlement buffer guarantees the price covers principal plus
-  the lender's settlement entitlement (full coupon on
-  full-term-interest loans, pro-rata otherwise) plus the
+  settlement buffer guarantees the price covers
+  the lender's settlement entitlement (which already includes
+  principal plus the full coupon on full-term-interest loans
+  or the pro-rata interest otherwise) plus the
   treasury cut, so the split is always at least neutral for
   you. If you want to see the projected split before
   confirming, the diamond exposes
