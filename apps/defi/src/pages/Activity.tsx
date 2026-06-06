@@ -195,12 +195,20 @@ function renderArgValue(key: string, value: string | number | boolean): string {
     'lateFeePaid',
     'vpfiAmount',
     'ethAmount',
-    // T-090 Sub 3 — swap-to-repay arg keys carry wei-sized token
-    // amounts that should render in the same `formatUnitsPretty` shape
-    // as the canonical repayment rows.
-    'collateralIn',
-    'principalOut',
-    'partialPrincipal',
+    // T-090 Sub 3 — `collateralIn` / `principalOut` /
+    // `partialPrincipal` are deliberately NOT included here, because
+    // the Activity row doesn't have the loan's asset addresses in
+    // scope and so can't resolve the per-token decimals. The
+    // hardcoded `formatUnitsPretty(..., 18)` path the other entries
+    // use would mis-render a 6-decimal token (USDC, USDT) as a
+    // sub-femto value (Codex PR #405 round-1 P2 #2). Per-token
+    // decimal awareness across the whole Activity formatter is a
+    // separate refactor (the same gap exists for the existing
+    // `principal` / `collateralAmount` keys); for swap-to-repay
+    // the LoanTimeline `Breakdown` renders these fields with
+    // proper TokenAmount decimal lookup. Activity rows show the
+    // raw integers for now, which is at worst hard-to-read but
+    // never wrong-by-a-decimal.
   ]);
   if (amountKeys.has(key) && /^\d+$/.test(String(value))) {
     try {

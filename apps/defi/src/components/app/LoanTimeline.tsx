@@ -357,6 +357,56 @@ function Breakdown({ ev, principalAsset, collateralAsset }: BreakdownProps) {
         </dl>
       );
     }
+    case 'SwapToRepayExecuted': {
+      // T-090 Sub 3 — borrower-initiated full close via collateral swap.
+      // Render with proper token-decimal awareness via TokenAmount;
+      // `collateralIn` is the asset the borrower actually paid (the
+      // partial-fill leftover was refunded upstream), `principalOut`
+      // is what the swap delivered to the diamond.
+      const collateralIn = asBigInt(args.collateralIn);
+      const principalOut = asBigInt(args.principalOut);
+      return (
+        <dl className="loan-timeline-grid">
+          <Row label={t('loanTimeline.lblCollateralSwapped')}>
+            <TokenAmount amount={collateralIn} address={collateralAddr} withSymbol />
+          </Row>
+          <Row label={t('loanTimeline.lblPrincipalReceived')}>
+            <TokenAmount amount={principalOut} address={principalAddr} withSymbol />
+          </Row>
+          {typeof args.borrower === 'string' && (
+            <Row label={t('loanTimeline.lblBorrower')}>
+              <AddressDisplay address={args.borrower as string} copyable />
+            </Row>
+          )}
+        </dl>
+      );
+    }
+    case 'SwapToRepayPartialExecuted': {
+      // T-090 Sub 3 — borrower-initiated partial reduction via collateral
+      // swap. Adds `partialPrincipal` (the principal amount retired after
+      // the lender + treasury haircut) on top of the full-close fields.
+      const collateralIn = asBigInt(args.collateralIn);
+      const principalOut = asBigInt(args.principalOut);
+      const partialPrincipal = asBigInt(args.partialPrincipal);
+      return (
+        <dl className="loan-timeline-grid">
+          <Row label={t('loanTimeline.lblCollateralSwapped')}>
+            <TokenAmount amount={collateralIn} address={collateralAddr} withSymbol />
+          </Row>
+          <Row label={t('loanTimeline.lblPrincipalReceived')}>
+            <TokenAmount amount={principalOut} address={principalAddr} withSymbol />
+          </Row>
+          <Row label={t('loanTimeline.lblPrincipalRetired')}>
+            <TokenAmount amount={partialPrincipal} address={principalAddr} withSymbol />
+          </Row>
+          {typeof args.borrower === 'string' && (
+            <Row label={t('loanTimeline.lblBorrower')}>
+              <AddressDisplay address={args.borrower as string} copyable />
+            </Row>
+          )}
+        </dl>
+      );
+    }
     case 'LoanRepaid': {
       const interestPaid = asBigInt(args.interestPaid);
       const lateFeePaid = asBigInt(args.lateFeePaid);

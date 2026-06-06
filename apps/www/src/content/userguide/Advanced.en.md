@@ -962,6 +962,38 @@ Permissionless actions available to anyone regardless of role:
 - **Repay** — full or partial. Partial reduces outstanding
   and raises HF; full triggers terminal settlement, including
   the time-weighted VPFI Loan Initiation Fee rebate.
+- **Swap collateral to repay** — for ERC-20-on-ERC-20 loans
+  only, where you've pledged one ERC-20 as collateral against
+  a different ERC-20 principal. Instead of having to withdraw
+  collateral, swap externally on a DEX, redeposit the principal
+  asset, and then call repay (the classic four-step dance),
+  one call swaps your collateral into the loan's principal
+  asset and applies the proceeds to settlement atomically. Two
+  modes:
+    - *Full close* — sized to cover principal + interest +
+      late fee + treasury cut; loan transitions to Repaid; any
+      favorable-quote surplus principal lands in your wallet
+      directly (not your vault, so you can spend it immediately
+      without an extra withdraw step). Respects the
+      `useFullTermInterest` flag from offer creation, identical
+      to the regular repay surface.
+    - *Partial reduction* — gated on the offer having been
+      created with `allowsPartialRepay = true`. Reduces the
+      principal by the swap proceeds (after the
+      `lender share + treasury cut` haircut), resets the
+      accrual clock, post-swap health-factor check ensures
+      the loan still stands. Rejects swaps large enough to
+      retire the full principal — use Full close for that
+      so the position-NFT lifecycle + reward close fire.
+  Slippage capped at 3% by default (tighter than the
+  6% HF-liquidation cap because you're picking the moment;
+  the protocol gives you the borrower-friendly buffer). The
+  4-DEX try-list (0x v2 / 1inch v6 / Uniswap V3 / Balancer V2)
+  is the same proven adapter set the HF-liquidation path
+  uses; total swap failure reverts the whole transaction so
+  you can retry with better routing. The lender or whoever
+  currently holds the lender-position NFT cannot use this
+  surface on their own loan (self-repay guard).
 - **Preclose direct** — pay the outstanding amount from your
   wallet now, release collateral, settle the rebate.
 - **Preclose offset** — sell some collateral via the protocol's
