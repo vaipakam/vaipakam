@@ -183,6 +183,64 @@ Accepted y dispara la inicialización del préstamo, que mintea los
 dos NFTs de posición (uno para el prestamista y otro para el
 prestatario) y abre el préstamo en estado Active.
 
+Las ofertas cerradas llevan uno de varios estados distintos. Algunos
+ya están expuestos como chips de filtro en la página Mis Ofertas;
+otros son terminales del lado del indexer que recibirán tratamiento
+de UI dedicado en trabajos de seguimiento:
+
+- **Filled** — aceptada por una contraparte; la referencia del
+  préstamo de la oferta es el id del préstamo resultante.
+- **Cancelled** — la oferta alcanzó el estado Cancelled por
+  cualquiera de los dos caminos: retirada por el creador antes
+  de la aceptación, O limpiada sin permisos vía
+  `OfferCancelFacet.cancelOffer` una vez que
+  `LibVaipakam.isOfferExpired(offer)` es verdadero (el reembolso
+  igualmente se enruta al creador, sin importar quién inició la
+  llamada de cancelación).
+- **Sold** — la oferta optó por el flujo borrow-OR-sell de venta
+  paralela (ver Crear Oferta → Permitir venta opcional) y un
+  comprador en marketplace ejecutó el listado del NFT colateral
+  antes de que ningún prestamista aceptara. La oferta lleva el
+  estado on-chain `consumed_by_sale`; la columna de tasa de la
+  fila muestra la tasa a la que se publicó la oferta y la celda
+  de colateral renderiza la forma NFT (token id para ERC-721,
+  cantidad de copias para ERC-1155). La dapp también surface la
+  fila en el feed de Actividad como `Offer sold via OpenSea`
+  para el prestatario (creador de la oferta). El evento on-chain
+  en sí es
+  `OfferConsumedBySale(uint96 indexed offerId, address indexed executor)` —
+  tanto el id de la oferta COMO la dirección del executor están
+  indexados on-chain, pero la dirección del prestatario / creador
+  NO. La coincidencia de wallet del prestatario para el feed de
+  Actividad es agregada por el indexer en tiempo de ingestión
+  (hace un join con la fila de la oferta para buscar el creador),
+  así el filtro por wallet encuentra al prestatario sin que el
+  evento en sí los indexe.
+- **Fully Filled (estado del indexer, sin chip todavía)** — solo
+  para Range-orders. Cuando el matching de relleno parcial
+  consume el presupuesto restante de la oferta (el último match
+  completa el rango por completo, o un match parcial deja un
+  remanente sub-dust), `OfferMatchFacet` emite
+  `OfferClosed(FullyFilled | Dust)` y el indexer marca la fila
+  de la oferta con `status = 'fullyFilled'`. El estado `accepted`
+  del contrato y la etiqueta Filled on-chain de arriba están
+  reservados para el terminal de aceptación directa, por lo
+  que `fullyFilled` es distinto del lado del indexer. El
+  `MyOfferStatus` de la dapp aún no expone este terminal como
+  su propio chip de filtro — `useMyOffers` actualmente ignora
+  las filas con estado de indexer `fullyFilled` — así que una
+  oferta de rango completamente llena efectivamente cae fuera
+  de la vista Mis Ofertas hasta que llegue el chip dedicado.
+  La superficie del chip está en cola como un seguimiento de
+  UI separado.
+
+Las ofertas pasadas-GTT (Good-Til-Time) que nunca alcanzaron un
+evento terminal aún no están expuestas como un chip de estado
+distinto en la dapp; actualmente caen bajo Active hasta que el
+indexer registre un terminal. Un chip Expired dedicado está en
+cola como seguimiento de UI separado.
+
+
 <a id="offer-book.lender-offers"></a>
 
 ### Ofertas de prestamistas
@@ -409,6 +467,358 @@ Ajustes menos habituales:
   creación de ofertas.
 
 Los valores por defecto son razonables para la mayoría de usuarios.
+
+<a id="create-offer.borrow-or-sell"></a>
+
+### Permitir venta opcional de este NFT en OpenSea (solo ofertas de prestatario con colateral NFT)
+
+Si estás publicando una **oferta de prestatario** con **colateral
+ERC-721 o ERC-1155** y un **principal ERC-20**, la dapp expone un
+opt-in `Borrow or sell` debajo de la sección de colateral. Marcarlo
+marca la oferta como elegible para un listado de venta paralela de
+tu NFT colateral en OpenSea — una sola oferta que puede ser
+ejecutada YA SEA por un prestamista (tomas el préstamo) O por un
+comprador en marketplace (vendes el NFT). El listado NO se
+desmonta en la aceptación del prestamista si ya estaba publicado:
+si un prestamista ejecuta primero, tomas el préstamo, el listado
+existente en OpenSea se traslada a través de la inicialización del
+préstamo hasta su expiración Seaport original, y una ejecución
+posterior en marketplace antes de esa expiración dispara la cascada
+de liquidación del diamond para cerrar el préstamo con los ingresos
+de la venta (ver Escenario B abajo). Para ofertas GTT ordinarias
+esta expiración es el Good-Til-Time original de la oferta; la
+aceptación del prestamista no extiende ni vuelve a publicar el
+listado para el término completo del préstamo. Si un comprador en
+marketplace ejecuta primero, nunca se crea un préstamo (Escenario
+A). Los dos escenarios terminan en estados distintos de la oferta:
+el Escenario A marca la oferta con `consumed_by_sale` vía
+`markOfferConsumedBySale` (aparece bajo el filtro Sold), y la
+aceptación del prestamista está gateada contra cualquier oferta
+que ya haya sido marcada. En el Escenario B la oferta ya está en
+estado `Accepted` para cuando aterriza la ejecución del
+marketplace; el contrato deliberadamente deja el estado de la
+oferta en `Accepted` y solo liquida el préstamo desde la venta —
+la oferta no transita a Sold por segunda vez.
+
+**Naturaleza de dos pasos.** Optar a la creación de la oferta
+solamente activa la bandera de elegibilidad en la oferta. Conseguir
+un listado realmente comprable en OpenSea es un PASO DOBLE SEPARADO
+que la dapp NO automatiza hoy:
+
+1. **Registrar + cablear en el diamond.** Llama a
+   `OfferParallelSaleFacet.postParallelSaleListing(uint96
+   offerId, uint256 askPrice, bytes32 conduitKey, FeeLeg[]
+   feeLegs)` mientras la oferta esté activa y antes de cualquier
+   aceptación de prestamista. Una vez que la oferta sea aceptada,
+   cancelada, o consumida por venta, esta llamada revierte como
+   terminal; marcar el opt-in solo no es suficiente para crear un
+   listado que pueda trasladarse al Escenario B. El ask también
+   debe cubrir el piso pre-préstamo: principal más intereses
+   peor-caso a través de la duración del préstamo y la ventana de
+   gracia, recorte de tesorería sobre ese interés, el buffer de
+   seguridad configurado, y todos los montos de fee-legs. Asks
+   bajo-piso revierten en este paso. El argumento `feeLegs` es el
+   ÚNICO lugar donde esta llamada registra las obligaciones de
+   tarifas de protocolo OpenSea y royalties de creador: el diamond
+   resta cada monto de fee-leg de los ingresos del vendedor y
+   añade el destinatario + monto absoluto al array de
+   consideration de Seaport. Pasar `feeLegs: []` en una colección
+   con tarifas obligatorias produce una forma de orden que el paso
+   de publicación de OpenSea rechazará (faltan los ítems de
+   consideration de destinatarios de tarifas) y un fill directo
+   en Seaport enrutará el ask completo al vendedor en lugar de
+   dividir las tarifas como la colección requiere. Los usuarios
+   avanzados deben fetch el calendario de tarifas obligatorias
+   de OpenSea para la colección (el parser de tarifas in-repo en
+   `apps/agent/src/openseaFees.ts` es la referencia) y pasar
+   montos absolutos derivados contra el ask antes de llamar. El
+   facet internamente construye los `OrderComponents` canónicos
+   de Seaport a partir de esos inputs (más valores que retiene
+   en `CollateralListingExecutor.offerContext` — la dirección del
+   vault del prestatario, asset principal, campos de colateral,
+   startTime, endTime) y el `Seaport.getCounter` actual del vault,
+   deriva el orderHash vía `Seaport.getOrderHash`, lo retorna,
+   registra el binding ERC-1271 del vault a ese hash, y otorga la
+   aprobación del conduit de Seaport para el NFT colateral. El
+   evento `PostParallelSaleListing` emitido expone los args de
+   entrada (`offerId`, prestatario, orderHash, askPrice, datos
+   de executor / conduit, salt, fee legs); NO retorna los
+   campos por-contexto, así que reconstruir OrderComponents
+   off-chain requiere las lecturas adicionales descritas en el
+   paso 2 abajo. **Importante:** en este punto la orden ya es
+   EJECUTABLE vía Seaport. Un bot mirando los eventos del
+   contrato MÁS esas lecturas puede reconstruir los
+   OrderComponents y llamar `Seaport.fulfillOrder` directamente
+   — el listado no necesita aparecer en la UI de marketplace
+   de OpenSea para que el camino de fill on-chain funcione.
+   Si no quieres que contrapartes ejecuten al ask actual antes
+   de que aterrice el paso 2, ya sea ejecuta el paso 2
+   inmediatamente después del paso 1 O llama
+   `releaseParallelSaleLock` para invalidar el binding antes
+   de cualquier fill no intencionado.
+2. **Publicar en OpenSea.** Reconstruye los mismos OrderComponents
+   que el facet construyó. El evento `PostParallelSaleListing` por
+   sí solo no es suficiente: emite `offerId`, prestatario,
+   orderHash, askPrice, datos de executor / conduit, salt, y fee
+   legs, pero la forma de orden offer-keyed también necesita
+   valores retenidos en el storage `OfferContext` del executor
+   (dirección del vault del prestatario, asset principal, campos
+   de colateral, startTime, endTime) más el contador Seaport del
+   vault del prestatario (el contador del offerer —
+   `LibPrepayOrder.buildAndHashOfferMem` hashea
+   `Seaport.getCounter(ctx.borrowerVault)`, NO el contador del
+   bidder). Este es el mismo contexto usado por el camino
+   offer-order de `LibPrepayOrder.buildAndHashOfferMem`, y es
+   diferente de la forma de orden prepay-listing loan-keyed. Lee
+   ambos antes de publicar:
+   - `CollateralListingExecutor(executor).offerContext(orderHash)`
+     retorna el struct `OfferContext` persistido para ese hash.
+   - `Seaport.getCounter(borrowerVault)` retorna el contador
+     canónico de Seaport para el offerer del vault.
+   Con esos campos en mano el struct OrderComponents reproduce
+   exactamente el que el diamond hasheó. Antes de POSTear, añade
+   el campo solo-API `parameters.totalOriginalConsiderationItems`
+   — la API de OpenSea lo requiere aunque NO sea parte del struct
+   Seaport que produce el hash canónico; los publishers in-repo
+   (`apps/defi/src/lib/openseaPublish.ts` +
+   `apps/indexer/src/openseaPublish.ts`) lo inyectan antes de
+   llamar al endpoint. Para órdenes validadas por ERC-1271,
+   OpenSea acepta el campo `signature` como `0x` (bytes vacíos)
+   — el callback on-chain del vault `isValidSignature(orderHash,
+   '')` ignora los bytes de la firma y retorna el valor mágico
+   EIP-1271 para cualquier orderHash que el diamond haya
+   registrado previamente (del paso 1). HAZ POST del JSON al
+   endpoint de listings de OpenSea (`POST
+   /api/v2/orders/{chain}/{protocol}/listings`, según los docs
+   oficiales de [Create Listing](https://docs.opensea.io/reference/post_listing)
+   — este es el mismo endpoint que usan los publishers propios
+   de Vaipakam en `apps/agent/src/openseaProxy.ts` +
+   `apps/indexer/src/openseaPublish.ts`). Solo después de este
+   paso el listado aparece en la UI de marketplace de OpenSea
+   y se vuelve descubrible para compradores casuales. Vaipakam
+   no automatiza actualmente este envío para el camino
+   parallel-sale — exponer la publicación de listados
+   end-to-end está rastreado como seguimiento.
+
+Los usuarios avanzados que sigan el camino manual hoy necesitan
+AMBOS pasos para obtener visibilidad en OpenSea; correr solo el
+paso 1 produce una orden que es ejecutable directamente a través
+de Seaport (por un bot o contraparte que reconstruya los
+componentes desde el evento) pero invisible en la UI de
+marketplace de OpenSea.
+
+**Modo de fill forzado a All-or-Nothing.** Optar fija
+automáticamente el modo de fill de la oferta a `Aon` — modos de
+fill Partial o IOC con la opción de venta paralela activada
+crearían múltiples préstamos contra el colateral de una sola
+oferta, contra lo que el contrato gatea. El toggle está oculto en
+ofertas de prestamista, colateral ERC-20, principales NFT, y
+cualquier otra forma que el `_validatePostParallelSale` del
+contrato rechazaría, así que no puedes marcarlo accidentalmente
+en una oferta no elegible.
+
+**Lo que ve un comprador.**
+
+- *Antes de que ningún prestamista acepte* (Escenario A): un
+  comprador que ejecute el listado de OpenSea paga el precio
+  listado. En colecciones con tarifas obligatorias, Seaport
+  enruta los legs de tarifa de protocolo OpenSea y tarifa de
+  creador directamente a sus destinatarios configurados primero;
+  el executor pasa solo los **ingresos netos** (precio listado
+  menos esos legs de tarifa de marketplace / creador) al diamond.
+  El diamond pone en escrow ese monto neto en tu vault, el NFT
+  se transfiere al comprador, y la oferta se marca
+  `consumed_by_sale` (visible como estado "Sold" distinto en Mis
+  Ofertas, Actividad, y Detalles de Oferta). Nunca se creó un
+  préstamo; te quedas con los ingresos netos de la venta.
+- *Después de que un prestamista acepte* (Escenario B): el
+  listado se traslada a través de la inicialización del préstamo
+  — ni el bloqueo del NFT del prestatario ni el listado se
+  desmontan. Una ejecución posterior por comprador dispara la
+  cascada de liquidación del diamond en una sola transacción
+  Seaport. Misma nota de fee-leg que el Escenario A: en
+  colecciones con tarifas obligatorias, Seaport enruta los legs
+  de tarifa de protocolo OpenSea y tarifa de creador
+  directamente a sus destinatarios configurados primero, y el
+  executor pasa solo los **ingresos netos** (precio de venta
+  menos tarifas de marketplace / creador) a la cascada del
+  diamond. La cascada entonces enruta ese monto neto: el
+  prestamista recibe su entitlement de liquidación (que
+  `LibEntitlement.settlementInterest` calcula como el cupón
+  completo cuando el préstamo se creó con `useFullTermInterest
+  = true`, o el interés pro-rata acumulado al timestamp de
+  liquidación de otra manera — el gate es la política del
+  préstamo, no si la venta sucede antes o después de la madurez
+  programada), el recorte de tesorería va a tesorería, y el
+  resto se deposita DIRECTAMENTE en el vault del actual holder
+  del NFT de posición del prestatario (vía
+  `LibUserVault.getOrCreate` + un depósito al vault). No se
+  crea reclamo en el Claim Center — revisa tu balance del vault
+  después de que aterrice la venta.
+
+**Lo que no puedes combinarlo con.** Dos clases de conflicto
+distintas, superficializadas en diferentes etapas del protocolo:
+
+- *Bloque en tiempo de publicación (listado sibling loan-keyed).*
+  Si el préstamo ya tiene un listado parallel-sale trasladándose
+  desde la creación de la oferta Y el prestatario luego llama
+  `NFTPrepayListingFacet.postPrepayListing` (o
+  `updatePrepayListing`) para publicar un SEGUNDO listado prepay
+  loan-keyed sobre el mismo préstamo, el diamond revierte con
+  `SiblingParallelSaleListingLive`. La aprobación de conduit
+  para el NFT del prestatario es un solo slot — correr ambos
+  listados concurrentemente crearía una aprobación ambigua. El
+  prestatario ve el revert en la llamada de publicar/actualizar;
+  nada se ejecuta.
+- *Bloque en tiempo de fill (offset abierto de PrecloseFacet).*
+  Si el préstamo tiene una oferta offset abierta de
+  PrecloseFacet Y un comprador luego intenta ejecutar el listado
+  parallel-sale, el `_settleLoanFromParallelSale` del diamond
+  revierte con `ParallelSaleBlockedByOpenOffsetOffer`. El listado
+  sigue siendo válido en OpenSea pero cualquier intento de fill
+  revierte hasta que se borre el enlace offset. La dapp NO
+  surface actualmente un banner / notificación dedicado en la
+  página de Detalles del Préstamo para esta combinación; los
+  usuarios verán fills revertir y pueden necesitar inspeccionar
+  la razón del revert en un block explorer para diagnosticar. El
+  camino de limpieza es la superficie ordinaria de cancelación
+  de oferta — llama
+  `OfferCancelFacet.cancelOffer(offsetOfferId)` para cancelar la
+  oferta offset, lo que libera el enlace offset y desbloquea el
+  fill parallel-sale (PrecloseFacet no tiene un punto de entrada
+  separado de cancelación; el offset está bound a la oferta
+  enlazada, así que cancelar la oferta enlazada lo borra). Una
+  superficie UI dedicada para el conflicto está en cola como
+  seguimiento de UX separado.
+
+
+<a id="matching-opensea-offers-on-a-prepay-listing"></a>
+
+### Hacer match a ofertas de OpenSea sobre un prepay listing
+
+Una vez que tu prepay listing esté vivo en el marketplace de
+OpenSea, los compradores casuales a veces colocarán **ítem
+offers** directamente sobre tu token — bids ligados a tu
+colateral específico, no a cualquier token en la colección.
+Vaipakam surface estos item offers en la página de Detalles del
+Préstamo en tiempo real — un panel separado bajo "List collateral
+on OpenSea" con una fila por oferta entrante. El panel aplica un
+**umbral de buffer** — el entitlement de liquidación del
+prestamista (que YA INCLUYE principal más el cupón completo en
+préstamos full-term-interest o el interés pro-rata de otra manera
+— ver `PrepayListingFacet.getPrepayContext().lenderLeg`), más el
+recorte de tesorería, más un buffer de seguridad — y **engrisa**
+ofertas que no lo claren. Puedes ver el interés del mercado en
+cada nivel pero solo puedes hacer Match a ofertas que el
+protocolo realmente liquidará.
+
+Las ofertas colección-amplias / criteria (bids que cualquier
+token en la colección puede satisfacer) permanecen en OpenSea
+pero **no aparecen** en el panel Match de la dapp — la
+consideration multi-leg que el protocolo liquida no puede
+reconstruirse contra una oferta criteria sin plomería del lado
+del contrato que no está en v1. Si tu única demanda entrante es
+colección-amplia, el camino práctico hoy es esperar un bid
+ítem-específico O dejar el listado en tu ask fijo y dejar que
+cualquier comprador lo ejecute directamente. No puedes liquidar
+manualmente un bid colección-amplio tú mismo — el NFT colateral
+vive en tu vault de Vaipakam, y las órdenes Seaport del lado de
+Vaipakam son la única forma de liquidación autorizada.
+
+En colecciones que aplican tarifas de protocolo de OpenSea y/o
+royalties de creador, la dapp SÍ renderiza el panel de ofertas —
+el fetch del calendario de tarifas desde la API de OpenSea se
+trata como asesor; los datos reales de fulfillment se fetcean
+EN TIEMPO DE CLICK DE MATCH. El panel Match se renderiza
+independientemente del estado del fetch del calendario de tarifas;
+el fetch de fulfillment en tiempo de click es el gate. Si ese
+fetch falla (rate limit, caída de API, o forma de colección no
+soportada), el handler del lado de la dapp del click ABORTA
+antes de que se construya cualquier transacción
+`NFTPrepayListingAtomicFacet.matchOpenSeaOffer` — sin calldata,
+sin prompt de firma, sin revert. La función on-chain en sí no es
+un selector que retorne `bool`; cuando sí corre retorna un
+`bytes32` orderHash o revierte. Así que el panel de una colección
+con tarifas obligatorias puede mostrar ofertas que puedes
+explorar pero no todas son clickeables-para-match en un momento
+dado.
+
+Cuando encuentras una oferta aceptable y haces click en **Match
+offer**, la dapp abre el modal **Confirm Match**, que reitera el
+matched value (el monto bruto de la oferta de OpenSea — NO el
+monto neto al que el diamond liquida; en colecciones con tarifas
+obligatorias
+`NFTPrepayListingAtomicFacet.matchOpenSeaOffer` calcula
+`effectiveAsk = offerValue - bidderFeeTotal` antes de correr la
+división prestamista / tesorería / prestatario, así que el neto
+que el diamond realmente distribuye es menor que el headline del
+modal) y da una explicación genérica del flujo atomic-match.
+Después de confirmar, la dapp envía una sola transacción
+`matchOpenSeaOffer` que paquetiza la oferta del bidder con una
+contra-orden recién construida del lado del diamond en una sola
+llamada `matchAdvancedOrders` de Seaport — el fulfillment del
+bidder, el leg lado-listing de la contra-orden (haya o no tenido
+un prepay listing v1 previo vivo; el camino atómico soporta
+`existingHash == 0`), y la cascada de liquidación del diamond
+aterrizan atómicamente en un bloque. La transacción ya sea tiene
+éxito completamente (préstamo liquidado, NFT transferido,
+ingresos de venta divididos) o revierte completamente (nada se
+mueve), y NO HAY ventana entre la rotación del listing y la
+liquidación en la que un comprador tercero pudiera entrar al
+precio matched.
+
+> **Sin ventana de carrera — atómico por construcción.** Este es
+> el cierre estructural del patrón v1 de dos pasos "cancel +
+> post": bajo v1 la dapp rotaría el listing como una transacción
+> separada `updatePrepayListing`, dejando el precio rotado vivo
+> en OpenSea hasta que el `fulfillOrder` del bidder aterrice en
+> un bloque posterior — cualquiera mirando el mempool podría
+> snipear al bidder fuera del precio que pujó. El camino atómico
+> cierra ese hueco vinculando ambas órdenes en una llamada
+> Seaport match: o el bidder ejecuta al precio acordado o la
+> transacción entera revierte.
+
+**Lo que aún quieres verificar antes de hacer click en Match:**
+
+- **Confirma el matched value en el modal.** El modal surface el
+  monto bruto de la oferta de OpenSea. En colecciones con
+  tarifas obligatorias, el diamond liquida contra el effective
+  ask neto después de legs de tarifa de marketplace / creador
+  del lado del bidder, así que el valor del modal puede ser
+  mayor que el monto usado para la división prestamista /
+  tesorería / prestatario. La dirección del bidder y la división
+  precisa no están desglosadas ni en el modal NI en la fila del
+  panel OpenSea Offers (la fila muestra valor, payment token,
+  tipo de oferta, bidder truncado, y end time). La división se
+  aplica on-chain por el diamond en la liquidación — el buffer
+  de liquidación del protocolo garantiza que el effective ask
+  cubra el entitlement de liquidación del prestamista (que ya
+  incluye principal más el cupón completo en préstamos
+  full-term-interest o el interés pro-rata de otra manera) más
+  el recorte de tesorería, así que la división siempre es al
+  menos neutral para ti. Si quieres ver la división proyectada
+  antes de confirmar, el diamond expone
+  `PrepayListingFacet.getPrepayContext(loanId, asOfTimestamp)`
+  como una vista llamable — retorna los legs de prestamista y
+  tesorería que la cascada de liquidación enrutará al timestamp
+  dado, y el resto es tuyo.
+- **Revisa la postura de tarifas de OpenSea para la colección.**
+  Si la colección aplica tarifas de protocolo de OpenSea o
+  royalties de creador, el camino atómico necesita plomería
+  SignedZone `extraData` / criteria-resolver que la dapp fetcha
+  vía el proxy de fulfillment-data de OpenSea del agente (PR
+  #349) EN TIEMPO DE CLICK DE MATCH. El panel Match se renderiza
+  independientemente del estado del fetch del calendario de
+  tarifas; el fetch de fulfillment en tiempo de click es el
+  gate. Si ese fetch falla (rate limit, caída de API, forma de
+  colección no soportada), el handler del click del lado de la
+  dapp aborta antes de construir la transacción on-chain
+  `matchOpenSeaOffer` — no se construye calldata, no se dispara
+  prompt de firma, no se muestra banner por adelantado. Puedes
+  reintentar el click después (el fetch puede haber sido solo un
+  blip transitorio de API), o ejecutar el listing directamente
+  en OpenSea al ask listado mientras tanto.
+
 
 ---
 
@@ -1117,456 +1527,3 @@ de oferta. Un comprador completa la venta; puedes cancelar antes
 de que la venta se complete. Opcionalmente delegable a un keeper
 que tenga el permiso de "completar venta de préstamo"; el paso
 de iniciar en sí permanece sólo de usuario.
-
----
-
-<!-- ────────────────────────────────────────────────────────────── -->
-<!-- T-086 #374 — TRANSLATION NEEDED                                -->
-<!--                                                                -->
-<!--   The three sections below are appended in ENGLISH as the      -->
-<!--   translator source. Each block is anchored with a stable      -->
-<!--   in-app HTML id (load-bearing for dapp cross-links — DO NOT   -->
-<!--   change the anchor strings).                                  -->
-<!--                                                                -->
-<!--   Native Spanish reviewer: please translate each block     -->
-<!--   into Spanish AND move it into the appropriate position   -->
-<!--   in the body above:                                           -->
-<!--                                                                -->
-<!--   1. "Your Active Offers" — REPLACES the existing              -->
-<!--      `offer-book.your-active-offers` section in this file      -->
-<!--      (current locale content is the pre-OpenSea-feature        -->
-<!--      version; the EN-source version below ADDS the closed-     -->
-<!--      offer status bullets — Filled / Cancelled / Sold /        -->
-<!--      Fully Filled / past-GTT note).                            -->
-<!--                                                                -->
-<!--   2. "Allow optional sale of this NFT on OpenSea"              -->
-<!--      (anchor `create-offer.borrow-or-sell`) — INSERT after     -->
-<!--      `create-offer.advanced-options` in the Create Offer       -->
-<!--      section. This entire section is NEW in this locale.       -->
-<!--                                                                -->
-<!--   3. "Matching OpenSea offers on a prepay listing"             -->
-<!--      (anchor `matching-opensea-offers-on-a-prepay-listing`)    -->
-<!--      — INSERT before the "How Liquidation Actually Works"      -->
-<!--      section. This entire section is NEW in this locale.       -->
-<!--                                                                -->
-<!--   Once the translated sections are placed correctly above,     -->
-<!--   delete this banner block and the EN source blocks below it.  -->
-<!-- ────────────────────────────────────────────────────────────── -->
-
-## [TRANSLATION NEEDED] EN source — Your Active Offers (target placement: `offer-book.your-active-offers`)
-
-<a id="offer-book.your-active-offers"></a>
-
-### Your Active Offers
-
-Open offers (status Active, expiry not yet reached) you created.
-Cancellable any time before acceptance — the cancel call is free.
-Acceptance flips the offer to Accepted and triggers loan
-initiation, which mints the two position NFTs (one for lender,
-one for borrower) and opens the loan in the Active state.
-
-Closed offers carry one of several distinct statuses. Some are
-already exposed as filter chips on the My Offers page; others
-are indexer-side terminals that will get dedicated UI treatment
-in follow-up work:
-
-- **Filled** — accepted by a counterparty; the offer's loan
-  reference is the resulting loan id.
-- **Cancelled** — the offer reached the Cancelled state via
-  either path: withdrawn by the creator before acceptance,
-  OR cleaned up permissionlessly via `OfferCancelFacet.cancelOffer`
-  once `LibVaipakam.isOfferExpired(offer)` is true (the refund
-  still routes to the creator regardless of who initiated the
-  cancel call).
-- **Sold** — the offer was opted into the borrow-OR-sell
-  parallel-sale flow (see Create Offer → Allow optional sale)
-  and a marketplace buyer filled the NFT collateral listing
-  before any lender accepted. The offer carries the on-chain
-  status `consumed_by_sale`; the row's rate column shows the
-  rate the offer was posted at and the collateral cell renders
-  the NFT shape (token id for ERC-721, copy count for
-  ERC-1155). The dapp also surfaces the row in the Activity
-  feed as `Offer sold via OpenSea` for the borrower (offer
-  creator). The on-chain event itself is
-  `OfferConsumedBySale(uint96 indexed offerId, address indexed executor)` —
-  both the offer id AND the executor address are indexed on-chain,
-  but the borrower / creator address is NOT. The borrower's
-  wallet match for the Activity feed is added by the indexer at
-  ingestion time (it joins the offer row to look up the creator),
-  so the per-wallet filter finds the borrower without the
-  event itself indexing them.
-- **Fully Filled (indexer state, no chip yet)** — Range-orders
-  only. When partial-fill matching consumes the offer's
-  remaining budget (the last match fully fills the range, or
-  a partial match leaves a sub-dust remainder),
-  `OfferMatchFacet` emits `OfferClosed(FullyFilled | Dust)` and
-  the indexer stamps the offer row `status = 'fullyFilled'`.
-  The contract's `accepted` state and the on-chain Filled
-  label above are reserved for the direct-accept terminal, so
-  `fullyFilled` is distinct on the indexer side. The dapp's
-  `MyOfferStatus` doesn't yet expose this terminal as its own
-  filter chip — `useMyOffers` currently ignores rows with the
-  `fullyFilled` indexer status — so a fully-filled range offer
-  effectively drops out of the My Offers view altogether
-  until the dedicated chip lands. The chip surface is queued
-  as a separate UI follow-up.
-
-Past-GTT (Good-Til-Time) offers that never reached a terminal
-event aren't yet exposed as a distinct status chip in the dapp;
-they currently fall under Active until the indexer records a
-terminal. A dedicated Expired chip is queued as a separate UI
-follow-up.
-
-
-## [TRANSLATION NEEDED] EN source — Allow optional sale of this NFT on OpenSea (target placement: `create-offer.borrow-or-sell`)
-
-<a id="create-offer.borrow-or-sell"></a>
-
-### Allow optional sale of this NFT on OpenSea (borrower NFT-collateral offers only)
-
-If you're posting a **borrower offer** with **ERC-721 or
-ERC-1155 collateral** and an **ERC-20 principal**, the dapp
-exposes a `Borrow or sell` opt-in below the collateral
-section. Ticking it marks the offer as eligible for a
-parallel-sale listing of your NFT collateral on OpenSea — a
-single offer that can be filled EITHER by a lender (you take
-the loan) OR by a marketplace buyer (you sell the NFT). The
-listing is NOT torn down at lender acceptance if it was already
-posted: if a lender fills first you take the loan, the existing
-OpenSea listing carries through loan initiation until its
-original Seaport expiry, and a later marketplace fill before
-that expiry triggers the diamond's settlement waterfall to close
-the loan from the sale proceeds (see Scenario B below). For
-ordinary GTT offers this expiry is the offer's original
-Good-Til-Time; lender acceptance does not extend or repost the
-listing for the full loan term. If a marketplace buyer fills
-first, no loan is ever created (Scenario A). The two scenarios
-end at different offer states: Scenario A stamps
-the offer with `consumed_by_sale` via `markOfferConsumedBySale`
-(it shows up under the Sold filter), and lender acceptance
-is gated against any offer that has already been stamped. In
-Scenario B the offer is already in the `Accepted` state by
-the time the marketplace fill lands; the contract
-deliberately leaves the offer status at `Accepted` and only
-settles the loan from the sale — the offer doesn't transition
-to Sold a second time.
-
-**Two-step nature.** Opting in at offer create time just
-sets the eligibility flag on the offer. Getting an actual
-buyable listing onto OpenSea is a SEPARATE TWO-PART step
-the dapp does NOT automate today:
-
-1. **Record + wire on the diamond.** Call
-   `OfferParallelSaleFacet.postParallelSaleListing(uint96
-   offerId, uint256 askPrice, bytes32 conduitKey, FeeLeg[]
-   feeLegs)` while the offer is still active and before any
-   lender acceptance. Once the offer is accepted, cancelled, or
-   consumed by sale, this call reverts as terminal; ticking the
-   opt-in alone is not enough to create a listing that can carry
-   into Scenario B. The ask must also clear the pre-loan floor:
-   principal plus worst-case offer interest through the loan
-   duration and grace window, treasury cut on that interest, the
-   configured safety buffer, and all fee-leg amounts. Under-floor
-   asks revert at this step. The `feeLegs` argument is the ONLY
-   place this call records OpenSea protocol-fee and creator-
-   royalty obligations: the diamond subtracts each fee-leg
-   amount from the seller proceeds and appends the recipient +
-   absolute amount to the Seaport consideration array.
-   Passing `feeLegs: []` on a fee-enforced collection produces
-   an order shape that the OpenSea publish step will reject
-   (the fee-recipient consideration items are missing) and a
-   direct Seaport fill will route the full ask to the seller
-   rather than splitting the fees as the collection requires.
-   Advanced users must fetch the OpenSea required-fee schedule
-   for the collection (the in-repo fee parser at
-   `apps/agent/src/openseaFees.ts` is the reference) and pass
-   absolute amounts derived against the ask before calling. The facet internally builds the
-   canonical Seaport OrderComponents from those inputs, the
-   OfferContext values it records for the executor (borrower
-   vault address, principal asset, collateral fields, startTime,
-   endTime), and the current `Seaport.getCounter` for the vault,
-   derives the orderHash via
-   `Seaport.getOrderHash`, returns it, registers the vault's
-   ERC-1271 binding to that hash, and grants the Seaport
-   conduit approval for the NFT collateral. The emitted
-   `PostParallelSaleListing` event exposes the input args
-   (`offerId`, borrower, orderHash, askPrice, executor /
-   conduit data, salt, fee legs); it does NOT echo the
-   per-context fields, so reconstructing OrderComponents
-   off-chain requires the additional reads described in
-   step 2 below. **Important:** at this point the order is
-   already FILLABLE via Seaport. A bot watching the
-   contract's events PLUS those reads can reconstruct the
-   OrderComponents and call `Seaport.fulfillOrder` directly
-   — the listing does not need to appear on OpenSea's
-   marketplace UI for
-   the on-chain fill path to work. If you don't want
-   counterparties to fill at the current ask before step 2
-   lands, either run step 2 immediately after step 1 OR call
-   `releaseParallelSaleLock` to invalidate the binding before
-   any unintended fill.
-   For fee-enforced collections, populate `feeLegs` from the
-   collection's required OpenSea / creator fee schedule before
-   calling this step. Use only required, non-zero fee rows; cap
-   the list to the protocol-supported fee-leg count; convert each
-   row into an absolute fixed amount in the principal asset at the
-   chosen ask price; and use the listed fee recipient as the leg
-   recipient. If a required fee rounds to zero at the chosen ask,
-   the ask is too small for that collection and the post should not
-   be attempted. Passing an empty array is valid only for fee-free
-   collections. On fee-enforced collections it can produce an order
-   that fails OpenSea publication or cannot satisfy the marketplace's
-   required consideration shape.
-2. **Publish to OpenSea.** Reconstruct the same OrderComponents
-   the facet built. The `PostParallelSaleListing` event alone
-   isn't sufficient: it emits `offerId`, borrower, orderHash,
-   askPrice, executor / conduit data, salt, and fee legs, but
-   the offer-keyed order shape also needs values held in the
-   executor's `OfferContext` storage (borrower vault address,
-   principal asset, collateral fields, startTime, endTime) plus
-   the borrower vault's Seaport counter. This is the same
-   context used by the `LibPrepayOrder.buildAndHashOfferMem`
-   offer-order path, and it is different from the loan-keyed
-   prepay-listing order shape. Read both before posting:
-   - `CollateralListingExecutor(executor).offerContext(orderHash)`
-     returns the persisted `OfferContext` struct for that hash.
-   - `Seaport.getCounter(borrowerVault)` returns the canonical
-     Seaport counter for the vault offerer.
-   With those fields in hand the OrderComponents struct
-   reproduces exactly the one the diamond hashed. Before POSTing,
-   add the API-only `parameters.totalOriginalConsiderationItems`
-   field — OpenSea's API requires it even though it's NOT part
-   of the Seaport struct that produces the canonical hash; the
-   in-repo publishers (`apps/defi/src/lib/openseaPublish.ts` +
-   `apps/indexer/src/openseaPublish.ts`) inject it before
-   calling the endpoint. For ERC-1271-validated orders OpenSea
-   accepts the `signature` field as `0x` (empty bytes) — the
-   vault's on-chain `isValidSignature(orderHash, '')` callback
-   ignores the signature bytes and returns the EIP-1271 magic
-   value for any orderHash the diamond previously registered
-   (from step 1). POST the JSON to the OpenSea listings
-   endpoint (`POST /api/v2/orders/{chain}/{protocol}/listings`,
-   per the official [Create Listing](https://docs.opensea.io/reference/post_listing)
-   docs — this is the same endpoint Vaipakam's own publishers
-   in `apps/agent/src/openseaProxy.ts` +
-   `apps/indexer/src/openseaPublish.ts` use). Only after this
-   step does the listing appear on OpenSea's marketplace UI
-   and become discoverable to casual buyers. Vaipakam does
-   not currently automate this submission for the
-   parallel-sale path — surfacing the listing publication
-   end-to-end is tracked as a follow-up.
-
-Advanced users following the manual path today need BOTH steps
-to get OpenSea visibility; running step 1 alone produces an
-order that's fillable directly through Seaport (by a bot or
-counterparty that reconstructs the components from the event)
-but invisible on the OpenSea marketplace UI.
-
-**Fill mode is forced to All-or-Nothing.** Opting in
-automatically pins the offer's fill mode to `Aon` — partial
-or IOC fills would create multiple loans against one
-offer's collateral, which the contract gates against. The
-toggle is hidden on lender offers, ERC-20 collateral, NFT
-principals, and any other shape the contract's
-`_validatePostParallelSale` would reject, so you can't
-accidentally tick it on an ineligible offer.
-
-**What a buyer sees.**
-
-- *Before any lender accepts* (Scenario A): a buyer who
-  fills the OpenSea listing pays the listed price. On
-  fee-enforced collections, Seaport routes OpenSea
-  protocol-fee and creator-fee legs directly to their
-  configured recipients first; the executor passes only the
-  **net proceeds** (listed price minus those marketplace /
-  creator fee legs) to the diamond. The diamond escrows that
-  net amount in your vault, the NFT transfers to the buyer,
-  and the offer is marked `consumed_by_sale` (visible as a
-  distinct "Sold" status in My Offers, Activity, and Offer
-  Details). No loan was ever created; you keep the net sale
-  proceeds.
-- *After a lender accepts* (Scenario B): the listing
-  carries through loan initiation only if it was already
-  posted before acceptance, and only until the Seaport order's
-  original expiry. Neither the borrower NFT lock nor the listing
-  is torn down at acceptance, but lender acceptance also does not
-  extend or repost the order for the full loan term. A later buyer
-  fill before that expiry triggers the diamond's settlement
-  waterfall in one Seaport transaction. Same fee-leg note as Scenario A:
-  on fee-enforced collections, Seaport routes OpenSea
-  protocol-fee and creator-fee legs directly to their
-  configured recipients first, and the executor passes only
-  the **net proceeds** (sale price minus marketplace /
-  creator fees) into the diamond's waterfall. The waterfall
-  then routes that net amount: the lender receives their
-  settlement entitlement (which `LibEntitlement.settlementInterest`
-  computes as the full coupon when the loan was created with
-  `useFullTermInterest = true`, or the pro-rata interest
-  accrued to the settlement timestamp otherwise — the gate is
-  the loan policy, not whether the sale happens before or
-  after scheduled maturity), the treasury cut goes to
-  treasury, and the remainder is deposited DIRECTLY into
-  the current borrower-position NFT holder's vault (via
-  `LibUserVault.getOrCreate` + a vault deposit). No Claim
-  Center claim is created — check your vault balance after
-  the sale lands.
-
-**What you can't combine it with.** Two distinct conflict
-classes, surfaced at different protocol stages:
-
-- *Publish-time block (sibling loan-keyed listing).* If the
-  loan already has a parallel-sale listing carrying through
-  from offer-create AND the borrower then calls
-  `NFTPrepayListingFacet.postPrepayListing` (or `updatePrepayListing`)
-  to post a SECOND loan-keyed prepay listing on the same loan,
-  the diamond reverts with `SiblingParallelSaleListingLive`.
-  The conduit approval for the borrower's NFT is a single
-  slot — running both listings concurrently would create an
-  ambiguous approval. The borrower sees the revert at the
-  publish/update call; nothing fills.
-- *Fill-time block (open PrecloseFacet offset).* If the loan
-  has an open PrecloseFacet offset offer AND a buyer later
-  tries to fill the parallel-sale listing, the diamond's
-  `_settleLoanFromParallelSale` reverts with
-  `ParallelSaleBlockedByOpenOffsetOffer`. The listing remains
-  valid on OpenSea but any fill attempt reverts until the
-  offset link is cleared. The dapp does NOT currently surface
-  a dedicated banner / notification on the Loan Details page
-  for this combination; users will see fills revert and may
-  need to inspect the revert reason on a block explorer to
-  diagnose. The cleanup path is the ordinary offer-cancel
-  surface — call `OfferCancelFacet.cancelOffer(offsetOfferId)`
-  to cancel the offset offer, which releases the offset link
-  and unblocks the parallel-sale fill (PrecloseFacet has no
-  separate cancellation entry point; the offset is bound to
-  the linked offer, so cancelling the linked offer clears it).
-  A dedicated UI surface for the conflict is queued as a
-  separate UX follow-up.
-
-
-
-## [TRANSLATION NEEDED] EN source — Matching OpenSea offers on a prepay listing (target placement: `matching-opensea-offers-on-a-prepay-listing`)
-
-<a id="matching-opensea-offers-on-a-prepay-listing"></a>
-
-### Matching OpenSea offers on a prepay listing
-
-Once your prepay listing is live on OpenSea's marketplace,
-casual buyers will sometimes place **item offers** directly
-on your token — bids tied to your specific collateral, not
-to any token in the collection. Vaipakam surfaces these item
-offers on the Loan Details page in real time — a separate
-panel under "List collateral on OpenSea" with one row per
-incoming offer. The panel applies a **buffer threshold** —
-the lender's settlement entitlement (which ALREADY INCLUDES
-principal plus the full coupon for full-term-interest loans
-or the pro-rata interest otherwise — see
-`PrepayListingFacet.getPrepayContext().lenderLeg`), plus the
-treasury cut, plus a safety buffer — and **greys out** offers
-that don't clear it. You can see market interest at every
-level but can only Match offers that the protocol will
-actually settle.
-
-Collection-wide / criteria offers (bids that any token in
-the collection can fulfill) stay on OpenSea but **don't
-appear** in the dapp's Match panel — the multi-leg
-consideration the protocol settles into can't be
-reconstructed against a criteria offer without contract-side
-plumbing that isn't in v1. If your only inbound demand is
-collection-wide, the practical path today is to wait for
-an item-specific bid OR to leave the listing at your fixed
-ask and let any buyer fulfill it directly. You cannot
-manually settle a collection-wide bid yourself — the
-collateral NFT lives in your Vaipakam vault, and Vaipakam-
-side Seaport orders are the only authorised settlement
-shape.
-
-On collections that enforce OpenSea protocol fees and/or
-creator royalties, the dapp DOES render the offers panel —
-the fee-schedule fetch from the OpenSea API is treated as
-advisory; the actual fulfillment data is fetched at
-Match-click time. If that fulfillment-data fetch fails (rate
-limit, API outage, or unsupported collection shape), the
-dapp-side Match click handler ABORTS before any
-`NFTPrepayListingAtomicFacet.matchOpenSeaOffer` transaction
-is constructed — no calldata, no signature prompt, no
-revert. The on-chain function itself isn't a `bool`-returning
-selector; when it does run it returns a `bytes32` order hash
-or reverts. So a fee-enforced collection's panel may show
-offers you can browse but not all of them are clickable-
-to-match in a given moment.
-
-When you find an acceptable offer and click **Match offer**,
-the dapp opens the **Confirm Match** modal, which restates the
-matched value (the gross OpenSea offer amount the panel showed
-— NOT the net amount the diamond will settle at; on
-fee-enforced collections `NFTPrepayListingAtomicFacet.matchOpenSeaOffer`
-computes `effectiveAsk = offerValue - bidderFeeTotal` before
-running the lender / treasury / borrower split, so the net the
-diamond actually distributes is smaller than the modal's
-headline) and gives a generic explanation of the atomic-match
-flow. After you
-confirm, the dapp sends a single `matchOpenSeaOffer`
-transaction that bundles the bidder's offer with a freshly-
-constructed diamond-side counter-order into one Seaport
-`matchAdvancedOrders` call — the bidder's fulfilment, the
-counter-order's listing-side leg (whether or not you had a
-prior v1 prepay listing live; the atomic path supports
-`existingHash == 0`), and the diamond's settlement waterfall
-all land atomically in one block. The transaction either fully succeeds (loan
-settled, NFT transferred, sale proceeds split) or fully
-reverts (nothing moves), and there is **no window between
-listing rotation and settlement** in which a third-party
-buyer could step in at the matched price.
-
-> **No race window — atomic by construction.** This is the
-> structural close-out of the v1 two-step "cancel + post"
-> pattern: under v1 the dapp would rotate the listing as a
-> separate `updatePrepayListing` transaction, leaving the
-> rotated price live on OpenSea until the bidder's
-> `fulfillOrder` landed in a later block — anyone watching
-> the mempool could snipe the bidder out of the price they
-> bid. The atomic path closes that hole by binding both
-> orders into one Seaport match call: either the bidder fills
-> at the agreed price or the whole transaction reverts.
-
-**What you still want to verify before clicking Match:**
-
-- **Confirm the matched value in the modal.** The modal
-  surfaces the gross OpenSea offer amount. On fee-enforced
-  collections, the diamond settles against the net effective
-  ask after bidder-side marketplace / creator fee legs, so the
-  modal value can be higher than the amount used for the
-  lender / treasury / borrower split. The bidder address and
-  the precise split aren't broken out in either the modal OR
-  the OpenSea Offers panel row (the row shows value, payment
-  token, offer kind, truncated bidder, and end time). The split
-  is enforced on-chain by the diamond at settlement — the
-  protocol's settlement buffer guarantees the effective ask covers
-  the lender's settlement entitlement (which already includes
-  principal plus the full coupon on full-term-interest loans
-  or the pro-rata interest otherwise) plus the
-  treasury cut, so the split is always at least neutral for
-  you. If you want to see the projected split before
-  confirming, the diamond exposes
-  `PrepayListingFacet.getPrepayContext(loanId, asOfTimestamp)`
-  as a callable view — it returns the lender and treasury legs
-  the settlement waterfall will route at the given timestamp,
-  and the remainder is yours.
-- **Check OpenSea's fee posture for the collection.** If the
-  collection enforces OpenSea protocol fees or creator
-  royalties, the atomic path needs SignedZone `extraData` /
-  criteria-resolver plumbing that the dapp fetches via the
-  agent's OpenSea fulfillment-data proxy (PR #349) AT MATCH
-  CLICK TIME. The Match panel renders regardless of
-  fee-schedule fetch status; the click-time fulfillment-data
-  fetch is the gate. If that fetch fails (rate limit, API
-  outage, unsupported collection shape), the dapp-side click
-  handler aborts before constructing the on-chain
-  `matchOpenSeaOffer` transaction — no calldata is built,
-  no signature prompt fires, no banner is shown in advance.
-  You can retry the click later (the fetch may have just
-  been a transient API blip), or fill the listing directly
-  on OpenSea at the listed ask in the meantime.
-
-
