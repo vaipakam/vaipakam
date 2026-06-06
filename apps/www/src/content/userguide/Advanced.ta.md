@@ -521,6 +521,20 @@ SEPARATE TWO-PART step ஆகும்:
    step 1-க்கு பிறகு உடனடியாக step 2-ஐ run செய்யவும் அல்லது எந்த
    unintended fill-க்கு முன் binding-ஐ invalidate செய்ய
    `releaseParallelSaleLock`-ஐ call செய்யவும்.
+   Fee-enforced collections-க்கு, இந்த step-ஐ call செய்வதற்கு
+   முன் collection-இன் required OpenSea / creator fee schedule-இல்
+   இருந்து `feeLegs`-ஐ populate செய்யவும். Required, non-zero
+   fee rows-ஐ மட்டுமே பயன்படுத்தவும்; list-ஐ protocol-supported
+   fee-leg count-க்கு cap செய்யவும்; ஒவ்வொரு row-ஐயும் chosen
+   ask price-இல் principal asset-இல் absolute fixed amount-ஆக
+   convert செய்யவும்; மற்றும் listed fee recipient-ஐ leg
+   recipient-ஆக பயன்படுத்தவும். Chosen ask-இல் required fee
+   zero-க்கு round ஆனால், ask அந்த collection-க்கு மிகவும்
+   சிறியதாக உள்ளது மற்றும் post முயற்சிக்கப்படக் கூடாது. Empty
+   array-ஐ pass செய்வது fee-free collections-க்கு மட்டுமே
+   valid. Fee-enforced collections-இல் இது OpenSea publication-இல்
+   fail ஆகும் அல்லது marketplace-இன் required consideration shape-ஐ
+   satisfy செய்ய முடியாத ஒரு order-ஐ produce செய்யலாம்.
 2. **OpenSea-இல் publish செய்.** Facet build செய்த அதே
    OrderComponents-ஐ reconstruct செய்யவும். `PostParallelSaleListing`
    event மட்டும் போதாது: இது `offerId`, borrower, orderHash,

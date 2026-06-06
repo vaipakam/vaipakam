@@ -523,6 +523,20 @@ listing OpenSea पर लाना एक SEPARATE TWO-PART step है जि�
    ask पर fill करें, या तो step 1 के तुरंत बाद step 2 run करें
    या किसी unintended fill से पहले binding को invalidate करने के
    लिए `releaseParallelSaleLock` call करें।
+   Fee-enforced collections के लिए, इस step को call करने से पहले
+   collection के required OpenSea / creator fee schedule से
+   `feeLegs` को populate करें। केवल required, non-zero fee rows
+   का उपयोग करें; list को protocol-supported fee-leg count तक
+   सीमित करें; प्रत्येक row को chosen ask price पर principal
+   asset में absolute fixed amount में convert करें; और listed
+   fee recipient को leg recipient के रूप में उपयोग करें। यदि
+   chosen ask पर एक required fee zero पर round हो जाती है, तो
+   ask उस collection के लिए बहुत छोटा है और post प्रयास नहीं
+   किया जाना चाहिए। एक empty array pass करना केवल fee-free
+   collections के लिए valid है। Fee-enforced collections पर यह
+   एक ऐसा order produce कर सकता है जो OpenSea publication में
+   fail हो जाता है या marketplace के required consideration shape
+   को satisfy नहीं कर सकता।
 2. **OpenSea पर publish करें।** वही OrderComponents reconstruct
    करें जो facet ने बनाए। केवल `PostParallelSaleListing` event
    पर्याप्त नहीं है: यह `offerId`, borrower, orderHash,

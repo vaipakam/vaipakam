@@ -554,6 +554,20 @@ SÉPARÉE que la application n'automatise PAS aujourd'hui :
    l'étape 2 immédiatement après l'étape 1, SOIT appelez
    `releaseParallelSaleLock` pour invalider le binding avant tout
    remplissage non intentionnel.
+   Pour les collections à frais imposés, peuplez `feeLegs` à partir
+   du calendrier de frais requis OpenSea / créateur de la collection
+   avant d'appeler cette étape. N'utilisez QUE les lignes de frais
+   requis, non-zéro ; limitez la liste au nombre de fee-legs
+   supporté par le protocole ; convertissez chaque ligne en un
+   montant fixe absolu dans l'asset principal au prix d'ask choisi ;
+   et utilisez le destinataire de frais listé comme destinataire du
+   leg. Si un frais requis arrondit à zéro au ask choisi, l'ask est
+   trop petit pour cette collection et le post ne devrait pas être
+   tenté. Passer un tableau vide n'est valide que pour les
+   collections sans frais. Sur les collections à frais imposés cela
+   peut produire un ordre qui échoue à la publication OpenSea ou ne
+   peut pas satisfaire la forme de consideration requise du
+   marketplace.
 2. **Publier sur OpenSea.** Reconstruisez les mêmes
    OrderComponents que le facet a construits. L'événement
    `PostParallelSaleListing` seul ne suffit pas : il émet

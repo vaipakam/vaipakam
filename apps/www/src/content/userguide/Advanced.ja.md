@@ -514,6 +514,18 @@ land する時点でオファーはすでに `Accepted` 状態です;
    ステップ 1 の直後にステップ 2 を実行するか、意図しない fill の
    前に `releaseParallelSaleLock` を呼び出してバインディングを
    無効化します。
+   fee-enforced コレクションの場合、このステップを呼び出す前に
+   コレクションの必須 OpenSea / クリエイター料金スケジュールから
+   `feeLegs` を populate します。必須、非ゼロの料金行のみを使用
+   します;リストをプロトコルがサポートする fee-leg 数に制限
+   します;各行を選択した ask 価格で元本アセットの絶対固定額に
+   変換します;リストされた料金受信者を leg 受信者として使用
+   します。選択した ask で必須料金がゼロに丸められる場合、ask は
+   そのコレクションには小さすぎ、post を試みるべきではありません。
+   空の配列を渡すことは fee-free コレクションでのみ有効です。
+   fee-enforced コレクションでは、OpenSea パブリケーションに
+   失敗するか、マーケットプレイスの必須 consideration 形状を
+   満たせない注文を生成する可能性があります。
 2. **OpenSea で publish。** facet が構築したのと同じ
    OrderComponents を再構築します。`PostParallelSaleListing`
    イベント単独では不十分です: それは `offerId`、ボロワー、

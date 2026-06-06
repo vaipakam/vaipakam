@@ -556,6 +556,20 @@ que la aplicación NO automatiza hoy:
    inmediatamente después del paso 1 O llama
    `releaseParallelSaleLock` para invalidar el binding antes
    de cualquier fill no intencionado.
+   Para colecciones con tarifas obligatorias, popula `feeLegs` del
+   calendario de tarifas requeridas de OpenSea / creador de la
+   colección antes de llamar a este paso. Usa solo filas de tarifa
+   requeridas, no-cero; limita la lista al conteo de fee-leg
+   soportado por el protocolo; convierte cada fila en un monto fijo
+   absoluto en el asset principal al precio de ask elegido; y usa
+   el destinatario de tarifa listado como destinatario del leg. Si
+   una tarifa requerida se redondea a cero al ask elegido, el ask
+   es demasiado pequeño para esa colección y el post no debe ser
+   intentado. Pasar un array vacío es válido solo para colecciones
+   sin tarifa. En colecciones con tarifas obligatorias puede
+   producir una orden que falle en la publicación de OpenSea o no
+   pueda satisfacer la forma de consideration requerida del
+   marketplace.
 2. **Publicar en OpenSea.** Reconstruye los mismos OrderComponents
    que el facet construyó. El evento `PostParallelSaleListing` por
    sí solo no es suficiente: emite `offerId`, prestatario,

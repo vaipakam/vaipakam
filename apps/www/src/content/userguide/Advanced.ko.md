@@ -472,6 +472,17 @@ fill이 도착할 때까지 오퍼가 이미 `Accepted` 상태입니다;
    전에 카운터파티가 현재 ask에 fill하는 것을 원하지 않는다면,
    단계 1 직후 단계 2를 실행하거나 의도하지 않은 fill 전에
    `releaseParallelSaleLock`을 호출하여 바인딩을 무효화합니다.
+   fee-enforced 컬렉션의 경우, 이 단계를 호출하기 전에 컬렉션의
+   필수 OpenSea / 크리에이터 수수료 일정에서 `feeLegs`를 채웁니다.
+   필수, 0이 아닌 수수료 행만 사용하십시오; 목록을 프로토콜이
+   지원하는 fee-leg 수로 제한하십시오; 각 행을 선택한 ask 가격
+   에서 원금 자산의 절대 고정 금액으로 변환하십시오; 그리고
+   나열된 수수료 수신자를 leg 수신자로 사용하십시오. 선택한
+   ask에서 필수 수수료가 0으로 반올림되면, ask는 해당 컬렉션
+   에 너무 작고 post를 시도해서는 안 됩니다. 빈 배열을 전달
+   하는 것은 fee-free 컬렉션에만 유효합니다. fee-enforced
+   컬렉션에서는 OpenSea 게시에 실패하거나 마켓플레이스의 필수
+   consideration 형태를 충족할 수 없는 주문을 생성할 수 있습니다.
 2. **OpenSea에 publish.** facet이 빌드한 동일한 OrderComponents를
    재구성합니다. `PostParallelSaleListing` 이벤트만으로는
    충분하지 않습니다: 이는 `offerId`, 대출자, orderHash,

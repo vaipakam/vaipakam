@@ -553,6 +553,20 @@ ZWEI-TEILE-Schritt, den die dapp heute NICHT automatisiert:
    Schritt 2 sofort nach Schritt 1 aus ODER rufe
    `releaseParallelSaleLock` auf, um das Binding vor einer
    unbeabsichtigten Erfüllung zu invalidieren.
+   Für Fee-Enforced-Collections, populiere `feeLegs` aus dem
+   geforderten OpenSea- / Creator-Fee-Schedule der Collection vor
+   diesem Schritt-Aufruf. Verwende NUR geforderte, nicht-null
+   Fee-Zeilen; beschränke die Liste auf den vom Protokoll
+   unterstützten Fee-Leg-Count; konvertiere jede Zeile in einen
+   absoluten Festbetrag im Principal-Asset zum gewählten Ask-Preis;
+   und verwende den gelisteten Fee-Empfänger als Leg-Empfänger.
+   Wenn eine geforderte Fee am gewählten Ask auf null gerundet
+   wird, ist der Ask zu klein für diese Collection und der Post
+   sollte nicht versucht werden. Ein leeres Array zu übergeben ist
+   nur für fee-freie Collections gültig. Auf Fee-Enforced-Collections
+   kann es eine Order produzieren, die bei der OpenSea-
+   Veröffentlichung fehlschlägt oder die geforderte Consideration-
+   Form des Marketplaces nicht erfüllen kann.
 2. **Auf OpenSea veröffentlichen.** Rekonstruiere dieselben
    OrderComponents, die der Facet gebaut hat. Das
    `PostParallelSaleListing`-Event allein reicht nicht: es
