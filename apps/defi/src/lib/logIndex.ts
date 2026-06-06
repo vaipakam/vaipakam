@@ -778,22 +778,24 @@ async function runScan(
       ? indexerLastBlockHint + 1
       : baseFrom;
 
-  if (fromBlock > head) return hydrate(cached);
-
-  // T-086 Round-8 §19.7e + Codex round-20 P2 — sale-event catchup
-  // window. The main `fromBlock` is fast-forwarded when the indexer
-  // hint is ahead of the cache cursor, which is fine for the bulk
-  // events (the indexer delivers them and the dapp reads via the
-  // worker-up path). But `OfferConsumedBySale` is critical for the
-  // worker-DOWN fallback (`useMyOffers` sold bucket + OfferDetails
+  // T-086 Round-8 §19.7e + Codex round-20 P2 + round-21 P2 #1 —
+  // sale-event catchup window. The main `fromBlock` is fast-forwarded
+  // when the indexer hint is ahead of the cache cursor, which is fine
+  // for the bulk events (the indexer delivers them and the dapp reads
+  // via the worker-up path). But `OfferConsumedBySale` is critical for
+  // the worker-DOWN fallback (`useMyOffers` sold bucket + OfferDetails
   // status corroboration). If a sale lands while the indexer is
-  // healthy + browser cache is behind, fast-forwarding past it
-  // leaves the cached events permanently blind to the sale; later,
-  // when the worker goes down, the dapp shows the offer as
-  // `active`. Track the catchup window here so the topic-specific
-  // pass below scans `[baseFrom, fromBlock - 1]` for that one
-  // topic (small extra cost: O(1) extra `eth_getLogs` call per
-  // chunk when fast-forward is engaged).
+  // healthy + browser cache is behind, fast-forwarding past it leaves
+  // the cached events permanently blind to the sale; later, when the
+  // worker goes down, the dapp shows the offer as `active`.
+  //
+  // Round-21 P2 #1 fix: this must run BEFORE the `fromBlock > head`
+  // early return — that early return fires the moment the indexer
+  // hint matches the safe head (common warmed-cache fast-forward
+  // case), which would skip catchup entirely. The catchup uses
+  // `closedOfferIdSet` + `soldOfferIdSet` + `eventMap` (initialized
+  // immediately below), so those also have to be hoisted above the
+  // early return.
   const saleCatchupActive = fromBlock > baseFrom;
   const saleCatchupFromBlock = baseFrom;
   const saleCatchupToBlock = fromBlock - 1;
@@ -903,21 +905,70 @@ async function runScan(
         soldOfferIdSet.add(offerId);
         // Same eventKey shape as the addEvent closure inside the
         // main loop — the closure is scoped to that block, so
-        // construct the entry directly here. Participant
-        // enrichment happens in the post-scan pass below; for now
-        // tag executor only.
+        // construct the entry directly here. Codex round-21 P2 #2 —
+        // ALSO look up the creator from cached `OfferCreated` events
+        // in eventMap (initialized from prior-scan cache) before
+        // writing the event, so the warmed-cache fast-forward
+        // scenario gets the borrower in participants without waiting
+        // for the indexer-callback post-scan pass below. The
+        // post-scan pass still covers the case where the create event
+        // is fully fast-forwarded past.
+        let cachedCreator: string | undefined;
+        for (const ev of eventMap.values()) {
+          if (
+            ev.kind === 'OfferCreated' &&
+            typeof ev.args.offerId === 'string' &&
+            ev.args.offerId === offerId &&
+            typeof ev.args.creator === 'string'
+          ) {
+            cachedCreator = ev.args.creator.toLowerCase();
+            break;
+          }
+        }
         const eventKey = `${event.transactionHash}:${event.logIndex}`;
         eventMap.set(eventKey, {
           kind: 'OfferConsumedBySale',
           blockNumber: Number(event.blockNumber),
           logIndex: Number(event.logIndex),
           txHash: event.transactionHash,
-          participants: [executor],
+          participants: cachedCreator ? [executor, cachedCreator] : [executor],
           args: { offerId, executor },
         });
       }
       catchupCursor = catchupToBlock + 1;
     }
+  }
+
+  // Codex round-21 P2 #1 — early-return AFTER the catchup pass. When
+  // the indexer hint already matches the safe head, `fromBlock > head`
+  // (no main-scan work to do). Pre-fix this returned `hydrate(cached)`
+  // before the catchup ran, so warmed-cache + healthy-worker users
+  // never picked up new sale terminals. Now the catchup runs first
+  // (updating eventMap / closedOfferIdSet / soldOfferIdSet in
+  // memory); we write the merged state to cache and hydrate the
+  // updated shape.
+  if (fromBlock > head) {
+    const sortedEvents = Array.from(eventMap.values()).sort((a, b) => {
+      if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
+      return a.logIndex - b.logIndex;
+    });
+    const updatedCached: CachedShape = {
+      ...cached,
+      // lastBlock stays at the cached value — we only advanced the
+      // catchup cursor, not the main scan cursor.
+      closedOfferIds: Array.from(closedOfferIdSet).sort((a, b) =>
+        Number(BigInt(a) - BigInt(b)),
+      ),
+      soldOfferIds: Array.from(soldOfferIdSet).sort((a, b) =>
+        Number(BigInt(a) - BigInt(b)),
+      ),
+      recentAcceptedOfferIds: recentAcceptedOfferIds.slice(
+        -RECENT_ACCEPTED_CAP,
+      ),
+      events: sortedEvents,
+    };
+    writeCache(chainId, diamondAddress, updatedCached);
+    return hydrate(updatedCached);
   }
 
   while (cursor <= head) {
@@ -1655,19 +1706,39 @@ async function runScan(
   // before the cache write. Bounded N (number of consumed events
   // missing creator) and the callback is HTTP-cached, so the
   // amortized cost is low.
-  if (fetchOfferCreator) {
-    const seenOfferIds = new Set<string>();
-    for (const ev of eventMap.values()) {
-      if (ev.kind !== 'OfferCreated') continue;
-      const id = ev.args.offerId;
-      if (typeof id === 'string') seenOfferIds.add(id);
+  // Codex round-21 P2 #2 — first pass: walk eventMap for every
+  // `OfferCreated`, build an offerId → creator address map. Use it
+  // to enrich BOTH the in-current-scan sale events AND the catchup
+  // sale events that were written with `[executor]` only.
+  const creatorByOfferIdLocal = new Map<string, string>();
+  for (const ev of eventMap.values()) {
+    if (ev.kind !== 'OfferCreated') continue;
+    const id = ev.args.offerId;
+    const creator = ev.args.creator;
+    if (typeof id === 'string' && typeof creator === 'string') {
+      creatorByOfferIdLocal.set(id, creator.toLowerCase());
     }
+  }
+  for (const ev of eventMap.values()) {
+    if (ev.kind !== 'OfferConsumedBySale') continue;
+    const offerId = ev.args.offerId;
+    if (typeof offerId !== 'string') continue;
+    const localCreator = creatorByOfferIdLocal.get(offerId);
+    if (localCreator && !ev.participants.includes(localCreator)) {
+      ev.participants = [...ev.participants, localCreator];
+    }
+  }
+  // Second pass: events whose `OfferCreated` was fast-forwarded past
+  // (NOT in this scan AND NOT cached from a prior scan) still lack
+  // the creator. Use the indexer callback for those — bounded N
+  // (only events still missing creator), HTTP-cached.
+  if (fetchOfferCreator) {
     const missing: { ev: ActivityEvent; offerId: string }[] = [];
     for (const ev of eventMap.values()) {
       if (ev.kind !== 'OfferConsumedBySale') continue;
       const offerId = ev.args.offerId;
       if (typeof offerId !== 'string') continue;
-      if (seenOfferIds.has(offerId)) continue;
+      if (creatorByOfferIdLocal.has(offerId)) continue;
       missing.push({ ev, offerId });
     }
     for (const { ev, offerId } of missing) {
