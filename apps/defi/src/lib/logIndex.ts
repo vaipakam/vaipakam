@@ -384,7 +384,15 @@ function storageKey(chainId: number, diamond: string): string {
   // worker-down fallback path. The bump forces a one-time re-scan
   // from the deploy block on next page load; correctness over the
   // (one-time) extra cold-scan cost.
-  return `vaipakam:logIndex:v2:${chainId}:${diamond.toLowerCase()}`;
+  //
+  // T-090 Sub 3 + Codex PR #402 round-2 P2 #2 — bumped `v2` → `v3`
+  // because the SwapToRepay secondary scan was added in this PR. Same
+  // rationale: any existing browser cursor that has already advanced
+  // past a swap-to-repay block would never replay it under the same
+  // key, so SwapToRepayExecuted / SwapToRepayPartialExecuted rows
+  // would be missing from the worker-down fallback path. One-time
+  // re-scan from the deploy block on next page load.
+  return `vaipakam:logIndex:v3:${chainId}:${diamond.toLowerCase()}`;
 }
 
 function emptyCache(deployBlock: number): CachedShape {
@@ -1086,9 +1094,13 @@ async function runScan(
             LIQUIDATION_FALLBACK_SPLIT_TOPIC0,
             LOAN_SETTLED_TOPIC0,
             PARTIAL_REPAID_TOPIC0,
-            // T-090 Sub 3 — borrower-initiated swap-to-repay events.
-            SWAP_TO_REPAY_EXECUTED_TOPIC0,
-            SWAP_TO_REPAY_PARTIAL_EXECUTED_TOPIC0,
+            // T-090 Sub 3 — `SWAP_TO_REPAY_EXECUTED_TOPIC0` +
+            // `SWAP_TO_REPAY_PARTIAL_EXECUTED_TOPIC0` deliberately omitted
+            // here. The bulk topic OR-list must stay at ≤24 (publicnode /
+            // free-tier silent cap drops results once it crosses 25), and
+            // adding two more would push us to 26. Captured below in a
+            // dedicated secondary scan call, same pattern as
+            // `OFFER_CONSUMED_BY_SALE_TOPIC0`.
             CLAIM_RETRY_EXECUTED_TOPIC0,
             BORROWER_LIF_REBATE_CLAIMED_TOPIC0,
             STAKING_REWARDS_CLAIMED_TOPIC0,
@@ -1166,6 +1178,45 @@ async function runScan(
     void consumedScanOk;
     if (consumedLogs.length > 0) {
       logs = logs.concat(consumedLogs);
+    }
+
+    // T-090 Sub 3 — third `eth_getLogs` call dedicated to the two
+    // SwapToRepay topics, same rationale as the OfferConsumedBySale
+    // secondary scan: keeps the bulk call's topic OR-list at 24 (under
+    // the publicnode silent cap) while still capturing the new
+    // borrower-initiated swap-to-repay events on the worker-down
+    // fallback path. Logs merge into the main scan via concat; the
+    // decoder branch matches by `topic0` so ordering is irrelevant.
+    let swapLogs: RawLog[] = [];
+    try {
+      swapLogs = await safeGetLogs(rpcUrl, {
+        address: diamondAddress,
+        topics: [
+          [
+            SWAP_TO_REPAY_EXECUTED_TOPIC0,
+            SWAP_TO_REPAY_PARTIAL_EXECUTED_TOPIC0,
+          ],
+        ],
+        fromBlock: cursor,
+        toBlock,
+      });
+    } catch (err) {
+      // Same degradation policy as OfferConsumedBySale above.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (effectiveChunk > 1) {
+        const next = Math.max(1, Math.floor(effectiveChunk / 2));
+        console.warn(
+          `[logIndex] SwapToRepay getLogs failed at ${effectiveChunk}-block chunk, downshifting to ${next}: ${msg}`,
+        );
+        effectiveChunk = next;
+        continue;
+      }
+      console.warn(
+        `[logIndex] SwapToRepay getLogs failed at chunk=1 (swap-to-repay capture degraded for this chunk; advancing cursor): ${msg}`,
+      );
+    }
+    if (swapLogs.length > 0) {
+      logs = logs.concat(swapLogs);
     }
 
     // Small inter-chunk pause — keeps us under Alchemy free-tier CUPS without

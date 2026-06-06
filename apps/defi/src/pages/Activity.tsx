@@ -195,6 +195,12 @@ function renderArgValue(key: string, value: string | number | boolean): string {
     'lateFeePaid',
     'vpfiAmount',
     'ethAmount',
+    // T-090 Sub 3 — swap-to-repay arg keys carry wei-sized token
+    // amounts that should render in the same `formatUnitsPretty` shape
+    // as the canonical repayment rows.
+    'collateralIn',
+    'principalOut',
+    'partialPrincipal',
   ]);
   if (amountKeys.has(key) && /^\d+$/.test(String(value))) {
     try {
@@ -229,6 +235,10 @@ const ARG_LABELS: Record<string, string> = {
   user: 'User',
   vpfiAmount: 'VPFI',
   ethAmount: 'ETH paid',
+  // T-090 Sub 3 — labels for swap-to-repay event args.
+  collateralIn: 'Collateral swapped',
+  principalOut: 'Principal received',
+  partialPrincipal: 'Principal retired',
 };
 
 /**
