@@ -138,6 +138,13 @@ const KIND_PRIORITY: ActivityEventKind[] = [
   'VPFIWithdrawnFromVault',
   'OfferCreated',
   'OfferCanceled',
+  // T-086 Round-8 §19.7e + Codex round-20 P3 — parallel-sale
+  // Scenario A terminal. Both `pickPrimary` (drives the rolled-up
+  // tx headline) and the filter-chip generator
+  // (`KIND_PRIORITY.filter(... kindsPresent)`) read this list, so
+  // the entry surfaces the sold-via-OpenSea kind in the toolbar
+  // filter without an extra config.
+  'OfferConsumedBySale',
 ];
 
 function pickPrimary(events: ActivityEvent[]): ActivityEventKind {

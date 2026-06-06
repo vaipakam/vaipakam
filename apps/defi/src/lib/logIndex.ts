@@ -780,6 +780,24 @@ async function runScan(
 
   if (fromBlock > head) return hydrate(cached);
 
+  // T-086 Round-8 §19.7e + Codex round-20 P2 — sale-event catchup
+  // window. The main `fromBlock` is fast-forwarded when the indexer
+  // hint is ahead of the cache cursor, which is fine for the bulk
+  // events (the indexer delivers them and the dapp reads via the
+  // worker-up path). But `OfferConsumedBySale` is critical for the
+  // worker-DOWN fallback (`useMyOffers` sold bucket + OfferDetails
+  // status corroboration). If a sale lands while the indexer is
+  // healthy + browser cache is behind, fast-forwarding past it
+  // leaves the cached events permanently blind to the sale; later,
+  // when the worker goes down, the dapp shows the offer as
+  // `active`. Track the catchup window here so the topic-specific
+  // pass below scans `[baseFrom, fromBlock - 1]` for that one
+  // topic (small extra cost: O(1) extra `eth_getLogs` call per
+  // chunk when fast-forward is engaged).
+  const saleCatchupActive = fromBlock > baseFrom;
+  const saleCatchupFromBlock = baseFrom;
+  const saleCatchupToBlock = fromBlock - 1;
+
   const merged = new Map<string, CachedShape['loans'][number]>();
   for (const row of cached.loans) merged.set(row.loanId, row);
   const owners: Record<string, string> = { ...cached.owners };
@@ -830,6 +848,77 @@ async function runScan(
   // no point rediscovering it every chunk.
   let effectiveChunk = CHUNK;
   let cursor = fromBlock;
+
+  // T-086 Round-8 §19.7e + Codex round-20 P2 — sale-event catchup
+  // pass. Scans `OFFER_CONSUMED_BY_SALE_TOPIC0` over the gap the
+  // main `fromBlock` fast-forwarded past so the cached events
+  // include every Scenario A terminal even on warmed caches with
+  // healthy indexers. Bounded chunked loop with the same downshift-
+  // on-failure pattern as the main secondary call. Logs feed the
+  // same in-loop decoder via the dedicated catchup-event branch
+  // below (we run the decoder inline here rather than buffering
+  // raw logs since the addEvent closure needs to land entries into
+  // the same eventMap before the main loop starts).
+  if (saleCatchupActive) {
+    let catchupCursor = saleCatchupFromBlock;
+    let catchupChunk = CHUNK;
+    while (catchupCursor <= saleCatchupToBlock) {
+      const catchupToBlock = Math.min(
+        catchupCursor + catchupChunk - 1,
+        saleCatchupToBlock,
+      );
+      let catchupLogs: RawLog[] = [];
+      try {
+        catchupLogs = await safeGetLogs(rpcUrl, {
+          address: diamondAddress,
+          topics: [[OFFER_CONSUMED_BY_SALE_TOPIC0]],
+          fromBlock: catchupCursor,
+          toBlock: catchupToBlock,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (catchupChunk > 1) {
+          catchupChunk = Math.max(1, Math.floor(catchupChunk / 2));
+          console.warn(
+            `[logIndex] sale-catchup getLogs failed at ${catchupChunk * 2}-block chunk, downshifting: ${msg}`,
+          );
+          continue;
+        }
+        console.warn(
+          `[logIndex] sale-catchup getLogs failed at chunk=1, advancing past gap: ${msg}`,
+        );
+        catchupCursor = catchupToBlock + 1;
+        continue;
+      }
+      // Decode the catchup logs inline so they merge into the same
+      // eventMap + closedOfferIdSet + soldOfferIdSet as the main
+      // loop's results.
+      for (const event of catchupLogs) {
+        const topics = event.topics;
+        if (!topics || topics.length < 3) continue;
+        if (topics[0] !== OFFER_CONSUMED_BY_SALE_TOPIC0) continue;
+        const offerId = BigInt(topics[1]).toString();
+        const executor = ('0x' + topics[2].slice(26)).toLowerCase();
+        closedOfferIdSet.add(offerId);
+        soldOfferIdSet.add(offerId);
+        // Same eventKey shape as the addEvent closure inside the
+        // main loop — the closure is scoped to that block, so
+        // construct the entry directly here. Participant
+        // enrichment happens in the post-scan pass below; for now
+        // tag executor only.
+        const eventKey = `${event.transactionHash}:${event.logIndex}`;
+        eventMap.set(eventKey, {
+          kind: 'OfferConsumedBySale',
+          blockNumber: Number(event.blockNumber),
+          logIndex: Number(event.logIndex),
+          txHash: event.transactionHash,
+          participants: [executor],
+          args: { offerId, executor },
+        });
+      }
+      catchupCursor = catchupToBlock + 1;
+    }
+  }
 
   while (cursor <= head) {
     const toBlock = Math.min(cursor + effectiveChunk - 1, head);

@@ -169,6 +169,11 @@ export async function handleOffersStats(req: Request, env: Env): Promise<Respons
       accepted: 0,
       cancelled: 0,
       expired: 0,
+      // T-086 Round-8 §19.7e + Codex round-20 P2 — Scenario A
+      // parallel-sale terminal. Without this bucket the public
+      // `total` (used by dashboard / lifetime-metrics widgets) would
+      // silently undercount every sold-before-acceptance offer.
+      consumed_by_sale: 0,
     };
     for (const row of counts.results ?? []) {
       tally[row.status] = row.n;
@@ -179,7 +184,13 @@ export async function handleOffersStats(req: Request, env: Env): Promise<Respons
       accepted: tally.accepted,
       cancelled: tally.cancelled,
       expired: tally.expired,
-      total: tally.active + tally.accepted + tally.cancelled + tally.expired,
+      consumedBySale: tally.consumed_by_sale,
+      total:
+        tally.active +
+        tally.accepted +
+        tally.cancelled +
+        tally.expired +
+        tally.consumed_by_sale,
       indexer: cursor
         ? { lastBlock: cursor.last_block, updatedAt: cursor.updated_at }
         : null,
