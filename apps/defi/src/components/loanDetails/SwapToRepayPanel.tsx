@@ -20,6 +20,13 @@ interface SwapToRepayPanelProps {
   /** The diamond address — `taker` for aggregator quotes, target of
    *  the swapToRepayFull call. */
   diamondAddress: Address;
+  /** Unix-seconds boundary past which the on-chain
+   *  `swapToRepayFull` reverts with `RepaymentPastGracePeriod`.
+   *  Used for a submit-time re-check so a stale parent-page minute
+   *  tick (`pastPrepayGrace` updates on a 60s tick) doesn't let the
+   *  borrower click submit on a funds-moving operation that would
+   *  always revert (Codex PR #409 round-3 P2 #2). */
+  graceUntilSec: number;
   /** Called after the tx confirms so the parent page can refresh
    *  loan state. Without this the parent would keep rendering the
    *  pre-swap (Active) loan with the swap panel enabled, letting a
@@ -78,6 +85,7 @@ export function SwapToRepayPanel({
   collateralAmount,
   principalAsset,
   diamondAddress,
+  graceUntilSec,
   onAfterSuccess,
 }: SwapToRepayPanelProps) {
   const { address, isCorrectChain } = useWallet();
@@ -125,6 +133,19 @@ export function SwapToRepayPanel({
 
   const handleSubmit = async () => {
     if (!canWrite || !quotes || quotes.calls.length === 0 || !diamond) return;
+    // Codex PR #409 round-3 P2 #2 — re-derive grace at click-time
+    // using the live `Date.now()`. The parent's `pastPrepayGrace`
+    // signal moves on a minute tick, leaving up to ~60s of stale
+    // "still inside grace" state. A funds-moving tx deserves a
+    // fresh-as-of-click check; surface the same error the contract
+    // would return so the user knows why we refused to submit.
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (nowSec >= graceUntilSec) {
+      setError(
+        'Repayment past grace period — the loan can no longer be repaid; the lender will need to default + claim.',
+      );
+      return;
+    }
     setSubmitting(true);
     setError(null);
     setTxHash(null);
