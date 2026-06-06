@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ArrowRightLeft, AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
 import type { Address } from 'viem';
 import { useWallet } from '../../context/WalletContext';
+import { useChainOverride } from '../../context/ChainContext';
 import { useDiamondContract } from '../../contracts/useDiamond';
 import { useLiquidationQuotes } from '../../hooks/useLiquidationQuotes';
 import type { OrchestratedQuotes } from '../../lib/swapQuoteService';
@@ -80,6 +81,13 @@ export function SwapToRepayPanel({
   onAfterSuccess,
 }: SwapToRepayPanelProps) {
   const { address, isCorrectChain } = useWallet();
+  // Codex PR #409 round-2 P2 #2 — when a user has the public-dashboard
+  // `viewChainId` override active (looking at a chain other than their
+  // connected wallet's chain), `useDiamondContract()` intentionally
+  // returns a read-only handle. Submit would throw inside the write
+  // call. Refuse to enable the action button in that mode so the
+  // panel is purely informational while cross-chain viewing.
+  const { viewChainId } = useChainOverride();
   const diamond = useDiamondContract();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -102,7 +110,8 @@ export function SwapToRepayPanel({
     workerOrigin: WORKER_ORIGIN,
   });
 
-  const canWrite = !!address && isCorrectChain && !!diamond;
+  const canWrite =
+    !!address && isCorrectChain && !!diamond && viewChainId === null;
 
   // Note: NO collateral-asset ERC20 approval is needed here (Codex
   // PR #409 round-1 P2 #3). The on-chain `swapToRepayFull` pulls the
@@ -140,17 +149,31 @@ export function SwapToRepayPanel({
       step.success({
         note: `tx ${tx.hash} via ${quotes.ranked[0].adapterKind}`,
       });
-      // Codex PR #409 round-1 P2 #2 — refresh the parent page's loan
-      // state so the panel hides and the Active loan flips to
-      // Repaid. Otherwise the user can accidentally submit a second
-      // tx that always reverts.
-      if (onAfterSuccess) await onAfterSuccess();
     } catch (err) {
       setError(decodeContractError(err, 'Swap-to-repay failed'));
       step.failure(err);
-    } finally {
       setSubmitting(false);
+      return;
     }
+    // Codex PR #409 round-1 P2 #2 — refresh the parent page's loan
+    // state so the panel hides and the Active loan flips to Repaid.
+    // Codex PR #409 round-2 P2 #4 — handle the refresh OUTSIDE the
+    // tx try/catch. A failing `onAfterSuccess` (RPC blip, etc.) AFTER
+    // a successful tx must NOT mislabel the swap as failed — the
+    // funds-moving operation already completed on-chain. Log the
+    // refresh failure as its own concern so the user still sees the
+    // success state but knows to refresh the page manually.
+    if (onAfterSuccess) {
+      try {
+        await onAfterSuccess();
+      } catch (refreshErr) {
+        console.warn(
+          '[SwapToRepayPanel] tx succeeded but loan-state refresh failed; refresh the page to update',
+          refreshErr,
+        );
+      }
+    }
+    setSubmitting(false);
   };
 
   return (

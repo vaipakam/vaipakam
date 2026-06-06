@@ -1076,11 +1076,18 @@ export default function LoanDetails() {
               EXACTLY so we never show a button that would always
               revert:
               - borrower-NFT-owner authority (Sub 1 Codex round-1 P1 #3)
+              - NOT also the lender-side holder (the on-chain lender
+                self-repay guard rejects degenerate case; Codex PR
+                #409 round-2 P2 #1)
               - Active status only (FallbackPending rejected on-chain)
+              - NOT past grace (contract reverts
+                `RepaymentPastGracePeriod`; Codex PR #409 round-2 P2 #3)
               - both asset types ERC20 (P2 #4 Sub 1)
               - both legs Liquid (`UnsupportedLoanShape` otherwise) */}
           {isBorrower &&
+            !isLender &&
             isActive &&
+            !pastPrepayGrace &&
             !isIlliquidLoan &&
             Number(loan.assetType) === AssetType.ERC20 &&
             Number(loan.collateralAssetType) === AssetType.ERC20 &&
