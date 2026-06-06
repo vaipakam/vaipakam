@@ -1609,38 +1609,33 @@ async function processLoanLogs(
       }
     } else if (log.eventName === 'SwapToRepayPartialExecuted') {
       // T-090 Sub 2 — borrower swap-to-repay partial. The contract path
-      // reduces both `loan.principal` (by `partialPrincipal`) and
+      // reduces `loan.principal` (by `partialPrincipal`), reduces
       // `loan.collateralAmount` (by `collateralIn` =
-      // `actualCollateralConsumed` — the partial-fill leftover was already
-      // refunded to the borrower vault). Plus resets `loan.startTime` to
-      // `block.timestamp` (RepayFacet.repayPartial:663 pattern). The loan
-      // stays Active.
+      // `actualCollateralConsumed`; partial-fill leftover refunded to
+      // borrower vault), and resets `loan.startTime = block.timestamp`
+      // (RepayFacet.repayPartial:663 pattern). The loan stays Active.
       //
-      // The event doesn't carry post-state (`PartialRepaid` does;
-      // SwapToRepayPartialExecuted predates that pattern by design). Read
-      // the current row + parse with BigInt + write back as a decimal
-      // string. SQL-side `CAST(... AS INTEGER) - ?` would silently clamp
-      // any ERC20-sized value above 2^63 to `9223372036854775807` —
-      // schema stores amounts as TEXT specifically because real ERC20
-      // amounts blow past 64-bit signed (Codex round-1 P1 on PR #391).
-      // Mirrors the `InternalMatchExecuted` read-modify-write pattern.
+      // Idempotency via canonical chain read (Codex round-2 P1 on
+      // PR #391): a delta-based UPDATE (`principal -= partialPrincipal`)
+      // would double-subtract if the cron pass retries this block range
+      // after the UPDATE landed but before `indexer_cursor` advances
+      // (recordActivityEvents / refreshStubLoans / cursor-write failure
+      // cases). Instead read the canonical post-state via
+      // `getLoanDetails(loanId)` and write absolute values — the same
+      // RPC quota the existing stub-loan refresh path spends, and
+      // identical reruns produce identical writes.
       const loanId = Number(a.loanId as bigint);
-      const cur = await env.DB.prepare(
-        `SELECT principal, collateral_amount
-           FROM loans WHERE chain_id = ? AND loan_id = ?`,
-      )
-        .bind(chainId, loanId)
-        .first<{ principal: string; collateral_amount: string }>();
-      if (cur) {
-        const newPrincipal = BigInt(cur.principal) - (a.partialPrincipal as bigint);
-        const newCollateral = BigInt(cur.collateral_amount) - (a.collateralIn as bigint);
-        // Codex round-1 P2 #1 — refresh `start_time` from the event
-        // block. The contract resets `loan.startTime = block.timestamp`
-        // on partial swap-to-repay (RepayFacet.repayPartial:663
-        // pattern); without mirroring it here, `/loans` consumers
-        // calculate remaining term / grace / accrual against the stale
-        // pre-swap value until some unrelated full refresh hits.
-        const blockAt = blockTimestamps.get(log.blockNumber) ?? now;
+      try {
+        const detail = (await client.readContract({
+          address: diamond,
+          abi: DIAMOND_LOAN_DETAILS_ABI,
+          functionName: 'getLoanDetails',
+          args: [BigInt(loanId)],
+        })) as {
+          principal: bigint;
+          collateralAmount: bigint;
+          startTime: bigint;
+        };
         await env.DB.prepare(
           `UPDATE loans
              SET principal = ?,
@@ -1650,14 +1645,19 @@ async function processLoanLogs(
            WHERE chain_id = ? AND loan_id = ?`,
         )
           .bind(
-            newPrincipal.toString(),
-            newCollateral.toString(),
-            blockAt,
+            detail.principal.toString(),
+            detail.collateralAmount.toString(),
+            Number(detail.startTime),
             now,
             chainId,
             loanId,
           )
           .run();
+      } catch {
+        // RPC failure — fall back to the event-block timestamp for
+        // `updated_at` so the row at least bumps. Next cron tick will
+        // pick up the canonical values via the refreshStubLoans path
+        // or a subsequent terminal-event handler.
       }
       // Mirror PartialRepaid's grace-end refresh — the contract resets
       // `loan.startTime` on partial swap-to-repay too (RepayFacet:663
