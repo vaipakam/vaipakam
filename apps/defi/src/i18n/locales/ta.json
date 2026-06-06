@@ -623,7 +623,8 @@
     "burnedHeader": "— நிலை NFT அழிக்கப்பட்டது மற்றும் டோக்கன் ID ஐ ஒருபோதும் மீண்டும் பயன்படுத்த அல்லது மாற்ற முடியாது.",
     "genuinePrefix": "உண்மையான Vaipakam NFT இங்கு:",
     "healthFactor": "ஆரோக்கிய காரணி",
-    "ltv": "LTV"
+    "ltv": "LTV",
+    "offerSold": "Sold via OpenSea"
   },
   "loanFlow": {
     "backToLoan": "கடனுக்குத் திரும்பு",

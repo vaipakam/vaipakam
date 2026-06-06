@@ -623,7 +623,8 @@
     "burnedHeader": "— 포지션 NFT가 파기되었으며 토큰 ID는 결코 재사용되거나 이전될 수 없습니다.",
     "genuinePrefix": "정품 Vaipakam NFT 위치:",
     "healthFactor": "헬스 팩터",
-    "ltv": "LTV"
+    "ltv": "LTV",
+    "offerSold": "Sold via OpenSea"
   },
   "loanFlow": {
     "backToLoan": "대출로 돌아가기",

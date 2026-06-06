@@ -623,7 +623,8 @@
     "burnedHeader": "— تم تدمير NFT المركز ولا يمكن إعادة استخدام معرّف الرمز أو نقله أبدًا.",
     "genuinePrefix": "NFT Vaipakam أصلي على",
     "healthFactor": "عامل الصحة",
-    "ltv": "LTV"
+    "ltv": "LTV",
+    "offerSold": "Sold via OpenSea"
   },
   "loanFlow": {
     "backToLoan": "العودة إلى القرض",

@@ -258,12 +258,18 @@ export interface LogIndexResult {
   /** Reverse lookup: position-NFT tokenId → the `OfferCreated` event that
    *  minted it. Useful for burned NFTs whose offer never turned into a loan
    *  (canceled before acceptance), so the Verifier can still surface the
-   *  offer status instead of falling back to "unknown". */
+   *  offer status instead of falling back to "unknown".
+   *
+   *  T-086 Round-8 §19.7e + Codex round-18 P2 #6 — `sold` status added
+   *  for the parallel-sale Scenario A terminal (`OfferConsumedBySale`).
+   *  Scenario A also burns the offer-creator NFT; without this state
+   *  the Verifier would tell prospective buyers a sold-through-OpenSea
+   *  offer was "open" (the default fallback). */
   getOfferForToken: (tokenId: bigint) =>
     | {
         offerId: string;
         creator: string;
-        status: 'accepted' | 'canceled' | 'open';
+        status: 'accepted' | 'canceled' | 'sold' | 'open';
         event: ActivityEvent;
       }
     | null;
@@ -291,8 +297,16 @@ interface CachedShape {
   prevOwners?: Record<string, string>;
   // Offer IDs (decimal strings) from OfferCreated.
   offerIds: string[];
-  /** Offer IDs that have reached a terminal state (accepted or canceled). */
+  /** Offer IDs that have reached a terminal state (accepted, canceled,
+   *  or sold-via-OpenSea). */
   closedOfferIds?: string[];
+  /** T-086 Round-8 §19.7e + Codex round-18 P2 #4 — Offer IDs whose
+   *  terminal state is specifically the parallel-sale Scenario A
+   *  (`OfferConsumedBySale`). Stripped from the public
+   *  `closedOfferIds` so OfferBook's Closed/Filled tab doesn't show
+   *  them as pagination slots that render nothing — sold offers are
+   *  not `accepted`, so `fetchBatch` would skip them anyway. */
+  soldOfferIds?: string[];
   /** Highest (most recent) offerId seen in `OfferAccepted`, or null. */
   lastAcceptedOfferId?: string | null;
   /** Last N accepted offer IDs in OLDEST-FIRST scan order. Hydrated to
@@ -365,6 +379,7 @@ function emptyCache(deployBlock: number): CachedShape {
     prevOwners: {},
     offerIds: [],
     closedOfferIds: [],
+    soldOfferIds: [],
     lastAcceptedOfferId: null,
     recentAcceptedOfferIds: [],
     events: [],
@@ -402,6 +417,8 @@ function readCache(chainId: number, diamond: string): CachedShape | null {
       prevOwners: parsed.prevOwners ?? {},
       offerIds: Array.isArray(parsed.offerIds) ? parsed.offerIds : [],
       closedOfferIds: Array.isArray(parsed.closedOfferIds) ? parsed.closedOfferIds : [],
+      // Codex round-18 P2 #4 — restore the sold-id subset.
+      soldOfferIds: Array.isArray(parsed.soldOfferIds) ? parsed.soldOfferIds : [],
       lastAcceptedOfferId: parsed.lastAcceptedOfferId ?? null,
       recentAcceptedOfferIds,
       events,
@@ -665,6 +682,17 @@ export async function loadLoanIndex(
    *  given (indexer unreachable / disabled), behaviour matches the
    *  original cache-cursor-based incremental scan. */
   indexerLastBlockHint?: number,
+  /** T-086 Round-8 §19.7e + Codex round-18 P2 #5 — optional
+   *  creator-lookup callback for OfferConsumedBySale events whose
+   *  prior OfferCreated wasn't in the scan (fast-forwarded past). The
+   *  caller wires this to `fetchOfferById` so the post-scan
+   *  enrichment can recover the borrower's address from the indexer
+   *  and tag it on the cached event's participants list. Without
+   *  this, the cached event tags only `executor`, hiding the row
+   *  from the borrower's Activity feed when the worker later goes
+   *  down. Returns null on lookup failure (degradation acceptable —
+   *  matches the pre-fix behaviour). */
+  fetchOfferCreator?: (offerId: string) => Promise<string | null>,
 ): Promise<LogIndexResult> {
   const key = storageKey(chainId, diamondAddress);
   const existing = inflight.get(key);
@@ -676,6 +704,7 @@ export async function loadLoanIndex(
     deployBlock,
     chainId,
     indexerLastBlockHint,
+    fetchOfferCreator,
   ).finally(() => {
     inflight.delete(key);
   });
@@ -689,6 +718,7 @@ async function runScan(
   deployBlock: number,
   chainId: number,
   indexerLastBlockHint?: number,
+  fetchOfferCreator?: (offerId: string) => Promise<string | null>,
 ): Promise<LogIndexResult> {
   // Misconfiguration guard — runs before any cache read or RPC call.
   // `deployBlock` must be the chain's actual Diamond-deploy block; a
@@ -743,6 +773,17 @@ async function runScan(
   const prevOwners: Record<string, string> = { ...(cached.prevOwners ?? {}) };
   const offerIdSet = new Set<string>(cached.offerIds);
   const closedOfferIdSet = new Set<string>(cached.closedOfferIds ?? []);
+  // T-086 Round-8 §19.7e + Codex round-18 P2 #4 — sold-via-OpenSea
+  // ids tracked separately from the closed union. `closedOfferIdSet`
+  // is the union of accepted + cancelled + sold for the openOfferIds
+  // calculation (sold offers must drop from the live active set);
+  // `soldOfferIdSet` is consumed below to STRIP sold ids from the
+  // public `closedOfferIds` array. Without this strip, OfferBook's
+  // Closed/Filled tab includes sold offers in pagination but
+  // `fetchBatch` drops every row with `!raw.accepted` (sold offers
+  // are not accepted) — leaving blank pagination slots that inflate
+  // the scanned total without rendering anything useful.
+  const soldOfferIdSet = new Set<string>(cached.soldOfferIds ?? []);
   let lastAcceptedOfferId: bigint | null = cached.lastAcceptedOfferId
     ? BigInt(cached.lastAcceptedOfferId)
     : null;
@@ -862,28 +903,40 @@ async function runScan(
         toBlock,
       });
     } catch (err) {
-      // Codex round-17 P2 #3 — DON'T silently advance the cursor.
-      // If the secondary call fails after the bulk call succeeded,
-      // letting `cursor = toBlock + 1` run at the bottom of the loop
-      // means any sale terminal in this chunk's block range is
-      // permanently absent from `closedOfferIds`/events in the
-      // browser cache — leaving sold offers stuck on `active` until
-      // the user clears storage. Throw so the outer chunk retries
-      // (the bulk call's downshift path is engaged on retry too).
+      // Codex round-17 P2 #3 + round-18 P2 #2 — DON'T silently
+      // advance the cursor on failure. If the secondary call fails
+      // after the bulk call succeeded, advancing `cursor = toBlock + 1`
+      // means any sale terminal in this chunk's range is permanently
+      // absent from `closedOfferIds`/events. So we engage the SAME
+      // downshift-or-retry path the bulk call uses below: shrink the
+      // chunk size to half (down to 1) and re-run the loop iteration
+      // against the SAME cursor with the smaller window. Once the
+      // chunk is small enough that even the secondary call no longer
+      // fails (or it succeeds at chunk=1), the loop proceeds. If
+      // chunk is already 1 and the call STILL fails (genuinely broken
+      // RPC topic/provider), we accept the degradation and advance —
+      // sold-row capture is best-effort; the indexer-first path covers
+      // the common case.
       const msg = err instanceof Error ? err.message : String(err);
+      if (isBlockRangeOrSizeError(msg) && effectiveChunk > 1) {
+        const next = Math.max(1, Math.floor(effectiveChunk / 2));
+        console.warn(
+          `[logIndex] OfferConsumedBySale getLogs rejected ${effectiveChunk}-block chunk, downshifting to ${next}: ${msg}`,
+        );
+        effectiveChunk = next;
+        continue; // retry same cursor with the smaller chunk
+      }
+      // Non-rate-limit / non-range failure at chunk=1 — log and
+      // advance. Same cursor would just fail again indefinitely.
       console.warn(
-        `[logIndex] OfferConsumedBySale getLogs failed (will retry chunk): ${msg}`,
+        `[logIndex] OfferConsumedBySale getLogs failed at chunk=${effectiveChunk} (sold-row capture degraded for this chunk; advancing cursor to avoid infinite retry): ${msg}`,
       );
       consumedScanOk = false;
     }
-    if (!consumedScanOk) {
-      // Retry on next loop iteration WITHOUT advancing the cursor.
-      // Skip the inter-chunk pause + event loop below; the bulk
-      // call's RawLog[] is also dropped on the floor (the chunk is
-      // re-fetched on retry), which is fine — the next iteration
-      // re-fetches both.
-      continue;
-    }
+    // `consumedScanOk == false` here means we accepted the degradation
+    // and want the cursor to advance. Fall through to the bulk event
+    // loop below.
+    void consumedScanOk;
     if (consumedLogs.length > 0) {
       logs = logs.concat(consumedLogs);
     }
@@ -965,6 +1018,10 @@ async function runScan(
         const offerId = BigInt(topics[1]).toString();
         const executor = ('0x' + topics[2].slice(26)).toLowerCase();
         closedOfferIdSet.add(offerId);
+        // Codex round-18 P2 #4 — also mark this offerId as sold so
+        // it's stripped from the public `closedOfferIds` (kept in
+        // `closedOfferIdSet` for the openOfferIds calc above).
+        soldOfferIdSet.add(offerId);
         let creatorFromPriorCreated: string | undefined;
         for (const ev of eventMap.values()) {
           if (
@@ -1487,6 +1544,47 @@ async function runScan(
     }
   }
 
+  // T-086 Round-8 §19.7e + Codex round-18 P2 #5 — post-scan
+  // enrichment for OfferConsumedBySale events whose `OfferCreated`
+  // wasn't in this scan window (fast-forwarded past). The scan-loop
+  // creator lookup walks `eventMap`, but fast-forward skips the
+  // older OfferCreated and the event ends up cached with only
+  // `executor` in participants — hiding the row from the borrower's
+  // Activity feed when the worker later goes down. Recover the
+  // creator from the indexer via the callback and patch participants
+  // before the cache write. Bounded N (number of consumed events
+  // missing creator) and the callback is HTTP-cached, so the
+  // amortized cost is low.
+  if (fetchOfferCreator) {
+    const seenOfferIds = new Set<string>();
+    for (const ev of eventMap.values()) {
+      if (ev.kind !== 'OfferCreated') continue;
+      const id = ev.args.offerId;
+      if (typeof id === 'string') seenOfferIds.add(id);
+    }
+    const missing: { ev: ActivityEvent; offerId: string }[] = [];
+    for (const ev of eventMap.values()) {
+      if (ev.kind !== 'OfferConsumedBySale') continue;
+      const offerId = ev.args.offerId;
+      if (typeof offerId !== 'string') continue;
+      if (seenOfferIds.has(offerId)) continue;
+      missing.push({ ev, offerId });
+    }
+    for (const { ev, offerId } of missing) {
+      try {
+        const creator = await fetchOfferCreator(offerId);
+        if (creator) {
+          const lc = creator.toLowerCase();
+          if (!ev.participants.includes(lc)) {
+            ev.participants = [...ev.participants, lc];
+          }
+        }
+      } catch {
+        // Best-effort — leave participants as-is on failure.
+      }
+    }
+  }
+
   const sortedEvents = Array.from(eventMap.values()).sort((a, b) => {
     if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
     return a.logIndex - b.logIndex;
@@ -1500,6 +1598,9 @@ async function runScan(
     prevOwners,
     offerIds: Array.from(offerIdSet).sort((a, b) => Number(BigInt(a) - BigInt(b))),
     closedOfferIds: Array.from(closedOfferIdSet).sort((a, b) => Number(BigInt(a) - BigInt(b))),
+    // Codex round-18 P2 #4 — persisted alongside closedOfferIds so the
+    // hydrate path can subtract them out for the public surface.
+    soldOfferIds: Array.from(soldOfferIdSet).sort((a, b) => Number(BigInt(a) - BigInt(b))),
     lastAcceptedOfferId: lastAcceptedOfferId ? lastAcceptedOfferId.toString() : null,
     // Trim to the trailing RECENT_ACCEPTED_CAP (most recent), preserving
     // oldest-first scan order so the cache stays append-friendly across
@@ -1525,7 +1626,15 @@ function hydrate(cached: CachedShape): LogIndexResult {
   const openOfferIds = cached.offerIds
     .filter((s) => !closed.has(s))
     .map((s) => BigInt(s));
+  // Codex round-18 P2 #4 — STRIP sold ids from the publicly exposed
+  // `closedOfferIds` so OfferBook's Closed/Filled tab doesn't waste
+  // pagination slots on sold-before-acceptance offers that
+  // `fetchBatch` immediately filters away (`!raw.accepted`).
+  // `closedOfferIdSet` stays as the union for the openOfferIds calc
+  // above — sold offers still correctly drop from the live set.
+  const sold = new Set(cached.soldOfferIds ?? []);
   const closedOfferIds = closedRaw
+    .filter((s) => !sold.has(s))
     .map((s) => BigInt(s))
     .sort((a, b) => Number(a - b));
   const lastAcceptedOfferId = cached.lastAcceptedOfferId
@@ -1615,19 +1724,34 @@ function hydrate(cached: CachedShape): LogIndexResult {
   // surface "this was a canceled offer" in the Verifier. Covers the token-9
   // shape: offer was created (mint) → offer canceled (burn) with no loan ever
   // initiated, so tokenToLoan never gets populated.
-  const offerStatus = new Map<string, 'accepted' | 'canceled'>();
+  // Codex round-18 P2 #6 — track the sold-via-OpenSea terminal too.
+  // Without it the NftVerifier would tell prospective buyers a
+  // sold-through-OpenSea offer was "open" (default fallback).
+  const offerStatus = new Map<string, 'accepted' | 'canceled' | 'sold'>();
   for (const ev of events) {
-    if (ev.kind !== 'OfferAccepted' && ev.kind !== 'OfferCanceled') continue;
+    if (
+      ev.kind !== 'OfferAccepted' &&
+      ev.kind !== 'OfferCanceled' &&
+      ev.kind !== 'OfferConsumedBySale'
+    ) {
+      continue;
+    }
     const offerId =
       typeof ev.args.offerId === 'string' ? ev.args.offerId : String(ev.args.offerId ?? '');
-    offerStatus.set(offerId, ev.kind === 'OfferAccepted' ? 'accepted' : 'canceled');
+    const status =
+      ev.kind === 'OfferAccepted'
+        ? 'accepted'
+        : ev.kind === 'OfferCanceled'
+          ? 'canceled'
+          : 'sold';
+    offerStatus.set(offerId, status);
   }
   const tokenToOfferCtx = new Map<
     string,
     {
       offerId: string;
       creator: string;
-      status: 'accepted' | 'canceled' | 'open';
+      status: 'accepted' | 'canceled' | 'sold' | 'open';
       event: ActivityEvent;
     }
   >();

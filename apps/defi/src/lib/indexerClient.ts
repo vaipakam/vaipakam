@@ -610,9 +610,21 @@ export function indexedToRawOffer(o: IndexedOffer): {
   offerType: number;
   lendingAsset: string;
   amount: bigint;
+  // T-086 Round-8 §19.7e + Codex round-18 P2 #1 — Range Orders Phase 2
+  // canonical mapping (#183): borrower offers store displayed APR
+  // CEILING in `interestRateBpsMax` and floor in `interestRateBps`
+  // (the floor sits at `0` so the lender-side discoverability ladder
+  // works). The MyOffersTable sold-row branch reads `interestRateBpsMax`
+  // first; bubble it through here so the rate cell shows the actual
+  // posted rate instead of `0%` on every sold offer. Same fix needed
+  // for `amountMax` so future range-orders consumers see the ceiling
+  // they expect.
+  amountMax: bigint;
   interestRateBps: bigint;
+  interestRateBpsMax: bigint;
   collateralAsset: string;
   collateralAmount: bigint;
+  collateralAmountMax: bigint;
   durationDays: bigint;
   principalLiquidity: number;
   collateralLiquidity: number;
@@ -664,9 +676,14 @@ export function indexedToRawOffer(o: IndexedOffer): {
     offerType: o.offerType,
     lendingAsset: o.lendingAsset,
     amount: BigInt(o.amount),
+    amountMax: BigInt(o.amountMax ?? o.amount),
     interestRateBps: BigInt(o.interestRateBps),
+    interestRateBpsMax: BigInt(o.interestRateBpsMax ?? o.interestRateBps),
     collateralAsset: o.collateralAsset,
     collateralAmount: BigInt(o.collateralAmount),
+    // The indexer doesn't expose `collateralAmountMax` on IndexedOffer
+    // today; fall back to the floor so the wire shape matches Phase 2.
+    collateralAmountMax: BigInt(o.collateralAmount),
     durationDays: BigInt(o.durationDays),
     principalLiquidity: o.principalLiquidity,
     collateralLiquidity: o.collateralLiquidity,

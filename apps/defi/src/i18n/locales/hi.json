@@ -623,7 +623,8 @@
     "burnedHeader": "— पोजिशन NFT नष्ट हो गया है और टोकन ID को कभी पुन: उपयोग या स्थानांतरित नहीं किया जा सकता।",
     "genuinePrefix": "वास्तविक Vaipakam NFT पर",
     "healthFactor": "हेल्थ फैक्टर",
-    "ltv": "LTV"
+    "ltv": "LTV",
+    "offerSold": "Sold via OpenSea"
   },
   "loanFlow": {
     "backToLoan": "लोन पर वापस",

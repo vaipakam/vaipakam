@@ -623,7 +623,8 @@
     "burnedHeader": "— ポジションNFTは破棄され、トークンIDは再利用も譲渡もできません。",
     "genuinePrefix": "本物のVaipakam NFT (",
     "healthFactor": "ヘルスファクター",
-    "ltv": "LTV"
+    "ltv": "LTV",
+    "offerSold": "Sold via OpenSea"
   },
   "loanFlow": {
     "backToLoan": "ローンに戻る",

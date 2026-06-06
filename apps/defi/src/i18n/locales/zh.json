@@ -623,7 +623,8 @@
     "burnedHeader": "— 持仓 NFT 已被销毁,代币 ID 不能再被复用或转移。",
     "genuinePrefix": "正版 Vaipakam NFT 位于",
     "healthFactor": "健康因子",
-    "ltv": "LTV"
+    "ltv": "LTV",
+    "offerSold": "Sold via OpenSea"
   },
   "loanFlow": {
     "backToLoan": "返回贷款",

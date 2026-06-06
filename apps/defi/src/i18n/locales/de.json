@@ -623,7 +623,8 @@
     "burnedHeader": "— der Positions-NFT ist zerstört und die Token-ID kann nie wiederverwendet oder übertragen werden.",
     "genuinePrefix": "Echter Vaipakam-NFT auf",
     "healthFactor": "Health Factor",
-    "ltv": "LTV"
+    "ltv": "LTV",
+    "offerSold": "Sold via OpenSea"
   },
   "loanFlow": {
     "backToLoan": "Zurück zum Kredit",

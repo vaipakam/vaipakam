@@ -8,6 +8,7 @@ import {
   type ActivityEvent,
 } from '../lib/logIndex';
 import { useOfferStats } from './useOfferStats';
+import { fetchOfferById } from '../lib/indexerClient';
 import { useLiveWatermark } from './useLiveWatermark';
 import { watermarkPolicy } from './watermarkPolicy';
 import { useDataFreshness } from '../context/DataFreshnessContext';
@@ -148,6 +149,22 @@ export function useLogIndex() {
         chain.deployBlock,
         chainId,
         indexerLastBlock,
+        // Codex round-18 P2 #5 — creator-lookup callback for
+        // OfferConsumedBySale events whose OfferCreated was
+        // fast-forwarded past. Reaches the indexer for the offer
+        // row and returns the creator address; logIndex patches the
+        // event's participants so the borrower's wallet matches when
+        // the worker later goes down.
+        async (offerId: string): Promise<string | null> => {
+          try {
+            const id = Number(offerId);
+            if (!Number.isFinite(id)) return null;
+            const o = await fetchOfferById(chainId, id);
+            return o?.creator ?? null;
+          } catch {
+            return null;
+          }
+        },
       );
       setLoans(result.loans);
       setOfferIds(result.offerIds);
