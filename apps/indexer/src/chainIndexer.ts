@@ -1625,40 +1625,42 @@ async function processLoanLogs(
       // RPC quota the existing stub-loan refresh path spends, and
       // identical reruns produce identical writes.
       const loanId = Number(a.loanId as bigint);
-      try {
-        const detail = (await client.readContract({
-          address: diamond,
-          abi: DIAMOND_LOAN_DETAILS_ABI,
-          functionName: 'getLoanDetails',
-          args: [BigInt(loanId)],
-        })) as {
-          principal: bigint;
-          collateralAmount: bigint;
-          startTime: bigint;
-        };
-        await env.DB.prepare(
-          `UPDATE loans
-             SET principal = ?,
-                 collateral_amount = ?,
-                 start_time = ?,
-                 updated_at = ?
-           WHERE chain_id = ? AND loan_id = ?`,
+      // Codex round-3 P2 #1 — pin the read to the event's block so a
+      // later partial swap past `scanTo` can't bleed through and write
+      // unfinalized state for the older safe log we're handling now.
+      // Pass through any RPC error so the cron pass aborts and retries
+      // (Codex round-3 P1) — `refreshStubLoans` only heals `is_stub =
+      // 1` rows, so swallowing here would leave principal /
+      // collateral_amount / start_time stale on this normal Active row
+      // until some unrelated terminal event touches the loan.
+      const detail = (await client.readContract({
+        address: diamond,
+        abi: DIAMOND_LOAN_DETAILS_ABI,
+        functionName: 'getLoanDetails',
+        args: [BigInt(loanId)],
+        blockNumber: log.blockNumber,
+      })) as {
+        principal: bigint;
+        collateralAmount: bigint;
+        startTime: bigint;
+      };
+      await env.DB.prepare(
+        `UPDATE loans
+           SET principal = ?,
+               collateral_amount = ?,
+               start_time = ?,
+               updated_at = ?
+         WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(
+          detail.principal.toString(),
+          detail.collateralAmount.toString(),
+          Number(detail.startTime),
+          now,
+          chainId,
+          loanId,
         )
-          .bind(
-            detail.principal.toString(),
-            detail.collateralAmount.toString(),
-            Number(detail.startTime),
-            now,
-            chainId,
-            loanId,
-          )
-          .run();
-      } catch {
-        // RPC failure — fall back to the event-block timestamp for
-        // `updated_at` so the row at least bumps. Next cron tick will
-        // pick up the canonical values via the refreshStubLoans path
-        // or a subsequent terminal-event handler.
-      }
+        .run();
       // Mirror PartialRepaid's grace-end refresh — the contract resets
       // `loan.startTime` on partial swap-to-repay too (RepayFacet:663
       // pattern), which moves the grace boundary for any live listing.
