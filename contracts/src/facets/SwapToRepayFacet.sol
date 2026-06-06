@@ -314,20 +314,22 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, plan.lenderDue);
 
         // Surplus principal → CURRENT borrower-position NFT holder's
-        // vault (Codex round-2 P1 #1). Routing to `loan.borrower`
-        // (the latched field) after authorizing the current NFT
-        // owner would let the original borrower siphon the surplus
-        // by simply having their vault un-recorded for that asset.
-        // Resolve the current owner via `ownerOf(borrowerTokenId)`.
+        // EOA directly (Codex round-4 P1 #2). Routing to the vault
+        // with `recordVaultDeposit` leaves the surplus unclaimable:
+        // `ClaimFacet.claimAsBorrower` releases ONLY the collateral
+        // asset recorded in `borrowerClaims[loanId]` (the principal
+        // asset is a different asset), and `vaultWithdrawERC20` is
+        // `onlyDiamondInternal`. Direct EOA transfer is the only
+        // path the holder can actually realize the surplus on.
+        // Resolved via `ownerOf(borrowerTokenId)` so the surplus
+        // follows the NFT, not the stale `loan.borrower` field
+        // (Codex round-2 P1 #1).
         uint256 surplusPrincipal = outputAmount - requiredPrincipal;
         address currentBorrowerHolder = IERC721(address(this))
             .ownerOf(loan.borrowerTokenId);
         if (surplusPrincipal > 0) {
-            address holderVault = LibFacet.getOrCreateVault(currentBorrowerHolder);
-            IERC20(loan.principalAsset).safeTransfer(holderVault, surplusPrincipal);
-            LibVaipakam.recordVaultDeposit(
+            IERC20(loan.principalAsset).safeTransfer(
                 currentBorrowerHolder,
-                loan.principalAsset,
                 surplusPrincipal
             );
         }
@@ -434,15 +436,16 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         );
 
         // Codex round-3 P2 #1 — emit the caller (current borrower-NFT
-        // owner), not the latched `loan.borrower` field. After the
-        // round-1 `requireBorrowerNftOwner` shift the caller IS the
-        // authority root; emitting the stale field would attribute
-        // swap-to-repay activity to the original borrower in indexer
-        // / dashboard surfaces.
+        // owner), not the latched `loan.borrower` field.
+        // Codex round-4 P2 #1 — emit `actualCollateralConsumed`, not
+        // `maxCollateralIn`. The unspent leftover was refunded to the
+        // borrower vault above; emitting the requested amount would
+        // overstate the protocol-level sell volume and understate the
+        // borrower's residual position on indexer / dashboard surfaces.
         emit SwapToRepayExecuted(
             loanId,
             msg.sender,
-            maxCollateralIn,
+            actualCollateralConsumed,
             outputAmount,
             adapterUsed
         );
@@ -583,29 +586,32 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             LibFacet.recordTreasuryAccrual(loan.principalAsset, treasuryShare);
         }
 
-        // Codex round-3 P1 #1 — pay the lender directly on the partial
-        // path. The loan stays Active so the lender has no claim slot,
-        // and `vaultWithdrawERC20` is `onlyDiamondInternal` — routing
-        // through the lender vault would leave the lender unable to
-        // withdraw what they just earned. Direct transfer to
-        // `loan.lender` (the EOA) mirrors `RepayFacet.repayPartial:647`
-        // and is the canonical pattern for active-loan partial settlements.
+        // Codex round-3 P1 #1 + round-4 P1 #3 — pay the lender directly
+        // on the partial path, but route to the CURRENT lender-side NFT
+        // owner (not the stale `loan.lender` field). Lender rights
+        // travel with the NFT just like borrower rights; without this
+        // resolution, a plain ERC-721 transfer of the lender NFT
+        // would leave the borrower's partial payment routing to the
+        // original lender (who no longer owns the loan). The loan
+        // stays Active so the lender has no claim slot, and
+        // `vaultWithdrawERC20` is `onlyDiamondInternal` — direct EOA
+        // transfer is the only path to actually realize the funds.
+        address currentLenderHolder = IERC721(address(this))
+            .ownerOf(loan.lenderTokenId);
         uint256 lenderTotal = lenderShare + partialPrincipal;
-        IERC20(loan.principalAsset).safeTransfer(loan.lender, lenderTotal);
+        IERC20(loan.principalAsset).safeTransfer(currentLenderHolder, lenderTotal);
 
         // Any leftover principal (above accrued + partialPrincipal) →
-        // current borrower-NFT holder's vault (Codex round-2 P1 #1
-        // mirror of the full-path fix). Resolves via
-        // `ownerOf(borrowerTokenId)` so the surplus follows the NFT.
+        // current borrower-NFT holder's EOA directly (Codex round-4
+        // P1 #2 / round-2 P1 #1). Same rationale as the full-path
+        // surplus: Active partial-repay loans have no claim slot for
+        // principal and vault withdraw is internal-only.
         uint256 surplus = outputAmount - treasuryShare - lenderTotal;
         if (surplus > 0) {
             address currentBorrowerHolder = IERC721(address(this))
                 .ownerOf(loan.borrowerTokenId);
-            address holderVault = LibFacet.getOrCreateVault(currentBorrowerHolder);
-            IERC20(loan.principalAsset).safeTransfer(holderVault, surplus);
-            LibVaipakam.recordVaultDeposit(
+            IERC20(loan.principalAsset).safeTransfer(
                 currentBorrowerHolder,
-                loan.principalAsset,
                 surplus
             );
         }
@@ -613,10 +619,15 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // ── Loan state updates ───────────────────────────────────────
         unchecked {
             loan.principal -= partialPrincipal;
-            // Codex round-1 P1 #4 — also reduce collateralAmount so
-            // HF / default / claim logic reflects true post-swap
-            // backing.
-            loan.collateralAmount -= collateralSwapAmount;
+            // Codex round-1 P1 #4 — reduce collateralAmount so HF /
+            // default / claim logic reflects true post-swap backing.
+            // Codex round-4 P1 #1 — use `actualCollateralConsumed`,
+            // not `collateralSwapAmount`. On an aggregator partial-fill
+            // the unspent input was already refunded to the vault
+            // (above); subtracting the FULL `collateralSwapAmount`
+            // here would double-count the loss and understate the
+            // remaining backing for HF / default math.
+            loan.collateralAmount -= actualCollateralConsumed;
         }
         loan.startTime = uint64(block.timestamp); // reset accrual clock
 
@@ -654,12 +665,13 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         uint256 hf = abi.decode(hfResult, (uint256));
         if (hf < LibVaipakam.MIN_HEALTH_FACTOR) revert HealthFactorTooLow();
 
-        // Codex round-3 P2 #1 — emit the caller (current borrower-NFT
-        // owner), not the latched `loan.borrower` field.
+        // Codex round-3 P2 #1 + round-4 P2 #1 — emit `msg.sender`
+        // (current borrower-NFT owner, not stale `loan.borrower`)
+        // and `actualCollateralConsumed` (not the requested amount).
         emit SwapToRepayPartialExecuted(
             loanId,
             msg.sender,
-            collateralSwapAmount,
+            actualCollateralConsumed,
             outputAmount,
             partialPrincipal,
             adapterUsed

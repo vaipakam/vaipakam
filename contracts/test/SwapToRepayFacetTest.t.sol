@@ -423,12 +423,14 @@ contract SwapToRepayFacetTest is SetupTest {
     // Test #15 — Surplus principal routes to borrower vault
     // ── ─────────────────────────────────────────────────────── ──
 
-    function test_swapToRepayFull_SurplusPrincipalToBorrowerVault() public {
+    function test_swapToRepayFull_SurplusPrincipalToBorrowerEoa() public {
         _scaffoldLoan(1, /* allowsPartialRepay */ false, /* useFullTermInterest */ false);
         // 1:1 quote, 1500 collateral → 1500 principal. Debt is ~1011
-        // ether. Surplus ≈ 489 ether should land in the borrower vault.
+        // ether. Surplus ≈ 489 ether goes direct-to-EOA (Codex round-4
+        // P1 #2 — vault routing leaves the surplus unclaimable because
+        // ClaimFacet only releases the collateral asset).
         adapter1.setOutputMultiplierBps(10_000);
-        uint256 borrowerPrincipalBefore = IERC20(address(principalAsset)).balanceOf(borrowerVault);
+        uint256 borrowerEoaPrincipalBefore = IERC20(address(principalAsset)).balanceOf(borrowerEoa);
         uint256 maxCollateralIn = 1_500 ether;
 
         vm.prank(borrowerEoa);
@@ -438,11 +440,11 @@ contract SwapToRepayFacetTest is SetupTest {
             maxCollateralIn
         );
 
-        uint256 borrowerPrincipalAfter = IERC20(address(principalAsset)).balanceOf(borrowerVault);
+        uint256 borrowerEoaPrincipalAfter = IERC20(address(principalAsset)).balanceOf(borrowerEoa);
         assertGt(
-            borrowerPrincipalAfter,
-            borrowerPrincipalBefore,
-            "borrower vault must receive surplus principal"
+            borrowerEoaPrincipalAfter,
+            borrowerEoaPrincipalBefore,
+            "borrower EOA must receive surplus principal directly"
         );
     }
 
