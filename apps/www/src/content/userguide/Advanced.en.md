@@ -184,8 +184,13 @@ as a filter chip on the My Offers page:
   the NFT shape (token id for ERC-721, copy count for
   ERC-1155). The dapp also surfaces the row in the Activity
   feed as `Offer sold via OpenSea` for the borrower (offer
-  creator) — the underlying event indexes both the executor
-  and the creator addresses so the per-wallet filter finds it.
+  creator). The on-chain event itself is
+  `OfferConsumedBySale(uint96 indexed offerId, address indexed executor)` —
+  only the executor address is indexed on-chain. The borrower's
+  wallet match for the Activity feed is added by the indexer at
+  ingestion time (it joins the offer row to look up the creator),
+  so the per-wallet filter finds the borrower without needing the
+  event itself to index them.
 
 Past-GTT (Good-Til-Time) offers that never reached a terminal
 event aren't yet exposed as a distinct status chip in the dapp;
@@ -424,14 +429,28 @@ listing, and lender acceptance is gated against any offer that
 has already been consumed by sale.
 
 **Two-step nature.** Opting in at offer create time just
-sets the eligibility flag on the offer. The listing itself
-is published in a separate step against the diamond after
-the offer is live — the dapp will not auto-post the listing
-for you at offer create time, and a dedicated in-app flow
-for the publish step is queued as a follow-up. Advanced
-users can publish the listing today by calling the diamond's
-`OfferParallelSaleFacet.postParallelSaleListing` directly
-with the corresponding Seaport order shape.
+sets the eligibility flag on the offer. Getting an actual
+buyable listing onto OpenSea is a SEPARATE TWO-PART step
+the dapp does NOT automate today:
+
+1. **Record + wire on the diamond.** Call
+   `OfferParallelSaleFacet.postParallelSaleListing` with the
+   corresponding Seaport order shape. This records the order
+   hash and wires the vault's Seaport conduit approval so a
+   later fulfilment can settle — but it does NOT submit the
+   order JSON to OpenSea. By itself, no buyer on OpenSea can
+   see or fill anything.
+2. **Publish to OpenSea.** Submit the same signed Seaport
+   order JSON to OpenSea via the OpenSea API (or any other
+   Seaport-compatible marketplace UI). Only after this step
+   does the listing appear on OpenSea's marketplace UI and
+   become fillable by a buyer. Vaipakam does not currently
+   automate this submission — surfacing the listing publication
+   end-to-end is tracked as a follow-up.
+
+Advanced users following the manual path today need BOTH steps;
+running step 1 alone produces an offer marked eligible with no
+buyer-discoverable listing.
 
 **Fill mode is forced to All-or-Nothing.** Opting in
 automatically pins the offer's fill mode to `Aon` — partial
@@ -935,11 +954,11 @@ buyer could step in at the matched price.
   full-term-interest loans, pro-rata otherwise) plus the
   treasury cut, so the split is always at least neutral for
   you. If you want to see the projected split before
-  confirming, compute it yourself: the lender leg is
-  `LibCollateralSettlement.principalPlusAccruedInterest(loanId)`
-  on the loan-details page; the treasury leg is the protocol
-  yield-fee BPS applied to the interest portion; the remainder
-  is yours.
+  confirming, the diamond exposes
+  `PrepayListingFacet.getPrepayContext(loanId, asOfTimestamp)`
+  as a callable view — it returns the lender and treasury legs
+  the settlement waterfall will route at the given timestamp,
+  and the remainder is yours.
 - **Check OpenSea's fee posture for the collection.** If the
   collection enforces OpenSea protocol fees or creator
   royalties, the atomic path needs SignedZone `extraData` /
