@@ -445,7 +445,7 @@ timelock, y no pueden mover activos.
   que cruce 1,0 es suficiente.
 - **Slippage de liquidación** — cuando se dispara una liquidación,
   el swap puede vender tu colateral a precios mermados por
-  slippage. El swap es permissionless —cualquiera puede
+  slippage para repagar al prestamista. El swap es permissionless —cualquiera puede
   dispararlo en el instante en que tu HF cae por debajo de 1,0.
 - **Defaults con colateral ilíquido** — el default transfiere
   todo tu colateral al prestamista. No hay reclamación residual;
@@ -533,7 +533,7 @@ que la aplicación NO automatiza hoy:
    `apps/defi/src/lib/openseaFeeSchedule.ts` es la referencia) y pasar
    montos absolutos derivados contra el ask antes de llamar. El
    facet internamente construye los `OrderComponents` canónicos
-   de Seaport a partir de esos inputs (más valores que retiene
+   de Seaport a partir de esos inputs (plus valores que retiene
    en `CollateralListingExecutor.offerContext` — la dirección del
    vault del prestatario, asset principal, campos de colateral,
    startTime, endTime) y el `Seaport.getCounter` actual del vault,
@@ -669,7 +669,7 @@ distintas, superficializadas en diferentes etapas del protocolo:
   para el NFT del prestatario es un solo slot — correr ambos
   listados concurrentemente crearía una aprobación ambigua. El
   prestatario ve el revert en la llamada de publicar/actualizar;
-  nada se ejecuta.
+  nothing se ejecuta.
 - *Bloque en tiempo de fill (offset abierto de PrecloseFacet).*
   Si el préstamo tiene una oferta offset abierta de
   PrecloseFacet Y un comprador luego intenta ejecutar el listado
@@ -1160,9 +1160,111 @@ precio matched.
   blip transitorio de API), o ejecutar el listing directamente
   en OpenSea al ask listado mientras tanto.
 
-
 ---
 
+## Cómo funciona realmente la liquidación
+
+Las Divulgaciones de Riesgo que aceptaste al momento de la oferta resumen el resultado en el peor de los casos en dos frases. Esta sección explica la mecánica subyacente, útil si quieres entender POR QUÉ existe el respaldo en especie (in-kind fallback), o cuál de las cuatro ramas tomaría realmente tu préstamo.
+
+La función del contrato que decide la división es `LibFallback.computeFallbackEntitlements`. Recorre cuatro casos en orden; el PRIMERO que coincide es el que se ejecuta.
+
+<a id="liquidation-mechanics.case-1"></a>
+
+### Caso 1 — Oráculo disponible, colateral vale ≥ monto adeudado
+
+El camino saludable. Los feeds de precios de Chainlink responden, el quórum secundario Soft 2-de-N (Tellor + API3 + DIA) no ha discrepado, y el colateral incautado cubre el monto adeudado cuando se valora contra el oráculo.
+
+Qué sucede:
+
+- El prestamista recibe **activos de colateral** por valor de (principal + intereses acumulados + un bono de respaldo del 3%), valorados en el oráculo. En efecto: el prestamista es compensado a valor justo, pagado en el activo de colateral en lugar del activo prestado.
+- La tesorería recibe una prima del 2% del principal, también valorada en colateral.
+- El prestatario recibe el **remanente** del colateral de vuelta. Este es un reembolso real — es el exceso de colateralización que no fue necesario para cubrir la reclamación del prestamista.
+
+Ejemplo práctico: un préstamo de 1000 USDC contra 0.6 WETH ($3000 de colateral, $1000 de deuda). El oráculo valora el ETH en $5000 / WETH; deuda + intereses + bono = $1050. El prestamista recibe 0.21 WETH (valor de $1050), la tesorería recibe 0.004 WETH (valor de $20 de la prima del 2%), el prestatario recibe los ~0.386 WETH restantes.
+
+<a id="liquidation-mechanics.case-2"></a>
+
+### Caso 2 — Oráculo disponible, colateral vale < monto adeudado
+
+El camino "bajo el agua". El oráculo funciona, pero el colateral incautado vale menos que el monto adeudado incluso al precio del oráculo. Común en caídas de activos volátiles donde el valor del colateral cae más rápido de lo que el HF puede reaccionar.
+
+Qué sucede:
+
+- El prestamista recibe **TODO** el colateral incautado, en el activo de colateral.
+- La tesorería no recibe nada.
+- El prestatario no recibe nada — no hay remanente para reembolsar.
+
+El prestamista absorbe el déficit. No existe ninguna reclamación posterior contra el prestatario, el protocolo o cualquier tercero. Este es el caso sobre el cual advierte específicamente la línea "la recuperación puede ser menor que el activo prestado" de las Divulgaciones de Riesgo.
+
+Ejemplo práctico: mismo préstamo de 1000 USDC / 0.6 WETH, pero el ETH cae a $1500 / WETH. El colateral ahora vale $900; la deuda es de $1050. El prestamista recibe los 0.6 WETH íntegros (valor de $900), tesorería 0, prestatario 0.
+
+<a id="liquidation-mechanics.case-3"></a>
+
+### Caso 3 — Quórum del oráculo NO DISPONIBLE
+
+El camino del "quórum oscuro". La obsolescencia de Chainlink supera el techo de volatilidad Y el quórum secundario 2-de-N no puede ponerse de acuerdo (cada secundario está fuera de línea o discrepa con el primario). El protocolo no tiene un precio confiable para ninguno de los lados del préstamo, por lo que no puede calcular una división justa.
+
+Qué sucede:
+
+- El prestamista recibe **TODO** el colateral incautado, en el activo de colateral, **independientemente del valor calculado** (porque ningún cálculo es confiable).
+- La tesorería no recibe nada.
+- El prestatario no recibe nada.
+
+Mismo pago que el Caso 2, pero alcanzado por una razón fundamentalmente diferente: el protocolo no está decidiendo que "el colateral vale menos que la deuda" — está decidiendo "No puedo confiar en ningún número aquí, así que el prestamista recibe la canasta incautada completa y absorbe lo que sea que valga en el mercado abierto".
+
+Se emite un evento on-chain diferente (`LiquidationFallbackOracleUnavailable`) para que los auditores puedan distinguir los dos caminos en el análisis post-mortem.
+
+<a id="liquidation-mechanics.case-4"></a>
+
+### Caso 4 — Activo ilíquido en cualquier lado
+
+El camino de activos ilíquidos. El activo prestado, el activo de colateral, o ambos no califican como Líquidos en el clasificador del protocolo (sin feed de Chainlink, o sin pool de liquidez concentrada tipo Uniswap-V3 por encima del umbral de volumen). Común para colateral NFT y tokens de baja liquidez.
+
+Qué sucede al momento del default:
+
+- El prestamista recibe el **colateral completo** en especie, independientemente del valor de mercado.
+- No hay partición entre "monto adeudado" y "remanente" — no se puede aplicar la valoración del oráculo.
+- El activo puede valer materialmente más o menos que el monto adeudado. Sin garantía de reventa.
+
+Ambas partes consintieron esto cuando se creó la oferta — la cláusula de activos ilíquidos de las Divulgaciones de Riesgo cubre exactamente este caso. No puedes llegar a esta rama a menos que ambas partes hayan elegido a sabiendas realizar un préstamo que involucre un activo ilíquido.
+
+<a id="liquidation-mechanics.why-in-kind"></a>
+
+### ¿Por qué en especie, por qué no siempre efectivo?
+
+Tres razones por las que el protocolo paga en unidades del activo de colateral en lugar de cambiar siempre al activo prestado:
+
+- **Corte de Secuenciador / DEX**: cuando el protocolo no puede ejecutar un swap de forma segura (slippage > 6%, liquidez escasa, reversión de DEX, secuenciador caído), la acción más segura es entregar lo que ya tiene — el colateral incautado — directamente. Forzar un swap a cualquier costo consolidaría las pérdidas.
+- **Escenario de cisne negro**: en cascadas volátiles, un camino con oráculo disponible puede desaparecer en cuestión de minutos. Mantener el respaldo en especie pre-instalado permite que el protocolo siga funcionando incluso cuando cada fuente de precio está degradada.
+- **Recuperación por par de contrapartes**: al momento de reclamar, el prestamista (o su bot keeper) obtiene una segunda oportunidad a través del failover completo de 4 DEX. Si las condiciones se han normalizado para entonces, pueden vender el colateral en especie por el activo prestado a través de la misma infraestructura de enrutamiento que intentó el camino al momento de la liquidación.
+
+<a id="liquidation-mechanics.claim-time-retry"></a>
+
+### Reintento al momento de reclamar
+
+`ClaimFacet.claimAsLenderWithRetry` permite que el prestamista (o un keeper que actúe sobre el NFT del prestamista) proporcione una lista de reintentos ordenada de llamadas a adaptadores de swap (0x → 1inch → Uniswap V3 → Balancer V2) cuando el préstamo está en `FallbackPending`. La librería itera la lista, confirma al primer éxito, y reescribe las reclamaciones del prestamista + prestatario a ingresos en el activo principal.
+
+El fracaso total deja intacta la división de colateral registrada y transiciona el préstamo de forma terminal a Defaulted — momento en el cual el prestamista toma el colateral en especie y es libre de venderlo a través de cualquier vía externa.
+
+<a id="liquidation-mechanics.internal-match-rescue"></a>
+
+### Rescate por match interno pre-reclamación
+
+Antes de que se ejecute cualquier swap externo — en la liquidación por HF, en el default por tiempo, Y al momento de reclamar — el protocolo primero verifica si existe un **préstamo en dirección opuesta** que pueda liquidar este sin ninguna intervención de DEX.
+
+Si el préstamo A necesita vender WETH por USDC y el préstamo B necesita vender USDC por WETH, los dos pueden emparejarse directamente: el colateral de A cubre la deuda de B y viceversa, valorado al oráculo del protocolo. Sin agregador, sin slippage, sin comisión de swap. El prestatario conserva mucho más de su colateral; el prestamista es compensado al precio del oráculo.
+
+Este camino de match interno se ejecuta automáticamente:
+
+- **En la liquidación por HF**: cuando un keeper llama a liquidar y existe una contraparte opuesta, el protocolo liquida internamente en lugar de realizar el swap. El keeper sigue ganando un incentivo de matcher.
+- **En el default por tiempo**: misma verificación antes del swap por default.
+- **Al momento de reclamar**: cuando un prestamista reclama un préstamo estancado en `FallbackPending`, el protocolo vuelve a verificar si hay una contraparte opuesta. Esta es una verdadera segunda oportunidad: el grupo de préstamos emparejables crece continuamente, por lo que una contraparte que no existía cuando la liquidación falló por primera vez puede existir para cuando reclames.
+
+Un préstamo que terminó en `FallbackPending` porque su swap al momento de la liquidación falló *transitoriamente* (un pico momentáneo de slippage, una reversión de DEX, un tick de oráculo obsoleto) es un candidato ideal para el rescate — el colateral subyacente suele ser todavía perfectamente líquido, y un préstamo opuesto puede liquidarlo limpiamente. El protocolo solo requiere que el oráculo aún pueda valorar el activo; no requiere que el DEX tenga profundidad, porque un match interno nunca toca un DEX.
+
+Si no existe una contraparte opuesta, el protocolo cae en el camino del agregador externo descrito anteriormente. El match interno es una optimización de "mejor si está disponible", nunca un bloqueador.
+
+---
 
 ## Allowances
 
@@ -1528,3 +1630,67 @@ de oferta. Un comprador completa la venta; puedes cancelar antes
 de que la venta se complete. Opcionalmente delegable a un keeper
 que tenga el permiso de "completar venta de préstamo"; el paso
 de iniciar en sí permanece sólo de usuario.
+
+---
+
+## Recuperación de tokens atascados
+
+Esta sección cubre un CASO EXCEPCIONAL que la mayoría de los usuarios nunca necesitarán. Lee todo antes de hacer clic en el enlace de recuperación en la parte inferior — declarar una fuente incorrecta puede bloquear tu vault bajo la política de sanciones del protocolo.
+
+<a id="stuck-recovery.what"></a>
+
+### Qué significa "token atascado"
+
+Tu proxy de Vaipakam Vault es un almacenamiento interno del protocolo. NO es una dirección de depósito. Cada depósito soportado por el protocolo fluye a través de los puntos de entrada de los facets de Vaipakam, que extraen fondos de tu billetera hacia tu vault como parte de una creación de oferta, aceptación de préstamo u operación de staking. Los tokens que llegan al vault FUERA de ese flujo — una transferencia directa `IERC20.transfer` desde una billetera o un retiro de un CEX que copió y pegó la dirección de tu vault — se quedan allí sin contabilidad del protocolo. El Visor de Activos los oculta al mostrar solo el saldo rastreado por el protocolo.
+
+Hay dos formas en que los tokens se atascan:
+
+1. **Los enviaste tú mismo.** Copiaste la dirección de tu vault (desde el Dashboard o un explorador de bloques) en un campo de retiro de un CEX o en un formulario de envío de tokens de una billetera, y lo enviaste. Los tokens llegaron a tu vault sin pasar por la ruta de depósito del protocolo.
+
+2. **Un tercero los envió ("ataque de polvo" o dust attack).** Alguien transfirió una pequeña cantidad a tu vault desde una billetera marcada, con la esperanza de asociar tu dirección con su reputación. Este es un vector de ataque real contra direcciones de alto perfil en cadenas sin permisos.
+
+<a id="stuck-recovery.taint-poisoning"></a>
+
+### Sobre el "envenenamiento por rastro"
+
+Si el remitente tercero está en una lista de sanciones, las herramientas genéricas de análisis on-chain pueden marcar tu vault como "adyacente a sanciones" aunque nunca hayas tocado los tokens entrantes. No hay forma on-chain de deshacer esto — el evento de transferencia es permanente. La contabilidad INTERNA de Vaipakam no se ve afectada (solo rastreamos depósitos mediados por el protocolo, el polvo nunca entra en nuestro contador), por lo que tus préstamos / stakes / reclamaciones continúan funcionando normalmente. Pero las herramientas externas que no entienden nuestra contabilidad pueden mostrar advertencias.
+
+<a id="stuck-recovery.dont-recover"></a>
+
+### Cuándo NO recuperar
+
+Si NO enviaste los tokens tú mismo, **no intentes recuperarlos**. La recuperación requiere que declares la dirección del remitente. Si esa dirección está en la lista de sanciones, tu vault quedará bloqueado bajo la política de sanciones del protocolo hasta que la fuente sea eliminada de la lista por el oráculo.
+
+Los tokens que no enviaste no son tuyos. Recuperarlos declarando una dirección "limpia" que realmente no posees también es una mala idea — el protocolo no puede verificar la declaración on-chain, pero las herramientas externas de oráculo pueden discrepar más adelante.
+
+La medida segura es ignorar el polvo no solicitado. No afecta tu saldo del protocolo ni ningún préstamo u oferta activa.
+
+<a id="stuck-recovery.when-recover"></a>
+
+### Cuándo SÍ recuperar
+
+Enviaste los tokens tú mismo por error, controlas la billetera de origen y sabes que el origen no está en ninguna lista de sanciones (tu propia EOA, una billetera caliente de un CEX de la que retiraste, etc.).
+
+<a id="stuck-recovery.flow"></a>
+
+### Flujo de recuperación
+
+1. Visita la [página de recuperación](/app/recover).
+2. Ingresa la dirección del contrato del token, el origen desde el que enviaste y el monto.
+3. Revisa cuidadosamente el reconocimiento en pantalla.
+4. Escribe "CONFIRM" para habilitar la firma.
+5. Firma el reconocimiento EIP-712 en tu billetera.
+6. Envía la transacción.
+
+Dos resultados:
+
+- **Origen limpio** → los tokens vuelven a tu EOA.
+- **Origen marcado** → los tokens se quedan en el vault, tu vault queda bloqueado bajo la política de sanciones del protocolo. El bloqueo se levanta automáticamente si la dirección es eliminada posteriormente del oráculo de sanciones.
+
+<a id="stuck-recovery.disown"></a>
+
+### Desautorización de tokens no solicitados (registro de auditoría de cumplimiento)
+
+Si deseas un registro público on-chain que afirme que cierto saldo de tokens en tu vault NO es tuyo, el protocolo proporciona una función `disown(token)`. Emite un evento (`TokenDisowned`) y no cambia nada más — los tokens se quedan en el vault como antes. Útil en disputas de cumplimiento si un CEX o regulador pregunta "¿recibió estos fondos?": puedes señalar el evento on-chain.
+
+La función disown está expuesta solo a través de llamada directa al contrato por ahora; el frontend de Vaipakam no la muestra como un botón. Usa una interfaz "Write Contract" de un explorador de bloques o una herramienta de interacción con contratos para llamarla.

@@ -27,7 +27,7 @@ ERC-721 et ERC-1155 liés à tes positions de prêt. Aucune mise en
 commun : les actifs des autres utilisateurs ne sont jamais dans ce
 contrat.
 
-L'vault est le seul endroit où résident le collatéral, les actifs
+L'vault est the seul endroit où résident le collatéral, les actifs
 prêtés et ton VPFI verrouillé. Le protocole s'authentifie auprès
 de lui à chaque dépôt et retrait. L'implémentation peut être mise
 à jour par le propriétaire du protocole, mais uniquement à travers
@@ -291,7 +291,7 @@ Sélectionne le côté de l'offre où se trouve le créateur :
 Pour une offre de dette tu spécifies l'actif, le montant
 principal, l'APR fixe et la durée en jours :
 
-- **Actif** — l'ERC-20 prêté / emprunté.
+- **Activo** — l'ERC-20 prêté / emprunté.
 - **Montant** — principal, libellé dans les décimales natives de
   l'actif.
 - **APR** — taux annuel fixe en basis points (centièmes de
@@ -349,7 +349,7 @@ de liquidité :
 - **Liquide** — possède un flux de prix Chainlink enregistré ET
   au moins un pool Uniswap V3 / PancakeSwap V3 / SushiSwap V3
   avec ≥ 1 M$ de profondeur au tick courant. Les calculs LTV et
-  HF s'appliquent ; une liquidation basée sur HF route le
+  HF s'appliquent ; une liquidation basée sur HF enruta le
   collatéral via un failover sur 4 DEX (0x → 1inch → Uniswap V3
   → Balancer V2).
 - **Illiquide** — tout ce qui échoue à ce qui précède. Valorisé à
@@ -666,7 +666,7 @@ conflit distinctes, surfacées à différentes étapes du protocole :
   L'emprunteur voit le revert à l'appel publish/update ; rien ne
   se remplit.
 - *Bloc temps-remplissage (offset PrecloseFacet ouvert).* Si le
-  prêt a une offre offset PrecloseFacet ouverte ET qu'un
+  prêt a une offre offset PrecloseFacet ouvert ET qu'un
   acheteur essaie ensuite de remplir le listing parallel-sale, le
   `_settleLoanFromParallelSale` du diamond revert avec
   `ParallelSaleBlockedByOpenOffsetOffer`. Le listing reste
@@ -938,7 +938,7 @@ HF au-dessus de 1,0 signifie que la position est surcollatéralisée
 par rapport au seuil de liquidation. À mesure que HF dérive vers
 1,0, ta protection s'amenuise. Une fois HF
 descendu sous 1,0, n'importe qui (toi inclus) peut appeler
-liquider, et le protocole route le collatéral via le failover
+liquider, et le protocole enruta le collatéral via le failover
 4-DEX vers ton actif principal. La récupération est nette de
 slippage.
 
@@ -1158,9 +1158,111 @@ prix matched.
   peut juste avoir été un blip API transitoire), ou remplir le
   listing directement sur OpenSea à l'ask listé en attendant.
 
-
 ---
 
+## Comment fonctionne réellement la liquidation
+
+Les Avertissements de Risque que tu as acceptés au moment de l'offre résument le résultat dans le pire des cas en deux phrases. Cette section explique la mécanique sous-jacente — utile si tu veux comprendre POURQUOI le secours en nature (in-kind fallback) existe, ou laquelle des quatre branches ton prêt prendrait réellement.
+
+La fonction du contrat qui décide de la répartition est `LibFallback.computeFallbackEntitlements`. Elle parcourt quatre cas dans l'ordre ; le PREMIER qui correspond est celui qui s'exécute.
+
+<a id="liquidation-mechanics.case-1"></a>
+
+### Cas 1 — Oracle disponible, collatéral vaut ≥ montant dû
+
+Le chemin sain. Les flux de prix Chainlink sont réactifs, le quorum secondaire Soft 2-sur-N (Tellor + API3 + DIA) n'a pas été en désaccord, et le collatéral saisi couvre le montant dû lorsqu'il est valorisé par l'oracle.
+
+Ce qui se passe :
+
+- Le prêteur reçoit des **actifs de collatéral** d'une valeur de (principal + intérêts accumulés + un bonus de secours de 3 %), valorisés par l'oracle. En effet : le prêteur est indemnisé à sa juste valeur, payé dans l'actif de collatéral plutôt que dans l'actif prêté.
+- La trésorerie reçoit une prime de 2 % du principal, également valorisée en collatéral.
+- L'emprunteur récupère le **reste** du collatéral. Il s'agit d'un véritable remboursement — c'est la sur-collatéralisation qui n'était pas nécessaire pour couvrir la réclamation du prêteur.
+
+Exemple concret : un prêt de 1000 USDC contre 0,6 WETH (3000 $ de collatéral, 1000 $ de dette). L'oracle évalue l'ETH à 5000 $ / WETH ; dette + intérêts + bonus = 1050 $. Le prêteur reçoit 0,21 WETH (valeur de 1050 $), la trésorerie reçoit 0,004 WETH (valeur de 20 $ de la prime de 2 %), l'emprunteur reçoit les ~0,386 WETH restants.
+
+<a id="liquidation-mechanics.case-2"></a>
+
+### Cas 2 — Oracle disponible, collatéral vaut < montant dû
+
+Le chemin « sous l'eau ». L'oracle fonctionne, mais le collatéral saisi vaut moins que le montant dû, même au prix de l'oracle. Courant lors de krachs d'actifs volatils où la valeur du collatéral chute plus vite que le HF ne peut réagir.
+
+Ce qui se passe :
+
+- Le prêteur reçoit **TOUT** le collatéral saisi, dans l'actif de collatéral.
+- La trésorerie ne reçoit rien.
+- L'emprunteur ne reçoit rien — il n'y a pas de reste à rembourser.
+
+Le prêteur absorbe le déficit. Aucune autre réclamation n'existe contre l'emprunteur, le protocole ou tout tiers. C'est le cas dont traite spécifiquement la ligne « la récupération peut être inférieure à l'actif prêté » des Avertissements de Risque.
+
+Exemple concret : même prêt de 1000 USDC / 0,6 WETH, mais l'ETH chute à 1500 $ / WETH. Le collatéral vaut maintenant 900 $ ; la dette est de 1050 $. Le prêteur reçoit les 0,6 WETH (valeur de 900 $), trésorerie 0, emprunteur 0.
+
+<a id="liquidation-mechanics.case-3"></a>
+
+### Cas 3 — Quorum de l'oracle NON DISPONIBLE
+
+Le chemin du « quorum noir ». L'obsolescence de Chainlink dépasse le plafond de volatilité ET le quorum secondaire 2-sur-N ne peut pas se mettre d'accord (chaque secondaire est soit hors ligne, soit en désaccord avec le primaire). Le protocole n'a pas de prix fiable pour l'un ou l'autre côté du prêt, il ne peut donc pas calculer une répartition équitable.
+
+Ce qui se passe :
+
+- Le prêteur reçoit **TOUT** le collatéral saisi, dans l'actif de collatéral, **indépendamment de la valeur calculée** (car aucun calcul n'est fiable).
+- La trésorerie ne reçoit rien.
+- L'emprunteur ne reçoit rien.
+
+Même paiement que dans le Cas 2, mais atteint pour une raison fondamentalement différente : le protocole ne décide pas que « le collatéral vaut moins que la dette » — il décide « Je ne peux faire confiance à aucun chiffre ici, donc le prêteur reçoit l'intégralité du panier saisi et absorbe ce qu'il vaudra sur le marché libre ».
+
+Un événement on-chain différent (`LiquidationFallbackOracleUnavailable`) est émis afin que les auditeurs puissent distinguer les deux chemins dans l'analyse post-mortem.
+
+<a id="liquidation-mechanics.case-4"></a>
+
+### Cas 4 — Actif illiquide d'un côté ou de l'autre
+
+Le chemin des actifs illiquides. L'actif prêté, l'actif de collatéral, ou les deux ne sont pas qualifiés de Liquides dans le classificateur du protocole (pas de flux Chainlink, ou pas de pool de liquidité concentrée de type Uniswap-V3 au-dessus du seuil de volume). Courant pour le collatéral NFT et les jetons à faible liquidité.
+
+Ce qui se passe au moment du défaut :
+
+- Le prêteur reçoit l'**intégralité du collatéral** en nature, indépendamment de la valeur de marché.
+- Pas de partition entre « montant dû » et « reste » — l'évaluation par l'oracle ne peut pas être appliquée.
+- L'actif peut valoir matériellement plus ou moins que le montant dû. Aucune garantie de reventabilité.
+
+Les deux parties y ont consenti lors de la création de l'offre — la clause relative aux actifs illiquides des Avertissements de Risque couvre exactement ce cas. Tu ne peux pas atteindre cette branche à moins que les deux parties n'aient sciemment choisi de conclure un prêt impliquant un actif illiquide.
+
+<a id="liquidation-mechanics.why-in-kind"></a>
+
+### Pourquoi en nature, pourquoi pas toujours en cash ?
+
+Trois raisons pour lesquelles le protocole paie en unités d'actifs de collatéral plutôt que de toujours échanger contre l'actif prêté :
+
+- **Panne de Séquenceur / DEX** : lorsque le protocole ne peut pas exécuter un swap en toute sécurité (slippage > 6 %, liquidité faible, revers de DEX, séquenceur en panne), l'action la plus sûre est de livrer ce qu'il possède déjà — le collatéral saisi — directement. Forcer un swap à tout prix verrouillerait les pertes.
+- **Scénario de cygne noir** : lors de cascades volatiles, un chemin avec oracle disponible peut disparaître en quelques minutes. Maintenir le secours en nature pré-installé permet au protocole de rester fonctionnel même lorsque chaque source de prix est dégradée.
+- **Récupération par paire de contreparties** : au moment de la réclamation, le prêteur (ou son bot keeper) obtient une seconde chance via le failover complet de 4 DEX. Si les conditions se sont normalisées d'ici là, ils peuvent vendre le collatéral en nature pour l'actif prêté via la même infrastructure de routage que celle tentée par le chemin lors de la liquidation.
+
+<a id="liquidation-mechanics.claim-time-retry"></a>
+
+### Reprise au moment de la réclamation
+
+`ClaimFacet.claimAsLenderWithRetry` permet au prêteur (ou à un keeper agissant sur le NFT du prêteur) de fournir une liste de tentatives classée d'appels aux adaptateurs de swap (0x → 1inch → Uniswap V3 → Balancer V2) lorsque le prêt est en `FallbackPending`. La bibliothèque parcourt la liste, valide au premier succès, et réécrit les réclamations du prêteur + emprunteur en produits de l'actif principal.
+
+Un échec total laisse intacte la répartition du collatéral enregistrée et fait passer le prêt de manière terminale en Defaulted — point auquel le prêteur prend le collatéral en nature et est libre de lo vendre par n'importe quel canal externe.
+
+<a id="liquidation-mechanics.internal-match-rescue"></a>
+
+### Sauvetage par match interne pré-réclamation
+
+Avant tout swap externe — lors de la liquidation HF, du défaut basé sur le temps, ET au moment de la réclamation — le protocole vérifie d'abord s'il existe un **prêt de direction opposée** capable de régler celui-ci sans aucune intervention de DEX.
+
+Si le prêt A doit vendre du WETH contre de l'USDC et que le prêt B doit vendre de l'USDC contre du WETH, les deux peuvent être appariés directement : le collatéral de A couvre la dette de B et vice-versa, au prix de l'oracle du protocole. Pas d'agrégateur, pas de slippage, pas de frais de swap. L'emprunteur conserve beaucoup plus de son collatéral ; le prêteur est indemnisé au prix de l'oracle.
+
+Ce chemin de match interne s'exécute automatiquement :
+
+- **Lors de la liquidation HF** : lorsqu'un keeper appelle liquider et qu'une contrepartie opposée existe, le protocole règle en interne au lieu de swapper. Le keeper gagne toujours une incitation de matcher.
+- **Lors du défaut basé sur le temps** : même vérification avant le swap de défaut.
+- **Au moment de la réclamation** : lorsqu'un prêteur réclame un prêt bloqué en `FallbackPending`, le protocole vérifie à nouveau s'il existe une contrepartie opposée. C'est une véritable seconde chance : le pool de prêts appariables croît continuellement, de sorte qu'une contrepartie qui n'existait pas lors de l'échec initial de la liquidation peut exister au moment de ta réclamation.
+
+Un prêt qui s'est retrouvé en `FallbackPending` parce que son swap lors de la liquidation a échoué *de manière transitoire* (un pic de slippage momentané, un revers de DEX, un tick d'oracle obsolète) est un candidat idéal pour le sauvetage — le collatéral sous-jacent est généralement encore parfaitement liquide, et un prêt opposé peut le régler proprement. Le protocole exige seulement que l'oracle puisse encore évaluer l'actif ; il n'exige pas que le DEX ait de la profondeur, car un match interne ne touche jamais un DEX.
+
+Si aucune contrepartie opposée n'existe, le protocole se replie sur le chemin de l'agrégateur externe décrit ci-dessus. Le match interne est une optimisation « mieux si disponible », jamais un bloqueur.
+
+---
 
 ## Allowances
 
@@ -1236,7 +1338,7 @@ actuellement stubée en attendant la création du canal.
 Étant donné une adresse de contrat NFT et un identifiant de
 token, le vérificateur récupère :
 
-- Le propriétaire actuel (ou un signal de burn si le token est
+- Le propriétaire actuel (o un signal de burn si le token est
   déjà brûlé).
 - Les métadonnées JSON on-chain.
 - Une vérification croisée avec le protocole : dérive
@@ -1529,3 +1631,67 @@ demandé. Un acheteur finalise la vente ; tu peux annuler avant
 que la vente ne soit exécutée. Optionnellement délégable à un
 keeper détenant la permission « finaliser une vente de prêt » ;
 l'étape d'initiation reste réservée à l'utilisateur.
+
+---
+
+## Récupération de jetons bloqués
+
+Cette section couvre un CAS PARTICULIER dont la plupart des utilisateurs n'auront jamais besoin. Lis tout avant de cliquer sur le lien de récupération en bas — déclarer une source incorrecte peut verrouiller ton vault en vertu de la politique de sanctions du protocole.
+
+<a id="stuck-recovery.what"></a>
+
+### Ce que signifie « jeton bloqué »
+
+Ton proxy Vaipakam Vault est un stockage interne au protocole. Ce n'est PAS une adresse de dépôt. Chaque dépôt pris en charge par le protocole passe par les points d'entrée des facets de Vaipakam, qui retirent des fonds de ton wallet vers ton vault dans le cadre d'une création d'offre, d'une acceptation de prêt ou d'une opération de stake. Les jetons qui arrivent au vault EN DEHORS de ce flux — un transfert direct `IERC20.transfer` depuis un wallet ou un retrait d'un CEX qui a copié-collé l'adresse de ton vault — restent là sans comptabilité du protocole. Le Visionneur d'Actifs les masque en n'affichant que le solde suivi par le protocole.
+
+Deux manières dont les jetons se retrouvent bloqués :
+
+1. **Tu les as envoyés toi-même.** Tu as copié l'adresse de ton vault (depuis le Tableau de bord ou un explorateur de blocs) dans un champ de retrait de CEX ou un formulaire d'envoi de jetons de wallet, et tu as validé. Les jetons ont atterri dans ton vault sans passer par le chemin de dépôt du protocole.
+
+2. **Un tiers les a envoyés (« attaque par poussière » ou dust attack).** Quelqu'un a transféré une petite somme vers ton vault depuis un wallet signalé, dans l'espoir d'associer ton adresse à sa réputation. Il s'agit d'un véritable vecteur d'attaque contre les adresses à haut profil sur les chaînes sans permission.
+
+<a id="stuck-recovery.taint-poisoning"></a>
+
+### À propos de « l'empoisonnement par trace » (taint poisoning)
+
+Si l'expéditeur tiers figure sur une liste de sanctions, les outils génériques d'analyse on-chain peuvent signaler ton vault comme « proche de sanctions » même si tu n'as jamais touché aux jetons entrants. Il n'existe aucun moyen on-chain d'annuler cela — l'événement de transfert est permanent. La comptabilité INTERNE de Vaipakam n'est pas affectée (nous ne suivons que les dépôts médiés par le protocole, la poussière n'entre jamais dans notre décompte), tes prêts / stakes / réclamations continuent donc de fonctionner normalement. Mais les outils externes qui ne comprennent pas notre comptabilité peuvent afficher des avertissements.
+
+<a id="stuck-recovery.dont-recover"></a>
+
+### Quand ne PAS récupérer
+
+Si tu n'as PAS envoyé les jetons toi-même, **ne tente pas de les récupérer**. La récupération nécessite que tu déclare l'adresse de l'expéditeur. Si cette adresse figure sur la liste des sanctions, ton vault sera verrouillé en vertu de la politique de sanctions du protocole jusqu'à ce que la source soit retirée de la liste par l'oracle.
+
+Les jetons que tu n'as pas envoyés ne sont pas les tiens. Les récupérer en déclarant une adresse « propre » que tu ne possèdes pas réellement est également une mauvaise idée — le protocole ne peut pas vérifier la déclaration on-chain, mais les outils d'oracle externes pourraient ne pas être d'accord plus tard.
+
+La décision la plus sûre est d'ignorer la poussière non sollicitée. Cela n'affecte pas ton solde de protocole ni aucun prêt ou offre active.
+
+<a id="stuck-recovery.when-recover"></a>
+
+### Quand récupérer
+
+Tu as envoyé les jetons toi-même par erreur, tu contrôles le wallet source et tu sais que la source ne figure sur aucune liste de sanctions (ton propre EOA, un hot wallet de CEX d'où tu as retiré, etc.).
+
+<a id="stuck-recovery.flow"></a>
+
+### Flux de récupération
+
+1. Visite la [page de récupération](/app/recover).
+2. Entre l'adresse du contrat du jeton, la source d'où tu as envoyé et le montant.
+3. Lis attentivement l'avis de réception à l'écran.
+4. Tape « CONFIRM » pour activer la signature.
+5. Signe l'avis de réception EIP-712 dans ton wallet.
+6. Soumets la transaction.
+
+Deux résultats possibles :
+
+- **Source propre** → les jetons reviennent vers ton EOA.
+- **Source signalée** → les jetons restent dans l'vault, ton vault est verrouillé en vertu de la politique de sanctions du protocole. Le verrou se lève automatiquement si l'adresse est ultérieurement retirée de l'oracle de sanctions.
+
+<a id="stuck-recovery.disown"></a>
+
+### Désavouer des jetons non sollicités (piste d'audit de conformité)
+
+Si tu souhaites un enregistrement public on-chain affirmant qu'un certain solde de jetons dans ton vault n'est PAS le tien, le protocole fournit une fonction `disown(token)`. Elle émet un événement (`TokenDisowned`) et ne change rien d'autre — les jetons restent dans l'vault comme avant. Utile lors de litiges de conformité si un CEX ou un régulateur demande « avez-vous reçu ces fonds ? » : tu peux pointer vers l'événement on-chain.
+
+La fonction disown est exposée uniquement via un appel direct au contrat pour l'instant ; le frontend Vaipakam ne la propose pas sous forme de bouton. Utilise l'interface « Write Contract » d'un explorateur de blocs ou un outil d'interaction avec les contrats pour l'appeler.

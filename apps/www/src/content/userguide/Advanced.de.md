@@ -178,8 +178,8 @@ diese Liste wird immer vollständig angezeigt.
 
 Offene Angebote (Status Active, Ablauf noch nicht erreicht), die
 du erstellt hast. Jederzeit vor der Annahme stornierbar — der
-Stornoaufruf ist kostenlos. Die Annahme ändert das Angebot in
-Accepted und löst die Kreditinitialisierung aus, die die beiden
+Stornoaufruf ist kostenlos. Die Annahme schaltet das Angebot auf
+Accepted um und löst die Kreditinitialisierung aus, die die beiden
 Positions-NFTs mintet (eines für den Verleiher, eines für den
 Kreditnehmer) und den Kredit im Active-Status öffnet.
 
@@ -333,7 +333,7 @@ und der Loan eröffnet wird (oder du stornierst).
 Felder des Rental-Sub-Typs. Spezifiziert den NFT-Vertrag und die
 Token-ID (und die Menge für ERC-1155), plus die tägliche
 Mietgebühr im Principal-Asset. Bei der Annahme zieht das Protokoll die
-vorausbezahlte Miete aus dem Vault des Mieters in die
+vorausbezahlte Mietgebühr aus dem Vault des Mieters in die
 Verwahrung — das ist Dauer × tägliche Gebühr, plus 5% Puffer.
 Der NFT selbst geht in einen delegierten Zustand (über
 ERC-4907-Nutzungsrechte oder den entsprechenden ERC-1155-Rental-
@@ -439,7 +439,7 @@ Timelock abgesichert und können keine Assets bewegen.
   kreuzt, reicht aus.
 - **Liquidations-Slippage** — wenn eine Liquidation auslöst,
   kann der Swap dein Collateral zu Preisen verkaufen, die durch
-  Slippage ausgehöhlt sind. Der Swap ist permissionless — jeder
+  Slippage ausgehöhlt sind, um den Lender zurückzuzahlen. Der Swap ist permissionless — jeder
   kann ihn in dem Moment auslösen, in dem dein HF unter 1,0 fällt.
 - **Defaults bei illiquidem Collateral** — der Default überträgt
   dein gesamtes Collateral an den Lender. Es gibt keinen
@@ -1049,7 +1049,7 @@ Full-Term-Interest-Krediten oder die Pro-Rata-Zinsen ansonsten
 EINSCHLIESST — siehe
 `PrepayListingFacet.getPrepayContext().lenderLeg`), plus den
 Treasury-Anteil, plus einen Sicherheits-Buffer — und **gräulicht**
-Offers aus, die ihn nicht erreichen. Du kannst auf jedem Niveau
+Offers aus, die ihn nicht erreichen. Aus du kannst auf jedem Niveau
 Marktinteresse sehen, aber nur Offers matchen, die das Protokoll
 tatsächlich settlen wird.
 
@@ -1162,9 +1162,105 @@ ein Dritt-Käufer beim matched price eingreifen könnte.
   sein), oder das Listing direkt auf OpenSea zum gelisteten Ask
   in der Zwischenzeit erfüllen.
 
-
 ---
 
+## Wie Liquidationen tatsächlich funktionieren
+
+Die Risiko-Hinweise, denen du bei der Angebotserstellung zugestimmt hast, fassen das Worst-Case-Szenario in zwei Sätzen zusammen. Dieser Abschnitt erklärt die zugrunde liegenden Mechanismen — nützlich, wenn du verstehen willst, WARUM der In-Kind-Fallback existiert oder welchen der vier Wege dein Loan tatsächlich nehmen würde.
+
+Die Vertragsfunktion, die über die Aufteilung entscheidet, ist `LibFallback.computeFallbackEntitlements`. Sie durchläuft vier Fälle in der angegebenen Reihenfolge; der ERSTE Fall, der zutrifft, wird ausgeführt.
+
+<a id="liquidation-mechanics.case-1"></a>
+
+### Fall 1 — Orakel verfügbar, Collateral wert ≥ fälliger Betrag
+
+Der gesunde Pfad. Chainlink-Preisfeeds antworten, das sekundäre Soft-2-aus-N-Quorum (Tellor + API3 + DIA) hat nicht widersprochen, und das beschlagnahmte Collateral deckt den geschuldeten Betrag bei Bewertung durch das Orakel.
+
+Was passiert:
+- Der Lender erhält **Collateral-Assets** im Wert von (Principal + aufgelaufene Zinsen + 3% Fallback-Bonus), bewertet durch das Orakel. Effekt: Der Lender wird zum beizulegenden Zeitwert entschädigt, gezahlt im Collateral-Asset statt im Lending-Asset.
+- Die Treasury erhält eine Prämie von 2% des Principals, ebenfalls im Collateral-Asset bewertet.
+- Der Borrower erhält das **verbleibende** Collateral zurück. Dies ist eine echte Rückerstattung — es handelt sich um die Überbesicherung, die nicht zur Deckung der Forderung des Lenders benötigt wurde.
+
+Beispiel: Ein Loan von 1000 USDC gegen 0,6 WETH (3000 $ Collateral, 1000 $ Schulden). Das Orakel bewertet ETH mit 5000 $/WETH; Schulden + Zinsen + Bonus = 1050 $. Der Lender erhält 0,21 WETH (Wert 1050 $), die Treasury erhält 0,004 WETH (Wert 20 $ der 2%-Prämie), der Borrower erhält die verbleibenden ~0,386 WETH.
+
+<a id="liquidation-mechanics.case-2"></a>
+
+### Fall 2 — Orakel verfügbar, Collateral wert < fälliger Betrag
+
+Der "Unterwasser"-Pfad. Das Orakel funktioniert, aber das beschlagnahmte Collateral ist selbst zum Orakelpreis weniger wert als der fällige Betrag. Häufig bei Abstürzen volatiler Assets, bei denen der Collateral-Wert schneller fällt, als der HF reagieren kann.
+
+Was passiert:
+- Der Lender erhält **ALLES** beschlagnahmte Collateral im Collateral-Asset.
+- Die Treasury erhält nichts.
+- Der Borrower erhält nichts — es gibt keinen Rest zur Rückerstattung.
+
+Der Lender fängt den Fehlbetrag auf. Es besteht kein weiterer Anspruch gegen den Borrower, das Protokoll oder Dritte. Dies ist der Fall, vor dem die Zeile "Wiedererlangung kann geringer sein als das verliehene Asset" in den Risiko-Hinweisen ausdrücklich warnt.
+
+Beispiel: Derselbe 1000 USDC / 0,6 WETH Loan, aber ETH stürzt auf 1500 $/WETH ab. Collateral jetzt 900 $ wert; Schulden sind 1050 $. Der Lender erhält alle 0,6 WETH (Wert 900 $), Treasury 0, Borrower 0.
+
+<a id="liquidation-mechanics.case-3"></a>
+
+### Fall 3 — Orakel-Quorum NICHT VERFÜGBAR
+
+Der Pfad des "dunklen Quorums". Die Veraltung von Chainlink liegt über der Volatilitätsgrenze UND das sekundäre 2-aus-N-Quorum findet keine Einigung (jedes sekundäre Orakel ist entweder offline oder widerspricht dem primären). Das Protokoll hat keinen vertrauenswürdigen Preis für eine der Seiten des Loans und kann daher keine faire Aufteilung berechnen.
+
+Was passiert:
+- Der Lender erhält **ALLES** beschlagnahmte Collateral im Collateral-Asset, **unabhängig vom berechneten Wert** (da keine Berechnung vertrauenswürdig ist).
+- Die Treasury erhält nichts.
+- Der Borrower erhält nichts.
+
+Gleiche Auszahlung wie in Fall 2, aber aus einem grundlegend anderen Grund: Das Protokoll entscheidet nicht "Collateral ist weniger wert als Schulden" — es entscheidet "Ich kann hier keinem Wert vertrauen, also erhält der Lender den gesamten beschlagnahmten Korb und muss damit leben, was auch immer dieser am offenen Markt wert ist".
+
+Ein anderes On-Chain-Event (`LiquidationFallbackOracleUnavailable`) wird emittiert, damit Auditoren die beiden Pfade in der Post-Mortem-Analyse unterscheiden können.
+
+<a id="liquidation-mechanics.case-4"></a>
+
+### Fall 4 — Illiquides Asset auf einer Seite
+
+Der Pfad für illiquide Assets. Das Lending-Asset, das Collateral-Asset oder beide qualifizieren sich im Klassifikator des Protokolls nicht als Liquid (kein Chainlink-Feed oder kein konzentrierter Liquiditätspool vom Typ Uniswap-V3 über der Volumenschwelle). Häufig bei NFT-Collateral und Long-Tail-Token.
+
+Was zum Zeitpunkt des Defaults passiert:
+- Der Lender erhält das **vollständige Collateral** in-kind, unabhängig vom Marktwert.
+- Keine Aufteilung zwischen "geschuldetem Betrag" und "Rest" — Orakel-Preise können nicht angewendet werden.
+- Das Asset kann wesentlich mehr oder weniger wert sein als der geschuldete Betrag. Keine Gewährleistung für die Wiederverkäuflichkeit.
+
+Beide Seiten haben dem bei Erstellung der Offer zugestimmt — die Illiquid-Asset-Klausel in den Risiko-Hinweisen deckt genau diesen Fall ab. Dieser Zweig kann nur erreicht werden, wenn beide Parteien sich wissentlich für einen Loan mit einem illiquiden Asset entschieden haben.
+
+<a id="liquidation-mechanics.why-in-kind"></a>
+
+### Warum in-kind, warum nicht immer Cash?
+
+Drei Gründe, warum das Protokoll in Collateral-Asset-Einheiten auszahlt, statt immer in das Lending-Asset zu tauschen:
+- **Sequencer- / DEX-Ausfall**: Wenn das Protokoll einen Swap nicht sicher ausführen kann (Slippage > 6 %, geringe Liquidität, DEX-Revert, Sequencer down), ist die sicherste Aktion, das zu liefern, was es bereits hat — das beschlagnahmte Collateral — direkt. Ein Swap um jeden Preis würde Verluste zementieren.
+- **Black-Swan-Szenario**: In volatilen Kaskaden kann ein Pfad mit verfügbarem Orakel innerhalb von Minuten verschwinden. Den In-Kind-Fallback bereitizuhalten, hält das Protokoll funktionsfähig, selbst wenn jede Preisquelle beeinträchtigt ist.
+- **Gegenpartei-Paar-Recovery**: Beim Claimen erhält der Lender (oder sein Keeper-Bot) eine zweite Chance über das vollständige 4-DEX-Failover. Wenn sich die Bedingungen bis dahin normalisiert haben, können sie das In-Kind-Collateral über dieselbe Routing-Infrastruktur, die der Pfad bei der Liquidation versucht hat, gegen das Lending-Asset verkaufen.
+
+<a id="liquidation-mechanics.claim-time-retry"></a>
+
+### Claim-Zeit-Retry
+
+`ClaimFacet.claimAsLenderWithRetry` ermöglicht es dem Lender (oder einem Keeper, der für den NFT des Lenders handelt), eine ranggeordnete Retry-Liste von Swap-Adapter-Aufrufen (0x → 1inch → Uniswap V3 → Balancer V2) bereitzustellen, wenn sich der Loan in `FallbackPending` befindet. Die Library durchläuft die Liste, führt beim ersten Erfolg aus und schreibt die Lender- + Borrower-Claims in Erlöse des Principal-Assets um.
+
+Ein totaler Fehlschlag lässt die aufgezeichnete Collateral-Aufteilung intakt und überführt den Loan endgültig in den Status Defaulted — an diesem Punkt übernimmt der Lender das In-Kind-Collateral und kann es über jeden externen Handelsplatz verkaufen.
+
+<a id="liquidation-mechanics.internal-match-rescue"></a>
+
+### Interne Match-Rettung vor dem Claim
+
+Bevor ein externer Swap läuft — bei HF-Liquidation, zeitbasiertem Default UND beim Claimen — prüft das Protokoll zuerst, ob ein **Loan in Gegenrichtung** existiert, der diesen Loan ohne jegliche DEX-Beteiligung settlen kann.
+
+Wenn Loan A WETH gegen USDC verkaufen muss und Loan B USDC gegen WETH verkaufen muss, können die beiden direkt gematcht werden: Das Collateral of A deckt die Schulden von B und umgekehrt, bewertet zum Orakelpreis des Protokolls. Kein Aggregator, keine Slippage, keine Swap-Gebühr. Der Borrower behält wesentlich mehr von seinem Collateral; der Lender wird zum Orakelpreis entschädigt.
+
+Dieser interne Matching-Pfad läuft automatisch:
+- **Bei HF-Liquidation** — wenn ein Keeper Liquidation aufruft und eine Gegenpartei existiert, settelt das Protokoll intern statt zu swappen. Der Keeper verdient weiterhin einen Matcher-Incentive.
+- **Bei zeitbasiertem Default** — dieselbe Prüfung vor dem Default-Swap.
+- **Beim Claimen** — wenn ein Lender einen Loan claimt, der in `FallbackPending` feststeckt, prüft das Protokoll erneut auf eine Gegenpartei. Dies ist eine echte zweite Chance: Der Pool matchbarer Loans wächst kontinuierlich, sodass eine Gegenpartei, die bei der ersten Liquidation noch nicht existierte, beim Claimen vorhanden sein kann.
+
+Ein Loan, der in `FallbackPending` gelandet ist, weil sein Swap bei der Liquidation *vorübergehend* fehlschlug (ein kurzzeitiger Slippage-Peak, ein DEX-Revert, ein veralteter Orakel-Tick), ist ein idealer Rettungskandidat — das zugrunde liegende Collateral ist normalerweise immer noch perfekt liquide, und ein Gegen-Loan kann es sauber klären. Das Protokoll erfordert nur, dass das Orakel das Asset noch bewerten kann; es erfordert keine DEX-Tiefe, da ein internes Match niemals einen DEX berührt.
+
+Wenn keine Gegenpartei existiert, fällt das Protokoll auf den oben beschriebenen Pfad des externen Aggregators zurück. Das interne Match ist eine "besser-wenn-verfügbar"-Optimierung, niemals ein Blockierer.
+
+---
 
 ## Allowances
 
@@ -1383,7 +1479,7 @@ Refinance zahlt deinen bestehenden Loan atomar aus neuem Principal
 ab und eröffnet einen frischen Loan mit den neuen Konditionen —
 alles in einer Transaktion. Collateral bleibt die ganze Zeit in
 deinem Vault; es gibt kein ungesichertes Fenster. Der neue Loan
-muss bei der Initiierung das HF ≥ 1,5-Gate genauso bestehen wie
+must bei der Initiierung das HF ≥ 1,5-Gate genauso bestehen wie
 jeder andere Loan.
 
 Der ungenutzte Loan-Initiation-Fee-Rebate des alten Loans wird
@@ -1527,3 +1623,64 @@ zum Verkauf. Ein Käufer schließt den Verkauf ab; du kannst vor
 Ausführung des Verkaufs stornieren. Optional an einen Keeper
 delegierbar, der die "Loan-Verkauf abschließen"-Permission hält;
 der Initiate-Schritt selbst bleibt user-only.
+
+---
+
+## Wiederherstellung hängengebliebener Token
+
+Dieser Abschnitt behandelt einen SONDERFALL, den die meisten Nutzer nie benötigen werden. Lies alles aufmerksam durch, bevor du auf den Wiederherstellungs-Link unten klickst — die Angabe einer falschen Quelle kann dazu führen, dass dein Vault im Rahmen der Sanktionspolitik des Protokolls gesperrt wird.
+
+<a id="stuck-recovery.what"></a>
+
+### Was "hängengebliebene Token" bedeutet
+
+Dein Vaipakam-Vault-Proxy ist ein interner Speicher des Protokolls. Er ist KEINE Einzahlungsadresse. Jede vom Protokoll unterstützte Einzahlung läuft über die Facet-Einstiegspunkte von Vaipakam, die im Rahmen einer Offer-Erstellung, Loan-Annahme oder eines Staking-Vorgangs Mittel aus deinem Wallet in deinen Vault ziehen. Token, die AUSSERHALB dieses Flows im Vault ankommen — z. B. durch einen direkten `IERC20.transfer` aus einem Wallet oder einen CEX-Withdrawal, bei dem deine Vault-Adresse kopiert und eingefügt wurde — liegen dort ohne Protokoll-Buchhaltung. Der Asset-Viewer blendet sie aus, da er nur den vom Protokoll verfolgten Saldo anzeigt.
+
+Token können auf zwei Arten hängenbleiben:
+1. **Du hast sie selbst geschickt.** Du hast deine Vault-Adresse (aus dem Dashboard oder einem Block-Explorer) in ein CEX-Auszahlungsfeld oder das Senden-Formular eines Wallets kopiert und abgeschickt. Die Token landeten in deinem Vault, ohne den Einzahlungspfad des Protokolls zu durchlaufen.
+2. **Ein Dritter hat sie geschickt ("Dust-Attacke").** Jemand hat einen kleinen Betrag von einem markierten Wallet an deinen Vault überwiesen, in der Hoffnung, deine Adresse mit seinem Ruf in Verbindung zu bringen. Dies ist ein realer Angriffsvektor gegen prominente Adressen auf permissionless Chains.
+
+<a id="stuck-recovery.taint-poisoning"></a>
+
+### Über "Taint-Poisoning"
+
+Wenn der Dritt-Absender auf einer Sanktionsliste steht, könnten generische On-Chain-Analysetools deinen Vault als "sanktionsnah" markieren, obwohl du die eingehenden Token nie berührt hast. Es gibt keinen On-Chain-Weg, dies rückgängig zu machen — das Transfer-Event ist permanent. Die INTERNE Buchhaltung von Vaipakam ist davon unberührt (wir verfolgen nur über das Protokoll vermittelte Deposits, Dust geht niemals in unsere Zähler ein), sodass deine Loans / Stakes / Claims normal weiterfunktionieren. Externe Tools jedoch, die unsere Buchhaltung nicht verstehen, könnten Warnungen anzeigen.
+
+<a id="stuck-recovery.dont-recover"></a>
+
+### Wann du Token NICHT wiederherstellen solltest
+
+Wenn du die Token NICHT selbst geschickt hast, **versuche nicht, sie wiederherzustellen**. Die Wiederherstellung erfordert, dass du die Adresse des Absenders angibst. Wenn diese Adresse auf der Sanktionsliste steht, wird dein Vault im Rahmen der Sanktionspolitik des Protokolls gesperrt, bis die Quelle vom Orakel von der Liste genommen wird.
+
+Token, die du nicht gesendet hast, gehören dir nicht. Sie wiederherzustellen, indem du eine "saubere" Adresse angibst, die du gar nicht besitzt, ist ebenfalls eine schlechte Idee — das Protokoll kann die Angabe on-chain nicht verifizieren, aber externe Orakel-Tools könnten später widersprechen.
+
+Der sicherste Weg ist es, unaufgeforderten Dust zu ignorieren. Er beeinträchtigt weder deinen Protokoll-Saldo noch aktive Loans oder Offers.
+
+<a id="stuck-recovery.when-recover"></a>
+
+### Wann du Token wiederherstellen solltest
+
+Du hast die Token versehentlich selbst gesendet, du kontrollierst das Quell-Wallet und weißt, dass die Quelle auf keiner Sanktionsliste steht (dein eigenes EOA, ein CEX-Hot-Wallet, von dem du abgehoben hast, etc.).
+
+<a id="stuck-recovery.flow"></a>
+
+### Wiederherstellungs-Flow
+
+1. Besuche die [Wiederherstellungs-Seite](/app/recover).
+2. Gib die Token-Vertragsadresse, die Quelle, von der du gesendet hast, und den Betrag ein.
+3. Lies den Hinweis auf dem Bildschirm sorgfältig durch.
+4. Tippe "CONFIRM" ein, um das Signieren freizuschalten.
+5. Signiere die EIP-712-Bestätigung in deinem Wallet.
+6. Sende die Transaktion ab.
+
+Zwei Ergebnisse sind möglich:
+- **Quelle sauber** → Token kehren zu deinem EOA zurück.
+- **Quelle markiert** → Token bleiben im Vault, dein Vault wird im Rahmen der Sanktionspolitik des Protokolls gesperrt. Die Sperre hebt sich automatisch auf, wenn die Adresse später vom Sanktions-Orakel entfernt wird.
+
+<a id="stuck-recovery.disown"></a>
+
+### Unaufgeforderte Token verleugnen (Compliance-Audit-Trail)
+
+Wenn du einen öffentlichen On-Chain-Nachweis möchtest, dass ein bestimmter Token-Saldo in deinem Vault NICHT dir gehört, bietet das Protokoll eine `disown(token)`-Funktion an. Sie emittiert ein Event (`TokenDisowned`) und ändert sonst nichts — die Token bleiben wie zuvor im Vault. Dies ist nützlich bei Compliance-Streitigkeiten, falls eine CEX oder eine Regulierungsbehörde fragt: "Haben Sie diese Mittel erhalten?". Du kannst dann auf das On-Chain-Event verweisen.
+
+Die Disown-Funktion ist derzeit nur über direkten Vertragsaufruf zugänglich; das Vaipakam-Frontend bietet dafür keinen Button an. Nutze die "Write Contract"-Oberfläche eines Block-Explorers oder ein Tool zur Interaktion mit Smart Contracts, um sie aufzurufen.
