@@ -219,28 +219,159 @@ The financial logic doesn't need to know whether the principal arrived
 via an AMM swap or a Fusion fill — it sees a principal-asset balance
 delta at the diamond and routes the splits the same way.
 
-### 5.4 Slippage / minOutput
+### 5.4 minOutput floor — reuse the NFT auction prepay formula
 
-v1 enforces slippage via `cfgMaxSwapToRepaySlippageBps` (admin-tunable
-default 3%). v1.1 doesn't need a separate cap — the Fusion order's
-`minPrincipalOut` is the slippage floor; if the auction doesn't fill at
-or above that, the order expires. The borrower sets the floor at
-commit time via the dapp; the diamond just enforces "delivered
-principal ≥ minPrincipalOut" at finalize.
+v1 enforces slippage via `cfgMaxSwapToRepaySlippageBps` (admin-tunable,
+default 3%). v1.1 doesn't use a slippage cap at all — the order's
+`minPrincipalOut` IS the floor. But the borrower can't pick that floor
+freely: it must cover the full debt obligation plus a safety buffer.
 
-A new admin knob `cfgMinIntentMinOutputBps` could optionally floor the
-borrower's choice (e.g. "you can't commit at worse than 5% slippage
-against current oracle price"), but v1.1 defers that to v1.2 — the
-borrower is the one waiting, the borrower picks the floor.
+The canonical formula already exists for the NFT auction prepay-listing
+flow (T-086 §17.5-bis), at
+`contracts/src/facets/NFTPrepayListingAtomicFacet.sol:267-295`:
 
-### 5.5 Timeout / cancel-by-keeper
+```
+floor    = lenderLeg + treasuryLeg              // full settlement entitlement
+minOut   = floor × (10_000 + bufferBps) / 10_000
+```
 
-If the borrower forgets to cancel an expired intent, the collateral
-sits in the custodial slot indefinitely. v1.1 ships a permissionless
-`cancelExpiredIntent(uint256 loanId)` that anyone can poke after
-`deadline + cancelGrace` to nudge the collateral back to the borrower's
-vault. This avoids a stuck-position scenario without giving a keeper
-authority over the borrower's collateral.
+Where `(lenderLeg, treasuryLeg)` come from
+`IVaipakamPrepayContext.getPrepayContext(loanId, timestamp)` — the
+context computes:
+
+- `lenderLeg` = principal + interest (full-term snapshot if the loan
+  was created with `useFullTermInterest = true`, pro-rata otherwise) +
+  any accrued late-fee leg.
+- `treasuryLeg` = the protocol's cut on the interest leg per the
+  current `cfgTreasuryFeeBps`.
+
+**v1.1 reuses this verbatim.** Two changes vs the NFT path:
+
+1. A new admin knob `cfgIntentMinOutputBufferBps` (default 200 bps =
+   2%) separate from `cfgPrepayListingBufferBps` (currently 500 bps =
+   5%). The NFT-auction buffer absorbs resale-volatility risk and
+   stale-listing risk; the intent buffer only absorbs the gap between
+   commit and fill (max ~5 minutes) plus solver-side rounding. 2% is
+   ample for that window.
+2. The buffer-not-configured guard from
+   `PrepayListingBufferNotConfigured` becomes
+   `IntentMinOutputBufferNotConfigured`; the
+   `cfgIntentMinOutputBufferBps` admin knob must be set by deploy
+   bootstrap before the surface can be enabled (§5.6 below).
+
+`commitSwapToRepayIntent` enforces the floor at commit time:
+
+```
+PrepayContext pctx = IVaipakamPrepayContext(this).getPrepayContext(loanId, block.timestamp);
+uint256 floor  = pctx.lenderLeg + pctx.treasuryLeg;
+uint256 minOut = (floor * (10_000 + s.cfgIntentMinOutputBufferBps)) / 10_000;
+if (commit.minPrincipalOut < minOut) revert IntentMinOutputBelowFloor(commit.minPrincipalOut, minOut);
+```
+
+`finalizeSwapToRepayIntent` re-asserts the floor against the *actual*
+delivered principal — so even if the solver overdelivers (better than
+the committed `minOutput`), the assertion stays correct, and any
+favourable surplus flows to the borrower's EOA via the same waterfall
+v1 uses.
+
+### 5.5 Cancel paths — borrower button + permissionless safety net
+
+Two cancel surfaces. The borrower has full control of their own
+collateral the moment the auction ends; the permissionless safety net
+only exists for borrower-AFK / wallet-dead scenarios.
+
+- **`cancelSwapToRepayIntent(uint256 loanId)`** — borrower-NFT-owner
+  only. Callable any time after `commit.deadline` (the Fusion auction
+  end). Pulls the custodial collateral back to the borrower's vault
+  via the standard `vaultDepositERC20` path; clears the commit slot.
+  The dapp's intent panel surfaces this as an enabled "Cancel & return
+  collateral" button the moment the auction expires un-filled. This
+  is the borrower's clean recovery path — they can immediately commit
+  a fresh intent, fall back to atomic v1, or just walk away.
+- **`cancelExpiredIntent(uint256 loanId)`** — permissionless. Callable
+  after `commit.deadline + cancelGrace` (default 24h). Same effect:
+  custodial collateral returns to the **borrower's vault** (never the
+  caller's wallet — no incentive abuse), commit slot clears. This
+  exists only so a borrower-AFK / dead-wallet scenario can't strand
+  collateral indefinitely. The 24h gap is generous: the borrower gets
+  first crack at a clean cancel without keepers racing them.
+
+**No-double-commit guard.** `commitSwapToRepayIntent` reverts with
+`IntentAlreadyCommitted(loanId)` if `s.intentCommits[loanId]` is
+non-zero. Without this guard, a fresh commit could overwrite a live
+commit's storage slot while the first auction is still running, and
+collateral pulled by the first commit would be stranded. The borrower
+must cancel the existing commit before placing a new one.
+
+### 5.6 Admin enable flag — `cfgIntentSwapToRepayEnabled`
+
+The v1.1 surface ships on every chain but is **default-OFF**. An admin
+flag controls per-chain rollout:
+
+- Storage: append `bool cfgIntentSwapToRepayEnabled` to
+  `ProtocolConfig`.
+- Setter: `ConfigFacet.setIntentSwapToRepayEnabled(bool)`. ADMIN_ROLE
+  pre-handover; timelock post-handover. Emits
+  `IntentSwapToRepayEnabledSet(bool)` for audit / indexer surfacing.
+- Getter: `getIntentSwapToRepayEnabled() returns (bool)`.
+- Enforcement: all three intent-facet entry points (`commit...`,
+  `finalize...`, `cancel...`) check the flag and revert with
+  `IntentSurfaceDisabled()` when false — clean rejection at the entry,
+  not a downstream revert.
+  - **Exception**: `cancelSwapToRepayIntent` AND `cancelExpiredIntent`
+    skip the flag check IFF there's an existing commit slot for that
+    loan. Otherwise a borrower whose chain had the flag toggled off
+    *after* they committed would be unable to recover their custodial
+    collateral.
+
+Initial rollout (per §8.5): **Base + Arbitrum first** (deepest Fusion
+solver depth among the chains Vaipakam supports), Sepolia for QA.
+Other chains stay OFF until governance toggles them on.
+
+### 5.7 MEV-resistance — design notes for auditors
+
+The intent-based path is intentionally MEV-resistant across every
+surface. Recording the analysis here so a future auditor doesn't need
+to re-derive it:
+
+1. **The swap itself.** Fusion's whole architecture is MEV-resistant
+   by design — resolvers compete in an off-chain Dutch auction; the
+   winning resolver internalizes execution to their private mempool /
+   book. The swap calldata never sits in the public mempool waiting
+   to be sandwiched. This is a primary feature of intent-based
+   protocols, not a property of Vaipakam's integration.
+2. **`finalize` front-running.** The function is permissionless — any
+   observer can poke it. Intentionally: it's a public-good call. The
+   body reads `principalBalance >= minPrincipalOut`, then runs the
+   settlement waterfall (lender vault credit, treasury cut, borrower
+   surplus to EOA). All targets are determined by the immutable loan
+   struct. No oracle read at finalize, no swap, no arbitrage
+   opportunity — whoever calls it gets nothing. The result is
+   identical regardless of caller.
+3. **Steal-the-principal-between-fill-and-finalize.** Once the
+   principal lands at the diamond, the only code path that touches it
+   is `finalize` itself, and it routes exclusively via the loan
+   struct's immutable lender / borrower addresses. Custodial
+   accounting is keyed by `loanId`; there's no "claim someone else's
+   intent" surface.
+4. **Replay.** `finalize` clears the commit slot; the orderHash is
+   recorded as filled in Fusion's `Settlement` contract too (Fusion's
+   own anti-replay). The same Fusion order can't be filled twice; the
+   same Vaipakam loan can't be finalized twice.
+5. **Cross-loan substitution.** The commit binds an `orderHash` to a
+   `loanId`. A solver can't fulfil loan A's intent and have the
+   proceeds credited to loan B — the orderHash → loanId mapping is
+   enforced at finalize (`s.intentCommits[loanId].orderHash` must
+   match the order Fusion filled into the diamond).
+
+One UX wart (NOT a security issue): there's a brief window between
+fill (principal lands) and finalize (waterfall runs) where the loan
+stays Active in indexed views even though the principal is already
+sitting custodially. No theft vector — `finalize`'s routing is
+determined by the loan struct. The window is closed by the
+permissionless `finalize` call that any observer (the dapp, a keeper,
+the indexer's catch-up worker) can poke immediately upon seeing the
+Fusion fill event.
 
 ## 6. Off-chain shape
 
@@ -319,26 +450,47 @@ Same shape as T-090 v1's four-sub split:
 Sub 1 ships independently. Subs 2-4 are sequenced behind it because the
 new events / ABIs come out of Sub 1.
 
-## 8. Decisions still open
+## 8. Decisions closed (resolved 2026-06-07)
 
-These warrant explicit user input before Sub 1 starts:
+All five open checkpoints have explicit picks. Sub 1 can start.
 
-1. **Intent backend pick.** This doc recommends Fusion. CoWSwap is the
-   close runner-up. Confirming the pick gates everything below.
-2. **Min-output floor.** v1.1 lets the borrower pick freely; v1.2 adds
-   `cfgMinIntentMinOutputBps`. Confirm v1.1 ships without that floor.
-3. **Cancel-by-keeper grace.** Setting `cancelGrace` too short means
-   keepers race the borrower's own cancel. Default proposal: 24 hours
-   after `deadline`.
-4. **Recipient pattern vs callback pattern.** This doc picks the
-   Fusion-recipient model (passive). If UniswapX-style callback
-   patterns are preferred (lower latency between fill + waterfall,
-   higher complexity), Sub 1 needs to switch shape — confirm before
-   coding.
-5. **Single-chain or multi-chain at v1.1.** The atomic v1 ships on every
-   chain Vaipakam supports. v1.1 should probably ship intent-based on
-   Base + Arbitrum first (largest TVL chains where solver depth
-   matters), with Sepolia testnet for QA. Confirm chain scope.
+1. **Intent backend: 1inch Fusion** — confirmed. CoWSwap and UniswapX
+   stay viable as v1.2+ if Fusion underperforms in production.
+2. **Min-output floor: reused from NFT auction prepay-listing.**
+   `floor = lenderLeg + treasuryLeg`; `minOutput ≥ floor × (1 +
+   cfgIntentMinOutputBufferBps)`, default 200 bps (2%). Borrower
+   does NOT pick freely — the floor must cover the full debt
+   obligation (principal + interest leg + treasury cut) plus the 2%
+   buffer for the commit-to-fill window. Reuses
+   `IVaipakamPrepayContext.getPrepayContext(...)` verbatim; same
+   pattern as `NFTPrepayListingAtomicFacet:267-295`. See §5.4.
+3. **Cancel surface: borrower button at deadline + permissionless
+   safety net after 24h.** Two paths:
+   - `cancelSwapToRepayIntent` — borrower-NFT-owner only, callable
+     immediately after `commit.deadline` (~5 min Fusion auction end).
+     The dapp surfaces this as the "Cancel & return collateral" button
+     the moment the auction expires un-filled.
+   - `cancelExpiredIntent` — permissionless, callable after
+     `commit.deadline + 24h`. Borrower-AFK safety net only; collateral
+     always returns to the borrower's vault. See §5.5.
+4. **Recipient pattern** — confirmed. Passive-receive model: the
+   diamond is the order's `recipient`; Fusion's `Settlement` contract
+   transfers the principal asset to the diamond on fill; a separate
+   permissionless `finalize` call runs the settlement waterfall. No
+   diamond code runs inside the solver's fill transaction. Simpler
+   audit surface than the callback pattern, no MEV vector (see
+   §5.7). The brief fill-to-finalize idle window is a UX wart, not a
+   security issue; closed by the permissionless `finalize` poke.
+5. **Chain scope: ship on every chain but admin-flag default-OFF.**
+   New `cfgIntentSwapToRepayEnabled` per-chain boolean; admin enables
+   per chain via `ConfigFacet.setIntentSwapToRepayEnabled(bool)`
+   (pre-handover ADMIN_ROLE, post-handover timelock). All three entry
+   points reject with `IntentSurfaceDisabled()` while OFF. Initial
+   rollout: Base + Arbitrum first (deepest Fusion solver depth);
+   Sepolia for QA. Other chains stay OFF until governance toggles.
+   The flag check is bypassed only for the two cancel paths on a
+   pre-existing commit, so a chain-toggle-off can't strand any
+   borrower's custodial collateral. See §5.6.
 
 ## 9. Out of scope for v1.1 (deferred to v1.2+)
 
