@@ -196,15 +196,21 @@ exposed as a filter chip on the My Offers page:
   ingestion time (it joins the offer row to look up the creator),
   so the per-wallet filter finds the borrower without the
   event itself indexing them.
-- **Fully Filled** — Range-orders only. When partial-fill
-  matching consumes the offer's remaining budget (the last
-  match fully fills the range, or a partial match leaves a
-  sub-dust remainder), `OfferMatchFacet` emits
-  `OfferClosed(FullyFilled | Dust)` and the indexer stamps
-  `status = 'fullyFilled'`. The row drops out of Active and
-  is reachable under the Fully Filled chip; the contract's
-  `accepted` state and the on-chain Filled label above are
-  reserved for the direct-accept terminal.
+- **Fully Filled (indexer state, no chip yet)** — Range-orders
+  only. When partial-fill matching consumes the offer's
+  remaining budget (the last match fully fills the range, or
+  a partial match leaves a sub-dust remainder),
+  `OfferMatchFacet` emits `OfferClosed(FullyFilled | Dust)` and
+  the indexer stamps the offer row `status = 'fullyFilled'`.
+  The contract's `accepted` state and the on-chain Filled
+  label above are reserved for the direct-accept terminal, so
+  `fullyFilled` is distinct on the indexer side. The dapp's
+  `MyOfferStatus` doesn't yet expose this terminal as its own
+  filter chip — `useMyOffers` currently ignores rows with the
+  `fullyFilled` indexer status — so a fully-filled range offer
+  effectively drops out of the My Offers view altogether
+  until the dedicated chip lands. The chip surface is queued
+  as a separate UI follow-up.
 
 Past-GTT (Good-Til-Time) offers that never reached a terminal
 event aren't yet exposed as a distinct status chip in the dapp;
@@ -488,7 +494,10 @@ the dapp does NOT automate today:
    builder also needs values held in the executor's
    `OfferContext` storage (borrower vault address, principal
    asset, collateral fields, startTime, endTime) plus the
-   bidder-side Seaport counter. Read both before posting:
+   borrower vault's Seaport counter (the offerer's counter —
+   `LibPrepayOrder.buildAndHashOfferMem` hashes
+   `Seaport.getCounter(ctx.borrowerVault)`, NOT the bidder's
+   counter). Read both before posting:
    - `CollateralListingExecutor(executor).offerContext(orderHash)`
      returns the persisted `OfferContext` struct for that hash.
    - `Seaport.getCounter(borrowerVault)` returns the canonical
@@ -1006,8 +1015,14 @@ to-match in a given moment.
 
 When you find an acceptable offer and click **Match offer**,
 the dapp opens the **Confirm Match** modal, which restates the
-matched value (the price the diamond will settle at) and gives
-a generic explanation of the atomic-match flow. After you
+matched value (the gross OpenSea offer amount the panel showed
+— NOT the net amount the diamond will settle at; on
+fee-enforced collections `NFTPrepayListingAtomicFacet.matchOpenSeaOffer`
+computes `effectiveAsk = offerValue - bidderFeeTotal` before
+running the lender / treasury / borrower split, so the net the
+diamond actually distributes is smaller than the modal's
+headline) and gives a generic explanation of the atomic-match
+flow. After you
 confirm, the dapp sends a single `matchOpenSeaOffer`
 transaction that bundles the bidder's offer with a freshly-
 constructed diamond-side counter-order into one Seaport
