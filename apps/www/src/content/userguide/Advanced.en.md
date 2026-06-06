@@ -186,7 +186,12 @@ filter chip on the My Offers page:
   feed as `Offer sold via OpenSea` for the borrower (offer
   creator) — the underlying event indexes both the executor
   and the creator addresses so the per-wallet filter finds it.
-- **Expired** — past GTT deadline without any terminal event.
+
+Past-GTT (Good-Til-Time) offers that never reached a terminal
+event aren't yet exposed as a distinct status chip in the dapp;
+they currently fall under Active until the indexer records a
+terminal. A dedicated Expired chip is queued as a separate UI
+follow-up.
 
 <a id="offer-book.lender-offers"></a>
 
@@ -407,9 +412,16 @@ exposes a `Borrow or sell` opt-in below the collateral
 section. Ticking it marks the offer as eligible for a
 parallel-sale listing of your NFT collateral on OpenSea — a
 single offer that can be filled EITHER by a lender (you take
-the loan) OR by a marketplace buyer (you sell the NFT and
-the offer closes). Whichever lands first wins; both paths can't
-fire on the same offer.
+the loan) OR by a marketplace buyer (you sell the NFT). The
+listing is NOT torn down at lender acceptance: if a lender
+fills first you take the loan, the OpenSea listing carries
+through loan initiation, and a later marketplace fill triggers
+the diamond's settlement waterfall to close the loan from the
+sale proceeds (see Scenario B below). If a marketplace buyer
+fills first, no loan is ever created (Scenario A). Either way,
+the offer closes the moment a marketplace buyer fills the
+listing, and lender acceptance is gated against any offer that
+has already been consumed by sale.
 
 **Two-step nature.** Opting in at offer create time just
 sets the eligibility flag on the offer. The listing itself
@@ -433,12 +445,17 @@ accidentally tick it on an ineligible offer.
 **What a buyer sees.**
 
 - *Before any lender accepts* (Scenario A): a buyer who
-  fills the OpenSea listing pays the listed price, the
-  diamond escrows the proceeds in your vault, the NFT
-  transfers to the buyer, and the offer is marked
-  `consumed_by_sale` (visible as a distinct "Sold" status
-  in My Offers, Activity, and Offer Details). No loan was
-  ever created; you keep the full sale proceeds.
+  fills the OpenSea listing pays the listed price. On
+  fee-enforced collections, Seaport routes OpenSea
+  protocol-fee and creator-fee legs directly to their
+  configured recipients first; the executor passes only the
+  **net proceeds** (listed price minus those marketplace /
+  creator fee legs) to the diamond. The diamond escrows that
+  net amount in your vault, the NFT transfers to the buyer,
+  and the offer is marked `consumed_by_sale` (visible as a
+  distinct "Sold" status in My Offers, Activity, and Offer
+  Details). No loan was ever created; you keep the net sale
+  proceeds.
 - *After a lender accepts* (Scenario B): the listing
   carries through loan initiation — neither the borrower
   NFT lock nor the listing is torn down. A later buyer
@@ -451,12 +468,26 @@ accidentally tick it on an ineligible offer.
   surplus from the Claim Center exactly as you would for
   a normal preclose.
 
-**What you can't combine it with.** The contract blocks an
-open PrecloseFacet offset offer on the same loan (you can't
-have two cross-flow exits live at once) and blocks a sibling
-loan-keyed prepay listing on the same loan (the conduit
-approval would be ambiguous). These are surfaced as revert
-errors during the publish step, not at offer-create time.
+**What you can't combine it with.** Two related conflicts —
+both of which surface at the **fill** step, not at publish
+or offer-create:
+
+- A live loan-keyed prepay listing on the SAME loan as a
+  carried-through parallel-sale listing. The conduit approval
+  for the borrower's NFT is a single slot; the diamond's
+  `postPrepayListing` reverts at publish-time if there's
+  already a carried parallel-sale listing on the same loan
+  (this one IS publish-step — see
+  `ParallelSaleConflictsWithLoanKeyedListing`).
+- An open PrecloseFacet offset offer on the loan. The
+  diamond's `_settleLoanFromParallelSale` reverts with
+  `ParallelSaleBlockedByOpenOffsetOffer` when a buyer tries
+  to fill the parallel-sale listing — NOT at the publish step.
+  If you have an open offset and a live parallel-sale listing,
+  the listing remains valid on OpenSea but any fill attempt
+  reverts until you cancel the offset. The dapp surfaces
+  this on the Loan Details page so you can choose which
+  cross-flow exit you actually want.
 
 ---
 
@@ -780,13 +811,17 @@ Permissionless actions available to anyone regardless of role:
 - **List collateral on OpenSea (prepay sale)** — if the loan has
   an NFT as collateral and the lender opted in at offer time, you
   can post your collateral on OpenSea via Vaipakam at any price
-  above the live floor (principal + accrued interest + treasury
-  cut + a safety buffer). When a buyer fills, the sale waterfall
-  pays the lender, the treasury fee, and the remainder lands in
-  your vault — atomically, in one Seaport transaction, no extra
-  step from you. Cancellable any time before the grace window
-  closes. The listing surfaces on OpenSea's marketplace UI
-  automatically; you don't sign anything off-chain.
+  above the live floor. The floor is the lender's **settlement
+  entitlement** (the FULL coupon for full-term-interest loans
+  where the lender locked in the whole interest leg at offer
+  time, pro-rata accrued interest otherwise) plus the treasury
+  cut plus a safety buffer. When a buyer fills, the sale
+  waterfall pays the lender at their entitlement, the treasury
+  fee, and the remainder lands in your vault — atomically, in
+  one Seaport transaction, no extra step from you. Cancellable
+  any time before the grace window closes. The listing surfaces
+  on OpenSea's marketplace UI automatically; you don't sign
+  anything off-chain.
 - **Claim as borrower** — terminal-only. Returns collateral on
   full repayment, or the unused VPFI Loan Initiation Fee
   rebate on default / liquidation. Burns the borrower position
@@ -818,11 +853,13 @@ on your token — bids tied to your specific collateral, not
 to any token in the collection. Vaipakam surfaces these item
 offers on the Loan Details page in real time — a separate
 panel under "List collateral on OpenSea" with one row per
-incoming offer. The panel applies a **buffer threshold**
-(principal + accrued interest + treasury cut + safety
-buffer) and **greys out** offers that don't clear it. You
-can see market interest at every level but can only Match
-offers that the protocol will actually settle.
+incoming offer. The panel applies a **buffer threshold** —
+principal plus the lender's settlement entitlement (full
+coupon for full-term-interest loans, pro-rata otherwise),
+plus the treasury cut, plus a safety buffer — and **greys
+out** offers that don't clear it. You can see market
+interest at every level but can only Match offers that the
+protocol will actually settle.
 
 Collection-wide / criteria offers (bids that any token in
 the collection can fulfill) stay on OpenSea but **don't
@@ -879,10 +916,12 @@ buyer could step in at the matched price.
   modal echoes the bidder address, the rotated listing price
   the diamond will accept, and the lender / treasury /
   borrower split. The protocol's settlement buffer enforces
-  that the price covers principal + accrued interest +
-  treasury cut, so the split is always at least neutral for
-  you — but it's still your transaction, so it's still your
-  responsibility to confirm.
+  that the price covers principal plus the lender's
+  settlement entitlement (full coupon on full-term-interest
+  loans, pro-rata otherwise) plus the treasury cut, so the
+  split is always at least neutral for you — but it's still
+  your transaction, so it's still your responsibility to
+  confirm.
 - **Check OpenSea's fee posture for the collection.** If the
   collection enforces OpenSea protocol fees or creator
   royalties, the atomic path needs SignedZone `extraData` /
