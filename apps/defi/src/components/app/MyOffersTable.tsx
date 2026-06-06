@@ -382,20 +382,32 @@ export function MyOffersTable({
                         {t('loanDetails.daysSuffix')}
                       </td>
                       <td>
-                        {/* Codex round-13 P2 #2 — sold-history rows
-                            always have NFT collateral (the
-                            `consumed_by_sale` terminal is only set
-                            by the parallel-sale path, which the
-                            contract restricts to borrower offers
-                            with ERC721 / ERC1155 collateral). Pass
-                            the real `collateralAssetType` +
-                            `collateralTokenId` so the cell renders
+                        {/* Codex round-13 P2 #2 + round-16 P2 #1 —
+                            sold-history rows always have NFT
+                            collateral (the `consumed_by_sale`
+                            terminal is only set by the parallel-sale
+                            path, which the contract restricts to
+                            borrower offers with ERC721 / ERC1155
+                            collateral). Pass real `collateralAssetType`
+                            + `collateralTokenId` so the cell renders
                             "NFT #42" instead of a meaningless ERC20-
-                            amount fallback. */}
+                            amount fallback. For ERC1155 PrincipalCell
+                            interprets `amount` as the number of
+                            copies, so route through `collateralQuantity`
+                            (the ERC1155 copy count) instead of
+                            `collateralAmount` (which on an ERC1155
+                            offer is the principal amount, not the
+                            NFT count). For ERC721 PrincipalCell
+                            ignores `amount` (always 1) so the same
+                            branch works for both NFT types. */}
                         <PrincipalCell
                           assetType={offer.collateralAssetType ?? 1}
                           asset={offer.collateralAsset}
-                          amount={offer.collateralAmount}
+                          amount={
+                            offer.collateralAssetType === 2
+                              ? offer.collateralQuantity ?? 1n
+                              : offer.collateralAmount
+                          }
                           tokenId={offer.collateralTokenId ?? 0n}
                           chainId={chainId}
                         />

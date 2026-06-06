@@ -243,8 +243,16 @@ export default function CreateOffer() {
   // `ParallelSaleRequiresNFTCollateral`. Defensive UX guard.
   useEffect(() => {
     if (!form.allowsParallelSale) return;
+    // Codex round-16 P2 #4 — `OfferParallelSaleFacet._validatePostParallelSale`
+    // ALSO rejects offers whose principal (lendingAsset) is non-ERC20
+    // with `UnsupportedPrincipalForParallelSale`. Without this added
+    // gate, an NFT-principal borrower offer (`assetType == ERC721 /
+    // ERC1155`) with NFT collateral could still tick the toggle and
+    // submit, only to revert at create time. Mirror the contract's
+    // eligibility: borrower + ERC20 principal + NFT collateral.
     const eligible =
       form.offerType === "borrower" &&
+      form.assetType === "erc20" &&
       (form.collateralAssetType === "erc721" ||
         form.collateralAssetType === "erc1155");
     if (!eligible) {
@@ -253,6 +261,7 @@ export default function CreateOffer() {
   }, [
     form.allowsParallelSale,
     form.offerType,
+    form.assetType,
     form.collateralAssetType,
     setField,
   ]);
@@ -1524,6 +1533,7 @@ export default function CreateOffer() {
                 fill modes create multiple loans against a single
                 offer's collateral. */}
             {form.offerType === 'borrower' &&
+              form.assetType === 'erc20' &&
               (form.collateralAssetType === 'erc721' ||
                 form.collateralAssetType === 'erc1155') && (
                 <label className="checkbox-row" style={{ marginTop: 12 }}>

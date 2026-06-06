@@ -778,6 +778,18 @@ async function runScan(
     // Infura, QuickNode, publicnode, direct node RPCs).
     let logs: RawLog[];
     try {
+      // T-086 Round-8 §19.7e + Codex round-15 P2 #5 + round-16 P2 #3 —
+      // `OFFER_CONSUMED_BY_SALE_TOPIC0` is fetched via a SEPARATE second
+      // `eth_getLogs` call (immediately after the bulk call below) so
+      // the main filter's topic OR-list stays at 24 entries — under the
+      // publicnode/free-tier silent cap that drops results when the
+      // list crosses 25. The decoder branch for the consumed-by-sale
+      // event still lives in the in-loop scan and decodes logs from
+      // either call uniformly. `OFFER_CANCELED_DETAILS_TOPIC0` is also
+      // omitted from the main filter (same cap reason); for that event
+      // the contract-side trade-off has been accepted (no second call
+      // for it — re-add the same way once any other cap-pressing event
+      // joins the list).
       logs = await safeGetLogs(rpcUrl, {
         address: diamondAddress,
         topics: [
@@ -787,22 +799,6 @@ async function runScan(
             OFFER_CREATED_TOPIC0,
             OFFER_ACCEPTED_TOPIC0,
             OFFER_CANCELED_TOPIC0,
-            // OFFER_CONSUMED_BY_SALE_TOPIC0 + OFFER_CANCELED_DETAILS_TOPIC0
-            // intentionally omitted from the filter array. publicnode
-            // (and other free-tier RPCs) silently return empty results
-            // when the topic OR-list exceeds an internal cap (~24
-            // entries observed). Adding either pushes the array past 24
-            // and breaks event capture for every event kind. The
-            // decoder branches below stay in case logs of these kinds
-            // ever land via a wider scan (e.g. a paid RPC with no cap,
-            // or a future split into a second eth_getLogs call). For
-            // the worker-down fallback path, sold-before-acceptance
-            // offers therefore don't bucket into `sold` on free-tier
-            // RPCs — same trade-off the cancelled-details branch
-            // accepts. The indexer-first path (which doesn't use this
-            // filter) covers the common case. Re-add when (a) we move
-            // off free-tier RPC OR (b) split into a second
-            // eth_getLogs call.
             LOAN_REPAID_TOPIC0,
             LOAN_DEFAULTED_TOPIC0,
             LENDER_CLAIMED_TOPIC0,
@@ -838,6 +834,35 @@ async function runScan(
         continue; // retry same cursor with the smaller chunk
       }
       throw err;
+    }
+
+    // T-086 Round-8 §19.7e + Codex round-16 P2 #3 — second
+    // `eth_getLogs` call dedicated to `OFFER_CONSUMED_BY_SALE_TOPIC0`.
+    // Keeps the bulk call's topic OR-list at 24 (under the publicnode
+    // silent cap) while still capturing sold-before-acceptance offers
+    // on the worker-down fallback path. Same chunk window, same
+    // address. Logs merge into the main scan via a single concat
+    // below; the decoder branch matches by `topic0` so ordering is
+    // irrelevant.
+    let consumedLogs: RawLog[] = [];
+    try {
+      consumedLogs = await safeGetLogs(rpcUrl, {
+        address: diamondAddress,
+        topics: [[OFFER_CONSUMED_BY_SALE_TOPIC0]],
+        fromBlock: cursor,
+        toBlock,
+      });
+    } catch (err) {
+      // Don't downshift on this secondary call — the bulk call's
+      // chunk size already adapted. Just log + carry on; missing
+      // sold-event capture is a degradation, not a hard failure.
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[logIndex] OfferConsumedBySale getLogs failed (sold-row capture degraded for this chunk): ${msg}`,
+      );
+    }
+    if (consumedLogs.length > 0) {
+      logs = logs.concat(consumedLogs);
     }
 
     // Small inter-chunk pause — keeps us under Alchemy free-tier CUPS without

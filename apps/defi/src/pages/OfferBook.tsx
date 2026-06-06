@@ -172,6 +172,10 @@ export interface OfferData {
   /** T-086 Round-8 §19.7e + Codex round-13 P2 #2 — NFT collateral
    *  token id. See {@link collateralAssetType} above. */
   collateralTokenId?: bigint;
+  /** T-086 Round-8 §19.7e + Codex round-16 P2 #1 — ERC1155 NFT
+   *  collateral "number of copies". For ERC721 the cell ignores it
+   *  (always 1). Optional same as the other NFT-shape fields. */
+  collateralQuantity?: bigint;
 }
 
 type TabFilter = 'both' | 'lender' | 'borrower';
@@ -267,6 +271,10 @@ export type RawOffer = {
   /** T-086 Round-8 §19.7e + Codex round-13 P2 #2 — NFT collateral
    *  token id. See {@link collateralAssetType} above. */
   collateralTokenId?: bigint;
+  /** T-086 Round-8 §19.7e + Codex round-16 P2 #1 — ERC1155 NFT
+   *  collateral "number of copies". For ERC721 the cell ignores it
+   *  (always 1). Optional same as the other NFT-shape fields. */
+  collateralQuantity?: bigint;
 };
 
 export function toOfferData(r: RawOffer): OfferData {
@@ -310,6 +318,8 @@ export function toOfferData(r: RawOffer): OfferData {
     collateralAssetType:
       r.collateralAssetType === undefined ? undefined : Number(r.collateralAssetType),
     collateralTokenId: r.collateralTokenId,
+    // Codex round-16 P2 #1 — ERC1155 collateral copy count.
+    collateralQuantity: r.collateralQuantity,
   };
 }
 

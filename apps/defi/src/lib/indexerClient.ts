@@ -646,6 +646,13 @@ export function indexedToRawOffer(o: IndexedOffer): {
   // up through the RawOffer → OfferData mapper.
   collateralAssetType: number;
   collateralTokenId: bigint;
+  // T-086 Round-8 §19.7e + Codex round-16 P2 #1 — ERC1155 NFT
+  // collateral "number of copies". For ERC721 PrincipalCell ignores
+  // it (always 1); for ERC1155 this is what renders as the "N ×"
+  // multiplier. Surfaced here so sold rows pass the proper count to
+  // the cell instead of mis-reading `collateralAmount` (which is the
+  // principal amount for ERC20 borrows).
+  collateralQuantity: bigint;
 } {
   // Optional field narrowing for indexer/frontend version skew —
   // see the IndexedOffer doc-block. Each new-since-0014 field is
@@ -676,6 +683,7 @@ export function indexedToRawOffer(o: IndexedOffer): {
     fillMode: o.fillMode ?? 0,
     collateralAssetType: o.collateralAssetType,
     collateralTokenId: BigInt(o.collateralTokenId ?? '0'),
+    collateralQuantity: BigInt(o.collateralQuantity ?? '0'),
   };
 }
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ArrowLeft, ExternalLink, X } from 'lucide-react';
@@ -80,6 +80,22 @@ export default function OfferDetails() {
   // Round-9 contract change. Using `useLogIndex` is the bounded-cost
   // alternative that ships in this PR.
   const { events: logIndexEvents } = useLogIndex();
+  // Codex round-16 P2 #5 — mirror `logIndexEvents` into a ref so the
+  // indexer/chain useEffect can read its CURRENT value at execution
+  // time without listing `logIndexEvents` in the deps array (which
+  // would force a chain refetch every time the log-index ticks).
+  // Without this, the race below leaves a sold offer stuck on `active`:
+  //   t0: corroboration effect runs synchronously → status='sold'
+  //   t1: indexer useEffect's async chain read finishes →
+  //       status='active' (overwriting the sold marker)
+  //   t2: logIndexEvents hasn't changed → corroboration effect
+  //       doesn't re-run → status stuck on 'active'.
+  // With the ref, t1 reads the live events array, sees the
+  // `OfferConsumedBySale` entry, and keeps status='sold'.
+  const logIndexEventsRef = useRef(logIndexEvents);
+  useEffect(() => {
+    logIndexEventsRef.current = logIndexEvents;
+  }, [logIndexEvents]);
 
   const chainId = readChain.chainId ?? DEFAULT_CHAIN.chainId;
   const blockExplorer =
@@ -156,7 +172,22 @@ export default function OfferDetails() {
         }
         const od = toOfferData(raw);
         setChainOffer(od);
-        setStatus(od.accepted ? 'accepted' : 'active');
+        // Codex round-16 P2 #5 — race fix. Defer to the log-index
+        // events ref BEFORE falling back to the live/accepted
+        // classification, so the async chain read can't overwrite
+        // a previously-set 'consumed_by_sale' status.
+        const idStr = offerIdBig.toString();
+        const consumedHit = logIndexEventsRef.current.find(
+          (ev) =>
+            ev.kind === 'OfferConsumedBySale' &&
+            typeof ev.args.offerId === 'string' &&
+            ev.args.offerId === idStr,
+        );
+        if (consumedHit) {
+          setStatus('consumed_by_sale');
+        } else {
+          setStatus(od.accepted ? 'accepted' : 'active');
+        }
         setIndexed(null);
         setLoading(false);
       } catch (err) {
