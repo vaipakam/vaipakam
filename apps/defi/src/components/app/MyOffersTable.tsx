@@ -300,11 +300,59 @@ export function MyOffersTable({
                 }
 
                 // T-086 Round-8 (#358) §19.7e — Scenario A parallel-
-                // sale terminal. Carries full data via the indexer so
-                // we render every column normally with the "Sold via
-                // OpenSea" badge. Distinct from `cancelled` so users
-                // can read sold-history rows in their "My Offers" view.
+                // sale terminal. Indexer-first rows carry full offer
+                // data; worker-down fallback rows (`useMyOffers`'
+                // `soldStubs` from the `useLogIndex` event with no
+                // localStorage snapshot) carry only `id` +
+                // `offerType` — same identity-only stub shape as
+                // cancelled rows. Mirror the cancelled branch's
+                // `hasFullData` split so the stub case renders compact
+                // `—` cells instead of zero/meaningless fungible
+                // amounts (Codex round-15 P2 #1).
                 if (row.status === 'sold') {
+                  const ZERO_ADDR_LC =
+                    '0x0000000000000000000000000000000000000000';
+                  const hasFullData =
+                    offer.lendingAsset.toLowerCase() !== ZERO_ADDR_LC;
+                  if (!hasFullData) {
+                    return (
+                      <tr
+                        key={offer.id.toString()}
+                        style={{ opacity: 0.85 }}
+                      >
+                        <td>
+                          <Link to={`/app/offers/${offer.id.toString()}`}>
+                            #{offer.id.toString()}
+                          </Link>
+                        </td>
+                        <td>
+                          <span className="badge badge-outline">
+                            {offer.offerType === 0
+                              ? t('common.lender')
+                              : t('common.borrower')}
+                          </span>
+                        </td>
+                        <td>—</td>
+                        <td>—</td>
+                        <td>—</td>
+                        <td>—</td>
+                        <td>
+                          <span
+                            className="status-badge"
+                            style={{
+                              background:
+                                'var(--success-bg, var(--surface-2))',
+                              color: 'var(--success-fg, var(--text))',
+                            }}
+                            title={t('myOffersTable.statusSoldTooltip')}
+                          >
+                            {t('myOffersTable.statusSold')}
+                          </span>
+                        </td>
+                        <td></td>
+                      </tr>
+                    );
+                  }
                   return (
                     <tr key={offer.id.toString()} style={{ opacity: 0.85 }}>
                       <td>

@@ -787,19 +787,22 @@ async function runScan(
             OFFER_CREATED_TOPIC0,
             OFFER_ACCEPTED_TOPIC0,
             OFFER_CANCELED_TOPIC0,
-            OFFER_CONSUMED_BY_SALE_TOPIC0,
-            // OFFER_CANCELED_DETAILS_TOPIC0 intentionally omitted from
-            // the filter array. publicnode (and other free-tier RPCs)
-            // silently return empty results when the topic OR-list
-            // exceeds an internal cap (~24 entries observed). Adding
-            // this topic pushed the array to 25 and broke event capture
-            // for every event kind. The companion event isn't emitted
-            // by any deployed Vaipakam Diamond on Sepolia today
-            // (contract redeploy hasn't happened yet) so omitting it
-            // costs nothing in practice. Re-add when (a) we move off
-            // free-tier RPC OR (b) split into a second eth_getLogs
-            // call. The decoder branch below stays in case logs of
-            // this kind ever land via a wider scan.
+            // OFFER_CONSUMED_BY_SALE_TOPIC0 + OFFER_CANCELED_DETAILS_TOPIC0
+            // intentionally omitted from the filter array. publicnode
+            // (and other free-tier RPCs) silently return empty results
+            // when the topic OR-list exceeds an internal cap (~24
+            // entries observed). Adding either pushes the array past 24
+            // and breaks event capture for every event kind. The
+            // decoder branches below stay in case logs of these kinds
+            // ever land via a wider scan (e.g. a paid RPC with no cap,
+            // or a future split into a second eth_getLogs call). For
+            // the worker-down fallback path, sold-before-acceptance
+            // offers therefore don't bucket into `sold` on free-tier
+            // RPCs — same trade-off the cancelled-details branch
+            // accepts. The indexer-first path (which doesn't use this
+            // filter) covers the common case. Re-add when (a) we move
+            // off free-tier RPC OR (b) split into a second
+            // eth_getLogs call.
             LOAN_REPAID_TOPIC0,
             LOAN_DEFAULTED_TOPIC0,
             LENDER_CLAIMED_TOPIC0,
@@ -896,21 +899,40 @@ async function runScan(
         closedOfferIdSet.add(offerId);
         addEvent('OfferCanceled', [creator], { offerId, creator });
       } else if (topic0 === OFFER_CONSUMED_BY_SALE_TOPIC0) {
-        // T-086 Round-8 §19.7 + Codex round-14 P2 — parallel-sale
-        // Scenario A terminal. Mirror of the OfferCanceled branch:
-        // add to `closedOfferIdSet` so the offer drops from the live
-        // active set, and addEvent so `useMyOffers`' fallback path
-        // can bucket it as `'sold'`. The event's second indexed arg
-        // is the executor address (not the offer creator), so we
-        // address-tag the event under the diamond address — the
-        // `useMyOffers` filter keys on the OFFER ID (already cross-
-        // referenced against `myCreates`), not on the event's
-        // address tags.
+        // T-086 Round-8 §19.7 + Codex round-14 P2 + round-15 P2 #3 —
+        // parallel-sale Scenario A terminal. Mirror of the
+        // OfferCanceled branch: add to `closedOfferIdSet` so the
+        // offer drops from the live active set, and addEvent so
+        // `useMyOffers`' fallback path can bucket it as `'sold'`.
+        //
+        // The event's second indexed arg is the executor address
+        // (NOT the offer creator), so a tag of only `[executor]`
+        // would hide this row from the Activity feed for the
+        // borrower (whose wallet wouldn't match the executor's
+        // address). We look up the offer's creator from the prior
+        // `OfferCreated` event in the same `eventMap` and tag both
+        // executor + creator so the Activity feed surfaces the row
+        // for the borrower too.
         if (topics.length < 3) continue;
         const offerId = BigInt(topics[1]).toString();
         const executor = ('0x' + topics[2].slice(26)).toLowerCase();
         closedOfferIdSet.add(offerId);
-        addEvent('OfferConsumedBySale', [executor], { offerId, executor });
+        let creatorFromPriorCreated: string | undefined;
+        for (const ev of eventMap.values()) {
+          if (
+            ev.kind === 'OfferCreated' &&
+            typeof ev.args.offerId === 'string' &&
+            ev.args.offerId === offerId &&
+            typeof ev.args.creator === 'string'
+          ) {
+            creatorFromPriorCreated = ev.args.creator;
+            break;
+          }
+        }
+        const participants = creatorFromPriorCreated
+          ? [executor, creatorFromPriorCreated]
+          : [executor];
+        addEvent('OfferConsumedBySale', participants, { offerId, executor });
       } else if (topic0 === OFFER_CANCELED_DETAILS_TOPIC0) {
         // Companion to OfferCanceled — same offer, but with the full
         // financial terms folded into args. Decoded so `useMyOffers`

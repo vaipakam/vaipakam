@@ -52,6 +52,16 @@ interface SerializedOffer {
   /** T-034 — optional; older snapshots predate this field, so reads
    *  must default to 0 (None) if absent. */
   periodicInterestCadence?: number;
+  /** T-086 Round-8 §19.7e + Codex round-15 P2 #6 — collateral NFT
+   *  asset type (0 = ERC20, 1 = ERC721, 2 = ERC1155). Optional; older
+   *  snapshots predate this field and round-trip with `undefined`
+   *  (consumers default to the safe per-row fallback). Surfaced
+   *  here so a worker-down `useMyOffers` snapshot recovery for a
+   *  sold row renders the proper NFT shape on the row's collateral
+   *  cell instead of a generic ERC20 amount. */
+  collateralAssetType?: number;
+  /** T-086 Round-8 §19.7e + Codex round-15 P2 #6 — see {@link collateralAssetType} above. */
+  collateralTokenId?: string;
   /** Unix-seconds timestamp the snapshot was last written. Used for
    *  pruning when storage gets full. */
   capturedAt: number;
@@ -112,6 +122,15 @@ export function writeOfferSnapshot(
     tokenId: offer.tokenId.toString(),
     allowsPartialRepay: offer.allowsPartialRepay,
     periodicInterestCadence: offer.periodicInterestCadence ?? 0,
+    // Codex round-15 P2 #6 — persist the NFT collateral type + token
+    // id so a snapshot-recovered sold row renders the proper NFT
+    // shape on the row's collateral cell. Older snapshots omit these
+    // and the reader defaults them to `undefined`.
+    collateralAssetType: offer.collateralAssetType,
+    collateralTokenId:
+      offer.collateralTokenId !== undefined
+        ? offer.collateralTokenId.toString()
+        : undefined,
     capturedAt: Math.floor(Date.now() / 1000),
   };
   try {
@@ -175,6 +194,14 @@ export function readOfferSnapshot(
       allowsPartialRepay: p.allowsPartialRepay ?? false,
       periodicInterestCadence:
         typeof p.periodicInterestCadence === 'number' ? p.periodicInterestCadence : 0,
+      // Codex round-15 P2 #6 — undefined when the snapshot predates
+      // the field; consumers (MyOffersTable sold row, OfferDetails)
+      // already have per-row defaulting for that case (ERC721 +
+      // token-id 0 is the safe defensive guess).
+      collateralAssetType:
+        typeof p.collateralAssetType === 'number' ? p.collateralAssetType : undefined,
+      collateralTokenId:
+        typeof p.collateralTokenId === 'string' ? BigInt(p.collateralTokenId) : undefined,
     };
   } catch {
     // Corrupted entry — clear it and move on.

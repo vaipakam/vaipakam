@@ -272,7 +272,7 @@
     "firstOfferBanner": "このペアにはまだ市場レートが存在しません — 最初のオファーを掲載することになります。下記で金利を設定してください。",
     "marketWidgetIlliquidBanner": "⚠ このペアにはオラクル価格のない非流動性資産が含まれます。プロトコルは最低担保の自動計算や標準的なヘルスファクター / LTV チェックを実行できません — あなたと相手方が直接価格を決定し、双方の同意が必要です。下記ですべての条件を設定してください。",
     "allowsParallelSaleLabel": "Allow optional sale of this NFT on OpenSea",
-    "allowsParallelSaleHint": "Borrow OR sell — opting in marks this offer as eligible for a parallel-sale listing. You'll still need to publish the listing yourself (My Offers → \"Post sale listing\" once the offer is live). If a buyer fills the listing before any lender accepts, the sale proceeds land in your vault and the offer closes. If a lender accepts first, the listing (once published) carries through the loan and any later buyer fill automatically settles the loan from the sale proceeds (lender gets their promised interest, you keep the surplus). Only on Borrower offers with NFT collateral. Forces all-or-nothing fill mode."
+    "allowsParallelSaleHint": "Borrow OR sell — opting in marks this offer as eligible for a parallel-sale listing. The listing itself is published separately by calling the diamond's `postParallelSaleListing` once the offer is live (a dedicated in-app flow is queued as a follow-up). If a buyer fills the listing before any lender accepts, the sale proceeds land in your vault and the offer closes. If a lender accepts first, the listing (once published) carries through the loan and any later buyer fill automatically settles the loan from the sale proceeds (lender gets their promised interest, you keep the surplus). Only on Borrower offers with NFT collateral. Forces all-or-nothing fill mode."
   },
   "loanDetails": {
     "connectTitle": "ウォレットを接続",

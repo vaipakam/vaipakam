@@ -27,6 +27,7 @@ import { TokenIcon } from '@vaipakam/ui/TokenIcon';
 import { ErrorAlert } from '../components/app/ErrorAlert';
 import { decodeContractError } from '@vaipakam/lib/decodeContractError';
 import { PerThingKeeperToggles } from '../components/app/PerThingKeeperToggles';
+import { useLogIndex } from '../hooks/useLogIndex';
 
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 
@@ -67,6 +68,18 @@ export default function OfferDetails() {
   const readChain = useReadChain();
   const diamondRead = useDiamondRead();
   const diamondWrite = useDiamondContract();
+  // T-086 Round-8 §19.7e + Codex round-15 P2 #2 — `useLogIndex` is
+  // tapped here purely to corroborate the consumed-by-sale status on
+  // the worker-down fallback path. The Round-8 contract preserves the
+  // `Offer` storage row across a Scenario A sale (only
+  // `offerConsumedBySale[id]` is set), so `getOffer(id)` returns a
+  // live-looking row + my fallback would misclassify it as `'active'`
+  // without this corroboration. There's no single-id on-chain getter
+  // for the consumed flag (it's a diamond-storage mapping; no auto-
+  // getter), and adding `MetricsFacet.getOfferState(uint256)` is a
+  // Round-9 contract change. Using `useLogIndex` is the bounded-cost
+  // alternative that ships in this PR.
+  const { events: logIndexEvents } = useLogIndex();
 
   const chainId = readChain.chainId ?? DEFAULT_CHAIN.chainId;
   const blockExplorer =
@@ -162,6 +175,30 @@ export default function OfferDetails() {
       cancelled = true;
     };
   }, [chainId, offerIdBig, diamondRead, refetchTick, t]);
+
+  // T-086 Round-8 §19.7e + Codex round-15 P2 #2 — corroborate
+  // consumed-by-sale terminal from `useLogIndex` events. Runs
+  // ALONGSIDE the indexer/chain read above (separate effect so
+  // including `logIndexEvents` in the deps doesn't cause refetches).
+  // The Round-8 contract preserves the `Offer` storage row across a
+  // Scenario A sale (only `offerConsumedBySale[id]` is set, no
+  // single-id external getter — adding one is Round-9 contract work);
+  // without this corroboration, `getOffer(id)` returns a live-looking
+  // row and the fallback misclassifies a sold offer as `'active'`.
+  // Lookup is O(events) but events is browser-bounded.
+  useEffect(() => {
+    if (offerIdBig === null) return;
+    const idStr = offerIdBig.toString();
+    const consumedHit = logIndexEvents.find(
+      (ev) =>
+        ev.kind === 'OfferConsumedBySale' &&
+        typeof ev.args.offerId === 'string' &&
+        ev.args.offerId === idStr,
+    );
+    if (consumedHit) {
+      setStatus('consumed_by_sale');
+    }
+  }, [offerIdBig, logIndexEvents]);
 
   // Resolve the OfferCreated tx-hash via the indexer's activity
   // endpoint. The worker captured the hash into D1 at indexing time;
