@@ -1642,6 +1642,7 @@ async function processLoanLogs(
       })) as {
         principal: bigint;
         collateralAmount: bigint;
+        durationDays: bigint;
         startTime: bigint;
       };
       await env.DB.prepare(
@@ -1670,7 +1671,27 @@ async function processLoanLogs(
         .bind(chainId, loanId)
         .first<{ '1': number } | null>();
       if (hasListing2) {
-        const refreshedGraceEnd = await _resolveGraceEnd(client, diamond, loanId);
+        // Codex round-4 P2 — anchor the grace refresh to the SAME event
+        // block as the loan read above. `_resolveGraceEnd` calls
+        // `getLoanDetails` at the node's `latest` head; if there's a
+        // later partial repay or governance grace change past `scanTo`,
+        // we'd write a grace_period_end that contradicts the principal
+        // / collateral_amount we just wrote at log.blockNumber. Read
+        // `getEffectiveGraceSeconds` at the event block too and
+        // compute grace_period_end inline from the loan fields we
+        // already have — also saves one RPC call.
+        const graceSeconds = Number(
+          (await client.readContract({
+            address: diamond,
+            abi: GRACE_SECONDS_ABI,
+            functionName: 'getEffectiveGraceSeconds',
+            args: [detail.durationDays],
+            blockNumber: log.blockNumber,
+          })) as bigint,
+        );
+        const endTime =
+          Number(detail.startTime) + Number(detail.durationDays) * 86400;
+        const refreshedGraceEnd = endTime + graceSeconds;
         await env.DB.prepare(
           `UPDATE prepay_listings
              SET grace_period_end = ?, updated_at = ?
