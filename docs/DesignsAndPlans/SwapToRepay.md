@@ -172,14 +172,9 @@ pattern — confirm at implementation time).
 
 ## 6. Execution flow — `swapToRepayFull`
 
-> **Codex round-1 P1/P2 fixes folded in (4 P1 + 3 P2)** —
-> see §6.1 below for the audit trail. The flow as stated here is
-> the post-fix design that the implementation must follow exactly.
-
 ```
 1.  Load loan; assert status == Active; assert ERC20 / ERC20 shape
     (loan.assetType == ERC20, collateralLiquidity == Liquid).
-    Reject any other shape with UnsupportedLoanShape.
 2.  LibAuth.requireBorrower(loan).
 3.  Block lender-side self-repay (same guard as RepayFacet:273-278).
 4.  Compute graceEnd; assert block.timestamp <= graceEnd
@@ -191,67 +186,44 @@ pattern — confirm at implementation time).
     ).
     plan.lenderDue is principal + lenderShare; plan.treasuryShare is
     the 1% cut on (interest + lateFee).
-6.  Compute the required principalAsset output for full close-out:
+6.  Compute the required principalAsset output:
         requiredPrincipal = plan.lenderDue + plan.treasuryShare
-    NOTE: VPFI yield-fee discount (RepayFacet:309-321) is NOT
-    applied here in v1 — see §6.2 for the explicit deferral.
 7.  Compute the expected swap output via LibFallback.expectedSwapOutput
     using the borrower's specified `maxCollateralIn`. From that
     derive the slippage-adjusted minOutput:
         minPrincipalOut = expectedProceeds *
             (BASIS_POINTS - cfgMaxSwapToRepaySlippageBps()) /
             BASIS_POINTS
-    Pre-flight bounds check — the slippage floor must already cover
-    the loan settlement, else the swap is uneconomic before the
-    adapter is ever called:
         if (minPrincipalOut < requiredPrincipal)
             revert SwapBoundsInsufficient();
 8.  Withdraw maxCollateralIn from borrower vault to diamond (T-051
-    pattern). The unwithdrawn portion (loan.collateralAmount -
-    maxCollateralIn) stays in the borrower's vault — see step 12b
-    for the claim treatment.
+    pattern).
 9.  LibSwap.swapWithFailover(loanId, collateralAsset, principalAsset,
-        maxCollateralIn, minPrincipalOut, address(this), adapterCalls).
-
-    **CRITICAL — slippage enforcement**: `minOutput` passed to LibSwap
-    is `minPrincipalOut` (the slippage-floor), NOT `requiredPrincipal`.
-    Passing `requiredPrincipal` would let the adapter consume the
-    full `maxCollateralIn` at any pricing as long as the loan closes —
-    the borrower's slippage-cap intent is defeated. The slippage
-    floor is the load-bearing protection here.
-
-    Post-swap, separately verify the floor cleared the loan:
-        if (!success) revert SwapAllAdaptersFailed();
-        if (outputAmount < requiredPrincipal) revert InsufficientProceeds();
-    Both must hold or the whole tx reverts (no soft-fallback in v1).
-10. On swap success: diamond now holds exactly `outputAmount` of
-    principalAsset (>= requiredPrincipal, by step 9 guard).
-11. Settle the waterfall using the plan — diamond-held-proceeds
-    pattern (NOT vaultDepositERC20From which would need a
-    self-allowance the diamond never sets; mirror RiskFacet:702-712):
-    a. Treasury share:
-        IERC20(principalAsset).safeTransfer(treasury, plan.treasuryShare);
-        LibFacet.recordTreasuryAccrual(principalAsset, plan.treasuryShare);
-    b. Lender share — resolve the lender's vault proxy and direct-
-       transfer + record:
-        address lenderVault = LibFacet.getOrCreateVault(loan.lender);
-        IERC20(principalAsset).safeTransfer(lenderVault, plan.lenderDue);
-        LibVaipakam.recordVaultDeposit(loan.lender, principalAsset,
-            plan.lenderDue);
+        maxCollateralIn, requiredPrincipal, address(this), adapterCalls).
+    Note: minOutput passed to LibSwap = requiredPrincipal exactly,
+    NOT minPrincipalOut. This is the harder bound: the swap MUST
+    produce enough to close the loan or it reverts the whole call
+    (no soft-fallback — borrower can retry with better routing).
+10. On swap success: diamond now holds at least requiredPrincipal of
+    principalAsset.
+11. Settle the waterfall using the plan:
+    a. Treasury share: transfer plan.treasuryShare from diamond
+       directly to treasury; record via LibFacet.recordTreasuryAccrual.
+    b. Lender share: deposit plan.lenderDue into lender's vault via
+       VaultFactoryFacet.vaultDepositERC20From (T-037 single-transfer
+       pattern — payer = address(this), user = loan.lender).
 12. Write claim slots:
     a. s.lenderClaims[loanId] = ClaimInfo(asset=principalAsset,
        amount=plan.lenderDue, ...) — same shape as repayLoan:355.
     b. s.borrowerClaims[loanId] = ClaimInfo(asset=collateralAsset,
-       amount = loan.collateralAmount - maxCollateralIn, ...).
-       The unswapped collateral never left the borrower's vault, so
-       this records the residual pledged amount the borrower is
-       entitled to recover (mirrors the canonical full-repay claim at
-       RepayFacet:365 but reduced by what the swap consumed).
+       amount=ANY_LEFTOVER_COLLATERAL, ...) — if the swap consumed
+       less than maxCollateralIn, the remainder is claimable.
 13. ANY LEFTOVER PRINCIPAL above requiredPrincipal: the diamond now
-    holds (outputAmount - requiredPrincipal) extra principalAsset.
-    Per §9: surplus principal goes to the borrower's vault via the
-    same diamond-held-transfer pattern as the lender share —
-    `safeTransfer(borrowerVault, surplus) + recordVaultDeposit`.
+    holds (swapOutput - requiredPrincipal) extra principalAsset.
+    Two policy options (see §9 — picking option A for v1):
+    Option A: Deposit the surplus to the borrower's vault — they get
+              the upside of a tight quote.
+    Option B: Treat as protocol surplus → treasury.
 14. Mark loan Repaid; emit LoanSettlementBreakdown + LoanRepaid +
     SwapToRepayExecuted (new event).
 15. Close phase-2 reward accrual: LibInteractionRewards.closeLoan(
@@ -259,62 +231,14 @@ pattern — confirm at implementation time).
     ).
 ```
 
-### 6.1 Codex round-1 P1/P2 audit-trail
-
-Issues caught by Codex round-1 on the v0 design and folded into the
-final flow above:
-
-| # | Severity | Issue | Fix |
-|---|---|---|---|
-| 1 | P1 | v0 passed `requiredPrincipal` as `minOutput` to LibSwap, defeating the 3% slippage cap for any `maxCollateralIn` larger than strictly needed. | Step 9 — pass `minPrincipalOut` (the slippage-floor) to LibSwap. Then assert `outputAmount >= requiredPrincipal` separately. Pre-flight rejects (`minPrincipalOut < requiredPrincipal`) catch the borrower-unfriendly case before any state moves. |
-| 2 | P1 | v0 `borrowerClaims.amount` covered only "any leftover collateral" but ignored the unswapped portion of `loan.collateralAmount` that was never withdrawn — leaving that pledged amount unclaimable after the loan transitioned to Repaid. | Step 12b — `borrowerClaims.amount = loan.collateralAmount - maxCollateralIn`. The unwithdrawn portion sits in the borrower's vault and is recorded in the claim slot for ClaimFacet to release on Repaid status. |
-| 3 | P1 | v0 routed the lender share via `VaultFactoryFacet.vaultDepositERC20From(address(this), loan.lender, ...)`, but that variant's `safeTransferFrom(payer, proxy, amount)` requires the diamond to have set a self-allowance — which it never does. The full closeout would revert. | Step 11b — use the diamond-held-proceeds pattern from `RiskFacet:707-712`: `getOrCreateVault(lender)` + `safeTransfer(vault, due)` + `recordVaultDeposit(lender, asset, due)`. No `From` variant, no self-allowance. |
-| 4 | P1 | v0 partial path reduced `loan.principal` but left `loan.collateralAmount` unchanged — making downstream HF/default/claim logic believe the original collateral still backed a now-smaller principal, overstating solvency. | §7 step 13 — `loan.collateralAmount -= collateralSwapAmount`. |
-| 5 | P2 | v0 didn't surface that v1 omits VPFI yield-fee discount preservation; lenders with discount consent would see different settlement math vs. `repayLoan`. | §6.2 — explicit v1 deferral with rationale. |
-| 6 | P2 | v0 didn't make explicit that `LibSwap.swapWithFailover` returns `(false, 0, max)` on total failure — the design said "reverts" without requiring the facet to check the boolean. | Step 9 — explicit `if (!success) revert SwapAllAdaptersFailed();` check after LibSwap returns. |
-| 7 | P2 | v0 partial path could set `loan.principal = 0` without closing the loan — leaving a zero-principal Active loan unable to be claimed. | §7 step 11 — partial path rejects with `PartialWouldRetireFullPrincipal()` when proceeds would retire the full debt, directing the borrower to use `swapToRepayFull` instead. |
-
-### 6.2 VPFI yield-fee discount — explicit v1 deferral
-
-`RepayFacet.repayLoan:309-321` applies a lender-side VPFI discount:
-when the lender has discount consent AND holds enough VPFI, the 1%
-treasury cut is paid in VPFI from the lender's vault and the lender
-keeps 100% of interest+lateFee in the principal asset (the
-`plan.treasuryShare` in principal becomes 0).
-
-T-090 v1 **does not replicate this discount** on the swap-to-repay
-path. Reasons:
-
-1. The discount path mutates `plan.treasuryShare → 0`, which would
-   change `requiredPrincipal` and re-cascade through the slippage
-   floor math. Folding it in cleanly requires either a second
-   pre-flight pass or accepting that the discount-eligible borrower
-   gets a tighter `minPrincipalOut` after the discount applies.
-2. The lender's discount eligibility depends on their VPFI vault
-   balance AT REPAY TIME — the borrower picking the swap moment
-   can't predict whether the discount will fire. Either path needs
-   a UI surface that flips between the two costs.
-3. The borrower-side VPFI LIF discount (paid at offer accept time,
-   §5.2b of TokenomicsTechSpec) is already snapshotted onto the loan
-   and continues to apply identically to `swapToRepayFull` — only
-   the lender's yield-fee discount is deferred.
-
-v1.1 follow-up: replicate the `tryApplyYieldFee` branch from
-`RepayFacet:309-321` in `SwapToRepayFacet` with the second-pass
-slippage-floor recomputation. Tracked as a new sub-card once v1
-ships.
-
 ## 7. Execution flow — `swapToRepayPartial`
 
 ```
-1.  Load loan; assert status == Active; assert ERC20 / ERC20 shape
-    (else UnsupportedLoanShape).
+1.  Load loan; assert status == Active; assert ERC20 / ERC20 shape.
 2.  LibAuth.requireBorrower(loan).
 3.  Assert loan.allowsPartialRepay (else PartialRepayNotAllowed).
-4.  Assert collateralSwapAmount > 0;
-    assert collateralSwapAmount <= loan.collateralAmount.
-5.  Compute graceEnd; assert block.timestamp <= graceEnd
-    (RepaymentPastGracePeriod).
+4.  Assert collateralSwapAmount > 0.
+5.  Compute graceEnd; assert block.timestamp <= graceEnd.
 6.  Compute expected proceeds + slippage-adjusted minPrincipalOut as
     in step 7 of swapToRepayFull. minPrincipalOut here is the swap's
     minimum guarantee, not a "must cover loan" hard bound.
@@ -322,9 +246,7 @@ ships.
 8.  LibSwap.swapWithFailover(loanId, collateralAsset, principalAsset,
         collateralSwapAmount, minPrincipalOut, address(this),
         adapterCalls).
-9.  On swap result:
-        if (!success) revert SwapAllAdaptersFailed();
-        let principalProceeds = outputAmount;
+9.  On swap success: diamond holds principalProceeds.
 10. Compute accrued interest:
         accrued = LibEntitlement.accruedInterestToTime(
             loan, block.timestamp
@@ -332,51 +254,30 @@ ships.
         (treasuryShare, lenderShare) = LibEntitlement.splitTreasury(
             accrued
         );
-        if (principalProceeds < lenderShare + treasuryShare)
-            revert InsufficientProceeds();   // can't even cover accrued
 11. Bound the partial-principal reduction:
         partialPrincipal = principalProceeds - lenderShare - treasuryShare;
         if (partialPrincipal == 0) revert InsufficientProceeds();
-        // Per Codex round-1 P2 #3: a partial path that would fully
-        // retire the principal is rejected — the borrower must use
-        // swapToRepayFull, which carries the close-out side effects
-        // (Repaid status transition, position-NFT lifecycle, reward
-        // close, full-term-interest application). Allowing principal
-        // to hit zero here would leave an Active zero-principal loan
-        // unable to be claimed.
-        if (partialPrincipal >= loan.principal)
-            revert PartialWouldRetireFullPrincipal();
-    Enforce the existing minPartial floor:
+        if (partialPrincipal > loan.principal)
+            partialPrincipal = loan.principal; // cap at remaining
+    Also enforce the existing minPartial floor:
         minPartial = loan.principal * s.assetRiskParams[principalAsset]
             .minPartialBps / BASIS_POINTS;
         if (partialPrincipal < minPartial)
             revert InsufficientPartialAmount();
-12. Settle waterfall — diamond-held proceeds pattern:
-    a. lenderShare + partialPrincipal → lender vault:
-        address lenderVault = LibFacet.getOrCreateVault(loan.lender);
-        IERC20(principalAsset).safeTransfer(
-            lenderVault, lenderShare + partialPrincipal
-        );
-        LibVaipakam.recordVaultDeposit(loan.lender, principalAsset,
-            lenderShare + partialPrincipal);
-    b. treasuryShare → treasury:
-        IERC20(principalAsset).safeTransfer(treasury, treasuryShare);
-        LibFacet.recordTreasuryAccrual(principalAsset, treasuryShare);
+12. Settle waterfall:
+    a. lenderShare + partialPrincipal → loan.lender (vaultDepositERC20From
+       OR direct transfer — match the existing repayPartial pattern at
+       RepayFacet.sol:647).
+    b. treasuryShare → treasury.
 13. Update loan state:
         loan.principal -= partialPrincipal;
-        loan.collateralAmount -= collateralSwapAmount;  // Codex P1 #4
-        loan.startTime = uint64(block.timestamp);       // reset clock
-14. Any leftover principal from the swap above
-    (lenderShare + treasuryShare + partialPrincipal) — same surplus
-    treatment as the full path: deposit to borrower's vault.
-15. Post-repay HF check (per repayPartial:771-783): for liquid-on-
-    liquid loans, recompute HF and assert HF >= MIN_HEALTH_FACTOR.
-    Now that `collateralAmount` has been reduced (step 13), this
-    check reflects the true post-swap solvency.
-16. T-034 §4.5 periodic-interest accumulator bookkeeping (mirror
+        loan.startTime = uint64(block.timestamp);   // reset clock
+14. Post-repay HF check (per repayPartial:771-783): for liquid-on-liquid
+    loans, recompute HF and assert HF >= MIN_HEALTH_FACTOR.
+15. T-034 §4.5 periodic-interest accumulator bookkeeping (mirror
     RepayFacet.sol:679-706 — the partial swap-to-repay should advance
     the periodic-interest checkpoint identically).
-17. Emit PartialRepaid + SwapToRepayPartialExecuted.
+16. Emit PartialRepaid + SwapToRepayPartialExecuted.
 ```
 
 ## 8. Storage changes
@@ -449,26 +350,18 @@ guardrail in `CLAUDE.md`).
 ## 11. Errors
 
 ```solidity
-// Reused from IVaipakamErrors / RepayFacet:
 error PartialRepayNotAllowed();
 error InsufficientPartialAmount();
 error RepaymentPastGracePeriod();
 error InvalidLoanStatus();
 error LenderCannotRepayOwnLoan();
-error HealthFactorTooLow();
-error InsufficientProceeds();        // post-swap: proceeds < required
-error InvalidAmount();
-
-// New in this facet:
-error SwapBoundsInsufficient();      // slippage-floor < requiredPrincipal
-                                     // → uneconomic before adapter call
-error SwapAllAdaptersFailed();       // LibSwap returned (success=false)
+error SwapBoundsInsufficient();      // expected proceeds < required
+error InsufficientProceeds();        // partial: proceeds < interest + minPartial
 error UnsupportedLoanShape();        // non-ERC20/ERC20 loan
-error PartialWouldRetireFullPrincipal();
-                                     // partial proceeds would close
-                                     // the loan; borrower must use
-                                     // swapToRepayFull instead
 ```
+
+The first five are intentional re-uses from `RepayFacet`. The last
+three are new.
 
 ## 12. Test plan
 
