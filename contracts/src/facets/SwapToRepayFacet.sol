@@ -263,6 +263,14 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         if (minPrincipalOut < requiredPrincipal) revert SwapBoundsInsufficient();
 
         // ── Withdraw collateral to diamond + execute swap ────────────
+        // Codex round-3 P1 #2 — aggregator adapters can partial-fill
+        // and return UNSPENT input to `msg.sender` (the diamond).
+        // Snapshot the collateral balance before to compute actual
+        // consumption after, refunding any residual to the current
+        // borrower-NFT holder's vault. Treating maxCollateralIn as
+        // fully consumed would leave dust stuck on the diamond.
+        uint256 collateralBalanceBefore =
+            IERC20(loan.collateralAsset).balanceOf(address(this));
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 VaultFactoryFacet.vaultWithdrawERC20.selector,
@@ -285,8 +293,13 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         );
         if (!success) revert SwapAllAdaptersFailed();
         // Slippage floor cleared the loan; the debt-cover bound is a
-        // separate post-swap assertion (Codex P2 #2).
+        // separate post-swap assertion (Codex round-1 P2 #2).
         if (outputAmount < requiredPrincipal) revert InsufficientProceeds();
+
+        // Refund partial-fill leftover collateral (Codex round-3 P1 #2).
+        uint256 actualCollateralConsumed = maxCollateralIn -
+            (IERC20(loan.collateralAsset).balanceOf(address(this)) -
+                collateralBalanceBefore);
 
         // ── Settlement waterfall — diamond-held proceeds pattern
         //    (Codex round-1 P1 #3 — mirrors RiskFacet:702-712) ────────
@@ -330,20 +343,35 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         });
 
         // Codex round-1 P1 #2 — record the residual pledged collateral
-        // that was never withdrawn from the borrower's vault. The
-        // borrower keeps `collateralAmount - maxCollateralIn`; the
-        // ClaimFacet release path unlocks it on the Repaid transition.
-        // Codex round-2 P1 #2 — `claimed: false` regardless of
-        // residual=0 so the LIF VPFI rebate path
-        // (`settleBorrowerLifProper` below) can credit
-        // `borrowerLifRebate` for later claim. `ClaimFacet.claimAsBorrower`
-        // gates on `claim.claimed` BEFORE considering the LIF rebate;
-        // marking claimed=true at write time would lock the rebate
-        // surface entirely.
-        uint256 residualCollateral = loan.collateralAmount - maxCollateralIn;
+        // (never withdrawn from the borrower vault) + the partial-
+        // fill residual the aggregator returned to the diamond
+        // (Codex round-3 P1 #2). The borrower keeps everything that
+        // wasn't actually consumed by the swap. ClaimFacet releases
+        // on the Repaid transition.
+        // Codex round-2 P1 #2 — `claimed: false` regardless of amount
+        // so `settleBorrowerLifProper` below can credit
+        // `borrowerLifRebate` for later claim.
+        uint256 unconsumedCollateral = loan.collateralAmount - actualCollateralConsumed;
+        // Push the partial-fill leftover (= maxCollateralIn -
+        // actualCollateralConsumed) back into the borrower vault
+        // immediately. The "never withdrawn" portion (loan.collateralAmount
+        // - maxCollateralIn) is already in the vault; the diamond holds
+        // the unspent input from the swap, so refund it now.
+        uint256 partialFillRefund = maxCollateralIn - actualCollateralConsumed;
+        if (partialFillRefund > 0) {
+            IERC20(loan.collateralAsset).safeTransfer(
+                LibFacet.getOrCreateVault(loan.borrower),
+                partialFillRefund
+            );
+            LibVaipakam.recordVaultDeposit(
+                loan.borrower,
+                loan.collateralAsset,
+                partialFillRefund
+            );
+        }
         s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
             asset: loan.collateralAsset,
-            amount: residualCollateral,
+            amount: unconsumedCollateral,
             assetType: LibVaipakam.AssetType.ERC20,
             tokenId: 0,
             quantity: 0,
@@ -405,9 +433,15 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             /* lenderForfeit */ false
         );
 
+        // Codex round-3 P2 #1 — emit the caller (current borrower-NFT
+        // owner), not the latched `loan.borrower` field. After the
+        // round-1 `requireBorrowerNftOwner` shift the caller IS the
+        // authority root; emitting the stale field would attribute
+        // swap-to-repay activity to the original borrower in indexer
+        // / dashboard surfaces.
         emit SwapToRepayExecuted(
             loanId,
-            loan.borrower,
+            msg.sender,
             maxCollateralIn,
             outputAmount,
             adapterUsed
@@ -479,6 +513,10 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             LibVaipakam.BASIS_POINTS;
 
         // ── Withdraw + swap ──────────────────────────────────────────
+        // Codex round-3 P1 #2 — same partial-fill refund pattern
+        // as `swapToRepayFull`.
+        uint256 collateralBalanceBefore =
+            IERC20(loan.collateralAsset).balanceOf(address(this));
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 VaultFactoryFacet.vaultWithdrawERC20.selector,
@@ -500,6 +538,23 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             adapterCalls
         );
         if (!success) revert SwapAllAdaptersFailed();
+
+        // Refund partial-fill leftover collateral to borrower vault.
+        uint256 actualCollateralConsumed = collateralSwapAmount -
+            (IERC20(loan.collateralAsset).balanceOf(address(this)) -
+                collateralBalanceBefore);
+        uint256 partialFillRefund = collateralSwapAmount - actualCollateralConsumed;
+        if (partialFillRefund > 0) {
+            IERC20(loan.collateralAsset).safeTransfer(
+                LibFacet.getOrCreateVault(loan.borrower),
+                partialFillRefund
+            );
+            LibVaipakam.recordVaultDeposit(
+                loan.borrower,
+                loan.collateralAsset,
+                partialFillRefund
+            );
+        }
 
         // ── Accrued-interest split + partial bound ───────────────────
         uint256 accrued = LibEntitlement.accruedInterestToTime(loan, block.timestamp);
@@ -528,10 +583,15 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             LibFacet.recordTreasuryAccrual(loan.principalAsset, treasuryShare);
         }
 
-        address lenderVault = LibFacet.getOrCreateVault(loan.lender);
+        // Codex round-3 P1 #1 — pay the lender directly on the partial
+        // path. The loan stays Active so the lender has no claim slot,
+        // and `vaultWithdrawERC20` is `onlyDiamondInternal` — routing
+        // through the lender vault would leave the lender unable to
+        // withdraw what they just earned. Direct transfer to
+        // `loan.lender` (the EOA) mirrors `RepayFacet.repayPartial:647`
+        // and is the canonical pattern for active-loan partial settlements.
         uint256 lenderTotal = lenderShare + partialPrincipal;
-        IERC20(loan.principalAsset).safeTransfer(lenderVault, lenderTotal);
-        LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, lenderTotal);
+        IERC20(loan.principalAsset).safeTransfer(loan.lender, lenderTotal);
 
         // Any leftover principal (above accrued + partialPrincipal) →
         // current borrower-NFT holder's vault (Codex round-2 P1 #1
@@ -594,9 +654,11 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         uint256 hf = abi.decode(hfResult, (uint256));
         if (hf < LibVaipakam.MIN_HEALTH_FACTOR) revert HealthFactorTooLow();
 
+        // Codex round-3 P2 #1 — emit the caller (current borrower-NFT
+        // owner), not the latched `loan.borrower` field.
         emit SwapToRepayPartialExecuted(
             loanId,
-            loan.borrower,
+            msg.sender,
             collateralSwapAmount,
             outputAmount,
             partialPrincipal,
