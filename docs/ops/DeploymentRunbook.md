@@ -1766,3 +1766,83 @@ CREATE2 address is too. Cross-chain `setPeer` wiring (via
 3. **F3**: clean pass. The cumulative hardenings from F1 + F2
    meant no new bugs surfaced.
 
+
+---
+
+## T-086 OpenSea prepay-listing surface — operator env requirements
+
+T-086 added a borrower-driven OpenSea prepay-listing + atomic
+match-rotation surface to the Diamond. It introduces operator
+configuration on the **off-chain side** that's not part of the
+Diamond deploy itself — set these on every chain that should
+serve the OpenSea panel on the frontend.
+
+### Required: `OPENSEA_API_KEY` (apps/agent secret)
+
+The agent Worker (`apps/agent`) proxies two surfaces that need a
+live OpenSea API key:
+
+- **OpenSea Offers fetch** — `/opensea/offers/...` (the offers
+  panel on the Loan Details page).
+- **Fulfillment-data fetch** — `POST /api/v2/offers/fulfillment_data`
+  used by the Round-6 atomic match-rotation at click time to
+  obtain SignedZone `extraData` (fee-enforced collections),
+  `CriteriaResolver[]` (criteria offers), and `units_to_fill`
+  (ERC1155 multi-unit lots).
+
+Set the secret per environment:
+
+```bash
+cd apps/agent
+wrangler secret put OPENSEA_API_KEY --env staging
+wrangler secret put OPENSEA_API_KEY --env production
+```
+
+Get a key from <https://docs.opensea.io/reference/api-keys>. Apply
+the same key to the agent Worker on every chain in the deploy set —
+the OpenSea API is chain-agnostic. Missing key → the panel
+silently fails fetch and the dapp falls back to a "no offers"
+state with no banner; the click-time fulfillment-data fetch
+gate aborts the `matchOpenSeaOffer` call before any signature
+prompt fires.
+
+### Required: `VITE_AGENT_ORIGIN` (apps/defi env)
+
+The dapp (`apps/defi`) needs to know where the agent Worker
+lives. Set it per environment in the dapp's `.env.production` /
+`.env.staging`:
+
+```
+VITE_AGENT_ORIGIN=https://agent-production.<account>.workers.dev
+```
+
+Set this to the URL `wrangler deploy` prints for the agent
+Worker. Missing var → the offers panel and the click-time
+fulfillment-data fetch both noop; the dapp behaves as if no
+OpenSea offers exist on any prepay-listing.
+
+### Indexer D1 migrations (auto-applied)
+
+The T-086 ship introduced several indexer-side D1 migrations
+covering the `consumed_by_sale` offer status (PR #370 added
+`0021_backfill_consumed_by_sale_creator.sql`). Apply them with
+the indexer Worker's wrangler:
+
+```bash
+cd apps/indexer
+wrangler d1 migrations apply vaipakam-archive --remote
+```
+
+The `deploy-chain.sh` / `deploy-testnet.sh` `cf-indexer` phase
+auto-applies these on deploy; manual application above is only
+needed if you're deploying the indexer Worker out-of-band from
+the orchestrated deploy.
+
+### Multi-marketplace expansion (#281 — DEFERRED)
+
+T-086 v1 deliberately scoped to OpenSea (Seaport) only. The
+Backlog card #281 tracks multi-marketplace expansion to Blur /
+LooksRare / X2Y2 / Magic Eden. No operator env config is needed
+until that card lands — Vaipakam's contract-side surface is
+marketplace-agnostic (Seaport-compatible), so the work is in
+the dapp + agent + indexer rather than the Diamond.

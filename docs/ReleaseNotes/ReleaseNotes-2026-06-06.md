@@ -3333,3 +3333,143 @@ publish.
   change.
 - CI workflow green on the final commit (`43f6fb19`).
 - Codex round-24 review verdict: "Didn't find any major issues."
+
+---
+
+## T-086 Phase-2 fork-test trilogy + 9-locale Advanced User Guide (closing-out batch)
+
+The final operational closing of T-086 landed across four PRs late on
+2026-06-06:
+
+### PR #375 — Phase-2a diamond-on-fork harness (closes part of #369)
+
+Stands up the real Seaport 1.6 contract on a Base-Sepolia fork
+(`SEAPORT_ADDR = 0x0000000000000068F116a894984e2DB1123eB395`),
+deploys the full Vaipakam diamond via the regular `setupHelper`
+cut shape, deploys the real `CollateralListingExecutor` UUPS proxy,
+opens the test conduit channel via
+`ConduitController.updateChannel(forkConduit, SEAPORT_ADDR, true)`,
+and writes the conduit-key runtime check
+(`bytes20(conduitKey) == msg.sender`). Sanity test confirms the
+diamond and executor are wired correctly against the real Seaport.
+Gated behind `FORK_URL_BASE_SEPOLIA`; silently skipped when the
+env var is empty so CI without an archive-node URL passes.
+
+### PR #377 — Phase-2b borrower scaffold + `postPrepayListing` invariant (closes #376)
+
+The borrower-side half: scaffolds an active loan via
+`TestMutatorFacet.setLoan` + `mintNFTRaw`, posts a real prepay
+listing via `postPrepayListing` against the on-fork diamond, and
+asserts the hash-rederive invariant by reconstructing the canonical
+`OrderComponents` off-chain via `LibPrepayOrder.componentsForCancel`
+and `Seaport.getOrderHash`. Also asserts the vault ERC-1271
+binding (`getListingExecutor(orderHash) == address(forkExecutor)`)
+and unpacks the executor's `orderContext(orderHash)` struct to
+verify every field landed correctly. Warps time between scaffold
+and post so `listingTimestamp ≠ loanStartTimestamp` and the
+rederive isn't a tautology.
+
+### PR #379 — Phase-2c buyer fulfillment + 6 settlement assertions (closes #378)
+
+The buyer-side half — the actual end-to-end walkthrough. The
+buyer scaffolds payment (mint + approve Seaport for the ask),
+the test builds an `AdvancedOrder` from the reconstructed
+`OrderComponents` (drop `counter`, add
+`totalOriginalConsiderationItems`, `signature: 0x` because the
+vault's ERC-1271 callback accepts any orderHash the diamond has
+previously bound), then calls real
+`Seaport.fulfillAdvancedOrder(advanced, [], bytes32(0), phase2Buyer)`.
+Six post-fill assertions verify the diamond's settlement waterfall:
+- Lender NFT holder balance ↑ by `pctx.lenderLeg`.
+- Treasury balance ↑ by `pctx.treasuryLeg`.
+- Borrower NFT holder balance ↑ by `askPrice - lenderLeg -
+  treasuryLeg`.
+- `LoanFacet.getLoanDetails(loanId).status == Settled`.
+- `prepayListingOrderHash[loanId]` cleared at settlement.
+- `IERC721(collateral).ownerOf(tokenId) == phase2Buyer`.
+
+Codex round-1 P2 caught the subtle but real bug that
+`LibPrepayOrder._componentsAtMemory` pins consideration recipients
+as `pctx.lenderNftOwner` and `pctx.borrowerNftOwner` derived via
+`ownerOf(positionNftId)` — the test scaffold mints those position
+NFTs to the EOA actors not their vaults, so Seaport pays the EOAs
+directly. Fixed in round-1 (assertions retargeted to EOA
+balances, not vault balances). Round-2 verdict: "Didn't find any
+major issues."
+
+This trilogy plus the previously-merged Phase-1 fork test (PR #353
+hash-rederive invariant against real Seaport) closes #369 in full:
+both surfaces of the T-086 prepay-listing flow — post and fill —
+are now verified end-to-end against the real Seaport contract on
+a Base-Sepolia fork.
+
+### PR #380 — Advanced User Guide refresh: 9-locale translations (closes #374)
+
+Translates the three new sections introduced by the Round-6
+atomic match-rotation + Round-8 borrow-OR-sell ships into all 9
+non-English Advanced User Guide locales (Arabic / German / Spanish /
+French / Hindi / Japanese / Korean / Tamil / Chinese Simplified):
+
+1. **Your Active Offers** (`offer-book.your-active-offers`) —
+   replaced existing section with the expanded version including
+   the closed-offer status bullets the dapp now exposes: Filled /
+   Cancelled (with permissionless cleanup) / Sold (with
+   `OfferConsumedBySale` event shape + indexer-side creator
+   enrichment) / Fully Filled (indexer state, no chip yet) /
+   past-GTT note.
+2. **Allow optional sale of this NFT on OpenSea**
+   (`create-offer.borrow-or-sell`) — entirely new. Two-step nature
+   (`postParallelSaleListing` + OpenSea publish), forced Aon
+   fill-mode, Scenario A vs B settlement waterfalls, conflict
+   classes (publish-time sibling block, fill-time PrecloseFacet
+   offset block).
+3. **Matching OpenSea offers on a prepay listing**
+   (`matching-opensea-offers-on-a-prepay-listing`) — entirely new.
+   Round-6 atomic match-rotation, Confirm Match modal
+   gross-vs-net distinction, `PrepayListingFacet.getPrepayContext`
+   split-quote view, click-time fulfillment-data fetch gate.
+
+All code identifiers (facet names, error names, ABI shapes) kept
+in English; anchor IDs preserved verbatim so the dapp's in-app
+cross-links continue resolving.
+
+Raja contributed two substantial polish commits on top of the
+machine-generated translations: stylistic refinement across all 9
+locales, and the addition of the previously-missing "How
+Liquidation Actually Works" + stuck-recovery sections (which
+predated my translation pass).
+
+Codex round-1 caught two real issues — the matching-opensea
+section was anchored to the wrong heading (Create Offer instead of
+Loan Details), and the in-text reference to `apps/agent/src/openseaFees.ts`
+pointed at a non-existent path (actual file is
+`apps/defi/src/lib/openseaFeeSchedule.ts`, which had drifted in the
+EN source too). Both fixed across all 10 files. Round-2 caught the
+missing fee-leg posting guardrails paragraph between
+`releaseParallelSaleLock` and step 2 — added in all 9 locales,
+each translation covering the five canonical rules (populate
+`feeLegs` from required schedule before calling, use only
+required-non-zero rows, cap to protocol-supported leg count,
+convert to absolute fixed amounts in principal asset, reject asks
+where a required fee rounds to zero). Round-2 also flagged a
+renderer-side bug in `apps/www/src/lib/markdownToc.tsx` where the
+H3 component derives its own slug from the heading text instead of
+honouring the `<a id="...">` preceding it — affects EN and every
+locale identically and predates this PR; tracked as a separate
+renderer card.
+
+The translations themselves are first-pass machine-generated
+drafts that should be refined by native-fluent technical
+reviewers per the original card's acceptance criteria. The
+structural skeleton (anchors at the right positions, content at
+the right ToC depth, references to in-repo files that actually
+exist) is now correct so reviewers can focus on prose refinement.
+
+### T-086 ship state
+
+With these four PRs merged, every functional T-086 card on the
+`@vaipakam-labs` project board has transitioned to Done. The
+single remaining open item is the explicitly out-of-scope #281
+**multi-marketplace expansion** (Blur / LooksRare / X2Y2 /
+Magic Eden) follow-up card, sitting in Backlog as a deliberate
+post-T-086 v2 scope.
