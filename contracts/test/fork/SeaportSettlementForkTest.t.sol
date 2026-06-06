@@ -3,12 +3,16 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "../SetupTest.t.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
+import {LibPrepayOrder} from "../../src/libraries/LibPrepayOrder.sol";
+import {ISeaportOrderHash, OrderComponents} from "../../src/seaport/ISeaportOrderHash.sol";
+import {IVaipakamPrepayContext} from "../../src/seaport/IVaipakamPrepayContext.sol";
 import {FeeLeg} from "../../src/seaport/PrepayTypes.sol";
 import {CollateralListingExecutor} from "../../src/seaport/CollateralListingExecutor.sol";
 import {NFTPrepayListingFacet} from "../../src/facets/NFTPrepayListingFacet.sol";
-import {PrepayListingFacet} from "../../src/facets/NFTPrepayListingFacet.sol";
+import {PrepayListingFacet} from "../../src/facets/PrepayListingFacet.sol";
 import {ConfigFacet} from "../../src/facets/ConfigFacet.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
+import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 import {MockRentableNFT721} from "../mocks/MockRentableNFT721.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
@@ -94,13 +98,14 @@ contract SeaportSettlementForkTest is SetupTest {
     uint256 internal constant BORROWER_TOKEN_ID = 101;
     uint256 internal constant COLLATERAL_TOKEN_ID = 1;
 
-    // Conduit key the test creates a fresh Seaport conduit under so
-    // the executor's allow-list check resolves to an address the
-    // test deployer controls. Distinct from any production conduit
-    // key — the upper 12 bytes encode an ASCII tag the indexer can
-    // recognise off-chain.
-    bytes32 internal constant TEST_CONDUIT_KEY =
-        bytes32(uint256(0xfafa_e570acba1d10) << 96);
+    // Conduit key — built at runtime in setUp from
+    // `address(this) << 96 | TEST_CONDUIT_SALT`. Codex round-1 P1:
+    // real Seaport's `ConduitController.createConduit` requires the
+    // FIRST 20 BYTES of the conduit key to equal `msg.sender`; a
+    // fixed-tag constant would revert the call before any fork
+    // test ran.
+    bytes32 internal testConduitKey;
+    uint96 internal constant TEST_CONDUIT_SALT = 0xfafae570acba1d;
 
     uint256 internal constant TEST_SALT = 0xa11ce;
 
@@ -178,8 +183,15 @@ contract SeaportSettlementForkTest is SetupTest {
             forkConduitController != address(0),
             "Seaport.information().conduitController must be non-zero on fork"
         );
+        // Real Seaport's createConduit requires conduitKey[0:20] ==
+        // msg.sender (`createConduit` reverts InvalidCreator otherwise).
+        // Pack address(this) into the top 20 bytes + a unique salt in
+        // the bottom 12 so the same test contract can mint distinct
+        // conduits across runs if needed.
+        testConduitKey =
+            bytes32((uint256(uint160(address(this))) << 96) | uint256(TEST_CONDUIT_SALT));
         forkConduit = IConduitController(forkConduitController).createConduit(
-            TEST_CONDUIT_KEY,
+            testConduitKey,
             address(this)
         );
 
@@ -251,7 +263,7 @@ contract SeaportSettlementForkTest is SetupTest {
             "test conduit must be on the executor allow-list"
         );
         (address resolved, bool exists) = IConduitController(forkConduitController)
-            .getConduit(TEST_CONDUIT_KEY);
+            .getConduit(testConduitKey);
         assertTrue(exists, "test conduitKey must resolve to an extant conduit");
         assertEq(resolved, forkConduit, "conduitKey must round-trip to forkConduit");
     }
@@ -286,7 +298,7 @@ contract SeaportSettlementForkTest is SetupTest {
         _scaffoldActiveLoan();
 
         uint256 askPrice = _floorPlusBuffer();
-        bytes32 conduitKey = TEST_CONDUIT_KEY;
+        bytes32 conduitKey = testConduitKey;
         FeeLeg[] memory feeLegs = _emptyFeeLegs();
 
         // Real-Seaport postPrepayListing. The diamond's path calls
@@ -312,6 +324,42 @@ contract SeaportSettlementForkTest is SetupTest {
             stored,
             recordedHash,
             "diamond storage slot must mirror the executor-recorded hash"
+        );
+
+        // Codex round-1 P2 — extend the assertion: reconstruct the
+        // canonical OrderComponents off-chain via the same
+        // `LibPrepayOrder.componentsForCancel` builder the executor's
+        // cancel path uses, then call real `Seaport.getOrderHash`
+        // and assert the result MATCHES the recorded hash. This is
+        // the §17.5 hash-rederive invariant in its fullest form:
+        // not just "Seaport produces the right hash for our
+        // components" (Phase-1) and not just "the diamond records
+        // the same hash it returned" (storage round-trip), but
+        // "the diamond's `_buildAndRecord` path constructs THE SAME
+        // OrderComponents that the off-chain reconstruction builds".
+        // A drift in either side would surface here as a hash
+        // mismatch.
+        LibVaipakam.Loan memory loanCopy =
+            LoanFacet(address(diamond)).getLoanDetails(LOAN_ID);
+        IVaipakamPrepayContext.PrepayContext memory pctx = IVaipakamPrepayContext(
+            address(diamond)
+        ).getPrepayContext(LOAN_ID, uint256(loanCopy.startTime));
+        uint256 counter = ISeaportOrderHash(SEAPORT_ADDR).getCounter(phase2BorrowerVault);
+        OrderComponents memory components = LibPrepayOrder.componentsForCancel(
+            pctx,
+            address(forkExecutor),
+            askPrice,
+            conduitKey,
+            TEST_SALT,
+            uint256(loanCopy.startTime),
+            counter,
+            feeLegs
+        );
+        bytes32 rederivedHash = ISeaportOrderHash(SEAPORT_ADDR).getOrderHash(components);
+        assertEq(
+            recordedHash,
+            rederivedHash,
+            "diamond-recorded hash must match independently-reconstructed Seaport hash"
         );
     }
 
