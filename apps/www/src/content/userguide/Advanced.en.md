@@ -168,8 +168,8 @@ Acceptance flips the offer to Accepted and triggers loan
 initiation, which mints the two position NFTs (one for lender,
 one for borrower) and opens the loan in the Active state.
 
-Closed offers carry one of three distinct statuses, each exposed
-as a filter chip on the My Offers page:
+Closed offers carry one of several distinct statuses, each
+exposed as a filter chip on the My Offers page:
 
 - **Filled** — accepted by a counterparty; the offer's loan
   reference is the resulting loan id.
@@ -196,6 +196,15 @@ as a filter chip on the My Offers page:
   ingestion time (it joins the offer row to look up the creator),
   so the per-wallet filter finds the borrower without the
   event itself indexing them.
+- **Fully Filled** — Range-orders only. When partial-fill
+  matching consumes the offer's remaining budget (the last
+  match fully fills the range, or a partial match leaves a
+  sub-dust remainder), `OfferMatchFacet` emits
+  `OfferClosed(FullyFilled | Dust)` and the indexer stamps
+  `status = 'fullyFilled'`. The row drops out of Active and
+  is reachable under the Fully Filled chip; the contract's
+  `accepted` state and the on-chain Filled label above are
+  reserved for the direct-accept terminal.
 
 Past-GTT (Good-Til-Time) offers that never reached a terminal
 event aren't yet exposed as a distinct status chip in the dapp;
@@ -447,17 +456,25 @@ the dapp does NOT automate today:
    `OfferParallelSaleFacet.postParallelSaleListing(uint96
    offerId, uint256 askPrice, bytes32 conduitKey, FeeLeg[]
    feeLegs)`. The facet internally builds the canonical
-   Seaport OrderComponents from those inputs, derives the
-   orderHash via `Seaport.getOrderHash`, returns it, registers
-   the vault's ERC-1271 binding to that hash, and grants the
-   Seaport conduit approval for the NFT collateral. The emitted
-   `PostParallelSaleListing` event exposes every field needed
-   to reconstruct the OrderComponents. **Important:** at this
-   point the order is already FILLABLE via Seaport. A bot
-   watching the contract's events can reconstruct the
-   OrderComponents from the event payload + the input args
-   and call `Seaport.fulfillOrder` directly — the listing
-   does not need to appear on OpenSea's marketplace UI for
+   Seaport OrderComponents from those inputs (plus values it
+   holds in `CollateralListingExecutor.offerContext` — the
+   borrower vault address, principal asset, collateral fields,
+   startTime, endTime) and the current `Seaport.getCounter`
+   for the vault, derives the orderHash via
+   `Seaport.getOrderHash`, returns it, registers the vault's
+   ERC-1271 binding to that hash, and grants the Seaport
+   conduit approval for the NFT collateral. The emitted
+   `PostParallelSaleListing` event exposes the input args
+   (`offerId`, borrower, orderHash, askPrice, executor /
+   conduit data, salt, fee legs); it does NOT echo the
+   per-context fields, so reconstructing OrderComponents
+   off-chain requires the additional reads described in
+   step 2 below. **Important:** at this point the order is
+   already FILLABLE via Seaport. A bot watching the
+   contract's events PLUS those reads can reconstruct the
+   OrderComponents and call `Seaport.fulfillOrder` directly
+   — the listing does not need to appear on OpenSea's
+   marketplace UI for
    the on-chain fill path to work. If you don't want
    counterparties to fill at the current ask before step 2
    lands, either run step 2 immediately after step 1 OR call
@@ -477,15 +494,20 @@ the dapp does NOT automate today:
    - `Seaport.getCounter(borrowerVault)` returns the canonical
      Seaport counter for the vault offerer.
    With those fields in hand the OrderComponents struct
-   reproduces exactly the one the diamond hashed. For
-   ERC-1271-validated orders OpenSea accepts the `signature`
-   field as `0x` (empty bytes) — the vault's on-chain
-   `isValidSignature(orderHash, '')` callback ignores the
-   signature bytes and returns the EIP-1271 magic value for
-   any orderHash the diamond previously registered (from
-   step 1). POST the JSON to the OpenSea listings endpoint
-   (`POST /api/v2/orders/{chain}/{protocol}/listings`, per
-   the official [Create Listing](https://docs.opensea.io/reference/post_listing)
+   reproduces exactly the one the diamond hashed. Before POSTing,
+   add the API-only `parameters.totalOriginalConsiderationItems`
+   field — OpenSea's API requires it even though it's NOT part
+   of the Seaport struct that produces the canonical hash; the
+   in-repo publishers (`apps/defi/src/lib/openseaPublish.ts` +
+   `apps/indexer/src/openseaPublish.ts`) inject it before
+   calling the endpoint. For ERC-1271-validated orders OpenSea
+   accepts the `signature` field as `0x` (empty bytes) — the
+   vault's on-chain `isValidSignature(orderHash, '')` callback
+   ignores the signature bytes and returns the EIP-1271 magic
+   value for any orderHash the diamond previously registered
+   (from step 1). POST the JSON to the OpenSea listings
+   endpoint (`POST /api/v2/orders/{chain}/{protocol}/listings`,
+   per the official [Create Listing](https://docs.opensea.io/reference/post_listing)
    docs — this is the same endpoint Vaipakam's own publishers
    in `apps/agent/src/openseaProxy.ts` +
    `apps/indexer/src/openseaPublish.ts` use). Only after this
