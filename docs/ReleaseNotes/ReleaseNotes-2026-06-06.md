@@ -3239,3 +3239,97 @@ The note explicitly calls out that this is **the only case** a borrower-initiate
 - Translations of the new content into the existing Basic/Advanced locales (de, ta, etc.) — those follow the normal translation rotation pace.
 - Equivalent additions to the Basic user guide — the OpenSea listing flow is an Advanced-mode feature and is documented there.
 - Frontend / contract changes — the friendly-error UX referenced in the doc note lives in PR #318.
+
+## T-086 Round-8 §19 frontend follow-ups — `allowsParallelSale` form control + `consumed_by_sale` status (#365, #366, PR #370)
+
+Wraps up the two deferred-during-Round-8 frontend cards in one PR.
+
+**#365** — Create Offer surface now exposes the `Borrow or sell` opt-in
+when (and only when) the form shape matches the contract's eligibility
+gate: borrower side + ERC-20 principal + ERC-721 / ERC-1155 collateral.
+The toggle is mirrored as `allowsParallelSale` in the create payload
+and the dapp also forces `fillMode = Aon` (1) on opt-in offers so the
+contract's `ParallelSaleRequiresAonFillMode` gate is never tripped
+client-side. The toggle resets automatically whenever the form leaves
+the eligibility window (defensive UX guard — borrower flips to lender,
+collateral changes to ERC-20, principal changes to NFT, etc.). The
+hint copy is explicit about the two-step nature: opting in marks the
+offer as eligible, but publishing the marketplace listing itself is a
+separate step against the diamond after the offer is live.
+
+**#366** — My Offers + Activity + Offer Details now classify the
+Scenario A parallel-sale terminal (`consumed_by_sale`) as a distinct
+status alongside Active / Filled / Cancelled / Expired. The indexer's
+`/offers/stats` route also tallies sold offers separately and folds
+them into `total`. Sold rows are clickable through to Offer Details
+where the new status badge surfaces "Sold" with a success-color
+treatment; the NftVerifier widens its offer-status union to include
+`sold` so a buyer checking a position-NFT burned by a sold-via-OpenSea
+fill sees the right context instead of the misleading default "open".
+
+### Hardening passes — 12 Codex review rounds
+
+The PR went through twelve Codex adversarial review rounds with a
+broad spread of P1 / P2 / P3 fixes. The fixes group naturally into
+five themes:
+
+**Data pipeline correctness.** Round-13 P2 (sold-row PrincipalCell
+hard-coded `assetType=0`) and Round-16 P2 (ERC1155 collateral
+quantity) widened the IndexedOffer → RawOffer → OfferData pipeline so
+sold rows render the proper NFT shape with the right copy count.
+Round-18 P2 (indexed max APR) bubbled `interestRateBpsMax` through the
+same pipeline so the rate cell shows the actual posted ceiling instead
+of the canonical floor `0%` that borrower offers carry.
+
+**Browser scan robustness.** The `useLogIndex` worker-down fallback
+path took the brunt of the hardening: Round-14 P2 (#3) added
+`OfferConsumedBySale` to the scan + dedup + closed-set; Round-15 P2
+(#5) capped the topic OR-list at 24 to dodge the publicnode silent
+cap; Round-16 P2 (#3) split the secondary call out to its own
+`eth_getLogs` so the bulk filter stays under the cap; Round-17 P2
+(#3) stopped the cursor from advancing past a failed secondary call;
+Round-18 P2 (#5) added a `fetchOfferCreator` callback so creator
+participants get patched in for fast-forwarded sales; Round-20 P2
+added a sale-event catchup pass over the fast-forward gap; Round-21
+P2 (#1) hoisted that catchup BEFORE the `fromBlock > head` early
+return; Round-22 P2 (#1) inlined the enrichment passes into the
+early-return branch; Round-23 P2 advanced the cursor past the
+catchup window so the historical scan doesn't repeat.
+
+**Indexer-side participant + stats.** Round-16 P2 (#2) added a
+batched `creatorByOfferId` pre-fetch in `recordActivityEvents` so the
+borrower address lands in the indexed sale event's args bag.
+Round-18 P2 (#3) extended the backfill story with migration
+`0021_backfill_consumed_by_sale_creator.sql` so pre-existing rows
+get rewritten too. Round-19 P2 (#3) widened the rewrite to also
+update the `actor` column from executor to creator (the supported
+`/activity?actor=<wallet>` filter keys on `actor`, not on the args
+walk). Round-20 P2 added the `consumed_by_sale` bucket to
+`/offers/stats` totals.
+
+**UX correctness.** Round-13 P2 (#1) added a useEffect that resets
+`allowsParallelSale` the moment the form leaves the eligibility
+window — without it the hidden toggle could submit `true` on a
+lender / ERC20-collateral offer and revert at create time. Round-14
+P2 (#2) softened the toggle copy to not promise marketplace
+publishing at create time. Round-16 P2 (#4) tightened the
+eligibility check to require ERC-20 principal too. Round-17 P2 (#2)
+fixed the sold-row rate cell to use `interestRateBpsMax`. Round-18
+P2 (#6) gave the NftVerifier a `sold` case in both the status union
+and the user-facing copy. Round-20 P3 added `OfferConsumedBySale`
+to `KIND_PRIORITY` so the Activity filter chip actually offers it.
+
+**Spec ↔ code convergence.** Round-21 P2 (#3) rewrote
+`docs/FunctionalSpecs/WebsiteReadme.md` §169 to describe the two-step
+nature honestly: opt-in sets eligibility, publish is separate, and
+the "whichever happens first wins" semantics only kick in after
+publish.
+
+### Verification
+
+- `apps/defi` `tsc -b --noEmit` clean throughout the 12-round
+  iteration.
+- `apps/indexer` `tsc -p . --noEmit` clean on every indexer-side
+  change.
+- CI workflow green on the final commit (`43f6fb19`).
+- Codex round-24 review verdict: "Didn't find any major issues."
