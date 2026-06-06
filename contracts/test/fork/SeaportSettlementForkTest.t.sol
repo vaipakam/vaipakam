@@ -12,7 +12,7 @@ import {NFTPrepayListingFacet} from "../../src/facets/NFTPrepayListingFacet.sol"
 import {PrepayListingFacet} from "../../src/facets/PrepayListingFacet.sol";
 import {ConfigFacet} from "../../src/facets/ConfigFacet.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
-import {LoanFacet} from "../../src/facets/LoanFacet.sol";
+import {VaipakamVaultImplementation} from "../../src/VaipakamVaultImplementation.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 import {MockRentableNFT721} from "../mocks/MockRentableNFT721.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
@@ -36,6 +36,12 @@ interface IConduitController {
         external
         view
         returns (address conduit, bool exists);
+
+    /// @notice Opens (or closes) a channel on a conduit so that channel
+    ///         can execute transfers through it. Required for any
+    ///         counter-party (including Seaport itself) to actually
+    ///         transfer tokens via the conduit.
+    function updateChannel(address conduit, address channel, bool isOpen) external;
 }
 
 /**
@@ -195,6 +201,20 @@ contract SeaportSettlementForkTest is SetupTest {
             address(this)
         );
 
+        // Codex round-2 P2 #1 — open `SEAPORT_ADDR` as a channel on
+        // the new conduit. Without this, real Seaport's transfer
+        // attempt through the conduit at fulfillment time would
+        // revert `ChannelClosed`, masking that Phase-2c's later
+        // settlement assertions exercise the actual transfer path.
+        // The conduit's owner (= `address(this)`, per the
+        // createConduit call above) is the only caller authorised
+        // for `updateChannel`.
+        IConduitController(forkConduitController).updateChannel(
+            forkConduit,
+            SEAPORT_ADDR,
+            true
+        );
+
         // Deploy the real CollateralListingExecutor as a UUPS proxy
         // pointing at the canonical Seaport on this fork. SAME
         // contract production uses — no mock. The fork test's whole
@@ -301,6 +321,19 @@ contract SeaportSettlementForkTest is SetupTest {
         bytes32 conduitKey = testConduitKey;
         FeeLeg[] memory feeLegs = _emptyFeeLegs();
 
+        // Codex round-2 P2 #2 — warp time forward so
+        // `loan.startTime` ≠ `block.timestamp`-at-listing. The
+        // production `_buildAndRecord` stamps `block.timestamp` into
+        // the Seaport components' `startTime` slot, while
+        // `loan.startTime` is the loan ORIGINATION stamp set at
+        // `initiateLoan`. Same-block scaffolding would mask a real
+        // bug where the rederive accidentally uses loan-start
+        // instead of listing-post time; warping by an arbitrary
+        // amount keeps the two distinct and makes the rederive
+        // assertion below load-bearing.
+        vm.warp(block.timestamp + 1 days);
+        uint256 listingTimestamp = block.timestamp;
+
         // Real-Seaport postPrepayListing. The diamond's path calls
         // into the executor which calls into REAL Seaport's
         // `getOrderHash`. A canonical-builder drift from what real
@@ -326,6 +359,37 @@ contract SeaportSettlementForkTest is SetupTest {
             "diamond storage slot must mirror the executor-recorded hash"
         );
 
+        // Codex round-2 P2 #3 — assert the two settlement-prerequisite
+        // side effects too: the vault's ERC-1271 binding (so Seaport
+        // accepts the order as authorised) and the executor's order-
+        // context record (so the zone callback at fill time can
+        // resolve loanId / conduit / askPrice / mode). Without these
+        // the Phase-2c fulfillment would revert even though the
+        // diamond mirror slot looked correct.
+        assertEq(
+            VaipakamVaultImplementation(phase2BorrowerVault).getListingExecutor(recordedHash),
+            address(forkExecutor),
+            "vault's ERC-1271 binding must point at the executor for the recorded orderHash"
+        );
+        (
+            uint96 ctxLoanId,
+            address ctxConduit,
+            bytes32 ctxConduitKey,
+            uint256 ctxSalt,
+            uint64 ctxStartTime,
+            uint192 ctxAskPrice,
+            ,
+            ,
+            uint8 ctxMode
+        ) = forkExecutor.orderContext(recordedHash);
+        assertEq(uint256(ctxLoanId), LOAN_ID, "executor.orderContext.loanId must equal LOAN_ID");
+        assertEq(ctxConduit, forkConduit, "executor.orderContext.conduit must equal forkConduit");
+        assertEq(ctxConduitKey, conduitKey, "executor.orderContext.conduitKey must round-trip");
+        assertEq(ctxSalt, TEST_SALT, "executor.orderContext.salt must equal TEST_SALT");
+        assertEq(uint256(ctxStartTime), listingTimestamp, "executor.orderContext.startTime must equal listing block.timestamp");
+        assertEq(uint256(ctxAskPrice), askPrice, "executor.orderContext.askPrice must equal askPrice");
+        assertEq(uint256(ctxMode), 0, "executor.orderContext.mode must be PREPAY_MODE_FIXED_PRICE (0)");
+
         // Codex round-1 P2 — extend the assertion: reconstruct the
         // canonical OrderComponents off-chain via the same
         // `LibPrepayOrder.componentsForCancel` builder the executor's
@@ -339,11 +403,14 @@ contract SeaportSettlementForkTest is SetupTest {
         // OrderComponents that the off-chain reconstruction builds".
         // A drift in either side would surface here as a hash
         // mismatch.
-        LibVaipakam.Loan memory loanCopy =
-            LoanFacet(address(diamond)).getLoanDetails(LOAN_ID);
+        // Codex round-2 P2 #2 — context evaluated AS-OF the listing
+        // timestamp (the `block.timestamp` captured immediately
+        // before the post call). Loan-start would be wrong and
+        // would mask a bug if the production path accidentally
+        // used loan-start instead.
         IVaipakamPrepayContext.PrepayContext memory pctx = IVaipakamPrepayContext(
             address(diamond)
-        ).getPrepayContext(LOAN_ID, uint256(loanCopy.startTime));
+        ).getPrepayContext(LOAN_ID, listingTimestamp);
         uint256 counter = ISeaportOrderHash(SEAPORT_ADDR).getCounter(phase2BorrowerVault);
         OrderComponents memory components = LibPrepayOrder.componentsForCancel(
             pctx,
@@ -351,7 +418,7 @@ contract SeaportSettlementForkTest is SetupTest {
             askPrice,
             conduitKey,
             TEST_SALT,
-            uint256(loanCopy.startTime),
+            listingTimestamp,
             counter,
             feeLegs
         );
