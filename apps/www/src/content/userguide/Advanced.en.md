@@ -168,8 +168,10 @@ Acceptance flips the offer to Accepted and triggers loan
 initiation, which mints the two position NFTs (one for lender,
 one for borrower) and opens the loan in the Active state.
 
-Closed offers carry one of several distinct statuses, each
-exposed as a filter chip on the My Offers page:
+Closed offers carry one of several distinct statuses. Some are
+already exposed as filter chips on the My Offers page; others
+are indexer-side terminals that will get dedicated UI treatment
+in follow-up work:
 
 - **Filled** — accepted by a counterparty; the offer's loan
   reference is the resulting loan id.
@@ -490,14 +492,13 @@ the dapp does NOT automate today:
    the facet built. The `PostParallelSaleListing` event alone
    isn't sufficient: it emits `offerId`, borrower, orderHash,
    askPrice, executor / conduit data, salt, and fee legs, but
-   the canonical `LibPrepayListingWiring._buildOrderComponents`
-   builder also needs values held in the executor's
-   `OfferContext` storage (borrower vault address, principal
-   asset, collateral fields, startTime, endTime) plus the
-   borrower vault's Seaport counter (the offerer's counter —
-   `LibPrepayOrder.buildAndHashOfferMem` hashes
-   `Seaport.getCounter(ctx.borrowerVault)`, NOT the bidder's
-   counter). Read both before posting:
+   the offer-keyed order shape also needs values held in the
+   executor's `OfferContext` storage (borrower vault address,
+   principal asset, collateral fields, startTime, endTime) plus
+   the borrower vault's Seaport counter. This is the same
+   context used by the `LibPrepayOrder.buildAndHashOfferMem`
+   offer-order path, and it is different from the loan-keyed
+   prepay-listing order shape. Read both before posting:
    - `CollateralListingExecutor(executor).offerContext(orderHash)`
      returns the persisted `OfferContext` struct for that hash.
    - `Seaport.getCounter(borrowerVault)` returns the canonical
@@ -1050,13 +1051,16 @@ buyer could step in at the matched price.
 **What you still want to verify before clicking Match:**
 
 - **Confirm the matched value in the modal.** The modal
-  surfaces the price the diamond will settle at. The bidder
-  address and the precise lender / treasury / borrower split
-  aren't broken out in either the modal OR the OpenSea Offers
-  panel row (the row shows value, payment token, offer kind,
-  truncated bidder, and end time). The split is enforced
-  on-chain by the diamond at settlement — the protocol's
-  settlement buffer guarantees the price covers
+  surfaces the gross OpenSea offer amount. On fee-enforced
+  collections, the diamond settles against the net effective
+  ask after bidder-side marketplace / creator fee legs, so the
+  modal value can be higher than the amount used for the
+  lender / treasury / borrower split. The bidder address and
+  the precise split aren't broken out in either the modal OR
+  the OpenSea Offers panel row (the row shows value, payment
+  token, offer kind, truncated bidder, and end time). The split
+  is enforced on-chain by the diamond at settlement — the
+  protocol's settlement buffer guarantees the effective ask covers
   the lender's settlement entitlement (which already includes
   principal plus the full coupon on full-term-interest loans
   or the pro-rata interest otherwise) plus the
