@@ -197,6 +197,28 @@ contract SeaportSettlementForkTest is SetupTest {
     function test_Fork_PostPrepayListing_AgainstRealSeaport() public {
         if (!forkEnabled) return;
 
+        // Codex round-1 P2 #1 + #3 — `_initiateBorrowerOffer` and
+        // `_buildPrepayListingComponents` are intentionally
+        // unimplemented stubs in this Phase-2a PR (the wiring is
+        // the next session's work). Without `vm.skip`, the test
+        // body below would panic on either the zero loan-id
+        // require OR on `components.consideration[0]` against an
+        // empty array. `vm.skip(true)` marks the test as skipped
+        // (silently passes) so the fork suite isn't broken by
+        // intentionally-stubbed scaffold tests. Drop this line
+        // when the helpers below are filled in (Phase-2b).
+        vm.skip(true);
+
+        // Codex round-1 P2 #2 — when this test IS filled in, it
+        // ALSO needs to configure the prepay-listing admin state
+        // BEFORE the post call: `AdminFacet.setCfgPrepayListingEnabled(true)`,
+        // a nonzero buffer via `AdminFacet.setCfgPrepayListingBufferBps`,
+        // and the executor address via
+        // `AdminFacet.setCollateralListingExecutor(...)`. SetupTest's
+        // `setupHelper` leaves these at protocol defaults, which the
+        // facet's gates reject before reaching real Seaport. The
+        // Phase-2b PR will add the config wiring inline below.
+
         // ── Borrower / lender scaffold ───────────────────────────
         // Mint an ERC20 principal to the lender + an ERC721 to the
         // borrower. SetupTest's setupHelper provisions `lender` /
@@ -284,6 +306,12 @@ contract SeaportSettlementForkTest is SetupTest {
     ///         existing setUp + helpers without a rebuild.
     function test_Fork_BuyerFulfillsAndSettles_Skeleton() public {
         if (!forkEnabled) return;
+
+        // Codex round-1 P2 #1 — placeholder marked skipped so the
+        // fork suite isn't broken by an obviously-incomplete test
+        // body. The TODO list below is the work-list for the
+        // Phase-2b implementation PR.
+        vm.skip(true);
 
         // TODO(phase-2.x): inherit the borrower scaffold + the live
         // prepay listing from `test_Fork_PostPrepayListing_AgainstRealSeaport`.
