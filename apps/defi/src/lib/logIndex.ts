@@ -1002,8 +1002,17 @@ async function runScan(
     });
     const updatedCached: CachedShape = {
       ...cached,
-      // lastBlock stays at the cached value — we only advanced the
-      // catchup cursor, not the main scan cursor.
+      // Codex round-23 P2 — advance `lastBlock` past the catchup
+      // window so the next `useLogIndex` load doesn't rescan the
+      // same `[baseFrom, fromBlock - 1]` gap. Pre-fix, every future
+      // load in the warmed-cache + healthy-worker state re-ran the
+      // sale-only scan over historical blocks already covered.
+      // Conditional on `saleCatchupActive` because if the catchup
+      // didn't fire (fromBlock == baseFrom), `fromBlock - 1` would
+      // be < cached.lastBlock and we'd silently regress the cursor.
+      lastBlock: saleCatchupActive
+        ? Math.max(cached.lastBlock, fromBlock - 1)
+        : cached.lastBlock,
       closedOfferIds: Array.from(closedOfferIdSet).sort((a, b) =>
         Number(BigInt(a) - BigInt(b)),
       ),
