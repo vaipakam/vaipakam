@@ -183,6 +183,64 @@ Accepted y dispara la inicialización del préstamo, que mintea los
 dos NFTs de posición (uno para el prestamista y otro para el
 prestatario) y abre el préstamo en estado Active.
 
+Las ofertas cerradas llevan uno de varios estados distintos. Algunos
+ya están expuestos como chips de filtro en la página Mis Ofertas;
+otros son terminales del lado del indexador que recibirán tratamiento
+de UI dedicado en trabajos de seguimiento:
+
+- **Filled** — aceptada por una contraparte; la referencia del
+  préstamo de la oferta es el id del préstamo resultante.
+- **Cancelled** — la oferta alcanzó el estado Cancelled por
+  cualquiera de los dos caminos: retirada por el creador antes
+  de la aceptación, O limpiada sin permisos vía
+  `OfferCancelFacet.cancelOffer` una vez que
+  `LibVaipakam.isOfferExpired(offer)` es verdadero (el reembolso
+  igualmente se enruta al creador, sin importar quién inició la
+  llamada de cancelación).
+- **Sold** — la oferta optó por el flujo borrow-OR-sell de venta
+  paralela (ver Crear Oferta → Permitir venta opcional) y un
+  comprador en mercado ejecutó el listado del NFT colateral
+  antes de que ningún prestamista aceptara. La oferta lleva el
+  estado on-chain `consumed_by_sale`; la columna de tasa de la
+  fila muestra la tasa a la que se publicó la oferta y la celda
+  de colateral renderiza la forma NFT (token id para ERC-721,
+  cantidad de copias para ERC-1155). La aplicación también muestra la
+  fila en el feed de Actividad como `Offer sold via OpenSea`
+  para el prestatario (creador de la oferta). El evento on-chain
+  en sí es
+  `OfferConsumedBySale(uint96 indexed offerId, address indexed executor)` —
+  tanto el id de la oferta COMO la dirección del executor están
+  indexados on-chain, pero la dirección del prestatario / creador
+  NO. La coincidencia de billetera del prestatario para el feed de
+  Actividad es agregada por el indexador en tiempo de ingestión
+  (hace un join con la fila de la oferta para buscar el creador),
+  así el filtro por billetera encuentra al prestatario sin que el
+  evento en sí los indexe.
+- **Fully Filled (estado del indexador, sin chip todavía)** — solo
+  para órdenes de rango. Cuando el matching de relleno parcial
+  consume el presupuesto restante de la oferta (el último match
+  completa el rango por completo, o un match parcial deja un
+  remanente sub-dust), `OfferMatchFacet` emite
+  `OfferClosed(FullyFilled | Dust)` y el indexador marca la fila
+  de la oferta con `status = 'fullyFilled'`. El estado `accepted`
+  del contrato y la etiqueta Filled on-chain de arriba están
+  reservados para el terminal de aceptación directa, por lo
+  que `fullyFilled` es distinto del lado del indexador. El
+  `MyOfferStatus` de la aplicación aún no expone este terminal como
+  su propio chip de filtro — `useMyOffers` actualmente ignora
+  las filas con estado de indexador `fullyFilled` — así que una
+  oferta de rango completamente llena efectivamente cae fuera
+  de la vista Mis Ofertas hasta que llegue el chip dedicado.
+  La superficie del chip está en cola como un seguimiento de
+  UI separado.
+
+Las ofertas pasadas-GTT (tiempo límite GTT) que nunca alcanzaron un
+evento terminal aún no están expuestas como un chip de estado
+distinto en la aplicación; actualmente caen bajo Active hasta que el
+indexador registre un terminal. Un chip Expired dedicado está en
+cola como seguimiento de UI separado.
+
+
 <a id="offer-book.lender-offers"></a>
 
 ### Ofertas de prestamistas
@@ -387,7 +445,7 @@ timelock, y no pueden mover activos.
   que cruce 1,0 es suficiente.
 - **Slippage de liquidación** — cuando se dispara una liquidación,
   el swap puede vender tu colateral a precios mermados por
-  slippage. El swap es permissionless —cualquiera puede
+  slippage para repagar al prestamista. El swap es permissionless —cualquiera puede
   dispararlo en el instante en que tu HF cae por debajo de 1,0.
 - **Defaults con colateral ilíquido** — el default transfiere
   todo tu colateral al prestamista. No hay reclamación residual;
@@ -410,7 +468,243 @@ Ajustes menos habituales:
 
 Los valores por defecto son razonables para la mayoría de usuarios.
 
----
+<a id="create-offer.borrow-or-sell"></a>
+
+### Permitir venta opcional de este NFT en OpenSea (solo ofertas de prestatario con colateral NFT)
+
+Si estás publicando una **oferta de prestatario** con **colateral
+ERC-721 o ERC-1155** y un **principal ERC-20**, la aplicación expone un
+opt-in `Borrow or sell` debajo de la sección de colateral. Marcarlo
+marca la oferta como elegible para un listado de venta paralela de
+tu NFT colateral en OpenSea — una sola oferta que puede ser
+ejecutada YA SEA por un prestamista (tomas el préstamo) O por un
+comprador en mercado (vendes el NFT). El listado NO se
+desmonta en la aceptación del prestamista si ya estaba publicado:
+si un prestamista ejecuta primero, tomas el préstamo, el listado
+existente en OpenSea se traslada a través de la inicialización del
+préstamo hasta su expiración Seaport original, y una ejecución
+posterior en mercado antes de esa expiración dispara la cascada
+de liquidación del diamond para cerrar el préstamo con los ingresos
+de la venta (ver Escenario B abajo). Para ofertas GTT ordinarias
+esta expiración es el tiempo límite GTT original de la oferta; la
+aceptación del prestamista no extiende ni vuelve a publicar el
+listado para el término completo del préstamo. Si un comprador en
+mercado ejecuta primero, nunca se crea un préstamo (Escenario
+A). Los dos escenarios terminan en estados distintos de la oferta:
+el Escenario A marca la oferta con `consumed_by_sale` vía
+`markOfferConsumedBySale` (aparece bajo el filtro Sold), y la
+aceptación del prestamista está barreraada contra cualquier oferta
+que ya haya sido marcada. En el Escenario B la oferta ya está en
+estado `Accepted` para cuando aterriza la ejecución del
+mercado; el contrato deliberadamente deja el estado de la
+oferta en `Accepted` y solo liquida el préstamo desde la venta —
+la oferta no transita a Sold por segunda vez.
+
+**Naturaleza de dos pasos.** Optar a la creación de la oferta
+solamente activa la bandera de elegibilidad en la oferta. Conseguir
+un listado realmente comprable en OpenSea es un PASO DOBLE SEPARADO
+que la aplicación NO automatiza hoy:
+
+1. **Registrar + cablear en el diamond.** Llama a
+   `OfferParallelSaleFacet.postParallelSaleListing(uint96
+   offerId, uint256 askPrice, bytes32 conduitKey, FeeLeg[]
+   feeLegs)` mientras la oferta esté activa y antes de cualquier
+   aceptación de prestamista. Una vez que la oferta sea aceptada,
+   cancelada, o consumida por venta, esta llamada revierte como
+   terminal; marcar el opt-in solo no es suficiente para crear un
+   listado que pueda trasladarse al Escenario B. El ask también
+   debe cubrir el piso pre-préstamo: principal más intereses
+   peor-caso a través de la duración del préstamo y la ventana de
+   gracia, recorte de tesorería sobre ese interés, el buffer de
+   seguridad configurado, y todos los montos de fee-legs. Asks
+   bajo-piso revierten en este paso. El argumento `feeLegs` es el
+   ÚNICO lugar donde esta llamada registra las obligaciones de
+   tarifas de protocolo OpenSea y royalties de creador: el diamond
+   resta cada monto de fee-leg de los ingresos del vendedor y
+   añade el destinatario + monto absoluto al array de
+   consideration de Seaport. Pasar `feeLegs: []` en una colección
+   con tarifas obligatorias produce una forma de orden que el paso
+   de publicación de OpenSea rechazará (faltan los ítems de
+   consideration de destinatarios de tarifas) y un fill directo
+   en Seaport enrutará el ask completo al vendedor en lugar de
+   dividir las tarifas como la colección requiere. Los usuarios
+   avanzados deben consulta el calendario de tarifas obligatorias
+   de OpenSea para la colección (el parser de tarifas in-repo en
+   `apps/defi/src/lib/openseaFeeSchedule.ts` es la referencia) y pasar
+   montos absolutos derivados contra el ask antes de llamar. El
+   facet internamente construye los `OrderComponents` canónicos
+   de Seaport a partir de esos inputs (plus valores que retiene
+   en `CollateralListingExecutor.offerContext` — la dirección del
+   vault del prestatario, asset principal, campos de colateral,
+   startTime, endTime) y el `Seaport.getCounter` actual del vault,
+   deriva el orderHash vía `Seaport.getOrderHash`, lo retorna,
+   registra el binding ERC-1271 del vault a ese hash, y otorga la
+   aprobación del conduit de Seaport para el NFT colateral. El
+   evento `PostParallelSaleListing` emitido expone los args de
+   entrada (`offerId`, prestatario, orderHash, askPrice, datos
+   de executor / conduit, salt, fee legs); NO retorna los
+   campos por-contexto, así que reconstruir OrderComponents
+   off-chain requiere las lecturas adicionales descritas en el
+   paso 2 abajo. **Importante:** en este punto la orden ya es
+   EJECUTABLE vía Seaport. Un bot mirando los eventos del
+   contrato MÁS esas lecturas puede reconstruir los
+   OrderComponents y llamar `Seaport.fulfillOrder` directamente
+   — el listado no necesita aparecer en la UI de mercado
+   de OpenSea para que el camino de fill on-chain funcione.
+   Si no quieres que contrapartes ejecuten al ask actual antes
+   de que aterrice el paso 2, ya sea ejecuta el paso 2
+   inmediatamente después del paso 1 O llama
+   `releaseParallelSaleLock` para invalidar el binding antes
+   de cualquier fill no intencionado.
+   Para colecciones con tarifas obligatorias, popula `feeLegs` del
+   calendario de tarifas requeridas de OpenSea / creador de la
+   colección antes de llamar a este paso. Usa solo filas de tarifa
+   requeridas, no-cero; limita la lista al conteo de fee-leg
+   soportado por el protocolo; convierte cada fila en un monto fijo
+   absoluto en el asset principal al precio de ask elegido; y usa
+   el destinatario de tarifa listado como destinatario del leg. Si
+   una tarifa requerida se redondea a cero al ask elegido, el ask
+   es demasiado pequeño para esa colección y el post no debe ser
+   intentado. Pasar un array vacío es válido solo para colecciones
+   sin tarifa. En colecciones con tarifas obligatorias puede
+   producir una orden que falle en la publicación de OpenSea o no
+   pueda satisfacer la forma de consideration requerida del
+   marketplace.
+2. **Publicar en OpenSea.** Reconstruye los mismos OrderComponents
+   que el facet construyó. El evento `PostParallelSaleListing` por
+   sí solo no es suficiente: emite `offerId`, prestatario,
+   orderHash, askPrice, datos de executor / conduit, salt, y fee
+   legs, pero la forma de orden offer-keyed también necesita
+   valores retenidos en el storage `OfferContext` del executor
+   (dirección del vault del prestatario, asset principal, campos
+   de colateral, startTime, endTime) más el contador Seaport del
+   vault del prestatario (el contador del offerer —
+   `LibPrepayOrder.buildAndHashOfferMem` hashea
+   `Seaport.getCounter(ctx.borrowerVault)`, NO el contador del
+   postor). Este es el mismo contexto usado por el camino
+   offer-order de `LibPrepayOrder.buildAndHashOfferMem`, y es
+   diferente de la forma de orden prepay-listing loan-keyed. Lee
+   ambos antes de publicar:
+   - `CollateralListingExecutor(executor).offerContext(orderHash)`
+     retorna el struct `OfferContext` persistido para ese hash.
+   - `Seaport.getCounter(borrowerVault)` retorna el contador
+     canónico de Seaport para el offerer del vault.
+   Con esos campos en mano el struct OrderComponents reproduce
+   exactamente el que el diamond hasheó. Antes de POSTear, añade
+   el campo solo-API `parameters.totalOriginalConsiderationItems`
+   — la API de OpenSea lo requiere aunque NO sea parte del struct
+   Seaport que produce el hash canónico; los publishers in-repo
+   (`apps/defi/src/lib/openseaPublish.ts` +
+   `apps/indexer/src/openseaPublish.ts`) lo inyectan antes de
+   llamar al endpoint. Para órdenes validadas por ERC-1271,
+   OpenSea acepta el campo `signature` como `0x` (bytes vacíos)
+   — el callback on-chain del vault `isValidSignature(orderHash,
+   '')` ignora los bytes de la firma y retorna el valor mágico
+   EIP-1271 para cualquier orderHash que el diamond haya
+   registrado previamente (del paso 1). HAZ POST del JSON al
+   endpoint de listings de OpenSea (`POST
+   /api/v2/orders/{chain}/{protocol}/listings`, según los docs
+   oficiales de [Create Listing](https://docs.opensea.io/reference/post_listing)
+   — este es el mismo endpoint que usan los publishers propios
+   de Vaipakam en `apps/agent/src/openseaProxy.ts` +
+   `apps/indexer/src/openseaPublish.ts`). Solo después de este
+   paso el listado aparece en la UI de mercado de OpenSea
+   y se vuelve descubrible para compradores casuales. Vaipakam
+   no automatiza actualmente este envío para el camino
+   parallel-sale — exponer la publicación de listados
+   end-to-end está rastreado como seguimiento.
+
+Los usuarios avanzados que sigan el camino manual hoy necesitan
+AMBOS pasos para obtener visibilidad en OpenSea; correr solo el
+paso 1 produce una orden que es ejecutable directamente a través
+de Seaport (por un bot o contraparte que reconstruya los
+componentes desde el evento) pero invisible en la UI de
+mercado de OpenSea.
+
+**Modo de fill forzado a All-or-Nothing.** Optar fija
+automáticamente el modo de fill de la oferta a `Aon` — modos de
+fill Partial o IOC con la opción de venta paralela activada
+crearían múltiples préstamos contra el colateral de una sola
+oferta, contra lo que el contrato barreraa. El toggle está oculto en
+ofertas de prestamista, colateral ERC-20, principales NFT, y
+cualquier otra forma que el `_validatePostParallelSale` del
+contrato rechazaría, así que no puedes marcarlo accidentalmente
+en una oferta no elegible.
+
+**Lo que ve un comprador.**
+
+- *Antes de que ningún prestamista acepte* (Escenario A): un
+  comprador que ejecute el listado de OpenSea paga el precio
+  listado. En colecciones con tarifas obligatorias, Seaport
+  enruta los legs de tarifa de protocolo OpenSea y tarifa de
+  creador directamente a sus destinatarios configurados primero;
+  el executor pasa solo los **ingresos netos** (precio listado
+  menos esos legs de tarifa de mercado / creador) al diamond.
+  El diamond pone en escrow ese monto neto en tu vault, el NFT
+  se transfiere al comprador, y la oferta se marca
+  `consumed_by_sale` (visible como estado "Sold" distinto en Mis
+  Ofertas, Actividad, y Detalles de Oferta). Nunca se creó un
+  préstamo; te quedas con los ingresos netos de la venta.
+- *Después de que un prestamista acepte* (Escenario B): el
+  listado se traslada a través de la inicialización del préstamo
+  — ni el bloqueo del NFT del prestatario ni el listado se
+  desmontan. Una ejecución posterior por comprador dispara la
+  cascada de liquidación del diamond en una sola transacción
+  Seaport. Misma nota de fee-leg que el Escenario A: en
+  colecciones con tarifas obligatorias, Seaport enruta los legs
+  de tarifa de protocolo OpenSea y tarifa de creador
+  directamente a sus destinatarios configurados primero, y el
+  executor pasa solo los **ingresos netos** (precio de venta
+  menos tarifas de mercado / creador) a la cascada del
+  diamond. La cascada entonces enruta ese monto neto: el
+  prestamista recibe su entitlement de liquidación (que
+  `LibEntitlement.settlementInterest` calcula como el cupón
+  completo cuando el préstamo se creó con `useFullTermInterest
+  = true`, o el interés pro-rata acumulado al timestamp de
+  liquidación de otra manera — el barrera es la política del
+  préstamo, no si la venta sucede antes o después de la madurez
+  programada), el recorte de tesorería va a tesorería, y el
+  resto se deposita DIRECTAMENTE en el vault del actual holder
+  del NFT de posición del prestatario (vía
+  `LibUserVault.getOrCreate` + un depósito al vault). No se
+  crea reclamo en el Claim Center — revisa tu balance del vault
+  después de que aterrice la venta.
+
+**Lo que no puedes combinarlo con.** Dos clases de conflicto
+distintas, superficializadas en diferentes etapas del protocolo:
+
+- *Bloque en tiempo de publicación (listado sibling loan-keyed).*
+  Si el préstamo ya tiene un listado parallel-sale trasladándose
+  desde la creación de la oferta Y el prestatario luego llama
+  `NFTPrepayListingFacet.postPrepayListing` (o
+  `updatePrepayListing`) para publicar un SEGUNDO listado prepay
+  loan-keyed sobre el mismo préstamo, el diamond revierte con
+  `SiblingParallelSaleListingLive`. La aprobación de conduit
+  para el NFT del prestatario es un solo slot — correr ambos
+  listados concurrentemente crearía una aprobación ambigua. El
+  prestatario ve el revert en la llamada de publicar/actualizar;
+  nothing se ejecuta.
+- *Bloque en tiempo de fill (offset abierto de PrecloseFacet).*
+  Si el préstamo tiene una oferta offset abierta de
+  PrecloseFacet Y un comprador luego intenta ejecutar el listado
+  parallel-sale, el `_settleLoanFromParallelSale` del diamond
+  revierte con `ParallelSaleBlockedByOpenOffsetOffer`. El listado
+  sigue siendo válido en OpenSea pero cualquier intento de fill
+  revierte hasta que se borre el enlace offset. La aplicación NO
+  surface actualmente un banner / notificación dedicado en la
+  página de Detalles del Préstamo para esta combinación; los
+  usuarios verán fills revertir y pueden necesitar inspeccionar
+  la razón del revert en un block explorer para diagnosticar. El
+  camino de limpieza es la superficie ordinaria de cancelación
+  de oferta — llama
+  `OfferCancelFacet.cancelOffer(offsetOfferId)` para cancelar la
+  oferta offset, lo que libera el enlace offset y desbloquea el
+  fill parallel-sale (PrecloseFacet no tiene un punto de entrada
+  separado de cancelación; el offset está bound a la oferta
+  enlazada, así que cancelar la oferta enlazada lo borra). Una
+  superficie UI dedicada para el conflicto está en cola como
+  seguimiento de UX separado.
+
 
 ## Centro de reclamaciones
 
@@ -750,6 +1044,239 @@ del rol:
   colateral en repago total, o el reembolso de VPFI Loan
   Initiation Fee no usado en default / liquidación. Quema el NFT
   de posición de prestatario.
+
+---
+
+<a id="matching-opensea-offers-on-a-prepay-listing"></a>
+
+### Hacer match a ofertas de OpenSea sobre un prepay listing
+
+Una vez que tu prepay listing esté vivo en el mercado de
+OpenSea, los compradores casuales a veces colocarán **ítem
+offers** directamente sobre tu token — pujas ligados a tu
+colateral específico, no a cualquier token en la colección.
+Vaipakam muestra estos item offers en la página de Detalles del
+Préstamo en tiempo real — un panel separado bajo "List collateral
+on OpenSea" con una fila por oferta entrante. El panel aplica un
+**umbral de buffer** — el entitlement de liquidación del
+prestamista (que YA INCLUYE principal más el cupón completo en
+préstamos full-term-interest o el interés pro-rata de otra manera
+— ver `PrepayListingFacet.getPrepayContext().lenderLeg`), más el
+recorte de tesorería, más un buffer de seguridad — y **engrisa**
+ofertas que no lo claren. Puedes ver el interés del mercado en
+cada nivel pero solo puedes hacer Match a ofertas que el
+protocolo realmente liquidará.
+
+Las ofertas colección-amplias / criteria (pujas que cualquier
+token en la colección puede satisfacer) permanecen en OpenSea
+pero **no aparecen** en el panel Match de la aplicación — la
+consideration multi-leg que el protocolo liquida no puede
+reconstruirse contra una oferta criteria sin plomería del lado
+del contrato que no está en v1. Si tu única demanda entrante es
+colección-amplia, el camino práctico hoy es esperar un puja
+ítem-específico O dejar el listado en tu ask fijo y dejar que
+cualquier comprador lo ejecute directamente. No puedes liquidar
+manualmente un puja colección-amplio tú mismo — el NFT colateral
+vive en tu vault de Vaipakam, y las órdenes Seaport del lado de
+Vaipakam son la única forma de liquidación autorizada.
+
+En colecciones que aplican tarifas de protocolo de OpenSea y/o
+royalties de creador, la aplicación SÍ renderiza el panel de ofertas —
+el consulta del calendario de tarifas desde la API de OpenSea se
+trata como asesor; los datos reales de fulfillment se fetcean
+EN TIEMPO DE CLICK DE MATCH. El panel Match se renderiza
+independientemente del estado del consulta del calendario de tarifas;
+el consulta de fulfillment en tiempo de click es el barrera. Si ese
+consulta falla (rate limit, caída de API, o forma de colección no
+soportada), el handler del lado de la aplicación del click ABORTA
+antes de que se construya cualquier transacción
+`NFTPrepayListingAtomicFacet.matchOpenSeaOffer` — sin calldata,
+sin prompt de firma, sin revert. La función on-chain en sí no es
+un selector que retorne `bool`; cuando sí corre retorna un
+`bytes32` orderHash o revierte. Así que el panel de una colección
+con tarifas obligatorias puede mostrar ofertas que puedes
+explorar pero no todas son clickeables-para-match en un momento
+dado.
+
+Cuando encuentras una oferta aceptable y haces click en **Match
+offer**, la aplicación abre el cuadro de confirmación **Confirmar match**, que reitera el
+valor emparejado (el monto bruto de la oferta de OpenSea — NO el
+monto neto al que el diamond liquida; en colecciones con tarifas
+obligatorias
+`NFTPrepayListingAtomicFacet.matchOpenSeaOffer` calcula
+`effectiveAsk = offerValue - bidderFeeTotal` antes de correr la
+división prestamista / tesorería / prestatario, así que el neto
+que el diamond realmente distribuye es menor que el importe principal mostrado del
+cuadro de confirmación) y da una explicación genérica del flujo atomic-match.
+Después de confirmar, la aplicación envía una sola transacción
+`matchOpenSeaOffer` que paquetiza la oferta del postor con una
+contra-orden recién construida del lado del diamond en una sola
+llamada `matchAdvancedOrders` de Seaport — el fulfillment del
+postor, el leg lado-listing de la contra-orden (haya o no tenido
+un prepay listing v1 previo vivo; el camino atómico soporta
+`existingHash == 0`), y la cascada de liquidación del diamond
+aterrizan atómicamente en un bloque. La transacción ya sea tiene
+éxito completamente (préstamo liquidado, NFT transferido,
+ingresos de venta divididos) o revierte completamente (nada se
+mueve), y NO HAY ventana entre la rotación del listing y la
+liquidación en la que un comprador tercero pudiera entrar al
+precio matched.
+
+> **Sin ventana de carrera — atómico por construcción.** Este es
+> el cierre estructural del patrón v1 de dos pasos "cancel +
+> post": bajo v1 la aplicación rotaría el listing como una transacción
+> separada `updatePrepayListing`, dejando el precio rotado vivo
+> en OpenSea hasta que el `fulfillOrder` del postor aterrice en
+> un bloque posterior — cualquiera mirando el mempool podría
+> snipear al postor fuera del precio que pujó. El camino atómico
+> cierra ese hueco vinculando ambas órdenes en una llamada
+> Seaport match: o el postor ejecuta al precio acordado o la
+> transacción entera revierte.
+
+**Lo que aún quieres verificar antes de hacer click en Match:**
+
+- **Confirma el valor emparejado en el cuadro de confirmación.** El cuadro de confirmación muestra el
+  monto bruto de la oferta de OpenSea. En colecciones con
+  tarifas obligatorias, el diamond liquida contra el effective
+  ask neto después de legs de tarifa de mercado / creador
+  del lado del postor, así que el valor del cuadro de confirmación puede ser
+  mayor que el monto usado para la división prestamista /
+  tesorería / prestatario. La dirección del postor y la división
+  precisa no están desglosadas ni en el cuadro de confirmación NI en la fila del
+  panel OpenSea Offers (la fila muestra valor, payment token,
+  tipo de oferta, postor truncado, y end time). La división se
+  aplica on-chain por el diamond en la liquidación — el buffer
+  de liquidación del protocolo garantiza que el effective ask
+  cubra el entitlement de liquidación del prestamista (que ya
+  incluye principal más el cupón completo en préstamos
+  full-term-interest o el interés pro-rata de otra manera) más
+  el recorte de tesorería, así que la división siempre es al
+  menos neutral para ti. Si quieres ver la división proyectada
+  antes de confirmar, el diamond expone
+  `PrepayListingFacet.getPrepayContext(loanId, asOfTimestamp)`
+  como una vista llamable — retorna los legs de prestamista y
+  tesorería que la cascada de liquidación enrutará al timestamp
+  dado, y el resto es tuyo.
+- **Revisa la postura de tarifas de OpenSea para la colección.**
+  Si la colección aplica tarifas de protocolo de OpenSea o
+  royalties de creador, el camino atómico necesita plomería
+  SignedZone `extraData` / criteria-resolver que la aplicación consultaa
+  vía el proxy de fulfillment-data de OpenSea del agente (PR
+  #349) EN TIEMPO DE CLICK DE MATCH. El panel Match se renderiza
+  independientemente del estado del consulta del calendario de
+  tarifas; el consulta de fulfillment en tiempo de click es el
+  barrera. Si ese consulta falla (rate limit, caída de API, forma de
+  colección no soportada), el handler del click del lado de la
+  aplicación aborta antes de construir la transacción on-chain
+  `matchOpenSeaOffer` — no se construye calldata, no se dispara
+  prompt de firma, no se muestra banner por adelantado. Puedes
+  reintentar el click después (el consulta puede haber sido solo un
+  blip transitorio de API), o ejecutar el listing directamente
+  en OpenSea al ask listado mientras tanto.
+
+---
+
+## Cómo funciona realmente la liquidación
+
+Las Divulgaciones de Riesgo que aceptaste al momento de la oferta resumen el resultado en el peor de los casos en dos frases. Esta sección explica la mecánica subyacente, útil si quieres entender POR QUÉ existe el respaldo en especie (in-kind fallback), o cuál de las cuatro ramas tomaría realmente tu préstamo.
+
+La función del contrato que decide la división es `LibFallback.computeFallbackEntitlements`. Recorre cuatro casos en orden; el PRIMERO que coincide es el que se ejecuta.
+
+<a id="liquidation-mechanics.case-1"></a>
+
+### Caso 1 — Oráculo disponible, colateral vale ≥ monto adeudado
+
+El camino saludable. Los feeds de precios de Chainlink responden, el quórum secundario Soft 2-de-N (Tellor + API3 + DIA) no ha discrepado, y el colateral incautado cubre el monto adeudado cuando se valora contra el oráculo.
+
+Qué sucede:
+
+- El prestamista recibe **activos de colateral** por valor de (principal + intereses acumulados + un bono de respaldo del 3%), valorados en el oráculo. En efecto: el prestamista es compensado a valor justo, pagado en el activo de colateral en lugar del activo prestado.
+- La tesorería recibe una prima del 2% del principal, también valorada en colateral.
+- El prestatario recibe el **remanente** del colateral de vuelta. Este es un reembolso real — es el exceso de colateralización que no fue necesario para cubrir la reclamación del prestamista.
+
+Ejemplo práctico: un préstamo de 1000 USDC contra 0.6 WETH ($3000 de colateral, $1000 de deuda). El oráculo valora el ETH en $5000 / WETH; deuda + intereses + bono = $1050. El prestamista recibe 0.21 WETH (valor de $1050), la tesorería recibe 0.004 WETH (valor de $20 de la prima del 2%), el prestatario recibe los ~0.386 WETH restantes.
+
+<a id="liquidation-mechanics.case-2"></a>
+
+### Caso 2 — Oráculo disponible, colateral vale < monto adeudado
+
+El camino "bajo el agua". El oráculo funciona, pero el colateral incautado vale menos que el monto adeudado incluso al precio del oráculo. Común en caídas de activos volátiles donde el valor del colateral cae más rápido de lo que el HF puede reaccionar.
+
+Qué sucede:
+
+- El prestamista recibe **TODO** el colateral incautado, en el activo de colateral.
+- La tesorería no recibe nada.
+- El prestatario no recibe nada — no hay remanente para reembolsar.
+
+El prestamista absorbe el déficit. No existe ninguna reclamación posterior contra el prestatario, el protocolo o cualquier tercero. Este es el caso sobre el cual advierte específicamente la línea "la recuperación puede ser menor que el activo prestado" de las Divulgaciones de Riesgo.
+
+Ejemplo práctico: mismo préstamo de 1000 USDC / 0.6 WETH, pero el ETH cae a $1500 / WETH. El colateral ahora vale $900; la deuda es de $1050. El prestamista recibe los 0.6 WETH íntegros (valor de $900), tesorería 0, prestatario 0.
+
+<a id="liquidation-mechanics.case-3"></a>
+
+### Caso 3 — Quórum del oráculo NO DISPONIBLE
+
+El camino del "quórum oscuro". La obsolescencia de Chainlink supera el techo de volatilidad Y el quórum secundario 2-de-N no puede ponerse de acuerdo (cada secundario está fuera de línea o discrepa con el primario). El protocolo no tiene un precio confiable para ninguno de los lados del préstamo, por lo que no puede calcular una división justa.
+
+Qué sucede:
+
+- El prestamista recibe **TODO** el colateral incautado, en el activo de colateral, **independientemente del valor calculado** (porque ningún cálculo es confiable).
+- La tesorería no recibe nada.
+- El prestatario no recibe nada.
+
+Mismo pago que el Caso 2, pero alcanzado por una razón fundamentalmente diferente: el protocolo no está decidiendo que "el colateral vale menos que la deuda" — está decidiendo "No puedo confiar en ningún número aquí, así que el prestamista recibe la canasta incautada completa y absorbe lo que sea que valga en el mercado abierto".
+
+Se emite un evento on-chain diferente (`LiquidationFallbackOracleUnavailable`) para que los auditores puedan distinguir los dos caminos en el análisis post-mortem.
+
+<a id="liquidation-mechanics.case-4"></a>
+
+### Caso 4 — Activo ilíquido en cualquier lado
+
+El camino de activos ilíquidos. El activo prestado, el activo de colateral, o ambos no califican como Líquidos en el clasificador del protocolo (sin feed de Chainlink, o sin pool de liquidez concentrada tipo Uniswap-V3 por encima del umbral de volumen). Común para colateral NFT y tokens de baja liquidez.
+
+Qué sucede al momento del default:
+
+- El prestamista recibe el **colateral completo** en especie, independientemente del valor de mercado.
+- No hay partición entre "monto adeudado" y "remanente" — no se puede aplicar la valoración del oráculo.
+- El activo puede valer materialmente más o menos que el monto adeudado. Sin garantía de reventa.
+
+Ambas partes consintieron esto cuando se creó la oferta — la cláusula de activos ilíquidos de las Divulgaciones de Riesgo cubre exactamente este caso. No puedes llegar a esta rama a menos que ambas partes hayan elegido a sabiendas realizar un préstamo que involucre un activo ilíquido.
+
+<a id="liquidation-mechanics.why-in-kind"></a>
+
+### ¿Por qué en especie, por qué no siempre efectivo?
+
+Tres razones por las que el protocolo paga en unidades del activo de colateral en lugar de cambiar siempre al activo prestado:
+
+- **Corte de Secuenciador / DEX**: cuando el protocolo no puede ejecutar un swap de forma segura (slippage > 6%, liquidez escasa, reversión de DEX, secuenciador caído), la acción más segura es entregar lo que ya tiene — el colateral incautado — directamente. Forzar un swap a cualquier costo consolidaría las pérdidas.
+- **Escenario de cisne negro**: en cascadas volátiles, un camino con oráculo disponible puede desaparecer en cuestión de minutos. Mantener el respaldo en especie pre-instalado permite que el protocolo siga funcionando incluso cuando cada fuente de precio está degradada.
+- **Recuperación por par de contrapartes**: al momento de reclamar, el prestamista (o su bot keeper) obtiene una segunda oportunidad a través del failover completo de 4 DEX. Si las condiciones se han normalizado para entonces, pueden vender el colateral en especie por el activo prestado a través de la misma infraestructura de enrutamiento que intentó el camino al momento de la liquidación.
+
+<a id="liquidation-mechanics.claim-time-retry"></a>
+
+### Reintento al momento de reclamar
+
+`ClaimFacet.claimAsLenderWithRetry` permite que el prestamista (o un keeper que actúe sobre el NFT del prestamista) proporcione una lista de reintentos ordenada de llamadas a adaptadores de swap (0x → 1inch → Uniswap V3 → Balancer V2) cuando el préstamo está en `FallbackPending`. La librería itera la lista, confirma al primer éxito, y reescribe las reclamaciones del prestamista + prestatario a ingresos en el activo principal.
+
+El fracaso total deja intacta la división de colateral registrada y transiciona el préstamo de forma terminal a Defaulted — momento en el cual el prestamista toma el colateral en especie y es libre de venderlo a través de cualquier vía externa.
+
+<a id="liquidation-mechanics.internal-match-rescue"></a>
+
+### Rescate por match interno pre-reclamación
+
+Antes de que se ejecute cualquier swap externo — en la liquidación por HF, en el default por tiempo, Y al momento de reclamar — el protocolo primero verifica si existe un **préstamo en dirección opuesta** que pueda liquidar este sin ninguna intervención de DEX.
+
+Si el préstamo A necesita vender WETH por USDC y el préstamo B necesita vender USDC por WETH, los dos pueden emparejarse directamente: el colateral de A cubre la deuda de B y viceversa, valorado al oráculo del protocolo. Sin agregador, sin slippage, sin comisión de swap. El prestatario conserva mucho más de su colateral; el prestamista es compensado al precio del oráculo.
+
+Este camino de match interno se ejecuta automáticamente:
+
+- **En la liquidación por HF**: cuando un keeper llama a liquidar y existe una contraparte opuesta, el protocolo liquida internamente en lugar de realizar el swap. El keeper sigue ganando un incentivo de matcher.
+- **En el default por tiempo**: misma verificación antes del swap por default.
+- **Al momento de reclamar**: cuando un prestamista reclama un préstamo estancado en `FallbackPending`, el protocolo vuelve a verificar si hay una contraparte opuesta. Esta es una verdadera segunda oportunidad: el grupo de préstamos emparejables crece continuamente, por lo que una contraparte que no existía cuando la liquidación falló por primera vez puede existir para cuando reclames.
+
+Un préstamo que terminó en `FallbackPending` porque su swap al momento de la liquidación falló *transitoriamente* (un pico momentáneo de slippage, una reversión de DEX, un tick de oráculo obsoleto) es un candidato ideal para el rescate — el colateral subyacente suele ser todavía perfectamente líquido, y un préstamo opuesto puede liquidarlo limpiamente. El protocolo solo requiere que el oráculo aún pueda valorar el activo; no requiere que el DEX tenga profundidad, porque un match interno nunca toca un DEX.
+
+Si no existe una contraparte opuesta, el protocolo cae en el camino del agregador externo descrito anteriormente. El match interno es una optimización de "mejor si está disponible", nunca un bloqueador.
 
 ---
 
@@ -1117,3 +1644,67 @@ de oferta. Un comprador completa la venta; puedes cancelar antes
 de que la venta se complete. Opcionalmente delegable a un keeper
 que tenga el permiso de "completar venta de préstamo"; el paso
 de iniciar en sí permanece sólo de usuario.
+
+---
+
+## Recuperación de tokens atascados
+
+Esta sección cubre un CASO EXCEPCIONAL que la mayoría de los usuarios nunca necesitarán. Lee todo antes de hacer clic en el enlace de recuperación en la parte inferior — declarar una fuente incorrecta puede bloquear tu vault bajo la política de sanciones del protocolo.
+
+<a id="stuck-recovery.what"></a>
+
+### Qué significa "token atascado"
+
+Tu proxy de Vaipakam Vault es un almacenamiento interno del protocolo. NO es una dirección de depósito. Cada depósito soportado por el protocolo fluye a través de los puntos de entrada de los facets de Vaipakam, que extraen fondos de tu billetera hacia tu vault como parte de una creación de oferta, aceptación de préstamo u operación de staking. Los tokens que llegan al vault FUERA de ese flujo — una transferencia directa `IERC20.transfer` desde una billetera o un retiro de un CEX que copió y pegó la dirección de tu vault — se quedan allí sin contabilidad del protocolo. El Visor de Activos los oculta al mostrar solo el saldo rastreado por el protocolo.
+
+Hay dos formas en que los tokens se atascan:
+
+1. **Los enviaste tú mismo.** Copiaste la dirección de tu vault (desde el Dashboard o un explorador de bloques) en un campo de retiro de un CEX o en un formulario de envío de tokens de una billetera, y lo enviaste. Los tokens llegaron a tu vault sin pasar por la ruta de depósito del protocolo.
+
+2. **Un tercero los envió ("ataque de polvo" o dust attack).** Alguien transfirió una pequeña cantidad a tu vault desde una billetera marcada, con la esperanza de asociar tu dirección con su reputación. Este es un vector de ataque real contra direcciones de alto perfil en cadenas sin permisos.
+
+<a id="stuck-recovery.taint-poisoning"></a>
+
+### Sobre el "envenenamiento por rastro"
+
+Si el remitente tercero está en una lista de sanciones, las herramientas genéricas de análisis on-chain pueden marcar tu vault como "adyacente a sanciones" aunque nunca hayas tocado los tokens entrantes. No hay forma on-chain de deshacer esto — el evento de transferencia es permanente. La contabilidad INTERNA de Vaipakam no se ve afectada (solo rastreamos depósitos mediados por el protocolo, el polvo nunca entra en nuestro contador), por lo que tus préstamos / stakes / reclamaciones continúan funcionando normalmente. Pero las herramientas externas que no entienden nuestra contabilidad pueden mostrar advertencias.
+
+<a id="stuck-recovery.dont-recover"></a>
+
+### Cuándo NO recuperar
+
+Si NO enviaste los tokens tú mismo, **no intentes recuperarlos**. La recuperación requiere que declares la dirección del remitente. Si esa dirección está en la lista de sanciones, tu vault quedará bloqueado bajo la política de sanciones del protocolo hasta que la fuente sea eliminada de la lista por el oráculo.
+
+Los tokens que no enviaste no son tuyos. Recuperarlos declarando una dirección "limpia" que realmente no posees también es una mala idea — el protocolo no puede verificar la declaración on-chain, pero las herramientas externas de oráculo pueden discrepar más adelante.
+
+La medida segura es ignorar el polvo no solicitado. No afecta tu saldo del protocolo ni ningún préstamo u oferta activa.
+
+<a id="stuck-recovery.when-recover"></a>
+
+### Cuándo SÍ recuperar
+
+Enviaste los tokens tú mismo por error, controlas la billetera de origen y sabes que el origen no está en ninguna lista de sanciones (tu propia EOA, una billetera caliente de un CEX de la que retiraste, etc.).
+
+<a id="stuck-recovery.flow"></a>
+
+### Flujo de recuperación
+
+1. Visita la [página de recuperación](/app/recover).
+2. Ingresa la dirección del contrato del token, el origen desde el que enviaste y el monto.
+3. Revisa cuidadosamente el reconocimiento en pantalla.
+4. Escribe "CONFIRM" para habilitar la firma.
+5. Firma el reconocimiento EIP-712 en tu billetera.
+6. Envía la transacción.
+
+Dos resultados:
+
+- **Origen limpio** → los tokens vuelven a tu EOA.
+- **Origen marcado** → los tokens se quedan en el vault, tu vault queda bloqueado bajo la política de sanciones del protocolo. El bloqueo se levanta automáticamente si la dirección es eliminada posteriormente del oráculo de sanciones.
+
+<a id="stuck-recovery.disown"></a>
+
+### Desautorización de tokens no solicitados (registro de auditoría de cumplimiento)
+
+Si deseas un registro público on-chain que afirme que cierto saldo de tokens en tu vault NO es tuyo, el protocolo proporciona una función `disown(token)`. Emite un evento (`TokenDisowned`) y no cambia nada más — los tokens se quedan en el vault como antes. Útil en disputas de cumplimiento si un CEX o regulador pregunta "¿recibió estos fondos?": puedes señalar el evento on-chain.
+
+La función disown está expuesta solo a través de llamada directa al contrato por ahora; el frontend de Vaipakam no la muestra como un botón. Usa una interfaz "Write Contract" de un explorador de bloques o una herramienta de interacción con contratos para llamarla.
