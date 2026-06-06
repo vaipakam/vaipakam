@@ -1,0 +1,466 @@
+// src/facets/SwapToRepayFacet.sol
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.29;
+
+import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLifecycle} from "../libraries/LibLifecycle.sol";
+import {LibAuth} from "../libraries/LibAuth.sol";
+import {LibEntitlement} from "../libraries/LibEntitlement.sol";
+import {LibSettlement} from "../libraries/LibSettlement.sol";
+import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
+import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
+import {LibSwap} from "../libraries/LibSwap.sol";
+import {LibFallback} from "../libraries/LibFallback.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
+import {DiamondPausable} from "../libraries/LibPausable.sol";
+import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
+import {RiskFacet} from "./RiskFacet.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+
+/**
+ * @title SwapToRepayFacet
+ * @author Vaipakam Developer Team
+ * @notice T-090 — Borrower-initiated swap-to-repay surface. Lets the
+ *         borrower swap their collateral asset into the loan's principal
+ *         asset and apply the proceeds to settlement in a single
+ *         transaction, instead of the 4-step withdraw → external swap →
+ *         re-deposit → repay flow.
+ * @dev Part of the Diamond Standard (EIP-2535). Reentrancy-guarded,
+ *      pausable. ERC20-on-ERC20 loans only in v1; NFT collateral has no
+ *      swap path at repay time today (T-086's prepay-listing surface is
+ *      gated to the pre-grace window).
+ *
+ *      Two entry points:
+ *        {swapToRepayFull}    — close-out via swap. Respects
+ *                               `loan.useFullTermInterest`.
+ *        {swapToRepayPartial} — partial principal reduction via swap,
+ *                               gated on `loan.allowsPartialRepay`.
+ *
+ *      Slippage cap: `cfgMaxSwapToRepaySlippageBps()` (default 300 bps =
+ *      3% — tighter than the liquidation cap because the borrower picks
+ *      the moment and can wait for better price action).
+ *
+ *      Auth: both entry points require `LibAuth.requireBorrower(loan)` —
+ *      no third-party "swap-on-behalf-of". The borrower's collateral is
+ *      at risk during the swap; consent must be the borrower's own.
+ *      Third parties can still use `RepayFacet.repayLoan` to repay on
+ *      the borrower's behalf with their own principal asset.
+ *
+ *      Surplus principal (when a tight quote delivers more than the
+ *      loan requires) routes to the borrower's vault — they took the
+ *      slippage risk, they get the symmetric upside.
+ *
+ *      Total swap failure (every adapter reverted) reverts the whole
+ *      tx — no soft-fallback in v1. Borrower can retry with better
+ *      routing.
+ *
+ *      Yield-fee VPFI discount (RepayFacet:309-321) is NOT applied on
+ *      this path in v1 — see docs/DesignsAndPlans/SwapToRepay.md §6.2.
+ *      Tracked for v1.1.
+ */
+contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors {
+    using SafeERC20 for IERC20;
+
+    /// @notice Emitted on a successful full swap-to-repay close-out.
+    /// @param loanId The loan being settled.
+    /// @param borrower The borrower (== msg.sender — caller authority).
+    /// @param collateralIn The collateral consumed by the swap.
+    /// @param principalOut The principal asset received from the swap.
+    /// @param adapterUsed The `LibSwap` adapter index that succeeded.
+    /// @custom:event-category state-change/loan-mutation
+    event SwapToRepayExecuted(
+        uint256 indexed loanId,
+        address indexed borrower,
+        uint256 collateralIn,
+        uint256 principalOut,
+        uint256 adapterUsed
+    );
+
+    /// @notice Emitted on a successful partial swap-to-repay (principal
+    ///         reduced; loan continues in Active).
+    /// @param loanId The loan being partially repaid.
+    /// @param borrower The borrower (== msg.sender).
+    /// @param collateralIn The collateral consumed by the swap.
+    /// @param principalOut The principal asset received from the swap.
+    /// @param partialPrincipal The principal amount retired.
+    /// @param adapterUsed The `LibSwap` adapter index that succeeded.
+    /// @custom:event-category state-change/loan-mutation
+    event SwapToRepayPartialExecuted(
+        uint256 indexed loanId,
+        address indexed borrower,
+        uint256 collateralIn,
+        uint256 principalOut,
+        uint256 partialPrincipal,
+        uint256 adapterUsed
+    );
+
+    /// @notice Pre-flight check failed: the slippage floor would not
+    ///         cover the loan's required principal payoff. Borrower
+    ///         must raise `maxCollateralIn` or wait for better price
+    ///         action.
+    error SwapBoundsInsufficient();
+
+    /// @notice `LibSwap.swapWithFailover` returned `(success=false)` —
+    ///         every adapter in the caller's try-list reverted.
+    error SwapAllAdaptersFailed();
+
+    /// @notice The loan isn't ERC20-on-ERC20 — NFT collateral / NFT
+    ///         rental / illiquid-asset loans are out of scope for the
+    ///         swap-to-repay surface in v1.
+    error UnsupportedLoanShape();
+
+    /// @notice Partial swap-to-repay proceeds would retire the full
+    ///         loan principal. To avoid leaving an Active zero-principal
+    ///         loan, the borrower must use `swapToRepayFull` instead —
+    ///         which carries the close-out side-effects (Repaid status,
+    ///         position-NFT lifecycle, reward close).
+    error PartialWouldRetireFullPrincipal();
+
+    /// @notice Repayment attempted past the loan's grace period —
+    ///         beyond that point only `DefaultedFacet` can resolve.
+    ///         Mirrored from `RepayFacet`.
+    error RepaymentPastGracePeriod();
+
+    /// @notice The offer was not opted into partial repay at creation;
+    ///         the partial swap-to-repay path requires the lender's
+    ///         pre-consent via `Offer.allowsPartialRepay`. Mirrored
+    ///         from `RepayFacet`.
+    error PartialRepayNotAllowed();
+
+    /// @notice Partial swap-to-repay proceeds resolved to less than
+    ///         the asset-level `minPartialBps` floor (`loan.principal *
+    ///         minPartialBps / BASIS_POINTS`). Mirrored from `RepayFacet`.
+    error InsufficientPartialAmount();
+
+    /// @notice Full swap-to-repay: swap the borrower's collateral asset
+    ///         for the loan's principal asset and close the loan in
+    ///         one transaction.
+    /// @dev    Only `Active` loans (FallbackPending cure intentionally
+    ///         out-of-scope in v1 to keep the slippage surface narrow).
+    ///         ERC20-on-ERC20 loans only.
+    ///
+    ///         Slippage floor computed from
+    ///         `LibFallback.expectedSwapOutput` × (BPS - cap) / BPS and
+    ///         passed to `LibSwap` as `minOutput`. The settlement-debt
+    ///         requirement is a SEPARATE post-swap assertion — passing
+    ///         `requiredPrincipal` to LibSwap directly would let a
+    ///         too-generous `maxCollateralIn` get consumed at arbitrarily
+    ///         bad pricing (Codex round-1 P1 #1).
+    ///
+    ///         Lender / treasury / borrower distribution mirrors
+    ///         `RepayFacet.repayLoan` for diamond-held proceeds:
+    ///         direct `safeTransfer` to each destination + matching
+    ///         `recordVaultDeposit` / `recordTreasuryAccrual` —
+    ///         NOT `vaultDepositERC20From` (would need a self-allowance
+    ///         the diamond never sets; Codex round-1 P1 #3).
+    ///
+    /// @param loanId           The loan to settle.
+    /// @param adapterCalls     Keeper-ranked 4-DEX try-list
+    ///                          (`LibSwap.AdapterCall[]`).
+    /// @param maxCollateralIn  Upper bound on collateral the caller
+    ///                          permits the diamond to withdraw + swap.
+    ///                          Must be ≤ `loan.collateralAmount`.
+    function swapToRepayFull(
+        uint256 loanId,
+        LibSwap.AdapterCall[] calldata adapterCalls,
+        uint256 maxCollateralIn
+    ) external nonReentrant whenNotPaused {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+
+        // ── Pre-flight gates ─────────────────────────────────────────
+        if (loan.status != LibVaipakam.LoanStatus.Active)
+            revert InvalidLoanStatus();
+        if (loan.assetType != LibVaipakam.AssetType.ERC20)
+            revert UnsupportedLoanShape();
+        if (
+            loan.collateralLiquidity != LibVaipakam.LiquidityStatus.Liquid ||
+            loan.principalLiquidity != LibVaipakam.LiquidityStatus.Liquid
+        ) revert UnsupportedLoanShape();
+        LibAuth.requireBorrower(loan);
+
+        // Block lender-side self-repay (mirrors RepayFacet:273-278).
+        if (msg.sender == loan.lender) revert LenderCannotRepayOwnLoan();
+        if (
+            IERC721(address(this)).ownerOf(loan.lenderTokenId) == msg.sender
+        ) revert LenderCannotRepayOwnLoan();
+
+        if (maxCollateralIn == 0 || maxCollateralIn > loan.collateralAmount)
+            revert InvalidAmount();
+
+        uint256 endTime = loan.startTime + loan.durationDays * LibVaipakam.ONE_DAY;
+        uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
+        if (block.timestamp > graceEnd) revert RepaymentPastGracePeriod();
+
+        // ── Build the settlement plan + required-principal target ────
+        uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
+        LibSettlement.ERC20Settlement memory plan = LibSettlement.computeRepayment(
+            loan,
+            lateFee,
+            block.timestamp
+        );
+        uint256 requiredPrincipal = plan.lenderDue + plan.treasuryShare;
+
+        // ── Slippage floor pre-flight (Codex round-1 P1 #1) ──────────
+        // Pass the slippage-floor to LibSwap, not requiredPrincipal —
+        // the latter would let any maxCollateralIn slip through at
+        // arbitrarily bad pricing as long as the debt closed.
+        uint256 expectedProceeds = LibFallback.expectedSwapOutput(
+            address(this),
+            loan.collateralAsset,
+            loan.principalAsset,
+            maxCollateralIn
+        );
+        uint256 minPrincipalOut = (expectedProceeds *
+            (LibVaipakam.BASIS_POINTS - LibVaipakam.cfgMaxSwapToRepaySlippageBps())) /
+            LibVaipakam.BASIS_POINTS;
+        if (minPrincipalOut < requiredPrincipal) revert SwapBoundsInsufficient();
+
+        // ── Withdraw collateral to diamond + execute swap ────────────
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                VaultFactoryFacet.vaultWithdrawERC20.selector,
+                loan.borrower,
+                loan.collateralAsset,
+                address(this),
+                maxCollateralIn
+            ),
+            VaultWithdrawFailed.selector
+        );
+
+        (bool success, uint256 outputAmount, uint256 adapterUsed) = LibSwap.swapWithFailover(
+            loanId,
+            loan.collateralAsset,
+            loan.principalAsset,
+            maxCollateralIn,
+            minPrincipalOut,
+            address(this),
+            adapterCalls
+        );
+        if (!success) revert SwapAllAdaptersFailed();
+        // Slippage floor cleared the loan; the debt-cover bound is a
+        // separate post-swap assertion (Codex P2 #2).
+        if (outputAmount < requiredPrincipal) revert InsufficientProceeds();
+
+        // ── Settlement waterfall — diamond-held proceeds pattern
+        //    (Codex round-1 P1 #3 — mirrors RiskFacet:702-712) ────────
+        address treasury = LibFacet.getTreasury();
+        if (plan.treasuryShare > 0) {
+            IERC20(loan.principalAsset).safeTransfer(treasury, plan.treasuryShare);
+            LibFacet.recordTreasuryAccrual(loan.principalAsset, plan.treasuryShare);
+        }
+
+        address lenderVault = LibFacet.getOrCreateVault(loan.lender);
+        IERC20(loan.principalAsset).safeTransfer(lenderVault, plan.lenderDue);
+        LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, plan.lenderDue);
+
+        // Surplus principal → borrower vault (§9 — borrower took the
+        // slippage risk, gets the upside).
+        uint256 surplusPrincipal = outputAmount - requiredPrincipal;
+        address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
+        if (surplusPrincipal > 0) {
+            IERC20(loan.principalAsset).safeTransfer(borrowerVault, surplusPrincipal);
+            LibVaipakam.recordVaultDeposit(loan.borrower, loan.principalAsset, surplusPrincipal);
+        }
+
+        // ── Claim slots ──────────────────────────────────────────────
+        s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
+            asset: loan.principalAsset,
+            amount: plan.lenderDue,
+            assetType: LibVaipakam.AssetType.ERC20,
+            tokenId: 0,
+            quantity: 0,
+            claimed: false
+        });
+
+        // Codex round-1 P1 #2 — record the residual pledged collateral
+        // that was never withdrawn from the borrower's vault. The
+        // borrower keeps `collateralAmount - maxCollateralIn`; the
+        // ClaimFacet release path unlocks it on the Repaid transition.
+        uint256 residualCollateral = loan.collateralAmount - maxCollateralIn;
+        s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
+            asset: loan.collateralAsset,
+            amount: residualCollateral,
+            assetType: LibVaipakam.AssetType.ERC20,
+            tokenId: 0,
+            quantity: 0,
+            claimed: residualCollateral == 0
+        });
+
+        // ── Transition + close phase-2 reward accrual ────────────────
+        LibLifecycle.transition(
+            loan,
+            LibVaipakam.LoanStatus.Active,
+            LibVaipakam.LoanStatus.Repaid
+        );
+        LibInteractionRewards.closeLoan(
+            loanId,
+            /* borrowerClean */ true,
+            /* lenderForfeit */ false
+        );
+
+        emit SwapToRepayExecuted(
+            loanId,
+            loan.borrower,
+            maxCollateralIn,
+            outputAmount,
+            adapterUsed
+        );
+    }
+
+    /// @notice Partial swap-to-repay: swap a portion of the borrower's
+    ///         collateral for the principal asset and apply the proceeds
+    ///         to a partial principal reduction. Resets the accrual
+    ///         clock per `repayPartial` semantics.
+    /// @dev    Gated on `loan.allowsPartialRepay` (snapshotted from
+    ///         `Offer.allowsPartialRepay` at init). Post-swap HF check
+    ///         per `repayPartial:771-783`.
+    /// @param loanId               The loan to partially repay.
+    /// @param collateralSwapAmount The collateral input to swap.
+    /// @param adapterCalls         Keeper-ranked try-list.
+    function swapToRepayPartial(
+        uint256 loanId,
+        uint256 collateralSwapAmount,
+        LibSwap.AdapterCall[] calldata adapterCalls
+    ) external nonReentrant whenNotPaused {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+
+        // ── Pre-flight gates ─────────────────────────────────────────
+        if (loan.status != LibVaipakam.LoanStatus.Active)
+            revert InvalidLoanStatus();
+        if (loan.assetType != LibVaipakam.AssetType.ERC20)
+            revert UnsupportedLoanShape();
+        if (
+            loan.collateralLiquidity != LibVaipakam.LiquidityStatus.Liquid ||
+            loan.principalLiquidity != LibVaipakam.LiquidityStatus.Liquid
+        ) revert UnsupportedLoanShape();
+        LibAuth.requireBorrower(loan);
+        if (!loan.allowsPartialRepay) revert PartialRepayNotAllowed();
+
+        if (collateralSwapAmount == 0 || collateralSwapAmount > loan.collateralAmount)
+            revert InvalidAmount();
+
+        uint256 endTime = loan.startTime + loan.durationDays * LibVaipakam.ONE_DAY;
+        uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
+        if (block.timestamp > graceEnd) revert RepaymentPastGracePeriod();
+
+        // ── Slippage floor pre-flight ────────────────────────────────
+        uint256 expectedProceeds = LibFallback.expectedSwapOutput(
+            address(this),
+            loan.collateralAsset,
+            loan.principalAsset,
+            collateralSwapAmount
+        );
+        uint256 minPrincipalOut = (expectedProceeds *
+            (LibVaipakam.BASIS_POINTS - LibVaipakam.cfgMaxSwapToRepaySlippageBps())) /
+            LibVaipakam.BASIS_POINTS;
+
+        // ── Withdraw + swap ──────────────────────────────────────────
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                VaultFactoryFacet.vaultWithdrawERC20.selector,
+                loan.borrower,
+                loan.collateralAsset,
+                address(this),
+                collateralSwapAmount
+            ),
+            VaultWithdrawFailed.selector
+        );
+
+        (bool success, uint256 outputAmount, uint256 adapterUsed) = LibSwap.swapWithFailover(
+            loanId,
+            loan.collateralAsset,
+            loan.principalAsset,
+            collateralSwapAmount,
+            minPrincipalOut,
+            address(this),
+            adapterCalls
+        );
+        if (!success) revert SwapAllAdaptersFailed();
+
+        // ── Accrued-interest split + partial bound ───────────────────
+        uint256 accrued = LibEntitlement.accruedInterestToTime(loan, block.timestamp);
+        (uint256 treasuryShare, uint256 lenderShare) = LibEntitlement.splitTreasury(accrued);
+
+        // Must at least cover the accrued interest.
+        if (outputAmount < lenderShare + treasuryShare) revert InsufficientProceeds();
+        uint256 partialPrincipal = outputAmount - lenderShare - treasuryShare;
+        if (partialPrincipal == 0) revert InsufficientProceeds();
+
+        // Codex round-1 P2 #3 — reject swaps that would retire the
+        // full principal; borrower must use `swapToRepayFull` for
+        // close-out side-effects.
+        if (partialPrincipal >= loan.principal)
+            revert PartialWouldRetireFullPrincipal();
+
+        uint256 minPartial = (loan.principal *
+            s.assetRiskParams[loan.principalAsset].minPartialBps) /
+            LibVaipakam.BASIS_POINTS;
+        if (partialPrincipal < minPartial) revert InsufficientPartialAmount();
+
+        // ── Settle waterfall — diamond-held pattern ──────────────────
+        address treasury = LibFacet.getTreasury();
+        if (treasuryShare > 0) {
+            IERC20(loan.principalAsset).safeTransfer(treasury, treasuryShare);
+            LibFacet.recordTreasuryAccrual(loan.principalAsset, treasuryShare);
+        }
+
+        address lenderVault = LibFacet.getOrCreateVault(loan.lender);
+        uint256 lenderTotal = lenderShare + partialPrincipal;
+        IERC20(loan.principalAsset).safeTransfer(lenderVault, lenderTotal);
+        LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, lenderTotal);
+
+        // Any leftover principal (above accrued + partialPrincipal) →
+        // borrower vault (same surplus treatment as the full path).
+        uint256 surplus = outputAmount - treasuryShare - lenderTotal;
+        if (surplus > 0) {
+            address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
+            IERC20(loan.principalAsset).safeTransfer(borrowerVault, surplus);
+            LibVaipakam.recordVaultDeposit(loan.borrower, loan.principalAsset, surplus);
+        }
+
+        // ── Loan state updates ───────────────────────────────────────
+        unchecked {
+            loan.principal -= partialPrincipal;
+            // Codex round-1 P1 #4 — also reduce collateralAmount so
+            // HF / default / claim logic reflects true post-swap
+            // backing.
+            loan.collateralAmount -= collateralSwapAmount;
+        }
+        loan.startTime = uint64(block.timestamp); // reset accrual clock
+
+        // ── T-034 §4.5 — periodic-interest checkpoint advance
+        //    (mirror RepayFacet:679-706) ────────────────────────────
+        if (loan.periodicInterestCadence != LibVaipakam.PeriodicInterestCadence.None) {
+            uint256 newPaid = uint256(loan.interestPaidSinceLastPeriod) + accrued;
+            if (newPaid > type(uint128).max) newPaid = type(uint128).max;
+            loan.interestPaidSinceLastPeriod = SafeCast.toUint128(newPaid);
+            if (LibPeriodicInterest.canAdvanceCheckpointInline(loan)) {
+                LibPeriodicInterest.advanceCheckpoint(loan);
+            }
+        }
+
+        // ── Post-repay HF guard ──────────────────────────────────────
+        bytes memory hfResult = LibFacet.crossFacetStaticCall(
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            HealthFactorCalculationFailed.selector
+        );
+        uint256 hf = abi.decode(hfResult, (uint256));
+        if (hf < LibVaipakam.MIN_HEALTH_FACTOR) revert HealthFactorTooLow();
+
+        emit SwapToRepayPartialExecuted(
+            loanId,
+            loan.borrower,
+            collateralSwapAmount,
+            outputAmount,
+            partialPrincipal,
+            adapterUsed
+        );
+    }
+}

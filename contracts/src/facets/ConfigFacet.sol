@@ -62,6 +62,10 @@ contract ConfigFacet is DiamondAccessControl {
         uint16 maxSlippageBps,
         uint16 maxIncentiveBps
     );
+    /// @notice T-090 — Emitted when `setMaxSwapToRepaySlippageBps` updates
+    ///         the borrower-initiated swap-to-repay slippage ceiling.
+    /// @custom:event-category informational/config
+    event MaxSwapToRepaySlippageBpsSet(uint16 maxSlippageBps);
     /// @custom:event-category informational/config
     event RiskConfigSet(uint16 volatilityLtvThresholdBps, uint16 rentalBufferBps);
     /// @custom:event-category informational/config
@@ -832,6 +836,39 @@ contract ConfigFacet is DiamondAccessControl {
         c.maxLiquidationSlippageBps = maxSlippageBps;
         c.maxLiquidatorIncentiveBps = maxIncentiveBps;
         emit LiquidationConfigSet(handlingFeeBps, maxSlippageBps, maxIncentiveBps);
+    }
+
+    /**
+     * @notice T-090 — Set the borrower-initiated swap-to-repay slippage
+     *         ceiling (BPS). Sibling to `setLiquidationConfig`'s
+     *         `maxSlippageBps`. Pass `0` to reset to the protocol default
+     *         (`MAX_SWAP_TO_REPAY_SLIPPAGE_BPS` = 300 = 3%).
+     * @dev ADMIN_ROLE-only. Bounded by `MAX_SLIPPAGE_BPS` (2500 = 25%) —
+     *      the same upper bound that guards `setLiquidationConfig`'s
+     *      slippage knob. The default (300 = 3%) is intentionally tighter
+     *      than the liquidation cap (600 = 6%) because the borrower is
+     *      not on an adversarial clock and can wait for better price
+     *      action. Operators tuning above the default should consider
+     *      the borrower-protection consequence: each BPS raised lets a
+     *      worse DEX quote slip past the diamond's pre-flight check.
+     * @param maxSlippageBps The new max swap-to-repay slippage in BPS.
+     */
+    function setMaxSwapToRepaySlippageBps(uint16 maxSlippageBps)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (maxSlippageBps > MAX_SLIPPAGE_BPS) revert InvalidSlippageBps(maxSlippageBps, MAX_SLIPPAGE_BPS);
+        LibVaipakam.storageSlot().protocolCfg.maxSwapToRepaySlippageBps = maxSlippageBps;
+        emit MaxSwapToRepaySlippageBpsSet(maxSlippageBps);
+    }
+
+    /**
+     * @notice T-090 — Read the configured swap-to-repay slippage ceiling
+     *         (BPS). Returns the default (300) when the storage value is
+     *         the zero sentinel.
+     */
+    function getMaxSwapToRepaySlippageBps() external view returns (uint256) {
+        return LibVaipakam.cfgMaxSwapToRepaySlippageBps();
     }
 
     /**

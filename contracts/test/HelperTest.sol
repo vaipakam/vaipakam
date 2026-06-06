@@ -24,6 +24,7 @@ import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
@@ -546,6 +547,17 @@ contract HelperTest {
         selectors[4] = RepayFacet.previewPeriodicSettle.selector;
         selectors[5] = RepayFacet.nextPeriodCheckpoint.selector;
         selectors[6] = RepayFacet.settlePeriodicInterest.selector;
+    }
+
+    /// T-090 — Borrower-initiated swap-to-repay facet selectors.
+    function getSwapToRepayFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](2);
+        selectors[0] = SwapToRepayFacet.swapToRepayFull.selector;
+        selectors[1] = SwapToRepayFacet.swapToRepayPartial.selector;
     }
 
     function getDefaultedFacetSelectors()

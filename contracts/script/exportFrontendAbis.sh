@@ -114,6 +114,7 @@ FACETS=(
   "RiskFacet"
   "RiskMatchLiquidationFacet"
   "StakingRewardsFacet"
+  "SwapToRepayFacet"
   "TreasuryFacet"
   "VaipakamNFTFacet"
   "VpfiBuyAdapter"
