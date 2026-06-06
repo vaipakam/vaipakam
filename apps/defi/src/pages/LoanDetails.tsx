@@ -1071,13 +1071,17 @@ export default function LoanDetails() {
             )}
           </div>
 
-          {/* T-090 #403 — borrower-initiated swap-to-repay. Renders
-              only for ERC20-on-ERC20 loans where the caller is the
-              current borrower-NFT owner. The on-chain
-              `SwapToRepayFacet.swapToRepayFull` enforces the same
-              gating server-side so this is purely a UX-quality
-              filter — hiding the panel when it would always revert. */}
+          {/* T-090 #403 — borrower-initiated swap-to-repay. Mirrors
+              the on-chain `SwapToRepayFacet.swapToRepayFull` gating
+              EXACTLY so we never show a button that would always
+              revert:
+              - borrower-NFT-owner authority (Sub 1 Codex round-1 P1 #3)
+              - Active status only (FallbackPending rejected on-chain)
+              - both asset types ERC20 (P2 #4 Sub 1)
+              - both legs Liquid (`UnsupportedLoanShape` otherwise) */}
           {isBorrower &&
+            isActive &&
+            !isIlliquidLoan &&
             Number(loan.assetType) === AssetType.ERC20 &&
             Number(loan.collateralAssetType) === AssetType.ERC20 &&
             activeDiamondAddr && (
@@ -1088,6 +1092,7 @@ export default function LoanDetails() {
                 collateralAmount={loan.collateralAmount}
                 principalAsset={loan.principalAsset as Address}
                 diamondAddress={activeDiamondAddr as Address}
+                onAfterSuccess={loadLoan}
               />
             )}
 

@@ -3,7 +3,6 @@ import { ArrowRightLeft, AlertTriangle, Loader2, RefreshCw } from 'lucide-react'
 import type { Address } from 'viem';
 import { useWallet } from '../../context/WalletContext';
 import { useDiamondContract } from '../../contracts/useDiamond';
-import { useERC20 } from '../../contracts/useERC20';
 import { useLiquidationQuotes } from '../../hooks/useLiquidationQuotes';
 import type { OrchestratedQuotes } from '../../lib/swapQuoteService';
 import { decodeContractError } from '@vaipakam/lib/decodeContractError';
@@ -20,6 +19,12 @@ interface SwapToRepayPanelProps {
   /** The diamond address — `taker` for aggregator quotes, target of
    *  the swapToRepayFull call. */
   diamondAddress: Address;
+  /** Called after the tx confirms so the parent page can refresh
+   *  loan state. Without this the parent would keep rendering the
+   *  pre-swap (Active) loan with the swap panel enabled, letting a
+   *  user accidentally submit a second tx that always reverts
+   *  (Codex PR #409 round-1 P2 #2). */
+  onAfterSuccess?: () => void | Promise<void>;
 }
 
 const WORKER_ORIGIN =
@@ -51,13 +56,16 @@ const KIND_LABEL: Record<
  *      liquidation path uses; sell-side = collateral, buy-side =
  *      principal, same shape).
  *   2. Display the best quote + fallback plan + unavailable venues.
- *   3. Ensure the borrower has approved the diamond to pull
- *      `maxCollateralIn` of the collateral asset.
- *   4. Submit `swapToRepayFull(loanId, calls, maxCollateralIn)`. The
- *      contract validates the slippage cap, executes the swap via the
- *      ranked try-list, and applies proceeds to the settlement
- *      waterfall. Total swap failure (all adapters revert) reverts
- *      the whole tx — borrower can retry with fresher quotes.
+ *   3. Submit `swapToRepayFull(loanId, calls, maxCollateralIn)`. The
+ *      contract pulls the pre-pledged collateral from the borrower's
+ *      protocol vault internally (no wallet allowance needed —
+ *      Codex PR #409 P2 #3), validates the slippage cap, executes
+ *      the swap via the ranked try-list, and applies proceeds to
+ *      the settlement waterfall. Total swap failure (all adapters
+ *      revert) reverts the whole tx — borrower can retry with
+ *      fresher quotes.
+ *   4. Call `onAfterSuccess` so the parent page refreshes the loan
+ *      state, hiding the panel and reflecting the Repaid transition.
  *
  * Partial-reduction mode (`swapToRepayPartial`) is a v1.x follow-up;
  * this MVP ships full-close only.
@@ -69,10 +77,10 @@ export function SwapToRepayPanel({
   collateralAmount,
   principalAsset,
   diamondAddress,
+  onAfterSuccess,
 }: SwapToRepayPanelProps) {
   const { address, isCorrectChain } = useWallet();
   const diamond = useDiamondContract();
-  const collateralErc20 = useERC20(collateralAsset);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -94,19 +102,17 @@ export function SwapToRepayPanel({
     workerOrigin: WORKER_ORIGIN,
   });
 
-  const canWrite =
-    !!address && isCorrectChain && !!diamond && !!collateralErc20;
+  const canWrite = !!address && isCorrectChain && !!diamond;
 
-  /** Ensure the borrower has approved the diamond for at least
-   *  `needed` of the collateral asset. Mirrors the
-   *  `ensureErc20Allowance` pattern at `LoanDetails.tsx:277-287`. */
-  const ensureCollateralAllowance = async (needed: bigint): Promise<void> => {
-    if (!collateralErc20 || !address || needed === 0n) return;
-    const current = (await collateralErc20.allowance(address, diamondAddress)) as bigint;
-    if (current >= needed) return;
-    const tx = await collateralErc20.approve(diamondAddress, needed);
-    await tx.wait();
-  };
+  // Note: NO collateral-asset ERC20 approval is needed here (Codex
+  // PR #409 round-1 P2 #3). The on-chain `swapToRepayFull` pulls the
+  // pre-pledged collateral from the borrower's protocol VAULT via
+  // `VaultFactoryFacet.vaultWithdrawERC20` — an `onlyDiamondInternal`
+  // call — not from the borrower's wallet through a Diamond
+  // allowance. A pre-flight `approve(diamond, maxCollateralIn)` would
+  // be dead surface area at best, and at worst would block borrowers
+  // holding USDT-style tokens (USDT requires a zero-allowance race
+  // before a re-set).
 
   const handleSubmit = async () => {
     if (!canWrite || !quotes || quotes.calls.length === 0 || !diamond) return;
@@ -120,7 +126,6 @@ export function SwapToRepayPanel({
       loanId: Number(loanId),
     });
     try {
-      await ensureCollateralAllowance(maxCollateralIn);
       const tx = await (
         diamond as unknown as {
           swapToRepayFull: (
@@ -135,6 +140,11 @@ export function SwapToRepayPanel({
       step.success({
         note: `tx ${tx.hash} via ${quotes.ranked[0].adapterKind}`,
       });
+      // Codex PR #409 round-1 P2 #2 — refresh the parent page's loan
+      // state so the panel hides and the Active loan flips to
+      // Repaid. Otherwise the user can accidentally submit a second
+      // tx that always reverts.
+      if (onAfterSuccess) await onAfterSuccess();
     } catch (err) {
       setError(decodeContractError(err, 'Swap-to-repay failed'));
       step.failure(err);
