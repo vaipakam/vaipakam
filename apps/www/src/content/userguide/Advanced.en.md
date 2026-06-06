@@ -427,10 +427,16 @@ fills first you take the loan, the OpenSea listing carries
 through loan initiation, and a later marketplace fill triggers
 the diamond's settlement waterfall to close the loan from the
 sale proceeds (see Scenario B below). If a marketplace buyer
-fills first, no loan is ever created (Scenario A). Either way,
-the offer closes the moment a marketplace buyer fills the
-listing, and lender acceptance is gated against any offer that
-has already been consumed by sale.
+fills first, no loan is ever created (Scenario A). The two
+scenarios end at different offer states: Scenario A stamps
+the offer with `consumed_by_sale` via `markOfferConsumedBySale`
+(it shows up under the Sold filter), and lender acceptance
+is gated against any offer that has already been stamped. In
+Scenario B the offer is already in the `Accepted` state by
+the time the marketplace fill lands; the contract
+deliberately leaves the offer status at `Accepted` and only
+settles the loan from the sale — the offer doesn't transition
+to Sold a second time.
 
 **Two-step nature.** Opting in at offer create time just
 sets the eligibility flag on the offer. Getting an actual
@@ -442,27 +448,43 @@ the dapp does NOT automate today:
    offerId, uint256 askPrice, bytes32 conduitKey, FeeLeg[]
    feeLegs)`. The facet internally builds the canonical
    Seaport OrderComponents from those inputs, derives the
-   orderHash via `Seaport.getOrderHash`, returns it, and
-   wires the vault's Seaport conduit approval so a later
-   fulfilment can settle. By itself, this on-chain call does
-   NOT submit anything to OpenSea — no buyer can see or fill
-   the listing yet.
+   orderHash via `Seaport.getOrderHash`, returns it, registers
+   the vault's ERC-1271 binding to that hash, and grants the
+   Seaport conduit approval for the NFT collateral. The emitted
+   `PostParallelSaleListing` event exposes every field needed
+   to reconstruct the OrderComponents. **Important:** at this
+   point the order is already FILLABLE via Seaport. A bot
+   watching the contract's events can reconstruct the
+   OrderComponents from the event payload + the input args
+   and call `Seaport.fulfillOrder` directly — the listing
+   does not need to appear on OpenSea's marketplace UI for
+   the on-chain fill path to work. If you don't want
+   counterparties to fill at the current ask before step 2
+   lands, either run step 2 immediately after step 1 OR call
+   `releaseParallelSaleLock` to invalidate the binding before
+   any unintended fill.
 2. **Publish to OpenSea.** Reconstruct the same OrderComponents
    the facet built (offer = the NFT collateral, consideration
    = ask + fee-leg recipients, salt + counter + endTime per
    the facet's `LibPrepayListingWiring._buildOrderComponents`
-   shape), sign the order via the vault's ERC-1271
-   `isValidSignature`, and POST the JSON to the OpenSea
-   `protocol-orders` endpoint (or any other Seaport-compatible
-   marketplace UI). Only after this step does the listing
-   appear on OpenSea's marketplace UI and become fillable.
+   shape). For ERC-1271-validated orders OpenSea accepts the
+   `signature` field as `0x` (empty bytes) — the vault's
+   on-chain `isValidSignature(orderHash, '')` callback ignores
+   the signature bytes and returns the EIP-1271 magic value
+   for any orderHash the diamond previously registered (from
+   step 1). POST the JSON to the OpenSea `protocol-orders`
+   endpoint (or any other Seaport-compatible marketplace UI).
+   Only after this step does the listing appear on OpenSea's
+   marketplace UI and become discoverable to casual buyers.
    Vaipakam does not currently automate this submission —
    surfacing the listing publication end-to-end is tracked
    as a follow-up.
 
-Advanced users following the manual path today need BOTH steps;
-running step 1 alone produces an offer marked eligible with no
-buyer-discoverable listing.
+Advanced users following the manual path today need BOTH steps
+to get OpenSea visibility; running step 1 alone produces an
+order that's fillable directly through Seaport (by a bot or
+counterparty that reconstructs the components from the event)
+but invisible on the OpenSea marketplace UI.
 
 **Fill mode is forced to All-or-Nothing.** Opting in
 automatically pins the offer's fill mode to `Aon` — partial
