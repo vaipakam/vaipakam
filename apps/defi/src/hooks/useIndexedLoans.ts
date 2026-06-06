@@ -116,7 +116,15 @@ export function useIndexedActiveLoans(): UseIndexedLoansResult {
           toBlock: liveSnapshot.safeBlock,
           address: diamond as Address,
           topics: [
-            [TOPIC0.LOAN_REPAID, TOPIC0.LOAN_DEFAULTED],
+            // T-090 Sub 3 — SwapToRepayExecuted is also a terminal
+            // close (Active → Repaid) and must filter the loan out of
+            // the active-loans surface during the near-realtime
+            // catch-up window.
+            [
+              TOPIC0.LOAN_REPAID,
+              TOPIC0.LOAN_DEFAULTED,
+              TOPIC0.SWAP_TO_REPAY_EXECUTED,
+            ],
           ],
         });
         if (cancelled) return;

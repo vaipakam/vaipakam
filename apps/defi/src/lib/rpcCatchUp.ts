@@ -182,6 +182,13 @@ export const TOPIC0 = {
   ),
   LOAN_REPAID: id('LoanRepaid(uint256,address,uint256,uint256)'),
   LOAN_DEFAULTED: id('LoanDefaulted(uint256,bool)'),
+  // T-090 Sub 3 — borrower swap-to-repay full close. Treated as a
+  // terminal close (Active → Repaid) identical to LoanRepaid so the
+  // near-realtime catch-up scan filters the loan out of active-loans
+  // surfaces before the central worker catches up.
+  SWAP_TO_REPAY_EXECUTED: id(
+    'SwapToRepayExecuted(uint256,address,uint256,uint256,uint256)',
+  ),
 } as const;
 
 /**
@@ -231,6 +238,8 @@ export function decodeLoanDelta(logs: CatchUpLog[]): {
     if (t0 === TOPIC0.LOAN_INITIATED) created.push(loanId);
     else if (t0 === TOPIC0.LOAN_REPAID) terminal.push(loanId);
     else if (t0 === TOPIC0.LOAN_DEFAULTED) terminal.push(loanId);
+    // T-090 Sub 3 — borrower swap-to-repay full close (Active → Repaid).
+    else if (t0 === TOPIC0.SWAP_TO_REPAY_EXECUTED) terminal.push(loanId);
   }
   return { created, terminal };
 }

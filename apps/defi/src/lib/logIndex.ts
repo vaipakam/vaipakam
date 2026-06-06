@@ -191,6 +191,9 @@ export type ActivityEventKind =
   | 'LiquidationFallbackSplit'
   | 'LoanSettled'
   | 'PartialRepaid'
+  // T-090 Sub 3 — borrower-initiated swap-to-repay surface.
+  | 'SwapToRepayExecuted'
+  | 'SwapToRepayPartialExecuted'
   | 'ClaimRetryExecuted'
   | 'BorrowerLifRebateClaimed'
   | 'StakingRewardsClaimed'

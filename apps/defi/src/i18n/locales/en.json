@@ -1013,6 +1013,8 @@
     "liquidationFallbackSplit": "Fallback collateral split",
     "loanSettled": "Loan settled",
     "partialRepaid": "Partial repayment",
+    "swapToRepayExecuted": "Loan repaid via collateral swap",
+    "swapToRepayPartialExecuted": "Partial repayment via collateral swap",
     "claimRetryExecuted": "Claim-time swap retry",
     "lifRebateClaimed": "VPFI fee-discount rebate claimed",
     "stakingRewardsClaimed": "VPFI staking rewards claimed",

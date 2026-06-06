@@ -51,6 +51,9 @@ const KIND_LABELS: Record<ActivityEventKind, string> = {
   LiquidationFallbackSplit: 'Fallback collateral split',
   LoanSettled: 'Loan settled',
   PartialRepaid: 'Partial repayment',
+  // T-090 Sub 3 — borrower-initiated swap-to-repay surface.
+  SwapToRepayExecuted: 'Loan repaid via collateral swap',
+  SwapToRepayPartialExecuted: 'Partial repayment via collateral swap',
   ClaimRetryExecuted: 'Claim-time swap retry',
   BorrowerLifRebateClaimed: 'VPFI rebate claimed',
   StakingRewardsClaimed: 'VPFI staking rewards claimed',
@@ -81,6 +84,10 @@ const KIND_ACCENT: Record<ActivityEventKind, string> = {
   LiquidationFallbackSplit: 'failure',
   LoanSettled: 'success',
   PartialRepaid: 'info',
+  // T-090 Sub 3 — `success` for full close (Active → Repaid),
+  // `info` for partial (loan stays Active).
+  SwapToRepayExecuted: 'success',
+  SwapToRepayPartialExecuted: 'info',
   ClaimRetryExecuted: 'info',
   BorrowerLifRebateClaimed: 'info',
   StakingRewardsClaimed: 'success',
@@ -126,6 +133,7 @@ function shortHash(hash: string): string {
 const KIND_PRIORITY: ActivityEventKind[] = [
   'LoanDefaulted',
   'LoanRepaid',
+  'SwapToRepayExecuted',
   'LoanInitiated',
   'LoanSold',
   'LoanObligationTransferred',
