@@ -312,8 +312,22 @@ export function MyOffersTable({
                 if (row.status === 'sold') {
                   const ZERO_ADDR_LC =
                     '0x0000000000000000000000000000000000000000';
-                  const hasFullData =
-                    offer.lendingAsset.toLowerCase() !== ZERO_ADDR_LC;
+                  // Codex round-22 P3 — the indexer writes
+                  // `lending_asset = '0x'` for offers whose inline
+                  // `getOfferDetails` read failed at create time
+                  // (heal path retries asynchronously). If such an
+                  // offer is marked `consumed_by_sale` before the
+                  // heal lands, the indexer-fed row reaches us with
+                  // `offer.lendingAsset === '0x'` — not a real
+                  // address. Also detect that stub shape so the
+                  // compact `—` rendering kicks in instead of trying
+                  // to render `PrincipalCell` on bogus data.
+                  const lc = offer.lendingAsset.toLowerCase();
+                  const isStub =
+                    lc === ZERO_ADDR_LC ||
+                    lc === '0x' ||
+                    !/^0x[0-9a-f]{40}$/.test(lc);
+                  const hasFullData = !isStub;
                   if (!hasFullData) {
                     return (
                       <tr

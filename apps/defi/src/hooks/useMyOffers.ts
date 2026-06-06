@@ -253,12 +253,31 @@ export function useMyOffers(
         if (!myCreates.has(offerId)) continue;
         cancelledIds.add(offerId);
       } else if (ev.kind === 'OfferConsumedBySale') {
-        // T-086 Round-8 §19.7e + Codex round-14 P2 — fallback path
-        // sold-bucket marker. Same myCreates-gate as cancelled +
-        // accepted: only my offers reach the bucket.
+        // T-086 Round-8 §19.7e + Codex round-14 P2 + round-22 P2 #2 —
+        // fallback path sold-bucket marker. Original implementation
+        // gated on `myCreates.has(offerId)` to mirror cancelled /
+        // accepted, but the catchup pass (round-20 P2) can discover
+        // sale events whose OfferCreated was fast-forwarded past
+        // (NOT in myCreates). The round-22 enrichment patches
+        // `participants` with the creator address via the indexer
+        // callback in those cases. So when the connected wallet
+        // matches the event's enriched participants but isn't in
+        // myCreates, still bucket the offer as sold — the
+        // alternative is the borrower-of-a-fast-forwarded-offer
+        // never seeing their sold row.
         const offerId = ev.args.offerId;
         if (typeof offerId !== 'string') continue;
-        if (!myCreates.has(offerId)) continue;
+        const eventTagsMe = ev.participants.includes(lower);
+        if (!myCreates.has(offerId) && !eventTagsMe) continue;
+        // Codex round-22 P2 #2 — also seed myCreates so the
+        // classification loop below reaches the sold branch. The
+        // contract gates `consumed_by_sale` to borrower offers
+        // (OfferParallelSaleFacet's `_validatePostParallelSale` rejects
+        // lender offers), so seed `offerType: 1` when no prior
+        // OfferCreated landed in myCreates.
+        if (!myCreates.has(offerId)) {
+          myCreates.set(offerId, { offerType: 1 });
+        }
         soldIds.add(offerId);
       } else if (ev.kind === 'OfferCanceledDetails') {
         const offerId = ev.args.offerId;

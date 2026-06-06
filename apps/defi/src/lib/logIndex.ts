@@ -948,6 +948,54 @@ async function runScan(
   // memory); we write the merged state to cache and hydrate the
   // updated shape.
   if (fromBlock > head) {
+    // Codex round-22 P2 #1 — also run the post-scan enrichment
+    // BEFORE writing the cache + early-returning. Otherwise a
+    // warmed-cache + healthy-worker user whose catchup discovered a
+    // new sale whose OfferCreated isn't in eventMap caches it with
+    // `participants: [executor]` only; the indexer callback never
+    // gets a chance to patch in the creator before the next
+    // worker-down fallback hides the row from the borrower.
+    const creatorByOfferIdEarly = new Map<string, string>();
+    for (const ev of eventMap.values()) {
+      if (ev.kind !== 'OfferCreated') continue;
+      const id = ev.args.offerId;
+      const creator = ev.args.creator;
+      if (typeof id === 'string' && typeof creator === 'string') {
+        creatorByOfferIdEarly.set(id, creator.toLowerCase());
+      }
+    }
+    for (const ev of eventMap.values()) {
+      if (ev.kind !== 'OfferConsumedBySale') continue;
+      const offerId = ev.args.offerId;
+      if (typeof offerId !== 'string') continue;
+      const localCreator = creatorByOfferIdEarly.get(offerId);
+      if (localCreator && !ev.participants.includes(localCreator)) {
+        ev.participants = [...ev.participants, localCreator];
+      }
+    }
+    if (fetchOfferCreator) {
+      const missingEarly: { ev: ActivityEvent; offerId: string }[] = [];
+      for (const ev of eventMap.values()) {
+        if (ev.kind !== 'OfferConsumedBySale') continue;
+        const offerId = ev.args.offerId;
+        if (typeof offerId !== 'string') continue;
+        if (creatorByOfferIdEarly.has(offerId)) continue;
+        missingEarly.push({ ev, offerId });
+      }
+      for (const { ev, offerId } of missingEarly) {
+        try {
+          const creator = await fetchOfferCreator(offerId);
+          if (creator) {
+            const lc = creator.toLowerCase();
+            if (!ev.participants.includes(lc)) {
+              ev.participants = [...ev.participants, lc];
+            }
+          }
+        } catch {
+          // Best-effort — leave participants as-is on failure.
+        }
+      }
+    }
     const sortedEvents = Array.from(eventMap.values()).sort((a, b) => {
       if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
       return a.logIndex - b.logIndex;
