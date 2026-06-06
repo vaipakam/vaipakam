@@ -1777,34 +1777,46 @@ configuration on the **off-chain side** that's not part of the
 Diamond deploy itself — set these on every chain that should
 serve the OpenSea panel on the frontend.
 
-### Required: `OPENSEA_API_KEY` (apps/agent secret)
+### Required: `OPENSEA_API_KEY` (Cloudflare Secrets Store binding)
 
-The agent Worker (`apps/agent`) proxies two surfaces that need a
-live OpenSea API key:
+Two Workers proxy surfaces that need a live OpenSea API key:
 
-- **OpenSea Offers fetch** — `/opensea/offers/...` (the offers
-  panel on the Loan Details page).
-- **Fulfillment-data fetch** — `POST /api/v2/offers/fulfillment_data`
-  used by the Round-6 atomic match-rotation at click time to
-  obtain SignedZone `extraData` (fee-enforced collections),
-  `CriteriaResolver[]` (criteria offers), and `units_to_fill`
-  (ERC1155 multi-unit lots).
+- **agent** — `/opensea/offers/...` (Loan Details offers panel) +
+  `/opensea/signed-offer/...` (Round-6 atomic match-rotation
+  click-time fetch of SignedZone `extraData` for fee-enforced
+  collections, `CriteriaResolver[]` for criteria offers, and
+  `units_to_fill` for ERC1155 multi-unit lots).
+- **indexer** — opportunistic enrichment for indexed offer rows.
 
-Set the secret per environment:
+Since T-078 the Workers bind their secrets from the **account-
+level Cloudflare Secrets Store** (store: `vaipakam-credentials`,
+id `1e66429d0fa24aa38a27bc05b7bcf63e`), NOT per-Worker `wrangler
+secret put` env blocks. The binding declarations live in
+`apps/agent/wrangler.jsonc` and `apps/indexer/wrangler.jsonc`
+under their `secrets_store_secrets` arrays (search for
+`"binding": "OPENSEA_API_KEY"` in each file).
+
+Set the value once at the account level:
 
 ```bash
-cd apps/agent
-wrangler secret put OPENSEA_API_KEY --env staging
-wrangler secret put OPENSEA_API_KEY --env production
+# Account-level Secrets Store (store: vaipakam-credentials).
+# Both agent and indexer bindings resolve from this single value.
+wrangler secrets-store secret create OPENSEA_API_KEY \
+  --store-id 1e66429d0fa24aa38a27bc05b7bcf63e
 ```
 
-Get a key from <https://docs.opensea.io/reference/api-keys>. Apply
-the same key to the agent Worker on every chain in the deploy set —
-the OpenSea API is chain-agnostic. Missing key → the panel
-silently fails fetch and the dapp falls back to a "no offers"
-state with no banner; the click-time fulfillment-data fetch
-gate aborts the `matchOpenSeaOffer` call before any signature
-prompt fires.
+(Wrangler prompts for the value; redeploy each Worker afterwards
+so the bindings re-resolve.)
+
+Get a key from <https://docs.opensea.io/reference/api-keys>. The
+key is chain-agnostic — the same value powers every chain in the
+deploy set. Missing key → the offers panel silently fails fetch
+and the dapp falls back to a "no offers" state with no banner;
+the click-time fulfillment-data fetch gate aborts the
+`matchOpenSeaOffer` call before any signature prompt fires.
+
+For local `wrangler dev`, create the same secret WITHOUT the
+`--remote` flag so the local dev runtime can resolve it.
 
 ### Required: `VITE_AGENT_ORIGIN` (apps/defi env)
 
