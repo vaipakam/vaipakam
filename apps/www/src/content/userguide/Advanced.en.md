@@ -168,6 +168,26 @@ Acceptance flips the offer to Accepted and triggers loan
 initiation, which mints the two position NFTs (one for lender,
 one for borrower) and opens the loan in the Active state.
 
+Closed offers carry one of four distinct statuses, exposed as a
+filter chip on the My Offers page:
+
+- **Filled** — accepted by a counterparty; the offer's loan
+  reference is the resulting loan id.
+- **Cancelled** — withdrawn by the creator before acceptance
+  (or auto-expired past the GTT deadline).
+- **Sold** — the offer was opted into the borrow-OR-sell
+  parallel-sale flow (see Create Offer → Allow optional sale)
+  and a marketplace buyer filled the NFT collateral listing
+  before any lender accepted. The offer carries the on-chain
+  status `consumed_by_sale`; the row's rate column shows the
+  rate the offer was posted at and the collateral cell renders
+  the NFT shape (token id for ERC-721, copy count for
+  ERC-1155). The dapp also surfaces the row in the Activity
+  feed as `Offer sold via OpenSea` for the borrower (offer
+  creator) — the underlying event indexes both the executor
+  and the creator addresses so the per-wallet filter finds it.
+- **Expired** — past GTT deadline without any terminal event.
+
 <a id="offer-book.lender-offers"></a>
 
 ### Lender Offers
@@ -375,6 +395,68 @@ Less-common knobs:
 - Side-specific options exposed by the offer creation flow.
 
 Defaults are sensible for most users.
+
+<a id="create-offer.borrow-or-sell"></a>
+
+### Allow optional sale of this NFT on OpenSea (borrower
+NFT-collateral offers only)
+
+If you're posting a **borrower offer** with **ERC-721 or
+ERC-1155 collateral** and an **ERC-20 principal**, the dapp
+exposes a `Borrow or sell` opt-in below the collateral
+section. Ticking it marks the offer as eligible for a
+parallel-sale listing of your NFT collateral on OpenSea — a
+single offer that can be filled EITHER by a lender (you take
+the loan) OR by a marketplace buyer (you sell the NFT and
+the offer closes). Whichever lands first wins; both paths can't
+fire on the same offer.
+
+**Two-step nature.** Opting in at offer create time just
+sets the eligibility flag on the offer. The listing itself
+is published in a separate step against the diamond after
+the offer is live — the dapp will not auto-post the listing
+for you at offer create time, and a dedicated in-app flow
+for the publish step is queued as a follow-up. Advanced
+users can publish the listing today by calling the diamond's
+`OfferParallelSaleFacet.postParallelSaleListing` directly
+with the corresponding Seaport order shape.
+
+**Fill mode is forced to All-or-Nothing.** Opting in
+automatically pins the offer's fill mode to `Aon` — partial
+or IOC fills would create multiple loans against one
+offer's collateral, which the contract gates against. The
+toggle is hidden on lender offers, ERC-20 collateral, NFT
+principals, and any other shape the contract's
+`_validatePostParallelSale` would reject, so you can't
+accidentally tick it on an ineligible offer.
+
+**What a buyer sees.**
+
+- *Before any lender accepts* (Scenario A): a buyer who
+  fills the OpenSea listing pays the listed price, the
+  diamond escrows the proceeds in your vault, the NFT
+  transfers to the buyer, and the offer is marked
+  `consumed_by_sale` (visible as a distinct "Sold" status
+  in My Offers, Activity, and Offer Details). No loan was
+  ever created; you keep the full sale proceeds.
+- *After a lender accepts* (Scenario B): the listing
+  carries through loan initiation — neither the borrower
+  NFT lock nor the listing is torn down. A later buyer
+  fill triggers the diamond's settlement waterfall in one
+  Seaport transaction: the lender receives their
+  settlement entitlement (full coupon for full-term
+  loans, pro-rata for partial-term), the treasury cut
+  goes to treasury, and the remainder lands in the
+  borrower-position NFT holder's vault. You can claim the
+  surplus from the Claim Center exactly as you would for
+  a normal preclose.
+
+**What you can't combine it with.** The contract blocks an
+open PrecloseFacet offset offer on the same loan (you can't
+have two cross-flow exits live at once) and blocks a sibling
+loan-keyed prepay listing on the same loan (the conduit
+approval would be ambiguous). These are surfaced as revert
+errors during the publish step, not at offer-create time.
 
 ---
 
@@ -766,52 +848,50 @@ gated until v1.1. The fee-enforced matching path is tracked
 separately under Issue #331.
 
 When you find an acceptable offer and click **Match offer**,
-the dapp rotates your live OpenSea listing's price down to
-the offer's value. This is a normal `updatePrepayListing`
-transaction — one signature, no off-chain coordination.
+the dapp opens the **Confirm Match** modal, which restates
+the bidder you're matching, the price you're settling at,
+and the lender / treasury / borrower split the diamond will
+route. After you confirm, the dapp sends a single
+`matchOpenSeaOffer` transaction that bundles your listing
+and the bidder's offer into one Seaport `matchAdvancedOrders`
+call — your listing rotation, the bidder's fulfilment, and
+the diamond's settlement waterfall all land atomically in
+one block. The transaction either fully succeeds (loan
+settled, NFT transferred, sale proceeds split) or fully
+reverts (nothing moves), and there is **no window between
+listing rotation and settlement** in which a third-party
+buyer could step in at the matched price.
 
-> **The race window is real.** Once your rotation
-> transaction confirms, *any* OpenSea buyer can fulfill at
-> the matched price — not only the bidder who placed the
-> offer you matched. In practice, sniping the bidder out of
-> the price they bid is possible during the small window
-> between your rotation and their `Seaport.fulfillOrder`.
->
-> Before clicking Match, the dapp shows you a modal that
-> spells this out and names the bidder you're matching.
-> You must explicitly acknowledge it to proceed.
+> **No race window — atomic by construction.** This is the
+> structural close-out of the v1 two-step "cancel + post"
+> pattern: under v1 the dapp would rotate the listing as a
+> separate `updatePrepayListing` transaction, leaving the
+> rotated price live on OpenSea until the bidder's
+> `fulfillOrder` landed in a later block — anyone watching
+> the mempool could snipe the bidder out of the price they
+> bid. The atomic path closes that hole by binding both
+> orders into one Seaport match call: either the bidder fills
+> at the agreed price or the whole transaction reverts.
 
-**What you can do to mitigate the race window:**
+**What you still want to verify before clicking Match:**
 
-- **Notify the bidder out-of-band before clicking Match.**
-  If you can reach the bidder by any channel they're
-  monitoring (Discord, X / Twitter DM, Telegram, an ENS
-  reverse-record contact field, a Farcaster ping), do that
-  before you click Match. The bidder being ready to fulfill
-  within seconds of your rotation is the strongest
-  mitigation you can apply today.
-- **Match at favourable prices, not desperate ones.** The
-  buffer-threshold filter prevents the dapp from letting
-  you match at protocol-unprofitable prices, but the
-  buffer is a floor — the closer you sit to it, the
-  thinner the cushion against a snipe at a price the
-  bidder didn't intend to pay.
-- **Cancel the listing first if the bidder is unresponsive.**
-  If the bidder you wanted to match has gone quiet, the
-  safest path is to cancel the listing entirely and re-post
-  at the new price after re-engaging. Sniping is no longer
-  possible once there's no live order on the marketplace.
-
-**What's coming.** The race window is a v1 trade-off, not a
-permanent constraint. A v2 atomic match-rotation path — one
-transaction that simultaneously rotates the listing and
-settles against the originating bidder, with no window for a
-third party to step in — is tracked under [Issue #333](https://github.com/vaipakam/vaipakam/issues/333).
-That path requires a new contract surface and a deeper
-OpenSea API integration, so it has been deliberately deferred
-until production signal indicates the race window actually
-bites in practice. If you experience a snipe, please report
-it on Issue #333 so prioritisation has the data it needs.
+- **Confirm the bidder address and price in the modal.** The
+  modal echoes the bidder address, the rotated listing price
+  the diamond will accept, and the lender / treasury /
+  borrower split. The protocol's settlement buffer enforces
+  that the price covers principal + accrued interest +
+  treasury cut, so the split is always at least neutral for
+  you — but it's still your transaction, so it's still your
+  responsibility to confirm.
+- **Check OpenSea's fee posture for the collection.** If the
+  collection enforces OpenSea protocol fees or creator
+  royalties, the atomic path needs SignedZone `extraData` /
+  criteria-resolver plumbing that the dapp fetches via the
+  agent's OpenSea fulfillment-data proxy (PR #349). When
+  that data is unavailable the dapp's Match panel is hidden
+  with an informational banner; buyers can still fill your
+  listing directly on OpenSea at the listed ask in those
+  cases.
 
 ---
 
