@@ -233,7 +233,7 @@ Folgearbeiten dedizierte UI-Behandlung erhalten:
   herausfällt, bis der dedizierte Chip landet. Die Chip-Oberfläche
   ist als separates UI-Follow-up in der Warteschlange.
 
-Past-GTT (Good-Til-Time) Angebote, die nie ein Terminal-Event
+Past-GTT (GTT-Ablaufzeit) Angebote, die nie ein Terminal-Event
 erreicht haben, sind noch nicht als eigener Status-Chip in der
 dapp exponiert; sie fallen derzeit unter Active, bis der Indexer
 ein Terminal aufzeichnet. Ein dedizierter Expired-Chip ist als
@@ -482,7 +482,7 @@ Ablauf übertragen, und eine spätere Marketplace-Erfüllung vor
 diesem Ablauf löst die Settlement-Waterfall des Diamonds aus, um
 den Kredit aus den Verkaufserlösen zu schließen (siehe Szenario B
 unten). Für gewöhnliche GTT-Angebote ist dieser Ablauf das
-ursprüngliche Good-Til-Time des Angebots; die Verleiher-Annahme
+ursprüngliche GTT-Ablaufzeit des Angebots; die Verleiher-Annahme
 verlängert das Listing nicht und postet es nicht für die volle
 Kreditlaufzeit neu. Wenn ein Marketplace-Käufer zuerst erfüllt,
 wird nie ein Kredit erstellt (Szenario A). Die zwei Szenarien
@@ -1042,8 +1042,7 @@ platzieren gelegentliche Käufer manchmal **Item-Offers** direkt
 auf deinem Token — Bids, die an dein spezifisches Collateral
 gebunden sind, nicht an irgendein Token in der Collection.
 Vaipakam zeigt diese Item-Offers in Echtzeit auf der Kredit-
-Details-Seite an — ein separates Panel unter "List collateral on
-OpenSea" mit einer Zeile pro eingehendem Offer. Das Panel wendet
+Details-Seite an — einen separaten Bereich unter "Kollateral auf OpenSea listen" mit einer Zeile pro eingehendem Offer. Der Bereich wendet
 einen **Buffer-Threshold** an — das Settlement-Entitlement des
 Verleihers (das BEREITS Principal plus den vollen Coupon bei
 Full-Term-Interest-Krediten oder die Pro-Rata-Zinsen ansonsten
@@ -1056,7 +1055,7 @@ tatsächlich settlen wird.
 
 Collection-weite / Criteria-Offers (Bids, die jedes Token in der
 Collection erfüllen kann) bleiben auf OpenSea, aber **erscheinen
-nicht** im Match-Panel der dapp — die Multi-Leg-Consideration,
+nicht** im Match-Bereich der dapp — die Multi-Leg-Consideration,
 die das Protokoll settelt, kann gegen ein Criteria-Offer nicht
 ohne contract-seitige Plumbing rekonstruiert werden, das nicht in
 v1 ist. Wenn deine einzige eingehende Nachfrage collection-weit
@@ -1069,10 +1068,10 @@ seitige Seaport-Orders sind die einzige autorisierte Settlement-
 Form.
 
 Auf Collections, die OpenSea-Protokoll-Fees und/oder Creator-
-Royalties durchsetzen, rendert die dapp DAS Offers-Panel — der
+Royalties durchsetzen, rendert die dapp DAS Offers-Bereich — der
 Fee-Schedule-Fetch von der OpenSea-API wird als beratend
 behandelt; die tatsächlichen Fulfillment-Daten werden zur MATCH-
-KLICK-ZEIT gefetcht. Das Match-Panel rendert unabhängig vom
+KLICK-ZEIT gefetcht. Der Match-Bereich rendert unabhängig vom
 Fee-Schedule-Fetch-Status; der Click-Time-Fulfillment-Daten-Fetch
 ist das Gate. Wenn dieser Fetch fehlschlägt (Rate-Limit, API-
 Ausfall, oder nicht unterstützte Collection-Form), BRICHT der
@@ -1081,21 +1080,21 @@ dapp-seitige Click-Handler ab, bevor eine
 konstruiert wird — kein Calldata, kein Signaturprompt, kein
 Revert. Die On-Chain-Funktion selbst ist kein `bool`-
 zurückgebender Selector; wenn sie läuft, gibt sie einen `bytes32`-
-OrderHash zurück oder revertiert. Das Panel einer Fee-Enforced-
+OrderHash zurück oder revertiert. Der Bereich einer Fee-Enforced-
 Collection kann also Offers zeigen, die du durchsuchen kannst,
 aber nicht alle von ihnen sind in einem bestimmten Moment
 klickbar-zum-Matchen.
 
-Wenn du ein akzeptables Offer findest und auf **Match offer**
-klickst, öffnet die dapp das **Confirm Match**-Modal, das den
-matched value (den Brutto-OpenSea-Offer-Betrag — NICHT den
+Wenn du ein akzeptables Offer findest und auf **Angebot matchen**
+klickst, öffnet die dapp den **Match bestätigen**-Bestätigungsdialog, das den
+gematchten Wert (den Brutto-OpenSea-Offer-Betrag — NICHT den
 Netto-Betrag, zu dem der Diamond settelt; auf Fee-Enforced-
 Collections berechnet
 `NFTPrepayListingAtomicFacet.matchOpenSeaOffer` `effectiveAsk =
 offerValue - bidderFeeTotal` vor der Aufteilung Verleiher /
 Treasury / Kreditnehmer, sodass der Netto-Betrag, den der
 Diamond tatsächlich verteilt, kleiner ist als das Headline des
-Modals) und eine generische Erklärung des Atomic-Match-Flows
+Bestätigungsdialogs) und eine generische Erklärung des Atomic-Match-Flows
 gibt. Nach Bestätigung sendet die dapp eine einzelne
 `matchOpenSeaOffer`-Transaktion, die das Bidder-Offer mit einer
 frisch konstruierten Diamond-seitigen Counter-Order in einen
@@ -1124,14 +1123,14 @@ ein Dritt-Käufer beim matched price eingreifen könnte.
 
 **Was du vor dem Klick auf Match noch verifizieren willst:**
 
-- **Bestätige den matched value im Modal.** Das Modal zeigt den
+- **Bestätige den gematchten Wert im Bestätigungsdialog.** Der Bestätigungsdialog zeigt den
   Brutto-OpenSea-Offer-Betrag. Auf Fee-Enforced-Collections
   settelt der Diamond gegen den Netto-Effective-Ask nach
   Bidder-seitigen Marketplace- / Creator-Fee-Legs, sodass der
-  Modal-Wert höher sein kann als der Betrag, der für die
+  Wert im Bestätigungsdialog höher sein kann als der Betrag, der für die
   Verleiher- / Treasury- / Kreditnehmer-Aufteilung verwendet
   wird. Die Bidder-Adresse und die genaue Aufteilung sind weder
-  im Modal NOCH in der OpenSea-Offers-Panel-Zeile aufgeschlüsselt
+  im Bestätigungsdialog NOCH in der Zeile im OpenSea-Offers-Bereich aufgeschlüsselt
   (die Zeile zeigt Wert, Payment-Token, Offer-Art, abgeschnittenen
   Bidder und End-Time). Die Aufteilung wird on-chain vom Diamond
   beim Settlement durchgesetzt — der Settlement-Buffer des
@@ -1151,7 +1150,7 @@ ein Dritt-Käufer beim matched price eingreifen könnte.
   durchsetzt, benötigt der Atomic-Pfad SignedZone-`extraData`- /
   Criteria-Resolver-Plumbing, das die dapp über den OpenSea-
   Fulfillment-Daten-Proxy des Agents (PR #349) ZUR MATCH-KLICK-
-  ZEIT fetcht. Das Match-Panel rendert unabhängig vom Fee-
+  ZEIT fetcht. Der Match-Bereich rendert unabhängig vom Fee-
   Schedule-Fetch-Status; der Click-Time-Fulfillment-Daten-Fetch
   ist das Gate. Wenn dieser Fetch fehlschlägt (Rate-Limit, API-
   Ausfall, nicht unterstützte Collection-Form), bricht der
