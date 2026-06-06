@@ -132,6 +132,19 @@ const LOAN_SETTLED_TOPIC0 = id('LoanSettled(uint256)');
 const PARTIAL_REPAID_TOPIC0 = id(
   'PartialRepaid(uint256,uint256,uint256)',
 );
+// T-090 Sub 3 — borrower swap-to-repay events for the worker-down
+// fallback scanner. Sigs match `apps/contracts/src/facets/SwapToRepayFacet.sol`:
+//   event SwapToRepayExecuted(uint256 indexed loanId, address indexed borrower,
+//       uint256 collateralIn, uint256 principalOut, uint256 adapterUsed);
+//   event SwapToRepayPartialExecuted(uint256 indexed loanId, address indexed borrower,
+//       uint256 collateralIn, uint256 principalOut, uint256 partialPrincipal,
+//       uint256 adapterUsed);
+const SWAP_TO_REPAY_EXECUTED_TOPIC0 = id(
+  'SwapToRepayExecuted(uint256,address,uint256,uint256,uint256)',
+);
+const SWAP_TO_REPAY_PARTIAL_EXECUTED_TOPIC0 = id(
+  'SwapToRepayPartialExecuted(uint256,address,uint256,uint256,uint256,uint256)',
+);
 const CLAIM_RETRY_EXECUTED_TOPIC0 = id(
   'ClaimRetryExecuted(uint256,bool,uint256)',
 );
@@ -1073,6 +1086,9 @@ async function runScan(
             LIQUIDATION_FALLBACK_SPLIT_TOPIC0,
             LOAN_SETTLED_TOPIC0,
             PARTIAL_REPAID_TOPIC0,
+            // T-090 Sub 3 — borrower-initiated swap-to-repay events.
+            SWAP_TO_REPAY_EXECUTED_TOPIC0,
+            SWAP_TO_REPAY_PARTIAL_EXECUTED_TOPIC0,
             CLAIM_RETRY_EXECUTED_TOPIC0,
             BORROWER_LIF_REBATE_CLAIMED_TOPIC0,
             STAKING_REWARDS_CLAIMED_TOPIC0,
@@ -1573,6 +1589,61 @@ async function runScan(
           loanId,
           amountRepaid,
           newPrincipal,
+        });
+      } else if (topic0 === SWAP_TO_REPAY_EXECUTED_TOPIC0) {
+        // T-090 Sub 3 — SwapToRepayExecuted(loanId indexed, borrower indexed,
+        // collateralIn, principalOut, adapterUsed). Both loanId and borrower
+        // are indexed (Sub 1 round-3 P2 #1 — `borrower` is `msg.sender`, the
+        // current borrower-NFT owner). Surface the row keyed by the borrower
+        // so wallet-filtered views catch it.
+        if (topics.length < 3) continue;
+        const loanId = BigInt(topics[1]).toString();
+        const borrower = ('0x' + topics[2].slice(26)).toLowerCase();
+        let collateralIn = '0';
+        let principalOut = '0';
+        try {
+          const [c, p] = decodeAbiParameters(
+            parseAbiParameters('uint256, uint256, uint256'),
+            event.data,
+          );
+          collateralIn = (c as bigint).toString();
+          principalOut = (p as bigint).toString();
+        } catch {
+          // Malformed data — keep defaults.
+        }
+        addEvent('SwapToRepayExecuted', [borrower], {
+          loanId,
+          borrower,
+          collateralIn,
+          principalOut,
+        });
+      } else if (topic0 === SWAP_TO_REPAY_PARTIAL_EXECUTED_TOPIC0) {
+        // T-090 Sub 3 — SwapToRepayPartialExecuted(loanId indexed,
+        // borrower indexed, collateralIn, principalOut, partialPrincipal,
+        // adapterUsed). Same topic layout as the full close.
+        if (topics.length < 3) continue;
+        const loanId = BigInt(topics[1]).toString();
+        const borrower = ('0x' + topics[2].slice(26)).toLowerCase();
+        let collateralIn = '0';
+        let principalOut = '0';
+        let partialPrincipal = '0';
+        try {
+          const [c, p, pp] = decodeAbiParameters(
+            parseAbiParameters('uint256, uint256, uint256, uint256'),
+            event.data,
+          );
+          collateralIn = (c as bigint).toString();
+          principalOut = (p as bigint).toString();
+          partialPrincipal = (pp as bigint).toString();
+        } catch {
+          // Malformed data — keep defaults.
+        }
+        addEvent('SwapToRepayPartialExecuted', [borrower], {
+          loanId,
+          borrower,
+          collateralIn,
+          principalOut,
+          partialPrincipal,
         });
       } else if (topic0 === CLAIM_RETRY_EXECUTED_TOPIC0) {
         // ClaimRetryExecuted(loanId indexed, succeeded, proceeds)

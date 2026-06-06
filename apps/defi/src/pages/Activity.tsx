@@ -134,6 +134,15 @@ const KIND_PRIORITY: ActivityEventKind[] = [
   'LoanDefaulted',
   'LoanRepaid',
   'SwapToRepayExecuted',
+  // T-090 Sub 3 — periodic-interest loans emit
+  // `RepayPartialPeriodAdvanced` + `PeriodicInterestSettled` in the
+  // same tx as `swapToRepayPartial`. Without the partial kind in this
+  // priority list, `pickPrimary` would fall back to the first
+  // periodic event (which isn't in the priority list either) and
+  // surface a less-meaningful headline for the row. Put it just
+  // below the full-close kind so the partial reduction itself is
+  // the headline, not its periodic side-effect.
+  'SwapToRepayPartialExecuted',
   'LoanInitiated',
   'LoanSold',
   'LoanObligationTransferred',
