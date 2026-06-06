@@ -79,6 +79,19 @@ bounded by its own `MAX_*_BPS` cap. The `liqBonusBps` per asset (set
 via `updateRiskParams`) cannot exceed the chain-level
 `maxLiquidatorIncentiveBps` — the latter is the hard ceiling.
 
+### Swap-to-Repay max slippage (T-090)
+
+(`setMaxSwapToRepaySlippageBps` / `getMaxSwapToRepaySlippageBps`)
+
+Caps the slippage a borrower-initiated swap-to-repay transaction
+may realize. Sibling to `maxLiquidationSlippageBps` with a tighter
+default (300 bps / 3% vs. 600 bps / 6%) because the borrower picks
+the moment and is not on an adversarial clock. Bounded by the same
+protocol-wide `MAX_SLIPPAGE_BPS` ceiling (2500 bps / 25%) as the
+liquidation knob. Storage-zero fallback returns the 300-bps default
+until governance explicitly tunes, so no post-deploy operator action
+is required on a fresh deploy.
+
 ### Risk config — volatility-LTV threshold + rental buffer
 
 `volatilityLtvThresholdBps` must be > `BASIS_POINTS` (i.e. > 100%) —

@@ -1858,3 +1858,48 @@ LooksRare / X2Y2 / Magic Eden. No operator env config is needed
 until that card lands — Vaipakam's contract-side surface is
 marketplace-agnostic (Seaport-compatible), so the work is in
 the dapp + agent + indexer rather than the Diamond.
+
+---
+
+## T-090 Swap-to-Repay slippage knob — operator note
+
+T-090 added a borrower-initiated `Swap collateral to repay` surface
+to the Diamond. It introduces **one** operator-tunable knob and **no
+new env vars / secrets / RPC keys**.
+
+### `cfgMaxSwapToRepaySlippageBps` — admin-tunable, sensible default
+
+The knob caps the realized slippage a borrower swap-to-repay
+transaction is allowed to absorb. Default is **300 bps (3%)** — tighter
+than the existing HF-liquidation slippage cap (`cfgMaxLiquidationSlippageBps`,
+default 600 bps / 6%) because the borrower picks the moment and is
+not on an adversarial clock. Both knobs share the same protocol-wide
+**25% (`MAX_SLIPPAGE_BPS`)** ceiling at the setter.
+
+**No post-deploy operator action is required.** The Diamond's
+storage-zero-fallback returns the 300 bps default until governance
+explicitly tunes it via `ConfigFacet.setMaxSwapToRepaySlippageBps`.
+
+If a future market environment warrants raising or lowering the cap,
+the setter is `ADMIN_ROLE`-gated (pre-handover) and
+`TimelockController`-gated post-handover, same as every other
+`ConfigFacet` knob. The bound at the setter is checked against the
+existing `MAX_SLIPPAGE_BPS` constant — there's no separate ceiling
+to remember.
+
+### Swap-adapter set — no new operator action
+
+The borrower swap-to-repay surface reuses the existing 4-DEX
+swap-failover adapter registry (`AdminFacet.addSwapAdapter` /
+`removeSwapAdapter`). No new adapter slot, no new aggregator account,
+no new API key. The same adapters that power HF-liquidation and the
+auto-liquidate-on-period-shortfall path power swap-to-repay.
+
+### Multi-marketplace / intent-based variant (DEFERRED)
+
+The v1.1 intent-based settlement variant (1inch Fusion or CoWSwap
+solver-based execution for best-price at the cost of a 1-2 minute
+solver window) is tracked under Backlog card #389. No operator env
+config needed until that card lands — the operator-side change there
+will be one new aggregator API key, documented as part of that card
+when it ships.
