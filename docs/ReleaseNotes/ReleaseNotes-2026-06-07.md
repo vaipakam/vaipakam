@@ -1,4 +1,16 @@
-## Thread — T-090 Swap-to-Repay (PRs #390 / #391 / #402)
+# Release Notes — 2026-06-07
+
+## Intro
+
+One thread this day: **T-090 — borrower-initiated swap-to-repay**.
+A borrower with the wrong asset in their vault can now repay an ERC-20
+loan in a single atomic call instead of the four-step withdraw / external
+swap / redeposit / repay dance. Shipped across four sub-PRs (contracts /
+indexer / frontend surface / docs) plus one follow-up fix PR (#405), and
+folded a cumulative 34 Codex review findings across 14 review rounds —
+17 P1, 14 P2, 3 P3 — before each PR landed clean.
+
+## Thread — T-090 Swap-to-Repay (PRs #390 / #391 / #402 / #405)
 
 A borrower can now repay a Vaipakam ERC-20 loan by swapping their pledged collateral asset into the loan's principal asset and applying the proceeds to the settlement waterfall, all in a single transaction. Before this thread, the canonical way to repay a loan where the borrower happened to hold the wrong asset was a four-step dance: withdraw collateral to wallet, externally swap on a DEX, re-deposit the principal asset, then call the regular repay entry point. Each step leaked gas, slippage, and custody surface area — and the borrower had to manage the slippage themselves on every leg.
 
