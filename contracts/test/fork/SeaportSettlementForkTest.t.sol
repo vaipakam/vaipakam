@@ -5,17 +5,30 @@ import {SetupTest} from "../SetupTest.t.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LibPrepayOrder} from "../../src/libraries/LibPrepayOrder.sol";
 import {ISeaportOrderHash, OrderComponents} from "../../src/seaport/ISeaportOrderHash.sol";
+import {
+    OrderParameters,
+    AdvancedOrder,
+    CriteriaResolver,
+    OfferItem as MatchOfferItem,
+    ConsiderationItem as MatchConsiderationItem,
+    OrderType as MatchOrderType
+} from "../../src/seaport/ISeaportMatch.sol";
+import {ItemType} from "../../src/seaport/ISeaportZone.sol";
 import {IVaipakamPrepayContext} from "../../src/seaport/IVaipakamPrepayContext.sol";
 import {FeeLeg} from "../../src/seaport/PrepayTypes.sol";
 import {CollateralListingExecutor} from "../../src/seaport/CollateralListingExecutor.sol";
 import {NFTPrepayListingFacet} from "../../src/facets/NFTPrepayListingFacet.sol";
 import {PrepayListingFacet} from "../../src/facets/PrepayListingFacet.sol";
 import {ConfigFacet} from "../../src/facets/ConfigFacet.sol";
+import {AdminFacet} from "../../src/facets/AdminFacet.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
+import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {VaipakamVaultImplementation} from "../../src/VaipakamVaultImplementation.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 import {MockRentableNFT721} from "../mocks/MockRentableNFT721.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
+import {IERC20} from "../../lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {IERC721} from "../../lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/token/ERC721/IERC721.sol";
 import {ERC1967Proxy} from "../../lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 /// @dev Minimal interface for Seaport's `information()` accessor.
@@ -42,6 +55,19 @@ interface IConduitController {
     ///         counter-party (including Seaport itself) to actually
     ///         transfer tokens via the conduit.
     function updateChannel(address conduit, address channel, bool isOpen) external;
+}
+
+/// @dev Minimal interface for `Seaport.fulfillAdvancedOrder` — the
+///      single function Phase-2c calls into to drive a real buyer
+///      fulfillment against the live prepay listing. Seaport's full
+///      ABI is large; we vendor only the slice we use.
+interface ISeaportFulfill {
+    function fulfillAdvancedOrder(
+        AdvancedOrder calldata advancedOrder,
+        CriteriaResolver[] calldata criteriaResolvers,
+        bytes32 fulfillerConduitKey,
+        address recipient
+    ) external payable returns (bool fulfilled);
 }
 
 /**
@@ -123,6 +149,7 @@ contract SeaportSettlementForkTest is SetupTest {
 
     address internal phase2Borrower;
     address internal phase2Lender;
+    address internal phase2Buyer;
     address internal phase2BorrowerVault;
     address internal phase2LenderVault;
 
@@ -164,6 +191,7 @@ contract SeaportSettlementForkTest is SetupTest {
         // state with any setUp-helper-provisioned position.
         phase2Borrower = makeAddr("phase2-borrower");
         phase2Lender = makeAddr("phase2-lender");
+        phase2Buyer = makeAddr("phase2-buyer");
 
         // Lazily-provisioned per-user vaults on the diamond. The
         // borrower's vault HOLDS the collateral NFT before
@@ -428,6 +456,203 @@ contract SeaportSettlementForkTest is SetupTest {
             rederivedHash,
             "diamond-recorded hash must match independently-reconstructed Seaport hash"
         );
+    }
+
+    /// @notice **Phase-2c deliverable.** Real buyer fulfillment +
+    ///         the six settlement assertions Issue #378 specified.
+    ///
+    ///         Drives:
+    ///           1. Borrower scaffold + on-fork `postPrepayListing`
+    ///              (same path Phase-2b exercises).
+    ///           2. Buyer-side scaffold: mint payment ERC20 + approve
+    ///              real Seaport for the listing's ask amount.
+    ///           3. Build `AdvancedOrder` matching the on-chain order
+    ///              shape. Signature is the EMPTY BYTES `0x` — the
+    ///              vault's ERC-1271 `isValidSignature(orderHash, "")`
+    ///              callback returns the EIP-1271 magic value for any
+    ///              orderHash the executor previously bound via
+    ///              `wire`.
+    ///           4. Real `Seaport.fulfillAdvancedOrder` from the buyer.
+    ///           5. Asserts six post-fill state changes (per #378):
+    ///              a. Lender vault balance ↑ by `pctx.lenderLeg`.
+    ///              b. Treasury balance ↑ by `pctx.treasuryLeg`.
+    ///              c. Borrower vault balance ↑ by the remainder.
+    ///              d. Loan transitioned to `Settled`.
+    ///              e. Borrower-NFT lock released.
+    ///              f. Buyer holds the collateral NFT.
+    function test_Fork_BuyerFulfillsAndSettles() public {
+        if (!forkEnabled) return;
+
+        // ── Borrower scaffold + post (same as Phase-2b) ──────────
+        phase2Collateral.mint(phase2BorrowerVault, COLLATERAL_TOKEN_ID);
+        _scaffoldActiveLoan();
+        vm.warp(block.timestamp + 1 days);
+        uint256 listingTimestamp = block.timestamp;
+        uint256 askPrice = _floorPlusBuffer();
+        bytes32 conduitKey = testConduitKey;
+        FeeLeg[] memory feeLegs = _emptyFeeLegs();
+
+        vm.prank(phase2Borrower);
+        bytes32 recordedHash = NFTPrepayListingFacet(address(diamond))
+            .postPrepayListing(LOAN_ID, askPrice, TEST_SALT, conduitKey, feeLegs);
+
+        // ── Reconstruct the canonical OrderComponents off-chain ───
+        IVaipakamPrepayContext.PrepayContext memory pctx = IVaipakamPrepayContext(
+            address(diamond)
+        ).getPrepayContext(LOAN_ID, listingTimestamp);
+        uint256 counter = ISeaportOrderHash(SEAPORT_ADDR).getCounter(phase2BorrowerVault);
+        OrderComponents memory components = LibPrepayOrder.componentsForCancel(
+            pctx,
+            address(forkExecutor),
+            askPrice,
+            conduitKey,
+            TEST_SALT,
+            listingTimestamp,
+            counter,
+            feeLegs
+        );
+
+        // ── Buyer-side scaffold: mint payment + approve Seaport ───
+        ERC20Mock(address(phase2Principal)).mint(phase2Buyer, askPrice);
+        vm.prank(phase2Buyer);
+        IERC20(address(phase2Principal)).approve(SEAPORT_ADDR, askPrice);
+
+        // ── Snapshot balances + state BEFORE fulfillment ─────────
+        address treasury = AdminFacet(address(diamond)).getTreasury();
+        uint256 lenderVaultBefore =
+            IERC20(address(phase2Principal)).balanceOf(phase2LenderVault);
+        uint256 treasuryBefore =
+            IERC20(address(phase2Principal)).balanceOf(treasury);
+        uint256 borrowerVaultBefore =
+            IERC20(address(phase2Principal)).balanceOf(phase2BorrowerVault);
+
+        // ── Build AdvancedOrder from OrderComponents ─────────────
+        // `OrderParameters` is `OrderComponents` minus `counter` plus
+        // `totalOriginalConsiderationItems`. Signature stays empty
+        // bytes — the vault's ERC-1271 callback accepts any
+        // orderHash the diamond previously registered via `wire`.
+        // numerator/denominator = 1/1 for a full fill.
+        // `OrderComponents` (from ISeaportOrderHash) and `OrderParameters`
+        // (from ISeaportMatch) use STRUCTURALLY-IDENTICAL but
+        // type-distinct nested types (OfferItem / ConsiderationItem /
+        // OrderType). Solidity rejects the implicit cross-interface
+        // conversion even though the wire layouts match exactly, so
+        // we copy the arrays element-by-element with the explicit
+        // target-interface types.
+        MatchOfferItem[] memory matchOffer = new MatchOfferItem[](components.offer.length);
+        for (uint256 i = 0; i < components.offer.length; i++) {
+            matchOffer[i] = MatchOfferItem({
+                itemType: ItemType(uint8(components.offer[i].itemType)),
+                token: components.offer[i].token,
+                identifierOrCriteria: components.offer[i].identifierOrCriteria,
+                startAmount: components.offer[i].startAmount,
+                endAmount: components.offer[i].endAmount
+            });
+        }
+        MatchConsiderationItem[] memory matchConsideration =
+            new MatchConsiderationItem[](components.consideration.length);
+        for (uint256 i = 0; i < components.consideration.length; i++) {
+            matchConsideration[i] = MatchConsiderationItem({
+                itemType: ItemType(uint8(components.consideration[i].itemType)),
+                token: components.consideration[i].token,
+                identifierOrCriteria: components.consideration[i].identifierOrCriteria,
+                startAmount: components.consideration[i].startAmount,
+                endAmount: components.consideration[i].endAmount,
+                recipient: components.consideration[i].recipient
+            });
+        }
+        AdvancedOrder memory advanced = AdvancedOrder({
+            parameters: OrderParameters({
+                offerer: components.offerer,
+                zone: components.zone,
+                offer: matchOffer,
+                consideration: matchConsideration,
+                orderType: MatchOrderType(uint8(components.orderType)),
+                startTime: components.startTime,
+                endTime: components.endTime,
+                zoneHash: components.zoneHash,
+                salt: components.salt,
+                conduitKey: components.conduitKey,
+                totalOriginalConsiderationItems: components.consideration.length
+            }),
+            numerator: 1,
+            denominator: 1,
+            signature: hex"",
+            extraData: hex""
+        });
+
+        // ── Real Seaport fulfillAdvancedOrder ────────────────────
+        // `fulfillerConduitKey = bytes32(0)` — buyer pays via
+        // Seaport directly (the buyer's ERC20 approval is on
+        // Seaport, not on a buyer-side conduit). `recipient =
+        // phase2Buyer` — the NFT goes to the buyer.
+        CriteriaResolver[] memory noResolvers = new CriteriaResolver[](0);
+        vm.prank(phase2Buyer);
+        bool ok = ISeaportFulfill(SEAPORT_ADDR).fulfillAdvancedOrder(
+            advanced,
+            noResolvers,
+            bytes32(0),
+            phase2Buyer
+        );
+        assertTrue(ok, "Seaport.fulfillAdvancedOrder must return true on a full fill");
+
+        // ── Six post-fill assertions (per Issue #378) ────────────
+        // 1. Lender vault balance ↑ by lender leg.
+        uint256 lenderVaultAfter =
+            IERC20(address(phase2Principal)).balanceOf(phase2LenderVault);
+        assertEq(
+            lenderVaultAfter - lenderVaultBefore,
+            pctx.lenderLeg,
+            "lender vault balance must increase by pctx.lenderLeg"
+        );
+        // 2. Treasury balance ↑ by treasury leg.
+        uint256 treasuryAfter =
+            IERC20(address(phase2Principal)).balanceOf(treasury);
+        assertEq(
+            treasuryAfter - treasuryBefore,
+            pctx.treasuryLeg,
+            "treasury balance must increase by pctx.treasuryLeg"
+        );
+        // 3. Borrower vault balance ↑ by remainder.
+        uint256 borrowerVaultAfter =
+            IERC20(address(phase2Principal)).balanceOf(phase2BorrowerVault);
+        uint256 expectedRemainder = askPrice - pctx.lenderLeg - pctx.treasuryLeg;
+        assertEq(
+            borrowerVaultAfter - borrowerVaultBefore,
+            expectedRemainder,
+            "borrower vault balance must increase by ask minus lender+treasury legs"
+        );
+        // 4. Loan transitioned to Settled.
+        LibVaipakam.Loan memory loanAfter =
+            LoanFacet(address(diamond)).getLoanDetails(LOAN_ID);
+        assertEq(
+            uint256(loanAfter.status),
+            uint256(LibVaipakam.LoanStatus.Settled),
+            "loan.status must be Settled after fulfillment"
+        );
+        // 5. Borrower-NFT lock released. Diamond storage clears the
+        //    prepay-listing slot at settlement; assert it's zero.
+        bytes32 storedAfter = NFTPrepayListingFacet(address(diamond))
+            .getPrepayListingOrderHash(LOAN_ID);
+        assertEq(
+            storedAfter,
+            bytes32(0),
+            "prepayListingOrderHash slot must clear at settlement"
+        );
+        // 6. Buyer holds the collateral NFT.
+        assertEq(
+            IERC721(address(phase2Collateral)).ownerOf(COLLATERAL_TOKEN_ID),
+            phase2Buyer,
+            "buyer must hold the collateral NFT after fulfillment"
+        );
+
+        // Silence unused-var warning for the recordedHash captured at
+        // the post call. We don't directly assert against it here
+        // (the Phase-2b test already locked the hash-rederive
+        // invariant); the storedAfter assertion above confirms the
+        // diamond slot cleared, which is the load-bearing settlement
+        // signal.
+        recordedHash;
     }
 
     // ─── Phase-2b helpers ──────────────────────────────────────────
