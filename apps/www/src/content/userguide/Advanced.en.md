@@ -439,13 +439,17 @@ section. Ticking it marks the offer as eligible for a
 parallel-sale listing of your NFT collateral on OpenSea — a
 single offer that can be filled EITHER by a lender (you take
 the loan) OR by a marketplace buyer (you sell the NFT). The
-listing is NOT torn down at lender acceptance: if a lender
-fills first you take the loan, the OpenSea listing carries
-through loan initiation, and a later marketplace fill triggers
-the diamond's settlement waterfall to close the loan from the
-sale proceeds (see Scenario B below). If a marketplace buyer
-fills first, no loan is ever created (Scenario A). The two
-scenarios end at different offer states: Scenario A stamps
+listing is NOT torn down at lender acceptance if it was already
+posted: if a lender fills first you take the loan, the existing
+OpenSea listing carries through loan initiation until its
+original Seaport expiry, and a later marketplace fill before
+that expiry triggers the diamond's settlement waterfall to close
+the loan from the sale proceeds (see Scenario B below). For
+ordinary GTT offers this expiry is the offer's original
+Good-Til-Time; lender acceptance does not extend or repost the
+listing for the full loan term. If a marketplace buyer fills
+first, no loan is ever created (Scenario A). The two scenarios
+end at different offer states: Scenario A stamps
 the offer with `consumed_by_sale` via `markOfferConsumedBySale`
 (it shows up under the Sold filter), and lender acceptance
 is gated against any offer that has already been stamped. In
@@ -463,12 +467,20 @@ the dapp does NOT automate today:
 1. **Record + wire on the diamond.** Call
    `OfferParallelSaleFacet.postParallelSaleListing(uint96
    offerId, uint256 askPrice, bytes32 conduitKey, FeeLeg[]
-   feeLegs)`. The facet internally builds the canonical
-   Seaport OrderComponents from those inputs (plus values it
-   holds in `CollateralListingExecutor.offerContext` — the
-   borrower vault address, principal asset, collateral fields,
-   startTime, endTime) and the current `Seaport.getCounter`
-   for the vault, derives the orderHash via
+   feeLegs)` while the offer is still active and before any
+   lender acceptance. Once the offer is accepted, cancelled, or
+   consumed by sale, this call reverts as terminal; ticking the
+   opt-in alone is not enough to create a listing that can carry
+   into Scenario B. The ask must also clear the pre-loan floor:
+   principal plus worst-case offer interest through the loan
+   duration and grace window, treasury cut on that interest, the
+   configured safety buffer, and all fee-leg amounts. Under-floor
+   asks revert at this step. The facet internally builds the
+   canonical Seaport OrderComponents from those inputs, the
+   OfferContext values it records for the executor (borrower
+   vault address, principal asset, collateral fields, startTime,
+   endTime), and the current `Seaport.getCounter` for the vault,
+   derives the orderHash via
    `Seaport.getOrderHash`, returns it, registers the vault's
    ERC-1271 binding to that hash, and grants the Seaport
    conduit approval for the NFT collateral. The emitted
@@ -488,6 +500,18 @@ the dapp does NOT automate today:
    lands, either run step 2 immediately after step 1 OR call
    `releaseParallelSaleLock` to invalidate the binding before
    any unintended fill.
+   For fee-enforced collections, populate `feeLegs` from the
+   collection's required OpenSea / creator fee schedule before
+   calling this step. Use only required, non-zero fee rows; cap
+   the list to the protocol-supported fee-leg count; convert each
+   row into an absolute fixed amount in the principal asset at the
+   chosen ask price; and use the listed fee recipient as the leg
+   recipient. If a required fee rounds to zero at the chosen ask,
+   the ask is too small for that collection and the post should not
+   be attempted. Passing an empty array is valid only for fee-free
+   collections. On fee-enforced collections it can produce an order
+   that fails OpenSea publication or cannot satisfy the marketplace's
+   required consideration shape.
 2. **Publish to OpenSea.** Reconstruct the same OrderComponents
    the facet built. The `PostParallelSaleListing` event alone
    isn't sufficient: it emits `offerId`, borrower, orderHash,
@@ -557,10 +581,13 @@ accidentally tick it on an ineligible offer.
   Details). No loan was ever created; you keep the net sale
   proceeds.
 - *After a lender accepts* (Scenario B): the listing
-  carries through loan initiation — neither the borrower
-  NFT lock nor the listing is torn down. A later buyer
-  fill triggers the diamond's settlement waterfall in one
-  Seaport transaction. Same fee-leg note as Scenario A:
+  carries through loan initiation only if it was already
+  posted before acceptance, and only until the Seaport order's
+  original expiry. Neither the borrower NFT lock nor the listing
+  is torn down at acceptance, but lender acceptance also does not
+  extend or repost the order for the full loan term. A later buyer
+  fill before that expiry triggers the diamond's settlement
+  waterfall in one Seaport transaction. Same fee-leg note as Scenario A:
   on fee-enforced collections, Seaport routes OpenSea
   protocol-fee and creator-fee legs directly to their
   configured recipients first, and the executor passes only
