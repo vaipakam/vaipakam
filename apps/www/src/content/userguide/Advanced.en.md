@@ -168,8 +168,8 @@ Acceptance flips the offer to Accepted and triggers loan
 initiation, which mints the two position NFTs (one for lender,
 one for borrower) and opens the loan in the Active state.
 
-Closed offers carry one of four distinct statuses, exposed as a
-filter chip on the My Offers page:
+Closed offers carry one of three distinct statuses, each exposed
+as a filter chip on the My Offers page:
 
 - **Filled** — accepted by a counterparty; the offer's loan
   reference is the resulting loan id.
@@ -463,31 +463,34 @@ accidentally tick it on an ineligible offer.
   Seaport transaction: the lender receives their
   settlement entitlement (full coupon for full-term
   loans, pro-rata for partial-term), the treasury cut
-  goes to treasury, and the remainder lands in the
-  borrower-position NFT holder's vault. You can claim the
-  surplus from the Claim Center exactly as you would for
-  a normal preclose.
+  goes to treasury, and the remainder is deposited
+  DIRECTLY into the current borrower-position NFT holder's
+  vault (via `LibUserVault.getOrCreate` + a vault deposit).
+  No Claim Center claim is created — check your vault
+  balance after the sale lands.
 
-**What you can't combine it with.** Two related conflicts —
-both of which surface at the **fill** step, not at publish
-or offer-create:
+**What you can't combine it with.** Two distinct conflict
+classes, surfaced at different protocol stages:
 
-- A live loan-keyed prepay listing on the SAME loan as a
-  carried-through parallel-sale listing. The conduit approval
-  for the borrower's NFT is a single slot; the diamond's
-  `postPrepayListing` reverts at publish-time if there's
-  already a carried parallel-sale listing on the same loan
-  (this one IS publish-step — see
-  `ParallelSaleConflictsWithLoanKeyedListing`).
-- An open PrecloseFacet offset offer on the loan. The
-  diamond's `_settleLoanFromParallelSale` reverts with
-  `ParallelSaleBlockedByOpenOffsetOffer` when a buyer tries
-  to fill the parallel-sale listing — NOT at the publish step.
-  If you have an open offset and a live parallel-sale listing,
-  the listing remains valid on OpenSea but any fill attempt
-  reverts until you cancel the offset. The dapp surfaces
-  this on the Loan Details page so you can choose which
-  cross-flow exit you actually want.
+- *Publish-time block (sibling loan-keyed listing).* If the
+  loan already has a parallel-sale listing carrying through
+  from offer-create AND the borrower then calls
+  `NFTPrepayListingFacet.postPrepayListing` (or `updatePrepayListing`)
+  to post a SECOND loan-keyed prepay listing on the same loan,
+  the diamond reverts with `SiblingParallelSaleListingLive`.
+  The conduit approval for the borrower's NFT is a single
+  slot — running both listings concurrently would create an
+  ambiguous approval. The borrower sees the revert at the
+  publish/update call; nothing fills.
+- *Fill-time block (open PrecloseFacet offset).* If the loan
+  has an open PrecloseFacet offset offer AND a buyer later
+  tries to fill the parallel-sale listing, the diamond's
+  `_settleLoanFromParallelSale` reverts with
+  `ParallelSaleBlockedByOpenOffsetOffer`. The listing remains
+  valid on OpenSea but any fill attempt reverts until the
+  offset is cancelled. The dapp surfaces this on the Loan
+  Details page so the borrower can choose which cross-flow
+  exit they actually want.
 
 ---
 
@@ -876,19 +879,21 @@ side Seaport orders are the only authorised settlement
 shape.
 
 On collections that enforce OpenSea protocol fees and/or
-creator royalties, the dapp currently does NOT render the
-offers panel at all — it shows an informational banner in
-that slot instead. Incoming offers stay visible on OpenSea's
-marketplace UI (and the bidder can still fill your listing
-there at the listed ask), but the dapp-side Match flow is
-gated until v1.1. The fee-enforced matching path is tracked
-separately under Issue #331.
+creator royalties, the dapp DOES render the offers panel —
+the fee-schedule fetch from the OpenSea API is treated as
+advisory; the actual fulfillment data is fetched at
+Match-click time. If that fulfillment-data fetch fails (rate
+limit, API outage, or unsupported collection shape), the
+Match click returns false rather than building a transaction
+the diamond would reject — so a fee-enforced collection's
+panel may show offers you can browse but not all of them are
+clickable-to-match in a given moment.
 
 When you find an acceptable offer and click **Match offer**,
-the dapp opens the **Confirm Match** modal, which restates
-the bidder you're matching, the price you're settling at,
-and the lender / treasury / borrower split the diamond will
-route. After you confirm, the dapp sends a single
+the dapp opens the **Confirm Match** modal, which restates the
+matched value (the bidder's offered price the listing will
+rotate to) and gives a generic explanation of the atomic-match
+flow. After you confirm, the dapp sends a single
 `matchOpenSeaOffer` transaction that bundles your listing
 and the bidder's offer into one Seaport `matchAdvancedOrders`
 call — your listing rotation, the bidder's fulfilment, and
@@ -912,16 +917,19 @@ buyer could step in at the matched price.
 
 **What you still want to verify before clicking Match:**
 
-- **Confirm the bidder address and price in the modal.** The
-  modal echoes the bidder address, the rotated listing price
-  the diamond will accept, and the lender / treasury /
-  borrower split. The protocol's settlement buffer enforces
-  that the price covers principal plus the lender's
-  settlement entitlement (full coupon on full-term-interest
-  loans, pro-rata otherwise) plus the treasury cut, so the
-  split is always at least neutral for you — but it's still
-  your transaction, so it's still your responsibility to
-  confirm.
+- **Confirm the matched value in the modal.** The modal
+  surfaces the price the listing will rotate to (matching the
+  bidder's offered amount). The bidder address and the precise
+  lender / treasury / borrower split aren't currently broken
+  out in the modal — the dapp surfaces them on the OpenSea
+  Offers panel ROW you clicked to open the modal, and the
+  diamond enforces the split at settlement. The protocol's
+  settlement buffer enforces that the price covers principal
+  plus the lender's settlement entitlement (full coupon on
+  full-term-interest loans, pro-rata otherwise) plus the
+  treasury cut, so the split is always at least neutral for
+  you. Still your transaction; still your responsibility to
+  cross-check the panel row before clicking Match.
 - **Check OpenSea's fee posture for the collection.** If the
   collection enforces OpenSea protocol fees or creator
   royalties, the atomic path needs SignedZone `extraData` /
