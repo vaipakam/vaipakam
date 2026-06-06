@@ -464,21 +464,36 @@ the dapp does NOT automate today:
    `releaseParallelSaleLock` to invalidate the binding before
    any unintended fill.
 2. **Publish to OpenSea.** Reconstruct the same OrderComponents
-   the facet built (offer = the NFT collateral, consideration
-   = ask + fee-leg recipients, salt + counter + endTime per
-   the facet's `LibPrepayListingWiring._buildOrderComponents`
-   shape). For ERC-1271-validated orders OpenSea accepts the
-   `signature` field as `0x` (empty bytes) — the vault's
-   on-chain `isValidSignature(orderHash, '')` callback ignores
-   the signature bytes and returns the EIP-1271 magic value
-   for any orderHash the diamond previously registered (from
-   step 1). POST the JSON to the OpenSea `protocol-orders`
-   endpoint (or any other Seaport-compatible marketplace UI).
-   Only after this step does the listing appear on OpenSea's
-   marketplace UI and become discoverable to casual buyers.
-   Vaipakam does not currently automate this submission —
-   surfacing the listing publication end-to-end is tracked
-   as a follow-up.
+   the facet built. The `PostParallelSaleListing` event alone
+   isn't sufficient: it emits `offerId`, borrower, orderHash,
+   askPrice, executor / conduit data, salt, and fee legs, but
+   the canonical `LibPrepayListingWiring._buildOrderComponents`
+   builder also needs values held in the executor's
+   `OfferContext` storage (borrower vault address, principal
+   asset, collateral fields, startTime, endTime) plus the
+   bidder-side Seaport counter. Read both before posting:
+   - `CollateralListingExecutor(executor).offerContext(orderHash)`
+     returns the persisted `OfferContext` struct for that hash.
+   - `Seaport.getCounter(borrowerVault)` returns the canonical
+     Seaport counter for the vault offerer.
+   With those fields in hand the OrderComponents struct
+   reproduces exactly the one the diamond hashed. For
+   ERC-1271-validated orders OpenSea accepts the `signature`
+   field as `0x` (empty bytes) — the vault's on-chain
+   `isValidSignature(orderHash, '')` callback ignores the
+   signature bytes and returns the EIP-1271 magic value for
+   any orderHash the diamond previously registered (from
+   step 1). POST the JSON to the OpenSea listings endpoint
+   (`POST /api/v2/orders/{chain}/{protocol}/listings`, per
+   the official [Create Listing](https://docs.opensea.io/reference/post_listing)
+   docs — this is the same endpoint Vaipakam's own publishers
+   in `apps/agent/src/openseaProxy.ts` +
+   `apps/indexer/src/openseaPublish.ts` use). Only after this
+   step does the listing appear on OpenSea's marketplace UI
+   and become discoverable to casual buyers. Vaipakam does
+   not currently automate this submission for the
+   parallel-sale path — surfacing the listing publication
+   end-to-end is tracked as a follow-up.
 
 Advanced users following the manual path today need BOTH steps
 to get OpenSea visibility; running step 1 alone produces an
