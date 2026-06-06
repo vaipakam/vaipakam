@@ -555,6 +555,73 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
 - **Collateral for NFT Renting:** The collateral for NFT renting is a prepayment of total rental fees + a 5% buffer, denominated in ERC-20 tokens.
   - This is intentionally different from ERC-20 lending. For NFT renting, the rented NFT itself stays in vault custody and is returned by the protocol at rental closure/default, so the borrower does not need to post separate NFT collateral on top of the ERC-20 prepayment model.
 
+### NFT collateral sale before default
+
+For ERC-20 loans secured by ERC-721 or ERC-1155 collateral, Vaipakam may
+let the borrower-side position holder opt the collateral into an
+OpenSea-compatible marketplace listing before default. This feature is
+intended to let a borrower realize NFT equity and repay the loan from
+sale proceeds, without weakening the lender's default rights.
+
+- The listing path is opt-in. A lender offer must explicitly allow NFT
+  collateral sale, and borrower-side listing controls remain unavailable
+  unless that permission is present on the resulting offer or loan.
+- The listed NFT must remain in the borrower's Vaipakam Vault until a
+  valid marketplace fill atomically pays the settlement waterfall and
+  transfers the NFT to the buyer. The borrower must never receive raw
+  transfer authority over the vaulted collateral merely because they
+  asked to list it.
+- Marketplace operator approval must be limited to governance-approved
+  conduits or equivalent marketplace transfer agents. Approval to an
+  arbitrary wallet or unapproved conduit is not an acceptable listing
+  path.
+- A live listing must cover at least the lender settlement entitlement,
+  treasury entitlement, and any required marketplace fee legs. The
+  borrower may ask for more; the excess belongs to the current borrower
+  position holder after the lender and treasury are satisfied.
+- Settlement recipients must follow the current Vaipakam position NFT
+  owners at fill time, not only the original lender and borrower
+  wallets. This preserves secondary-transfer semantics for both
+  lender-side and borrower-side position NFTs.
+- A successful marketplace fill is a proper loan close, not a default.
+  It must settle the lender, treasury, borrower residual, position NFT
+  lock, and borrower VPFI rebate / forfeiture state consistently with
+  other proper-close paths.
+- If the listing remains unfilled through the loan's grace boundary,
+  the ordinary default or liquidation path resumes. The listing must
+  not keep a defaultable loan stuck or require a separate borrower action
+  before lender recovery can proceed.
+- ERC-1155 collateral listings are full-position sales only in the
+  initial design. Partial ERC-1155 collateral sales must not be allowed
+  to close the loan with partial payment.
+- A borrower may update or cancel their live listing before the
+  grace-boundary cutoff when they still hold the borrower-side position
+  NFT. Cancellation releases only the listing lock; it does not repay
+  the loan or change the ordinary loan obligations.
+- When a listed loan is repaid, defaulted, liquidated, refinanced, or
+  otherwise reaches a terminal state through another valid path, the
+  listing binding must be cleared so a stale marketplace fill cannot
+  later move collateral that no longer belongs in that listing flow.
+- Direct sale fills must be blocked when the borrower has become
+  sanctioned between listing and fill, where an active sanctions oracle
+  is configured.
+- Listings may support fixed-price, Dutch-decay, or OpenSea-offer
+  assisted English-style discovery. In every mode, the on-chain
+  settlement floor remains authoritative and the borrower-facing ask
+  controls must not be able to underpay the lender or treasury.
+
+Borrow-or-sell offers may also list the NFT collateral at offer
+creation time, before any lender has accepted. If a buyer fills first,
+the offer is consumed by sale, the offer position closes, and the
+borrower receives the sale proceeds through their Vault. If a lender
+accepts first, the same listing intent can carry into the live loan and
+continues to settle through the loan-level waterfall. Acceptance, offer
+matching, offer cancellation, and offer modification must all recognize
+this terminal or locked state so a lender cannot accept an offer whose
+collateral has already been sold, and a borrower cannot mutate
+settlement-floor terms while a fillable listing still depends on the
+old terms.
+
 ## 4. Offer Book Display
 
 ### Frontend Implementation
@@ -1804,12 +1871,13 @@ All functions are pure `view` functions (zero gas for callers when invoked via R
 - **Flash-Loan Atomicity Tests:** Tests and review should verify that keeper-funded flash-loan liquidation is atomic: the Diamond receives or pulls the principal repayment before collateral is released, the flash-loan callback reverts the whole transaction if debt plus fee cannot be repaid, and the keeper receiver does not retain custody of user funds between transactions.
 - **Internal-Match Liquidation Tests:** Tests should cover internal-match enablement defaulting off, per-tier liquidation-threshold snapshots at loan initiation, two-loan reciprocal matches, three-loan cycle matches, priority-window blocking of external liquidation, reopening external liquidation after the window, per-leg incentive bounds, partial-match residual claimability, terminal-state claim behavior, fallback-pending full rescue, fallback-pending partial residual scaling, oracle-unpriceable fallback-pending rejection, active-to-internally-matched and fallback-pending-to-internally-matched lifecycle edges, and event/indexer compatibility.
 - **Offer-System Behaviour Tests:** Tests should cover fill-mode behaviour, offer expiry and cleanup, in-place offer modification without orphaning already-filled obligations, direct-accept preview parity with actual acceptance, and self-trade prevention across both direct acceptance and permissionless matching.
+- **NFT Collateral Listing Tests:** Tests should cover borrower opt-in, lender-side permission, minimum sale-floor enforcement, approved marketplace transfer paths, full-position ERC-1155 sales, listing update and cancellation, marketplace-fill settlement order, grace-boundary expiry, default after an unfilled listing, proper close after a sale, stale-listing cleanup after other terminal paths, offer consumed by sale before lender acceptance, sale-versus-accept race handling, and sanctions checks at fill time where sanctions screening is active.
 - **Production-Superset Test Harness:** Shared test scaffolding should route every production Diamond facet selector plus any explicit test-only helpers. A test should not pass by accidentally hitting a missing selector where production would route the call, especially for pause, legal, reward, oracle-admin, vault, and tokenomics surfaces.
 - **Off-Chain Data-Flow Audit:** Before mainnet, the project should maintain a catalog of off-chain reads and writes used by the frontend, workers, indexer, keeper, and operator tools. Each entry should identify signer requirements, freshness or time-to-live assumptions, fail-open or fail-closed behavior, plausibility checks, and blast radius. External reads that influence money-moving decisions should have explicit stale-data handling, and keeper writes should remain bounded by on-chain checks.
 - **Off-Chain Data Resilience:** Before mainnet, production off-chain data needed for usability and compliance should have an encrypted backup path outside the primary hosting account and billing boundary. The backup set should include indexed offer / loan data, diagnostics needed for support, legal-hold audit records, and legal-document storage. Operators should verify backup readability on a recurring schedule and maintain a documented restore path for a fresh hosting account.
 - **Risk Sign-Off Package:** Before each mainnet launch or material risk-control activation, operators should archive a risk sign-off covering audit posture, parameter sanity, emergency controls, bot and external dependency readiness, chain-specific deployment readbacks, liquidation economics, sequencer and oracle outage behavior, and the exact scope being approved.
 - **Release-Notes Discipline:** Behaviour-changing pull requests should carry their own unreleased release-note fragment so operator-facing change history lands atomically with the work. Daily or release-cut assembly may fold those fragments into dated release notes, and CI should warn when app or contract behaviour changes without a corresponding release-note entry.
-- **Required CI Gate:** The protected main branch should require the fast deploy-sanity and workspace validation checks, plus the change-detection gate that decides which checks are relevant for a pull request. Slow full-regression checks may remain informational on ordinary pull requests, but release branches and version tags must run the full predeploy regression as a hard mainnet gate before cutover.
+- **Required CI Gate:** The protected main branch should require fast deploy-sanity, positive-flow, and workspace-validation checks, plus the change-detection gate that decides which checks are relevant for a pull request. Slow full-regression and gas-cost review checks may remain informational or operator-local on ordinary pull requests, but release branches and version tags must run the full predeploy regression as a hard mainnet gate before cutover.
 - **Deploy Guardrails:** Deploy sanity coverage should fail before broadcast when a facet would exceed the EVM runtime-size limit, when a public selector is missing, duplicated, or routed to the wrong facet, when the expected facet count does not exactly match the deployed Diamond, or when committed ABI files are stale or missing. These checks protect deployability and consumer compatibility rather than changing user behavior.
 - **Static-Analysis Closure:** Static-analysis findings should be triaged to zero open high-risk findings before mainnet readiness. Dismissed findings need written rationale, dependency findings should be filtered when they belong to unmodified audited libraries, and real dead-code findings should be removed instead of suppressed.
 - **Generated Contract Documentation:** Public NatSpec documentation must describe the current Chainlink CCIP cross-chain architecture and avoid stale LayerZero / OApp wording. If generated public docs are known to be materially stale during a migration, the published site should visibly warn readers until the wording is corrected, and that warning should be retired once the docs are current.

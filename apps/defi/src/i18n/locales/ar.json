@@ -270,7 +270,9 @@
     },
     "marketWidgetBanner": "النشر بسعر السوق الحالي (≈ {{rate}}% سنويًا) لهذا الزوج. راجع وعدل الشروط أدناه قبل التأكيد.",
     "firstOfferBanner": "لا يوجد سعر سوق لهذا الزوج بعد — ستقوم بنشر العرض الأول. حدد سعر الفائدة أدناه.",
-    "marketWidgetIlliquidBanner": "⚠ يتضمن هذا الزوج أصلًا بدون سوق سائل (بدون سعر أوراكل). لا يمكن للبروتوكول حساب الحد الأدنى للضمان تلقائيًا أو تشغيل فحوصات عامل الصحة / LTV القياسية هنا — أنت والطرف المقابل تحددان السعر مباشرة ويجب أن يوافق كلاكما. حدد جميع الشروط أدناه."
+    "marketWidgetIlliquidBanner": "⚠ يتضمن هذا الزوج أصلًا بدون سوق سائل (بدون سعر أوراكل). لا يمكن للبروتوكول حساب الحد الأدنى للضمان تلقائيًا أو تشغيل فحوصات عامل الصحة / LTV القياسية هنا — أنت والطرف المقابل تحددان السعر مباشرة ويجب أن يوافق كلاكما. حدد جميع الشروط أدناه.",
+    "allowsParallelSaleLabel": "Allow optional sale of this NFT on OpenSea",
+    "allowsParallelSaleHint": "Borrow OR sell — opting in marks this offer as eligible for a parallel-sale listing. The listing itself is published separately by calling the diamond's `postParallelSaleListing` once the offer is live (a dedicated in-app flow is queued as a follow-up). If a buyer fills the listing before any lender accepts, the sale proceeds land in your vault and the offer closes. If a lender accepts first, the listing (once published) carries through the loan and any later buyer fill automatically settles the loan from the sale proceeds (lender gets their promised interest, you keep the surplus). Only on Borrower offers with NFT collateral. Forces all-or-nothing fill mode."
   },
   "loanDetails": {
     "connectTitle": "اربط محفظتك",
@@ -501,7 +503,8 @@
     "lblRetryOutcome": "نتيجة إعادة المحاولة",
     "retrySucceeded": "نجحت",
     "retryFailed": "فشلت — رجعت إلى تقسيم الضمان",
-    "lblRetryProceeds": "العائدات المُرجعة"
+    "lblRetryProceeds": "العائدات المُرجعة",
+    "offerConsumedBySale": "Offer sold via OpenSea"
   },
   "claimActionBar": {
     "readyToClaim": "جاهز للمطالبة",
@@ -620,7 +623,8 @@
     "burnedHeader": "— تم تدمير NFT المركز ولا يمكن إعادة استخدام معرّف الرمز أو نقله أبدًا.",
     "genuinePrefix": "NFT Vaipakam أصلي على",
     "healthFactor": "عامل الصحة",
-    "ltv": "LTV"
+    "ltv": "LTV",
+    "offerSold": "Sold via OpenSea"
   },
   "loanFlow": {
     "backToLoan": "العودة إلى القرض",
@@ -822,7 +826,9 @@
     "cancel": "إلغاء",
     "cancelling": "جاري الإلغاء…",
     "assetTypeLegend": "أنواع الأصول: {{kinds}}",
-    "cancelPendingConfig": "يجري التحقق من تهيئة المطابقة الخاصة بالسلسلة… سيتم تفعيل الإلغاء بمجرد تحميل تهيئة البروتوكول."
+    "cancelPendingConfig": "يجري التحقق من تهيئة المطابقة الخاصة بالسلسلة… سيتم تفعيل الإلغاء بمجرد تحميل تهيئة البروتوكول.",
+    "statusSold": "Sold",
+    "statusSoldTooltip": "Sold via OpenSea — the offer's NFT collateral was filled by a buyer before any lender accepted. Proceeds landed in your vault."
   },
   "hero": {
     "brand": "Vaipakam",

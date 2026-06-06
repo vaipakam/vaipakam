@@ -37,6 +37,7 @@ const KIND_LABELS: Record<ActivityEventKind, string> = {
   // for cancelled-row reconstruction. Hidden from the Activity feed
   // (filtered out below) so it doesn't show up as a duplicate row.
   OfferCanceledDetails: 'Offer canceled (detail)',
+  OfferConsumedBySale: 'Offer sold via OpenSea',
   LoanInitiated: 'Loan initiated',
   LoanRepaid: 'Loan repaid',
   LoanDefaulted: 'Loan defaulted',
@@ -66,6 +67,7 @@ const KIND_ACCENT: Record<ActivityEventKind, string> = {
   OfferAccepted: 'success',
   OfferCanceled: 'failure',
   OfferCanceledDetails: 'failure',
+  OfferConsumedBySale: 'success',
   LoanInitiated: 'success',
   LoanRepaid: 'success',
   LoanDefaulted: 'failure',
@@ -136,6 +138,13 @@ const KIND_PRIORITY: ActivityEventKind[] = [
   'VPFIWithdrawnFromVault',
   'OfferCreated',
   'OfferCanceled',
+  // T-086 Round-8 §19.7e + Codex round-20 P3 — parallel-sale
+  // Scenario A terminal. Both `pickPrimary` (drives the rolled-up
+  // tx headline) and the filter-chip generator
+  // (`KIND_PRIORITY.filter(... kindsPresent)`) read this list, so
+  // the entry surfaces the sold-via-OpenSea kind in the toolbar
+  // filter without an extra config.
+  'OfferConsumedBySale',
 ];
 
 function pickPrimary(events: ActivityEvent[]): ActivityEventKind {

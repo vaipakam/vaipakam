@@ -52,6 +52,17 @@ const OFFER_CREATED_TOPIC0 = id('OfferCreated(uint256,address,uint8)');
 // `getOffer` round-trip.
 const OFFER_ACCEPTED_TOPIC0 = id('OfferAccepted(uint256,address,uint256)');
 const OFFER_CANCELED_TOPIC0 = id('OfferCanceled(uint256,address)');
+// T-086 Round-8 §19.7 + Codex round-14 P2 — `OfferConsumedBySale` is
+// the Scenario A parallel-sale terminal. Distinct from `OfferCanceled`
+// so the fallback path can map a sold-before-acceptance offer into
+// the `'sold'` bucket instead of leaving it stuck in the active set.
+// Event signature: `OfferConsumedBySale(uint96 indexed offerId,
+// address indexed executor)`. The uint96 still topic-encodes
+// canonically as a uint256 word, so the topic match shape is the
+// same as the other offer-keyed events.
+const OFFER_CONSUMED_BY_SALE_TOPIC0 = id(
+  'OfferConsumedBySale(uint96,address)',
+);
 // Companion of `OfferCanceled` that carries the full offer terms for
 // cancelled-row reconstruction (see OfferFacet.sol). The legacy
 // `OfferCanceled` keeps emitting for historical consumers; this one
@@ -166,6 +177,7 @@ export type ActivityEventKind =
   | 'OfferAccepted'
   | 'OfferCanceled'
   | 'OfferCanceledDetails'
+  | 'OfferConsumedBySale'
   | 'LoanInitiated'
   | 'LoanRepaid'
   | 'LoanDefaulted'
@@ -246,12 +258,18 @@ export interface LogIndexResult {
   /** Reverse lookup: position-NFT tokenId → the `OfferCreated` event that
    *  minted it. Useful for burned NFTs whose offer never turned into a loan
    *  (canceled before acceptance), so the Verifier can still surface the
-   *  offer status instead of falling back to "unknown". */
+   *  offer status instead of falling back to "unknown".
+   *
+   *  T-086 Round-8 §19.7e + Codex round-18 P2 #6 — `sold` status added
+   *  for the parallel-sale Scenario A terminal (`OfferConsumedBySale`).
+   *  Scenario A also burns the offer-creator NFT; without this state
+   *  the Verifier would tell prospective buyers a sold-through-OpenSea
+   *  offer was "open" (the default fallback). */
   getOfferForToken: (tokenId: bigint) =>
     | {
         offerId: string;
         creator: string;
-        status: 'accepted' | 'canceled' | 'open';
+        status: 'accepted' | 'canceled' | 'sold' | 'open';
         event: ActivityEvent;
       }
     | null;
@@ -279,8 +297,16 @@ interface CachedShape {
   prevOwners?: Record<string, string>;
   // Offer IDs (decimal strings) from OfferCreated.
   offerIds: string[];
-  /** Offer IDs that have reached a terminal state (accepted or canceled). */
+  /** Offer IDs that have reached a terminal state (accepted, canceled,
+   *  or sold-via-OpenSea). */
   closedOfferIds?: string[];
+  /** T-086 Round-8 §19.7e + Codex round-18 P2 #4 — Offer IDs whose
+   *  terminal state is specifically the parallel-sale Scenario A
+   *  (`OfferConsumedBySale`). Stripped from the public
+   *  `closedOfferIds` so OfferBook's Closed/Filled tab doesn't show
+   *  them as pagination slots that render nothing — sold offers are
+   *  not `accepted`, so `fetchBatch` would skip them anyway. */
+  soldOfferIds?: string[];
   /** Highest (most recent) offerId seen in `OfferAccepted`, or null. */
   lastAcceptedOfferId?: string | null;
   /** Last N accepted offer IDs in OLDEST-FIRST scan order. Hydrated to
@@ -334,7 +360,15 @@ const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
  * forward, increment normally when invalidation is required.
  */
 function storageKey(chainId: number, diamond: string): string {
-  return `vaipakam:logIndex:v1:${chainId}:${diamond.toLowerCase()}`;
+  // T-086 Round-8 §19.7e + Codex round-17 P2 #1 — bumped `v1` → `v2`
+  // because the OfferConsumedBySale scan was added in this PR. Any
+  // existing browser whose cursor has already advanced past a block
+  // carrying a parallel-sale terminal would NEVER replay it under
+  // the same key — leaving sold offers stuck in `active` in the
+  // worker-down fallback path. The bump forces a one-time re-scan
+  // from the deploy block on next page load; correctness over the
+  // (one-time) extra cold-scan cost.
+  return `vaipakam:logIndex:v2:${chainId}:${diamond.toLowerCase()}`;
 }
 
 function emptyCache(deployBlock: number): CachedShape {
@@ -345,6 +379,7 @@ function emptyCache(deployBlock: number): CachedShape {
     prevOwners: {},
     offerIds: [],
     closedOfferIds: [],
+    soldOfferIds: [],
     lastAcceptedOfferId: null,
     recentAcceptedOfferIds: [],
     events: [],
@@ -382,6 +417,8 @@ function readCache(chainId: number, diamond: string): CachedShape | null {
       prevOwners: parsed.prevOwners ?? {},
       offerIds: Array.isArray(parsed.offerIds) ? parsed.offerIds : [],
       closedOfferIds: Array.isArray(parsed.closedOfferIds) ? parsed.closedOfferIds : [],
+      // Codex round-18 P2 #4 — restore the sold-id subset.
+      soldOfferIds: Array.isArray(parsed.soldOfferIds) ? parsed.soldOfferIds : [],
       lastAcceptedOfferId: parsed.lastAcceptedOfferId ?? null,
       recentAcceptedOfferIds,
       events,
@@ -645,6 +682,17 @@ export async function loadLoanIndex(
    *  given (indexer unreachable / disabled), behaviour matches the
    *  original cache-cursor-based incremental scan. */
   indexerLastBlockHint?: number,
+  /** T-086 Round-8 §19.7e + Codex round-18 P2 #5 — optional
+   *  creator-lookup callback for OfferConsumedBySale events whose
+   *  prior OfferCreated wasn't in the scan (fast-forwarded past). The
+   *  caller wires this to `fetchOfferById` so the post-scan
+   *  enrichment can recover the borrower's address from the indexer
+   *  and tag it on the cached event's participants list. Without
+   *  this, the cached event tags only `executor`, hiding the row
+   *  from the borrower's Activity feed when the worker later goes
+   *  down. Returns null on lookup failure (degradation acceptable —
+   *  matches the pre-fix behaviour). */
+  fetchOfferCreator?: (offerId: string) => Promise<string | null>,
 ): Promise<LogIndexResult> {
   const key = storageKey(chainId, diamondAddress);
   const existing = inflight.get(key);
@@ -656,6 +704,7 @@ export async function loadLoanIndex(
     deployBlock,
     chainId,
     indexerLastBlockHint,
+    fetchOfferCreator,
   ).finally(() => {
     inflight.delete(key);
   });
@@ -669,6 +718,7 @@ async function runScan(
   deployBlock: number,
   chainId: number,
   indexerLastBlockHint?: number,
+  fetchOfferCreator?: (offerId: string) => Promise<string | null>,
 ): Promise<LogIndexResult> {
   // Misconfiguration guard — runs before any cache read or RPC call.
   // `deployBlock` must be the chain's actual Diamond-deploy block; a
@@ -710,12 +760,45 @@ async function runScan(
   // the local cache holds richer information and we keep scanning
   // from there.
   const baseFrom = Math.max(cached.lastBlock + 1, deployBlock);
+  // T-086 Round-8 §19.7e + Codex round-19 P2 #2 — when the cache is
+  // FRESH (lastBlock === deployBlock - 1), bypass the indexer hint
+  // and scan from the deploy block. Otherwise the v2 cache bump's
+  // historical rescan never actually happens: an empty cache + a
+  // healthy indexer would still fast-forward past every pre-existing
+  // OfferConsumedBySale log, leaving the worker-down fallback path
+  // permanently blind to sale terminals that landed before this
+  // build's first run. A full historical scan on first load is the
+  // accepted one-time cost — this platform is pre-live (per the
+  // doc-block above), so no existing user has a v1 cache to migrate
+  // gracefully. Subsequent scans see `cached.lastBlock > deployBlock - 1`
+  // and the fast-forward re-engages normally.
+  const isFreshCache = cached.lastBlock === deployBlock - 1;
   const fromBlock =
-    indexerLastBlockHint && indexerLastBlockHint + 1 > baseFrom
+    !isFreshCache && indexerLastBlockHint && indexerLastBlockHint + 1 > baseFrom
       ? indexerLastBlockHint + 1
       : baseFrom;
 
-  if (fromBlock > head) return hydrate(cached);
+  // T-086 Round-8 §19.7e + Codex round-20 P2 + round-21 P2 #1 —
+  // sale-event catchup window. The main `fromBlock` is fast-forwarded
+  // when the indexer hint is ahead of the cache cursor, which is fine
+  // for the bulk events (the indexer delivers them and the dapp reads
+  // via the worker-up path). But `OfferConsumedBySale` is critical for
+  // the worker-DOWN fallback (`useMyOffers` sold bucket + OfferDetails
+  // status corroboration). If a sale lands while the indexer is
+  // healthy + browser cache is behind, fast-forwarding past it leaves
+  // the cached events permanently blind to the sale; later, when the
+  // worker goes down, the dapp shows the offer as `active`.
+  //
+  // Round-21 P2 #1 fix: this must run BEFORE the `fromBlock > head`
+  // early return — that early return fires the moment the indexer
+  // hint matches the safe head (common warmed-cache fast-forward
+  // case), which would skip catchup entirely. The catchup uses
+  // `closedOfferIdSet` + `soldOfferIdSet` + `eventMap` (initialized
+  // immediately below), so those also have to be hoisted above the
+  // early return.
+  const saleCatchupActive = fromBlock > baseFrom;
+  const saleCatchupFromBlock = baseFrom;
+  const saleCatchupToBlock = fromBlock - 1;
 
   const merged = new Map<string, CachedShape['loans'][number]>();
   for (const row of cached.loans) merged.set(row.loanId, row);
@@ -723,6 +806,17 @@ async function runScan(
   const prevOwners: Record<string, string> = { ...(cached.prevOwners ?? {}) };
   const offerIdSet = new Set<string>(cached.offerIds);
   const closedOfferIdSet = new Set<string>(cached.closedOfferIds ?? []);
+  // T-086 Round-8 §19.7e + Codex round-18 P2 #4 — sold-via-OpenSea
+  // ids tracked separately from the closed union. `closedOfferIdSet`
+  // is the union of accepted + cancelled + sold for the openOfferIds
+  // calculation (sold offers must drop from the live active set);
+  // `soldOfferIdSet` is consumed below to STRIP sold ids from the
+  // public `closedOfferIds` array. Without this strip, OfferBook's
+  // Closed/Filled tab includes sold offers in pagination but
+  // `fetchBatch` drops every row with `!raw.accepted` (sold offers
+  // are not accepted) — leaving blank pagination slots that inflate
+  // the scanned total without rendering anything useful.
+  const soldOfferIdSet = new Set<string>(cached.soldOfferIds ?? []);
   let lastAcceptedOfferId: bigint | null = cached.lastAcceptedOfferId
     ? BigInt(cached.lastAcceptedOfferId)
     : null;
@@ -757,6 +851,183 @@ async function runScan(
   let effectiveChunk = CHUNK;
   let cursor = fromBlock;
 
+  // T-086 Round-8 §19.7e + Codex round-20 P2 — sale-event catchup
+  // pass. Scans `OFFER_CONSUMED_BY_SALE_TOPIC0` over the gap the
+  // main `fromBlock` fast-forwarded past so the cached events
+  // include every Scenario A terminal even on warmed caches with
+  // healthy indexers. Bounded chunked loop with the same downshift-
+  // on-failure pattern as the main secondary call. Logs feed the
+  // same in-loop decoder via the dedicated catchup-event branch
+  // below (we run the decoder inline here rather than buffering
+  // raw logs since the addEvent closure needs to land entries into
+  // the same eventMap before the main loop starts).
+  if (saleCatchupActive) {
+    let catchupCursor = saleCatchupFromBlock;
+    let catchupChunk = CHUNK;
+    while (catchupCursor <= saleCatchupToBlock) {
+      const catchupToBlock = Math.min(
+        catchupCursor + catchupChunk - 1,
+        saleCatchupToBlock,
+      );
+      let catchupLogs: RawLog[] = [];
+      try {
+        catchupLogs = await safeGetLogs(rpcUrl, {
+          address: diamondAddress,
+          topics: [[OFFER_CONSUMED_BY_SALE_TOPIC0]],
+          fromBlock: catchupCursor,
+          toBlock: catchupToBlock,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (catchupChunk > 1) {
+          catchupChunk = Math.max(1, Math.floor(catchupChunk / 2));
+          console.warn(
+            `[logIndex] sale-catchup getLogs failed at ${catchupChunk * 2}-block chunk, downshifting: ${msg}`,
+          );
+          continue;
+        }
+        console.warn(
+          `[logIndex] sale-catchup getLogs failed at chunk=1, advancing past gap: ${msg}`,
+        );
+        catchupCursor = catchupToBlock + 1;
+        continue;
+      }
+      // Decode the catchup logs inline so they merge into the same
+      // eventMap + closedOfferIdSet + soldOfferIdSet as the main
+      // loop's results.
+      for (const event of catchupLogs) {
+        const topics = event.topics;
+        if (!topics || topics.length < 3) continue;
+        if (topics[0] !== OFFER_CONSUMED_BY_SALE_TOPIC0) continue;
+        const offerId = BigInt(topics[1]).toString();
+        const executor = ('0x' + topics[2].slice(26)).toLowerCase();
+        closedOfferIdSet.add(offerId);
+        soldOfferIdSet.add(offerId);
+        // Same eventKey shape as the addEvent closure inside the
+        // main loop — the closure is scoped to that block, so
+        // construct the entry directly here. Codex round-21 P2 #2 —
+        // ALSO look up the creator from cached `OfferCreated` events
+        // in eventMap (initialized from prior-scan cache) before
+        // writing the event, so the warmed-cache fast-forward
+        // scenario gets the borrower in participants without waiting
+        // for the indexer-callback post-scan pass below. The
+        // post-scan pass still covers the case where the create event
+        // is fully fast-forwarded past.
+        let cachedCreator: string | undefined;
+        for (const ev of eventMap.values()) {
+          if (
+            ev.kind === 'OfferCreated' &&
+            typeof ev.args.offerId === 'string' &&
+            ev.args.offerId === offerId &&
+            typeof ev.args.creator === 'string'
+          ) {
+            cachedCreator = ev.args.creator.toLowerCase();
+            break;
+          }
+        }
+        const eventKey = `${event.transactionHash}:${event.logIndex}`;
+        eventMap.set(eventKey, {
+          kind: 'OfferConsumedBySale',
+          blockNumber: Number(event.blockNumber),
+          logIndex: Number(event.logIndex),
+          txHash: event.transactionHash,
+          participants: cachedCreator ? [executor, cachedCreator] : [executor],
+          args: { offerId, executor },
+        });
+      }
+      catchupCursor = catchupToBlock + 1;
+    }
+  }
+
+  // Codex round-21 P2 #1 — early-return AFTER the catchup pass. When
+  // the indexer hint already matches the safe head, `fromBlock > head`
+  // (no main-scan work to do). Pre-fix this returned `hydrate(cached)`
+  // before the catchup ran, so warmed-cache + healthy-worker users
+  // never picked up new sale terminals. Now the catchup runs first
+  // (updating eventMap / closedOfferIdSet / soldOfferIdSet in
+  // memory); we write the merged state to cache and hydrate the
+  // updated shape.
+  if (fromBlock > head) {
+    // Codex round-22 P2 #1 — also run the post-scan enrichment
+    // BEFORE writing the cache + early-returning. Otherwise a
+    // warmed-cache + healthy-worker user whose catchup discovered a
+    // new sale whose OfferCreated isn't in eventMap caches it with
+    // `participants: [executor]` only; the indexer callback never
+    // gets a chance to patch in the creator before the next
+    // worker-down fallback hides the row from the borrower.
+    const creatorByOfferIdEarly = new Map<string, string>();
+    for (const ev of eventMap.values()) {
+      if (ev.kind !== 'OfferCreated') continue;
+      const id = ev.args.offerId;
+      const creator = ev.args.creator;
+      if (typeof id === 'string' && typeof creator === 'string') {
+        creatorByOfferIdEarly.set(id, creator.toLowerCase());
+      }
+    }
+    for (const ev of eventMap.values()) {
+      if (ev.kind !== 'OfferConsumedBySale') continue;
+      const offerId = ev.args.offerId;
+      if (typeof offerId !== 'string') continue;
+      const localCreator = creatorByOfferIdEarly.get(offerId);
+      if (localCreator && !ev.participants.includes(localCreator)) {
+        ev.participants = [...ev.participants, localCreator];
+      }
+    }
+    if (fetchOfferCreator) {
+      const missingEarly: { ev: ActivityEvent; offerId: string }[] = [];
+      for (const ev of eventMap.values()) {
+        if (ev.kind !== 'OfferConsumedBySale') continue;
+        const offerId = ev.args.offerId;
+        if (typeof offerId !== 'string') continue;
+        if (creatorByOfferIdEarly.has(offerId)) continue;
+        missingEarly.push({ ev, offerId });
+      }
+      for (const { ev, offerId } of missingEarly) {
+        try {
+          const creator = await fetchOfferCreator(offerId);
+          if (creator) {
+            const lc = creator.toLowerCase();
+            if (!ev.participants.includes(lc)) {
+              ev.participants = [...ev.participants, lc];
+            }
+          }
+        } catch {
+          // Best-effort — leave participants as-is on failure.
+        }
+      }
+    }
+    const sortedEvents = Array.from(eventMap.values()).sort((a, b) => {
+      if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
+      return a.logIndex - b.logIndex;
+    });
+    const updatedCached: CachedShape = {
+      ...cached,
+      // Codex round-23 P2 — advance `lastBlock` past the catchup
+      // window so the next `useLogIndex` load doesn't rescan the
+      // same `[baseFrom, fromBlock - 1]` gap. Pre-fix, every future
+      // load in the warmed-cache + healthy-worker state re-ran the
+      // sale-only scan over historical blocks already covered.
+      // Conditional on `saleCatchupActive` because if the catchup
+      // didn't fire (fromBlock == baseFrom), `fromBlock - 1` would
+      // be < cached.lastBlock and we'd silently regress the cursor.
+      lastBlock: saleCatchupActive
+        ? Math.max(cached.lastBlock, fromBlock - 1)
+        : cached.lastBlock,
+      closedOfferIds: Array.from(closedOfferIdSet).sort((a, b) =>
+        Number(BigInt(a) - BigInt(b)),
+      ),
+      soldOfferIds: Array.from(soldOfferIdSet).sort((a, b) =>
+        Number(BigInt(a) - BigInt(b)),
+      ),
+      recentAcceptedOfferIds: recentAcceptedOfferIds.slice(
+        -RECENT_ACCEPTED_CAP,
+      ),
+      events: sortedEvents,
+    };
+    writeCache(chainId, diamondAddress, updatedCached);
+    return hydrate(updatedCached);
+  }
+
   while (cursor <= head) {
     const toBlock = Math.min(cursor + effectiveChunk - 1, head);
 
@@ -766,6 +1037,18 @@ async function runScan(
     // Infura, QuickNode, publicnode, direct node RPCs).
     let logs: RawLog[];
     try {
+      // T-086 Round-8 §19.7e + Codex round-15 P2 #5 + round-16 P2 #3 —
+      // `OFFER_CONSUMED_BY_SALE_TOPIC0` is fetched via a SEPARATE second
+      // `eth_getLogs` call (immediately after the bulk call below) so
+      // the main filter's topic OR-list stays at 24 entries — under the
+      // publicnode/free-tier silent cap that drops results when the
+      // list crosses 25. The decoder branch for the consumed-by-sale
+      // event still lives in the in-loop scan and decodes logs from
+      // either call uniformly. `OFFER_CANCELED_DETAILS_TOPIC0` is also
+      // omitted from the main filter (same cap reason); for that event
+      // the contract-side trade-off has been accepted (no second call
+      // for it — re-add the same way once any other cap-pressing event
+      // joins the list).
       logs = await safeGetLogs(rpcUrl, {
         address: diamondAddress,
         topics: [
@@ -775,18 +1058,6 @@ async function runScan(
             OFFER_CREATED_TOPIC0,
             OFFER_ACCEPTED_TOPIC0,
             OFFER_CANCELED_TOPIC0,
-            // OFFER_CANCELED_DETAILS_TOPIC0 intentionally omitted from
-            // the filter array. publicnode (and other free-tier RPCs)
-            // silently return empty results when the topic OR-list
-            // exceeds an internal cap (~24 entries observed). Adding
-            // this topic pushed the array to 25 and broke event capture
-            // for every event kind. The companion event isn't emitted
-            // by any deployed Vaipakam Diamond on Sepolia today
-            // (contract redeploy hasn't happened yet) so omitting it
-            // costs nothing in practice. Re-add when (a) we move off
-            // free-tier RPC OR (b) split into a second eth_getLogs
-            // call. The decoder branch below stays in case logs of
-            // this kind ever land via a wider scan.
             LOAN_REPAID_TOPIC0,
             LOAN_DEFAULTED_TOPIC0,
             LENDER_CLAIMED_TOPIC0,
@@ -822,6 +1093,60 @@ async function runScan(
         continue; // retry same cursor with the smaller chunk
       }
       throw err;
+    }
+
+    // T-086 Round-8 §19.7e + Codex round-16 P2 #3 — second
+    // `eth_getLogs` call dedicated to `OFFER_CONSUMED_BY_SALE_TOPIC0`.
+    // Keeps the bulk call's topic OR-list at 24 (under the publicnode
+    // silent cap) while still capturing sold-before-acceptance offers
+    // on the worker-down fallback path. Same chunk window, same
+    // address. Logs merge into the main scan via a single concat
+    // below; the decoder branch matches by `topic0` so ordering is
+    // irrelevant.
+    let consumedLogs: RawLog[] = [];
+    let consumedScanOk = true;
+    try {
+      consumedLogs = await safeGetLogs(rpcUrl, {
+        address: diamondAddress,
+        topics: [[OFFER_CONSUMED_BY_SALE_TOPIC0]],
+        fromBlock: cursor,
+        toBlock,
+      });
+    } catch (err) {
+      // Codex round-17 P2 #3 + round-18 P2 #2 + round-19 P2 #1 —
+      // DON'T silently advance the cursor on failure. The bulk-call
+      // pattern (throw on non-range error) isn't right here either:
+      // we DON'T want a transient secondary-call failure to crash
+      // the whole `runScan`. So this branch downshifts on ANY
+      // failure (not just range errors) while `effectiveChunk > 1`,
+      // and only accepts the degradation + advances the cursor when
+      // chunk = 1 still fails. Transient 5xx / persistent 429 /
+      // provider-specific topic errors all get the same retry
+      // shrinkage; only a genuinely broken provider at chunk=1 falls
+      // through to "degrade + advance" (the same trade-off the
+      // existing `OfferCanceledDetails` omission accepts).
+      const msg = err instanceof Error ? err.message : String(err);
+      if (effectiveChunk > 1) {
+        const next = Math.max(1, Math.floor(effectiveChunk / 2));
+        console.warn(
+          `[logIndex] OfferConsumedBySale getLogs failed at ${effectiveChunk}-block chunk, downshifting to ${next}: ${msg}`,
+        );
+        effectiveChunk = next;
+        continue; // retry same cursor with the smaller chunk
+      }
+      // At chunk = 1, repeated failures mean the provider just won't
+      // serve this topic. Advance + log + accept the gap.
+      console.warn(
+        `[logIndex] OfferConsumedBySale getLogs failed at chunk=1 (sold-row capture degraded for this chunk; advancing cursor): ${msg}`,
+      );
+      consumedScanOk = false;
+    }
+    // `consumedScanOk == false` here means we accepted the degradation
+    // and want the cursor to advance. Fall through to the bulk event
+    // loop below.
+    void consumedScanOk;
+    if (consumedLogs.length > 0) {
+      logs = logs.concat(consumedLogs);
     }
 
     // Small inter-chunk pause — keeps us under Alchemy free-tier CUPS without
@@ -882,6 +1207,45 @@ async function runScan(
         const creator = ('0x' + topics[2].slice(26)).toLowerCase();
         closedOfferIdSet.add(offerId);
         addEvent('OfferCanceled', [creator], { offerId, creator });
+      } else if (topic0 === OFFER_CONSUMED_BY_SALE_TOPIC0) {
+        // T-086 Round-8 §19.7 + Codex round-14 P2 + round-15 P2 #3 —
+        // parallel-sale Scenario A terminal. Mirror of the
+        // OfferCanceled branch: add to `closedOfferIdSet` so the
+        // offer drops from the live active set, and addEvent so
+        // `useMyOffers`' fallback path can bucket it as `'sold'`.
+        //
+        // The event's second indexed arg is the executor address
+        // (NOT the offer creator), so a tag of only `[executor]`
+        // would hide this row from the Activity feed for the
+        // borrower (whose wallet wouldn't match the executor's
+        // address). We look up the offer's creator from the prior
+        // `OfferCreated` event in the same `eventMap` and tag both
+        // executor + creator so the Activity feed surfaces the row
+        // for the borrower too.
+        if (topics.length < 3) continue;
+        const offerId = BigInt(topics[1]).toString();
+        const executor = ('0x' + topics[2].slice(26)).toLowerCase();
+        closedOfferIdSet.add(offerId);
+        // Codex round-18 P2 #4 — also mark this offerId as sold so
+        // it's stripped from the public `closedOfferIds` (kept in
+        // `closedOfferIdSet` for the openOfferIds calc above).
+        soldOfferIdSet.add(offerId);
+        let creatorFromPriorCreated: string | undefined;
+        for (const ev of eventMap.values()) {
+          if (
+            ev.kind === 'OfferCreated' &&
+            typeof ev.args.offerId === 'string' &&
+            ev.args.offerId === offerId &&
+            typeof ev.args.creator === 'string'
+          ) {
+            creatorFromPriorCreated = ev.args.creator;
+            break;
+          }
+        }
+        const participants = creatorFromPriorCreated
+          ? [executor, creatorFromPriorCreated]
+          : [executor];
+        addEvent('OfferConsumedBySale', participants, { offerId, executor });
       } else if (topic0 === OFFER_CANCELED_DETAILS_TOPIC0) {
         // Companion to OfferCanceled — same offer, but with the full
         // financial terms folded into args. Decoded so `useMyOffers`
@@ -1388,6 +1752,67 @@ async function runScan(
     }
   }
 
+  // T-086 Round-8 §19.7e + Codex round-18 P2 #5 — post-scan
+  // enrichment for OfferConsumedBySale events whose `OfferCreated`
+  // wasn't in this scan window (fast-forwarded past). The scan-loop
+  // creator lookup walks `eventMap`, but fast-forward skips the
+  // older OfferCreated and the event ends up cached with only
+  // `executor` in participants — hiding the row from the borrower's
+  // Activity feed when the worker later goes down. Recover the
+  // creator from the indexer via the callback and patch participants
+  // before the cache write. Bounded N (number of consumed events
+  // missing creator) and the callback is HTTP-cached, so the
+  // amortized cost is low.
+  // Codex round-21 P2 #2 — first pass: walk eventMap for every
+  // `OfferCreated`, build an offerId → creator address map. Use it
+  // to enrich BOTH the in-current-scan sale events AND the catchup
+  // sale events that were written with `[executor]` only.
+  const creatorByOfferIdLocal = new Map<string, string>();
+  for (const ev of eventMap.values()) {
+    if (ev.kind !== 'OfferCreated') continue;
+    const id = ev.args.offerId;
+    const creator = ev.args.creator;
+    if (typeof id === 'string' && typeof creator === 'string') {
+      creatorByOfferIdLocal.set(id, creator.toLowerCase());
+    }
+  }
+  for (const ev of eventMap.values()) {
+    if (ev.kind !== 'OfferConsumedBySale') continue;
+    const offerId = ev.args.offerId;
+    if (typeof offerId !== 'string') continue;
+    const localCreator = creatorByOfferIdLocal.get(offerId);
+    if (localCreator && !ev.participants.includes(localCreator)) {
+      ev.participants = [...ev.participants, localCreator];
+    }
+  }
+  // Second pass: events whose `OfferCreated` was fast-forwarded past
+  // (NOT in this scan AND NOT cached from a prior scan) still lack
+  // the creator. Use the indexer callback for those — bounded N
+  // (only events still missing creator), HTTP-cached.
+  if (fetchOfferCreator) {
+    const missing: { ev: ActivityEvent; offerId: string }[] = [];
+    for (const ev of eventMap.values()) {
+      if (ev.kind !== 'OfferConsumedBySale') continue;
+      const offerId = ev.args.offerId;
+      if (typeof offerId !== 'string') continue;
+      if (creatorByOfferIdLocal.has(offerId)) continue;
+      missing.push({ ev, offerId });
+    }
+    for (const { ev, offerId } of missing) {
+      try {
+        const creator = await fetchOfferCreator(offerId);
+        if (creator) {
+          const lc = creator.toLowerCase();
+          if (!ev.participants.includes(lc)) {
+            ev.participants = [...ev.participants, lc];
+          }
+        }
+      } catch {
+        // Best-effort — leave participants as-is on failure.
+      }
+    }
+  }
+
   const sortedEvents = Array.from(eventMap.values()).sort((a, b) => {
     if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
     return a.logIndex - b.logIndex;
@@ -1401,6 +1826,9 @@ async function runScan(
     prevOwners,
     offerIds: Array.from(offerIdSet).sort((a, b) => Number(BigInt(a) - BigInt(b))),
     closedOfferIds: Array.from(closedOfferIdSet).sort((a, b) => Number(BigInt(a) - BigInt(b))),
+    // Codex round-18 P2 #4 — persisted alongside closedOfferIds so the
+    // hydrate path can subtract them out for the public surface.
+    soldOfferIds: Array.from(soldOfferIdSet).sort((a, b) => Number(BigInt(a) - BigInt(b))),
     lastAcceptedOfferId: lastAcceptedOfferId ? lastAcceptedOfferId.toString() : null,
     // Trim to the trailing RECENT_ACCEPTED_CAP (most recent), preserving
     // oldest-first scan order so the cache stays append-friendly across
@@ -1426,7 +1854,15 @@ function hydrate(cached: CachedShape): LogIndexResult {
   const openOfferIds = cached.offerIds
     .filter((s) => !closed.has(s))
     .map((s) => BigInt(s));
+  // Codex round-18 P2 #4 — STRIP sold ids from the publicly exposed
+  // `closedOfferIds` so OfferBook's Closed/Filled tab doesn't waste
+  // pagination slots on sold-before-acceptance offers that
+  // `fetchBatch` immediately filters away (`!raw.accepted`).
+  // `closedOfferIdSet` stays as the union for the openOfferIds calc
+  // above — sold offers still correctly drop from the live set.
+  const sold = new Set(cached.soldOfferIds ?? []);
   const closedOfferIds = closedRaw
+    .filter((s) => !sold.has(s))
     .map((s) => BigInt(s))
     .sort((a, b) => Number(a - b));
   const lastAcceptedOfferId = cached.lastAcceptedOfferId
@@ -1516,19 +1952,34 @@ function hydrate(cached: CachedShape): LogIndexResult {
   // surface "this was a canceled offer" in the Verifier. Covers the token-9
   // shape: offer was created (mint) → offer canceled (burn) with no loan ever
   // initiated, so tokenToLoan never gets populated.
-  const offerStatus = new Map<string, 'accepted' | 'canceled'>();
+  // Codex round-18 P2 #6 — track the sold-via-OpenSea terminal too.
+  // Without it the NftVerifier would tell prospective buyers a
+  // sold-through-OpenSea offer was "open" (default fallback).
+  const offerStatus = new Map<string, 'accepted' | 'canceled' | 'sold'>();
   for (const ev of events) {
-    if (ev.kind !== 'OfferAccepted' && ev.kind !== 'OfferCanceled') continue;
+    if (
+      ev.kind !== 'OfferAccepted' &&
+      ev.kind !== 'OfferCanceled' &&
+      ev.kind !== 'OfferConsumedBySale'
+    ) {
+      continue;
+    }
     const offerId =
       typeof ev.args.offerId === 'string' ? ev.args.offerId : String(ev.args.offerId ?? '');
-    offerStatus.set(offerId, ev.kind === 'OfferAccepted' ? 'accepted' : 'canceled');
+    const status =
+      ev.kind === 'OfferAccepted'
+        ? 'accepted'
+        : ev.kind === 'OfferCanceled'
+          ? 'canceled'
+          : 'sold';
+    offerStatus.set(offerId, status);
   }
   const tokenToOfferCtx = new Map<
     string,
     {
       offerId: string;
       creator: string;
-      status: 'accepted' | 'canceled' | 'open';
+      status: 'accepted' | 'canceled' | 'sold' | 'open';
       event: ActivityEvent;
     }
   >();

@@ -299,6 +299,159 @@ export function MyOffersTable({
                   );
                 }
 
+                // T-086 Round-8 (#358) §19.7e — Scenario A parallel-
+                // sale terminal. Indexer-first rows carry full offer
+                // data; worker-down fallback rows (`useMyOffers`'
+                // `soldStubs` from the `useLogIndex` event with no
+                // localStorage snapshot) carry only `id` +
+                // `offerType` — same identity-only stub shape as
+                // cancelled rows. Mirror the cancelled branch's
+                // `hasFullData` split so the stub case renders compact
+                // `—` cells instead of zero/meaningless fungible
+                // amounts (Codex round-15 P2 #1).
+                if (row.status === 'sold') {
+                  const ZERO_ADDR_LC =
+                    '0x0000000000000000000000000000000000000000';
+                  // Codex round-22 P3 — the indexer writes
+                  // `lending_asset = '0x'` for offers whose inline
+                  // `getOfferDetails` read failed at create time
+                  // (heal path retries asynchronously). If such an
+                  // offer is marked `consumed_by_sale` before the
+                  // heal lands, the indexer-fed row reaches us with
+                  // `offer.lendingAsset === '0x'` — not a real
+                  // address. Also detect that stub shape so the
+                  // compact `—` rendering kicks in instead of trying
+                  // to render `PrincipalCell` on bogus data.
+                  const lc = offer.lendingAsset.toLowerCase();
+                  const isStub =
+                    lc === ZERO_ADDR_LC ||
+                    lc === '0x' ||
+                    !/^0x[0-9a-f]{40}$/.test(lc);
+                  const hasFullData = !isStub;
+                  if (!hasFullData) {
+                    return (
+                      <tr
+                        key={offer.id.toString()}
+                        style={{ opacity: 0.85 }}
+                      >
+                        <td>
+                          <Link to={`/app/offers/${offer.id.toString()}`}>
+                            #{offer.id.toString()}
+                          </Link>
+                        </td>
+                        <td>
+                          <span className="badge badge-outline">
+                            {offer.offerType === 0
+                              ? t('common.lender')
+                              : t('common.borrower')}
+                          </span>
+                        </td>
+                        <td>—</td>
+                        <td>—</td>
+                        <td>—</td>
+                        <td>—</td>
+                        <td>
+                          <span
+                            className="status-badge"
+                            style={{
+                              background:
+                                'var(--success-bg, var(--surface-2))',
+                              color: 'var(--success-fg, var(--text))',
+                            }}
+                            title={t('myOffersTable.statusSoldTooltip')}
+                          >
+                            {t('myOffersTable.statusSold')}
+                          </span>
+                        </td>
+                        <td></td>
+                      </tr>
+                    );
+                  }
+                  return (
+                    <tr key={offer.id.toString()} style={{ opacity: 0.85 }}>
+                      <td>
+                        <Link to={`/app/offers/${offer.id.toString()}`}>
+                          #{offer.id.toString()}
+                        </Link>
+                      </td>
+                      <td>
+                        <span className="badge badge-outline">
+                          {offer.offerType === 0
+                            ? t('common.lender')
+                            : t('common.borrower')}
+                        </span>
+                      </td>
+                      <td>
+                        <PrincipalCell
+                          assetType={offer.assetType}
+                          asset={offer.lendingAsset}
+                          amount={offer.amount}
+                          tokenId={offer.tokenId}
+                          chainId={chainId}
+                        />
+                      </td>
+                      {/* Codex round-17 P2 #2 — sold rows are always
+                          borrower-side parallel-sale offers
+                          (consumed_by_sale is contract-gated to
+                          borrower offers). Borrower offers store the
+                          displayed APR CEILING in `interestRateBpsMax`,
+                          while `interestRateBps` is the canonical
+                          floor (`0`). Render the max here so sold
+                          history shows the rate the offer was posted
+                          at, not a misleading `0%`. */}
+                      <td>{bpsToPercent(offer.interestRateBpsMax ?? offer.interestRateBps)}</td>
+                      <td>
+                        {offer.durationDays.toString()}{' '}
+                        {t('loanDetails.daysSuffix')}
+                      </td>
+                      <td>
+                        {/* Codex round-13 P2 #2 + round-16 P2 #1 —
+                            sold-history rows always have NFT
+                            collateral (the `consumed_by_sale`
+                            terminal is only set by the parallel-sale
+                            path, which the contract restricts to
+                            borrower offers with ERC721 / ERC1155
+                            collateral). Pass real `collateralAssetType`
+                            + `collateralTokenId` so the cell renders
+                            "NFT #42" instead of a meaningless ERC20-
+                            amount fallback. For ERC1155 PrincipalCell
+                            interprets `amount` as the number of
+                            copies, so route through `collateralQuantity`
+                            (the ERC1155 copy count) instead of
+                            `collateralAmount` (which on an ERC1155
+                            offer is the principal amount, not the
+                            NFT count). For ERC721 PrincipalCell
+                            ignores `amount` (always 1) so the same
+                            branch works for both NFT types. */}
+                        <PrincipalCell
+                          assetType={offer.collateralAssetType ?? 1}
+                          asset={offer.collateralAsset}
+                          amount={
+                            offer.collateralAssetType === 2
+                              ? offer.collateralQuantity ?? 1n
+                              : offer.collateralAmount
+                          }
+                          tokenId={offer.collateralTokenId ?? 0n}
+                          chainId={chainId}
+                        />
+                      </td>
+                      <td>
+                        <span
+                          className="status-badge"
+                          style={{
+                            background: 'var(--success-bg, var(--surface-2))',
+                            color: 'var(--success-fg, var(--text))',
+                          }}
+                          title={t('myOffersTable.statusSoldTooltip')}
+                        >
+                          {t('myOffersTable.statusSold')}
+                        </span>
+                      </td>
+                      <td></td>
+                    </tr>
+                  );
+                }
+
                 // Active or filled — full row.
                 const isActive = row.status === 'active';
                 const isFilled = row.status === 'filled';

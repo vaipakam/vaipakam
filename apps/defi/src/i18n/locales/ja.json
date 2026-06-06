@@ -270,7 +270,9 @@
     },
     "marketWidgetBanner": "このペアの現在の市場レート(≈ {{rate}}% APR)で掲載中。確定する前に下記の条件を確認・調整してください。",
     "firstOfferBanner": "このペアにはまだ市場レートが存在しません — 最初のオファーを掲載することになります。下記で金利を設定してください。",
-    "marketWidgetIlliquidBanner": "⚠ このペアにはオラクル価格のない非流動性資産が含まれます。プロトコルは最低担保の自動計算や標準的なヘルスファクター / LTV チェックを実行できません — あなたと相手方が直接価格を決定し、双方の同意が必要です。下記ですべての条件を設定してください。"
+    "marketWidgetIlliquidBanner": "⚠ このペアにはオラクル価格のない非流動性資産が含まれます。プロトコルは最低担保の自動計算や標準的なヘルスファクター / LTV チェックを実行できません — あなたと相手方が直接価格を決定し、双方の同意が必要です。下記ですべての条件を設定してください。",
+    "allowsParallelSaleLabel": "Allow optional sale of this NFT on OpenSea",
+    "allowsParallelSaleHint": "Borrow OR sell — opting in marks this offer as eligible for a parallel-sale listing. The listing itself is published separately by calling the diamond's `postParallelSaleListing` once the offer is live (a dedicated in-app flow is queued as a follow-up). If a buyer fills the listing before any lender accepts, the sale proceeds land in your vault and the offer closes. If a lender accepts first, the listing (once published) carries through the loan and any later buyer fill automatically settles the loan from the sale proceeds (lender gets their promised interest, you keep the surplus). Only on Borrower offers with NFT collateral. Forces all-or-nothing fill mode."
   },
   "loanDetails": {
     "connectTitle": "ウォレットを接続",
@@ -501,7 +503,8 @@
     "lblRetryOutcome": "再試行結果",
     "retrySucceeded": "成功",
     "retryFailed": "失敗 — 担保分配にフォールバック",
-    "lblRetryProceeds": "返却された収益"
+    "lblRetryProceeds": "返却された収益",
+    "offerConsumedBySale": "Offer sold via OpenSea"
   },
   "claimActionBar": {
     "readyToClaim": "請求準備完了",
@@ -620,7 +623,8 @@
     "burnedHeader": "— ポジションNFTは破棄され、トークンIDは再利用も譲渡もできません。",
     "genuinePrefix": "本物のVaipakam NFT (",
     "healthFactor": "ヘルスファクター",
-    "ltv": "LTV"
+    "ltv": "LTV",
+    "offerSold": "Sold via OpenSea"
   },
   "loanFlow": {
     "backToLoan": "ローンに戻る",
@@ -822,7 +826,9 @@
     "cancel": "キャンセル",
     "cancelling": "キャンセル中…",
     "assetTypeLegend": "アセットタイプ: {{kinds}}",
-    "cancelPendingConfig": "チェーンのマッチング設定を確認中… プロトコル設定の読み込み完了後、キャンセルが有効になります。"
+    "cancelPendingConfig": "チェーンのマッチング設定を確認中… プロトコル設定の読み込み完了後、キャンセルが有効になります。",
+    "statusSold": "Sold",
+    "statusSoldTooltip": "Sold via OpenSea — the offer's NFT collateral was filled by a buyer before any lender accepted. Proceeds landed in your vault."
   },
   "hero": {
     "brand": "Vaipakam",

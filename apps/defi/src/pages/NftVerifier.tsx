@@ -70,7 +70,15 @@ type Verdict =
       offerContext: {
         offerId: string;
         creator: string;
-        status: "accepted" | "canceled" | "open";
+        /** T-086 Round-8 §19.7e + Codex round-18 P2 #6 — `'sold'`
+         *  added for the parallel-sale Scenario A terminal
+         *  (`OfferConsumedBySale`). Scenario A burns the offer-
+         *  creator NFT after the buyer fills the listing, so a
+         *  prospective buyer checking THIS position-NFT needs to
+         *  see "the underlying offer sold via OpenSea" instead of
+         *  the default "open" — which would suggest the offer is
+         *  still on the order book. */
+        status: "accepted" | "canceled" | "sold" | "open";
       } | null;
     }
   | { kind: "never-minted"; chain: DeployedChain; tokenId: string }
@@ -581,12 +589,20 @@ function BurnedCard({
   const { t } = useTranslation();
   const { chain, tokenId, role, loanDetails, offerContext, lastOwner } =
     verdict;
+  // T-086 Round-8 §19.7e + Codex round-18 P2 #6 — `sold` case added
+  // for the parallel-sale Scenario A terminal: the underlying offer
+  // was sold via OpenSea (buyer filled the NFT-collateral listing
+  // before any lender accepted). Surface that explicitly so a
+  // prospective on-chain-history buyer doesn't read "still open" for
+  // a burned NFT whose offer is in fact gone from the order book.
   const offerStatusLabel =
     offerContext?.status === "canceled"
       ? "canceled by the creator before any borrower / lender accepted it"
       : offerContext?.status === "accepted"
         ? "accepted and has since migrated to a replacement NFT"
-        : "still open at the time of the burn";
+        : offerContext?.status === "sold"
+          ? "sold via OpenSea — the buyer filled the NFT-collateral listing before any lender accepted, and the offer is no longer on the order book"
+          : "still open at the time of the burn";
   return (
     <div className="card verifier-result verifier-burned">
       <div className="verifier-verdict-row">
@@ -702,7 +718,9 @@ function BurnedCard({
                 ? t("nftVerifier.offerCanceled")
                 : offerContext.status === "accepted"
                   ? t("nftVerifier.offerAccepted")
-                  : t("nftVerifier.offerOpen")}
+                  : offerContext.status === "sold"
+                    ? t("nftVerifier.offerSold")
+                    : t("nftVerifier.offerOpen")}
             </span>
           </div>
           <p className="page-subtitle" style={{ marginTop: 12 }}>

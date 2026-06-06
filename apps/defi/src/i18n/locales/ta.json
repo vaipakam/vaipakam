@@ -270,7 +270,9 @@
     },
     "marketWidgetBanner": "இந்த ஜோடிக்கான தற்போதைய சந்தை விகிதத்தில் (≈ {{rate}}% APR) இடுகிறது. உறுதிசெய்வதற்கு முன் கீழே உள்ள சரத்துக்களை மதிப்பாய்வு செய்து சரிசெய்யவும்.",
     "firstOfferBanner": "இந்த ஜோடிக்கு இன்னும் சந்தை விகிதம் இல்லை — நீங்கள் முதல் வாய்ப்பை இடுவீர்கள். கீழே வட்டி விகிதத்தை அமைக்கவும்.",
-    "marketWidgetIlliquidBanner": "⚠ இந்த ஜோடியில் திரவ சந்தை இல்லாத சொத்து உள்ளது (ஆரக்கிள் விலை இல்லை). நெறிமுறையால் இங்கு குறைந்தபட்ச ஈட்டை தானாகக் கணக்கிட முடியாது அல்லது நிலையான ஆரோக்கிய காரணி / LTV சோதனைகளை இயக்க முடியாது — நீங்களும் உங்கள் எதிர் தரப்பினரும் நேரடியாக விலையை நிர்ணயிக்கிறீர்கள் இருவரும் சம்மதிக்க வேண்டும். கீழே அனைத்து சரத்துகளையும் அமைக்கவும்."
+    "marketWidgetIlliquidBanner": "⚠ இந்த ஜோடியில் திரவ சந்தை இல்லாத சொத்து உள்ளது (ஆரக்கிள் விலை இல்லை). நெறிமுறையால் இங்கு குறைந்தபட்ச ஈட்டை தானாகக் கணக்கிட முடியாது அல்லது நிலையான ஆரோக்கிய காரணி / LTV சோதனைகளை இயக்க முடியாது — நீங்களும் உங்கள் எதிர் தரப்பினரும் நேரடியாக விலையை நிர்ணயிக்கிறீர்கள் இருவரும் சம்மதிக்க வேண்டும். கீழே அனைத்து சரத்துகளையும் அமைக்கவும்.",
+    "allowsParallelSaleLabel": "Allow optional sale of this NFT on OpenSea",
+    "allowsParallelSaleHint": "Borrow OR sell — opting in marks this offer as eligible for a parallel-sale listing. The listing itself is published separately by calling the diamond's `postParallelSaleListing` once the offer is live (a dedicated in-app flow is queued as a follow-up). If a buyer fills the listing before any lender accepts, the sale proceeds land in your vault and the offer closes. If a lender accepts first, the listing (once published) carries through the loan and any later buyer fill automatically settles the loan from the sale proceeds (lender gets their promised interest, you keep the surplus). Only on Borrower offers with NFT collateral. Forces all-or-nothing fill mode."
   },
   "loanDetails": {
     "connectTitle": "உங்கள் வாலெட்டை இணைக்கவும்",
@@ -501,7 +503,8 @@
     "lblRetryOutcome": "மீண்டும் முயற்சி முடிவு",
     "retrySucceeded": "வெற்றிகரமாக",
     "retryFailed": "தோல்வி — collateral பகிர்வுக்கு திரும்பியது",
-    "lblRetryProceeds": "திரும்பிய வருமானம்"
+    "lblRetryProceeds": "திரும்பிய வருமானம்",
+    "offerConsumedBySale": "Offer sold via OpenSea"
   },
   "claimActionBar": {
     "readyToClaim": "Claim செய்ய தயாராக உள்ளது",
@@ -620,7 +623,8 @@
     "burnedHeader": "— நிலை NFT அழிக்கப்பட்டது மற்றும் டோக்கன் ID ஐ ஒருபோதும் மீண்டும் பயன்படுத்த அல்லது மாற்ற முடியாது.",
     "genuinePrefix": "உண்மையான Vaipakam NFT இங்கு:",
     "healthFactor": "ஆரோக்கிய காரணி",
-    "ltv": "LTV"
+    "ltv": "LTV",
+    "offerSold": "Sold via OpenSea"
   },
   "loanFlow": {
     "backToLoan": "கடனுக்குத் திரும்பு",
@@ -822,7 +826,9 @@
     "cancel": "ரத்து",
     "cancelling": "ரத்து செய்கிறது…",
     "assetTypeLegend": "சொத்து வகைகள்: {{kinds}}",
-    "cancelPendingConfig": "சங்கிலியின் பொருத்த உள்ளமைவைச் சரிபார்க்கிறது… நெறிமுறை உள்ளமைவு ஏற்றப்பட்டதும் ரத்து செய்வது இயக்கப்படும்."
+    "cancelPendingConfig": "சங்கிலியின் பொருத்த உள்ளமைவைச் சரிபார்க்கிறது… நெறிமுறை உள்ளமைவு ஏற்றப்பட்டதும் ரத்து செய்வது இயக்கப்படும்.",
+    "statusSold": "Sold",
+    "statusSoldTooltip": "Sold via OpenSea — the offer's NFT collateral was filled by a buyer before any lender accepted. Proceeds landed in your vault."
   },
   "hero": {
     "brand": "Vaipakam",

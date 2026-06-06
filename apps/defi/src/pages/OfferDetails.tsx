@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ArrowLeft, ExternalLink, X } from 'lucide-react';
@@ -27,10 +27,21 @@ import { TokenIcon } from '@vaipakam/ui/TokenIcon';
 import { ErrorAlert } from '../components/app/ErrorAlert';
 import { decodeContractError } from '@vaipakam/lib/decodeContractError';
 import { PerThingKeeperToggles } from '../components/app/PerThingKeeperToggles';
+import { useLogIndex } from '../hooks/useLogIndex';
 
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 
-type OfferStatus = 'active' | 'accepted' | 'cancelled' | 'expired' | 'unknown';
+/** T-086 Round-8 §19.7e — `consumed_by_sale` is the parallel-sale
+ *  Scenario A terminal (buyer fills the offer's NFT collateral before
+ *  any lender accepts). Routed here by the MyOffersTable "Sold" row
+ *  link via `Link to /app/offers/{offerId}` per Codex round-14 P2. */
+type OfferStatus =
+  | 'active'
+  | 'accepted'
+  | 'cancelled'
+  | 'expired'
+  | 'consumed_by_sale'
+  | 'unknown';
 
 /**
  * Per-offer detail surface, keyed by offer id. Mirrors `LoanDetails`:
@@ -57,6 +68,34 @@ export default function OfferDetails() {
   const readChain = useReadChain();
   const diamondRead = useDiamondRead();
   const diamondWrite = useDiamondContract();
+  // T-086 Round-8 §19.7e + Codex round-15 P2 #2 — `useLogIndex` is
+  // tapped here purely to corroborate the consumed-by-sale status on
+  // the worker-down fallback path. The Round-8 contract preserves the
+  // `Offer` storage row across a Scenario A sale (only
+  // `offerConsumedBySale[id]` is set), so `getOffer(id)` returns a
+  // live-looking row + my fallback would misclassify it as `'active'`
+  // without this corroboration. There's no single-id on-chain getter
+  // for the consumed flag (it's a diamond-storage mapping; no auto-
+  // getter), and adding `MetricsFacet.getOfferState(uint256)` is a
+  // Round-9 contract change. Using `useLogIndex` is the bounded-cost
+  // alternative that ships in this PR.
+  const { events: logIndexEvents } = useLogIndex();
+  // Codex round-16 P2 #5 — mirror `logIndexEvents` into a ref so the
+  // indexer/chain useEffect can read its CURRENT value at execution
+  // time without listing `logIndexEvents` in the deps array (which
+  // would force a chain refetch every time the log-index ticks).
+  // Without this, the race below leaves a sold offer stuck on `active`:
+  //   t0: corroboration effect runs synchronously → status='sold'
+  //   t1: indexer useEffect's async chain read finishes →
+  //       status='active' (overwriting the sold marker)
+  //   t2: logIndexEvents hasn't changed → corroboration effect
+  //       doesn't re-run → status stuck on 'active'.
+  // With the ref, t1 reads the live events array, sees the
+  // `OfferConsumedBySale` entry, and keeps status='sold'.
+  const logIndexEventsRef = useRef(logIndexEvents);
+  useEffect(() => {
+    logIndexEventsRef.current = logIndexEvents;
+  }, [logIndexEvents]);
 
   const chainId = readChain.chainId ?? DEFAULT_CHAIN.chainId;
   const blockExplorer =
@@ -133,7 +172,22 @@ export default function OfferDetails() {
         }
         const od = toOfferData(raw);
         setChainOffer(od);
-        setStatus(od.accepted ? 'accepted' : 'active');
+        // Codex round-16 P2 #5 — race fix. Defer to the log-index
+        // events ref BEFORE falling back to the live/accepted
+        // classification, so the async chain read can't overwrite
+        // a previously-set 'consumed_by_sale' status.
+        const idStr = offerIdBig.toString();
+        const consumedHit = logIndexEventsRef.current.find(
+          (ev) =>
+            ev.kind === 'OfferConsumedBySale' &&
+            typeof ev.args.offerId === 'string' &&
+            ev.args.offerId === idStr,
+        );
+        if (consumedHit) {
+          setStatus('consumed_by_sale');
+        } else {
+          setStatus(od.accepted ? 'accepted' : 'active');
+        }
         setIndexed(null);
         setLoading(false);
       } catch (err) {
@@ -152,6 +206,30 @@ export default function OfferDetails() {
       cancelled = true;
     };
   }, [chainId, offerIdBig, diamondRead, refetchTick, t]);
+
+  // T-086 Round-8 §19.7e + Codex round-15 P2 #2 — corroborate
+  // consumed-by-sale terminal from `useLogIndex` events. Runs
+  // ALONGSIDE the indexer/chain read above (separate effect so
+  // including `logIndexEvents` in the deps doesn't cause refetches).
+  // The Round-8 contract preserves the `Offer` storage row across a
+  // Scenario A sale (only `offerConsumedBySale[id]` is set, no
+  // single-id external getter — adding one is Round-9 contract work);
+  // without this corroboration, `getOffer(id)` returns a live-looking
+  // row and the fallback misclassifies a sold offer as `'active'`.
+  // Lookup is O(events) but events is browser-bounded.
+  useEffect(() => {
+    if (offerIdBig === null) return;
+    const idStr = offerIdBig.toString();
+    const consumedHit = logIndexEvents.find(
+      (ev) =>
+        ev.kind === 'OfferConsumedBySale' &&
+        typeof ev.args.offerId === 'string' &&
+        ev.args.offerId === idStr,
+    );
+    if (consumedHit) {
+      setStatus('consumed_by_sale');
+    }
+  }, [offerIdBig, logIndexEvents]);
 
   // Resolve the OfferCreated tx-hash via the indexer's activity
   // endpoint. The worker captured the hash into D1 at indexing time;
@@ -789,6 +867,11 @@ function StatusBadge({
       label: t('offerDetails.statusExpired', { defaultValue: 'Expired' }),
       bg: 'var(--surface-2)',
       fg: 'var(--muted)',
+    },
+    consumed_by_sale: {
+      label: t('myOffersTable.statusSold', { defaultValue: 'Sold' }),
+      bg: 'var(--success-bg, var(--surface-2))',
+      fg: 'var(--success-fg, var(--text))',
     },
     unknown: {
       label: t('offerDetails.statusUnknown', { defaultValue: 'Unknown' }),

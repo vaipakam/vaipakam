@@ -2266,9 +2266,53 @@ async function recordActivityEvents(
   chainId: number,
   blockTimestamps: Map<bigint, number>,
 ): Promise<number> {
+  // T-086 Round-8 §19.7e + Codex round-16 P2 #2 — `OfferConsumedBySale`
+  // events carry only (offerId, executor) in args. The executor is the
+  // protocol's CollateralListingExecutor singleton — never the
+  // borrower (the offer creator who SHOULD see the row in their
+  // Activity feed). The dapp's `indexedToActivityEvent` derives
+  // participants from `args` + the indexer's `actor`; without an
+  // enriched args bag the borrower's wallet never lands in
+  // participants and the Activity feed silently hides the sold-row
+  // from the borrower. Pre-fetch the creator from the `offers` table
+  // in one batched lookup before the row INSERTs so the per-row D1
+  // round-trips stay bounded. Same-batch races (OfferCreated +
+  // OfferConsumedBySale in the same indexer batch) leave creator
+  // null and the borrower hidden — matches the pre-fix behaviour,
+  // not a new degradation.
+  const consumedOfferIds = new Set<number>();
+  for (const log of logs) {
+    if (log.eventName === 'OfferConsumedBySale') {
+      const id = Number((log.args as Record<string, unknown>).offerId as bigint);
+      if (Number.isFinite(id)) consumedOfferIds.add(id);
+    }
+  }
+  const creatorByOfferId = new Map<number, string>();
+  if (consumedOfferIds.size > 0) {
+    const placeholders = Array.from(consumedOfferIds, () => '?').join(',');
+    const rows = await env.DB.prepare(
+      `SELECT offer_id, creator FROM offers
+        WHERE chain_id = ? AND offer_id IN (${placeholders})`,
+    )
+      .bind(chainId, ...Array.from(consumedOfferIds))
+      .all<{ offer_id: number; creator: string }>();
+    for (const r of rows.results ?? []) {
+      creatorByOfferId.set(r.offer_id, r.creator);
+    }
+  }
+
   let inserted = 0;
   for (const log of logs) {
-    const args = log.args;
+    let args = log.args;
+    if (log.eventName === 'OfferConsumedBySale') {
+      const id = Number((args as Record<string, unknown>).offerId as bigint);
+      const creator = creatorByOfferId.get(id);
+      if (creator) {
+        // Add `creator` so the dapp's `indexedToActivityEvent`
+        // address-walk surfaces the borrower in participants.
+        args = { ...args, creator };
+      }
+    }
     const { actor, loanId, offerId } = pluckActivityRefs(log.eventName, args);
     const argsJson = serializeArgs(args);
     const blockAt = blockTimestamps.get(log.blockNumber) ?? Math.floor(Date.now() / 1000);
@@ -2493,13 +2537,24 @@ function pluckActivityRefs(
         offerId: Number(args.offerId as bigint),
       };
     case 'OfferConsumedBySale':
-      // T-086 Round-8 (#358) §19.7 — Scenario A terminal. The event
-      // carries (offerId, executor); actor here is the executor that
-      // drove the sale fill (the Seaport-conformant executor singleton),
-      // distinct from a user-initiated cancel. No loanId — pre-loan
-      // branch.
+      // T-086 Round-8 (#358) §19.7 + Codex round-19 P2 #3 — Scenario A
+      // terminal. The event carries (offerId, executor); `executor` is
+      // the protocol's Seaport-conformant executor singleton (never a
+      // real user), so it's useless as the `actor` filter target. The
+      // BORROWER (= offer creator) is who needs to see this row when
+      // querying `/activity?actor=<wallet>`. We rely on the
+      // `recordActivityEvents` enrichment pass having put the
+      // `creator` field into `args` (looked up from the `offers`
+      // table) before this mapper runs — `actor = creator` then
+      // makes server-side per-wallet filters surface the sold row to
+      // the borrower as expected. The `executor` address stays in
+      // `args.executor` for the unfiltered Activity feed's
+      // address-walk participant derivation.
       return {
-        actor: (args.executor as string)?.toLowerCase() ?? null,
+        actor:
+          (args.creator as string | undefined)?.toLowerCase() ??
+          (args.executor as string)?.toLowerCase() ??
+          null,
         loanId: null,
         offerId: Number(args.offerId as bigint),
       };

@@ -232,6 +232,40 @@ export default function CreateOffer() {
     setField,
   ]);
 
+  // T-086 Round-8 (#358) §19.5 — Codex round-13 P2 #1 — reset the
+  // `allowsParallelSale` opt-in to false the moment the form leaves
+  // the eligibility window (borrower offer + ERC721/ERC1155
+  // collateral). Without this reset the toggle stays `true` in state
+  // even though it's hidden from the UI; `toCreateOfferPayload`
+  // would then submit `allowsParallelSale: true` + `fillMode = 1` on
+  // a lender / ERC20-collateral offer, and `OfferCreateFacet` would
+  // reject the tx with `ParallelSaleRequiresBorrowerOffer` or
+  // `ParallelSaleRequiresNFTCollateral`. Defensive UX guard.
+  useEffect(() => {
+    if (!form.allowsParallelSale) return;
+    // Codex round-16 P2 #4 — `OfferParallelSaleFacet._validatePostParallelSale`
+    // ALSO rejects offers whose principal (lendingAsset) is non-ERC20
+    // with `UnsupportedPrincipalForParallelSale`. Without this added
+    // gate, an NFT-principal borrower offer (`assetType == ERC721 /
+    // ERC1155`) with NFT collateral could still tick the toggle and
+    // submit, only to revert at create time. Mirror the contract's
+    // eligibility: borrower + ERC20 principal + NFT collateral.
+    const eligible =
+      form.offerType === "borrower" &&
+      form.assetType === "erc20" &&
+      (form.collateralAssetType === "erc721" ||
+        form.collateralAssetType === "erc1155");
+    if (!eligible) {
+      setField("allowsParallelSale", false);
+    }
+  }, [
+    form.allowsParallelSale,
+    form.offerType,
+    form.assetType,
+    form.collateralAssetType,
+    setField,
+  ]);
+
   // Live wallet-balance check. Compares the wallet's current balance
   // of the asset that will be pulled at offer-create time (lender →
   // lendingAsset, borrower-ERC20 → collateralAsset) against the
@@ -1479,6 +1513,51 @@ export default function CreateOffer() {
                 </small>
               </span>
             </label>
+
+            {/* T-086 Round-8 (#358) §19.5 — borrow-OR-sell parallel-sale
+                opt-in. Only valid on Borrower offers with NFT
+                collateral (ERC721 / ERC1155); the contract gate at
+                `OfferCreateFacet` rejects lender / non-NFT-collateral
+                cases at create time with
+                `ParallelSaleRequiresBorrowerOffer` /
+                `ParallelSaleRequiresNFTCollateral`. Toggle visibility
+                here mirrors that contract gate so the UX never offers
+                an opt-in the contract would reject.
+
+                Aon fill mode is forced automatically when this toggle
+                is on (see {@link toCreateOfferPayload} in offerSchema.ts
+                — `fillMode: s.allowsParallelSale ? 1 : 0`). The
+                contract's round-8 P2 #4 gate
+                (`ParallelSaleRequiresAonFillMode`) rejects Partial /
+                IOC offers with parallel-sale enabled because those
+                fill modes create multiple loans against a single
+                offer's collateral. */}
+            {form.offerType === 'borrower' &&
+              form.assetType === 'erc20' &&
+              (form.collateralAssetType === 'erc721' ||
+                form.collateralAssetType === 'erc1155') && (
+                <label className="checkbox-row" style={{ marginTop: 12 }}>
+                  <input
+                    type="checkbox"
+                    checked={form.allowsParallelSale}
+                    onChange={(e) =>
+                      setField("allowsParallelSale", e.target.checked)
+                    }
+                  />
+                  <span>
+                    {t('createOffer.allowsParallelSaleLabel')}
+                    <small
+                      style={{
+                        display: "block",
+                        opacity: 0.75,
+                        marginTop: 2,
+                      }}
+                    >
+                      {t('createOffer.allowsParallelSaleHint')}
+                    </small>
+                  </span>
+                </label>
+              )}
 
             {/* T-034 — Periodic Interest Payment cadence dropdown.
                 Hidden entirely when the master kill-switch is off OR

@@ -173,6 +173,30 @@ export interface CreateOfferPayload {
    *  through the createOffer ABI in commit `1938ba79`; the contract
    *  rejects the flag on lender / non-NFT-collateral offers. */
   allowsParallelSale: boolean;
+  /** #125 — DEX-style fill mode flavour
+   *    0 = Partial (default; today's behaviour)
+   *    1 = Aon (all-or-nothing)
+   *    2 = Ioc (immediate-or-cancel; paired with expiresAt)
+   *  Round-8 Codex round-8 P2 #4 forces Aon on parallel-sale offers —
+   *  partial / IOC fills create multiple loans against a single
+   *  offer's collateral, incompatible with parallel-sale's single-loan
+   *  split-on-fill assumption. {@link toCreateOfferPayload} sets this
+   *  automatically based on `allowsParallelSale`. */
+  fillMode: number;
+  /** #195 — Good-Til-Time deadline as a uint64 unix-seconds stamp.
+   *  `0n` ⇒ Good-Til-Cancelled (GTC; today's default). The contract
+   *  enforces `expiresAt > block.timestamp` when non-zero. Surfaced
+   *  on the payload so the createOffer ABI tuple matches the
+   *  contract's `CreateOfferParams` shape exactly; the form has no
+   *  UI for it yet, so we always pass `0n`. */
+  expiresAt: bigint;
+  /** T-086 step 4 — lender opt-in for borrower-initiated prepay
+   *  collateral listing during the loan (distinct from the Round-8
+   *  borrow-OR-sell parallel-sale opt-in `allowsParallelSale` above).
+   *  See `LibVaipakam.CreateOfferParams.allowsPrepayListing` for
+   *  full semantics. Default `false` is the safe behaviour; the form
+   *  has no UI for it yet (Round-8 deferred; future enhancement). */
+  allowsPrepayListing: boolean;
 }
 
 /**
@@ -412,6 +436,23 @@ export function toCreateOfferPayload(
     // Contract gate (`OfferCreateFacet`) refuses lender + non-NFT-
     // collateral cases at create time; UI surface enforces the same.
     allowsParallelSale: s.allowsParallelSale,
+    // #125 + Round-8 Codex round-8 P2 #4 — force Aon (1) when
+    // `allowsParallelSale` is on; default to Partial (0) otherwise.
+    // The form's toggle visibility hides parallel-sale opt-in on
+    // offers where Aon would be inappropriate; this defensive coupling
+    // ensures the payload always matches the contract's
+    // `ParallelSaleRequiresAonFillMode` gate.
+    fillMode: s.allowsParallelSale ? 1 : 0,
+    // Codex round-14 P1 — add the remaining createOffer tuple fields
+    // so the payload matches the contract's `CreateOfferParams` shape
+    // exactly. `expiresAt = 0n` ⇒ GTC (today's behaviour);
+    // `allowsPrepayListing = false` ⇒ no borrower-initiated prepay
+    // listing during the loan (today's default). Form UI for both is
+    // a future enhancement; the explicit zeros here just keep the wire
+    // shape matching the ABI tuple instead of relying on the encoder
+    // to default missing keys.
+    expiresAt: 0n,
+    allowsPrepayListing: false,
   };
 }
 
