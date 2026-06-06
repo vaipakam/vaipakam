@@ -33,6 +33,17 @@ interface SwapToRepayPanelProps {
    *  user accidentally submit a second tx that always reverts
    *  (Codex PR #409 round-1 P2 #2). */
   onAfterSuccess?: () => void | Promise<void>;
+  /** Parent-page action lock. `true` when any other action card on
+   *  the same loan (Repay, Add collateral, etc.) has a transaction
+   *  in flight; disables this panel's submit so a borrower can't
+   *  fire both `repayLoan` and `swapToRepayFull` on the same loan
+   *  in parallel — only one terminal close can succeed, the second
+   *  burns gas reverting on status (Codex PR #409 round-4 P2 #3). */
+  actionLoading?: boolean;
+  /** Called by the panel to claim the same action lock while its
+   *  own transaction is in flight, so the parent page's repay /
+   *  add-collateral buttons also disable. */
+  onActionLoadingChange?: (loading: boolean) => void;
 }
 
 const WORKER_ORIGIN =
@@ -87,6 +98,8 @@ export function SwapToRepayPanel({
   diamondAddress,
   graceUntilSec,
   onAfterSuccess,
+  actionLoading = false,
+  onActionLoadingChange,
 }: SwapToRepayPanelProps) {
   const { address, isCorrectChain } = useWallet();
   // Codex PR #409 round-2 P2 #2 — when a user has the public-dashboard
@@ -149,6 +162,11 @@ export function SwapToRepayPanel({
     setSubmitting(true);
     setError(null);
     setTxHash(null);
+    // Claim the shared action lock so the parent page's repay /
+    // add-collateral buttons disable in parallel (Codex PR #409
+    // round-4 P2 #3 — prevents the borrower from firing both
+    // `repayLoan` and `swapToRepayFull` on the same loan).
+    onActionLoadingChange?.(true);
     const step = beginStep({
       area: 'repay',
       flow: 'swapToRepayFull',
@@ -174,6 +192,7 @@ export function SwapToRepayPanel({
       setError(decodeContractError(err, 'Swap-to-repay failed'));
       step.failure(err);
       setSubmitting(false);
+      onActionLoadingChange?.(false);
       return;
     }
     // Codex PR #409 round-1 P2 #2 — refresh the parent page's loan
@@ -195,6 +214,7 @@ export function SwapToRepayPanel({
       }
     }
     setSubmitting(false);
+    onActionLoadingChange?.(false);
   };
 
   return (
@@ -218,9 +238,10 @@ export function SwapToRepayPanel({
         Swap your pledged collateral into the loan's principal asset
         and apply the proceeds to the settlement waterfall in one
         atomic call — no separate withdraw, DEX hop, redeposit, or
-        repay step needed. Capped at 3% slippage by the protocol; if
-        every quote is worse than that, the transaction reverts and
-        you can retry with fresher routing.
+        repay step needed. The protocol enforces a slippage cap
+        (admin-tunable; default 3%); if every quote is worse than
+        the live cap, the transaction reverts and you can retry
+        with fresher routing.
       </div>
 
       {status === 'loading' && (
@@ -268,7 +289,9 @@ export function SwapToRepayPanel({
         <button
           type="button"
           className="btn btn-primary btn-sm"
-          disabled={!canWrite || status !== 'ready' || submitting}
+          disabled={
+            !canWrite || status !== 'ready' || submitting || actionLoading
+          }
           onClick={handleSubmit}
         >
           {submitting ? 'Submitting…' : 'Swap & repay'}

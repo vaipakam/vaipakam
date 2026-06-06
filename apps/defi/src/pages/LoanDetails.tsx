@@ -1113,6 +1113,8 @@ export default function LoanDetails() {
                     ? endTime
                     : endTime + Number(prepayGraceSeconds)
                 }
+                actionLoading={actionLoading}
+                onActionLoadingChange={setActionLoading}
                 onAfterSuccess={loadLoan}
               />
             )}
