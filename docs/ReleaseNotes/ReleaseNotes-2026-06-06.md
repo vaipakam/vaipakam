@@ -3240,7 +3240,7 @@ The note explicitly calls out that this is **the only case** a borrower-initiate
 - Equivalent additions to the Basic user guide — the OpenSea listing flow is an Advanced-mode feature and is documented there.
 - Frontend / contract changes — the friendly-error UX referenced in the doc note lives in PR #318.
 
-# T-086 Round-8 §19 frontend follow-ups — `allowsParallelSale` form control + `consumed_by_sale` status (#365, #366, PR #370)
+## T-086 Round-8 §19 frontend follow-ups — `allowsParallelSale` form control + `consumed_by_sale` status (#365, #366, PR #370)
 
 Wraps up the two deferred-during-Round-8 frontend cards in one PR.
 
@@ -3267,7 +3267,7 @@ treatment; the NftVerifier widens its offer-status union to include
 `sold` so a buyer checking a position-NFT burned by a sold-via-OpenSea
 fill sees the right context instead of the misleading default "open".
 
-## Hardening passes — 12 Codex review rounds
+### Hardening passes — 12 Codex review rounds
 
 The PR went through twelve Codex adversarial review rounds with a
 broad spread of P1 / P2 / P3 fixes. The fixes group naturally into
@@ -3325,7 +3325,7 @@ nature honestly: opt-in sets eligibility, publish is separate, and
 the "whichever happens first wins" semantics only kick in after
 publish.
 
-## Verification
+### Verification
 
 - `apps/defi` `tsc -b --noEmit` clean throughout the 12-round
   iteration.
