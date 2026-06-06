@@ -530,7 +530,7 @@ que la dapp NO automatiza hoy:
    dividir las tarifas como la colección requiere. Los usuarios
    avanzados deben fetch el calendario de tarifas obligatorias
    de OpenSea para la colección (el parser de tarifas in-repo en
-   `apps/agent/src/openseaFees.ts` es la referencia) y pasar
+   `apps/defi/src/lib/openseaFeeSchedule.ts` es la referencia) y pasar
    montos absolutos derivados contra el ask antes de llamar. El
    facet internamente construye los `OrderComponents` canónicos
    de Seaport a partir de esos inputs (más valores que retiene
@@ -691,136 +691,6 @@ distintas, superficializadas en diferentes etapas del protocolo:
   superficie UI dedicada para el conflicto está en cola como
   seguimiento de UX separado.
 
-
-<a id="matching-opensea-offers-on-a-prepay-listing"></a>
-
-### Hacer match a ofertas de OpenSea sobre un prepay listing
-
-Una vez que tu prepay listing esté vivo en el marketplace de
-OpenSea, los compradores casuales a veces colocarán **ítem
-offers** directamente sobre tu token — bids ligados a tu
-colateral específico, no a cualquier token en la colección.
-Vaipakam surface estos item offers en la página de Detalles del
-Préstamo en tiempo real — un panel separado bajo "List collateral
-on OpenSea" con una fila por oferta entrante. El panel aplica un
-**umbral de buffer** — el entitlement de liquidación del
-prestamista (que YA INCLUYE principal más el cupón completo en
-préstamos full-term-interest o el interés pro-rata de otra manera
-— ver `PrepayListingFacet.getPrepayContext().lenderLeg`), más el
-recorte de tesorería, más un buffer de seguridad — y **engrisa**
-ofertas que no lo claren. Puedes ver el interés del mercado en
-cada nivel pero solo puedes hacer Match a ofertas que el
-protocolo realmente liquidará.
-
-Las ofertas colección-amplias / criteria (bids que cualquier
-token en la colección puede satisfacer) permanecen en OpenSea
-pero **no aparecen** en el panel Match de la dapp — la
-consideration multi-leg que el protocolo liquida no puede
-reconstruirse contra una oferta criteria sin plomería del lado
-del contrato que no está en v1. Si tu única demanda entrante es
-colección-amplia, el camino práctico hoy es esperar un bid
-ítem-específico O dejar el listado en tu ask fijo y dejar que
-cualquier comprador lo ejecute directamente. No puedes liquidar
-manualmente un bid colección-amplio tú mismo — el NFT colateral
-vive en tu vault de Vaipakam, y las órdenes Seaport del lado de
-Vaipakam son la única forma de liquidación autorizada.
-
-En colecciones que aplican tarifas de protocolo de OpenSea y/o
-royalties de creador, la dapp SÍ renderiza el panel de ofertas —
-el fetch del calendario de tarifas desde la API de OpenSea se
-trata como asesor; los datos reales de fulfillment se fetcean
-EN TIEMPO DE CLICK DE MATCH. El panel Match se renderiza
-independientemente del estado del fetch del calendario de tarifas;
-el fetch de fulfillment en tiempo de click es el gate. Si ese
-fetch falla (rate limit, caída de API, o forma de colección no
-soportada), el handler del lado de la dapp del click ABORTA
-antes de que se construya cualquier transacción
-`NFTPrepayListingAtomicFacet.matchOpenSeaOffer` — sin calldata,
-sin prompt de firma, sin revert. La función on-chain en sí no es
-un selector que retorne `bool`; cuando sí corre retorna un
-`bytes32` orderHash o revierte. Así que el panel de una colección
-con tarifas obligatorias puede mostrar ofertas que puedes
-explorar pero no todas son clickeables-para-match en un momento
-dado.
-
-Cuando encuentras una oferta aceptable y haces click en **Match
-offer**, la dapp abre el modal **Confirm Match**, que reitera el
-matched value (el monto bruto de la oferta de OpenSea — NO el
-monto neto al que el diamond liquida; en colecciones con tarifas
-obligatorias
-`NFTPrepayListingAtomicFacet.matchOpenSeaOffer` calcula
-`effectiveAsk = offerValue - bidderFeeTotal` antes de correr la
-división prestamista / tesorería / prestatario, así que el neto
-que el diamond realmente distribuye es menor que el headline del
-modal) y da una explicación genérica del flujo atomic-match.
-Después de confirmar, la dapp envía una sola transacción
-`matchOpenSeaOffer` que paquetiza la oferta del bidder con una
-contra-orden recién construida del lado del diamond en una sola
-llamada `matchAdvancedOrders` de Seaport — el fulfillment del
-bidder, el leg lado-listing de la contra-orden (haya o no tenido
-un prepay listing v1 previo vivo; el camino atómico soporta
-`existingHash == 0`), y la cascada de liquidación del diamond
-aterrizan atómicamente en un bloque. La transacción ya sea tiene
-éxito completamente (préstamo liquidado, NFT transferido,
-ingresos de venta divididos) o revierte completamente (nada se
-mueve), y NO HAY ventana entre la rotación del listing y la
-liquidación en la que un comprador tercero pudiera entrar al
-precio matched.
-
-> **Sin ventana de carrera — atómico por construcción.** Este es
-> el cierre estructural del patrón v1 de dos pasos "cancel +
-> post": bajo v1 la dapp rotaría el listing como una transacción
-> separada `updatePrepayListing`, dejando el precio rotado vivo
-> en OpenSea hasta que el `fulfillOrder` del bidder aterrice en
-> un bloque posterior — cualquiera mirando el mempool podría
-> snipear al bidder fuera del precio que pujó. El camino atómico
-> cierra ese hueco vinculando ambas órdenes en una llamada
-> Seaport match: o el bidder ejecuta al precio acordado o la
-> transacción entera revierte.
-
-**Lo que aún quieres verificar antes de hacer click en Match:**
-
-- **Confirma el matched value en el modal.** El modal surface el
-  monto bruto de la oferta de OpenSea. En colecciones con
-  tarifas obligatorias, el diamond liquida contra el effective
-  ask neto después de legs de tarifa de marketplace / creador
-  del lado del bidder, así que el valor del modal puede ser
-  mayor que el monto usado para la división prestamista /
-  tesorería / prestatario. La dirección del bidder y la división
-  precisa no están desglosadas ni en el modal NI en la fila del
-  panel OpenSea Offers (la fila muestra valor, payment token,
-  tipo de oferta, bidder truncado, y end time). La división se
-  aplica on-chain por el diamond en la liquidación — el buffer
-  de liquidación del protocolo garantiza que el effective ask
-  cubra el entitlement de liquidación del prestamista (que ya
-  incluye principal más el cupón completo en préstamos
-  full-term-interest o el interés pro-rata de otra manera) más
-  el recorte de tesorería, así que la división siempre es al
-  menos neutral para ti. Si quieres ver la división proyectada
-  antes de confirmar, el diamond expone
-  `PrepayListingFacet.getPrepayContext(loanId, asOfTimestamp)`
-  como una vista llamable — retorna los legs de prestamista y
-  tesorería que la cascada de liquidación enrutará al timestamp
-  dado, y el resto es tuyo.
-- **Revisa la postura de tarifas de OpenSea para la colección.**
-  Si la colección aplica tarifas de protocolo de OpenSea o
-  royalties de creador, el camino atómico necesita plomería
-  SignedZone `extraData` / criteria-resolver que la dapp fetcha
-  vía el proxy de fulfillment-data de OpenSea del agente (PR
-  #349) EN TIEMPO DE CLICK DE MATCH. El panel Match se renderiza
-  independientemente del estado del fetch del calendario de
-  tarifas; el fetch de fulfillment en tiempo de click es el
-  gate. Si ese fetch falla (rate limit, caída de API, forma de
-  colección no soportada), el handler del click del lado de la
-  dapp aborta antes de construir la transacción on-chain
-  `matchOpenSeaOffer` — no se construye calldata, no se dispara
-  prompt de firma, no se muestra banner por adelantado. Puedes
-  reintentar el click después (el fetch puede haber sido solo un
-  blip transitorio de API), o ejecutar el listing directamente
-  en OpenSea al ask listado mientras tanto.
-
-
----
 
 ## Centro de reclamaciones
 
@@ -1162,6 +1032,137 @@ del rol:
   de posición de prestatario.
 
 ---
+
+<a id="matching-opensea-offers-on-a-prepay-listing"></a>
+
+### Hacer match a ofertas de OpenSea sobre un prepay listing
+
+Una vez que tu prepay listing esté vivo en el marketplace de
+OpenSea, los compradores casuales a veces colocarán **ítem
+offers** directamente sobre tu token — bids ligados a tu
+colateral específico, no a cualquier token en la colección.
+Vaipakam surface estos item offers en la página de Detalles del
+Préstamo en tiempo real — un panel separado bajo "List collateral
+on OpenSea" con una fila por oferta entrante. El panel aplica un
+**umbral de buffer** — el entitlement de liquidación del
+prestamista (que YA INCLUYE principal más el cupón completo en
+préstamos full-term-interest o el interés pro-rata de otra manera
+— ver `PrepayListingFacet.getPrepayContext().lenderLeg`), más el
+recorte de tesorería, más un buffer de seguridad — y **engrisa**
+ofertas que no lo claren. Puedes ver el interés del mercado en
+cada nivel pero solo puedes hacer Match a ofertas que el
+protocolo realmente liquidará.
+
+Las ofertas colección-amplias / criteria (bids que cualquier
+token en la colección puede satisfacer) permanecen en OpenSea
+pero **no aparecen** en el panel Match de la dapp — la
+consideration multi-leg que el protocolo liquida no puede
+reconstruirse contra una oferta criteria sin plomería del lado
+del contrato que no está en v1. Si tu única demanda entrante es
+colección-amplia, el camino práctico hoy es esperar un bid
+ítem-específico O dejar el listado en tu ask fijo y dejar que
+cualquier comprador lo ejecute directamente. No puedes liquidar
+manualmente un bid colección-amplio tú mismo — el NFT colateral
+vive en tu vault de Vaipakam, y las órdenes Seaport del lado de
+Vaipakam son la única forma de liquidación autorizada.
+
+En colecciones que aplican tarifas de protocolo de OpenSea y/o
+royalties de creador, la dapp SÍ renderiza el panel de ofertas —
+el fetch del calendario de tarifas desde la API de OpenSea se
+trata como asesor; los datos reales de fulfillment se fetcean
+EN TIEMPO DE CLICK DE MATCH. El panel Match se renderiza
+independientemente del estado del fetch del calendario de tarifas;
+el fetch de fulfillment en tiempo de click es el gate. Si ese
+fetch falla (rate limit, caída de API, o forma de colección no
+soportada), el handler del lado de la dapp del click ABORTA
+antes de que se construya cualquier transacción
+`NFTPrepayListingAtomicFacet.matchOpenSeaOffer` — sin calldata,
+sin prompt de firma, sin revert. La función on-chain en sí no es
+un selector que retorne `bool`; cuando sí corre retorna un
+`bytes32` orderHash o revierte. Así que el panel de una colección
+con tarifas obligatorias puede mostrar ofertas que puedes
+explorar pero no todas son clickeables-para-match en un momento
+dado.
+
+Cuando encuentras una oferta aceptable y haces click en **Match
+offer**, la dapp abre el modal **Confirm Match**, que reitera el
+matched value (el monto bruto de la oferta de OpenSea — NO el
+monto neto al que el diamond liquida; en colecciones con tarifas
+obligatorias
+`NFTPrepayListingAtomicFacet.matchOpenSeaOffer` calcula
+`effectiveAsk = offerValue - bidderFeeTotal` antes de correr la
+división prestamista / tesorería / prestatario, así que el neto
+que el diamond realmente distribuye es menor que el headline del
+modal) y da una explicación genérica del flujo atomic-match.
+Después de confirmar, la dapp envía una sola transacción
+`matchOpenSeaOffer` que paquetiza la oferta del bidder con una
+contra-orden recién construida del lado del diamond en una sola
+llamada `matchAdvancedOrders` de Seaport — el fulfillment del
+bidder, el leg lado-listing de la contra-orden (haya o no tenido
+un prepay listing v1 previo vivo; el camino atómico soporta
+`existingHash == 0`), y la cascada de liquidación del diamond
+aterrizan atómicamente en un bloque. La transacción ya sea tiene
+éxito completamente (préstamo liquidado, NFT transferido,
+ingresos de venta divididos) o revierte completamente (nada se
+mueve), y NO HAY ventana entre la rotación del listing y la
+liquidación en la que un comprador tercero pudiera entrar al
+precio matched.
+
+> **Sin ventana de carrera — atómico por construcción.** Este es
+> el cierre estructural del patrón v1 de dos pasos "cancel +
+> post": bajo v1 la dapp rotaría el listing como una transacción
+> separada `updatePrepayListing`, dejando el precio rotado vivo
+> en OpenSea hasta que el `fulfillOrder` del bidder aterrice en
+> un bloque posterior — cualquiera mirando el mempool podría
+> snipear al bidder fuera del precio que pujó. El camino atómico
+> cierra ese hueco vinculando ambas órdenes en una llamada
+> Seaport match: o el bidder ejecuta al precio acordado o la
+> transacción entera revierte.
+
+**Lo que aún quieres verificar antes de hacer click en Match:**
+
+- **Confirma el matched value en el modal.** El modal surface el
+  monto bruto de la oferta de OpenSea. En colecciones con
+  tarifas obligatorias, el diamond liquida contra el effective
+  ask neto después de legs de tarifa de marketplace / creador
+  del lado del bidder, así que el valor del modal puede ser
+  mayor que el monto usado para la división prestamista /
+  tesorería / prestatario. La dirección del bidder y la división
+  precisa no están desglosadas ni en el modal NI en la fila del
+  panel OpenSea Offers (la fila muestra valor, payment token,
+  tipo de oferta, bidder truncado, y end time). La división se
+  aplica on-chain por el diamond en la liquidación — el buffer
+  de liquidación del protocolo garantiza que el effective ask
+  cubra el entitlement de liquidación del prestamista (que ya
+  incluye principal más el cupón completo en préstamos
+  full-term-interest o el interés pro-rata de otra manera) más
+  el recorte de tesorería, así que la división siempre es al
+  menos neutral para ti. Si quieres ver la división proyectada
+  antes de confirmar, el diamond expone
+  `PrepayListingFacet.getPrepayContext(loanId, asOfTimestamp)`
+  como una vista llamable — retorna los legs de prestamista y
+  tesorería que la cascada de liquidación enrutará al timestamp
+  dado, y el resto es tuyo.
+- **Revisa la postura de tarifas de OpenSea para la colección.**
+  Si la colección aplica tarifas de protocolo de OpenSea o
+  royalties de creador, el camino atómico necesita plomería
+  SignedZone `extraData` / criteria-resolver que la dapp fetcha
+  vía el proxy de fulfillment-data de OpenSea del agente (PR
+  #349) EN TIEMPO DE CLICK DE MATCH. El panel Match se renderiza
+  independientemente del estado del fetch del calendario de
+  tarifas; el fetch de fulfillment en tiempo de click es el
+  gate. Si ese fetch falla (rate limit, caída de API, forma de
+  colección no soportada), el handler del click del lado de la
+  dapp aborta antes de construir la transacción on-chain
+  `matchOpenSeaOffer` — no se construye calldata, no se dispara
+  prompt de firma, no se muestra banner por adelantado. Puedes
+  reintentar el click después (el fetch puede haber sido solo un
+  blip transitorio de API), o ejecutar el listing directamente
+  en OpenSea al ask listado mientras tanto.
+
+
+---
+
 
 ## Allowances
 

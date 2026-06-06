@@ -489,7 +489,7 @@ land する時点でオファーはすでに `Accepted` 状態です;
    ように料金を分割する代わりに全 ask をセラーにルーティング
    します。上級ユーザーはコレクションの OpenSea required-fee
    スケジュールを fetch する必要があり(in-repo fee parser
-   `apps/agent/src/openseaFees.ts` がリファレンス)、コール前に
+   `apps/defi/src/lib/openseaFeeSchedule.ts` がリファレンス)、コール前に
    ask に対して導出された絶対金額を渡す必要があります。Facet は
    内部的にこれらの入力(プラス
    `CollateralListingExecutor.offerContext` に保持される値 —
@@ -642,127 +642,6 @@ fill モードを自動的に `Aon` にピン留めします — parallel-sale
   専用 UI サーフェスは別の UX フォローアップとしてキューに
   入っています。
 
-
-<a id="matching-opensea-offers-on-a-prepay-listing"></a>
-
-### prepay リスティング上の OpenSea オファーをマッチング
-
-prepay リスティングが OpenSea のマーケットプレイスで稼働すると、
-カジュアルな購入者があなたのトークンに直接 **item offers** を
-配置することがあります — コレクション内の任意のトークンでは
-なく、あなたの特定の担保に結びついた bids。Vaipakam はこれらの
-item offers を Loan Details ページにリアルタイムで表面化します
-— "List collateral on OpenSea" の下に、incoming offer ごとに 1
-行の別パネルがあります。パネルは **buffer threshold** を適用
-します — レンダーの決済 entitlement(これは元本プラス
-フルクーポン(フルタームインタレストローン)または pro-rata
-利息(それ以外)をすでに含む — 参照
-`PrepayListingFacet.getPrepayContext().lenderLeg`)、プラス
-トレジャリーカット、プラス安全バッファ — そして閾値を満たさない
-オファーを **グレー表示** します。あらゆるレベルで市場の関心を
-見ることができますが、プロトコルが実際に決済するオファーのみ
-Match できます。
-
-コレクション全体 / criteria オファー(コレクション内の任意の
-トークンが履行できる bids)は OpenSea に残りますが dapp の
-Match パネルには **表示されません** — プロトコルが決済する
-multi-leg consideration は v1 にないコントラクト側の plumbing
-なしでは criteria オファーに対して再構築できません。唯一の
-inbound demand がコレクション全体の場合、今日の実用的なパスは
-item-specific bid を待つか、リスティングを固定 ask に残し、
-任意の購入者が直接履行するのを許可することです。コレクション
-全体の bid を手動で自分で決済することはできません — 担保 NFT
-は Vaipakam ボルトに存在し、Vaipakam 側の Seaport オーダーが
-唯一認可された決済形態です。
-
-OpenSea プロトコル料金や creator royalties を強制するコレクション
-では、dapp はオファーパネルをレンダリングします — OpenSea API
-からの fee-schedule fetch は advisory として扱われ;実際の
-fulfillment data は MATCH CLICK TIME に fetch されます。Match
-パネルは fee-schedule fetch ステータスに関係なくレンダリングし;
-click-time の fulfillment-data fetch がゲートです。その fetch が
-失敗した場合(rate limit、API ダウン、またはサポートされていない
-コレクション形状)、dapp 側の Match click ハンドラーは任意の
-`NFTPrepayListingAtomicFacet.matchOpenSeaOffer` トランザクション
-が構築される前に ABORT します — calldata なし、signature プロンプト
-なし、revert なし。オンチェーン関数自体は `bool` を返すセレクター
-ではありません;実行されると `bytes32` の orderHash を返すか
-revert します。したがって fee-enforced コレクションのパネルは
-ブラウズできるオファーを表示することがありますが、それらすべてが
-特定の瞬間に clickable-to-match であるとは限りません。
-
-許容可能なオファーを見つけて **Match offer** をクリックすると、
-dapp は **Confirm Match** モーダルを開きます。これは matched
-value(gross OpenSea オファー額 — diamond が決済する net 額
-ではない;fee-enforced コレクションでは
-`NFTPrepayListingAtomicFacet.matchOpenSeaOffer` が lender /
-treasury / borrower 分割を実行する前に `effectiveAsk =
-offerValue - bidderFeeTotal` を計算するため、diamond が実際に
-分配する net 額はモーダルのヘッドラインより小さい)を再表示し、
-atomic-match フローの一般的な説明を提供します。確認後、dapp は
-bidder のオファーを新たに構築された diamond 側のカウンター
-オーダーと一緒に単一の Seaport `matchAdvancedOrders` 呼び出しに
-バンドルする単一の `matchOpenSeaOffer` トランザクションを送信
-します — bidder の履行、カウンターオーダーの listing-side
-レッグ(以前の v1 prepay リスティングが稼働していたかどうかに
-かかわらず;atomic パスは `existingHash == 0` をサポート)、
-diamond の決済ウォーターフォールがすべて 1 つのブロックで
-atomic に land します。トランザクションは完全に成功する(ローン
-決済、NFT 転送、販売収益分割)か完全に revert する(何も動かない)
-かのいずれかであり、リスティング rotation と決済の間にサード
-パーティ購入者が matched price で介入できる **ウィンドウは
-ありません**。
-
-> **レースウィンドウなし — 構造上 atomic。** これは v1 の二段階
-> "cancel + post" パターンの構造的なクローズアウトです: v1 の
-> 下では dapp はリスティングを別の `updatePrepayListing`
-> トランザクションとして rotate し、rotate された価格を OpenSea
-> 上で bidder の `fulfillOrder` が後のブロックで land するまで
-> ライブのままにします — mempool を監視する誰でも bidder を
-> 彼らが bid した価格から snipe できました。Atomic パスは両方の
-> オーダーを単一の Seaport match 呼び出しにバインドすることで
-> その穴を閉じます: bidder が合意された価格で fill するか、
-> トランザクション全体が revert するかのいずれかです。
-
-**Match をクリックする前にまだ確認したいこと:**
-
-- **モーダルで matched value を確認。** モーダルは gross OpenSea
-  オファー額を表面化します。fee-enforced コレクションでは、
-  diamond は bidder 側の marketplace / creator fee レッグの後の
-  net effective ask に対して決済するため、モーダル値は lender /
-  treasury / borrower 分割に使用される額より大きい可能性が
-  あります。bidder アドレスと正確な分割はモーダルにも OpenSea
-  Offers パネル行(行は value、payment token、offer 種類、
-  truncated bidder、end time を表示)にも分解されていません。
-  分割は決済時に diamond によりオンチェーンで強制されます —
-  プロトコルの決済バッファは effective ask が lender の決済
-  entitlement(これは元本プラスフルクーポン(フルタームインタレスト
-  ローン)または pro-rata 利息(それ以外)をすでに含む)プラス
-  トレジャリーカットをカバーすることを保証するため、分割は
-  常に少なくともあなたにとってニュートラルです。確認前に予測
-  分割を見たい場合、diamond は
-  `PrepayListingFacet.getPrepayContext(loanId, asOfTimestamp)`
-  を callable ビューとして公開します — 与えられたタイムスタンプ
-  で決済ウォーターフォールがルーティングする lender と treasury
-  レッグを返し、残りはあなたのものです。
-- **コレクションの OpenSea fee posture を確認。** コレクションが
-  OpenSea プロトコル料金や creator royalties を強制する場合、
-  atomic パスは dapp がエージェントの OpenSea fulfillment-data
-  プロキシ(PR #349)経由で MATCH CLICK TIME に fetch する
-  SignedZone `extraData` / criteria-resolver plumbing を必要と
-  します。Match パネルは fee-schedule fetch ステータスに関係
-  なくレンダリングし;click-time の fulfillment-data fetch が
-  ゲートです。その fetch が失敗した場合(rate limit、API ダウン、
-  サポートされていないコレクション形状)、dapp 側の click
-  ハンドラーはオンチェーン `matchOpenSeaOffer` トランザクション
-  を構築する前に abort します — calldata は構築されず、
-  signature プロンプトは発火せず、バナーは事前に表示されません。
-  click を後で再試行するか(fetch は一時的な API blip だった
-  可能性があります)、その間に OpenSea で listed ask で直接
-  リスティングを履行することができます。
-
-
----
 
 ## Claim Center
 
@@ -1083,6 +962,128 @@ role に関係なく誰でも利用できる permissionless actions:
   します。
 
 ---
+
+<a id="matching-opensea-offers-on-a-prepay-listing"></a>
+
+### prepay リスティング上の OpenSea オファーをマッチング
+
+prepay リスティングが OpenSea のマーケットプレイスで稼働すると、
+カジュアルな購入者があなたのトークンに直接 **item offers** を
+配置することがあります — コレクション内の任意のトークンでは
+なく、あなたの特定の担保に結びついた bids。Vaipakam はこれらの
+item offers を Loan Details ページにリアルタイムで表面化します
+— "List collateral on OpenSea" の下に、incoming offer ごとに 1
+行の別パネルがあります。パネルは **buffer threshold** を適用
+します — レンダーの決済 entitlement(これは元本プラス
+フルクーポン(フルタームインタレストローン)または pro-rata
+利息(それ以外)をすでに含む — 参照
+`PrepayListingFacet.getPrepayContext().lenderLeg`)、プラス
+トレジャリーカット、プラス安全バッファ — そして閾値を満たさない
+オファーを **グレー表示** します。あらゆるレベルで市場の関心を
+見ることができますが、プロトコルが実際に決済するオファーのみ
+Match できます。
+
+コレクション全体 / criteria オファー(コレクション内の任意の
+トークンが履行できる bids)は OpenSea に残りますが dapp の
+Match パネルには **表示されません** — プロトコルが決済する
+multi-leg consideration は v1 にないコントラクト側の plumbing
+なしでは criteria オファーに対して再構築できません。唯一の
+inbound demand がコレクション全体の場合、今日の実用的なパスは
+item-specific bid を待つか、リスティングを固定 ask に残し、
+任意の購入者が直接履行するのを許可することです。コレクション
+全体の bid を手動で自分で決済することはできません — 担保 NFT
+は Vaipakam ボルトに存在し、Vaipakam 側の Seaport オーダーが
+唯一認可された決済形態です。
+
+OpenSea プロトコル料金や creator royalties を強制するコレクション
+では、dapp はオファーパネルをレンダリングします — OpenSea API
+からの fee-schedule fetch は advisory として扱われ;実際の
+fulfillment data は MATCH CLICK TIME に fetch されます。Match
+パネルは fee-schedule fetch ステータスに関係なくレンダリングし;
+click-time の fulfillment-data fetch がゲートです。その fetch が
+失敗した場合(rate limit、API ダウン、またはサポートされていない
+コレクション形状)、dapp 側の Match click ハンドラーは任意の
+`NFTPrepayListingAtomicFacet.matchOpenSeaOffer` トランザクション
+が構築される前に ABORT します — calldata なし、signature プロンプト
+なし、revert なし。オンチェーン関数自体は `bool` を返すセレクター
+ではありません;実行されると `bytes32` の orderHash を返すか
+revert します。したがって fee-enforced コレクションのパネルは
+ブラウズできるオファーを表示することがありますが、それらすべてが
+特定の瞬間に clickable-to-match であるとは限りません。
+
+許容可能なオファーを見つけて **Match offer** をクリックすると、
+dapp は **Confirm Match** モーダルを開きます。これは matched
+value(gross OpenSea オファー額 — diamond が決済する net 額
+ではない;fee-enforced コレクションでは
+`NFTPrepayListingAtomicFacet.matchOpenSeaOffer` が lender /
+treasury / borrower 分割を実行する前に `effectiveAsk =
+offerValue - bidderFeeTotal` を計算するため、diamond が実際に
+分配する net 額はモーダルのヘッドラインより小さい)を再表示し、
+atomic-match フローの一般的な説明を提供します。確認後、dapp は
+bidder のオファーを新たに構築された diamond 側のカウンター
+オーダーと一緒に単一の Seaport `matchAdvancedOrders` 呼び出しに
+バンドルする単一の `matchOpenSeaOffer` トランザクションを送信
+します — bidder の履行、カウンターオーダーの listing-side
+レッグ(以前の v1 prepay リスティングが稼働していたかどうかに
+かかわらず;atomic パスは `existingHash == 0` をサポート)、
+diamond の決済ウォーターフォールがすべて 1 つのブロックで
+atomic に land します。トランザクションは完全に成功する(ローン
+決済、NFT 転送、販売収益分割)か完全に revert する(何も動かない)
+かのいずれかであり、リスティング rotation と決済の間にサード
+パーティ購入者が matched price で介入できる **ウィンドウは
+ありません**。
+
+> **レースウィンドウなし — 構造上 atomic。** これは v1 の二段階
+> "cancel + post" パターンの構造的なクローズアウトです: v1 の
+> 下では dapp はリスティングを別の `updatePrepayListing`
+> トランザクションとして rotate し、rotate された価格を OpenSea
+> 上で bidder の `fulfillOrder` が後のブロックで land するまで
+> ライブのままにします — mempool を監視する誰でも bidder を
+> 彼らが bid した価格から snipe できました。Atomic パスは両方の
+> オーダーを単一の Seaport match 呼び出しにバインドすることで
+> その穴を閉じます: bidder が合意された価格で fill するか、
+> トランザクション全体が revert するかのいずれかです。
+
+**Match をクリックする前にまだ確認したいこと:**
+
+- **モーダルで matched value を確認。** モーダルは gross OpenSea
+  オファー額を表面化します。fee-enforced コレクションでは、
+  diamond は bidder 側の marketplace / creator fee レッグの後の
+  net effective ask に対して決済するため、モーダル値は lender /
+  treasury / borrower 分割に使用される額より大きい可能性が
+  あります。bidder アドレスと正確な分割はモーダルにも OpenSea
+  Offers パネル行(行は value、payment token、offer 種類、
+  truncated bidder、end time を表示)にも分解されていません。
+  分割は決済時に diamond によりオンチェーンで強制されます —
+  プロトコルの決済バッファは effective ask が lender の決済
+  entitlement(これは元本プラスフルクーポン(フルタームインタレスト
+  ローン)または pro-rata 利息(それ以外)をすでに含む)プラス
+  トレジャリーカットをカバーすることを保証するため、分割は
+  常に少なくともあなたにとってニュートラルです。確認前に予測
+  分割を見たい場合、diamond は
+  `PrepayListingFacet.getPrepayContext(loanId, asOfTimestamp)`
+  を callable ビューとして公開します — 与えられたタイムスタンプ
+  で決済ウォーターフォールがルーティングする lender と treasury
+  レッグを返し、残りはあなたのものです。
+- **コレクションの OpenSea fee posture を確認。** コレクションが
+  OpenSea プロトコル料金や creator royalties を強制する場合、
+  atomic パスは dapp がエージェントの OpenSea fulfillment-data
+  プロキシ(PR #349)経由で MATCH CLICK TIME に fetch する
+  SignedZone `extraData` / criteria-resolver plumbing を必要と
+  します。Match パネルは fee-schedule fetch ステータスに関係
+  なくレンダリングし;click-time の fulfillment-data fetch が
+  ゲートです。その fetch が失敗した場合(rate limit、API ダウン、
+  サポートされていないコレクション形状)、dapp 側の click
+  ハンドラーはオンチェーン `matchOpenSeaOffer` トランザクション
+  を構築する前に abort します — calldata は構築されず、
+  signature プロンプトは発火せず、バナーは事前に表示されません。
+  click を後で再試行するか(fetch は一時的な API blip だった
+  可能性があります)、その間に OpenSea で listed ask で直接
+  リスティングを履行することができます。
+
+
+---
+
 
 ## Allowances
 

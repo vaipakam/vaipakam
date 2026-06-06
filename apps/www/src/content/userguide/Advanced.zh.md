@@ -412,7 +412,7 @@ GTT 报价，此到期是报价的原始 Good-Til-Time；出借人接受不会
    缺失），并且直接的 Seaport 填充将把完整 ask 路由到卖方，
    而不是按集合要求分割费用。高级用户必须获取集合的 OpenSea
    required-fee 时间表（in-repo fee parser
-   `apps/agent/src/openseaFees.ts` 是参考）并在调用前传递
+   `apps/defi/src/lib/openseaFeeSchedule.ts` 是参考）并在调用前传递
    针对 ask 派生的绝对金额。Facet 在内部从这些输入（加上它在
    `CollateralListingExecutor.offerContext` 中保留的值 —
    借款人 vault 地址、本金资产、抵押品字段、startTime、
@@ -530,98 +530,6 @@ GTT 报价，此到期是报价的原始 Good-Til-Time；出借人接受不会
   报价，因此取消链接的报价会清除它）。冲突的专用 UI 表面作为
   单独的 UX 跟进排队。
 
-
-<a id="matching-opensea-offers-on-a-prepay-listing"></a>
-
-### 在 prepay listing 上匹配 OpenSea 报价
-
-一旦您的 prepay listing 在 OpenSea 的市场上上线，休闲买家
-有时会直接在您的令牌上放置 **item offers** — 与您特定的
-抵押品相关联的 bids，而不是与集合中的任何令牌相关联。
-Vaipakam 在 Loan Details 页面上实时显示这些 item offers
-— "List collateral on OpenSea" 下方的一个单独面板，每个
-传入报价一行。该面板应用 **缓冲阈值** — 出借人的结算
-entitlement（已包括本金 + 完整票面（在 full-term-interest
-贷款上）或 pro-rata 利息（否则）— 参见
-`PrepayListingFacet.getPrepayContext().lenderLeg`），加上
-国库削减，加上安全缓冲 — 并将未达到的报价 **变灰**。您可以
-在每个级别看到市场兴趣，但只能匹配协议实际会结算的报价。
-
-集合范围 / criteria 报价（集合中任何令牌都可以满足的 bids）
-留在 OpenSea 上，但在 dapp 的 Match 面板中 **不显示** — 协议
-结算的多腿 consideration 在没有 v1 中没有的合约端 plumbing 的
-情况下无法针对 criteria 报价重建。如果您唯一的入站需求是集合
-范围的，今天的实用路径是等待特定项目的 bid，或将列表保留在
-您的固定 ask 上，让任何买家直接满足它。您无法手动自己结算
-集合范围的 bid — 抵押品 NFT 存在于您的 Vaipakam vault 中，
-Vaipakam 端 Seaport 订单是唯一授权的结算形式。
-
-在强制 OpenSea 协议费用和/或创作者版税的集合上，dapp 确实
-渲染报价面板 — 来自 OpenSea API 的 fee-schedule 获取被视为
-咨询性的；实际的 fulfillment 数据在 MATCH 单击时获取。Match
-面板渲染与 fee-schedule 获取状态无关；单击时的 fulfillment-
-data 获取是门控。如果该获取失败（速率限制、API 中断或不支持的
-集合形状），dapp 端 Match 单击处理程序在构建任何
-`NFTPrepayListingAtomicFacet.matchOpenSeaOffer` 交易之前
-中止 — 没有 calldata，没有签名提示，没有 revert。链上函数
-本身不是返回 `bool` 的选择器；当它运行时返回 `bytes32`
-orderHash 或 revert。因此强制费用集合的面板可能会显示可浏览
-的报价，但并非所有报价在给定时刻都可点击匹配。
-
-当您找到可接受的报价并单击 **Match offer** 时，dapp 会打开
-**Confirm Match** 模态框，它重申 matched value（OpenSea 报价
-的总金额 — 而不是 diamond 将结算的净金额；在强制费用集合上，
-`NFTPrepayListingAtomicFacet.matchOpenSeaOffer` 在运行 lender /
-treasury / borrower 分割之前计算 `effectiveAsk = offerValue -
-bidderFeeTotal`，因此 diamond 实际分配的净额小于模态框的
-标题）并提供 atomic-match 流程的通用说明。确认后，dapp 发送
-一个单一的 `matchOpenSeaOffer` 交易，将 bidder 的报价与新构建的
-diamond 端反订单捆绑到单个 Seaport `matchAdvancedOrders` 调用中
-— bidder 的满足、反订单的列表端 leg（无论您之前是否有 v1
-prepay listing 上线；atomic 路径支持 `existingHash == 0`）以及
-diamond 的结算瀑布都原子地在一个块中登陆。交易要么完全成功
-（贷款结算、NFT 转移、销售收益分割），要么完全 revert（没有
-任何移动），并且在列表轮换和结算之间 **没有窗口** 让第三方
-买家以匹配价格介入。
-
-> **没有竞争窗口 — 按构造原子。** 这是 v1 两步 "cancel + post"
-> 模式的结构性收尾：在 v1 下，dapp 会将列表作为单独的
-> `updatePrepayListing` 交易轮换，将轮换的价格留在 OpenSea 上
-> 直到 bidder 的 `fulfillOrder` 在后续块中登陆 — 任何监视
-> mempool 的人都可以从 bidder 的出价中 snipe。Atomic 路径通过
-> 将两个订单绑定到一个 Seaport match 调用中来关闭该漏洞：
-> 要么 bidder 以约定价格填充，要么整个交易 revert。
-
-**单击 Match 之前您仍想验证的内容：**
-
-- **在模态框中确认 matched value。** 模态框显示 OpenSea 报价的
-  总金额。在强制费用集合上，diamond 针对 bidder 端 marketplace
-  / creator fee 腿之后的净有效 ask 结算，因此模态值可能高于
-  用于 lender / treasury / borrower 分割的金额。bidder 地址
-  和精确分割在模态框或 OpenSea Offers 面板行（行显示 value、
-  payment token、报价类型、截断的 bidder 和 end time）中都
-  没有分解。分割由 diamond 在结算时在链上强制 — 协议的结算
-  缓冲保证有效 ask 覆盖出借人的结算 entitlement（已包括
-  本金 + 完整票面（在 full-term-interest 贷款上）或 pro-rata
-  利息（否则））加上国库削减，因此分割对您始终至少是中性的。
-  如果您希望在确认之前查看预计分割，diamond 将
-  `PrepayListingFacet.getPrepayContext(loanId, asOfTimestamp)`
-  公开为可调用视图 — 它返回结算瀑布将在给定时间戳路由的
-  lender 和 treasury 腿，剩余部分归您所有。
-- **检查集合的 OpenSea 费用态势。** 如果集合强制 OpenSea
-  协议费用或创作者版税，atomic 路径需要 SignedZone
-  `extraData` / criteria-resolver plumbing，dapp 通过 agent 的
-  OpenSea fulfillment-data 代理（PR #349）在 MATCH 单击时
-  获取。Match 面板渲染与 fee-schedule 获取状态无关；单击时
-  的 fulfillment-data 获取是门控。如果该获取失败（速率限制、
-  API 中断、不支持的集合形状），dapp 端单击处理程序在构建
-  链上 `matchOpenSeaOffer` 交易之前中止 — 不构建 calldata，
-  不触发签名提示，不预先显示横幅。您可以稍后重试单击（获取
-  可能只是短暂的 API blip），或同时在 OpenSea 上直接以 listed
-  ask 满足列表。
-
-
----
 
 ## Claim Center
 
@@ -919,6 +827,99 @@ locked" 等)。
   Fee rebate。会 burn borrower position NFT。
 
 ---
+
+<a id="matching-opensea-offers-on-a-prepay-listing"></a>
+
+### 在 prepay listing 上匹配 OpenSea 报价
+
+一旦您的 prepay listing 在 OpenSea 的市场上上线，休闲买家
+有时会直接在您的令牌上放置 **item offers** — 与您特定的
+抵押品相关联的 bids，而不是与集合中的任何令牌相关联。
+Vaipakam 在 Loan Details 页面上实时显示这些 item offers
+— "List collateral on OpenSea" 下方的一个单独面板，每个
+传入报价一行。该面板应用 **缓冲阈值** — 出借人的结算
+entitlement（已包括本金 + 完整票面（在 full-term-interest
+贷款上）或 pro-rata 利息（否则）— 参见
+`PrepayListingFacet.getPrepayContext().lenderLeg`），加上
+国库削减，加上安全缓冲 — 并将未达到的报价 **变灰**。您可以
+在每个级别看到市场兴趣，但只能匹配协议实际会结算的报价。
+
+集合范围 / criteria 报价（集合中任何令牌都可以满足的 bids）
+留在 OpenSea 上，但在 dapp 的 Match 面板中 **不显示** — 协议
+结算的多腿 consideration 在没有 v1 中没有的合约端 plumbing 的
+情况下无法针对 criteria 报价重建。如果您唯一的入站需求是集合
+范围的，今天的实用路径是等待特定项目的 bid，或将列表保留在
+您的固定 ask 上，让任何买家直接满足它。您无法手动自己结算
+集合范围的 bid — 抵押品 NFT 存在于您的 Vaipakam vault 中，
+Vaipakam 端 Seaport 订单是唯一授权的结算形式。
+
+在强制 OpenSea 协议费用和/或创作者版税的集合上，dapp 确实
+渲染报价面板 — 来自 OpenSea API 的 fee-schedule 获取被视为
+咨询性的；实际的 fulfillment 数据在 MATCH 单击时获取。Match
+面板渲染与 fee-schedule 获取状态无关；单击时的 fulfillment-
+data 获取是门控。如果该获取失败（速率限制、API 中断或不支持的
+集合形状），dapp 端 Match 单击处理程序在构建任何
+`NFTPrepayListingAtomicFacet.matchOpenSeaOffer` 交易之前
+中止 — 没有 calldata，没有签名提示，没有 revert。链上函数
+本身不是返回 `bool` 的选择器；当它运行时返回 `bytes32`
+orderHash 或 revert。因此强制费用集合的面板可能会显示可浏览
+的报价，但并非所有报价在给定时刻都可点击匹配。
+
+当您找到可接受的报价并单击 **Match offer** 时，dapp 会打开
+**Confirm Match** 模态框，它重申 matched value（OpenSea 报价
+的总金额 — 而不是 diamond 将结算的净金额；在强制费用集合上，
+`NFTPrepayListingAtomicFacet.matchOpenSeaOffer` 在运行 lender /
+treasury / borrower 分割之前计算 `effectiveAsk = offerValue -
+bidderFeeTotal`，因此 diamond 实际分配的净额小于模态框的
+标题）并提供 atomic-match 流程的通用说明。确认后，dapp 发送
+一个单一的 `matchOpenSeaOffer` 交易，将 bidder 的报价与新构建的
+diamond 端反订单捆绑到单个 Seaport `matchAdvancedOrders` 调用中
+— bidder 的满足、反订单的列表端 leg（无论您之前是否有 v1
+prepay listing 上线；atomic 路径支持 `existingHash == 0`）以及
+diamond 的结算瀑布都原子地在一个块中登陆。交易要么完全成功
+（贷款结算、NFT 转移、销售收益分割），要么完全 revert（没有
+任何移动），并且在列表轮换和结算之间 **没有窗口** 让第三方
+买家以匹配价格介入。
+
+> **没有竞争窗口 — 按构造原子。** 这是 v1 两步 "cancel + post"
+> 模式的结构性收尾：在 v1 下，dapp 会将列表作为单独的
+> `updatePrepayListing` 交易轮换，将轮换的价格留在 OpenSea 上
+> 直到 bidder 的 `fulfillOrder` 在后续块中登陆 — 任何监视
+> mempool 的人都可以从 bidder 的出价中 snipe。Atomic 路径通过
+> 将两个订单绑定到一个 Seaport match 调用中来关闭该漏洞：
+> 要么 bidder 以约定价格填充，要么整个交易 revert。
+
+**单击 Match 之前您仍想验证的内容：**
+
+- **在模态框中确认 matched value。** 模态框显示 OpenSea 报价的
+  总金额。在强制费用集合上，diamond 针对 bidder 端 marketplace
+  / creator fee 腿之后的净有效 ask 结算，因此模态值可能高于
+  用于 lender / treasury / borrower 分割的金额。bidder 地址
+  和精确分割在模态框或 OpenSea Offers 面板行（行显示 value、
+  payment token、报价类型、截断的 bidder 和 end time）中都
+  没有分解。分割由 diamond 在结算时在链上强制 — 协议的结算
+  缓冲保证有效 ask 覆盖出借人的结算 entitlement（已包括
+  本金 + 完整票面（在 full-term-interest 贷款上）或 pro-rata
+  利息（否则））加上国库削减，因此分割对您始终至少是中性的。
+  如果您希望在确认之前查看预计分割，diamond 将
+  `PrepayListingFacet.getPrepayContext(loanId, asOfTimestamp)`
+  公开为可调用视图 — 它返回结算瀑布将在给定时间戳路由的
+  lender 和 treasury 腿，剩余部分归您所有。
+- **检查集合的 OpenSea 费用态势。** 如果集合强制 OpenSea
+  协议费用或创作者版税，atomic 路径需要 SignedZone
+  `extraData` / criteria-resolver plumbing，dapp 通过 agent 的
+  OpenSea fulfillment-data 代理（PR #349）在 MATCH 单击时
+  获取。Match 面板渲染与 fee-schedule 获取状态无关；单击时
+  的 fulfillment-data 获取是门控。如果该获取失败（速率限制、
+  API 中断、不支持的集合形状），dapp 端单击处理程序在构建
+  链上 `matchOpenSeaOffer` 交易之前中止 — 不构建 calldata，
+  不触发签名提示，不预先显示横幅。您可以稍后重试单击（获取
+  可能只是短暂的 API blip），或同时在 OpenSea 上直接以 listed
+  ask 满足列表。
+
+
+---
+
 
 ## Allowances
 

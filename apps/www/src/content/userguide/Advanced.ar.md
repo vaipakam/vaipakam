@@ -447,7 +447,7 @@ Seaport الأصلية، وتُطلق عملية ملء سوق لاحقة قبل
    مفقودة)، وملء Seaport المباشر يُوجِّه ask الكامل إلى البائع
    بدلاً من تقسيم الرسوم كما تطلب المجموعة. يجب على المستخدمين
    المتقدمين جلب جدول الرسوم المطلوبة من OpenSea للمجموعة
-   (محلل الرسوم in-repo في `apps/agent/src/openseaFees.ts` هو
+   (محلل الرسوم in-repo في `apps/defi/src/lib/openseaFeeSchedule.ts` هو
    المرجع) وتمرير مبالغ مطلقة مشتقة مقابل ask قبل الاستدعاء.
    يبني facet داخلياً Seaport OrderComponents القانونية من تلك
    المدخلات (بالإضافة إلى القيم التي يحتفظ بها في
@@ -577,109 +577,6 @@ parallel-sale ستنشئ قروضاً متعددة مقابل ضمان عرض و
   مرتبط بالعرض المرتبط، لذا إلغاء العرض المرتبط يمسحه). سطح UI
   مخصص للنزاع في قائمة الانتظار كمتابعة UX منفصلة.
 
-
-<a id="matching-opensea-offers-on-a-prepay-listing"></a>
-
-### مطابقة عروض OpenSea على prepay listing
-
-بمجرد أن يكون prepay listing الخاص بك مباشراً على سوق OpenSea،
-سيقوم المشترون العاديون أحياناً بوضع **item offers** مباشرة على
-الرمز الخاص بك — bids مرتبطة بضمانك المحدد، وليس بأي رمز في
-المجموعة. يعرض Vaipakam هذه item offers على صفحة Loan Details
-في الوقت الفعلي — لوحة منفصلة تحت "List collateral on OpenSea"
-بصف واحد لكل عرض وارد. تطبق اللوحة **عتبة buffer** — استحقاق
-تسوية المُقرض (الذي يتضمن بالفعل رأس المال + القسيمة الكاملة على
-قروض full-term-interest أو فائدة pro-rata خلاف ذلك — انظر
-`PrepayListingFacet.getPrepayContext().lenderLeg`)، بالإضافة إلى
-تخفيض الخزانة، بالإضافة إلى buffer أمان — و **تُصبِّغ بالرمادي**
-العروض التي لا تجتازه. يمكنك رؤية اهتمام السوق في كل مستوى لكن
-يمكنك فقط Match العروض التي سيسويها البروتوكول فعلاً.
-
-عروض collection-wide / criteria (bids يمكن لأي رمز في المجموعة
-تلبيتها) تبقى على OpenSea لكنها **لا تظهر** في لوحة Match لـ
-dapp — لا يمكن إعادة بناء consideration multi-leg الذي يسويه
-البروتوكول مقابل عرض criteria بدون plumbing من جانب العقد ليس
-في v1. إذا كان طلبك الوارد الوحيد collection-wide، فإن المسار
-العملي اليوم هو انتظار bid محدد للعنصر أو ترك الإدراج عند ask
-الثابت والسماح لأي مشتري بتلبيته مباشرة. لا يمكنك تسوية bid
-collection-wide يدوياً بنفسك — NFT الضمان يعيش في vault
-Vaipakam الخاص بك، وطلبات Seaport من جانب Vaipakam هي شكل
-التسوية المُصرَّح به الوحيد.
-
-على المجموعات التي تفرض رسوم بروتوكول OpenSea و/أو حقوق المُنشئ،
-يعرض dapp لوحة العروض — يُعامل جلب جدول الرسوم من OpenSea API
-كاستشاري؛ يتم جلب بيانات fulfillment الفعلية في وقت نقرة MATCH.
-تعرض لوحة Match بغض النظر عن حالة جلب جدول الرسوم؛ جلب
-fulfillment-data في وقت النقر هو البوابة. إذا فشل ذلك الجلب
-(rate limit، انقطاع API، أو شكل مجموعة غير مدعوم)، يُجهض معالج
-نقر Match من جانب dapp قبل بناء أي معاملة
-`NFTPrepayListingAtomicFacet.matchOpenSeaOffer` — لا calldata،
-لا signature prompt، لا revert. الدالة on-chain نفسها ليست
-selector يُرجع `bool`؛ عندما تعمل تُرجع `bytes32` orderHash أو
-ترجع. لذا يمكن للوحة مجموعة تفرض رسوماً عرض عروض يمكنك تصفحها
-لكن ليست كلها clickable-to-match في لحظة معينة.
-
-عندما تجد عرضاً مقبولاً وتنقر **Match offer**، يفتح dapp مودال
-**Confirm Match**، الذي يعيد ذكر matched value (المبلغ الإجمالي
-لعرض OpenSea — وليس المبلغ الصافي الذي سيسوي عنده diamond؛ على
-مجموعات تفرض رسوماً، يحسب
-`NFTPrepayListingAtomicFacet.matchOpenSeaOffer`
-`effectiveAsk = offerValue - bidderFeeTotal` قبل تشغيل تقسيم
-lender / treasury / borrower، لذا فإن الصافي الذي يوزعه diamond
-فعلاً أصغر من عنوان المودال) ويعطي شرحاً عاماً لتدفق
-atomic-match. بعد التأكيد، يرسل dapp معاملة `matchOpenSeaOffer`
-واحدة تجمع عرض bidder مع طلب مضاد حديث البناء من جانب diamond
-في استدعاء Seaport `matchAdvancedOrders` واحد — تلبية bidder،
-رجل listing-side للطلب المضاد (سواء كان لديك prepay listing v1
-سابق مباشر أم لا؛ المسار atomic يدعم `existingHash == 0`)، شلال
-تسوية diamond كلها تهبط atomicly في كتلة واحدة. المعاملة إما
-تنجح بالكامل (القرض مُسوَّى، NFT منقول، عائدات البيع مقسمة) أو
-ترجع بالكامل (لا شيء يتحرك)، و **لا توجد نافذة** بين دوران
-listing والتسوية يمكن لمشتري طرف ثالث الدخول فيها بسعر matched.
-
-> **لا توجد نافذة race — atomic بطبيعة البناء.** هذا هو الإغلاق
-> الهيكلي لنمط v1 خطوتين "cancel + post": تحت v1 سيدور dapp
-> الإدراج كمعاملة `updatePrepayListing` منفصلة، تاركاً السعر
-> المُدار مباشراً على OpenSea حتى يهبط `fulfillOrder` لـ bidder
-> في كتلة لاحقة — يمكن لأي شخص يراقب mempool snipe bidder من
-> السعر الذي قدمه. يغلق المسار atomic تلك الفجوة بربط كلا
-> الطلبين في استدعاء Seaport match واحد: إما يملأ bidder بالسعر
-> المتفق عليه أو ترجع المعاملة بأكملها.
-
-**ما تريد التحقق منه قبل نقر Match:**
-
-- **أكد matched value في المودال.** يعرض المودال المبلغ الإجمالي
-  لعرض OpenSea. على مجموعات تفرض رسوماً، يسوي diamond مقابل
-  صافي effective ask بعد أرجل رسم marketplace / المُنشئ من جانب
-  bidder، لذا قد تكون قيمة المودال أعلى من المبلغ المستخدم
-  للتقسيم lender / treasury / borrower. عنوان bidder والتقسيم
-  الدقيق ليسا مقسمين في المودال أو في صف لوحة OpenSea Offers
-  (يعرض الصف value، payment token، نوع العرض، bidder مقطوع،
-  وend time). يُفرض التقسيم on-chain بواسطة diamond في
-  التسوية — يضمن buffer تسوية البروتوكول أن effective ask يغطي
-  استحقاق تسوية المُقرض (الذي يتضمن بالفعل رأس المال + القسيمة
-  الكاملة على قروض full-term-interest أو فائدة pro-rata خلاف
-  ذلك) + تخفيض الخزانة، لذا فإن التقسيم دائماً محايد على الأقل
-  لك. إذا كنت تريد رؤية التقسيم المتوقع قبل التأكيد، يعرض
-  diamond `PrepayListingFacet.getPrepayContext(loanId,
-  asOfTimestamp)` كعرض قابل للاستدعاء — يُرجع أرجل lender و
-  treasury التي سيوجهها شلال التسوية في الطابع الزمني المحدد،
-  والباقي لك.
-- **تحقق من وضع رسوم OpenSea للمجموعة.** إذا فرضت المجموعة
-  رسوم بروتوكول OpenSea أو حقوق المُنشئ، يحتاج المسار atomic
-  إلى plumbing SignedZone `extraData` / criteria-resolver
-  الذي يجلبه dapp عبر وكيل بيانات fulfillment OpenSea لـ agent
-  (PR #349) في وقت نقرة MATCH. تعرض لوحة Match بغض النظر عن
-  حالة جلب جدول الرسوم؛ جلب fulfillment-data في وقت النقر هو
-  البوابة. إذا فشل ذلك الجلب (rate limit، انقطاع API، شكل
-  مجموعة غير مدعوم)، يُجهض معالج النقر من جانب dapp قبل بناء
-  معاملة `matchOpenSeaOffer` on-chain — لا يُبنى calldata، لا
-  يُطلق signature prompt، لا يُعرض بانر مسبقاً. يمكنك إعادة
-  المحاولة لاحقاً (قد يكون الجلب مجرد blip API مؤقت)، أو ملء
-  الإدراج مباشرة على OpenSea عند listed ask في هذه الأثناء.
-
-
----
 
 ## مركز المطالبات
 
@@ -991,6 +888,110 @@ VPFI — اسحب VPFI من الـ vault إلى محفظتك. يخرج VPFI ال
   المُقترض.
 
 ---
+
+<a id="matching-opensea-offers-on-a-prepay-listing"></a>
+
+### مطابقة عروض OpenSea على prepay listing
+
+بمجرد أن يكون prepay listing الخاص بك مباشراً على سوق OpenSea،
+سيقوم المشترون العاديون أحياناً بوضع **item offers** مباشرة على
+الرمز الخاص بك — bids مرتبطة بضمانك المحدد، وليس بأي رمز في
+المجموعة. يعرض Vaipakam هذه item offers على صفحة Loan Details
+في الوقت الفعلي — لوحة منفصلة تحت "List collateral on OpenSea"
+بصف واحد لكل عرض وارد. تطبق اللوحة **عتبة buffer** — استحقاق
+تسوية المُقرض (الذي يتضمن بالفعل رأس المال + القسيمة الكاملة على
+قروض full-term-interest أو فائدة pro-rata خلاف ذلك — انظر
+`PrepayListingFacet.getPrepayContext().lenderLeg`)، بالإضافة إلى
+تخفيض الخزانة، بالإضافة إلى buffer أمان — و **تُصبِّغ بالرمادي**
+العروض التي لا تجتازه. يمكنك رؤية اهتمام السوق في كل مستوى لكن
+يمكنك فقط Match العروض التي سيسويها البروتوكول فعلاً.
+
+عروض collection-wide / criteria (bids يمكن لأي رمز في المجموعة
+تلبيتها) تبقى على OpenSea لكنها **لا تظهر** في لوحة Match لـ
+dapp — لا يمكن إعادة بناء consideration multi-leg الذي يسويه
+البروتوكول مقابل عرض criteria بدون plumbing من جانب العقد ليس
+في v1. إذا كان طلبك الوارد الوحيد collection-wide، فإن المسار
+العملي اليوم هو انتظار bid محدد للعنصر أو ترك الإدراج عند ask
+الثابت والسماح لأي مشتري بتلبيته مباشرة. لا يمكنك تسوية bid
+collection-wide يدوياً بنفسك — NFT الضمان يعيش في vault
+Vaipakam الخاص بك، وطلبات Seaport من جانب Vaipakam هي شكل
+التسوية المُصرَّح به الوحيد.
+
+على المجموعات التي تفرض رسوم بروتوكول OpenSea و/أو حقوق المُنشئ،
+يعرض dapp لوحة العروض — يُعامل جلب جدول الرسوم من OpenSea API
+كاستشاري؛ يتم جلب بيانات fulfillment الفعلية في وقت نقرة MATCH.
+تعرض لوحة Match بغض النظر عن حالة جلب جدول الرسوم؛ جلب
+fulfillment-data في وقت النقر هو البوابة. إذا فشل ذلك الجلب
+(rate limit، انقطاع API، أو شكل مجموعة غير مدعوم)، يُجهض معالج
+نقر Match من جانب dapp قبل بناء أي معاملة
+`NFTPrepayListingAtomicFacet.matchOpenSeaOffer` — لا calldata،
+لا signature prompt، لا revert. الدالة on-chain نفسها ليست
+selector يُرجع `bool`؛ عندما تعمل تُرجع `bytes32` orderHash أو
+ترجع. لذا يمكن للوحة مجموعة تفرض رسوماً عرض عروض يمكنك تصفحها
+لكن ليست كلها clickable-to-match في لحظة معينة.
+
+عندما تجد عرضاً مقبولاً وتنقر **Match offer**، يفتح dapp مودال
+**Confirm Match**، الذي يعيد ذكر matched value (المبلغ الإجمالي
+لعرض OpenSea — وليس المبلغ الصافي الذي سيسوي عنده diamond؛ على
+مجموعات تفرض رسوماً، يحسب
+`NFTPrepayListingAtomicFacet.matchOpenSeaOffer`
+`effectiveAsk = offerValue - bidderFeeTotal` قبل تشغيل تقسيم
+lender / treasury / borrower، لذا فإن الصافي الذي يوزعه diamond
+فعلاً أصغر من عنوان المودال) ويعطي شرحاً عاماً لتدفق
+atomic-match. بعد التأكيد، يرسل dapp معاملة `matchOpenSeaOffer`
+واحدة تجمع عرض bidder مع طلب مضاد حديث البناء من جانب diamond
+في استدعاء Seaport `matchAdvancedOrders` واحد — تلبية bidder،
+رجل listing-side للطلب المضاد (سواء كان لديك prepay listing v1
+سابق مباشر أم لا؛ المسار atomic يدعم `existingHash == 0`)، شلال
+تسوية diamond كلها تهبط atomicly في كتلة واحدة. المعاملة إما
+تنجح بالكامل (القرض مُسوَّى، NFT منقول، عائدات البيع مقسمة) أو
+ترجع بالكامل (لا شيء يتحرك)، و **لا توجد نافذة** بين دوران
+listing والتسوية يمكن لمشتري طرف ثالث الدخول فيها بسعر matched.
+
+> **لا توجد نافذة race — atomic بطبيعة البناء.** هذا هو الإغلاق
+> الهيكلي لنمط v1 خطوتين "cancel + post": تحت v1 سيدور dapp
+> الإدراج كمعاملة `updatePrepayListing` منفصلة، تاركاً السعر
+> المُدار مباشراً على OpenSea حتى يهبط `fulfillOrder` لـ bidder
+> في كتلة لاحقة — يمكن لأي شخص يراقب mempool snipe bidder من
+> السعر الذي قدمه. يغلق المسار atomic تلك الفجوة بربط كلا
+> الطلبين في استدعاء Seaport match واحد: إما يملأ bidder بالسعر
+> المتفق عليه أو ترجع المعاملة بأكملها.
+
+**ما تريد التحقق منه قبل نقر Match:**
+
+- **أكد matched value في المودال.** يعرض المودال المبلغ الإجمالي
+  لعرض OpenSea. على مجموعات تفرض رسوماً، يسوي diamond مقابل
+  صافي effective ask بعد أرجل رسم marketplace / المُنشئ من جانب
+  bidder، لذا قد تكون قيمة المودال أعلى من المبلغ المستخدم
+  للتقسيم lender / treasury / borrower. عنوان bidder والتقسيم
+  الدقيق ليسا مقسمين في المودال أو في صف لوحة OpenSea Offers
+  (يعرض الصف value، payment token، نوع العرض، bidder مقطوع،
+  وend time). يُفرض التقسيم on-chain بواسطة diamond في
+  التسوية — يضمن buffer تسوية البروتوكول أن effective ask يغطي
+  استحقاق تسوية المُقرض (الذي يتضمن بالفعل رأس المال + القسيمة
+  الكاملة على قروض full-term-interest أو فائدة pro-rata خلاف
+  ذلك) + تخفيض الخزانة، لذا فإن التقسيم دائماً محايد على الأقل
+  لك. إذا كنت تريد رؤية التقسيم المتوقع قبل التأكيد، يعرض
+  diamond `PrepayListingFacet.getPrepayContext(loanId,
+  asOfTimestamp)` كعرض قابل للاستدعاء — يُرجع أرجل lender و
+  treasury التي سيوجهها شلال التسوية في الطابع الزمني المحدد،
+  والباقي لك.
+- **تحقق من وضع رسوم OpenSea للمجموعة.** إذا فرضت المجموعة
+  رسوم بروتوكول OpenSea أو حقوق المُنشئ، يحتاج المسار atomic
+  إلى plumbing SignedZone `extraData` / criteria-resolver
+  الذي يجلبه dapp عبر وكيل بيانات fulfillment OpenSea لـ agent
+  (PR #349) في وقت نقرة MATCH. تعرض لوحة Match بغض النظر عن
+  حالة جلب جدول الرسوم؛ جلب fulfillment-data في وقت النقر هو
+  البوابة. إذا فشل ذلك الجلب (rate limit، انقطاع API، شكل
+  مجموعة غير مدعوم)، يُجهض معالج النقر من جانب dapp قبل بناء
+  معاملة `matchOpenSeaOffer` on-chain — لا يُبنى calldata، لا
+  يُطلق signature prompt، لا يُعرض بانر مسبقاً. يمكنك إعادة
+  المحاولة لاحقاً (قد يكون الجلب مجرد blip API مؤقت)، أو ملء
+  الإدراج مباشرة على OpenSea عند listed ask في هذه الأثناء.
+
+
+---
+
 
 ## التصاريح (Allowances)
 

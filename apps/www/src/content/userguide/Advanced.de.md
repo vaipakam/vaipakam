@@ -526,7 +526,7 @@ ZWEI-TEILE-Schritt, den die dapp heute NICHT automatisiert:
    Verkäufer, statt die Fees aufzuteilen, wie es die Collection
    verlangt. Erfahrene Benutzer müssen den OpenSea-Required-Fee-
    Zeitplan für die Collection fetchen (der In-Repo-Fee-Parser
-   bei `apps/agent/src/openseaFees.ts` ist die Referenz) und
+   bei `apps/defi/src/lib/openseaFeeSchedule.ts` ist die Referenz) und
    absolute, gegen den Ask abgeleitete Beträge vor dem Aufruf
    übergeben. Der Facet baut intern die kanonischen Seaport
    OrderComponents aus diesen Eingaben (plus Werte, die er in
@@ -691,139 +691,6 @@ oberflächlich gemacht:
   für den Konflikt ist als separates UX-Follow-up in der
   Warteschlange.
 
-
-<a id="matching-opensea-offers-on-a-prepay-listing"></a>
-
-### OpenSea-Offers auf einem Prepay-Listing matchen
-
-Sobald dein Prepay-Listing auf dem OpenSea-Marketplace live ist,
-platzieren gelegentliche Käufer manchmal **Item-Offers** direkt
-auf deinem Token — Bids, die an dein spezifisches Collateral
-gebunden sind, nicht an irgendein Token in der Collection.
-Vaipakam zeigt diese Item-Offers in Echtzeit auf der Kredit-
-Details-Seite an — ein separates Panel unter "List collateral on
-OpenSea" mit einer Zeile pro eingehendem Offer. Das Panel wendet
-einen **Buffer-Threshold** an — das Settlement-Entitlement des
-Verleihers (das BEREITS Principal plus den vollen Coupon bei
-Full-Term-Interest-Krediten oder die Pro-Rata-Zinsen ansonsten
-EINSCHLIESST — siehe
-`PrepayListingFacet.getPrepayContext().lenderLeg`), plus den
-Treasury-Anteil, plus einen Sicherheits-Buffer — und **gräulicht**
-Offers aus, die ihn nicht erreichen. Du kannst auf jedem Niveau
-Marktinteresse sehen, aber nur Offers matchen, die das Protokoll
-tatsächlich settlen wird.
-
-Collection-weite / Criteria-Offers (Bids, die jedes Token in der
-Collection erfüllen kann) bleiben auf OpenSea, aber **erscheinen
-nicht** im Match-Panel der dapp — die Multi-Leg-Consideration,
-die das Protokoll settelt, kann gegen ein Criteria-Offer nicht
-ohne contract-seitige Plumbing rekonstruiert werden, das nicht in
-v1 ist. Wenn deine einzige eingehende Nachfrage collection-weit
-ist, ist der praktische Pfad heute, auf einen item-spezifischen
-Bid zu warten ODER das Listing zu deinem festen Ask zu lassen
-und jedem Käufer zu erlauben, es direkt zu erfüllen. Du kannst
-einen collection-weiten Bid nicht manuell selbst settlen — das
-Collateral-NFT lebt in deinem Vaipakam-Vault, und Vaipakam-
-seitige Seaport-Orders sind die einzige autorisierte Settlement-
-Form.
-
-Auf Collections, die OpenSea-Protokoll-Fees und/oder Creator-
-Royalties durchsetzen, rendert die dapp DAS Offers-Panel — der
-Fee-Schedule-Fetch von der OpenSea-API wird als beratend
-behandelt; die tatsächlichen Fulfillment-Daten werden zur MATCH-
-KLICK-ZEIT gefetcht. Das Match-Panel rendert unabhängig vom
-Fee-Schedule-Fetch-Status; der Click-Time-Fulfillment-Daten-Fetch
-ist das Gate. Wenn dieser Fetch fehlschlägt (Rate-Limit, API-
-Ausfall, oder nicht unterstützte Collection-Form), BRICHT der
-dapp-seitige Click-Handler ab, bevor eine
-`NFTPrepayListingAtomicFacet.matchOpenSeaOffer`-Transaktion
-konstruiert wird — kein Calldata, kein Signaturprompt, kein
-Revert. Die On-Chain-Funktion selbst ist kein `bool`-
-zurückgebender Selector; wenn sie läuft, gibt sie einen `bytes32`-
-OrderHash zurück oder revertiert. Das Panel einer Fee-Enforced-
-Collection kann also Offers zeigen, die du durchsuchen kannst,
-aber nicht alle von ihnen sind in einem bestimmten Moment
-klickbar-zum-Matchen.
-
-Wenn du ein akzeptables Offer findest und auf **Match offer**
-klickst, öffnet die dapp das **Confirm Match**-Modal, das den
-matched value (den Brutto-OpenSea-Offer-Betrag — NICHT den
-Netto-Betrag, zu dem der Diamond settelt; auf Fee-Enforced-
-Collections berechnet
-`NFTPrepayListingAtomicFacet.matchOpenSeaOffer` `effectiveAsk =
-offerValue - bidderFeeTotal` vor der Aufteilung Verleiher /
-Treasury / Kreditnehmer, sodass der Netto-Betrag, den der
-Diamond tatsächlich verteilt, kleiner ist als das Headline des
-Modals) und eine generische Erklärung des Atomic-Match-Flows
-gibt. Nach Bestätigung sendet die dapp eine einzelne
-`matchOpenSeaOffer`-Transaktion, die das Bidder-Offer mit einer
-frisch konstruierten Diamond-seitigen Counter-Order in einen
-einzelnen `matchAdvancedOrders`-Seaport-Aufruf bündelt — die
-Bidder-Erfüllung, das Listing-seitige Leg der Counter-Order
-(unabhängig davon, ob du ein vorheriges v1-Prepay-Listing live
-hattest oder nicht; der Atomic-Pfad unterstützt `existingHash ==
-0`) und die Settlement-Waterfall des Diamonds landen atomar in
-einem Block. Die Transaktion hat entweder vollen Erfolg
-(Kredit gesettelt, NFT transferiert, Verkaufserlöse aufgeteilt)
-oder revertiert vollständig (nichts bewegt sich), und es gibt
-KEIN Fenster zwischen Listing-Rotation und Settlement, in dem
-ein Dritt-Käufer beim matched price eingreifen könnte.
-
-> **Kein Race-Window — atomar per Konstruktion.** Das ist die
-> strukturelle Schließung des v1-Zwei-Schritt-"cancel + post"-
-> Patterns: unter v1 würde die dapp das Listing als separate
-> `updatePrepayListing`-Transaktion rotieren und den rotierten
-> Preis auf OpenSea live lassen, bis der `fulfillOrder` des
-> Bidders in einem späteren Block landet — jeder, der den
-> Mempool beobachtet, könnte den Bidder aus dem Preis ausstechen,
-> den er geboten hatte. Der Atomic-Pfad schließt diese Lücke,
-> indem er beide Orders in einen Seaport-Match-Aufruf bindet:
-> Entweder erfüllt der Bidder zum vereinbarten Preis oder die
-> gesamte Transaktion revertiert.
-
-**Was du vor dem Klick auf Match noch verifizieren willst:**
-
-- **Bestätige den matched value im Modal.** Das Modal zeigt den
-  Brutto-OpenSea-Offer-Betrag. Auf Fee-Enforced-Collections
-  settelt der Diamond gegen den Netto-Effective-Ask nach
-  Bidder-seitigen Marketplace- / Creator-Fee-Legs, sodass der
-  Modal-Wert höher sein kann als der Betrag, der für die
-  Verleiher- / Treasury- / Kreditnehmer-Aufteilung verwendet
-  wird. Die Bidder-Adresse und die genaue Aufteilung sind weder
-  im Modal NOCH in der OpenSea-Offers-Panel-Zeile aufgeschlüsselt
-  (die Zeile zeigt Wert, Payment-Token, Offer-Art, abgeschnittenen
-  Bidder und End-Time). Die Aufteilung wird on-chain vom Diamond
-  beim Settlement durchgesetzt — der Settlement-Buffer des
-  Protokolls garantiert, dass der Effective-Ask das Settlement-
-  Entitlement des Verleihers (das bereits Principal plus den
-  vollen Coupon bei Full-Term-Interest-Krediten oder die Pro-Rata-
-  Zinsen ansonsten einschließt) plus den Treasury-Anteil deckt,
-  sodass die Aufteilung immer mindestens neutral für dich ist.
-  Wenn du die projizierte Aufteilung vor der Bestätigung sehen
-  willst, exponiert der Diamond
-  `PrepayListingFacet.getPrepayContext(loanId, asOfTimestamp)`
-  als aufrufbare View — er gibt die Verleiher- und Treasury-Legs
-  zurück, die die Settlement-Waterfall zum gegebenen Timestamp
-  routen wird, und der Rest gehört dir.
-- **Prüfe OpenSeas Fee-Posture für die Collection.** Wenn die
-  Collection OpenSea-Protokoll-Fees oder Creator-Royalties
-  durchsetzt, benötigt der Atomic-Pfad SignedZone-`extraData`- /
-  Criteria-Resolver-Plumbing, das die dapp über den OpenSea-
-  Fulfillment-Daten-Proxy des Agents (PR #349) ZUR MATCH-KLICK-
-  ZEIT fetcht. Das Match-Panel rendert unabhängig vom Fee-
-  Schedule-Fetch-Status; der Click-Time-Fulfillment-Daten-Fetch
-  ist das Gate. Wenn dieser Fetch fehlschlägt (Rate-Limit, API-
-  Ausfall, nicht unterstützte Collection-Form), bricht der
-  Click-Handler der dapp ab, bevor er die On-Chain-
-  `matchOpenSeaOffer`-Transaktion konstruiert — kein Calldata
-  wird gebaut, kein Signaturprompt feuert, kein Banner wird im
-  Voraus gezeigt. Du kannst den Click später erneut versuchen
-  (der Fetch könnte nur ein vorübergehender API-Blip gewesen
-  sein), oder das Listing direkt auf OpenSea zum gelisteten Ask
-  in der Zwischenzeit erfüllen.
-
-
----
 
 ## Claim Center
 
@@ -1165,6 +1032,140 @@ verfügbar sind:
   Verbrennt den Borrower-Position-NFT.
 
 ---
+
+<a id="matching-opensea-offers-on-a-prepay-listing"></a>
+
+### OpenSea-Offers auf einem Prepay-Listing matchen
+
+Sobald dein Prepay-Listing auf dem OpenSea-Marketplace live ist,
+platzieren gelegentliche Käufer manchmal **Item-Offers** direkt
+auf deinem Token — Bids, die an dein spezifisches Collateral
+gebunden sind, nicht an irgendein Token in der Collection.
+Vaipakam zeigt diese Item-Offers in Echtzeit auf der Kredit-
+Details-Seite an — ein separates Panel unter "List collateral on
+OpenSea" mit einer Zeile pro eingehendem Offer. Das Panel wendet
+einen **Buffer-Threshold** an — das Settlement-Entitlement des
+Verleihers (das BEREITS Principal plus den vollen Coupon bei
+Full-Term-Interest-Krediten oder die Pro-Rata-Zinsen ansonsten
+EINSCHLIESST — siehe
+`PrepayListingFacet.getPrepayContext().lenderLeg`), plus den
+Treasury-Anteil, plus einen Sicherheits-Buffer — und **gräulicht**
+Offers aus, die ihn nicht erreichen. Du kannst auf jedem Niveau
+Marktinteresse sehen, aber nur Offers matchen, die das Protokoll
+tatsächlich settlen wird.
+
+Collection-weite / Criteria-Offers (Bids, die jedes Token in der
+Collection erfüllen kann) bleiben auf OpenSea, aber **erscheinen
+nicht** im Match-Panel der dapp — die Multi-Leg-Consideration,
+die das Protokoll settelt, kann gegen ein Criteria-Offer nicht
+ohne contract-seitige Plumbing rekonstruiert werden, das nicht in
+v1 ist. Wenn deine einzige eingehende Nachfrage collection-weit
+ist, ist der praktische Pfad heute, auf einen item-spezifischen
+Bid zu warten ODER das Listing zu deinem festen Ask zu lassen
+und jedem Käufer zu erlauben, es direkt zu erfüllen. Du kannst
+einen collection-weiten Bid nicht manuell selbst settlen — das
+Collateral-NFT lebt in deinem Vaipakam-Vault, und Vaipakam-
+seitige Seaport-Orders sind die einzige autorisierte Settlement-
+Form.
+
+Auf Collections, die OpenSea-Protokoll-Fees und/oder Creator-
+Royalties durchsetzen, rendert die dapp DAS Offers-Panel — der
+Fee-Schedule-Fetch von der OpenSea-API wird als beratend
+behandelt; die tatsächlichen Fulfillment-Daten werden zur MATCH-
+KLICK-ZEIT gefetcht. Das Match-Panel rendert unabhängig vom
+Fee-Schedule-Fetch-Status; der Click-Time-Fulfillment-Daten-Fetch
+ist das Gate. Wenn dieser Fetch fehlschlägt (Rate-Limit, API-
+Ausfall, oder nicht unterstützte Collection-Form), BRICHT der
+dapp-seitige Click-Handler ab, bevor eine
+`NFTPrepayListingAtomicFacet.matchOpenSeaOffer`-Transaktion
+konstruiert wird — kein Calldata, kein Signaturprompt, kein
+Revert. Die On-Chain-Funktion selbst ist kein `bool`-
+zurückgebender Selector; wenn sie läuft, gibt sie einen `bytes32`-
+OrderHash zurück oder revertiert. Das Panel einer Fee-Enforced-
+Collection kann also Offers zeigen, die du durchsuchen kannst,
+aber nicht alle von ihnen sind in einem bestimmten Moment
+klickbar-zum-Matchen.
+
+Wenn du ein akzeptables Offer findest und auf **Match offer**
+klickst, öffnet die dapp das **Confirm Match**-Modal, das den
+matched value (den Brutto-OpenSea-Offer-Betrag — NICHT den
+Netto-Betrag, zu dem der Diamond settelt; auf Fee-Enforced-
+Collections berechnet
+`NFTPrepayListingAtomicFacet.matchOpenSeaOffer` `effectiveAsk =
+offerValue - bidderFeeTotal` vor der Aufteilung Verleiher /
+Treasury / Kreditnehmer, sodass der Netto-Betrag, den der
+Diamond tatsächlich verteilt, kleiner ist als das Headline des
+Modals) und eine generische Erklärung des Atomic-Match-Flows
+gibt. Nach Bestätigung sendet die dapp eine einzelne
+`matchOpenSeaOffer`-Transaktion, die das Bidder-Offer mit einer
+frisch konstruierten Diamond-seitigen Counter-Order in einen
+einzelnen `matchAdvancedOrders`-Seaport-Aufruf bündelt — die
+Bidder-Erfüllung, das Listing-seitige Leg der Counter-Order
+(unabhängig davon, ob du ein vorheriges v1-Prepay-Listing live
+hattest oder nicht; der Atomic-Pfad unterstützt `existingHash ==
+0`) und die Settlement-Waterfall des Diamonds landen atomar in
+einem Block. Die Transaktion hat entweder vollen Erfolg
+(Kredit gesettelt, NFT transferiert, Verkaufserlöse aufgeteilt)
+oder revertiert vollständig (nichts bewegt sich), und es gibt
+KEIN Fenster zwischen Listing-Rotation und Settlement, in dem
+ein Dritt-Käufer beim matched price eingreifen könnte.
+
+> **Kein Race-Window — atomar per Konstruktion.** Das ist die
+> strukturelle Schließung des v1-Zwei-Schritt-"cancel + post"-
+> Patterns: unter v1 würde die dapp das Listing als separate
+> `updatePrepayListing`-Transaktion rotieren und den rotierten
+> Preis auf OpenSea live lassen, bis der `fulfillOrder` des
+> Bidders in einem späteren Block landet — jeder, der den
+> Mempool beobachtet, könnte den Bidder aus dem Preis ausstechen,
+> den er geboten hatte. Der Atomic-Pfad schließt diese Lücke,
+> indem er beide Orders in einen Seaport-Match-Aufruf bindet:
+> Entweder erfüllt der Bidder zum vereinbarten Preis oder die
+> gesamte Transaktion revertiert.
+
+**Was du vor dem Klick auf Match noch verifizieren willst:**
+
+- **Bestätige den matched value im Modal.** Das Modal zeigt den
+  Brutto-OpenSea-Offer-Betrag. Auf Fee-Enforced-Collections
+  settelt der Diamond gegen den Netto-Effective-Ask nach
+  Bidder-seitigen Marketplace- / Creator-Fee-Legs, sodass der
+  Modal-Wert höher sein kann als der Betrag, der für die
+  Verleiher- / Treasury- / Kreditnehmer-Aufteilung verwendet
+  wird. Die Bidder-Adresse und die genaue Aufteilung sind weder
+  im Modal NOCH in der OpenSea-Offers-Panel-Zeile aufgeschlüsselt
+  (die Zeile zeigt Wert, Payment-Token, Offer-Art, abgeschnittenen
+  Bidder und End-Time). Die Aufteilung wird on-chain vom Diamond
+  beim Settlement durchgesetzt — der Settlement-Buffer des
+  Protokolls garantiert, dass der Effective-Ask das Settlement-
+  Entitlement des Verleihers (das bereits Principal plus den
+  vollen Coupon bei Full-Term-Interest-Krediten oder die Pro-Rata-
+  Zinsen ansonsten einschließt) plus den Treasury-Anteil deckt,
+  sodass die Aufteilung immer mindestens neutral für dich ist.
+  Wenn du die projizierte Aufteilung vor der Bestätigung sehen
+  willst, exponiert der Diamond
+  `PrepayListingFacet.getPrepayContext(loanId, asOfTimestamp)`
+  als aufrufbare View — er gibt die Verleiher- und Treasury-Legs
+  zurück, die die Settlement-Waterfall zum gegebenen Timestamp
+  routen wird, und der Rest gehört dir.
+- **Prüfe OpenSeas Fee-Posture für die Collection.** Wenn die
+  Collection OpenSea-Protokoll-Fees oder Creator-Royalties
+  durchsetzt, benötigt der Atomic-Pfad SignedZone-`extraData`- /
+  Criteria-Resolver-Plumbing, das die dapp über den OpenSea-
+  Fulfillment-Daten-Proxy des Agents (PR #349) ZUR MATCH-KLICK-
+  ZEIT fetcht. Das Match-Panel rendert unabhängig vom Fee-
+  Schedule-Fetch-Status; der Click-Time-Fulfillment-Daten-Fetch
+  ist das Gate. Wenn dieser Fetch fehlschlägt (Rate-Limit, API-
+  Ausfall, nicht unterstützte Collection-Form), bricht der
+  Click-Handler der dapp ab, bevor er die On-Chain-
+  `matchOpenSeaOffer`-Transaktion konstruiert — kein Calldata
+  wird gebaut, kein Signaturprompt feuert, kein Banner wird im
+  Voraus gezeigt. Du kannst den Click später erneut versuchen
+  (der Fetch könnte nur ein vorübergehender API-Blip gewesen
+  sein), oder das Listing direkt auf OpenSea zum gelisteten Ask
+  in der Zwischenzeit erfüllen.
+
+
+---
+
 
 ## Allowances
 

@@ -487,7 +487,7 @@ the dapp does NOT automate today:
    rather than splitting the fees as the collection requires.
    Advanced users must fetch the OpenSea required-fee schedule
    for the collection (the in-repo fee parser at
-   `apps/agent/src/openseaFees.ts` is the reference) and pass
+   `apps/defi/src/lib/openseaFeeSchedule.ts` is the reference) and pass
    absolute amounts derived against the ask before calling. The facet internally builds the
    canonical Seaport OrderComponents from those inputs, the
    OfferContext values it records for the executor (borrower
