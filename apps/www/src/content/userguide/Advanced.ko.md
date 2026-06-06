@@ -148,13 +148,61 @@ Offers"에 영향을 주지 않습니다 — 그 list는 항상 전체가 표시
 
 <a id="offer-book.your-active-offers"></a>
 
-### 내 Active Offers
+### 내 활성 오퍼
 
-내가 만든 open offers(status Active, expiration 미도달)입니다. acceptance
-전에는 언제든 cancel할 수 있습니다 — cancel은 무료입니다. Acceptance는
-offer를 Accepted로 바꾸고 loan initiation을 trigger하여 두 position
-NFTs(lender용 하나, borrower용 하나)를 mint하고 loan을 Active state로
-open합니다.
+당신이 만든 오픈 오퍼(상태 Active, 만료가 아직 도달하지 않음).
+수락 전 언제든지 취소 가능 — 취소 호출은 무료입니다. 수락하면
+오퍼가 Accepted로 바뀌고 대출 초기화가 트리거되어, 두 개의
+포지션 NFT(렌더용 하나, 대출자용 하나)가 민팅되고 대출이
+Active 상태로 열립니다.
+
+마감된 오퍼는 여러 구별된 상태 중 하나를 가집니다. 일부는 이미
+My Offers 페이지에서 필터 칩으로 노출되어 있으며; 다른 일부는
+후속 작업에서 전용 UI 처리를 받을 indexer 측 터미널입니다:
+
+- **Filled** — 카운터파티에 의해 수락됨; 오퍼의 대출 참조는
+  결과 대출 id입니다.
+- **Cancelled** — 오퍼가 두 경로 중 하나를 통해 Cancelled
+  상태에 도달: 수락 전 생성자에 의해 철회됨, 또는
+  `LibVaipakam.isOfferExpired(offer)`가 true가 되면
+  `OfferCancelFacet.cancelOffer`를 통해 권한 없이 정리됨
+  (취소 호출을 시작한 사람과 관계없이 환불은 여전히 생성자에게
+  라우팅됨).
+- **Sold** — 오퍼가 borrow-OR-sell 병렬 판매 플로우에 옵트인
+  되었으며(Create Offer → Allow optional sale 참조) 어떤 렌더도
+  수락하기 전에 마켓플레이스 구매자가 NFT 담보 리스팅을
+  fill했습니다. 오퍼는 온체인 상태 `consumed_by_sale`을 가지며;
+  행의 레이트 열은 오퍼가 게시된 레이트를 표시하고 담보 셀은
+  NFT 모양(ERC-721의 토큰 id, ERC-1155의 복사 수)을 렌더링
+  합니다. dapp은 또한 Activity 피드에서 행을 대출자(오퍼
+  생성자)를 위해 `Offer sold via OpenSea`로 노출합니다. 온체인
+  이벤트 자체는
+  `OfferConsumedBySale(uint96 indexed offerId, address indexed executor)`
+  — 오퍼 id와 executor 주소 모두 온체인으로 인덱싱되지만,
+  대출자 / 생성자 주소는 그렇지 않습니다. Activity 피드를 위한
+  대출자의 지갑 매칭은 indexer가 인제스션 시간에 추가합니다
+  (생성자를 조회하기 위해 오퍼 행을 join), 그래서 per-wallet
+  필터가 이벤트 자체가 그들을 인덱싱하지 않아도 대출자를
+  찾습니다.
+- **Fully Filled (indexer 상태, 아직 칩 없음)** — Range 주문
+  전용. 부분 채움 매칭이 오퍼의 남은 예산을 소비할 때(마지막
+  매치가 범위를 완전히 채우거나, 부분 매치가 sub-dust 잔여를
+  남김), `OfferMatchFacet`이 `OfferClosed(FullyFilled | Dust)`를
+  emit하고 indexer가 오퍼 행에 `status = 'fullyFilled'`를
+  스탬프합니다. 컨트랙트의 `accepted` 상태와 위의 온체인
+  Filled 라벨은 direct-accept 터미널용으로 예약되어 있어,
+  `fullyFilled`는 indexer 측에서 구별됩니다. dapp의
+  `MyOfferStatus`는 아직 이 터미널을 자체 필터 칩으로 노출하지
+  않으며 — `useMyOffers`는 현재 `fullyFilled` indexer 상태의
+  행을 무시합니다 — 그래서 fully-filled range 오퍼는 전용 칩이
+  올 때까지 My Offers 뷰에서 사실상 완전히 사라집니다. 칩
+  서피스는 별도의 UI 후속 작업으로 큐에 있습니다.
+
+터미널 이벤트에 도달한 적이 없는 past-GTT(Good-Til-Time) 오퍼는
+아직 dapp에서 구별된 상태 칩으로 노출되지 않으며; 현재는
+indexer가 터미널을 기록할 때까지 Active 아래에 속합니다.
+전용 Expired 칩은 별도의 UI 후속 작업으로 큐에 있습니다.
+
 
 <a id="offer-book.lender-offers"></a>
 
@@ -349,6 +397,305 @@ assets를 move할 수 없습니다.
 - offer creation flow에서 exposed되는 side-specific options.
 
 defaults는 대부분의 users에게 합리적입니다.
+
+<a id="create-offer.borrow-or-sell"></a>
+
+### 이 NFT의 OpenSea 옵션 판매 허용 (NFT 담보 대출자 오퍼 전용)
+
+**ERC-721 또는 ERC-1155 담보**와 **ERC-20 원금**으로 **대출자
+오퍼**를 게시하는 경우, dapp은 담보 섹션 아래에 `Borrow or sell`
+옵트인을 노출합니다. 이것을 체크하면 오퍼가 OpenSea에서
+NFT 담보의 병렬 판매 리스팅에 적격으로 표시됩니다 — 단일
+오퍼가 렌더(당신이 대출을 받음) 또는 마켓플레이스 구매자
+(당신이 NFT를 판매함) 중 하나에 의해 fill될 수 있습니다.
+리스팅이 이미 게시되어 있다면 렌더 수락 시 리스팅이 철거되지
+않습니다: 렌더가 먼저 fill하면 당신은 대출을 받고, 기존 OpenSea
+리스팅은 대출 초기화를 통해 원래 Seaport 만료까지 이월되며,
+해당 만료 전 후속 마켓플레이스 fill은 diamond의 결제
+워터폴을 트리거하여 판매 수익으로 대출을 종료합니다 (아래
+시나리오 B 참조). 일반 GTT 오퍼의 경우 이 만료는 오퍼의 원래
+Good-Til-Time입니다; 렌더 수락은 리스팅을 전체 대출 기간 동안
+연장하거나 다시 게시하지 않습니다. 마켓플레이스 구매자가 먼저
+fill하면 대출이 절대 생성되지 않습니다 (시나리오 A). 두 시나리오
+는 서로 다른 오퍼 상태로 끝납니다: 시나리오 A는
+`markOfferConsumedBySale`을 통해 오퍼에 `consumed_by_sale`을
+스탬프합니다 (Sold 필터 아래에 표시됨), 렌더 수락은 이미
+스탬프된 오퍼에 대해 게이트됩니다. 시나리오 B에서는 마켓플레이스
+fill이 도착할 때까지 오퍼가 이미 `Accepted` 상태입니다;
+컨트랙트는 의도적으로 오퍼 상태를 `Accepted`에 두고 판매에서
+대출만 결제합니다 — 오퍼는 두 번째로 Sold로 전이하지 않습니다.
+
+**2단계 특성.** 오퍼 생성 시간의 옵트인은 오퍼에 적격성 플래그를
+설정할 뿐입니다. OpenSea에서 실제로 구매 가능한 리스팅을
+얻는 것은 dapp이 오늘 자동화하지 않는 별도의 두 부분 단계
+입니다:
+
+1. **diamond에서 등록 + 와이어.**
+   `OfferParallelSaleFacet.postParallelSaleListing(uint96
+   offerId, uint256 askPrice, bytes32 conduitKey, FeeLeg[]
+   feeLegs)`를 오퍼가 여전히 활성이고 렌더 수락 전에 호출합니다.
+   오퍼가 수락되거나, 취소되거나, 판매로 소비되면 이 호출은
+   터미널로 revert됩니다; 옵트인 체크만으로는 시나리오 B로
+   이월할 수 있는 리스팅을 만들기에 충분하지 않습니다. ask도
+   pre-loan floor를 커버해야 합니다: 원금 + 대출 기간과 grace
+   윈도우를 통한 최악의 경우 오퍼 이자, 그 이자에 대한 트레저리
+   컷, 구성된 안전 버퍼, 모든 fee-leg 금액. 플로어 이하 ask는
+   이 단계에서 revert됩니다. `feeLegs` 인수는 이 호출이
+   OpenSea 프로토콜 수수료와 크리에이터 로열티 의무를 기록하는
+   유일한 장소입니다: diamond는 각 fee-leg 금액을 판매자
+   수익에서 빼고 수신자 + 절대 금액을 Seaport consideration
+   배열에 추가합니다. fee-enforced 컬렉션에서 `feeLegs: []`를
+   전달하면 OpenSea publish 단계가 거부하는 주문 형태를 생성
+   하고 (fee-recipient consideration 항목이 누락됨), 직접 Seaport
+   fill은 컬렉션이 요구하는 대로 수수료를 분할하는 대신 전체
+   ask를 판매자에게 라우팅합니다. 고급 사용자는 컬렉션의
+   OpenSea required-fee 일정을 fetch해야 하며 (in-repo fee parser
+   `apps/agent/src/openseaFees.ts`가 참조), 호출 전 ask에 대해
+   파생된 절대 금액을 전달해야 합니다. Facet은 내부적으로
+   이러한 입력 (플러스
+   `CollateralListingExecutor.offerContext`에 보유하는 값 —
+   대출자 볼트 주소, 원금 자산, 담보 필드, startTime, endTime)과
+   볼트에 대한 현재 `Seaport.getCounter`로부터 canonical Seaport
+   OrderComponents를 빌드하고, `Seaport.getOrderHash`를 통해
+   orderHash를 도출하고, 반환하고, 볼트의 ERC-1271 바인딩을
+   그 해시에 등록하고, NFT 담보에 대한 Seaport conduit 승인을
+   부여합니다. emit된 `PostParallelSaleListing` 이벤트는 입력
+   인수를 노출합니다 (`offerId`, 대출자, orderHash, askPrice,
+   executor / conduit 데이터, salt, fee legs); per-context 필드를
+   echo하지 않으므로, 오프체인에서 OrderComponents를 재구성하려면
+   아래 단계 2에서 설명하는 추가 읽기가 필요합니다. **중요:**
+   이 시점에서 주문은 이미 Seaport를 통해 FILLABLE입니다.
+   컨트랙트의 이벤트와 그 읽기를 보는 봇은 OrderComponents를
+   재구성하고 `Seaport.fulfillOrder`를 직접 호출할 수 있습니다 —
+   온체인 fill 경로가 작동하기 위해 리스팅이 OpenSea의 마켓
+   플레이스 UI에 나타날 필요가 없습니다. 단계 2가 land하기
+   전에 카운터파티가 현재 ask에 fill하는 것을 원하지 않는다면,
+   단계 1 직후 단계 2를 실행하거나 의도하지 않은 fill 전에
+   `releaseParallelSaleLock`을 호출하여 바인딩을 무효화합니다.
+2. **OpenSea에 publish.** facet이 빌드한 동일한 OrderComponents를
+   재구성합니다. `PostParallelSaleListing` 이벤트만으로는
+   충분하지 않습니다: 이는 `offerId`, 대출자, orderHash,
+   askPrice, executor / conduit 데이터, salt, fee legs를
+   emit하지만, offer-keyed 주문 형태는 executor의 `OfferContext`
+   스토리지에 보유된 값 (대출자 볼트 주소, 원금 자산, 담보 필드,
+   startTime, endTime)과 대출자 볼트의 Seaport 카운터 (offerer의
+   카운터 — `LibPrepayOrder.buildAndHashOfferMem`은
+   `Seaport.getCounter(ctx.borrowerVault)`를 해시, bidder의
+   카운터가 아님)도 필요합니다. 이는
+   `LibPrepayOrder.buildAndHashOfferMem` offer-order 경로가
+   사용하는 것과 동일한 컨텍스트이며, loan-keyed prepay-listing
+   주문 형태와는 다릅니다. 게시하기 전에 둘 다 읽으십시오:
+   - `CollateralListingExecutor(executor).offerContext(orderHash)`는
+     해당 해시에 대한 영구화된 `OfferContext` 구조체를 반환합니다.
+   - `Seaport.getCounter(borrowerVault)`는 볼트 offerer에 대한
+     canonical Seaport 카운터를 반환합니다.
+   이러한 필드를 손에 들면 OrderComponents 구조체가 diamond가
+   해시한 것을 정확히 재현합니다. POST하기 전에 API 전용 필드
+   `parameters.totalOriginalConsiderationItems`를 추가합니다 —
+   OpenSea의 API는 canonical 해시를 생성하는 Seaport 구조체의
+   일부가 아니지만 이를 요구합니다; in-repo 게시자
+   (`apps/defi/src/lib/openseaPublish.ts` +
+   `apps/indexer/src/openseaPublish.ts`)는 endpoint 호출 전에
+   이를 inject합니다. ERC-1271로 검증된 주문의 경우 OpenSea는
+   `signature` 필드를 `0x` (빈 바이트)로 수락합니다 — 볼트의
+   온체인 `isValidSignature(orderHash, '')` 콜백은 signature
+   바이트를 무시하고 diamond가 이전에 등록한 (단계 1에서) 모든
+   orderHash에 대해 EIP-1271 매직 값을 반환합니다. JSON을
+   OpenSea listings endpoint에 POST합니다 (`POST
+   /api/v2/orders/{chain}/{protocol}/listings`, 공식
+   [Create Listing](https://docs.opensea.io/reference/post_listing)
+   문서에 따라 — 이는 Vaipakam 자체 게시자
+   `apps/agent/src/openseaProxy.ts` +
+   `apps/indexer/src/openseaPublish.ts`가 사용하는 동일한
+   endpoint). 이 단계 후에만 리스팅이 OpenSea의 마켓플레이스
+   UI에 나타나고 캐주얼 구매자가 발견할 수 있게 됩니다.
+   Vaipakam은 현재 parallel-sale 경로에 대해 이 제출을 자동화
+   하지 않으며 — end-to-end 리스팅 게시 표면화는 후속 작업으로
+   추적됩니다.
+
+오늘 수동 경로를 따르는 고급 사용자는 OpenSea 가시성을 얻기
+위해 두 단계 모두 필요합니다; 단계 1만 실행하면 Seaport를
+통해 직접 fillable한 주문이 생성되지만 (이벤트에서 구성요소를
+재구성하는 봇이나 카운터파티에 의해) OpenSea 마켓플레이스 UI
+에서는 보이지 않습니다.
+
+**Fill 모드는 All-or-Nothing으로 강제.** 옵트인은 오퍼의 fill
+모드를 자동으로 `Aon`에 고정합니다 — parallel-sale이 활성화된
+partial / IOC fill 모드는 단일 오퍼의 담보에 대해 여러 대출을
+생성하게 되며, 컨트랙트가 이를 게이트합니다. 토글은 렌더
+오퍼, ERC-20 담보, NFT 원금, 그리고 컨트랙트의
+`_validatePostParallelSale`이 거부할 다른 형태에서 숨겨져
+있어, 부적격 오퍼에서 실수로 체크할 수 없습니다.
+
+**구매자가 보는 것.**
+
+- *어떤 렌더도 수락하기 전* (시나리오 A): OpenSea 리스팅을
+  fill하는 구매자는 listed price를 지불합니다. fee-enforced
+  컬렉션에서 Seaport는 OpenSea protocol-fee와 creator-fee leg을
+  먼저 구성된 수신자에게 직접 라우팅합니다; executor는 **net
+  proceeds** (listed price에서 해당 marketplace / creator fee leg을
+  뺀 것)만 diamond로 전달합니다. Diamond는 그 net 금액을 당신의
+  볼트에 에스크로하고, NFT는 구매자에게 전송되며, 오퍼는
+  `consumed_by_sale`로 마크됩니다 (My Offers, Activity, Offer
+  Details에 구별된 "Sold" 상태로 표시). 대출이 절대 생성되지
+  않았습니다; 당신은 net 판매 수익을 유지합니다.
+- *렌더가 수락한 후* (시나리오 B): 리스팅은 대출 초기화를
+  통해 이월됩니다 — 대출자 NFT 잠금도 리스팅도 철거되지
+  않습니다. 후속 구매자 fill은 diamond의 결제 워터폴을 Seaport
+  트랜잭션에서 트리거합니다. 시나리오 A와 동일한 fee-leg 참고:
+  fee-enforced 컬렉션에서 Seaport는 OpenSea protocol-fee와
+  creator-fee leg을 먼저 구성된 수신자에게 직접 라우팅하고,
+  executor는 **net proceeds** (판매 가격에서 marketplace /
+  creator fee를 뺀 것)만 diamond의 워터폴로 전달합니다. 워터폴은
+  그 다음 그 net 금액을 라우팅합니다: 렌더는 결제 entitlement를
+  받습니다 (`LibEntitlement.settlementInterest`가 대출이
+  `useFullTermInterest = true`로 생성된 경우 전체 쿠폰으로
+  계산, 그렇지 않으면 결제 타임스탬프에 누적된 pro-rata 이자
+  로 계산 — 게이트는 대출 정책이며, 판매가 예정된 만기 전후인지
+  여부가 아님), 트레저리 컷은 트레저리로 가며, 나머지는 현재
+  대출자 포지션 NFT 보유자의 볼트에 직접 입금됩니다
+  (`LibUserVault.getOrCreate` + 볼트 입금 통해). Claim Center
+  클레임은 생성되지 않습니다 — 판매가 land한 후 볼트 잔액을
+  확인하십시오.
+
+**결합할 수 없는 것.** 두 가지 구별된 충돌 클래스가 다른
+프로토콜 단계에서 표면화됩니다:
+
+- *Publish 시간 블록 (자매 loan-keyed 리스팅).* 대출에 이미
+  오퍼 생성에서 이월된 parallel-sale 리스팅이 있고 대출자가
+  그런 다음 동일한 대출에 두 번째 loan-keyed prepay 리스팅을
+  게시하기 위해 `NFTPrepayListingFacet.postPrepayListing` (또는
+  `updatePrepayListing`)을 호출하면, diamond는
+  `SiblingParallelSaleListingLive`로 revert합니다. 대출자
+  NFT에 대한 conduit 승인은 단일 슬롯입니다 — 두 리스팅을
+  동시에 실행하면 모호한 승인이 생성됩니다. 대출자는 publish /
+  update 호출에서 revert를 봅니다; 아무것도 fill되지 않습니다.
+- *Fill 시간 블록 (열린 PrecloseFacet offset).* 대출에 열린
+  PrecloseFacet offset 오퍼가 있고 구매자가 나중에 parallel-sale
+  리스팅을 fill하려고 하면, diamond의
+  `_settleLoanFromParallelSale`은
+  `ParallelSaleBlockedByOpenOffsetOffer`로 revert합니다.
+  리스팅은 OpenSea에서 유효하게 유지되지만 offset 링크가
+  지워질 때까지 fill 시도는 revert합니다. dapp은 현재 Loan
+  Details 페이지에서 이 조합에 대한 전용 배너 / 알림을 표면화
+  하지 않으며; 사용자는 fill이 revert하는 것을 보게 되고 진단을
+  위해 블록 탐색기에서 revert 이유를 검사해야 할 수도 있습니다.
+  정리 경로는 일반 offer-cancel 표면입니다 — offset 오퍼를
+  취소하기 위해 `OfferCancelFacet.cancelOffer(offsetOfferId)`를
+  호출하면 offset 링크를 해제하고 parallel-sale fill을 차단
+  해제합니다 (PrecloseFacet에는 별도의 취소 진입점이 없습니다;
+  offset은 링크된 오퍼에 바운드되어 있으므로 링크된 오퍼를
+  취소하면 지워집니다). 충돌에 대한 전용 UI 표면은 별도의 UX
+  후속 작업으로 큐에 있습니다.
+
+
+<a id="matching-opensea-offers-on-a-prepay-listing"></a>
+
+### Prepay 리스팅에서 OpenSea 오퍼 매칭
+
+prepay 리스팅이 OpenSea의 마켓플레이스에서 라이브가 되면, 캐주얼
+구매자가 때때로 당신의 토큰에 직접 **item offers**를 배치합니다 —
+컬렉션의 어떤 토큰이 아닌 당신의 특정 담보에 묶인 bids입니다.
+Vaipakam은 이러한 item offers를 Loan Details 페이지에 실시간
+으로 표면화합니다 — "List collateral on OpenSea" 아래의 별도
+패널에 incoming offer당 한 행씩. 패널은 **buffer threshold**를
+적용합니다 — 렌더의 결제 entitlement (이미 원금 + 전체 쿠폰
+(full-term-interest 대출) 또는 pro-rata 이자 (그렇지 않으면)
+포함 — 참조 `PrepayListingFacet.getPrepayContext().lenderLeg`),
+플러스 트레저리 컷, 플러스 안전 버퍼 — 이를 클리어하지 않는
+오퍼를 **회색 처리**합니다. 모든 수준에서 시장 관심을 볼 수
+있지만 프로토콜이 실제로 결제할 오퍼만 Match할 수 있습니다.
+
+컬렉션 전체 / criteria 오퍼 (컬렉션의 모든 토큰이 fulfill할 수
+있는 bids)는 OpenSea에 남아 있지만 dapp의 Match 패널에는 **표시
+되지 않습니다** — 프로토콜이 결제하는 multi-leg consideration은
+v1에 없는 컨트랙트 측 plumbing 없이 criteria 오퍼에 대해
+재구성될 수 없습니다. 유일한 인바운드 수요가 컬렉션 전체라면,
+오늘의 실용적 경로는 item-specific bid를 기다리거나 리스팅을
+고정 ask로 두고 어떤 구매자든 직접 fulfill할 수 있게 두는
+것입니다. 컬렉션 전체 bid를 수동으로 직접 결제할 수 없습니다 —
+담보 NFT가 당신의 Vaipakam 볼트에 있고, Vaipakam 측 Seaport
+주문이 유일하게 승인된 결제 형태입니다.
+
+OpenSea 프로토콜 수수료 및/또는 크리에이터 로열티를 강제하는
+컬렉션에서 dapp은 오퍼 패널을 렌더링합니다 — OpenSea API에서의
+fee-schedule fetch는 advisory로 처리되며; 실제 fulfillment 데이터는
+MATCH 클릭 시간에 fetch됩니다. Match 패널은 fee-schedule fetch
+상태에 관계없이 렌더링되며; 클릭 시간 fulfillment-data fetch가
+게이트입니다. 그 fetch가 실패하면 (rate limit, API 중단, 또는
+지원되지 않는 컬렉션 형태), dapp 측 Match 클릭 핸들러가 어떤
+`NFTPrepayListingAtomicFacet.matchOpenSeaOffer` 트랜잭션이
+구성되기 전에 ABORT합니다 — calldata 없음, signature 프롬프트
+없음, revert 없음. 온체인 함수 자체는 `bool` 반환 셀렉터가 아니며;
+실행되면 `bytes32` orderHash를 반환하거나 revert합니다. 따라서
+fee-enforced 컬렉션의 패널은 탐색할 수 있는 오퍼를 표시할 수
+있지만 그 모두가 주어진 순간에 clickable-to-match인 것은
+아닙니다.
+
+수용 가능한 오퍼를 찾고 **Match offer**를 클릭하면, dapp이
+**Confirm Match** 모달을 엽니다. 이는 matched value (gross
+OpenSea 오퍼 금액 — diamond가 결제할 net 금액이 아님;
+fee-enforced 컬렉션에서
+`NFTPrepayListingAtomicFacet.matchOpenSeaOffer`는 lender /
+treasury / borrower 분할을 실행하기 전에 `effectiveAsk =
+offerValue - bidderFeeTotal`을 계산하므로, diamond가 실제로
+분배하는 net는 모달의 헤드라인보다 작습니다)를 다시 표시하고
+atomic-match 플로우의 일반적인 설명을 제공합니다. 확인 후,
+dapp은 bidder의 오퍼를 새로 구성된 diamond 측 카운터 주문과
+단일 Seaport `matchAdvancedOrders` 호출에 묶는 단일
+`matchOpenSeaOffer` 트랜잭션을 보냅니다 — bidder의 fulfillment,
+카운터 주문의 listing 측 leg (이전 v1 prepay 리스팅이 라이브
+였는지 여부에 관계없이; atomic 경로는 `existingHash == 0`을
+지원), diamond의 결제 워터폴이 모두 한 블록에 atomic으로
+land합니다. 트랜잭션은 완전히 성공하거나 (대출 결제, NFT 전송,
+판매 수익 분할) 완전히 revert (아무것도 움직이지 않음)하며,
+리스팅 회전과 결제 사이에 제3자 구매자가 matched price에
+개입할 수 있는 **창이 없습니다**.
+
+> **레이스 윈도우 없음 — 구조상 atomic.** 이는 v1 두 단계
+> "cancel + post" 패턴의 구조적 폐쇄입니다: v1 하에서 dapp은
+> 리스팅을 별도의 `updatePrepayListing` 트랜잭션으로 회전하고,
+> 회전된 가격을 OpenSea에 라이브로 두어 bidder의
+> `fulfillOrder`가 나중 블록에서 land할 때까지 — mempool을
+> 보는 누구든지 bidder를 bid한 가격에서 snipe할 수 있었습니다.
+> Atomic 경로는 두 주문을 하나의 Seaport match 호출에 바인딩
+> 하여 그 구멍을 닫습니다: bidder가 합의된 가격에 fill하거나
+> 전체 트랜잭션이 revert합니다.
+
+**Match를 클릭하기 전에 여전히 확인하고 싶은 것:**
+
+- **모달에서 matched value 확인.** 모달은 gross OpenSea 오퍼
+  금액을 표면화합니다. fee-enforced 컬렉션에서 diamond는 bidder
+  측 marketplace / creator fee leg 후의 net effective ask에
+  대해 결제하므로, 모달 값은 lender / treasury / borrower 분할에
+  사용된 금액보다 클 수 있습니다. bidder 주소와 정확한 분할은
+  모달이나 OpenSea Offers 패널 행 (행은 value, payment token,
+  offer 종류, 잘린 bidder, end time을 표시)에서 분리되어 있지
+  않습니다. 분할은 결제 시 diamond에 의해 온체인으로 강제됩니다 —
+  프로토콜의 결제 버퍼는 effective ask가 렌더의 결제 entitlement
+  (이미 원금 + 전체 쿠폰 (full-term-interest 대출) 또는
+  pro-rata 이자 (그렇지 않으면) 포함) + 트레저리 컷을 커버하는
+  것을 보장하므로, 분할은 항상 최소한 당신에게 중립적입니다.
+  확인하기 전에 예상 분할을 보고 싶다면, diamond는
+  `PrepayListingFacet.getPrepayContext(loanId, asOfTimestamp)`를
+  callable 뷰로 노출합니다 — 주어진 타임스탬프에서 결제
+  워터폴이 라우팅할 lender와 treasury leg을 반환하며, 나머지는
+  당신의 것입니다.
+- **컬렉션에 대한 OpenSea의 fee posture 확인.** 컬렉션이
+  OpenSea 프로토콜 수수료나 크리에이터 로열티를 강제하면,
+  atomic 경로는 dapp이 agent의 OpenSea fulfillment-data 프록시
+  (PR #349)를 통해 MATCH 클릭 시간에 fetch하는 SignedZone
+  `extraData` / criteria-resolver plumbing이 필요합니다. Match
+  패널은 fee-schedule fetch 상태에 관계없이 렌더링되며; 클릭
+  시간의 fulfillment-data fetch가 게이트입니다. 그 fetch가
+  실패하면 (rate limit, API 중단, 지원되지 않는 컬렉션 형태),
+  dapp 측 클릭 핸들러는 온체인 `matchOpenSeaOffer` 트랜잭션을
+  구성하기 전에 abort합니다 — calldata가 빌드되지 않고,
+  signature 프롬프트가 발생하지 않으며, 사전에 배너가 표시되지
+  않습니다. 나중에 클릭을 재시도하거나 (fetch가 일시적인 API blip
+  이었을 수 있음), 그 사이 OpenSea에 listed ask로 직접 리스팅을
+  fulfill할 수 있습니다.
+
 
 ---
 
