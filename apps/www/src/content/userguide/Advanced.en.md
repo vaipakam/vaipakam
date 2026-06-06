@@ -488,9 +488,13 @@ classes, surfaced at different protocol stages:
   `_settleLoanFromParallelSale` reverts with
   `ParallelSaleBlockedByOpenOffsetOffer`. The listing remains
   valid on OpenSea but any fill attempt reverts until the
-  offset is cancelled. The dapp surfaces this on the Loan
-  Details page so the borrower can choose which cross-flow
-  exit they actually want.
+  offset is cancelled. The dapp does NOT currently surface a
+  dedicated banner / notification on the Loan Details page
+  for this combination; users will see fills revert and may
+  need to inspect the revert reason on a block explorer (or
+  cancel the offset offer manually from PrecloseFacet) to
+  unblock the listing. A dedicated UI surface for the conflict
+  is queued as a separate UX follow-up.
 
 ---
 
@@ -891,14 +895,16 @@ clickable-to-match in a given moment.
 
 When you find an acceptable offer and click **Match offer**,
 the dapp opens the **Confirm Match** modal, which restates the
-matched value (the bidder's offered price the listing will
-rotate to) and gives a generic explanation of the atomic-match
-flow. After you confirm, the dapp sends a single
-`matchOpenSeaOffer` transaction that bundles your listing
-and the bidder's offer into one Seaport `matchAdvancedOrders`
-call — your listing rotation, the bidder's fulfilment, and
-the diamond's settlement waterfall all land atomically in
-one block. The transaction either fully succeeds (loan
+matched value (the price the diamond will settle at) and gives
+a generic explanation of the atomic-match flow. After you
+confirm, the dapp sends a single `matchOpenSeaOffer`
+transaction that bundles the bidder's offer with a freshly-
+constructed diamond-side counter-order into one Seaport
+`matchAdvancedOrders` call — the bidder's fulfilment, the
+counter-order's listing-side leg (whether or not you had a
+prior v1 prepay listing live; the atomic path supports
+`existingHash == 0`), and the diamond's settlement waterfall
+all land atomically in one block. The transaction either fully succeeds (loan
 settled, NFT transferred, sale proceeds split) or fully
 reverts (nothing moves), and there is **no window between
 listing rotation and settlement** in which a third-party
@@ -918,27 +924,35 @@ buyer could step in at the matched price.
 **What you still want to verify before clicking Match:**
 
 - **Confirm the matched value in the modal.** The modal
-  surfaces the price the listing will rotate to (matching the
-  bidder's offered amount). The bidder address and the precise
-  lender / treasury / borrower split aren't currently broken
-  out in the modal — the dapp surfaces them on the OpenSea
-  Offers panel ROW you clicked to open the modal, and the
-  diamond enforces the split at settlement. The protocol's
-  settlement buffer enforces that the price covers principal
-  plus the lender's settlement entitlement (full coupon on
+  surfaces the price the diamond will settle at. The bidder
+  address and the precise lender / treasury / borrower split
+  aren't broken out in either the modal OR the OpenSea Offers
+  panel row (the row shows value, payment token, offer kind,
+  truncated bidder, and end time). The split is enforced
+  on-chain by the diamond at settlement — the protocol's
+  settlement buffer guarantees the price covers principal plus
+  the lender's settlement entitlement (full coupon on
   full-term-interest loans, pro-rata otherwise) plus the
   treasury cut, so the split is always at least neutral for
-  you. Still your transaction; still your responsibility to
-  cross-check the panel row before clicking Match.
+  you. If you want to see the projected split before
+  confirming, compute it yourself: the lender leg is
+  `LibCollateralSettlement.principalPlusAccruedInterest(loanId)`
+  on the loan-details page; the treasury leg is the protocol
+  yield-fee BPS applied to the interest portion; the remainder
+  is yours.
 - **Check OpenSea's fee posture for the collection.** If the
   collection enforces OpenSea protocol fees or creator
   royalties, the atomic path needs SignedZone `extraData` /
   criteria-resolver plumbing that the dapp fetches via the
-  agent's OpenSea fulfillment-data proxy (PR #349). When
-  that data is unavailable the dapp's Match panel is hidden
-  with an informational banner; buyers can still fill your
-  listing directly on OpenSea at the listed ask in those
-  cases.
+  agent's OpenSea fulfillment-data proxy (PR #349) AT MATCH
+  CLICK TIME. The Match panel renders regardless of
+  fee-schedule fetch status; the click-time fulfillment-data
+  fetch is the gate. If that fetch fails (rate limit, API
+  outage, unsupported collection shape), `matchOpenSeaOffer`
+  returns false and nothing happens — no transaction is
+  submitted, no banner is shown in advance. You can retry the
+  click later, or fill the listing directly on OpenSea at the
+  listed ask in the meantime.
 
 ---
 
