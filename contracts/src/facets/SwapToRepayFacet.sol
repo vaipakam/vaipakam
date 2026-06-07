@@ -198,6 +198,10 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         LibSwap.AdapterCall[] calldata adapterCalls,
         uint256 maxCollateralIn
     ) external nonReentrant whenNotPaused {
+        // T-090 v1.1 (#389) §5.8 — borrower can't run the v1 atomic
+        // close path while their v1.1 intent commit is live; the
+        // intent surface already pulled the collateral into custody.
+        LibVaipakam.assertNoLiveIntentCommit(loanId);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
@@ -466,6 +470,10 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         uint256 collateralSwapAmount,
         LibSwap.AdapterCall[] calldata adapterCalls
     ) external nonReentrant whenNotPaused {
+        // T-090 v1.1 (#389) §5.8 — same custody-conflict rationale
+        // as `swapToRepayFull`; block partial-atomic while the
+        // intent surface holds the collateral.
+        LibVaipakam.assertNoLiveIntentCommit(loanId);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 

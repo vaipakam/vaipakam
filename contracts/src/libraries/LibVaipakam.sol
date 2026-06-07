@@ -5185,4 +5185,34 @@ library LibVaipakam {
     ) internal {
         storageSlot().protocolTrackedVaultBalance[user][token] -= amount;
     }
+
+    /**
+     * @notice T-090 v1.1 (#389) — `IntentPending` guard helper.
+     *         Reverts `IntentPending(loanId)` when an intent-based
+     *         swap-to-repay commit is live for the loan. Wired at
+     *         the top of every voluntary-close / collateral-mutating
+     *         entry point that touches `loan.borrower`'s vault, per
+     *         design §5.8.
+     *
+     *         Lender-protection entry points (HF-liquidation,
+     *         time-default, periodic-shortfall) call
+     *         `forceCancelIntentIfDueOrRevert` instead — that helper
+     *         force-cancels the intent when the loan is already
+     *         liquidatable / defaultable AND reverts `IntentPending`
+     *         otherwise. The latter lands when the
+     *         `SwapToRepayIntentFacet` bodies implement the cancel
+     *         primitives the force-cancel branches depend on.
+     *
+     * @dev    Internal one-liner so each call site stays a
+     *         single-line edit. Uses the cheap inline reads on
+     *         `storageSlot().intentCommits[loanId]` (single SLOAD on
+     *         the first struct slot — `orderHash` is the first field
+     *         + is set non-zero on commit + cleared on every cancel
+     *         / fill / force-cancel path).
+     */
+    function assertNoLiveIntentCommit(uint256 loanId) internal view {
+        if (storageSlot().intentCommits[loanId].orderHash != bytes32(0)) {
+            revert IVaipakamErrors.IntentPending(loanId);
+        }
+    }
 }

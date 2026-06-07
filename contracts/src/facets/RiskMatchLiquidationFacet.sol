@@ -146,6 +146,18 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         uint256 loanIdB,
         uint256 loanIdC
     ) external nonReentrant whenNotPaused {
+        // T-090 v1.1 (#389) §5.8 layer 2 — TEMPORARY placeholder
+        // on ALL THREE legs. The internal-match liquidator withdraws
+        // from every leg's borrower vault simultaneously; a live
+        // commit on any of the three would orphan that leg's
+        // custodial slot. Per Codex round-6 P1 #6 the full list of
+        // HF-liquidation entry points needs the force-cancel
+        // pattern; that lands when the
+        // `SwapToRepayIntentFacet.cancelSwapToRepayIntent`
+        // primitive does.
+        LibVaipakam.assertNoLiveIntentCommit(loanIdA);
+        LibVaipakam.assertNoLiveIntentCommit(loanIdB);
+        LibVaipakam.assertNoLiveIntentCommit(loanIdC);
         // Tier-1 sanctions: matcher receives 1% per leg in PR5;
         // blocking sanctioned wallets here keeps the value-receipt
         // path closed.

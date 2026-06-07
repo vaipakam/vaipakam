@@ -248,6 +248,10 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
      * @param loanId The loan ID to repay.
      */
     function repayLoan(uint256 loanId) external nonReentrant whenNotPaused {
+        // T-090 v1.1 (#389) §5.8 — block voluntary close while an
+        // intent-based swap-to-repay commit is live (custody has
+        // already moved out of `loan.borrower`'s vault).
+        LibVaipakam.assertNoLiveIntentCommit(loanId);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         // FallbackPending is accepted: a full repay cures the failed
@@ -608,6 +612,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         uint256 loanId,
         uint256 partialAmount
     ) external nonReentrant whenNotPaused {
+        // T-090 v1.1 (#389) §5.8 — partial repay still pulls from
+        // `loan.borrower`'s vault; block while a v1.1 commit is live.
+        LibVaipakam.assertNoLiveIntentCommit(loanId);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         LibAuth.requireBorrower(loan);
@@ -1156,6 +1163,15 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         uint256 boundary,
         LibSwap.AdapterCall[] calldata adapterCalls
     ) private {
+        // T-090 v1.1 (#389) §5.8 — TEMPORARY placeholder. Same
+        // force-cancel-on-due-trigger pattern as the public
+        // HF-liquidation entry points; lands in the next Sub 1
+        // commit. The caller (`settlePeriodicInterest`) reverts
+        // this path through the standard call stack, so a live
+        // commit cleanly aborts the period-shortfall auto-
+        // liquidation rather than orphaning the loan in a half-
+        // settled period.
+        LibVaipakam.assertNoLiveIntentCommit(loanId);
         // Sell-amount sizing: aim for `shortfall × (1 + slippageCap)` of
         // collateral so the swap clears even in the worst-case slippage
         // scenario. If the loan's remaining collateral is smaller, sell

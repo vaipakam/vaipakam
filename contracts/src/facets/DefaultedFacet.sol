@@ -176,6 +176,17 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         uint256 loanId,
         LibSwap.AdapterCall[] calldata adapterCalls
     ) external whenNotPaused nonReentrant {
+        // T-090 v1.1 (#389) §5.8 — TEMPORARY placeholder. Final
+        // behaviour per Codex round-5 P1 #8: if a commit is live
+        // AND `block.timestamp >= loan.endTime + gracePeriod`,
+        // force-cancel the intent (return collateral, clear state,
+        // emit `SwapToRepayIntentForceCancelled(loanId,
+        // TimeDefaultDue, address(this))`) then proceed with the
+        // default flow. The cancel primitives the force-cancel
+        // branch depends on land in the next Sub 1 commit; for now
+        // this guard keeps the lender-protection path safe by
+        // refusing to proceed past a live commit.
+        LibVaipakam.assertNoLiveIntentCommit(loanId);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active)

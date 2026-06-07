@@ -91,6 +91,10 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         uint256 oldLoanId,
         uint256 borrowerOfferId
     ) external nonReentrant whenNotPaused {
+        // T-090 v1.1 (#389) §5.8 — refinance withdraws old
+        // collateral from `loan.borrower`'s vault before flipping
+        // the old loan to Repaid; block while a v1.1 commit is live.
+        LibVaipakam.assertNoLiveIntentCommit(oldLoanId);
         // Tier-1 sanctions gate — refinance routes funds + creates
         // new loan state for msg.sender; sanctioned wallet blocked.
         LibVaipakam._assertNotSanctioned(msg.sender);
