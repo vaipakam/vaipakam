@@ -6,6 +6,11 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibCollateralSettlement} from "../libraries/LibCollateralSettlement.sol";
+import {LibSettlement} from "../libraries/LibSettlement.sol";
+import {LibLifecycle} from "../libraries/LibLifecycle.sol";
+import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
+import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
+import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -18,6 +23,7 @@ import {IPostInteraction} from "@1inch/limit-order-protocol/contracts/interfaces
 import {IOrderMixin} from "@1inch/limit-order-protocol/contracts/interfaces/IOrderMixin.sol";
 import {MakerTraits} from "@1inch/limit-order-protocol/contracts/libraries/MakerTraitsLib.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
+import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 
 /**
@@ -724,20 +730,44 @@ contract SwapToRepayIntentFacet is
     ///      authorised against `commit.lopAtCommit`, NOT the global
     ///      cfg).
     function preInteraction(
-        IOrderMixin.Order calldata order,
-        bytes calldata extension,
+        IOrderMixin.Order calldata /* order */,
+        bytes calldata /* extension */,
         bytes32 orderHash,
-        address taker,
-        uint256 makingAmount,
-        uint256 takingAmount,
-        uint256 remainingMakingAmount,
-        bytes calldata extraData
+        address /* taker */,
+        uint256 /* makingAmount */,
+        uint256 /* takingAmount */,
+        uint256 /* remainingMakingAmount */,
+        bytes calldata /* extraData */
     )
         external
     {
-        order; extension; orderHash; taker; makingAmount; takingAmount;
-        remainingMakingAmount; extraData;
-        revert NotYetImplemented();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+
+        // ── Reverse-index lookup ────────────────────────────────────
+        uint256 loanId = s.orderHashToLoanId[orderHash];
+        if (loanId == 0 || s.intentCommits[loanId].orderHash != orderHash) {
+            revert IntentPreInteractionUnknownOrder(orderHash);
+        }
+
+        // ── Authorized-caller check against pinned LOP (Codex
+        //    round-11 P2 #6) ───────────────────────────────────────────
+        if (msg.sender != s.intentCommits[loanId].lopAtCommit) {
+            revert IntentPreInteractionUnauthorized(msg.sender);
+        }
+
+        // ── Snapshot the diamond's principal balance pre-fill into
+        //    transient storage keyed by orderHash. `postInteraction`
+        //    reads this back to compute `actualDelivered` via
+        //    balance-delta (Codex round-5 P1 #2 — Fusion's `delivered`
+        //    arg can drift from the diamond's actual balance for
+        //    fee-on-transfer / rebasing principals). EIP-1153
+        //    transient storage is the right primitive: per-tx-scoped,
+        //    free at tx-end, safe against same-tx reentry.
+        address principal = s.loans[loanId].principalAsset;
+        uint256 baseline = IERC20(principal).balanceOf(address(this));
+        assembly ("memory-safe") {
+            tstore(orderHash, baseline)
+        }
     }
 
     /// @inheritdoc IPostInteraction
@@ -748,21 +778,214 @@ contract SwapToRepayIntentFacet is
     ///      `commit.lopAtCommit` per round-10 P1 #6; live-floor
     ///      re-check with `+ lateFee` per round-10 P1 #5.
     function postInteraction(
-        IOrderMixin.Order calldata order,
-        bytes calldata extension,
+        IOrderMixin.Order calldata /* order */,
+        bytes calldata /* extension */,
         bytes32 orderHash,
-        address taker,
+        address /* taker */,
         uint256 makingAmount,
-        uint256 takingAmount,
-        uint256 remainingMakingAmount,
-        bytes calldata extraData
+        uint256 /* takingAmount */,
+        uint256 /* remainingMakingAmount */,
+        bytes calldata /* extraData */
     )
         external
         nonReentrant
     {
-        order; extension; orderHash; taker; makingAmount; takingAmount;
-        remainingMakingAmount; extraData;
-        revert NotYetImplemented();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+
+        // ── Step 1: reverse-index lookup (Codex round-11 P1 #7 —
+        //    derive loanId BEFORE the auth check; round-7's pre-step
+        //    ordering had this swapped) ────────────────────────────────
+        uint256 loanId = s.orderHashToLoanId[orderHash];
+        if (loanId == 0) revert IntentNotRegistered(orderHash);
+
+        // ── Step 2: authorized-caller against pinned LOP (Codex
+        //    round-10 P1 #6) ─────────────────────────────────────────
+        LibVaipakam.SwapToRepayIntentCommit storage commit = s.intentCommits[loanId];
+        if (msg.sender != commit.lopAtCommit) {
+            revert IntentPostInteractionUnauthorized(msg.sender);
+        }
+
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+
+        // ── Step 3: actual principal received via transient-storage
+        //    baseline (Codex round-5 P1 #2 + round-7 P1 #6) ─────────
+        uint256 baseline;
+        assembly ("memory-safe") {
+            baseline := tload(orderHash)
+            tstore(orderHash, 0)
+        }
+        uint256 actualDelivered = IERC20(loan.principalAsset).balanceOf(address(this))
+            - baseline;
+
+        // ── Step 4: live floor re-check (Codex round-2 P1 #8 +
+        //    round-10 P1 #5 + round-11 P1 #3 — add `lateFee`) ───────
+        uint256 endTime = uint256(loan.startTime)
+            + uint256(loan.durationDays) * LibVaipakam.ONE_DAY;
+        uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
+        uint256 liveLenderLeg = LibCollateralSettlement.principalPlusAccruedInterest(
+            loanId, block.timestamp
+        );
+        uint256 liveTreasuryLeg = LibCollateralSettlement.treasuryAndPrecloseFee(
+            loanId, block.timestamp
+        );
+        uint256 liveFloor = liveLenderLeg + liveTreasuryLeg + lateFee;
+        if (actualDelivered < liveFloor) {
+            revert IntentDeliveredBelowLiveFloor(actualDelivered, liveFloor);
+        }
+
+        // ── Step 5: residual handling — `safeTransfer` to vault THEN
+        //    `recordVaultDeposit` (Codex round-10 P1 #2 + round-11
+        //    P1 #1 — direct recordVaultDeposit doesn't move tokens) ─
+        uint256 consumed = makingAmount;
+        uint256 residual = commit.custodialCollateral - consumed;
+        if (residual > 0) {
+            address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
+            IERC20(loan.collateralAsset).safeTransfer(borrowerVault, residual);
+            LibVaipakam.recordVaultDeposit(
+                loan.borrower, loan.collateralAsset, residual
+            );
+        }
+
+        // ── Step 6: settlement waterfall (mirrors v1
+        //    `SwapToRepayFacet.swapToRepayFull` post-swap; `consumed`
+        //    feeds the claim-record branch so `claim =
+        //    loan.collateralAmount - consumed`) ──────────────────────
+        _runSettlement(s, loan, loanId, actualDelivered, consumed, lateFee);
+
+        // ── Step 7: aggregate allowance + live count decrement ──────
+        s.intentAggregateAllowance[loan.collateralAsset] -= commit.custodialCollateral;
+        s.intentLiveCommitCount -= 1;
+        IERC20(loan.collateralAsset).forceApprove(commit.lopAtCommit, 0);
+        if (s.intentAggregateAllowance[loan.collateralAsset] != 0) {
+            IERC20(loan.collateralAsset).forceApprove(
+                commit.lopAtCommit,
+                s.intentAggregateAllowance[loan.collateralAsset]
+            );
+        }
+
+        // ── Step 8: storage cleanup ─────────────────────────────────
+        bytes32 extensionHash = commit.extensionHash;
+        delete s.orderHashToLoanId[orderHash];
+        delete s.intentExtensionBytes[extensionHash];
+        delete s.intentCommits[loanId];
+
+        // ── Step 9: emit ────────────────────────────────────────────
+        emit SwapToRepayIntentFilled(loanId, orderHash, consumed, actualDelivered, residual);
+    }
+
+    /// @dev Settlement waterfall — mirrors
+    ///      `SwapToRepayFacet.swapToRepayFull` post-swap step-for-step
+    ///      so the principal-side flows are identical to v1 atomic.
+    ///      `consumed` is passed verbatim to the claim-record branch
+    ///      so `claim = loan.collateralAmount - consumed` (Codex
+    ///      round-8 P1 #3 — undoes the round-4 P1 #4 override now
+    ///      that residual is vault-deposited above so
+    ///      `ClaimFacet.claimAsBorrower` can withdraw it). Factored
+    ///      private to keep `postInteraction` readable.
+    function _runSettlement(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.Loan storage loan,
+        uint256 loanId,
+        uint256 actualDelivered,
+        uint256 consumed,
+        uint256 lateFee
+    ) private {
+        LibSettlement.ERC20Settlement memory plan = LibSettlement.computeRepayment(
+            loan, lateFee, block.timestamp
+        );
+        uint256 requiredPrincipal = plan.lenderDue + plan.treasuryShare;
+        // The §5.4 floor check + §5.1 step 4 postInteraction live
+        // floor check already established `actualDelivered >=
+        // liveFloor`; this assertion is a defense-in-depth.
+        if (actualDelivered < requiredPrincipal) {
+            revert IntentDeliveredBelowLiveFloor(actualDelivered, requiredPrincipal);
+        }
+
+        // Treasury share.
+        if (plan.treasuryShare > 0) {
+            address treasury = LibFacet.getTreasury();
+            IERC20(loan.principalAsset).safeTransfer(treasury, plan.treasuryShare);
+            LibFacet.recordTreasuryAccrual(loan.principalAsset, plan.treasuryShare);
+        }
+
+        // Lender vault credit.
+        address lenderVault = LibFacet.getOrCreateVault(loan.lender);
+        IERC20(loan.principalAsset).safeTransfer(lenderVault, plan.lenderDue);
+        LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, plan.lenderDue);
+
+        // Surplus principal → current borrower-NFT-owner EOA
+        // (Codex round-4 P1 #2 from v1 — `claimAsBorrower` only
+        // releases collateral, not principal; vault path would
+        // strand the surplus).
+        uint256 surplusPrincipal = actualDelivered - requiredPrincipal;
+        if (surplusPrincipal > 0) {
+            address currentBorrowerHolder =
+                IERC721(address(this)).ownerOf(loan.borrowerTokenId);
+            IERC20(loan.principalAsset).safeTransfer(
+                currentBorrowerHolder, surplusPrincipal
+            );
+        }
+
+        // Claim slots.
+        s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
+            asset: loan.principalAsset,
+            amount: plan.lenderDue,
+            assetType: LibVaipakam.AssetType.ERC20,
+            tokenId: 0,
+            quantity: 0,
+            claimed: false
+        });
+        s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
+            asset: loan.collateralAsset,
+            amount: loan.collateralAmount - consumed,
+            assetType: LibVaipakam.AssetType.ERC20,
+            tokenId: 0,
+            quantity: 0,
+            claimed: false
+        });
+
+        // Position-NFT status flips (mirror v1).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                VaipakamNFTFacet.updateNFTStatus.selector,
+                loan.borrowerTokenId,
+                loanId,
+                LibVaipakam.LoanPositionStatus.LoanRepaid
+            ),
+            bytes4(keccak256("NFTStatusUpdateFailed()"))
+        );
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                VaipakamNFTFacet.updateNFTStatus.selector,
+                loan.lenderTokenId,
+                loanId,
+                LibVaipakam.LoanPositionStatus.LoanRepaid
+            ),
+            bytes4(keccak256("NFTStatusUpdateFailed()"))
+        );
+
+        // Active prepay listing cleanup (idempotent on loans
+        // without a listing).
+        LibPrepayCleanup.clearActiveListing(loan, loanId);
+
+        // Transition Active → Repaid.
+        LibLifecycle.transition(
+            loan,
+            LibVaipakam.LoanStatus.Active,
+            LibVaipakam.LoanStatus.Repaid
+        );
+
+        // LIF VPFI settlement (proper close — splits diamond-held
+        // VPFI between borrower rebate + treasury per
+        // `LibVPFIDiscount`).
+        LibVPFIDiscount.settleBorrowerLifProper(loan);
+
+        // Phase-2 reward accrual close.
+        LibInteractionRewards.closeLoan(
+            loanId,
+            /* borrowerClean */ true,
+            /* lenderForfeit */ false
+        );
     }
 
     // ══════════════════════════════════════════════════════════════
