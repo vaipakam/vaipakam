@@ -347,7 +347,10 @@ Phase 1 surface — three external entry points:
      `s.intentAggregateAllowance[token]` counter tracks the sum of
      all live custodial collaterals per collateral token. Add
      `custodialCollateral` (NOT `loan.collateralAmount`) to the
-     aggregate and reapprove Fusion's ALLOWANCE_TARGET to the new
+     aggregate and reapprove Fusion's `LimitOrderProtocol` (per Codex round-7 P1 #1 — Fusion is
+built on the 1inch Limit Order Protocol, not the 0x Settler model;
+the maker's allowance recipient is the `LimitOrderProtocol` contract
+address itself, NOT a separate `ALLOWANCE_TARGET` like 0x v2 uses) to the new
      aggregate (zero-then-set for USDT). On fill / cancel, subtract
      consumed amount + remaining custodial from the aggregate and
      reapprove to the new lower aggregate. This serializes correctly
@@ -380,27 +383,35 @@ Phase 1 surface — three external entry points:
      baseline** (Codex round-5 P1 #2 + round-6 P1 #3). For
      fee-on-transfer or rebasing principal tokens, Fusion's
      `delivered` argument is the protocol/order amount, NOT proof
-     the diamond's principal balance grew by that much. The baseline
-     comes from the **diamond's ERC-1271 `isValidSignature` hook**:
-     Fusion's `LimitOrderProtocol` calls `isValidSignature(orderHash,
-     sig)` once per fill, BEFORE the principal transfer (this is
-     part of Fusion's standard maker-signature verification dance).
-     The diamond's ERC-1271 implementation does two things:
-     (a) returns the magic value if `orderHashToLoanId[orderHash] !=
-     0 AND s.intentCommits[loanId].orderHash == orderHash` (the
-     standard round-2 P1 #6 binding check), and (b) writes the
-     current principal-token balance to **transient storage** keyed
-     by orderHash:
+     the diamond's principal balance grew by that much.
+
+     **The baseline comes from Fusion's `preInteraction` hook**, NOT
+     ERC-1271's `isValidSignature` (Codex round-7 P1 #6). The 1inch
+     `LimitOrderProtocol` calls `isValidSignature(orderHash, sig)`
+     via **staticcall** for contract-order signature verification —
+     `tstore` inside would revert / return invalid and every Fusion
+     fill for the diamond maker would become unfillable. ERC-1271
+     therefore stays pure (only does the orderHash binding check
+     against `orderHashToLoanId` and returns the magic value).
+
+     Fusion's `preInteraction(...)` hook is the right place: it's a
+     normal CALL (not staticcall), runs BEFORE the maker→taker token
+     transfer, and Fusion's protocol exposes it via the
+     `IPreInteraction` interface the diamond implements. The
+     diamond's `preInteraction` writes the principal-balance baseline
+     to transient storage keyed by orderHash, with the same
+     `msg.sender == cfgFusionLimitOrderProtocol` auth check
+     `postInteraction` uses:
      ```
-     // ERC-1271 isValidSignature (called by Fusion pre-transfer):
+     // preInteraction (Fusion calls via CALL, pre-transfer):
+     if (msg.sender != s.cfgFusionLimitOrderProtocol)
+       revert IntentPreInteractionUnauthorized(msg.sender);
      uint256 loanId = s.orderHashToLoanId[orderHash];
      if (loanId == 0 || s.intentCommits[loanId].orderHash != orderHash)
-       return INVALID_MAGIC;
-     // Transient-storage baseline (EIP-1153, Solidity ≥0.8.24):
-     address principal = LibVaipakam.loanByIdRead(loanId).principalAsset;
+       revert IntentPreInteractionUnknownOrder(orderHash);
+     address principal = s.loans[loanId].principalAsset;
      uint256 baseline = IERC20(principal).balanceOf(address(this));
      assembly { tstore(orderHash, baseline) }
-     return ERC1271_MAGIC;
      ```
      Then `postInteraction` (called AFTER the transfer) reads the
      baseline back and computes the actual delta:
@@ -418,6 +429,22 @@ Phase 1 surface — three external entry points:
      assembly per the snippet above. Use `actualDelivered` (NOT
      Fusion's `delivered` arg) for the floor check and the
      waterfall.
+
+     **Outgoing-transfer fee scope (Codex round-7 P1 #3).** If the
+     principal token also charges a fee on the diamond → lender
+     vault / treasury transfers later in the waterfall, the
+     lender's vault credit will be smaller than `lenderLeg` from
+     `getPrepayContext`. This is **identical to v1's behaviour** —
+     `swapToRepayFull` and `RepayFacet.repayLoan` use the same
+     `safeTransfer` calls and have the same exposure. v1.1 inherits
+     v1's stance: principal tokens with outgoing transfer fees are
+     out of scope for the entire swap-to-repay surface (atomic AND
+     intent), not v1.1 specifically. The standard upstream "Liquid
+     leg" eligibility check filters them at the loan-create gate —
+     non-symmetric transfer behaviour fails the liquidity criteria.
+     Documenting here so a future v1.2 token-allowlist expansion
+     doesn't accidentally widen the surface beyond what the
+     waterfall can safely settle.
   4. **Live floor re-check** (Codex round-2 P1 #8): recompute
      `liveFloor = lenderLeg + treasuryLeg` via
      `IVaipakamPrepayContext.getPrepayContext(loanId, block.timestamp)`.
@@ -457,7 +484,10 @@ Phase 1 surface — three external entry points:
      `(custodialCollateral)` from `s.intentAggregateAllowance[token]`
      (custodial slot fully consumed for this loan — step 5 vault-
      credited any unconsumed portion, step 6 settled the rest).
-     Reapprove Fusion's ALLOWANCE_TARGET to the new lower aggregate.
+     Reapprove Fusion's `LimitOrderProtocol` (per Codex round-7 P1 #1 — Fusion is
+built on the 1inch Limit Order Protocol, not the 0x Settler model;
+the maker's allowance recipient is the `LimitOrderProtocol` contract
+address itself, NOT a separate `ALLOWANCE_TARGET` like 0x v2 uses) to the new lower aggregate.
   8. Clear `intentCommits[loanId]` and `orderHashToLoanId[orderHash]`.
   9. Emit `SwapToRepayIntentFilled(loanId, orderHash, consumed,
      delivered, residualRefunded)`.
@@ -494,15 +524,48 @@ Append-only to `LibVaipakam`:
 
 ```
 struct SwapToRepayIntentCommit {
+    // ── Fusion-order projection (Codex round-7 P1 #4 — enough for ──
+    //    getIntentCommit to reconstruct the full canonical order +
+    //    for cancelOrder calls that need the order struct, not just
+    //    the hash):
     bytes32 orderHash;            // Fusion order hash — primary key for ERC-1271 + postInteraction lookup
     uint64  deadline;
-    uint256 minPrincipalOut;      // §5.4 floor enforced at commit + postInteraction
-    uint256 custodialCollateral;  // exact amount pulled from vault — needed for partial-fill refund (§5.9)
+    uint256 makerAmount;          // == custodialCollateral after step 8 invariant guard (== loan.collateralAmount post-round-6)
+    uint256 takerAmount;          // §5.4 floor enforced at commit + postInteraction
+    uint256 salt;                 // borrower-supplied; must round-trip
+    uint256 makerTraits;          // Fusion's packed traits bitfield (allowPartialFills, allowMultipleFills, etc.)
+    bytes32 extensionHash;        // pre-image of the extension/postInteraction call data; full bytes in a separate slot:
+    // (the extension bytes themselves live in a separate `mapping(bytes32 extensionHash => bytes)` so this struct stays cheap)
+
+    // ── Vaipakam-side bookkeeping:
+    uint256 custodialCollateral;  // == makerAmount after fee-on-transfer rejection; tracked separately for the round-2 P2 #7 aggregate counter
     address committedByForRecord; // commit-time borrower-NFT holder, for activity surfacing only
 }
 mapping(uint256 loanId => SwapToRepayIntentCommit) intentCommits;
-mapping(bytes32 orderHash => uint256 loanId) orderHashToLoanId; // reverse index for postInteraction + ERC-1271 lookup
+mapping(bytes32 orderHash => uint256 loanId) orderHashToLoanId; // reverse index for postInteraction + preInteraction lookup
+mapping(bytes32 extensionHash => bytes) intentExtensionBytes;    // separate slot keeps the commit struct cheap
 ```
+
+The `getIntentCommit(loanId) view returns (FusionOrderRead memory)`
+projection function returns:
+```
+struct FusionOrderRead {
+    address maker;              // == address(this), always
+    address recipient;          // == address(this), always
+    address makerAsset;         // loan.collateralAsset
+    address takerAsset;         // loan.principalAsset
+    uint256 makerAmount;
+    uint256 takerAmount;
+    uint64  deadline;
+    uint256 salt;
+    uint256 makerTraits;
+    bytes   extension;          // pulled from intentExtensionBytes by extensionHash
+}
+```
+The dapp calls this AFTER `commitSwapToRepayIntent` lands, and gets
+the canonical Fusion order struct ready to post to 1inch Fusion's
+resolver-pickup endpoint. Same orderHash that ERC-1271 will bless +
+that postInteraction will look up.
 
 The reverse index is load-bearing: when Fusion calls
 `diamond.isValidSignature(orderHash, sig)` during the fill or
@@ -660,8 +723,18 @@ new one.
 The v1.1 surface ships on every chain but is **default-OFF**. An admin
 flag controls per-chain rollout:
 
-- Storage: append `bool cfgIntentSwapToRepayEnabled` to
-  `ProtocolConfig`.
+- Storage: append `bool cfgIntentSwapToRepayEnabled` (and every
+  other v1.1 config flag/knob: `cfgIntentMinCommitHFBps`,
+  `cfgIntentMinOutputBufferBps`, `cfgIntentMinAuctionSeconds`,
+  `cfgIntentMaxAuctionSeconds`, `cfgIntentCancelGraceSeconds`,
+  `cfgFusionLimitOrderProtocol`) to the **top-level
+  `LibVaipakam.Storage` struct, NOT the nested `ProtocolConfig`**
+  sub-struct (Codex round-7 P1 #5). Appending to `ProtocolConfig`
+  is not storage-safe: `LibVaipakam.Storage` already has
+  `ProtocolConfig protocolCfg` followed by `borrowerLifRebate` and
+  swap-adapter state; growing the nested struct shifts every
+  subsequent slot on upgrade. Top-level append is the canonical
+  Diamond storage-extension pattern Vaipakam uses elsewhere.
 - Setter: `ConfigFacet.setIntentSwapToRepayEnabled(bool)`. ADMIN_ROLE
   pre-handover; timelock post-handover. Emits
   `IntentSwapToRepayEnabledSet(bool)` for audit / indexer surfacing.
@@ -818,9 +891,15 @@ force-cancel — these are voluntary, no lender-protection urgency):**
 - `PrecloseFacet.precloseDirect(loanId)` — borrower pays out of
   pocket; records a borrower collateral claim and transitions to
   Repaid.
-- `PrecloseFacet.precloseOffset(...)` — sells collateral via the
-  protocol swap router and applies proceeds to the same waterfall;
-  breaks if collateral is in custody.
+- `PrecloseFacet.offsetWithNewOffer(...)`,
+  `PrecloseFacet.completeOffset(...)`, and
+  `PrecloseFacet.completeOffsetInternal(...)` (Codex round-7 P1 #2 —
+  the actual offset entry points; my earlier draft used the
+  non-existent `precloseOffset` shorthand). The
+  `_completeOffsetImpl` internal records a borrower claim for
+  `loan.collateralAmount` while assuming the collateral remains in
+  `loan.borrower`'s vault. All three external entry points block
+  with `IntentPending`.
 - `PrecloseFacet.transferObligationViaOffer(...)` (Codex round-6
   P1 #5) — withdraws the current borrower's collateral, rewrites
   `loan.borrower`, `loan.collateralAmount`, `startTime`, and the
@@ -983,7 +1062,10 @@ best-price intent). On the intent path:
    loan.collateralAmount` always holds. The diamond constructs the
    final Fusion order from `params` + the now-known `makerAmount =
    custodialCollateral`, computes the canonical orderHash, registers
-   it in storage, approves Fusion's ALLOWANCE_TARGET. The borrower's
+   it in storage, approves Fusion's `LimitOrderProtocol` (per Codex round-7 P1 #1 — Fusion is
+built on the 1inch Limit Order Protocol, not the 0x Settler model;
+the maker's allowance recipient is the `LimitOrderProtocol` contract
+address itself, NOT a separate `ALLOWANCE_TARGET` like 0x v2 uses). The borrower's
    *only* signature is on this on-chain transaction — there's no
    off-chain order signature (the diamond signs via ERC-1271
    inside the fill).
