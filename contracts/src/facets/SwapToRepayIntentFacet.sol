@@ -414,14 +414,24 @@ contract SwapToRepayIntentFacet is
     ///      registered live commit. Returns the ERC-1271 magic
     ///      value IFF `orderHashToLoanId[hash] != 0 AND
     ///      intentCommits[loanId].orderHash == hash`. Pure
-    ///      read-only — no `tstore`, no state mutation.
-    function isValidSignature(bytes32 orderHash, bytes calldata signature)
+    ///      read-only — no `tstore`, no state mutation
+    ///      (Codex round-7 P1 #6: 1inch LOP v4 calls this via
+    ///      staticcall, so state writes would revert and brick
+    ///      every Fusion fill for the diamond-as-maker pattern).
+    ///      Signature payload is unused (the binding check is purely
+    ///      against on-chain registered state).
+    function isValidSignature(bytes32 orderHash, bytes calldata /* signature */)
         external
         view
         returns (bytes4)
     {
-        orderHash; signature;
-        revert NotYetImplemented();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 loanId = s.orderHashToLoanId[orderHash];
+        if (loanId == 0) return bytes4(0xffffffff);
+        if (s.intentCommits[loanId].orderHash != orderHash) {
+            return bytes4(0xffffffff);
+        }
+        return IERC1271.isValidSignature.selector;
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -431,13 +441,31 @@ contract SwapToRepayIntentFacet is
     /// @notice §6.2 — dapp reads back the canonical Fusion order for
     ///         this loan's live commit, then posts the full struct
     ///         to 1inch's resolver-pickup endpoint via the
-    ///         `apps/agent` worker. Reverts if no commit is live.
+    ///         `apps/agent` worker. Reverts {IntentNoCommit} if no
+    ///         commit is live.
+    /// @dev    Reconstructs the derivable fields (maker / receiver /
+    ///         assets) from the loan + diamond identity, returns the
+    ///         stored fields verbatim, and resolves the extension
+    ///         bytes from `intentExtensionBytes[extensionHash]` so
+    ///         the dapp doesn't need a second on-chain read.
     function getIntentCommit(uint256 loanId)
         external
         view
         returns (FusionOrderRead memory order)
     {
-        loanId;
-        revert NotYetImplemented();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.SwapToRepayIntentCommit storage commit = s.intentCommits[loanId];
+        if (commit.orderHash == bytes32(0)) revert IntentNoCommit(loanId);
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        order.maker       = address(this);
+        order.receiver    = address(this);
+        order.makerAsset  = loan.collateralAsset;
+        order.takerAsset  = loan.principalAsset;
+        order.makerAmount = commit.makerAmount;
+        order.takerAmount = commit.takerAmount;
+        order.deadline    = commit.deadline;
+        order.salt        = commit.salt;
+        order.makerTraits = commit.makerTraits;
+        order.extension   = s.intentExtensionBytes[commit.extensionHash];
     }
 }
