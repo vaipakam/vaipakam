@@ -238,12 +238,37 @@ Phase 1 surface — three external entry points:
      `params.deadline <= loan.endTime + gracePeriod` (Codex round-5
      P2 #5 — cap intent deadline at the default boundary so the
      loan can never be settled-as-Repaid via intent fill after the
-     time-default window has closed)**, `params.extension` includes
-     the diamond's `postInteraction` callback target. Revert
-     `IntentOrderFieldsMismatch(field)` on any mismatch. Note:
-     `makerAmount` is NOT validated here — it's finalized at step 9
-     after the collateral withdraw measures the actual received
-     amount.
+     time-default window has closed)**.
+
+     **Fusion-binding checks (Codex round-8 P1 #1 + P1 #4 + P1 #5)** —
+     `params.makerTraits` is the source of truth for hooks +
+     expiry in 1inch LOP v4; `params.deadline` alone isn't enforced
+     by Fusion. Required `makerTraits` bits:
+     - `makerTraits.hasExtension()` must be SET; and the low 160
+       bits of `params.salt` must equal
+       `uint160(uint256(keccak256(params.extension)))`. v4's protocol
+       only accepts the extension bytes when both conditions hold;
+       otherwise the extension is silently ignored.
+     - `makerTraits.hasPreInteractionCall()` must be SET. Without it
+       Fusion never calls `preInteraction`, leaving the transient
+       baseline at zero and `actualDelivered` artificially huge in
+       postInteraction. The extension bytes must encode the
+       diamond's address as the preInteraction target.
+     - `makerTraits.hasPostInteractionCall()` must be SET. Same logic
+       — the extension bytes must encode the diamond's address as the
+       postInteraction target.
+     - `makerTraits.expiration()` (the lo-40 expiry slot in
+       `makerTraits`) must equal `params.deadline`. Fusion's
+       protocol checks `block.timestamp <= makerTraits.expiration()`
+       on fill; the borrower-supplied `params.deadline` is only the
+       Vaipakam-side gate. Mismatch would let a fill land past our
+       `params.deadline` even though Fusion happily accepts.
+     Revert `IntentMakerTraitsMismatch(reason)` for any of these.
+
+     Revert `IntentOrderFieldsMismatch(field)` on any mismatch above.
+     Note: `makerAmount` is NOT validated here — it's finalized at
+     step 9 after the collateral withdraw measures the actual
+     received amount.
   3. (DEFERRED to step 9) — orderHash computation moves to *after*
      the collateral withdraw resolves the fee-on-transfer / rebasing
      delta. The borrower-controlled fields are now validated; the
@@ -371,7 +396,10 @@ address itself, NOT a separate `ALLOWANCE_TARGET` like 0x v2 uses) to the new
   1. **Authorized-caller check** (Codex round-2 P1 #5): revert
      `IntentPostInteractionUnauthorized(msg.sender)` unless
      `msg.sender == cfgFusionLimitOrderProtocol` for this chain.
-     The protocol address is recorded in `ProtocolConfig` at deploy
+     The protocol address is recorded as a top-level slot in
+     `LibVaipakam.Storage` (NOT inside `ProtocolConfig` — Codex
+     round-8 P1 #8; nested-struct append would shift slots after
+     `protocolCfg` and corrupt deployed state) at deploy
      and admin-rotatable via `ConfigFacet.setFusionLimitOrderProtocol`.
      Without this check any external caller could supply
      attacker-chosen `consumed`/`delivered` and trick the diamond
@@ -430,21 +458,38 @@ address itself, NOT a separate `ALLOWANCE_TARGET` like 0x v2 uses) to the new
      Fusion's `delivered` arg) for the floor check and the
      waterfall.
 
-     **Outgoing-transfer fee scope (Codex round-7 P1 #3).** If the
-     principal token also charges a fee on the diamond → lender
-     vault / treasury transfers later in the waterfall, the
-     lender's vault credit will be smaller than `lenderLeg` from
-     `getPrepayContext`. This is **identical to v1's behaviour** —
-     `swapToRepayFull` and `RepayFacet.repayLoan` use the same
-     `safeTransfer` calls and have the same exposure. v1.1 inherits
-     v1's stance: principal tokens with outgoing transfer fees are
-     out of scope for the entire swap-to-repay surface (atomic AND
-     intent), not v1.1 specifically. The standard upstream "Liquid
-     leg" eligibility check filters them at the loan-create gate —
-     non-symmetric transfer behaviour fails the liquidity criteria.
-     Documenting here so a future v1.2 token-allowlist expansion
-     doesn't accidentally widen the surface beyond what the
-     waterfall can safely settle.
+     **Outgoing-transfer fee scope (Codex round-7 P1 #3 + round-8
+     P1 #6).** If the principal token also charges a fee on the
+     diamond → lender vault / treasury transfers later in the
+     waterfall, the lender's vault credit will be smaller than
+     `lenderLeg` from `getPrepayContext`. This is **identical to
+     v1's behaviour** — `swapToRepayFull` and `RepayFacet.repayLoan`
+     use the same `safeTransfer` calls and have the same exposure.
+
+     **Round-7's claim that the upstream "Liquid leg" gate
+     (`OracleFacet._checkLiquidity`) filters fee-on-transfer
+     principal was wrong (round-8 P1 #6)** — the Liquid check only
+     verifies fresh oracle pricing + AMM floor-size slippage; it
+     doesn't do a transfer round-trip / symmetry probe. A
+     fee-on-transfer principal token CAN pass Liquid today.
+
+     v1.1 closes this with a **token allowlist** the admin maintains:
+     `cfgIntentAllowedPrincipalTokens[token] => bool` (and the
+     mirrored `cfgIntentAllowedCollateralTokens[token]` — both
+     legs need explicit allow). Commit (§5.1 step 1 eligibility
+     gate) reverts `IntentTokenNotAllowed(token)` for any token
+     whose allowlist slot is false. Default-OFF on every token at
+     deploy; admin adds tokens post-deploy after operator-side
+     verification of non-fee-on-transfer + non-rebasing behaviour
+     (deploy ops includes a `cast send`-style transfer round-trip
+     probe to confirm before adding). The pattern is the same
+     "explicit-allow, audited-additions" model `cfgAllowedAggregators`
+     uses for the Phase 7a adapter set.
+
+     The token allowlist also obsoletes the round-6 P1 #4
+     "reject fee-on-transfer collateral via balance-delta probe at
+     commit" — that fix becomes a defense-in-depth backup; the
+     allowlist is the primary gate.
   4. **Live floor re-check** (Codex round-2 P1 #8): recompute
      `liveFloor = lenderLeg + treasuryLeg` via
      `IVaipakamPrepayContext.getPrepayContext(loanId, block.timestamp)`.
@@ -456,30 +501,35 @@ address itself, NOT a separate `ALLOWANCE_TARGET` like 0x v2 uses) to the new
      contract reverts the fill on our revert, the borrower's
      collateral stays in custody, and the borrower can cancel +
      retry with a higher committed takerAmount.
-  5. Refund unconsumed custodial collateral (§5.9) to the
-     **commit-time-of-record borrower vault** (`loan.borrower`),
-     NOT the current NFT-owner's vault (Codex round-2 P1 #3 —
-     `RiskFacet.triggerLiquidation` and `DefaultedFacet.markDefaulted`
-     both withdraw from `loan.borrower`'s vault; landing residual
-     elsewhere would strand it for those recovery paths). Surplus
-     principal (delivery above lender + treasury) routes to the
-     **current borrower-NFT-owner's EOA** — that's the
-     borrower-friendly v1 pattern that mirrors `swapToRepayFull`.
+  5. **Residual custodial collateral routes via the standard
+     borrower claim slot** (Codex round-8 P1 #3 — the round-4 P1 #4
+     "direct vault credit" resolution was wrong: Vaipakam users
+     withdraw collateral via `ClaimFacet.claimAsBorrower`, and
+     `vaultWithdrawERC20` is `onlyDiamondInternal` so configured
+     tokens aren't recoverable via stuck-funds rescue. A direct
+     vault credit isn't withdrawable for the borrower). Don't
+     touch the residual here — let the canonical v1 waterfall in
+     step 6 record the borrower claim natively. The waterfall
+     already records `claim = loan.collateralAmount -
+     actualCollateralConsumed`; pass `actualCollateralConsumed =
+     consumed` (the real Fusion-consumed amount, NOT the round-4
+     P1 #4 "= loan.collateralAmount" override) so the claim slot
+     correctly captures `residual = loan.collateralAmount -
+     consumed`. The borrower then withdraws the residual via
+     `ClaimFacet.claimAsBorrower` like every other terminal-close
+     path. **Surplus principal** (delivery above lender + treasury)
+     still routes to the **current borrower-NFT-owner's EOA** —
+     mirrors v1's borrower-friendly pattern; principal-side surplus
+     doesn't suffer from the same vault-withdrawability issue.
   6. Run the canonical settlement waterfall using the same Lib calls
      as v1's `swapToRepayFull`, **with `actualCollateralConsumed =
-     loan.collateralAmount` passed explicitly** (Codex round-4 P1 #4).
-     v1's waterfall otherwise records a borrower claim for
-     `loan.collateralAmount - actualCollateralConsumed`; reusing it
-     after step 5 already vault-credited the residual would
-     double-credit the borrower (vault credit AND claim slot for the
-     same residual). By telling the waterfall "the swap consumed
-     everything" — even when the actual Fusion consumed less and
-     step 5 already returned the difference — the waterfall records
-     a zero claim, and the residual lives only in the vault credit
-     step 5 wrote. Internally, `LibSettlement.computeRepayment` /
-     `LibEntitlement.splitTreasury` consume the explicit
-     "consumed = full" signal and skip the claim-record branch
-     entirely for this path.
+     consumed`** (the real Fusion-consumed amount; Codex round-8 P1
+     #3 supersedes the round-4 P1 #4 "= loan.collateralAmount"
+     override). The waterfall's existing claim-record branch handles
+     residual cleanly: `claim = loan.collateralAmount - consumed`
+     lands in the borrower's claim slot, withdrawable via
+     `claimAsBorrower`. The round-4 "double-credit" concern doesn't
+     apply now that step 5 no longer pre-credits the residual.
   7. Decrement the per-token aggregate allowance by
      `(custodialCollateral)` from `s.intentAggregateAllowance[token]`
      (custodial slot fully consumed for this loan — step 5 vault-
@@ -676,14 +726,19 @@ transfers mid-auction, the new holder gets cancel rights immediately
 on deadline — consistent with Vaipakam's protocol-wide convention
 that authority + claim rights travel with the NFT.
 
-**Already-filled pre-check.** Both cancel paths first check Fusion's
-`LimitOrderProtocol.remainingInvalidatorForOrder(diamond, orderHash)`
-(or equivalent). If the order is already fully filled, the cancel
-reverts with `IntentAlreadyFilled` — the principal has already
-arrived and postInteraction either ran or is the next step; clearing
-the commit here would either lose the principal in storage or let
-the borrower walk away with both collateral and principal (Codex
-round-1 P1 #4).
+**Already-filled pre-check.** Both cancel paths first call Fusion's
+`LimitOrderProtocol.rawRemainingInvalidatorForOrder(diamond,
+orderHash)` (Codex round-8 P1 #2 — the `raw` variant; the
+non-`raw` `remainingInvalidatorForOrder` REVERTS on never-filled
+orders because the remaining-invalidator slot is still zero,
+which would make both cancel paths revert on the *common*
+no-fill-then-cancel case). The raw variant returns 0 for never-
+filled, `~0` for fully-filled, and a partial value for partial.
+If fully filled, the cancel reverts with `IntentAlreadyFilled` —
+the principal has already arrived and postInteraction either ran
+or is the next step; clearing the commit here would either lose
+the principal in storage or let the borrower walk away with both
+collateral and principal (Codex round-1 P1 #4).
 
 - **`cancelSwapToRepayIntent(uint256 loanId)`** — current
   borrower-NFT owner only (authority gate). Callable any time after
@@ -804,7 +859,7 @@ A committed intent leaves the loan Active while moving the pledged
 collateral out of the borrower vault into diamond custody. During
 the 1-3 minute fill window plus the 24h cancel-grace window, the
 existing HF-liquidation (`RiskFacet.triggerLiquidation`) and
-time-default (`DefaultedFacet.markDefaulted`) paths would otherwise
+time-default (`DefaultedFacet.triggerDefault`) paths would otherwise
 expect to withdraw `loan.collateralAmount` from `loan.borrower`'s
 vault — and find it absent (Codex round-1 P1 #5).
 
@@ -853,7 +908,7 @@ threshold, not the liquidation threshold),
   borrower's intent is healthy enough to deserve the 5-min + 24h
   window.
 
-**`DefaultedFacet.markDefaulted` force-cancel** (Codex round-3 P1 #8).
+**`DefaultedFacet.triggerDefault` force-cancel** (Codex round-3 P1 #8).
 A borrower committing shortly before `endTime + gracePeriod` would
 otherwise gain an extra ~24h delay against default: the intent's
 `commit.deadline + cancelGrace` lives 24h past Fusion's 5min
@@ -861,16 +916,16 @@ deadline, which extends past `endTime + gracePeriod` if the commit
 landed close to maturity. Same force-cancel pattern as
 `triggerLiquidation`:
 
-- `markDefaulted(loanId, ...)` checks `s.intentCommits[loanId].orderHash`.
+- `triggerDefault(loanId, ...)` checks `s.intentCommits[loanId].orderHash`.
 - If non-zero AND `block.timestamp >= loan.endTime + gracePeriod`
   (the loan is already defaultable on time-grounds), the facet
   force-cancels: calls Fusion's `cancelOrder`, returns custodial
   collateral to `loan.borrower`'s vault, decrements aggregate
   allowance, clears commit slots, emits
   `SwapToRepayIntentForceCancelled(loanId, reason=timeDefaultDue)`,
-  then proceeds with the standard `markDefaulted` flow.
+  then proceeds with the standard `triggerDefault` flow.
 - If commit exists but loan is NOT yet defaultable (commit landed
-  while still inside grace), `markDefaulted` reverts with
+  while still inside grace), `triggerDefault` reverts with
   `IntentPending(loanId)` — same as `triggerLiquidation`'s healthy
   path. The default caller can retry after grace.
 
@@ -1114,7 +1169,7 @@ Three new event handlers in `apps/indexer/src/chainIndexer.ts`:
   (`hfBelowLiquidationThreshold`, `timeDefaultDue`) drives the
   activity-feed copy: "intent force-cancelled by liquidation" vs
   "intent force-cancelled by time default". This event is emitted
-  by `triggerLiquidation` (§5.8 layer 2) and `markDefaulted` (§5.8
+  by `triggerLiquidation` (§5.8 layer 2) and `triggerDefault` (§5.8
   force-cancel) inside the same tx as the recovery action — the
   indexer can attribute the row by the bundling tx hash.
 
