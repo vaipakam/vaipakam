@@ -263,6 +263,25 @@ Phase 1 surface — three external entry points:
        on fill; the borrower-supplied `params.deadline` is only the
        Vaipakam-side gate. Mismatch would let a fill land past our
        `params.deadline` even though Fusion happily accepts.
+     - `makerTraits.usePermit2()` must be CLEAR (Codex round-10 P2 #3
+       — the diamond approves Fusion's `LimitOrderProtocol` directly
+       in step 10 via standard ERC20 allowance; if `usePermit2` is
+       set, Fusion would try to pull the maker asset through
+       Permit2 instead, and the fill becomes unexecutable because
+       the diamond never authorized a Permit2 transfer).
+     - `makerTraits.allowPartialFills()` must be CLEAR (Codex
+       round-10 P2 #4 — a first partial fill would settle the loan
+       atomically (clearing `orderHashToLoanId` + `intentCommits`)
+       while 1inch's protocol still tracks a nonzero remaining
+       amount. Subsequent resolver attempts against that remaining
+       slice skip the ERC-1271 check in v4 (cached) and only fail
+       inside `postInteraction` — borrower's collateral is gone but
+       Fusion still has a "live" partial). Atomic single-fill is
+       safer; partial-fill support is a v1.2 design effort.
+     - `makerTraits.allowMultipleFills()` must be CLEAR (same
+       reason — round-10 P2 #4; multi-fill would let the same
+       cleared-from-storage order be re-filled even after the
+       loan is Repaid).
      Revert `IntentMakerTraitsMismatch(reason)` for any of these.
 
      Revert `IntentOrderFieldsMismatch(field)` on any mismatch above.
@@ -277,7 +296,7 @@ Phase 1 surface — three external entry points:
   4. **Pre-commit HF gate** (Codex round-2 P1 #2 first half): compute
      the loan's live health factor via `RiskFacet.calculateHealthFactor`.
      Revert `IntentBlockedHFTooLow(currentHF, minHF)` if HF <
-     `cfgIntentMinCommitHFBps` (default 1.2e18 = 120%). This blocks
+     `cfgIntentMinCommitHF` (default 1.2e18 = 120%). This blocks
      an already-stressed borrower from using intent as a stall
      tactic during a collateral price drop; lender exposure is
      bounded because borrowers near liquidation can't enter the
@@ -288,8 +307,13 @@ Phase 1 surface — three external entry points:
      `IntentOrderHashAlreadyInUse(orderHash)` if
      `s.orderHashToLoanId[orderHash] != 0`. Prevents a second loan
      from clobbering the first's reverse-index mapping.
-  7. minOutput floor: compute `floor = lenderLeg + treasuryLeg` from
-     `IVaipakamPrepayContext.getPrepayContext(loanId, block.timestamp)`.
+  7. minOutput floor: compute `floor = lenderLeg + treasuryLeg +
+     calculateLateFee(loan, block.timestamp)` (Codex round-10 P1
+     #5 — see §5.1 postInteraction step 4 for the rationale on
+     why `getPrepayContext` alone underprices the floor).
+     `lenderLeg + treasuryLeg` from
+     `IVaipakamPrepayContext.getPrepayContext(loanId, block.timestamp)`,
+     `calculateLateFee` from `LibVaipakam`.
      **Floor is denominated in the loan's PRINCIPAL asset** — it's
      the amount that needs to come back from the swap to cover the
      debt (Codex round-3 P1 #1). Compared against
@@ -393,9 +417,12 @@ address itself, NOT a separate `ALLOWANCE_TARGET` like 0x v2 uses) to the new
   guard (Codex round-2 P1 #9 — without it a callback-capable token
   or malicious recipient could reenter the diamond mid-settlement).
   Sequence:
-  1. **Authorized-caller check** (Codex round-2 P1 #5): revert
+  1. **Authorized-caller check** (Codex round-2 P1 #5 + round-10
+     P1 #6): revert
      `IntentPostInteractionUnauthorized(msg.sender)` unless
-     `msg.sender == cfgFusionLimitOrderProtocol` for this chain.
+     `msg.sender == s.intentCommits[loanId].lopAtCommit` (the
+     LOP address the commit was pinned to — NOT
+     `s.cfgFusionLimitOrderProtocol` which might have rotated).
      The protocol address is recorded as a top-level slot in
      `LibVaipakam.Storage` (NOT inside `ProtocolConfig` — Codex
      round-8 P1 #8; nested-struct append would shift slots after
@@ -490,37 +517,61 @@ address itself, NOT a separate `ALLOWANCE_TARGET` like 0x v2 uses) to the new
      "reject fee-on-transfer collateral via balance-delta probe at
      commit" — that fix becomes a defense-in-depth backup; the
      allowlist is the primary gate.
-  4. **Live floor re-check** (Codex round-2 P1 #8): recompute
-     `liveFloor = lenderLeg + treasuryLeg` via
-     `IVaipakamPrepayContext.getPrepayContext(loanId, block.timestamp)`.
-     `params.takerAmount` was static at commit time; live
-     `lenderLeg` can grow up to 5% from `calculateLateFee` for
-     post-maturity loans (the 2% intent buffer wouldn't cover that
-     gap). Revert `IntentDeliveredBelowLiveFloor(actualDelivered,
+  4. **Live floor re-check** (Codex round-2 P1 #8 + round-10 P1 #5):
+     recompute the live floor including late fees, since
+     `IVaipakamPrepayContext.getPrepayContext` currently uses
+     `LibCollateralSettlement.principalPlusAccruedInterest` plus
+     `treasuryAndPrecloseFee` and does **NOT** add
+     `LibVaipakam.calculateLateFee`. For intents committed before
+     `endTime` but filled after, the late fee is non-zero in
+     `LibSettlement.computeRepayment`'s actual settlement math, but
+     would be missing from `getPrepayContext`'s output. The floor
+     check must add it explicitly:
+     ```
+     PrepayContext pctx = IVaipakamPrepayContext(this).getPrepayContext(loanId, block.timestamp);
+     uint256 lateFee = LibVaipakam.calculateLateFee(loan, block.timestamp);
+     uint256 liveFloor = pctx.lenderLeg + pctx.treasuryLeg + lateFee;
+     ```
+     Revert `IntentDeliveredBelowLiveFloor(actualDelivered,
      liveFloor)` if `actualDelivered < liveFloor`. Fusion's
      contract reverts the fill on our revert, the borrower's
      collateral stays in custody, and the borrower can cancel +
-     retry with a higher committed takerAmount.
-  5. **Residual custodial collateral routes via the standard
-     borrower claim slot** (Codex round-8 P1 #3 — the round-4 P1 #4
-     "direct vault credit" resolution was wrong: Vaipakam users
-     withdraw collateral via `ClaimFacet.claimAsBorrower`, and
-     `vaultWithdrawERC20` is `onlyDiamondInternal` so configured
-     tokens aren't recoverable via stuck-funds rescue. A direct
-     vault credit isn't withdrawable for the borrower). Don't
-     touch the residual here — let the canonical v1 waterfall in
-     step 6 record the borrower claim natively. The waterfall
-     already records `claim = loan.collateralAmount -
-     actualCollateralConsumed`; pass `actualCollateralConsumed =
-     consumed` (the real Fusion-consumed amount, NOT the round-4
-     P1 #4 "= loan.collateralAmount" override) so the claim slot
-     correctly captures `residual = loan.collateralAmount -
-     consumed`. The borrower then withdraws the residual via
-     `ClaimFacet.claimAsBorrower` like every other terminal-close
-     path. **Surplus principal** (delivery above lender + treasury)
+     retry with a higher committed takerAmount. The same
+     `+lateFee` augmentation applies to the COMMIT-time floor
+     check (§5.1 step 7) so a borrower can't commit a takerAmount
+     that wouldn't cover the late fee.
+  5. **Residual: vault-deposit AND claim-record, both required**
+     (Codex round-8 P1 #3 corrected by round-10 P1 #2). The
+     round-8 fix went too far in the OTHER direction — it removed
+     the vault deposit AND relied on the canonical waterfall's
+     claim-record. But `ClaimFacet.claimAsBorrower` pays ERC20
+     borrower claims by WITHDRAWING `claim.amount` FROM
+     `loan.borrower`'s vault. After step 8 of commit moved the full
+     `loan.collateralAmount` into diamond custody and the swap
+     consumed only `consumed`, the residual is in DIAMOND custody
+     — NOT the vault. Recording a claim without the underlying
+     tokens in the vault would make `claimAsBorrower` revert at
+     withdraw time.
+
+     So the residual handling is two atomic operations:
+     (a) **Deposit residual to the vault** via the
+         diamond-internal-only `LibVaipakam.recordVaultDeposit`
+         helper, which updates `protocolTrackedVaultBalance[token]`
+         AND moves the tokens (this is what the existing
+         `LibPrepayCleanup` pattern uses; the helper is NOT the
+         public `vaultDepositERC20` that pulls from caller via
+         allowance — round-8 P1 #3 conflated the two).
+     (b) **Let the canonical waterfall record the claim** by
+         passing `actualCollateralConsumed = consumed`. The
+         waterfall's existing `claim = loan.collateralAmount -
+         consumed` then matches the deposit from step (a).
+     Both are needed together; either alone breaks the invariant.
+
+     **Surplus principal** (delivery above lender + treasury)
      still routes to the **current borrower-NFT-owner's EOA** —
-     mirrors v1's borrower-friendly pattern; principal-side surplus
-     doesn't suffer from the same vault-withdrawability issue.
+     mirrors v1's borrower-friendly pattern; principal-side
+     surplus doesn't suffer from the same vault-deposit issue
+     because the EOA holds tokens directly, not via a vault.
   6. Run the canonical settlement waterfall using the same Lib calls
      as v1's `swapToRepayFull`, **with `actualCollateralConsumed =
      consumed`** (the real Fusion-consumed amount; Codex round-8 P1
@@ -590,6 +641,7 @@ struct SwapToRepayIntentCommit {
     // ── Vaipakam-side bookkeeping:
     uint256 custodialCollateral;  // == makerAmount after fee-on-transfer rejection; tracked separately for the round-2 P2 #7 aggregate counter
     address committedByForRecord; // commit-time borrower-NFT holder, for activity surfacing only
+    address lopAtCommit;          // Codex round-10 P1 #6 — pinned Fusion LimitOrderProtocol at commit time. Cancel / force-cancel / postInteraction all read THIS, not s.cfgFusionLimitOrderProtocol. Without it, a config rotation would orphan posted orders + leave allowance live on the old LOP.
 }
 mapping(uint256 loanId => SwapToRepayIntentCommit) intentCommits;
 mapping(bytes32 orderHash => uint256 loanId) orderHashToLoanId; // reverse index for postInteraction + preInteraction lookup
@@ -794,7 +846,7 @@ flag controls per-chain rollout:
   ```
   // Scalar flags + knobs (appended to top-level Storage):
   bool    cfgIntentSwapToRepayEnabled;     // §5.6 master switch
-  uint16  cfgIntentMinCommitHFBps;          // §5.1 step 4 (default 12000 = 1.2e18 scaled)
+  uint256 cfgIntentMinCommitHF;             // §5.1 step 4 — HF_SCALE-scaled (default 1.2e18 = 120%). Codex round-10 P1 #1 — earlier draft stored 12000 in a uint16 "BPS" slot but `RiskFacet.calculateHealthFactor` returns HF_SCALE-scaled values (1e18); a uint16 BPS comparison would never trigger for stressed loans. Store + compare in HF_SCALE space.
   uint16  cfgIntentMinOutputBufferBps;     // §5.4 (default 200 = 2%)
   uint32  cfgIntentMinAuctionSeconds;       // §5.1 step 2 (default 60)
   uint32  cfgIntentMaxAuctionSeconds;       // §5.1 step 2 (default 600)
@@ -821,11 +873,25 @@ flag controls per-chain rollout:
   // post-handover; each emits a config-set event for audit /
   // indexer surfacing):
   function setIntentSwapToRepayEnabled(bool enabled) external;
-  function setIntentMinCommitHFBps(uint16 bps) external;
+  function setIntentMinCommitHF(uint256 hfScaleValue) external;
   function setIntentMinOutputBufferBps(uint16 bps) external;
   function setIntentAuctionSecondsBounds(uint32 min, uint32 max) external;
   function setIntentCancelGraceSeconds(uint32 sec) external;
   function setFusionLimitOrderProtocol(address fusion) external;
+  // Codex round-10 P1 #6 — `setFusionLimitOrderProtocol` reverts
+  // with `IntentLOPRotationWhileCommitsLive` if any
+  // `intentCommits[loanId].orderHash != 0` slot is live. Sub 1
+  // tracks `s.intentLiveCommitCount` (incremented on commit,
+  // decremented on fill/cancel/force-cancel) so this is an O(1)
+  // check, not an O(n) scan. The fork to also pin `lopAtCommit`
+  // into the commit struct (so each commit remembers its LOP
+  // address even across a future-allowed rotation) is in §5.2 +
+  // §5.5 + §5.8 — every cancel / force-cancel / postInteraction
+  // call site reads `commit.lopAtCommit`, NOT
+  // `s.cfgFusionLimitOrderProtocol`. Without this, rotating the
+  // protocol address would leave already-posted orders
+  // un-cancellable (the cancel goes to the new contract; the old
+  // contract still has the order live + allowance live).
 
   // Allowlist setters (admin curates per-token after operator-
   // side transfer round-trip probes confirm symmetric behaviour):
@@ -926,7 +992,7 @@ during a live commit.
 
 **Layer 1 — pre-commit HF gate (§5.1 step 4).** `commitSwapToRepayIntent`
 rejects with `IntentBlockedHFTooLow` when current HF <
-`cfgIntentMinCommitHFBps` (default 1.2e18 = 120%). Borrowers near
+`cfgIntentMinCommitHF` (default 1.2e18 = 120%). Borrowers near
 liquidation can't enter intent at all. This handles the typical
 "stall during a collateral price drop" attack at commit time.
 
@@ -1102,18 +1168,19 @@ no balance-delta inference needed.
   everything; the residual is zero.
 - If `consumed < custodialCollateral`, the difference
   (`residual = custodialCollateral - consumed`) is the unspent
-  collateral. **The residual is recorded in the borrower's
-  claim slot, not direct-vault-credited** (Codex round-9 P1 — the
-  earlier round-4 P1 #4 / round-1 P1 #7 "direct credit" guidance
-  was reverted in round-8 P1 #3: `vaultWithdrawERC20` is
-  `onlyDiamondInternal` and `ClaimFacet.claimAsBorrower` is the
-  only user-facing recovery path for configured tokens). The
-  mechanism: postInteraction step 6 passes `actualCollateralConsumed
-  = consumed` to the canonical v1 waterfall, whose claim-record
-  branch then writes `claim = loan.collateralAmount - consumed`
-  into the borrower's claim slot — withdrawable via
-  `ClaimFacet.claimAsBorrower` like every other terminal-close
-  residual.
+  collateral. **Two atomic operations handle it** (Codex round-10
+  P1 #2 — see §5.1 step 5 for the full rationale):
+  1. **Vault-deposit the residual** via
+     `LibVaipakam.recordVaultDeposit` (the diamond-internal helper,
+     NOT the public `vaultDepositERC20`); updates
+     `protocolTrackedVaultBalance[loan.collateralAsset]` AND moves
+     the tokens into `loan.borrower`'s vault.
+  2. **Record the borrower claim** via the canonical waterfall's
+     `claim = loan.collateralAmount - consumed` branch (passing
+     `actualCollateralConsumed = consumed`).
+  Both together: vault now holds `residual`, claim slot records
+  `residual` against `loan.borrower`. `ClaimFacet.claimAsBorrower`
+  withdraws `claim.amount` from the vault and the math balances.
 
 This closes Codex round-1 P1 #7 + round-8 P1 #3 together —
 there's no residual-stranding path on successful fills, AND no
