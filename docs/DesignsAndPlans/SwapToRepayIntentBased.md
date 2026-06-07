@@ -95,8 +95,13 @@ vector open. The final architecture closes all three.)
 - **Settlement window:** 1-3 minutes typical; configurable per order.
 - **Solver depth:** 30+ resolvers, large overlap with 1inch v6 routes.
 - **Failure mode:** if no resolver fills before the auction ends, the
-  order expires; the diamond's commit slot just clears and the borrower
-  can resubmit or fall back to v1 atomic.
+  order expires on Fusion's orderbook (it becomes unfillable). The
+  diamond's commit slot does NOT auto-clear — Fusion's expiry is
+  external orderbook state that doesn't mutate Vaipakam storage. A
+  follow-up `cancelSwapToRepayIntent` (borrower, immediately after
+  deadline) or `cancelExpiredIntent` (anyone, after 24h grace) is
+  what actually clears the commit, frees the custodial collateral,
+  and decrements the aggregate allowance. See §5.5.
 - **Integration cost:** moderate. Need to build the order off-chain
   (1inch SDK), commit to the diamond, observe fill via event, run the
   settlement waterfall in the same tx as the fill (via a callback the
@@ -166,11 +171,21 @@ waterfall before the reactor's solvency check.
    quoteProxy.ts → /quote/1inch`) flatten the integration ramp.
 2. Fusion's solver set is the deepest of the three for the generic
    ERC-20 ↔ ERC-20 pairs Vaipakam loans use.
-3. Fusion's settlement contract is a passive recipient — the diamond
-   doesn't need to run code during the fill, just receive the taker
-   asset. That simplifies the on-chain shape: the v1.1 facet becomes a
-   commit-then-settle pair, not a callback-during-fill contract. Lower
-   audit surface area; fewer corners for the fulfilment race.
+3. Fusion's `LimitOrderProtocol` natively supports the
+   `postInteraction` callback the diamond needs to run the
+   settlement waterfall atomically with the fill (see §5.1).
+   Combined with diamond-as-maker + ERC-1271 binding, this gives
+   single-tx settlement without writing a separate `IReactorCallback`
+   interface like UniswapX would require — the audit surface stays
+   contained to one Fusion-defined hook signature.
+
+(An earlier revision of this section recommended Fusion because the
+diamond could be a passive recipient with a separate finalize step.
+That was rejected during Codex round-1 review — passive-receive left
+the orderHash → loanId binding unenforceable + a fill-vs-finalize race
+window open. The final architecture uses Fusion's postInteraction
+hook, which is still Fusion-native + still simpler than UniswapX's
+custom callback, just not passive.)
 
 The doc treats Fusion as the default and Sub 1's contracts as
 Fusion-shaped. CoWSwap and UniswapX stay viable as v1.2 or later if
@@ -255,6 +270,24 @@ Phase 1 surface — three external entry points:
      step 2) and the floor check has no opinion on it.
   8. Pull the pledged collateral from the borrower's vault into the
      diamond's custodial slot via `VaultFactoryFacet.vaultWithdrawERC20`.
+     **Use balance-delta accounting** for fee-on-transfer + rebasing
+     tokens (Codex round-4 P1 #5):
+     ```
+     before = collateralToken.balanceOf(address(this));
+     vaultWithdrawERC20(loan.borrower, collateralToken, loan.collateralAmount);
+     custodialCollateral = collateralToken.balanceOf(address(this)) - before;
+     ```
+     v1.1 motivates with fee-enforced/rebasing-token support, so the
+     diamond must record what it *actually received*, not what it
+     requested. Aggregate-allowance bookkeeping (§5.1 step 9), cancel
+     refunds (§5.5), and residual computation (§5.9) all key off
+     `custodialCollateral` — if it overstated reality, every
+     downstream path would target tokens that don't exist at the
+     diamond, leading to reverts on cancel / partial-fill refunds /
+     aggregate-allowance reductions. Also: the §5.4 floor check
+     against `order.takerAmount` (principal-side) is still correct
+     unit-wise; what changes is the on-chain accounting of the
+     collateral side.
   9. **Aggregate allowance management** (Codex round-2 P2 #7): the
      diamond tracks `s.intentAggregateAllowance[token]` — the sum
      of all live custodial collaterals per collateral token. On
@@ -306,7 +339,20 @@ Phase 1 surface — three external entry points:
      **current borrower-NFT-owner's EOA** — that's the
      borrower-friendly v1 pattern that mirrors `swapToRepayFull`.
   5. Run the canonical settlement waterfall using the same Lib calls
-     as v1's `swapToRepayFull`.
+     as v1's `swapToRepayFull`, **with `actualCollateralConsumed =
+     loan.collateralAmount` passed explicitly** (Codex round-4 P1 #4).
+     v1's waterfall otherwise records a borrower claim for
+     `loan.collateralAmount - actualCollateralConsumed`; reusing it
+     after step 4 already vault-credited the residual would
+     double-credit the borrower (vault credit AND claim slot for the
+     same residual). By telling the waterfall "the swap consumed
+     everything" — even when the actual Fusion consumed less and
+     step 4 already returned the difference — the waterfall records
+     a zero claim, and the residual lives only in the vault credit
+     step 4 wrote. Internally, `LibSettlement.computeRepayment` /
+     `LibEntitlement.splitTreasury` consume the explicit
+     "consumed = full" signal and skip the claim-record branch
+     entirely for this path.
   6. Decrement the per-token aggregate allowance (§5.1 step 9).
   7. Clear `intentCommits[loanId]` and `orderHashToLoanId[orderHash]`.
   8. Emit `SwapToRepayIntentFilled(loanId, orderHash, consumed,
@@ -604,7 +650,10 @@ a new internal force-cancel path:
 
 - `triggerLiquidation(loanId, ...)` checks
   `s.intentCommits[loanId].orderHash`. If non-zero AND current HF <
-  `MIN_HEALTH_FACTOR` (the standard 1.0e18 liquidation threshold),
+  `HF_LIQUIDATION_THRESHOLD` / `HF_SCALE` (1.0e18, the actual
+liquidation threshold per `LibVaipakam.sol:68-69`; NOT
+`MIN_HEALTH_FACTOR` which is 1.5e18 — that's the loan-init / top-up
+threshold, not the liquidation threshold),
   the facet:
   1. Calls Fusion's `cancelOrder(orderHash)` to invalidate the
      intent on the Fusion side (any in-flight fill against it now
@@ -616,9 +665,10 @@ a new internal force-cancel path:
   5. Emits `SwapToRepayIntentForceCancelled(loanId,
      reason=hfBelowLiquidationThreshold)`.
   6. Proceeds with the standard HF-liquidation flow.
-- If a commit exists but HF >= `MIN_HEALTH_FACTOR`, liquidation
-  still reverts with `IntentPending(loanId)` — the borrower's
-  intent is healthy enough to deserve the 5-min + 24h window.
+- If a commit exists but HF >= `HF_LIQUIDATION_THRESHOLD`,
+  liquidation still reverts with `IntentPending(loanId)` — the
+  borrower's intent is healthy enough to deserve the 5-min + 24h
+  window.
 
 **`DefaultedFacet.markDefaulted` force-cancel** (Codex round-3 P1 #8).
 A borrower committing shortly before `endTime + gracePeriod` would
@@ -641,20 +691,35 @@ landed close to maturity. Same force-cancel pattern as
   `IntentPending(loanId)` — same as `triggerLiquidation`'s healthy
   path. The default caller can retry after grace.
 
-**`RepayFacet.repayLoan` interaction** (Codex round-3 P1 #7). Third
-parties can call `repayLoan` on Active ERC20 loans. If a repay
-landed while a swap-to-repay intent has the collateral in custody,
-the loan would flip Repaid via the regular path and the custodial
-collateral would orphan (no claim, no recovery). Block this with the
-same revert pattern:
+**Every voluntary Active → Repaid path** (Codex round-3 P1 #7 +
+round-4 P1 #3). Third parties can drive a loan terminal via several
+paths besides `repayLoan`; every path that writes a borrower
+collateral claim under the assumption that the collateral sits in
+`loan.borrower`'s vault must block while custody is live, otherwise
+the loan flips Repaid and the custodial collateral orphans. The full
+list of voluntary close paths the v1.1 facet must guard:
 
-- `repayLoan(loanId)` and `repayPartial(loanId, amount)` both check
-  `s.intentCommits[loanId].orderHash`. If non-zero, revert with
-  `IntentPending(loanId)`.
-- No force-cancel path here — `repayLoan` is voluntary; whoever
-  called it can wait for the borrower's auction + cancel-grace, or
-  the borrower can cancel and accept regular repayment manually.
-  Unlike liquidation, there's no lender-protection urgency.
+- `RepayFacet.repayLoan(loanId)` and `RepayFacet.repayPartial(loanId,
+  amount)` — third-party-callable on Active ERC20 loans.
+- `PrecloseFacet.precloseDirect(loanId)` — borrower pays out of
+  pocket; records a borrower collateral claim and transitions to
+  Repaid.
+- `PrecloseFacet.precloseOffset(...)` — sells collateral via the
+  protocol swap router and applies proceeds to the same waterfall;
+  obviously breaks if the collateral is in custody.
+- `RefinanceFacet.refinanceLoan(...)` — withdraws the old collateral
+  from `loan.borrower`'s vault before transitioning the old loan to
+  Repaid.
+
+Each of these checks `s.intentCommits[loanId].orderHash` on entry
+and reverts with `IntentPending(loanId)` if non-zero.
+
+No force-cancel path on any of these — they're all voluntary;
+whoever called them can wait for the borrower's auction +
+cancel-grace, or the borrower can cancel and re-attempt the close
+manually. Unlike liquidation, none have a lender-protection
+urgency that justifies overriding the borrower's committed intent
+window.
 
 **Why HF-1.0 threshold for force-cancel and not HF-1.5 (the
 MIN_HEALTH_FACTOR at loan init)?** Force-cancel is a lender-protection
