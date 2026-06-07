@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
@@ -176,17 +177,13 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         uint256 loanId,
         LibSwap.AdapterCall[] calldata adapterCalls
     ) external whenNotPaused nonReentrant {
-        // T-090 v1.1 (#389) §5.8 — TEMPORARY placeholder. Final
-        // behaviour per Codex round-5 P1 #8: if a commit is live
-        // AND `block.timestamp >= loan.endTime + gracePeriod`,
-        // force-cancel the intent (return collateral, clear state,
-        // emit `SwapToRepayIntentForceCancelled(loanId,
-        // TimeDefaultDue, address(this))`) then proceed with the
-        // default flow. The cancel primitives the force-cancel
-        // branch depends on land in the next Sub 1 commit; for now
-        // this guard keeps the lender-protection path safe by
-        // refusing to proceed past a live commit.
-        LibVaipakam.assertNoLiveIntentCommit(loanId);
+        // T-090 v1.1 (#389) §5.8 — if a v1.1 intent commit is live
+        // AND the loan is past `endTime + gracePeriod`, force-cancel
+        // it (return collateral + clear state + emit
+        // `SwapToRepayIntentForceCancelled(TimeDefaultDue)`) then
+        // proceed with the default flow. Pre-grace commits keep
+        // their window — `IntentPending` revert (Codex round-5 P1 #8).
+        SwapToRepayIntentFacet(address(this)).forceCancelIntentIfPastDefaultOrRevert(loanId);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active)

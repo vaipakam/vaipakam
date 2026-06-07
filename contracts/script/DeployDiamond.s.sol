@@ -1117,7 +1117,7 @@ contract DeployDiamond is Script {
     ///   • 1 ERC-1271 binding check (`isValidSignature`)
     ///   • 1 read-back view for the dapp's commit-then-post pattern.
     function _getSwapToRepayIntentFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](10);
         s[0] = SwapToRepayIntentFacet.commitSwapToRepayIntent.selector;
         s[1] = SwapToRepayIntentFacet.cancelSwapToRepayIntent.selector;
         s[2] = SwapToRepayIntentFacet.cancelExpiredIntent.selector;
@@ -1125,6 +1125,10 @@ contract DeployDiamond is Script {
         s[4] = SwapToRepayIntentFacet.postInteraction.selector;
         s[5] = SwapToRepayIntentFacet.isValidSignature.selector;
         s[6] = SwapToRepayIntentFacet.getIntentCommit.selector;
+        // §5.8 layer 2 — force-cancel surface (onlyDiamondInternal).
+        s[7] = SwapToRepayIntentFacet.internalForceCancelIntent.selector;
+        s[8] = SwapToRepayIntentFacet.forceCancelIntentIfHFBelowOrRevert.selector;
+        s[9] = SwapToRepayIntentFacet.forceCancelIntentIfPastDefaultOrRevert.selector;
     }
 
     function _getDefaultedSelectors() internal pure returns (bytes4[] memory s) {

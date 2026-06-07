@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
@@ -1163,15 +1164,14 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         uint256 boundary,
         LibSwap.AdapterCall[] calldata adapterCalls
     ) private {
-        // T-090 v1.1 (#389) §5.8 — TEMPORARY placeholder. Same
-        // force-cancel-on-due-trigger pattern as the public
-        // HF-liquidation entry points; lands in the next Sub 1
-        // commit. The caller (`settlePeriodicInterest`) reverts
-        // this path through the standard call stack, so a live
-        // commit cleanly aborts the period-shortfall auto-
-        // liquidation rather than orphaning the loan in a half-
-        // settled period.
-        LibVaipakam.assertNoLiveIntentCommit(loanId);
+        // T-090 v1.1 (#389) §5.8 layer 2 — same force-cancel-on-
+        // HF-low pattern as the public HF-liquidation entry
+        // points. If no commit is live → no-op. If a commit is
+        // live AND HF < `HF_LIQUIDATION_THRESHOLD` → force-cancel
+        // + emit `SwapToRepayIntentForceCancelled`. Otherwise
+        // revert `IntentPending` so the borrower's window is
+        // honoured even mid-period.
+        SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanId);
         // Sell-amount sizing: aim for `shortfall × (1 + slippageCap)` of
         // collateral so the swap clears even in the worst-case slippage
         // scenario. If the loan's remaining collateral is smaller, sell

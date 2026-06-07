@@ -571,7 +571,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](7);
+        selectors = new bytes4[](10);
         selectors[0] = SwapToRepayIntentFacet.commitSwapToRepayIntent.selector;
         selectors[1] = SwapToRepayIntentFacet.cancelSwapToRepayIntent.selector;
         selectors[2] = SwapToRepayIntentFacet.cancelExpiredIntent.selector;
@@ -579,6 +579,12 @@ contract HelperTest {
         selectors[4] = SwapToRepayIntentFacet.postInteraction.selector;
         selectors[5] = SwapToRepayIntentFacet.isValidSignature.selector;
         selectors[6] = SwapToRepayIntentFacet.getIntentCommit.selector;
+        // §5.8 layer 2 force-cancel surface (onlyDiamondInternal) —
+        // wired via crossFacetCall from the HF-liquidation +
+        // time-default entry points.
+        selectors[7] = SwapToRepayIntentFacet.internalForceCancelIntent.selector;
+        selectors[8] = SwapToRepayIntentFacet.forceCancelIntentIfHFBelowOrRevert.selector;
+        selectors[9] = SwapToRepayIntentFacet.forceCancelIntentIfPastDefaultOrRevert.selector;
     }
 
     function getDefaultedFacetSelectors()

@@ -293,6 +293,10 @@ contract SwapToRepayIntentFacet is
     error UnsupportedLoanShape();
     /// @dev Mirrors `SwapToRepayFacet.RepaymentPastGracePeriod`.
     error RepaymentPastGracePeriod();
+    /// @dev `internalForceCancelIntent` is restricted to cross-facet
+    ///      calls — direct user invocation would bypass the
+    ///      trigger-condition check the caller facet runs first.
+    error OnlyDiamondInternal();
 
     // ──────────────────────────────────────────────────────────────
     //  1inch LOP v4 makerTraits bit constants (per
@@ -632,6 +636,98 @@ contract SwapToRepayIntentFacet is
     //  pinned `lopAtCommit` for the Fusion cancel call)
     // ──────────────────────────────────────────────────────────────
 
+    /// @notice §5.8 layer 2 — force-cancel a live intent commit to
+    ///         clear custody before a lender-protection action
+    ///         settles. Called by `RiskFacet`'s 4 HF-liquidation
+    ///         entry points + `RiskMatchLiquidationFacet.triggerInternalMatchLiquidation`
+    ///         + `RepayFacet._autoLiquidatePeriodShortfall` +
+    ///         `DefaultedFacet.triggerDefault` AFTER they confirm
+    ///         their respective trigger condition (HF <
+    ///         HF_LIQUIDATION_THRESHOLD for the HF paths; loan past
+    ///         `endTime + gracePeriod` for the time-default path).
+    /// @dev    `onlyDiamondInternal` — restricted to cross-facet
+    ///         calls. The trigger-condition check is the caller's
+    ///         responsibility (the diamond's reentrancy guard
+    ///         already wraps the outer entry point). Identical
+    ///         teardown to {_executeCancel}: Fusion cancel, return
+    ///         collateral to `loan.borrower` vault, aggregate-
+    ///         allowance + live-count decrement, storage cleanup;
+    ///         the only difference is the event emitted (
+    ///         {SwapToRepayIntentForceCancelled} with reason
+    ///         discriminator + source facet attribution).
+    function internalForceCancelIntent(uint256 loanId, ForceCancelReason reason)
+        external
+    {
+        if (msg.sender != address(this)) revert OnlyDiamondInternal();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.SwapToRepayIntentCommit storage commit = s.intentCommits[loanId];
+        if (commit.orderHash == bytes32(0)) revert IntentNoCommit(loanId);
+
+        bytes32 orderHash = _teardownCommit(s, loanId, commit);
+
+        emit SwapToRepayIntentForceCancelled(loanId, orderHash, reason, msg.sender);
+    }
+
+    /// @notice One-liner force-cancel helper for HF-liquidation
+    ///         entry points (`RiskFacet`'s four triggers,
+    ///         `RiskMatchLiquidationFacet.triggerInternalMatchLiquidation`,
+    ///         `RepayFacet._autoLiquidatePeriodShortfall`). If no
+    ///         commit is live → no-op. If a commit is live AND
+    ///         HF < `HF_LIQUIDATION_THRESHOLD` → force-cancel +
+    ///         emit `SwapToRepayIntentForceCancelled` with
+    ///         `HFBelowLiquidationThreshold` reason. If a commit
+    ///         is live AND HF is still healthy → revert
+    ///         `IntentPending` so the borrower keeps the 5min + 24h
+    ///         window the design promises.
+    /// @dev    `onlyDiamondInternal`. Callers wire this as the
+    ///         FIRST line of their entry point (before any other
+    ///         vault-touching work). Replaces the temporary
+    ///         `LibVaipakam.assertNoLiveIntentCommit` placeholder
+    ///         the round-2 checkpoint used.
+    function forceCancelIntentIfHFBelowOrRevert(uint256 loanId) external {
+        if (msg.sender != address(this)) revert OnlyDiamondInternal();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.intentCommits[loanId].orderHash == bytes32(0)) return;
+        uint256 hf = RiskFacet(address(this)).calculateHealthFactor(loanId);
+        if (hf >= LibVaipakam.HF_LIQUIDATION_THRESHOLD) {
+            revert IVaipakamErrors.IntentPending(loanId);
+        }
+        LibVaipakam.SwapToRepayIntentCommit storage commit = s.intentCommits[loanId];
+        bytes32 orderHash = _teardownCommit(s, loanId, commit);
+        emit SwapToRepayIntentForceCancelled(
+            loanId, orderHash, ForceCancelReason.HFBelowLiquidationThreshold, address(this)
+        );
+    }
+
+    /// @notice One-liner force-cancel helper for
+    ///         `DefaultedFacet.triggerDefault`. If no commit is
+    ///         live → no-op. If a commit is live AND
+    ///         `block.timestamp >= endTime + gracePeriod` →
+    ///         force-cancel + emit
+    ///         `SwapToRepayIntentForceCancelled` with
+    ///         `TimeDefaultDue` reason. If a commit is live AND
+    ///         the loan isn't past grace yet → revert
+    ///         `IntentPending`.
+    /// @dev    `onlyDiamondInternal`. Same wiring pattern as
+    ///         {forceCancelIntentIfHFBelowOrRevert}.
+    function forceCancelIntentIfPastDefaultOrRevert(uint256 loanId) external {
+        if (msg.sender != address(this)) revert OnlyDiamondInternal();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.intentCommits[loanId].orderHash == bytes32(0)) return;
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        uint256 endTime = uint256(loan.startTime)
+            + uint256(loan.durationDays) * LibVaipakam.ONE_DAY;
+        uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
+        if (block.timestamp < graceEnd) {
+            revert IVaipakamErrors.IntentPending(loanId);
+        }
+        LibVaipakam.SwapToRepayIntentCommit storage commit = s.intentCommits[loanId];
+        bytes32 orderHash = _teardownCommit(s, loanId, commit);
+        emit SwapToRepayIntentForceCancelled(
+            loanId, orderHash, ForceCancelReason.TimeDefaultDue, address(this)
+        );
+    }
+
     /// @dev Tears down a live commit per §5.5 — invariant guard,
     ///      Fusion cancel, collateral return to `loan.borrower`'s
     ///      vault, aggregate-allowance + live-count decrements,
@@ -644,30 +740,33 @@ contract SwapToRepayIntentFacet is
         LibVaipakam.SwapToRepayIntentCommit storage commit,
         address cancelledBy
     ) private {
+        bytes32 orderHash = _teardownCommit(s, loanId, commit);
+        emit SwapToRepayIntentCancelled(loanId, orderHash, cancelledBy);
+    }
+
+    /// @dev Shared commit-teardown body used by {_executeCancel}
+    ///      (borrower / permissionless paths) and
+    ///      {internalForceCancelIntent} (lender-protection paths).
+    ///      Handles: already-filled pre-check (Codex round-8 P1 #2),
+    ///      Fusion `cancelOrder` (round-12 P1 #4),
+    ///      safeTransfer-then-recordVaultDeposit return (round-11
+    ///      P1 #1), aggregate-allowance + live-count decrement +
+    ///      Fusion approval re-set, storage cleanup. Returns the
+    ///      orderHash so the caller can emit the right event.
+    function _teardownCommit(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        LibVaipakam.SwapToRepayIntentCommit storage commit
+    ) private returns (bytes32 orderHash) {
         // ── 1. Already-filled pre-check (Codex round-8 P1 #2) ───────
-        // `rawRemainingInvalidatorForOrder` is the variant that
-        // distinguishes never-filled (returns 0) from fully-filled
-        // (returns ~0) WITHOUT reverting — the non-`raw` variant
-        // reverts on never-filled which is the common no-fill-then-
-        // cancel case. Read against the pinned LOP (`lopAtCommit`)
-        // so an admin rotation can't desync.
         uint256 remainingRaw = IOrderMixin(commit.lopAtCommit)
             .rawRemainingInvalidatorForOrder(address(this), commit.orderHash);
-        // For bit-invalidator mode (round-10 P2 #4: partial + multi
-        // fills both disallowed → `useBitInvalidator() == true`), a
-        // fully-spent slot returns `type(uint256).max`; for the
-        // remaining-amount mode a fully-filled slot returns 1
-        // (canonical "filled" marker in LOP v4). Treat any non-zero
-        // value other than the never-filled `0` as "already filled
-        // / in progress" — same conservative semantics the dapp's
-        // pre-flight uses.
+        // Bit-invalidator mode → fully-spent slot returns
+        // `type(uint256).max`; remaining-amount mode → fully-filled
+        // returns 1. Any non-zero is "already filled / in progress".
         if (remainingRaw != 0) revert IntentAlreadyFilled();
 
         // ── 2. Cancel Fusion-side ───────────────────────────────────
-        // `cancelOrder(MakerTraits, bytes32)` — Codex round-12 P1
-        // #4 confirmed signature. Idempotent: if the order was
-        // already expired on the orderbook, this is a no-op from
-        // LOP's perspective (it just invalidates again).
         IOrderMixin(commit.lopAtCommit).cancelOrder(
             MakerTraits.wrap(commit.makerTraits),
             commit.orderHash
@@ -677,12 +776,6 @@ contract SwapToRepayIntentFacet is
         //       vault (Codex round-2 P1 #3 + round-11 P1 #1) ────────
         LibVaipakam.Loan storage loan = s.loans[loanId];
         address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
-        // `safeTransfer` first so the tokens are AT the vault
-        // address; then `recordVaultDeposit` updates
-        // `protocolTrackedVaultBalance[loan.borrower][token]` so
-        // `ClaimFacet.claimAsBorrower` + the standard
-        // recovery paths see the credit (Codex round-11 P1 #1 —
-        // `recordVaultDeposit` ONLY moves the counter, not tokens).
         IERC20(loan.collateralAsset).safeTransfer(
             borrowerVault, commit.custodialCollateral
         );
@@ -694,9 +787,6 @@ contract SwapToRepayIntentFacet is
         s.intentAggregateAllowance[loan.collateralAsset] -=
             commit.custodialCollateral;
         s.intentLiveCommitCount -= 1;
-        // Re-set Fusion's per-token allowance to the new lower
-        // aggregate (zero-then-set for USDT-style tokens that
-        // refuse non-zero → non-zero re-sets).
         IERC20(loan.collateralAsset).forceApprove(commit.lopAtCommit, 0);
         if (s.intentAggregateAllowance[loan.collateralAsset] != 0) {
             IERC20(loan.collateralAsset).forceApprove(
@@ -706,13 +796,11 @@ contract SwapToRepayIntentFacet is
         }
 
         // ── 5. Storage cleanup ──────────────────────────────────────
-        bytes32 orderHash = commit.orderHash;
+        orderHash = commit.orderHash;
         bytes32 extensionHash = commit.extensionHash;
         delete s.orderHashToLoanId[orderHash];
         delete s.intentExtensionBytes[extensionHash];
         delete s.intentCommits[loanId];
-
-        emit SwapToRepayIntentCancelled(loanId, orderHash, cancelledBy);
     }
 
     // ══════════════════════════════════════════════════════════════
