@@ -198,29 +198,104 @@ Eligibility (mirrors v1's `SwapToRepayFacet` gating exactly):
 
 Phase 1 surface — three external entry points:
 
-- **`commitSwapToRepayIntent(uint256 loanId, FusionOrderCommit calldata commit)`** —
-  Borrower-NFT-owner-only. Validates all eligibility gates above plus
-  the no-double-commit guard (§5.5). Computes the minOutput floor
-  (§5.4); reverts `IntentMinOutputBelowFloor` if
-  `commit.minPrincipalOut < floor × (1 + cfgIntentMinOutputBufferBps)`.
-  Pulls the borrower's pledged collateral from the vault into the
-  diamond's custodial slot keyed by `loanId`. Pre-approves Fusion's
-  ALLOWANCE_TARGET for the custodial collateral (zero-then-set so
-  USDT-style tokens work). Records the commit in storage. Emits
-  `SwapToRepayIntentCommitted`.
+- **`commitSwapToRepayIntent(uint256 loanId, FusionOrderFields calldata order)`** —
+  Borrower-NFT-owner-only. The `order` parameter carries every
+  structured field of the Fusion order (NOT just an opaque hash —
+  Codex round-2 P1 #1). Sequence:
+  1. Verify all eligibility gates above.
+  2. Verify `order.maker == address(this)`, `order.recipient ==
+     address(this)`, `order.makerAsset == loan.collateralAsset`,
+     `order.takerAsset == loan.principalAsset`, `order.makerAmount
+     == loan.collateralAmount`, `order.deadline >= block.timestamp +
+     cfgIntentMinAuctionSeconds`, `order.deadline <= block.timestamp
+     + cfgIntentMaxAuctionSeconds`, `order.extension` includes the
+     diamond's `postInteraction` callback target. Revert
+     `IntentOrderFieldsMismatch(field)` on any mismatch.
+  3. Recompute the orderHash on-chain from `order`'s fields using
+     Fusion's canonical hash function (must match what Fusion's
+     contract computes during the fill); this is the hash the
+     diamond's ERC-1271 will bless.
+  4. **Pre-commit HF gate** (Codex round-2 P1 #2 first half): compute
+     the loan's live health factor via `RiskFacet.calculateHealthFactor`.
+     Revert `IntentBlockedHFTooLow(currentHF, minHF)` if HF <
+     `cfgIntentMinCommitHFBps` (default 1.2e18 = 120%). This blocks
+     an already-stressed borrower from using intent as a stall
+     tactic during a collateral price drop; lender exposure is
+     bounded because borrowers near liquidation can't enter the
+     intent surface at all.
+  5. No-double-commit guard: revert `IntentAlreadyCommitted(loanId)`
+     if `s.intentCommits[loanId].orderHash != 0`.
+  6. **OrderHash uniqueness** (Codex round-2 P1 #6): revert
+     `IntentOrderHashAlreadyInUse(orderHash)` if
+     `s.orderHashToLoanId[orderHash] != 0`. Prevents a second loan
+     from clobbering the first's reverse-index mapping.
+  7. minOutput floor: compute `floor = lenderLeg + treasuryLeg` from
+     `IVaipakamPrepayContext.getPrepayContext(loanId, block.timestamp)`;
+     revert `IntentMinOutputBelowFloor(min, required)` if
+     `order.makingAmount < floor × (10_000 + cfgIntentMinOutputBufferBps)
+     / 10_000`. (Note: in v1.1's diamond-as-maker model, the
+     borrower's `minOutput` is the Fusion order's `takerAmount`
+     — the principal asset they accept in exchange for the
+     collateral they're selling.)
+  8. Pull the pledged collateral from the borrower's vault into the
+     diamond's custodial slot via `VaultFactoryFacet.vaultWithdrawERC20`.
+  9. **Aggregate allowance management** (Codex round-2 P2 #7): the
+     diamond tracks `s.intentAggregateAllowance[token]` — the sum
+     of all live custodial collaterals per collateral token. On
+     commit, add `order.makingAmount` to the aggregate and
+     reapprove Fusion's ALLOWANCE_TARGET to the new aggregate
+     (zero-then-set for USDT). On fill / cancel, subtract consumed
+     amount + remaining custodial from the aggregate and reapprove
+     to the new lower aggregate. This serializes correctly across
+     multiple concurrent intents on the same collateral token —
+     no allowance can be reduced below the sum of outstanding
+     maker amounts.
+  10. Record commit + reverse-index. Emit `SwapToRepayIntentCommitted`.
 
 - **`postInteraction(...)`** — *Called by Fusion's `LimitOrderProtocol`
-  during the fill transaction*, NOT externally. Implements the
-  matching Fusion interface. Fusion has already (a) verified the
-  diamond's ERC-1271 signature for the orderHash, (b) transferred the
-  principal asset to the diamond (the order's `recipient`), and (c)
-  pulled the consumed collateral from the diamond. The hook receives
-  the exact `consumed` and `delivered` amounts, looks up the commit
-  by orderHash, asserts `delivered ≥ commit.minPrincipalOut`, refunds
-  any unconsumed custodial collateral to the borrower-NFT-owner's
-  vault (§5.9), runs the canonical settlement waterfall using the
-  same Lib calls as v1's `swapToRepayFull`, clears the commit slot,
-  and emits `SwapToRepayIntentFilled`. All atomic in one tx.
+  during the fill transaction*, NOT externally callable by users.
+  Marked `nonReentrant` against the diamond's standard reentrancy
+  guard (Codex round-2 P1 #9 — without it a callback-capable token
+  or malicious recipient could reenter the diamond mid-settlement).
+  Sequence:
+  1. **Authorized-caller check** (Codex round-2 P1 #5): revert
+     `IntentPostInteractionUnauthorized(msg.sender)` unless
+     `msg.sender == cfgFusionLimitOrderProtocol` for this chain.
+     The protocol address is recorded in `ProtocolConfig` at deploy
+     and admin-rotatable via `ConfigFacet.setFusionLimitOrderProtocol`.
+     Without this check any external caller could supply
+     attacker-chosen `consumed`/`delivered` and trick the diamond
+     into settling the wrong loan against unrelated principal-token
+     balance.
+  2. Reverse-index lookup: `loanId = s.orderHashToLoanId[orderHash]`.
+     Revert `IntentNotRegistered(orderHash)` if zero.
+  3. **Live floor re-check** (Codex round-2 P1 #8): recompute
+     `liveFloor = lenderLeg + treasuryLeg` via
+     `IVaipakamPrepayContext.getPrepayContext(loanId, block.timestamp)`.
+     `commit.minPrincipalOut` was static at commit time; live
+     `lenderLeg` can grow up to 5% from `calculateLateFee` for
+     post-maturity loans (the 2% intent buffer wouldn't cover that
+     gap). Revert `IntentDeliveredBelowLiveFloor(delivered, liveFloor)`
+     if `delivered < liveFloor`. Fusion's contract reverts the
+     fill on our revert, the borrower's collateral stays in
+     custody, and the borrower can cancel + retry with a higher
+     committed minOutput.
+  4. Refund unconsumed custodial collateral (§5.9) to the
+     **commit-time-of-record borrower vault** (`loan.borrower`),
+     NOT the current NFT-owner's vault (Codex round-2 P1 #3 —
+     `RiskFacet.triggerLiquidation` and `DefaultedFacet.markDefaulted`
+     both withdraw from `loan.borrower`'s vault; landing residual
+     elsewhere would strand it for those recovery paths). Surplus
+     principal (delivery above lender + treasury) routes to the
+     **current borrower-NFT-owner's EOA** — that's the
+     borrower-friendly v1 pattern that mirrors `swapToRepayFull`.
+  5. Run the canonical settlement waterfall using the same Lib calls
+     as v1's `swapToRepayFull`.
+  6. Decrement the per-token aggregate allowance (§5.1 step 9).
+  7. Clear `intentCommits[loanId]` and `orderHashToLoanId[orderHash]`.
+  8. Emit `SwapToRepayIntentFilled(loanId, orderHash, consumed,
+     delivered, residualRefunded)`.
+  All atomic in one tx — fill + waterfall + cleanup.
 
 - **`cancelSwapToRepayIntent(uint256 loanId)`** — Current
   borrower-NFT-owner only (Codex round-1 P2 #6 — authority follows
@@ -378,23 +453,29 @@ the borrower walk away with both collateral and principal (Codex
 round-1 P1 #4).
 
 - **`cancelSwapToRepayIntent(uint256 loanId)`** — current
-  borrower-NFT owner only. Callable any time after `commit.deadline`
-  (the Fusion auction end). Already-filled pre-check; cancels
-  Fusion-side via `cancelOrder(orderHash)`; transfers the custodial
-  collateral directly to the current borrower-NFT-owner's vault via
-  `LibVaipakam.recordVaultDeposit`; clears the commit slot. The
+  borrower-NFT owner only (authority gate). Callable any time after
+  `commit.deadline`. Already-filled pre-check; cancels Fusion-side
+  via `cancelOrder(orderHash)`; transfers the custodial collateral
+  directly to the **`loan.borrower` vault** (the commit-time
+  borrower-of-record, NOT the current NFT owner's vault — Codex
+  round-2 P1 #3) via `LibVaipakam.recordVaultDeposit`; decrements
+  the per-token aggregate allowance (§5.1 step 9); clears
+  `intentCommits[loanId]` and `orderHashToLoanId[orderHash]`. The
   dapp's intent panel surfaces this as an enabled "Cancel & return
   collateral" button the moment the auction expires un-filled. The
   borrower can immediately commit a fresh intent, fall back to
-  atomic v1, or walk away.
+  atomic v1, or walk away. *Why authority is "current NFT owner" but
+  return target is "commit-time borrower vault":* claim rights for
+  initiating the action travel with the NFT, but the cancelled
+  collateral must land where the recovery paths (`RiskFacet`,
+  `DefaultedFacet`) look for it — both withdraw from
+  `loan.borrower`'s vault.
 - **`cancelExpiredIntent(uint256 loanId)`** — permissionless.
   Callable after `commit.deadline + cfgIntentCancelGraceSeconds`
-  (default 24h). Same already-filled pre-check, same return path —
-  collateral always lands in the **current borrower-NFT-owner's
-  vault** (never the caller's wallet), commit slot clears. Exists
-  only so a borrower-AFK / dead-wallet scenario can't strand
-  collateral indefinitely. 24h is generous: the borrower gets first
-  crack at a clean cancel without keepers racing them.
+  (default 24h). Same already-filled pre-check, same return target
+  (`loan.borrower`'s vault), same aggregate-allowance + cleanup
+  pattern. Exists only so a borrower-AFK / dead-wallet scenario
+  can't strand collateral indefinitely.
 
 **No-double-commit guard.** `commitSwapToRepayIntent` reverts with
 `IntentAlreadyCommitted(loanId)` if `s.intentCommits[loanId]` is
@@ -484,39 +565,59 @@ time-default (`DefaultedFacet.markDefaulted`) paths would otherwise
 expect to withdraw `loan.collateralAmount` from `loan.borrower`'s
 vault — and find it absent (Codex round-1 P1 #5).
 
-The v1.1 facet handles this by **blocking both recovery paths while
-a commit is live**:
+The v1.1 facet handles this with a **two-layer defence** (Codex
+round-2 P1 #2): a pre-commit HF gate that keeps already-stressed
+borrowers out of the surface entirely, plus a liquidation-side
+force-cancel path that handles the residual case where HF degrades
+during a live commit.
 
-- `RiskFacet.triggerLiquidation(loanId, ...)` checks
-  `s.intentCommits[loanId].orderHash` first. If non-zero, reverts
-  with `IntentPending(loanId)`.
-- `DefaultedFacet.markDefaulted(loanId, ...)` same check, same revert.
+**Layer 1 — pre-commit HF gate (§5.1 step 4).** `commitSwapToRepayIntent`
+rejects with `IntentBlockedHFTooLow` when current HF <
+`cfgIntentMinCommitHFBps` (default 1.2e18 = 120%). Borrowers near
+liquidation can't enter intent at all. This handles the typical
+"stall during a collateral price drop" attack at commit time.
 
-The borrower committed voluntarily and gets the 5-minute auction
-plus the 24h cancel-grace window. After the grace expires, the
-permissionless `cancelExpiredIntent` returns the collateral to the
-borrower's vault, at which point the standard HF-liquidation and
-time-default paths pick up again (no special wiring needed — the
-collateral is back where they expect it).
+**Layer 2 — liquidation force-cancel.** For the residual case where
+HF degrades during a live commit (collateral price falls mid-auction
+after a healthy commit landed), `RiskFacet.triggerLiquidation` gets
+a new internal force-cancel path:
 
-**Why block-vs-route-through-custody?** Routing the recovery paths
-through the custodial slot (so a triggerLiquidation while a commit
-is pending would liquidate the custodial collateral instead) was
-considered and rejected for v1.1. Two reasons:
+- `triggerLiquidation(loanId, ...)` checks
+  `s.intentCommits[loanId].orderHash`. If non-zero AND current HF <
+  `MIN_HEALTH_FACTOR` (the standard 1.0e18 liquidation threshold),
+  the facet:
+  1. Calls Fusion's `cancelOrder(orderHash)` to invalidate the
+     intent on the Fusion side (any in-flight fill against it now
+     reverts on the protocol layer).
+  2. Returns custodial collateral to `loan.borrower`'s vault via
+     the same direct-credit pattern §5.3 uses.
+  3. Decrements the per-token aggregate allowance.
+  4. Clears `intentCommits[loanId]` + `orderHashToLoanId[orderHash]`.
+  5. Emits `SwapToRepayIntentForceCancelled(loanId,
+     reason=hfBelowLiquidationThreshold)`.
+  6. Proceeds with the standard HF-liquidation flow.
+- If a commit exists but HF >= `MIN_HEALTH_FACTOR`, liquidation
+  still reverts with `IntentPending(loanId)` — the borrower's
+  intent is healthy enough to deserve the 5-min + 24h window.
 
-1. The collateral is mid-swap from the protocol's point of view —
-   the borrower committed to an outcome where the principal asset
-   replaces the collateral. Liquidating mid-swap would mean racing
-   Fusion's fill against the diamond's own liquidation transfer,
-   with both touching the custodial slot in unpredictable order.
-2. The borrower's exposure window for the lender is bounded: the
-   maximum delay is `5 min auction + 24h cancel-grace`. Lender HF
-   exposure for an extra 24h on an already-committed-to-be-repaid
-   loan is materially safer than racing a swap mid-fill.
+**`DefaultedFacet.markDefaulted` interaction.** Time-default doesn't
+need the same urgency (it only fires after grace, by which point the
+intent's `cancelExpiredIntent` window has already passed). Default
+behavior: `markDefaulted` reverts with `IntentPending(loanId)` while
+a commit exists. If the loan's `endTime + gracePeriod` AND the
+intent's `commit.deadline + cancelGrace` have both passed, the
+permissionless `cancelExpiredIntent` is callable by anyone (including
+the would-be defaulter) to free the collateral, then `markDefaulted`
+proceeds in a follow-up tx. No race because both windows are
+explicit, not adversarial.
 
-If a future v1.2 surfaces "intent with lender consent" (lender can
-liquidate immediately by force-cancelling the intent), the design
-hooks would land in this section.
+**Why HF-1.0 threshold for force-cancel and not HF-1.5 (the
+MIN_HEALTH_FACTOR at loan init)?** Force-cancel is a lender-protection
+escape hatch — it should fire only when liquidation is otherwise
+needed (HF < 1.0). For loans that are still solvent (HF >= 1.0) but
+the borrower committed an unfillable intent to stall, the borrower
+is the one waiting; their stall hurts them, not the lender. The
+intent expires in 5 minutes; the cancel-grace closes in 24h.
 
 ### 5.9 Partial fills + residual custodial collateral
 
@@ -687,14 +788,24 @@ all 7 issues atomically; see §5.1, §5.2, §5.3, §5.5, §5.7, §5.8,
    - `cancelExpiredIntent` — permissionless, callable after
      `commit.deadline + 24h`. Borrower-AFK safety net only; collateral
      always returns to the borrower's vault. See §5.5.
-4. **Recipient pattern** — confirmed. Passive-receive model: the
-   diamond is the order's `recipient`; Fusion's `Settlement` contract
-   transfers the principal asset to the diamond on fill; a separate
-   permissionless `finalize` call runs the settlement waterfall. No
-   diamond code runs inside the solver's fill transaction. Simpler
-   audit surface than the callback pattern, no MEV vector (see
-   §5.7). The brief fill-to-finalize idle window is a UX wart, not a
-   security issue; closed by the permissionless `finalize` poke.
+4. **Recipient pattern + Fusion postInteraction hook** — confirmed.
+   *Decision revised after Codex round-1.* Initial design was
+   passive-receive + a separate permissionless finalize call, but
+   that left 7 architectural gaps (fill-vs-finalize race; no
+   fill-proof; default/liquidation unaware of pending commits;
+   partial-fill residuals stranded; cancel after fill;
+   `vaultDepositERC20` return path broken; cross-loan substitution
+   via balance delta). All seven close at once by having the
+   diamond participate atomically in the fill via Fusion's native
+   `postInteraction` hook: diamond is the order maker AND the
+   recipient AND the post-interaction callback target. The hook
+   runs the full settlement waterfall inside the solver's fill tx;
+   no idle window; no separate finalize. The diamond signs the
+   orderHash via ERC-1271 (the only "signature" Fusion needs).
+   §5.1 captures the three external entry points (commit, two
+   cancels); §5.3 captures the atomic-fill settlement; §5.7 captures
+   the MEV-resistance analysis with the ERC-1271 binding closing
+   cross-loan substitution.
 5. **Chain scope: ship on every chain but admin-flag default-OFF.**
    New `cfgIntentSwapToRepayEnabled` per-chain boolean; admin enables
    per chain via `ConfigFacet.setIntentSwapToRepayEnabled(bool)`
