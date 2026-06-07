@@ -5,16 +5,20 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibCollateralSettlement} from "../libraries/LibCollateralSettlement.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import {IPreInteraction} from "@1inch/limit-order-protocol/contracts/interfaces/IPreInteraction.sol";
 import {IPostInteraction} from "@1inch/limit-order-protocol/contracts/interfaces/IPostInteraction.sol";
 import {IOrderMixin} from "@1inch/limit-order-protocol/contracts/interfaces/IOrderMixin.sol";
 import {MakerTraits} from "@1inch/limit-order-protocol/contracts/libraries/MakerTraitsLib.sol";
+import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
+import {RiskFacet} from "./RiskFacet.sol";
 
 /**
  * @title SwapToRepayIntentFacet
@@ -276,6 +280,65 @@ contract SwapToRepayIntentFacet is
     ///      this branch replace each `revert NotYetImplemented()`
     ///      with the body documented inline against the design doc.
     error NotYetImplemented();
+    /// @dev Mirrors `SwapToRepayFacet.UnsupportedLoanShape` (the v1
+    ///      sibling keeps this error facet-local rather than on
+    ///      `IVaipakamErrors`). v1.1 uses the same conditions: both
+    ///      legs ERC20 + both legs Liquid.
+    error UnsupportedLoanShape();
+    /// @dev Mirrors `SwapToRepayFacet.RepaymentPastGracePeriod`.
+    error RepaymentPastGracePeriod();
+
+    // ──────────────────────────────────────────────────────────────
+    //  1inch LOP v4 makerTraits bit constants (per
+    //  `lib/limit-order-protocol/contracts/libraries/MakerTraitsLib.sol`
+    //  — recorded inline so the bit checks at §5.1 step 2 are
+    //  self-contained and audit-greppable).
+    // ──────────────────────────────────────────────────────────────
+    uint256 private constant _NO_PARTIAL_FILLS_FLAG = 1 << 255;
+    uint256 private constant _ALLOW_MULTIPLE_FILLS_FLAG = 1 << 254;
+    uint256 private constant _PRE_INTERACTION_CALL_FLAG = 1 << 252;
+    uint256 private constant _POST_INTERACTION_CALL_FLAG = 1 << 251;
+    uint256 private constant _HAS_EXTENSION_FLAG = 1 << 249;
+    uint256 private constant _USE_PERMIT2_FLAG = 1 << 248;
+    /// @dev Expiration sub-field: bits 80-119 (40-bit uint).
+    uint256 private constant _EXPIRATION_OFFSET = 80;
+    uint256 private constant _UINT40_MASK = (1 << 40) - 1;
+
+    /// @dev EIP-712 typehash for the 1inch LOP v4 `Order` struct —
+    ///      hardcoded from
+    ///      `lib/limit-order-protocol/contracts/OrderLib.sol:34`. The
+    ///      LOP library's `OrderLib.hash` uses inline-assembly
+    ///      `calldatacopy` which is unusable from a memory-built
+    ///      order; we recompute via `abi.encode` against the same
+    ///      typehash and the LOP's domain separator (fetched at
+    ///      commit time from `cfgFusionLimitOrderProtocol`).
+    bytes32 private constant _LIMIT_ORDER_TYPEHASH = keccak256(
+        "Order("
+            "uint256 salt,"
+            "address maker,"
+            "address receiver,"
+            "address makerAsset,"
+            "address takerAsset,"
+            "uint256 makingAmount,"
+            "uint256 takingAmount,"
+            "uint256 makerTraits"
+        ")"
+    );
+
+    /// @dev Field-identifier hashes used in `IntentOrderFieldsMismatch`
+    ///      reverts so an off-chain decoder can map back to the
+    ///      specific failed field. Kept as constants (not strings)
+    ///      so the calldata-side decoder is deterministic across
+    ///      bytecode changes.
+    bytes32 private constant _FIELD_DEADLINE = keccak256("deadline");
+    bytes32 private constant _FIELD_SALT_EXTENSION = keccak256("salt-extension-binding");
+    bytes32 private constant _REASON_HAS_EXTENSION = keccak256("hasExtension");
+    bytes32 private constant _REASON_PRE_INTERACTION = keccak256("needPreInteractionCall");
+    bytes32 private constant _REASON_POST_INTERACTION = keccak256("needPostInteractionCall");
+    bytes32 private constant _REASON_PARTIAL_FILLS = keccak256("allowPartialFills");
+    bytes32 private constant _REASON_MULTIPLE_FILLS = keccak256("allowMultipleFills");
+    bytes32 private constant _REASON_USE_PERMIT2 = keccak256("usePermit2");
+    bytes32 private constant _REASON_EXPIRATION_MISMATCH = keccak256("expiration-mismatch");
 
     // ══════════════════════════════════════════════════════════════
     //  Borrower-facing entry points
@@ -306,8 +369,190 @@ contract SwapToRepayIntentFacet is
         nonReentrant
         whenNotPaused
     {
-        loanId; params; // silence-unused
-        revert NotYetImplemented();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+
+        // ── §5.6 master switch ──────────────────────────────────────
+        if (!s.cfgIntentSwapToRepayEnabled) revert IntentSurfaceDisabled();
+
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+
+        // ── §5.1 step 1: eligibility gates ──────────────────────────
+        // Active + ERC20-on-ERC20 + both legs Liquid + tokens on
+        // both per-token allowlists + caller is the current
+        // borrower-NFT holder + caller is not the lender (latched
+        // OR current NFT holder) + not past grace.
+        if (loan.status != LibVaipakam.LoanStatus.Active)
+            revert IVaipakamErrors.InvalidLoanStatus();
+        if (
+            loan.assetType != LibVaipakam.AssetType.ERC20 ||
+            loan.collateralAssetType != LibVaipakam.AssetType.ERC20
+        ) revert UnsupportedLoanShape();
+        if (
+            loan.collateralLiquidity != LibVaipakam.LiquidityStatus.Liquid ||
+            loan.principalLiquidity != LibVaipakam.LiquidityStatus.Liquid
+        ) revert UnsupportedLoanShape();
+        if (!s.cfgIntentAllowedPrincipalTokens[loan.principalAsset])
+            revert IntentTokenNotAllowed(loan.principalAsset);
+        if (!s.cfgIntentAllowedCollateralTokens[loan.collateralAsset])
+            revert IntentTokenNotAllowed(loan.collateralAsset);
+        LibAuth.requireBorrowerNftOwner(loan);
+        if (msg.sender == loan.lender) revert IVaipakamErrors.LenderCannotRepayOwnLoan();
+        if (IERC721(address(this)).ownerOf(loan.lenderTokenId) == msg.sender)
+            revert IVaipakamErrors.LenderCannotRepayOwnLoan();
+        uint256 endTime = uint256(loan.startTime) + uint256(loan.durationDays) * LibVaipakam.ONE_DAY;
+        uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
+        if (block.timestamp > graceEnd) revert RepaymentPastGracePeriod();
+
+        // ── §5.1 step 2: field + makerTraits binding checks ─────────
+        // Deadline bounds (Codex round-8 P1 #5 + round-5 P2 #5):
+        if (
+            params.deadline <= block.timestamp ||
+            params.deadline < block.timestamp + s.cfgIntentMinAuctionSeconds ||
+            params.deadline > block.timestamp + s.cfgIntentMaxAuctionSeconds ||
+            uint256(params.deadline) > graceEnd
+        ) revert IntentOrderFieldsMismatch(_FIELD_DEADLINE);
+        // makerTraits bits (Codex round-8 P1 #1 + round-10 P2 #3/#4):
+        uint256 mt = params.makerTraits;
+        if ((mt & _HAS_EXTENSION_FLAG) == 0)
+            revert IntentMakerTraitsMismatch(_REASON_HAS_EXTENSION);
+        if ((mt & _PRE_INTERACTION_CALL_FLAG) == 0)
+            revert IntentMakerTraitsMismatch(_REASON_PRE_INTERACTION);
+        if ((mt & _POST_INTERACTION_CALL_FLAG) == 0)
+            revert IntentMakerTraitsMismatch(_REASON_POST_INTERACTION);
+        // `allowPartialFills()` returns TRUE when the NO_PARTIAL bit
+        // is CLEAR — we require partial-fills DISALLOWED so the
+        // NO_PARTIAL flag must be SET.
+        if ((mt & _NO_PARTIAL_FILLS_FLAG) == 0)
+            revert IntentMakerTraitsMismatch(_REASON_PARTIAL_FILLS);
+        if ((mt & _ALLOW_MULTIPLE_FILLS_FLAG) != 0)
+            revert IntentMakerTraitsMismatch(_REASON_MULTIPLE_FILLS);
+        if ((mt & _USE_PERMIT2_FLAG) != 0)
+            revert IntentMakerTraitsMismatch(_REASON_USE_PERMIT2);
+        // makerTraits expiration sub-field must match `params.deadline`
+        // (Codex round-8 P1 #5 — without this, Fusion can fill past
+        // our Vaipakam-side gate).
+        if (((mt >> _EXPIRATION_OFFSET) & _UINT40_MASK) != uint256(params.deadline))
+            revert IntentMakerTraitsMismatch(_REASON_EXPIRATION_MISMATCH);
+        // salt low-160 bits == keccak256(extension) (Codex round-8
+        // P1 #1 — LOP v4's extension-binding rule).
+        bytes32 extensionHash = keccak256(params.extension);
+        if ((params.salt & ((1 << 160) - 1)) != uint256(uint160(uint256(extensionHash))))
+            revert IntentOrderFieldsMismatch(_FIELD_SALT_EXTENSION);
+
+        // ── §5.1 step 4: pre-commit HF gate (Codex round-10 P1 #1
+        //    — HF_SCALE-scaled comparison) ────────────────────────────
+        // Cross-facet staticcall to RiskFacet (we're already inside
+        // the diamond; the call routes via the Diamond fallback).
+        uint256 currentHF = RiskFacet(address(this)).calculateHealthFactor(loanId);
+        if (currentHF < s.cfgIntentMinCommitHF)
+            revert IntentBlockedHFTooLow(currentHF, s.cfgIntentMinCommitHF);
+
+        // ── §5.1 step 5: no-double-commit ───────────────────────────
+        if (s.intentCommits[loanId].orderHash != bytes32(0))
+            revert IntentAlreadyCommitted(loanId);
+
+        // ── §5.1 step 7: minOutput floor (Codex round-10 P1 #5 +
+        //    round-11 P1 #3 — must add late fee on top of getPrepayContext) ─
+        uint256 lenderLeg = LibCollateralSettlement.principalPlusAccruedInterest(
+            loanId, block.timestamp
+        );
+        uint256 treasuryLeg = LibCollateralSettlement.treasuryAndPrecloseFee(
+            loanId, block.timestamp
+        );
+        uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
+        uint256 floor_ = lenderLeg + treasuryLeg + lateFee;
+        uint256 minOut = (floor_ * (LibVaipakam.BASIS_POINTS + s.cfgIntentMinOutputBufferBps))
+            / LibVaipakam.BASIS_POINTS;
+        if (params.takerAmount < minOut)
+            revert IntentMinOutputBelowFloor(params.takerAmount, minOut);
+
+        // ── §5.1 step 8: pull collateral + reject fee-on-transfer ───
+        // Balance-delta accounting AND require received == requested
+        // (Codex round-4 P1 #5 + round-6 P1 #4): fee-on-transfer
+        // collateral is rejected outright since cancel + claim-
+        // record paths would otherwise drift away from
+        // `loan.collateralAmount`.
+        IERC20 collateralToken = IERC20(loan.collateralAsset);
+        uint256 balanceBefore = collateralToken.balanceOf(address(this));
+        VaultFactoryFacet(address(this)).vaultWithdrawERC20(
+            loan.borrower, loan.collateralAsset, address(this), loan.collateralAmount
+        );
+        uint256 received = collateralToken.balanceOf(address(this)) - balanceBefore;
+        if (received != loan.collateralAmount)
+            revert IntentCollateralFeeOnTransferUnsupported(received, loan.collateralAmount);
+        uint256 custodialCollateral = received;
+
+        // ── §5.1 step 9: compute canonical 1inch LOP v4 orderHash ───
+        // Replicates `OrderLib.hash`: EIP-712 over the 8-field Order
+        // struct using LOP's own DOMAIN_SEPARATOR (fetched on-chain
+        // for the pinned `cfgFusionLimitOrderProtocol`).
+        bytes32 lopDomainSeparator = _fetchLopDomainSeparator(s.cfgFusionLimitOrderProtocol);
+        bytes32 structHash = keccak256(abi.encode(
+            _LIMIT_ORDER_TYPEHASH,
+            params.salt,
+            uint256(uint160(address(this))),         // maker = diamond
+            uint256(uint160(address(this))),         // receiver = diamond
+            uint256(uint160(loan.collateralAsset)),  // makerAsset
+            uint256(uint160(loan.principalAsset)),   // takerAsset
+            custodialCollateral,                     // makingAmount = actual received
+            params.takerAmount,                      // takingAmount
+            params.makerTraits
+        ));
+        bytes32 orderHash = keccak256(
+            abi.encodePacked(bytes2(0x1901), lopDomainSeparator, structHash)
+        );
+
+        // ── §5.1 step 6 (deferred): orderHash uniqueness ────────────
+        if (s.orderHashToLoanId[orderHash] != 0)
+            revert IntentOrderHashAlreadyInUse(orderHash);
+
+        // ── §5.1 step 10: aggregate allowance management
+        //    (zero-then-set for USDT-style tokens) ─────────────────────
+        s.intentAggregateAllowance[loan.collateralAsset] += custodialCollateral;
+        IERC20(loan.collateralAsset).forceApprove(s.cfgFusionLimitOrderProtocol, 0);
+        IERC20(loan.collateralAsset).forceApprove(
+            s.cfgFusionLimitOrderProtocol,
+            s.intentAggregateAllowance[loan.collateralAsset]
+        );
+
+        // ── §5.1 step 11: record commit + reverse index + extension
+        //    bytes + bump live count + emit ─────────────────────────────
+        s.intentCommits[loanId] = LibVaipakam.SwapToRepayIntentCommit({
+            orderHash: orderHash,
+            deadline: params.deadline,
+            makerAmount: custodialCollateral,
+            takerAmount: params.takerAmount,
+            salt: params.salt,
+            makerTraits: params.makerTraits,
+            extensionHash: extensionHash,
+            custodialCollateral: custodialCollateral,
+            committedByForRecord: msg.sender,
+            lopAtCommit: s.cfgFusionLimitOrderProtocol
+        });
+        s.orderHashToLoanId[orderHash] = loanId;
+        s.intentExtensionBytes[extensionHash] = params.extension;
+        s.intentLiveCommitCount += 1;
+
+        emit SwapToRepayIntentCommitted(
+            loanId,
+            orderHash,
+            msg.sender,
+            custodialCollateral,
+            params.takerAmount,
+            params.deadline
+        );
+    }
+
+    /// @dev Fetch LOP's EIP-712 DOMAIN_SEPARATOR via staticcall (no
+    ///      IDomainSeparator interface in the LOP submodule, but
+    ///      the standard EIP-712 `DOMAIN_SEPARATOR()` selector
+    ///      `0x3644e515` is honoured by every audited LOP build).
+    function _fetchLopDomainSeparator(address lop) private view returns (bytes32) {
+        (bool ok, bytes memory ret) = lop.staticcall(
+            abi.encodeWithSignature("DOMAIN_SEPARATOR()")
+        );
+        require(ok && ret.length == 32, "lop ds");
+        return abi.decode(ret, (bytes32));
     }
 
     /**
