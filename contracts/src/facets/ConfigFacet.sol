@@ -2813,12 +2813,18 @@ contract ConfigFacet is DiamondAccessControl {
         return LibVaipakam.storageSlot().cfgIntentSwapToRepayEnabled;
     }
 
+    /// @dev Codex round-2 PR #420 P2 — getters return EFFECTIVE
+    ///      values (storage value when non-zero, documented
+    ///      defaults otherwise). The facet enforces the effective
+    ///      value at commit time; the public API surface must
+    ///      report what's actually enforced so dapp + admin
+    ///      observers don't see a stale `0` for an unset slot.
     function getIntentMinCommitHF() external view returns (uint256) {
-        return LibVaipakam.storageSlot().cfgIntentMinCommitHF;
+        return LibVaipakam.cfgIntentMinCommitHFEffective();
     }
 
     function getIntentMinOutputBufferBps() external view returns (uint16) {
-        return LibVaipakam.storageSlot().cfgIntentMinOutputBufferBps;
+        return LibVaipakam.cfgIntentMinOutputBufferBpsEffective();
     }
 
     function getIntentAuctionSecondsBounds()
@@ -2826,12 +2832,14 @@ contract ConfigFacet is DiamondAccessControl {
         view
         returns (uint32 minSec, uint32 maxSec)
     {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        return (s.cfgIntentMinAuctionSeconds, s.cfgIntentMaxAuctionSeconds);
+        return (
+            LibVaipakam.cfgIntentMinAuctionSecondsEffective(),
+            LibVaipakam.cfgIntentMaxAuctionSecondsEffective()
+        );
     }
 
     function getIntentCancelGraceSeconds() external view returns (uint32) {
-        return LibVaipakam.storageSlot().cfgIntentCancelGraceSeconds;
+        return LibVaipakam.cfgIntentCancelGraceSecondsEffective();
     }
 
     function getFusionLimitOrderProtocol() external view returns (address) {

@@ -310,6 +310,12 @@ contract SwapToRepayIntentFacet is
     uint256 private constant _POST_INTERACTION_CALL_FLAG = 1 << 251;
     uint256 private constant _HAS_EXTENSION_FLAG = 1 << 249;
     uint256 private constant _USE_PERMIT2_FLAG = 1 << 248;
+    /// @dev LOP v4 rejects any fill that combines epoch-manager
+    ///      checking with the bit-invalidator path. Our orders use
+    ///      the bit-invalidator path (no partial / no multiple
+    ///      fills), so accepting `needCheckEpochManager` would
+    ///      produce an unfillable order. Codex round-2 PR #420 P2.
+    uint256 private constant _NEED_CHECK_EPOCH_MANAGER_FLAG = 1 << 250;
     /// @dev Expiration sub-field: bits 80-119 (40-bit uint).
     uint256 private constant _EXPIRATION_OFFSET = 80;
     uint256 private constant _UINT40_MASK = (1 << 40) - 1;
@@ -350,6 +356,7 @@ contract SwapToRepayIntentFacet is
     bytes32 private constant _REASON_PARTIAL_FILLS = keccak256("allowPartialFills");
     bytes32 private constant _REASON_MULTIPLE_FILLS = keccak256("allowMultipleFills");
     bytes32 private constant _REASON_USE_PERMIT2 = keccak256("usePermit2");
+    bytes32 private constant _REASON_NEED_CHECK_EPOCH_MANAGER = keccak256("needCheckEpochManager");
     bytes32 private constant _REASON_EXPIRATION_MISMATCH = keccak256("expiration-mismatch");
 
     // ══════════════════════════════════════════════════════════════
@@ -446,6 +453,8 @@ contract SwapToRepayIntentFacet is
             revert IntentMakerTraitsMismatch(_REASON_MULTIPLE_FILLS);
         if ((mt & _USE_PERMIT2_FLAG) != 0)
             revert IntentMakerTraitsMismatch(_REASON_USE_PERMIT2);
+        if ((mt & _NEED_CHECK_EPOCH_MANAGER_FLAG) != 0)
+            revert IntentMakerTraitsMismatch(_REASON_NEED_CHECK_EPOCH_MANAGER);
         // makerTraits expiration sub-field must match `params.deadline`
         // (Codex round-8 P1 #5 — without this, Fusion can fill past
         // our Vaipakam-side gate).
@@ -629,9 +638,16 @@ contract SwapToRepayIntentFacet is
     ///         borrower-supplied `params.extension` matches the
     ///         canonical layout this returns.
     function canonicalExtension() public view returns (bytes memory) {
-        uint256 offsets = (uint256(20) << (6 * 28))
-                        | (uint256(40) << (7 * 28))
-                        | (uint256(40) << (8 * 28));
+        // Codex round-2 PR #420 P1 — LOP v4's `OffsetsLib.get`
+        // decodes each field's end-offset with `bitShift = index *
+        // 32`, NOT `* 28`. The round-1 fix used the wrong slot
+        // width which would have made LOP decode the
+        // PreInteractionData / PostInteractionData targets at the
+        // wrong byte offsets, calling random bytes as if they were
+        // addresses.
+        uint256 offsets = (uint256(20) << (6 * 32))
+                        | (uint256(40) << (7 * 32))
+                        | (uint256(40) << (8 * 32));
         return abi.encodePacked(offsets, address(this), address(this));
     }
 

@@ -571,7 +571,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](10);
+        selectors = new bytes4[](11);
         selectors[0] = SwapToRepayIntentFacet.commitSwapToRepayIntent.selector;
         selectors[1] = SwapToRepayIntentFacet.cancelSwapToRepayIntent.selector;
         selectors[2] = SwapToRepayIntentFacet.cancelExpiredIntent.selector;
@@ -585,6 +585,11 @@ contract HelperTest {
         selectors[7] = SwapToRepayIntentFacet.internalForceCancelIntent.selector;
         selectors[8] = SwapToRepayIntentFacet.forceCancelIntentIfHFBelowOrRevert.selector;
         selectors[9] = SwapToRepayIntentFacet.forceCancelIntentIfPastDefaultOrRevert.selector;
+        // Codex round-2 PR #420 P2 — dapp read surface; without
+        // routing this through the diamond cut the borrower can't
+        // mirror the canonical extension bytes the commit gate
+        // requires.
+        selectors[10] = SwapToRepayIntentFacet.canonicalExtension.selector;
     }
 
     function getDefaultedFacetSelectors()

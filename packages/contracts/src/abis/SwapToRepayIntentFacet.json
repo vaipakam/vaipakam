@@ -27,6 +27,19 @@
   },
   {
     "type": "function",
+    "name": "canonicalExtension",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "commitSwapToRepayIntent",
     "inputs": [
       {
@@ -65,6 +78,32 @@
             "internalType": "bytes"
           }
         ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "forceCancelIntentIfHFBelowOrRevert",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "forceCancelIntentIfPastDefaultOrRevert",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -143,6 +182,24 @@
   },
   {
     "type": "function",
+    "name": "internalForceCancelIntent",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reason",
+        "type": "uint8",
+        "internalType": "enum SwapToRepayIntentFacet.ForceCancelReason"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "isValidSignature",
     "inputs": [
       {
@@ -151,7 +208,7 @@
         "internalType": "bytes32"
       },
       {
-        "name": "signature",
+        "name": "",
         "type": "bytes",
         "internalType": "bytes"
       }
@@ -170,7 +227,7 @@
     "name": "postInteraction",
     "inputs": [
       {
-        "name": "order",
+        "name": "",
         "type": "tuple",
         "internalType": "struct IOrderMixin.Order",
         "components": [
@@ -217,7 +274,7 @@
         ]
       },
       {
-        "name": "extension",
+        "name": "",
         "type": "bytes",
         "internalType": "bytes"
       },
@@ -227,7 +284,7 @@
         "internalType": "bytes32"
       },
       {
-        "name": "taker",
+        "name": "",
         "type": "address",
         "internalType": "address"
       },
@@ -237,17 +294,17 @@
         "internalType": "uint256"
       },
       {
-        "name": "takingAmount",
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "remainingMakingAmount",
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "extraData",
+        "name": "",
         "type": "bytes",
         "internalType": "bytes"
       }
@@ -260,7 +317,7 @@
     "name": "preInteraction",
     "inputs": [
       {
-        "name": "order",
+        "name": "",
         "type": "tuple",
         "internalType": "struct IOrderMixin.Order",
         "components": [
@@ -307,7 +364,7 @@
         ]
       },
       {
-        "name": "extension",
+        "name": "",
         "type": "bytes",
         "internalType": "bytes"
       },
@@ -317,27 +374,27 @@
         "internalType": "bytes32"
       },
       {
-        "name": "taker",
+        "name": "",
         "type": "address",
         "internalType": "address"
       },
       {
-        "name": "makingAmount",
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "takingAmount",
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "remainingMakingAmount",
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "extraData",
+        "name": "",
         "type": "bytes",
         "internalType": "bytes"
       }
@@ -582,6 +639,17 @@
   },
   {
     "type": "error",
+    "name": "ERC721NonexistentToken",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "EnforcedPause",
     "inputs": []
   },
@@ -773,6 +841,17 @@
   },
   {
     "type": "error",
+    "name": "IntentPending",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "IntentPostInteractionUnauthorized",
     "inputs": [
       {
@@ -865,6 +944,22 @@
     "type": "error",
     "name": "InvalidLoanStatus",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidTransition",
+    "inputs": [
+      {
+        "name": "from",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.LoanStatus"
+      },
+      {
+        "name": "to",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.LoanStatus"
+      }
+    ]
   },
   {
     "type": "error",
@@ -1029,6 +1124,11 @@
   {
     "type": "error",
     "name": "OfferCreationFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OnlyDiamondInternal",
     "inputs": []
   },
   {
@@ -1206,6 +1306,11 @@
   },
   {
     "type": "error",
+    "name": "RepaymentPastGracePeriod",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ReportAfterFinalization",
     "inputs": []
   },
@@ -1223,6 +1328,44 @@
     "type": "error",
     "name": "RiskAndTermsConsentRequired",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SafeCastOverflowedUintDowncast",
+    "inputs": [
+      {
+        "name": "bits",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SafeCastOverflowedUintToInt",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SafeERC20FailedOperation",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",
@@ -1252,6 +1395,11 @@
   {
     "type": "error",
     "name": "UnauthorizedCrossFacetCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnsupportedLoanShape",
     "inputs": []
   },
   {
