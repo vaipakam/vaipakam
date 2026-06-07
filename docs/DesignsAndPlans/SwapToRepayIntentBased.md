@@ -1460,3 +1460,63 @@ all 7 issues atomically; see §5.1, §5.2, §5.3, §5.5, §5.7, §5.8,
 - 1inch Fusion docs: https://docs.1inch.io/docs/fusion-swap/introduction
 - CoWSwap protocol docs: https://docs.cow.fi/
 - UniswapX protocol docs: https://docs.uniswap.org/contracts/uniswapx/overview
+
+## 11. Sub-card index + round-12 follow-ups deferred to Sub 1
+
+This doc went through 11 rounds of adversarial Codex review across 4
+push days. By round 12 the iteration was past diminishing returns —
+remaining findings are precise 1inch LOP v4 source-code details (exact
+`Order` struct field order, `cancelOrder(MakerTraits, bytes32)`
+signature, bit-invalidator nonce reservation) that are best caught at
+Sub 1 implementation time when the actual `lib/1inch-lop` interfaces
+are imported and `forge build` runs against the real ABI.
+
+The 7 round-12 findings explicitly tagged for Sub 1 resolution:
+
+1. **(P1)** Cancel path needs `safeTransfer` before
+   `recordVaultDeposit` (same root cause as round-11 P1 #1 but on the
+   cancel path rather than the residual path).
+2. **(P1)** Residual `safeTransfer`-then-`recordVaultDeposit`
+   sequence still inconsistently described across §5.5 and §5.9;
+   Sub 1 lands a single canonical helper.
+3. **(P1)** Hash via the canonical 1inch LOP v4 `Order` struct shape
+   (`receiver`, `makingAmount`, `takingAmount`, `makerTraits`; no
+   separate `deadline`/`extension` fields in the hash preimage —
+   those live inside `makerTraits` + the extension reference).
+4. **(P1)** `LimitOrderProtocol.cancelOrder` is
+   `(MakerTraits makerTraits, bytes32 orderHash)`, not just
+   `bytes32`. Cancel + force-cancel call sites must pass
+   `commit.makerTraits` from storage.
+5. **(P2)** Remove the residual claim that `lenderLeg` includes the
+   late fee from `getPrepayContext` — `getPrepayContext` doesn't
+   add it; both floor sites (§5.1 step 7 + postInteraction step 4)
+   already augment with `+ calculateLateFee` explicitly.
+6. **(P1)** `commitSwapToRepayIntent` external entry point declared
+   `nonReentrant` in the implementation.
+7. **(P2)** Reserve a unique 1inch LOP v4 bit-invalidator nonce per
+   live intent. With `allowPartialFills`/`allowMultipleFills` both
+   clear (round-10 P2 #4), the protocol uses the bit-invalidator
+   path; the maker's `nonceOrEpoch` slot per-bit invalidates one
+   nonce on fill/cancel. Sub 1 manages a `nonce` counter and bit
+   allocation so two concurrent intents never collide on the same
+   nonce bit.
+
+### Sub-card index (filed 2026-06-07)
+
+The implementation work splits into four PRs following the T-090 v1
+shape:
+
+- **Sub 1 (#416)** — `SwapToRepayIntentFacet` + storage + ConfigFacet
+  wiring + IntentPending guards on the 13 voluntary-close /
+  collateral-mutating entry points + force-cancel pattern on the 7
+  HF + time-default entry points + producer artifacts + tests.
+  Resolves the 7 round-12 follow-ups above.
+- **Sub 2 (#417)** — Indexer event handlers for the 4 new events +
+  `swap_to_repay_intents` D1 table + event-coverage script update.
+- **Sub 3 (#418)** — Loan Details mode toggle + intent flow +
+  `apps/agent` `/intent/fusion/post` endpoint.
+- **Sub 4 (#419)** — Functional spec + Advanced User Guide section +
+  release-notes fragment.
+
+Sub 1 ships independently. Subs 2-4 unblock once Sub 1's events,
+ABIs, and behaviour are stable.
