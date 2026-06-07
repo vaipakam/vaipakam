@@ -280,16 +280,40 @@ Phase 1 surface — three external entry points:
      determined at step 9 and the floor check has no opinion on it.
   8. Pull the pledged collateral from the borrower's vault into the
      diamond's custodial slot via `VaultFactoryFacet.vaultWithdrawERC20`.
-     **Use balance-delta accounting** for fee-on-transfer + rebasing
-     tokens (Codex round-4 P1 #5):
+     **Use balance-delta accounting**:
      ```
      before = collateralToken.balanceOf(address(this));
      vaultWithdrawERC20(loan.borrower, collateralToken, loan.collateralAmount);
-     custodialCollateral = collateralToken.balanceOf(address(this)) - before;
+     received = collateralToken.balanceOf(address(this)) - before;
      ```
-     v1.1 motivates with fee-enforced/rebasing-token support, so the
-     diamond must record what it *actually received*, not what it
-     requested.
+     **Reject fee-on-transfer / rebasing collateral at this point**
+     (Codex round-6 P1 #4 + P1 #2): revert
+     `IntentCollateralFeeOnTransferUnsupported(received, requested)`
+     if `received != loan.collateralAmount`. Two reasons this
+     rejection is the right call for v1.1:
+     1. If `received < loan.collateralAmount`, cancel would only
+        return `received` to the vault, leaving the loan Active with
+        a stale `loan.collateralAmount` that liquidation /
+        time-default / partial-withdraw would try to draw from a
+        vault that no longer holds the full amount. Every downstream
+        invariant breaks.
+     2. If we updated `loan.collateralAmount = received` at commit
+        time to keep the invariant, repeated commit-cancel cycles on
+        the same loan would drain the collateral via fee accrual,
+        forcing the borrower's HF into liquidation territory by their
+        own actions. Borrower-controlled foot-gun.
+     v1.1 motivates fee-on-transfer support on the **PRINCIPAL**
+     side (Fusion delivers actual amounts, not notional); the
+     collateral side is rejected here. Future v1.2 can revisit if
+     fee-on-transfer collateral demand emerges. Borrowers with
+     fee-on-transfer collateral still have the atomic v1
+     `swapToRepayFull` path available.
+
+     After the rejection check passes, `custodialCollateral =
+     received` (which equals `loan.collateralAmount`). All downstream
+     references to `custodialCollateral` reduce to using
+     `loan.collateralAmount` directly — the variable name is
+     retained for code clarity but the values are equal.
 
   9. **Construct and register the final Fusion order** (Codex round-5
      P1 #1). Build the full order struct with `makerAmount =
@@ -352,24 +376,48 @@ Phase 1 surface — three external entry points:
      balance.
   2. Reverse-index lookup: `loanId = s.orderHashToLoanId[orderHash]`.
      Revert `IntentNotRegistered(orderHash)` if zero.
-  3. **Measure actual principal received** (Codex round-5 P1 #2).
-     For fee-on-transfer or rebasing principal tokens, Fusion's
+  3. **Measure actual principal received via transient-storage
+     baseline** (Codex round-5 P1 #2 + round-6 P1 #3). For
+     fee-on-transfer or rebasing principal tokens, Fusion's
      `delivered` argument is the protocol/order amount, NOT proof
-     the diamond's principal balance actually grew by that much.
-     Use balance-delta against a snapshot the diamond took before
-     Fusion's transfer:
+     the diamond's principal balance grew by that much. The baseline
+     comes from the **diamond's ERC-1271 `isValidSignature` hook**:
+     Fusion's `LimitOrderProtocol` calls `isValidSignature(orderHash,
+     sig)` once per fill, BEFORE the principal transfer (this is
+     part of Fusion's standard maker-signature verification dance).
+     The diamond's ERC-1271 implementation does two things:
+     (a) returns the magic value if `orderHashToLoanId[orderHash] !=
+     0 AND s.intentCommits[loanId].orderHash == orderHash` (the
+     standard round-2 P1 #6 binding check), and (b) writes the
+     current principal-token balance to **transient storage** keyed
+     by orderHash:
      ```
-     // Snapshot taken at start of postInteraction (Fusion has already
-     // transferred the principal in by this point; the snapshot
-     // would need to live in transient storage so the hook can read
-     // a pre-transfer baseline. Alternative: read Fusion's
-     // post-fill balance and subtract a deterministic
-     // diamond-known baseline that EXCLUDES the principal slot for
-     // this loanId).
-     actualDelivered = principalToken.balanceOf(address(this)) - principalPreFillBaseline;
+     // ERC-1271 isValidSignature (called by Fusion pre-transfer):
+     uint256 loanId = s.orderHashToLoanId[orderHash];
+     if (loanId == 0 || s.intentCommits[loanId].orderHash != orderHash)
+       return INVALID_MAGIC;
+     // Transient-storage baseline (EIP-1153, Solidity ≥0.8.24):
+     address principal = LibVaipakam.loanByIdRead(loanId).principalAsset;
+     uint256 baseline = IERC20(principal).balanceOf(address(this));
+     assembly { tstore(orderHash, baseline) }
+     return ERC1271_MAGIC;
      ```
-     Use `actualDelivered` (NOT Fusion's `delivered` arg) for the
-     floor check and the waterfall.
+     Then `postInteraction` (called AFTER the transfer) reads the
+     baseline back and computes the actual delta:
+     ```
+     assembly { baseline := tload(orderHash) }
+     actualDelivered = principalToken.balanceOf(address(this)) - baseline;
+     // Clear the slot so a future reuse can't read stale baseline:
+     assembly { tstore(orderHash, 0) }
+     ```
+     Transient storage is the right primitive: per-tx-scoped (the
+     fill tx is the only tx that uses the slot), free at tx-end
+     (no permanent storage growth), and safe against re-entrancy
+     within the same tx. Sub 1 should use the EIP-1153 mnemonic if
+     Solidity gains a syntactic wrapper for it; otherwise inline
+     assembly per the snippet above. Use `actualDelivered` (NOT
+     Fusion's `delivered` arg) for the floor check and the
+     waterfall.
   4. **Live floor re-check** (Codex round-2 P1 #8): recompute
      `liveFloor = lenderLeg + treasuryLeg` via
      `IVaipakamPrepayContext.getPrepayContext(loanId, block.timestamp)`.
@@ -773,9 +821,24 @@ force-cancel — these are voluntary, no lender-protection urgency):**
 - `PrecloseFacet.precloseOffset(...)` — sells collateral via the
   protocol swap router and applies proceeds to the same waterfall;
   breaks if collateral is in custody.
+- `PrecloseFacet.transferObligationViaOffer(...)` (Codex round-6
+  P1 #5) — withdraws the current borrower's collateral, rewrites
+  `loan.borrower`, `loan.collateralAmount`, `startTime`, and the
+  borrower NFT. If an intent is pending, the loan baseline changes
+  underneath the still-valid Fusion order; the orderHash binds a
+  loanId snapshot that no longer matches.
 - `RefinanceFacet.refinanceLoan(...)` — withdraws old collateral
   from `loan.borrower`'s vault before transitioning the old loan to
   Repaid.
+- `SwapToRepayFacet.swapToRepayFull(loanId, ...)` and
+  `SwapToRepayFacet.swapToRepayPartial(loanId, ...)` (Codex round-6
+  P1 #1) — v1's atomic swap-to-repay sibling surface. Both withdraw
+  from `loan.borrower`'s vault and transition the loan. If a
+  borrower has same-token collateral remaining elsewhere (or the
+  diamond does — e.g., from a concurrent fill) and they commit an
+  intent then call atomic v1, the atomic path settles the loan
+  Repaid while the intent's custodial collateral orphans. Block at
+  v1's entry points with the same `IntentPending` revert.
 
 **Collateral-mutating paths (block with `IntentPending` — round-5
 P1 #3):**
@@ -801,6 +864,11 @@ interest auto-liquidation in `RepayFacet`:
 - `RiskFacet.triggerPartialLiquidation(loanId, ...)` (partial)
 - `RiskFacet.triggerLiquidationDiscounted(loanId, ...)` (discounted /
   flash-loan path)
+- `RiskMatchLiquidationFacet.triggerInternalMatchLiquidation(loanId, ...)`
+  (Codex round-6 P1 #6) — when `internalMatchEnabled` is on, the
+  two-way/three-way internal-match liquidation withdraws collateral
+  from `loan.borrower`'s vault and decrements `principal` /
+  `collateralAmount`. Same force-cancel pattern.
 - `RepayFacet._autoLiquidatePeriodShortfall(loanId, ...)` (internal,
   called from periodic-interest-checkpoint shortfall flow)
 
@@ -905,31 +973,37 @@ function and the on-chain reverse-index, both inside
 The Loan Details swap-to-repay panel grows a mode toggle (atomic vs
 best-price intent). On the intent path:
 
-1. Borrower picks `minPrincipalOut` (default = the §5.4 floor + a
+1. Borrower picks `takerAmount` (default = the §5.4 floor + a
    small UX buffer; the dapp shows the live floor so the borrower
    can override if they want to raise the threshold further).
-2. Dapp computes the orderHash for a Fusion order with
-   `maker = diamond`, `recipient = diamond`, `validTo = now + 5min`,
-   `makerAsset = collateral`, `takerAsset = principal`,
-   `makerAmount = loan.collateralAmount`, `takerAmount = minPrincipalOut`.
-3. Borrower submits one transaction: `commitSwapToRepayIntent(loanId,
-   commit)`. The diamond pulls the borrower's collateral into the
-   custodial slot, records the commit + reverse-index, and approves
-   Fusion's ALLOWANCE_TARGET. The borrower's *only* signature is on
-   this on-chain transaction — there's no off-chain order signature
-   to handle (the diamond signs via ERC-1271 inside the fill).
-4. Dapp posts the orderHash to 1inch Fusion (via `apps/agent`) so
-   Fusion's resolver set picks it up.
-5. Dapp polls Fusion's API for fill status — purely informational;
+2. Borrower submits one transaction:
+   `commitSwapToRepayIntent(loanId, params)`. The diamond rejects
+   fee-on-transfer / rebasing collateral (§5.1 step 8 invariant
+   guard); so for the supported case `custodialCollateral ==
+   loan.collateralAmount` always holds. The diamond constructs the
+   final Fusion order from `params` + the now-known `makerAmount =
+   custodialCollateral`, computes the canonical orderHash, registers
+   it in storage, approves Fusion's ALLOWANCE_TARGET. The borrower's
+   *only* signature is on this on-chain transaction — there's no
+   off-chain order signature (the diamond signs via ERC-1271
+   inside the fill).
+3. **Dapp reads back the registered orderHash + full order struct**
+   (via a `getIntentCommit(loanId)` view returning the deterministic
+   shape the diamond just built). Posts the full order to 1inch
+   Fusion via `apps/agent`. Because the diamond rejected
+   fee-on-transfer collateral at commit, the orderHash the dapp
+   reads matches the one Fusion's resolvers will see on the fill —
+   no off-chain-vs-on-chain hash drift (Codex round-6 P1 #2).
+4. Dapp polls Fusion's API for fill status — purely informational;
    no diamond-side action needed when the fill lands. The fill
    transaction itself (submitted by the winning solver) runs the
    diamond's `postInteraction`, which settles the loan atomically.
    The dapp observes via the `SwapToRepayIntentFilled` event.
-6. If the auction expires without fill, the dapp surfaces a
+5. If the auction expires without fill, the dapp surfaces a
    "Cancel & return collateral" button that calls
    `cancelSwapToRepayIntent`. The button is gated on
    `now >= commit.deadline AND !alreadyFilled` (the dapp pre-checks
-   the second condition via Fusion's API to avoid a wasted gas).
+   the second condition via Fusion's API to avoid wasted gas).
 
 ### 6.3 Indexer
 
