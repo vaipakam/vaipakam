@@ -79,10 +79,18 @@ price. On fill, 1inch's `Settlement` contract atomically transfers the
 maker asset out of the borrower's wallet and credits the taker asset to
 a configurable recipient.
 
-**Integration shape for Vaipakam:** the dapp builds a Fusion order with
-the borrower's vault as the `maker` and the diamond as the `recipient`
-of the taker asset. The diamond's role is purely the receiving address;
-1inch's contract handles the actual swap.
+**Integration shape for Vaipakam:** the diamond is the Fusion order
+`maker`, `recipient`, AND `postInteraction` target — see §5.1 for
+the final architecture. The diamond signs the orderHash via ERC-1271
+(no borrower-side off-chain signature needed). On fill, Fusion's
+`Settlement` contract transfers the principal to the diamond and
+calls `diamond.postInteraction(...)` atomically, which runs the
+full settlement waterfall inside the solver's fill tx. (Earlier
+revisions of this section described a "vault as maker, diamond as
+passive recipient" shape; that was rejected during Codex round-1
+review — it left the orderHash → loanId binding unenforceable, the
+balance-delta finalize step racy, and the cross-loan substitution
+vector open. The final architecture closes all three.)
 
 - **Settlement window:** 1-3 minutes typical; configurable per order.
 - **Solver depth:** 30+ resolvers, large overlap with 1inch v6 routes.
@@ -230,13 +238,21 @@ Phase 1 surface — three external entry points:
      `s.orderHashToLoanId[orderHash] != 0`. Prevents a second loan
      from clobbering the first's reverse-index mapping.
   7. minOutput floor: compute `floor = lenderLeg + treasuryLeg` from
-     `IVaipakamPrepayContext.getPrepayContext(loanId, block.timestamp)`;
-     revert `IntentMinOutputBelowFloor(min, required)` if
-     `order.makingAmount < floor × (10_000 + cfgIntentMinOutputBufferBps)
-     / 10_000`. (Note: in v1.1's diamond-as-maker model, the
-     borrower's `minOutput` is the Fusion order's `takerAmount`
-     — the principal asset they accept in exchange for the
-     collateral they're selling.)
+     `IVaipakamPrepayContext.getPrepayContext(loanId, block.timestamp)`.
+     **Floor is denominated in the loan's PRINCIPAL asset** — it's
+     the amount that needs to come back from the swap to cover the
+     debt (Codex round-3 P1 #1). Compared against the Fusion order's
+     **`takerAmount` (principal side)**, NOT `makerAmount` (collateral
+     side):
+     ```
+     required = floor × (10_000 + cfgIntentMinOutputBufferBps) / 10_000
+     if (order.takerAmount < required) revert IntentMinOutputBelowFloor(order.takerAmount, required);
+     ```
+     This is unit-safe across any collateral/principal pair with
+     mismatched prices or decimals — the comparison is principal-
+     vs-principal. The Fusion `makerAmount` is informational at
+     commit (it equals `loan.collateralAmount` per field-validation
+     step 2) and the floor check has no opinion on it.
   8. Pull the pledged collateral from the borrower's vault into the
      diamond's custodial slot via `VaultFactoryFacet.vaultWithdrawERC20`.
   9. **Aggregate allowance management** (Codex round-2 P2 #7): the
@@ -306,15 +322,18 @@ Phase 1 surface — three external entry points:
   `IntentAlreadyFilled` so the user can't accidentally clear a commit
   whose principal already landed. Cancels Fusion-side via the
   protocol's `cancelOrder(orderHash)` (idempotent / no-op if already
-  expired), returns the custodial collateral to the current
-  borrower-NFT-owner's vault using the internal direct-credit pattern
-  (§5.3), clears the commit slot. Emits `SwapToRepayIntentCancelled`.
+  expired), returns the custodial collateral to **`loan.borrower`'s
+  vault** (the commit-time borrower-of-record, where RiskFacet,
+  DefaultedFacet, and RepayFacet recovery paths look for it — see
+  §5.5 for the full authority-vs-return-target rationale) via the
+  internal direct-credit pattern (§5.3), clears the commit slot.
+  Emits `SwapToRepayIntentCancelled`.
 
 - **`cancelExpiredIntent(uint256 loanId)`** — Permissionless safety
   net. Callable after `commit.deadline + cfgIntentCancelGraceSeconds`
   (default 24h). Same already-filled pre-check; collateral always
-  returns to the **current** borrower-NFT-owner's vault (never the
-  caller's wallet — no incentive abuse). Emits
+  returns to **`loan.borrower`'s vault** (never the caller's
+  wallet — no incentive abuse). Emits
   `SwapToRepayIntentCancelled` with `cancelledBy = msg.sender` for
   observability. Bypasses the §5.6 admin-flag check IFF a commit
   exists, so a chain-toggle-off can't strand custodial collateral.
@@ -425,10 +444,11 @@ uint256 minOut = (floor * (10_000 + s.cfgIntentMinOutputBufferBps)) / 10_000;
 if (commit.minPrincipalOut < minOut) revert IntentMinOutputBelowFloor(commit.minPrincipalOut, minOut);
 ```
 
-`finalizeSwapToRepayIntent` re-asserts the floor against the *actual*
-delivered principal — so even if the solver overdelivers (better than
-the committed `minOutput`), the assertion stays correct, and any
-favourable surplus flows to the borrower's EOA via the same waterfall
+The `postInteraction` hook re-asserts the floor (against the *live*
+recomputed `lenderLeg + treasuryLeg` at fill time, see §5.1
+postInteraction step 3) — so even if the solver overdelivers (better
+than the committed `minOutput`), the assertion stays correct, and
+any favourable surplus flows to the borrower's EOA via the same waterfall
 v1 uses.
 
 ### 5.5 Cancel paths — borrower button + permissionless safety net
@@ -521,24 +541,24 @@ to re-derive it:
    book. The swap calldata never sits in the public mempool waiting
    to be sandwiched. This is a primary feature of intent-based
    protocols, not a property of Vaipakam's integration.
-2. **`finalize` front-running.** The function is permissionless — any
-   observer can poke it. Intentionally: it's a public-good call. The
-   body reads `principalBalance >= minPrincipalOut`, then runs the
-   settlement waterfall (lender vault credit, treasury cut, borrower
-   surplus to EOA). All targets are determined by the immutable loan
-   struct. No oracle read at finalize, no swap, no arbitrage
-   opportunity — whoever calls it gets nothing. The result is
-   identical regardless of caller.
-3. **Steal-the-principal-between-fill-and-finalize.** Once the
-   principal lands at the diamond, the only code path that touches it
-   is `finalize` itself, and it routes exclusively via the loan
-   struct's immutable lender / borrower addresses. Custodial
-   accounting is keyed by `loanId`; there's no "claim someone else's
+2. **`postInteraction` front-running.** The hook is not externally
+   callable — `msg.sender` must be `cfgFusionLimitOrderProtocol`
+   (§5.1 postInteraction step 1). No public-mempool front-run vector
+   exists for the settlement step.
+3. **Steal-the-principal-during-fill.** The principal lands at the
+   diamond inside Fusion's fill transaction and the same tx's
+   `postInteraction` routes it exclusively via the loan struct's
+   immutable lender / borrower addresses. There is no idle window
+   where the principal sits at the diamond unattributed — the
+   settlement is atomic with the fill. Custodial accounting is keyed
+   by `loanId` + `orderHash`; there's no "claim someone else's
    intent" surface.
-4. **Replay.** `finalize` clears the commit slot; the orderHash is
-   recorded as filled in Fusion's `Settlement` contract too (Fusion's
-   own anti-replay). The same Fusion order can't be filled twice; the
-   same Vaipakam loan can't be finalized twice.
+4. **Replay.** `postInteraction` clears `intentCommits[loanId]` AND
+   `orderHashToLoanId[orderHash]` atomically; the orderHash is
+   recorded as filled in Fusion's `LimitOrderProtocol` too (Fusion's
+   own anti-replay). The same Fusion order can't be filled twice;
+   the same Vaipakam loan can't be settled twice via the same
+   intent.
 5. **Cross-loan substitution.** The commit binds an `orderHash` to a
    `loanId` via the storage reverse-index (§5.2). The binding is
    enforced *during the fill itself* via the diamond's ERC-1271
@@ -600,16 +620,41 @@ a new internal force-cancel path:
   still reverts with `IntentPending(loanId)` — the borrower's
   intent is healthy enough to deserve the 5-min + 24h window.
 
-**`DefaultedFacet.markDefaulted` interaction.** Time-default doesn't
-need the same urgency (it only fires after grace, by which point the
-intent's `cancelExpiredIntent` window has already passed). Default
-behavior: `markDefaulted` reverts with `IntentPending(loanId)` while
-a commit exists. If the loan's `endTime + gracePeriod` AND the
-intent's `commit.deadline + cancelGrace` have both passed, the
-permissionless `cancelExpiredIntent` is callable by anyone (including
-the would-be defaulter) to free the collateral, then `markDefaulted`
-proceeds in a follow-up tx. No race because both windows are
-explicit, not adversarial.
+**`DefaultedFacet.markDefaulted` force-cancel** (Codex round-3 P1 #8).
+A borrower committing shortly before `endTime + gracePeriod` would
+otherwise gain an extra ~24h delay against default: the intent's
+`commit.deadline + cancelGrace` lives 24h past Fusion's 5min
+deadline, which extends past `endTime + gracePeriod` if the commit
+landed close to maturity. Same force-cancel pattern as
+`triggerLiquidation`:
+
+- `markDefaulted(loanId, ...)` checks `s.intentCommits[loanId].orderHash`.
+- If non-zero AND `block.timestamp >= loan.endTime + gracePeriod`
+  (the loan is already defaultable on time-grounds), the facet
+  force-cancels: calls Fusion's `cancelOrder`, returns custodial
+  collateral to `loan.borrower`'s vault, decrements aggregate
+  allowance, clears commit slots, emits
+  `SwapToRepayIntentForceCancelled(loanId, reason=timeDefaultDue)`,
+  then proceeds with the standard `markDefaulted` flow.
+- If commit exists but loan is NOT yet defaultable (commit landed
+  while still inside grace), `markDefaulted` reverts with
+  `IntentPending(loanId)` — same as `triggerLiquidation`'s healthy
+  path. The default caller can retry after grace.
+
+**`RepayFacet.repayLoan` interaction** (Codex round-3 P1 #7). Third
+parties can call `repayLoan` on Active ERC20 loans. If a repay
+landed while a swap-to-repay intent has the collateral in custody,
+the loan would flip Repaid via the regular path and the custodial
+collateral would orphan (no claim, no recovery). Block this with the
+same revert pattern:
+
+- `repayLoan(loanId)` and `repayPartial(loanId, amount)` both check
+  `s.intentCommits[loanId].orderHash`. If non-zero, revert with
+  `IntentPending(loanId)`.
+- No force-cancel path here — `repayLoan` is voluntary; whoever
+  called it can wait for the borrower's auction + cancel-grace, or
+  the borrower can cancel and accept regular repayment manually.
+  Unlike liquidation, there's no lender-protection urgency.
 
 **Why HF-1.0 threshold for force-cancel and not HF-1.5 (the
 MIN_HEALTH_FACTOR at loan init)?** Force-cancel is a lender-protection
@@ -631,8 +676,10 @@ no balance-delta inference needed.
   everything; the residual is zero.
 - If `consumed < custodialCollateral`, the difference
   (`residual = custodialCollateral - consumed`) is the unspent
-  collateral. The hook transfers `residual` directly to the
-  **current** borrower-NFT-owner's vault via
+  collateral. The hook transfers `residual` directly to
+  **`loan.borrower`'s vault** (the commit-time borrower-of-record
+  — same target the cancel paths use; see §5.5 for the
+  authority-vs-return-target split rationale) via
   `LibVaipakam.recordVaultDeposit` (same internal helper §5.3 uses),
   in the same atomic transaction as the settlement waterfall.
 
@@ -734,9 +781,20 @@ Three new event handlers in `apps/indexer/src/chainIndexer.ts`:
   distinguishes borrower-initiated (the regular `cancel`) from
   permissionless-poke (the `cancelExpired` path) for activity feed
   attribution.
+- `SwapToRepayIntentForceCancelled` (Codex round-3 P2 #6) — delete
+  the `swap_to_repay_intents` row. The loan flips to Defaulted (if
+  `reason == timeDefaultDue` or HF-based liquidation actually
+  succeeded) or stays Active (if force-cancel ran but liquidation
+  reverted downstream). The `reason` enum field
+  (`hfBelowLiquidationThreshold`, `timeDefaultDue`) drives the
+  activity-feed copy: "intent force-cancelled by liquidation" vs
+  "intent force-cancelled by time default". This event is emitted
+  by `triggerLiquidation` (§5.8 layer 2) and `markDefaulted` (§5.8
+  force-cancel) inside the same tx as the recovery action — the
+  indexer can attribute the row by the bundling tx hash.
 
 `apps/indexer/scripts/check-event-coverage.mjs` will fail until
-these three events are handled (or allowlisted). Adding the typed
+these four events are handled (or allowlisted). Adding the typed
 table is preferred over allowlisting since intent state IS
 user-facing projection (the dapp needs to render "you have a
 pending intent fill").
