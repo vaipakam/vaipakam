@@ -36,8 +36,8 @@ import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
  *           (creating a new loan). Principal from the new lender flows to
  *           the borrower.
  *        2. Borrower calls {refinanceLoan}: repays the old lender
- *           (principal + full-term interest + any shortfall — early
- *           repayment economics per README), releases old collateral,
+ *           (principal + full-term interest — early repayment economics
+ *           per README), releases old collateral,
  *           verifies post-refinance HF ≥ 1.5 and LTV ≤ loanInitMaxLtvBps on the new
  *           loan, and transitions the old loan to Repaid.
  */
@@ -50,7 +50,8 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     /// @param borrower The borrower's address.
     /// @param oldLender The original lender's address.
     /// @param newLender The new lender's address.
-    /// @param shortfallPaid Any shortfall amount paid by borrower.
+    /// @param shortfallPaid Reserved for ABI compatibility; refinance no
+    ///        longer charges a rate shortfall on top of full-term interest.
     /// @param oldLoanNewStatus The original loan's `LoanStatus` after the
     ///        refinance — always `Repaid` (1). Carried explicitly so an
     ///        indexer flips status from the payload rather than inferring
@@ -78,8 +79,8 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
      *         creating a new loan. Principal from Lender B is sent to alice.
      *      3. alice calls this function to close the old loan:
      *         - Verifies the Borrower Offer was accepted and a new loan exists.
-     *         - Repays old lender (principal + full-term interest + shortfall;
-     *           see LibEntitlement.fullTermInterest — matches README early
+     *         - Repays old lender (principal + full-term interest; see
+     *           LibEntitlement.fullTermInterest — matches README early
      *           repayment economics).
      *         - Releases old collateral back to alice.
      *         - Checks post-refinance HF and LTV on new loan.
@@ -175,25 +176,20 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             oldLoan.durationDays
         );
 
-        // Shortfall: if new offer yields less interest than old loan expected
-        uint256 newExpectedInterest = LibEntitlement.fullTermInterest(
-            offer.amount,
-            offer.interestRateBps,
-            offer.durationDays
-        );
+        // Refinance closes the old loan, so the original lender exits fully
+        // protected at principal + full-term interest. Do not add the
+        // lower-rate offer's interest delta here; unlike transfer/offset
+        // paths, there is no remaining earning slice to top up.
         uint256 shortfall = 0;
-        if (newExpectedInterest < oldInterest) {
-            shortfall = oldInterest - newExpectedInterest;
-        }
 
-        // Treasury fee on interest portion (1% of interest + shortfall).
+        // Treasury fee on the old loan's full-term interest.
         // Lender Yield Fee discount (Tokenomics §6): when the old lender has
         // platform-level VPFI-discount consent AND holds >= the required VPFI
         // in vault, the treasury cut is paid in VPFI from the old lender's
         // vault and the old lender keeps 100% of interestPortion in the
         // lending asset. tryApplyYieldFee silently falls back on any
         // precondition failure.
-        uint256 interestPortion = oldInterest + shortfall;
+        uint256 interestPortion = oldInterest;
         (uint256 treasuryFee, uint256 lenderInterest) = LibEntitlement.splitTreasury(
             interestPortion
         );

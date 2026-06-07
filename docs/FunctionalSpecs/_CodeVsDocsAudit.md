@@ -41,6 +41,7 @@ copying what the code does.
 
 | Date opened | Divergent symbol | Resolution | Closed by |
 |-------------|------------------|------------|-----------|
+| 2026-06-07 | `RefinanceFacet.refinanceLoan` added `oldInterest + shortfall` even though the original lender exits fully protected at principal + full-term interest | **Code aligned to spec.** Refinance now charges only the old loan's full-term interest before the existing treasury split; the lower-rate offer delta is not stacked on top. Contract comments, borrower-facing English copy, and the refinance spec warning were updated to match. | #411 |
 | 2026-05-22 | `ADR-0004` "every cross-chain contract carries `GuardianPausable`" (over-broad — `VpfiPoolRateGovernor` does not extend it) AND `ConfigureCcip._setGuardians` does not wire `VPFIMirrorToken` | **Both directions addressed.** ADR-0004 wording qualified to "every cross-chain contract with a runtime send / receive path" + enumerated the contracts that carry the pause base + named `VpfiPoolRateGovernor` as the intentional exception (rate-limit admin only, no runtime send/receive). `ConfigureCcip._setGuardians` extended to wire `VPFIMirrorToken` on mirror chains (the canonical `VPFIToken` is OFT-shaped and paused via its own AccessControl path, not the cross-chain guardian — left untouched). | #200 + #201 |
 
 ---

@@ -551,20 +551,49 @@ contract RefinanceFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev Covers shortfall payment branch in refinanceLoan (new interest < old expected)
-    function testRefinanceLoanWithShortfallPaid() public {
+    /// @dev Lower-rate refinance offers should not add a rate shortfall on
+    ///      top of old full-term interest. The old lender exits the loan, so
+    ///      principal + oldInterest is the complete protected economics
+    ///      before the existing treasury split.
+    function testRefinanceLoanDoesNotDoubleCountLowerRateShortfall() public {
         _acceptBorrowerOffer(borrowerOfferId);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(uint256(2e18)));
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5000)));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
-        ERC20Mock(mockERC20).mint(borrower, 10 ether);
+        address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        uint256 borrowerBefore = ERC20(mockERC20).balanceOf(borrower);
+        uint256 lenderVaultBefore = ERC20(mockERC20).balanceOf(lenderVault);
+        uint256 treasuryBefore = ERC20(mockERC20).balanceOf(address(diamond));
+
+        uint256 oldInterest = (PRINCIPAL * 500 * 30) /
+            (LibVaipakam.DAYS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+        uint256 newExpectedInterest = (PRINCIPAL * 400 * 30) /
+            (LibVaipakam.DAYS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+        uint256 legacyShortfall = oldInterest - newExpectedInterest;
+        uint256 treasuryFee = (oldInterest * LibVaipakam.TREASURY_FEE_BPS) /
+            LibVaipakam.BASIS_POINTS;
+        uint256 lenderDue = PRINCIPAL + (oldInterest - treasuryFee);
 
         vm.prank(borrower);
         RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
+
+        assertGt(legacyShortfall, 0, "fixture must exercise lower-rate offer");
+        assertEq(
+            ERC20(mockERC20).balanceOf(lenderVault) - lenderVaultBefore,
+            lenderDue,
+            "old lender receives principal plus old full-term interest net of treasury fee"
+        );
+        assertEq(
+            ERC20(mockERC20).balanceOf(address(diamond)) - treasuryBefore,
+            treasuryFee,
+            "treasury receives fee only on old full-term interest"
+        );
+        assertEq(
+            borrowerBefore - ERC20(mockERC20).balanceOf(borrower),
+            PRINCIPAL + oldInterest,
+            "borrower must not pay oldInterest plus legacyShortfall"
+        );
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
