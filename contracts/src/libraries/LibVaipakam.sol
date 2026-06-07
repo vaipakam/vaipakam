@@ -3303,6 +3303,29 @@ library LibVaipakam {
         ///      `getIntentCommit(loanId)` view function on the
         ///      SwapToRepayIntentFacet.
         mapping(bytes32 => bytes) intentExtensionBytes;
+        /// @dev Codex round-1 PR #420 P2 #3 — refcount per
+        ///      `extensionHash`. Two concurrent commits sharing the
+        ///      same canonical extension bytes (the common case for
+        ///      v1.1 since every commit on this diamond produces an
+        ///      extension consisting of `(diamond, diamond)`)
+        ///      increment this rather than overwrite the mapping
+        ///      entry, and only the LAST teardown deletes the bytes.
+        ///      Without this, closing one commit deletes the bytes
+        ///      another live commit still references; `getIntentCommit`
+        ///      on that commit would return empty bytes and the
+        ///      dapp's resolver-pickup post would fail.
+        mapping(bytes32 => uint256) intentExtensionBytesRefCount;
+        /// @dev Codex round-1 PR #420 P1 #2 — nonce uniqueness per
+        ///      live commit on the diamond. LOP v4 routes our
+        ///      `allowPartialFills == false && allowMultipleFills ==
+        ///      false` orders through the bit-invalidator path
+        ///      where (maker, nonceOrEpoch) is the slot key. Two
+        ///      orders sharing the same nonceOrEpoch land in the
+        ///      same bit-slot — the first fill invalidates BOTH
+        ///      orders (Fusion treats them as duplicates). Tracking
+        ///      used nonces here + rejecting reuse forces the dapp
+        ///      to vary nonceOrEpoch across borrowers.
+        mapping(uint40 => bool) intentNonceUsed;
     }
 
     /// @dev One entry of the treasury-conversion target allocation
@@ -5184,6 +5207,41 @@ library LibVaipakam {
         uint256 amount
     ) internal {
         storageSlot().protocolTrackedVaultBalance[user][token] -= amount;
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    //  T-090 v1.1 (#389) — documented config defaults
+    //  Codex round-1 PR #420 P2 #4: storage-zero values must
+    //  fall back to the documented defaults so a fresh deploy
+    //  where governance enables the surface without explicitly
+    //  setting every knob doesn't ship with broken invariants
+    //  (HF gate disabled, zero auction window, zero buffer, etc.).
+    // ─────────────────────────────────────────────────────────────
+    uint256 internal constant DEFAULT_INTENT_MIN_COMMIT_HF = 1.2e18;
+    uint16 internal constant DEFAULT_INTENT_MIN_OUTPUT_BUFFER_BPS = 200;
+    uint32 internal constant DEFAULT_INTENT_MIN_AUCTION_SECONDS = 60;
+    uint32 internal constant DEFAULT_INTENT_MAX_AUCTION_SECONDS = 600;
+    uint32 internal constant DEFAULT_INTENT_CANCEL_GRACE_SECONDS = 86_400;
+
+    function cfgIntentMinCommitHFEffective() internal view returns (uint256) {
+        uint256 v = storageSlot().cfgIntentMinCommitHF;
+        return v == 0 ? DEFAULT_INTENT_MIN_COMMIT_HF : v;
+    }
+    function cfgIntentMinOutputBufferBpsEffective() internal view returns (uint16) {
+        uint16 v = storageSlot().cfgIntentMinOutputBufferBps;
+        return v == 0 ? DEFAULT_INTENT_MIN_OUTPUT_BUFFER_BPS : v;
+    }
+    function cfgIntentMinAuctionSecondsEffective() internal view returns (uint32) {
+        uint32 v = storageSlot().cfgIntentMinAuctionSeconds;
+        return v == 0 ? DEFAULT_INTENT_MIN_AUCTION_SECONDS : v;
+    }
+    function cfgIntentMaxAuctionSecondsEffective() internal view returns (uint32) {
+        uint32 v = storageSlot().cfgIntentMaxAuctionSeconds;
+        return v == 0 ? DEFAULT_INTENT_MAX_AUCTION_SECONDS : v;
+    }
+    function cfgIntentCancelGraceSecondsEffective() internal view returns (uint32) {
+        uint32 v = storageSlot().cfgIntentCancelGraceSeconds;
+        return v == 0 ? DEFAULT_INTENT_CANCEL_GRACE_SECONDS : v;
     }
 
     /**

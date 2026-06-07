@@ -77,6 +77,14 @@ const DELIBERATELY_NOT_HANDLED = {
     'T-086 Round-8 (#358) §19.7 — companion event recording the proceeds amount credited to the borrower\'s vault protocol-tracked balance. UI-facing breadcrumb so the borrower\'s "withdrawable balance" pane can refresh; no loans/offers row field for it directly (the proceeds land in `vaultProtocolTrackedBalance` which the standard `vaultWithdrawERC20` pulls from). Schema-side activity_events surfacing is a follow-up.',
   OfferSaleProceedsSplit:
     'T-086 Round-8 (#358) Codex round-3 user-directed redesign — fires on the post-acceptance parallel-sale fill path (lender accepted first, buyer fills later, diamond splits proceeds + settles the loan atomically). The loan-side terminal flip is recorded via the `LoanRepaid` / `LoanSettled` event chain that the existing executorFinalizePrepaySale path emits via LibLifecycle; this companion event carries the per-recipient split breakdown for activity_events surfacing. Schema-side handler is a Round-9 follow-up.',
+  SwapToRepayIntentCommitted:
+    'T-090 v1.1 Sub 1 (#416) — contract-side events. Indexer handler + `swap_to_repay_intents` D1 table land in Sub 2 (#417); allowlist entry removes when Sub 2 merges.',
+  SwapToRepayIntentFilled:
+    'T-090 v1.1 Sub 1 — see SwapToRepayIntentCommitted. Same Sub 2 (#417) follow-up.',
+  SwapToRepayIntentCancelled:
+    'T-090 v1.1 Sub 1 — see SwapToRepayIntentCommitted. Same Sub 2 (#417) follow-up.',
+  SwapToRepayIntentForceCancelled:
+    'T-090 v1.1 Sub 1 — see SwapToRepayIntentCommitted. Same Sub 2 (#417) follow-up.',
 };
 
 /** Recursively collect every `.sol` file under a directory. */

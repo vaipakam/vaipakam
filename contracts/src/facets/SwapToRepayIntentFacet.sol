@@ -342,6 +342,8 @@ contract SwapToRepayIntentFacet is
     ///      bytecode changes.
     bytes32 private constant _FIELD_DEADLINE = keccak256("deadline");
     bytes32 private constant _FIELD_SALT_EXTENSION = keccak256("salt-extension-binding");
+    bytes32 private constant _FIELD_EXTENSION_LAYOUT = keccak256("extension-layout");
+    bytes32 private constant _FIELD_NONCE_REUSED = keccak256("makerTraits-nonce-reused");
     bytes32 private constant _REASON_HAS_EXTENSION = keccak256("hasExtension");
     bytes32 private constant _REASON_PRE_INTERACTION = keccak256("needPreInteractionCall");
     bytes32 private constant _REASON_POST_INTERACTION = keccak256("needPostInteractionCall");
@@ -414,11 +416,17 @@ contract SwapToRepayIntentFacet is
         if (block.timestamp > graceEnd) revert RepaymentPastGracePeriod();
 
         // ── §5.1 step 2: field + makerTraits binding checks ─────────
-        // Deadline bounds (Codex round-8 P1 #5 + round-5 P2 #5):
+        // Deadline bounds (Codex round-8 P1 #5 + round-5 P2 #5).
+        // Use effective getters so a deploy where governance
+        // enabled the surface without explicitly setting every knob
+        // still gets the documented defaults (Codex round-1 PR #420
+        // P2 #4).
+        uint32 minAuctionSec = LibVaipakam.cfgIntentMinAuctionSecondsEffective();
+        uint32 maxAuctionSec = LibVaipakam.cfgIntentMaxAuctionSecondsEffective();
         if (
             params.deadline <= block.timestamp ||
-            params.deadline < block.timestamp + s.cfgIntentMinAuctionSeconds ||
-            params.deadline > block.timestamp + s.cfgIntentMaxAuctionSeconds ||
+            params.deadline < block.timestamp + minAuctionSec ||
+            params.deadline > block.timestamp + maxAuctionSec ||
             uint256(params.deadline) > graceEnd
         ) revert IntentOrderFieldsMismatch(_FIELD_DEADLINE);
         // makerTraits bits (Codex round-8 P1 #1 + round-10 P2 #3/#4):
@@ -448,14 +456,36 @@ contract SwapToRepayIntentFacet is
         bytes32 extensionHash = keccak256(params.extension);
         if ((params.salt & ((1 << 160) - 1)) != uint256(uint160(uint256(extensionHash))))
             revert IntentOrderFieldsMismatch(_FIELD_SALT_EXTENSION);
+        // Extension-layout validation (Codex round-1 PR #420 P1 #1)
+        // — extension bytes MUST bytewise match the canonical
+        // layout {canonicalExtension} returns. Without this a
+        // borrower can supply extension bytes whose hash matches
+        // the salt but whose pre+post-interaction targets point at
+        // a malicious contract, causing LOP to call into that
+        // contract on fill.
+        if (extensionHash != keccak256(canonicalExtension()))
+            revert IntentOrderFieldsMismatch(_FIELD_EXTENSION_LAYOUT);
+        // Nonce uniqueness (Codex round-1 PR #420 P1 #2) —
+        // makerTraits.nonceOrEpoch field (bits 120-159, uint40) is
+        // the LOP bit-invalidator slot key for our no-partial /
+        // no-multi orders. Two live commits sharing the same nonce
+        // land in the same bit-slot and the first fill invalidates
+        // BOTH; refuse reuse.
+        uint40 nonce = uint40((params.makerTraits >> 120) & ((1 << 40) - 1));
+        if (s.intentNonceUsed[nonce])
+            revert IntentMakerTraitsMismatch(_FIELD_NONCE_REUSED);
+        s.intentNonceUsed[nonce] = true;
 
         // ── §5.1 step 4: pre-commit HF gate (Codex round-10 P1 #1
         //    — HF_SCALE-scaled comparison) ────────────────────────────
         // Cross-facet staticcall to RiskFacet (we're already inside
         // the diamond; the call routes via the Diamond fallback).
         uint256 currentHF = RiskFacet(address(this)).calculateHealthFactor(loanId);
-        if (currentHF < s.cfgIntentMinCommitHF)
-            revert IntentBlockedHFTooLow(currentHF, s.cfgIntentMinCommitHF);
+        // Effective getter so a deploy that hasn't called
+        // `setIntentMinCommitHF` still ships the documented 1.2e18
+        // gate (Codex round-1 PR #420 P2 #4).
+        uint256 minHF = LibVaipakam.cfgIntentMinCommitHFEffective();
+        if (currentHF < minHF) revert IntentBlockedHFTooLow(currentHF, minHF);
 
         // ── §5.1 step 5: no-double-commit ───────────────────────────
         if (s.intentCommits[loanId].orderHash != bytes32(0))
@@ -471,8 +501,9 @@ contract SwapToRepayIntentFacet is
         );
         uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
         uint256 floor_ = lenderLeg + treasuryLeg + lateFee;
-        uint256 minOut = (floor_ * (LibVaipakam.BASIS_POINTS + s.cfgIntentMinOutputBufferBps))
-            / LibVaipakam.BASIS_POINTS;
+        uint256 minOut = (floor_ * (
+            LibVaipakam.BASIS_POINTS + LibVaipakam.cfgIntentMinOutputBufferBpsEffective()
+        )) / LibVaipakam.BASIS_POINTS;
         if (params.takerAmount < minOut)
             revert IntentMinOutputBelowFloor(params.takerAmount, minOut);
 
@@ -540,7 +571,13 @@ contract SwapToRepayIntentFacet is
             lopAtCommit: s.cfgFusionLimitOrderProtocol
         });
         s.orderHashToLoanId[orderHash] = loanId;
-        s.intentExtensionBytes[extensionHash] = params.extension;
+        // Refcount per extension hash (Codex round-1 PR #420 P2 #3).
+        // First commit at this hash stores the bytes; subsequent
+        // commits sharing the same hash just bump the counter.
+        if (s.intentExtensionBytesRefCount[extensionHash] == 0) {
+            s.intentExtensionBytes[extensionHash] = params.extension;
+        }
+        s.intentExtensionBytesRefCount[extensionHash] += 1;
         s.intentLiveCommitCount += 1;
 
         emit SwapToRepayIntentCommitted(
@@ -563,6 +600,39 @@ contract SwapToRepayIntentFacet is
         );
         require(ok && ret.length == 32, "lop ds");
         return abi.decode(ret, (bytes32));
+    }
+
+    /// @notice Returns the canonical LOP v4 extension bytes the
+    ///         borrower MUST supply at commit time (Codex round-1
+    ///         PR #420 P1 #1 — without this check a borrower can
+    ///         supply extension bytes that pass the salt-extension
+    ///         binding but encode the WRONG pre+post-interaction
+    ///         targets, causing LOP to call into an attacker-
+    ///         controlled contract during fill).
+    ///
+    ///         Layout per `lib/limit-order-protocol/contracts/libraries/ExtensionLib.sol`:
+    ///         the extension is a 32-byte offsets-word header
+    ///         followed by concatenated field bytes. Each of the 9
+    ///         dynamic fields stores its end-offset as a 28-bit
+    ///         value packed into the offsets word at position
+    ///         `i * 28`. For our shape (PreInteractionData =
+    ///         `address(this)`, PostInteractionData =
+    ///         `address(this)`, all other fields empty):
+    ///           - field index 6 (PreInteractionData) end-offset = 20
+    ///           - field index 7 (PostInteractionData) end-offset = 40
+    ///           - field index 8 (CustomData) end-offset = 40
+    ///           - all other field end-offsets = 0
+    ///         field content = `address(this) || address(this)`
+    ///         (20 + 20 bytes). Total extension length = 32 + 40
+    ///         = 72 bytes.
+    /// @dev    The dapp mirrors this construction off-chain so the
+    ///         borrower-supplied `params.extension` matches the
+    ///         canonical layout this returns.
+    function canonicalExtension() public view returns (bytes memory) {
+        uint256 offsets = (uint256(20) << (6 * 28))
+                        | (uint256(40) << (7 * 28))
+                        | (uint256(40) << (8 * 28));
+        return abi.encodePacked(offsets, address(this), address(this));
     }
 
     /**
@@ -623,7 +693,7 @@ contract SwapToRepayIntentFacet is
         // borrower's own clean recovery path.
         if (
             block.timestamp <
-                uint256(commit.deadline) + uint256(s.cfgIntentCancelGraceSeconds)
+                uint256(commit.deadline) + uint256(LibVaipakam.cfgIntentCancelGraceSecondsEffective())
         ) revert IntentNotPastCancelGrace();
 
         _executeCancel(s, loanId, commit, msg.sender);
@@ -799,7 +869,12 @@ contract SwapToRepayIntentFacet is
         orderHash = commit.orderHash;
         bytes32 extensionHash = commit.extensionHash;
         delete s.orderHashToLoanId[orderHash];
-        delete s.intentExtensionBytes[extensionHash];
+        // Refcount-aware delete (Codex round-1 PR #420 P2 #3) — only
+        // the LAST teardown for this extensionHash deletes the bytes.
+        s.intentExtensionBytesRefCount[extensionHash] -= 1;
+        if (s.intentExtensionBytesRefCount[extensionHash] == 0) {
+            delete s.intentExtensionBytes[extensionHash];
+        }
         delete s.intentCommits[loanId];
     }
 
@@ -952,9 +1027,16 @@ contract SwapToRepayIntentFacet is
         }
 
         // ── Step 8: storage cleanup ─────────────────────────────────
+        // Refcount-aware delete on the extension bytes (Codex
+        // round-1 PR #420 P2 #3) so a concurrent commit sharing
+        // the same canonical extension bytes still resolves
+        // through `getIntentCommit` after this teardown.
         bytes32 extensionHash = commit.extensionHash;
         delete s.orderHashToLoanId[orderHash];
-        delete s.intentExtensionBytes[extensionHash];
+        s.intentExtensionBytesRefCount[extensionHash] -= 1;
+        if (s.intentExtensionBytesRefCount[extensionHash] == 0) {
+            delete s.intentExtensionBytes[extensionHash];
+        }
         delete s.intentCommits[loanId];
 
         // ── Step 9: emit ────────────────────────────────────────────
