@@ -25,6 +25,7 @@ import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
+import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
@@ -560,6 +561,26 @@ contract HelperTest {
         selectors[1] = SwapToRepayFacet.swapToRepayPartial.selector;
     }
 
+    /// T-090 v1.1 (#389) — intent-based swap-to-repay facet selectors.
+    /// 3 external borrower entry points + 2 Fusion `LimitOrderProtocol`
+    /// hooks + ERC-1271 `isValidSignature` + 1 read-back view.
+    /// `getIntentCommit` is the dapp's read-back-then-post entry per
+    /// design §6.2.
+    function getSwapToRepayIntentFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](7);
+        selectors[0] = SwapToRepayIntentFacet.commitSwapToRepayIntent.selector;
+        selectors[1] = SwapToRepayIntentFacet.cancelSwapToRepayIntent.selector;
+        selectors[2] = SwapToRepayIntentFacet.cancelExpiredIntent.selector;
+        selectors[3] = SwapToRepayIntentFacet.preInteraction.selector;
+        selectors[4] = SwapToRepayIntentFacet.postInteraction.selector;
+        selectors[5] = SwapToRepayIntentFacet.isValidSignature.selector;
+        selectors[6] = SwapToRepayIntentFacet.getIntentCommit.selector;
+    }
+
     function getDefaultedFacetSelectors()
         public
         pure
@@ -948,7 +969,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](87);
+        selectors = new bytes4[](103);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -1087,6 +1108,26 @@ contract HelperTest {
         // T-090 — Borrower-initiated swap-to-repay slippage cap.
         selectors[85] = ConfigFacet.setMaxSwapToRepaySlippageBps.selector;
         selectors[86] = ConfigFacet.getMaxSwapToRepaySlippageBps.selector;
+        // T-090 v1.1 (#389) — intent-based swap-to-repay config surface.
+        // 8 setters + 8 getters per design §5.6; LOP-rotation guard
+        // enforced on `setFusionLimitOrderProtocol`. See
+        // `docs/DesignsAndPlans/SwapToRepayIntentBased.md`.
+        selectors[87] = ConfigFacet.setIntentSwapToRepayEnabled.selector;
+        selectors[88] = ConfigFacet.setIntentMinCommitHF.selector;
+        selectors[89] = ConfigFacet.setIntentMinOutputBufferBps.selector;
+        selectors[90] = ConfigFacet.setIntentAuctionSecondsBounds.selector;
+        selectors[91] = ConfigFacet.setIntentCancelGraceSeconds.selector;
+        selectors[92] = ConfigFacet.setFusionLimitOrderProtocol.selector;
+        selectors[93] = ConfigFacet.setIntentAllowedPrincipalToken.selector;
+        selectors[94] = ConfigFacet.setIntentAllowedCollateralToken.selector;
+        selectors[95] = ConfigFacet.getIntentSwapToRepayEnabled.selector;
+        selectors[96] = ConfigFacet.getIntentMinCommitHF.selector;
+        selectors[97] = ConfigFacet.getIntentMinOutputBufferBps.selector;
+        selectors[98] = ConfigFacet.getIntentAuctionSecondsBounds.selector;
+        selectors[99] = ConfigFacet.getIntentCancelGraceSeconds.selector;
+        selectors[100] = ConfigFacet.getFusionLimitOrderProtocol.selector;
+        selectors[101] = ConfigFacet.getIntentAllowedPrincipalToken.selector;
+        selectors[102] = ConfigFacet.getIntentAllowedCollateralToken.selector;
         return selectors;
     }
 

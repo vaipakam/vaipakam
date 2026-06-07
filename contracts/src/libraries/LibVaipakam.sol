@@ -1820,6 +1820,93 @@ library LibVaipakam {
      *          must pass. See `LibAuth.requireKeeperFor` and
      *          `ProfileFacet.setLoanKeeperEnabled`.
      */
+
+    /**
+     * @dev T-090 v1.1 (#389) — per-loan swap-to-repay intent commit.
+     *      Projection of the 1inch Fusion (Limit Order Protocol v4)
+     *      order that the diamond signs via ERC-1271 + the Vaipakam-
+     *      side bookkeeping needed for the
+     *      `pre/postInteraction` hooks and the cancel paths.
+     *
+     *      Shape per
+     *      `docs/DesignsAndPlans/SwapToRepayIntentBased.md` §5.2.
+     *
+     *      Fields that are derivable from the loan struct
+     *      (`maker == receiver == address(this)`,
+     *      `makerAsset == loan.collateralAsset`,
+     *      `takerAsset == loan.principalAsset`) are not stored — they
+     *      are recomputed at every use site so the storage footprint
+     *      stays minimal. `getIntentCommit(loanId)` on the
+     *      `SwapToRepayIntentFacet` returns the full reconstructed
+     *      Fusion order for the dapp to post to 1inch's resolver-pickup
+     *      endpoint.
+     */
+    struct SwapToRepayIntentCommit {
+        // ── Fusion-order projection (Codex round-7 P1 #4 + round-11
+        //    P1 #5 — every field the canonical hash + the
+        //    `cancelOrder(MakerTraits, bytes32)` call site need):
+        /// @dev Canonical 1inch LOP v4 orderHash, primary key for
+        ///      the ERC-1271 binding check + the pre/postInteraction
+        ///      hook lookup.
+        bytes32 orderHash;
+        /// @dev Borrower-supplied auction end; must equal
+        ///      `makerTraits.expiration()` (round-8 P1 #5) AND must
+        ///      be `<= loan.endTime + gracePeriod` (round-5 P2 #5).
+        uint64 deadline;
+        /// @dev `loan.collateralAmount` after the §5.1 step 8
+        ///      fee-on-transfer rejection invariant (`received ==
+        ///      loan.collateralAmount`). Kept separately to make the
+        ///      LOP order canonical hash recomputable from storage.
+        uint256 makerAmount;
+        /// @dev Borrower-picked principal-side minimum (§5.4 floor
+        ///      enforced at commit + recomputed at postInteraction
+        ///      with live `lateFee`).
+        uint256 takerAmount;
+        /// @dev Borrower-supplied; low 160 bits must equal
+        ///      `uint160(uint256(keccak256(params.extension)))` per
+        ///      LOP v4's extension-binding rule (Codex round-8 P1 #1).
+        uint256 salt;
+        /// @dev Packed 1inch LOP v4 makerTraits. Stored as raw
+        ///      `uint256` here so `LibVaipakam` stays free of LOP
+        ///      dependency; cast to `MakerTraits` at use sites.
+        ///      Round-8 + round-10 + round-12 fix every bit-pattern
+        ///      check enforced at commit:
+        ///      `hasExtension == 1`,
+        ///      `needPreInteractionCall == 1`,
+        ///      `needPostInteractionCall == 1`,
+        ///      `getExpirationTime() == deadline`,
+        ///      `usePermit2 == 0` (Codex round-10 P2 #3),
+        ///      `allowPartialFills == 0` (Codex round-10 P2 #4),
+        ///      `allowMultipleFills == 0`.
+        uint256 makerTraits;
+        /// @dev `keccak256(params.extension)`; the full extension
+        ///      bytes live in `intentExtensionBytes` to keep this
+        ///      struct cheap.
+        bytes32 extensionHash;
+
+        // ── Vaipakam-side bookkeeping:
+        /// @dev Exact amount the diamond holds in custody from the
+        ///      vault withdraw. Equal to `makerAmount` after §5.1
+        ///      step 8 (fee-on-transfer rejection invariant). Used
+        ///      by cancel paths to know how much to return + by the
+        ///      per-token aggregate-allowance decrement on
+        ///      fill / cancel.
+        uint256 custodialCollateral;
+        /// @dev Commit-time borrower-NFT holder — for activity-feed
+        ///      attribution ONLY (Codex round-2 P2 #6). Cancel
+        ///      authority follows the CURRENT borrower-NFT holder,
+        ///      never this field.
+        address committedByForRecord;
+        /// @dev Codex round-10 P1 #6 — pinned Fusion
+        ///      `LimitOrderProtocol` address at commit time.
+        ///      Cancel + cancelExpired + every force-cancel branch +
+        ///      pre/postInteraction's auth check all read THIS, NOT
+        ///      `cfgFusionLimitOrderProtocol` (which might have
+        ///      rotated). Defense-in-depth alongside the
+        ///      `intentLiveCommitCount` rotation block.
+        address lopAtCommit;
+    }
+
     struct Storage {
         uint256 nextOfferId;
         uint256 nextLoanId;
@@ -3134,6 +3221,88 @@ library LibVaipakam {
         /// @dev Round-3.2 against Raja round-3.2 P3 #2 + §19.10 Q3 —
         ///      per-offer monotonically-increasing nonce.
         mapping(uint96 => uint64) parallelSaleNonce;
+        // ─────────────────────────────────────────────────────────
+        //  T-090 v1.1 (#389) — intent-based swap-to-repay surface
+        //  Storage shape per
+        //  docs/DesignsAndPlans/SwapToRepayIntentBased.md §5.2 + §5.6
+        //  Appended to the top-level Storage struct (NOT the nested
+        //  `protocolCfg` ProtocolConfig) per Codex round-7 P1 #5 —
+        //  growing the nested struct would shift every slot after
+        //  `protocolCfg` on upgrade and corrupt deployed state.
+        // ─────────────────────────────────────────────────────────
+        /// @dev §5.6 master switch. Default OFF on every chain; admin
+        ///      enables after operator-side LOP address + token
+        ///      allowlist verification.
+        bool cfgIntentSwapToRepayEnabled;
+        /// @dev §5.1 step 4 — HF_SCALE-scaled minimum HF required at
+        ///      commit. Default 1.2e18 = 120% (blocks already-stressed
+        ///      borrowers from using intent as a liquidation-stall
+        ///      tactic). Codex round-10 P1 #1: stored as HF_SCALE-
+        ///      scaled uint256, NOT BPS-scaled uint16.
+        uint256 cfgIntentMinCommitHF;
+        /// @dev §5.4 — buffer above (lenderLeg + treasuryLeg +
+        ///      lateFee) the borrower's takerAmount must clear.
+        ///      Default 200 bps = 2%.
+        uint16 cfgIntentMinOutputBufferBps;
+        /// @dev §5.1 step 2 — minimum auction window in seconds.
+        ///      Default 60.
+        uint32 cfgIntentMinAuctionSeconds;
+        /// @dev §5.1 step 2 — maximum auction window in seconds.
+        ///      Default 600 (5 min; Fusion's typical setting).
+        uint32 cfgIntentMaxAuctionSeconds;
+        /// @dev §5.5 — grace window after Fusion deadline before the
+        ///      permissionless cancelExpired path opens.
+        ///      Default 86400 = 24h.
+        uint32 cfgIntentCancelGraceSeconds;
+        /// @dev §5.1 — pinned Fusion LimitOrderProtocol address for
+        ///      this chain. Admin-rotatable via
+        ///      `setFusionLimitOrderProtocol`, BUT the setter reverts
+        ///      `IntentLOPRotationWhileCommitsLive` if
+        ///      `intentLiveCommitCount > 0` (Codex round-10 P1 #6) so
+        ///      already-posted orders' cancel + cancellation flows
+        ///      stay bound to the LOP they were committed against.
+        address cfgFusionLimitOrderProtocol;
+        /// @dev §5.1 step 1 + Codex round-8 P1 #6 — per-token explicit
+        ///      allowlists for principal + collateral. Both default-OFF;
+        ///      admin adds tokens after operator-side transfer
+        ///      round-trip probes confirm non-fee-on-transfer +
+        ///      non-rebasing behaviour. Replaces the upstream
+        ///      "Liquid leg" check which doesn't probe transfer
+        ///      symmetry (round-7's claim that it did was wrong).
+        mapping(address => bool) cfgIntentAllowedPrincipalTokens;
+        mapping(address => bool) cfgIntentAllowedCollateralTokens;
+        /// @dev §5.1 step 9 + Codex round-2 P2 #7 — per-token
+        ///      aggregate custodial collateral. Tracks the sum of all
+        ///      live `intentCommits[*].custodialCollateral` for this
+        ///      token so a second concurrent commit can re-approve
+        ///      Fusion's LimitOrderProtocol to the new aggregate
+        ///      without clobbering the first commit's allowance.
+        mapping(address => uint256) intentAggregateAllowance;
+        /// @dev §5.1 step 11 + Codex round-10 P1 #6 — live-commit count.
+        ///      Incremented on commit; decremented on
+        ///      postInteraction (fill) + cancel + cancelExpired +
+        ///      every force-cancel branch. `setFusionLimitOrderProtocol`
+        ///      reverts `IntentLOPRotationWhileCommitsLive` if this
+        ///      is non-zero; rotation only allowed when no commit is
+        ///      live (defense-in-depth alongside the per-commit
+        ///      `lopAtCommit` pin).
+        uint256 intentLiveCommitCount;
+        /// @dev §5.2 — commit projection keyed by loanId.
+        mapping(uint256 => SwapToRepayIntentCommit) intentCommits;
+        /// @dev §5.2 — reverse-index orderHash → loanId for the
+        ///      ERC-1271 + pre/postInteraction hook lookups (the
+        ///      hooks receive only the orderHash from Fusion; they
+        ///      need the loanId to look up the commit and route to
+        ///      the right settlement waterfall).
+        mapping(bytes32 => uint256) orderHashToLoanId;
+        /// @dev §5.2 — extension bytes keyed by extensionHash. Kept
+        ///      off the SwapToRepayIntentCommit struct so the struct
+        ///      stays cheap; Fusion's protocol requires the
+        ///      borrower's posted order to include the full extension
+        ///      bytes, so the dapp reads them back via the
+        ///      `getIntentCommit(loanId)` view function on the
+        ///      SwapToRepayIntentFacet.
+        mapping(bytes32 => bytes) intentExtensionBytes;
     }
 
     /// @dev One entry of the treasury-conversion target allocation
