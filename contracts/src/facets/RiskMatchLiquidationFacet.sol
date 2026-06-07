@@ -153,9 +153,15 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // internal-match liquidator withdraws from every leg's
         // borrower vault simultaneously, so any live commit on
         // any of the three legs would orphan its custodial slot.
-        SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanIdA);
-        SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanIdB);
-        SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanIdC);
+        if (LibVaipakam.storageSlot().intentCommits[loanIdA].orderHash != bytes32(0)) {
+            SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanIdA);
+        }
+        if (LibVaipakam.storageSlot().intentCommits[loanIdB].orderHash != bytes32(0)) {
+            SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanIdB);
+        }
+        if (LibVaipakam.storageSlot().intentCommits[loanIdC].orderHash != bytes32(0)) {
+            SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanIdC);
+        }
         // Tier-1 sanctions: matcher receives 1% per leg in PR5;
         // blocking sanctioned wallets here keeps the value-receipt
         // path closed.

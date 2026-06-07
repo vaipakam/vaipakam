@@ -1171,7 +1171,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // + emit `SwapToRepayIntentForceCancelled`. Otherwise
         // revert `IntentPending` so the borrower's window is
         // honoured even mid-period.
-        SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanId);
+        if (LibVaipakam.storageSlot().intentCommits[loanId].orderHash != bytes32(0)) {
+            SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanId);
+        }
         // Sell-amount sizing: aim for `shortfall × (1 + slippageCap)` of
         // collateral so the swap clears even in the worst-case slippage
         // scenario. If the loan's remaining collateral is smaller, sell

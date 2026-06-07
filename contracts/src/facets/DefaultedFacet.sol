@@ -183,7 +183,9 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // `SwapToRepayIntentForceCancelled(TimeDefaultDue)`) then
         // proceed with the default flow. Pre-grace commits keep
         // their window — `IntentPending` revert (Codex round-5 P1 #8).
-        SwapToRepayIntentFacet(address(this)).forceCancelIntentIfPastDefaultOrRevert(loanId);
+        if (LibVaipakam.storageSlot().intentCommits[loanId].orderHash != bytes32(0)) {
+            SwapToRepayIntentFacet(address(this)).forceCancelIntentIfPastDefaultOrRevert(loanId);
+        }
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active)
