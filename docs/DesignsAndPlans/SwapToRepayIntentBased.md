@@ -378,6 +378,7 @@ Phase 1 surface — three external entry points:
        takerAmount: params.takerAmount,
        deadline: params.deadline,
        salt: params.salt,
+       makerTraits: params.makerTraits,      // Codex round-11 P1 #5
        extension: params.extension,
      });
      orderHash = fusion.hashOrder(finalOrder);  // canonical Fusion hash
@@ -406,9 +407,32 @@ address itself, NOT a separate `ALLOWANCE_TARGET` like 0x v2 uses) to the new
      across multiple concurrent intents on the same collateral token
      — no allowance can be reduced below the sum of outstanding
      maker amounts.
-  11. Record `intentCommits[loanId]` (orderHash, deadline,
-     takerAmount, custodialCollateral, committedByForRecord). Emit
-     `SwapToRepayIntentCommitted(loanId, orderHash, takerAmount,
+  11. Record `intentCommits[loanId]` with all the §5.2 storage
+     fields:
+     ```
+     s.intentCommits[loanId] = SwapToRepayIntentCommit({
+       orderHash:           orderHash,
+       deadline:            params.deadline,
+       makerAmount:         custodialCollateral,
+       takerAmount:         params.takerAmount,
+       salt:                params.salt,
+       makerTraits:         params.makerTraits,
+       extensionHash:       keccak256(params.extension),
+       custodialCollateral: custodialCollateral,
+       committedByForRecord: msg.sender,
+       lopAtCommit:         s.cfgFusionLimitOrderProtocol  // Codex round-11 P1 #2
+     });
+     s.orderHashToLoanId[orderHash] = loanId;
+     s.intentExtensionBytes[keccak256(params.extension)] = params.extension;
+     ```
+     **Increment the live-commit counter** (Codex round-11 P1 #2):
+     `s.intentLiveCommitCount += 1`. The setter
+     `setFusionLimitOrderProtocol` reads this for the
+     "rotation-while-commits-live" block (§5.6). Decremented in
+     postInteraction step 8 (fill) + both cancel paths (§5.5) +
+     every force-cancel path (§5.8 layer 2).
+
+     Emit `SwapToRepayIntentCommitted(loanId, orderHash, takerAmount,
      custodialCollateral)`.
 
 - **`postInteraction(...)`** — *Called by Fusion's `LimitOrderProtocol`
@@ -417,7 +441,14 @@ address itself, NOT a separate `ALLOWANCE_TARGET` like 0x v2 uses) to the new
   guard (Codex round-2 P1 #9 — without it a callback-capable token
   or malicious recipient could reenter the diamond mid-settlement).
   Sequence:
-  1. **Authorized-caller check** (Codex round-2 P1 #5 + round-10
+  1. **Reverse-index lookup first** (Codex round-11 P1 #7 — the
+     round-10 step ordering had this swapped; step 1 read
+     `intentCommits[loanId].lopAtCommit` but `loanId` was only
+     derived in step 2, so step 1 would have read `loanId == 0`'s
+     empty slot and rejected every legitimate fill). Derive
+     `loanId = s.orderHashToLoanId[orderHash]`. Revert
+     `IntentNotRegistered(orderHash)` if zero.
+  2. **Authorized-caller check** (Codex round-2 P1 #5 + round-10
      P1 #6): revert
      `IntentPostInteractionUnauthorized(msg.sender)` unless
      `msg.sender == s.intentCommits[loanId].lopAtCommit` (the
@@ -432,8 +463,6 @@ address itself, NOT a separate `ALLOWANCE_TARGET` like 0x v2 uses) to the new
      attacker-chosen `consumed`/`delivered` and trick the diamond
      into settling the wrong loan against unrelated principal-token
      balance.
-  2. Reverse-index lookup: `loanId = s.orderHashToLoanId[orderHash]`.
-     Revert `IntentNotRegistered(orderHash)` if zero.
   3. **Measure actual principal received via transient-storage
      baseline** (Codex round-5 P1 #2 + round-6 P1 #3). For
      fee-on-transfer or rebasing principal tokens, Fusion's
@@ -459,11 +488,14 @@ address itself, NOT a separate `ALLOWANCE_TARGET` like 0x v2 uses) to the new
      `postInteraction` uses:
      ```
      // preInteraction (Fusion calls via CALL, pre-transfer):
-     if (msg.sender != s.cfgFusionLimitOrderProtocol)
-       revert IntentPreInteractionUnauthorized(msg.sender);
      uint256 loanId = s.orderHashToLoanId[orderHash];
      if (loanId == 0 || s.intentCommits[loanId].orderHash != orderHash)
        revert IntentPreInteractionUnknownOrder(orderHash);
+     // Codex round-11 P2 #6 — check against the PINNED LOP for this
+     // commit, not the global config (same rationale as the
+     // postInteraction auth check at round-10 P1 #6):
+     if (msg.sender != s.intentCommits[loanId].lopAtCommit)
+       revert IntentPreInteractionUnauthorized(msg.sender);
      address principal = s.loans[loanId].principalAsset;
      uint256 baseline = IERC20(principal).balanceOf(address(this));
      assembly { tstore(orderHash, baseline) }
@@ -554,13 +586,28 @@ address itself, NOT a separate `ALLOWANCE_TARGET` like 0x v2 uses) to the new
      withdraw time.
 
      So the residual handling is two atomic operations:
-     (a) **Deposit residual to the vault** via the
-         diamond-internal-only `LibVaipakam.recordVaultDeposit`
-         helper, which updates `protocolTrackedVaultBalance[token]`
-         AND moves the tokens (this is what the existing
-         `LibPrepayCleanup` pattern uses; the helper is NOT the
-         public `vaultDepositERC20` that pulls from caller via
-         allowance — round-8 P1 #3 conflated the two).
+     (a) **Deposit residual to the vault — two on-chain operations**
+         (Codex round-11 P1 #1 — `LibVaipakam.recordVaultDeposit`
+         at `LibVaipakam.sol:4997-5003` ONLY updates the
+         protocol-tracked-balance counter; it does NOT move tokens.
+         The existing vault-credit pattern in `LibPrepayCleanup` etc.
+         calls `safeTransfer` first, then `recordVaultDeposit`).
+         The hook does:
+         ```
+         IERC20(loan.collateralAsset).safeTransfer(
+           VaultFactoryFacet(this).vaultOf(loan.borrower),
+           residual
+         );
+         LibVaipakam.recordVaultDeposit(
+           loan.borrower,
+           loan.collateralAsset,
+           residual
+         );
+         ```
+         First call moves the tokens from diamond → vault address;
+         second updates the protocol-tracked-balance counter so
+         `ClaimFacet.claimAsBorrower`'s withdraw-from-vault math
+         lines up.
      (b) **Let the canonical waterfall record the claim** by
          passing `actualCollateralConsumed = consumed`. The
          waterfall's existing `claim = loan.collateralAmount -
@@ -754,9 +801,11 @@ context computes:
 
 ```
 PrepayContext pctx = IVaipakamPrepayContext(this).getPrepayContext(loanId, block.timestamp);
-uint256 floor  = pctx.lenderLeg + pctx.treasuryLeg;
-uint256 minOut = (floor * (10_000 + s.cfgIntentMinOutputBufferBps)) / 10_000;
-if (commit.minPrincipalOut < minOut) revert IntentMinOutputBelowFloor(commit.minPrincipalOut, minOut);
+// Codex round-11 P1 #3 — must add lateFee; getPrepayContext omits it.
+uint256 lateFee = LibVaipakam.calculateLateFee(s.loans[loanId], block.timestamp);
+uint256 floor   = pctx.lenderLeg + pctx.treasuryLeg + lateFee;
+uint256 minOut  = (floor * (10_000 + s.cfgIntentMinOutputBufferBps)) / 10_000;
+if (params.takerAmount < minOut) revert IntentMinOutputBelowFloor(params.takerAmount, minOut);
 ```
 
 The `postInteraction` hook re-asserts the floor (against the *live*
@@ -1009,7 +1058,13 @@ while collateral sits in custody):
 
 - `triggerLiquidation(loanId, ...)` checks
   `s.intentCommits[loanId].orderHash`. If non-zero AND current HF <
-  `HF_LIQUIDATION_THRESHOLD` / `HF_SCALE` (1.0e18, the actual
+  `HF_LIQUIDATION_THRESHOLD` (== `HF_SCALE` == 1.0e18; Codex
+round-11 P1 #4 — the round-7 wording `HF_LIQUIDATION_THRESHOLD /
+HF_SCALE` was ambiguous, parses as Solidity division to `1` which
+would let insolvent loans through. Both constants equal 1e18, so
+"either name is fine" was the intent — sticking with the
+`HF_LIQUIDATION_THRESHOLD` name for liquidation comparisons), the
+actual
 liquidation threshold per `LibVaipakam.sol:68-69`; NOT
 `MIN_HEALTH_FACTOR` which is 1.5e18 — that's the loan-init / top-up
 threshold, not the liquidation threshold),
