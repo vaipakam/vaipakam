@@ -15,6 +15,7 @@ import RepayFacetABI from './RepayFacet.json';
 import SwapToRepayFacetABI from './SwapToRepayFacet.json';
 // T-090 v1.1 (#389) — intent-based swap-to-repay sibling facet.
 import SwapToRepayIntentFacetABI from './SwapToRepayIntentFacet.json';
+import IntentConfigFacetABI from './IntentConfigFacet.json';
 import DefaultedFacetABI from './DefaultedFacet.json';
 import RiskFacetABI from './RiskFacet.json';
 import RiskMatchLiquidationFacetABI from './RiskMatchLiquidationFacet.json';
@@ -82,6 +83,7 @@ export {
   RepayFacetABI,
   SwapToRepayFacetABI,
   SwapToRepayIntentFacetABI,
+  IntentConfigFacetABI,
   DefaultedFacetABI,
   RiskFacetABI,
   RiskMatchLiquidationFacetABI,
@@ -139,6 +141,7 @@ export const DIAMOND_ABI = [
   ...RepayFacetABI,
   ...SwapToRepayFacetABI,
   ...SwapToRepayIntentFacetABI,
+  ...IntentConfigFacetABI,
   ...DefaultedFacetABI,
   ...RiskFacetABI,
   ...RiskMatchLiquidationFacetABI,

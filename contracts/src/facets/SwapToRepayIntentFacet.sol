@@ -316,6 +316,15 @@ contract SwapToRepayIntentFacet is
     ///      fills), so accepting `needCheckEpochManager` would
     ///      produce an unfillable order. Codex round-2 PR #420 P2.
     uint256 private constant _NEED_CHECK_EPOCH_MANAGER_FLAG = 1 << 250;
+    /// @dev LOP v4 bit 247: when set on a WETH taker asset, the
+    ///      protocol unwraps WETH and sends native ETH to the
+    ///      `receiver` (the diamond). `postInteraction` then
+    ///      measures `IERC20(loan.principalAsset).balanceOf(this)`
+    ///      which would see ZERO (the ETH lives in the diamond's
+    ///      contract balance, not the ERC20 balance) and revert
+    ///      `IntentDeliveredBelowLiveFloor` even though the resolver
+    ///      paid in full. Codex round-3 PR #420 P2.
+    uint256 private constant _UNWRAP_WETH_FLAG = 1 << 247;
     /// @dev Expiration sub-field: bits 80-119 (40-bit uint).
     uint256 private constant _EXPIRATION_OFFSET = 80;
     uint256 private constant _UINT40_MASK = (1 << 40) - 1;
@@ -357,6 +366,7 @@ contract SwapToRepayIntentFacet is
     bytes32 private constant _REASON_MULTIPLE_FILLS = keccak256("allowMultipleFills");
     bytes32 private constant _REASON_USE_PERMIT2 = keccak256("usePermit2");
     bytes32 private constant _REASON_NEED_CHECK_EPOCH_MANAGER = keccak256("needCheckEpochManager");
+    bytes32 private constant _REASON_UNWRAP_WETH = keccak256("unwrapWeth");
     bytes32 private constant _REASON_EXPIRATION_MISMATCH = keccak256("expiration-mismatch");
 
     // ══════════════════════════════════════════════════════════════
@@ -455,6 +465,8 @@ contract SwapToRepayIntentFacet is
             revert IntentMakerTraitsMismatch(_REASON_USE_PERMIT2);
         if ((mt & _NEED_CHECK_EPOCH_MANAGER_FLAG) != 0)
             revert IntentMakerTraitsMismatch(_REASON_NEED_CHECK_EPOCH_MANAGER);
+        if ((mt & _UNWRAP_WETH_FLAG) != 0)
+            revert IntentMakerTraitsMismatch(_REASON_UNWRAP_WETH);
         // makerTraits expiration sub-field must match `params.deadline`
         // (Codex round-8 P1 #5 — without this, Fusion can fill past
         // our Vaipakam-side gate).

@@ -26,6 +26,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
+import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
@@ -137,6 +138,10 @@ contract DeployDiamond is Script {
         SwapToRepayFacet swapToRepayFacet = new SwapToRepayFacet();
         // T-090 v1.1 (#389) — intent-based swap-to-repay sibling facet.
         SwapToRepayIntentFacet swapToRepayIntentFacet = new SwapToRepayIntentFacet();
+        // T-090 v1.1 (#389) — intent-based swap-to-repay config knobs.
+        // Carved off `ConfigFacet` after the round-2 PR #420 CI block
+        // pushed it past EIP-170.
+        IntentConfigFacet intentConfigFacet = new IntentConfigFacet();
         DefaultedFacet defaultedFacet = new DefaultedFacet();
         RiskFacet riskFacet = new RiskFacet();
         RiskMatchLiquidationFacet riskMatchLiquidationFacet =
@@ -188,7 +193,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](45);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](46);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -306,6 +311,11 @@ contract DeployDiamond is Script {
         cuts[44] = _buildCut(
             address(swapToRepayIntentFacet),
             _getSwapToRepayIntentFacetSelectors()
+        );
+        // T-090 v1.1 (#389) intent-based swap-to-repay config facet.
+        cuts[45] = _buildCut(
+            address(intentConfigFacet),
+            _getIntentConfigSelectors()
         );
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
@@ -1450,7 +1460,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](103);
+        s = new bytes4[](87);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -1620,33 +1630,29 @@ contract DeployDiamond is Script {
         // `MAX_SLIPPAGE_BPS = 2500` (25%).
         s[85] = ConfigFacet.setMaxSwapToRepaySlippageBps.selector;
         s[86] = ConfigFacet.getMaxSwapToRepaySlippageBps.selector;
-        // T-090 v1.1 (#389) — intent-based swap-to-repay config surface.
-        // Per design §5.6 the v1.1 cfg slots are ALL appended to the
-        // top-level `LibVaipakam.Storage` struct (NOT the nested
-        // `ProtocolConfig`) per Codex round-7 P1 #5; setters take
-        // the standard ADMIN_ROLE / timelock path. The Fusion
-        // `LimitOrderProtocol` setter additionally reverts
-        // `IntentLOPRotationWhileCommitsLive` while any commit is
-        // live (round-10 P1 #6) — the per-commit `lopAtCommit` pin
-        // defends-in-depth even if that ever slips. Allowlist
-        // setters are admin-curated per-token after operator-side
-        // transfer round-trip probes confirm symmetric behaviour.
-        s[87] = ConfigFacet.setIntentSwapToRepayEnabled.selector;
-        s[88] = ConfigFacet.setIntentMinCommitHF.selector;
-        s[89] = ConfigFacet.setIntentMinOutputBufferBps.selector;
-        s[90] = ConfigFacet.setIntentAuctionSecondsBounds.selector;
-        s[91] = ConfigFacet.setIntentCancelGraceSeconds.selector;
-        s[92] = ConfigFacet.setFusionLimitOrderProtocol.selector;
-        s[93] = ConfigFacet.setIntentAllowedPrincipalToken.selector;
-        s[94] = ConfigFacet.setIntentAllowedCollateralToken.selector;
-        s[95] = ConfigFacet.getIntentSwapToRepayEnabled.selector;
-        s[96] = ConfigFacet.getIntentMinCommitHF.selector;
-        s[97] = ConfigFacet.getIntentMinOutputBufferBps.selector;
-        s[98] = ConfigFacet.getIntentAuctionSecondsBounds.selector;
-        s[99] = ConfigFacet.getIntentCancelGraceSeconds.selector;
-        s[100] = ConfigFacet.getFusionLimitOrderProtocol.selector;
-        s[101] = ConfigFacet.getIntentAllowedPrincipalToken.selector;
-        s[102] = ConfigFacet.getIntentAllowedCollateralToken.selector;
+    }
+
+    /// T-090 v1.1 (#389) — intent-based swap-to-repay config
+    /// selectors. Carved off `ConfigFacet` after round-2 PR #420 CI
+    /// block on EIP-170.
+    function _getIntentConfigSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](16);
+        s[0] = IntentConfigFacet.setIntentSwapToRepayEnabled.selector;
+        s[1] = IntentConfigFacet.setIntentMinCommitHF.selector;
+        s[2] = IntentConfigFacet.setIntentMinOutputBufferBps.selector;
+        s[3] = IntentConfigFacet.setIntentAuctionSecondsBounds.selector;
+        s[4] = IntentConfigFacet.setIntentCancelGraceSeconds.selector;
+        s[5] = IntentConfigFacet.setFusionLimitOrderProtocol.selector;
+        s[6] = IntentConfigFacet.setIntentAllowedPrincipalToken.selector;
+        s[7] = IntentConfigFacet.setIntentAllowedCollateralToken.selector;
+        s[8] = IntentConfigFacet.getIntentSwapToRepayEnabled.selector;
+        s[9] = IntentConfigFacet.getIntentMinCommitHF.selector;
+        s[10] = IntentConfigFacet.getIntentMinOutputBufferBps.selector;
+        s[11] = IntentConfigFacet.getIntentAuctionSecondsBounds.selector;
+        s[12] = IntentConfigFacet.getIntentCancelGraceSeconds.selector;
+        s[13] = IntentConfigFacet.getFusionLimitOrderProtocol.selector;
+        s[14] = IntentConfigFacet.getIntentAllowedPrincipalToken.selector;
+        s[15] = IntentConfigFacet.getIntentAllowedCollateralToken.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {

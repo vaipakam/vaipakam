@@ -26,6 +26,7 @@ import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
+import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
@@ -980,7 +981,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](103);
+        selectors = new bytes4[](87);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -1119,27 +1120,35 @@ contract HelperTest {
         // T-090 — Borrower-initiated swap-to-repay slippage cap.
         selectors[85] = ConfigFacet.setMaxSwapToRepaySlippageBps.selector;
         selectors[86] = ConfigFacet.getMaxSwapToRepaySlippageBps.selector;
-        // T-090 v1.1 (#389) — intent-based swap-to-repay config surface.
-        // 8 setters + 8 getters per design §5.6; LOP-rotation guard
-        // enforced on `setFusionLimitOrderProtocol`. See
-        // `docs/DesignsAndPlans/SwapToRepayIntentBased.md`.
-        selectors[87] = ConfigFacet.setIntentSwapToRepayEnabled.selector;
-        selectors[88] = ConfigFacet.setIntentMinCommitHF.selector;
-        selectors[89] = ConfigFacet.setIntentMinOutputBufferBps.selector;
-        selectors[90] = ConfigFacet.setIntentAuctionSecondsBounds.selector;
-        selectors[91] = ConfigFacet.setIntentCancelGraceSeconds.selector;
-        selectors[92] = ConfigFacet.setFusionLimitOrderProtocol.selector;
-        selectors[93] = ConfigFacet.setIntentAllowedPrincipalToken.selector;
-        selectors[94] = ConfigFacet.setIntentAllowedCollateralToken.selector;
-        selectors[95] = ConfigFacet.getIntentSwapToRepayEnabled.selector;
-        selectors[96] = ConfigFacet.getIntentMinCommitHF.selector;
-        selectors[97] = ConfigFacet.getIntentMinOutputBufferBps.selector;
-        selectors[98] = ConfigFacet.getIntentAuctionSecondsBounds.selector;
-        selectors[99] = ConfigFacet.getIntentCancelGraceSeconds.selector;
-        selectors[100] = ConfigFacet.getFusionLimitOrderProtocol.selector;
-        selectors[101] = ConfigFacet.getIntentAllowedPrincipalToken.selector;
-        selectors[102] = ConfigFacet.getIntentAllowedCollateralToken.selector;
         return selectors;
+    }
+
+    /// T-090 v1.1 (#389) — intent-based swap-to-repay config surface.
+    /// Carved into its own `IntentConfigFacet` after the 8 v1.1
+    /// setter/getter pairs pushed `ConfigFacet` over EIP-170
+    /// (round-2 PR #420 CI block).
+    function getIntentConfigFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](16);
+        selectors[0] = IntentConfigFacet.setIntentSwapToRepayEnabled.selector;
+        selectors[1] = IntentConfigFacet.setIntentMinCommitHF.selector;
+        selectors[2] = IntentConfigFacet.setIntentMinOutputBufferBps.selector;
+        selectors[3] = IntentConfigFacet.setIntentAuctionSecondsBounds.selector;
+        selectors[4] = IntentConfigFacet.setIntentCancelGraceSeconds.selector;
+        selectors[5] = IntentConfigFacet.setFusionLimitOrderProtocol.selector;
+        selectors[6] = IntentConfigFacet.setIntentAllowedPrincipalToken.selector;
+        selectors[7] = IntentConfigFacet.setIntentAllowedCollateralToken.selector;
+        selectors[8] = IntentConfigFacet.getIntentSwapToRepayEnabled.selector;
+        selectors[9] = IntentConfigFacet.getIntentMinCommitHF.selector;
+        selectors[10] = IntentConfigFacet.getIntentMinOutputBufferBps.selector;
+        selectors[11] = IntentConfigFacet.getIntentAuctionSecondsBounds.selector;
+        selectors[12] = IntentConfigFacet.getIntentCancelGraceSeconds.selector;
+        selectors[13] = IntentConfigFacet.getFusionLimitOrderProtocol.selector;
+        selectors[14] = IntentConfigFacet.getIntentAllowedPrincipalToken.selector;
+        selectors[15] = IntentConfigFacet.getIntentAllowedCollateralToken.selector;
     }
 
     function getInteractionRewardsFacetSelectors()

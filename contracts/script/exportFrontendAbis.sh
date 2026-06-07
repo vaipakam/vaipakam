@@ -116,6 +116,7 @@ FACETS=(
   "StakingRewardsFacet"
   "SwapToRepayFacet"
   "SwapToRepayIntentFacet"
+  "IntentConfigFacet"
   "TreasuryFacet"
   "VaipakamNFTFacet"
   "VpfiBuyAdapter"

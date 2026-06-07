@@ -3,7 +3,7 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
-import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
@@ -76,18 +76,18 @@ contract SwapToRepayIntentFacetTest is SetupTest {
         _scaffoldLoan(LOAN_ID);
 
         // v1.1 config — enable surface + allowlist + bounds.
-        ConfigFacet(address(diamond)).setIntentSwapToRepayEnabled(true);
-        ConfigFacet(address(diamond)).setIntentAllowedPrincipalToken(
+        IntentConfigFacet(address(diamond)).setIntentSwapToRepayEnabled(true);
+        IntentConfigFacet(address(diamond)).setIntentAllowedPrincipalToken(
             address(principalAsset), true
         );
-        ConfigFacet(address(diamond)).setIntentAllowedCollateralToken(
+        IntentConfigFacet(address(diamond)).setIntentAllowedCollateralToken(
             address(collateralAsset), true
         );
-        ConfigFacet(address(diamond)).setIntentMinCommitHF(1.2e18);
-        ConfigFacet(address(diamond)).setIntentMinOutputBufferBps(200);
-        ConfigFacet(address(diamond)).setIntentAuctionSecondsBounds(60, 600);
-        ConfigFacet(address(diamond)).setIntentCancelGraceSeconds(86_400);
-        ConfigFacet(address(diamond)).setFusionLimitOrderProtocol(address(fusionLOP));
+        IntentConfigFacet(address(diamond)).setIntentMinCommitHF(1.2e18);
+        IntentConfigFacet(address(diamond)).setIntentMinOutputBufferBps(200);
+        IntentConfigFacet(address(diamond)).setIntentAuctionSecondsBounds(60, 600);
+        IntentConfigFacet(address(diamond)).setIntentCancelGraceSeconds(86_400);
+        IntentConfigFacet(address(diamond)).setFusionLimitOrderProtocol(address(fusionLOP));
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -96,27 +96,27 @@ contract SwapToRepayIntentFacetTest is SetupTest {
 
     function test_Config_MasterSwitchPersisted() public view {
         assertTrue(
-            ConfigFacet(address(diamond)).getIntentSwapToRepayEnabled(),
+            IntentConfigFacet(address(diamond)).getIntentSwapToRepayEnabled(),
             "master switch should be ON after setUp"
         );
     }
 
     function test_Config_FusionLOPPersisted() public view {
         assertEq(
-            ConfigFacet(address(diamond)).getFusionLimitOrderProtocol(),
+            IntentConfigFacet(address(diamond)).getFusionLimitOrderProtocol(),
             address(fusionLOP)
         );
     }
 
     function test_Config_AllowlistsPersisted() public view {
         assertTrue(
-            ConfigFacet(address(diamond)).getIntentAllowedPrincipalToken(address(principalAsset))
+            IntentConfigFacet(address(diamond)).getIntentAllowedPrincipalToken(address(principalAsset))
         );
         assertTrue(
-            ConfigFacet(address(diamond)).getIntentAllowedCollateralToken(address(collateralAsset))
+            IntentConfigFacet(address(diamond)).getIntentAllowedCollateralToken(address(collateralAsset))
         );
         assertFalse(
-            ConfigFacet(address(diamond)).getIntentAllowedPrincipalToken(address(0xCAFE))
+            IntentConfigFacet(address(diamond)).getIntentAllowedPrincipalToken(address(0xCAFE))
         );
     }
 
@@ -125,7 +125,7 @@ contract SwapToRepayIntentFacetTest is SetupTest {
     // ══════════════════════════════════════════════════════════════
 
     function test_Commit_RevertWhen_MasterSwitchOff() public {
-        ConfigFacet(address(diamond)).setIntentSwapToRepayEnabled(false);
+        IntentConfigFacet(address(diamond)).setIntentSwapToRepayEnabled(false);
         SwapToRepayIntentFacet.FusionOrderParams memory params = _validParams();
         vm.prank(borrowerEoa);
         vm.expectRevert(SwapToRepayIntentFacet.IntentSurfaceDisabled.selector);
@@ -133,7 +133,7 @@ contract SwapToRepayIntentFacetTest is SetupTest {
     }
 
     function test_Commit_RevertWhen_PrincipalTokenNotAllowed() public {
-        ConfigFacet(address(diamond)).setIntentAllowedPrincipalToken(
+        IntentConfigFacet(address(diamond)).setIntentAllowedPrincipalToken(
             address(principalAsset), false
         );
         SwapToRepayIntentFacet.FusionOrderParams memory params = _validParams();
@@ -148,7 +148,7 @@ contract SwapToRepayIntentFacetTest is SetupTest {
     }
 
     function test_Commit_RevertWhen_CollateralTokenNotAllowed() public {
-        ConfigFacet(address(diamond)).setIntentAllowedCollateralToken(
+        IntentConfigFacet(address(diamond)).setIntentAllowedCollateralToken(
             address(collateralAsset), false
         );
         SwapToRepayIntentFacet.FusionOrderParams memory params = _validParams();
