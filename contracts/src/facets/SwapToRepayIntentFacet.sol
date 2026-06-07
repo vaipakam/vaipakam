@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
+import {LibFacet} from "../libraries/LibFacet.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -13,6 +14,7 @@ import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import {IPreInteraction} from "@1inch/limit-order-protocol/contracts/interfaces/IPreInteraction.sol";
 import {IPostInteraction} from "@1inch/limit-order-protocol/contracts/interfaces/IPostInteraction.sol";
 import {IOrderMixin} from "@1inch/limit-order-protocol/contracts/interfaces/IOrderMixin.sol";
+import {MakerTraits} from "@1inch/limit-order-protocol/contracts/libraries/MakerTraitsLib.sol";
 
 /**
  * @title SwapToRepayIntentFacet
@@ -324,8 +326,21 @@ contract SwapToRepayIntentFacet is
         nonReentrant
         whenNotPaused
     {
-        loanId;
-        revert NotYetImplemented();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.SwapToRepayIntentCommit storage commit = s.intentCommits[loanId];
+        if (commit.orderHash == bytes32(0)) revert IntentNoCommit(loanId);
+
+        // Authority: current borrower-NFT holder (Codex round-2
+        // P2 #6 — claim rights follow the NFT, not the commit-time
+        // owner).
+        LibAuth.requireBorrowerNftOwner(s.loans[loanId]);
+
+        // Borrower can only cancel after Fusion's auction deadline
+        // — before that the order is still fillable on the
+        // resolver-pickup endpoint.
+        if (block.timestamp < commit.deadline) revert IntentNotPastDeadline();
+
+        _executeCancel(s, loanId, commit, msg.sender);
     }
 
     /**
@@ -342,8 +357,111 @@ contract SwapToRepayIntentFacet is
         nonReentrant
         whenNotPaused
     {
-        loanId;
-        revert NotYetImplemented();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.SwapToRepayIntentCommit storage commit = s.intentCommits[loanId];
+        if (commit.orderHash == bytes32(0)) revert IntentNoCommit(loanId);
+
+        // Grace window starts at Fusion's `deadline` and runs for
+        // `cfgIntentCancelGraceSeconds` (default 24h). During that
+        // window only the current borrower-NFT holder may cancel —
+        // keeps a keeper / opportunist from front-running the
+        // borrower's own clean recovery path.
+        if (
+            block.timestamp <
+                uint256(commit.deadline) + uint256(s.cfgIntentCancelGraceSeconds)
+        ) revert IntentNotPastCancelGrace();
+
+        _executeCancel(s, loanId, commit, msg.sender);
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  Shared cancel teardown (Codex round-11 P1 #1 —
+    //  safeTransfer-before-recordVaultDeposit; round-8 P1 #2 —
+    //  rawRemainingInvalidatorForOrder; round-10 P1 #6 —
+    //  pinned `lopAtCommit` for the Fusion cancel call)
+    // ──────────────────────────────────────────────────────────────
+
+    /// @dev Tears down a live commit per §5.5 — invariant guard,
+    ///      Fusion cancel, collateral return to `loan.borrower`'s
+    ///      vault, aggregate-allowance + live-count decrements,
+    ///      storage cleanup, event. Shared body for both cancel
+    ///      paths; the per-path authority + timing checks live in
+    ///      their respective external entry points.
+    function _executeCancel(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        LibVaipakam.SwapToRepayIntentCommit storage commit,
+        address cancelledBy
+    ) private {
+        // ── 1. Already-filled pre-check (Codex round-8 P1 #2) ───────
+        // `rawRemainingInvalidatorForOrder` is the variant that
+        // distinguishes never-filled (returns 0) from fully-filled
+        // (returns ~0) WITHOUT reverting — the non-`raw` variant
+        // reverts on never-filled which is the common no-fill-then-
+        // cancel case. Read against the pinned LOP (`lopAtCommit`)
+        // so an admin rotation can't desync.
+        uint256 remainingRaw = IOrderMixin(commit.lopAtCommit)
+            .rawRemainingInvalidatorForOrder(address(this), commit.orderHash);
+        // For bit-invalidator mode (round-10 P2 #4: partial + multi
+        // fills both disallowed → `useBitInvalidator() == true`), a
+        // fully-spent slot returns `type(uint256).max`; for the
+        // remaining-amount mode a fully-filled slot returns 1
+        // (canonical "filled" marker in LOP v4). Treat any non-zero
+        // value other than the never-filled `0` as "already filled
+        // / in progress" — same conservative semantics the dapp's
+        // pre-flight uses.
+        if (remainingRaw != 0) revert IntentAlreadyFilled();
+
+        // ── 2. Cancel Fusion-side ───────────────────────────────────
+        // `cancelOrder(MakerTraits, bytes32)` — Codex round-12 P1
+        // #4 confirmed signature. Idempotent: if the order was
+        // already expired on the orderbook, this is a no-op from
+        // LOP's perspective (it just invalidates again).
+        IOrderMixin(commit.lopAtCommit).cancelOrder(
+            MakerTraits.wrap(commit.makerTraits),
+            commit.orderHash
+        );
+
+        // ── 3. Return custodial collateral to `loan.borrower`'s
+        //       vault (Codex round-2 P1 #3 + round-11 P1 #1) ────────
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
+        // `safeTransfer` first so the tokens are AT the vault
+        // address; then `recordVaultDeposit` updates
+        // `protocolTrackedVaultBalance[loan.borrower][token]` so
+        // `ClaimFacet.claimAsBorrower` + the standard
+        // recovery paths see the credit (Codex round-11 P1 #1 —
+        // `recordVaultDeposit` ONLY moves the counter, not tokens).
+        IERC20(loan.collateralAsset).safeTransfer(
+            borrowerVault, commit.custodialCollateral
+        );
+        LibVaipakam.recordVaultDeposit(
+            loan.borrower, loan.collateralAsset, commit.custodialCollateral
+        );
+
+        // ── 4. Aggregate-allowance + live-count decrements ──────────
+        s.intentAggregateAllowance[loan.collateralAsset] -=
+            commit.custodialCollateral;
+        s.intentLiveCommitCount -= 1;
+        // Re-set Fusion's per-token allowance to the new lower
+        // aggregate (zero-then-set for USDT-style tokens that
+        // refuse non-zero → non-zero re-sets).
+        IERC20(loan.collateralAsset).forceApprove(commit.lopAtCommit, 0);
+        if (s.intentAggregateAllowance[loan.collateralAsset] != 0) {
+            IERC20(loan.collateralAsset).forceApprove(
+                commit.lopAtCommit,
+                s.intentAggregateAllowance[loan.collateralAsset]
+            );
+        }
+
+        // ── 5. Storage cleanup ──────────────────────────────────────
+        bytes32 orderHash = commit.orderHash;
+        bytes32 extensionHash = commit.extensionHash;
+        delete s.orderHashToLoanId[orderHash];
+        delete s.intentExtensionBytes[extensionHash];
+        delete s.intentCommits[loanId];
+
+        emit SwapToRepayIntentCancelled(loanId, orderHash, cancelledBy);
     }
 
     // ══════════════════════════════════════════════════════════════
