@@ -778,11 +778,7 @@ new one.
 The v1.1 surface ships on every chain but is **default-OFF**. An admin
 flag controls per-chain rollout:
 
-- Storage: append `bool cfgIntentSwapToRepayEnabled` (and every
-  other v1.1 config flag/knob: `cfgIntentMinCommitHFBps`,
-  `cfgIntentMinOutputBufferBps`, `cfgIntentMinAuctionSeconds`,
-  `cfgIntentMaxAuctionSeconds`, `cfgIntentCancelGraceSeconds`,
-  `cfgFusionLimitOrderProtocol`) to the **top-level
+- Storage: append the full v1.1 config surface to the **top-level
   `LibVaipakam.Storage` struct, NOT the nested `ProtocolConfig`**
   sub-struct (Codex round-7 P1 #5). Appending to `ProtocolConfig`
   is not storage-safe: `LibVaipakam.Storage` already has
@@ -790,6 +786,65 @@ flag controls per-chain rollout:
   swap-adapter state; growing the nested struct shifts every
   subsequent slot on upgrade. Top-level append is the canonical
   Diamond storage-extension pattern Vaipakam uses elsewhere.
+
+  The v1.1 config surface (Codex round-9 P2 — round-8 added the
+  token allowlists but didn't specify their storage / setter
+  signature; without these, no token can be enabled post-deploy
+  and the intent surface stays permanently inert):
+  ```
+  // Scalar flags + knobs (appended to top-level Storage):
+  bool    cfgIntentSwapToRepayEnabled;     // §5.6 master switch
+  uint16  cfgIntentMinCommitHFBps;          // §5.1 step 4 (default 12000 = 1.2e18 scaled)
+  uint16  cfgIntentMinOutputBufferBps;     // §5.4 (default 200 = 2%)
+  uint32  cfgIntentMinAuctionSeconds;       // §5.1 step 2 (default 60)
+  uint32  cfgIntentMaxAuctionSeconds;       // §5.1 step 2 (default 600)
+  uint32  cfgIntentCancelGraceSeconds;     // §5.5 (default 86400 = 24h)
+  address cfgFusionLimitOrderProtocol;     // §5.1 postInteraction auth + cancel target
+
+  // Per-token allowlists (Codex round-8 P1 #6):
+  mapping(address token => bool allowed) cfgIntentAllowedPrincipalTokens;
+  mapping(address token => bool allowed) cfgIntentAllowedCollateralTokens;
+
+  // Aggregate-allowance bookkeeping (Codex round-2 P2 #7):
+  mapping(address token => uint256 aggregate) intentAggregateAllowance;
+
+  // Commit projection + reverse-index + extension storage (§5.2):
+  mapping(uint256 loanId => SwapToRepayIntentCommit) intentCommits;
+  mapping(bytes32 orderHash => uint256 loanId) orderHashToLoanId;
+  mapping(bytes32 extensionHash => bytes extension) intentExtensionBytes;
+  ```
+
+  `ConfigFacet` exposes the matching setter/getter pairs (Codex
+  round-9 P2):
+  ```
+  // Scalar setters (all ADMIN_ROLE pre-handover, timelock
+  // post-handover; each emits a config-set event for audit /
+  // indexer surfacing):
+  function setIntentSwapToRepayEnabled(bool enabled) external;
+  function setIntentMinCommitHFBps(uint16 bps) external;
+  function setIntentMinOutputBufferBps(uint16 bps) external;
+  function setIntentAuctionSecondsBounds(uint32 min, uint32 max) external;
+  function setIntentCancelGraceSeconds(uint32 sec) external;
+  function setFusionLimitOrderProtocol(address fusion) external;
+
+  // Allowlist setters (admin curates per-token after operator-
+  // side transfer round-trip probes confirm symmetric behaviour):
+  function setIntentAllowedPrincipalToken(address token, bool allowed) external;
+  function setIntentAllowedCollateralToken(address token, bool allowed) external;
+
+  // Getters (the matching read functions exposed via DiamondLoupe
+  // for keeper / indexer / dapp consumption):
+  function getIntentSwapToRepayEnabled() external view returns (bool);
+  // ...etc for each setter
+  function getIntentAllowedPrincipalToken(address token) external view returns (bool);
+  function getIntentAllowedCollateralToken(address token) external view returns (bool);
+  ```
+
+  Initial rollout: `setIntentSwapToRepayEnabled(false)` on every
+  chain at deploy; admin enables per-chain after operator
+  verification of the Fusion LOP protocol address +
+  per-token round-trip probes complete (deploy runbook bullet
+  for §8.5).
 - Setter: `ConfigFacet.setIntentSwapToRepayEnabled(bool)`. ADMIN_ROLE
   pre-handover; timelock post-handover. Emits
   `IntentSwapToRepayEnabledSet(bool)` for audit / indexer surfacing.
@@ -1047,16 +1102,24 @@ no balance-delta inference needed.
   everything; the residual is zero.
 - If `consumed < custodialCollateral`, the difference
   (`residual = custodialCollateral - consumed`) is the unspent
-  collateral. The hook transfers `residual` directly to
-  **`loan.borrower`'s vault** (the commit-time borrower-of-record
-  — same target the cancel paths use; see §5.5 for the
-  authority-vs-return-target split rationale) via
-  `LibVaipakam.recordVaultDeposit` (same internal helper §5.3 uses),
-  in the same atomic transaction as the settlement waterfall.
+  collateral. **The residual is recorded in the borrower's
+  claim slot, not direct-vault-credited** (Codex round-9 P1 — the
+  earlier round-4 P1 #4 / round-1 P1 #7 "direct credit" guidance
+  was reverted in round-8 P1 #3: `vaultWithdrawERC20` is
+  `onlyDiamondInternal` and `ClaimFacet.claimAsBorrower` is the
+  only user-facing recovery path for configured tokens). The
+  mechanism: postInteraction step 6 passes `actualCollateralConsumed
+  = consumed` to the canonical v1 waterfall, whose claim-record
+  branch then writes `claim = loan.collateralAmount - consumed`
+  into the borrower's claim slot — withdrawable via
+  `ClaimFacet.claimAsBorrower` like every other terminal-close
+  residual.
 
-This closes Codex round-1 P1 #7 — there's no residual-stranding
-path on successful fills. The exact accounting (`consumed`,
-`delivered`, `residual`) is emitted as part of
+This closes Codex round-1 P1 #7 + round-8 P1 #3 together —
+there's no residual-stranding path on successful fills, AND no
+double-credit (the round-4 fix kept the residual in *only* the
+claim slot, not also in the vault). The exact accounting
+(`consumed`, `delivered`, `residual`) is emitted as part of
 `SwapToRepayIntentFilled` so the indexer can surface the breakdown
 on Loan Details + Activity.
 
