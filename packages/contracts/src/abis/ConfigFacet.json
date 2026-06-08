@@ -1222,6 +1222,19 @@
   },
   {
     "type": "function",
+    "name": "setMirrorTierMaxAgeSec",
+    "inputs": [
+      {
+        "name": "newValue",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setNotificationFee",
     "inputs": [
       {
@@ -1663,6 +1676,58 @@
   },
   {
     "type": "function",
+    "name": "setTwaMinStakedDays",
+    "inputs": [
+      {
+        "name": "newValue",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setTwaRecentDays",
+    "inputs": [
+      {
+        "name": "newValue",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setTwaRecentWeight",
+    "inputs": [
+      {
+        "name": "newValue",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setTwaWindowDays",
+    "inputs": [
+      {
+        "name": "newValue",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setTwapGuard",
     "inputs": [
       {
@@ -2037,6 +2102,19 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MirrorTierMaxAgeSecSet",
+    "inputs": [
+      {
+        "name": "newValue",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
       }
     ],
     "anonymous": false
@@ -2474,6 +2552,58 @@
   },
   {
     "type": "event",
+    "name": "TwaMinStakedDaysSet",
+    "inputs": [
+      {
+        "name": "newValue",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TwaRecentDaysSet",
+    "inputs": [
+      {
+        "name": "newValue",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TwaRecentWeightSet",
+    "inputs": [
+      {
+        "name": "newValue",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TwaWindowDaysSet",
+    "inputs": [
+      {
+        "name": "newValue",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "TwapGuardSet",
     "inputs": [
       {
@@ -2762,6 +2892,17 @@
   },
   {
     "type": "error",
+    "name": "InvalidMirrorTierMaxAgeSec",
+    "inputs": [
+      {
+        "name": "newValue",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidNotificationFee",
     "inputs": [
       {
@@ -2870,6 +3011,50 @@
         "name": "reason",
         "type": "string",
         "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidTwaMinStakedDays",
+    "inputs": [
+      {
+        "name": "newValue",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidTwaRecentDays",
+    "inputs": [
+      {
+        "name": "newValue",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidTwaRecentWeight",
+    "inputs": [
+      {
+        "name": "newValue",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidTwaWindowDays",
+    "inputs": [
+      {
+        "name": "newValue",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ]
   },
