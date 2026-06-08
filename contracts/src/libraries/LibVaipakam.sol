@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibDiamond} from "@diamond-3/libraries/LibDiamond.sol";
+import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
 // Numeraire generalization (b1) (T-047 prep): the INumeraireOracle interface that
@@ -1741,6 +1742,72 @@ library LibVaipakam {
     }
 
     /**
+     * @notice T-087 Sub 1.A — one day's snapshot inside the 30-slot
+     *         ring buffer of the user's tracked VPFI stake.
+     *
+     * @dev Each ring slot stores BOTH the day id and the closing
+     *      balance for that day, so the TWA scanner can filter
+     *      slots by `dayId ∈ [currentDay - 29, currentDay]` and
+     *      reject slots whose `dayId` has rolled out of the active
+     *      30-day window. Codex round-4 P1 #2 caught that deriving
+     *      a slot's day id from a single `firstWriteDayId` mis-labels
+     *      old balances after the ring wraps.
+     *
+     *      `balance` is the protocol-tracked staking balance
+     *      (`s.protocolTrackedVaultBalance[user][s.vpfiToken]`), NOT
+     *      the raw vault VPFI balance — unsolicited transfers can't
+     *      inflate the tier (Codex round-7 P1 #7).
+     *
+     *      `uint128` covers the full 230M VPFI token cap with room
+     *      to spare; the struct lands in its own storage slot per
+     *      Solidity array semantics (Codex round-6 P2 #12 / round-8
+     *      P2 #3 — adjacent struct array elements don't share slots
+     *      even when the struct itself fits in less than one slot).
+     */
+    struct DaySnapshot {
+        uint16 dayId;
+        uint128 balance;
+    }
+
+    /**
+     * @notice T-087 Sub 1.A — mirror-side cached per-user tier
+     *         entry written by the CCIP `TierUpdated` inbound
+     *         handler (Sub 2) and read by every mirror fee-charging
+     *         path (Sub 1.C).
+     *
+     * @dev Field ordering chosen for slot packing:
+     *        8 + 40 + 64 + 40 + 16 + 16 = 184 bits → fits in one
+     *        slot (256-bit ceiling).
+     *
+     *      `effectiveTier` is the post-min-history-gate tier value
+     *      Base computed at push time; mirrors apply it as-is
+     *      without re-deriving. `effectiveBps` (Codex round-11
+     *      P1 #6) carries the actual BPS to apply so governance
+     *      mutations of the per-tier discount table on Base
+     *      propagate to mirrors directly; mirrors do NOT read
+     *      their own local tier-BPS constants at fee-application
+     *      time.
+     *
+     *      `lastNonce` is the monotonic ordering key — payload
+     *      `nonce`, NOT a timestamp — so two same-block tier
+     *      mutations on Base still order strictly (Codex round-2
+     *      P1 #1). `tierExpirySec` is the absolute timestamp past
+     *      which the cached tier is stale-by-construction; use
+     *      `type(uint40).max` as the "no expiry" sentinel for
+     *      steady-state stakers (Codex round-6 P1 #9).
+     *      `tierTableVersion` lets mirrors detect governance
+     *      threshold-table changes (Codex round-6 P1 #10).
+     */
+    struct CachedTier {
+        uint8 effectiveTier;
+        uint40 lastUpdateSec;
+        uint64 lastNonce;
+        uint40 tierExpirySec;
+        uint16 tierTableVersion;
+        uint16 effectiveBps;
+    }
+
+    /**
      * @notice Per-loan custody + claim bookkeeping for the borrower Loan
      *         Initiation Fee VPFI-path (Phase 5 / §5.2b).
      *
@@ -2188,7 +2255,15 @@ library LibVaipakam {
         // — and that average replaces the previous live tier-at-repay
         // lookup. See docs/GovernanceConfigDesign.md §5.2a for the full
         // rationale and the anti-gaming design sketch.
-        mapping(address => UserVpfiDiscountState) userVpfiDiscountState;
+        // === DEPRECATED in T-087 Sub 1.A ===
+        // The Phase-5 simple-TWA accumulator. The slot is retained
+        // in place to preserve the storage layout contract loupe
+        // tools depend on; new T-087 ring-buffer state is appended
+        // at the end of this struct (see `dayBalances` et al). DO
+        // NOT reinterpret this slot — leave it dead. Sub 1.B
+        // rewires every call site off this mapping; Sub 1 ships
+        // with the slot abandoned, not removed.
+        mapping(address => UserVpfiDiscountState) userVpfiDiscountState_DEPRECATED;
         // ─── VPFI Platform Interaction Rewards (spec §4) ────────────────
         // Daily emission pool split 50/50 across lenders (by USD interest
         // earned that day) and borrowers (by USD interest paid that day on
@@ -3326,6 +3401,185 @@ library LibVaipakam {
         ///      used nonces here + rejecting reuse forces the dapp
         ///      to vary nonceOrEpoch across borrowers.
         mapping(uint40 => bool) intentNonceUsed;
+        // ─── T-087 Sub 1.A — Cross-chain reward + tier system ───────────
+        //
+        // Storage scaffolding only in Sub 1.A: the slots are added
+        // here and the helper library (LibVPFIDiscount) has stub
+        // entry points reading / writing them. The math + the
+        // call-site rewires land in Sub 1.B; the CCIP wiring lands
+        // in Sub 2. See docs/DesignsAndPlans/CrossChainRewardSystem.md
+        // §5 for the design rationale; Codex review iteration is
+        // tracked in the closed PR #439.
+        //
+        // ── Base-side: ring-buffer TWA accumulator ──────────────────────
+        //
+        // Per-user 30-slot daily ring buffer of protocol-tracked
+        // stake snapshots, indexed by `dayId = block.timestamp /
+        // 1 days`. Each slot stores its own `dayId` so the TWA
+        // scanner can reject slots outside the active 30-day window
+        // (Codex round-4 P1 #2). Lazy gap-fill on BOTH writes and
+        // reads (Codex round-6 P1 #8) bounded at 30 iterations
+        // (round-9 P1 #2).
+        mapping(address => DaySnapshot[30]) dayBalances;
+        // Most recent day a snapshot was written for the user.
+        // `0` doubles as the "uninitialised" marker; the first write
+        // initialises `lastUpdateDayId = currentDay - 1` to skip the
+        // 20 000-iteration loop a literal Unix-epoch-based gap-fill
+        // would otherwise require (round-8 P1 #8).
+        mapping(address => uint16) lastUpdateDayId;
+        // Day id of the user's most recent 0→positive transition.
+        // Cleared on positive→0 transition so the next stake
+        // re-seeds the tenure counter from scratch (Codex round-6
+        // P1 #1 + round-10 P1 #2 — a primed wallet that previously
+        // waited out the gate cannot carry old tenure across a
+        // zero-balance gap, and the TWA scanner filters slots by
+        // `dayId >= currentStakeStartDayId`).
+        mapping(address => uint16) currentStakeStartDayId;
+        // Seconds-since-epoch of the same transition. Used by the
+        // elapsed-time min-history gate INSTEAD of inclusive day
+        // buckets, so a user staking just before midnight can't
+        // satisfy the 3-day gate after ~24 hours (Codex round-11
+        // P2 #4).
+        mapping(address => uint40) currentStakeStartSec;
+        // Projected absolute timestamp past which the user's
+        // current effective tier will fall to a lower tier IF no
+        // further balance mutations occur. Computed at every rollup
+        // pass from the ring buffer's deterministic future
+        // trajectory; embedded in the CCIP payload so mirrors
+        // enforce decay locally without a Base round-trip. Use
+        // `type(uint40).max` for steady-state stakers whose
+        // trajectory never crosses (Codex round-3 P1 #1 + round-6
+        // P1 #9).
+        mapping(address => uint40) tierExpirySec;
+        // ── Tier propagation ordering keys ──────────────────────────────
+        //
+        // Monotonic per-user push nonce; the strict ordering key
+        // mirrors compare against `userTierCache[user].lastNonce`.
+        // Incremented on every effective-tier crossing, every
+        // expiry shift in EITHER direction, every table-version
+        // bump, or a forced push (Codex round-4 P1 #1 + round-7
+        // P1 #1).
+        mapping(address => uint64) userTierPushNonce;
+        // Per-destination last-pushed nonce, keyed by destination
+        // CCIP chain selector. Allows the broadcast step to skip
+        // destinations already current AND lets the catchup path
+        // bootstrap new destinations added between mutations
+        // without manual sweep (Codex round-1 P2 #11 + round-2
+        // P1 #2).
+        mapping(address => mapping(uint64 => uint64)) userTierLastPushedNonce;
+        // ── Tier table versioning (governance) ──────────────────────────
+        //
+        // Bumped by ConfigFacet on every tier-threshold or
+        // discount-BPS mutation. Mirrors carry it in the cache slot
+        // and treat a stale version as tier 0 until a fresh push
+        // catches them up (Codex round-6 P1 #10).
+        uint16 tierTableVersion;
+        // One-shot per-(user, version, destination) bit for the
+        // permissionless catchup sweep. Set when the sweep pushes
+        // a fresh TierUpdated to that destination for that user at
+        // that version; prevents repeat sweeps from draining
+        // `protocolBroadcastBudget` by burning CCIP gas on no-ops
+        // (Codex round-10 P1 #4 + round-11 P2 #1 — per-destination
+        // granularity ensures new mirrors added between sweep calls
+        // aren't permanently skipped).
+        mapping(address => mapping(uint16 => mapping(uint64 => bool))) tierTableSweepDone;
+        // Protocol-funded CCIP broadcast budget — native gas
+        // balance held by the diamond on Base and topped up by
+        // treasury allocation. Consumed by the in-tx auto-broadcast
+        // helper on every nonce-bumping rollup pass; if exhausted,
+        // the whole step-1 transaction reverts (fail-closed) so
+        // there is no window where a balance-mutation lands without
+        // mirror propagation (Codex round-5 P1 #3 + round-6 P1 #2).
+        uint256 protocolBroadcastBudget;
+        // Enumerable registry of users with non-zero tracked stake.
+        // Populated on 0→positive, removed on positive→0. Lets the
+        // permissionless `sweepTierTableUpdate(startIdx, count)`
+        // walk every active staker after a `tierTableVersion` bump
+        // (Codex round-8 P1 #4 — Solidity mappings aren't
+        // enumerable, so the catchup pass needs this set).
+        EnumerableSet.AddressSet activeStakerRegistry;
+        // ── Mirror-side cached tier surface ─────────────────────────────
+        //
+        // Used ONLY on mirror chains (`!isCanonicalVpfiChain`).
+        // Written by the CCIP `TierUpdated` inbound handler in
+        // Sub 2; read by `LibVPFIDiscount.tryApply` /
+        // `tryApplyYieldFee` in Sub 1.C. Empty on Base (the rollup
+        // pass writes `userTierPushNonce` etc instead).
+        mapping(address => CachedTier) userTierCache;
+        // Highest `tierTableVersion` seen across all inbound
+        // `TierUpdated` payloads on this mirror. Raised lazily;
+        // mirror fee paths treat any `userTierCache[user]` whose
+        // `tierTableVersion` differs from `currentTierTableVersion`
+        // as tier 0 (Codex round-9 P1 #7 + round-10 P1 #1 — the
+        // eager `VersionBumped` broadcast raises this immediately
+        // on governance mutation; lazy adoption is the fallback).
+        uint16 currentTierTableVersion;
+        // Mirror-side EVM chain id of Base is REUSED from the
+        // existing `baseChainId` slot (declared earlier in this
+        // struct for the reward-report path); no new slot allocated.
+        // The CCIP TierUpdated inbound handler validates
+        // `srcChainId == s.baseChainId` (NOT the CCIP selector; the
+        // messenger already translates per Codex round-9 P1 #4).
+        //
+        // Mirror-side authenticated business peer — the Base
+        // diamond / messenger contract address whose `TierUpdated`
+        // payloads we accept. Validated via the messenger's
+        // existing `channelPeer` mapping (Codex round-4 P1 #4 +
+        // round-9 P1 #4 — `Any2EVMMessage.sender` is always the
+        // local CCIP adapter, never the business peer).
+        address baseAuthorizedMessenger;
+        // ── Cross-chain buyback custody (Base) ──────────────────────────
+        //
+        // Set of remittance-token addresses per chain that the
+        // protocol will accept as buyback fuel; tokens not in the
+        // allow-list have their full fee-fraction flow to the
+        // treasury rather than the buyback budget (Codex round-5
+        // P1 #4). Keyed by source chain id so a token address
+        // collision across chains can't credit the wrong asset.
+        mapping(uint256 => mapping(address => bool)) buybackAllowedToken;
+        // Per-chain buyback budget accumulator (every chain). The
+        // diamond holds the funds directly so it can `approve` the
+        // CCIP messenger + remit cross-chain without round-tripping
+        // through an external custody contract (Codex round-2 P2 #12).
+        mapping(address => uint256) buybackBudget;
+        // Base-side aggregated inbound buyback budget keyed by the
+        // Base-delivered token (NOT the source-chain token — a
+        // source-chain address may not exist on Base and may
+        // collide across chains; round-6 P1 #11).
+        mapping(address => uint256) baseBuybackBudget;
+        // Base-side reservation accumulator for in-flight Fusion
+        // buyback intents. On commit:
+        //     baseBuybackBudget[token]   -= amountIn
+        //     baseBuybackReserved[token] += amountIn
+        // On fill, the reservation clears; on commit expiry the
+        // reservation rolls back into the budget. Without the
+        // reservation, two keepers committing against the same
+        // available budget could over-allocate and the second
+        // fill underflows at `safeTransferFrom` (Codex round-8
+        // P1 #5).
+        mapping(address => uint256) baseBuybackReserved;
+        // Cumulative buyback-fed inflow widening the existing
+        // `VPFI_STAKING_POOL_CAP` claim gate. Incremented on each
+        // successful buyback fill (Codex round-2 P2 #13).
+        uint256 stakingPoolBuybackBudget;
+        // ── T-087 ConfigFacet knobs ─────────────────────────────────────
+        //
+        // All five knobs default to 0 in storage; the getter helpers
+        // (LibVaipakam.cfgTwa*, cfgMirrorTierMaxAgeSec) substitute the
+        // hardcoded default when the slot reads 0. The setters in
+        // ConfigFacet enforce the per-knob bounds documented in
+        // CrossChainRewardSystem.md §5.
+        uint8 cfgTwaRecentDays;
+        uint8 cfgTwaWindowDays;
+        uint8 cfgTwaRecentWeight;
+        uint8 cfgTwaMinStakedDays;
+        uint32 cfgMirrorTierMaxAgeSec;
+        // Mirror-side authenticated remittance receiver address.
+        // `TreasuryFacet.absorbRemittance` is restricted to
+        // `msg.sender == buybackRemittanceReceiver` so no
+        // unauthorised caller can inflate `baseBuybackBudget` by
+        // forging remittance call data (Codex round-11 P1 #5).
+        address buybackRemittanceReceiver;
     }
 
     /// @dev One entry of the treasury-conversion target allocation
@@ -5242,6 +5496,42 @@ library LibVaipakam {
     function cfgIntentCancelGraceSecondsEffective() internal view returns (uint32) {
         uint32 v = storageSlot().cfgIntentCancelGraceSeconds;
         return v == 0 ? DEFAULT_INTENT_CANCEL_GRACE_SECONDS : v;
+    }
+
+    // ── T-087 Sub 1.A — ring-buffer TWA + mirror-cache defaults ─────────
+    //
+    // Hardcoded defaults align with the design doc §5 launch values;
+    // any zero in storage falls through to these so a fresh deploy
+    // behaves correctly with no post-deploy governance calls.
+    uint8 internal constant DEFAULT_TWA_RECENT_DAYS = 7;
+    uint8 internal constant DEFAULT_TWA_WINDOW_DAYS = 30;
+    uint8 internal constant DEFAULT_TWA_RECENT_WEIGHT = 3;
+    uint8 internal constant DEFAULT_TWA_MIN_STAKED_DAYS = 3;
+    uint32 internal constant DEFAULT_MIRROR_TIER_MAX_AGE_SEC = 5_184_000; // 60 days
+
+    function cfgTwaRecentDaysEffective() internal view returns (uint8) {
+        uint8 v = storageSlot().cfgTwaRecentDays;
+        return v == 0 ? DEFAULT_TWA_RECENT_DAYS : v;
+    }
+
+    function cfgTwaWindowDaysEffective() internal view returns (uint8) {
+        uint8 v = storageSlot().cfgTwaWindowDays;
+        return v == 0 ? DEFAULT_TWA_WINDOW_DAYS : v;
+    }
+
+    function cfgTwaRecentWeightEffective() internal view returns (uint8) {
+        uint8 v = storageSlot().cfgTwaRecentWeight;
+        return v == 0 ? DEFAULT_TWA_RECENT_WEIGHT : v;
+    }
+
+    function cfgTwaMinStakedDaysEffective() internal view returns (uint8) {
+        uint8 v = storageSlot().cfgTwaMinStakedDays;
+        return v == 0 ? DEFAULT_TWA_MIN_STAKED_DAYS : v;
+    }
+
+    function cfgMirrorTierMaxAgeSecEffective() internal view returns (uint32) {
+        uint32 v = storageSlot().cfgMirrorTierMaxAgeSec;
+        return v == 0 ? DEFAULT_MIRROR_TIER_MAX_AGE_SEC : v;
     }
 
     /**

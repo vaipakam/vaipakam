@@ -624,7 +624,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         LibVPFIDiscount.rollupUserDiscount(lender, lenderBal);
         loan.lenderDiscountAccAtInit = LibVaipakam
             .storageSlot()
-            .userVpfiDiscountState[lender]
+            .userVpfiDiscountState_DEPRECATED[lender]
             .cumulativeDiscountBpsSeconds;
     }
 
@@ -642,7 +642,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         LibVPFIDiscount.rollupUserDiscount(borrower, borrowerBal);
         loan.borrowerDiscountAccAtInit = LibVaipakam
             .storageSlot()
-            .userVpfiDiscountState[borrower]
+            .userVpfiDiscountState_DEPRECATED[borrower]
             .cumulativeDiscountBpsSeconds;
     }
 

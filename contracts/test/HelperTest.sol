@@ -981,7 +981,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](87);
+        selectors = new bytes4[](92);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -1120,6 +1120,12 @@ contract HelperTest {
         // T-090 — Borrower-initiated swap-to-repay slippage cap.
         selectors[85] = ConfigFacet.setMaxSwapToRepaySlippageBps.selector;
         selectors[86] = ConfigFacet.getMaxSwapToRepaySlippageBps.selector;
+        // T-087 Sub 1.A — ring-buffer TWA + mirror-cache knob setters.
+        selectors[87] = ConfigFacet.setTwaRecentDays.selector;
+        selectors[88] = ConfigFacet.setTwaWindowDays.selector;
+        selectors[89] = ConfigFacet.setTwaRecentWeight.selector;
+        selectors[90] = ConfigFacet.setTwaMinStakedDays.selector;
+        selectors[91] = ConfigFacet.setMirrorTierMaxAgeSec.selector;
         return selectors;
     }
 

@@ -703,7 +703,7 @@ contract VPFIDiscountFacet is
         )
     {
         LibVaipakam.UserVpfiDiscountState storage u =
-            LibVaipakam.storageSlot().userVpfiDiscountState[user];
+            LibVaipakam.storageSlot().userVpfiDiscountState_DEPRECATED[user];
         return (
             u.discountBpsAtPreviousRollup,
             u.lastRollupAt,

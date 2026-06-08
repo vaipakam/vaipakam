@@ -2646,4 +2646,91 @@ contract ConfigFacet is DiamondAccessControl {
         numeraireSwapEnabled_ = c.numeraireSwapEnabled;
     }
 
+    // ─── T-087 Sub 1.A — Ring-buffer TWA + mirror-cache knobs ───────────
+    //
+    // Bounds match docs/DesignsAndPlans/CrossChainRewardSystem.md §5.
+    // Sub 1.A ships the setters + bounds + events; consumption lands in
+    // Sub 1.B onward.
+
+    event TwaRecentDaysSet(uint8 newValue);
+    event TwaWindowDaysSet(uint8 newValue);
+    event TwaRecentWeightSet(uint8 newValue);
+    event TwaMinStakedDaysSet(uint8 newValue);
+    event MirrorTierMaxAgeSecSet(uint32 newValue);
+
+    error InvalidTwaRecentDays(uint8 newValue);
+    error InvalidTwaWindowDays(uint8 newValue);
+    error InvalidTwaRecentWeight(uint8 newValue);
+    error InvalidTwaMinStakedDays(uint8 newValue);
+    error InvalidMirrorTierMaxAgeSec(uint32 newValue);
+
+    /// @notice Set the number of recent days that receive the heavier
+    ///         weight inside the 30-day ring-buffer TWA.
+    /// @dev    Bounded `1 ≤ x ≤ 14` per design §5. Setting `0` falls
+    ///         through to the library default (7) at read time.
+    function setTwaRecentDays(uint8 newValue)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (newValue == 0 || newValue > 14) revert InvalidTwaRecentDays(newValue);
+        LibVaipakam.storageSlot().cfgTwaRecentDays = newValue;
+        emit TwaRecentDaysSet(newValue);
+    }
+
+    /// @notice Set the full window length of the ring-buffer TWA in days.
+    /// @dev    Bounded `14 ≤ x ≤ 30` per design §5 (capped at the
+    ///         30-slot ring buffer per Codex round-2 P2 #7).
+    function setTwaWindowDays(uint8 newValue)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (newValue < 14 || newValue > 30) revert InvalidTwaWindowDays(newValue);
+        LibVaipakam.storageSlot().cfgTwaWindowDays = newValue;
+        emit TwaWindowDaysSet(newValue);
+    }
+
+    /// @notice Set the recent-day weighting multiplier in the two-tier
+    ///         TWA blend.
+    /// @dev    Bounded `1 ≤ x ≤ 10` per design §5.
+    function setTwaRecentWeight(uint8 newValue)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (newValue == 0 || newValue > 10) revert InvalidTwaRecentWeight(newValue);
+        LibVaipakam.storageSlot().cfgTwaRecentWeight = newValue;
+        emit TwaRecentWeightSet(newValue);
+    }
+
+    /// @notice Set the minimum staked days before the EFFECTIVE_TIER
+    ///         gate releases the discount.
+    /// @dev    Bounded `2 ≤ x ≤ 14` per design §5 — lower bound raised
+    ///         from 1 per Codex round-6 P2 #13 (`= 1` reopens the
+    ///         same-day flash-stake gaming case).
+    function setTwaMinStakedDays(uint8 newValue)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (newValue < 2 || newValue > 14) revert InvalidTwaMinStakedDays(newValue);
+        LibVaipakam.storageSlot().cfgTwaMinStakedDays = newValue;
+        emit TwaMinStakedDaysSet(newValue);
+    }
+
+    /// @notice Set the secondary max-age cap for a mirror's cached
+    ///         per-user tier.
+    /// @dev    Bounded `30d ≤ x ≤ 180d` per design §5. The primary
+    ///         decay enforcement is the projected `tierExpirySec`
+    ///         baked into the cache; this cap is the on-mirror
+    ///         backstop for the "stake then never return" worst case
+    ///         (Codex round-2 P1 #3).
+    function setMirrorTierMaxAgeSec(uint32 newValue)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (newValue < 2_592_000 || newValue > 15_552_000) {
+            revert InvalidMirrorTierMaxAgeSec(newValue);
+        }
+        LibVaipakam.storageSlot().cfgMirrorTierMaxAgeSec = newValue;
+        emit MirrorTierMaxAgeSecSet(newValue);
+    }
+
 }
