@@ -485,7 +485,15 @@ export function SwapToRepayIntentPanel({
       // after deadline).
       if (AGENT_ORIGIN) {
         try {
-          await fetch(`${AGENT_ORIGIN}/intent/fusion/post`, {
+          // Codex round-2 PR #430 P2 — surface upstream Fusion
+          // pickup failures to the borrower. The on-chain commit
+          // already locked their collateral in custody; if the
+          // Fusion-side post fails (queued-ack from a
+          // pre-rotation worker, 4xx from a rejected payload,
+          // 5xx from Fusion), the borrower needs to know so they
+          // can cancel after deadline instead of waiting for a
+          // fill that won't arrive.
+          const res = await fetch(`${AGENT_ORIGIN}/intent/fusion/post`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -506,8 +514,26 @@ export function SwapToRepayIntentPanel({
               },
             }),
           });
-        } catch {
-          // Best-effort. Continue.
+          if (!res.ok) {
+            setError(
+              `On-chain commit succeeded, but the Fusion resolver-pickup post failed (HTTP ${res.status}). Your collateral is in protocol custody; cancel after the auction deadline to recover.`,
+            );
+          } else {
+            const body = (await res.json().catch(() => null)) as
+              | { status?: string; note?: string }
+              | null;
+            if (body?.status === 'queued' && body?.note) {
+              setError(
+                `On-chain commit succeeded, but Fusion-side pickup is in a degraded state: ${body.note}`,
+              );
+            }
+          }
+        } catch (err) {
+          setError(
+            `On-chain commit succeeded, but the Fusion resolver-pickup post failed: ${
+              err instanceof Error ? err.message : String(err)
+            }. Your collateral is in protocol custody; cancel after the auction deadline to recover.`,
+          );
         }
       }
 

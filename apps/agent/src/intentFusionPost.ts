@@ -44,7 +44,10 @@
 
 import type { Env } from './env';
 
-const FUSION_BASE_URL = 'https://api.1inch.dev/fusion/relayer/v2.0';
+// Codex round-2 PR #430 P2 — host is `api.1inch.com`, NOT
+// `.dev`. The `.dev` host does not serve the Fusion relayer
+// route on the current API portal.
+const FUSION_BASE_URL = 'https://api.1inch.com/fusion/relayer/v2.0';
 
 /// Chain IDs 1inch Fusion supports. Codex round-1 PR #430 P2 —
 /// without this allow-list, a dapp on Base Sepolia (84532) or any
