@@ -48,7 +48,9 @@ The platform is **pre-live** (no production users), so this design treats ABI-br
 
 ### 4.1 Tier resolution — two-tier TWA on Base
 
-For each user, the diamond maintains a **30-slot daily ring buffer** of vault VPFI balance snapshots, indexed by `dayId = block.timestamp / 1 days`. The buffer is updated lazily — on each balance-mutation site (deposit, withdraw, claim, sale settlement, etc.), the diamond fills in any gap days from `lastUpdateDay` to `currentDay - 1` with the *prior* balance (because the balance was unchanged during the gap), then writes today's new balance into `slot[currentDay % 30]`. The TWA is computed on demand by reading the 30 slots, mapping each slot's `dayId` to its weight region, and applying the weighted average.
+For each user, the diamond maintains a **30-slot daily ring buffer** of vault VPFI balance snapshots, indexed by `dayId = block.timestamp / 1 days`. Each slot stores BOTH the dayId and the balance: `slot[i] = (uint16 dayId, uint128 balance)`. The buffer is updated lazily — on each balance-mutation site (deposit, withdraw, claim, sale settlement, etc.), the diamond fills in any gap days from `lastUpdateDay` to `currentDay - 1` with the *prior* balance (because the balance was unchanged during the gap), then writes today's new balance into `slot[currentDay % 30]`. The TWA is computed on demand by reading the 30 slots, checking each slot's `dayId` field against the active 30-day window (`dayId ∈ [currentDay - 29, currentDay]`), and applying the weighted average over slots that pass the window check.
+
+**Why per-slot dayId, not derived from `firstWriteDayId` (Codex round-4 P1 #2)**: a naive ring-buffer layout that derives each slot's dayId from `firstWriteDayId + i % 30` produces incorrect mappings after the ring wraps. On day 100 with `firstWriteDayId = 0`, slot 0 actually represents day 90 (the most recent overwrite of that slot), not day 0. Storing the dayId in the slot itself eliminates this ambiguity: the TWA scanner simply ignores any slot whose `dayId` falls outside the active window.
 
 > **Why a ring buffer, not aggregate sums?** Codex round-1 P1 #3 caught that two aggregate sums (`recentSum`, `olderSum`) cannot be advanced exactly without knowing what balance held during the day that just rolled across the recent/older boundary. Two users with the same aggregate sums but different intra-window balance distributions would produce identical TWAs but actually deserve different ones. The ring buffer carries the full per-day balance distribution and is the simplest exact representation; the gap-fill is O(days-since-last-update) bounded by 30, so cost is capped.
 
@@ -69,6 +71,10 @@ TWA = (Σ balance(dayId) × weight(dayId)) / denominator
 ```
 
 The self-seeded denominator lets a fresh staker reach a meaningful TWA on day 1 (denominator starts at 3 for one recent day, so TWA = balance immediately) and ramps to the full 44 over 30 days. Codex round-1 P2 #7 caught that a fixed 44 denominator would force a 100-VPFI staker to wait 30 days for tier 1; the self-seeded denominator fixes this.
+
+**Minimum-history gate (Codex round-4 P1 #3)**: the self-seeded denominator alone would let a fresh wallet stake huge VPFI, get tier 4 for a single fee transaction, and immediately unstake — the discount fires at the discounted rate and decay arrives too late to matter. To close this gaming vector, the discount is gated on `stakedDays >= cfgTwaMinStakedDays` (default 3 days, governance-bounded 1-14 days). Below this threshold the user's tier-from-TWA is computed and stored but EFFECTIVE_TIER is forced to 0 — the user still accrues TWA history and CCIP propagation still fires the moment the tier crosses, but no fee discount applies until the user has at least N days of staking history.
+
+This shifts the cost-vs-discount tradeoff: a fresh wallet must commit stake for `cfgTwaMinStakedDays` BEFORE drawing any discount benefit. Pre-live freedom lets us tune this knob during early-user testing; 3 days is the proposed launch value (long enough that flash-stake gaming costs ~3 days of opportunity cost on the staked VPFI, short enough that genuine new users see discounts quickly).
 
 **Behaviour highlights:**
 
@@ -101,8 +107,8 @@ No changes to the existing vault-proxy pattern. Each user has a `VaipakamVaultIm
 1. **State mutation step** — Any balance-mutating call site invokes `LibVPFIDiscount.rollupUserDiscount(user, currentBal)`. This:
    - Advances the ring buffer to today (lazy gap-fill).
    - Recomputes the current tier from the buffer.
-   - **Computes the projected expiry**: scans the future trajectory of the ring buffer assuming no further balance mutations (older days roll out, all newer days hold the current balance), determines the dayId on which the projected TWA will first cross BELOW the current tier boundary, and stores `tierExpiryDayId[user] = thatDayId`. This is the closed-form solution the mirror later uses to enforce decay-driven expiry without a Base round-trip.
-   - Increments `s.userTierPushNonce[user]` (uint64, monotonic) ONLY IF the tier crossed a boundary OR the caller signals a forced push.
+   - **Computes the projected expiry**: scans the future trajectory of the ring buffer assuming no further balance mutations (older days roll out, all newer days hold the current balance), determines the dayId on which the projected TWA will first cross BELOW the current tier boundary, and stores `tierExpirySec[user] = thatDayId × 1 day`. This is the closed-form solution the mirror later uses to enforce decay-driven expiry without a Base round-trip.
+   - Increments `s.userTierPushNonce[user]` (uint64, monotonic) IF the tier crossed a boundary OR the projected expiry shifted earlier vs the previous stored value OR the caller signals a forced push (Codex round-4 P1 #1 — an unstake that lowers expiry without crossing a tier-boundary today MUST still trigger a re-broadcast; otherwise the per-destination de-dup check skips and mirrors keep the stale, later expiry).
    - Emits `BaseTierChanged(user, oldTier, newTier, computedAt, nonce, tierExpirySec)`.
    - **Does NOT send any CCIP messages.** No `msg.value` required.
 
@@ -127,7 +133,9 @@ The `cfgMirrorTierMaxAgeSec` knob remains as a *secondary* safety cap (the on-mi
 
 **Re-send semantics for failed deliveries (Codex round-2 P1 #2)**: `broadcastTierUpdate` is *idempotent* in this sense: if the CCIP send doesn't reach the mirror (router accepts but executor fails permanently), the mirror's cache stays at the pre-failure value, while Base's `userTierLastPushedNonce` shows the send was attempted. The user can call a `forceResendTierUpdate(user, dests)` overload that bypasses the de-dup check and re-sends regardless of `userTierLastPushedNonce`. Keepers can do the same when monitoring CCIP delivery status off-chain. The standard `broadcastTierUpdate` is the cheap "send if not yet sent" path; the force version is the recovery path.
 
-**Sender authentication (round-1 P1 #2)**: the mirror inbound handler validates both `srcChainSelector == s.baseChainSelector` AND `authenticatedSender == s.baseAuthorizedMessenger`. The authenticated sender comes from CCIP's `Any2EVMMessage.sender` field. Governance sets `baseAuthorizedMessenger` on each mirror via `setBaseAuthorizedMessenger(...)`.
+**Sender authentication (round-1 P1 #2 + round-4 P1 #4)**: the mirror inbound handler validates the **business-peer mapping** that `VaipakamRewardMessenger` already exposes for REPORT/BROADCAST messages — NOT the raw `Any2EVMMessage.sender` field. Codex caught that in the existing CCIP adapter, `Any2EVMMessage.sender` is the *remote `CcipMessenger`*, not the business peer; the messenger resolves the actual peer through its channel-peer mapping before forwarding the decoded payload to the diamond. The tier-update inbound path mirrors that pattern exactly: the messenger validates `channelPeer[srcChainSelector] == decodedBusinessPeer` and forwards a `(payload, srcChainSelector, businessPeer)` triple to the diamond. The diamond then checks `srcChainSelector == s.baseChainSelector` AND `businessPeer == s.baseAuthorizedMessenger`. Using `Any2EVMMessage.sender` directly would reject every legitimate tier update because the address would always be the local `CcipMessenger` adapter, not the Base business peer.
+
+**Reward-messenger payload-size gate update (Codex round-4 P1 #5)**: the existing `VaipakamRewardMessenger` rejects every inbound payload whose ABI length doesn't match the current 4-word REPORT/BROADCAST shape. The new `TierUpdated` payload is 6 ABI words (`kind`, `user`, `tier`, `computedAt`, `nonce`, `tierExpirySec`). Sub 2 (cross-chain wiring) MUST extend the messenger's payload-size gate to accept both the existing 4-word shape AND the new 6-word `TierUpdated` shape — without that change, every mirror tier update will revert at the messenger's pre-decode length check before reaching the new decode branch. The messenger's existing dispatch-by-kind pattern handles the actual branching; this is purely a size-check update.
 
 **Mandatory tier freshness on mirrors (Codex round-2 P1 #3)**: the mirror fee path additionally enforces a maximum cache age. At fee-application time, `LibVPFIDiscount.tryApply` / `tryApplyYieldFee` compare `now - userTierCache[user].lastUpdateSec` against `cfgMirrorTierMaxAgeSec` (default 60 days, governance-bounded 30-180 days). If the cache is older than the bound, the fee is charged WITHOUT the discount (tier resolves to 0 for that fee). This is the on-chain backstop against the "stake then never return + nobody pokes" worst case: the user can either re-trigger a CCIP push (by transacting on Base + calling `broadcastTierUpdate`), or accept the tier-0 fee on the mirror until they refresh. No keeper required for correctness.
 
@@ -220,14 +228,14 @@ The Diamond's `predeploy-check.sh` selector-coverage suite is updated to expect 
 
 // === T-087 — Ring-buffer TWA accumulator ===
 // Per-user 30-slot ring buffer of daily balance snapshots.
-// `dayBalances[user][i]` is the closing VPFI vault balance for
-// (firstWriteDayId[user] + i) % 30. uint128 covers the full
-// 230M VPFI token cap (Codex round-2 P2 #8 — uint80 would cap
-// per-user balance at ~1.2M VPFI, smaller than the 55.2M staking
-// pool itself).
-mapping(address => uint128[30]) dayBalances;
-mapping(address => uint16)      firstWriteDayId;   // dayId of slot index 0
-mapping(address => uint16)      lastUpdateDayId;   // most recent day written
+// Each slot stores BOTH the dayId AND the balance — this lets the
+// TWA scanner reject slots whose dayId falls outside the active
+// window without depending on a derived index (Codex round-4 P1 #2
+// caught that a wrap-around in `dayId % 30` indexing without an
+// in-slot dayId mis-labels old balances after day 30).
+struct DaySnapshot { uint16 dayId; uint128 balance; }
+mapping(address => DaySnapshot[30]) dayBalances;
+mapping(address => uint16)          lastUpdateDayId;   // most recent day written
 
 // Monotonic per-user nonce — strict ordering key for cross-chain
 // tier propagation. Incremented on every tier-crossing balance
@@ -304,6 +312,7 @@ uint256 stakingPoolBuybackBudget;
 | `cfgTwaRecentDays`                    | uint8   | 7           | 1 ≤ x ≤ 14                  |
 | `cfgTwaWindowDays`                    | uint8   | 30          | 14 ≤ x ≤ 30 (capped at the 30-slot ring buffer per Codex round-2 P2 #7) |
 | `cfgTwaRecentWeight`                  | uint8   | 3           | 1 ≤ x ≤ 10                  |
+| `cfgTwaMinStakedDays`                 | uint8   | 3           | 1 ≤ x ≤ 14 (Codex round-4 P1 #3 — flash-stake-and-withdraw gaming gate) |
 | `cfgMirrorTierMaxAgeSec`              | uint32  | 5_184_000 (60d) | 2_592_000 (30d) ≤ x ≤ 15_552_000 (180d) |
 
 All bounds-checked via `ConfigFacet`'s existing `setUint256WithBounds` pattern (T-008).
@@ -335,7 +344,7 @@ The implementation lands in 5 PRs, each independently reviewable + Codex-audited
 | Sub | Title                                                | Scope                                                                                                                                                                                                                                                                                                                              |
 | --- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | **Contracts — Base accumulator + tier resolution**   | Rewrite `LibVPFIDiscount` for two-tier TWA via 30-slot ring buffer + monotonic nonce; storage additions on Base; emit `BaseTierChanged(user, oldTier, newTier, computedAt, nonce)`; delete `StakingRewardsFacet` + `VPFIDiscountFacet` + `VpfiBuyAdapter` from mirrors (RETAIN `VPFIMirrorToken` so `InteractionRewardsFacet` keeps working); new `ConfigFacet` knobs (TWA window/weighting + mirror max-age). Producer artifacts + tests + frontend ABI sync. |
-| 2   | **Cross-chain — `VaipakamRewardMessenger` extension** | Add `TierUpdated` message kind; Base outbound on tier-change; mirror inbound handler writes `userTierCache`; mirror-side fee-path reads from cache; full fork-test on Base Sepolia → Sepolia mirror.                                                                                                                              |
+| 2   | **Cross-chain — `VaipakamRewardMessenger` extension** | Add `TierUpdated` message kind; Base outbound on tier-change; mirror inbound handler writes `userTierCache`; mirror-side fee-path reads from cache; **extend the messenger's payload-size gate to accept BOTH the existing 4-word REPORT/BROADCAST shape AND the new 6-word `TierUpdated` shape** (Codex round-4 P1 #5); **route business-peer authentication through the messenger's existing `channelPeer` mapping, NOT raw `Any2EVMMessage.sender`** (Codex round-4 P1 #4); full fork-test on Base Sepolia → Sepolia mirror.                                                                                                                              |
 | 3   | **Treasury buyback** | `TreasuryFacet` budget accumulators on every chain; remit flow via existing CCIP path; Base-side `executeBuyback()`; agent + keeper worker wiring for event observation + randomized swap delay; new `ConfigFacet` knobs (fee bps, tranche cap, slippage); pause lever.                                                            |
 | 4   | **Frontend — chain-agnostic UX** | Global "Stake VPFI" entry on every page; one-click chain-switch flow; tier display + balance + rewards previews uniform across chains; 30-minute "tier syncing" notice after a stake/unstake action; "Managed on Base" footnote in Advanced; new `useUserTier` hook reading from indexer + on-chain fallback.                       |
 | 5   | **Indexer + docs** | New indexer event handlers for `BaseTierChanged` + `TierUpdated` + `BuybackBudgetReady` + `BuybackExecuted`; functional spec under `docs/FunctionalSpecs/CrossChainRewards.md`; refresh of `docs/TokenomicsTechSpec.md` §6 + §7; Advanced UG entry; release-notes thread.                                                          |
