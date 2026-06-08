@@ -175,9 +175,16 @@ the borrower-position NFT can cancel the intent. The protocol:
   legitimately running for solvers).
 - Tears down the on-chain commit record + the Fusion-side order
   registration.
-- Returns the custodial collateral to the borrower's personal vault.
+- Returns the custodial collateral to **the loan's original borrower's
+  vault** — the address recorded on `loan.borrower` at origination,
+  not necessarily the current borrower-NFT holder. The two diverge
+  only when the borrower-position NFT has been transferred after the
+  intent was committed; that scenario is a rare edge case but the
+  cancel teardown is keyed by the original-borrower record. The
+  current NFT holder is the **authorised caller** of the cancel; the
+  recipient of the returned custody is the original borrower.
 - Emits a `SwapToRepayIntentCancelled` event attributing the cancel to
-  the borrower.
+  the caller wallet.
 
 ### Permissionless cancel (after grace)
 
@@ -186,10 +193,18 @@ because the wallet is no longer reachable — anyone can call a
 permissionless cancel path **after** the deadline plus the configured
 cancel-grace window (default 24 hours past the deadline). The same
 teardown + collateral return happens; the activity feed attributes the
-cancel to the wallet that called the permissionless path.
+cancel to the wallet that called the permissionless path. The
+returned custody still flows to the loan's original borrower's vault
+(same recipient as the borrower-cancel path).
 
-This is the protocol's anti-stranding guarantee: an abandoned commit
-cannot indefinitely lock the borrower's collateral.
+The permissionless path is the protocol's **anti-stranding affordance**,
+not an automatic recovery: collateral returns only when someone
+actually calls the function. If no caller ever does, the commit and
+the custodial collateral remain in the diamond indefinitely. The
+expectation is that the original borrower, the keeper network, or any
+third party watching the protocol can call the path to claim the
+solver-bot-style recovery gas; the contract makes the call open
+rather than scheduling automatic recovery.
 
 ### Force-cancel (lender protection)
 
@@ -236,13 +251,25 @@ When a solver fills the order through 1inch's Limit Order Protocol:
    if the makerTraits or other on-order parameters have been tampered
    with mid-flight.
 4. With the floor check passing, the post-interaction hook runs the
-   canonical settlement waterfall: the lender's leg is delivered to the
-   lender-position-NFT holder; the treasury's leg is delivered to the
-   treasury; any favorable-quote surplus over the floor lands in the
-   borrower's wallet directly (not the vault) so it can be spent
-   immediately without an extra withdraw step; the loan transitions to
-   the Repaid lifecycle state; the time-weighted VPFI Loan Initiation
-   Fee rebate is delivered as appropriate.
+   canonical settlement waterfall:
+    - The lender's leg is **credited to the lender's vault / claim
+      slot** keyed by the loan's original lender address; the current
+      lender-position-NFT holder withdraws it via the protocol's
+      claim entry point (`ClaimFacet.claimAsLender`). This indirect
+      delivery is identical to the atomic surface's settlement path
+      and is intentional: position-NFT transferability means the
+      "current holder" can change between fill registration and
+      withdrawal, so a pull-based claim slot is the safer settlement
+      shape than a direct push.
+    - The treasury's leg is delivered directly to the configured
+      treasury address.
+    - Any favorable-quote surplus over the floor lands in the
+      borrower's wallet directly (not the vault) so it can be spent
+      immediately without an extra withdraw step.
+    - The loan transitions to the Repaid lifecycle state.
+    - The time-weighted VPFI Loan Initiation Fee rebate is recorded
+      against the borrower's claim slot to be withdrawn via the
+      borrower-side claim path.
 5. A `SwapToRepayIntentFilled` event is emitted; the activity feed
    attributes the row to the borrower that originated the commit (NOT
    the solver who submitted the fill transaction).
