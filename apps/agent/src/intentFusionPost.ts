@@ -160,7 +160,7 @@ export async function handleIntentFusionPost(
       ok: true,
       status: 'queued',
       orderHash: parsed.orderHash,
-      note: `Chain ${parsed.chainId} is not supported by 1inch Fusion. The on-chain commit is the source of truth; no Fusion solver discovery happens on this chain. Cancel after deadline to recover custodial collateral.`,
+      note: `Chain ${parsed.chainId} is not supported by 1inch Fusion. Your collateral is in protocol custody as recorded by the on-chain commit; cancel after the auction deadline to return it to your vault — do not wait for a fill that will not arrive.`,
     });
   }
 
@@ -183,7 +183,7 @@ export async function handleIntentFusionPost(
       status: 'queued',
       orderHash: parsed.orderHash,
       note:
-        'INTENT_FUSION_API_KEY is not configured on this Worker. The on-chain commit is the source of truth (collateral in diamond custody, ERC-1271 bound). No Fusion solver discovery happens until the secret is rotated in.',
+        'INTENT_FUSION_API_KEY is not configured on this Worker (operator-pre-activation state). No Fusion solver discovery happens until the secret is bound + the worker redeploys. Your collateral is in protocol custody as recorded by the on-chain commit; cancel after the auction deadline to return it to your vault — do not wait for a fill that will not arrive.',
     });
   }
 
@@ -199,11 +199,24 @@ export async function handleIntentFusionPost(
   // a borrower EIP-712 signature for these orders; we pass an
   // empty bytes string in the signature field.
   //
-  // `quoteId` is from 1inch's preceding quote API. Vaipakam's
-  // commit flow is non-quote (we generate the order shape from
-  // on-chain context, not from a 1inch quote round-trip). We pass
-  // an empty string; Fusion's relayer allows that for orders that
-  // were not generated through their quote flow.
+  // Codex round-3 PR #430 P1 — `quoteId` is sourced from 1inch's
+  // quote/build round-trip and is REQUIRED by Fusion's relayer.
+  // Vaipakam's commit flow constructs the order shape from
+  // on-chain context rather than from a 1inch quote, so we have
+  // no quoteId to pass. Fusion will likely reject this submission
+  // upstream. The dapp's panel surfaces the upstream rejection via
+  // the response-status surfacing the round-2 fix added, so the
+  // borrower's recovery path is the standard cancel-after-deadline.
+  //
+  // A v1.2 follow-up will either (a) drive the order shape through
+  // 1inch's quote/build step at commit time so we have a real
+  // quoteId, or (b) switch to 1inch's Limit Order Protocol relayer
+  // endpoint (which doesn't require a quoteId) instead of Fusion's
+  // resolver-pickup endpoint. Until that lands, the GA bridge is
+  // load-bearing for the architectural shape (request reaches
+  // Fusion, ERC-1271 binding holds, fills atomic with custody)
+  // but every commit's upstream response is expected to be a
+  // 4xx until the quoteId surface ships.
   const signedOrderInput = {
     order: {
       maker: parsed.order.maker,
@@ -304,23 +317,28 @@ function validateBody(raw: unknown): IntentFusionPostRequest | null {
 
   if (typeof o.chainId !== 'number' || !Number.isInteger(o.chainId) || o.chainId <= 0)
     return null;
-  if (typeof o.orderHash !== 'string' || !o.orderHash.startsWith('0x'))
-    return null;
-  if (typeof o.commitTxHash !== 'string' || !o.commitTxHash.startsWith('0x'))
-    return null;
+  // Codex round-3 PR #430 P2 — tighten payload validation so a
+  // non-browser caller that spoofs an allowed Origin can't push
+  // through arbitrary strings that 1inch will spend our shared
+  // API quota rejecting. Hex addresses are 0x + 40 hex chars,
+  // hashes / bytes32 are 0x + 64 hex chars, uint256 string
+  // decimals are bounded, and the extension is a known canonical
+  // length the diamond's `canonicalExtension` view returns.
+  if (!isBytes32Hex(o.orderHash) || !isBytes32Hex(o.commitTxHash)) return null;
 
   const order = o.order as Record<string, unknown> | undefined;
   if (!order || typeof order !== 'object') return null;
-  const addrs = ['maker', 'receiver', 'makerAsset', 'takerAsset', 'extension'];
+  const addrs = ['maker', 'receiver', 'makerAsset', 'takerAsset'] as const;
   for (const f of addrs) {
-    if (typeof order[f] !== 'string' || !(order[f] as string).startsWith('0x'))
-      return null;
+    if (!isAddressHex(order[f])) return null;
   }
-  const uints = ['makerAmount', 'takerAmount', 'salt', 'makerTraits'];
+  if (!isExtensionHex(order.extension)) return null;
+  const uints = ['makerAmount', 'takerAmount', 'salt', 'makerTraits'] as const;
   for (const f of uints) {
-    if (typeof order[f] !== 'string') return null;
+    if (!isUint256DecString(order[f])) return null;
   }
-  if (typeof order.deadline !== 'number' || !Number.isInteger(order.deadline))
+  if (typeof order.deadline !== 'number' || !Number.isInteger(order.deadline) ||
+      order.deadline <= 0)
     return null;
 
   return {
@@ -329,4 +347,30 @@ function validateBody(raw: unknown): IntentFusionPostRequest | null {
     commitTxHash: o.commitTxHash as `0x${string}`,
     order: order as IntentFusionPostRequest['order'],
   };
+}
+
+const HEX_ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
+const HEX_BYTES32_RE = /^0x[0-9a-fA-F]{64}$/;
+// Canonical extension: 32-byte offsets header + 40 bytes content
+// (two 20-byte addresses per the v1.1 contract's
+// `canonicalExtension`); total 0x + 144 hex chars.
+const HEX_EXTENSION_RE = /^0x[0-9a-fA-F]{144}$/;
+const UINT256_DEC_RE = /^[0-9]{1,78}$/;
+
+function isAddressHex(v: unknown): v is `0x${string}` {
+  return typeof v === 'string' && HEX_ADDR_RE.test(v);
+}
+function isBytes32Hex(v: unknown): v is `0x${string}` {
+  return typeof v === 'string' && HEX_BYTES32_RE.test(v);
+}
+function isExtensionHex(v: unknown): v is `0x${string}` {
+  return typeof v === 'string' && HEX_EXTENSION_RE.test(v);
+}
+function isUint256DecString(v: unknown): v is string {
+  if (typeof v !== 'string' || !UINT256_DEC_RE.test(v)) return false;
+  try {
+    return BigInt(v) < BigInt(2) ** BigInt(256);
+  } catch {
+    return false;
+  }
 }
