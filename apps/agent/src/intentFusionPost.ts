@@ -120,6 +120,20 @@ export async function handleIntentFusionPost(
   // Origin gate above stops the browser-misconfigured noise; the
   // rate-limit stops a malicious caller from spoofing Origin +
   // burning the Vaipakam-side quota.
+  //
+  // Codex round-6 PR #430 P2 — fail-closed when the operator has
+  // bound the API key but NOT bound the rate-limit. The pair must
+  // be activated together; binding the key alone exposes the
+  // shared quota to ungated spend. When both are unbound (pre-
+  // activation), the no-API-key short-circuit below kicks in and
+  // we never reach the upstream `fetch`, so this gate only
+  // matters in the half-activated state.
+  if (env.INTENT_FUSION_API_KEY && !env.INTENT_FUSION_POST_RATELIMIT) {
+    console.error(
+      '[intent/fusion/post] half-activated: API key bound but rate-limit unbound; refusing request',
+    );
+    return jsonErr(corsOrigin, 503, 'rate-limit-not-configured');
+  }
   if (!(await checkRateLimit(req, env.INTENT_FUSION_POST_RATELIMIT))) {
     return jsonErr(corsOrigin, 429, 'rate-limited');
   }

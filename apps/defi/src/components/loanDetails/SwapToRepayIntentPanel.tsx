@@ -695,13 +695,43 @@ export function SwapToRepayIntentPanel({
         </div>
       )}
 
-      {!hasLiveIntent && !FUSION_SUPPORTED_CHAIN_IDS.has(chainId) && (
+      {/* Codex round-6 PR #430 P1 + P2 — commit is disabled until
+          the v1.2 quoteId work + the agent-origin requirement are
+          both addressed. Three independent disable reasons; the
+          alert text explains which one applies. The cancel
+          surface stays accessible for any pre-existing live
+          commits regardless. */}
+      {!hasLiveIntent && (
         <div className="alert alert-warning" style={{ fontSize: '0.82rem' }}>
           <AlertTriangle size={14} />
           <span>
-            1inch Fusion does not support chain {chainId}, so a commit
-            here would lock your collateral with no chance of a
-            resolver fill. Use the atomic swap-to-repay above instead.
+            {!FUSION_SUPPORTED_CHAIN_IDS.has(chainId) ? (
+              <>
+                1inch Fusion does not support chain {chainId}, so a
+                commit here would lock your collateral with no chance
+                of a resolver fill. Use the atomic swap-to-repay
+                above instead.
+              </>
+            ) : !AGENT_ORIGIN ? (
+              <>
+                The Vaipakam agent worker URL is not configured in
+                this build, so the resolver-pickup hand-off would be
+                skipped on commit and your collateral would lock in
+                custody with no chance of a fill. Use the atomic
+                swap-to-repay above instead.
+              </>
+            ) : (
+              <>
+                The 1inch Fusion resolver-pickup wire submits orders
+                without the `quoteId` field that Fusion requires, so
+                upstream is expected to reject every commit until
+                the v1.2 follow-up (issue #431) patches the bridge.
+                Commit is disabled to avoid locking collateral that
+                would only ever recover via the cancel-after-deadline
+                path. Use the atomic swap-to-repay above instead;
+                this surface re-enables when #431 lands.
+              </>
+            )}
           </span>
         </div>
       )}
@@ -715,7 +745,12 @@ export function SwapToRepayIntentPanel({
               !canWrite ||
               submitting ||
               actionLoading ||
-              !FUSION_SUPPORTED_CHAIN_IDS.has(chainId)
+              !FUSION_SUPPORTED_CHAIN_IDS.has(chainId) ||
+              !AGENT_ORIGIN ||
+              // v1.2 #431 — Fusion-side quoteId not yet integrated;
+              // commits would be rejected upstream. Disable until
+              // the follow-up lands.
+              true
             }
             onClick={handleCommit}
           >
