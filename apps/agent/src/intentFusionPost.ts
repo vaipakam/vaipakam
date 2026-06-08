@@ -94,7 +94,10 @@ function rpcForChain(env: Env, chainId: number): string | undefined {
 // Codex round-2 PR #430 P2 — host is `api.1inch.com`, NOT
 // `.dev`. The `.dev` host does not serve the same routes on
 // the current API portal.
-const LOP_ORDERBOOK_BASE_URL = 'https://api.1inch.com/orderbook/v4.0';
+// Codex round-1 PR #435 P1 — 1inch's current docs list
+// `/orderbook/v4.1/{chain}` for the submit shape we use; v4.0
+// is documented as deprecated. Updated to v4.1.
+const LOP_ORDERBOOK_BASE_URL = 'https://api.1inch.com/orderbook/v4.1';
 
 /// Chain IDs 1inch Fusion supports. Codex round-1 PR #430 P2 —
 /// without this allow-list, a dapp on Base Sepolia (84532) or any
