@@ -171,7 +171,7 @@ library LibVPFIDiscount {
         uint256 balPostMutation
     ) internal {
         LibVaipakam.UserVpfiDiscountState storage u =
-            LibVaipakam.storageSlot().userVpfiDiscountState[user];
+            LibVaipakam.storageSlot().userVpfiDiscountState_DEPRECATED[user];
 
         if (u.lastRollupAt == 0) {
             // Self-seed against the post-mutation balance — that's the
@@ -215,7 +215,7 @@ library LibVPFIDiscount {
         uint256 windowSeconds = block.timestamp - loan.startTime;
         uint256 currentAcc =
             LibVaipakam.storageSlot()
-                .userVpfiDiscountState[loan.lender]
+                .userVpfiDiscountState_DEPRECATED[loan.lender]
                 .cumulativeDiscountBpsSeconds;
         if (currentAcc <= loan.lenderDiscountAccAtInit) return 0;
         avgBps =
@@ -240,7 +240,7 @@ library LibVPFIDiscount {
         uint256 windowSeconds = block.timestamp - loan.startTime;
         uint256 currentAcc =
             LibVaipakam.storageSlot()
-                .userVpfiDiscountState[loan.borrower]
+                .userVpfiDiscountState_DEPRECATED[loan.borrower]
                 .cumulativeDiscountBpsSeconds;
         if (currentAcc <= loan.borrowerDiscountAccAtInit) return 0;
         avgBps =

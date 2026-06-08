@@ -1460,7 +1460,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](87);
+        s = new bytes4[](92);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -1630,6 +1630,13 @@ contract DeployDiamond is Script {
         // `MAX_SLIPPAGE_BPS = 2500` (25%).
         s[85] = ConfigFacet.setMaxSwapToRepaySlippageBps.selector;
         s[86] = ConfigFacet.getMaxSwapToRepaySlippageBps.selector;
+        // T-087 Sub 1.A — ring-buffer TWA + mirror-cache knobs. Storage
+        // scaffolding only in 1.A; consumption lands in Sub 1.B onward.
+        s[87] = ConfigFacet.setTwaRecentDays.selector;
+        s[88] = ConfigFacet.setTwaWindowDays.selector;
+        s[89] = ConfigFacet.setTwaRecentWeight.selector;
+        s[90] = ConfigFacet.setTwaMinStakedDays.selector;
+        s[91] = ConfigFacet.setMirrorTierMaxAgeSec.selector;
     }
 
     /// T-090 v1.1 (#389) — intent-based swap-to-repay config
