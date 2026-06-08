@@ -54,6 +54,12 @@ const KIND_LABELS: Record<ActivityEventKind, string> = {
   // T-090 Sub 3 — borrower-initiated swap-to-repay surface.
   SwapToRepayExecuted: 'Loan repaid via collateral swap',
   SwapToRepayPartialExecuted: 'Partial repayment via collateral swap',
+  // T-090 v1.1 (#389) Sub 3 (#418) — intent-based swap-to-repay
+  // surface. Solver-fulfilled commit → atomic settlement.
+  SwapToRepayIntentCommitted: 'Best-price swap-to-repay intent committed',
+  SwapToRepayIntentFilled: 'Loan repaid via best-price intent',
+  SwapToRepayIntentCancelled: 'Best-price intent cancelled',
+  SwapToRepayIntentForceCancelled: 'Best-price intent force-cancelled (lender protection)',
   ClaimRetryExecuted: 'Claim-time swap retry',
   BorrowerLifRebateClaimed: 'VPFI rebate claimed',
   StakingRewardsClaimed: 'VPFI staking rewards claimed',
@@ -88,6 +94,13 @@ const KIND_ACCENT: Record<ActivityEventKind, string> = {
   // `info` for partial (loan stays Active).
   SwapToRepayExecuted: 'success',
   SwapToRepayPartialExecuted: 'info',
+  // v1.1 intent variants — commit/cancel are info (loan still
+  // Active), Filled is success (terminal close), ForceCancelled
+  // is warning (lender-protection action drove it).
+  SwapToRepayIntentCommitted: 'info',
+  SwapToRepayIntentFilled: 'success',
+  SwapToRepayIntentCancelled: 'info',
+  SwapToRepayIntentForceCancelled: 'warning',
   ClaimRetryExecuted: 'info',
   BorrowerLifRebateClaimed: 'info',
   StakingRewardsClaimed: 'success',
@@ -143,6 +156,16 @@ const KIND_PRIORITY: ActivityEventKind[] = [
   // below the full-close kind so the partial reduction itself is
   // the headline, not its periodic side-effect.
   'SwapToRepayPartialExecuted',
+  // T-090 v1.1 (#389) Sub 3 (#418) — intent-fill terminal close
+  // is the headline of any tx that emits it (same priority as
+  // `SwapToRepayExecuted`); commit / cancel / force-cancel are
+  // worth surfacing as the headline when they're the only
+  // intent-related event, but they don't carry a loan terminal so
+  // they sit below the close kinds.
+  'SwapToRepayIntentFilled',
+  'SwapToRepayIntentForceCancelled',
+  'SwapToRepayIntentCommitted',
+  'SwapToRepayIntentCancelled',
   'LoanInitiated',
   'LoanSold',
   'LoanObligationTransferred',

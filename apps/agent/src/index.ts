@@ -32,6 +32,8 @@
  *   GET  /frames/active-loans/image         — Frame SVG image
  *   POST /quote/0x                          — 0x v2 aggregator proxy
  *   POST /quote/1inch                       — 1inch v6 aggregator proxy
+ *   POST /intent/fusion/post                — 1inch Fusion resolver-pickup
+ *                                             proxy (T-090 v1.1 Sub 3)
  *   POST /opensea/listing                   — OpenSea Listings API proxy
  *                                             (T-086 step 14)
  *   ANY  /diag/record                       — diagnostics record capture
@@ -67,6 +69,7 @@ import { runPeriodicPreNotify } from './periodicPreNotify';
 import { runBuyWatchdog } from './buyWatchdog';
 import { handle0xQuote, handle1inchQuote } from './quoteProxy';
 import { handleOpenSeaListingPost } from './openseaProxy';
+import { handleIntentFusionPost } from './intentFusionPost';
 import { handleOpenSeaCollection } from './openseaCollectionProxy';
 import { handleOpenSeaOffers } from './openseaOffersProxy';
 import { handleOpenSeaSignedOffer } from './openseaSignedOfferProxy';
@@ -161,6 +164,20 @@ export default {
     }
     if (url.pathname === '/quote/1inch' && req.method === 'POST') {
       return handle1inchQuote(req, resolved);
+    }
+    // T-090 v1.1 (#389) Sub 3 (#418) — Fusion resolver-pickup proxy.
+    // Dapp posts the orderHash + structured Fusion order + commit
+    // tx hash after the borrower's `commitSwapToRepayIntent` lands.
+    // Worker forwards to 1inch Fusion's resolver-pickup endpoint
+    // server-side (key stays Vaipakam-side) and returns the
+    // upstream JSON pass-through. v1.1 launch: handler validates +
+    // queues; real upstream `fetch` lands in the v1.1 GA card.
+    if (url.pathname === '/intent/fusion/post' && req.method === 'POST') {
+      return handleIntentFusionPost(
+        req,
+        resolved,
+        resolveAllowedOrigin(req, resolved),
+      );
     }
 
     // Diagnostics record. CORS-locked + per-IP rate-limited inside
