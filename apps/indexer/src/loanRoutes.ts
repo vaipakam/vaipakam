@@ -307,6 +307,40 @@ export async function handleLoanById(
         auctionMode: listing.auction_mode,
       };
     }
+    // T-090 v1.1 (#389) Sub 2 (#417) — surface the live intent
+    // commit (if any) so the dapp can render the pending-intent
+    // CTA + cancel button from this single endpoint. Mirrors the
+    // prepay-listing surface above; null when no commit is live.
+    // Codex round-1 PR #421 P2 — without this read surface the
+    // table is write-only and the dapp has no path to learn an
+    // intent commit landed.
+    const intent = await env.DB.prepare(
+      `SELECT order_hash, committed_by, maker_amount, taker_amount,
+              deadline, committed_at, committed_tx_hash
+       FROM swap_to_repay_intents
+       WHERE chain_id = ? AND loan_id = ?`,
+    )
+      .bind(chainId, loanId)
+      .first<{
+        order_hash: string;
+        committed_by: string;
+        maker_amount: string;
+        taker_amount: string;
+        deadline: number;
+        committed_at: number;
+        committed_tx_hash: string;
+      }>();
+    if (intent) {
+      payload.swapToRepayIntent = {
+        orderHash: intent.order_hash,
+        committedBy: intent.committed_by,
+        makerAmount: intent.maker_amount,
+        takerAmount: intent.taker_amount,
+        deadline: intent.deadline,
+        committedAt: intent.committed_at,
+        committedTxHash: intent.committed_tx_hash,
+      };
+    }
     return jsonResponse(payload);
   } catch (err) {
     console.error('[loanRoutes] byId failed', err);

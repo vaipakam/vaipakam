@@ -1546,6 +1546,11 @@ async function processLoanLogs(
       // through a fill / cancel that the dispatcher would have
       // processed earlier in the same batch, OR through a stale
       // reorg replay (in which case the row content is identical).
+      // Stamp `committed_at` with the block timestamp (Codex round-1
+      // PR #421 P2 — on a cold-start backfill the worker's `now` is
+      // far ahead of the actual on-chain commit time and would make
+      // backfilled pending intents look newly committed).
+      const blockAt = blockTimestamps.get(log.blockNumber) ?? now;
       await env.DB.prepare(
         `INSERT OR REPLACE INTO swap_to_repay_intents
            (chain_id, loan_id, order_hash, committed_by,
@@ -1561,7 +1566,7 @@ async function processLoanLogs(
           String(a.makerAmount as bigint),
           String(a.takerAmount as bigint),
           Number(a.deadline as bigint),
-          now,
+          blockAt,
           log.transactionHash,
         )
         .run();
@@ -1573,6 +1578,23 @@ async function processLoanLogs(
       // row is deleted. Mirrors `SwapToRepayExecuted` exactly for
       // the loan-side state machine, plus the intent-row cleanup.
       const loanId = Number(a.loanId as bigint);
+      // Codex round-1 PR #421 P2 — look up the originating
+      // `committed_by` from the intent row BEFORE we delete it so
+      // the participants resolver can attribute the successful fill
+      // to the borrower's activity feed (Fusion's solver is the
+      // tx-side caller but the borrower owns the close-out
+      // semantically).
+      const intentRow = await env.DB.prepare(
+        `SELECT committed_by FROM swap_to_repay_intents
+         WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(chainId, loanId)
+        .first<{ committed_by: string } | null>();
+      if (intentRow?.committed_by) {
+        // Stash on the args object so the participants resolver
+        // (Phase C) can read it without a second SQL round-trip.
+        (a as Record<string, unknown>).committedBy = intentRow.committed_by;
+      }
       const r = await flipLoanStatus(env, chainId, a, log, 'repaid');
       if (r) statusUpdates++;
       await _deletePrepayListing(env, chainId, loanId);
@@ -2781,12 +2803,26 @@ function pluckActivityRefs(
         loanId: Number(args.loanId as bigint),
         offerId: null,
       };
-    // System-driven — `Filled` is initiated by a Fusion solver
-    // (no Vaipakam-side actor); `ForceCancelled` is initiated by
-    // the liquidation / time-default entry point (`source` is the
-    // facet's diamond address, not a user — leaving `actor` null
-    // matches the same `LoanDefaulted` / `LoanLiquidated` pattern).
+    // `Filled` attributed to the borrower who originated the
+    // commit, NOT the Fusion solver who actually submitted the
+    // fill tx (Codex round-1 PR #421 P2 — the Activity feed's
+    // close-out row must reach the connected borrower, otherwise
+    // they lose visibility of their own successful repay). The
+    // `committedBy` field on `args` is stashed by the indexer
+    // dispatcher BEFORE the row delete that releases it — see the
+    // `SwapToRepayIntentFilled` branch in `processLoanLogs`.
     case 'SwapToRepayIntentFilled':
+      return {
+        actor: (args.committedBy as string)?.toLowerCase() ?? null,
+        loanId: Number(args.loanId as bigint),
+        offerId: null,
+      };
+    // `ForceCancelled` stays system-attributed — the cancel was
+    // triggered by the liquidation / time-default entry point
+    // (`source` is the facet's diamond address, not a user). The
+    // downstream `LoanLiquidated` / `LoanDefaulted` event carries
+    // the activity-feed attribution for the lender-protection
+    // action that drove it.
     case 'SwapToRepayIntentForceCancelled':
       return {
         actor: null,
