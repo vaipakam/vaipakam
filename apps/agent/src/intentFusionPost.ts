@@ -43,6 +43,7 @@
  */
 
 import type { Env } from './env';
+import { getDeployment } from '@vaipakam/contracts/deployments';
 
 // Codex round-2 PR #430 P2 — host is `api.1inch.com`, NOT
 // `.dev`. The `.dev` host does not serve the Fusion relayer
@@ -156,6 +157,28 @@ export async function handleIntentFusionPost(
   // ran the commit tx successfully to get the orderHash; an
   // attacker faking the request still hits the same on-chain
   // rejection.
+
+  // Codex round-8 PR #430 P2 — bind maker/receiver to the
+  // Vaipakam diamond on the request's chainId. Without this gate,
+  // a non-browser caller that spoofs an allowed Origin can
+  // submit orders for an arbitrary ERC-1271 contract using our
+  // Fusion API quota; Fusion would validate against that
+  // attacker contract's `isValidSignature` rather than the
+  // Vaipakam diamond's. The on-chain commit check the borrower
+  // ran earlier is loan-scoped; the Fusion request body's maker/
+  // receiver fields are the resolver-side commitment, so they
+  // must equal the diamond.
+  const deployment = getDeployment(parsed.chainId);
+  if (!deployment) {
+    return jsonErr(corsOrigin, 400, 'no-deployment-for-chain');
+  }
+  const expectedDiamond = deployment.diamond.toLowerCase();
+  if (
+    parsed.order.maker.toLowerCase() !== expectedDiamond ||
+    parsed.order.receiver.toLowerCase() !== expectedDiamond
+  ) {
+    return jsonErr(corsOrigin, 400, 'maker-receiver-not-diamond');
+  }
 
   // Codex round-1 PR #430 P2 — gate to chains 1inch Fusion
   // supports. A Base Sepolia commit (chainId 84532) would
