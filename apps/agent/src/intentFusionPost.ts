@@ -27,7 +27,7 @@
  *
  * GA wiring (#426): validates the payload, posts to 1inch's
  * Fusion resolver-pickup endpoint with the
- * `INTENT_FUSION_API_KEY` secret server-side, and passes the
+ * `ONEINCH_API_KEY` secret server-side, and passes the
  * upstream JSON response through to the dapp. If the secret is
  * unset (alpha-era deploys), the handler degrades to the
  * pre-GA queued-ack behaviour so a dapp expecting the
@@ -36,7 +36,7 @@
  * of truth either way.
  *
  * Stage-3 split note: no funds move through this handler.
- * Compromise of the `INTENT_FUSION_API_KEY` secret rate-limits
+ * Compromise of the `ONEINCH_API_KEY` secret rate-limits
  * resolver visibility but can't pull collateral — that lives
  * behind the diamond's ERC-1271 signature on the orderHash,
  * not the agent's auth.
@@ -178,7 +178,7 @@ export async function handleIntentFusionPost(
   // activation), the no-API-key short-circuit below kicks in and
   // we never reach the upstream `fetch`, so this gate only
   // matters in the half-activated state.
-  if (env.INTENT_FUSION_API_KEY && !env.INTENT_FUSION_POST_RATELIMIT) {
+  if (env.ONEINCH_API_KEY && !env.INTENT_FUSION_POST_RATELIMIT) {
     console.error(
       '[intent/fusion/post] half-activated: API key bound but rate-limit unbound; refusing request',
     );
@@ -246,7 +246,7 @@ export async function handleIntentFusionPost(
   // this second step the caller could replay a public commit tx
   // hash + mutate the order fields (Codex round-1 P2 fix).
   //
-  // Skip the preflight entirely when `INTENT_FUSION_API_KEY` is
+  // Skip the preflight entirely when `ONEINCH_API_KEY` is
   // unbound (the queued-ack path further below is the
   // operator-pre-activation short-circuit; no Fusion spend
   // happens, so the RPC quota the preflight would consume is
@@ -257,7 +257,7 @@ export async function handleIntentFusionPost(
   // Cost when active: two RPC calls per request (one
   // `eth_getTransactionReceipt` + one `eth_call` against the
   // diamond). Bounded above by the rate-limit binding.
-  if (env.INTENT_FUSION_API_KEY) {
+  if (env.ONEINCH_API_KEY) {
     const rpcUrl = rpcForChain(env, parsed.chainId);
     if (rpcUrl) {
       const preflight = await preflightCommitOnChain(
@@ -303,7 +303,7 @@ export async function handleIntentFusionPost(
   // (e.g. an alpha-era staging environment that never rotated
   // it in), fall back to the queued-ack behaviour so the dapp's
   // forward-compatible response shape still resolves cleanly.
-  if (!env.INTENT_FUSION_API_KEY) {
+  if (!env.ONEINCH_API_KEY) {
     console.log('[intent/fusion/post] queued (no API key configured)', {
       chainId: parsed.chainId,
       orderHash: parsed.orderHash,
@@ -314,7 +314,7 @@ export async function handleIntentFusionPost(
       status: 'queued',
       orderHash: parsed.orderHash,
       note:
-        'INTENT_FUSION_API_KEY is not configured on this Worker (operator-pre-activation state). No Fusion solver discovery happens until the secret is bound + the worker redeploys. Your collateral is in protocol custody as recorded by the on-chain commit; cancel after the auction deadline to return it to your vault — do not wait for a fill that will not arrive.',
+        'ONEINCH_API_KEY is not configured on this Worker (operator-pre-activation state). No Fusion solver discovery happens until the secret is bound + the worker redeploys. Your collateral is in protocol custody as recorded by the on-chain commit; cancel after the auction deadline to return it to your vault — do not wait for a fill that will not arrive.',
     });
   }
 
@@ -348,7 +348,7 @@ export async function handleIntentFusionPost(
     const upstream = await fetch(upstreamUrl, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${env.INTENT_FUSION_API_KEY}`,
+        Authorization: `Bearer ${env.ONEINCH_API_KEY}`,
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },

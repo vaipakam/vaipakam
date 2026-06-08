@@ -350,56 +350,41 @@ a commit on supported chains — the on-chain commit succeeds and the
 cancel-after-deadline path always works, but no resolver fill will
 arrive.
 
-Activation requires creating two Cloudflare resources (account-level
-Secrets Store entry + Worker rate-limit namespace), re-adding the
-matching bindings to `apps/agent/wrangler.jsonc`, and redeploying.
-Order matters — Cloudflare's deploy validation rejects bindings
-whose underlying resources don't exist yet, so each binding has to
-be re-added AFTER its resource is created. Run on each chain whose
-deploy the operator wants the bridge active for.
+Activation requires:
+- Enabling the LOP Orderbook scope on the **existing**
+  `ONEINCH_API_KEY` secret (the same 1inch developer-portal key
+  `apps/agent/src/quoteProxy.ts` already uses for the
+  `/quote/1inch` route — no separate `INTENT_FUSION_API_KEY`
+  secret is needed).
+- Registering ONE new Cloudflare resource: the per-IP rate-limit
+  namespace for the new endpoint.
+- Re-adding the rate-limit binding to `apps/agent/wrangler.jsonc`
+  and redeploying.
 
-#### Step 1 — Create the 1inch developer-portal API key
+Run on each chain whose deploy the operator wants the bridge
+active for.
 
-Sign in to <https://portal.1inch.dev/>, create a project, and
-provision an API key with both **Limit Order Protocol Orderbook**
-and **Swap Aggregation** scopes enabled. Capture the key value
-locally for the next step.
+#### Step 1 — Enable the LOP Orderbook scope on the existing 1inch key
 
-The key is read server-side only — never exposed to the dapp — so a
-single key is enough across all chains the agent worker is deployed
-to.
+Sign in to <https://portal.1inch.dev/>, open the project that owns
+the existing `ONEINCH_API_KEY` (the one currently powering the
+`/quote/1inch` proxy), and add the **Limit Order Protocol
+Orderbook** scope to the same key. **Swap Aggregation** should
+already be enabled (it's what `quoteProxy.ts` uses); leave it on.
 
-#### Step 2 — Register the secret in the account-level Secrets Store
+The key value does not change, so no Cloudflare Secrets-Store
+edit is needed — the existing `ONEINCH_API_KEY` binding the
+worker already reads will pick up the new scope on the next
+upstream request.
 
-From the worker checkout:
+If the existing key was provisioned at a tier that doesn't allow
+LOP Orderbook access, rotate it to a tier that does and re-run
+the standard secret rotation flow (`wrangler secrets-store secret
+update <STORE_ID> --name ONEINCH_API_KEY --value <new-key>`); the
+quoteProxy and intent-Fusion paths both pick up the rotation on
+the next deploy.
 
-```bash
-cd apps/agent
-# STORE_ID is the same id every other secret in the worker reads
-# from — look it up from any existing entry in
-# `apps/agent/wrangler.jsonc` → `secrets_store_secrets` (the
-# `store_id` field is the same value across all entries).
-STORE_ID="<paste from wrangler.jsonc>"
-
-wrangler secrets-store secret create "$STORE_ID" \
-  --name INTENT_FUSION_API_KEY \
-  --scopes workers \
-  --value "<the API key from step 1>"
-```
-
-Confirm the secret landed:
-
-```bash
-wrangler secrets-store secret list "$STORE_ID" --scopes workers \
-  | grep INTENT_FUSION_API_KEY
-```
-
-**Do NOT use `wrangler secret put`** — that targets per-Worker
-secret bindings rather than the account-level Secrets Store the
-worker reads from. The two namespaces are separate; mixing them
-silently fails to bind.
-
-#### Step 3 — Register the per-IP rate-limit namespace
+#### Step 2 — Register the per-IP rate-limit namespace
 
 Open the Cloudflare dashboard → Workers & Pages → `vaipakam-agent`
 → Settings → Bindings. Add a new **Rate limiting** binding:
@@ -408,23 +393,22 @@ Open the Cloudflare dashboard → Workers & Pages → `vaipakam-agent`
 | --- | --- |
 | Variable name | `INTENT_FUSION_POST_RATELIMIT` |
 | Type | Rate limiting |
-| Namespace ID | choose a fresh integer; capture it for step 4 |
+| Namespace ID | choose a fresh integer; capture it for step 3 |
 | Simple limit | `30` requests per `60` seconds |
 
-This bounds abuse spend on the `INTENT_FUSION_API_KEY` quota. The
+This bounds abuse spend on the shared `ONEINCH_API_KEY` quota. The
 agent worker's `handleIntentFusionPost` runs a half-activation
 gate (`503 rate-limit-not-configured`) when the API key is bound
-but this binding is NOT, so the activation order — secret first,
-then rate-limit, then wrangler edit + redeploy — is enforced.
+but this binding is NOT, so the operator can't accidentally expose
+the quota by skipping this step.
 
-#### Step 4 — Re-add both bindings to wrangler.jsonc and redeploy
+#### Step 3 — Re-add the rate-limit binding to wrangler.jsonc and redeploy
 
-Open `apps/agent/wrangler.jsonc` and locate the two operator-action
-comment blocks (search for `T-090 v1.1 GA (#426)` for the API key
-and `T-090 v1.1 GA (#430)` for the rate-limit binding). Each block
-contains the exact binding declaration the file shipped without —
-uncomment / paste it back in. For the rate-limit binding, replace
-`<chosen-id>` with the namespace id from step 3.
+Open `apps/agent/wrangler.jsonc` and locate the operator-action
+comment block (search for `T-090 v1.1 GA (#430)` under
+`unsafe.bindings`). The block contains the exact binding
+declaration the file shipped without — paste it back in, replacing
+`<chosen-id>` with the namespace id from step 2.
 
 Then redeploy:
 
@@ -433,16 +417,17 @@ cd apps/agent
 npx wrangler deploy
 ```
 
-Verify both bindings landed on the live Worker:
+Verify the binding landed on the live Worker:
 
 ```bash
 npx wrangler deployments list --name vaipakam-agent | head -5
 # Open the latest deployment in the Cloudflare dashboard and
-# confirm `INTENT_FUSION_API_KEY` (secret) + `INTENT_FUSION_POST_RATELIMIT`
-# (rate-limit) both appear under Bindings.
+# confirm `INTENT_FUSION_POST_RATELIMIT` appears under Bindings
+# (the existing `ONEINCH_API_KEY` secret binding should already
+# be present and unchanged).
 ```
 
-#### Step 5 — Smoke test the activated bridge
+#### Step 4 — Smoke test the activated bridge
 
 The fastest end-to-end check posts a commit on Base Sepolia (which
 the dapp's chain gate allows + the agent's mainnet allow-list
