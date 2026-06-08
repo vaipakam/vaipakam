@@ -113,6 +113,13 @@ export function SwapToRepayIntentPanel({
   // Codex round-1 PR #423 P2 — refresh trigger so a successful
   // commit / cancel re-runs the live-intent fetch effect.
   const [refreshTick, setRefreshTick] = useState(0);
+  // Codex round-3 PR #423 P2 — when the panel optimistically sets
+  // `liveIntent` after a successful commit (because the indexer
+  // hasn't ingested the event yet), the refresh effect's
+  // immediate re-fetch would otherwise clear the optimistic
+  // pending row back to null. Track the optimistic-set state +
+  // suppress the null-clear until the indexer catches up.
+  const [optimisticPending, setOptimisticPending] = useState(false);
   // Codex round-1 PR #423 P2 — render-time tick so the cancel
   // button enables itself the moment `liveIntent.deadline` is
   // crossed (without depending on an unrelated re-render).
@@ -137,7 +144,18 @@ export function SwapToRepayIntentPanel({
         if (!res.ok) return;
         const payload = await res.json();
         if (cancelled) return;
-        setLiveIntent(payload.swapToRepayIntent ?? null);
+        const indexerIntent = payload.swapToRepayIntent ?? null;
+        if (indexerIntent) {
+          // Indexer caught up — replace the optimistic placeholder
+          // (or absence thereof) with the canonical row.
+          setLiveIntent(indexerIntent);
+          setOptimisticPending(false);
+        } else if (!optimisticPending) {
+          // No optimistic row outstanding → trust the indexer.
+          setLiveIntent(null);
+        }
+        // Else: optimisticPending is true AND indexer says null
+        // (ingestion lag). Keep the optimistic row in place.
       } catch {
         // Indexer unreachable → silently treat as "no live intent".
         // The borrower can still attempt a fresh commit; the on-chain
@@ -150,7 +168,7 @@ export function SwapToRepayIntentPanel({
     return () => {
       cancelled = true;
     };
-  }, [loanId, chainId, refreshTick]);
+  }, [loanId, chainId, refreshTick, optimisticPending]);
 
   // Codex round-1 PR #423 P2 — read live auction-max bound from
   // the diamond's `IntentConfigFacet`. Best-effort; falls back to
@@ -269,35 +287,44 @@ export function SwapToRepayIntentPanel({
       // safety margin (~2% on top) to absorb 1-2 blocks of
       // additional interest accrual between read + commit-tx
       // inclusion.
+      // Codex round-3 PR #423 P2 — call `getPrepayContext` with
+      // its real shape: `(loanId, asOfTimestamp)` returns a
+      // `PrepayContext` struct with `lenderLeg` + `treasuryLeg`
+      // (no `lateFee` field — the on-chain intent code computes
+      // it separately from loan state). Round-2's call shape
+      // (1-arg + reading `lateFee`) would throw at the viem read
+      // layer and silently drop through to the principal × 125%
+      // fallback, which is exactly what round-2 set out to fix.
       let liveFloor: bigint;
       try {
         const ctx = (await (
           diamond as unknown as {
-            getPrepayContext: (id: bigint) => Promise<{
-              lenderLeg: bigint;
-              treasuryLeg: bigint;
-              lateFee: bigint;
-            }>;
+            getPrepayContext: (
+              id: bigint,
+              asOf: bigint,
+            ) => Promise<{ lenderLeg: bigint; treasuryLeg: bigint }>;
           }
-        ).getPrepayContext(loanId)) as {
+        ).getPrepayContext(loanId, BigInt(now))) as {
           lenderLeg: bigint;
           treasuryLeg: bigint;
-          lateFee: bigint;
         };
-        // Effective buffer BPS (~200 = 2% by default). Add a 2%
-        // safety margin on top of the protocol buffer to absorb
-        // interest accrual between read + tx inclusion.
-        const bufferBps = BigInt(200);
-        const protectiveBps = BigInt(200);
-        const totalBufferBps = bufferBps + protectiveBps;
-        const baseFloor = ctx.lenderLeg + ctx.treasuryLeg + ctx.lateFee;
+        // Buffer BPS structure:
+        //   - 200 bps (~2%): the configured intent buffer that
+        //     the contract's postInteraction check enforces.
+        //   - 300 bps (~3%): safety margin layered on top to
+        //     absorb (a) potential late-fee accrual the struct
+        //     doesn't expose, (b) 1-2 blocks of interest accrual
+        //     between this read + tx inclusion.
+        const protocolBufferBps = BigInt(200);
+        const safetyBps = BigInt(300);
+        const totalBufferBps = protocolBufferBps + safetyBps;
+        const baseFloor = ctx.lenderLeg + ctx.treasuryLeg;
         liveFloor =
           (baseFloor * (BigInt(10_000) + totalBufferBps)) / BigInt(10_000);
       } catch {
         // Fallback: principal × 125%. Mirrors the round-0
         // behaviour for low-APR / fresh loans where the floor
-        // approximates principal. Logs the underlying error so
-        // ops can see when the chain read keeps failing.
+        // approximates principal.
         liveFloor = (principalAmount * BigInt(125)) / BigInt(100);
       }
       const takerAmount = liveFloor;
@@ -383,6 +410,10 @@ export function SwapToRepayIntentPanel({
         committedAt: Math.floor(Date.now() / 1000),
         committedTxHash: commitTxHash,
       });
+      // Codex round-3 PR #423 P2 — flag the optimistic set so
+      // the refresh effect doesn't immediately null-clear when
+      // the indexer hasn't ingested yet.
+      setOptimisticPending(true);
       step.success({ note: `tx ${commitTxHash}` });
     } catch (err) {
       setError(decodeContractError(err, 'Intent commit failed'));
@@ -429,6 +460,13 @@ export function SwapToRepayIntentPanel({
     } finally {
       setSubmitting(false);
       onActionLoadingChange?.(false);
+      // Optimistic-clear on cancel — the on-chain row is gone;
+      // null-clearing immediately matches what the indexer will
+      // confirm on the next tick (Codex round-3 P2 — without
+      // this, the cancel surface would persist for the indexer-
+      // catch-up window).
+      setLiveIntent(null);
+      setOptimisticPending(false);
       setRefreshTick((t) => t + 1);
       if (onAfterSuccess) {
         try {
