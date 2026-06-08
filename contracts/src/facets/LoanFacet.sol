@@ -619,13 +619,18 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     ///      the average discount over just this loan's lifetime.
     ///      Docs §5.2a.
     function _snapshotLenderDiscount(LibVaipakam.Loan storage loan) private {
+        // T-087 Sub 1.B — rollup against the protocol-tracked stake
+        // (NOT raw vault balance), per design §3 reuse row +
+        // Codex round-7 P1 #7. The `lenderDiscountAccAtInit` slot
+        // stays in place but is vestigial under the new design
+        // (loan-window averaging replaced by instant EFFECTIVE_BPS
+        // lookup at fee time — see {LibVPFIDiscount.lenderTimeWeightedDiscountBps}
+        // for the rewire). Left at 0; deferring removal until storage-
+        // layout cleanup in a later sub-card so loupe-readable layout
+        // stays byte-identical for now.
         address lender = loan.lender;
-        uint256 lenderBal = LibVPFIDiscount.vaultVpfiBalance(lender);
+        uint256 lenderBal = LibVPFIDiscount.trackedVpfiBalance(lender);
         LibVPFIDiscount.rollupUserDiscount(lender, lenderBal);
-        loan.lenderDiscountAccAtInit = LibVaipakam
-            .storageSlot()
-            .userVpfiDiscountState_DEPRECATED[lender]
-            .cumulativeDiscountBpsSeconds;
     }
 
     /// @dev Borrower mirror of {_snapshotLenderDiscount} (Phase 5 / §5.2b).
@@ -637,13 +642,11 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     ///      carries from prior loans (as lender or borrower), so the
     ///      window measured here is purely "from now on".
     function _snapshotBorrowerDiscount(LibVaipakam.Loan storage loan) private {
+        // T-087 Sub 1.B — borrower mirror of {_snapshotLenderDiscount}.
+        // Rollup against protocol-tracked stake, no loan-window anchor.
         address borrower = loan.borrower;
-        uint256 borrowerBal = LibVPFIDiscount.vaultVpfiBalance(borrower);
+        uint256 borrowerBal = LibVPFIDiscount.trackedVpfiBalance(borrower);
         LibVPFIDiscount.rollupUserDiscount(borrower, borrowerBal);
-        loan.borrowerDiscountAccAtInit = LibVaipakam
-            .storageSlot()
-            .userVpfiDiscountState_DEPRECATED[borrower]
-            .cumulativeDiscountBpsSeconds;
     }
 
     function _copyFinancialFields(

@@ -3451,6 +3451,17 @@ library LibVaipakam {
         // trajectory never crosses (Codex round-3 P1 #1 + round-6
         // P1 #9).
         mapping(address => uint40) tierExpirySec;
+        // T-087 Sub 1.B — last-computed EFFECTIVE_TIER / EFFECTIVE_BPS
+        // for the user, written at the end of every rollup. The
+        // nonce-bump heuristic compares the post-rollup effective
+        // state against these snapshots; a mismatch increments
+        // `userTierPushNonce` so the Sub 2 broadcast helper fans the
+        // change out to every destination. Both default 0; the
+        // first-ever rollup for a fresh user with positive stake
+        // therefore reliably triggers a bump (newEffTier > 0 vs
+        // prev 0).
+        mapping(address => uint8) lastEffectiveTier;
+        mapping(address => uint16) lastEffectiveBps;
         // ── Tier propagation ordering keys ──────────────────────────────
         //
         // Monotonic per-user push nonce; the strict ordering key

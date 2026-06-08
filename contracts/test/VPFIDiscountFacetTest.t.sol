@@ -357,10 +357,19 @@ contract VPFIDiscountFacetTest is SetupTest {
         // the acceptor-aware {quoteVPFIDiscountFor}. Pre-fund borrower vault
         // to tier 1 (>= 100 VPFI) so the tier gate does not short-circuit.
         uint256 offerId = _createLenderErc20Offer(10_000 ether);
-        address borrowerVault = _buyerVault(borrower);
-        vpfiToken.transfer(borrowerVault, 500 ether);
-        vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(borrower, address(vpfiToken), 500 ether); // tier 1
+        // T-087 Sub 1.B — stake via the sanctioned `depositVPFIToVault`
+        // path so the ring-buffer accumulator is populated. The raw
+        // `vpfiToken.transfer + recordVaultDepositERC20` backdoor that
+        // pre-T-087 Phase-5 tests used skips the rollup and leaves
+        // EFFECTIVE_TIER at 0.
+        vpfiToken.transfer(borrower, 500 ether);
+        vm.startPrank(borrower);
+        vpfiToken.approve(address(diamond), 500 ether);
+        _facet().depositVPFIToVault(500 ether); // tier 1
+        vm.stopPrank();
+        // Elapse the min-history gate (default 3 days) so EFFECTIVE_TIER
+        // releases.
+        vm.warp(block.timestamp + 4 days);
 
         (bool eligible, uint256 vpfi, uint256 bal, uint8 tier) = _facet()
             .quoteVPFIDiscountFor(offerId, borrower);
@@ -461,9 +470,15 @@ contract VPFIDiscountFacetTest is SetupTest {
         address borrowerVault = _buyerVault(borrower);
         address lenderVault = VaultFactoryFacet(address(diamond))
             .getOrCreateUserVault(lender);
-        vpfiToken.transfer(borrowerVault, 500 ether);
-        vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(borrower, address(vpfiToken), 500 ether); // tier 1
+        // T-087 Sub 1.B — stake via the sanctioned `depositVPFIToVault`
+        // path so the ring-buffer accumulator is populated.
+        vpfiToken.transfer(borrower, 500 ether);
+        vm.startPrank(borrower);
+        vpfiToken.approve(address(diamond), 500 ether);
+        _facet().depositVPFIToVault(500 ether); // tier 1
+        vm.stopPrank();
+        // Clear min-history gate.
+        vm.warp(block.timestamp + 4 days);
 
         (bool eligible, uint256 vpfiRequired, , uint8 tier) = _facet()
             .quoteVPFIDiscountFor(offerId, borrower);
@@ -654,6 +669,9 @@ contract VPFIDiscountFacetTest is SetupTest {
         _facet().depositVPFIToVault(5_000 ether);
         _facet().setVPFIDiscountConsent(true);
         vm.stopPrank();
+        // T-087 Sub 1.B — elapse the min-history gate so the lender's
+        // EFFECTIVE_TIER releases before the loan opens.
+        vm.warp(block.timestamp + 4 days);
 
         uint256 offerId = _createLenderErc20Offer(principal);
 
@@ -784,6 +802,9 @@ contract VPFIDiscountFacetTest is SetupTest {
         _facet().depositVPFIToVault(500 ether); // tier 1 (≥ 100 < 1000)
         _facet().setVPFIDiscountConsent(true);
         vm.stopPrank();
+        // T-087 Sub 1.B — clear min-history gate so the quote/accept
+        // path sees a non-zero EFFECTIVE_TIER.
+        vm.warp(block.timestamp + 4 days);
 
         uint256 offerId = _createLenderErc20Offer(principal);
 
@@ -873,6 +894,12 @@ contract VPFIDiscountFacetTest is SetupTest {
         _facet().depositVPFIToVault(500 ether); // tier 1
         _facet().setVPFIDiscountConsent(true);
         vm.stopPrank();
+        // T-087 Sub 1.B — clear min-history gate so the borrower can
+        // open the loan at tier 1. The post-acceptance immediate-
+        // unstake still drives EFFECTIVE_TIER back to 0 at settlement
+        // time (full-unstake reset per design §4.1), so the rebate
+        // remains 0 by parity with the Phase-5 stamp-refresh outcome.
+        vm.warp(block.timestamp + 4 days);
 
         uint256 offerId = _createLenderErc20Offer(principal);
 

@@ -78,7 +78,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
     function test_DeployDiamond_RoutesEveryFacetSelector() public {
         _populateRoutedSet();
 
-        string[46] memory facets = cutFacetNames();
+        string[47] memory facets = cutFacetNames();
         uint256 missing;
         for (uint256 i; i < facets.length; ++i) {
             string memory name = facets[i];
@@ -108,7 +108,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
     ///         4-byte selector — such a collision makes `diamondCut`
     ///         revert and the Diamond undeployable.
     function test_NoSelectorCollisionAcrossFacets() public {
-        string[46] memory facets = cutFacetNames();
+        string[47] memory facets = cutFacetNames();
         uint256 collisions;
         for (uint256 i; i < facets.length; ++i) {
             collisions += _recordAndCountCollisions(facets[i]);
@@ -206,6 +206,9 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
         _addAll(_getMetricsSelectors());
         _addAll(_getVpfiTokenSelectors());
         _addAll(_getVpfiDiscountSelectors());
+        // T-087 Sub 1.B — single-home accumulator facet (carved off
+        // {LibVPFIDiscount} for EIP-170 budget; see facet docstring).
+        _addAll(_getVpfiDiscountAccumulatorSelectors());
         _addAll(_getStakingRewardsSelectors());
         _addAll(_getInteractionRewardsSelectors());
         _addAll(_getRewardReporterSelectors());
