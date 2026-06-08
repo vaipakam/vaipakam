@@ -1031,14 +1031,25 @@ Permissionless actions available to anyone regardless of role:
       while the auction runs. A 1-second timer drives the
       countdown so the cancel button enables itself the
       moment the deadline passes; you don't have to refresh.
-    - *Cancel & return* — after the deadline you can cancel
-      the intent yourself; the custodial collateral returns
-      to your vault. If you leave the order unfilled for a
-      configurable grace window (default 24 hours past the
-      deadline), anyone can call the permissionless
-      "cancelExpired" path to return your collateral on your
-      behalf, so an abandoned commit can't strand your
-      assets.
+    - *Cancel & return* — after the deadline the current
+      borrower-position-NFT holder can cancel the intent. The
+      custodial collateral returns to **the loan's original
+      borrower vault** (the address recorded on the loan at
+      origination, which is usually you — they only diverge
+      if the borrower-position NFT was transferred to a new
+      holder between commit and cancel; in that case the new
+      holder is the authorised caller but the original
+      borrower is the destination). If the cancel is never
+      called, anyone can call the permissionless
+      "cancelExpired" path after a configurable grace window
+      (default 24 hours past the deadline) — but only if
+      someone actually does call it. The permissionless path
+      is an anti-stranding affordance, not an automatic
+      recovery: the contract has no scheduled wake-up and
+      pays no gas compensation, so an abandoned commit can
+      sit in diamond custody indefinitely until someone runs
+      the cancel themselves. Treat the cancel surface as
+      your own responsibility.
     - *Lender protection* — if HF drops below the liquidation
       threshold or the loan crosses the default boundary
       while your intent is still live, the protocol force-

@@ -201,10 +201,14 @@ The permissionless path is the protocol's **anti-stranding affordance**,
 not an automatic recovery: collateral returns only when someone
 actually calls the function. If no caller ever does, the commit and
 the custodial collateral remain in the diamond indefinitely. The
-expectation is that the original borrower, the keeper network, or any
-third party watching the protocol can call the path to claim the
-solver-bot-style recovery gas; the contract makes the call open
-rather than scheduling automatic recovery.
+contract pays the caller no protocol-level gas compensation — the
+expectation is that the original borrower, a keeper, or any third
+party watching the protocol can call the path because the on-chain
+state is observable and the function is open; the call is altruistic
+or self-interested (cleaning up your own commit) rather than
+incentivised by an in-protocol bounty. The contract does not schedule
+automatic recovery; the affordance is only as strong as the off-chain
+willingness to call it.
 
 ### Force-cancel (lender protection)
 
@@ -234,8 +238,13 @@ via the source field.
 
 The force-cancel is intentionally not attributed to a borrower wallet
 in the activity feed; the lender-protection action that drove it
-carries the attribution via its own downstream `LoanLiquidated` /
-`LoanDefaulted` event.
+carries the attribution via its own downstream event. That downstream
+event depends on which trigger ran: the HF-liquidation paths emit
+`LoanLiquidated`, the time-default path emits `LoanDefaulted`, and the
+partial-period auto-liquidation path emits
+`PeriodicInterestAutoLiquidated`. Activity-feed tooling reading the
+spec as the oracle must inspect the trigger kind to know which
+downstream event to join the force-cancel row to.
 
 ## Fill — solver-side path
 
@@ -253,14 +262,19 @@ When a solver fills the order through 1inch's Limit Order Protocol:
 4. With the floor check passing, the post-interaction hook runs the
    canonical settlement waterfall:
     - The lender's leg is **credited to the lender's vault / claim
-      slot** keyed by the loan's original lender address; the current
-      lender-position-NFT holder withdraws it via the protocol's
-      claim entry point (`ClaimFacet.claimAsLender`). This indirect
-      delivery is identical to the atomic surface's settlement path
-      and is intentional: position-NFT transferability means the
-      "current holder" can change between fill registration and
-      withdrawal, so a pull-based claim slot is the safer settlement
-      shape than a direct push.
+      slot** keyed by the **current lender-of-record** stored in
+      `loan.lender`. This is not necessarily the address that
+      originated the loan: when a lender-side loan sale completes,
+      the protocol's lender-position migration updates `loan.lender`
+      to the new lender, and the intent settlement records the leg
+      against that current record-of-truth. The lender-position-NFT
+      holder withdraws it via the protocol's claim entry point
+      (`ClaimFacet.claimAsLender`). This indirect delivery is
+      identical to the atomic surface's settlement path and is
+      intentional: position-NFT transferability means the "current
+      NFT holder" can change between fill registration and
+      withdrawal, so a pull-based claim slot is the safer
+      settlement shape than a direct push.
     - The treasury's leg is delivered directly to the configured
       treasury address.
     - Any favorable-quote surplus over the floor lands in the
