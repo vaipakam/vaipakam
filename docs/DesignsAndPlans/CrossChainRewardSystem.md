@@ -72,9 +72,13 @@ TWA = (Σ balance(dayId) × weight(dayId)) / denominator
 
 The self-seeded denominator lets a fresh staker reach a meaningful TWA on day 1 (denominator starts at 3 for one recent day, so TWA = balance immediately) and ramps to the full 44 over 30 days. Codex round-1 P2 #7 caught that a fixed 44 denominator would force a 100-VPFI staker to wait 30 days for tier 1; the self-seeded denominator fixes this.
 
-**Minimum-history gate (Codex round-4 P1 #3)**: the self-seeded denominator alone would let a fresh wallet stake huge VPFI, get tier 4 for a single fee transaction, and immediately unstake — the discount fires at the discounted rate and decay arrives too late to matter. To close this gaming vector, the discount is gated on `stakedDays >= cfgTwaMinStakedDays` (default 3 days, governance-bounded 1-14 days). Below this threshold the user's tier-from-TWA is computed and stored but EFFECTIVE_TIER is forced to 0 — the user still accrues TWA history and CCIP propagation still fires the moment the tier crosses, but no fee discount applies until the user has at least N days of staking history.
+**Minimum-history gate (Codex round-4 P1 #3 + round-5 P1 #1 + P1 #2)**: the self-seeded denominator alone would let a fresh wallet stake huge VPFI, get tier 4 for a single fee transaction, and immediately unstake — the discount fires at the discounted rate and decay arrives too late to matter. To close this gaming vector, the discount is gated on `stakedDays >= cfgTwaMinStakedDays` (default 3 days, governance-bounded 1-14 days). Below this threshold the user's tier-from-TWA is computed for accumulator continuity but EFFECTIVE_TIER is forced to 0.
 
-This shifts the cost-vs-discount tradeoff: a fresh wallet must commit stake for `cfgTwaMinStakedDays` BEFORE drawing any discount benefit. Pre-live freedom lets us tune this knob during early-user testing; 3 days is the proposed launch value (long enough that flash-stake gaming costs ~3 days of opportunity cost on the staked VPFI, short enough that genuine new users see discounts quickly).
+**The payload carries EFFECTIVE_TIER, NOT raw TWA-derived tier (Codex round-5 P1 #1)**. The mirror cache has no visibility into `cfgTwaMinStakedDays` or `stakedDays`, so propagating the raw tier would let a fresh wallet broadcast tier 4 to mirrors and get the discount on the mirror fee path immediately even though Base-effective tier is 0. Base computes `effectiveTier = stakedDays >= cfgTwaMinStakedDays ? rawTier : 0` and sends THAT value across CCIP; the mirror's `tryApply` / `tryApplyYieldFee` paths apply whatever effective-tier the cache holds without re-deriving it.
+
+**`stakedDays` definition (Codex round-5 P1 #2)** — count only days where the user actually had non-zero balance, not synthetic zero-fill days from the lazy gap-fill. The straightforward implementation: track `firstStakeDayId[user]` (initialized when the user's balance first transitions from 0 to non-zero, never overwritten), and compute `stakedDays = min(cfgTwaWindowDays, currentDayId - firstStakeDayId + 1)` at every TWA read. The lazy gap-fill from a zero initial `lastUpdateDayId` would otherwise let a first-time staker's window appear to contain 30 days of (zero-balance) history immediately, instantly satisfying the min-stake gate and reopening the gaming vector. The `firstStakeDayId` tracker fixes this.
+
+This shifts the cost-vs-discount tradeoff: a fresh wallet must commit stake for `cfgTwaMinStakedDays` of GENUINE non-zero balance BEFORE drawing any discount benefit. Pre-live freedom lets us tune this knob during early-user testing; 3 days is the proposed launch value.
 
 **Behaviour highlights:**
 
@@ -112,7 +116,13 @@ No changes to the existing vault-proxy pattern. Each user has a `VaipakamVaultIm
    - Emits `BaseTierChanged(user, oldTier, newTier, computedAt, nonce, tierExpirySec)`.
    - **Does NOT send any CCIP messages.** No `msg.value` required.
 
-2. **Broadcast step** — A *payable* entry point `broadcastTierUpdate(address user, uint64[] dests)` (callable by anyone) reads the current tier + the projected expiry from the user's accumulator state, then for each destination in `dests` checks whether the cached `userTierLastPushedNonce[user][dest] < userTierPushNonce[user]`. For destinations where the nonce is stale, the function calls `VaipakamRewardMessenger.sendTierUpdate(...)` with the payload `(uint8 kind, address user, uint8 tier, uint40 computedAt, uint64 nonce, uint40 tierExpirySec)`. The caller pays the CCIP fee via `msg.value`; `nonce` is the strict ordering key.
+2. **Broadcast step** — Two complementary paths:
+
+   - **Protocol-funded auto-broadcast (Codex round-5 P1 #3)**: when the rollup pass in step 1 produces a nonce bump (tier crossed OR expiry shifted earlier OR forced push), the same step 1 transaction also calls `_protocolBroadcastTierUpdate(user)` *internal* helper that pulls CCIP gas from a `s.protocolBroadcastBudget` (uint256, native gas balance held by the diamond on Base, topped up by treasury allocation) and fans out the `TierUpdated` message to every live destination. The user does NOT pay msg.value; the protocol does. This closes the abuse vector where a user who unstakes could skip a downgrade broadcast — the auto-broadcast fires whether the user wants it or not, paid out of the protocol's budget. If the budget is empty (operator hasn't topped it up), the auto-broadcast SKIPS silently and the user-initiated path below is the fallback.
+
+   - **User-initiated broadcast** `broadcastTierUpdate(address user, uint64[] dests)` (callable by anyone, payable): reads the current tier + expiry from the user's accumulator state, then for each destination in `dests` checks whether the cached `userTierLastPushedNonce[user][dest] < userTierPushNonce[user]`. For destinations where the nonce is stale, the function calls `VaipakamRewardMessenger.sendTierUpdate(...)` with the payload `(uint8 kind, address user, uint8 tier, uint40 computedAt, uint64 nonce, uint40 tierExpirySec)`. The caller pays the CCIP fee via `msg.value`. `nonce` is the strict ordering key. This is the recovery path when the protocol budget is empty, when a destination chain was added between mutations, or when a user wants to force a refresh.
+
+   The treasury allocation feeds `s.protocolBroadcastBudget` from a configured fraction of the treasury balance, swept on a keeper-driven schedule. Sub 3 builds the top-up flow + the operator alert when the budget runs low.
 
 **Projected tier-decay expiry (Codex round-3 P1 #1)**: the central observation is that, under the ring-buffer + two-tier weighting, the TWA's future trajectory is FULLY DETERMINED by the current ring-buffer state if no further balance mutations occur. So Base can compute, at push time, the EXACT day on which the projected TWA crosses below the current tier boundary, and embed that future moment in the CCIP payload as `tierExpirySec` (uint40 seconds, absolute timestamp).
 
@@ -167,8 +177,8 @@ Each fee-collecting site on every chain credits a fraction (`cfgBuybackFeeBps`, 
 When a per-token buyback balance crosses `cfgBuybackMinRemittance` (default $1k worth, oracle-resolved at write time):
 
 1. The chain's diamond emits `BuybackBudgetReady(token, amount)`.
-2. The agent worker picks up the event and triggers `TreasuryFacet.remitBuyback(token, amount)` on the source-chain diamond. The diamond approves the CCIP token pool + calls `CcipMessenger.send(...)` to move the funds to Base.
-3. On Base, the existing CCIP inbound handler routes the funds into `s.baseBuybackBudget[token]`.
+2. The agent worker picks up the event and triggers `TreasuryFacet.remitBuyback(token, amount)` on the source-chain diamond. The diamond **approves `CcipMessenger`** (the local messenger contract) for `amount` of `token`, then calls `CcipMessenger.send(...)`. The messenger then `safeTransferFrom`s the tokens into itself and approves the underlying CCIP router / pool internally (Codex round-5 P1 #4 — the original draft "approve the CCIP token pool" was wrong because the existing messenger adapter pulls tokens from `msg.sender` via `safeTransferFrom` and then approves the router itself; the diamond's approval must target the messenger, not the router).
+3. On Base, a **new dedicated `BuybackRemittanceReceiver` contract** (NOT `VaipakamRewardMessenger`) accepts the inbound token transfer. `VaipakamRewardMessenger.onCrossChainMessage` is data-only and reverts on `tokens.length != 0` (Codex round-5 P1 #5); reusing it for buyback remittance would revert every inbound. The receiver validates source chain + authenticated business peer, decodes a small remittance header `(uint8 kind = REMITTANCE, address sourceToken, uint256 sourceAmount)`, then transfers the inbound token amount into the Base diamond via `TreasuryFacet.absorbRemittance(token, amount, srcChainId)`. The receiver is part of the cross-chain layer alongside `CcipMessenger` and `VaipakamRewardMessenger` — Sub 3 builds it as a separate UUPS contract with its own pause lever and authorization.
 
 **Base-side execution via 1inch Fusion intent (Codex round-1 P2 #10)**: a Base-side keeper trigger periodically calls `TreasuryBuybackIntentFacet.commitBuybackIntent(token, amountIn)`:
 
@@ -236,6 +246,9 @@ The Diamond's `predeploy-check.sh` selector-coverage suite is updated to expect 
 struct DaySnapshot { uint16 dayId; uint128 balance; }
 mapping(address => DaySnapshot[30]) dayBalances;
 mapping(address => uint16)          lastUpdateDayId;   // most recent day written
+mapping(address => uint16)          firstStakeDayId;   // dayId on which user's balance first transitioned 0 → positive
+                                                       // (Codex round-5 P1 #2 — `stakedDays` counts genuine
+                                                       //  non-zero history, not synthetic zero-fill days)
 
 // Monotonic per-user nonce — strict ordering key for cross-chain
 // tier propagation. Incremented on every tier-crossing balance
@@ -256,6 +269,13 @@ mapping(address => mapping(uint64 => uint64)) userTierLastPushedNonce;
 // Embedded in the CCIP payload so mirrors enforce decay locally
 // without a Base round-trip. (Codex round-3 P1 #1.)
 mapping(address => uint40) tierExpirySec;
+
+// Protocol-funded broadcast budget (native gas on Base). Topped
+// up by treasury allocation; consumed by `_protocolBroadcastTierUpdate`
+// on every nonce-bumping rollup pass. (Codex round-5 P1 #3 —
+// closes the user-skips-downgrade-broadcast abuse vector by
+// removing user agency from the broadcast trigger.)
+uint256 protocolBroadcastBudget;
 ```
 
 Cold cost per active staker on Base: 30 × `uint128` packs into 15 slots + 2 metadata slots + 1 push-nonce slot + per-destination last-pushed (1 slot per active destination). Sub-card 1 includes the gas snapshot vs the existing accumulator.
