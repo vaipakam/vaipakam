@@ -994,6 +994,83 @@ Permissionless actions available to anyone regardless of role:
   you can retry with better routing. The lender or whoever
   currently holds the lender-position NFT cannot use this
   surface on their own loan (self-repay guard).
+- **Best-price intent (1inch Fusion, v1.1 alpha)** — for the
+  same ERC-20-on-ERC-20 shape, an intent-based alternative to
+  the atomic swap above. Instead of routing through Vaipakam's
+  on-chain 4-DEX adapter list right now, you commit your
+  collateral to a Fusion-style auction: solvers compete on
+  price over a short window (defaults to a 60-second to
+  10-minute auction), and the winning solver fills the order
+  by paying your loan's settlement legs directly to the
+  diamond. The settlement waterfall runs atomically with the
+  fill in the same transaction; the same lender-protection
+  guarantees apply (no partial fills, full reversion if any
+  step fails). Note that the custody model differs from the
+  atomic surface in one important way: the atomic surface only
+  holds your collateral inside the one repay transaction (it
+  either fully settles or fully reverts in a single block).
+  The intent surface holds your collateral in protocol custody
+  **across the entire commit lifecycle** — from the moment you
+  commit until the order fills, you cancel, or someone calls
+  the permissionless cancel path. Reaching the auction deadline
+  does NOT automatically return your collateral; it only opens
+  the cancel paths described below. If neither you nor the
+  permissionless path acts after the deadline, your collateral
+  stays in diamond custody indefinitely. During the entire
+  custody window your collateral is in the diamond, not your
+  personal vault.
+    - *When to use it (post-GA)* — once the GA piece below
+      lands, this surface is the right choice when you're not
+      in a hurry and want the resolver competition to surface
+      a slightly better price than the live DEX quote.
+      Expected fills are minute-scale rather than block-scale.
+      The atomic surface above stays the right choice when
+      you need predictable timing.
+    - *Pending state* — the Loan Details page shows a
+      "pending intent" card with the order hash and deadline
+      while the auction runs. A 1-second timer drives the
+      countdown so the cancel button enables itself the
+      moment the deadline passes; you don't have to refresh.
+    - *Cancel & return* — after the deadline the current
+      borrower-position-NFT holder can cancel the intent. The
+      custodial collateral returns to **the loan's original
+      borrower vault** (the address recorded on the loan at
+      origination, which is usually you — they only diverge
+      if the borrower-position NFT was transferred to a new
+      holder between commit and cancel; in that case the new
+      holder is the authorised caller but the original
+      borrower is the destination). If the cancel is never
+      called, anyone can call the permissionless
+      "cancelExpired" path after a configurable grace window
+      (default 24 hours past the deadline) — but only if
+      someone actually does call it. The permissionless path
+      is an anti-stranding affordance, not an automatic
+      recovery: the contract has no scheduled wake-up and
+      pays no gas compensation, so an abandoned commit can
+      sit in diamond custody indefinitely until someone runs
+      the cancel themselves. Treat the cancel surface as
+      your own responsibility.
+    - *Lender protection* — if HF drops below the liquidation
+      threshold or the loan crosses the default boundary
+      while your intent is still live, the protocol force-
+      cancels the commit (returns collateral to your vault)
+      before running the lender-protection action, so the
+      intent doesn't compete with the liquidator for the
+      same collateral.
+    - *Status disclosure* — v1.1 ships in alpha. The piece
+      that actively posts your committed order to 1inch
+      Fusion's resolver-pickup endpoint is a deliberate
+      follow-up (the v1.1 GA card). In alpha, your commit
+      lands on-chain and the protocol custody + cancel paths
+      all work, but new commits are **not** broadcast to
+      Fusion's solver network, so the auction is unlikely to
+      receive a fill until the GA piece lands. Pick the
+      atomic surface above for predictable repayment timing
+      while the alpha runs; the intent surface is here for
+      early adopters who want to exercise the cancel /
+      pending-state flows and provide feedback ahead of GA.
+      A banner inside the panel surfaces this status
+      explicitly.
 - **Preclose direct** — pay the outstanding amount from your
   wallet now, release collateral, settle the rebate.
 - **Preclose offset** — sell some collateral via the protocol's
