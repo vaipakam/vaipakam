@@ -207,6 +207,11 @@ export type ActivityEventKind =
   // T-090 Sub 3 — borrower-initiated swap-to-repay surface.
   | 'SwapToRepayExecuted'
   | 'SwapToRepayPartialExecuted'
+  // T-090 v1.1 (#389) Sub 3 (#418) — intent-based swap-to-repay surface.
+  | 'SwapToRepayIntentCommitted'
+  | 'SwapToRepayIntentFilled'
+  | 'SwapToRepayIntentCancelled'
+  | 'SwapToRepayIntentForceCancelled'
   | 'ClaimRetryExecuted'
   | 'BorrowerLifRebateClaimed'
   | 'StakingRewardsClaimed'

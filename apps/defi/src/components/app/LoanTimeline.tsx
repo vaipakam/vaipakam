@@ -69,6 +69,11 @@ const KIND_LABEL_KEY: Record<ActivityEventKind, string> = {
   // T-090 Sub 3 — borrower-initiated swap-to-repay surface.
   SwapToRepayExecuted: 'loanTimeline.swapToRepayExecuted',
   SwapToRepayPartialExecuted: 'loanTimeline.swapToRepayPartialExecuted',
+  // T-090 v1.1 (#389) Sub 3 (#418) — intent-based surface.
+  SwapToRepayIntentCommitted: 'loanTimeline.swapToRepayIntentCommitted',
+  SwapToRepayIntentFilled: 'loanTimeline.swapToRepayIntentFilled',
+  SwapToRepayIntentCancelled: 'loanTimeline.swapToRepayIntentCancelled',
+  SwapToRepayIntentForceCancelled: 'loanTimeline.swapToRepayIntentForceCancelled',
   ClaimRetryExecuted: 'loanTimeline.claimRetryExecuted',
   BorrowerLifRebateClaimed: 'loanTimeline.lifRebateClaimed',
   // The following kinds aren't loan-scoped (no `args.loanId`) so they're
@@ -105,6 +110,10 @@ const KIND_ACCENT: Record<ActivityEventKind, 'success' | 'failure' | 'info' | 'w
   // info (loan stays Active).
   SwapToRepayExecuted: 'success',
   SwapToRepayPartialExecuted: 'info',
+  SwapToRepayIntentCommitted: 'info',
+  SwapToRepayIntentFilled: 'success',
+  SwapToRepayIntentCancelled: 'info',
+  SwapToRepayIntentForceCancelled: 'warn',
   ClaimRetryExecuted: 'info',
   BorrowerLifRebateClaimed: 'info',
   StakingRewardsClaimed: 'success',
@@ -126,6 +135,10 @@ function iconForKind(kind: ActivityEventKind) {
     // canonical repay paths.
     case 'SwapToRepayExecuted':
     case 'SwapToRepayPartialExecuted':
+    case 'SwapToRepayIntentFilled':
+    case 'SwapToRepayIntentCommitted':
+    case 'SwapToRepayIntentCancelled':
+    case 'SwapToRepayIntentForceCancelled':
       return CheckCircle;
     case 'LoanDefaulted':
     case 'LiquidationFallback':
