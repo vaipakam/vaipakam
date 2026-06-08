@@ -68,15 +68,33 @@ const AGENT_ORIGIN =
   (import.meta as unknown as { env: Record<string, string | undefined> }).env
     .VITE_AGENT_ORIGIN ?? null;
 
-// Codex round-5 PR #430 P2 — pre-commit chain gate. Fusion only
-// supports a fixed set of mainnet chains (mirror of the agent
-// worker's `FUSION_SUPPORTED_CHAIN_IDS`). On any other chain the
-// agent endpoint short-circuits to a queued-ack, so allowing the
-// borrower to commit there just locks their collateral into
-// custody with no chance of a Fusion fill. Disable the Commit
-// button up-front + tell them why.
+// Codex round-5 PR #430 P2 + Codex round-1 PR #435 P2 — the
+// chain gate allows BOTH 1inch-supported mainnets AND
+// Vaipakam's deployed testnets:
+//
+//   - Mainnets (1, 8453, 42161, 10, 56, 137): the agent worker
+//     forwards these to 1inch's LOP orderbook for resolver
+//     pickup. Full happy path.
+//
+//   - Testnets (84532, 11155111, 421614, 11155420, 80002, 97):
+//     the agent worker short-circuits to a queued-ack with a
+//     "chain not supported by 1inch" note. Commit is enabled so
+//     operators can exercise the full on-chain commit +
+//     cancel-after-deadline cycle for testnet validation; no
+//     resolver fill arrives, but every other piece of the
+//     surface works end-to-end.
+//
+// The warning alert below explains the chain-specific
+// expectation in both cases. The two halves stay in one set
+// because the difference is operator-side messaging, not a
+// security boundary; the agent keeps its own mainnet-only
+// allow-list for the actual upstream submit.
 const FUSION_SUPPORTED_CHAIN_IDS: ReadonlySet<number> = new Set([
+  // Mainnets — 1inch LOP orderbook accepts these.
   1, 8453, 42161, 10, 56, 137,
+  // Deployed testnets — agent short-circuits to queued-ack;
+  // on-chain commit + cancel cycle still exercises end-to-end.
+  84532, 11155111, 421614, 11155420, 80002, 97,
 ]);
 
 // 1inch LOP v4 makerTraits bits — mirrors the Sub 1 contracts'
@@ -695,82 +713,54 @@ export function SwapToRepayIntentPanel({
         </div>
       )}
 
-      {/* Codex round-6 PR #430 P1 + P2 — commit is disabled until
-          the v1.2 quoteId work + the agent-origin requirement are
-          both addressed. Three independent disable reasons; the
-          alert text explains which one applies.
-
-          Codex round-7 PR #430 P2 — keep this warning visible for
-          live-intent borrowers too. Their existing commit is also
-          expected not to fill until #431, so they need the same
-          "use cancel-after-deadline" framing even though the
-          Commit button is hidden in their state. */}
-      <div className="alert alert-warning" style={{ fontSize: '0.82rem' }}>
-        <AlertTriangle size={14} />
-        <span>
-          {!FUSION_SUPPORTED_CHAIN_IDS.has(chainId) ? (
-            <>
-              1inch Fusion does not support chain {chainId}.
-              {hasLiveIntent ? (
-                <>
-                  {' '}
-                  Your existing commit can only be resolved via the
-                  cancel-after-deadline path; no resolver fill will
-                  arrive on this chain.
-                </>
-              ) : (
-                <>
-                  {' '}
-                  A commit here would lock your collateral with no
-                  chance of a resolver fill. Use the atomic
-                  swap-to-repay above instead.
-                </>
-              )}
-            </>
-          ) : !AGENT_ORIGIN ? (
-            <>
-              The Vaipakam agent worker URL is not configured in this
-              build.
-              {hasLiveIntent ? (
-                <>
-                  {' '}
-                  Your existing commit is best resolved via the
-                  cancel-after-deadline path.
-                </>
-              ) : (
-                <>
-                  {' '}
-                  Use the atomic swap-to-repay above instead.
-                </>
-              )}
-            </>
-          ) : (
-            <>
-              The 1inch Fusion resolver-pickup wire submits orders
-              without the `quoteId` field that Fusion requires, so
-              upstream is expected to reject every commit until the
-              v1.2 follow-up (issue #431) patches the bridge.
-              {hasLiveIntent ? (
-                <>
-                  {' '}
-                  Your existing commit is expected NOT to fill;
-                  cancel after the deadline to return custodial
-                  collateral to your vault.
-                </>
-              ) : (
-                <>
-                  {' '}
-                  Commit is disabled to avoid locking collateral
-                  that would only ever recover via the
-                  cancel-after-deadline path. Use the atomic
-                  swap-to-repay above instead; this surface
-                  re-enables when #431 lands.
-                </>
-              )}
-            </>
-          )}
-        </span>
-      </div>
+      {/* T-090 v1.2 #431 — surface re-enabled on the LOP
+          orderbook wire. The warning now only renders when a
+          genuine constraint blocks the commit path. */}
+      {(!FUSION_SUPPORTED_CHAIN_IDS.has(chainId) || !AGENT_ORIGIN) && (
+        <div className="alert alert-warning" style={{ fontSize: '0.82rem' }}>
+          <AlertTriangle size={14} />
+          <span>
+            {!FUSION_SUPPORTED_CHAIN_IDS.has(chainId) ? (
+              <>
+                1inch's orderbook doesn't aggregate chain {chainId}, so
+                a commit here will land on-chain but no resolver fill
+                will arrive.
+                {hasLiveIntent ? (
+                  <>
+                    {' '}
+                    Your existing commit is best resolved via the
+                    cancel-after-deadline path.
+                  </>
+                ) : (
+                  <>
+                    {' '}
+                    Use the atomic swap-to-repay above for predictable
+                    repayment on this chain.
+                  </>
+                )}
+              </>
+            ) : (
+              <>
+                The Vaipakam agent worker URL is not configured in
+                this build, so the resolver-pickup hand-off would be
+                skipped on commit.
+                {hasLiveIntent ? (
+                  <>
+                    {' '}
+                    Your existing commit is best resolved via the
+                    cancel-after-deadline path.
+                  </>
+                ) : (
+                  <>
+                    {' '}
+                    Use the atomic swap-to-repay above instead.
+                  </>
+                )}
+              </>
+            )}
+          </span>
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 8 }}>
         {!hasLiveIntent && (
@@ -782,11 +772,11 @@ export function SwapToRepayIntentPanel({
               submitting ||
               actionLoading ||
               !FUSION_SUPPORTED_CHAIN_IDS.has(chainId) ||
-              !AGENT_ORIGIN ||
-              // v1.2 #431 — Fusion-side quoteId not yet integrated;
-              // commits would be rejected upstream. Disable until
-              // the follow-up lands.
-              true
+              !AGENT_ORIGIN
+              // T-090 v1.2 #431 — the round-0 hard-disable is
+              // gone now that the agent worker submits to the
+              // LOP orderbook endpoint (no quoteId required)
+              // instead of Fusion v2's resolver-pickup.
             }
             onClick={handleCommit}
           >

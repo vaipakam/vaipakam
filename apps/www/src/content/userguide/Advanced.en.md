@@ -1019,25 +1019,12 @@ Permissionless actions available to anyone regardless of role:
   stays in diamond custody indefinitely. During the entire
   custody window your collateral is in the diamond, not your
   personal vault.
-    - *When to use it* — once the v1.2 quoteId-integration
-      follow-up below lands, this surface is the right choice
-      when you're not in a hurry and want the resolver
-      competition to surface a slightly better price than the
-      live DEX quote. Expected fills are minute-scale rather
-      than block-scale. The atomic surface above stays the
-      right choice when you need predictable timing.
-    - *Known limitation today* — the current resolver-pickup
-      wire submits orders to 1inch's Fusion relayer without a
-      `quoteId` field. Fusion's relayer documents that field
-      as required, so submissions are expected to be rejected
-      upstream until a follow-up patches the bridge to either
-      thread a real quote round-trip OR switch to 1inch's
-      Limit Order Protocol relayer endpoint. The on-chain
-      commit still locks your collateral correctly + all the
-      cancel paths still work, but **expect to cancel after
-      deadline rather than expect a fill** until that follow-
-      up lands. Use the atomic swap-to-repay above for
-      reliable repayment timing meanwhile.
+    - *When to use it* — when you're not in a hurry and want
+      the resolver competition to surface a slightly better
+      price than the live DEX quote. Expected fills are
+      minute-scale rather than block-scale. The atomic surface
+      above stays the right choice when you need predictable
+      timing.
     - *Pending state* — the Loan Details page shows a
       "pending intent" card with the order hash and deadline
       while the auction runs. A 1-second timer drives the
