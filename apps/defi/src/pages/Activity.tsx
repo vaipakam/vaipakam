@@ -330,7 +330,22 @@ export default function Activity() {
       if (ev.participants.includes(me)) return true;
       // LoanDefaulted has no participants — include it if the event's loanId
       // is one the current wallet actually participates in.
-      if (ev.kind === 'LoanDefaulted' && typeof ev.args.loanId === 'string') {
+      //
+      // T-090 v1.2 #429 — SwapToRepayIntentForceCancelled is the
+      // same shape: deliberately system-attributed (`actor = null`
+      // in the indexer participants resolver; empty participants
+      // in the browser-fallback decoder), with only the diamond
+      // `source` in the args. Without this branch the borrower
+      // never sees the row that explains why their pending intent
+      // disappeared right before a liquidation / time-default.
+      // Same loanId-membership check as the LoanDefaulted branch
+      // since both events carry `args.loanId` as the loan-scope
+      // key.
+      if (
+        (ev.kind === 'LoanDefaulted' ||
+          ev.kind === 'SwapToRepayIntentForceCancelled') &&
+        typeof ev.args.loanId === 'string'
+      ) {
         return userLoanIds.has(ev.args.loanId);
       }
       return false;

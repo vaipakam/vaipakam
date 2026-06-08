@@ -341,16 +341,20 @@ attribution + severity:
   diamond `source`); severity `warning` (a lender-protection action
   followed).
 
-In the dapp's current Activity page, the wallet-participant filter
-admits only events whose participants include the connected wallet —
-plus a `LoanDefaulted` special-case keyed by loan id. The three
-borrower-attributed events surface for the connected borrower
-through the participant filter; the system-attributed force-cancel
-row does **not** surface for the borrower with the current filter
-shape. Extending the `LoanDefaulted` special-case to include
-`SwapToRepayIntentForceCancelled` so the borrower's view shows the
-row joined to the loan they recognise is tracked as a v1.2
-follow-up.
+In the dapp's Activity page, the wallet-participant filter admits
+events whose participants include the connected wallet, plus a
+loan-id-keyed special-case that includes `LoanDefaulted` and
+`SwapToRepayIntentForceCancelled` for any loan the connected
+wallet currently participates in. The three borrower-attributed
+events (`Committed`, `Filled`, `Cancelled`) surface through the
+participant filter; the system-attributed `ForceCancelled` row
+surfaces through the loan-id special-case so the borrower's view
+shows the row joined to the loan they recognise. This loan-id-
+membership check uses the same `useUserLoans`-driven set that
+backs the `LoanDefaulted` branch, so it stays correct for the
+position-NFT-transfer edge case (the row surfaces for whoever
+currently holds the borrower-position NFT, not the
+origination address).
 
 The dapp surfaces an in-page **pending intent** card on Loan Details
 while a commit is live. The card shows the order hash, the deadline,
