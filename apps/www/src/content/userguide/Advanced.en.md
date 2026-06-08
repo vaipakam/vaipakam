@@ -1010,10 +1010,14 @@ Permissionless actions available to anyone regardless of role:
   holds your collateral inside the one repay transaction (it
   either fully settles or fully reverts in a single block).
   The intent surface holds your collateral in protocol custody
-  **across the auction window** — typically a minute or two,
-  capped by the deadline you set. You can still recover it via
-  the cancel paths described below, but during the auction
-  window your collateral is in the diamond's custody, not your
+  **across the entire commit lifecycle** — from the moment you
+  commit until the order fills, you cancel, or someone calls
+  the permissionless cancel path. Reaching the auction deadline
+  does NOT automatically return your collateral; it only opens
+  the cancel paths described below. If neither you nor the
+  permissionless path acts after the deadline, your collateral
+  stays in diamond custody indefinitely. During the entire
+  custody window your collateral is in the diamond, not your
   personal vault.
     - *When to use it (post-GA)* — once the GA piece below
       lands, this surface is the right choice when you're not
