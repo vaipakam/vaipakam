@@ -51,6 +51,7 @@ import { PrepayListingBanner } from "../components/loanDetails/PrepayListingBann
 import { PrepayListingActions } from "../components/loanDetails/PrepayListingActions";
 import { OpenSeaOffersSection } from "../components/loanDetails/OpenSeaOffersSection";
 import { SwapToRepayPanel } from "../components/loanDetails/SwapToRepayPanel";
+import { SwapToRepayIntentPanel } from "../components/loanDetails/SwapToRepayIntentPanel";
 import { useNFTPrepayListing } from "../hooks/useNFTPrepayListing";
 import "./LoanDetails.css";
 
@@ -1107,6 +1108,44 @@ export default function LoanDetails() {
                 collateralAsset={loan.collateralAsset as Address}
                 collateralAmount={loan.collateralAmount}
                 principalAsset={loan.principalAsset as Address}
+                diamondAddress={activeDiamondAddr as Address}
+                graceUntilSec={
+                  prepayGraceSeconds === null
+                    ? endTime
+                    : endTime + Number(prepayGraceSeconds)
+                }
+                actionLoading={actionLoading}
+                onActionLoadingChange={setActionLoading}
+                onAfterSuccess={loadLoan}
+              />
+            )}
+
+          {/* T-090 v1.1 (#389) Sub 3 (#418) — best-price intent
+              variant. Same eligibility gates as the atomic
+              SwapToRepayPanel above (the on-chain v1.1 facet
+              re-enforces identical conditions: ERC20-on-ERC20,
+              both legs Liquid, not past grace, lender exclusion,
+              not lender-NFT holder). Both panels render
+              simultaneously; the borrower picks atomic vs
+              best-price per-swap. */}
+          {isBorrower &&
+            !isLender &&
+            !!loan.lender &&
+            !!address &&
+            address.toLowerCase() !== loan.lender.toLowerCase() &&
+            isActive &&
+            !pastPrepayGrace &&
+            !isIlliquidLoan &&
+            Number(loan.assetType) === AssetType.ERC20 &&
+            Number(loan.collateralAssetType) === AssetType.ERC20 &&
+            activeDiamondAddr && (
+              <SwapToRepayIntentPanel
+                loanId={BigInt(loanId!)}
+                chainId={chainId ?? DEFAULT_CHAIN.chainId}
+                collateralAsset={loan.collateralAsset as Address}
+                collateralAmount={loan.collateralAmount}
+                principalAsset={loan.principalAsset as Address}
+                principalAmount={loan.principal}
                 diamondAddress={activeDiamondAddr as Address}
                 graceUntilSec={
                   prepayGraceSeconds === null
