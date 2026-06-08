@@ -13,6 +13,9 @@ import RepayFacetABI from './RepayFacet.json';
 // asset → principal asset and applies the proceeds to a full or partial
 // loan repay in one transaction.
 import SwapToRepayFacetABI from './SwapToRepayFacet.json';
+// T-090 v1.1 (#389) — intent-based swap-to-repay sibling facet.
+import SwapToRepayIntentFacetABI from './SwapToRepayIntentFacet.json';
+import IntentConfigFacetABI from './IntentConfigFacet.json';
 import DefaultedFacetABI from './DefaultedFacet.json';
 import RiskFacetABI from './RiskFacet.json';
 import RiskMatchLiquidationFacetABI from './RiskMatchLiquidationFacet.json';
@@ -79,6 +82,8 @@ export {
   LoanFacetABI,
   RepayFacetABI,
   SwapToRepayFacetABI,
+  SwapToRepayIntentFacetABI,
+  IntentConfigFacetABI,
   DefaultedFacetABI,
   RiskFacetABI,
   RiskMatchLiquidationFacetABI,
@@ -135,6 +140,8 @@ export const DIAMOND_ABI = [
   ...LoanFacetABI,
   ...RepayFacetABI,
   ...SwapToRepayFacetABI,
+  ...SwapToRepayIntentFacetABI,
+  ...IntentConfigFacetABI,
   ...DefaultedFacetABI,
   ...RiskFacetABI,
   ...RiskMatchLiquidationFacetABI,

@@ -33,7 +33,7 @@ abstract contract DiamondFacetNames {
     ///      `NFTPrepayListingAtomicFacet`;
     ///      41 → 42 in T-086 Round-7 (#355) with
     ///      `NFTPrepayAutoListFacet`.)
-    function cutFacetNames() internal pure returns (string[44] memory) {
+    function cutFacetNames() internal pure returns (string[46] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -44,6 +44,7 @@ abstract contract DiamondFacetNames {
             "DiamondLoupeFacet",
             "EarlyWithdrawalFacet",
             "VaultFactoryFacet",
+            "IntentConfigFacet",
             "InteractionRewardsFacet",
             "LegalFacet",
             "LoanFacet",
@@ -103,6 +104,7 @@ abstract contract DiamondFacetNames {
             "RiskMatchLiquidationFacet",
             "StakingRewardsFacet",
             "SwapToRepayFacet",
+            "SwapToRepayIntentFacet",
             "TreasuryFacet",
             "VaipakamNFTFacet",
             "VPFIDiscountFacet",

@@ -25,6 +25,8 @@ import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
+import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
+import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
@@ -560,6 +562,37 @@ contract HelperTest {
         selectors[1] = SwapToRepayFacet.swapToRepayPartial.selector;
     }
 
+    /// T-090 v1.1 (#389) — intent-based swap-to-repay facet selectors.
+    /// 3 external borrower entry points + 2 Fusion `LimitOrderProtocol`
+    /// hooks + ERC-1271 `isValidSignature` + 1 read-back view.
+    /// `getIntentCommit` is the dapp's read-back-then-post entry per
+    /// design §6.2.
+    function getSwapToRepayIntentFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](11);
+        selectors[0] = SwapToRepayIntentFacet.commitSwapToRepayIntent.selector;
+        selectors[1] = SwapToRepayIntentFacet.cancelSwapToRepayIntent.selector;
+        selectors[2] = SwapToRepayIntentFacet.cancelExpiredIntent.selector;
+        selectors[3] = SwapToRepayIntentFacet.preInteraction.selector;
+        selectors[4] = SwapToRepayIntentFacet.postInteraction.selector;
+        selectors[5] = SwapToRepayIntentFacet.isValidSignature.selector;
+        selectors[6] = SwapToRepayIntentFacet.getIntentCommit.selector;
+        // §5.8 layer 2 force-cancel surface (onlyDiamondInternal) —
+        // wired via crossFacetCall from the HF-liquidation +
+        // time-default entry points.
+        selectors[7] = SwapToRepayIntentFacet.internalForceCancelIntent.selector;
+        selectors[8] = SwapToRepayIntentFacet.forceCancelIntentIfHFBelowOrRevert.selector;
+        selectors[9] = SwapToRepayIntentFacet.forceCancelIntentIfPastDefaultOrRevert.selector;
+        // Codex round-2 PR #420 P2 — dapp read surface; without
+        // routing this through the diamond cut the borrower can't
+        // mirror the canonical extension bytes the commit gate
+        // requires.
+        selectors[10] = SwapToRepayIntentFacet.canonicalExtension.selector;
+    }
+
     function getDefaultedFacetSelectors()
         public
         pure
@@ -1088,6 +1121,34 @@ contract HelperTest {
         selectors[85] = ConfigFacet.setMaxSwapToRepaySlippageBps.selector;
         selectors[86] = ConfigFacet.getMaxSwapToRepaySlippageBps.selector;
         return selectors;
+    }
+
+    /// T-090 v1.1 (#389) — intent-based swap-to-repay config surface.
+    /// Carved into its own `IntentConfigFacet` after the 8 v1.1
+    /// setter/getter pairs pushed `ConfigFacet` over EIP-170
+    /// (round-2 PR #420 CI block).
+    function getIntentConfigFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](16);
+        selectors[0] = IntentConfigFacet.setIntentSwapToRepayEnabled.selector;
+        selectors[1] = IntentConfigFacet.setIntentMinCommitHF.selector;
+        selectors[2] = IntentConfigFacet.setIntentMinOutputBufferBps.selector;
+        selectors[3] = IntentConfigFacet.setIntentAuctionSecondsBounds.selector;
+        selectors[4] = IntentConfigFacet.setIntentCancelGraceSeconds.selector;
+        selectors[5] = IntentConfigFacet.setFusionLimitOrderProtocol.selector;
+        selectors[6] = IntentConfigFacet.setIntentAllowedPrincipalToken.selector;
+        selectors[7] = IntentConfigFacet.setIntentAllowedCollateralToken.selector;
+        selectors[8] = IntentConfigFacet.getIntentSwapToRepayEnabled.selector;
+        selectors[9] = IntentConfigFacet.getIntentMinCommitHF.selector;
+        selectors[10] = IntentConfigFacet.getIntentMinOutputBufferBps.selector;
+        selectors[11] = IntentConfigFacet.getIntentAuctionSecondsBounds.selector;
+        selectors[12] = IntentConfigFacet.getIntentCancelGraceSeconds.selector;
+        selectors[13] = IntentConfigFacet.getFusionLimitOrderProtocol.selector;
+        selectors[14] = IntentConfigFacet.getIntentAllowedPrincipalToken.selector;
+        selectors[15] = IntentConfigFacet.getIntentAllowedCollateralToken.selector;
     }
 
     function getInteractionRewardsFacetSelectors()

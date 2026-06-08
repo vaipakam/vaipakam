@@ -388,4 +388,38 @@ interface IVaipakamErrors {
     ///         at a fresh feed or clear the slot to fall back to the
     ///         derived rate.
     error PadNumeraireRateFeedStale();
+
+    /// @notice T-090 v1.1 (#389) — every voluntary-close,
+    ///         collateral-mutating, and lender-protection entry point
+    ///         that touches `loan.borrower`'s vault MUST revert with
+    ///         this error while an intent-based swap-to-repay commit
+    ///         is live for the loan. The borrower committed their
+    ///         collateral to a Fusion order; the diamond holds it
+    ///         custodially and the loan's standard vault-pull paths
+    ///         would either revert (vault empty) or orphan the
+    ///         custodial slot (loan flips state but custody stays).
+    ///
+    ///         Caller resolutions:
+    ///           • Voluntary callers (RepayFacet, PrecloseFacet,
+    ///             RefinanceFacet, v1 SwapToRepayFacet,
+    ///             AddCollateralFacet, PartialWithdrawalFacet) — wait
+    ///             for the borrower's `cancelSwapToRepayIntent` or
+    ///             the 24h `cancelExpiredIntent`. No lender-
+    ///             protection urgency justifies overriding the
+    ///             borrower's committed window.
+    ///           • Lender-protection callers (RiskFacet's 4 HF-
+    ///             liquidation entry points, RiskMatchLiquidationFacet
+    ///             internal-match, RepayFacet's
+    ///             `_autoLiquidatePeriodShortfall`,
+    ///             `DefaultedFacet.triggerDefault`) — only revert
+    ///             when the loan is still healthy enough to honour
+    ///             the borrower's window. When the loan is already
+    ///             liquidatable / defaultable on time grounds, the
+    ///             entry point force-cancels the intent (returns
+    ///             collateral, clears state, emits
+    ///             `SwapToRepayIntentForceCancelled`) and proceeds.
+    ///
+    ///         See `docs/DesignsAndPlans/SwapToRepayIntentBased.md`
+    ///         §5.8 for the block-vs-force-cancel matrix.
+    error IntentPending(uint256 loanId);
 }

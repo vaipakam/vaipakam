@@ -25,6 +25,8 @@ import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
+import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
+import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
@@ -134,6 +136,12 @@ contract DeployDiamond is Script {
         LoanFacet loanFacet = new LoanFacet();
         RepayFacet repayFacet = new RepayFacet();
         SwapToRepayFacet swapToRepayFacet = new SwapToRepayFacet();
+        // T-090 v1.1 (#389) — intent-based swap-to-repay sibling facet.
+        SwapToRepayIntentFacet swapToRepayIntentFacet = new SwapToRepayIntentFacet();
+        // T-090 v1.1 (#389) — intent-based swap-to-repay config knobs.
+        // Carved off `ConfigFacet` after the round-2 PR #420 CI block
+        // pushed it past EIP-170.
+        IntentConfigFacet intentConfigFacet = new IntentConfigFacet();
         DefaultedFacet defaultedFacet = new DefaultedFacet();
         RiskFacet riskFacet = new RiskFacet();
         RiskMatchLiquidationFacet riskMatchLiquidationFacet =
@@ -185,7 +193,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](44);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](46);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -292,6 +300,22 @@ contract DeployDiamond is Script {
         cuts[43] = _buildCut(
             address(swapToRepayFacet),
             _getSwapToRepayFacetSelectors()
+        );
+        // T-090 v1.1 (#389) — intent-based swap-to-repay sibling.
+        // Hosts the commit / cancel / cancelExpired entry points +
+        // the 1inch Fusion `LimitOrderProtocol` pre/postInteraction
+        // hooks + ERC-1271 `isValidSignature` + the read-back
+        // projection. Carved into its own facet to keep audit
+        // surface localised to the Fusion-binding code path; the v1
+        // atomic surface stays unchanged.
+        cuts[44] = _buildCut(
+            address(swapToRepayIntentFacet),
+            _getSwapToRepayIntentFacetSelectors()
+        );
+        // T-090 v1.1 (#389) intent-based swap-to-repay config facet.
+        cuts[45] = _buildCut(
+            address(intentConfigFacet),
+            _getIntentConfigSelectors()
         );
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
@@ -1096,6 +1120,29 @@ contract DeployDiamond is Script {
         s[1] = SwapToRepayFacet.swapToRepayPartial.selector;
     }
 
+    /// T-090 v1.1 (#389) — intent-based swap-to-repay facet selectors.
+    /// Per design §5.1 + §6.2:
+    ///   • 3 borrower-facing entry points (commit / cancel / cancelExpired)
+    ///   • 2 Fusion `LimitOrderProtocol` callbacks (pre/postInteraction)
+    ///   • 1 ERC-1271 binding check (`isValidSignature`)
+    ///   • 1 read-back view for the dapp's commit-then-post pattern.
+    function _getSwapToRepayIntentFacetSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](11);
+        s[0] = SwapToRepayIntentFacet.commitSwapToRepayIntent.selector;
+        s[1] = SwapToRepayIntentFacet.cancelSwapToRepayIntent.selector;
+        s[2] = SwapToRepayIntentFacet.cancelExpiredIntent.selector;
+        s[3] = SwapToRepayIntentFacet.preInteraction.selector;
+        s[4] = SwapToRepayIntentFacet.postInteraction.selector;
+        s[5] = SwapToRepayIntentFacet.isValidSignature.selector;
+        s[6] = SwapToRepayIntentFacet.getIntentCommit.selector;
+        // §5.8 layer 2 — force-cancel surface (onlyDiamondInternal).
+        s[7] = SwapToRepayIntentFacet.internalForceCancelIntent.selector;
+        s[8] = SwapToRepayIntentFacet.forceCancelIntentIfHFBelowOrRevert.selector;
+        s[9] = SwapToRepayIntentFacet.forceCancelIntentIfPastDefaultOrRevert.selector;
+        // Dapp read surface for the canonical extension bytes.
+        s[10] = SwapToRepayIntentFacet.canonicalExtension.selector;
+    }
+
     function _getDefaultedSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](2);
         s[0] = DefaultedFacet.triggerDefault.selector;
@@ -1583,6 +1630,29 @@ contract DeployDiamond is Script {
         // `MAX_SLIPPAGE_BPS = 2500` (25%).
         s[85] = ConfigFacet.setMaxSwapToRepaySlippageBps.selector;
         s[86] = ConfigFacet.getMaxSwapToRepaySlippageBps.selector;
+    }
+
+    /// T-090 v1.1 (#389) — intent-based swap-to-repay config
+    /// selectors. Carved off `ConfigFacet` after round-2 PR #420 CI
+    /// block on EIP-170.
+    function _getIntentConfigSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](16);
+        s[0] = IntentConfigFacet.setIntentSwapToRepayEnabled.selector;
+        s[1] = IntentConfigFacet.setIntentMinCommitHF.selector;
+        s[2] = IntentConfigFacet.setIntentMinOutputBufferBps.selector;
+        s[3] = IntentConfigFacet.setIntentAuctionSecondsBounds.selector;
+        s[4] = IntentConfigFacet.setIntentCancelGraceSeconds.selector;
+        s[5] = IntentConfigFacet.setFusionLimitOrderProtocol.selector;
+        s[6] = IntentConfigFacet.setIntentAllowedPrincipalToken.selector;
+        s[7] = IntentConfigFacet.setIntentAllowedCollateralToken.selector;
+        s[8] = IntentConfigFacet.getIntentSwapToRepayEnabled.selector;
+        s[9] = IntentConfigFacet.getIntentMinCommitHF.selector;
+        s[10] = IntentConfigFacet.getIntentMinOutputBufferBps.selector;
+        s[11] = IntentConfigFacet.getIntentAuctionSecondsBounds.selector;
+        s[12] = IntentConfigFacet.getIntentCancelGraceSeconds.selector;
+        s[13] = IntentConfigFacet.getFusionLimitOrderProtocol.selector;
+        s[14] = IntentConfigFacet.getIntentAllowedPrincipalToken.selector;
+        s[15] = IntentConfigFacet.getIntentAllowedCollateralToken.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {

@@ -86,6 +86,13 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         uint256 loanId,
         uint256 amount
     ) external nonReentrant whenNotPaused {
+        // T-090 v1.1 (#389) §5.8 — top-ups mutate
+        // `loan.collateralAmount` mid-auction; the v1.1 commit's
+        // `custodialCollateral` / makerAmount would drift from the
+        // loan struct + `postInteraction`'s
+        // `actualCollateralConsumed = loan.collateralAmount`
+        // accounting would double-count the top-up.
+        LibVaipakam.assertNoLiveIntentCommit(loanId);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 

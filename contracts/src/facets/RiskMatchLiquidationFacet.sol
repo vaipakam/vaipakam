@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -146,6 +147,21 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         uint256 loanIdB,
         uint256 loanIdC
     ) external nonReentrant whenNotPaused {
+        // T-090 v1.1 (#389) §5.8 layer 2 — force-cancel any live
+        // v1.1 commit on each leg if HF below liquidation
+        // threshold; otherwise revert `IntentPending`. The
+        // internal-match liquidator withdraws from every leg's
+        // borrower vault simultaneously, so any live commit on
+        // any of the three legs would orphan its custodial slot.
+        if (LibVaipakam.storageSlot().intentCommits[loanIdA].orderHash != bytes32(0)) {
+            SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanIdA);
+        }
+        if (LibVaipakam.storageSlot().intentCommits[loanIdB].orderHash != bytes32(0)) {
+            SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanIdB);
+        }
+        if (LibVaipakam.storageSlot().intentCommits[loanIdC].orderHash != bytes32(0)) {
+            SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanIdC);
+        }
         // Tier-1 sanctions: matcher receives 1% per leg in PR5;
         // blocking sanctioned wallets here keeps the value-receipt
         // path closed.

@@ -2645,4 +2645,5 @@ contract ConfigFacet is DiamondAccessControl {
         periodicEnabled = c.periodicInterestEnabled;
         numeraireSwapEnabled_ = c.numeraireSwapEnabled;
     }
+
 }

@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
@@ -472,6 +473,21 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 loanId,
         LibSwap.AdapterCall[] calldata adapterCalls
     ) external nonReentrant whenNotPaused {
+        // T-090 v1.1 (#389) §5.8 layer 2 — if a v1.1 intent commit
+        // is live, force-cancel it (return collateral + clear
+        // state + emit `SwapToRepayIntentForceCancelled`) when
+        // HF < `HF_LIQUIDATION_THRESHOLD`; otherwise revert
+        // `IntentPending` so the borrower keeps the 5min + 24h
+        // window. No-op when no commit is live.
+        // Inline storage pre-check so this entry point stays callable on
+        // diamonds that haven't cut `SwapToRepayIntentFacet` (the
+        // scenario suite + other diamond test harnesses that select
+        // facets a la carte). When no v1.1 intent commit is live for
+        // this loan, the cross-facet call is skipped entirely and we
+        // proceed straight to the standard liquidation flow.
+        if (LibVaipakam.storageSlot().intentCommits[loanId].orderHash != bytes32(0)) {
+            SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanId);
+        }
         // Tier-1 sanctions gate. The 3% liquidator bonus flows to
         // msg.sender — value receipt by a sanctioned wallet, blocked.
         // Anyone unflagged can still call this; liquidation is not
@@ -822,6 +838,16 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 loanId,
         LibSwap.SplitCall[] calldata splits
     ) external nonReentrant whenNotPaused {
+        // T-090 v1.1 (#389) §5.8 layer 2 — see `triggerLiquidation`.
+        // Inline storage pre-check so this entry point stays callable on
+        // diamonds that haven't cut `SwapToRepayIntentFacet` (the
+        // scenario suite + other diamond test harnesses that select
+        // facets a la carte). When no v1.1 intent commit is live for
+        // this loan, the cross-facet call is skipped entirely and we
+        // proceed straight to the standard liquidation flow.
+        if (LibVaipakam.storageSlot().intentCommits[loanId].orderHash != bytes32(0)) {
+            SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanId);
+        }
         // Sanctions / sequencer / HF / liquidity gates — identical to
         // {triggerLiquidation}.
         LibVaipakam._assertNotSanctioned(msg.sender);
@@ -1078,6 +1104,16 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 fractionBps,
         LibSwap.AdapterCall[] calldata adapterCalls
     ) external nonReentrant whenNotPaused {
+        // T-090 v1.1 (#389) §5.8 layer 2 — see `triggerLiquidation`.
+        // Inline storage pre-check so this entry point stays callable on
+        // diamonds that haven't cut `SwapToRepayIntentFacet` (the
+        // scenario suite + other diamond test harnesses that select
+        // facets a la carte). When no v1.1 intent commit is live for
+        // this loan, the cross-facet call is skipped entirely and we
+        // proceed straight to the standard liquidation flow.
+        if (LibVaipakam.storageSlot().intentCommits[loanId].orderHash != bytes32(0)) {
+            SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanId);
+        }
         // Tier-1 sanctions gate — the dynamic incentive bonus flows to
         // msg.sender, so value-receipt blocked for sanctioned addresses.
         LibVaipakam._assertNotSanctioned(msg.sender);
@@ -1390,6 +1426,16 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         address recipient,
         bytes calldata /* extraData reserved for v2 */
     ) external nonReentrant whenNotPaused {
+        // T-090 v1.1 (#389) §5.8 layer 2 — see `triggerLiquidation`.
+        // Inline storage pre-check so this entry point stays callable on
+        // diamonds that haven't cut `SwapToRepayIntentFacet` (the
+        // scenario suite + other diamond test harnesses that select
+        // facets a la carte). When no v1.1 intent commit is live for
+        // this loan, the cross-facet call is skipped entirely and we
+        // proceed straight to the standard liquidation flow.
+        if (LibVaipakam.storageSlot().intentCommits[loanId].orderHash != bytes32(0)) {
+            SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanId);
+        }
         // Tier-1 sanctions gate — `msg.sender` authored the trade; the
         // seizure flows to `recipient` but the caller is the one
         // earning the discount-net-of-execution-cost profit.

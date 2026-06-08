@@ -65,6 +65,10 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         uint256 loanId,
         uint256 amount
     ) external nonReentrant whenNotPaused {
+        // T-090 v1.1 (#389) §5.8 — partial withdraws reduce
+        // `loan.collateralAmount` mid-auction; same baseline-drift
+        // problem as `addCollateral`. Block while live.
+        LibVaipakam.assertNoLiveIntentCommit(loanId);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.borrower != msg.sender) revert NotBorrower();

@@ -1,7 +1,7 @@
 [
   {
     "type": "function",
-    "name": "autoDeductDaily",
+    "name": "cancelExpiredIntent",
     "inputs": [
       {
         "name": "loanId",
@@ -14,7 +14,7 @@
   },
   {
     "type": "function",
-    "name": "calculateRepaymentAmount",
+    "name": "cancelSwapToRepayIntent",
     "inputs": [
       {
         "name": "loanId",
@@ -22,99 +22,25 @@
         "internalType": "uint256"
       }
     ],
-    "outputs": [
-      {
-        "name": "totalDue",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
-    "name": "nextPeriodCheckpoint",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
+    "name": "canonicalExtension",
+    "inputs": [],
     "outputs": [
       {
         "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "stateMutability": "view"
   },
   {
     "type": "function",
-    "name": "previewPeriodicSettle",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "cadence",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "periodEndAt",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "graceEndsAt",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "expected",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "paidByBorrower",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "shortfall",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "canSettleNow",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "repayLoan",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "repayPartial",
+    "name": "commitSwapToRepayIntent",
     "inputs": [
       {
         "name": "loanId",
@@ -122,35 +48,32 @@
         "internalType": "uint256"
       },
       {
-        "name": "partialAmount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "settlePeriodicInterest",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "adapterCalls",
-        "type": "tuple[]",
-        "internalType": "struct LibSwap.AdapterCall[]",
+        "name": "params",
+        "type": "tuple",
+        "internalType": "struct SwapToRepayIntentFacet.FusionOrderParams",
         "components": [
           {
-            "name": "adapterIdx",
+            "name": "takerAmount",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "data",
+            "name": "deadline",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "salt",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "makerTraits",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "extension",
             "type": "bytes",
             "internalType": "bytes"
           }
@@ -161,8 +84,327 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "forceCancelIntentIfHFBelowOrRevert",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "forceCancelIntentIfPastDefaultOrRevert",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getIntentCommit",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "order",
+        "type": "tuple",
+        "internalType": "struct SwapToRepayIntentFacet.FusionOrderRead",
+        "components": [
+          {
+            "name": "maker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "receiver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "makerAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "takerAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "makerAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "takerAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "salt",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "makerTraits",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "extension",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "internalForceCancelIntent",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reason",
+        "type": "uint8",
+        "internalType": "enum SwapToRepayIntentFacet.ForceCancelReason"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "isValidSignature",
+    "inputs": [
+      {
+        "name": "orderHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "postInteraction",
+    "inputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct IOrderMixin.Order",
+        "components": [
+          {
+            "name": "salt",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "maker",
+            "type": "uint256",
+            "internalType": "Address"
+          },
+          {
+            "name": "receiver",
+            "type": "uint256",
+            "internalType": "Address"
+          },
+          {
+            "name": "makerAsset",
+            "type": "uint256",
+            "internalType": "Address"
+          },
+          {
+            "name": "takerAsset",
+            "type": "uint256",
+            "internalType": "Address"
+          },
+          {
+            "name": "makingAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "takingAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "makerTraits",
+            "type": "uint256",
+            "internalType": "MakerTraits"
+          }
+        ]
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "orderHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "makingAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "preInteraction",
+    "inputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct IOrderMixin.Order",
+        "components": [
+          {
+            "name": "salt",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "maker",
+            "type": "uint256",
+            "internalType": "Address"
+          },
+          {
+            "name": "receiver",
+            "type": "uint256",
+            "internalType": "Address"
+          },
+          {
+            "name": "makerAsset",
+            "type": "uint256",
+            "internalType": "Address"
+          },
+          {
+            "name": "takerAsset",
+            "type": "uint256",
+            "internalType": "Address"
+          },
+          {
+            "name": "makingAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "takingAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "makerTraits",
+            "type": "uint256",
+            "internalType": "MakerTraits"
+          }
+        ]
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "orderHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
-    "name": "AutoDailyDeducted",
+    "name": "SwapToRepayIntentCancelled",
     "inputs": [
       {
         "name": "loanId",
@@ -171,7 +413,93 @@
         "internalType": "uint256"
       },
       {
-        "name": "dayFeeDeducted",
+        "name": "orderHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "cancelledBy",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SwapToRepayIntentCommitted",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "orderHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "committedBy",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "makerAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "takerAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "deadline",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SwapToRepayIntentFilled",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "orderHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "consumed",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "delivered",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "residualToBorrowerVault",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -181,7 +509,7 @@
   },
   {
     "type": "event",
-    "name": "LoanRepaid",
+    "name": "SwapToRepayIntentForceCancelled",
     "inputs": [
       {
         "name": "loanId",
@@ -190,356 +518,25 @@
         "internalType": "uint256"
       },
       {
-        "name": "repayer",
-        "type": "address",
+        "name": "orderHash",
+        "type": "bytes32",
         "indexed": true,
-        "internalType": "address"
+        "internalType": "bytes32"
       },
       {
-        "name": "interestPaid",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "lateFeePaid",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "outstandingPrincipal",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "accruedInterest",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newStatus",
+        "name": "reason",
         "type": "uint8",
         "indexed": false,
-        "internalType": "enum LibVaipakam.LoanStatus"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LoanSettlementBreakdown",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
+        "internalType": "enum SwapToRepayIntentFacet.ForceCancelReason"
       },
       {
-        "name": "principal",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "interest",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "lateFee",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "treasuryShare",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "lenderShare",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PartialRepaid",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "amountRepaid",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newPrincipal",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "accruedInterest",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PeriodicInterestAutoLiquidated",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "periodEndAt",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "shortfall",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "collateralSold",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "lenderProceeds",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "settlerBonus",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "treasuryShare",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "settler",
+        "name": "source",
         "type": "address",
         "indexed": true,
         "internalType": "address"
       }
     ],
     "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PeriodicInterestSettled",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "periodEndAt",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "expected",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "paidByBorrower",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "settler",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PeriodicSlippageOverBuffer",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "expectedShortfall",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "actualLenderProceeds",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "RepayPartialPeriodAdvanced",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "periodEndAt",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "expected",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "advancedBy",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "SwapAdapterAttempted",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "adapterIdx",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "adapter",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "success",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "SwapAdapterSucceeded",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "adapterIdx",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "adapter",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "outputAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "SwapAllAdaptersFailed",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "error",
-    "name": "AdapterIndexOutOfRange",
-    "inputs": [
-      {
-        "name": "adapterIdx",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "registeredCount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
   },
   {
     "type": "error",
@@ -694,18 +691,153 @@
   },
   {
     "type": "error",
-    "name": "InsufficientPartialAmount",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InsufficientPrepay",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "InsufficientProceeds",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IntentAlreadyCommitted",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IntentAlreadyFilled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IntentBlockedHFTooLow",
+    "inputs": [
+      {
+        "name": "currentHF",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "minHF",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IntentCollateralFeeOnTransferUnsupported",
+    "inputs": [
+      {
+        "name": "received",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IntentDeliveredBelowLiveFloor",
+    "inputs": [
+      {
+        "name": "actualDelivered",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "liveFloor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IntentMakerTraitsMismatch",
+    "inputs": [
+      {
+        "name": "reasonHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IntentMinOutputBelowFloor",
+    "inputs": [
+      {
+        "name": "provided",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "required",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IntentNoCommit",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IntentNotPastCancelGrace",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IntentNotPastDeadline",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IntentNotRegistered",
+    "inputs": [
+      {
+        "name": "orderHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IntentOrderFieldsMismatch",
+    "inputs": [
+      {
+        "name": "fieldHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IntentOrderHashAlreadyInUse",
+    "inputs": [
+      {
+        "name": "orderHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
   },
   {
     "type": "error",
@@ -715,6 +847,55 @@
         "name": "loanId",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IntentPostInteractionUnauthorized",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IntentPreInteractionUnauthorized",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IntentPreInteractionUnknownOrder",
+    "inputs": [
+      {
+        "name": "orderHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IntentSurfaceDisabled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IntentTokenNotAllowed",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },
@@ -882,11 +1063,6 @@
   },
   {
     "type": "error",
-    "name": "NoSwapAdaptersConfigured",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "NonLiquidAsset",
     "inputs": []
   },
@@ -917,11 +1093,6 @@
   },
   {
     "type": "error",
-    "name": "NotDailyYet",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "NotLender",
     "inputs": []
   },
@@ -932,12 +1103,12 @@
   },
   {
     "type": "error",
-    "name": "NotNFTRental",
+    "name": "NotOfferCreator",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "NotOfferCreator",
+    "name": "NotYetImplemented",
     "inputs": []
   },
   {
@@ -953,6 +1124,11 @@
   {
     "type": "error",
     "name": "OfferCreationFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OnlyDiamondInternal",
     "inputs": []
   },
   {
@@ -1001,11 +1177,6 @@
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "PartialRepayNotAllowed",
-    "inputs": []
   },
   {
     "type": "error",
@@ -1198,17 +1369,6 @@
   },
   {
     "type": "error",
-    "name": "SanctionedAddress",
-    "inputs": [
-      {
-        "name": "who",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "SanctionsOracleUnavailable",
     "inputs": []
   },
@@ -1235,6 +1395,11 @@
   {
     "type": "error",
     "name": "UnauthorizedCrossFacetCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnsupportedLoanShape",
     "inputs": []
   },
   {

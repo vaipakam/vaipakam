@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
@@ -248,6 +249,10 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
      * @param loanId The loan ID to repay.
      */
     function repayLoan(uint256 loanId) external nonReentrant whenNotPaused {
+        // T-090 v1.1 (#389) §5.8 — block voluntary close while an
+        // intent-based swap-to-repay commit is live (custody has
+        // already moved out of `loan.borrower`'s vault).
+        LibVaipakam.assertNoLiveIntentCommit(loanId);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         // FallbackPending is accepted: a full repay cures the failed
@@ -608,6 +613,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         uint256 loanId,
         uint256 partialAmount
     ) external nonReentrant whenNotPaused {
+        // T-090 v1.1 (#389) §5.8 — partial repay still pulls from
+        // `loan.borrower`'s vault; block while a v1.1 commit is live.
+        LibVaipakam.assertNoLiveIntentCommit(loanId);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         LibAuth.requireBorrower(loan);
@@ -1156,6 +1164,16 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         uint256 boundary,
         LibSwap.AdapterCall[] calldata adapterCalls
     ) private {
+        // T-090 v1.1 (#389) §5.8 layer 2 — same force-cancel-on-
+        // HF-low pattern as the public HF-liquidation entry
+        // points. If no commit is live → no-op. If a commit is
+        // live AND HF < `HF_LIQUIDATION_THRESHOLD` → force-cancel
+        // + emit `SwapToRepayIntentForceCancelled`. Otherwise
+        // revert `IntentPending` so the borrower's window is
+        // honoured even mid-period.
+        if (LibVaipakam.storageSlot().intentCommits[loanId].orderHash != bytes32(0)) {
+            SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanId);
+        }
         // Sell-amount sizing: aim for `shortfall × (1 + slippageCap)` of
         // collateral so the swap clears even in the worst-case slippage
         // scenario. If the loan's remaining collateral is smaller, sell

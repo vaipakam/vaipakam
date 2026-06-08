@@ -19,6 +19,8 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
+import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
+import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -68,6 +70,8 @@ import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {console} from "forge-std/console.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
+import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
+import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
@@ -206,6 +210,9 @@ contract SetupTest is Test {
     RiskMatchLiquidationFacet riskMatchLiquidationFacet;
     RepayFacet repayFacet;
     SwapToRepayFacet swapToRepayFacet;
+    // T-090 v1.1 (#389) — intent-based swap-to-repay sibling facet.
+    SwapToRepayIntentFacet swapToRepayIntentFacet;
+    IntentConfigFacet intentConfigFacet;
     AdminFacet adminFacet;
     ClaimFacet claimFacet;
     AddCollateralFacet addCollateralFacet;
@@ -293,6 +300,8 @@ contract SetupTest is Test {
         riskMatchLiquidationFacet = new RiskMatchLiquidationFacet();
         repayFacet = new RepayFacet();
         swapToRepayFacet = new SwapToRepayFacet();
+        swapToRepayIntentFacet = new SwapToRepayIntentFacet();
+        intentConfigFacet = new IntentConfigFacet();
         adminFacet = new AdminFacet();
         claimFacet = new ClaimFacet();
         addCollateralFacet = new AddCollateralFacet();
@@ -352,7 +361,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](45);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](47);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -614,6 +623,18 @@ contract SetupTest is Test {
             facetAddress: address(swapToRepayFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getSwapToRepayFacetSelectors()
+        });
+        // T-090 v1.1 (#389) — intent-based swap-to-repay sibling facet.
+        cuts[45] = IDiamondCut.FacetCut({
+            facetAddress: address(swapToRepayIntentFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSwapToRepayIntentFacetSelectors()
+        });
+        // T-090 v1.1 (#389) intent-based swap-to-repay config facet.
+        cuts[46] = IDiamondCut.FacetCut({
+            facetAddress: address(intentConfigFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getIntentConfigFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

@@ -157,6 +157,9 @@ contract PrecloseFacet is
     function precloseDirect(
         uint256 loanId
     ) external nonReentrant whenNotPaused {
+        // T-090 v1.1 (#389) §5.8 — borrower can't preclose-direct
+        // while the v1.1 intent surface holds the collateral.
+        LibVaipakam.assertNoLiveIntentCommit(loanId);
         // Tier-1 sanctions gate — preclose routes funds back to
         // msg.sender (borrower closing early); sanctioned blocked.
         LibVaipakam._assertNotSanctioned(msg.sender);
@@ -395,6 +398,11 @@ contract PrecloseFacet is
         uint256 loanId,
         uint256 borrowerOfferId
     ) external nonReentrant whenNotPaused {
+        // T-090 v1.1 (#389) §5.8 — transferObligation rewrites
+        // `loan.borrower` + `loan.collateralAmount` + the borrower
+        // NFT; the v1.1 commit's `lopAtCommit` pin and orderHash
+        // would describe a stale baseline. Block while live.
+        LibVaipakam.assertNoLiveIntentCommit(loanId);
         // Tier-1 sanctions gate — transferring an obligation closes
         // and re-opens loan state on behalf of msg.sender.
         LibVaipakam._assertNotSanctioned(msg.sender);
@@ -686,6 +694,11 @@ contract PrecloseFacet is
         bool creatorRiskAndTermsConsent,
         address prepayAsset
     ) external nonReentrant whenNotPaused returns (uint256 newOfferId) {
+        // T-090 v1.1 (#389) §5.8 — offset writes a new offer that
+        // settles against `loan.collateralAmount`; same custody-
+        // conflict rationale as the other PrecloseFacet entry
+        // points.
+        LibVaipakam.assertNoLiveIntentCommit(loanId);
         LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
         _validateOffsetRequest(
             loan,
@@ -995,6 +1008,13 @@ contract PrecloseFacet is
     ///      `nonReentrant`) and `completeOffsetInternal` (cross-facet,
     ///      no guard). Single source of truth for the offset close-out.
     function _completeOffsetImpl(uint256 originalLoanId) private {
+        // T-090 v1.1 (#389) §5.8 — shared body for `completeOffset`
+        // (external) and `completeOffsetInternal` (cross-facet, no
+        // outer guard). Gate here so both entry points are covered
+        // by a single check; covers the case where the offset close-
+        // out fires while the original loan still has a live v1.1
+        // commit.
+        LibVaipakam.assertNoLiveIntentCommit(originalLoanId);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[originalLoanId];
         if (loan.status != LibVaipakam.LoanStatus.Active)
