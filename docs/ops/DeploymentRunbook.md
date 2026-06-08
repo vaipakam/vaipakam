@@ -336,6 +336,131 @@ chain. Tail the live Worker logs to inspect:
 cd ops/hf-watcher && npx wrangler tail --format=pretty
 ```
 
+### T-090 v1.1 GA — intent-based swap-to-repay bridge activation
+
+The intent-based swap-to-repay surface (`SwapToRepayIntentPanel` on
+Loan Details) ships **functionally complete but inactive** until the
+operator finishes the post-deploy activation below. While
+unactivated, the agent worker's `POST /intent/fusion/post` returns a
+queued-ack with a "no Fusion solver discovery happens until the
+secret is rotated in" note; the dapp's panel surfaces the
+unsupported-chain warning + recommends the atomic swap-to-repay
+surface as the reliable repayment path. Borrowers can still attempt
+a commit on supported chains — the on-chain commit succeeds and the
+cancel-after-deadline path always works, but no resolver fill will
+arrive.
+
+Activation requires:
+- Enabling the LOP Orderbook scope on the **existing**
+  `ONEINCH_API_KEY` secret (the same 1inch developer-portal key
+  `apps/agent/src/quoteProxy.ts` already uses for the
+  `/quote/1inch` route — no separate `INTENT_FUSION_API_KEY`
+  secret is needed).
+- Registering ONE new Cloudflare resource: the per-IP rate-limit
+  namespace for the new endpoint.
+- Re-adding the rate-limit binding to `apps/agent/wrangler.jsonc`
+  and redeploying.
+
+Run on each chain whose deploy the operator wants the bridge
+active for.
+
+#### Step 1 — Enable the LOP Orderbook scope on the existing 1inch key
+
+Sign in to <https://portal.1inch.dev/>, open the project that owns
+the existing `ONEINCH_API_KEY` (the one currently powering the
+`/quote/1inch` proxy), and add the **Limit Order Protocol
+Orderbook** scope to the same key. **Swap Aggregation** should
+already be enabled (it's what `quoteProxy.ts` uses); leave it on.
+
+The key value does not change, so no Cloudflare Secrets-Store
+edit is needed — the existing `ONEINCH_API_KEY` binding the
+worker already reads will pick up the new scope on the next
+upstream request.
+
+If the existing key was provisioned at a tier that doesn't allow
+LOP Orderbook access, rotate it to a tier that does and re-run
+the standard secret rotation flow (`wrangler secrets-store secret
+update <STORE_ID> --name ONEINCH_API_KEY --value <new-key>`); the
+quoteProxy and intent-Fusion paths both pick up the rotation on
+the next deploy.
+
+#### Step 2 — Register the per-IP rate-limit namespace
+
+Open the Cloudflare dashboard → Workers & Pages → `vaipakam-agent`
+→ Settings → Bindings. Add a new **Rate limiting** binding:
+
+| Field | Value |
+| --- | --- |
+| Variable name | `INTENT_FUSION_POST_RATELIMIT` |
+| Type | Rate limiting |
+| Namespace ID | choose a fresh integer; capture it for step 3 |
+| Simple limit | `30` requests per `60` seconds |
+
+This bounds abuse spend on the shared `ONEINCH_API_KEY` quota. The
+agent worker's `handleIntentFusionPost` runs a half-activation
+gate (`503 rate-limit-not-configured`) when the API key is bound
+but this binding is NOT, so the operator can't accidentally expose
+the quota by skipping this step.
+
+#### Step 3 — Re-add the rate-limit binding to wrangler.jsonc and redeploy
+
+Open `apps/agent/wrangler.jsonc` and locate the operator-action
+comment block (search for `T-090 v1.1 GA (#430)` under
+`unsafe.bindings`). The block contains the exact binding
+declaration the file shipped without — paste it back in, replacing
+`<chosen-id>` with the namespace id from step 2.
+
+Then redeploy:
+
+```bash
+cd apps/agent
+npx wrangler deploy
+```
+
+Verify the binding landed on the live Worker:
+
+```bash
+npx wrangler deployments list --name vaipakam-agent | head -5
+# Open the latest deployment in the Cloudflare dashboard and
+# confirm `INTENT_FUSION_POST_RATELIMIT` appears under Bindings
+# (the existing `ONEINCH_API_KEY` secret binding should already
+# be present and unchanged).
+```
+
+#### Step 4 — Smoke test the activated bridge
+
+The fastest end-to-end check posts a commit on Base Sepolia (which
+the dapp's chain gate allows + the agent's mainnet allow-list
+rejects). The expected result: the on-chain commit succeeds, the
+agent endpoint returns a `queued` ack with the unsupported-chain
+note, and the borrower's panel surfaces it. This validates every
+gate up to the upstream submit without spending a 1inch quota
+request on the live key.
+
+For a mainnet smoke test (deliberately scoped down to a small loan
+value), the expected result is a 2xx from the agent endpoint with
+the upstream 1inch orderbook response in the body. Tail the live
+Worker logs while the smoke test runs:
+
+```bash
+cd apps/agent && npx wrangler tail --format=pretty
+```
+
+Look for the matching `[intent/fusion/post]` log line; any
+`commit-tx-not-found`, `orderhash-not-in-commit-tx`,
+`order-fields-mismatch`, or `commit-no-longer-live` rejection
+indicates a misconfiguration that needs investigation before the
+borrower-facing surface is announced.
+
+#### Rollback
+
+To disable the bridge, comment out the same two bindings in
+`apps/agent/wrangler.jsonc` and redeploy. The agent endpoint
+short-circuits back to the queued-ack pre-activation state on the
+next request without losing any in-flight commit state — the
+on-chain commit + cancel paths remain functional throughout the
+binding flip.
+
 #### Quick sanity check from the frontend (added 2026-05-07)
 
 The frontend's diagnostics surface now exposes the same signals
