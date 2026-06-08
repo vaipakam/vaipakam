@@ -480,7 +480,13 @@ Each sub follows the project's standard PR-with-Codex-review cycle. Sub 1-2 are 
 
 ---
 
-## 9. Deliberate design choices the review surfaced (not bugs)
+## 9. Design-iteration close-out
+
+11 rounds of Codex pre-design review on this doc, with ~80 distinct findings folded (a mix of architectural corrections, security gates, and implementation-detail edge cases). The architectural shape locked from round-2 onward: Q1-Q5 decisions, ring-buffer TWA, CCIP propagation policy with monotonic nonce + per-destination tracking, MEV-protected Fusion buyback, fail-closed protocol-funded broadcast budget, mirror cache with `tierTableVersion + tierExpirySec`, sweep with one-shot-per-(user, version, dest) granularity, IntentDispatchFacet for 1inch callbacks. None of these have moved across the last four rounds.
+
+Sub 1 (contracts) carries the architecture to production-quality Solidity, where Codex review on the actual code will catch any residual implementation-detail findings the design doc's narrative form couldn't precisely pin down (e.g., exact storage-slot packing, gas snapshot deltas, revert-string conventions, event-emission order). That's the right phase for the remaining shake-down, not another iteration on the prose.
+
+### 9a. Deliberate design choices the review surfaced (not bugs)
 
 **Time-only EFFECTIVE_TIER activation does NOT auto-broadcast** (Codex round-8 P1 #7 — deliberately not folded). When a fresh staker's `stakedDays` crosses `cfgTwaMinStakedDays` purely from time advancement (no balance mutation triggers the rollup), Base's EFFECTIVE_TIER for that user flips from 0 to the real tier. The auto-broadcast hook is on balance-mutation sites and on Base fee-charge sites, so this time-only transition does NOT auto-fire a CCIP push. Until the user touches Base in any way, their mirror cache stays at EFFECTIVE_TIER 0.
 
