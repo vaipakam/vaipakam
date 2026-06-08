@@ -189,19 +189,33 @@ const SWAP_TO_REPAY_INTENT_FORCE_CANCELLED_TOPIC0 = id(
 // ─────────────────────────────────────────────────────────────
 
 const INTENT_COMMITTERS_STORAGE_KEY = 'vaipakam.intentCommitters.v1';
-// Default grace = 24h, matching the Sub 1 documented cancel-
-// grace default. Stored entries past `deadline + GRACE_SEC` are
-// dropped on access — they refer to commits that are either
-// long resolved on-chain or now permissionlessly cancellable.
-const INTENT_COMMITTER_GRACE_SEC = 24 * 60 * 60;
+// Codex round-1 PR #432 P2 — grace = 90 days, NOT 24 hours.
+// The first iteration tied the grace to the on-chain cancel
+// window (24h past the auction deadline), but that's too short
+// for the fallback scanner's use case: a borrower who closes
+// the app while a commit is live, the resolver fills it, and
+// the borrower returns >24h later would otherwise have the
+// committer entry pruned from storage BEFORE the scanner
+// replays the cached Filled log. 90 days is a deliberately
+// pessimistic cap on the borrower's reasonable
+// re-engagement window; past that the row is unlikely to be
+// re-decoded anyway.
+const INTENT_COMMITTER_GRACE_SEC = 90 * 24 * 60 * 60;
 
 type IntentCommitterEntry = { committedBy: string; expiresAt: number };
 type IntentCommittersByOrderHash = Record<string, IntentCommitterEntry>;
 
 function readIntentCommittersRaw(): IntentCommittersByOrderHash {
-  if (typeof window === 'undefined' || !window.localStorage) return {};
+  if (typeof window === 'undefined') return {};
+  // Codex round-1 PR #432 P2 — `window.localStorage` getter
+  // itself can throw in some environments (storage disabled,
+  // blocked by policy, opaque origin / sandboxed iframe). Guard
+  // both the property access AND the `getItem` / `JSON.parse`
+  // calls inside the same try.
   try {
-    const raw = window.localStorage.getItem(INTENT_COMMITTERS_STORAGE_KEY);
+    const ls = window.localStorage;
+    if (!ls) return {};
+    const raw = ls.getItem(INTENT_COMMITTERS_STORAGE_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as unknown;
     if (parsed && typeof parsed === 'object') {
@@ -214,16 +228,18 @@ function readIntentCommittersRaw(): IntentCommittersByOrderHash {
 }
 
 function writeIntentCommittersRaw(map: IntentCommittersByOrderHash): void {
-  if (typeof window === 'undefined' || !window.localStorage) return;
+  if (typeof window === 'undefined') return;
+  // Codex round-1 PR #432 P2 — same defensive guard as the
+  // read path; environments that throw on the getter need the
+  // try to wrap that too.
   try {
-    window.localStorage.setItem(
-      INTENT_COMMITTERS_STORAGE_KEY,
-      JSON.stringify(map),
-    );
+    const ls = window.localStorage;
+    if (!ls) return;
+    ls.setItem(INTENT_COMMITTERS_STORAGE_KEY, JSON.stringify(map));
   } catch {
-    // Quota / serialization error — swallow; the in-scan Map
-    // still works for the current scan, so the fallback path
-    // degrades gracefully.
+    // Quota / serialization error / opaque origin — swallow;
+    // the in-scan Map still works for the current scan, so the
+    // fallback path degrades gracefully.
   }
 }
 
@@ -270,13 +286,6 @@ function persistIntentCommitter(
   writeIntentCommittersRaw(map);
 }
 
-function forgetIntentCommitter(orderHash: string): void {
-  const key = orderHash.toLowerCase();
-  const map = readIntentCommittersRaw();
-  if (!(key in map)) return;
-  delete map[key];
-  writeIntentCommittersRaw(map);
-}
 
 const CLAIM_RETRY_EXECUTED_TOPIC0 = id(
   'ClaimRetryExecuted(uint256,bool,uint256)',
@@ -530,7 +539,16 @@ function storageKey(chainId: number, diamond: string): string {
   // key, so SwapToRepayExecuted / SwapToRepayPartialExecuted rows
   // would be missing from the worker-down fallback path. One-time
   // re-scan from the deploy block on next page load.
-  return `vaipakam:logIndex:v3:${chainId}:${diamond.toLowerCase()}`;
+  // Codex round-1 PR #432 P2 — bump to v4. The v3 cache shape
+  // for any browser that already cached a fallback-path
+  // `SwapToRepayIntentFilled` row with `participants: []`
+  // (the bug this PR fixes) would otherwise keep that stale row
+  // forever; later scans merge from `cached.events` + start
+  // after `cached.lastBlock`, so the new committer memo would
+  // never replay against the historical Filled log. Bumping the
+  // version forces every browser to re-scan from scratch the
+  // next time the fallback path runs.
+  return `vaipakam:logIndex:v4:${chainId}:${diamond.toLowerCase()}`;
 }
 
 function emptyCache(deployBlock: number): CachedShape {
@@ -1927,12 +1945,20 @@ async function runScan(
         // The in-scan Map is seeded from localStorage at the start
         // of every scan, so the lookup hits even when the Committed
         // event lived in an earlier scan chunk or before a page
-        // reload. After consuming, drop the entry from both the
-        // in-scan Map AND localStorage so the storage doesn't
-        // hold the now-resolved orderHash forever.
+        // reload.
+        //
+        // Codex round-1 PR #432 P2 — DO NOT delete the storage
+        // entry on Filled here. A scan can process the Filled log,
+        // delete the memo, and then abort BEFORE `writeCache` runs
+        // (e.g. a later chunk's `eth_getLogs` rate-limits or
+        // 5xxs). The retry would replay the same Filled log
+        // against an empty memo and produce `participants: []`.
+        // Storage cleanup is now the wall-clock sweep's job at
+        // load time (90-day window per
+        // INTENT_COMMITTER_GRACE_SEC); entries are ~100 bytes
+        // each so growth is bounded.
         const committedBy =
           intentCommitterByOrderHash.get(orderHash.toLowerCase()) ?? '';
-        forgetIntentCommitter(orderHash);
         addEvent(
           'SwapToRepayIntentFilled',
           committedBy ? [committedBy] : [],
@@ -1953,9 +1979,9 @@ async function runScan(
         const loanId = BigInt(topics[1]).toString();
         const orderHash = topics[2];
         const cancelledBy = ('0x' + topics[3].slice(26)).toLowerCase();
-        // T-090 v1.2 #427 — drop the persisted committer entry
-        // (if any) since the commit has been torn down on-chain.
-        forgetIntentCommitter(orderHash);
+        // Codex round-1 PR #432 P2 — same delete-on-abort-during-
+        // retry race as the Filled branch above; let the wall-
+        // clock sweep handle cleanup instead of deleting here.
         addEvent('SwapToRepayIntentCancelled', [cancelledBy], {
           loanId,
           orderHash,
@@ -1983,8 +2009,9 @@ async function runScan(
         } catch {
           // Malformed data — keep defaults.
         }
-        // T-090 v1.2 #427 — same teardown as the Cancelled branch.
-        forgetIntentCommitter(orderHash);
+        // Codex round-1 PR #432 P2 — see Filled branch above on
+        // why we deliberately don't delete the storage entry
+        // here; the wall-clock sweep handles cleanup.
         addEvent('SwapToRepayIntentForceCancelled', [], {
           loanId,
           orderHash,
