@@ -44,6 +44,39 @@
 
 import type { Env } from './env';
 import { getDeployment } from '@vaipakam/contracts/deployments';
+import { createPublicClient, http, keccak256, toBytes } from 'viem';
+
+// T-090 v1.2 #428 — keccak256 of the canonical
+// `SwapToRepayIntentCommitted(uint256,bytes32,address,uint256,uint256,uint64)`
+// event signature, pre-computed at module load.
+const SWAP_TO_REPAY_INTENT_COMMITTED_TOPIC0 = keccak256(
+  toBytes(
+    'SwapToRepayIntentCommitted(uint256,bytes32,address,uint256,uint256,uint64)',
+  ),
+);
+
+// T-090 v1.2 #428 — per-chain RPC binding lookup. Mirror of the
+// pattern used in `buyWatchdog.ts`; reuses the same secrets the
+// other agent handlers read from.
+function rpcForChain(env: Env, chainId: number): string | undefined {
+  if (chainId === 1) return env.RPC_ETH;
+  if (chainId === 8453) return env.RPC_BASE;
+  if (chainId === 42161) return env.RPC_ARB;
+  if (chainId === 10) return env.RPC_OP;
+  if (chainId === 56) return env.RPC_BNB;
+  if (chainId === 137) return env.RPC_POLYGON;
+  // Testnets — kept for parity with the chain-allow-list above
+  // (Fusion doesn't support them, but the preflight can still
+  // verify the commit landed on-chain for the rejected-chain
+  // queued-ack path).
+  if (chainId === 11155111) return env.RPC_SEPOLIA;
+  if (chainId === 84532) return env.RPC_BASE_SEPOLIA;
+  if (chainId === 421614) return env.RPC_ARB_SEPOLIA;
+  if (chainId === 11155420) return env.RPC_OP_SEPOLIA;
+  if (chainId === 80002) return env.RPC_POLYGON_AMOY;
+  if (chainId === 97) return env.RPC_BNB_TESTNET;
+  return undefined;
+}
 
 // Codex round-2 PR #430 P2 — host is `api.1inch.com`, NOT
 // `.dev`. The `.dev` host does not serve the Fusion relayer
@@ -178,6 +211,66 @@ export async function handleIntentFusionPost(
     parsed.order.receiver.toLowerCase() !== expectedDiamond
   ) {
     return jsonErr(corsOrigin, 400, 'maker-receiver-not-diamond');
+  }
+
+  // T-090 v1.2 #428 — on-chain commit preflight. The Origin gate
+  // above stops the browser-misconfigured noise; the rate limit
+  // bounds spend; the maker/receiver-bound-to-diamond check
+  // prevents foreign ERC-1271 contracts from spending our key.
+  // But a non-browser caller that spoofs Origin + bounds the
+  // body to our diamond can still spam shape-valid-but-fake
+  // commits + burn the Fusion quota at the upstream rejection.
+  //
+  // Defense: fetch the `commitTxHash` receipt + verify it
+  // contains a `SwapToRepayIntentCommitted` log whose indexed
+  // orderHash (topic[2]) matches the body's `orderHash` AND was
+  // emitted by the Vaipakam diamond on this chain. Proves the
+  // commit actually happened on-chain.
+  //
+  // Cost: one `eth_getTransactionReceipt` per request. Bounded by
+  // the rate-limit binding above. If the RPC URL isn't bound
+  // (operator-pre-activation or test environments), skip the
+  // preflight — the request still reaches the upstream `fetch`
+  // gated by the API key + rate-limit + body validation, and
+  // Fusion's server-side ERC-1271 staticcall is the final
+  // backstop against unregistered orderHashes.
+  const rpcUrl = rpcForChain(env, parsed.chainId);
+  if (rpcUrl) {
+    try {
+      const client = createPublicClient({ transport: http(rpcUrl) });
+      const receipt = await client.getTransactionReceipt({
+        hash: parsed.commitTxHash,
+      });
+      if (!receipt || receipt.status !== 'success') {
+        return jsonErr(corsOrigin, 400, 'commit-tx-not-successful');
+      }
+      const expectedOrderHashTopic = parsed.orderHash.toLowerCase();
+      let foundMatchingCommit = false;
+      for (const log of receipt.logs) {
+        if (
+          log.address.toLowerCase() !== expectedDiamond ||
+          log.topics[0]?.toLowerCase() !==
+            SWAP_TO_REPAY_INTENT_COMMITTED_TOPIC0.toLowerCase()
+        ) {
+          continue;
+        }
+        // topic[2] is the indexed orderHash field.
+        if (log.topics[2]?.toLowerCase() === expectedOrderHashTopic) {
+          foundMatchingCommit = true;
+          break;
+        }
+      }
+      if (!foundMatchingCommit) {
+        return jsonErr(corsOrigin, 400, 'orderhash-not-in-commit-tx');
+      }
+    } catch (err) {
+      // RPC failure isn't fatal — fall through to Fusion. The
+      // log noise lets ops see when the preflight degrades.
+      console.warn(
+        '[intent/fusion/post] on-chain preflight RPC error; proceeding',
+        err,
+      );
+    }
   }
 
   // Codex round-1 PR #430 P2 — gate to chains 1inch Fusion
