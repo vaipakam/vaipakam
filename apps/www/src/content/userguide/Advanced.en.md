@@ -1003,9 +1003,18 @@ Permissionless actions available to anyone regardless of role:
   10-minute auction), and the winning solver fills the order
   by paying your loan's settlement legs directly to the
   diamond. The settlement waterfall runs atomically with the
-  fill in the same transaction; you get the same on-chain
-  guarantees as the atomic surface (no partial fills, full
-  reversion if anything fails).
+  fill in the same transaction; the same lender-protection
+  guarantees apply (no partial fills, full reversion if any
+  step fails). Note that the custody model differs from the
+  atomic surface in one important way: the atomic surface only
+  holds your collateral inside the one repay transaction (it
+  either fully settles or fully reverts in a single block).
+  The intent surface holds your collateral in protocol custody
+  **across the auction window** — typically a minute or two,
+  capped by the deadline you set. You can still recover it via
+  the cancel paths described below, but during the auction
+  window your collateral is in the diamond's custody, not your
+  personal vault.
     - *When to use it* — when you're not in a hurry and want
       the resolver competition to surface a slightly better
       price than the live DEX quote. Typical fills land in
@@ -1031,15 +1040,20 @@ Permissionless actions available to anyone regardless of role:
       before running the lender-protection action, so the
       intent doesn't compete with the liquidator for the
       same collateral.
-    - *Status disclosure* — v1.1 ships in alpha; the
-      direct-to-Fusion push of new intents to the
-      resolver-pickup endpoint is a known follow-up. Your
-      collateral is in protocol custody from the moment you
-      commit (same custody model as the atomic surface) and
-      the cancel path always works. Resolvers monitoring the
-      on-chain LOP for new orders may still pick yours up;
-      we deliberately surface a banner so you can pick the
-      atomic surface above when you want predictable timing.
+    - *Status disclosure* — v1.1 ships in alpha. The piece
+      that actively posts your committed order to 1inch
+      Fusion's resolver-pickup endpoint is a deliberate
+      follow-up (the v1.1 GA card). In alpha, your commit
+      lands on-chain and the protocol custody + cancel paths
+      all work, but new commits are **not** broadcast to
+      Fusion's solver network, so the auction is unlikely to
+      receive a fill until the GA piece lands. Pick the
+      atomic surface above for predictable repayment timing
+      while the alpha runs; the intent surface is here for
+      early adopters who want to exercise the cancel /
+      pending-state flows and provide feedback ahead of GA.
+      A banner inside the panel surfaces this status
+      explicitly.
 - **Preclose direct** — pay the outstanding amount from your
   wallet now, release collateral, settle the rebate.
 - **Preclose offset** — sell some collateral via the protocol's

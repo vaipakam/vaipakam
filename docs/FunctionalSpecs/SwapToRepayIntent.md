@@ -85,7 +85,14 @@ Submitting a commit on the surface produces, in a single transaction:
    minimum output (taker amount) is recorded.
 4. The protocol approves the 1inch Limit Order Protocol contract to
    pull the custodial collateral when a solver fills the order. The
-   approval is sized to the exact custodial amount.
+   approval is **per-token aggregate**: the protocol maintains a
+   running total of pending custodial amounts across all live commits
+   for the same collateral token and approves the Limit Order Protocol
+   for the sum. When two or more live commits share the same collateral
+   token, each commit raises the aggregate; each teardown (fill,
+   cancel, force-cancel) lowers it. This is intentional — it avoids
+   the per-commit approval reset that would otherwise revoke a sibling
+   commit's allowance.
 5. A `SwapToRepayIntentCommitted` event is emitted; the activity feed
    attributes the row to the borrower address that submitted the commit.
 
@@ -111,29 +118,45 @@ borrower-supplied order must:
 - Carry an auction deadline within the protocol's configured auction
   window bounds and not exceeding the loan's maturity-plus-grace
   boundary.
-- Carry a nonce that has not been used by any prior live commit on the
-  same chain (the protocol tracks used nonces globally for replay
-  protection).
+- Carry a nonce that has not been used by **any** prior commit on the
+  same chain — successful, cancelled, or force-cancelled. The
+  protocol's nonce-used set is per-chain and **permanent**: once a
+  nonce is consumed by any commit it is never released for reuse, so
+  clients must vary the nonce per commit forever rather than retry an
+  earlier value after a teardown. This mirrors the underlying 1inch
+  LOP bit-invalidator semantic where the bit is consumed permanently.
 - Not request unwrap-WETH delivery (the receiver expects ERC-20, not
   native ETH).
 - Not request epoch-manager checking (incompatible with the
   bit-invalidator path the protocol's order shape requires).
+- Not request Permit2-mediated transfers (the diamond approves the
+  Limit Order Protocol contract directly; Permit2-flagged orders would
+  route the transfer through a different authorization path the
+  diamond does not authorize).
 
 Any deviation from the above rejects the commit at submission time with
 a discriminated error so the dapp can surface a precise reason.
 
-## Live floor (post-fill check)
+## Live floor — commit-time vs fill-time
 
-When a solver attempts to fill the order, the protocol's
-post-interaction hook re-evaluates the **live settlement floor** at
-fill-time block timestamp and rejects the fill if the solver-delivered
-amount falls below `(principal + accrued interest + treasury and
-preclose fees + late fee accrual) × (1 + configured buffer bps)`.
+The protocol enforces the live settlement floor at two distinct points
+with different buffer semantics.
 
-This is the same logic the atomic surface enforces at submission time;
-the intent surface enforces it at fill time so the protocol stays
-protected even if a solver tries to fill late (e.g. after additional
-interest has accrued).
+**At commit time**, the borrower-supplied `takerAmount` must be at or
+above `(principal + accrued interest + treasury and preclose fees +
+late fee accrual) × (1 + configured buffer bps)`. The buffer protects
+the borrower from a marginal fill that the protocol would technically
+accept but that leaves no headroom against block-to-block interest
+accrual between commit and fill.
+
+**At fill time**, the protocol's post-interaction hook re-evaluates the
+floor at the fill-block timestamp **without** the buffer — the raw
+`lenderLeg + treasuryLeg + lateFee`. The hook reverts the fill if the
+solver-delivered amount falls below the raw floor. The buffer is a
+commit-time guarantee for the borrower, not a fill-time cushion for the
+solver: an order whose `takerAmount` already exceeds the raw floor at
+fill time fills cleanly; the buffer's job at commit was to ensure that
+condition still holds after a short auction window.
 
 ## Cancel — three paths
 
