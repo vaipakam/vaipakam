@@ -68,6 +68,17 @@ const AGENT_ORIGIN =
   (import.meta as unknown as { env: Record<string, string | undefined> }).env
     .VITE_AGENT_ORIGIN ?? null;
 
+// Codex round-5 PR #430 P2 — pre-commit chain gate. Fusion only
+// supports a fixed set of mainnet chains (mirror of the agent
+// worker's `FUSION_SUPPORTED_CHAIN_IDS`). On any other chain the
+// agent endpoint short-circuits to a queued-ack, so allowing the
+// borrower to commit there just locks their collateral into
+// custody with no chance of a Fusion fill. Disable the Commit
+// button up-front + tell them why.
+const FUSION_SUPPORTED_CHAIN_IDS: ReadonlySet<number> = new Set([
+  1, 8453, 42161, 10, 56, 137,
+]);
+
 // 1inch LOP v4 makerTraits bits — mirrors the Sub 1 contracts'
 // internal constants. Borrower-side salt + traits construction
 // follows the canonical layout `canonicalExtension()` validates
@@ -684,12 +695,28 @@ export function SwapToRepayIntentPanel({
         </div>
       )}
 
+      {!hasLiveIntent && !FUSION_SUPPORTED_CHAIN_IDS.has(chainId) && (
+        <div className="alert alert-warning" style={{ fontSize: '0.82rem' }}>
+          <AlertTriangle size={14} />
+          <span>
+            1inch Fusion does not support chain {chainId}, so a commit
+            here would lock your collateral with no chance of a
+            resolver fill. Use the atomic swap-to-repay above instead.
+          </span>
+        </div>
+      )}
+
       <div style={{ display: 'flex', gap: 8 }}>
         {!hasLiveIntent && (
           <button
             type="button"
             className="btn btn-primary btn-sm"
-            disabled={!canWrite || submitting || actionLoading}
+            disabled={
+              !canWrite ||
+              submitting ||
+              actionLoading ||
+              !FUSION_SUPPORTED_CHAIN_IDS.has(chainId)
+            }
             onClick={handleCommit}
           >
             {submitting ? 'Submitting…' : 'Commit best-price intent'}
