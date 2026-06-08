@@ -101,11 +101,23 @@ No changes to the existing vault-proxy pattern. Each user has a `VaipakamVaultIm
 1. **State mutation step** — Any balance-mutating call site invokes `LibVPFIDiscount.rollupUserDiscount(user, currentBal)`. This:
    - Advances the ring buffer to today (lazy gap-fill).
    - Recomputes the current tier from the buffer.
+   - **Computes the projected expiry**: scans the future trajectory of the ring buffer assuming no further balance mutations (older days roll out, all newer days hold the current balance), determines the dayId on which the projected TWA will first cross BELOW the current tier boundary, and stores `tierExpiryDayId[user] = thatDayId`. This is the closed-form solution the mirror later uses to enforce decay-driven expiry without a Base round-trip.
    - Increments `s.userTierPushNonce[user]` (uint64, monotonic) ONLY IF the tier crossed a boundary OR the caller signals a forced push.
-   - Emits `BaseTierChanged(user, oldTier, newTier, computedAt, nonce)`.
+   - Emits `BaseTierChanged(user, oldTier, newTier, computedAt, nonce, tierExpirySec)`.
    - **Does NOT send any CCIP messages.** No `msg.value` required.
 
-2. **Broadcast step** — A *payable* entry point `broadcastTierUpdate(address user, uint64[] dests)` (callable by anyone) reads the current tier from the user's accumulator state, then for each destination in `dests` checks whether the cached `userTierLastPushedNonce[user][dest] < userTierPushNonce[user]`. For destinations where the nonce is stale, the function calls `VaipakamRewardMessenger.sendTierUpdate(...)` with the payload `(uint8 kind, address user, uint8 tier, uint40 computedAt, uint64 nonce)`. The caller pays the CCIP fee via `msg.value`; `nonce` increments via the rollup pass above and is the strict ordering key.
+2. **Broadcast step** — A *payable* entry point `broadcastTierUpdate(address user, uint64[] dests)` (callable by anyone) reads the current tier + the projected expiry from the user's accumulator state, then for each destination in `dests` checks whether the cached `userTierLastPushedNonce[user][dest] < userTierPushNonce[user]`. For destinations where the nonce is stale, the function calls `VaipakamRewardMessenger.sendTierUpdate(...)` with the payload `(uint8 kind, address user, uint8 tier, uint40 computedAt, uint64 nonce, uint40 tierExpirySec)`. The caller pays the CCIP fee via `msg.value`; `nonce` is the strict ordering key.
+
+**Projected tier-decay expiry (Codex round-3 P1 #1)**: the central observation is that, under the ring-buffer + two-tier weighting, the TWA's future trajectory is FULLY DETERMINED by the current ring-buffer state if no further balance mutations occur. So Base can compute, at push time, the EXACT day on which the projected TWA crosses below the current tier boundary, and embed that future moment in the CCIP payload as `tierExpirySec` (uint40 seconds, absolute timestamp).
+
+On the mirror, the fee path applies the discount ONLY IF `now < userTierCache[user].tierExpirySec`. Past expiry, the cache is stale-by-construction and the user pays at tier 0 until a fresh push arrives. This:
+
+- Pushes the decay-handling logic onto Base (where the ring buffer state lives) at push time.
+- Adds a single uint40 to the payload (no balance trajectory propagation).
+- Eliminates the keeper requirement: pure on-chain enforcement.
+- Pre-empts the "stake-then-unstake-then-exploit-stale-mirror-tier" vector Codex flagged: the moment the unstake happens, the projected expiry is recomputed, the new (much sooner) expiry is propagated on the next push, and mirrors honour the new expiry.
+
+The `cfgMirrorTierMaxAgeSec` knob remains as a *secondary* safety cap (the on-mirror "even if Base hasn't pushed an update in N months, treat the cache as expired"), but the primary correctness path is now the projected expiry baked into the cached tier itself.
 
 **The dapp orchestrates step 2** after every stake/unstake action: it asks the user to confirm a small native-gas top-up to fund the CCIP broadcasts to all live mirror destinations. The user pays once per stake action; mirrors get the update in CCIP-DON time (typically <2 minutes). For users who don't want to pay (or transact through a relayer), step 1 alone still updates the user's tier on Base; their cached tier on mirrors stays stale until somebody (themselves, a keeper, a friend) calls `broadcastTierUpdate`.
 
@@ -123,8 +135,8 @@ No changes to the existing vault-proxy pattern. Each user has a `VaipakamVaultIm
 
 Each mirror chain's diamond exposes:
 
-- Storage: `mapping(address => CachedTier) public userTierCache` where `CachedTier = struct { uint8 tier; uint40 lastUpdateSec; uint40 lastComputedAt; }` — packed into a single slot.
-- Inbound message handler: `onCcipMessageReceived(...)` decodes the `TierUpdated` kind and runs the §4.3 source-chain + sender + message-ordering validations before writing the cache.
+- Storage: `mapping(address => CachedTier) public userTierCache` where `CachedTier = struct { uint8 tier; uint40 lastUpdateSec; uint64 lastNonce; uint40 tierExpirySec; }` — packed into a single slot (8 + 40 + 64 + 40 = 152 bits; the final `tierExpirySec` field is the Codex round-3 P1 #1 addition that drives mirror-side decay enforcement, per §4.3).
+- Inbound message handler: `onCcipMessageReceived(...)` decodes the `TierUpdated` kind and runs the §4.3 source-chain + authenticated-sender + nonce-monotonic validations before writing the cache. The handler also writes `tierExpirySec` from the payload.
 
 **Fee-path beneficiary lookup (Codex round-1 P1 #5)**: `LibVPFIDiscount.tryApply` and `tryApplyYieldFee` on mirrors take an explicit **beneficiary** argument and look up `userTierCache[beneficiary].tier`. The beneficiary is the address that earns the discount — not necessarily `msg.sender`:
 
@@ -228,6 +240,14 @@ mapping(address => uint64) userTierPushNonce;
 // (Codex round-2 P1 #2 — gives the forced-resend path a separate
 // state to rewind.)
 mapping(address => mapping(uint64 => uint64)) userTierLastPushedNonce;
+
+// Projected tier-decay expiry — absolute seconds-since-epoch past
+// which the user's current Base tier will fall to a lower tier
+// IF no further balance mutations occur. Computed at every rollup
+// pass from the ring buffer's deterministic future trajectory.
+// Embedded in the CCIP payload so mirrors enforce decay locally
+// without a Base round-trip. (Codex round-3 P1 #1.)
+mapping(address => uint40) tierExpirySec;
 ```
 
 Cold cost per active staker on Base: 30 × `uint128` packs into 15 slots + 2 metadata slots + 1 push-nonce slot + per-destination last-pushed (1 slot per active destination). Sub-card 1 includes the gas snapshot vs the existing accumulator.
@@ -236,9 +256,10 @@ Cold cost per active staker on Base: 30 × `uint128` packs into 15 slots + 2 met
 
 ```
 struct CachedTier {
-    uint8  tier;          // current cached tier (0-4)
-    uint40 lastUpdateSec; // wall-clock of last cache write (used for max-age check)
-    uint64 lastNonce;     // monotonic ordering key — payload nonce, NOT timestamp
+    uint8  tier;            // current cached tier (0-4)
+    uint40 lastUpdateSec;   // wall-clock of last cache write (used for the secondary max-age safety cap)
+    uint64 lastNonce;       // monotonic ordering key — payload nonce, NOT timestamp
+    uint40 tierExpirySec;   // Codex round-3 P1 #1 — the absolute timestamp past which the cached tier is stale-by-construction
 }
 mapping(address => CachedTier) userTierCache;
 
@@ -248,7 +269,7 @@ address baseAuthorizedMessenger;
 uint64  baseChainSelector;
 ```
 
-`CachedTier` packs into a single slot (8 + 40 + 64 = 112 bits). One slot per user with a cached tier.
+`CachedTier` packs into a single slot (8 + 40 + 64 + 40 = 152 bits). One slot per user with a cached tier.
 
 **`TreasuryFacet` additions (every chain):**
 
