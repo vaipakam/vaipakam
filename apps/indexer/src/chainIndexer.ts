@@ -1537,6 +1537,74 @@ async function processLoanLogs(
       const r = await flipLoanStatus(env, chainId, a, log, 'repaid');
       if (r) statusUpdates++;
       await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
+    } else if (log.eventName === 'SwapToRepayIntentCommitted') {
+      // T-090 v1.1 (#389) Sub 2 (#417) — intent-based commit. INSERT
+      // a `swap_to_repay_intents` row keyed by (chain_id, loan_id);
+      // the loan stays Active in `loans`. At most one live commit
+      // per loan is enforced on-chain by `IntentAlreadyCommitted`,
+      // so `INSERT OR REPLACE` is safe — a "replace" can only occur
+      // through a fill / cancel that the dispatcher would have
+      // processed earlier in the same batch, OR through a stale
+      // reorg replay (in which case the row content is identical).
+      await env.DB.prepare(
+        `INSERT OR REPLACE INTO swap_to_repay_intents
+           (chain_id, loan_id, order_hash, committed_by,
+            maker_amount, taker_amount, deadline,
+            committed_at, committed_tx_hash)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+        .bind(
+          chainId,
+          Number(a.loanId as bigint),
+          (a.orderHash as string).toLowerCase(),
+          (a.committedBy as string).toLowerCase(),
+          String(a.makerAmount as bigint),
+          String(a.takerAmount as bigint),
+          Number(a.deadline as bigint),
+          now,
+          log.transactionHash,
+        )
+        .run();
+    } else if (log.eventName === 'SwapToRepayIntentFilled') {
+      // T-090 v1.1 Sub 2 — Fusion solver filled the intent; the
+      // diamond's postInteraction ran the canonical settlement
+      // waterfall atomically. Loan transitions Active→Repaid, the
+      // active prepay-listing (if any) is cleared, and the intent
+      // row is deleted. Mirrors `SwapToRepayExecuted` exactly for
+      // the loan-side state machine, plus the intent-row cleanup.
+      const loanId = Number(a.loanId as bigint);
+      const r = await flipLoanStatus(env, chainId, a, log, 'repaid');
+      if (r) statusUpdates++;
+      await _deletePrepayListing(env, chainId, loanId);
+      await env.DB.prepare(
+        `DELETE FROM swap_to_repay_intents
+         WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(chainId, loanId)
+        .run();
+    } else if (log.eventName === 'SwapToRepayIntentCancelled') {
+      // T-090 v1.1 Sub 2 — borrower cancel OR permissionless
+      // `cancelExpired` poke. Loan stays Active (the cancel only
+      // tears down the v1.1 commit + returns collateral to the
+      // borrower vault). Delete the intent row.
+      await env.DB.prepare(
+        `DELETE FROM swap_to_repay_intents
+         WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(chainId, Number(a.loanId as bigint))
+        .run();
+    } else if (log.eventName === 'SwapToRepayIntentForceCancelled') {
+      // T-090 v1.1 Sub 2 — HF-liquidation OR time-default path
+      // force-cancelled the intent. The lender-protection action
+      // proceeds in the same tx via downstream events
+      // (LoanLiquidated / LoanDefaulted etc.) — those handlers do
+      // the loan-side flip. Here we just delete the intent row.
+      await env.DB.prepare(
+        `DELETE FROM swap_to_repay_intents
+         WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(chainId, Number(a.loanId as bigint))
+        .run();
     } else if (log.eventName === 'LoanPreclosedDirect') {
       // Preclose Option 1 — borrower closes early. Transition Active→Repaid.
       const r = await flipLoanStatus(env, chainId, a, log, 'repaid');
@@ -2697,6 +2765,31 @@ function pluckActivityRefs(
     case 'SwapToRepayPartialExecuted':
       return {
         actor: (args.borrower as string)?.toLowerCase() ?? null,
+        loanId: Number(args.loanId as bigint),
+        offerId: null,
+      };
+    // T-090 v1.1 (#389) Sub 2 (#417) — borrower-attributed events.
+    case 'SwapToRepayIntentCommitted':
+      return {
+        actor: (args.committedBy as string)?.toLowerCase() ?? null,
+        loanId: Number(args.loanId as bigint),
+        offerId: null,
+      };
+    case 'SwapToRepayIntentCancelled':
+      return {
+        actor: (args.cancelledBy as string)?.toLowerCase() ?? null,
+        loanId: Number(args.loanId as bigint),
+        offerId: null,
+      };
+    // System-driven — `Filled` is initiated by a Fusion solver
+    // (no Vaipakam-side actor); `ForceCancelled` is initiated by
+    // the liquidation / time-default entry point (`source` is the
+    // facet's diamond address, not a user — leaving `actor` null
+    // matches the same `LoanDefaulted` / `LoanLiquidated` pattern).
+    case 'SwapToRepayIntentFilled':
+    case 'SwapToRepayIntentForceCancelled':
+      return {
+        actor: null,
         loanId: Number(args.loanId as bigint),
         offerId: null,
       };
