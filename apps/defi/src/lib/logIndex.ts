@@ -145,6 +145,25 @@ const SWAP_TO_REPAY_EXECUTED_TOPIC0 = id(
 const SWAP_TO_REPAY_PARTIAL_EXECUTED_TOPIC0 = id(
   'SwapToRepayPartialExecuted(uint256,address,uint256,uint256,uint256,uint256)',
 );
+// T-090 v1.1 (#389) Sub 3 (#418) — intent-based surface topics
+// (Codex round-1 P2). Indexer's the primary path, but the
+// browser-side fallback scanner (when VITE_INDEXER_ORIGIN is
+// unset or the route returns 5xx) needs these to produce
+// `SwapToRepayIntent*` activity rows.
+const SWAP_TO_REPAY_INTENT_COMMITTED_TOPIC0 = id(
+  'SwapToRepayIntentCommitted(uint256,bytes32,address,uint256,uint256,uint64)',
+);
+const SWAP_TO_REPAY_INTENT_FILLED_TOPIC0 = id(
+  'SwapToRepayIntentFilled(uint256,bytes32,uint256,uint256,uint256)',
+);
+const SWAP_TO_REPAY_INTENT_CANCELLED_TOPIC0 = id(
+  'SwapToRepayIntentCancelled(uint256,bytes32,address)',
+);
+// reason is `uint8` per the Solidity enum encoding; source is
+// the facet address that emitted (current diamond by convention).
+const SWAP_TO_REPAY_INTENT_FORCE_CANCELLED_TOPIC0 = id(
+  'SwapToRepayIntentForceCancelled(uint256,bytes32,uint8,address)',
+);
 const CLAIM_RETRY_EXECUTED_TOPIC0 = id(
   'ClaimRetryExecuted(uint256,bool,uint256)',
 );
@@ -1200,6 +1219,15 @@ async function runScan(
           [
             SWAP_TO_REPAY_EXECUTED_TOPIC0,
             SWAP_TO_REPAY_PARTIAL_EXECUTED_TOPIC0,
+            // T-090 v1.1 Sub 3 (Codex round-1 P2) — fold the
+            // 4 intent topics into the same getLogs request so
+            // the fallback scanner returns them in one
+            // round-trip (mirrors the same-call pattern Sub 1
+            // uses for the atomic v1 events).
+            SWAP_TO_REPAY_INTENT_COMMITTED_TOPIC0,
+            SWAP_TO_REPAY_INTENT_FILLED_TOPIC0,
+            SWAP_TO_REPAY_INTENT_CANCELLED_TOPIC0,
+            SWAP_TO_REPAY_INTENT_FORCE_CANCELLED_TOPIC0,
           ],
         ],
         fromBlock: cursor,
@@ -1700,6 +1728,107 @@ async function runScan(
           collateralIn,
           principalOut,
           partialPrincipal,
+        });
+      } else if (topic0 === SWAP_TO_REPAY_INTENT_COMMITTED_TOPIC0) {
+        // T-090 v1.1 Sub 3 — SwapToRepayIntentCommitted(loanId indexed,
+        // orderHash indexed, committedBy indexed, makerAmount, takerAmount,
+        // uint64 deadline). Attribute to committedBy so wallet-filtered
+        // views catch the commit.
+        if (topics.length < 4) continue;
+        const loanId = BigInt(topics[1]).toString();
+        const orderHash = topics[2];
+        const committedBy = ('0x' + topics[3].slice(26)).toLowerCase();
+        let makerAmount = '0';
+        let takerAmount = '0';
+        let deadline = 0;
+        try {
+          const [m, t, d] = decodeAbiParameters(
+            parseAbiParameters('uint256, uint256, uint64'),
+            event.data,
+          );
+          makerAmount = (m as bigint).toString();
+          takerAmount = (t as bigint).toString();
+          deadline = Number(d as bigint);
+        } catch {
+          // Malformed data — keep defaults.
+        }
+        addEvent('SwapToRepayIntentCommitted', [committedBy], {
+          loanId,
+          orderHash,
+          committedBy,
+          makerAmount,
+          takerAmount,
+          deadline,
+        });
+      } else if (topic0 === SWAP_TO_REPAY_INTENT_FILLED_TOPIC0) {
+        // T-090 v1.1 Sub 3 — SwapToRepayIntentFilled(loanId indexed,
+        // orderHash indexed, consumed, delivered, residual). No
+        // address on-event; the indexer's row-attribution looks up
+        // the borrower from the prior Committed row. Fallback path
+        // surfaces it loan-scoped without an actor attribution
+        // (mirrors how LoanRepaid is handled).
+        if (topics.length < 3) continue;
+        const loanId = BigInt(topics[1]).toString();
+        const orderHash = topics[2];
+        let consumed = '0';
+        let delivered = '0';
+        try {
+          const [c, d] = decodeAbiParameters(
+            parseAbiParameters('uint256, uint256, uint256'),
+            event.data,
+          );
+          consumed = (c as bigint).toString();
+          delivered = (d as bigint).toString();
+        } catch {
+          // Malformed data — keep defaults.
+        }
+        addEvent('SwapToRepayIntentFilled', [], {
+          loanId,
+          orderHash,
+          consumed,
+          delivered,
+        });
+      } else if (topic0 === SWAP_TO_REPAY_INTENT_CANCELLED_TOPIC0) {
+        // T-090 v1.1 Sub 3 — SwapToRepayIntentCancelled(loanId indexed,
+        // orderHash indexed, cancelledBy indexed). Attribute to
+        // cancelledBy so the activity feed distinguishes the borrower
+        // cancel from the permissionless `cancelExpired` poke.
+        if (topics.length < 4) continue;
+        const loanId = BigInt(topics[1]).toString();
+        const orderHash = topics[2];
+        const cancelledBy = ('0x' + topics[3].slice(26)).toLowerCase();
+        addEvent('SwapToRepayIntentCancelled', [cancelledBy], {
+          loanId,
+          orderHash,
+          cancelledBy,
+        });
+      } else if (topic0 === SWAP_TO_REPAY_INTENT_FORCE_CANCELLED_TOPIC0) {
+        // T-090 v1.1 Sub 3 — SwapToRepayIntentForceCancelled(loanId
+        // indexed, orderHash indexed, reason, source indexed). Surface
+        // loan-scoped (no actor attribution); the downstream
+        // `LoanLiquidated` / `LoanDefaulted` event carries the
+        // lender-protection action's attribution.
+        if (topics.length < 4) continue;
+        const loanId = BigInt(topics[1]).toString();
+        const orderHash = topics[2];
+        const source = ('0x' + topics[3].slice(26)).toLowerCase();
+        let reason = 0;
+        try {
+          const [r] = decodeAbiParameters(
+            parseAbiParameters('uint8'),
+            event.data,
+          );
+          // viem decodes uint8 as number (not bigint); cast through
+          // unknown to satisfy TS without runtime change.
+          reason = Number(r as unknown as bigint);
+        } catch {
+          // Malformed data — keep defaults.
+        }
+        addEvent('SwapToRepayIntentForceCancelled', [], {
+          loanId,
+          orderHash,
+          reason,
+          source,
         });
       } else if (topic0 === CLAIM_RETRY_EXECUTED_TOPIC0) {
         // ClaimRetryExecuted(loanId indexed, succeeded, proceeds)

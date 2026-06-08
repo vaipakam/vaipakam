@@ -47,10 +47,14 @@ interface Props {
   principalAmount: bigint;
   diamondAddress: Address;
   graceUntilSec: number;
-  /** Effective auction-max-seconds from the on-chain config. The
-   *  parent fetches this via the IntentConfigFacet getter; default
-   *  600 (5 min) if the parent doesn't pass one (matches the
-   *  documented Sub 1 default). */
+  /** Effective auction-max-seconds. The panel reads this live from
+   *  the diamond via `IntentConfigFacet.getIntentAuctionSecondsBounds`
+   *  on mount; parent can pass an initial value to avoid a frame
+   *  flash when the chain query is in flight. Defaults to 600
+   *  (matches the documented Sub 1 default) as a safe initial
+   *  before the chain read returns (Codex round-1 PR #423 P2 —
+   *  hardcoded 600 would reject every commit if governance
+   *  lowered the cap). */
   auctionMaxSec?: number;
   onAfterSuccess?: () => void | Promise<void>;
   actionLoading?: boolean;
@@ -106,8 +110,21 @@ export function SwapToRepayIntentPanel({
   const [error, setError] = useState<string | null>(null);
   const [liveIntent, setLiveIntent] = useState<LiveIntent | null>(null);
   const [loadingIntent, setLoadingIntent] = useState(false);
+  // Codex round-1 PR #423 P2 — refresh trigger so a successful
+  // commit / cancel re-runs the live-intent fetch effect.
+  const [refreshTick, setRefreshTick] = useState(0);
+  // Codex round-1 PR #423 P2 — render-time tick so the cancel
+  // button enables itself the moment `liveIntent.deadline` is
+  // crossed (without depending on an unrelated re-render).
+  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
+  // Codex round-1 PR #423 P2 — read the live auction-max bound
+  // from the diamond so the panel adapts when governance rotates
+  // the knob.
+  const [liveAuctionMaxSec, setLiveAuctionMaxSec] = useState(auctionMaxSec);
 
-  // Fetch live intent state from indexer.
+  // Fetch live intent state from indexer. Re-runs on commit /
+  // cancel via the `refreshTick` bump so the panel reflects the
+  // new on-chain state without depending on the parent re-mount.
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -133,7 +150,43 @@ export function SwapToRepayIntentPanel({
     return () => {
       cancelled = true;
     };
-  }, [loanId, chainId]);
+  }, [loanId, chainId, refreshTick]);
+
+  // Codex round-1 PR #423 P2 — read live auction-max bound from
+  // the diamond's `IntentConfigFacet`. Best-effort; falls back to
+  // the prop default if the read fails.
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      if (!diamond) return;
+      try {
+        const bounds = (await (
+          diamond as unknown as {
+            getIntentAuctionSecondsBounds: () => Promise<[bigint, bigint]>;
+          }
+        ).getIntentAuctionSecondsBounds()) as [bigint, bigint] | undefined;
+        if (cancelled || !bounds) return;
+        setLiveAuctionMaxSec(Number(bounds[1]));
+      } catch {
+        // Use the prop default.
+      }
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [diamond]);
+
+  // Codex round-1 PR #423 P2 — keep `nowSec` fresh so the cancel
+  // button enables itself the moment `liveIntent.deadline` is
+  // crossed. 1-second tick is plenty for the human-perceived
+  // window; cleaned up on unmount.
+  useEffect(() => {
+    const id = setInterval(() => {
+      setNowSec(Math.floor(Date.now() / 1000));
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
 
   const canWrite =
     !!address && isCorrectChain && !!diamond && viewChainId === null;
@@ -168,7 +221,15 @@ export function SwapToRepayIntentPanel({
       const extHash = await keccak256Hex(extension);
       const extHashBig = BigInt(extHash);
       const low160Mask = (BigInt(1) << BigInt(160)) - BigInt(1);
-      const nonce = BigInt(Math.floor(Math.random() * 0xffffffff)); // 40-bit
+      // Codex round-1 PR #423 P2 — use the full uint40 nonce
+      // space the contract's `intentNonceUsed` slot covers. Math.random's
+      // 32-bit space hits ~50% birthday collision at ~77k commits;
+      // mixing two random words pushes that to ~1.4M commits.
+      const noncePart1 = BigInt(Math.floor(Math.random() * 0xffffffff));
+      const noncePart2 = BigInt(Math.floor(Math.random() * 0xffff));
+      const nonce =
+        ((noncePart2 << BigInt(32)) | noncePart1) &
+        ((BigInt(1) << BigInt(40)) - BigInt(1));
       const saltHigh = nonce << BigInt(160);
       const salt = saltHigh | (extHashBig & low160Mask);
 
@@ -177,7 +238,9 @@ export function SwapToRepayIntentPanel({
       // (default 600); never let it exceed `endTime + gracePeriod`
       // (the contract enforces both).
       const now = Math.floor(Date.now() / 1000);
-      const desiredDeadline = now + auctionMaxSec;
+      // Use the live `liveAuctionMaxSec` read from the chain
+      // (round-1 P2 fix); prop value is the initial fallback.
+      const desiredDeadline = now + liveAuctionMaxSec;
       const deadline = Math.min(desiredDeadline, graceUntilSec);
       let makerTraits =
         HAS_EXTENSION_FLAG |
@@ -264,6 +327,12 @@ export function SwapToRepayIntentPanel({
     } finally {
       setSubmitting(false);
       onActionLoadingChange?.(false);
+      // Codex round-1 PR #423 P2 — bump the refresh tick so the
+      // panel re-fetches its own live-intent state. The parent's
+      // `onAfterSuccess` reloads the loan but doesn't re-mount
+      // this panel; without the bump the effect's deps don't
+      // change and the UI keeps showing "Commit best-price intent".
+      setRefreshTick((t) => t + 1);
       if (onAfterSuccess) {
         try {
           await onAfterSuccess();
@@ -297,6 +366,7 @@ export function SwapToRepayIntentPanel({
     } finally {
       setSubmitting(false);
       onActionLoadingChange?.(false);
+      setRefreshTick((t) => t + 1);
       if (onAfterSuccess) {
         try {
           await onAfterSuccess();
@@ -311,7 +381,6 @@ export function SwapToRepayIntentPanel({
   // Render
   // ───────────────────────────────────────────────────────────
   const hasLiveIntent = !!liveIntent;
-  const nowSec = Math.floor(Date.now() / 1000);
   const cancelEnabled = hasLiveIntent && nowSec >= (liveIntent?.deadline ?? 0);
 
   return (

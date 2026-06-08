@@ -1127,14 +1127,25 @@ export default function LoanDetails() {
               both legs Liquid, not past grace, lender exclusion,
               not lender-NFT holder). Both panels render
               simultaneously; the borrower picks atomic vs
-              best-price per-swap. */}
+              best-price per-swap.
+
+              Codex round-1 PR #423 P2 — the `!pastPrepayGrace`
+              clause is intentionally OMITTED here (vs the atomic
+              panel) because if the borrower committed an intent
+              that gets clamped close to grace end, they MUST
+              keep a path to `cancelSwapToRepayIntent` even after
+              `pastPrepayGrace` flips. The panel surfaces its
+              own internal pending-state read; commit submission
+              still reverts on-chain when the deadline check
+              fails (the contract enforces deadline <= grace), so
+              there is no risk of accidentally committing post-grace.
+          */}
           {isBorrower &&
             !isLender &&
             !!loan.lender &&
             !!address &&
             address.toLowerCase() !== loan.lender.toLowerCase() &&
             isActive &&
-            !pastPrepayGrace &&
             !isIlliquidLoan &&
             Number(loan.assetType) === AssetType.ERC20 &&
             Number(loan.collateralAssetType) === AssetType.ERC20 &&
