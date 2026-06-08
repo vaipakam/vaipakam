@@ -201,11 +201,17 @@ in the same transaction as the lender-protection action. The
 custodial collateral is returned to the borrower's vault before the
 protection action runs against the (now-restored) collateral state.
 
-A `SwapToRepayIntentForceCancelled` event is emitted with a reason
-discriminator (`HFBelowLiquidationThreshold`, `LoanPastDefault`, etc.)
-and the address of the facet that triggered it, so the activity feed
-can distinguish HF-trigger from time-trigger from match-liquidation
-trigger.
+A `SwapToRepayIntentForceCancelled` event is emitted with a
+reason discriminator and a source address. The reason takes one of
+two values: `HFBelowLiquidationThreshold` (used by all the HF /
+liquidation-path triggers, including internal-match liquidation) or
+`TimeDefaultDue` (used by the maturity-plus-grace default trigger).
+The source field carries the diamond's own address — these
+force-cancel calls always cross the diamond boundary, so the
+event-recorded source is the diamond, not the originating facet.
+Activity-feed tooling can therefore distinguish the **kind** of
+trigger via the reason enum, but not the originating facet identity
+via the source field.
 
 The force-cancel is intentionally not attributed to a borrower wallet
 in the activity feed; the lender-protection action that drove it

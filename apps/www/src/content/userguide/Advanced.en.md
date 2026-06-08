@@ -1015,11 +1015,13 @@ Permissionless actions available to anyone regardless of role:
   the cancel paths described below, but during the auction
   window your collateral is in the diamond's custody, not your
   personal vault.
-    - *When to use it* — when you're not in a hurry and want
-      the resolver competition to surface a slightly better
-      price than the live DEX quote. Typical fills land in
-      one to two minutes. The atomic surface above is the
-      right choice when you need predictable timing.
+    - *When to use it (post-GA)* — once the GA piece below
+      lands, this surface is the right choice when you're not
+      in a hurry and want the resolver competition to surface
+      a slightly better price than the live DEX quote.
+      Expected fills are minute-scale rather than block-scale.
+      The atomic surface above stays the right choice when
+      you need predictable timing.
     - *Pending state* — the Loan Details page shows a
       "pending intent" card with the order hash and deadline
       while the auction runs. A 1-second timer drives the
