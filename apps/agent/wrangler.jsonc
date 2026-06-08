@@ -140,6 +140,12 @@
       // serves traffic. The Origin gate above remains in place
       // regardless.
       {
+        "name": "INTENT_FUSION_POST_RATELIMIT",
+        "type": "ratelimit",
+        "namespace_id": "555",
+        "simple": { "limit": 30, "period": 60 },
+      },
+      {
         // T-086 Round-5 Block A (#313) — GET /opensea/collection/{slug}
         // is hit by the dapp once per post / update flow on a fee-
         // enforced collection (rare; only those collections need the
@@ -241,26 +247,94 @@
   // `/diag/legal-hold` endpoint also has no secret — it checks the
   // caller's on-chain ADMIN_ROLE instead.
   "secrets_store_secrets": [
-    { "binding": "RPC_BASE",            "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_BASE" },
-    { "binding": "RPC_ETH",             "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_ETH" },
-    { "binding": "RPC_ARB",             "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_ARB" },
-    { "binding": "RPC_OP",              "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_OP" },
-    { "binding": "RPC_BNB",             "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_BNB" },
-    { "binding": "RPC_POLYGON",         "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_POLYGON" },
-    { "binding": "RPC_SEPOLIA",         "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_SEPOLIA" },
-    { "binding": "RPC_BASE_SEPOLIA",    "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_BASE_SEPOLIA" },
-    { "binding": "RPC_ARB_SEPOLIA",     "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_ARB_SEPOLIA" },
-    { "binding": "RPC_OP_SEPOLIA",      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_OP_SEPOLIA" },
-    { "binding": "RPC_POLYGON_AMOY",    "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_POLYGON_AMOY" },
-    { "binding": "RPC_BNB_TESTNET",     "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_BNB_TESTNET" },
-    { "binding": "TG_BOT_TOKEN",        "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "TG_BOT_TOKEN" },
-    { "binding": "PUSH_CHANNEL_PK",     "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "PUSH_CHANNEL_PK" },
-    { "binding": "ZEROEX_API_KEY",      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "ZEROEX_API_KEY" },
-    { "binding": "ONEINCH_API_KEY",     "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "ONEINCH_API_KEY" },
+    {
+      "binding": "RPC_BASE",
+      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+      "secret_name": "RPC_BASE",
+    },
+    {
+      "binding": "RPC_ETH",
+      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+      "secret_name": "RPC_ETH",
+    },
+    {
+      "binding": "RPC_ARB",
+      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+      "secret_name": "RPC_ARB",
+    },
+    {
+      "binding": "RPC_OP",
+      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+      "secret_name": "RPC_OP",
+    },
+    {
+      "binding": "RPC_BNB",
+      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+      "secret_name": "RPC_BNB",
+    },
+    {
+      "binding": "RPC_POLYGON",
+      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+      "secret_name": "RPC_POLYGON",
+    },
+    {
+      "binding": "RPC_SEPOLIA",
+      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+      "secret_name": "RPC_SEPOLIA",
+    },
+    {
+      "binding": "RPC_BASE_SEPOLIA",
+      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+      "secret_name": "RPC_BASE_SEPOLIA",
+    },
+    {
+      "binding": "RPC_ARB_SEPOLIA",
+      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+      "secret_name": "RPC_ARB_SEPOLIA",
+    },
+    {
+      "binding": "RPC_OP_SEPOLIA",
+      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+      "secret_name": "RPC_OP_SEPOLIA",
+    },
+    {
+      "binding": "RPC_POLYGON_AMOY",
+      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+      "secret_name": "RPC_POLYGON_AMOY",
+    },
+    {
+      "binding": "RPC_BNB_TESTNET",
+      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+      "secret_name": "RPC_BNB_TESTNET",
+    },
+    {
+      "binding": "TG_BOT_TOKEN",
+      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+      "secret_name": "TG_BOT_TOKEN",
+    },
+    {
+      "binding": "PUSH_CHANNEL_PK",
+      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+      "secret_name": "PUSH_CHANNEL_PK",
+    },
+    {
+      "binding": "ZEROEX_API_KEY",
+      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+      "secret_name": "ZEROEX_API_KEY",
+    },
+    {
+      "binding": "ONEINCH_API_KEY",
+      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+      "secret_name": "ONEINCH_API_KEY",
+    },
     // T-086 step 14 — OpenSea Listings API key powers
     // `POST /opensea/listing`. Server-side only; the dapp never
     // sees this key.
-    { "binding": "OPENSEA_API_KEY",     "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "OPENSEA_API_KEY" },
+    {
+      "binding": "OPENSEA_API_KEY",
+      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+      "secret_name": "OPENSEA_API_KEY",
+    },
     // T-090 v1.1 GA (#426 / #436) — the intent-Fusion bridge in
     // apps/agent/src/intentFusionPost.ts reads the SHARED
     // `ONEINCH_API_KEY` entry above (the same key quoteProxy.ts
@@ -270,7 +344,11 @@
     // secret is needed. The matching rate-limit binding is the
     // operator-action block under `unsafe.bindings` higher up
     // in this file (search for `INTENT_FUSION_POST_RATELIMIT`).
-    { "binding": "DIAG_WALLET_HMAC_KEY", "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "DIAG_WALLET_HMAC_KEY" },
+    {
+      "binding": "DIAG_WALLET_HMAC_KEY",
+      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+      "secret_name": "DIAG_WALLET_HMAC_KEY",
+    },
     // ET-001 — no transaction-scan secret. The pre-sign transaction
     // preview is a frontend-only viem `eth_call` simulation (no API
     // key, so no server-side proxy). The Blockaid → GoPlus migration
