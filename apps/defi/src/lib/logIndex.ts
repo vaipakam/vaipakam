@@ -164,6 +164,129 @@ const SWAP_TO_REPAY_INTENT_CANCELLED_TOPIC0 = id(
 const SWAP_TO_REPAY_INTENT_FORCE_CANCELLED_TOPIC0 = id(
   'SwapToRepayIntentForceCancelled(uint256,bytes32,uint8,address)',
 );
+
+// ─────────────────────────────────────────────────────────────
+// T-090 v1.2 #427 — cross-chunk + cross-reload intent-committer
+// memoization for the fallback Filled-row attribution path.
+//
+// Why: the Committed branch above stores `orderHash → committedBy`
+// in an in-scan Map so a subsequent Filled in the SAME scan
+// chunk can attribute the row to the borrower. When the
+// Committed event lives in an EARLIER scan chunk (or before a
+// page reload), the in-scan Map is empty and the Filled row
+// gets `participants: []` — Activity's wallet filter drops it
+// for the connected borrower.
+//
+// Fix: persist the map to localStorage with the deadline-plus-
+// grace expiry boundary so the lookup survives across scans and
+// reloads. Entries clear on the matching Filled / Cancelled /
+// ForceCancelled event, and a sweep on access drops anything
+// past its expiry so the storage doesn't accumulate forever.
+//
+// SSR / non-browser guards: every helper short-circuits cleanly
+// when `localStorage` isn't available, so the fallback path
+// stays correct in any environment.
+// ─────────────────────────────────────────────────────────────
+
+const INTENT_COMMITTERS_STORAGE_KEY = 'vaipakam.intentCommitters.v1';
+// Codex round-1 PR #432 P2 — grace = 90 days, NOT 24 hours.
+// The first iteration tied the grace to the on-chain cancel
+// window (24h past the auction deadline), but that's too short
+// for the fallback scanner's use case: a borrower who closes
+// the app while a commit is live, the resolver fills it, and
+// the borrower returns >24h later would otherwise have the
+// committer entry pruned from storage BEFORE the scanner
+// replays the cached Filled log. 90 days is a deliberately
+// pessimistic cap on the borrower's reasonable
+// re-engagement window; past that the row is unlikely to be
+// re-decoded anyway.
+const INTENT_COMMITTER_GRACE_SEC = 90 * 24 * 60 * 60;
+
+type IntentCommitterEntry = { committedBy: string; expiresAt: number };
+type IntentCommittersByOrderHash = Record<string, IntentCommitterEntry>;
+
+function readIntentCommittersRaw(): IntentCommittersByOrderHash {
+  if (typeof window === 'undefined') return {};
+  // Codex round-1 PR #432 P2 — `window.localStorage` getter
+  // itself can throw in some environments (storage disabled,
+  // blocked by policy, opaque origin / sandboxed iframe). Guard
+  // both the property access AND the `getItem` / `JSON.parse`
+  // calls inside the same try.
+  try {
+    const ls = window.localStorage;
+    if (!ls) return {};
+    const raw = ls.getItem(INTENT_COMMITTERS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === 'object') {
+      return parsed as IntentCommittersByOrderHash;
+    }
+    return {};
+  } catch {
+    return {};
+  }
+}
+
+function writeIntentCommittersRaw(map: IntentCommittersByOrderHash): void {
+  if (typeof window === 'undefined') return;
+  // Codex round-1 PR #432 P2 — same defensive guard as the
+  // read path; environments that throw on the getter need the
+  // try to wrap that too.
+  try {
+    const ls = window.localStorage;
+    if (!ls) return;
+    ls.setItem(INTENT_COMMITTERS_STORAGE_KEY, JSON.stringify(map));
+  } catch {
+    // Quota / serialization error / opaque origin — swallow;
+    // the in-scan Map still works for the current scan, so the
+    // fallback path degrades gracefully.
+  }
+}
+
+/// Returns `[orderHashLower, committedByLower][]` for hydrating
+/// the in-scan Map at the start of every scan. Sweeps expired
+/// entries from storage as a side effect (cheap; happens once
+/// per scan invocation).
+function loadIntentCommittersFromStorage(): [string, string][] {
+  const raw = readIntentCommittersRaw();
+  const now = Math.floor(Date.now() / 1000);
+  const live: IntentCommittersByOrderHash = {};
+  const out: [string, string][] = [];
+  for (const [orderHash, entry] of Object.entries(raw)) {
+    if (
+      entry &&
+      typeof entry === 'object' &&
+      typeof entry.committedBy === 'string' &&
+      typeof entry.expiresAt === 'number' &&
+      entry.expiresAt > now
+    ) {
+      live[orderHash] = entry;
+      out.push([orderHash, entry.committedBy]);
+    }
+  }
+  // Only rewrite storage when we actually pruned something —
+  // common case is no expiries and no I/O.
+  if (Object.keys(live).length !== Object.keys(raw).length) {
+    writeIntentCommittersRaw(live);
+  }
+  return out;
+}
+
+function persistIntentCommitter(
+  orderHash: string,
+  committedBy: string,
+  deadlineSec: number,
+): void {
+  const key = orderHash.toLowerCase();
+  const map = readIntentCommittersRaw();
+  map[key] = {
+    committedBy: committedBy.toLowerCase(),
+    expiresAt: deadlineSec + INTENT_COMMITTER_GRACE_SEC,
+  };
+  writeIntentCommittersRaw(map);
+}
+
+
 const CLAIM_RETRY_EXECUTED_TOPIC0 = id(
   'ClaimRetryExecuted(uint256,bool,uint256)',
 );
@@ -416,7 +539,16 @@ function storageKey(chainId: number, diamond: string): string {
   // key, so SwapToRepayExecuted / SwapToRepayPartialExecuted rows
   // would be missing from the worker-down fallback path. One-time
   // re-scan from the deploy block on next page load.
-  return `vaipakam:logIndex:v3:${chainId}:${diamond.toLowerCase()}`;
+  // Codex round-1 PR #432 P2 — bump to v4. The v3 cache shape
+  // for any browser that already cached a fallback-path
+  // `SwapToRepayIntentFilled` row with `participants: []`
+  // (the bug this PR fixes) would otherwise keep that stale row
+  // forever; later scans merge from `cached.events` + start
+  // after `cached.lastBlock`, so the new committer memo would
+  // never replay against the historical Filled log. Bumping the
+  // version forces every browser to re-scan from scratch the
+  // next time the fallback path runs.
+  return `vaipakam:logIndex:v4:${chainId}:${diamond.toLowerCase()}`;
 }
 
 function emptyCache(deployBlock: number): CachedShape {
@@ -1263,7 +1395,17 @@ async function runScan(
     // has no D1 row-lookup (that's the indexer's path); without
     // this in-scan memo the Filled row would carry an empty
     // participants list and Activity's wallet-filter would drop it.
-    const intentCommitterByOrderHash = new Map<string, string>();
+    //
+    // T-090 v1.2 #427 — seeded from localStorage at the start of
+    // each scan so the memo survives cross-chunk + cross-page-
+    // reload. The Committed branch writes both the in-scan Map
+    // and the storage entry; the Filled / Cancelled /
+    // ForceCancelled branches read + delete from both. Entries
+    // expire on the deadline-plus-grace boundary so the storage
+    // doesn't accumulate forever.
+    const intentCommitterByOrderHash = new Map<string, string>(
+      loadIntentCommittersFromStorage(),
+    );
 
     for (const event of logs) {
       const topics = event.topics;
@@ -1762,7 +1904,12 @@ async function runScan(
           // Malformed data — keep defaults.
         }
         // Memo for the in-chunk Filled lookup (round-2 P2 fix).
+        // T-090 v1.2 #427 — persist to localStorage with the
+        // deadline-plus-grace expiry boundary so a Filled event
+        // landing in a later scan chunk (or after a page reload)
+        // still attributes correctly.
         intentCommitterByOrderHash.set(orderHash.toLowerCase(), committedBy);
+        persistIntentCommitter(orderHash, committedBy, deadline);
         addEvent('SwapToRepayIntentCommitted', [committedBy], {
           loanId,
           orderHash,
@@ -1793,16 +1940,23 @@ async function runScan(
         } catch {
           // Malformed data — keep defaults.
         }
-        // Codex round-2 PR #423 P2 — attribute to the prior
-        // committer (recorded by the Committed branch in this
-        // same scan chunk). The indexer's path also attributes
-        // Filled to `committed_by` so the activity feed matches
-        // across both paths. When the Committed event is in an
-        // earlier scan chunk we lose the attribution — a v1.2
-        // could persist a small `intent_committers` map in the
-        // browser storage to cover that edge case; for now the
-        // indexer is the primary read path and the fallback only
-        // matters when it's down.
+        // Codex round-2 PR #423 P2 + T-090 v1.2 #427 — attribute
+        // to the prior committer recorded by the Committed branch.
+        // The in-scan Map is seeded from localStorage at the start
+        // of every scan, so the lookup hits even when the Committed
+        // event lived in an earlier scan chunk or before a page
+        // reload.
+        //
+        // Codex round-1 PR #432 P2 — DO NOT delete the storage
+        // entry on Filled here. A scan can process the Filled log,
+        // delete the memo, and then abort BEFORE `writeCache` runs
+        // (e.g. a later chunk's `eth_getLogs` rate-limits or
+        // 5xxs). The retry would replay the same Filled log
+        // against an empty memo and produce `participants: []`.
+        // Storage cleanup is now the wall-clock sweep's job at
+        // load time (90-day window per
+        // INTENT_COMMITTER_GRACE_SEC); entries are ~100 bytes
+        // each so growth is bounded.
         const committedBy =
           intentCommitterByOrderHash.get(orderHash.toLowerCase()) ?? '';
         addEvent(
@@ -1825,6 +1979,9 @@ async function runScan(
         const loanId = BigInt(topics[1]).toString();
         const orderHash = topics[2];
         const cancelledBy = ('0x' + topics[3].slice(26)).toLowerCase();
+        // Codex round-1 PR #432 P2 — same delete-on-abort-during-
+        // retry race as the Filled branch above; let the wall-
+        // clock sweep handle cleanup instead of deleting here.
         addEvent('SwapToRepayIntentCancelled', [cancelledBy], {
           loanId,
           orderHash,
@@ -1852,6 +2009,9 @@ async function runScan(
         } catch {
           // Malformed data — keep defaults.
         }
+        // Codex round-1 PR #432 P2 — see Filled branch above on
+        // why we deliberately don't delete the storage entry
+        // here; the wall-clock sweep handles cleanup.
         addEvent('SwapToRepayIntentForceCancelled', [], {
           loanId,
           orderHash,
