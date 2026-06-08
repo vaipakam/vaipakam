@@ -249,17 +249,33 @@
     // `POST /opensea/listing`. Server-side only; the dapp never
     // sees this key.
     { "binding": "OPENSEA_API_KEY",     "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "OPENSEA_API_KEY" },
-    // T-090 v1.1 GA (#426) — 1inch Fusion resolver-pickup API key
-    // powers `POST /intent/fusion/post`. Operator creates the
-    // secret in the account-level Secrets Store via:
-    //   wrangler secrets-store secret create <STORE_ID> \
-    //     --name INTENT_FUSION_API_KEY \
-    //     --scopes workers \
-    //     --value <fusion-api-key>
-    // (the per-Worker `wrangler secret put` command is for Worker
-    // secret bindings, NOT the account-level Secrets Store this
-    // file uses. Codex round-1 PR #430 P2.)
-    { "binding": "INTENT_FUSION_API_KEY", "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "INTENT_FUSION_API_KEY" },
+    // T-090 v1.1 GA (#426) — 1inch Fusion resolver-pickup API key.
+    // Auto-binding intentionally OMITTED: Cloudflare's Workers
+    // Build validates that every `secret_name` listed here exists
+    // in the account-level Secrets Store before the deploy
+    // succeeds, and the secret has to be created by the operator
+    // after creating a Fusion API key on the 1inch developer
+    // portal. Re-adding the binding before the secret exists fails
+    // the deploy.
+    //
+    // Operator action — to enable the bridge:
+    //   1. Create a Fusion API key on the 1inch developer portal.
+    //   2. Add the secret to the account-level Secrets Store:
+    //        wrangler secrets-store secret create <STORE_ID> \
+    //          --name INTENT_FUSION_API_KEY \
+    //          --scopes workers \
+    //          --value <fusion-api-key>
+    //   3. Add this binding back to the list above:
+    //        { "binding": "INTENT_FUSION_API_KEY",
+    //          "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+    //          "secret_name": "INTENT_FUSION_API_KEY" }
+    //   4. Redeploy.
+    //
+    // While the binding is absent, the agent endpoint's code
+    // (apps/agent/src/intentFusionPost.ts) reads
+    // env.INTENT_FUSION_API_KEY as undefined and falls back to
+    // the queued-ack response so the dapp's resolution path stays
+    // clean. The on-chain commit remains the source of truth.
     { "binding": "DIAG_WALLET_HMAC_KEY", "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "DIAG_WALLET_HMAC_KEY" },
     // ET-001 — no transaction-scan secret. The pre-sign transaction
     // preview is a frontend-only viem `eth_call` simulation (no API
