@@ -13,11 +13,15 @@ The surface is in **v1.1 alpha** at first launch; one piece of the end-
 to-end pipeline (direct posting of new intents to the 1inch Fusion
 resolver-pickup endpoint) is deliberately deferred to a v1.1 GA card.
 The on-chain commit, custody, ERC-1271 binding, cancel paths, and
-lender-protection force-cancel paths are all in their final shape;
-the deferred piece is a courtesy push, not a custody primitive. The
-specification below is the **intended** behaviour for the surface as a
-whole (alpha + GA) and notes where the alpha launch falls short of the
-full intent explicitly.
+lender-protection force-cancel paths are all in their final shape.
+The deferred piece is **load-bearing for discovery**: Fusion's solver
+network discovers orders through 1inch's own resolver-pickup feed,
+not through arbitrary Limit Order Protocol on-chain monitoring, so
+until the agent bridge is wired, alpha commits do not reach
+Fusion's solver set and should be treated as cancel-or-expire by
+default. The specification below is the **intended** behaviour for
+the surface as a whole (alpha + GA) and notes where the alpha
+launch falls short of the full intent explicitly.
 
 ## Scope and audience
 
@@ -258,18 +262,27 @@ force-cancel-the-intent-first:
   (direct), preclose (offset), refinance, add-collateral, partial
   withdrawal — all blocked with a discriminated error; the borrower
   must cancel the intent first.
-- HF liquidation, time-default, internal-match liquidation,
-  partial-period auto-liquidation — proceed, force-cancelling the
-  intent first so the protection action runs against restored
-  collateral state.
+- HF liquidation, time-default, internal-match liquidation — proceed,
+  force-cancelling the intent first so the protection action runs
+  against restored collateral state.
+- Partial-period auto-liquidation (the period-shortfall path) —
+  proceeds **only when HF is below the liquidation threshold**, in
+  which case the intent is force-cancelled first as above. When HF is
+  still healthy, the auto-liquidation path rejects with the
+  `IntentPending` discriminated error instead of running; the
+  borrower must cancel the intent first (after deadline) before the
+  shortfall path can run, exactly like the user-callable paths above.
+  This narrower behaviour mirrors the contract's choice to gate the
+  shortfall path through the HF-only force-cancel helper rather than
+  the unconditional one.
 
 This is the protocol's no-double-spend invariant for collateral that is
 in temporary diamond custody.
 
 ## Activity feed
 
-The four intent-surface events surface in the activity feed and the
-loan timeline:
+The four intent-surface events are recorded with the following
+attribution + severity:
 
 - `SwapToRepayIntentCommitted` — attributed to the borrower who
   originated the commit; severity `info` (loan stays Active).
@@ -278,9 +291,21 @@ loan timeline:
 - `SwapToRepayIntentCancelled` — attributed to the wallet that called
   cancel (distinguishes the borrower path from the permissionless
   poke); severity `info`.
-- `SwapToRepayIntentForceCancelled` — attributed system-side (no
-  borrower attribution); severity `warning` (a lender-protection
-  action followed).
+- `SwapToRepayIntentForceCancelled` — **system-attributed** (no
+  borrower attribution; the event's only address field is the
+  diamond `source`); severity `warning` (a lender-protection action
+  followed).
+
+In the dapp's current Activity page, the wallet-participant filter
+admits only events whose participants include the connected wallet —
+plus a `LoanDefaulted` special-case keyed by loan id. The three
+borrower-attributed events surface for the connected borrower
+through the participant filter; the system-attributed force-cancel
+row does **not** surface for the borrower with the current filter
+shape. Extending the `LoanDefaulted` special-case to include
+`SwapToRepayIntentForceCancelled` so the borrower's view shows the
+row joined to the loan they recognise is tracked as a v1.2
+follow-up.
 
 The dapp surfaces an in-page **pending intent** card on Loan Details
 while a commit is live. The card shows the order hash, the deadline,
@@ -298,9 +323,14 @@ post-interaction settlement waterfall are all in their final shape.
 The intent — for the dapp to acknowledge a successful commit through a
 Vaipakam-hosted proxy that forwards to Fusion — is preserved in the
 agent worker's `POST /intent/fusion/post` endpoint. At alpha the
-endpoint validates the payload, queues the commit telemetry, and
-returns a `queued` acknowledgement. The actual outbound `fetch` to
-Fusion lands in the GA card without a dapp-side redeploy.
+endpoint validates the payload, writes an observability log line
+(no durable queue, no D1 / KV state), and returns an
+acknowledgement whose status field is the literal string
+`queued` as a forward-compatible response shape. Operators reading
+this spec as the oracle should not expect a recoverable
+queue-state record from the alpha endpoint; the durable telemetry
+sink, like the outbound `fetch` itself, lands in the GA card
+without a dapp-side redeploy.
 
 The user-facing disclosure on the panel is explicit: the borrower can
 still pick the atomic surface above for predictable timing while the
