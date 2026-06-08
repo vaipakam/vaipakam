@@ -376,10 +376,6 @@ dapp-side redeploy.
 
 ## Open follow-ups (v1.2)
 
-- A cross-chunk in-browser memoization of the orderHash-to-committer
-  mapping for the indexer-fallback decode of `SwapToRepayIntentFilled`
-  rows (so the fallback path always attributes the row to the borrower
-  even when the Committed event lives in an earlier scan chunk).
 - A stronger agent endpoint authentication layer (rate limiter binding
   + on-chain commit pre-flight) beyond the Origin header check the
   agent worker ships with.

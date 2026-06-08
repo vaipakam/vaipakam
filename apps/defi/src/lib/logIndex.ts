@@ -164,6 +164,120 @@ const SWAP_TO_REPAY_INTENT_CANCELLED_TOPIC0 = id(
 const SWAP_TO_REPAY_INTENT_FORCE_CANCELLED_TOPIC0 = id(
   'SwapToRepayIntentForceCancelled(uint256,bytes32,uint8,address)',
 );
+
+// ─────────────────────────────────────────────────────────────
+// T-090 v1.2 #427 — cross-chunk + cross-reload intent-committer
+// memoization for the fallback Filled-row attribution path.
+//
+// Why: the Committed branch above stores `orderHash → committedBy`
+// in an in-scan Map so a subsequent Filled in the SAME scan
+// chunk can attribute the row to the borrower. When the
+// Committed event lives in an EARLIER scan chunk (or before a
+// page reload), the in-scan Map is empty and the Filled row
+// gets `participants: []` — Activity's wallet filter drops it
+// for the connected borrower.
+//
+// Fix: persist the map to localStorage with the deadline-plus-
+// grace expiry boundary so the lookup survives across scans and
+// reloads. Entries clear on the matching Filled / Cancelled /
+// ForceCancelled event, and a sweep on access drops anything
+// past its expiry so the storage doesn't accumulate forever.
+//
+// SSR / non-browser guards: every helper short-circuits cleanly
+// when `localStorage` isn't available, so the fallback path
+// stays correct in any environment.
+// ─────────────────────────────────────────────────────────────
+
+const INTENT_COMMITTERS_STORAGE_KEY = 'vaipakam.intentCommitters.v1';
+// Default grace = 24h, matching the Sub 1 documented cancel-
+// grace default. Stored entries past `deadline + GRACE_SEC` are
+// dropped on access — they refer to commits that are either
+// long resolved on-chain or now permissionlessly cancellable.
+const INTENT_COMMITTER_GRACE_SEC = 24 * 60 * 60;
+
+type IntentCommitterEntry = { committedBy: string; expiresAt: number };
+type IntentCommittersByOrderHash = Record<string, IntentCommitterEntry>;
+
+function readIntentCommittersRaw(): IntentCommittersByOrderHash {
+  if (typeof window === 'undefined' || !window.localStorage) return {};
+  try {
+    const raw = window.localStorage.getItem(INTENT_COMMITTERS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === 'object') {
+      return parsed as IntentCommittersByOrderHash;
+    }
+    return {};
+  } catch {
+    return {};
+  }
+}
+
+function writeIntentCommittersRaw(map: IntentCommittersByOrderHash): void {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    window.localStorage.setItem(
+      INTENT_COMMITTERS_STORAGE_KEY,
+      JSON.stringify(map),
+    );
+  } catch {
+    // Quota / serialization error — swallow; the in-scan Map
+    // still works for the current scan, so the fallback path
+    // degrades gracefully.
+  }
+}
+
+/// Returns `[orderHashLower, committedByLower][]` for hydrating
+/// the in-scan Map at the start of every scan. Sweeps expired
+/// entries from storage as a side effect (cheap; happens once
+/// per scan invocation).
+function loadIntentCommittersFromStorage(): [string, string][] {
+  const raw = readIntentCommittersRaw();
+  const now = Math.floor(Date.now() / 1000);
+  const live: IntentCommittersByOrderHash = {};
+  const out: [string, string][] = [];
+  for (const [orderHash, entry] of Object.entries(raw)) {
+    if (
+      entry &&
+      typeof entry === 'object' &&
+      typeof entry.committedBy === 'string' &&
+      typeof entry.expiresAt === 'number' &&
+      entry.expiresAt > now
+    ) {
+      live[orderHash] = entry;
+      out.push([orderHash, entry.committedBy]);
+    }
+  }
+  // Only rewrite storage when we actually pruned something —
+  // common case is no expiries and no I/O.
+  if (Object.keys(live).length !== Object.keys(raw).length) {
+    writeIntentCommittersRaw(live);
+  }
+  return out;
+}
+
+function persistIntentCommitter(
+  orderHash: string,
+  committedBy: string,
+  deadlineSec: number,
+): void {
+  const key = orderHash.toLowerCase();
+  const map = readIntentCommittersRaw();
+  map[key] = {
+    committedBy: committedBy.toLowerCase(),
+    expiresAt: deadlineSec + INTENT_COMMITTER_GRACE_SEC,
+  };
+  writeIntentCommittersRaw(map);
+}
+
+function forgetIntentCommitter(orderHash: string): void {
+  const key = orderHash.toLowerCase();
+  const map = readIntentCommittersRaw();
+  if (!(key in map)) return;
+  delete map[key];
+  writeIntentCommittersRaw(map);
+}
+
 const CLAIM_RETRY_EXECUTED_TOPIC0 = id(
   'ClaimRetryExecuted(uint256,bool,uint256)',
 );
@@ -1263,7 +1377,17 @@ async function runScan(
     // has no D1 row-lookup (that's the indexer's path); without
     // this in-scan memo the Filled row would carry an empty
     // participants list and Activity's wallet-filter would drop it.
-    const intentCommitterByOrderHash = new Map<string, string>();
+    //
+    // T-090 v1.2 #427 — seeded from localStorage at the start of
+    // each scan so the memo survives cross-chunk + cross-page-
+    // reload. The Committed branch writes both the in-scan Map
+    // and the storage entry; the Filled / Cancelled /
+    // ForceCancelled branches read + delete from both. Entries
+    // expire on the deadline-plus-grace boundary so the storage
+    // doesn't accumulate forever.
+    const intentCommitterByOrderHash = new Map<string, string>(
+      loadIntentCommittersFromStorage(),
+    );
 
     for (const event of logs) {
       const topics = event.topics;
@@ -1762,7 +1886,12 @@ async function runScan(
           // Malformed data — keep defaults.
         }
         // Memo for the in-chunk Filled lookup (round-2 P2 fix).
+        // T-090 v1.2 #427 — persist to localStorage with the
+        // deadline-plus-grace expiry boundary so a Filled event
+        // landing in a later scan chunk (or after a page reload)
+        // still attributes correctly.
         intentCommitterByOrderHash.set(orderHash.toLowerCase(), committedBy);
+        persistIntentCommitter(orderHash, committedBy, deadline);
         addEvent('SwapToRepayIntentCommitted', [committedBy], {
           loanId,
           orderHash,
@@ -1793,18 +1922,17 @@ async function runScan(
         } catch {
           // Malformed data — keep defaults.
         }
-        // Codex round-2 PR #423 P2 — attribute to the prior
-        // committer (recorded by the Committed branch in this
-        // same scan chunk). The indexer's path also attributes
-        // Filled to `committed_by` so the activity feed matches
-        // across both paths. When the Committed event is in an
-        // earlier scan chunk we lose the attribution — a v1.2
-        // could persist a small `intent_committers` map in the
-        // browser storage to cover that edge case; for now the
-        // indexer is the primary read path and the fallback only
-        // matters when it's down.
+        // Codex round-2 PR #423 P2 + T-090 v1.2 #427 — attribute
+        // to the prior committer recorded by the Committed branch.
+        // The in-scan Map is seeded from localStorage at the start
+        // of every scan, so the lookup hits even when the Committed
+        // event lived in an earlier scan chunk or before a page
+        // reload. After consuming, drop the entry from both the
+        // in-scan Map AND localStorage so the storage doesn't
+        // hold the now-resolved orderHash forever.
         const committedBy =
           intentCommitterByOrderHash.get(orderHash.toLowerCase()) ?? '';
+        forgetIntentCommitter(orderHash);
         addEvent(
           'SwapToRepayIntentFilled',
           committedBy ? [committedBy] : [],
@@ -1825,6 +1953,9 @@ async function runScan(
         const loanId = BigInt(topics[1]).toString();
         const orderHash = topics[2];
         const cancelledBy = ('0x' + topics[3].slice(26)).toLowerCase();
+        // T-090 v1.2 #427 — drop the persisted committer entry
+        // (if any) since the commit has been torn down on-chain.
+        forgetIntentCommitter(orderHash);
         addEvent('SwapToRepayIntentCancelled', [cancelledBy], {
           loanId,
           orderHash,
@@ -1852,6 +1983,8 @@ async function runScan(
         } catch {
           // Malformed data — keep defaults.
         }
+        // T-090 v1.2 #427 — same teardown as the Cancelled branch.
+        forgetIntentCommitter(orderHash);
         addEvent('SwapToRepayIntentForceCancelled', [], {
           loanId,
           orderHash,
