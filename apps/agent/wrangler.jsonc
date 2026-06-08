@@ -106,6 +106,17 @@
       // here because Cloudflare's deploy validates that every
       // `namespace_id` is registered with the account, and the
       // dev account this checks-in against has 1001-1005 only.
+      //
+      // ** Required, not optional, when INTENT_FUSION_API_KEY is
+      //    bound. ** The handler's half-activation gate returns
+      //    `503 rate-limit-not-configured` when the API key is
+      //    bound but this rate-limit binding is missing, so the
+      //    bridge stays in the half-activated reject state until
+      //    BOTH are present (Codex round-7 PR #430 P2). Skipping
+      //    this step leaves the API key spend ungated to Origin-
+      //    spoofed callers; binding the limiter without the
+      //    key is harmless but doesn't activate anything.
+      //
       // To enable the gate in production:
       //   1. Register a new rate-limit namespace in the
       //      Cloudflare dashboard for this Worker.
@@ -115,11 +126,13 @@
       //          "type": "ratelimit",
       //          "namespace_id": "<chosen-id>",
       //          "simple": { "limit": 30, "period": 60 } }
-      // The agent code path (apps/agent/src/intentFusionPost.ts +
-      // env.ts) reads this binding optionally; when undefined,
-      // the `checkRateLimit` helper no-ops so the endpoint still
-      // serves traffic. The Origin gate above remains in place
-      // regardless.
+      //
+      // While neither this binding nor `INTENT_FUSION_API_KEY` is
+      // bound (the as-merged state), `checkRateLimit` no-ops
+      // because the no-API-key short-circuit at the top of the
+      // handler returns the queued-ack before any spend happens
+      // — the endpoint still serves traffic. The Origin gate
+      // above remains in place regardless.
       {
         // T-086 Round-5 Block A (#313) — GET /opensea/collection/{slug}
         // is hit by the dapp once per post / update flow on a fee-
