@@ -158,10 +158,43 @@ contract VPFIDiscountAccumulatorFacet {
                 });
             }
         }
-        s.dayBalances[user][today % 30] = LibVaipakam.DaySnapshot({
-            dayId: today,
-            balance: uint128(balPostMutation)
-        });
+        // Same-day rollup: keep the DAY'S MINIMUM, not the last
+        // write. Codex Sub 1.B round-2 P1 caught that a user could
+        // stake tier-0 dust early in day 0, top up to tier-N late
+        // in the same day, and have the slot overwritten with the
+        // post-top-up balance — erasing the dust history. With the
+        // min-history window starting at `today - cfgTwaMinStakedDays
+        // + 1`, the dust day would never enter the min-tier scan
+        // and the clamp would let the user collect a tier-N
+        // discount with no real tenure at that tier.
+        //
+        // Storing the daily minimum costs legitimate same-day top-
+        // ups a small amount of credit (the day reads at the
+        // morning balance rather than the evening balance) but
+        // closes the gaming vector entirely. Users who want full
+        // credit for a higher balance simply wait until the next
+        // day to top up; tomorrow's slot then starts fresh at the
+        // higher value.
+        uint128 newBal = uint128(balPostMutation);
+        LibVaipakam.DaySnapshot storage todaySlot =
+            s.dayBalances[user][today % 30];
+        // Distinguish "we already wrote today's slot earlier today"
+        // (`prevUpdateDay == today && prevBal > 0`) from "this is
+        // the first write at today's slot" (prevBal == 0, including
+        // the legitimate first-ever stake on `today == 0` where
+        // every initial value is 0). The previous logic checked
+        // only `todaySlot.dayId == today`, which is also true for
+        // the default-zero slot on epoch day 0 — a fresh user's
+        // 500 VPFI deposit then read as "newBal > existing" and got
+        // silently skipped.
+        if (prevUpdateDay == today && prevBal > 0) {
+            if (newBal < todaySlot.balance) {
+                todaySlot.balance = newBal;
+            }
+        } else {
+            todaySlot.dayId = today;
+            todaySlot.balance = newBal;
+        }
         s.lastUpdateDayId[user] = today;
     }
 
