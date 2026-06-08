@@ -78,10 +78,23 @@ function rpcForChain(env: Env, chainId: number): string | undefined {
   return undefined;
 }
 
+// T-090 v1.2 #431 — switched from Fusion's resolver-pickup
+// endpoint to 1inch's Limit Order Protocol orderbook endpoint
+// because:
+//   - Fusion v2 requires `quoteId` from a preceding 1inch
+//     quote/build round-trip; Vaipakam's commit flow constructs
+//     the order shape from on-chain context (collateral
+//     amount + live floor + canonical extension), so we have
+//     no quoteId to pass.
+//   - The LOP orderbook accepts arbitrary signed orders.
+//     Resolvers (any party watching the public LOP orderbook)
+//     pick up the order on profitability; ERC-1271 validation
+//     against the diamond's `isValidSignature` still happens
+//     the same way at fill time.
 // Codex round-2 PR #430 P2 — host is `api.1inch.com`, NOT
-// `.dev`. The `.dev` host does not serve the Fusion relayer
-// route on the current API portal.
-const FUSION_BASE_URL = 'https://api.1inch.com/fusion/relayer/v2.0';
+// `.dev`. The `.dev` host does not serve the same routes on
+// the current API portal.
+const LOP_ORDERBOOK_BASE_URL = 'https://api.1inch.com/orderbook/v4.0';
 
 /// Chain IDs 1inch Fusion supports. Codex round-1 PR #430 P2 —
 /// without this allow-list, a dapp on Base Sepolia (84532) or any
@@ -302,38 +315,19 @@ export async function handleIntentFusionPost(
     });
   }
 
-  // Codex round-1 PR #430 P1 — Fusion v2 relayer expects the
-  // `SignedOrderInput` shape:
-  //   { order: LimitOrderV4, signature: bytes, extension: bytes,
-  //     quoteId: string }
+  // T-090 v1.2 #431 — LOP orderbook submit body. The orderHash +
+  // signature are top-level; the order fields nest under `data`.
   //
-  // For ERC-1271 contract makers (which the Vaipakam diamond is),
-  // the on-chain `isValidSignature` resolves the signature server-
-  // side — Fusion's server staticcalls into the diamond's ERC-1271
-  // hook with the canonical orderHash. The dapp does not produce
-  // a borrower EIP-712 signature for these orders; we pass an
-  // empty bytes string in the signature field.
-  //
-  // Codex round-3 PR #430 P1 — `quoteId` is sourced from 1inch's
-  // quote/build round-trip and is REQUIRED by Fusion's relayer.
-  // Vaipakam's commit flow constructs the order shape from
-  // on-chain context rather than from a 1inch quote, so we have
-  // no quoteId to pass. Fusion will likely reject this submission
-  // upstream. The dapp's panel surfaces the upstream rejection via
-  // the response-status surfacing the round-2 fix added, so the
-  // borrower's recovery path is the standard cancel-after-deadline.
-  //
-  // A v1.2 follow-up will either (a) drive the order shape through
-  // 1inch's quote/build step at commit time so we have a real
-  // quoteId, or (b) switch to 1inch's Limit Order Protocol relayer
-  // endpoint (which doesn't require a quoteId) instead of Fusion's
-  // resolver-pickup endpoint. Until that lands, the GA bridge is
-  // load-bearing for the architectural shape (request reaches
-  // Fusion, ERC-1271 binding holds, fills atomic with custody)
-  // but every commit's upstream response is expected to be a
-  // 4xx until the quoteId surface ships.
+  // ERC-1271 binding: the diamond is the maker. 1inch's
+  // orderbook relayer staticcalls `isValidSignature(orderHash, '')`
+  // against the maker at fill time; the diamond's hook returns
+  // the magic value if the orderHash matches its registered
+  // commit. The dapp doesn't produce an EIP-712 signature for
+  // these orders — `signature: '0x'`.
   const signedOrderInput = {
-    order: {
+    orderHash: parsed.orderHash,
+    signature: '0x',
+    data: {
       maker: parsed.order.maker,
       receiver: parsed.order.receiver,
       makerAsset: parsed.order.makerAsset,
@@ -342,13 +336,11 @@ export async function handleIntentFusionPost(
       takingAmount: parsed.order.takerAmount,
       salt: parsed.order.salt,
       makerTraits: parsed.order.makerTraits,
+      extension: parsed.order.extension,
     },
-    signature: '0x',
-    extension: parsed.order.extension,
-    quoteId: '',
   };
 
-  const upstreamUrl = `${FUSION_BASE_URL}/${parsed.chainId}/order/submit`;
+  const upstreamUrl = `${LOP_ORDERBOOK_BASE_URL}/${parsed.chainId}`;
   try {
     const upstream = await fetch(upstreamUrl, {
       method: 'POST',

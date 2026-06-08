@@ -782,11 +782,11 @@ export function SwapToRepayIntentPanel({
               submitting ||
               actionLoading ||
               !FUSION_SUPPORTED_CHAIN_IDS.has(chainId) ||
-              !AGENT_ORIGIN ||
-              // v1.2 #431 — Fusion-side quoteId not yet integrated;
-              // commits would be rejected upstream. Disable until
-              // the follow-up lands.
-              true
+              !AGENT_ORIGIN
+              // T-090 v1.2 #431 — the round-0 hard-disable is
+              // gone now that the agent worker submits to the
+              // LOP orderbook endpoint (no quoteId required)
+              // instead of Fusion v2's resolver-pickup.
             }
             onClick={handleCommit}
           >
