@@ -9,19 +9,17 @@ the release notes for the v1.1 sub-cards, and the user-facing description
 in `apps/www/src/content/userguide/Advanced.en.md`. It is **not**
 transcribed from the contract code.
 
-The surface is in **v1.1 alpha** at first launch; one piece of the end-
-to-end pipeline (direct posting of new intents to the 1inch Fusion
-resolver-pickup endpoint) is deliberately deferred to a v1.1 GA card.
-The on-chain commit, custody, ERC-1271 binding, cancel paths, and
-lender-protection force-cancel paths are all in their final shape.
-The deferred piece is **load-bearing for discovery**: Fusion's solver
-network discovers orders through 1inch's own resolver-pickup feed,
-not through arbitrary Limit Order Protocol on-chain monitoring, so
-until the agent bridge is wired, alpha commits do not reach
-Fusion's solver set and should be treated as cancel-or-expire by
-default. The specification below is the **intended** behaviour for
-the surface as a whole (alpha + GA) and notes where the alpha
-launch falls short of the full intent explicitly.
+The full surface is in its final shape at v1.1 GA: the on-chain
+commit, custody, ERC-1271 binding, cancel paths,
+lender-protection force-cancel paths, and the agent-side
+resolver-pickup bridge to 1inch's Fusion endpoint are all
+present. Fusion's solver network discovers orders through 1inch's
+own resolver-pickup feed (not through arbitrary Limit Order
+Protocol on-chain monitoring), and the agent worker's
+`POST /intent/fusion/post` proxy is the bridge to that feed —
+operator-configured via the `INTENT_FUSION_API_KEY` secret. The
+specification below is the intended behaviour of the surface in
+its production-ready form.
 
 ## Scope and audience
 
@@ -354,37 +352,28 @@ and a cancel button gated on `now >= deadline`. A 1-second timer drives
 the countdown so the cancel button enables itself at the deadline
 without a manual page refresh.
 
-## v1.1 alpha disclosure
+## Agent-side resolver-pickup bridge
 
-At first launch the **direct push of new intents** to the 1inch Fusion
-resolver-pickup endpoint is deferred to a v1.1 GA card. The on-chain
-commit, custody, ERC-1271 binding, all cancel paths, and the
-post-interaction settlement waterfall are all in their final shape.
+The dapp posts the committed order shape to the agent worker's
+`POST /intent/fusion/post`. The agent injects the
+`INTENT_FUSION_API_KEY` secret server-side and forwards the order to
+1inch's Fusion resolver-pickup endpoint; the dapp receives the
+upstream JSON response unchanged.
 
-The intent — for the dapp to acknowledge a successful commit through a
-Vaipakam-hosted proxy that forwards to Fusion — is preserved in the
-agent worker's `POST /intent/fusion/post` endpoint. At alpha the
-endpoint validates the payload, writes an observability log line
-(no durable queue, no D1 / KV state), and returns an
-acknowledgement whose status field is the literal string
-`queued` as a forward-compatible response shape. Operators reading
-this spec as the oracle should not expect a recoverable
-queue-state record from the alpha endpoint; the durable telemetry
-sink, like the outbound `fetch` itself, lands in the GA card
-without a dapp-side redeploy.
+If the agent worker's `INTENT_FUSION_API_KEY` secret is unset
+(e.g. an operator deploying before rotating the secret in), the
+endpoint degrades to a queued-ack response so the dapp's resolution
+path stays clean. In that operator-pre-rotation state the on-chain
+commit is the source of truth and Fusion-side discovery does not
+happen; rotating the secret in restores the full pipeline without a
+dapp-side redeploy.
 
-The user-facing disclosure on the panel is explicit: the borrower can
-still pick the atomic surface above for predictable timing while the
-alpha runs.
+## Open follow-ups (v1.2)
 
-## Open follow-ups
-
-- The full pipeline to push commits to the Fusion resolver-pickup
-  endpoint at the agent worker boundary.
 - A cross-chunk in-browser memoization of the orderHash-to-committer
   mapping for the indexer-fallback decode of `SwapToRepayIntentFilled`
   rows (so the fallback path always attributes the row to the borrower
   even when the Committed event lives in an earlier scan chunk).
 - A stronger agent endpoint authentication layer (rate limiter binding
   + on-chain commit pre-flight) beyond the Origin header check the
-  alpha ships with.
+  agent worker ships with.

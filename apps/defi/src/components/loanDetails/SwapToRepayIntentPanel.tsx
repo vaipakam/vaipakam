@@ -632,20 +632,6 @@ export function SwapToRepayIntentPanel({
         can cancel after the deadline and the custodial collateral
         returns to your vault.
       </div>
-      <div
-        className="alert alert-warning"
-        style={{ fontSize: '0.78rem' }}
-      >
-        <AlertTriangle size={14} />
-        <span>
-          <strong>v1.1 alpha:</strong> the 1inch Fusion resolver-pickup
-          upstream is not yet wired. Your collateral goes into diamond
-          custody on commit, but resolver discovery may be delayed.
-          Use the atomic swap-to-repay above for predictable fills;
-          this surface is for early adopters who can cancel after the
-          deadline if no resolver finds the order.
-        </span>
-      </div>
 
       {loadingIntent && (
         <div style={{ fontSize: '0.82rem', opacity: 0.7 }}>

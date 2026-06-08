@@ -234,6 +234,11 @@ export interface WorkerEnv extends BaseEnv {
   // `POST /opensea/listing` proxy. Used server-side only; the dapp
   // never sees this key.
   OPENSEA_API_KEY?: SecretBinding;
+  // T-090 v1.1 GA (#426) — 1inch Fusion resolver-pickup API key for the
+  // `POST /intent/fusion/post` proxy. The dapp posts the committed
+  // order shape; the worker injects this key server-side and forwards
+  // to 1inch's Fusion endpoint so resolvers can pick it up.
+  INTENT_FUSION_API_KEY?: SecretBinding;
   // T-075 — server secret keying the per-wallet deletion hash.
   DIAG_WALLET_HMAC_KEY?: SecretBinding;
 }
@@ -269,6 +274,8 @@ export interface Env extends BaseEnv {
   ONEINCH_API_KEY?: string;
   // T-086 step 14 — resolved OpenSea Listings API key.
   OPENSEA_API_KEY?: string;
+  // T-090 v1.1 GA (#426) — resolved 1inch Fusion resolver-pickup API key.
+  INTENT_FUSION_API_KEY?: string;
 
   // T-086 Round-5 Block A (#313) — per-chain allow-list of tokens
   // whose `transfer` can revert based on recipient (USDC OFAC
@@ -353,6 +360,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     zeroEx,
     oneInch,
     openSea,
+    intentFusion,
     walletHmac,
   ] = await Promise.all([
     readSecret(raw.RPC_BASE),
@@ -372,6 +380,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     readSecret(raw.ZEROEX_API_KEY),
     readSecret(raw.ONEINCH_API_KEY),
     readSecret(raw.OPENSEA_API_KEY),
+    readSecret(raw.INTENT_FUSION_API_KEY),
     readSecret(raw.DIAG_WALLET_HMAC_KEY),
   ]);
   return {
@@ -415,6 +424,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     ZEROEX_API_KEY: zeroEx,
     ONEINCH_API_KEY: oneInch,
     OPENSEA_API_KEY: openSea,
+    INTENT_FUSION_API_KEY: intentFusion,
     DIAG_WALLET_HMAC_KEY: walletHmac,
     // RPC_ZKEVM intentionally unset — Polygon zkEVM is out of scope.
   };

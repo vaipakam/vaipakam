@@ -1,5 +1,6 @@
 /**
- * T-090 v1.1 (#389) Sub 3 (#418) — Fusion resolver-pickup proxy.
+ * T-090 v1.1 (#389) Sub 3 (#418) + v1.1 GA (#426) — Fusion
+ * resolver-pickup proxy.
  *
  * Endpoint: `POST /intent/fusion/post`
  *
@@ -24,22 +25,26 @@
  *     set health (governance-tuning signal for future allow-list
  *     curation).
  *
- * v1.1 launch status: the actual `POST` to 1inch's resolver-pickup
- * endpoint is the follow-up integration step once the 1inch
- * Fusion SDK / direct API is finalised. This handler validates +
- * accepts the payload + returns a `queued` ack so the dapp's hook
- * has a successful resolution path. The real upstream `fetch`
- * lands in a v1.1 GA card; the agent endpoint's request shape
- * stays stable so the dapp doesn't re-deploy.
+ * GA wiring (#426): validates the payload, posts to 1inch's
+ * Fusion resolver-pickup endpoint with the
+ * `INTENT_FUSION_API_KEY` secret server-side, and passes the
+ * upstream JSON response through to the dapp. If the secret is
+ * unset (alpha-era deploys), the handler degrades to the
+ * pre-GA queued-ack behaviour so a dapp expecting the
+ * forward-compatible response shape still gets a clean
+ * success-path resolution — the on-chain commit is the source
+ * of truth either way.
  *
- * Stage-3 split note (Sub 1 / Sub 2 design): no funds move
- * through this handler. Compromise of the agent's
- * `INTENT_FUSION_API_KEY` secret rate-limits resolver visibility
- * but can't pull collateral — that lives behind the diamond's
- * ERC-1271 signature on the orderHash, not the agent's auth.
+ * Stage-3 split note: no funds move through this handler.
+ * Compromise of the `INTENT_FUSION_API_KEY` secret rate-limits
+ * resolver visibility but can't pull collateral — that lives
+ * behind the diamond's ERC-1271 signature on the orderHash,
+ * not the agent's auth.
  */
 
 import type { Env } from './env';
+
+const FUSION_BASE_URL = 'https://api.1inch.dev/fusion/relayer/v2.0';
 
 /// Request body shape — matches the structured order projection
 /// the indexer's `GET /loans/:id` returns as `payload.swapToRepayIntent`.
@@ -110,37 +115,81 @@ export async function handleIntentFusionPost(
   // attacker faking the request still hits the same on-chain
   // rejection.
 
-  // Future: post to 1inch Fusion's resolver-pickup endpoint:
-  //   const upstream = await fetch('https://api.1inch.dev/fusion/orders/...', {
-  //     method: 'POST',
-  //     headers: { 'Authorization': `Bearer ${env.INTENT_FUSION_API_KEY}` },
-  //     body: JSON.stringify({ orderHash, order: parsed.order }),
-  //   });
-  //   return passthrough(upstream, corsOrigin);
-  //
-  // For now: log + acknowledge so the dapp's `useIntentCommit`
-  // hook gets a successful resolution path. The on-chain commit
-  // is already done; the borrower's collateral is in custody;
-  // the agent's failure to forward to Fusion just means the
-  // resolver auction never picks the order up and it expires —
-  // exactly the cancel-window scenario the on-chain
-  // `cancelSwapToRepayIntent` handles.
+  // T-090 v1.1 GA (#426) — post to 1inch Fusion's resolver-pickup
+  // endpoint with the operator-held API key. The dapp gets back
+  // whatever Fusion replied (success → resolvers see the order;
+  // 4xx/5xx → dapp surfaces the upstream error so the borrower
+  // knows to cancel after deadline). If the secret is unset
+  // (e.g. an alpha-era staging environment that never rotated
+  // it in), fall back to the queued-ack behaviour so the dapp's
+  // forward-compatible response shape still resolves cleanly.
+  if (!env.INTENT_FUSION_API_KEY) {
+    console.log('[intent/fusion/post] queued (no API key configured)', {
+      chainId: parsed.chainId,
+      orderHash: parsed.orderHash,
+      commitTxHash: parsed.commitTxHash,
+    });
+    return jsonOk(corsOrigin, {
+      ok: true,
+      status: 'queued',
+      orderHash: parsed.orderHash,
+      note:
+        'INTENT_FUSION_API_KEY is not configured on this Worker. The on-chain commit is the source of truth (collateral in diamond custody, ERC-1271 bound). No Fusion solver discovery happens until the secret is rotated in.',
+    });
+  }
 
-  console.log('[intent/fusion/post] queued', {
-    chainId: parsed.chainId,
-    orderHash: parsed.orderHash,
-    commitTxHash: parsed.commitTxHash,
-    makerAmount: parsed.order.makerAmount,
-    takerAmount: parsed.order.takerAmount,
-    deadline: parsed.order.deadline,
-  });
+  const upstreamUrl = `${FUSION_BASE_URL}/${parsed.chainId}/order/submit`;
+  try {
+    const upstream = await fetch(upstreamUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.INTENT_FUSION_API_KEY}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        orderHash: parsed.orderHash,
+        order: {
+          maker: parsed.order.maker,
+          receiver: parsed.order.receiver,
+          makerAsset: parsed.order.makerAsset,
+          takerAsset: parsed.order.takerAsset,
+          makingAmount: parsed.order.makerAmount,
+          takingAmount: parsed.order.takerAmount,
+          salt: parsed.order.salt,
+          makerTraits: parsed.order.makerTraits,
+        },
+        extension: parsed.order.extension,
+        deadline: parsed.order.deadline,
+        // Commit tx hash carried as telemetry context so 1inch's
+        // resolver-pickup audit log can correlate to the
+        // originating on-chain transaction.
+        sourceTxHash: parsed.commitTxHash,
+      }),
+    });
+    return passthrough(upstream, corsOrigin);
+  } catch (err) {
+    console.error('[intent/fusion/post] upstream fetch failed', err);
+    return jsonErr(corsOrigin, 502, 'fusion-upstream-failed');
+  }
+}
 
-  return jsonOk(corsOrigin, {
-    ok: true,
-    status: 'queued',
-    orderHash: parsed.orderHash,
-    note:
-      'T-090 v1.1 alpha — Fusion resolver-pickup upstream is NOT YET WIRED. The on-chain commit is the source of truth (collateral in diamond custody, ERC-1271 bound). Resolvers picking up via on-chain log scanning may fill the order; if not, cancel after deadline returns custodial collateral to your vault. The v1.1 GA card wires the real upstream `fetch`.',
+async function passthrough(
+  upstream: Response,
+  corsOrigin: string,
+): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await upstream.json();
+  } catch {
+    body = { error: 'upstream-non-json', status: upstream.status };
+  }
+  return new Response(JSON.stringify(body), {
+    status: upstream.status,
+    headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': corsOrigin,
+    },
   });
 }
 
