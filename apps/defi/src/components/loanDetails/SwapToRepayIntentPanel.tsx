@@ -167,41 +167,53 @@ export function SwapToRepayIntentPanel({
       // live; treat that as null.
       if (!indexerOk && diamond) {
         try {
-          const chainCommit = (await (
+          // Codex round-6 PR #423 P2 — getIntentCommit returns
+          // the `FusionOrderRead` struct shape:
+          // (maker, receiver, makerAsset, takerAsset, makerAmount,
+          //  takerAmount, deadline, salt, makerTraits, extension).
+          // No orderHash / committedBy / committedAt on the view —
+          // the view reverts when no commit is live. We compute a
+          // placeholder orderHash locally (extension hash) just
+          // for display + populate committedBy with the connected
+          // address as a best-guess for the panel's pending-state
+          // rendering. The indexer's row replaces all this once
+          // it catches up; for the "indexer down" fallback the
+          // borrower's primary need is the cancel button which
+          // doesn't depend on these fields.
+          const fr = (await (
             diamond as unknown as {
               getIntentCommit: (id: bigint) => Promise<{
-                orderHash: `0x${string}`;
-                deadline: bigint;
                 makerAmount: bigint;
                 takerAmount: bigint;
-                committedBy: `0x${string}`;
+                deadline: bigint;
+                extension: `0x${string}`;
               }>;
             }
           ).getIntentCommit(loanId)) as {
-            orderHash: `0x${string}`;
-            deadline: bigint;
             makerAmount: bigint;
             takerAmount: bigint;
-            committedBy: `0x${string}`;
+            deadline: bigint;
+            extension: `0x${string}`;
           };
-          if (
-            chainCommit.orderHash &&
-            chainCommit.orderHash !==
-              '0x0000000000000000000000000000000000000000000000000000000000000000'
-          ) {
-            indexerIntent = {
-              orderHash: chainCommit.orderHash,
-              committedBy: chainCommit.committedBy.toLowerCase(),
-              makerAmount: chainCommit.makerAmount.toString(),
-              takerAmount: chainCommit.takerAmount.toString(),
-              deadline: Number(chainCommit.deadline),
-              committedAt: 0,
-              committedTxHash: '',
-            };
-            indexerOk = true;
-          }
+          // Reverts on no-commit → we won't reach here if no
+          // commit is live. When we do, populate the projection
+          // from what's available.
+          const { keccak256: kc } = await import('viem');
+          indexerIntent = {
+            orderHash: kc(fr.extension),
+            committedBy: (address ?? '').toLowerCase(),
+            makerAmount: fr.makerAmount.toString(),
+            takerAmount: fr.takerAmount.toString(),
+            deadline: Number(fr.deadline),
+            committedAt: 0,
+            committedTxHash: '',
+          };
+          indexerOk = true;
         } catch {
-          // No view; leave indexerIntent null.
+          // View reverts (no commit live) → leave indexerIntent null.
+          // Mark indexerOk=true so the round-3 "trust the indexer"
+          // gate below null-clears the panel correctly.
+          indexerOk = true;
         }
       }
       if (cancelled) return;
@@ -381,17 +393,24 @@ export function SwapToRepayIntentPanel({
           lenderLeg: bigint;
           treasuryLeg: bigint;
         };
-        // Codex round-5 P2 — use the live `cfgIntentMinOutputBufferBps`
-        // value instead of the hardcoded 200 bps so the panel
-        // matches the on-chain check when governance raises the
-        // buffer above the documented default (setter caps at
-        // 2500 bps).
+        // Codex round-6 PR #423 P2 — the contract floor is
+        //   (lenderLeg + treasuryLeg + lateFee) × (1 + cfgBuffer)
+        // not
+        //   (lenderLeg + treasuryLeg) × (1 + cfgBuffer + lateFeeMarginBps)
+        // Round-5's additive form under-shoots once cfgBuffer is
+        // near the 2500 bps cap + lateFee is at the 5% cap: floor
+        // ≈ 2.62 × base, our formula ≈ 1.31 × base → reverts.
+        //
+        // Correct formula: add the WORST-CASE lateFee (5% of
+        // principal) to the base inside the multiplier, then
+        // apply the live cfgBuffer (live read) + a small accrual
+        // margin (~1%) for blocks-between-read-and-tx. Always
+        // over-estimates; never under-estimates.
+        const estimatedLateFee = (principalAmount * BigInt(500)) / BigInt(10_000);
         const protocolBufferBps = BigInt(liveBufferBps);
-        const lateFeeMarginBps = BigInt(500);
         const accrualMarginBps = BigInt(100);
-        const totalBufferBps =
-          protocolBufferBps + lateFeeMarginBps + accrualMarginBps;
-        const baseFloor = ctx.lenderLeg + ctx.treasuryLeg;
+        const totalBufferBps = protocolBufferBps + accrualMarginBps;
+        const baseFloor = ctx.lenderLeg + ctx.treasuryLeg + estimatedLateFee;
         liveFloor =
           (baseFloor * (BigInt(10_000) + totalBufferBps)) / BigInt(10_000);
       } catch {
