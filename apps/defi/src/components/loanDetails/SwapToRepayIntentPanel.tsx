@@ -698,43 +698,79 @@ export function SwapToRepayIntentPanel({
       {/* Codex round-6 PR #430 P1 + P2 — commit is disabled until
           the v1.2 quoteId work + the agent-origin requirement are
           both addressed. Three independent disable reasons; the
-          alert text explains which one applies. The cancel
-          surface stays accessible for any pre-existing live
-          commits regardless. */}
-      {!hasLiveIntent && (
-        <div className="alert alert-warning" style={{ fontSize: '0.82rem' }}>
-          <AlertTriangle size={14} />
-          <span>
-            {!FUSION_SUPPORTED_CHAIN_IDS.has(chainId) ? (
-              <>
-                1inch Fusion does not support chain {chainId}, so a
-                commit here would lock your collateral with no chance
-                of a resolver fill. Use the atomic swap-to-repay
-                above instead.
-              </>
-            ) : !AGENT_ORIGIN ? (
-              <>
-                The Vaipakam agent worker URL is not configured in
-                this build, so the resolver-pickup hand-off would be
-                skipped on commit and your collateral would lock in
-                custody with no chance of a fill. Use the atomic
-                swap-to-repay above instead.
-              </>
-            ) : (
-              <>
-                The 1inch Fusion resolver-pickup wire submits orders
-                without the `quoteId` field that Fusion requires, so
-                upstream is expected to reject every commit until
-                the v1.2 follow-up (issue #431) patches the bridge.
-                Commit is disabled to avoid locking collateral that
-                would only ever recover via the cancel-after-deadline
-                path. Use the atomic swap-to-repay above instead;
-                this surface re-enables when #431 lands.
-              </>
-            )}
-          </span>
-        </div>
-      )}
+          alert text explains which one applies.
+
+          Codex round-7 PR #430 P2 — keep this warning visible for
+          live-intent borrowers too. Their existing commit is also
+          expected not to fill until #431, so they need the same
+          "use cancel-after-deadline" framing even though the
+          Commit button is hidden in their state. */}
+      <div className="alert alert-warning" style={{ fontSize: '0.82rem' }}>
+        <AlertTriangle size={14} />
+        <span>
+          {!FUSION_SUPPORTED_CHAIN_IDS.has(chainId) ? (
+            <>
+              1inch Fusion does not support chain {chainId}.
+              {hasLiveIntent ? (
+                <>
+                  {' '}
+                  Your existing commit can only be resolved via the
+                  cancel-after-deadline path; no resolver fill will
+                  arrive on this chain.
+                </>
+              ) : (
+                <>
+                  {' '}
+                  A commit here would lock your collateral with no
+                  chance of a resolver fill. Use the atomic
+                  swap-to-repay above instead.
+                </>
+              )}
+            </>
+          ) : !AGENT_ORIGIN ? (
+            <>
+              The Vaipakam agent worker URL is not configured in this
+              build.
+              {hasLiveIntent ? (
+                <>
+                  {' '}
+                  Your existing commit is best resolved via the
+                  cancel-after-deadline path.
+                </>
+              ) : (
+                <>
+                  {' '}
+                  Use the atomic swap-to-repay above instead.
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              The 1inch Fusion resolver-pickup wire submits orders
+              without the `quoteId` field that Fusion requires, so
+              upstream is expected to reject every commit until the
+              v1.2 follow-up (issue #431) patches the bridge.
+              {hasLiveIntent ? (
+                <>
+                  {' '}
+                  Your existing commit is expected NOT to fill;
+                  cancel after the deadline to return custodial
+                  collateral to your vault.
+                </>
+              ) : (
+                <>
+                  {' '}
+                  Commit is disabled to avoid locking collateral
+                  that would only ever recover via the
+                  cancel-after-deadline path. Use the atomic
+                  swap-to-repay above instead; this surface
+                  re-enables when #431 lands.
+                </>
+              )}
+            </>
+          )}
+        </span>
+      </div>
 
       <div style={{ display: 'flex', gap: 8 }}>
         {!hasLiveIntent && (

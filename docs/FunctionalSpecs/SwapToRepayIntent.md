@@ -9,17 +9,23 @@ the release notes for the v1.1 sub-cards, and the user-facing description
 in `apps/www/src/content/userguide/Advanced.en.md`. It is **not**
 transcribed from the contract code.
 
-The full surface is in its final shape at v1.1 GA: the on-chain
-commit, custody, ERC-1271 binding, cancel paths,
-lender-protection force-cancel paths, and the agent-side
-resolver-pickup bridge to 1inch's Fusion endpoint are all
-present. Fusion's solver network discovers orders through 1inch's
-own resolver-pickup feed (not through arbitrary Limit Order
-Protocol on-chain monitoring), and the agent worker's
-`POST /intent/fusion/post` proxy is the bridge to that feed —
-operator-configured via the `INTENT_FUSION_API_KEY` secret. The
-specification below is the intended behaviour of the surface in
-its production-ready form.
+The on-chain surface (commit, custody, ERC-1271 binding, cancel
+paths, lender-protection force-cancel paths) is in its final
+shape at v1.1 GA. The agent-side resolver-pickup bridge to 1inch
+Fusion is wired in code but **not functionally complete**: the
+bridge submits orders without a `quoteId` field that Fusion's
+relayer treats as required, so Fusion is expected to reject
+every submission upstream until the v1.2 follow-up (issue #431)
+either threads a real quoteId through from a 1inch quote/build
+round-trip, or switches the bridge to 1inch's Limit Order
+Protocol relayer endpoint (which doesn't require a quoteId).
+
+Until #431 ships, the production dapp keeps the Commit button
+disabled and recommends the atomic swap-to-repay surface instead.
+The intent surface's spec below describes the intended behaviour
+of the surface in its production-ready end-state (#431 + later);
+where alpha/half-state behaviour diverges, the spec calls it out
+explicitly.
 
 ## Scope and audience
 

@@ -271,13 +271,24 @@ async function checkRateLimit(
     | { limit(input: { key: string }): Promise<{ success: boolean }> }
     | undefined,
 ): Promise<boolean> {
+  // No binding → the half-activated check at the top of the
+  // handler has already returned 503 if the API key is bound,
+  // so reaching here with `!binding` means the key is unbound +
+  // we're in the queued-ack fallback path: allow.
   if (!binding) return true;
   const ip = req.headers.get('cf-connecting-ip') ?? 'unknown';
   try {
     const { success } = await binding.limit({ key: ip });
     return success;
-  } catch {
-    return true;
+  } catch (err) {
+    // Codex round-7 PR #430 P2 — fail-closed on limiter
+    // exception. The API key is bound (otherwise we never reach
+    // here per the comment above), so an opaque limiter failure
+    // would re-expose ungated spend to the shared Fusion quota.
+    // Better to reject the request with a clear log than to
+    // silently allow.
+    console.error('[intent/fusion/post] rate-limit binding threw', err);
+    return false;
   }
 }
 
