@@ -140,7 +140,7 @@ export async function handleIntentFusionPost(
     status: 'queued',
     orderHash: parsed.orderHash,
     note:
-      'T-090 v1.1 Sub 3 placeholder — Fusion resolver-pickup upstream wires in the v1.1 GA card; the dapp polls Fusion directly while the agent telemetry captures the commit.',
+      'T-090 v1.1 alpha — Fusion resolver-pickup upstream is NOT YET WIRED. The on-chain commit is the source of truth (collateral in diamond custody, ERC-1271 bound). Resolvers picking up via on-chain log scanning may fill the order; if not, cancel after deadline returns custodial collateral to your vault. The v1.1 GA card wires the real upstream `fetch`.',
   });
 }
 

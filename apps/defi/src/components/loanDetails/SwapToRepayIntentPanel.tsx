@@ -128,51 +128,113 @@ export function SwapToRepayIntentPanel({
   // from the diamond so the panel adapts when governance rotates
   // the knob.
   const [liveAuctionMaxSec, setLiveAuctionMaxSec] = useState(auctionMaxSec);
+  // Codex round-5 PR #423 P2 — same for the min-output buffer.
+  // Default 200 bps mirrors the documented Sub 1 default.
+  const [liveBufferBps, setLiveBufferBps] = useState(200);
 
-  // Fetch live intent state from indexer. Re-runs on commit /
-  // cancel via the `refreshTick` bump so the panel reflects the
-  // new on-chain state without depending on the parent re-mount.
+  // Fetch live intent state from indexer (primary) with on-chain
+  // fallback (Codex round-5 P2 — when `VITE_INDEXER_ORIGIN` is
+  // unset or 5xx, read directly from the diamond's
+  // `getIntentCommit` view so the borrower still has a cancel
+  // surface after a page reload). Re-runs on commit / cancel via
+  // the `refreshTick` bump + polls every 15s while the panel is
+  // mounted so a resolver-fill or force-cancel that happens
+  // minutes later is observed without a manual reload.
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      if (!INDEXER_ORIGIN) return;
       setLoadingIntent(true);
-      try {
-        const res = await fetch(
-          `${INDEXER_ORIGIN}/loans/${loanId}?chainId=${chainId}`,
-        );
-        if (!res.ok) return;
-        const payload = await res.json();
-        if (cancelled) return;
-        const indexerIntent = payload.swapToRepayIntent ?? null;
-        if (indexerIntent) {
-          // Indexer caught up — replace the optimistic placeholder
-          // (or absence thereof) with the canonical row.
-          setLiveIntent(indexerIntent);
-          setOptimisticPending(false);
-        } else if (!optimisticPending) {
-          // No optimistic row outstanding → trust the indexer.
-          setLiveIntent(null);
+      let indexerIntent: LiveIntent | null = null;
+      let indexerOk = false;
+      if (INDEXER_ORIGIN) {
+        try {
+          const res = await fetch(
+            `${INDEXER_ORIGIN}/loans/${loanId}?chainId=${chainId}`,
+          );
+          if (res.ok) {
+            const payload = await res.json();
+            indexerIntent = payload.swapToRepayIntent ?? null;
+            indexerOk = true;
+          }
+        } catch {
+          // Fall through to on-chain fallback below.
         }
-        // Else: optimisticPending is true AND indexer says null
-        // (ingestion lag). Keep the optimistic row in place.
-      } catch {
-        // Indexer unreachable → silently treat as "no live intent".
-        // The borrower can still attempt a fresh commit; the on-chain
-        // no-double-commit guard rejects it cleanly if one's live.
-      } finally {
-        if (!cancelled) setLoadingIntent(false);
       }
+      if (cancelled) return;
+      // On-chain fallback (Codex round-5 P2 #4) — if the indexer
+      // is unset / down / 5xx, read directly from the diamond.
+      // The view returns an empty/zero struct when no commit is
+      // live; treat that as null.
+      if (!indexerOk && diamond) {
+        try {
+          const chainCommit = (await (
+            diamond as unknown as {
+              getIntentCommit: (id: bigint) => Promise<{
+                orderHash: `0x${string}`;
+                deadline: bigint;
+                makerAmount: bigint;
+                takerAmount: bigint;
+                committedBy: `0x${string}`;
+              }>;
+            }
+          ).getIntentCommit(loanId)) as {
+            orderHash: `0x${string}`;
+            deadline: bigint;
+            makerAmount: bigint;
+            takerAmount: bigint;
+            committedBy: `0x${string}`;
+          };
+          if (
+            chainCommit.orderHash &&
+            chainCommit.orderHash !==
+              '0x0000000000000000000000000000000000000000000000000000000000000000'
+          ) {
+            indexerIntent = {
+              orderHash: chainCommit.orderHash,
+              committedBy: chainCommit.committedBy.toLowerCase(),
+              makerAmount: chainCommit.makerAmount.toString(),
+              takerAmount: chainCommit.takerAmount.toString(),
+              deadline: Number(chainCommit.deadline),
+              committedAt: 0,
+              committedTxHash: '',
+            };
+            indexerOk = true;
+          }
+        } catch {
+          // No view; leave indexerIntent null.
+        }
+      }
+      if (cancelled) return;
+      if (indexerIntent) {
+        setLiveIntent(indexerIntent);
+        setOptimisticPending(false);
+      } else if (indexerOk && !optimisticPending) {
+        // Indexer (or chain) was queried successfully + returned
+        // no commit → trust it. Don't null-clear when we couldn't
+        // reach either source — preserve any optimistic state.
+        setLiveIntent(null);
+      }
+      setLoadingIntent(false);
     }
     void load();
+    // Codex round-5 PR #423 P2 #5 — poll every 15s while mounted
+    // so a resolver fill or force-cancel updates the panel
+    // without a manual reload. 15s is a reasonable trade-off
+    // between freshness + indexer load.
+    const id = setInterval(() => void load(), 15_000);
     return () => {
       cancelled = true;
+      clearInterval(id);
     };
-  }, [loanId, chainId, refreshTick, optimisticPending]);
+  }, [loanId, chainId, refreshTick, optimisticPending, diamond]);
 
   // Codex round-1 PR #423 P2 — read live auction-max bound from
   // the diamond's `IntentConfigFacet`. Best-effort; falls back to
   // the prop default if the read fails.
+  // Codex round-5 PR #423 P2 — additionally read live
+  // `cfgIntentMinOutputBufferBps` so the panel adapts when
+  // governance rotates the buffer above the documented 200 bps
+  // default (setter caps at 2500 bps).
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -183,10 +245,21 @@ export function SwapToRepayIntentPanel({
             getIntentAuctionSecondsBounds: () => Promise<[bigint, bigint]>;
           }
         ).getIntentAuctionSecondsBounds()) as [bigint, bigint] | undefined;
-        if (cancelled || !bounds) return;
-        setLiveAuctionMaxSec(Number(bounds[1]));
+        if (!cancelled && bounds) setLiveAuctionMaxSec(Number(bounds[1]));
       } catch {
         // Use the prop default.
+      }
+      try {
+        const buf = (await (
+          diamond as unknown as {
+            getIntentMinOutputBufferBps: () => Promise<bigint>;
+          }
+        ).getIntentMinOutputBufferBps()) as bigint | undefined;
+        if (!cancelled && typeof buf === 'bigint') {
+          setLiveBufferBps(Number(buf));
+        }
+      } catch {
+        // Use the documented default (200 bps).
       }
     }
     void load();
@@ -308,18 +381,12 @@ export function SwapToRepayIntentPanel({
           lenderLeg: bigint;
           treasuryLeg: bigint;
         };
-        // Codex round-4 PR #423 P2 — buffer must cover:
-        //   • the late-fee component the PrepayContext struct
-        //     doesn't surface; `calculateLateFee` ramps to ~5%
-        //     of principal for past-maturity-in-grace loans
-        //   • the configured intent buffer (~2%) the contract's
-        //     postInteraction check enforces
-        //   • 1-2 blocks of interest accrual between this read
-        //     + tx inclusion (~0.5%)
-        // Worst case ≈ 7.5%; round up to 8% to leave margin.
-        // The borrower can still preview the actual numbers in
-        // the panel's amount display before signing.
-        const protocolBufferBps = BigInt(200);
+        // Codex round-5 P2 — use the live `cfgIntentMinOutputBufferBps`
+        // value instead of the hardcoded 200 bps so the panel
+        // matches the on-chain check when governance raises the
+        // buffer above the documented default (setter caps at
+        // 2500 bps).
+        const protocolBufferBps = BigInt(liveBufferBps);
         const lateFeeMarginBps = BigInt(500);
         const accrualMarginBps = BigInt(100);
         const totalBufferBps =
@@ -542,9 +609,23 @@ export function SwapToRepayIntentPanel({
         Commit your collateral to a Fusion solver auction. A resolver
         competes to fill the order at the best available price; the
         diamond's postInteraction hook runs the canonical settlement
-        waterfall atomically with the fill. Typically completes in
-        1-2 minutes; if no resolver fills, you can cancel after the
-        deadline and the custodial collateral returns to your vault.
+        waterfall atomically with the fill. If no resolver fills, you
+        can cancel after the deadline and the custodial collateral
+        returns to your vault.
+      </div>
+      <div
+        className="alert alert-warning"
+        style={{ fontSize: '0.78rem' }}
+      >
+        <AlertTriangle size={14} />
+        <span>
+          <strong>v1.1 alpha:</strong> the 1inch Fusion resolver-pickup
+          upstream is not yet wired. Your collateral goes into diamond
+          custody on commit, but resolver discovery may be delayed.
+          Use the atomic swap-to-repay above for predictable fills;
+          this surface is for early adopters who can cancel after the
+          deadline if no resolver finds the order.
+        </span>
       </div>
 
       {loadingIntent && (
