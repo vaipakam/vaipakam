@@ -994,6 +994,52 @@ Permissionless actions available to anyone regardless of role:
   you can retry with better routing. The lender or whoever
   currently holds the lender-position NFT cannot use this
   surface on their own loan (self-repay guard).
+- **Best-price intent (1inch Fusion, v1.1 alpha)** — for the
+  same ERC-20-on-ERC-20 shape, an intent-based alternative to
+  the atomic swap above. Instead of routing through Vaipakam's
+  on-chain 4-DEX adapter list right now, you commit your
+  collateral to a Fusion-style auction: solvers compete on
+  price over a short window (defaults to a 60-second to
+  10-minute auction), and the winning solver fills the order
+  by paying your loan's settlement legs directly to the
+  diamond. The settlement waterfall runs atomically with the
+  fill in the same transaction; you get the same on-chain
+  guarantees as the atomic surface (no partial fills, full
+  reversion if anything fails).
+    - *When to use it* — when you're not in a hurry and want
+      the resolver competition to surface a slightly better
+      price than the live DEX quote. Typical fills land in
+      one to two minutes. The atomic surface above is the
+      right choice when you need predictable timing.
+    - *Pending state* — the Loan Details page shows a
+      "pending intent" card with the order hash and deadline
+      while the auction runs. A 1-second timer drives the
+      countdown so the cancel button enables itself the
+      moment the deadline passes; you don't have to refresh.
+    - *Cancel & return* — after the deadline you can cancel
+      the intent yourself; the custodial collateral returns
+      to your vault. If you leave the order unfilled for a
+      configurable grace window (default 24 hours past the
+      deadline), anyone can call the permissionless
+      "cancelExpired" path to return your collateral on your
+      behalf, so an abandoned commit can't strand your
+      assets.
+    - *Lender protection* — if HF drops below the liquidation
+      threshold or the loan crosses the default boundary
+      while your intent is still live, the protocol force-
+      cancels the commit (returns collateral to your vault)
+      before running the lender-protection action, so the
+      intent doesn't compete with the liquidator for the
+      same collateral.
+    - *Status disclosure* — v1.1 ships in alpha; the
+      direct-to-Fusion push of new intents to the
+      resolver-pickup endpoint is a known follow-up. Your
+      collateral is in protocol custody from the moment you
+      commit (same custody model as the atomic surface) and
+      the cancel path always works. Resolvers monitoring the
+      on-chain LOP for new orders may still pick yours up;
+      we deliberately surface a banner so you can pick the
+      atomic surface above when you want predictable timing.
 - **Preclose direct** — pay the outstanding amount from your
   wallet now, release collateral, settle the rebate.
 - **Preclose offset** — sell some collateral via the protocol's

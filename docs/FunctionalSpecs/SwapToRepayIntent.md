@@ -1,0 +1,290 @@
+# Intent-based swap-to-repay — Functional Specification
+
+This document specifies the **intended** observable behaviour of the
+intent-based swap-to-repay surface (T-090 v1.1, parent #389) — the
+sibling to the atomic on-chain swap-to-repay surface from T-090 v1
+(#403). It is **implementation-independent**: every statement is sourced
+from the design exploration in `docs/DesignsAndPlans/SwapToRepayIntentBased.md`,
+the release notes for the v1.1 sub-cards, and the user-facing description
+in `apps/www/src/content/userguide/Advanced.en.md`. It is **not**
+transcribed from the contract code.
+
+The surface is in **v1.1 alpha** at first launch; one piece of the end-
+to-end pipeline (direct posting of new intents to the 1inch Fusion
+resolver-pickup endpoint) is deliberately deferred to a v1.1 GA card.
+The on-chain commit, custody, ERC-1271 binding, cancel paths, and
+lender-protection force-cancel paths are all in their final shape;
+the deferred piece is a courtesy push, not a custody primitive. The
+specification below is the **intended** behaviour for the surface as a
+whole (alpha + GA) and notes where the alpha launch falls short of the
+full intent explicitly.
+
+## Scope and audience
+
+This surface is intended for borrowers who currently hold a v1.1-eligible
+loan — specifically, ERC-20-on-ERC-20 loans (collateral and principal
+both liquid ERC-20 assets) where the borrower is not the same wallet as
+the current lender-NFT holder.
+
+It serves as an **alternative** to the atomic on-chain swap-to-repay
+surface from v1. Both surfaces coexist on the Loan Details page; the
+borrower picks which to use per repayment.
+
+## Why it exists
+
+The atomic surface trades through Vaipakam's on-chain DEX-adapter
+try-list at the moment of submission. The intent surface trades through
+a **solver auction** — borrowers signal intent to swap, solvers compete
+on price over a short window, and the winning solver fills the order.
+The intent surface is intended to surface a slightly better
+borrower-facing price when there is solver competition, at the cost of
+auction-window timing variability. The atomic surface stays available
+for borrowers who prefer predictable timing.
+
+## Eligibility
+
+A borrower may use the intent surface for a given loan only if **all**
+of the following hold at the time of commit:
+
+- The loan is in the **Active** lifecycle state.
+- The loan's collateral asset and principal asset are both ERC-20.
+- The loan's collateral asset and principal asset are both on the
+  protocol's **liquid** classification (an oracle feed and sufficient
+  on-chain liquidity exist for both).
+- The protocol-level **master switch** for the intent surface is enabled
+  on the chain.
+- The collateral asset and the principal asset are both on the
+  governance-curated **token allowlist** for the intent surface.
+- The loan's current Health Factor is at or above the configured
+  commit-time HF gate (default 1.2 in HF-scale units).
+- The loan is not at or past the configured maturity-plus-grace window.
+- The caller is the current holder of the borrower-position NFT for the
+  loan.
+- The loan does not already have a live intent commit.
+
+If any of the above is not met, the commit is rejected at the surface;
+no collateral is moved and no order is registered.
+
+The lender, or whoever currently holds the lender-position NFT for the
+loan, **cannot** use this surface on their own loan (same self-repay
+guard as the atomic surface).
+
+## Commit — what happens, end to end
+
+Submitting a commit on the surface produces, in a single transaction:
+
+1. The borrower's collateral is moved out of the borrower's personal
+   vault and into the diamond's own custody for the duration of the
+   intent. The accounting records the diamond as the temporary holder.
+2. The protocol registers a canonical Fusion-style order, binding the
+   diamond as both the maker and the receiver of the order, and binding
+   the protocol's signature-checking contract as the verifier of the
+   order via ERC-1271.
+3. The order's hash is stored on the diamond and indexed by the loan id;
+   the order's auction deadline is recorded; the borrower-supplied
+   minimum output (taker amount) is recorded.
+4. The protocol approves the 1inch Limit Order Protocol contract to
+   pull the custodial collateral when a solver fills the order. The
+   approval is sized to the exact custodial amount.
+5. A `SwapToRepayIntentCommitted` event is emitted; the activity feed
+   attributes the row to the borrower address that submitted the commit.
+
+The commit transaction reverts entirely if any of the eligibility checks
+above fail at submission time, or if the borrower-supplied order fails
+any of the order-shape integrity checks below.
+
+## Order-shape integrity (commit-time)
+
+The intent surface enforces a **rigid order shape** at commit. The
+borrower-supplied order must:
+
+- Place the diamond as the maker and the receiver.
+- Place the loan's collateral asset as the maker asset and the loan's
+  principal asset as the taker asset.
+- Place the loan's full collateral amount as the maker amount.
+- Place a taker amount at or above the protocol's **live settlement
+  floor** plus the configured buffer.
+- Disable partial fills and disable multiple fills (a v1.1 intent fills
+  exactly once or expires).
+- Carry the protocol's canonical extension bytes verbatim, with the
+  diamond as the pre-interaction and post-interaction target.
+- Carry an auction deadline within the protocol's configured auction
+  window bounds and not exceeding the loan's maturity-plus-grace
+  boundary.
+- Carry a nonce that has not been used by any prior live commit on the
+  same chain (the protocol tracks used nonces globally for replay
+  protection).
+- Not request unwrap-WETH delivery (the receiver expects ERC-20, not
+  native ETH).
+- Not request epoch-manager checking (incompatible with the
+  bit-invalidator path the protocol's order shape requires).
+
+Any deviation from the above rejects the commit at submission time with
+a discriminated error so the dapp can surface a precise reason.
+
+## Live floor (post-fill check)
+
+When a solver attempts to fill the order, the protocol's
+post-interaction hook re-evaluates the **live settlement floor** at
+fill-time block timestamp and rejects the fill if the solver-delivered
+amount falls below `(principal + accrued interest + treasury and
+preclose fees + late fee accrual) × (1 + configured buffer bps)`.
+
+This is the same logic the atomic surface enforces at submission time;
+the intent surface enforces it at fill time so the protocol stays
+protected even if a solver tries to fill late (e.g. after additional
+interest has accrued).
+
+## Cancel — three paths
+
+The intent can be cancelled along three paths.
+
+### Borrower cancel (after deadline)
+
+After the order's auction deadline has passed, the current holder of
+the borrower-position NFT can cancel the intent. The protocol:
+
+- Refuses to cancel before the deadline (the auction is still
+  legitimately running for solvers).
+- Tears down the on-chain commit record + the Fusion-side order
+  registration.
+- Returns the custodial collateral to the borrower's personal vault.
+- Emits a `SwapToRepayIntentCancelled` event attributing the cancel to
+  the borrower.
+
+### Permissionless cancel (after grace)
+
+If the borrower-position-NFT holder never calls the cancel — possibly
+because the wallet is no longer reachable — anyone can call a
+permissionless cancel path **after** the deadline plus the configured
+cancel-grace window (default 24 hours past the deadline). The same
+teardown + collateral return happens; the activity feed attributes the
+cancel to the wallet that called the permissionless path.
+
+This is the protocol's anti-stranding guarantee: an abandoned commit
+cannot indefinitely lock the borrower's collateral.
+
+### Force-cancel (lender protection)
+
+If, while the intent is live:
+
+- The loan's Health Factor drops below the liquidation threshold, OR
+- The loan crosses the maturity-plus-grace boundary, OR
+- A lender-protection action (HF liquidation, time default, internal
+  match liquidation, partial-period auto-liquidation) needs to run,
+
+then the protocol's relevant entry point **force-cancels** the intent
+in the same transaction as the lender-protection action. The
+custodial collateral is returned to the borrower's vault before the
+protection action runs against the (now-restored) collateral state.
+
+A `SwapToRepayIntentForceCancelled` event is emitted with a reason
+discriminator (`HFBelowLiquidationThreshold`, `LoanPastDefault`, etc.)
+and the address of the facet that triggered it, so the activity feed
+can distinguish HF-trigger from time-trigger from match-liquidation
+trigger.
+
+The force-cancel is intentionally not attributed to a borrower wallet
+in the activity feed; the lender-protection action that drove it
+carries the attribution via its own downstream `LoanLiquidated` /
+`LoanDefaulted` event.
+
+## Fill — solver-side path
+
+When a solver fills the order through 1inch's Limit Order Protocol:
+
+1. The protocol's pre-interaction hook records a baseline of the
+   diamond's principal-asset balance.
+2. The solver moves the custodial collateral out of the diamond and
+   delivers the taker-side principal-asset amount to the diamond.
+3. The protocol's post-interaction hook measures the balance delta and
+   re-evaluates the live settlement floor. The hook reverts the entire
+   fill if the delivered amount falls below the floor at fill-time, or
+   if the makerTraits or other on-order parameters have been tampered
+   with mid-flight.
+4. With the floor check passing, the post-interaction hook runs the
+   canonical settlement waterfall: the lender's leg is delivered to the
+   lender-position-NFT holder; the treasury's leg is delivered to the
+   treasury; any favorable-quote surplus over the floor lands in the
+   borrower's wallet directly (not the vault) so it can be spent
+   immediately without an extra withdraw step; the loan transitions to
+   the Repaid lifecycle state; the time-weighted VPFI Loan Initiation
+   Fee rebate is delivered as appropriate.
+5. A `SwapToRepayIntentFilled` event is emitted; the activity feed
+   attributes the row to the borrower that originated the commit (NOT
+   the solver who submitted the fill transaction).
+
+The fill is fully atomic with the loan's terminal settlement — if any
+post-interaction step reverts, the entire fill reverts and the
+collateral remains in diamond custody for the borrower or
+permissionless-cancel paths to recover.
+
+## Interactions with other surfaces
+
+While an intent is live, the following lender-side or borrower-side
+actions on the **same loan** are intentionally blocked or
+force-cancel-the-intent-first:
+
+- Repayment, partial repayment, swap-to-repay (atomic), preclose
+  (direct), preclose (offset), refinance, add-collateral, partial
+  withdrawal — all blocked with a discriminated error; the borrower
+  must cancel the intent first.
+- HF liquidation, time-default, internal-match liquidation,
+  partial-period auto-liquidation — proceed, force-cancelling the
+  intent first so the protection action runs against restored
+  collateral state.
+
+This is the protocol's no-double-spend invariant for collateral that is
+in temporary diamond custody.
+
+## Activity feed
+
+The four intent-surface events surface in the activity feed and the
+loan timeline:
+
+- `SwapToRepayIntentCommitted` — attributed to the borrower who
+  originated the commit; severity `info` (loan stays Active).
+- `SwapToRepayIntentFilled` — attributed to the borrower who originated
+  the commit; severity `success` (terminal Repaid).
+- `SwapToRepayIntentCancelled` — attributed to the wallet that called
+  cancel (distinguishes the borrower path from the permissionless
+  poke); severity `info`.
+- `SwapToRepayIntentForceCancelled` — attributed system-side (no
+  borrower attribution); severity `warning` (a lender-protection
+  action followed).
+
+The dapp surfaces an in-page **pending intent** card on Loan Details
+while a commit is live. The card shows the order hash, the deadline,
+and a cancel button gated on `now >= deadline`. A 1-second timer drives
+the countdown so the cancel button enables itself at the deadline
+without a manual page refresh.
+
+## v1.1 alpha disclosure
+
+At first launch the **direct push of new intents** to the 1inch Fusion
+resolver-pickup endpoint is deferred to a v1.1 GA card. The on-chain
+commit, custody, ERC-1271 binding, all cancel paths, and the
+post-interaction settlement waterfall are all in their final shape.
+
+The intent — for the dapp to acknowledge a successful commit through a
+Vaipakam-hosted proxy that forwards to Fusion — is preserved in the
+agent worker's `POST /intent/fusion/post` endpoint. At alpha the
+endpoint validates the payload, queues the commit telemetry, and
+returns a `queued` acknowledgement. The actual outbound `fetch` to
+Fusion lands in the GA card without a dapp-side redeploy.
+
+The user-facing disclosure on the panel is explicit: the borrower can
+still pick the atomic surface above for predictable timing while the
+alpha runs.
+
+## Open follow-ups
+
+- The full pipeline to push commits to the Fusion resolver-pickup
+  endpoint at the agent worker boundary.
+- A cross-chunk in-browser memoization of the orderHash-to-committer
+  mapping for the indexer-fallback decode of `SwapToRepayIntentFilled`
+  rows (so the fallback path always attributes the row to the borrower
+  even when the Committed event lives in an earlier scan chunk).
+- A stronger agent endpoint authentication layer (rate limiter binding
+  + on-chain commit pre-flight) beyond the Origin header check the
+  alpha ships with.
