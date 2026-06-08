@@ -129,7 +129,25 @@ contract VPFIDiscountAccumulatorFacet {
         uint128 prevBal,
         uint16 prevUpdateDay
     ) private {
-        if (prevUpdateDay != 0 && prevUpdateDay < today) {
+        // Gap-fill condition uses `prevUpdateDay < today` only — NOT
+        // `prevUpdateDay != 0 && ...`. The original `!= 0` guard
+        // intended to skip the gap-fill on the very first interaction
+        // (when no prior write existed) but mis-fired for a user
+        // whose legitimate first stake landed on `dayId == 0`:
+        // a later rollup at `today = N` would skip the gap-fill,
+        // leaving slots 1..N-1 as default `dayId = 0` snapshots, and
+        // `_effectiveBalanceForDay` would return 0 for those days
+        // because the fallback branch reads `lastUpdate >= d` as
+        // "no extension available" (Codex Sub 1.B P2 #2).
+        //
+        // The 30-iteration lower bound below caps the loop, so a
+        // true first-ever stake on `today = 20 000+` doesn't loop
+        // 20 000 times. For a fresh user the gap-fill writes
+        // `prevBal = 0` into the pre-stake slots, which is correct
+        // (the user actually had 0 balance on those days), and the
+        // TWA scanner filters them via the `currentStakeStartDayId`
+        // floor (round-10 P1 #2) so they don't enter the average.
+        if (prevUpdateDay < today) {
             uint16 gapStart = prevUpdateDay + 1;
             uint16 lowerBound = today > 29 ? today - 29 : 0;
             if (gapStart < lowerBound) gapStart = lowerBound;
