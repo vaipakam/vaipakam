@@ -125,6 +125,11 @@ interface BaseEnv {
   // postPrepayListing / updatePrepayListing tx, so a tight budget
   // is plenty; the binding exists mainly as an abuse safety net.
   OPENSEA_LISTING_RATELIMIT?: RateLimitBinding;
+  // T-090 v1.1 GA (#430) — per-IP gate on `POST /intent/fusion/post`.
+  // One POST per borrower commit-tx in normal flow; the binding
+  // bounds abuse that would otherwise spend the Vaipakam-side
+  // 1inch Fusion API quota.
+  INTENT_FUSION_POST_RATELIMIT?: RateLimitBinding;
   // T-086 Round-5 Block A (#313) — per-IP rate-limit on the new
   // GET /opensea/collection/{slug} proxy. Without this, anyone
   // can spoof an allowed Origin and iterate slugs/chains to drain
@@ -234,6 +239,11 @@ export interface WorkerEnv extends BaseEnv {
   // `POST /opensea/listing` proxy. Used server-side only; the dapp
   // never sees this key.
   OPENSEA_API_KEY?: SecretBinding;
+  // T-090 v1.1 GA (#426) — 1inch Fusion resolver-pickup API key for the
+  // `POST /intent/fusion/post` proxy. The dapp posts the committed
+  // order shape; the worker injects this key server-side and forwards
+  // to 1inch's Fusion endpoint so resolvers can pick it up.
+  INTENT_FUSION_API_KEY?: SecretBinding;
   // T-075 — server secret keying the per-wallet deletion hash.
   DIAG_WALLET_HMAC_KEY?: SecretBinding;
 }
@@ -269,6 +279,8 @@ export interface Env extends BaseEnv {
   ONEINCH_API_KEY?: string;
   // T-086 step 14 — resolved OpenSea Listings API key.
   OPENSEA_API_KEY?: string;
+  // T-090 v1.1 GA (#426) — resolved 1inch Fusion resolver-pickup API key.
+  INTENT_FUSION_API_KEY?: string;
 
   // T-086 Round-5 Block A (#313) — per-chain allow-list of tokens
   // whose `transfer` can revert based on recipient (USDC OFAC
@@ -353,6 +365,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     zeroEx,
     oneInch,
     openSea,
+    intentFusion,
     walletHmac,
   ] = await Promise.all([
     readSecret(raw.RPC_BASE),
@@ -372,6 +385,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     readSecret(raw.ZEROEX_API_KEY),
     readSecret(raw.ONEINCH_API_KEY),
     readSecret(raw.OPENSEA_API_KEY),
+    readSecret(raw.INTENT_FUSION_API_KEY),
     readSecret(raw.DIAG_WALLET_HMAC_KEY),
   ]);
   return {
@@ -382,6 +396,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     QUOTE_1INCH_RATELIMIT: raw.QUOTE_1INCH_RATELIMIT,
     DIAG_RECORD_RATELIMIT: raw.DIAG_RECORD_RATELIMIT,
     OPENSEA_LISTING_RATELIMIT: raw.OPENSEA_LISTING_RATELIMIT,
+    INTENT_FUSION_POST_RATELIMIT: raw.INTENT_FUSION_POST_RATELIMIT,
     OPENSEA_COLLECTION_RATELIMIT: raw.OPENSEA_COLLECTION_RATELIMIT,
     OPENSEA_OFFERS_RATELIMIT: raw.OPENSEA_OFFERS_RATELIMIT,
     // #334 — preserve the wrangler-vars config so the proxy
@@ -415,6 +430,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     ZEROEX_API_KEY: zeroEx,
     ONEINCH_API_KEY: oneInch,
     OPENSEA_API_KEY: openSea,
+    INTENT_FUSION_API_KEY: intentFusion,
     DIAG_WALLET_HMAC_KEY: walletHmac,
     // RPC_ZKEVM intentionally unset — Polygon zkEVM is out of scope.
   };

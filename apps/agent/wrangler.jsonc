@@ -101,6 +101,38 @@
         "namespace_id": "1005",
         "simple": { "limit": 30, "period": 60 },
       },
+      // T-090 v1.1 GA (#430) — operator-registered rate-limit
+      // binding for POST /intent/fusion/post. Not auto-declared
+      // here because Cloudflare's deploy validates that every
+      // `namespace_id` is registered with the account, and the
+      // dev account this checks-in against has 1001-1005 only.
+      //
+      // ** Required, not optional, when INTENT_FUSION_API_KEY is
+      //    bound. ** The handler's half-activation gate returns
+      //    `503 rate-limit-not-configured` when the API key is
+      //    bound but this rate-limit binding is missing, so the
+      //    bridge stays in the half-activated reject state until
+      //    BOTH are present (Codex round-7 PR #430 P2). Skipping
+      //    this step leaves the API key spend ungated to Origin-
+      //    spoofed callers; binding the limiter without the
+      //    key is harmless but doesn't activate anything.
+      //
+      // To enable the gate in production:
+      //   1. Register a new rate-limit namespace in the
+      //      Cloudflare dashboard for this Worker.
+      //   2. Add the binding back to this file with the chosen
+      //      namespace_id under the name `INTENT_FUSION_POST_RATELIMIT`:
+      //        { "name": "INTENT_FUSION_POST_RATELIMIT",
+      //          "type": "ratelimit",
+      //          "namespace_id": "<chosen-id>",
+      //          "simple": { "limit": 30, "period": 60 } }
+      //
+      // While neither this binding nor `INTENT_FUSION_API_KEY` is
+      // bound (the as-merged state), `checkRateLimit` no-ops
+      // because the no-API-key short-circuit at the top of the
+      // handler returns the queued-ack before any spend happens
+      // — the endpoint still serves traffic. The Origin gate
+      // above remains in place regardless.
       {
         // T-086 Round-5 Block A (#313) — GET /opensea/collection/{slug}
         // is hit by the dapp once per post / update flow on a fee-
@@ -191,6 +223,13 @@
   //   - OPENSEA_API_KEY      — T-086 step 14: OpenSea Listings API
   //                            key for `POST /opensea/listing`.
   //                            Server-side only.
+  //   - INTENT_FUSION_API_KEY — T-090 v1.1 GA (#426): 1inch Fusion
+  //                            resolver-pickup API key for
+  //                            `POST /intent/fusion/post`. When
+  //                            unset, the endpoint falls back to a
+  //                            queued-ack so the dapp resolves
+  //                            cleanly + the on-chain commit stays
+  //                            the source of truth.
   //   - DIAG_WALLET_HMAC_KEY — T-075: server secret keying the
   //                            per-wallet deletion hash. When unset,
   //                            connected-wallet capture skips writes
@@ -223,6 +262,33 @@
     // `POST /opensea/listing`. Server-side only; the dapp never
     // sees this key.
     { "binding": "OPENSEA_API_KEY",     "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "OPENSEA_API_KEY" },
+    // T-090 v1.1 GA (#426) — 1inch Fusion resolver-pickup API key.
+    // Auto-binding intentionally OMITTED: Cloudflare's Workers
+    // Build validates that every `secret_name` listed here exists
+    // in the account-level Secrets Store before the deploy
+    // succeeds, and the secret has to be created by the operator
+    // after creating a Fusion API key on the 1inch developer
+    // portal. Re-adding the binding before the secret exists fails
+    // the deploy.
+    //
+    // Operator action — to enable the bridge:
+    //   1. Create a Fusion API key on the 1inch developer portal.
+    //   2. Add the secret to the account-level Secrets Store:
+    //        wrangler secrets-store secret create <STORE_ID> \
+    //          --name INTENT_FUSION_API_KEY \
+    //          --scopes workers \
+    //          --value <fusion-api-key>
+    //   3. Add this binding back to the list above:
+    //        { "binding": "INTENT_FUSION_API_KEY",
+    //          "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+    //          "secret_name": "INTENT_FUSION_API_KEY" }
+    //   4. Redeploy.
+    //
+    // While the binding is absent, the agent endpoint's code
+    // (apps/agent/src/intentFusionPost.ts) reads
+    // env.INTENT_FUSION_API_KEY as undefined and falls back to
+    // the queued-ack response so the dapp's resolution path stays
+    // clean. The on-chain commit remains the source of truth.
     { "binding": "DIAG_WALLET_HMAC_KEY", "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "DIAG_WALLET_HMAC_KEY" },
     // ET-001 — no transaction-scan secret. The pre-sign transaction
     // preview is a frontend-only viem `eth_call` simulation (no API

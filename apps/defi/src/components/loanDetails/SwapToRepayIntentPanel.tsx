@@ -68,6 +68,17 @@ const AGENT_ORIGIN =
   (import.meta as unknown as { env: Record<string, string | undefined> }).env
     .VITE_AGENT_ORIGIN ?? null;
 
+// Codex round-5 PR #430 P2 — pre-commit chain gate. Fusion only
+// supports a fixed set of mainnet chains (mirror of the agent
+// worker's `FUSION_SUPPORTED_CHAIN_IDS`). On any other chain the
+// agent endpoint short-circuits to a queued-ack, so allowing the
+// borrower to commit there just locks their collateral into
+// custody with no chance of a Fusion fill. Disable the Commit
+// button up-front + tell them why.
+const FUSION_SUPPORTED_CHAIN_IDS: ReadonlySet<number> = new Set([
+  1, 8453, 42161, 10, 56, 137,
+]);
+
 // 1inch LOP v4 makerTraits bits — mirrors the Sub 1 contracts'
 // internal constants. Borrower-side salt + traits construction
 // follows the canonical layout `canonicalExtension()` validates
@@ -485,7 +496,15 @@ export function SwapToRepayIntentPanel({
       // after deadline).
       if (AGENT_ORIGIN) {
         try {
-          await fetch(`${AGENT_ORIGIN}/intent/fusion/post`, {
+          // Codex round-2 PR #430 P2 — surface upstream Fusion
+          // pickup failures to the borrower. The on-chain commit
+          // already locked their collateral in custody; if the
+          // Fusion-side post fails (queued-ack from a
+          // pre-rotation worker, 4xx from a rejected payload,
+          // 5xx from Fusion), the borrower needs to know so they
+          // can cancel after deadline instead of waiting for a
+          // fill that won't arrive.
+          const res = await fetch(`${AGENT_ORIGIN}/intent/fusion/post`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -506,8 +525,26 @@ export function SwapToRepayIntentPanel({
               },
             }),
           });
-        } catch {
-          // Best-effort. Continue.
+          if (!res.ok) {
+            setError(
+              `On-chain commit succeeded, but the Fusion resolver-pickup post failed (HTTP ${res.status}). Your collateral is in protocol custody; cancel after the auction deadline to recover.`,
+            );
+          } else {
+            const body = (await res.json().catch(() => null)) as
+              | { status?: string; note?: string }
+              | null;
+            if (body?.status === 'queued' && body?.note) {
+              setError(
+                `On-chain commit succeeded, but Fusion-side pickup is in a degraded state: ${body.note}`,
+              );
+            }
+          }
+        } catch (err) {
+          setError(
+            `On-chain commit succeeded, but the Fusion resolver-pickup post failed: ${
+              err instanceof Error ? err.message : String(err)
+            }. Your collateral is in protocol custody; cancel after the auction deadline to recover.`,
+          );
         }
       }
 
@@ -632,20 +669,6 @@ export function SwapToRepayIntentPanel({
         can cancel after the deadline and the custodial collateral
         returns to your vault.
       </div>
-      <div
-        className="alert alert-warning"
-        style={{ fontSize: '0.78rem' }}
-      >
-        <AlertTriangle size={14} />
-        <span>
-          <strong>v1.1 alpha:</strong> the 1inch Fusion resolver-pickup
-          upstream is not yet wired. Your collateral goes into diamond
-          custody on commit, but resolver discovery may be delayed.
-          Use the atomic swap-to-repay above for predictable fills;
-          this surface is for early adopters who can cancel after the
-          deadline if no resolver finds the order.
-        </span>
-      </div>
 
       {loadingIntent && (
         <div style={{ fontSize: '0.82rem', opacity: 0.7 }}>
@@ -672,12 +695,99 @@ export function SwapToRepayIntentPanel({
         </div>
       )}
 
+      {/* Codex round-6 PR #430 P1 + P2 — commit is disabled until
+          the v1.2 quoteId work + the agent-origin requirement are
+          both addressed. Three independent disable reasons; the
+          alert text explains which one applies.
+
+          Codex round-7 PR #430 P2 — keep this warning visible for
+          live-intent borrowers too. Their existing commit is also
+          expected not to fill until #431, so they need the same
+          "use cancel-after-deadline" framing even though the
+          Commit button is hidden in their state. */}
+      <div className="alert alert-warning" style={{ fontSize: '0.82rem' }}>
+        <AlertTriangle size={14} />
+        <span>
+          {!FUSION_SUPPORTED_CHAIN_IDS.has(chainId) ? (
+            <>
+              1inch Fusion does not support chain {chainId}.
+              {hasLiveIntent ? (
+                <>
+                  {' '}
+                  Your existing commit can only be resolved via the
+                  cancel-after-deadline path; no resolver fill will
+                  arrive on this chain.
+                </>
+              ) : (
+                <>
+                  {' '}
+                  A commit here would lock your collateral with no
+                  chance of a resolver fill. Use the atomic
+                  swap-to-repay above instead.
+                </>
+              )}
+            </>
+          ) : !AGENT_ORIGIN ? (
+            <>
+              The Vaipakam agent worker URL is not configured in this
+              build.
+              {hasLiveIntent ? (
+                <>
+                  {' '}
+                  Your existing commit is best resolved via the
+                  cancel-after-deadline path.
+                </>
+              ) : (
+                <>
+                  {' '}
+                  Use the atomic swap-to-repay above instead.
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              The 1inch Fusion resolver-pickup wire submits orders
+              without the `quoteId` field that Fusion requires, so
+              upstream is expected to reject every commit until the
+              v1.2 follow-up (issue #431) patches the bridge.
+              {hasLiveIntent ? (
+                <>
+                  {' '}
+                  Your existing commit is expected NOT to fill;
+                  cancel after the deadline to return custodial
+                  collateral to your vault.
+                </>
+              ) : (
+                <>
+                  {' '}
+                  Commit is disabled to avoid locking collateral
+                  that would only ever recover via the
+                  cancel-after-deadline path. Use the atomic
+                  swap-to-repay above instead; this surface
+                  re-enables when #431 lands.
+                </>
+              )}
+            </>
+          )}
+        </span>
+      </div>
+
       <div style={{ display: 'flex', gap: 8 }}>
         {!hasLiveIntent && (
           <button
             type="button"
             className="btn btn-primary btn-sm"
-            disabled={!canWrite || submitting || actionLoading}
+            disabled={
+              !canWrite ||
+              submitting ||
+              actionLoading ||
+              !FUSION_SUPPORTED_CHAIN_IDS.has(chainId) ||
+              !AGENT_ORIGIN ||
+              // v1.2 #431 — Fusion-side quoteId not yet integrated;
+              // commits would be rejected upstream. Disable until
+              // the follow-up lands.
+              true
+            }
             onClick={handleCommit}
           >
             {submitting ? 'Submitting…' : 'Commit best-price intent'}
