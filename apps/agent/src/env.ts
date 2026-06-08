@@ -125,6 +125,11 @@ interface BaseEnv {
   // postPrepayListing / updatePrepayListing tx, so a tight budget
   // is plenty; the binding exists mainly as an abuse safety net.
   OPENSEA_LISTING_RATELIMIT?: RateLimitBinding;
+  // T-090 v1.1 GA (#430) — per-IP gate on `POST /intent/fusion/post`.
+  // One POST per borrower commit-tx in normal flow; the binding
+  // bounds abuse that would otherwise spend the Vaipakam-side
+  // 1inch Fusion API quota.
+  INTENT_FUSION_POST_RATELIMIT?: RateLimitBinding;
   // T-086 Round-5 Block A (#313) — per-IP rate-limit on the new
   // GET /opensea/collection/{slug} proxy. Without this, anyone
   // can spoof an allowed Origin and iterate slugs/chains to drain
@@ -391,6 +396,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     QUOTE_1INCH_RATELIMIT: raw.QUOTE_1INCH_RATELIMIT,
     DIAG_RECORD_RATELIMIT: raw.DIAG_RECORD_RATELIMIT,
     OPENSEA_LISTING_RATELIMIT: raw.OPENSEA_LISTING_RATELIMIT,
+    INTENT_FUSION_POST_RATELIMIT: raw.INTENT_FUSION_POST_RATELIMIT,
     OPENSEA_COLLECTION_RATELIMIT: raw.OPENSEA_COLLECTION_RATELIMIT,
     OPENSEA_OFFERS_RATELIMIT: raw.OPENSEA_OFFERS_RATELIMIT,
     // #334 — preserve the wrangler-vars config so the proxy

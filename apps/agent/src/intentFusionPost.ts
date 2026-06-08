@@ -46,6 +46,22 @@ import type { Env } from './env';
 
 const FUSION_BASE_URL = 'https://api.1inch.dev/fusion/relayer/v2.0';
 
+/// Chain IDs 1inch Fusion supports. Codex round-1 PR #430 P2 —
+/// without this allow-list, a dapp on Base Sepolia (84532) or any
+/// other testnet would forward to a Fusion path that doesn't exist
+/// and every commit would silently fail at the upstream level.
+/// Source: 1inch Fusion supported-chains documentation. Mainnet
+/// only; Vaipakam testnets are gated to the queued-ack fallback
+/// regardless of the secret being set.
+const FUSION_SUPPORTED_CHAIN_IDS = new Set<number>([
+  1,      // Ethereum
+  8453,   // Base
+  42161,  // Arbitrum One
+  10,     // Optimism
+  56,     // BNB Chain
+  137,    // Polygon PoS
+]);
+
 /// Request body shape — matches the structured order projection
 /// the indexer's `GET /loans/:id` returns as `payload.swapToRepayIntent`.
 interface IntentFusionPostRequest {
@@ -96,6 +112,15 @@ export async function handleIntentFusionPost(
     return jsonErr(corsOrigin, 403, 'origin-not-allowed');
   }
 
+  // Codex round-1 PR #430 P2 — per-IP rate limit bounds the
+  // request rate that can spend the shared Fusion API key. The
+  // Origin gate above stops the browser-misconfigured noise; the
+  // rate-limit stops a malicious caller from spoofing Origin +
+  // burning the Vaipakam-side quota.
+  if (!(await checkRateLimit(req, env.INTENT_FUSION_POST_RATELIMIT))) {
+    return jsonErr(corsOrigin, 429, 'rate-limited');
+  }
+
   let raw: unknown;
   try {
     raw = await req.json();
@@ -114,6 +139,27 @@ export async function handleIntentFusionPost(
   // ran the commit tx successfully to get the orderHash; an
   // attacker faking the request still hits the same on-chain
   // rejection.
+
+  // Codex round-1 PR #430 P2 — gate to chains 1inch Fusion
+  // supports. A Base Sepolia commit (chainId 84532) would
+  // otherwise spend an API call on a path that doesn't exist; the
+  // upstream returns 404 and the dapp surfaces a misleading
+  // "Fusion upstream failed" error. Cleaner to short-circuit to
+  // the queued-ack with an unsupported-chain note so the user
+  // knows the on-chain commit is the source of truth + that
+  // resolver discovery isn't expected on this chain.
+  if (!FUSION_SUPPORTED_CHAIN_IDS.has(parsed.chainId)) {
+    console.log('[intent/fusion/post] queued (chain unsupported by Fusion)', {
+      chainId: parsed.chainId,
+      orderHash: parsed.orderHash,
+    });
+    return jsonOk(corsOrigin, {
+      ok: true,
+      status: 'queued',
+      orderHash: parsed.orderHash,
+      note: `Chain ${parsed.chainId} is not supported by 1inch Fusion. The on-chain commit is the source of truth; no Fusion solver discovery happens on this chain. Cancel after deadline to recover custodial collateral.`,
+    });
+  }
 
   // T-090 v1.1 GA (#426) — post to 1inch Fusion's resolver-pickup
   // endpoint with the operator-held API key. The dapp gets back
@@ -138,6 +184,39 @@ export async function handleIntentFusionPost(
     });
   }
 
+  // Codex round-1 PR #430 P1 — Fusion v2 relayer expects the
+  // `SignedOrderInput` shape:
+  //   { order: LimitOrderV4, signature: bytes, extension: bytes,
+  //     quoteId: string }
+  //
+  // For ERC-1271 contract makers (which the Vaipakam diamond is),
+  // the on-chain `isValidSignature` resolves the signature server-
+  // side — Fusion's server staticcalls into the diamond's ERC-1271
+  // hook with the canonical orderHash. The dapp does not produce
+  // a borrower EIP-712 signature for these orders; we pass an
+  // empty bytes string in the signature field.
+  //
+  // `quoteId` is from 1inch's preceding quote API. Vaipakam's
+  // commit flow is non-quote (we generate the order shape from
+  // on-chain context, not from a 1inch quote round-trip). We pass
+  // an empty string; Fusion's relayer allows that for orders that
+  // were not generated through their quote flow.
+  const signedOrderInput = {
+    order: {
+      maker: parsed.order.maker,
+      receiver: parsed.order.receiver,
+      makerAsset: parsed.order.makerAsset,
+      takerAsset: parsed.order.takerAsset,
+      makingAmount: parsed.order.makerAmount,
+      takingAmount: parsed.order.takerAmount,
+      salt: parsed.order.salt,
+      makerTraits: parsed.order.makerTraits,
+    },
+    signature: '0x',
+    extension: parsed.order.extension,
+    quoteId: '',
+  };
+
   const upstreamUrl = `${FUSION_BASE_URL}/${parsed.chainId}/order/submit`;
   try {
     const upstream = await fetch(upstreamUrl, {
@@ -147,30 +226,28 @@ export async function handleIntentFusionPost(
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
-      body: JSON.stringify({
-        orderHash: parsed.orderHash,
-        order: {
-          maker: parsed.order.maker,
-          receiver: parsed.order.receiver,
-          makerAsset: parsed.order.makerAsset,
-          takerAsset: parsed.order.takerAsset,
-          makingAmount: parsed.order.makerAmount,
-          takingAmount: parsed.order.takerAmount,
-          salt: parsed.order.salt,
-          makerTraits: parsed.order.makerTraits,
-        },
-        extension: parsed.order.extension,
-        deadline: parsed.order.deadline,
-        // Commit tx hash carried as telemetry context so 1inch's
-        // resolver-pickup audit log can correlate to the
-        // originating on-chain transaction.
-        sourceTxHash: parsed.commitTxHash,
-      }),
+      body: JSON.stringify(signedOrderInput),
     });
     return passthrough(upstream, corsOrigin);
   } catch (err) {
     console.error('[intent/fusion/post] upstream fetch failed', err);
     return jsonErr(corsOrigin, 502, 'fusion-upstream-failed');
+  }
+}
+
+async function checkRateLimit(
+  req: Request,
+  binding:
+    | { limit(input: { key: string }): Promise<{ success: boolean }> }
+    | undefined,
+): Promise<boolean> {
+  if (!binding) return true;
+  const ip = req.headers.get('cf-connecting-ip') ?? 'unknown';
+  try {
+    const { success } = await binding.limit({ key: ip });
+    return success;
+  } catch {
+    return true;
   }
 }
 

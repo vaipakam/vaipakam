@@ -102,6 +102,17 @@
         "simple": { "limit": 30, "period": 60 },
       },
       {
+        // T-090 v1.1 GA (#430) — POST /intent/fusion/post is one
+        // call per borrower commit tx, so the budget can be tight.
+        // The endpoint spends the Vaipakam-side 1inch Fusion API
+        // key; uncapped abuse could burn that quota. Per-IP gate
+        // mirrors the OpenSea binding above.
+        "name": "INTENT_FUSION_POST_RATELIMIT",
+        "type": "ratelimit",
+        "namespace_id": "1006",
+        "simple": { "limit": 30, "period": 60 },
+      },
+      {
         // T-086 Round-5 Block A (#313) — GET /opensea/collection/{slug}
         // is hit by the dapp once per post / update flow on a fee-
         // enforced collection (rare; only those collections need the
@@ -231,9 +242,15 @@
     // sees this key.
     { "binding": "OPENSEA_API_KEY",     "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "OPENSEA_API_KEY" },
     // T-090 v1.1 GA (#426) — 1inch Fusion resolver-pickup API key
-    // powers `POST /intent/fusion/post`. Operator rotates in via
-    // `wrangler secret put INTENT_FUSION_API_KEY` after creating a
-    // Fusion API key on the 1inch developer portal.
+    // powers `POST /intent/fusion/post`. Operator creates the
+    // secret in the account-level Secrets Store via:
+    //   wrangler secrets-store secret create <STORE_ID> \
+    //     --name INTENT_FUSION_API_KEY \
+    //     --scopes workers \
+    //     --value <fusion-api-key>
+    // (the per-Worker `wrangler secret put` command is for Worker
+    // secret bindings, NOT the account-level Secrets Store this
+    // file uses. Codex round-1 PR #430 P2.)
     { "binding": "INTENT_FUSION_API_KEY", "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "INTENT_FUSION_API_KEY" },
     { "binding": "DIAG_WALLET_HMAC_KEY", "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "DIAG_WALLET_HMAC_KEY" },
     // ET-001 — no transaction-scan secret. The pre-sign transaction
