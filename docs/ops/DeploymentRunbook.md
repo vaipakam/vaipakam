@@ -336,6 +336,146 @@ chain. Tail the live Worker logs to inspect:
 cd ops/hf-watcher && npx wrangler tail --format=pretty
 ```
 
+### T-090 v1.1 GA — intent-based swap-to-repay bridge activation
+
+The intent-based swap-to-repay surface (`SwapToRepayIntentPanel` on
+Loan Details) ships **functionally complete but inactive** until the
+operator finishes the post-deploy activation below. While
+unactivated, the agent worker's `POST /intent/fusion/post` returns a
+queued-ack with a "no Fusion solver discovery happens until the
+secret is rotated in" note; the dapp's panel surfaces the
+unsupported-chain warning + recommends the atomic swap-to-repay
+surface as the reliable repayment path. Borrowers can still attempt
+a commit on supported chains — the on-chain commit succeeds and the
+cancel-after-deadline path always works, but no resolver fill will
+arrive.
+
+Activation requires creating two Cloudflare resources (account-level
+Secrets Store entry + Worker rate-limit namespace), re-adding the
+matching bindings to `apps/agent/wrangler.jsonc`, and redeploying.
+Order matters — Cloudflare's deploy validation rejects bindings
+whose underlying resources don't exist yet, so each binding has to
+be re-added AFTER its resource is created. Run on each chain whose
+deploy the operator wants the bridge active for.
+
+#### Step 1 — Create the 1inch developer-portal API key
+
+Sign in to <https://portal.1inch.dev/>, create a project, and
+provision an API key with both **Limit Order Protocol Orderbook**
+and **Swap Aggregation** scopes enabled. Capture the key value
+locally for the next step.
+
+The key is read server-side only — never exposed to the dapp — so a
+single key is enough across all chains the agent worker is deployed
+to.
+
+#### Step 2 — Register the secret in the account-level Secrets Store
+
+From the worker checkout:
+
+```bash
+cd apps/agent
+# STORE_ID is the same id every other secret in the worker reads
+# from — look it up from any existing entry in
+# `apps/agent/wrangler.jsonc` → `secrets_store_secrets` (the
+# `store_id` field is the same value across all entries).
+STORE_ID="<paste from wrangler.jsonc>"
+
+wrangler secrets-store secret create "$STORE_ID" \
+  --name INTENT_FUSION_API_KEY \
+  --scopes workers \
+  --value "<the API key from step 1>"
+```
+
+Confirm the secret landed:
+
+```bash
+wrangler secrets-store secret list "$STORE_ID" --scopes workers \
+  | grep INTENT_FUSION_API_KEY
+```
+
+**Do NOT use `wrangler secret put`** — that targets per-Worker
+secret bindings rather than the account-level Secrets Store the
+worker reads from. The two namespaces are separate; mixing them
+silently fails to bind.
+
+#### Step 3 — Register the per-IP rate-limit namespace
+
+Open the Cloudflare dashboard → Workers & Pages → `vaipakam-agent`
+→ Settings → Bindings. Add a new **Rate limiting** binding:
+
+| Field | Value |
+| --- | --- |
+| Variable name | `INTENT_FUSION_POST_RATELIMIT` |
+| Type | Rate limiting |
+| Namespace ID | choose a fresh integer; capture it for step 4 |
+| Simple limit | `30` requests per `60` seconds |
+
+This bounds abuse spend on the `INTENT_FUSION_API_KEY` quota. The
+agent worker's `handleIntentFusionPost` runs a half-activation
+gate (`503 rate-limit-not-configured`) when the API key is bound
+but this binding is NOT, so the activation order — secret first,
+then rate-limit, then wrangler edit + redeploy — is enforced.
+
+#### Step 4 — Re-add both bindings to wrangler.jsonc and redeploy
+
+Open `apps/agent/wrangler.jsonc` and locate the two operator-action
+comment blocks (search for `T-090 v1.1 GA (#426)` for the API key
+and `T-090 v1.1 GA (#430)` for the rate-limit binding). Each block
+contains the exact binding declaration the file shipped without —
+uncomment / paste it back in. For the rate-limit binding, replace
+`<chosen-id>` with the namespace id from step 3.
+
+Then redeploy:
+
+```bash
+cd apps/agent
+npx wrangler deploy
+```
+
+Verify both bindings landed on the live Worker:
+
+```bash
+npx wrangler deployments list --name vaipakam-agent | head -5
+# Open the latest deployment in the Cloudflare dashboard and
+# confirm `INTENT_FUSION_API_KEY` (secret) + `INTENT_FUSION_POST_RATELIMIT`
+# (rate-limit) both appear under Bindings.
+```
+
+#### Step 5 — Smoke test the activated bridge
+
+The fastest end-to-end check posts a commit on Base Sepolia (which
+the dapp's chain gate allows + the agent's mainnet allow-list
+rejects). The expected result: the on-chain commit succeeds, the
+agent endpoint returns a `queued` ack with the unsupported-chain
+note, and the borrower's panel surfaces it. This validates every
+gate up to the upstream submit without spending a 1inch quota
+request on the live key.
+
+For a mainnet smoke test (deliberately scoped down to a small loan
+value), the expected result is a 2xx from the agent endpoint with
+the upstream 1inch orderbook response in the body. Tail the live
+Worker logs while the smoke test runs:
+
+```bash
+cd apps/agent && npx wrangler tail --format=pretty
+```
+
+Look for the matching `[intent/fusion/post]` log line; any
+`commit-tx-not-found`, `orderhash-not-in-commit-tx`,
+`order-fields-mismatch`, or `commit-no-longer-live` rejection
+indicates a misconfiguration that needs investigation before the
+borrower-facing surface is announced.
+
+#### Rollback
+
+To disable the bridge, comment out the same two bindings in
+`apps/agent/wrangler.jsonc` and redeploy. The agent endpoint
+short-circuits back to the queued-ack pre-activation state on the
+next request without losing any in-flight commit state — the
+on-chain commit + cancel paths remain functional throughout the
+binding flip.
+
 #### Quick sanity check from the frontend (added 2026-05-07)
 
 The frontend's diagnostics surface now exposes the same signals
