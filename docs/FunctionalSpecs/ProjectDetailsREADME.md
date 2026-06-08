@@ -621,6 +621,48 @@ this terminal or locked state so a lender cannot accept an offer whose
 collateral has already been sold, and a borrower cannot mutate
 settlement-floor terms while a fillable listing still depends on the
 old terms.
+- Borrow-or-sell eligibility is intentionally narrower than ordinary
+  offer creation: only borrower-side offers with NFT collateral and an
+  all-or-nothing fill mode may publish a parallel sale listing. This
+  keeps a single marketplace fill from conflicting with partial loan
+  fills or multiple child loans.
+- If a buyer fills the parallel sale before loan acceptance, the offer
+  must move to a dedicated sale-consumed terminal state, its position
+  NFT should be retired, sale proceeds should be credited to the
+  borrower's Vault, and all executor / vault order bindings must clear.
+- If a lender accepts first, the listing lock carries to the resulting
+  loan. Later release or cancellation authority follows the current
+  borrower-position NFT owner, not only the original borrower address.
+- Marketplace fills must be blocked after the loan's grace boundary.
+  Past that boundary, default and liquidation recovery take precedence
+  over keeping an old listing fillable.
+- Listing callbacks that record sale proceeds, mark offers consumed by
+  sale, or assert sanctions state must be reentrancy-safe against
+  malicious token transfer hooks re-entering offer acceptance or other
+  lifecycle entry points.
+- A loan may not have two live marketplace listing flows that compete
+  for the same NFT transfer approval. Loan-keyed prepay listings must
+  not overwrite an active parallel-sale approval slot, and a borrower
+  should cancel any open preclose-offset offer before a parallel sale
+  can settle.
+- Prepay-listing modes may include fixed-price, Dutch-decay, and
+  OpenSea-offer match flows. Dutch listings must enforce a minimum
+  auction window, end no later than the loan grace boundary, and ensure
+  total ask, fee legs, and borrower residual decay monotonically. OpenSea
+  offer matching should use an atomic match path so cancel, replacement,
+  and bidder fill either all succeed or all leave the prior listing
+  intact.
+- Fee-enforced collections that require marketplace fulfillment data
+  should fail closed until the proxy has fetched the canonical Seaport
+  parameters, bidder signature, extra data, and criteria resolvers
+  needed for a valid match. The dapp should surface that as an
+  unsupported-or-loading state, not route a known-doomed transaction.
+- When a listed loan is repaid, preclosed directly, refinanced, offset,
+  defaulted, liquidated, or otherwise closed outside the marketplace
+  fill path, listing cleanup must be atomic with that terminal action:
+  vault orderHash bindings, executor order context, and borrower-position
+  locks clear in the same transaction so stale marketplace signatures
+  cannot move collateral later.
 
 ## 4. Offer Book Display
 
@@ -725,6 +767,34 @@ The preview should preserve the resolved economic terms even when acceptance is 
 - Partial repayments must allocate interest-first before reducing principal when periodic-interest mode is enabled for the loan. The preview path should show the same split the settlement path will apply, so borrowers can see how much of a proposed payment covers the current period's accrued interest and how much reduces principal.
 - If a third party repays on behalf of the borrower, that third party does **not** gain any right to the collateral by making the payment alone.
 - After repayment, the collateral remains claimable only by the holder of the Vaipakam borrower NFT for that loan. Repayers must be clearly warned in the frontend and product flow that repayment does not transfer collateral ownership or collateral-claim rights.
+- Borrower-initiated swap-to-repay is an atomic repayment variant for
+  ERC-20-on-ERC-20 loans. The current borrower-position NFT holder may
+  swap pledged collateral into the principal asset and apply the proceeds
+  to the same repayment waterfall in one transaction, avoiding the
+  withdraw / external swap / redeposit / repay sequence.
+- Swap-to-repay supports a full-close mode that drives the loan to
+  `Repaid` and a partial-reduction mode only when the original offer
+  opted into partial repayment. Partial mode must not be used when the
+  swap proceeds would retire the full remaining principal; that case
+  should route through the full-close path so close housekeeping, reward
+  closure, and NFT status changes all fire.
+- Swap-to-repay must reuse the existing governed swap-adapter failover
+  path and configured venue set rather than introducing a new DEX
+  authority surface. If every supplied adapter route reverts, the whole
+  transaction reverts and the borrower can retry with better routing.
+- Borrower-facing swap-to-repay slippage is capped by a dedicated
+  protocol knob that defaults tighter than the liquidation cap because
+  the borrower chooses when to act. The cap remains bounded by the
+  protocol-wide slippage ceiling.
+- Authority follows the current borrower-position NFT owner. A lender
+  or current lender-position NFT holder must be blocked by the same
+  lender-self-repay guard used by ordinary repayment.
+- Full-close settlement mirrors ordinary repayment: lender entitlement
+  is deposited to the lender vault, treasury receives its fee share,
+  borrower LIF rebate / reward close handling runs, any prepay listing
+  is cleared, and unused pledged collateral becomes borrower-claimable.
+  Favorable-quote surplus principal should transfer directly to the
+  current borrower-position NFT holder's wallet.
 - Interest Formula: `Interest = (Principal * AnnualInterestRate * LoanDurationInDays) / (100 * DAYS_PER_YEAR)`. (Note: use standardized protocol constants such as `DAYS_PER_YEAR` and `SECONDS_PER_YEAR` rather than hard-coded literals like `365`, and ensure consistent precision, e.g., rate stored as basis points).
 - Late fees apply if repayment occurs after the due date but within the grace period, or if repayment is forced post-grace period.
 
@@ -1871,13 +1941,14 @@ All functions are pure `view` functions (zero gas for callers when invoked via R
 - **Flash-Loan Atomicity Tests:** Tests and review should verify that keeper-funded flash-loan liquidation is atomic: the Diamond receives or pulls the principal repayment before collateral is released, the flash-loan callback reverts the whole transaction if debt plus fee cannot be repaid, and the keeper receiver does not retain custody of user funds between transactions.
 - **Internal-Match Liquidation Tests:** Tests should cover internal-match enablement defaulting off, per-tier liquidation-threshold snapshots at loan initiation, two-loan reciprocal matches, three-loan cycle matches, priority-window blocking of external liquidation, reopening external liquidation after the window, per-leg incentive bounds, partial-match residual claimability, terminal-state claim behavior, fallback-pending full rescue, fallback-pending partial residual scaling, oracle-unpriceable fallback-pending rejection, active-to-internally-matched and fallback-pending-to-internally-matched lifecycle edges, and event/indexer compatibility.
 - **Offer-System Behaviour Tests:** Tests should cover fill-mode behaviour, offer expiry and cleanup, in-place offer modification without orphaning already-filled obligations, direct-accept preview parity with actual acceptance, and self-trade prevention across both direct acceptance and permissionless matching.
-- **NFT Collateral Listing Tests:** Tests should cover borrower opt-in, lender-side permission, minimum sale-floor enforcement, approved marketplace transfer paths, full-position ERC-1155 sales, listing update and cancellation, marketplace-fill settlement order, grace-boundary expiry, default after an unfilled listing, proper close after a sale, stale-listing cleanup after other terminal paths, offer consumed by sale before lender acceptance, sale-versus-accept race handling, and sanctions checks at fill time where sanctions screening is active.
+- **NFT Collateral Listing Tests:** Tests should cover borrower opt-in, lender-side permission, minimum sale-floor enforcement, approved marketplace transfer paths, full-position ERC-1155 sales, listing update and cancellation, marketplace-fill settlement order, grace-boundary expiry, default after an unfilled listing, proper close after a sale, stale-listing cleanup after other terminal paths, offer consumed by sale before lender acceptance, sale-versus-accept race handling, Dutch-decay monotonicity and auction-window bounds, atomic OpenSea-offer match rotation, fee-enforced collection fulfillment-data handling, sibling-listing approval isolation, current-borrower-holder release authority, and sanctions checks at fill time where sanctions screening is active.
+- **Swap-to-Repay Tests:** Tests should cover full-close and partial-reduction modes, partial-mode rejection when the swap would close the loan, current borrower-position NFT authority, lender-self-repay rejection, all-routes-failed atomic revert, slippage-cap enforcement, settlement waterfall parity with ordinary repayment, borrower surplus principal delivery, unused collateral claim creation, prepay-listing cleanup, and event/indexer compatibility for Activity and Loan Details timelines.
 - **Production-Superset Test Harness:** Shared test scaffolding should route every production Diamond facet selector plus any explicit test-only helpers. A test should not pass by accidentally hitting a missing selector where production would route the call, especially for pause, legal, reward, oracle-admin, vault, and tokenomics surfaces.
 - **Off-Chain Data-Flow Audit:** Before mainnet, the project should maintain a catalog of off-chain reads and writes used by the frontend, workers, indexer, keeper, and operator tools. Each entry should identify signer requirements, freshness or time-to-live assumptions, fail-open or fail-closed behavior, plausibility checks, and blast radius. External reads that influence money-moving decisions should have explicit stale-data handling, and keeper writes should remain bounded by on-chain checks.
 - **Off-Chain Data Resilience:** Before mainnet, production off-chain data needed for usability and compliance should have an encrypted backup path outside the primary hosting account and billing boundary. The backup set should include indexed offer / loan data, diagnostics needed for support, legal-hold audit records, and legal-document storage. Operators should verify backup readability on a recurring schedule and maintain a documented restore path for a fresh hosting account.
 - **Risk Sign-Off Package:** Before each mainnet launch or material risk-control activation, operators should archive a risk sign-off covering audit posture, parameter sanity, emergency controls, bot and external dependency readiness, chain-specific deployment readbacks, liquidation economics, sequencer and oracle outage behavior, and the exact scope being approved.
 - **Release-Notes Discipline:** Behaviour-changing pull requests should carry their own unreleased release-note fragment so operator-facing change history lands atomically with the work. Daily or release-cut assembly may fold those fragments into dated release notes, and CI should warn when app or contract behaviour changes without a corresponding release-note entry.
-- **Required CI Gate:** The protected main branch should require fast deploy-sanity, positive-flow, and workspace-validation checks, plus the change-detection gate that decides which checks are relevant for a pull request. Slow full-regression and gas-cost review checks may remain informational or operator-local on ordinary pull requests, but release branches and version tags must run the full predeploy regression as a hard mainnet gate before cutover.
+- **Required CI Gate:** The protected main branch should require fast deploy-sanity, positive-flow, and workspace-validation checks, plus the change-detection gate that decides which checks are relevant for a pull request. Per-PR contracts CI should use the narrow `cifast` Foundry profile for the deploy-sanity and positive-flow surface so routine PRs stay within hosted-runner memory limits. Slow full-regression and gas-cost review checks are operator-local on ordinary pull requests, while release branches and version tags must run the full predeploy regression as a hard mainnet gate before cutover. The removed `contracts-full` and `gas-snapshot` jobs should not be referenced as live PR gates in FunctionalSpecs, runbooks, or comments.
 - **Deploy Guardrails:** Deploy sanity coverage should fail before broadcast when a facet would exceed the EVM runtime-size limit, when a public selector is missing, duplicated, or routed to the wrong facet, when the expected facet count does not exactly match the deployed Diamond, or when committed ABI files are stale or missing. These checks protect deployability and consumer compatibility rather than changing user behavior.
 - **Static-Analysis Closure:** Static-analysis findings should be triaged to zero open high-risk findings before mainnet readiness. Dismissed findings need written rationale, dependency findings should be filtered when they belong to unmodified audited libraries, and real dead-code findings should be removed instead of suppressed.
 - **Generated Contract Documentation:** Public NatSpec documentation must describe the current Chainlink CCIP cross-chain architecture and avoid stale LayerZero / OApp wording. If generated public docs are known to be materially stale during a migration, the published site should visibly warn readers until the wording is corrected, and that warning should be retired once the docs are current.
