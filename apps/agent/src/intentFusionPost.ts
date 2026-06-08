@@ -71,8 +71,25 @@ export async function handleIntentFusionPost(
    *  endpoint on this Worker uses. */
   corsOrigin: string,
 ): Promise<Response> {
-  // env reserved for future Fusion API key + telemetry sink wiring.
-  void env;
+  // Codex round-4 PR #423 P2 — frontend-origin gate. CORS-echo
+  // (`corsOrigin`) is not authentication: a simple POST from
+  // any site or non-browser caller still reaches this handler.
+  // Without an Origin allow-list check, arbitrary callers could
+  // inject fake `queued` telemetry today + burn the server-side
+  // Fusion-pickup quota once the upstream `fetch` lands.
+  //
+  // Mirror the OpenSea listing route's gate (per docstring: CORS
+  // origin is resolved by `resolveAllowedOrigin` which falls back
+  // to FRONTEND_ORIGIN's first entry when the request has no
+  // matching Origin header — meaning anything with a foreign /
+  // missing Origin is implicitly mismatch-flagged here).
+  const reqOrigin = req.headers.get('Origin');
+  const allowed = (env as unknown as { FRONTEND_ORIGIN?: string })
+    .FRONTEND_ORIGIN ?? '';
+  const allowList = allowed.split(',').map((s) => s.trim()).filter(Boolean);
+  if (!reqOrigin || !allowList.includes(reqOrigin)) {
+    return jsonErr(corsOrigin, 403, 'origin-not-allowed');
+  }
 
   let raw: unknown;
   try {

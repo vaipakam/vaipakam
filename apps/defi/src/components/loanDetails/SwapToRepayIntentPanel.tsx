@@ -308,16 +308,22 @@ export function SwapToRepayIntentPanel({
           lenderLeg: bigint;
           treasuryLeg: bigint;
         };
-        // Buffer BPS structure:
-        //   - 200 bps (~2%): the configured intent buffer that
-        //     the contract's postInteraction check enforces.
-        //   - 300 bps (~3%): safety margin layered on top to
-        //     absorb (a) potential late-fee accrual the struct
-        //     doesn't expose, (b) 1-2 blocks of interest accrual
-        //     between this read + tx inclusion.
+        // Codex round-4 PR #423 P2 — buffer must cover:
+        //   • the late-fee component the PrepayContext struct
+        //     doesn't surface; `calculateLateFee` ramps to ~5%
+        //     of principal for past-maturity-in-grace loans
+        //   • the configured intent buffer (~2%) the contract's
+        //     postInteraction check enforces
+        //   • 1-2 blocks of interest accrual between this read
+        //     + tx inclusion (~0.5%)
+        // Worst case ≈ 7.5%; round up to 8% to leave margin.
+        // The borrower can still preview the actual numbers in
+        // the panel's amount display before signing.
         const protocolBufferBps = BigInt(200);
-        const safetyBps = BigInt(300);
-        const totalBufferBps = protocolBufferBps + safetyBps;
+        const lateFeeMarginBps = BigInt(500);
+        const accrualMarginBps = BigInt(100);
+        const totalBufferBps =
+          protocolBufferBps + lateFeeMarginBps + accrualMarginBps;
         const baseFloor = ctx.lenderLeg + ctx.treasuryLeg;
         liveFloor =
           (baseFloor * (BigInt(10_000) + totalBufferBps)) / BigInt(10_000);
@@ -354,7 +360,37 @@ export function SwapToRepayIntentPanel({
         }
       ).commitSwapToRepayIntent(loanId, params);
       const commitTxHash = tx.hash;
-      await tx.wait();
+      const receipt = (await tx.wait()) as
+        | { logs: { topics: string[] }[] }
+        | undefined;
+
+      // Codex round-4 PR #423 P2 — extract the CANONICAL orderHash
+      // from the `SwapToRepayIntentCommitted` event log. The
+      // contract registers + emits a hash derived from the salt,
+      // maker/receiver/assets, amounts, makerTraits, and LOP
+      // domain separator — NOT the extension keccak we used to
+      // bind the salt. Sending the wrong hash to the agent +
+      // Fusion would mean ERC-1271 staticcall returns
+      // `0xffffffff` for every resolver pickup attempt → no
+      // resolver fills, order expires.
+      const { keccak256, toBytes } = await import('viem');
+      const committedTopic0 = keccak256(
+        toBytes(
+          'SwapToRepayIntentCommitted(uint256,bytes32,address,uint256,uint256,uint64)',
+        ),
+      );
+      let canonicalOrderHash: `0x${string}` = extHash; // fallback
+      if (receipt?.logs) {
+        for (const lg of receipt.logs) {
+          if (lg.topics?.[0]?.toLowerCase() === committedTopic0.toLowerCase()) {
+            // topics[2] is the indexed orderHash field.
+            if (lg.topics[2]) {
+              canonicalOrderHash = lg.topics[2] as `0x${string}`;
+              break;
+            }
+          }
+        }
+      }
 
       // 6. Post the structured order to apps/agent so Fusion's
       // resolver-set picks it up. Best-effort — the on-chain commit
@@ -368,7 +404,7 @@ export function SwapToRepayIntentPanel({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chainId,
-              orderHash: extHash, // placeholder; real shape returned from chain logs
+              orderHash: canonicalOrderHash,
               commitTxHash,
               order: {
                 maker: diamondAddress,
@@ -398,11 +434,11 @@ export function SwapToRepayIntentPanel({
       // The refresh effect below replaces this row with the
       // canonical indexer-sourced one once the indexer catches up.
       setLiveIntent({
-        // Stable placeholder — the real orderHash is in the tx
-        // receipt logs (a v1.2 reads it and threads it through;
-        // for the MVP the placeholder displays a half-truth that
-        // gets replaced the moment the indexer catches up).
-        orderHash: extHash,
+        // Real canonical orderHash extracted from the receipt
+        // log above (Codex round-4 P2). Falls back to extHash
+        // only if topic extraction fails — the indexer's row
+        // will replace it on next tick either way.
+        orderHash: canonicalOrderHash,
         committedBy: (address ?? '').toLowerCase(),
         makerAmount: collateralAmount.toString(),
         takerAmount: takerAmount.toString(),
@@ -455,18 +491,19 @@ export function SwapToRepayIntentPanel({
         }
       ).cancelSwapToRepayIntent(loanId);
       await tx.wait();
+      // Codex round-4 PR #423 P2 — clear ONLY on success path.
+      // A revert at `tx.wait()` (too early / wrong NFT holder /
+      // RPC timeout) still has the on-chain commit alive; the
+      // borrower needs the cancel surface to stay so they can
+      // retry. Round-3 had this in `finally` which would clear
+      // the panel on any failure including transient RPC ones.
+      setLiveIntent(null);
+      setOptimisticPending(false);
     } catch (err) {
       setError(decodeContractError(err, 'Cancel intent failed'));
     } finally {
       setSubmitting(false);
       onActionLoadingChange?.(false);
-      // Optimistic-clear on cancel — the on-chain row is gone;
-      // null-clearing immediately matches what the indexer will
-      // confirm on the next tick (Codex round-3 P2 — without
-      // this, the cancel surface would persist for the indexer-
-      // catch-up window).
-      setLiveIntent(null);
-      setOptimisticPending(false);
       setRefreshTick((t) => t + 1);
       if (onAfterSuccess) {
         try {
