@@ -122,6 +122,7 @@ FACETS=(
   "VpfiBuyAdapter"
   "VpfiBuyReceiver"
   "VPFIDiscountFacet"
+  "VPFIDiscountAccumulatorFacet"
   "VPFITokenFacet"
   # FlashLoanLiquidationPath.md Phase 3 — standalone reference
   # receiver contract for `RiskFacet.triggerLiquidationDiscounted`.

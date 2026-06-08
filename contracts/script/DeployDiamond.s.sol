@@ -47,6 +47,7 @@ import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {MetricsDashboardFacet} from "../src/facets/MetricsDashboardFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
+import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {StakingRewardsFacet} from "../src/facets/StakingRewardsFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
@@ -163,6 +164,8 @@ contract DeployDiamond is Script {
         MetricsDashboardFacet metricsDashboardFacet = new MetricsDashboardFacet();
         VPFITokenFacet vpfiTokenFacet = new VPFITokenFacet();
         VPFIDiscountFacet vpfiDiscountFacet = new VPFIDiscountFacet();
+        VPFIDiscountAccumulatorFacet vpfiDiscountAccumulatorFacet =
+            new VPFIDiscountAccumulatorFacet();
         StakingRewardsFacet stakingRewardsFacet = new StakingRewardsFacet();
         InteractionRewardsFacet interactionRewardsFacet = new InteractionRewardsFacet();
         RewardReporterFacet rewardReporterFacet = new RewardReporterFacet();
@@ -193,7 +196,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](46);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](47);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -316,6 +319,13 @@ contract DeployDiamond is Script {
         cuts[45] = _buildCut(
             address(intentConfigFacet),
             _getIntentConfigSelectors()
+        );
+        // T-087 Sub 1.B — single-home VPFI discount accumulator facet
+        // (ring-buffer math + lifecycle bookkeeping). Carved off
+        // {LibVPFIDiscount} so settlement facets stay under EIP-170.
+        cuts[46] = _buildCut(
+            address(vpfiDiscountAccumulatorFacet),
+            _getVpfiDiscountAccumulatorSelectors()
         );
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
@@ -627,6 +637,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("metricsDashboardFacet",   address(metricsDashboardFacet));
         Deployments.writeFacet("vpfiTokenFacet",          address(vpfiTokenFacet));
         Deployments.writeFacet("vpfiDiscountFacet",       address(vpfiDiscountFacet));
+        Deployments.writeFacet("vpfiDiscountAccumulatorFacet", address(vpfiDiscountAccumulatorFacet));
         Deployments.writeFacet("stakingRewardsFacet",     address(stakingRewardsFacet));
         Deployments.writeFacet("interactionRewardsFacet", address(interactionRewardsFacet));
         Deployments.writeFacet("rewardReporterFacet",     address(rewardReporterFacet));
@@ -682,6 +693,7 @@ contract DeployDiamond is Script {
         console.log("MetricsDashboardFacet:", address(metricsDashboardFacet));
         console.log("VPFITokenFacet:       ", address(vpfiTokenFacet));
         console.log("VPFIDiscountFacet:    ", address(vpfiDiscountFacet));
+        console.log("VPFIDiscountAccumulatorFacet:", address(vpfiDiscountAccumulatorFacet));
         console.log("StakingRewardsFacet:  ", address(stakingRewardsFacet));
         console.log("InteractionRewardsFacet:", address(interactionRewardsFacet));
         console.log("RewardReporterFacet:  ", address(rewardReporterFacet));
@@ -1457,6 +1469,22 @@ contract DeployDiamond is Script {
         s[9] = RewardReporterFacet.getKnownGlobalInterestNumeraire18.selector;
         // Single-field getter for the protocol-console knob registry.
         s[10] = RewardReporterFacet.getRewardGraceSeconds.selector;
+    }
+
+    /// T-087 Sub 1.B — single-home accumulator facet (ring-buffer
+    /// math + lifecycle bookkeeping). Both selectors are gated to
+    /// `msg.sender == address(this)` so an EOA can never invoke
+    /// them directly; library wrappers route through the Diamond's
+    /// fallback. See {VPFIDiscountAccumulatorFacet.sol} for the
+    /// extraction rationale.
+    function _getVpfiDiscountAccumulatorSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](2);
+        s[0] = VPFIDiscountAccumulatorFacet.rollupUserDiscount.selector;
+        s[1] = VPFIDiscountAccumulatorFacet.effectiveTierAndBps.selector;
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {

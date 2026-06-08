@@ -10,6 +10,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
+import {VPFIDiscountAccumulatorFacet} from "../facets/VPFIDiscountAccumulatorFacet.sol";
 
 /**
  * @title LibVPFIDiscount
@@ -170,34 +171,67 @@ library LibVPFIDiscount {
         address user,
         uint256 balPostMutation
     ) internal {
-        LibVaipakam.UserVpfiDiscountState storage u =
-            LibVaipakam.storageSlot().userVpfiDiscountState_DEPRECATED[user];
-
-        if (u.lastRollupAt == 0) {
-            // Self-seed against the post-mutation balance — that's the
-            // tier in effect for the first measured period. Nothing
-            // accrues for time before this moment.
-            u.discountBpsAtPreviousRollup =
-                uint16(discountBpsForTier(tierOf(balPostMutation)));
-            u.lastRollupAt = uint64(block.timestamp);
-            return;
-        }
-
-        uint256 elapsed = block.timestamp - u.lastRollupAt;
-        if (elapsed > 0) {
-            // Close the prior period at the stamped bps, which was seeded
-            // from the pre-mutation balance of the PRIOR rollup — i.e.
-            // the tier in effect across the just-closed window.
-            u.cumulativeDiscountBpsSeconds +=
-                uint256(u.discountBpsAtPreviousRollup) * elapsed;
-        }
-        // Re-stamp against the post-mutation balance: the tier that will
-        // be in effect from now until the next rollup. Governance changes
-        // to the tier table take effect here prospectively.
-        u.discountBpsAtPreviousRollup =
-            uint16(discountBpsForTier(tierOf(balPostMutation)));
-        u.lastRollupAt = uint64(block.timestamp);
+        // T-087 Sub 1.B — route through {VPFIDiscountAccumulatorFacet}
+        // to keep the heavy ring-buffer + lifecycle bytecode out of
+        // every settlement-facet's inlined surface (see that facet's
+        // top-of-file rationale for the EIP-170 motivation). The
+        // wrapper preserves the public library API so call sites
+        // stay unchanged.
+        //
+        // Low-level call + silent fallback: many bespoke unit-test
+        // fixtures (LoanFacetTest, RepayFacetTest, ...) build a
+        // minimal diamond that doesn't cut the accumulator facet
+        // because they don't exercise the discount path. A direct
+        // typed call would revert `FunctionDoesNotExist`. The
+        // silent fallback preserves the pre-T-087 semantics on
+        // those fixtures (the rollup becomes a no-op) while
+        // production deployments + the SetupTest fixture get the
+        // full accumulator behaviour.
+        (bool ok, ) = address(this).call(
+            abi.encodeWithSelector(
+                VPFIDiscountAccumulatorFacet.rollupUserDiscount.selector,
+                user,
+                balPostMutation
+            )
+        );
+        ok; // explicitly ignored — see comment above.
     }
+
+    /// @notice T-087 Sub 1.B — read entry point used by every fee-charging
+    ///         path on Base. Returns the user's EFFECTIVE_TIER and the
+    ///         BPS to apply, both already past the min-history gate and
+    ///         the min-tier-over-history clamp.
+    /// @dev    Pure view; the caller MUST have invoked
+    ///         {rollupUserDiscount} first so the ring buffer reflects
+    ///         "as of now". Mirror chains read from
+    ///         `s.userTierCache[user]` instead (Sub 1.C wires that path).
+    function effectiveTierAndBps(address user)
+        internal
+        view
+        returns (uint8 effTier, uint16 effBps)
+    {
+        // T-087 Sub 1.B — cross-facet staticcall keeps the heavy TWA +
+        // min-tier scan out of the calling facet's inlined bytecode.
+        // Low-level staticcall + silent (0, 0) fallback keeps minimal-
+        // fixture test diamonds that don't cut the accumulator facet
+        // working — see {rollupUserDiscount} above for the full
+        // rationale.
+        (bool ok, bytes memory ret) = address(this).staticcall(
+            abi.encodeWithSelector(
+                VPFIDiscountAccumulatorFacet.effectiveTierAndBps.selector,
+                user
+            )
+        );
+        if (!ok || ret.length < 64) return (0, 0);
+        (effTier, effBps) = abi.decode(ret, (uint8, uint16));
+    }
+
+    // Heavy ring-buffer + lifecycle helpers live in
+    // {VPFIDiscountAccumulatorFacet}; this library accesses them
+    // via the cross-facet wrappers above so the consumers
+    // (RepayFacet / PrecloseFacet / RefinanceFacet) don't inline
+    // ~2 kB of bytecode each and breach EIP-170.
+
 
     /**
      * @notice Time-weighted average discount BPS a lender earned across a
@@ -211,15 +245,16 @@ library LibVPFIDiscount {
     function lenderTimeWeightedDiscountBps(
         LibVaipakam.Loan storage loan
     ) internal view returns (uint256 avgBps) {
+        // T-087 Sub 1.B: the design replaces the Phase-5 loan-window
+        // averaging with INSTANT EFFECTIVE_BPS lookup at the moment of
+        // fee application (design §3 reuse row). The `loan.startTime`
+        // gate is kept defensively — a zero-duration loan (accepted
+        // and repaid in the same block) returns 0 by parity with
+        // the previous semantics. The `loan.lenderDiscountAccAtInit`
+        // anchor stays populated (vestigial) but is no longer read.
         if (loan.startTime == 0 || block.timestamp <= loan.startTime) return 0;
-        uint256 windowSeconds = block.timestamp - loan.startTime;
-        uint256 currentAcc =
-            LibVaipakam.storageSlot()
-                .userVpfiDiscountState_DEPRECATED[loan.lender]
-                .cumulativeDiscountBpsSeconds;
-        if (currentAcc <= loan.lenderDiscountAccAtInit) return 0;
-        avgBps =
-            (currentAcc - loan.lenderDiscountAccAtInit) / windowSeconds;
+        ( , uint16 effBps) = effectiveTierAndBps(loan.lender);
+        avgBps = uint256(effBps);
     }
 
     /**
@@ -236,15 +271,11 @@ library LibVPFIDiscount {
     function borrowerTimeWeightedDiscountBps(
         LibVaipakam.Loan storage loan
     ) internal view returns (uint256 avgBps) {
+        // T-087 Sub 1.B — instant EFFECTIVE_BPS lookup, symmetric with
+        // {lenderTimeWeightedDiscountBps}. See the rationale there.
         if (loan.startTime == 0 || block.timestamp <= loan.startTime) return 0;
-        uint256 windowSeconds = block.timestamp - loan.startTime;
-        uint256 currentAcc =
-            LibVaipakam.storageSlot()
-                .userVpfiDiscountState_DEPRECATED[loan.borrower]
-                .cumulativeDiscountBpsSeconds;
-        if (currentAcc <= loan.borrowerDiscountAccAtInit) return 0;
-        avgBps =
-            (currentAcc - loan.borrowerDiscountAccAtInit) / windowSeconds;
+        ( , uint16 effBps) = effectiveTierAndBps(loan.borrower);
+        avgBps = uint256(effBps);
     }
 
     // ─── Quotes (view) ───────────────────────────────────────────────────────
@@ -286,8 +317,13 @@ library LibVPFIDiscount {
     {
         if (principal == 0 || borrower == address(0)) return (false, 0, 0);
 
-        uint256 bal = vaultVpfiBalance(borrower);
-        tier = tierOf(bal);
+        // T-087 Sub 1.B — read EFFECTIVE_TIER from the ring-buffer
+        // accumulator, NOT raw vault balance. The min-history gate
+        // and min-tier-over-history clamp must apply here too;
+        // otherwise a fresh wallet could quote a tier-4 LIF on Base
+        // even though the discount path will refuse to apply
+        // (Codex round-6 P1 #5).
+        (tier, ) = effectiveTierAndBps(borrower);
         if (tier == 0) return (false, 0, 0);
 
         uint256 normalFee = (principal * LibVaipakam.cfgLoanInitiationFeeBps()) /
@@ -471,16 +507,13 @@ library LibVPFIDiscount {
             return;
         }
 
-        // Roll up "as of now" (no mutation on this read) so the window
-        // average sees every period up to this settlement instant.
-        // T-054 PR-2 — clamp against tracked so dust doesn't shift
-        // the tier on the snapshot read.
-        uint256 borrowerBal = IERC20(vpfi).balanceOf(
-            s.userVaipakamVaults[loan.borrower]
-        );
-        uint256 borrowerTracked = s.protocolTrackedVaultBalance[loan.borrower][vpfi];
-        rollupUserDiscount(loan.borrower, clampToTracked(borrowerBal, borrowerTracked));
-
+        // T-087 Sub 1.B — no rollup at settlement: EFFECTIVE_BPS is
+        // an instantaneous read from the ring buffer (design §3 reuse
+        // row), so settlement only needs to LOOK at the borrower's
+        // current effective state, not mutate it. Dropping the rollup
+        // here keeps the heavy lifecycle / nonce-bump path out of
+        // every settlement facet's inlined bytecode (PrecloseFacet
+        // would otherwise breach EIP-170).
         uint256 avgBps = borrowerTimeWeightedDiscountBps(loan);
         uint256 rebate = (held * avgBps) / LibVaipakam.BASIS_POINTS;
         if (rebate > held) rebate = held;
@@ -588,22 +621,18 @@ library LibVPFIDiscount {
         address lenderVault = s.userVaipakamVaults[lender];
         if (lenderVault == address(0) || vpfi == address(0)) return (false, 0);
 
-        // 1. Roll up the lender's discount accumulator to "now" so the
-        //    window-averaged BPS reflects every period right up to this
-        //    settlement. No balance change on this read — pre == post at
-        //    the live balance. A second rollup after the withdraw
-        //    re-stamps at the post-mutation tier; splitting the two
-        //    protects against silent-fallback failure committing a
-        //    wrong stamp.
-        //    T-054 PR-2 — clamp against tracked so dust doesn't shift
-        //    the tier on the snapshot read.
+        // T-087 Sub 1.B — no pre-withdraw rollup. EFFECTIVE_BPS is an
+        // instant read; the second rollup AFTER the withdraw at the
+        // bottom of this function still captures the post-mutation
+        // balance for the ring buffer + lifecycle bookkeeping.
+        // Dropping this duplicate rollup keeps PrecloseFacet under
+        // EIP-170.
         uint256 vaultBal = IERC20(vpfi).balanceOf(lenderVault);
         uint256 prevTracked = s.protocolTrackedVaultBalance[lender][vpfi];
-        rollupUserDiscount(lender, clampToTracked(vaultBal, prevTracked));
 
-        // 2. Quote against the now-current accumulator + the loan's
-        //    init snapshot. This returns the time-weighted avg discount
-        //    for the window, not a live tier lookup.
+        // Quote against the live accumulator + the loan's init
+        // snapshot. This returns the time-weighted avg discount
+        // for the window, not a live tier lookup.
         (bool canQuote, uint256 vpfiRequired, ) = quoteYieldFee(loan, interestAmount);
         if (!canQuote) return (false, 0);
         if (vaultBal < vpfiRequired) return (false, 0);

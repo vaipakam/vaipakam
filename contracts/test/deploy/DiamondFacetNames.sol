@@ -33,7 +33,7 @@ abstract contract DiamondFacetNames {
     ///      `NFTPrepayListingAtomicFacet`;
     ///      41 → 42 in T-086 Round-7 (#355) with
     ///      `NFTPrepayAutoListFacet`.)
-    function cutFacetNames() internal pure returns (string[46] memory) {
+    function cutFacetNames() internal pure returns (string[47] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -108,6 +108,12 @@ abstract contract DiamondFacetNames {
             "TreasuryFacet",
             "VaipakamNFTFacet",
             "VPFIDiscountFacet",
+            // T-087 Sub 1.B — single-home facet for the heavy
+            // ring-buffer + lifecycle math the new VPFI discount
+            // accumulator depends on. Carved off `LibVPFIDiscount` so
+            // settlement facets (Repay / Preclose / Refinance) stay
+            // under EIP-170 instead of inlining ~2 kB per consumer.
+            "VPFIDiscountAccumulatorFacet",
             "VPFITokenFacet"
         ];
     }

@@ -38,6 +38,8 @@ import MetricsFacetABI from './MetricsFacet.json';
 import MetricsDashboardFacetABI from './MetricsDashboardFacet.json';
 import VPFITokenFacetABI from './VPFITokenFacet.json';
 import VPFIDiscountFacetABI from './VPFIDiscountFacet.json';
+// T-087 Sub 1.B — accumulator facet carved off LibVPFIDiscount.
+import VPFIDiscountAccumulatorFacetABI from './VPFIDiscountAccumulatorFacet.json';
 import StakingRewardsFacetABI from './StakingRewardsFacet.json';
 import InteractionRewardsFacetABI from './InteractionRewardsFacet.json';
 // T-068 renamed these contracts VPFIBuyAdapter/VPFIBuyReceiver →
@@ -106,6 +108,7 @@ export {
   MetricsDashboardFacetABI,
   VPFITokenFacetABI,
   VPFIDiscountFacetABI,
+  VPFIDiscountAccumulatorFacetABI,
   StakingRewardsFacetABI,
   InteractionRewardsFacetABI,
   VpfiBuyAdapterABI,
@@ -164,6 +167,7 @@ export const DIAMOND_ABI = [
   ...MetricsDashboardFacetABI,
   ...VPFITokenFacetABI,
   ...VPFIDiscountFacetABI,
+  ...VPFIDiscountAccumulatorFacetABI,
   ...StakingRewardsFacetABI,
   ...InteractionRewardsFacetABI,
   ...RewardReporterFacetABI,

@@ -50,6 +50,7 @@ import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {MetricsDashboardFacet} from "../src/facets/MetricsDashboardFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
+import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {StakingRewardsFacet} from "../src/facets/StakingRewardsFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
@@ -955,6 +956,21 @@ contract HelperTest {
         // (docs/TokenomicsTechSpec.md §8a); this selector lets
         // off-chain consumers read each origin bucket explicitly.
         selectors[22] = VPFIDiscountFacet.getVPFISoldToByChainId.selector;
+        return selectors;
+    }
+
+    /// T-087 Sub 1.B — single-home accumulator facet (ring-buffer math +
+    /// lifecycle bookkeeping). Both selectors gated to
+    /// `msg.sender == address(this)`; library wrappers in
+    /// {LibVPFIDiscount} reach them via cross-facet calls.
+    function getVpfiDiscountAccumulatorFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](2);
+        selectors[0] = VPFIDiscountAccumulatorFacet.rollupUserDiscount.selector;
+        selectors[1] = VPFIDiscountAccumulatorFacet.effectiveTierAndBps.selector;
         return selectors;
     }
 

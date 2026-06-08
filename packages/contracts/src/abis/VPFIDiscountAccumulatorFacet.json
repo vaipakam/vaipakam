@@ -1,0 +1,49 @@
+[
+  {
+    "type": "function",
+    "name": "effectiveTierAndBps",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "effTier",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "effBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "rollupUserDiscount",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "balPostMutation",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "error",
+    "name": "InternalCallerOnly",
+    "inputs": []
+  }
+]
