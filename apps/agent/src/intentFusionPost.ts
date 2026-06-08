@@ -512,13 +512,31 @@ async function preflightCommitOnChain(
       args: [loanId],
     })) as typeof onChain;
   } catch (err) {
-    // Could be: no live commit (view reverts), or genuine RPC
-    // failure. We were just here on the receipt path, so receipt
-    // RPC connectivity is fine — treat this revert as "commit
-    // already torn down" which is itself an abuse case (caller
-    // submitted a stale tx hash).
-    console.warn('[intent/fusion/post] getIntentCommit revert', err);
-    return { kind: 'reject', reason: 'commit-no-longer-live' };
+    // Codex round-2 PR #433 P2 — distinguish contract revert
+    // (the commit was torn down on-chain — fill / cancel /
+    // force-cancel in between the commit-tx mining and this
+    // request; legit reject) from genuine RPC degradation
+    // (rate-limit / timeout / provider issue; degrade so an
+    // otherwise valid live commit isn't blocked on transient
+    // RPC noise).
+    //
+    // viem throws `ContractFunctionRevertedError` on revert.
+    // For belt-and-braces we also detect the error message
+    // pattern in case the error class isn't surfaced verbatim
+    // (some custom transports wrap the original).
+    const name = (err as { name?: string })?.name ?? '';
+    const msg = String((err as Error)?.message ?? '');
+    const isRevert =
+      name === 'ContractFunctionRevertedError' ||
+      /revert|execution reverted/i.test(msg);
+    if (isRevert) {
+      return { kind: 'reject', reason: 'commit-no-longer-live' };
+    }
+    console.warn(
+      '[intent/fusion/post] getIntentCommit RPC degraded; proceeding',
+      err,
+    );
+    return { kind: 'degraded' };
   }
 
   if (
