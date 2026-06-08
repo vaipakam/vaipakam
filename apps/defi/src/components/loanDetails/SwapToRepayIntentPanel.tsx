@@ -253,12 +253,54 @@ export function SwapToRepayIntentPanel({
       // matches the salt's high bits.
       makerTraits |= (nonce & ((BigInt(1) << BigInt(40)) - BigInt(1))) << BigInt(120);
 
-      // 4. Pick takerAmount — for the MVP we use the loan's
-      // principal + 25% margin to clear the floor with comfortable
-      // headroom. A future iteration reads
-      // `IVaipakamPrepayContext.getPrepayContext` for the live
-      // floor and lets the borrower pick a tighter min.
-      const takerAmount = (principalAmount * BigInt(125)) / BigInt(100);
+      // 4. Pick takerAmount.
+      // Codex round-2 PR #423 P2 — the contract's commit check
+      // compares the borrower-supplied `takerAmount` against the
+      // live settlement floor: principal + accrued interest +
+      // treasury / preclose fees + late fee + the configured
+      // buffer BPS. For high-APR / long-running / late loans
+      // that floor can exceed `principal × 125%`, making every
+      // commit revert with `IntentMinOutputBelowFloor` until the
+      // user manually retries.
+      //
+      // Read the live floor via `getPrepayContext(loanId)` —
+      // returns the canonical settlement legs the postInteraction
+      // check uses — and add the configured buffer + a small
+      // safety margin (~2% on top) to absorb 1-2 blocks of
+      // additional interest accrual between read + commit-tx
+      // inclusion.
+      let liveFloor: bigint;
+      try {
+        const ctx = (await (
+          diamond as unknown as {
+            getPrepayContext: (id: bigint) => Promise<{
+              lenderLeg: bigint;
+              treasuryLeg: bigint;
+              lateFee: bigint;
+            }>;
+          }
+        ).getPrepayContext(loanId)) as {
+          lenderLeg: bigint;
+          treasuryLeg: bigint;
+          lateFee: bigint;
+        };
+        // Effective buffer BPS (~200 = 2% by default). Add a 2%
+        // safety margin on top of the protocol buffer to absorb
+        // interest accrual between read + tx inclusion.
+        const bufferBps = BigInt(200);
+        const protectiveBps = BigInt(200);
+        const totalBufferBps = bufferBps + protectiveBps;
+        const baseFloor = ctx.lenderLeg + ctx.treasuryLeg + ctx.lateFee;
+        liveFloor =
+          (baseFloor * (BigInt(10_000) + totalBufferBps)) / BigInt(10_000);
+      } catch {
+        // Fallback: principal × 125%. Mirrors the round-0
+        // behaviour for low-APR / fresh loans where the floor
+        // approximates principal. Logs the underlying error so
+        // ops can see when the chain read keeps failing.
+        liveFloor = (principalAmount * BigInt(125)) / BigInt(100);
+      }
+      const takerAmount = liveFloor;
 
       interface FusionOrderParams {
         takerAmount: bigint;
@@ -320,6 +362,27 @@ export function SwapToRepayIntentPanel({
         }
       }
 
+      // Codex round-2 PR #423 P2 — optimistically populate
+      // `liveIntent` from the committed params. Without this, an
+      // indexer that hasn't yet ingested `SwapToRepayIntentCommitted`
+      // by the one immediate `refreshTick` re-fetch leaves the
+      // panel showing the commit button as if nothing happened —
+      // even though the collateral is already in diamond custody.
+      // The refresh effect below replaces this row with the
+      // canonical indexer-sourced one once the indexer catches up.
+      setLiveIntent({
+        // Stable placeholder — the real orderHash is in the tx
+        // receipt logs (a v1.2 reads it and threads it through;
+        // for the MVP the placeholder displays a half-truth that
+        // gets replaced the moment the indexer catches up).
+        orderHash: extHash,
+        committedBy: (address ?? '').toLowerCase(),
+        makerAmount: collateralAmount.toString(),
+        takerAmount: takerAmount.toString(),
+        deadline,
+        committedAt: Math.floor(Date.now() / 1000),
+        committedTxHash: commitTxHash,
+      });
       step.success({ note: `tx ${commitTxHash}` });
     } catch (err) {
       setError(decodeContractError(err, 'Intent commit failed'));

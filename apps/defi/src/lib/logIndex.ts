@@ -1256,6 +1256,15 @@ async function runScan(
     // relying purely on retry/backoff. ~30ms ≈ 30 chunks/sec.
     await new Promise((r) => setTimeout(r, 30));
 
+    // Codex round-2 PR #423 P2 — within this scan chunk, remember
+    // the committer per orderHash from `SwapToRepayIntentCommitted`
+    // so a subsequent `SwapToRepayIntentFilled` in the SAME chunk
+    // can attribute the row to that borrower. The fallback scanner
+    // has no D1 row-lookup (that's the indexer's path); without
+    // this in-scan memo the Filled row would carry an empty
+    // participants list and Activity's wallet-filter would drop it.
+    const intentCommitterByOrderHash = new Map<string, string>();
+
     for (const event of logs) {
       const topics = event.topics;
       if (!topics || topics.length === 0) continue;
@@ -1752,6 +1761,8 @@ async function runScan(
         } catch {
           // Malformed data — keep defaults.
         }
+        // Memo for the in-chunk Filled lookup (round-2 P2 fix).
+        intentCommitterByOrderHash.set(orderHash.toLowerCase(), committedBy);
         addEvent('SwapToRepayIntentCommitted', [committedBy], {
           loanId,
           orderHash,
@@ -1782,12 +1793,29 @@ async function runScan(
         } catch {
           // Malformed data — keep defaults.
         }
-        addEvent('SwapToRepayIntentFilled', [], {
-          loanId,
-          orderHash,
-          consumed,
-          delivered,
-        });
+        // Codex round-2 PR #423 P2 — attribute to the prior
+        // committer (recorded by the Committed branch in this
+        // same scan chunk). The indexer's path also attributes
+        // Filled to `committed_by` so the activity feed matches
+        // across both paths. When the Committed event is in an
+        // earlier scan chunk we lose the attribution — a v1.2
+        // could persist a small `intent_committers` map in the
+        // browser storage to cover that edge case; for now the
+        // indexer is the primary read path and the fallback only
+        // matters when it's down.
+        const committedBy =
+          intentCommitterByOrderHash.get(orderHash.toLowerCase()) ?? '';
+        addEvent(
+          'SwapToRepayIntentFilled',
+          committedBy ? [committedBy] : [],
+          {
+            loanId,
+            orderHash,
+            consumed,
+            delivered,
+            committedBy,
+          },
+        );
       } else if (topic0 === SWAP_TO_REPAY_INTENT_CANCELLED_TOPIC0) {
         // T-090 v1.1 Sub 3 — SwapToRepayIntentCancelled(loanId indexed,
         // orderHash indexed, cancelledBy indexed). Attribute to
