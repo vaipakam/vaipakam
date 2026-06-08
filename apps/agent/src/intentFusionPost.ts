@@ -224,52 +224,37 @@ export async function handleIntentFusionPost(
   // Defense: fetch the `commitTxHash` receipt + verify it
   // contains a `SwapToRepayIntentCommitted` log whose indexed
   // orderHash (topic[2]) matches the body's `orderHash` AND was
-  // emitted by the Vaipakam diamond on this chain. Proves the
-  // commit actually happened on-chain.
+  // emitted by the Vaipakam diamond on this chain. Then read
+  // `getIntentCommit(loanId)` to verify EVERY field of the
+  // submitted `order` body matches the on-chain record — without
+  // this second step the caller could replay a public commit tx
+  // hash + mutate the order fields (Codex round-1 P2 fix).
   //
-  // Cost: one `eth_getTransactionReceipt` per request. Bounded by
-  // the rate-limit binding above. If the RPC URL isn't bound
-  // (operator-pre-activation or test environments), skip the
-  // preflight — the request still reaches the upstream `fetch`
-  // gated by the API key + rate-limit + body validation, and
-  // Fusion's server-side ERC-1271 staticcall is the final
-  // backstop against unregistered orderHashes.
-  const rpcUrl = rpcForChain(env, parsed.chainId);
-  if (rpcUrl) {
-    try {
-      const client = createPublicClient({ transport: http(rpcUrl) });
-      const receipt = await client.getTransactionReceipt({
-        hash: parsed.commitTxHash,
-      });
-      if (!receipt || receipt.status !== 'success') {
-        return jsonErr(corsOrigin, 400, 'commit-tx-not-successful');
-      }
-      const expectedOrderHashTopic = parsed.orderHash.toLowerCase();
-      let foundMatchingCommit = false;
-      for (const log of receipt.logs) {
-        if (
-          log.address.toLowerCase() !== expectedDiamond ||
-          log.topics[0]?.toLowerCase() !==
-            SWAP_TO_REPAY_INTENT_COMMITTED_TOPIC0.toLowerCase()
-        ) {
-          continue;
-        }
-        // topic[2] is the indexed orderHash field.
-        if (log.topics[2]?.toLowerCase() === expectedOrderHashTopic) {
-          foundMatchingCommit = true;
-          break;
-        }
-      }
-      if (!foundMatchingCommit) {
-        return jsonErr(corsOrigin, 400, 'orderhash-not-in-commit-tx');
-      }
-    } catch (err) {
-      // RPC failure isn't fatal — fall through to Fusion. The
-      // log noise lets ops see when the preflight degrades.
-      console.warn(
-        '[intent/fusion/post] on-chain preflight RPC error; proceeding',
-        err,
+  // Skip the preflight entirely when `INTENT_FUSION_API_KEY` is
+  // unbound (the queued-ack path further below is the
+  // operator-pre-activation short-circuit; no Fusion spend
+  // happens, so the RPC quota the preflight would consume is
+  // pure waste — Codex round-1 P2 fix). The unsupported-chain
+  // queued-ack also short-circuits, but it sits below this gate
+  // because the chain-allow-list check is cheaper than the RPC.
+  //
+  // Cost when active: two RPC calls per request (one
+  // `eth_getTransactionReceipt` + one `eth_call` against the
+  // diamond). Bounded above by the rate-limit binding.
+  if (env.INTENT_FUSION_API_KEY) {
+    const rpcUrl = rpcForChain(env, parsed.chainId);
+    if (rpcUrl) {
+      const preflight = await preflightCommitOnChain(
+        rpcUrl,
+        parsed,
+        expectedDiamond,
       );
+      if (preflight.kind === 'reject') {
+        return jsonErr(corsOrigin, 400, preflight.reason);
+      }
+      // 'degraded' falls through to Fusion; the log line lets
+      // ops see when the preflight RPC degraded so they can
+      // investigate without a user-facing failure.
     }
   }
 
@@ -406,6 +391,152 @@ async function checkRateLimit(
     console.error('[intent/fusion/post] rate-limit binding threw', err);
     return false;
   }
+}
+
+// T-090 v1.2 #428 + Codex round-1 — full on-chain preflight.
+// Returns:
+//   'ok'       → preflight verified; proceed to Fusion fetch.
+//   'reject'   → preflight proved the commit is fake / mismatched;
+//                surface the discriminated 400 to the caller.
+//   'degraded' → genuine RPC connectivity error (NOT tx-not-found);
+//                fall through to Fusion's server-side validation
+//                so the user-facing path isn't blocked on the
+//                operator's RPC health.
+async function preflightCommitOnChain(
+  rpcUrl: string,
+  parsed: IntentFusionPostRequest,
+  expectedDiamond: string,
+): Promise<
+  | { kind: 'ok' }
+  | { kind: 'reject'; reason: string }
+  | { kind: 'degraded' }
+> {
+  const client = createPublicClient({ transport: http(rpcUrl) });
+
+  // 1. Fetch the receipt. viem throws (`TransactionReceiptNotFoundError`)
+  //    when the hash isn't found — that's the abuse case this
+  //    preflight exists to stop, NOT an RPC degradation
+  //    (Codex round-1 P1). Distinguish by the error name.
+  let receipt: Awaited<ReturnType<typeof client.getTransactionReceipt>>;
+  try {
+    receipt = await client.getTransactionReceipt({ hash: parsed.commitTxHash });
+  } catch (err) {
+    const name = (err as { name?: string })?.name ?? '';
+    if (
+      name === 'TransactionReceiptNotFoundError' ||
+      /not found/i.test(String((err as Error)?.message ?? ''))
+    ) {
+      return { kind: 'reject', reason: 'commit-tx-not-found' };
+    }
+    console.warn(
+      '[intent/fusion/post] receipt RPC degraded; proceeding',
+      err,
+    );
+    return { kind: 'degraded' };
+  }
+  if (!receipt || receipt.status !== 'success') {
+    return { kind: 'reject', reason: 'commit-tx-not-successful' };
+  }
+
+  // 2. Find a matching `SwapToRepayIntentCommitted` log emitted
+  //    by the canonical diamond, with `topic[2]` (indexed
+  //    orderHash) matching the body.
+  const expectedOrderHashTopic = parsed.orderHash.toLowerCase();
+  let loanIdTopic: string | undefined;
+  for (const log of receipt.logs) {
+    if (
+      log.address.toLowerCase() !== expectedDiamond ||
+      log.topics[0]?.toLowerCase() !==
+        SWAP_TO_REPAY_INTENT_COMMITTED_TOPIC0.toLowerCase()
+    ) {
+      continue;
+    }
+    if (log.topics[2]?.toLowerCase() === expectedOrderHashTopic) {
+      // topic[1] is the indexed loanId.
+      loanIdTopic = log.topics[1];
+      break;
+    }
+  }
+  if (!loanIdTopic) {
+    return { kind: 'reject', reason: 'orderhash-not-in-commit-tx' };
+  }
+  const loanId = BigInt(loanIdTopic);
+
+  // 3. Read `getIntentCommit(loanId)` from the diamond and verify
+  //    every field of the submitted `order` body matches the
+  //    on-chain record (Codex round-1 P2). Without this step the
+  //    caller could replay a public commit tx hash + mutate the
+  //    order fields before forwarding to Fusion.
+  let onChain: {
+    maker: `0x${string}`;
+    receiver: `0x${string}`;
+    makerAsset: `0x${string}`;
+    takerAsset: `0x${string}`;
+    makerAmount: bigint;
+    takerAmount: bigint;
+    deadline: bigint;
+    salt: bigint;
+    makerTraits: bigint;
+    extension: `0x${string}`;
+  };
+  try {
+    onChain = (await client.readContract({
+      address: expectedDiamond as `0x${string}`,
+      abi: [
+        {
+          name: 'getIntentCommit',
+          type: 'function',
+          stateMutability: 'view',
+          inputs: [{ name: 'loanId', type: 'uint256' }],
+          outputs: [
+            {
+              components: [
+                { name: 'maker', type: 'address' },
+                { name: 'receiver', type: 'address' },
+                { name: 'makerAsset', type: 'address' },
+                { name: 'takerAsset', type: 'address' },
+                { name: 'makerAmount', type: 'uint256' },
+                { name: 'takerAmount', type: 'uint256' },
+                { name: 'deadline', type: 'uint64' },
+                { name: 'salt', type: 'uint256' },
+                { name: 'makerTraits', type: 'uint256' },
+                { name: 'extension', type: 'bytes' },
+              ],
+              name: 'order',
+              type: 'tuple',
+            },
+          ],
+        },
+      ] as const,
+      functionName: 'getIntentCommit',
+      args: [loanId],
+    })) as typeof onChain;
+  } catch (err) {
+    // Could be: no live commit (view reverts), or genuine RPC
+    // failure. We were just here on the receipt path, so receipt
+    // RPC connectivity is fine — treat this revert as "commit
+    // already torn down" which is itself an abuse case (caller
+    // submitted a stale tx hash).
+    console.warn('[intent/fusion/post] getIntentCommit revert', err);
+    return { kind: 'reject', reason: 'commit-no-longer-live' };
+  }
+
+  if (
+    onChain.maker.toLowerCase() !== parsed.order.maker.toLowerCase() ||
+    onChain.receiver.toLowerCase() !== parsed.order.receiver.toLowerCase() ||
+    onChain.makerAsset.toLowerCase() !== parsed.order.makerAsset.toLowerCase() ||
+    onChain.takerAsset.toLowerCase() !== parsed.order.takerAsset.toLowerCase() ||
+    onChain.makerAmount.toString() !== parsed.order.makerAmount ||
+    onChain.takerAmount.toString() !== parsed.order.takerAmount ||
+    onChain.deadline.toString() !== String(parsed.order.deadline) ||
+    onChain.salt.toString() !== parsed.order.salt ||
+    onChain.makerTraits.toString() !== parsed.order.makerTraits ||
+    onChain.extension.toLowerCase() !== parsed.order.extension.toLowerCase()
+  ) {
+    return { kind: 'reject', reason: 'order-fields-mismatch' };
+  }
+
+  return { kind: 'ok' };
 }
 
 async function passthrough(
