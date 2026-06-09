@@ -51,11 +51,14 @@ interface IVPFIDiscountAccumulatorInternal {
  * Trust + behaviour:
  *   - Producer call gated to `msg.sender == address(this)` (internal
  *     cross-facet only). EOAs can never invoke directly.
- *   - Silent skip when not configured (`rewardMessenger == address(0)`
- *     OR `s.broadcastDestinationCount == 0`). Lets the deploy land + be
- *     activated by a later admin call without breaking every stake /
- *     withdraw on the way (this is the local / testnet / pre-CCIP-wiring
- *     stance).
+ *   - Silent skip when `rewardMessenger == address(0)`. Lets the deploy
+ *     land + be activated by a later admin call without breaking every
+ *     stake / withdraw on the way (this is the local / testnet /
+ *     pre-CCIP-wiring stance). Once a messenger is set, the rollup-time
+ *     broadcast WILL fire; an empty-destinations configuration bubbles
+ *     `NoBroadcastDestinations` from the messenger up to the caller
+ *     (round-3 P1 #2 fold — no Diamond-side duplicate of the count to
+ *     drift fail-OPEN).
  *   - FAIL-CLOSED on budget exhaustion ONCE configured. Reverts
  *     `ProtocolBudgetExhausted(required, available)`. Operator must top
  *     up before downgrade-bearing mutations can land — the design's
@@ -97,6 +100,13 @@ contract ProtocolBroadcastFacet {
     ///         does the same to prevent an unrecoverable operator
     ///         typo burning the budget (Codex Sub 2.D round-1 P2 #2).
     error ZeroRecipient();
+    /// @notice `withdrawBudget` was called with `to == address(this)`.
+    ///         The diamond's `receive()` would accept the value, the
+    ///         accounting slot would decrement, but the native ETH
+    ///         would stay in-contract as un-budgeted balance with no
+    ///         path to re-credit. Reject upfront (Codex Sub 2.D round-4
+    ///         P3 #3).
+    error WithdrawToSelf();
 
     // ─── Producer call (rollup hook) ────────────────────────────────────
 
@@ -266,6 +276,7 @@ contract ProtocolBroadcastFacet {
     {
         LibAccessControl.checkRole(LibAccessControl.ADMIN_ROLE, msg.sender);
         if (to == address(0)) revert ZeroRecipient();
+        if (to == address(this)) revert WithdrawToSelf();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 budget = s.protocolBroadcastBudget;
         if (amount > budget) revert WithdrawExceedsBudget(amount, budget);

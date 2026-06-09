@@ -57,6 +57,18 @@ contract ProtocolBroadcastFacetTest is SetupTest {
         assertEq(recipient.balance, 0.4 ether, "recipient credited");
     }
 
+    function test_Withdraw_RevertWhen_WithdrawToSelf() public {
+        // Codex Sub 2.D round-4 P3 #3 — `withdrawBudget(address(this))`
+        // would call the diamond's `receive()` + decrement the
+        // accounting slot, leaving native ETH stranded in-contract
+        // as un-budgeted balance. Reject upfront.
+        vm.deal(address(this), 1 ether);
+        _call().topUpBroadcastBudget{value: 1 ether}();
+
+        vm.expectRevert(ProtocolBroadcastFacet.WithdrawToSelf.selector);
+        _call().withdrawBudget(payable(address(diamond)), 0.5 ether);
+    }
+
     function test_Withdraw_RevertWhen_ZeroRecipient() public {
         // Codex Sub 2.D round-1 P2 #2 — `withdrawBudget` must reject
         // `address(0)` to prevent an operator typo burning the budget.
