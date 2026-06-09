@@ -182,18 +182,26 @@ contract BuybackRemittanceReceiver is
         }
         if (deliveredAmount == 0) revert ZeroAmount();
 
-        // Forward the delivered token into the Diamond BEFORE
-        // calling absorbRemittance. The Diamond's facet then ONLY
-        // updates accounting (it never has to reach back here for
-        // custody).
+        // Codex Sub 3.A round-3 P2 #3 — fee-on-transfer / deflationary
+        // tokens may deliver less to the Diamond than `deliveredAmount`
+        // when the receiver's `safeTransfer` triggers a token-level
+        // fee. Credit the Diamond's budget with the ACTUAL amount that
+        // landed, NOT the pre-fee `deliveredAmount` — otherwise
+        // `baseBuybackBudget` overstates spendable custody and later
+        // commits could try to draw more than the Diamond actually
+        // holds. Token contracts that don't take fees see
+        // `actualReceived == deliveredAmount` so the path is benign.
+        uint256 diamondBalBefore = IERC20(deliveredToken).balanceOf(diamond);
         IERC20(deliveredToken).safeTransfer(diamond, deliveredAmount);
+        uint256 actualReceived =
+            IERC20(deliveredToken).balanceOf(diamond) - diamondBalBefore;
 
         ITreasuryBuybackIngress(diamond).absorbRemittance(
-            deliveredToken, deliveredAmount, sourceChainId
+            deliveredToken, actualReceived, sourceChainId
         );
 
         emit BuybackRemittanceForwarded(
-            sourceChainId, deliveredToken, deliveredAmount
+            sourceChainId, deliveredToken, actualReceived
         );
     }
 

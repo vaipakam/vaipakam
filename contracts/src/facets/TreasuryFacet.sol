@@ -604,7 +604,21 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
             revert InsufficientBuybackBudget(amount, treasuryBal);
         }
         s.treasuryBalances[token] = treasuryBal - amount;
-        s.buybackBudget[token] += amount;
+        // Codex Sub 3.A round-3 P2 #1 — on Base (canonical reward
+        // chain), local fee revenue doesn't need to cross any
+        // bridge; credit `baseBuybackBudget` directly so the future
+        // Sub 3.B `commitBuybackIntent` can spend it. On mirrors,
+        // credit the per-chain accumulator that `remitBuyback` will
+        // later ship to Base. `s.isCanonicalRewardChain` is the
+        // operator-set flag that distinguishes the two; without this
+        // routing, Base fee allocations would sit in `buybackBudget`
+        // and `remitBuyback` would try to send Base → Base (with
+        // `s.baseChainId == 0` on canonical, the send would fail).
+        if (s.isCanonicalRewardChain) {
+            s.baseBuybackBudget[token] += amount;
+        } else {
+            s.buybackBudget[token] += amount;
+        }
         emit BuybackBudgetCredited(token, amount);
     }
 
@@ -634,6 +648,12 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
         if (newReceiver == address(0)) revert TreasuryZeroAddress();
+        // Codex Sub 3.A round-3 P2 #2 — receiver MUST be a contract.
+        // An EOA in this slot would let that EOA call
+        // `absorbRemittance` directly + inflate `baseBuybackBudget`
+        // without any real CCIP delivery, since the only sender
+        // check on `absorbRemittance` is the equality with this slot.
+        if (newReceiver.code.length == 0) revert TreasuryZeroAddress();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         emit BuybackRemittanceReceiverSet(
             s.buybackRemittanceReceiver, newReceiver
@@ -646,6 +666,11 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
         if (newMessenger == address(0)) revert TreasuryZeroAddress();
+        // Codex Sub 3.A round-3 P2 #2 — messenger MUST be a contract.
+        // The `remitBuyback` call routes tokens through this address;
+        // an EOA would silently fail every send (no `sendMessage` on
+        // it) at runtime instead of at config time.
+        if (newMessenger.code.length == 0) revert TreasuryZeroAddress();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         emit CrossChainMessengerSet(s.crossChainMessenger, newMessenger);
         s.crossChainMessenger = newMessenger;

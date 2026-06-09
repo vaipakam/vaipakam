@@ -20,6 +20,15 @@ import {VaipakamRewardMessenger} from "../src/crosschain/VaipakamRewardMessenger
 import {GuardianPausable} from "../src/crosschain/GuardianPausable.sol";
 import {Deployments} from "./lib/Deployments.sol";
 
+/// @dev T-087 Sub 3.A — minimal selector surface for the
+///      `TreasuryFacet` setters this script needs. Avoids dragging
+///      the full TreasuryFacet contract through this script's import
+///      tree (it pulls every diamond facet).
+interface ITreasuryFacetCcip {
+    function setCrossChainMessenger(address messenger) external;
+    function setBuybackRemittanceReceiver(address receiver) external;
+}
+
 /**
  * @title ConfigureCcip
  * @notice T-068 Phase 6 — wires the Chainlink CCIP cross-chain stack on
@@ -231,6 +240,7 @@ contract ConfigureCcip is Script {
         _wirePoolLanes(c);
         _registerCct(c);
         _setBroadcastDestinations(c);
+        _wireDiamondBuybackConfig(c);
 
         vm.stopBroadcast();
 
@@ -513,6 +523,26 @@ contract ConfigureCcip is Script {
         VaipakamRewardMessenger(payable(c.rewardMessenger))
             .setBroadcastDestinations(mirrors);
         console.log("Reward broadcast destinations set:", n);
+    }
+
+    /// @dev T-087 Sub 3.A — point the Diamond's TreasuryFacet at the
+    ///      CCIP messenger + (on Base) at the BuybackRemittanceReceiver.
+    ///      Without these calls, `remitBuyback` would revert
+    ///      `CrossChainMessengerNotSet` even though the CcipMessenger
+    ///      has the channel registered, and `absorbRemittance` would
+    ///      reject every inbound delivery because the registered
+    ///      receiver is unset (Codex Sub 3.A round-3 P1 #1).
+    function _wireDiamondBuybackConfig(Ctx memory c) internal {
+        address diamond =
+            Deployments.readAddress(".diamond", "DIAMOND_ADDRESS");
+        ITreasuryFacetCcip(diamond).setCrossChainMessenger(c.messenger);
+        if (c.canonical) {
+            ITreasuryFacetCcip(diamond).setBuybackRemittanceReceiver(
+                c.localBuybackHandler
+            );
+            console.log("Diamond buyback receiver wired ->", c.localBuybackHandler);
+        }
+        console.log("Diamond crossChainMessenger wired ->", c.messenger);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────

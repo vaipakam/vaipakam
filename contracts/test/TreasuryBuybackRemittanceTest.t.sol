@@ -20,6 +20,11 @@ import {LibSwap} from "../src/libraries/LibSwap.sol";
 ///         a sibling test file so this file stays focused on the
 ///         per-facet invariants (allow-list / no-convert / budget /
 ///         sender-only / payload validation).
+/// @dev Trivial deployed contract — used as the
+///      `setBuybackRemittanceReceiver` and `setCrossChainMessenger`
+///      target so the round-3 P2 #2 EOA guards pass.
+contract _ContractStub {}
+
 contract TreasuryBuybackRemittanceTest is SetupTest {
     ERC20Mock internal usdcMirror;
     address internal usdcBase;
@@ -35,8 +40,11 @@ contract TreasuryBuybackRemittanceTest is SetupTest {
         // mapping handles the bridge; the receiver validates
         // against the destination-side address.
         usdcBase = makeAddr("usdcBase");
-        receiver = makeAddr("buybackReceiver");
-        messenger = makeAddr("ccipMessenger");
+        // Codex round-3 P2 #2 — the receiver + messenger setters
+        // require contract addresses (not EOAs) to prevent admin
+        // typos from inflating the budget via direct calls.
+        receiver = address(new _ContractStub());
+        messenger = address(new _ContractStub());
     }
 
     function _t() internal view returns (TreasuryFacet) {
@@ -80,6 +88,13 @@ contract TreasuryBuybackRemittanceTest is SetupTest {
         _t().setBuybackRemittanceReceiver(address(0));
     }
 
+    function test_SetBuybackRemittanceReceiver_RevertWhen_EOA() public {
+        // Codex round-3 P2 #2 — EOA in the receiver slot would let
+        // that EOA call `absorbRemittance` directly.
+        vm.expectRevert(TreasuryFacet.TreasuryZeroAddress.selector);
+        _t().setBuybackRemittanceReceiver(makeAddr("eoaReceiver"));
+    }
+
     function test_SetCrossChainMessenger_HappyPath() public {
         _t().setCrossChainMessenger(messenger);
         assertEq(_t().getCrossChainMessenger(), messenger);
@@ -88,6 +103,11 @@ contract TreasuryBuybackRemittanceTest is SetupTest {
     function test_SetCrossChainMessenger_RevertWhen_Zero() public {
         vm.expectRevert(TreasuryFacet.TreasuryZeroAddress.selector);
         _t().setCrossChainMessenger(address(0));
+    }
+
+    function test_SetCrossChainMessenger_RevertWhen_EOA() public {
+        vm.expectRevert(TreasuryFacet.TreasuryZeroAddress.selector);
+        _t().setCrossChainMessenger(makeAddr("eoaMessenger"));
     }
 
     // ─── remitBuyback invariants ──────────────────────────────────────
