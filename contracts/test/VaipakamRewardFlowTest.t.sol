@@ -342,4 +342,149 @@ contract VaipakamRewardFlowTest is Test {
             toks
         );
     }
+
+    // ─── T-087 Sub 2.B — TierUpdated + VersionBumped surface ────────────────
+
+    uint8 internal constant TIER_UPDATED = 3;
+    uint8 internal constant VERSION_BUMPED = 4;
+
+    function test_SendTierUpdate_HappyPath() public {
+        address user = makeAddr("user");
+        // `sendTierUpdate` is a Base → mirror push, so the Diamond-paired
+        // instance is `rewardBase`.
+        vm.prank(address(diamondBase));
+        rewardBase.sendTierUpdate{value: fee}(
+            user,
+            uint8(2),     // effective tier
+            uint16(1500), // effective bps
+            uint40(123),  // computedAt
+            uint256(7),   // nonce
+            type(uint40).max, // tierExpirySec sentinel
+            uint16(3),    // tierTableVersion
+            payable(address(diamondBase))
+        );
+        assertEq(router.pendingCount(), 1, "tier push captured");
+
+        // Confirm the mirror's inbound emits TierUpdateReceived with the
+        // round-tripped payload. Sub 2.C wires the Diamond forwarding; for
+        // Sub 2.B the receive event is the contract's visible artefact.
+        vm.expectEmit(true, true, false, true, address(rewardMirror));
+        emit VaipakamRewardMessenger.TierUpdateReceived(
+            BASE,
+            user,
+            2,
+            1500,
+            123,
+            7,
+            type(uint40).max,
+            3
+        );
+        router.deliver(0, SEL_BASE);
+    }
+
+    function test_SendVersionBumped_HappyPath() public {
+        vm.prank(address(diamondBase));
+        rewardBase.sendVersionBumped{value: fee}(
+            uint16(42),
+            payable(address(diamondBase))
+        );
+        assertEq(router.pendingCount(), 1, "version bump captured");
+
+        vm.expectEmit(true, true, false, true, address(rewardMirror));
+        emit VaipakamRewardMessenger.VersionBumpReceived(BASE, 42);
+        router.deliver(0, SEL_BASE);
+    }
+
+    function test_SendTierUpdate_RevertWhen_NotDiamond() public {
+        vm.deal(address(this), 1 ether);
+        vm.expectRevert(VaipakamRewardMessenger.OnlyDiamond.selector);
+        rewardBase.sendTierUpdate{value: fee}(
+            address(this), 1, 1000, 0, 1, 0, 1, payable(owner)
+        );
+    }
+
+    function test_SendVersionBumped_RevertWhen_NotDiamond() public {
+        vm.deal(address(this), 1 ether);
+        vm.expectRevert(VaipakamRewardMessenger.OnlyDiamond.selector);
+        rewardBase.sendVersionBumped{value: fee}(1, payable(owner));
+    }
+
+    function test_Receive_TierUpdated_RevertOnCanonical() public {
+        // A TIER_UPDATED-kind payload delivered to the canonical instance
+        // (Base) — only mirrors honour these.
+        bytes memory payload = abi.encode(
+            TIER_UPDATED,
+            address(0xdead),
+            uint8(2),
+            uint16(1500),
+            uint40(123),
+            uint256(7),
+            type(uint40).max,
+            uint16(3)
+        );
+        vm.prank(address(messengerBase));
+        vm.expectRevert(VaipakamRewardMessenger.BroadcastOnCanonical.selector);
+        rewardBase.onCrossChainMessage(
+            MIRROR, address(rewardMirror), payload, _empty()
+        );
+    }
+
+    function test_Receive_VersionBumped_RevertOnCanonical() public {
+        bytes memory payload = abi.encode(VERSION_BUMPED, uint16(7));
+        vm.prank(address(messengerBase));
+        vm.expectRevert(VaipakamRewardMessenger.BroadcastOnCanonical.selector);
+        rewardBase.onCrossChainMessage(
+            MIRROR, address(rewardMirror), payload, _empty()
+        );
+    }
+
+    function test_Receive_TierUpdated_RevertOnWrongSize() public {
+        // A REPORT-shaped payload (4 words) tagged with TIER_UPDATED kind.
+        // The per-type size check catches the mismatch (a packed 4-word
+        // tier push WOULD pass the outer 3-shape size gate but fail the
+        // inner exact-size check).
+        bytes memory wrongSize = abi.encode(
+            TIER_UPDATED, uint256(1), uint256(2), uint256(3)
+        );
+        vm.prank(address(messengerMirror));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VaipakamRewardMessenger.PayloadSizeMismatch.selector,
+                wrongSize.length,
+                uint256(8 * 32)
+            )
+        );
+        rewardMirror.onCrossChainMessage(
+            BASE, address(rewardBase), wrongSize, _empty()
+        );
+    }
+
+    function test_Receive_RevertOnInvalidSize() public {
+        // A 3-word payload — not in {2, 4, 8}. The outer size gate
+        // catches it before decode.
+        bytes memory threeWords = abi.encode(REPORT, uint256(1), uint256(2));
+        vm.prank(address(messengerMirror));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VaipakamRewardMessenger.PayloadSizeMismatch.selector,
+                threeWords.length,
+                uint256(4 * 32)
+            )
+        );
+        rewardMirror.onCrossChainMessage(
+            BASE, address(rewardBase), threeWords, _empty()
+        );
+    }
+
+    function test_QuoteSendTierUpdate_ReturnsNonZero() public view {
+        uint256 quoted = rewardBase.quoteSendTierUpdate(
+            address(0xbeef), 1, 1000, 0, 1, 0, 1
+        );
+        assertEq(quoted, fee, "quote covers the single configured destination");
+    }
+
+    function test_QuoteSendVersionBumped_ReturnsNonZero() public view {
+        uint256 quoted = rewardBase.quoteSendVersionBumped(uint16(1));
+        assertEq(quoted, fee, "quote covers the single configured destination");
+    }
 }

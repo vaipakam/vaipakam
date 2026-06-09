@@ -83,12 +83,24 @@ contract VaipakamRewardMessenger is
     uint8 internal constant MSG_TYPE_REPORT = 1;
     /// @notice Payload kind: Base → mirrors finalised-denominator broadcast.
     uint8 internal constant MSG_TYPE_BROADCAST = 2;
+    /// @notice T-087 Sub 2.B — Base → mirrors per-user effective-tier push.
+    uint8 internal constant MSG_TYPE_TIER_UPDATED = 3;
+    /// @notice T-087 Sub 2.B — Base → mirrors tier-table-version bump.
+    uint8 internal constant MSG_TYPE_VERSION_BUMPED = 4;
 
-    /// @notice Canonical payload size — `abi.encode(uint8, uint256,
-    ///         uint256, uint256)` is always four 32-byte words. A strict
-    ///         length pin on the inbound path rejects a padded packet
-    ///         (`abi.decode` would otherwise ignore trailing bytes).
+    /// @notice Canonical REPORT/BROADCAST payload size — `abi.encode(uint8,
+    ///         uint256, uint256, uint256)` is always four 32-byte words. A
+    ///         strict length pin on the inbound path rejects a padded
+    ///         packet (`abi.decode` would otherwise ignore trailing bytes).
     uint256 internal constant EXPECTED_PAYLOAD_SIZE = 4 * 32;
+    /// @notice T-087 Sub 2.B — `abi.encode(uint8 kind, address user,
+    ///         uint8 effTier, uint16 effBps, uint40 computedAt, uint256
+    ///         nonce, uint40 tierExpirySec, uint16 tierTableVersion)`
+    ///         packs into 8 × 32-byte words.
+    uint256 internal constant TIER_UPDATED_PAYLOAD_SIZE = 8 * 32;
+    /// @notice T-087 Sub 2.B — `abi.encode(uint8 kind, uint16 newVersion)`
+    ///         packs into 2 × 32-byte words.
+    uint256 internal constant VERSION_BUMPED_PAYLOAD_SIZE = 2 * 32;
 
     // ─── Storage ────────────────────────────────────────────────────────────
 
@@ -160,6 +172,52 @@ contract VaipakamRewardMessenger is
         uint256 indexed dayId,
         uint256 globalLenderNumeraire18,
         uint256 globalBorrowerNumeraire18
+    );
+
+    /// @custom:event-category informational/tier-transport
+    /// @notice T-087 Sub 2.B — Base → mirror tier push, sender side.
+    event TierUpdateSent(
+        bytes32 indexed messageId,
+        uint256 indexed destinationChainId,
+        address indexed user,
+        uint8 effectiveTier,
+        uint16 effectiveBps,
+        uint40 computedAt,
+        uint256 nonce,
+        uint40 tierExpirySec,
+        uint16 tierTableVersion
+    );
+
+    /// @custom:event-category informational/tier-transport
+    /// @notice T-087 Sub 2.B — Base → mirror tier-table version bump,
+    ///         sender side.
+    event VersionBumpSent(
+        bytes32 indexed messageId,
+        uint256 indexed destinationChainId,
+        uint16 newVersion
+    );
+
+    /// @custom:event-category informational/tier-transport
+    /// @notice T-087 Sub 2.B — receive-side decode event. Sub 2.C wires
+    ///         the Diamond ingress forwarding; until then the event is
+    ///         the only artefact a mirror surfaces for an inbound
+    ///         tier push (helpful for end-to-end Sub 2.B fork tests).
+    event TierUpdateReceived(
+        uint256 indexed sourceChainId,
+        address indexed user,
+        uint8 effectiveTier,
+        uint16 effectiveBps,
+        uint40 computedAt,
+        uint256 nonce,
+        uint40 tierExpirySec,
+        uint16 tierTableVersion
+    );
+
+    /// @custom:event-category informational/tier-transport
+    /// @notice T-087 Sub 2.B — receive-side decode for the version bump.
+    event VersionBumpReceived(
+        uint256 indexed sourceChainId,
+        uint16 newVersion
     );
 
     // ─── Errors ─────────────────────────────────────────────────────────────
@@ -366,6 +424,157 @@ contract VaipakamRewardMessenger is
         );
     }
 
+    // ─── Sender side — T-087 Sub 2.B tier-push surface ──────────────────────
+
+    /// @notice T-087 Sub 2.B — Base → every configured mirror per-user
+    ///         tier push. Diamond-only. `msg.value` must cover the SUM
+    ///         of per-destination quotes; the surplus is refunded.
+    /// @dev    Slither's `msg-value-loop` is intentional + bounded by the
+    ///         same `spent` cumulator pattern as {broadcastGlobal} (see
+    ///         that function's natspec for the rationale).
+    // slither-disable-start msg-value-loop
+    function sendTierUpdate(
+        address user,
+        uint8 effectiveTier,
+        uint16 effectiveBps,
+        uint40 computedAt,
+        uint256 nonce,
+        uint40 tierExpirySec,
+        uint16 tierTableVersion,
+        address payable refundAddress
+    ) external payable onlyDiamond whenNotPaused nonReentrant {
+        if (messenger == address(0)) revert MessengerNotSet();
+        uint256 n = broadcastDestinationChainIds.length;
+        if (n == 0) revert NoBroadcastDestinations();
+
+        bytes memory payload = abi.encode(
+            MSG_TYPE_TIER_UPDATED,
+            user,
+            effectiveTier,
+            effectiveBps,
+            computedAt,
+            nonce,
+            tierExpirySec,
+            tierTableVersion
+        );
+
+        uint256 spent;
+        for (uint256 i; i < n; ++i) {
+            uint256 dst = broadcastDestinationChainIds[i];
+            uint256 fee = ICrossChainMessenger(messenger).quoteMessageFee(
+                dst, payload, _noTokens(), destGasLimit
+            );
+            if (msg.value - spent < fee) {
+                revert InsufficientFee(msg.value - spent, fee);
+            }
+            // slither-disable-next-line arbitrary-send-eth,msg-value-loop
+            bytes32 messageId = ICrossChainMessenger(messenger).sendMessage{
+                value: fee
+            }(dst, payload, _noTokens(), destGasLimit);
+            spent += fee;
+
+            emit TierUpdateSent(
+                messageId,
+                dst,
+                user,
+                effectiveTier,
+                effectiveBps,
+                computedAt,
+                nonce,
+                tierExpirySec,
+                tierTableVersion
+            );
+        }
+
+        _refund(refundAddress, msg.value - spent);
+    }
+    // slither-disable-end msg-value-loop
+
+    /// @notice T-087 Sub 2.B — Base → every configured mirror eager
+    ///         tier-table-version bump on governance threshold / BPS
+    ///         change. Diamond-only.
+    // slither-disable-start msg-value-loop
+    function sendVersionBumped(
+        uint16 newVersion,
+        address payable refundAddress
+    ) external payable onlyDiamond whenNotPaused nonReentrant {
+        if (messenger == address(0)) revert MessengerNotSet();
+        uint256 n = broadcastDestinationChainIds.length;
+        if (n == 0) revert NoBroadcastDestinations();
+
+        bytes memory payload = abi.encode(MSG_TYPE_VERSION_BUMPED, newVersion);
+
+        uint256 spent;
+        for (uint256 i; i < n; ++i) {
+            uint256 dst = broadcastDestinationChainIds[i];
+            uint256 fee = ICrossChainMessenger(messenger).quoteMessageFee(
+                dst, payload, _noTokens(), destGasLimit
+            );
+            if (msg.value - spent < fee) {
+                revert InsufficientFee(msg.value - spent, fee);
+            }
+            // slither-disable-next-line arbitrary-send-eth,msg-value-loop
+            bytes32 messageId = ICrossChainMessenger(messenger).sendMessage{
+                value: fee
+            }(dst, payload, _noTokens(), destGasLimit);
+            spent += fee;
+
+            emit VersionBumpSent(messageId, dst, newVersion);
+        }
+
+        _refund(refundAddress, msg.value - spent);
+    }
+    // slither-disable-end msg-value-loop
+
+    /// @notice T-087 Sub 2.B — quote total fee for a {sendTierUpdate}.
+    function quoteSendTierUpdate(
+        address user,
+        uint8 effectiveTier,
+        uint16 effectiveBps,
+        uint40 computedAt,
+        uint256 nonce,
+        uint40 tierExpirySec,
+        uint16 tierTableVersion
+    ) external view returns (uint256 nativeFee) {
+        uint256 n = broadcastDestinationChainIds.length;
+        bytes memory payload = abi.encode(
+            MSG_TYPE_TIER_UPDATED,
+            user,
+            effectiveTier,
+            effectiveBps,
+            computedAt,
+            nonce,
+            tierExpirySec,
+            tierTableVersion
+        );
+        for (uint256 i; i < n; ++i) {
+            nativeFee += ICrossChainMessenger(messenger).quoteMessageFee(
+                broadcastDestinationChainIds[i],
+                payload,
+                _noTokens(),
+                destGasLimit
+            );
+        }
+    }
+
+    /// @notice T-087 Sub 2.B — quote total fee for a {sendVersionBumped}.
+    function quoteSendVersionBumped(uint16 newVersion)
+        external
+        view
+        returns (uint256 nativeFee)
+    {
+        uint256 n = broadcastDestinationChainIds.length;
+        bytes memory payload = abi.encode(MSG_TYPE_VERSION_BUMPED, newVersion);
+        for (uint256 i; i < n; ++i) {
+            nativeFee += ICrossChainMessenger(messenger).quoteMessageFee(
+                broadcastDestinationChainIds[i],
+                payload,
+                _noTokens(),
+                destGasLimit
+            );
+        }
+    }
+
     /// @notice Quote the total fee for a {broadcastGlobal} (sum over every
     ///         destination).
     function quoteBroadcastGlobal(
@@ -405,14 +614,30 @@ contract VaipakamRewardMessenger is
         // contract has no recovery path — reject a token-bearing message
         // so CCIP marks it failed + re-executable instead of stranding it.
         if (tokens.length != 0) revert UnexpectedTokens(tokens.length);
-        if (payload.length != EXPECTED_PAYLOAD_SIZE) {
-            revert PayloadSizeMismatch(payload.length, EXPECTED_PAYLOAD_SIZE);
+
+        // T-087 Sub 2.B — the inbound shape gate accepts THREE valid
+        // word counts: 4 (legacy REPORT / BROADCAST), 8 (TierUpdated),
+        // 2 (VersionBumped). Any other length is a padded / truncated
+        // packet and is rejected before decode.
+        uint256 len = payload.length;
+        if (
+            len != EXPECTED_PAYLOAD_SIZE
+            && len != TIER_UPDATED_PAYLOAD_SIZE
+            && len != VERSION_BUMPED_PAYLOAD_SIZE
+        ) {
+            revert PayloadSizeMismatch(len, EXPECTED_PAYLOAD_SIZE);
         }
 
-        (uint8 msgType, uint256 dayId, uint256 a, uint256 b) =
-            abi.decode(payload, (uint8, uint256, uint256, uint256));
+        // The first word is always the `uint8 kind` tag — the smallest
+        // common shape across all four message types. Dispatch on it
+        // first, then per-shape decode with the canonical decode
+        // tuple for that type.
+        uint8 msgType = abi.decode(payload[:32], (uint8));
 
         if (msgType == MSG_TYPE_REPORT) {
+            if (len != EXPECTED_PAYLOAD_SIZE) {
+                revert PayloadSizeMismatch(len, EXPECTED_PAYLOAD_SIZE);
+            }
             if (!isCanonical) revert ReportOnMirror();
             // The aggregator tags each report with a uint32 origin chain.
             // A wider source id is an operator misconfiguration — reject
@@ -422,16 +647,67 @@ contract VaipakamRewardMessenger is
             if (sourceChainId > type(uint32).max) {
                 revert ChainIdTooLarge(sourceChainId);
             }
+            (, uint256 dayId, uint256 a, uint256 b) =
+                abi.decode(payload, (uint8, uint256, uint256, uint256));
             emit ReportReceived(sourceChainId, dayId, a, b);
             IRewardAggregatorIngress(diamond).onChainReportReceived(
                 SafeCast.toUint32(sourceChainId), dayId, a, b
             );
         } else if (msgType == MSG_TYPE_BROADCAST) {
+            if (len != EXPECTED_PAYLOAD_SIZE) {
+                revert PayloadSizeMismatch(len, EXPECTED_PAYLOAD_SIZE);
+            }
             if (isCanonical) revert BroadcastOnCanonical();
+            (, uint256 dayId, uint256 a, uint256 b) =
+                abi.decode(payload, (uint8, uint256, uint256, uint256));
             emit BroadcastReceived(sourceChainId, dayId, a, b);
             IRewardReporterIngress(diamond).onRewardBroadcastReceived(
                 dayId, a, b
             );
+        } else if (msgType == MSG_TYPE_TIER_UPDATED) {
+            if (len != TIER_UPDATED_PAYLOAD_SIZE) {
+                revert PayloadSizeMismatch(len, TIER_UPDATED_PAYLOAD_SIZE);
+            }
+            if (isCanonical) revert BroadcastOnCanonical();
+            (
+                ,
+                address user,
+                uint8 effTier,
+                uint16 effBps,
+                uint40 computedAt,
+                uint256 nonce,
+                uint40 tierExpirySec,
+                uint16 tierTableVersion
+            ) = abi.decode(
+                payload,
+                (uint8, address, uint8, uint16, uint40, uint256, uint40, uint16)
+            );
+            emit TierUpdateReceived(
+                sourceChainId,
+                user,
+                effTier,
+                effBps,
+                computedAt,
+                nonce,
+                tierExpirySec,
+                tierTableVersion
+            );
+            // T-087 Sub 2.C will forward to the Diamond's tier ingress
+            // here — `IMirrorTierIngress(diamond).onTierUpdateReceived(
+            // sourceChainId, user, effTier, effBps, computedAt, nonce,
+            // tierExpirySec, tierTableVersion)`. Sub 2.B intentionally
+            // stops at the receive event so this slice can ship +
+            // be reviewed independently. Until Sub 2.C lands, mirrors
+            // surface the event-only inbound; the Diamond's cache stays
+            // unwritten.
+        } else if (msgType == MSG_TYPE_VERSION_BUMPED) {
+            if (len != VERSION_BUMPED_PAYLOAD_SIZE) {
+                revert PayloadSizeMismatch(len, VERSION_BUMPED_PAYLOAD_SIZE);
+            }
+            if (isCanonical) revert BroadcastOnCanonical();
+            (, uint16 newVersion) = abi.decode(payload, (uint8, uint16));
+            emit VersionBumpReceived(sourceChainId, newVersion);
+            // T-087 Sub 2.C will forward to the Diamond's tier ingress.
         } else {
             revert UnknownMessageType(msgType);
         }
