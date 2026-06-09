@@ -35,7 +35,7 @@ When the tuple matches `(0, 0, *, *)` *and* the user has never been pushed befor
 When a mirror receives a tier-update message:
 
 - The message must originate from Base. Messages claiming to originate from any other chain id are rejected.
-- The sender must be the configured authorised CCIP messenger. CCIP's own peer authentication is honoured; an additional Diamond-side check confirms the channel peer is the registered Base messenger.
+- The sender must be the configured authorised CCIP messenger. The authentication split is: `CcipMessenger` validates the CCIP channel peer (that the sending contract on the source chain is the registered Base-side messenger) BEFORE forwarding the payload to `VaipakamRewardMessenger`; the Diamond's tier ingress facet then only checks that the immediate caller is the registered `rewardMessenger` contract on this chain. There is no second channel-peer check at the Diamond boundary — the boundary is delegated to `CcipMessenger`.
 - The message's nonce must be strictly greater than the last nonce the mirror saw for the same user. Stale / replayed / out-of-order messages are rejected without mutating the cache.
 
 When the message also carries a tier-table version higher than the mirror has observed, the mirror's tracked version is raised — so a tier push that arrives before its companion `VersionBumped` broadcast doesn't get rejected as version-stale by the freshness gate.
@@ -53,7 +53,7 @@ When governance changes the tier-threshold table or the per-tier BPS table, ever
 Mirrors learn about the new version through two cooperating paths:
 
 - **Per-user path (automatic for active users)** — the broadcast de-dup gate compares the full `(effTier, effBps, expiry, version)` tuple against the last-pushed values. A governance version bump changes the version field of every active user's tuple, so the user's NEXT rollup-bearing Base action (deposit, withdrawal, loan action — any mutation that calls into the accumulator) sees the new version, fails the de-dup, and fires a fresh push. The mirror writes the new cache AND raises its tracked `currentTierTableVersion` via the Sub 2.C monotonic max. Users who take any Base action between governance bumps stay in sync automatically.
-- **Eager `VersionBumped` broadcast (deferred follow-up)** — a dedicated CCIP push from `ConfigFacet`'s setters at the moment of the bump so mirrors learn IMMEDIATELY without waiting on a per-user mutation. The messenger surface (`sendVersionBumped`) ships in Sub 2.B; the producer call from the governance setter is a deferred Sub 2.D follow-up tracked on the Sub 2 umbrella. Once it lands, dormant users (who don't take any Base action between bumps) also stay in sync without operator intervention.
+- **Eager `VersionBumped` broadcast (deferred follow-up)** — a dedicated CCIP push from `ConfigFacet`'s setters at the moment of the bump so mirrors raise their tracked `currentTierTableVersion` IMMEDIATELY without waiting on any user's per-user mutation. The messenger surface (`sendVersionBumped`) ships in Sub 2.B; the producer call from the governance setter is a deferred Sub 2.D follow-up tracked on the Sub 2 umbrella. Note: the VersionBumped path only raises the mirror's tracked version — it does NOT rewrite any per-user `userTierCache`. So once it lands, every dormant user's old-version cache immediately starts failing the freshness gate (returns tier 0) until their own next per-user push catches up. The eager broadcast removes the "first-active-user-pushes-first" timing dependency from the per-user path; it doesn't deliver a fresh cache to dormants.
 
 Until the eager broadcast lands, the timing is sensitive to which user's post-bump push arrives at the mirror FIRST: the mirror raises its tracked `currentTierTableVersion` on receipt, and from that moment every OTHER user's old-version cache fails the freshness gate (version mismatch → tier 0) until each of those users in turn does a Base action to land their own fresh push. So a single active user pushing post-bump is enough to invalidate every dormant user's cache; until then, the old-version caches keep applying. This isn't ideal (dormant users go silent rather than getting an immediate fresh push) but it's eventually-consistent and never serves a stale-version discount. The deferred eager broadcast + sweep helper close the dormant-user latency.
 
@@ -70,7 +70,7 @@ The freshness gates the mirror evaluates on every read, in order:
 1. `cache.effectiveTier == 0` → tier 0 (default / never pushed).
 2. `cache.tierTableVersion != s.currentTierTableVersion` → tier 0 (governance moved the table).
 3. `block.timestamp >= cache.tierExpirySec` → tier 0 (projected-expiry hit).
-4. `block.timestamp - cache.lastUpdateSec >= cfgMirrorTierMaxAgeSec` → tier 0 (max-age backstop; default 60 days).
+4. `block.timestamp - cache.lastUpdateSec > cfgMirrorTierMaxAgeSec` → tier 0 (max-age backstop; default 60 days). Note the strict `>`: a cache is still honoured at EXACTLY `lastUpdateSec + ageBudget`; one second past it returns tier 0.
 
 Gate 3's `tierExpirySec` is currently the `type(uint40).max` sentinel in every push (Sub 2.A simplified the projection to inert), so in practice the cache is honoured until either a fresh push arrives OR gate 4's max-age fires. The 60-day backstop is the absolute upper bound; a user whose cache went stale by missing pushes eventually drops to tier 0 even without further mutations — the passive degradation gate.
 
@@ -85,7 +85,7 @@ Gate 3's `tierExpirySec` is currently the `type(uint40).max` sentinel in every p
 ## Operator-visible failure modes
 
 - **`ProtocolBudgetExhausted(required, available)`** — rollup reverts when the budget can't cover the fan-out fee. User-facing fix: top up via `topUpBroadcastBudget()`. Anyone can fund; the operator monitors and tops up before exhaustion.
-- **`NoBroadcastDestinations`** — the operator wired the canonical-side messenger but forgot to set the destination chain list on the messenger itself. Every rollup will revert with this until the destinations are configured. Catches half-finished configuration before user mutations land.
+- **`NoBroadcastDestinations`** — the operator wired the canonical-side messenger but forgot to set the destination chain list on the messenger itself. ANY rollup that actually attempts a broadcast (i.e., passes the de-dup gate from section 2 — a new push tuple, NOT a first-zero-tier user or unchanged-tuple skip) reverts with this until the destinations are configured. Silent-skipped rollups never reach the messenger so they don't surface the misconfiguration; the first tier-changing user action exposes it. Catches half-finished configuration before user mutations land.
 - **`StaleNonce(got, cached)`** on the mirror — a CCIP message arrived out-of-order or was replayed. Not a user-visible error — the message is rejected and CCIP re-execution is the recovery path.
 
 ## Trust model summary
