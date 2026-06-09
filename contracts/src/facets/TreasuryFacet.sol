@@ -287,6 +287,13 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         // Diamond-as-treasury precondition.
         if (s.treasury != address(this)) revert TreasuryNotDiamond();
         if (tokenIn == address(0)) revert InvalidAddress();
+        // Codex Sub 3.A round-1 P2 — the no-convert flag must also
+        // block the treasury-convert path; otherwise an admin or
+        // keeper could rotate a protected asset (e.g., ETH from
+        // `buyVPFIWithETH`) out of its native form via convert even
+        // though `remitBuyback` blocks it. The flag covers BOTH
+        // outbound paths uniformly.
+        if (s.buybackNoConvert[tokenIn]) revert BuybackTokenNoConvert(tokenIn);
 
         uint256 balance = s.treasuryBalances[tokenIn];
         if (balance == 0) revert ZeroAmount();
@@ -425,8 +432,19 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
      *                      fee is forwarded exactly; remainder returns.
      * @return messageId The opaque CCIP message id.
      */
+    /// @param srcToken  Source-chain ERC20 to remit. Debited from
+    ///                  `s.buybackBudget[srcToken]` + approved to the
+    ///                  messenger for pull.
+    /// @param destToken Base-chain ERC20 the CCIP pool will deliver.
+    ///                  Encoded in the payload so the receiver's
+    ///                  `TokenMismatch` gate compares against the
+    ///                  destination-side address (Codex Sub 3.A
+    ///                  round-1 P1 #2). For mirror USDC → Base USDC,
+    ///                  these are different ERC20 addresses; CCIP's
+    ///                  token-pool mapping does the cross-chain swap.
     function remitBuyback(
-        address token,
+        address srcToken,
+        address destToken,
         uint256 amount,
         address payable refundAddress
     )
@@ -439,42 +457,50 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
-        if (token == address(0)) revert InvalidAddress();
+        if (srcToken == address(0) || destToken == address(0)) {
+            revert InvalidAddress();
+        }
         if (amount == 0) revert ZeroAmount();
-        if (s.buybackNoConvert[token]) revert BuybackTokenNoConvert(token);
+        if (s.buybackNoConvert[srcToken]) revert BuybackTokenNoConvert(srcToken);
 
         uint256 chainId = block.chainid;
-        if (!s.buybackAllowedToken[chainId][token]) {
-            revert BuybackTokenNotAllowed(chainId, token);
+        if (!s.buybackAllowedToken[chainId][srcToken]) {
+            revert BuybackTokenNotAllowed(chainId, srcToken);
         }
 
-        uint256 budget = s.buybackBudget[token];
-        if (amount > budget) revert InsufficientBuybackBudget(amount, budget);
-
+        // Config gates fire BEFORE accounting gates so a
+        // misconfiguration surfaces with a clear error rather than
+        // being masked by a coincidentally-zero budget.
         address messenger = s.crossChainMessenger;
         if (messenger == address(0)) revert CrossChainMessengerNotSet();
+
+        uint256 budget = s.buybackBudget[srcToken];
+        if (amount > budget) revert InsufficientBuybackBudget(amount, budget);
 
         // Debit FIRST (CEI). The cross-chain send is the post-debit
         // external interaction; if CcipMessenger reverts, the whole
         // tx rolls back and the budget is preserved.
-        s.buybackBudget[token] = budget - amount;
+        s.buybackBudget[srcToken] = budget - amount;
 
         // Approve the messenger for the exact amount. The messenger
         // (NOT the router; round-5 P1 #4) is the contract the
         // Diamond's tokens flow through; `forceApprove` re-sets the
         // allowance to exactly `amount` to handle non-standard ERC20s
         // (USDT) and any leftover from a prior partial pull.
-        IERC20(token).forceApprove(messenger, amount);
+        IERC20(srcToken).forceApprove(messenger, amount);
 
-        // Build the payload: declared token for cross-validation on
-        // the receiver. Source chain id is already in the CCIP header.
-        bytes memory payload = abi.encode(token);
+        // Build the payload: DESTINATION token address for cross-
+        // validation on the receiver (Codex Sub 3.A round-1 P1 #2).
+        // Source chain id is already in the CCIP header.
+        bytes memory payload = abi.encode(destToken);
 
-        // Token transfer list: exactly one entry.
+        // Token transfer list: exactly one entry. CCIP's pool maps
+        // `srcToken` → `destToken` on Base; the receiver gets the
+        // destination-side address in `tokens[0].token`.
         ICrossChainMessenger.TokenAmount[] memory tokens =
             new ICrossChainMessenger.TokenAmount[](1);
         tokens[0] = ICrossChainMessenger.TokenAmount({
-            token: token,
+            token: srcToken,
             amount: amount
         });
 
@@ -496,7 +522,7 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
             if (!ok) revert TreasuryZeroAddress(); // refund failure
         }
 
-        emit BuybackRemitted(messageId, token, amount, s.baseChainId);
+        emit BuybackRemitted(messageId, srcToken, amount, s.baseChainId);
     }
 
     /**
@@ -518,7 +544,14 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         if (msg.sender != s.buybackRemittanceReceiver) {
             revert OnlyBuybackRemittanceReceiver(msg.sender);
         }
-        s.buybackBudget[token] += amount;
+        // Codex Sub 3.A round-1 P1 #1 — credit the Base-side
+        // consolidated budget that Sub 3.B's `commitBuybackIntent`
+        // spends from, NOT the per-chain `buybackBudget` accumulator
+        // (which only tracks the LOCAL fee revenue waiting for
+        // remittance). The two slots are intentionally separate;
+        // crediting the wrong one would mean delivered tokens reach
+        // the Diamond but the future Fusion commit can't see them.
+        s.baseBuybackBudget[token] += amount;
         emit BuybackRemittanceAbsorbed(token, amount, sourceChainId);
     }
 
@@ -569,6 +602,17 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
 
     function getBuybackBudget(address token) external view returns (uint256) {
         return LibVaipakam.storageSlot().buybackBudget[token];
+    }
+
+    /// @notice T-087 Sub 3.A round-1 P1 #1 — read the Base-side
+    ///         consolidated buyback budget that `absorbRemittance`
+    ///         credits and Sub 3.B's `commitBuybackIntent` will spend
+    ///         from. Separate from the per-chain `buybackBudget`
+    ///         accumulator that tracks LOCAL fee revenue awaiting
+    ///         remittance. Reads `0` on mirrors (which never hold
+    ///         consolidated Base-side budget) — that's by design.
+    function getBaseBuybackBudget(address token) external view returns (uint256) {
+        return LibVaipakam.storageSlot().baseBuybackBudget[token];
     }
 
     function isBuybackAllowedToken(uint256 chainId, address token)

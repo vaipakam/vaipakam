@@ -77,6 +77,25 @@
   },
   {
     "type": "function",
+    "name": "getBaseBuybackBudget",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getBuybackBudget",
     "inputs": [
       {
@@ -205,7 +224,12 @@
     "name": "remitBuyback",
     "inputs": [
       {
-        "name": "token",
+        "name": "srcToken",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "destToken",
         "type": "address",
         "internalType": "address"
       },

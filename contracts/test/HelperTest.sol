@@ -713,7 +713,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](15);
+        selectors = new bytes4[](16);
         selectors[0] = TreasuryFacet.claimTreasuryFees.selector;
         selectors[1] = TreasuryFacet.getTreasuryBalance.selector;
         selectors[2] = TreasuryFacet.mintVPFI.selector;
@@ -726,10 +726,11 @@ contract HelperTest {
         selectors[8] = TreasuryFacet.setBuybackRemittanceReceiver.selector;
         selectors[9] = TreasuryFacet.setCrossChainMessenger.selector;
         selectors[10] = TreasuryFacet.getBuybackBudget.selector;
-        selectors[11] = TreasuryFacet.isBuybackAllowedToken.selector;
-        selectors[12] = TreasuryFacet.isBuybackNoConvert.selector;
-        selectors[13] = TreasuryFacet.getCrossChainMessenger.selector;
-        selectors[14] = TreasuryFacet.getBuybackRemittanceReceiver.selector;
+        selectors[11] = TreasuryFacet.getBaseBuybackBudget.selector;
+        selectors[12] = TreasuryFacet.isBuybackAllowedToken.selector;
+        selectors[13] = TreasuryFacet.isBuybackNoConvert.selector;
+        selectors[14] = TreasuryFacet.getCrossChainMessenger.selector;
+        selectors[15] = TreasuryFacet.getBuybackRemittanceReceiver.selector;
         return selectors;
     }
 
