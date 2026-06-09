@@ -67,6 +67,36 @@ contract VPFIDiscountAccumulatorFacet {
         uint120 prevBal = _readLastKnownBalance(s, user, prevUpdateDay);
         _maintainStakerLifecycle(s, user, prevBal, balPostMutation, today);
         _advanceRingBuffer(s, user, balPostMutation, today, prevBal, prevUpdateDay);
+        // T-087 Sub 2.A — replace the old `type(uint40).max` sentinel
+        // (which Sub 1.B / 1.C wrote unconditionally as a placeholder)
+        // with the actual projected expiry. The scan walks the future
+        // trajectory of the ring buffer assuming the user holds the
+        // current balance forever, and finds the first day on which
+        // the projected TWA crosses below the current EFFECTIVE_TIER
+        // boundary. The mirror cache's freshness gate now has a
+        // meaningful timestamp to compare against (design §4.3 +
+        // round-3 P1 #1).
+        s.tierExpirySec[user] = _computeProjectedTierExpiry(
+            s,
+            user,
+            today,
+            uint120(balPostMutation)
+        );
+    }
+
+    /// @notice T-087 Sub 2.A — read the user's projected tier-expiry
+    ///         timestamp. Computed at every rollup pass; the value
+    ///         is what the Sub 2.B `TierUpdated` CCIP payload will
+    ///         carry and what mirror caches enforce locally
+    ///         (`block.timestamp < cache.tierExpirySec` per Sub 1.C
+    ///         freshness gate). Returns `type(uint40).max` when no
+    ///         decay is projected within the 30-day ring buffer
+    ///         window — the "no expiry" sentinel (round-6 P1 #9).
+    /// @dev    Public read; off-chain monitoring + tests both consume
+    ///         this. NOT `onlyInternal` because there's no security
+    ///         posture against reading a public timestamp.
+    function getTierExpirySec(address user) external view returns (uint40) {
+        return LibVaipakam.storageSlot().tierExpirySec[user];
     }
 
     /// @notice Resolve the user's current EFFECTIVE_TIER and
@@ -336,5 +366,121 @@ contract VPFIDiscountAccumulatorFacet {
             anyHit = true;
         }
         return anyHit ? minTier : 0;
+    }
+
+    // ─── T-087 Sub 2.A — projected tierExpirySec trajectory ──────────
+
+    /// @dev Forecasted EFFECTIVE_TIER expiry timestamp, IF the user
+    ///      holds `currentBalance` from `today` forward. The mirror's
+    ///      cache-validity gate compares this against `block.timestamp`
+    ///      to decide whether the cached tier still applies (design
+    ///      §4.3 + round-3 P1 #1). When the trajectory never crosses
+    ///      below the user's current tier within the active 30-day
+    ///      ring buffer window, returns `type(uint40).max` — the
+    ///      "no projected expiry" sentinel mirrors honour as "never
+    ///      expires from decay alone" (round-6 P1 #9).
+    ///
+    ///      Cost: O(30 × 30) SLOADs worst case. The rollup is already
+    ///      heavy (deposit/withdraw paths cost 100k+ gas) so adding
+    ///      ~30 × the existing TWA scan is acceptable. An incremental
+    ///      O(30) variant exists in design notes for a follow-up if
+    ///      gas profiling shows it matters.
+    function _computeProjectedTierExpiry(
+        LibVaipakam.Storage storage s,
+        address user,
+        uint16 today,
+        uint120 currentBalance
+    ) private view returns (uint40) {
+        // First derive the user's CURRENT effective tier — what the
+        // mirror cache would receive on the next broadcast. If it's
+        // already 0 (gate not cleared OR clamp engages), there's no
+        // higher tier to decay FROM; sentinel.
+        uint8 currentTier = _currentEffectiveTier(s, user, today);
+        if (currentTier == 0) return type(uint40).max;
+
+        // Walk future days within the ring buffer's 30-day window
+        // and return the FIRST day on which the projected raw tier
+        // crosses below `currentTier`.
+        uint16 maxFuture = today + 30;
+        for (uint16 futureD = today + 1; futureD <= maxFuture; futureD++) {
+            uint256 projTwa = _projectedTwaAtDay(
+                s,
+                user,
+                today,
+                futureD,
+                currentBalance
+            );
+            if (LibVPFIDiscount.tierOf(projTwa) < currentTier) {
+                return uint40(uint256(futureD) * 1 days);
+            }
+        }
+        return type(uint40).max;
+    }
+
+    /// @dev Mirror of `effectiveTierAndBps` post-gate logic returning
+    ///      just the tier, callable from inside the facet without the
+    ///      `onlyInternal` external-call hop. The two paths SHARE the
+    ///      gate ordering so any future change to the effective-tier
+    ///      math lands in both call sites symmetrically.
+    function _currentEffectiveTier(
+        LibVaipakam.Storage storage s,
+        address user,
+        uint16 today
+    ) private view returns (uint8) {
+        uint40 startSec = s.currentStakeStartSec[user];
+        if (startSec == 0) return 0;
+        uint256 minWindow =
+            uint256(LibVaipakam.cfgTwaMinStakedDaysEffective()) * 1 days;
+        if (block.timestamp < uint256(startSec) + minWindow) return 0;
+        uint256 twa = _computeTwa(s, user, today);
+        uint8 rawTier = LibVPFIDiscount.tierOf(twa);
+        if (rawTier == 0) return 0;
+        uint8 minOverHistory = _computeRingBufferMinTier(
+            s,
+            user,
+            today,
+            LibVaipakam.cfgTwaMinStakedDaysEffective()
+        );
+        return rawTier < minOverHistory ? rawTier : minOverHistory;
+    }
+
+    /// @dev Projected TWA at future day `futureDay`, assuming the user
+    ///      holds `currentBalance` from `today` forward. Slots in
+    ///      `(today, futureDay]` are treated as gap-filled at
+    ///      `currentBalance`; slots in `[windowFloor, today]` use the
+    ///      actual historical `dayClose`. Mirrors the structure of
+    ///      `_computeTwa` so the projection matches the on-call
+    ///      semantics exactly.
+    function _projectedTwaAtDay(
+        LibVaipakam.Storage storage s,
+        address user,
+        uint16 today,
+        uint16 futureDay,
+        uint120 currentBalance
+    ) private view returns (uint256) {
+        if (s.currentStakeStartSec[user] == 0) return 0;
+        uint16 startDay = s.currentStakeStartDayId[user];
+        uint16 windowDays = uint16(LibVaipakam.cfgTwaWindowDaysEffective());
+        uint16 recentDays = uint16(LibVaipakam.cfgTwaRecentDaysEffective());
+        uint256 recentWeight = LibVaipakam.cfgTwaRecentWeightEffective();
+        uint16 windowFloor = futureDay >= windowDays
+            ? futureDay - windowDays + 1
+            : 0;
+        if (startDay > windowFloor) windowFloor = startDay;
+        uint16 recentFloor = futureDay >= recentDays
+            ? futureDay - recentDays + 1
+            : 0;
+        uint256 weightedSum;
+        uint256 weightSum;
+        for (uint16 d = windowFloor; d <= futureDay; d++) {
+            uint120 bal = d <= today
+                ? _effectiveDayClose(s, user, d)
+                : currentBalance;
+            uint256 w = d >= recentFloor ? recentWeight : 1;
+            weightedSum += w * uint256(bal);
+            weightSum += w;
+        }
+        if (weightSum == 0) return 0;
+        return weightedSum / weightSum;
     }
 }

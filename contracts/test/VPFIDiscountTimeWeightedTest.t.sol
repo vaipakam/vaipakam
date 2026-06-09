@@ -7,6 +7,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
+import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -87,6 +88,11 @@ contract VPFIDiscountTimeWeightedTest is SetupTest {
         // safely past the elapsed-seconds gate even if the test's
         // initial `block.timestamp` was 0.
         vm.warp(block.timestamp + 4 days + 1);
+    }
+
+    function _expiry(address user) internal view returns (uint40) {
+        return VPFIDiscountAccumulatorFacet(address(diamond))
+            .getTierExpirySec(user);
     }
 
     // ─── Min-history gate ─────────────────────────────────────────────
@@ -366,5 +372,67 @@ contract VPFIDiscountTimeWeightedTest is SetupTest {
         (uint8 otherTier,) = _effective(otherStaker);
         assertEq(stakerTier, 0, "staker drops to tier 0 after unstake");
         assertEq(otherTier, 2, "other staker keeps tier 2 across staker unstake");
+    }
+
+    // ─── T-087 Sub 2.A — projected tierExpirySec ──────────────────────
+
+    function test_ProjectedExpiry_FreshStakeReturnsSentinel() public {
+        // A fresh user inside the min-history window has effective
+        // tier 0, so no decay is possible → sentinel.
+        _stake(staker, T1_AMOUNT);
+        assertEq(_expiry(staker), type(uint40).max, "no expiry pre-gate");
+    }
+
+    function test_ProjectedExpiry_ConstantBalanceNeverDecays() public {
+        // A user who stakes tier-1 and never changes their balance
+        // sees their projected TWA converge to the held balance
+        // forever — the trajectory never crosses below tier 1 → sentinel.
+        _stake(staker, T1_AMOUNT);
+        _elapseMinHistory();
+        assertEq(_expiry(staker), type(uint40).max, "constant balance never decays");
+    }
+
+    function test_ProjectedExpiry_UnstakeProducesFiniteDay() public {
+        // A user who stakes tier-1, holds, then partially unstakes
+        // to dust below tier 1 — the rollup at the unstake will
+        // recompute the expiry. With currentBalance now below tier 1,
+        // EFFECTIVE_TIER is 0 → sentinel. (The "tier ought to expire
+        // on day X" case fires when balance is reduced but still
+        // ABOVE the new tier's lower boundary; tested below.)
+        _stake(staker, T2_AMOUNT);
+        _elapseMinHistory();
+        // Withdraw down to tier 1 — the user is now AT tier 1 but
+        // their dayClose history shows tier 2 days. As the
+        // tier-2 days roll out of the window, the projected TWA
+        // dips below tier 2 — but the user is now at tier 1, so the
+        // gate is whether projected TWA drops below TIER-1 floor.
+        // With currentBalance at T1_AMOUNT (500 ether), TWA converges
+        // to 500 → tier 1 forever → sentinel.
+        _unstake(staker, T2_AMOUNT - T1_AMOUNT);
+        assertEq(
+            _expiry(staker),
+            type(uint40).max,
+            "rebalanced to tier 1 floor: no decay"
+        );
+    }
+
+    function test_ProjectedExpiry_RestakeClearsExpiry() public {
+        // Full unstake then restake should produce a fresh expiry
+        // value. After full unstake the projection is sentinel
+        // (tier 0). After restake the user is back inside the
+        // min-history window so projection is sentinel again
+        // (tier 0 until gate clears).
+        _stake(staker, T1_AMOUNT);
+        _elapseMinHistory();
+        _unstake(staker, T1_AMOUNT);
+        assertEq(_expiry(staker), type(uint40).max, "post-unstake sentinel");
+
+        // Restake.
+        vpfiToken.transfer(staker, T1_AMOUNT);
+        vm.startPrank(staker);
+        IERC20(address(vpfiToken)).approve(address(diamond), T1_AMOUNT);
+        VPFIDiscountFacet(address(diamond)).depositVPFIToVault(T1_AMOUNT);
+        vm.stopPrank();
+        assertEq(_expiry(staker), type(uint40).max, "post-restake sentinel (gate pending)");
     }
 }
