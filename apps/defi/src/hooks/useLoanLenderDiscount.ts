@@ -100,6 +100,25 @@ export function useLoanLenderDiscount(
   const now = Math.floor(Date.now() / 1000);
   const windowSeconds = Math.max(0, now - startTime);
 
+  // Mirror the on-chain zero-duration guard in
+  // `LibVPFIDiscount.lenderTimeWeightedDiscountBps`:
+  //   if (loan.startTime == 0 || block.timestamp <= loan.startTime) return 0;
+  // A just-accepted loan (read in the same block as `acceptOffer`)
+  // returns 0 on the settlement path; the dapp must show 0 too,
+  // otherwise it would promise a discount the fee path would not
+  // actually apply. Codex Sub 1.D round-1 P3.
+  if (startTime === 0 || windowSeconds === 0) {
+    return {
+      data: {
+        effectiveAvgBps: 0,
+        stampedBpsAtPreviousRollup: 0,
+        windowSeconds,
+      },
+      isLoading: false,
+      error: null,
+    };
+  }
+
   return {
     data: {
       effectiveAvgBps: effectiveBps,

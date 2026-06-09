@@ -873,6 +873,17 @@ contract VPFIDiscountFacet is
         view
         returns (uint8 effTier, uint16 effBps)
     {
+        // Codex Sub 1.D round-1 P2 — every settlement path
+        // (RepayFacet, PrecloseFacet, RefinanceFacet via
+        // `LibVPFIDiscount.tryApplyYieldFee`) gates the actual
+        // discount on `s.vpfiDiscountConsent[user]` BEFORE calling
+        // the accumulator. Mirroring that gate here keeps the
+        // dapp's tier / lender-preview surface aligned with what
+        // the fee path actually applies — a user who hasn't opted
+        // in sees (0, 0) just like the on-chain fee path would.
+        if (!LibVaipakam.storageSlot().vpfiDiscountConsent[user]) {
+            return (0, 0);
+        }
         return LibVPFIDiscount.effectiveTierAndBps(user);
     }
 
