@@ -26,6 +26,14 @@ Same-day rollup semantics: `dayMin` accumulates the minimum across all writes fo
 
 The cached `effectiveBps` is applied directly so a governance change to the per-tier BPS table on Base reaches mirrors atomically with the version bump (round-11 P1 #6); mirrors deliberately do NOT consult their own per-tier-BPS constants at fee-application time.
 
+### POST-MERGE OPERATOR ACTION (Base canonical deploy)
+
+The mirror dispatch in `LibVPFIDiscount.effectiveTierAndBps` branches on `s.isCanonicalVpfiChain`. On the Base canonical deploy, governance MUST call `VPFITokenFacet.setCanonicalVPFIChain(true)` post-deploy — otherwise every discount read falls through to the mirror cache path, finds an empty cache, and silently returns tier 0. The selector is cut by `DeployDiamond.s.sol`, but the call itself is intentionally a governance action (not deploy-script-wired) so the same scripts can produce both canonical and mirror deploys without conditional branching. Codex Sub 1.C round-3 P2 #2 caught the gap; documenting here so the operator runbook picks it up before any production deploy.
+
+### Intentional design choice — min-tier scan width
+
+Codex Sub 1.C round-3 P2 #1 flagged that `_computeRingBufferMinTier` extends `windowFloor` DOWN to `currentStakeStartDayId` (capped at `today - 29`), which means a user who held tier 1 for 25 days, topped up to tier 3, and held tier 3 for 3 more days is still capped at tier 1 until the old days age out of the 30-day ring. This is the deliberate trade-off accepting the UX cost to close the dust-then-bulk attack vector (Codex round-3 P2 #4 from the same round). The user-visible path to upgrade tier: fully unstake (resets `currentStakeStartDayId` via the `positive→0` transition) then restake at the higher tier, paying a fresh `cfgTwaMinStakedDays` wait.
+
 ### Out of scope (still deferred)
 
 - CCIP inbound handler that WRITES the mirror cache: Sub 2.
