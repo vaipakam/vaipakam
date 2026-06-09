@@ -571,6 +571,13 @@ contract SwapToRepayIntentFacet is
         // ── §5.1 step 6 (deferred): orderHash uniqueness ────────────
         if (s.orderHashToLoanId[orderHash] != 0)
             revert IntentOrderHashAlreadyInUse(orderHash);
+        // T-087 Sub 3.B round-2 P1 #2 — also check the shared
+        // discriminator slot. A swap orderHash that happens to
+        // collide with a live BUYBACK orderHash would otherwise
+        // overwrite the BUYBACK kind here, mis-routing future
+        // callbacks for that hash into the swap-to-repay arm.
+        if (s.orderHashKind[orderHash] != bytes32(0))
+            revert IntentOrderHashAlreadyInUse(orderHash);
 
         // ── §5.1 step 10: aggregate allowance management
         //    (zero-then-set for USDT-style tokens) ─────────────────────

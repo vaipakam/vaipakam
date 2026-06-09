@@ -317,10 +317,11 @@ contract BuybackIntentLedgerTest is SetupTest {
             ORDER, address(token), AMOUNT, delivered
         );
 
-        // postInteraction reads the delta; makingAmount is ignored
-        // for buyback (round-1 P1 #2).
+        // postInteraction reads the VPFI delta. `makingAmount` must
+        // equal the full reservation (round-2 P2 #2 — partial fills
+        // rejected).
         vm.prank(lop);
-        _d().postInteraction(order, "", ORDER, address(0), 999, 0, 0, "");
+        _d().postInteraction(order, "", ORDER, address(0), AMOUNT, 0, 0, "");
 
         assertEq(
             _t().getStakingPoolBuybackBudget(),
@@ -347,7 +348,7 @@ contract BuybackIntentLedgerTest is SetupTest {
                 address(this)
             )
         );
-        _d().postInteraction(order, "", ORDER, address(0), 1, 0, 0, "");
+        _d().postInteraction(order, "", ORDER, address(0), AMOUNT, 0, 0, "");
     }
 
     function test_PostInteraction_RevertWhen_PastDeadline() public {
@@ -359,8 +360,9 @@ contract BuybackIntentLedgerTest is SetupTest {
         vm.prank(lop);
         _d().preInteraction(order, "", ORDER, address(0), 0, 0, 0, "");
 
-        // Warp past deadline before postInteraction lands.
-        vm.warp(uint256(expiresAt) + 1);
+        // Warp to AT-OR-AFTER expiresAt. Round-2 P2 #1 — the cutoff
+        // is `>=` so the exact boundary is rejected too.
+        vm.warp(uint256(expiresAt));
 
         vm.prank(lop);
         vm.expectRevert(
@@ -370,7 +372,45 @@ contract BuybackIntentLedgerTest is SetupTest {
                 block.timestamp
             )
         );
-        _d().postInteraction(order, "", ORDER, address(0), 1, 0, 0, "");
+        _d().postInteraction(order, "", ORDER, address(0), AMOUNT, 0, 0, "");
+    }
+
+    function test_PostInteraction_RevertWhen_PartialFill() public {
+        _seedBaseBudget(AMOUNT);
+        _t().commitBuybackIntent(
+            ORDER, address(token), AMOUNT, uint64(block.timestamp + 1 hours)
+        );
+
+        IOrderMixin.Order memory order;
+        vm.prank(lop);
+        _d().preInteraction(order, "", ORDER, address(0), 0, 0, 0, "");
+
+        // Half the reservation — partial fill.
+        uint256 halfFill = AMOUNT / 2;
+        vm.prank(lop);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibTreasuryBuyback.BuybackPartialFill.selector, halfFill, AMOUNT
+            )
+        );
+        _d().postInteraction(order, "", ORDER, address(0), halfFill, 0, 0, "");
+    }
+
+    function test_PostInteraction_RevertWhen_PreNotFired() public {
+        _seedBaseBudget(AMOUNT);
+        _t().commitBuybackIntent(
+            ORDER, address(token), AMOUNT, uint64(block.timestamp + 1 hours)
+        );
+
+        IOrderMixin.Order memory order;
+        // Skip preInteraction — call postInteraction directly.
+        vm.prank(lop);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibTreasuryBuyback.BuybackPreNotFired.selector, ORDER
+            )
+        );
+        _d().postInteraction(order, "", ORDER, address(0), AMOUNT, 0, 0, "");
     }
 
     function test_PostInteraction_RevertWhen_UnknownKind() public {

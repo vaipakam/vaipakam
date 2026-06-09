@@ -91,11 +91,28 @@ library LibTreasuryBuyback {
     ///         time.
     error BuybackLopNotConfigured();
     /// @notice Codex Sub 3.B round-1 P2 #1 — a Fusion fill landed
-    ///         AFTER the on-chain `expiresAt`. We refuse to settle
-    ///         late fills so the buyback budget isn't drained on a
-    ///         stale order; the operator can `expireBuybackIntent`
-    ///         + re-commit if it's still wanted.
+    ///         AT-OR-AFTER the on-chain `expiresAt`. We refuse to
+    ///         settle late fills so the buyback budget isn't drained
+    ///         on a stale order; the operator can
+    ///         `expireBuybackIntent` + re-commit if it's still
+    ///         wanted. The `>=` cutoff (round-2 P2 #1) ensures the
+    ///         fill and expire paths never both succeed at the
+    ///         exact `expiresAt` boundary.
     error BuybackPastDeadline(uint64 expiresAt, uint256 nowSec);
+    /// @notice Codex Sub 3.B round-2 P1 #3 — `postInteractionImpl`
+    ///         was called WITHOUT a prior `preInteractionImpl` for
+    ///         this orderHash, so the VPFI baseline is unset. A
+    ///         Fusion order that drops the pre-interaction call
+    ///         would otherwise credit the diamond's entire current
+    ///         VPFI balance as freshly delivered.
+    error BuybackPreNotFired(bytes32 orderHash);
+    /// @notice Codex Sub 3.B round-2 P2 #2 — Fusion delivered a
+    ///         partial fill. Sub 3.B accepts only full fills
+    ///         (operator must commit orders with
+    ///         `allowPartialFills: false` and `allowMultipleFills:
+    ///         false`); partial fills would otherwise release the
+    ///         full reservation on the first partial settlement.
+    error BuybackPartialFill(uint256 consumed, uint256 expected);
 
     // ─── Events ──────────────────────────────────────────────────────
 
@@ -187,6 +204,13 @@ library LibTreasuryBuyback {
         s.intentAggregateAllowance[token] += amountIn;
         IERC20(token).forceApprove(lop, s.intentAggregateAllowance[token]);
 
+        // Codex Sub 3.B round-2 P1 #1 — bump the shared live-commit
+        // counter so `IntentConfigFacet.setFusionLimitOrderProtocol`
+        // refuses to rotate LOP while a buyback intent is in
+        // flight. Without this the rotation would leave the
+        // outgoing LOP holding a stranded allowance.
+        s.intentLiveCommitCount += 1;
+
         emit BuybackIntentCommitted(
             orderHash, token, uint96(amountIn), uint64(expiresAt)
         );
@@ -207,10 +231,15 @@ library LibTreasuryBuyback {
         if (msg.sender != s.cfgFusionLimitOrderProtocol) {
             revert BuybackUnauthorizedCaller(msg.sender);
         }
-        // EIP-1153 transient storage; per-tx-scoped, free at tx-end.
+        // Codex Sub 3.B round-2 P1 #3 — store `baseline + 1` so a
+        // tload reading zero in `postInteractionImpl` reliably
+        // signals "pre-interaction never fired", regardless of
+        // whether the actual VPFI balance happened to be zero. EIP-
+        // 1153 transient storage; per-tx-scoped, free at tx-end.
         uint256 baseline = IERC20(s.vpfiToken).balanceOf(address(this));
+        uint256 marker = baseline + 1;
         assembly ("memory-safe") {
-            tstore(orderHash, baseline)
+            tstore(orderHash, marker)
         }
     }
 
@@ -221,7 +250,7 @@ library LibTreasuryBuyback {
      *      re-apply the shared LOP allowance counter, mark the
      *      order Filled, and clear the order-kind discriminator.
      */
-    function postInteractionImpl(bytes32 orderHash) internal {
+    function postInteractionImpl(bytes32 orderHash, uint256 consumed) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // Codex round-1 P1 #1 — auth-pinned to the configured LOP.
         if (msg.sender != s.cfgFusionLimitOrderProtocol) {
@@ -232,24 +261,33 @@ library LibTreasuryBuyback {
         if (info.status != LibVaipakam.BUYBACK_ORDER_STATUS_PENDING) {
             revert BuybackOrderNotPending(orderHash, info.status);
         }
-        // Codex round-1 P2 #1 — refuse to settle past the on-chain
-        // deadline. A stale fill would otherwise drain the buyback
-        // budget on an order the operator may have already moved on
-        // from off-chain.
-        if (block.timestamp > info.expiresAt) {
+        // Codex round-1 P2 #1 + round-2 P2 #1 — refuse to settle
+        // AT-OR-AFTER the on-chain deadline. The `>=` cutoff stops a
+        // race with `expireBuyback` (which accepts at the boundary)
+        // at the exact expiresAt second.
+        if (block.timestamp >= info.expiresAt) {
             revert BuybackPastDeadline(info.expiresAt, block.timestamp);
         }
+        // Codex round-2 P2 #2 — partial fills not supported in Sub
+        // 3.B. The operator must commit Fusion orders with
+        // allowPartialFills:false + allowMultipleFills:false.
+        // Detect: LOP's `consumed` (makingAmount) must equal the
+        // full reservation.
+        if (consumed != info.amountIn) {
+            revert BuybackPartialFill(consumed, info.amountIn);
+        }
 
-        // Codex round-1 P1 #2 — measure VPFI delivered via balance
-        // delta against the preInteraction snapshot. `makingAmount`
-        // is the maker-side (source-token sold), not the VPFI
-        // received — passing it through unaudited credited the
-        // staking pool in the wrong units.
-        uint256 baseline;
+        // Codex round-1 P1 #2 + round-2 P1 #3 — measure VPFI
+        // delivered via balance delta against the preInteraction
+        // snapshot. The +1 marker (see `preInteractionImpl`) lets
+        // us reject a missing pre-interaction call.
+        uint256 marker;
         assembly ("memory-safe") {
-            baseline := tload(orderHash)
+            marker := tload(orderHash)
             tstore(orderHash, 0)
         }
+        if (marker == 0) revert BuybackPreNotFired(orderHash);
+        uint256 baseline = marker - 1;
         uint256 actualVpfi =
             IERC20(s.vpfiToken).balanceOf(address(this)) - baseline;
 
@@ -272,6 +310,11 @@ library LibTreasuryBuyback {
                 lop, s.intentAggregateAllowance[info.token]
             );
         }
+
+        // Codex round-2 P1 #1 — decrement the shared live-commit
+        // counter so LOP rotation is unblocked when this was the
+        // last in-flight intent.
+        s.intentLiveCommitCount -= 1;
 
         // Mark Filled + clear the kind discriminator so any later
         // replay against this orderHash is rejected.
@@ -320,6 +363,9 @@ library LibTreasuryBuyback {
                 );
             }
         }
+
+        // Codex round-2 P1 #1 — release the live-commit slot.
+        s.intentLiveCommitCount -= 1;
 
         s.buybackOrders[orderHash].status =
             LibVaipakam.BUYBACK_ORDER_STATUS_EXPIRED;

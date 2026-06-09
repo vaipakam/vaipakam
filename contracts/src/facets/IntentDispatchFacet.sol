@@ -102,7 +102,7 @@ contract IntentDispatchFacet is
             // preInteraction baseline. `makingAmount` is the maker-
             // side (source-token sold) and is intentionally
             // unused here.
-            LibTreasuryBuyback.postInteractionImpl(orderHash);
+            LibTreasuryBuyback.postInteractionImpl(orderHash, makingAmount);
         } else {
             revert UnknownOrderKind(orderHash);
         }

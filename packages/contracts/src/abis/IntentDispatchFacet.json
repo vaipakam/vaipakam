@@ -289,6 +289,22 @@
   },
   {
     "type": "error",
+    "name": "BuybackPartialFill",
+    "inputs": [
+      {
+        "name": "consumed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expected",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "BuybackPastDeadline",
     "inputs": [
       {
@@ -300,6 +316,17 @@
         "name": "nowSec",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "BuybackPreNotFired",
+    "inputs": [
+      {
+        "name": "orderHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ]
   },
