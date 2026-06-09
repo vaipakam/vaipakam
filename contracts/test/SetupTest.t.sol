@@ -107,6 +107,7 @@ import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {LegalFacet} from "../src/facets/LegalFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
+import {MirrorTierReceiverFacet} from "../src/facets/MirrorTierReceiverFacet.sol";
 import {StakingRewardsFacet} from "../src/facets/StakingRewardsFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
@@ -243,6 +244,7 @@ contract SetupTest is Test {
     LegalFacet legalFacet;
     VPFIDiscountFacet vpfiDiscountFacet;
     VPFIDiscountAccumulatorFacet vpfiDiscountAccumulatorFacet;
+    MirrorTierReceiverFacet mirrorTierReceiverFacet;
     StakingRewardsFacet stakingRewardsFacet;
     InteractionRewardsFacet interactionRewardsFacet;
     RewardAggregatorFacet rewardAggregatorFacet;
@@ -332,6 +334,7 @@ contract SetupTest is Test {
         legalFacet = new LegalFacet();
         vpfiDiscountFacet = new VPFIDiscountFacet();
         vpfiDiscountAccumulatorFacet = new VPFIDiscountAccumulatorFacet();
+        mirrorTierReceiverFacet = new MirrorTierReceiverFacet();
         stakingRewardsFacet = new StakingRewardsFacet();
         interactionRewardsFacet = new InteractionRewardsFacet();
         rewardAggregatorFacet = new RewardAggregatorFacet();
@@ -364,7 +367,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](48);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](49);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -646,6 +649,12 @@ contract SetupTest is Test {
             facetAddress: address(vpfiDiscountAccumulatorFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
+        });
+        // T-087 Sub 2.C — mirror-side tier-push receiver facet.
+        cuts[48] = IDiamondCut.FacetCut({
+            facetAddress: address(mirrorTierReceiverFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getMirrorTierReceiverFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

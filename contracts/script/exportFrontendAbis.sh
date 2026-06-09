@@ -124,6 +124,10 @@ FACETS=(
   "VPFIDiscountFacet"
   "VPFIDiscountAccumulatorFacet"
   "VPFITokenFacet"
+  # T-087 Sub 2.C — mirror-side tier-push receiver. Live on every
+  # diamond (canonical Base writes nothing into it; mirrors receive
+  # the CCIP-forwarded tier push here).
+  "MirrorTierReceiverFacet"
   # FlashLoanLiquidationPath.md Phase 3 — standalone reference
   # receiver contract for `RiskFacet.triggerLiquidationDiscounted`.
   # NOT a diamond facet, so deliberately NOT spread into

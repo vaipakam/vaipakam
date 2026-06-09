@@ -51,6 +51,7 @@ import {MetricsDashboardFacet} from "../src/facets/MetricsDashboardFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
+import {MirrorTierReceiverFacet} from "../src/facets/MirrorTierReceiverFacet.sol";
 import {StakingRewardsFacet} from "../src/facets/StakingRewardsFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
@@ -976,6 +977,20 @@ contract HelperTest {
         selectors[1] = VPFIDiscountAccumulatorFacet.effectiveTierAndBps.selector;
         // T-087 Sub 2.A — projected tier-expiry view.
         selectors[2] = VPFIDiscountAccumulatorFacet.getTierExpirySec.selector;
+        return selectors;
+    }
+
+    /// T-087 Sub 2.C — mirror-side tier-push receiver facet.
+    function getMirrorTierReceiverFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](4);
+        selectors[0] = MirrorTierReceiverFacet.onTierUpdateReceived.selector;
+        selectors[1] = MirrorTierReceiverFacet.onVersionBumpedReceived.selector;
+        selectors[2] = MirrorTierReceiverFacet.getUserTierCache.selector;
+        selectors[3] = MirrorTierReceiverFacet.getCurrentTierTableVersion.selector;
         return selectors;
     }
 
