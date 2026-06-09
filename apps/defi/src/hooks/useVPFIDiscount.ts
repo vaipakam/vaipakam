@@ -297,9 +297,16 @@ export interface VPFIDiscountTier {
 }
 
 /**
- * Discount tier for `user` — reads `VPFIDiscountFacet.getVPFIDiscountTier`.
- * Pure VPFI-vault-balance lookup, no oracle dependency. Returns tier 0 when
- * no wallet is connected.
+ * Discount tier for `user` — reads `VPFIDiscountFacet.getEffectiveDiscount`
+ * for the post-gate EFFECTIVE_TIER + EFFECTIVE_BPS the fee path actually
+ * applies (T-087 Sub 1.D), AND `getVPFIDiscountTier` for the vault VPFI
+ * balance display. Returns tier 0 when no wallet is connected.
+ *
+ * Codex Sub 1.D round-2 P2 caught that the previous `getVPFIDiscountTier`
+ * read (raw vault-balance tier) let `BuyVPFI`'s `DiscountStatusCard`
+ * promise a discount the user could not yet claim during the min-history
+ * window. Reading via `getEffectiveDiscount` keeps the displayed tier
+ * aligned with the on-chain settlement behaviour.
  */
 export function useVPFIDiscountTier(user: string | null) {
   const publicClient = useDiamondPublicClient();
@@ -315,17 +322,26 @@ export function useVPFIDiscountTier(user: string | null) {
     }
     setLoading(true);
     try {
-      const result = (await publicClient.readContract({
-        address: diamondAddress,
-        abi: DIAMOND_ABI,
-        functionName: 'getVPFIDiscountTier',
-        args: [user as Address],
-      })) as readonly [bigint, bigint, bigint];
-      const [tier, vaultBal, discountBps] = result;
+      const [effective, raw] = await Promise.all([
+        publicClient.readContract({
+          address: diamondAddress,
+          abi: DIAMOND_ABI,
+          functionName: 'getEffectiveDiscount',
+          args: [user as Address],
+        }) as Promise<readonly [number, number]>,
+        publicClient.readContract({
+          address: diamondAddress,
+          abi: DIAMOND_ABI,
+          functionName: 'getVPFIDiscountTier',
+          args: [user as Address],
+        }) as Promise<readonly [bigint, bigint, bigint]>,
+      ]);
+      const [effTier, effBps] = effective;
+      const [, vaultBal] = raw;
       setData({
-        tier: Number(tier),
+        tier: Number(effTier),
         vaultBal,
-        discountBps: Number(discountBps),
+        discountBps: Number(effBps),
       });
     } catch {
       setData({ tier: 0, vaultBal: 0n, discountBps: 0 });

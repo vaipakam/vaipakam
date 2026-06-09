@@ -851,6 +851,42 @@ contract VPFIDiscountFacet is
         discountBps = LibVPFIDiscount.discountBpsForTier(tier);
     }
 
+    /// @notice T-087 Sub 1.D — the EFFECTIVE tier + BPS the user
+    ///         can actually claim at this instant. Returns the
+    ///         post-min-history-gate + post-min-tier-over-history-
+    ///         clamp values on Base; reads from the cached
+    ///         `CachedTier` slot on mirrors. Use this for any UI
+    ///         surface that needs to show "what discount applies
+    ///         at the moment of a fee charge" — Codex Sub 1.B
+    ///         round-3 P2 #2 caught that displaying the raw
+    ///         vault-balance tier from {getVPFIDiscountTier}
+    ///         during the min-history window let the dapp show
+    ///         a tier the user couldn't actually claim. The two
+    ///         getters are intentionally separate: {getVPFIDiscountTier}
+    ///         answers "what tier does my current stake balance
+    ///         imply?", {getEffectiveDiscount} answers "what
+    ///         discount applies right now?".
+    /// @return effTier  EFFECTIVE_TIER (0-4); the post-gate value.
+    /// @return effBps   EFFECTIVE_BPS; the BPS the fee path applies.
+    function getEffectiveDiscount(address user)
+        external
+        view
+        returns (uint8 effTier, uint16 effBps)
+    {
+        // Codex Sub 1.D round-1 P2 — every settlement path
+        // (RepayFacet, PrecloseFacet, RefinanceFacet via
+        // `LibVPFIDiscount.tryApplyYieldFee`) gates the actual
+        // discount on `s.vpfiDiscountConsent[user]` BEFORE calling
+        // the accumulator. Mirroring that gate here keeps the
+        // dapp's tier / lender-preview surface aligned with what
+        // the fee path actually applies — a user who hasn't opted
+        // in sees (0, 0) just like the on-chain fee path would.
+        if (!LibVaipakam.storageSlot().vpfiDiscountConsent[user]) {
+            return (0, 0);
+        }
+        return LibVPFIDiscount.effectiveTierAndBps(user);
+    }
+
     /**
      * @notice Current VPFI buy-side config + running totals.
      * @dev    `globalCap` and `perWalletCap` are returned as EFFECTIVE

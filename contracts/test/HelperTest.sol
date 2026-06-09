@@ -918,7 +918,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](23);
+        selectors = new bytes4[](24);
         selectors[0] = VPFIDiscountFacet.buyVPFIWithETH.selector;
         selectors[1] = VPFIDiscountFacet.depositVPFIToVault.selector;
         selectors[2] = VPFIDiscountFacet.quoteVPFIDiscount.selector;
@@ -956,6 +956,9 @@ contract HelperTest {
         // (docs/TokenomicsTechSpec.md §8a); this selector lets
         // off-chain consumers read each origin bucket explicitly.
         selectors[22] = VPFIDiscountFacet.getVPFISoldToByChainId.selector;
+        // T-087 Sub 1.D — post-gate EFFECTIVE_TIER + EFFECTIVE_BPS
+        // getter for the dapp's lender-discount preview hook.
+        selectors[23] = VPFIDiscountFacet.getEffectiveDiscount.selector;
         return selectors;
     }
 
