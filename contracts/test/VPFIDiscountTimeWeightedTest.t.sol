@@ -107,9 +107,16 @@ contract VPFIDiscountTimeWeightedTest is SetupTest {
         (uint8 tierBefore,) = _effective(staker);
         assertEq(tierBefore, 0, "still gated 1 second short");
 
-        vm.warp(block.timestamp + 2);
-        (uint8 tierAfter,) = _effective(staker);
-        assertEq(tierAfter, 1, "gate releases at exact elapsed boundary");
+        // Land EXACTLY on the `startSec + minWindow` boundary. The contract
+        // gate is `if (block.timestamp < uint256(startSec) + minWindow)
+        // return (0, 0);` — at the exact boundary the test must observe
+        // tier 1. Warping by 2 seconds (the previous fix) was sloppy: a
+        // regression that flipped the gate to `<=` would still have
+        // surfaced tier 1 here. The exact +1 makes the boundary
+        // assertion strictly correct.
+        vm.warp(block.timestamp + 1);
+        (uint8 tierAtBoundary,) = _effective(staker);
+        assertEq(tierAtBoundary, 1, "gate releases at exact elapsed boundary");
     }
 
     function test_MinHistory_AfterGateReleaseTier1Earned() public {
@@ -330,18 +337,34 @@ contract VPFIDiscountTimeWeightedTest is SetupTest {
 
     // ─── Multi-user isolation ─────────────────────────────────────────
 
-    function test_MultiUser_OneUserGateDoesNotAffectAnother() public {
+    function test_MultiUser_StakesAreIndependent() public {
+        // Both users stake at the same instant + at different tiers.
+        // After the same gate elapse, both surface their OWN tier —
+        // verifying the accumulator is per-user, not global.
         _stake(staker, T1_AMOUNT);
-        // otherStaker stakes 1 day later.
-        vm.warp(block.timestamp + ONE_DAY);
         _stake(otherStaker, T2_AMOUNT);
+        _elapseMinHistory();
 
-        // After 4 more days, staker is well past gate; otherStaker just
-        // crossed gate.
-        vm.warp(block.timestamp + 4 days);
         (uint8 stakerTier,) = _effective(staker);
         (uint8 otherTier,) = _effective(otherStaker);
-        assertEq(stakerTier, 1, "staker at tier 1");
-        assertEq(otherTier, 2, "other staker at tier 2");
+        assertEq(stakerTier, 1, "staker resolves to its own tier 1");
+        assertEq(otherTier, 2, "other staker resolves to its own tier 2");
+    }
+
+    function test_MultiUser_OneUnstakeDoesNotAffectOther() public {
+        // After both stakers are past the gate, one fully unstakes;
+        // the other's tier MUST remain unchanged. Verifies that the
+        // `currentStakeStartSec = 0` reset on `positive→0` is keyed
+        // by user (a regression that wiped global state would knock
+        // BOTH users back to tier 0).
+        _stake(staker, T1_AMOUNT);
+        _stake(otherStaker, T2_AMOUNT);
+        _elapseMinHistory();
+
+        _unstake(staker, T1_AMOUNT);
+        (uint8 stakerTier,) = _effective(staker);
+        (uint8 otherTier,) = _effective(otherStaker);
+        assertEq(stakerTier, 0, "staker drops to tier 0 after unstake");
+        assertEq(otherTier, 2, "other staker keeps tier 2 across staker unstake");
     }
 }
