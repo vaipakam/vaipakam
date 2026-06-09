@@ -149,6 +149,34 @@ contract BuybackIntentLedgerTest is SetupTest {
         );
     }
 
+    function test_Commit_RevertWhen_RecommitExpiredHash() public {
+        // Codex round-4 P2 #1 — an expired orderHash must not be
+        // re-usable. The off-chain Fusion order signed against the
+        // hash is still valid and could fill against the new
+        // reservation with stale terms.
+        // Anchor block.timestamp explicitly so the second commit's
+        // recomputed expiresAt is a fresh value (foundry seeds the
+        // test at block.timestamp = 1; the simpler `+ 1 hours` math
+        // was triggering a cached-expression quirk).
+        vm.warp(1_000_000);
+        _seedBaseBudget(AMOUNT * 2);
+        _t().commitBuybackIntent(
+            ORDER, address(token), AMOUNT, 0, uint64(1_000_000 + 1 hours)
+        );
+        // Expire it.
+        vm.warp(1_000_000 + 2 hours);
+        _t().expireBuybackIntent(ORDER);
+        // Re-commit the SAME orderHash.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibTreasuryBuyback.BuybackOrderHashInUse.selector, ORDER
+            )
+        );
+        _t().commitBuybackIntent(
+            ORDER, address(token), AMOUNT, 0, uint64(1_000_000 + 3 hours)
+        );
+    }
+
     function test_Commit_RevertWhen_DoubleCommitSameOrderHash() public {
         _seedBaseBudget(AMOUNT * 2);
         uint64 expiresAt = uint64(block.timestamp + 1 hours);
@@ -223,14 +251,19 @@ contract BuybackIntentLedgerTest is SetupTest {
 
     // ─── IntentDispatchFacet — isValidSignature ───────────────────
 
-    function test_IsValidSignature_BuybackPendingReturnsMagic() public {
+    function test_IsValidSignature_BuybackReturnsInvalidInSub3B() public {
+        // Codex round-4 P1 — BUYBACK signature validation is OFF in
+        // Sub 3.B. The full Fusion-order-template validation ships
+        // in Sub 3.C; until then isValidSignature always returns
+        // 0xffffffff for BUYBACK orderHashes so no Fusion fill can
+        // succeed through the diamond's ERC-1271 hook.
         _seedBaseBudget(AMOUNT);
         _t().commitBuybackIntent(
             ORDER, address(token), AMOUNT, 0, uint64(block.timestamp + 1 hours)
         );
 
-        bytes4 magic = _d().isValidSignature(ORDER, "");
-        assertEq(magic, IERC1271.isValidSignature.selector);
+        bytes4 ret = _d().isValidSignature(ORDER, "");
+        assertEq(ret, bytes4(0xffffffff));
     }
 
     function test_IsValidSignature_UnknownReturnsInvalid() public view {

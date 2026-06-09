@@ -205,6 +205,16 @@ library LibTreasuryBuyback {
         if (s.orderHashKind[orderHash] != bytes32(0)) {
             revert BuybackOrderHashInUse(orderHash);
         }
+        // Codex Sub 3.B round-4 P2 #1 — also reject orderHashes
+        // that previously held a buyback intent (Filled / Expired).
+        // The off-chain Fusion order signed against this hash is
+        // still valid; reusing the hash would let an old signed
+        // order fill against the new reservation with stale terms.
+        // Status NONE (0) is the only acceptable seed state.
+        if (s.buybackOrders[orderHash].status !=
+            LibVaipakam.BUYBACK_ORDER_STATUS_NONE) {
+            revert BuybackOrderHashInUse(orderHash);
+        }
 
         uint256 budget = s.baseBuybackBudget[token];
         if (amountIn > budget) {

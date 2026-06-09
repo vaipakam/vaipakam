@@ -121,18 +121,23 @@ contract IntentDispatchFacet is
         bytes32 kind = LibVaipakam.storageSlot().orderHashKind[orderHash];
         if (kind == LibVaipakam.ORDER_KIND_SWAP_TO_REPAY) {
             return LibSwapToRepayIntentSettlement.isValidSignatureImpl(orderHash);
-        } else if (kind == LibVaipakam.ORDER_KIND_BUYBACK) {
-            // Buyback path: the orderHash is stamped at commit time;
-            // its presence is the validity proof. The buyback order
-            // ledger entry's `status` must be `Pending` for the
-            // signature to be valid — a Filled / Expired status
-            // leaves the discriminator cleared via `delete
-            // orderHashKind`, so reaching here at all implies the
-            // entry is still Pending. Return the ERC-1271 magic
-            // value.
-            return IERC1271.isValidSignature.selector;
-        } else {
-            return bytes4(0xffffffff);
         }
+        // Codex Sub 3.B round-4 P1 — BUYBACK signature validation
+        // is intentionally OFF in Sub 3.B. Returning the ERC-1271
+        // magic value purely on a stamped `orderHashKind` would let
+        // an operator-typo'd orderHash (one whose underlying Fusion
+        // order routes proceeds to a non-diamond receiver, or omits
+        // the pre/postInteraction hooks) settle successfully. The
+        // full Fusion-order-template validation ships in Sub 3.C
+        // alongside the agent-side submission; until then the on-
+        // chain ledger surface (commit / expire / ABI) exists but
+        // no Fusion fill against a BUYBACK orderHash is signable
+        // through the diamond. Consequence in Sub 3.B: BUYBACK
+        // postInteractionImpl can still be exercised via direct
+        // tests but the Fusion solver rejects the order at signature
+        // check, so the production path is a no-op until 3.C.
+        // (UnknownOrderKind branch / 0xffffffff fall-through covers
+        // both stamped-but-not-validated AND unstamped.)
+        return bytes4(0xffffffff);
     }
 }
