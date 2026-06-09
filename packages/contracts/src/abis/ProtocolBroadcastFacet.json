@@ -1,19 +1,6 @@
 [
   {
     "type": "function",
-    "name": "getBroadcastDestinationCount",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getProtocolBroadcastBudget",
     "inputs": [],
     "outputs": [
@@ -52,19 +39,6 @@
         "name": "user",
         "type": "address",
         "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setBroadcastDestinationCount",
-    "inputs": [
-      {
-        "name": "count",
-        "type": "uint8",
-        "internalType": "uint8"
       }
     ],
     "outputs": [],
@@ -141,25 +115,6 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "BroadcastDestinationCountSet",
-    "inputs": [
-      {
-        "name": "oldCount",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      },
-      {
-        "name": "newCount",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
       }
     ],
     "anonymous": false
@@ -282,11 +237,6 @@
   {
     "type": "error",
     "name": "WithdrawFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ZeroBroadcastDestinationCount",
     "inputs": []
   },
   {

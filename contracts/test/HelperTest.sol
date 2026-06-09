@@ -1001,14 +1001,12 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](7);
+        selectors = new bytes4[](5);
         selectors[0] = ProtocolBroadcastFacet.protocolBroadcastTierUpdate.selector;
         selectors[1] = ProtocolBroadcastFacet.topUpBroadcastBudget.selector;
         selectors[2] = ProtocolBroadcastFacet.withdrawBudget.selector;
-        selectors[3] = ProtocolBroadcastFacet.setBroadcastDestinationCount.selector;
-        selectors[4] = ProtocolBroadcastFacet.getProtocolBroadcastBudget.selector;
-        selectors[5] = ProtocolBroadcastFacet.getBroadcastDestinationCount.selector;
-        selectors[6] = ProtocolBroadcastFacet.getUserTierPushNonce.selector;
+        selectors[3] = ProtocolBroadcastFacet.getProtocolBroadcastBudget.selector;
+        selectors[4] = ProtocolBroadcastFacet.getUserTierPushNonce.selector;
         return selectors;
     }
 

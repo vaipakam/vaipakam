@@ -69,8 +69,6 @@ contract ProtocolBroadcastFacet {
     event BroadcastBudgetToppedUp(address indexed funder, uint256 amount, uint256 newBalance);
     /// @custom:event-category state-change/broadcast-budget
     event BroadcastBudgetWithdrawn(address indexed to, uint256 amount, uint256 newBalance);
-    /// @custom:event-category state-change/broadcast-budget
-    event BroadcastDestinationCountSet(uint8 oldCount, uint8 newCount);
 
     /// @custom:event-category informational/tier-transport
     event ProtocolTierBroadcastSent(
@@ -90,10 +88,6 @@ contract ProtocolBroadcastFacet {
     /// @notice Insufficient protocol broadcast budget for the quoted CCIP
     ///         fee — operator must top up before mutations can land.
     error ProtocolBudgetExhausted(uint256 required, uint256 available);
-    /// @notice `setBroadcastDestinationCount` was called with 0 — that
-    ///         disables broadcasts; use `setRewardMessenger(0)` for that
-    ///         purpose explicitly.
-    error ZeroBroadcastDestinationCount();
     /// @notice `withdrawBudget` would underflow the live balance.
     error WithdrawExceedsBudget(uint256 requested, uint256 available);
     /// @notice The treasury / `to` transfer reverted on withdraw.
@@ -132,10 +126,23 @@ contract ProtocolBroadcastFacet {
             emit ProtocolTierBroadcastSkipped(user, "messenger-not-configured");
             return;
         }
-        if (s.broadcastDestinationCount == 0) {
-            emit ProtocolTierBroadcastSkipped(user, "no-destinations");
-            return;
-        }
+        // Codex Sub 2.D round-3 P1 #2 — the previous diamond-side
+        // `broadcastDestinationCount` slot was a duplicate of the
+        // messenger's `broadcastDestinationChainIds.length` and
+        // gated the broadcast at the Diamond level. If the operator
+        // synced the messenger's list but forgot the Diamond knob
+        // (or it drifted back to 0), every rollup silently returned
+        // even though `rewardMessenger` was configured. Fail-OPEN —
+        // exactly what the fail-CLOSED budget gate was meant to
+        // prevent.
+        //
+        // Removed the duplicate count + the check. The messenger
+        // itself reverts `NoBroadcastDestinations` when its list is
+        // empty (see `VaipakamRewardMessenger.sendTierUpdate`);
+        // that revert now bubbles through the accumulator to the
+        // caller, naturally failing CLOSED on a half-finished
+        // configuration. The messenger is the single source of
+        // truth for the destination set — no drift surface.
 
         // Resolve the current EFFECTIVE_TIER + BPS via the accumulator's
         // existing internal surface. The accumulator is `onlyInternal`
@@ -268,29 +275,10 @@ contract ProtocolBroadcastFacet {
         emit BroadcastBudgetWithdrawn(to, amount, s.protocolBroadcastBudget);
     }
 
-    /// @notice Configure how many destinations the messenger broadcasts
-    ///         to. The Diamond does not maintain the actual destination
-    ///         list (the messenger does); it only needs to know whether
-    ///         a broadcast SHOULD fire (count > 0) and to surface the
-    ///         number for ops verification. Must match the messenger's
-    ///         `broadcastDestinationChainIds.length`.
-    function setBroadcastDestinationCount(uint8 count) external {
-        LibAccessControl.checkRole(LibAccessControl.ADMIN_ROLE, msg.sender);
-        if (count == 0) revert ZeroBroadcastDestinationCount();
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint8 old = s.broadcastDestinationCount;
-        s.broadcastDestinationCount = count;
-        emit BroadcastDestinationCountSet(old, count);
-    }
-
     // ─── Read surface ──────────────────────────────────────────────────
 
     function getProtocolBroadcastBudget() external view returns (uint256) {
         return LibVaipakam.storageSlot().protocolBroadcastBudget;
-    }
-
-    function getBroadcastDestinationCount() external view returns (uint8) {
-        return LibVaipakam.storageSlot().broadcastDestinationCount;
     }
 
     function getUserTierPushNonce(address user) external view returns (uint64) {

@@ -187,6 +187,23 @@ library LibVPFIDiscount {
         // those fixtures (the rollup becomes a no-op) while
         // production deployments + the SetupTest fixture get the
         // full accumulator behaviour.
+        // Codex Sub 2.D round-3 P1 #1 — the outer-wrapper silent
+        // fallback on `FunctionDoesNotExist()` is only safe when
+        // we KNOW the revert can't have come from the broadcast
+        // path. The accumulator's own broadcast call is gated on
+        // `rewardMessenger != 0`, so if the messenger is unset
+        // the accumulator never reaches the broadcast facet and
+        // a returned `FunctionDoesNotExist` selector unambiguously
+        // means "the accumulator facet itself isn't cut" — silent
+        // fallback is correct for minimal-fixture tests.
+        //
+        // If the messenger IS set, however, the accumulator WILL
+        // attempt the broadcast call, and a `FunctionDoesNotExist`
+        // selector could equally well come from a missing
+        // ProtocolBroadcastFacet cut OR a misconfigured messenger
+        // contract — both are real production bugs that must
+        // bubble to the caller, not be silently swallowed.
+        address messenger = LibVaipakam.storageSlot().rewardMessenger;
         (bool ok, bytes memory returnData) = address(this).call(
             abi.encodeWithSelector(
                 VPFIDiscountAccumulatorFacet.rollupUserDiscount.selector,
@@ -195,37 +212,23 @@ library LibVPFIDiscount {
             )
         );
         if (!ok) {
-            // Codex Sub 2.D round-2 P1 #2 clarification — the
-            // discriminator concern was about a DOWNSTREAM-contract
-            // boundary (a misconfigured `rewardMessenger` could
-            // surface the same `FunctionDoesNotExist()` selector as
-            // a missing facet, and silent-swallowing would hide a
-            // real production bug). That concern is handled inside
-            // the accumulator by the `rewardMessenger != 0` guard
-            // around the broadcast call: when the messenger is set,
-            // any revert from the broadcast path bubbles correctly.
-            //
-            // At THIS internal-diamond boundary (LibVPFIDiscount →
-            // VPFIDiscountAccumulatorFacet) the same selector can
-            // only mean one thing: the accumulator facet isn't cut.
-            // There's no downstream contract aliasing the selector.
-            // Many minimal-fixture tests (RepayFacetTest,
-            // LoanFacetTest, ...) build a diamond without the
-            // accumulator because they don't exercise the discount
-            // path semantically — silent fallback keeps them green.
-            // Production deployments + SetupTest-based tests cut
-            // the accumulator and get the full behaviour with
-            // `ProtocolBudgetExhausted` (and any other real revert
-            // from inside the accumulator) bubbling correctly.
-            bytes4 functionDoesNotExistSelector = bytes4(
-                keccak256(bytes("FunctionDoesNotExist()"))
-            );
-            if (
-                returnData.length >= 4
-                    && bytes4(returnData) == functionDoesNotExistSelector
-            ) {
-                return; // silent fallback for minimal-fixture diamonds
+            if (messenger == address(0)) {
+                // Unconfigured — selector-discriminator silent
+                // fallback safely handles minimal-fixture diamonds.
+                bytes4 functionDoesNotExistSelector = bytes4(
+                    keccak256(bytes("FunctionDoesNotExist()"))
+                );
+                if (
+                    returnData.length >= 4
+                        && bytes4(returnData) == functionDoesNotExistSelector
+                ) {
+                    return;
+                }
             }
+            // Either the messenger is wired (production / configured
+            // testnet — any revert IS a real bug) or a non-selector
+            // revert raced through unconfigured paths. Bubble in
+            // both cases.
             assembly {
                 revert(add(32, returnData), mload(returnData))
             }

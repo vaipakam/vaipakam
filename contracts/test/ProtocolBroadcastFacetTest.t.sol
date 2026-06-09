@@ -30,7 +30,6 @@ contract ProtocolBroadcastFacetTest is SetupTest {
 
     function test_Defaults() public view {
         assertEq(_call().getProtocolBroadcastBudget(), 0, "budget default 0");
-        assertEq(_call().getBroadcastDestinationCount(), 0, "dest count 0");
         assertEq(_call().getUserTierPushNonce(user), 0, "nonce default 0");
     }
 
@@ -90,25 +89,6 @@ contract ProtocolBroadcastFacetTest is SetupTest {
         vm.prank(attacker);
         vm.expectRevert();
         _call().withdrawBudget(payable(attacker), 0.5 ether);
-    }
-
-    function test_SetBroadcastDestinationCount_HappyPath() public {
-        _call().setBroadcastDestinationCount(3);
-        assertEq(_call().getBroadcastDestinationCount(), 3, "count set");
-    }
-
-    function test_SetBroadcastDestinationCount_RevertWhen_Zero() public {
-        vm.expectRevert(
-            ProtocolBroadcastFacet.ZeroBroadcastDestinationCount.selector
-        );
-        _call().setBroadcastDestinationCount(0);
-    }
-
-    function test_SetBroadcastDestinationCount_RevertWhen_NotAdmin() public {
-        address attacker = makeAddr("attacker");
-        vm.prank(attacker);
-        vm.expectRevert();
-        _call().setBroadcastDestinationCount(2);
     }
 
     // ─── Internal gate ────────────────────────────────────────────────

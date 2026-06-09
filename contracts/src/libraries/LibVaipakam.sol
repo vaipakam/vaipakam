@@ -3605,18 +3605,20 @@ library LibVaipakam {
         mapping(address => uint8) lastEffectiveTier;
         mapping(address => uint16) lastEffectiveBps;
 
-        // T-087 Sub 2.D — Diamond-side mirror of the messenger's
-        // broadcast-destination set cardinality. The Diamond does NOT
-        // duplicate the full list (the messenger is the source of
-        // truth for the actual chain ids; a duplicate slot would
-        // drift); it only needs to know whether the rollup-time
-        // auto-broadcast SHOULD fire (count > 0) so a freshly-deployed
-        // diamond can land before the messenger destination list is
-        // wired without breaking every stake / withdraw. Operators
-        // sync this via `ProtocolBroadcastFacet.setBroadcastDestinationCount`
-        // alongside `VaipakamRewardMessenger.setBroadcastDestinations`.
-        // Appended at the END per the append-only discipline.
-        uint8 broadcastDestinationCount;
+        // T-087 Sub 2.D round-3 P1 #2 — placeholder slot kept for
+        // storage-layout stability ([[project_platform_prelive]]
+        // notwithstanding, append-only discipline is policy). The
+        // original `broadcastDestinationCount` was a duplicate of
+        // the messenger's `broadcastDestinationChainIds.length`
+        // gating the rollup-time broadcast at the Diamond level;
+        // Codex caught it as a fail-OPEN drift surface (operator
+        // syncs the messenger's list but forgets the Diamond knob
+        // → every rollup silently returns). Replaced by the
+        // messenger's own `NoBroadcastDestinations` revert
+        // bubbling up through the accumulator. Slot retained as
+        // `__reservedSub2D1` so any future slot append doesn't
+        // shift mainnet storage offsets.
+        uint8 __reservedSub2D1;
 
         // T-087 Sub 2.D round-2 P1 #1 — the de-dup gate must include
         // `tierExpirySec` and `tierTableVersion` alongside the
