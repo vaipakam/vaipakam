@@ -790,6 +790,36 @@ rate re-stamp at the new (lower) balance, applied to every
 open loan you're on. There is no grace window where the old
 tier still applies.
 
+<a id="buy-vpfi.cross-chain-tier"></a>
+
+### How your VPFI tier travels across chains
+
+You stake VPFI on Base — Base is the canonical chain that
+owns your accumulator state. When you act on a different chain
+(borrow on Sepolia, lend on Arbitrum, etc.), that chain reads
+a *cached* copy of your tier. The cache is kept fresh by an
+automatic cross-chain push: any change to your effective tier
+on Base triggers a CCIP message to every mirror chain you might
+act on. The push happens at the moment of mutation; no manual
+"sync my tier" action is required.
+
+Two things to know:
+
+- **Propagation time.** A push typically lands within minutes
+  on CCIP. Until it does, the mirror still honours your prior
+  cached tier — there is no flicker to tier 0.
+- **Cache expiry.** A cached tier remains honoured until either
+  a fresh push arrives OR the cache passes its max-age
+  backstop (60 days by default). If you don't act for a long
+  time on a given chain, your cache there will eventually
+  expire and the chain will treat you as tier 0 until the next
+  push. A single rollup-bearing action on Base re-sends the
+  push immediately.
+
+If you're curious about the exact gates the cache applies to
+detect staleness, see the
+[Cross-Chain Tier Propagation functional spec](https://github.com/vaipakam/vaipakam/blob/main/docs/FunctionalSpecs/CrossChainTierPropagation.md).
+
 ---
 
 ## Rewards
