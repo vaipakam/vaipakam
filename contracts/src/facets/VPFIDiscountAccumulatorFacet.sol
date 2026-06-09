@@ -308,10 +308,24 @@ contract VPFIDiscountAccumulatorFacet {
     ) private view returns (uint8) {
         if (s.currentStakeStartSec[user] == 0) return 0;
         uint16 startDay = s.currentStakeStartDayId[user];
+        // Sub 1.C round-1 P2 #4: the scan must extend BACK to
+        // `currentStakeStartDayId` (capped at the 30-day ring buffer
+        // window) so a dust-then-bulk attacker whose dust day has
+        // fallen out of the `today - minDays + 1` window is still
+        // caught. With the previous `if (startDay > windowFloor)
+        // windowFloor = startDay` narrowing, a user who staked
+        // dust on day 0, topped up the same day, and read tier on
+        // day 3 saw the scan start at day 1 — missing the dust
+        // dayMin entirely. The new logic widens the floor down to
+        // the earlier of `today - minDays + 1` or `startDay`,
+        // bounded below by `today - 29` to stay within the ring
+        // buffer's active range.
+        uint16 lowerCap = today > 29 ? today - 29 : 0;
         uint16 windowFloor = today >= windowDays
             ? today - windowDays + 1
             : 0;
-        if (startDay > windowFloor) windowFloor = startDay;
+        if (startDay < windowFloor) windowFloor = startDay;
+        if (windowFloor < lowerCap) windowFloor = lowerCap;
         uint8 minTier = type(uint8).max;
         bool anyHit;
         for (uint16 d = windowFloor; d <= today; d++) {

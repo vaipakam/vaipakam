@@ -954,11 +954,19 @@ contract ConfigFacet is DiamondAccessControl {
         if (!(e1 < e2 && e2 < e3 && e3 <= e4)) {
             revert NonMonotoneTierThresholds(e1, e2, e3, e4);
         }
-        LibVaipakam.ProtocolConfig storage c = LibVaipakam.storageSlot().protocolCfg;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.ProtocolConfig storage c = s.protocolCfg;
         c.vpfiTier1Min = t1;
         c.vpfiTier2Min = t2;
         c.vpfiTier3Min = t3;
         c.vpfiTier4Threshold = t4;
+        // T-087 Sub 1.C round-1 P2 #2 — bump `tierTableVersion`
+        // every time governance changes a tier threshold so the
+        // mirror cache freshness gate
+        // (`cachedTierTableVersion == currentTierTableVersion`)
+        // actually triggers. Without this bump the gate is
+        // architecturally correct but never fires in practice.
+        unchecked { s.tierTableVersion += 1; }
         emit VpfiTierThresholdsSet(t1, t2, t3, t4);
     }
 
@@ -989,11 +997,16 @@ contract ConfigFacet is DiamondAccessControl {
         if (!(e1 <= e2 && e2 <= e3 && e3 <= e4)) {
             revert NonMonotoneTierDiscounts(e1, e2, e3, e4);
         }
-        LibVaipakam.ProtocolConfig storage c = LibVaipakam.storageSlot().protocolCfg;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.ProtocolConfig storage c = s.protocolCfg;
         c.vpfiTier1DiscountBps = t1;
         c.vpfiTier2DiscountBps = t2;
         c.vpfiTier3DiscountBps = t3;
         c.vpfiTier4DiscountBps = t4;
+        // T-087 Sub 1.C round-1 P2 #2 — bump `tierTableVersion`
+        // so mirrors invalidate their cached entries on a
+        // discount-BPS change.
+        unchecked { s.tierTableVersion += 1; }
         emit VpfiTierDiscountsSet(t1, t2, t3, t4);
     }
 

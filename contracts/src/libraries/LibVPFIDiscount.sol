@@ -278,6 +278,14 @@ library LibVPFIDiscount {
         LibVaipakam.Storage storage s,
         address user
     ) private view returns (uint8 effTier, uint16 effBps) {
+        // Sub 1.C round-1 P2 #3: a mirror with a valid cached
+        // entry but no local `vpfiToken` set would otherwise let
+        // `quote()` succeed; the downstream `tryApplyBorrowerLif`
+        // then reaches `IERC20(vpfi).balanceOf(...)` with
+        // `vpfi == address(0)` and reverts instead of taking the
+        // documented silent fallback path. Treat unconfigured VPFI
+        // as "no discount available on this chain" upfront.
+        if (s.vpfiToken == address(0)) return (0, 0);
         LibVaipakam.CachedTier storage cache = s.userTierCache[user];
         if (cache.effectiveTier == 0) return (0, 0);
         if (cache.tierTableVersion != s.currentTierTableVersion) return (0, 0);
