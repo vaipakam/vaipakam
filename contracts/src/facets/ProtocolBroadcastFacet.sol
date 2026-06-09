@@ -98,6 +98,11 @@ contract ProtocolBroadcastFacet {
     error WithdrawExceedsBudget(uint256 requested, uint256 available);
     /// @notice The treasury / `to` transfer reverted on withdraw.
     error WithdrawFailed();
+    /// @notice `withdrawBudget` was called with `address(0)`. Other
+    ///         cross-chain rescue paths reject zero recipients; this
+    ///         does the same to prevent an unrecoverable operator
+    ///         typo burning the budget (Codex Sub 2.D round-1 P2 #2).
+    error ZeroRecipient();
 
     // ─── Producer call (rollup hook) ────────────────────────────────────
 
@@ -140,6 +145,23 @@ contract ProtocolBroadcastFacet {
             IVPFIDiscountAccumulatorInternal(address(this))
                 .effectiveTierAndBps(user);
 
+        // Codex Sub 2.D round-1 P2 #1 — skip the broadcast when the
+        // resolved (effTier, effBps) is identical to the last pushed
+        // pair. Without this every same-tier balance mutation burns
+        // CCIP gas on a no-op cache write. The `lastEffectiveTier` +
+        // `lastEffectiveBps` storage slots exist for exactly this
+        // de-dup (see their docstring in LibVaipakam.sol). Read-then-
+        // compare-then-skip; only update the "last pushed" stamp
+        // AFTER a successful send below.
+        if (
+            effTier == s.lastEffectiveTier[user]
+                && effBps == s.lastEffectiveBps[user]
+                && s.userTierPushNonce[user] != 0
+        ) {
+            emit ProtocolTierBroadcastSkipped(user, "tier-unchanged");
+            return;
+        }
+
         // Bump the per-user push nonce (monotonic on Base; mirrors
         // enforce strictly-greater via the Sub 2.C check).
         uint64 nonce = ++s.userTierPushNonce[user];
@@ -147,7 +169,17 @@ contract ProtocolBroadcastFacet {
         uint40 expiry = s.tierExpirySec[user];
         // Sub 2.A getter semantics — sentinel for never-rolled-up reads.
         if (expiry == 0) expiry = type(uint40).max;
-        uint16 version = s.currentTierTableVersion;
+        // Codex Sub 2.D round-1 P1 #2 — read the CANONICAL Base
+        // version (`s.tierTableVersion`, which `ConfigFacet` bumps on
+        // threshold / BPS change), NOT the mirror-side
+        // `currentTierTableVersion` (which is only raised by inbound
+        // mirror messages and stays 0 on Base). Without this fix the
+        // broadcast stamps the cache with version 0 forever — mirrors
+        // that have already observed a newer version (via the eager
+        // VersionBumped broadcast) would reject the freshly-written
+        // cache as version-stale and the user would lose their tier
+        // discount entirely.
+        uint16 version = s.tierTableVersion;
 
         IVaipakamRewardMessengerOutbound m =
             IVaipakamRewardMessengerOutbound(msgr);
@@ -175,6 +207,13 @@ contract ProtocolBroadcastFacet {
             payable(address(this))
         );
 
+        // Stamp the "last pushed" pair so the next rollup can de-dup
+        // (P2 #1 fold above). Done AFTER the send so a revert from
+        // inside the messenger leaves the stamp at the prior value
+        // and the next rollup retries.
+        s.lastEffectiveTier[user] = effTier;
+        s.lastEffectiveBps[user] = effBps;
+
         emit ProtocolTierBroadcastSent(user, effTier, effBps, nonce, fee);
     }
 
@@ -198,6 +237,7 @@ contract ProtocolBroadcastFacet {
         external
     {
         LibAccessControl.checkRole(LibAccessControl.ADMIN_ROLE, msg.sender);
+        if (to == address(0)) revert ZeroRecipient();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 budget = s.protocolBroadcastBudget;
         if (amount > budget) revert WithdrawExceedsBudget(amount, budget);

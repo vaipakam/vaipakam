@@ -58,6 +58,16 @@ contract ProtocolBroadcastFacetTest is SetupTest {
         assertEq(recipient.balance, 0.4 ether, "recipient credited");
     }
 
+    function test_Withdraw_RevertWhen_ZeroRecipient() public {
+        // Codex Sub 2.D round-1 P2 #2 — `withdrawBudget` must reject
+        // `address(0)` to prevent an operator typo burning the budget.
+        vm.deal(address(this), 1 ether);
+        _call().topUpBroadcastBudget{value: 1 ether}();
+
+        vm.expectRevert(ProtocolBroadcastFacet.ZeroRecipient.selector);
+        _call().withdrawBudget(payable(address(0)), 0.5 ether);
+    }
+
     function test_Withdraw_RevertWhen_ExceedsBudget() public {
         vm.deal(address(this), 1 ether);
         _call().topUpBroadcastBudget{value: 1 ether}();

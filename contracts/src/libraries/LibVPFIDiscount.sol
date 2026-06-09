@@ -187,14 +187,40 @@ library LibVPFIDiscount {
         // those fixtures (the rollup becomes a no-op) while
         // production deployments + the SetupTest fixture get the
         // full accumulator behaviour.
-        (bool ok, ) = address(this).call(
+        (bool ok, bytes memory returnData) = address(this).call(
             abi.encodeWithSelector(
                 VPFIDiscountAccumulatorFacet.rollupUserDiscount.selector,
                 user,
                 balPostMutation
             )
         );
-        ok; // explicitly ignored — see comment above.
+        if (!ok) {
+            // Codex Sub 2.D round-1 P1 #1 — `ProtocolBudgetExhausted`
+            // (and any other real revert from inside the accumulator)
+            // must bubble to the caller. The pre-Sub-2.D version
+            // silently swallowed ALL failures, but that's only safe
+            // for the minimal-fixture case where the accumulator
+            // facet isn't cut at all (a `FunctionDoesNotExist()`
+            // revert from the diamond's fallback). Discriminate by
+            // the revert selector: swallow only `FunctionDoesNotExist`,
+            // bubble everything else so production callers
+            // (depositVPFIToVault / withdrawVPFIFromVault / loan
+            // settlement) surface a budget-exhausted condition as a
+            // hard revert and the operator must top up before
+            // mutations can land.
+            bytes4 functionDoesNotExistSelector = bytes4(
+                keccak256(bytes("FunctionDoesNotExist()"))
+            );
+            if (
+                returnData.length >= 4
+                    && bytes4(returnData) == functionDoesNotExistSelector
+            ) {
+                return; // silent fallback for minimal-fixture diamonds
+            }
+            assembly {
+                revert(add(32, returnData), mload(returnData))
+            }
+        }
     }
 
     /// @notice T-087 Sub 1.B — read entry point used by every fee-charging
