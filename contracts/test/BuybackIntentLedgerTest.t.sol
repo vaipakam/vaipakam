@@ -4,6 +4,8 @@ pragma solidity ^0.8.29;
 import {SetupTest} from "./SetupTest.t.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
+import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
+import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {LibTreasuryBuyback} from "../src/libraries/LibTreasuryBuyback.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
@@ -11,22 +13,33 @@ import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import {IOrderMixin} from
     "@1inch/limit-order-protocol/contracts/interfaces/IOrderMixin.sol";
 
+/// @dev Trivial contract stub for setBuybackRemittanceReceiver.
+contract _ContractStub {}
+
+/// @dev Stand-in for the 1inch LOP — only needs an address.
+contract _MockLOP {}
+
 /// @title BuybackIntentLedgerTest
-/// @notice T-087 Sub 3.B — exercises the buyback ledger commit /
-///         expire surface on TreasuryFacet + the BUYBACK arm of
-///         IntentDispatchFacet. Doesn't cover SWAP_TO_REPAY's existing
-///         tests in `SwapToRepayIntentFacetTest.t.sol` — those still
-///         pass with the dispatcher routing.
+/// @notice T-087 Sub 3.B — buyback ledger + BUYBACK arm of
+///         IntentDispatchFacet (post-round-1 fold).
 contract BuybackIntentLedgerTest is SetupTest {
     ERC20Mock internal token;
+    ERC20Mock internal vpfi;
     address internal receiver;
+    address internal lop;
     bytes32 internal constant ORDER = keccak256("vaipakam.test.order.0");
     uint96 internal constant AMOUNT = 1_000e6;
 
     function setUp() public {
         setupHelper();
         token = new ERC20Mock("USDC", "USDC", 6);
-        receiver = address(new _Stub());
+        vpfi = new ERC20Mock("VPFI", "VPFI", 18);
+        receiver = address(new _ContractStub());
+        lop = address(new _MockLOP());
+
+        // Required by Sub 3.B's BUYBACK pre/postInteraction arms.
+        VPFITokenFacet(address(diamond)).setVPFIToken(address(vpfi));
+        IntentConfigFacet(address(diamond)).setFusionLimitOrderProtocol(lop);
     }
 
     function _t() internal view returns (TreasuryFacet) {
@@ -37,11 +50,12 @@ contract BuybackIntentLedgerTest is SetupTest {
         return IntentDispatchFacet(address(diamond));
     }
 
-    /// @dev Seed the Base-side buyback budget by calling the
-    ///      sender-restricted `absorbRemittance` — same path Sub 3.A's
-    ///      receiver uses on real CCIP delivery.
     function _seedBaseBudget(uint256 amount) internal {
         _t().setBuybackRemittanceReceiver(receiver);
+        // Fund the diamond with the source token so the LOP can pull
+        // at fill time (the receiver normally forwards delivered
+        // tokens — for tests we mint directly).
+        token.mint(address(diamond), amount);
         vm.prank(receiver);
         _t().absorbRemittance(address(token), amount, 11_155_111);
     }
@@ -59,13 +73,17 @@ contract BuybackIntentLedgerTest is SetupTest {
 
         _t().commitBuybackIntent(ORDER, address(token), AMOUNT, expiresAt);
 
-        // Reservation moved from budget to reserved.
         assertEq(_t().getBaseBuybackBudget(address(token)), 0, "budget drained");
-        // The kind is stamped + the ledger entry recorded.
         assertEq(
             _t().getOrderHashKind(ORDER),
             LibVaipakam.ORDER_KIND_BUYBACK,
             "kind stamped"
+        );
+        // LOP allowance granted (round-1 P1 #3).
+        assertEq(
+            token.allowance(address(diamond), lop),
+            AMOUNT,
+            "LOP allowance granted"
         );
         LibVaipakam.BuybackOrderInfo memory info = _t().getBuybackOrder(ORDER);
         assertEq(info.token, address(token));
@@ -98,7 +116,6 @@ contract BuybackIntentLedgerTest is SetupTest {
     }
 
     function test_Commit_RevertWhen_AmountOverflow() public {
-        // 2^96 — one too many for uint96.
         uint256 huge = uint256(type(uint96).max) + 1;
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -136,7 +153,6 @@ contract BuybackIntentLedgerTest is SetupTest {
         _seedBaseBudget(AMOUNT * 2);
         uint64 expiresAt = uint64(block.timestamp + 1 hours);
         _t().commitBuybackIntent(ORDER, address(token), AMOUNT, expiresAt);
-        // Re-commit on the same orderHash.
         vm.expectRevert(
             abi.encodeWithSelector(
                 LibTreasuryBuyback.BuybackOrderHashInUse.selector, ORDER
@@ -149,10 +165,10 @@ contract BuybackIntentLedgerTest is SetupTest {
 
     function test_Expire_HappyPath() public {
         _seedBaseBudget(AMOUNT);
-        uint64 expiresAt = uint64(block.timestamp + 1 hours);
-        _t().commitBuybackIntent(ORDER, address(token), AMOUNT, expiresAt);
+        _t().commitBuybackIntent(
+            ORDER, address(token), AMOUNT, uint64(block.timestamp + 1 hours)
+        );
 
-        // Past expiry.
         vm.warp(block.timestamp + 2 hours);
 
         vm.expectEmit(true, true, false, true, address(diamond));
@@ -160,15 +176,14 @@ contract BuybackIntentLedgerTest is SetupTest {
             ORDER, address(token), AMOUNT
         );
 
-        // Permissionless caller.
         address anyone = makeAddr("keeper");
         vm.prank(anyone);
         _t().expireBuybackIntent(ORDER);
 
-        // Reservation rolled back to budget.
         assertEq(_t().getBaseBuybackBudget(address(token)), AMOUNT, "budget restored");
-        // Kind discriminator cleared.
         assertEq(_t().getOrderHashKind(ORDER), bytes32(0), "kind cleared");
+        // LOP allowance rolled back to 0 (no other in-flight commits).
+        assertEq(token.allowance(address(diamond), lop), 0, "LOP allowance cleared");
         LibVaipakam.BuybackOrderInfo memory info = _t().getBuybackOrder(ORDER);
         assertEq(uint256(info.status), uint256(LibVaipakam.BUYBACK_ORDER_STATUS_EXPIRED));
     }
@@ -190,12 +205,12 @@ contract BuybackIntentLedgerTest is SetupTest {
 
     function test_Expire_RevertWhen_NotPending() public {
         _seedBaseBudget(AMOUNT);
-        uint64 expiresAt = uint64(block.timestamp + 1 hours);
-        _t().commitBuybackIntent(ORDER, address(token), AMOUNT, expiresAt);
+        _t().commitBuybackIntent(
+            ORDER, address(token), AMOUNT, uint64(block.timestamp + 1 hours)
+        );
         vm.warp(block.timestamp + 2 hours);
         _t().expireBuybackIntent(ORDER);
 
-        // Re-expire on the same orderHash (now Expired status).
         vm.expectRevert(
             abi.encodeWithSelector(
                 LibTreasuryBuyback.BuybackOrderNotPending.selector,
@@ -231,21 +246,38 @@ contract BuybackIntentLedgerTest is SetupTest {
         vm.warp(block.timestamp + 2 hours);
         _t().expireBuybackIntent(ORDER);
 
-        // Kind cleared on expire — discriminator zero → invalid.
         bytes4 ret = _d().isValidSignature(ORDER, "");
         assertEq(ret, bytes4(0xffffffff));
     }
 
-    // ─── IntentDispatchFacet — preInteraction (BUYBACK no-op) ─────
+    // ─── IntentDispatchFacet — preInteraction (BUYBACK arm) ────────
 
-    function test_PreInteraction_BuybackNoOp() public {
+    function test_PreInteraction_BuybackSnapshotsBaseline() public {
         _seedBaseBudget(AMOUNT);
         _t().commitBuybackIntent(
             ORDER, address(token), AMOUNT, uint64(block.timestamp + 1 hours)
         );
 
         IOrderMixin.Order memory order;
-        // For BUYBACK the dispatch arm returns silently; no revert.
+        // LOP is the only authorised caller.
+        vm.prank(lop);
+        _d().preInteraction(order, "", ORDER, address(0), 0, 0, 0, "");
+    }
+
+    function test_PreInteraction_RevertWhen_UnauthorisedCaller() public {
+        _seedBaseBudget(AMOUNT);
+        _t().commitBuybackIntent(
+            ORDER, address(token), AMOUNT, uint64(block.timestamp + 1 hours)
+        );
+
+        IOrderMixin.Order memory order;
+        // Default test caller is not the LOP.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibTreasuryBuyback.BuybackUnauthorizedCaller.selector,
+                address(this)
+            )
+        );
         _d().preInteraction(order, "", ORDER, address(0), 0, 0, 0, "");
     }
 
@@ -262,32 +294,83 @@ contract BuybackIntentLedgerTest is SetupTest {
 
     // ─── IntentDispatchFacet — postInteraction (BUYBACK arm) ──────
 
-    function test_PostInteraction_BuybackFillCreditsStakingPool() public {
+    function test_PostInteraction_BuybackFillCreditsStakingPoolViaDelta() public {
         _seedBaseBudget(AMOUNT);
         _t().commitBuybackIntent(
             ORDER, address(token), AMOUNT, uint64(block.timestamp + 1 hours)
         );
 
         uint256 stakingPre = _t().getStakingPoolBuybackBudget();
+        uint256 delivered = 12_345e18;
 
-        uint256 delivered = 12_345e18; // amount of VPFI Fusion would have filled.
+        IOrderMixin.Order memory order;
+        // preInteraction snapshots VPFI baseline.
+        vm.prank(lop);
+        _d().preInteraction(order, "", ORDER, address(0), 0, 0, 0, "");
+
+        // Simulate Fusion delivering VPFI into the diamond before
+        // calling postInteraction.
+        vpfi.mint(address(diamond), delivered);
 
         vm.expectEmit(true, true, false, true, address(diamond));
         emit LibTreasuryBuyback.BuybackIntentFilled(
             ORDER, address(token), AMOUNT, delivered
         );
 
-        IOrderMixin.Order memory order;
-        _d().postInteraction(order, "", ORDER, address(0), delivered, 0, 0, "");
+        // postInteraction reads the delta; makingAmount is ignored
+        // for buyback (round-1 P1 #2).
+        vm.prank(lop);
+        _d().postInteraction(order, "", ORDER, address(0), 999, 0, 0, "");
 
         assertEq(
             _t().getStakingPoolBuybackBudget(),
             stakingPre + delivered,
-            "staking pool credited"
+            "staking pool credited by VPFI delta"
         );
         LibVaipakam.BuybackOrderInfo memory info = _t().getBuybackOrder(ORDER);
         assertEq(uint256(info.status), uint256(LibVaipakam.BUYBACK_ORDER_STATUS_FILLED));
         assertEq(_t().getOrderHashKind(ORDER), bytes32(0), "kind cleared on fill");
+        // LOP allowance decremented to 0 (no other in-flight commits).
+        assertEq(token.allowance(address(diamond), lop), 0, "LOP allowance cleared");
+    }
+
+    function test_PostInteraction_RevertWhen_UnauthorisedCaller() public {
+        _seedBaseBudget(AMOUNT);
+        _t().commitBuybackIntent(
+            ORDER, address(token), AMOUNT, uint64(block.timestamp + 1 hours)
+        );
+
+        IOrderMixin.Order memory order;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibTreasuryBuyback.BuybackUnauthorizedCaller.selector,
+                address(this)
+            )
+        );
+        _d().postInteraction(order, "", ORDER, address(0), 1, 0, 0, "");
+    }
+
+    function test_PostInteraction_RevertWhen_PastDeadline() public {
+        _seedBaseBudget(AMOUNT);
+        uint64 expiresAt = uint64(block.timestamp + 1 hours);
+        _t().commitBuybackIntent(ORDER, address(token), AMOUNT, expiresAt);
+
+        IOrderMixin.Order memory order;
+        vm.prank(lop);
+        _d().preInteraction(order, "", ORDER, address(0), 0, 0, 0, "");
+
+        // Warp past deadline before postInteraction lands.
+        vm.warp(uint256(expiresAt) + 1);
+
+        vm.prank(lop);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibTreasuryBuyback.BuybackPastDeadline.selector,
+                expiresAt,
+                block.timestamp
+            )
+        );
+        _d().postInteraction(order, "", ORDER, address(0), 1, 0, 0, "");
     }
 
     function test_PostInteraction_RevertWhen_UnknownKind() public {
@@ -300,11 +383,4 @@ contract BuybackIntentLedgerTest is SetupTest {
         );
         _d().postInteraction(order, "", stray, address(0), 1, 0, 0, "");
     }
-
-    // ─── Helpers ─────────────────────────────────────────────────────
-
 }
-
-/// @dev A trivial contract used wherever the test needs to satisfy the
-///      EOA-rejection guards (`buybackRemittanceReceiver` setter).
-contract _Stub {}

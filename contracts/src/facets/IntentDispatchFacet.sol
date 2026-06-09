@@ -69,11 +69,11 @@ contract IntentDispatchFacet is
         if (kind == LibVaipakam.ORDER_KIND_SWAP_TO_REPAY) {
             LibSwapToRepayIntentSettlement.preInteractionImpl(orderHash);
         } else if (kind == LibVaipakam.ORDER_KIND_BUYBACK) {
-            // The buyback path has no preInteraction work — the
-            // delivered VPFI is measured at postInteraction time via
-            // the source-token reservation already debited at commit
-            // (no balance baseline needed for the receiver side).
-            return;
+            // Codex Sub 3.B round-1 P1 #2 — VPFI received needs a
+            // pre-fill balance baseline so postInteraction can
+            // measure the delta. The library applies the LOP auth
+            // check inside (round-1 P1 #1).
+            LibTreasuryBuyback.preInteractionImpl(orderHash);
         } else {
             revert UnknownOrderKind(orderHash);
         }
@@ -96,10 +96,13 @@ contract IntentDispatchFacet is
                 orderHash, makingAmount
             );
         } else if (kind == LibVaipakam.ORDER_KIND_BUYBACK) {
-            // For buyback, `makingAmount` is the actual VPFI the
-            // Fusion fill delivered. The library credits the staking
-            // pool budget and releases the source-token reservation.
-            LibTreasuryBuyback.onFill(orderHash, makingAmount);
+            // Codex Sub 3.B round-1 P1 #1 + P1 #2 + P2 #1 — the
+            // library applies LOP auth, expiry check, and reads
+            // delivered VPFI via balance-delta against the
+            // preInteraction baseline. `makingAmount` is the maker-
+            // side (source-token sold) and is intentionally
+            // unused here.
+            LibTreasuryBuyback.postInteractionImpl(orderHash);
         } else {
             revert UnknownOrderKind(orderHash);
         }

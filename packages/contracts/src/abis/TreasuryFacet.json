@@ -1000,6 +1000,11 @@
   },
   {
     "type": "error",
+    "name": "BuybackLopNotConfigured",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "BuybackNotYetExpired",
     "inputs": [
       {
