@@ -13,6 +13,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IVPFIToken} from "../interfaces/IVPFIToken.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {OracleFacet} from "./OracleFacet.sol";
+import {ICrossChainMessenger} from "../crosschain/ICrossChainMessenger.sol";
 
 /**
  * @title TreasuryFacet
@@ -83,6 +84,70 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     error TreasuryConvertArityMismatch(uint256 provided, uint256 expected);
     /// @notice A conversion leg's swap soft-failed across every adapter.
     error TreasuryConvertSwapFailed(address tokenOut);
+
+    // ─── T-087 Sub 3.A — buyback remittance ──────────────────────────
+
+    /// @notice `remitBuyback` was called for a token that is NOT on
+    ///         the allow-list for this chain (per
+    ///         `s.buybackAllowedToken[chainId][token]`).
+    error BuybackTokenNotAllowed(uint256 chainId, address token);
+    /// @notice `remitBuyback` was called for a token marked in
+    ///         `buybackNoConvert` — the token is intentionally
+    ///         exempted from cross-chain remittance (e.g., ETH from
+    ///         `buyVPFIWithETH` stays in operational reserve + LP).
+    error BuybackTokenNoConvert(address token);
+    /// @notice The configured `buybackBudget` for the token can't
+    ///         cover the requested remit amount.
+    error InsufficientBuybackBudget(uint256 requested, uint256 available);
+    /// @notice The Diamond's CCIP port (`s.crossChainMessenger`) is
+    ///         not configured. Admin must call
+    ///         `setCrossChainMessenger` before `remitBuyback`.
+    error CrossChainMessengerNotSet();
+    /// @notice Inbound `absorbRemittance` not called by the
+    ///         registered `buybackRemittanceReceiver`.
+    error OnlyBuybackRemittanceReceiver(address caller);
+    /// @notice `setCrossChainMessenger` or
+    ///         `setBuybackRemittanceReceiver` called with zero.
+    error TreasuryZeroAddress();
+
+    /// @notice Default CCIP destination gas limit for the buyback
+    ///         remittance callback. `BuybackRemittanceReceiver`'s
+    ///         inbound handler does: 1 token transfer + 1 facet call
+    ///         (`absorbRemittance`) + 1 event emit. 300k covers it
+    ///         with headroom.
+    uint256 internal constant BUYBACK_DEST_GAS_LIMIT = 300_000;
+
+    /// @custom:event-category state-change/buyback-remittance
+    event BuybackRemitted(
+        bytes32 indexed messageId,
+        address indexed token,
+        uint256 amount,
+        uint256 destChainId
+    );
+    /// @custom:event-category state-change/buyback-remittance
+    event BuybackRemittanceAbsorbed(
+        address indexed token,
+        uint256 amount,
+        uint256 indexed sourceChainId
+    );
+    /// @custom:event-category informational/config
+    event BuybackAllowedTokenSet(
+        uint256 indexed chainId,
+        address indexed token,
+        bool allowed
+    );
+    /// @custom:event-category informational/config
+    event BuybackNoConvertSet(address indexed token, bool on);
+    /// @custom:event-category informational/config
+    event BuybackRemittanceReceiverSet(
+        address indexed previous,
+        address indexed newReceiver
+    );
+    /// @custom:event-category informational/config
+    event CrossChainMessengerSet(
+        address indexed previous,
+        address indexed newMessenger
+    );
 
     /**
      * @notice Claims accumulated treasury fees for an asset.
@@ -317,5 +382,212 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         uint256 numeraireValue =
             (balance * price * 1e18) / (10 ** feedDec) / (10 ** tokenDec);
         return numeraireValue >= LibVaipakam.cfgTreasuryConvertUsdThreshold();
+    }
+
+    // ─── T-087 Sub 3.A — buyback remittance ──────────────────────────
+
+    /**
+     * @notice Send accumulated buyback budget cross-chain to the
+     *         Base-side `BuybackRemittanceReceiver`. Each remittance
+     *         is one (token, amount) per CCIP message; the agent /
+     *         operator schedules these calls when `buybackBudget[token]`
+     *         crosses an off-chain threshold.
+     *
+     * @dev ADMIN-gated. Debits the budget BEFORE the cross-chain send
+     *      (CEI). Approves the CcipMessenger for `amount` of `token`,
+     *      then calls `sendMessage` with a 1-element TokenAmount list
+     *      and a 32-byte payload carrying the declared token address
+     *      for cross-validation on the Base receiver.
+     *
+     *      The Diamond IS the registered channel handler on the buyback
+     *      channel for this chain (`channelOf[address(this)] ==
+     *      VPFI_BUYBACK_CHANNEL` on the CcipMessenger). The messenger
+     *      uses `channelOf[msg.sender]` to route, so the Diamond is the
+     *      authoritative source-sender — the Base-side
+     *      `channelPeerOf[VPFI_BUYBACK_CHANNEL][thisChainId]` must
+     *      point at this Diamond for the inbound to authenticate.
+     *
+     *      Reverts:
+     *        - `BuybackTokenNoConvert` if `token` is on the no-convert
+     *          list (e.g., ETH from `buyVPFIWithETH` stays in
+     *          operational reserve + LP — never crosses chains).
+     *        - `BuybackTokenNotAllowed(chainId, token)` if the token
+     *          is not on this chain's allow-list.
+     *        - `InsufficientBuybackBudget` if `amount` exceeds the
+     *          tracked budget.
+     *        - `CrossChainMessengerNotSet` if the port isn't wired.
+     *
+     * @param token         Source-chain ERC20 to remit. MUST be the
+     *                      same address (or canonical mirror) the Base
+     *                      receiver knows for this asset.
+     * @param amount        Amount in the token's own decimals.
+     * @param refundAddress `msg.value` surplus refund target. The CCIP
+     *                      fee is forwarded exactly; remainder returns.
+     * @return messageId The opaque CCIP message id.
+     */
+    function remitBuyback(
+        address token,
+        uint256 amount,
+        address payable refundAddress
+    )
+        external
+        payable
+        nonReentrant
+        whenNotPaused
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+        returns (bytes32 messageId)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+
+        if (token == address(0)) revert InvalidAddress();
+        if (amount == 0) revert ZeroAmount();
+        if (s.buybackNoConvert[token]) revert BuybackTokenNoConvert(token);
+
+        uint256 chainId = block.chainid;
+        if (!s.buybackAllowedToken[chainId][token]) {
+            revert BuybackTokenNotAllowed(chainId, token);
+        }
+
+        uint256 budget = s.buybackBudget[token];
+        if (amount > budget) revert InsufficientBuybackBudget(amount, budget);
+
+        address messenger = s.crossChainMessenger;
+        if (messenger == address(0)) revert CrossChainMessengerNotSet();
+
+        // Debit FIRST (CEI). The cross-chain send is the post-debit
+        // external interaction; if CcipMessenger reverts, the whole
+        // tx rolls back and the budget is preserved.
+        s.buybackBudget[token] = budget - amount;
+
+        // Approve the messenger for the exact amount. The messenger
+        // (NOT the router; round-5 P1 #4) is the contract the
+        // Diamond's tokens flow through; `forceApprove` re-sets the
+        // allowance to exactly `amount` to handle non-standard ERC20s
+        // (USDT) and any leftover from a prior partial pull.
+        IERC20(token).forceApprove(messenger, amount);
+
+        // Build the payload: declared token for cross-validation on
+        // the receiver. Source chain id is already in the CCIP header.
+        bytes memory payload = abi.encode(token);
+
+        // Token transfer list: exactly one entry.
+        ICrossChainMessenger.TokenAmount[] memory tokens =
+            new ICrossChainMessenger.TokenAmount[](1);
+        tokens[0] = ICrossChainMessenger.TokenAmount({
+            token: token,
+            amount: amount
+        });
+
+        // Quote the fee + forward exactly that much; surplus refunds.
+        // The CcipMessenger reads `channelOf[address(this)]` to pick
+        // the channel — this Diamond must be registered as the
+        // buyback channel handler.
+        uint256 fee = ICrossChainMessenger(messenger).quoteMessageFee(
+            s.baseChainId, payload, tokens, BUYBACK_DEST_GAS_LIMIT
+        );
+        if (msg.value < fee) revert InsufficientBuybackBudget(fee, msg.value);
+
+        messageId = ICrossChainMessenger(messenger).sendMessage{value: fee}(
+            s.baseChainId, payload, tokens, BUYBACK_DEST_GAS_LIMIT
+        );
+
+        if (msg.value > fee) {
+            (bool ok,) = refundAddress.call{value: msg.value - fee}("");
+            if (!ok) revert TreasuryZeroAddress(); // refund failure
+        }
+
+        emit BuybackRemitted(messageId, token, amount, s.baseChainId);
+    }
+
+    /**
+     * @notice Base-side ingress for the buyback remittance. Called by
+     *         the registered `BuybackRemittanceReceiver` AFTER the
+     *         receiver has validated the inbound delivery + forwarded
+     *         the tokens to this Diamond. This function only updates
+     *         the consolidated `buybackBudget` accounting.
+     * @dev    Sender check: only the registered receiver can call.
+     *         The receiver's `onCrossChainMessage` is in turn gated to
+     *         the CcipMessenger; so this is a 3-stage trust chain.
+     */
+    function absorbRemittance(
+        address token,
+        uint256 amount,
+        uint256 sourceChainId
+    ) external nonReentrant whenNotPaused {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (msg.sender != s.buybackRemittanceReceiver) {
+            revert OnlyBuybackRemittanceReceiver(msg.sender);
+        }
+        s.buybackBudget[token] += amount;
+        emit BuybackRemittanceAbsorbed(token, amount, sourceChainId);
+    }
+
+    // ─── T-087 Sub 3.A — admin setters ───────────────────────────────
+
+    function setBuybackAllowedToken(
+        uint256 chainId,
+        address token,
+        bool allowed
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        if (token == address(0)) revert InvalidAddress();
+        LibVaipakam.storageSlot().buybackAllowedToken[chainId][token] = allowed;
+        emit BuybackAllowedTokenSet(chainId, token, allowed);
+    }
+
+    function setBuybackNoConvert(address token, bool on)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (token == address(0)) revert InvalidAddress();
+        LibVaipakam.storageSlot().buybackNoConvert[token] = on;
+        emit BuybackNoConvertSet(token, on);
+    }
+
+    function setBuybackRemittanceReceiver(address newReceiver)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (newReceiver == address(0)) revert TreasuryZeroAddress();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        emit BuybackRemittanceReceiverSet(
+            s.buybackRemittanceReceiver, newReceiver
+        );
+        s.buybackRemittanceReceiver = newReceiver;
+    }
+
+    function setCrossChainMessenger(address newMessenger)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (newMessenger == address(0)) revert TreasuryZeroAddress();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        emit CrossChainMessengerSet(s.crossChainMessenger, newMessenger);
+        s.crossChainMessenger = newMessenger;
+    }
+
+    // ─── T-087 Sub 3.A — public reads ────────────────────────────────
+
+    function getBuybackBudget(address token) external view returns (uint256) {
+        return LibVaipakam.storageSlot().buybackBudget[token];
+    }
+
+    function isBuybackAllowedToken(uint256 chainId, address token)
+        external
+        view
+        returns (bool)
+    {
+        return LibVaipakam.storageSlot().buybackAllowedToken[chainId][token];
+    }
+
+    function isBuybackNoConvert(address token) external view returns (bool) {
+        return LibVaipakam.storageSlot().buybackNoConvert[token];
+    }
+
+    function getCrossChainMessenger() external view returns (address) {
+        return LibVaipakam.storageSlot().crossChainMessenger;
+    }
+
+    function getBuybackRemittanceReceiver() external view returns (address) {
+        return LibVaipakam.storageSlot().buybackRemittanceReceiver;
     }
 }

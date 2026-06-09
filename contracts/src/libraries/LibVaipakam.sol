@@ -3630,6 +3630,25 @@ library LibVaipakam {
         // `lastEffectiveBps` siblings.
         mapping(address => uint40) lastTierExpirySec;
         mapping(address => uint16) lastTierTableVersion;
+
+        // T-087 Sub 3.A — the CcipMessenger contract address (the
+        // cross-chain port, NOT a domain wrapper). The Diamond is
+        // itself the registered channel handler for the buyback
+        // channel and calls `CcipMessenger.sendMessage` directly
+        // from `TreasuryFacet.remitBuyback`. The same messenger
+        // serves any future cross-chain flow the Diamond wants to
+        // originate from. Admin-set via
+        // `TreasuryFacet.setCrossChainMessenger`.
+        address crossChainMessenger;
+
+        // T-087 Sub 3.A — admin-managed allow-list of tokens that
+        // are EXEMPT from the buyback / convert paths. Used to mark
+        // assets the protocol wants to keep in their native form
+        // (e.g., ETH from `buyVPFIWithETH` goes to operational
+        // reserve + VPFI/ETH LP — never gets remitted cross-chain or
+        // converted to other tokens). `remitBuyback` reverts if the
+        // token is on this list. Per design discussion 2026-06-09.
+        mapping(address => bool) buybackNoConvert;
     }
 
     /// @dev One entry of the treasury-conversion target allocation

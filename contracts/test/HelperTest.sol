@@ -713,11 +713,23 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](15);
         selectors[0] = TreasuryFacet.claimTreasuryFees.selector;
         selectors[1] = TreasuryFacet.getTreasuryBalance.selector;
         selectors[2] = TreasuryFacet.mintVPFI.selector;
         selectors[3] = TreasuryFacet.convertTreasuryAsset.selector;
+        // T-087 Sub 3.A — buyback remittance + admin + reads.
+        selectors[4] = TreasuryFacet.remitBuyback.selector;
+        selectors[5] = TreasuryFacet.absorbRemittance.selector;
+        selectors[6] = TreasuryFacet.setBuybackAllowedToken.selector;
+        selectors[7] = TreasuryFacet.setBuybackNoConvert.selector;
+        selectors[8] = TreasuryFacet.setBuybackRemittanceReceiver.selector;
+        selectors[9] = TreasuryFacet.setCrossChainMessenger.selector;
+        selectors[10] = TreasuryFacet.getBuybackBudget.selector;
+        selectors[11] = TreasuryFacet.isBuybackAllowedToken.selector;
+        selectors[12] = TreasuryFacet.isBuybackNoConvert.selector;
+        selectors[13] = TreasuryFacet.getCrossChainMessenger.selector;
+        selectors[14] = TreasuryFacet.getBuybackRemittanceReceiver.selector;
         return selectors;
     }
 
