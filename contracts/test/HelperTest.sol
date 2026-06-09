@@ -52,6 +52,7 @@ import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {MirrorTierReceiverFacet} from "../src/facets/MirrorTierReceiverFacet.sol";
+import {ProtocolBroadcastFacet} from "../src/facets/ProtocolBroadcastFacet.sol";
 import {StakingRewardsFacet} from "../src/facets/StakingRewardsFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
@@ -991,6 +992,21 @@ contract HelperTest {
         selectors[1] = MirrorTierReceiverFacet.onVersionBumpedReceived.selector;
         selectors[2] = MirrorTierReceiverFacet.getUserTierCache.selector;
         selectors[3] = MirrorTierReceiverFacet.getCurrentTierTableVersion.selector;
+        return selectors;
+    }
+
+    /// T-087 Sub 2.D — protocol broadcast orchestrator.
+    function getProtocolBroadcastFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](5);
+        selectors[0] = ProtocolBroadcastFacet.protocolBroadcastTierUpdate.selector;
+        selectors[1] = ProtocolBroadcastFacet.topUpBroadcastBudget.selector;
+        selectors[2] = ProtocolBroadcastFacet.withdrawBudget.selector;
+        selectors[3] = ProtocolBroadcastFacet.getProtocolBroadcastBudget.selector;
+        selectors[4] = ProtocolBroadcastFacet.getUserTierPushNonce.selector;
         return selectors;
     }
 

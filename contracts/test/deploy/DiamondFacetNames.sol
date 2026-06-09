@@ -33,7 +33,7 @@ abstract contract DiamondFacetNames {
     ///      `NFTPrepayListingAtomicFacet`;
     ///      41 → 42 in T-086 Round-7 (#355) with
     ///      `NFTPrepayAutoListFacet`.)
-    function cutFacetNames() internal pure returns (string[48] memory) {
+    function cutFacetNames() internal pure returns (string[49] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -121,7 +121,13 @@ abstract contract DiamondFacetNames {
             // `VaipakamRewardMessenger` contract's inbound handler
             // forwards `MSG_TYPE_TIER_UPDATED` / `MSG_TYPE_VERSION_BUMPED`
             // into this facet.
-            "MirrorTierReceiverFacet"
+            "MirrorTierReceiverFacet",
+            // T-087 Sub 2.D — protocol-funded mirror broadcast
+            // orchestrator. Reached only via the accumulator's
+            // post-rollup cross-facet call (gated to
+            // `msg.sender == address(this)`); the budget +
+            // destination-count admin surface is also here.
+            "ProtocolBroadcastFacet"
         ];
     }
 }

@@ -82,6 +82,40 @@ contract VPFIDiscountAccumulatorFacet {
             today,
             uint120(balPostMutation)
         );
+
+        // T-087 Sub 2.D — protocol-funded mirror broadcast via cross-
+        // facet call to `ProtocolBroadcastFacet`.
+        //
+        // Codex Sub 2.D round-2 P1 #2 — the previous failure-mode
+        // discriminator (swallow `FunctionDoesNotExist()`, bubble
+        // everything else) was unsafe: the same selector is returned
+        // when a misconfigured `rewardMessenger` is pointed at a
+        // contract that doesn't implement `sendTierUpdate` — exactly
+        // the case where we MUST bubble to surface the misconfig.
+        //
+        // Replaced by a direct on-chain configuration check: if
+        // `rewardMessenger == address(0)` the broadcast surface
+        // isn't wired (the deploy-time default + every minimal-
+        // fixture test), so we skip the call entirely. Once a
+        // messenger IS set, the call goes through and ANY revert
+        // from inside the broadcast facet (including
+        // `ProtocolBudgetExhausted`) bubbles correctly. This makes
+        // a missing `ProtocolBroadcastFacet` cut a deploy-time
+        // mistake the predeploy sanity catches rather than a
+        // silent runtime degrade.
+        if (s.rewardMessenger != address(0)) {
+            // slither-disable-next-line low-level-calls
+            (bool ok, bytes memory returnData) = address(this).call(
+                abi.encodeWithSignature(
+                    "protocolBroadcastTierUpdate(address)", user
+                )
+            );
+            if (!ok) {
+                assembly {
+                    revert(add(32, returnData), mload(returnData))
+                }
+            }
+        }
     }
 
     /// @notice T-087 Sub 2.A — read the user's projected tier-expiry

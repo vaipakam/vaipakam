@@ -187,14 +187,52 @@ library LibVPFIDiscount {
         // those fixtures (the rollup becomes a no-op) while
         // production deployments + the SetupTest fixture get the
         // full accumulator behaviour.
-        (bool ok, ) = address(this).call(
+        // Codex Sub 2.D round-3 P1 #1 — the outer-wrapper silent
+        // fallback on `FunctionDoesNotExist()` is only safe when
+        // we KNOW the revert can't have come from the broadcast
+        // path. The accumulator's own broadcast call is gated on
+        // `rewardMessenger != 0`, so if the messenger is unset
+        // the accumulator never reaches the broadcast facet and
+        // a returned `FunctionDoesNotExist` selector unambiguously
+        // means "the accumulator facet itself isn't cut" — silent
+        // fallback is correct for minimal-fixture tests.
+        //
+        // If the messenger IS set, however, the accumulator WILL
+        // attempt the broadcast call, and a `FunctionDoesNotExist`
+        // selector could equally well come from a missing
+        // ProtocolBroadcastFacet cut OR a misconfigured messenger
+        // contract — both are real production bugs that must
+        // bubble to the caller, not be silently swallowed.
+        address messenger = LibVaipakam.storageSlot().rewardMessenger;
+        (bool ok, bytes memory returnData) = address(this).call(
             abi.encodeWithSelector(
                 VPFIDiscountAccumulatorFacet.rollupUserDiscount.selector,
                 user,
                 balPostMutation
             )
         );
-        ok; // explicitly ignored — see comment above.
+        if (!ok) {
+            if (messenger == address(0)) {
+                // Unconfigured — selector-discriminator silent
+                // fallback safely handles minimal-fixture diamonds.
+                bytes4 functionDoesNotExistSelector = bytes4(
+                    keccak256(bytes("FunctionDoesNotExist()"))
+                );
+                if (
+                    returnData.length >= 4
+                        && bytes4(returnData) == functionDoesNotExistSelector
+                ) {
+                    return;
+                }
+            }
+            // Either the messenger is wired (production / configured
+            // testnet — any revert IS a real bug) or a non-selector
+            // revert raced through unconfigured paths. Bubble in
+            // both cases.
+            assembly {
+                revert(add(32, returnData), mload(returnData))
+            }
+        }
     }
 
     /// @notice T-087 Sub 1.B — read entry point used by every fee-charging

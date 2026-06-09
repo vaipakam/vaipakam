@@ -3604,6 +3604,32 @@ library LibVaipakam {
         // append-only per Codex Sub 1.B P1 #1.
         mapping(address => uint8) lastEffectiveTier;
         mapping(address => uint16) lastEffectiveBps;
+
+        // T-087 Sub 2.D round-3 P1 #2 — placeholder slot kept for
+        // storage-layout stability ([[project_platform_prelive]]
+        // notwithstanding, append-only discipline is policy). The
+        // original `broadcastDestinationCount` was a duplicate of
+        // the messenger's `broadcastDestinationChainIds.length`
+        // gating the rollup-time broadcast at the Diamond level;
+        // Codex caught it as a fail-OPEN drift surface (operator
+        // syncs the messenger's list but forgets the Diamond knob
+        // → every rollup silently returns). Replaced by the
+        // messenger's own `NoBroadcastDestinations` revert
+        // bubbling up through the accumulator. Slot retained as
+        // `__reservedSub2D1` so any future slot append doesn't
+        // shift mainnet storage offsets.
+        uint8 __reservedSub2D1;
+
+        // T-087 Sub 2.D round-2 P1 #1 — the de-dup gate must include
+        // `tierExpirySec` and `tierTableVersion` alongside the
+        // (tier, bps) pair. Mutations that keep tier the same but
+        // change expiry (e.g., a partial withdrawal that accelerates
+        // decay) OR change version (governance table bump) still
+        // need to propagate to mirrors. Each of these slots tracks
+        // the LAST PUSHED value next to its `lastEffectiveTier` /
+        // `lastEffectiveBps` siblings.
+        mapping(address => uint40) lastTierExpirySec;
+        mapping(address => uint16) lastTierTableVersion;
     }
 
     /// @dev One entry of the treasury-conversion target allocation
