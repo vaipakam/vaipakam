@@ -416,6 +416,17 @@ contract VPFIDiscountTimeWeightedTest is SetupTest {
         );
     }
 
+    function test_ProjectedExpiry_NeverRolledUpUserReturnsSentinel() public {
+        // Codex Sub 2.A round-3 P2 — a user whose state predates this
+        // facet cut OR who hasn't been rolled up yet has
+        // `tierExpirySec[user] == 0` in storage. The getter must fall
+        // through to the sentinel — any consumer reading 0 against
+        // `block.timestamp` would treat the user as "expired since
+        // epoch", inverting the intent.
+        address virgin = makeAddr("virgin");
+        assertEq(_expiry(virgin), type(uint40).max, "uninitialized read = sentinel");
+    }
+
     function test_ProjectedExpiry_RestakeClearsExpiry() public {
         // Full unstake then restake should produce a fresh expiry
         // value. After full unstake the projection is sentinel

@@ -96,7 +96,15 @@ contract VPFIDiscountAccumulatorFacet {
     ///         this. NOT `onlyInternal` because there's no security
     ///         posture against reading a public timestamp.
     function getTierExpirySec(address user) external view returns (uint40) {
-        return LibVaipakam.storageSlot().tierExpirySec[user];
+        // Codex Sub 2.A round-3 P2 — fall through to the sentinel
+        // when storage reads 0. A never-rolled-up user (state
+        // predates this facet cut, or first-rollup-not-yet-fired)
+        // would otherwise surface `0`, which any
+        // `block.timestamp < tierExpirySec` consumer would read as
+        // "expired since epoch". Sentinel is the correct null
+        // semantics — "no projected expiry".
+        uint40 stored = LibVaipakam.storageSlot().tierExpirySec[user];
+        return stored == 0 ? type(uint40).max : stored;
     }
 
     /// @notice Resolve the user's current EFFECTIVE_TIER and
