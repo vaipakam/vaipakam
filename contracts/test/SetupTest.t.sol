@@ -20,6 +20,7 @@ import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.so
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
+import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
@@ -71,6 +72,7 @@ import {console} from "forge-std/console.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
+import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -215,6 +217,7 @@ contract SetupTest is Test {
     SwapToRepayFacet swapToRepayFacet;
     // T-090 v1.1 (#389) — intent-based swap-to-repay sibling facet.
     SwapToRepayIntentFacet swapToRepayIntentFacet;
+    IntentDispatchFacet intentDispatchFacet;
     IntentConfigFacet intentConfigFacet;
     AdminFacet adminFacet;
     ClaimFacet claimFacet;
@@ -307,6 +310,7 @@ contract SetupTest is Test {
         repayFacet = new RepayFacet();
         swapToRepayFacet = new SwapToRepayFacet();
         swapToRepayIntentFacet = new SwapToRepayIntentFacet();
+        intentDispatchFacet = new IntentDispatchFacet();
         intentConfigFacet = new IntentConfigFacet();
         adminFacet = new AdminFacet();
         claimFacet = new ClaimFacet();
@@ -370,7 +374,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](50);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](51);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -664,6 +668,12 @@ contract SetupTest is Test {
             facetAddress: address(protocolBroadcastFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getProtocolBroadcastFacetSelectors()
+        });
+        // T-087 Sub 3.B — 1inch LOP v4 callback dispatcher.
+        cuts[50] = IDiamondCut.FacetCut({
+            facetAddress: address(intentDispatchFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getIntentDispatchFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

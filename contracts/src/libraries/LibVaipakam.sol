@@ -3661,7 +3661,59 @@ library LibVaipakam {
         // dest)`; reading 0 means "no pinning configured" and the
         // remit refuses to proceed.
         mapping(address => address) buybackDestToken;
+
+        // T-087 Sub 3.B — IntentDispatchFacet discriminator. Each
+        // committed 1inch order hash gets stamped with its KIND at
+        // commit time (`ORDER_KIND_SWAP_TO_REPAY` or
+        // `ORDER_KIND_BUYBACK`). The dispatch facet's
+        // `preInteraction` / `postInteraction` / `isValidSignature`
+        // arms look up this discriminator and route to the matching
+        // library. Cleared on terminal (fill / cancel / expire) so
+        // a stale order hash can't be replayed against a different
+        // KIND.
+        mapping(bytes32 => bytes32) orderHashKind;
+
+        // T-087 Sub 3.B — per-order info for the BUYBACK arm. Each
+        // active buyback intent reserves `amountIn` of `token` out of
+        // `s.baseBuybackBudget[token]` and into `s.baseBuybackReserved[token]`.
+        // The terminal hook (fill / expire) reads this struct to
+        // know which token's reservation to release. Packed: 20+12+8+1
+        // = 41 bytes ⇒ 2 slots.
+        mapping(bytes32 => BuybackOrderInfo) buybackOrders;
     }
+
+    /// @notice T-087 Sub 3.B — per-buyback-order state.
+    /// @param token       Source asset being swapped into VPFI.
+    /// @param amountIn    Amount of `token` reserved out of
+    ///                    `baseBuybackBudget`.
+    /// @param expiresAt   Unix-seconds deadline after which anyone
+    ///                    can call `expireBuyback(orderHash)` to roll
+    ///                    the reservation back into the budget.
+    /// @param status      Lifecycle marker — Pending / Filled /
+    ///                    Expired. Used to prevent double-fills +
+    ///                    double-expires.
+    struct BuybackOrderInfo {
+        address token;     // slot 0: 20 bytes
+        uint96 amountIn;   // slot 0: 12 bytes  (up to ~7.9e28 raw units — covers all reasonable tokens)
+        uint64 expiresAt;  // slot 1: 8 bytes
+        uint8 status;      // slot 1: 1 byte
+    }
+
+    /// @dev T-087 Sub 3.B — buyback-order status enum values. Kept
+    ///      as bare constants (not an enum) so we can compare in
+    ///      assembly + match storage layout exactly.
+    uint8 internal constant BUYBACK_ORDER_STATUS_NONE    = 0;
+    uint8 internal constant BUYBACK_ORDER_STATUS_PENDING = 1;
+    uint8 internal constant BUYBACK_ORDER_STATUS_FILLED  = 2;
+    uint8 internal constant BUYBACK_ORDER_STATUS_EXPIRED = 3;
+
+    /// @dev T-087 Sub 3.B — order-kind discriminators stamped into
+    ///      `s.orderHashKind` at commit time + cleared at terminal.
+    ///      Keccak-of-purpose; never re-used.
+    bytes32 internal constant ORDER_KIND_SWAP_TO_REPAY =
+        keccak256("vaipakam.intent.kind.swap-to-repay");
+    bytes32 internal constant ORDER_KIND_BUYBACK =
+        keccak256("vaipakam.intent.kind.buyback");
 
     /// @dev One entry of the treasury-conversion target allocation
     ///      (T-600). `convertTreasuryAsset` splits the input balance
