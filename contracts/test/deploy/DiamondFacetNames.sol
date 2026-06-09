@@ -33,7 +33,7 @@ abstract contract DiamondFacetNames {
     ///      `NFTPrepayListingAtomicFacet`;
     ///      41 → 42 in T-086 Round-7 (#355) with
     ///      `NFTPrepayAutoListFacet`.)
-    function cutFacetNames() internal pure returns (string[47] memory) {
+    function cutFacetNames() internal pure returns (string[48] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -114,7 +114,14 @@ abstract contract DiamondFacetNames {
             // settlement facets (Repay / Preclose / Refinance) stay
             // under EIP-170 instead of inlining ~2 kB per consumer.
             "VPFIDiscountAccumulatorFacet",
-            "VPFITokenFacet"
+            "VPFITokenFacet",
+            // T-087 Sub 2.C — mirror-side Diamond ingress for the
+            // cross-chain tier push. The Diamond's `userTierCache` +
+            // `currentTierTableVersion` writers live here; the
+            // `VaipakamRewardMessenger` contract's inbound handler
+            // forwards `MSG_TYPE_TIER_UPDATED` / `MSG_TYPE_VERSION_BUMPED`
+            // into this facet.
+            "MirrorTierReceiverFacet"
         ];
     }
 }

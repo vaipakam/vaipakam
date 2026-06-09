@@ -48,6 +48,53 @@ contract MockRewardDiamond {
         ++bcastCount;
     }
 
+    // T-087 Sub 2.C — mirror-side tier ingress capture. The mock simply
+    // records the most-recent call so tests can assert the messenger
+    // forwarded the right args; the production Diamond's
+    // {MirrorTierReceiverFacet} writes `s.userTierCache[user]` here.
+    uint256 public lastTierSrcChain;
+    address public lastTierUser;
+    uint8 public lastTierEffTier;
+    uint16 public lastTierEffBps;
+    uint40 public lastTierComputedAt;
+    uint256 public lastTierNonce;
+    uint40 public lastTierExpiry;
+    uint16 public lastTierVersion;
+    uint256 public tierUpdateCount;
+
+    function onTierUpdateReceived(
+        uint256 srcChainId,
+        address user,
+        uint8 effTier,
+        uint16 effBps,
+        uint40 computedAt,
+        uint256 nonce,
+        uint40 expiry,
+        uint16 version
+    ) external {
+        lastTierSrcChain = srcChainId;
+        lastTierUser = user;
+        lastTierEffTier = effTier;
+        lastTierEffBps = effBps;
+        lastTierComputedAt = computedAt;
+        lastTierNonce = nonce;
+        lastTierExpiry = expiry;
+        lastTierVersion = version;
+        ++tierUpdateCount;
+    }
+
+    uint256 public lastBumpSrcChain;
+    uint16 public lastBumpVersion;
+    uint256 public bumpCount;
+
+    function onVersionBumpedReceived(uint256 srcChainId, uint16 newVersion)
+        external
+    {
+        lastBumpSrcChain = srcChainId;
+        lastBumpVersion = newVersion;
+        ++bumpCount;
+    }
+
     receive() external payable {}
 }
 

@@ -33,6 +33,25 @@ interface IRewardReporterIngress {
     ) external;
 }
 
+/// @dev T-087 Sub 2.C — Mirror-side Diamond ingress for an inbound
+///      tier push. The Diamond implementation lives in
+///      `MirrorTierReceiverFacet`.
+interface IMirrorTierIngress {
+    function onTierUpdateReceived(
+        uint256 sourceChainId,
+        address user,
+        uint8 effectiveTier,
+        uint16 effectiveBps,
+        uint40 computedAt,
+        uint256 nonce,
+        uint40 tierExpirySec,
+        uint16 tierTableVersion
+    ) external;
+
+    function onVersionBumpedReceived(uint256 sourceChainId, uint16 newVersion)
+        external;
+}
+
 /**
  * @title VaipakamRewardMessenger — cross-chain reward accounting on the
  *        CCIP seam (T-068 Phase 4)
@@ -692,14 +711,16 @@ contract VaipakamRewardMessenger is
                 tierExpirySec,
                 tierTableVersion
             );
-            // T-087 Sub 2.C will forward to the Diamond's tier ingress
-            // here — `IMirrorTierIngress(diamond).onTierUpdateReceived(
-            // sourceChainId, user, effTier, effBps, computedAt, nonce,
-            // tierExpirySec, tierTableVersion)`. Sub 2.B intentionally
-            // stops at the receive event so this slice can ship +
-            // be reviewed independently. Until Sub 2.C lands, mirrors
-            // surface the event-only inbound; the Diamond's cache stays
-            // unwritten.
+            IMirrorTierIngress(diamond).onTierUpdateReceived(
+                sourceChainId,
+                user,
+                effTier,
+                effBps,
+                computedAt,
+                nonce,
+                tierExpirySec,
+                tierTableVersion
+            );
         } else if (msgType == MSG_TYPE_VERSION_BUMPED) {
             if (len != VERSION_BUMPED_PAYLOAD_SIZE) {
                 revert PayloadSizeMismatch(len, VERSION_BUMPED_PAYLOAD_SIZE);
@@ -707,7 +728,9 @@ contract VaipakamRewardMessenger is
             if (isCanonical) revert BroadcastOnCanonical();
             (, uint16 newVersion) = abi.decode(payload, (uint8, uint16));
             emit VersionBumpReceived(sourceChainId, newVersion);
-            // T-087 Sub 2.C will forward to the Diamond's tier ingress.
+            IMirrorTierIngress(diamond).onVersionBumpedReceived(
+                sourceChainId, newVersion
+            );
         } else {
             revert UnknownMessageType(msgType);
         }

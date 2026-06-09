@@ -40,6 +40,8 @@ import VPFITokenFacetABI from './VPFITokenFacet.json';
 import VPFIDiscountFacetABI from './VPFIDiscountFacet.json';
 // T-087 Sub 1.B — accumulator facet carved off LibVPFIDiscount.
 import VPFIDiscountAccumulatorFacetABI from './VPFIDiscountAccumulatorFacet.json';
+// T-087 Sub 2.C — mirror-side tier-push receiver facet.
+import MirrorTierReceiverFacetABI from './MirrorTierReceiverFacet.json';
 import StakingRewardsFacetABI from './StakingRewardsFacet.json';
 import InteractionRewardsFacetABI from './InteractionRewardsFacet.json';
 // T-068 renamed these contracts VPFIBuyAdapter/VPFIBuyReceiver →
@@ -109,6 +111,7 @@ export {
   VPFITokenFacetABI,
   VPFIDiscountFacetABI,
   VPFIDiscountAccumulatorFacetABI,
+  MirrorTierReceiverFacetABI,
   StakingRewardsFacetABI,
   InteractionRewardsFacetABI,
   VpfiBuyAdapterABI,
@@ -168,6 +171,7 @@ export const DIAMOND_ABI = [
   ...VPFITokenFacetABI,
   ...VPFIDiscountFacetABI,
   ...VPFIDiscountAccumulatorFacetABI,
+  ...MirrorTierReceiverFacetABI,
   ...StakingRewardsFacetABI,
   ...InteractionRewardsFacetABI,
   ...RewardReporterFacetABI,

@@ -48,6 +48,9 @@ import {MetricsDashboardFacet} from "../src/facets/MetricsDashboardFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
+// T-087 Sub 2.C — mirror-side Diamond ingress for the cross-chain
+// tier push; the `userTierCache` writer.
+import {MirrorTierReceiverFacet} from "../src/facets/MirrorTierReceiverFacet.sol";
 import {StakingRewardsFacet} from "../src/facets/StakingRewardsFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
@@ -166,6 +169,9 @@ contract DeployDiamond is Script {
         VPFIDiscountFacet vpfiDiscountFacet = new VPFIDiscountFacet();
         VPFIDiscountAccumulatorFacet vpfiDiscountAccumulatorFacet =
             new VPFIDiscountAccumulatorFacet();
+        // T-087 Sub 2.C — mirror-side tier-push receiver facet.
+        MirrorTierReceiverFacet mirrorTierReceiverFacet =
+            new MirrorTierReceiverFacet();
         StakingRewardsFacet stakingRewardsFacet = new StakingRewardsFacet();
         InteractionRewardsFacet interactionRewardsFacet = new InteractionRewardsFacet();
         RewardReporterFacet rewardReporterFacet = new RewardReporterFacet();
@@ -196,7 +202,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](47);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](48);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -326,6 +332,11 @@ contract DeployDiamond is Script {
         cuts[46] = _buildCut(
             address(vpfiDiscountAccumulatorFacet),
             _getVpfiDiscountAccumulatorSelectors()
+        );
+        // T-087 Sub 2.C — mirror-side tier-push receiver facet.
+        cuts[47] = _buildCut(
+            address(mirrorTierReceiverFacet),
+            _getMirrorTierReceiverSelectors()
         );
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
@@ -638,6 +649,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("vpfiTokenFacet",          address(vpfiTokenFacet));
         Deployments.writeFacet("vpfiDiscountFacet",       address(vpfiDiscountFacet));
         Deployments.writeFacet("vpfiDiscountAccumulatorFacet", address(vpfiDiscountAccumulatorFacet));
+        Deployments.writeFacet("mirrorTierReceiverFacet", address(mirrorTierReceiverFacet));
         Deployments.writeFacet("stakingRewardsFacet",     address(stakingRewardsFacet));
         Deployments.writeFacet("interactionRewardsFacet", address(interactionRewardsFacet));
         Deployments.writeFacet("rewardReporterFacet",     address(rewardReporterFacet));
@@ -694,6 +706,7 @@ contract DeployDiamond is Script {
         console.log("VPFITokenFacet:       ", address(vpfiTokenFacet));
         console.log("VPFIDiscountFacet:    ", address(vpfiDiscountFacet));
         console.log("VPFIDiscountAccumulatorFacet:", address(vpfiDiscountAccumulatorFacet));
+        console.log("MirrorTierReceiverFacet:", address(mirrorTierReceiverFacet));
         console.log("StakingRewardsFacet:  ", address(stakingRewardsFacet));
         console.log("InteractionRewardsFacet:", address(interactionRewardsFacet));
         console.log("RewardReporterFacet:  ", address(rewardReporterFacet));
@@ -1494,6 +1507,23 @@ contract DeployDiamond is Script {
         // T-087 Sub 2.A — projected tier-expiry view (off-chain
         // monitoring + Sub 2.B CCIP payload source + test inspection).
         s[2] = VPFIDiscountAccumulatorFacet.getTierExpirySec.selector;
+    }
+
+    /// T-087 Sub 2.C — mirror-side tier-push receiver facet. Both
+    /// selectors are gated to `msg.sender == s.rewardMessenger`; the
+    /// `VaipakamRewardMessenger` contract forwards inbound
+    /// `MSG_TYPE_TIER_UPDATED` / `MSG_TYPE_VERSION_BUMPED` here.
+    function _getMirrorTierReceiverSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](4);
+        s[0] = MirrorTierReceiverFacet.onTierUpdateReceived.selector;
+        s[1] = MirrorTierReceiverFacet.onVersionBumpedReceived.selector;
+        // Public read surface — off-chain monitoring + tests.
+        s[2] = MirrorTierReceiverFacet.getUserTierCache.selector;
+        s[3] = MirrorTierReceiverFacet.getCurrentTierTableVersion.selector;
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
