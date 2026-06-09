@@ -797,30 +797,38 @@ tier still applies.
 You stake VPFI on Base — Base is the canonical chain that
 owns your accumulator state. When you act on a different chain
 (borrow on Sepolia, lend on Arbitrum, etc.), that chain reads
-a *cached* copy of your tier. The cache is kept fresh by an
-automatic cross-chain push: any change to your effective tier
-on Base triggers a CCIP message to every mirror chain you might
-act on. The push happens at the moment of mutation; no manual
-"sync my tier" action is required.
+a *cached* copy of your tier. The cache is kept fresh by a
+cross-chain push: when your effective tier on Base changes,
+the next Base-side action you take broadcasts a CCIP message
+to every mirror chain you might act on. There is no manual
+"sync my tier" action required.
 
 Two things to know:
 
-- **Propagation time.** A push typically lands within minutes
-  on CCIP. Until it does, the mirror still honours your prior
-  cached tier — there is no flicker to tier 0.
-- **Cache expiry.** A cached tier remains honoured until either
-  (a) a fresh push arrives, (b) governance moves the tier-
-  threshold table to a new version, or (c) the cache passes
-  its max-age backstop (60 days by default). If you don't act
-  for a long time on a given chain, your cache there will
-  eventually expire and the chain will treat you as tier 0
-  until the next push. To refresh the cache from Base, you
-  need a rollup-bearing action that produces a NEW push tuple
-  — a stake that changes your tier, a partial withdrawal that
-  changes your projected expiry, or any tier-table-version
-  change. A same-tier same-balance "no-op" rollup will not
-  re-send a push; this is by design so the protocol budget
-  isn't burned on caches that are already correct.
+- **Tier maturation takes a follow-up action.** Your first
+  stake does NOT immediately broadcast — your effective tier
+  is gated by a minimum-history period (3 days by default) so
+  a fresh stake initially resolves to tier 0 and the broadcast
+  silent-skips. Once the period elapses, the gate releases on
+  Base immediately, but mirrors don't learn until your NEXT
+  rollup-bearing Base action (any deposit, partial withdrawal,
+  loan action) triggers a push. A 1-wei top-up is enough.
+- **Propagation time.** Once a push is dispatched, it
+  typically lands on the mirror within minutes via CCIP. Until
+  it does, the mirror still honours your prior cached tier —
+  there is no flicker to tier 0.
+- **Cache expiry.** A cached tier remains honoured until
+  either (a) a fresh push arrives, (b) governance moves the
+  tier-threshold table to a new version AND your tier changes
+  enough to trigger a push, or (c) the cache passes its max-
+  age backstop (60 days by default). If you don't act for a
+  long time on a given chain, your cache there will eventually
+  expire and the chain will treat you as tier 0 until the next
+  push. To refresh, do any Base-side action that changes your
+  effective tier or BPS. A same-tier same-balance "no-op"
+  rollup will NOT re-send a push — this is by design so the
+  protocol's broadcast budget isn't burned on caches that are
+  already correct.
 
 If you're curious about the exact gates the cache applies to
 detect staleness, see the
