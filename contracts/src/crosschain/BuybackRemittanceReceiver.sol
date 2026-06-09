@@ -95,6 +95,13 @@ contract BuybackRemittanceReceiver is
     // ─── Errors ───────────────────────────────────────────────────────
 
     error ZeroAddress();
+    /// @notice Codex Sub 3.A round-2 P2 #2 — `diamond` (or `messenger`)
+    ///         was set to an EOA. Forwarding the remitted tokens to
+    ///         an EOA would silently strand them; the EOA can never
+    ///         call `absorbRemittance` to credit the Base-side
+    ///         budget. Reject any address with no code at config
+    ///         time.
+    error NotAContract(address candidate);
     /// @notice `onCrossChainMessage` called by an address other than the
     ///         registered {messenger}.
     error NotMessenger(address caller);
@@ -133,6 +140,11 @@ contract BuybackRemittanceReceiver is
         ) {
             revert ZeroAddress();
         }
+        // Codex round-2 P2 #2 — messenger + diamond must be deployed
+        // contracts. An EOA in either slot strands tokens (diamond
+        // case) or routes inbound to a no-op address (messenger case).
+        if (messenger_.code.length == 0) revert NotAContract(messenger_);
+        if (diamond_.code.length == 0) revert NotAContract(diamond_);
         __Ownable_init(owner_);
         __Ownable2Step_init();
         _guardianPausableInit();
@@ -201,12 +213,14 @@ contract BuybackRemittanceReceiver is
 
     function setMessenger(address newMessenger) external onlyOwner {
         if (newMessenger == address(0)) revert ZeroAddress();
+        if (newMessenger.code.length == 0) revert NotAContract(newMessenger);
         emit MessengerSet(messenger, newMessenger);
         messenger = newMessenger;
     }
 
     function setDiamond(address newDiamond) external onlyOwner {
         if (newDiamond == address(0)) revert ZeroAddress();
+        if (newDiamond.code.length == 0) revert NotAContract(newDiamond);
         emit DiamondSet(diamond, newDiamond);
         diamond = newDiamond;
     }

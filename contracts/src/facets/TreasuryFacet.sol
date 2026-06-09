@@ -130,6 +130,12 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         uint256 amount,
         uint256 indexed sourceChainId
     );
+    /// @custom:event-category state-change/buyback-remittance
+    /// @notice Codex Sub 3.A round-2 P1 #2 — admin moved
+    ///         `amount` of `token` from `treasuryBalances` into
+    ///         `buybackBudget` so a future `remitBuyback` can ship
+    ///         it cross-chain to Base.
+    event BuybackBudgetCredited(address indexed token, uint256 amount);
     /// @custom:event-category informational/config
     event BuybackAllowedTokenSet(
         uint256 indexed chainId,
@@ -473,6 +479,10 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         // being masked by a coincidentally-zero budget.
         address messenger = s.crossChainMessenger;
         if (messenger == address(0)) revert CrossChainMessengerNotSet();
+        // Codex Sub 3.A round-2 P2 #1 — reject zero refund address
+        // upfront. A typo'd `address(0)` would otherwise let surplus
+        // `msg.value - fee` get burned in the `.call` at the end.
+        if (refundAddress == address(0)) revert TreasuryZeroAddress();
 
         uint256 budget = s.buybackBudget[srcToken];
         if (amount > budget) revert InsufficientBuybackBudget(amount, budget);
@@ -553,6 +563,49 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         // the Diamond but the future Fusion commit can't see them.
         s.baseBuybackBudget[token] += amount;
         emit BuybackRemittanceAbsorbed(token, amount, sourceChainId);
+    }
+
+    /**
+     * @notice Codex Sub 3.A round-2 P1 #2 — admin moves accumulated
+     *         fee revenue from `s.treasuryBalances[token]` into
+     *         `s.buybackBudget[token]`. Without this hook the
+     *         per-chain buyback budget would never get populated and
+     *         `remitBuyback` would always hit
+     *         `InsufficientBuybackBudget`.
+     * @dev    For Sub 3.A scope this is a MANUAL admin call: the
+     *         operator decides what portion of accumulated fees
+     *         becomes "for buyback" vs "for treasury direct claim".
+     *         A fully-automated split at fee-accrual time is tracked
+     *         as a Sub 3 add-on (the priority router card #472 is
+     *         the Base-side analogue; this per-chain allocator is a
+     *         separate follow-up).
+     *
+     *         Reverts:
+     *           - `BuybackTokenNoConvert` if the token is on the
+     *             no-convert list (the same flag protects this path
+     *             since "no convert" implies "no buyback either").
+     *           - `InsufficientBuybackBudget` if the diamond's
+     *             `treasuryBalances[token]` cannot cover the
+     *             requested allocation.
+     */
+    function creditBuybackBudget(address token, uint256 amount)
+        external
+        nonReentrant
+        whenNotPaused
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (token == address(0)) revert InvalidAddress();
+        if (amount == 0) revert ZeroAmount();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.buybackNoConvert[token]) revert BuybackTokenNoConvert(token);
+
+        uint256 treasuryBal = s.treasuryBalances[token];
+        if (amount > treasuryBal) {
+            revert InsufficientBuybackBudget(amount, treasuryBal);
+        }
+        s.treasuryBalances[token] = treasuryBal - amount;
+        s.buybackBudget[token] += amount;
+        emit BuybackBudgetCredited(token, amount);
     }
 
     // ─── T-087 Sub 3.A — admin setters ───────────────────────────────

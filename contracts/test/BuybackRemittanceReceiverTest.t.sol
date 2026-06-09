@@ -33,16 +33,24 @@ contract MockDiamondAbsorber {
 /// @notice T-087 Sub 3.A — unit-tests the inbound validation surface
 ///         of `BuybackRemittanceReceiver`. End-to-end CCIP delivery
 ///         lives in `TreasuryBuybackEndToEndTest`.
+/// @dev A minimal contract used as the registered messenger so the
+///      receiver's `code.length > 0` guard (Codex Sub 3.A round-2 P2
+///      #2) passes. Doesn't need any methods — the receiver only
+///      checks `msg.sender == messenger` for inbound trust.
+contract MockMessengerStub {}
+
 contract BuybackRemittanceReceiverTest is Test {
     BuybackRemittanceReceiver internal receiver;
     MockDiamondAbsorber internal absorber;
     ERC20Mock internal usdc;
     address internal owner = makeAddr("owner");
-    address internal messenger = makeAddr("messenger");
+    address internal messenger;
 
     function setUp() public {
         absorber = new MockDiamondAbsorber();
         usdc = new ERC20Mock("USDC", "USDC", 6);
+        // Codex Sub 3.A round-2 P2 #2 — messenger must be a contract.
+        messenger = address(new MockMessengerStub());
 
         BuybackRemittanceReceiver impl = new BuybackRemittanceReceiver();
         ERC1967Proxy proxy = new ERC1967Proxy(
@@ -231,14 +239,63 @@ contract BuybackRemittanceReceiverTest is Test {
     // ─── Admin ──────────────────────────────────────────────────────
 
     function test_SetMessenger_HappyPath() public {
-        address newMessenger = makeAddr("newMessenger");
+        address newMessenger = address(new MockMessengerStub());
         vm.prank(owner);
         receiver.setMessenger(newMessenger);
         assertEq(receiver.messenger(), newMessenger);
     }
 
     function test_SetMessenger_RevertWhen_NotOwner() public {
+        address newMessenger = address(new MockMessengerStub());
+        // Not pranking → msg.sender is the test contract, not owner.
         vm.expectRevert();
-        receiver.setMessenger(makeAddr("other"));
+        receiver.setMessenger(newMessenger);
+    }
+
+    // ─── Round-2 P2 #2 — EOA guards ──────────────────────────────────
+
+    function test_Initialize_RevertWhen_DiamondIsEOA() public {
+        address eoaDiamond = makeAddr("eoaDiamond");
+        BuybackRemittanceReceiver impl = new BuybackRemittanceReceiver();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                BuybackRemittanceReceiver.NotAContract.selector, eoaDiamond
+            )
+        );
+        new ERC1967Proxy(
+            address(impl),
+            abi.encodeCall(
+                BuybackRemittanceReceiver.initialize,
+                (owner, messenger, eoaDiamond)
+            )
+        );
+    }
+
+    function test_Initialize_RevertWhen_MessengerIsEOA() public {
+        address eoaMessenger = makeAddr("eoaMessenger");
+        BuybackRemittanceReceiver impl = new BuybackRemittanceReceiver();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                BuybackRemittanceReceiver.NotAContract.selector, eoaMessenger
+            )
+        );
+        new ERC1967Proxy(
+            address(impl),
+            abi.encodeCall(
+                BuybackRemittanceReceiver.initialize,
+                (owner, eoaMessenger, address(absorber))
+            )
+        );
+    }
+
+    function test_SetDiamond_RevertWhen_EOA() public {
+        address eoaDiamond = makeAddr("eoaDiamond");
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                BuybackRemittanceReceiver.NotAContract.selector, eoaDiamond
+            )
+        );
+        receiver.setDiamond(eoaDiamond);
     }
 }

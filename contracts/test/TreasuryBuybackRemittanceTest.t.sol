@@ -132,6 +132,47 @@ contract TreasuryBuybackRemittanceTest is SetupTest {
         _t().remitBuyback(address(usdcMirror), usdcBase, 0, payable(address(this)));
     }
 
+    function test_RemitBuyback_RevertWhen_ZeroRefund() public {
+        // Codex round-2 P2 #1 — refund target zero would burn surplus
+        // value. Must reject upfront.
+        _t().setBuybackAllowedToken(block.chainid, address(usdcMirror), true);
+        _t().setCrossChainMessenger(messenger);
+        vm.expectRevert(TreasuryFacet.TreasuryZeroAddress.selector);
+        _t().remitBuyback(address(usdcMirror), usdcBase, 1e6, payable(address(0)));
+    }
+
+    // ─── Round-2 P1 #2 — creditBuybackBudget admin allocator ──────
+
+    function test_CreditBuybackBudget_RevertWhen_NotAdmin() public {
+        address attacker = makeAddr("attacker");
+        vm.prank(attacker);
+        vm.expectRevert();
+        _t().creditBuybackBudget(address(usdcMirror), 1e6);
+    }
+
+    function test_CreditBuybackBudget_RevertWhen_NoConvert() public {
+        _t().setBuybackNoConvert(address(usdcMirror), true);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                TreasuryFacet.BuybackTokenNoConvert.selector,
+                address(usdcMirror)
+            )
+        );
+        _t().creditBuybackBudget(address(usdcMirror), 1e6);
+    }
+
+    function test_CreditBuybackBudget_RevertWhen_InsufficientTreasury() public {
+        // Treasury has zero balance for the token.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                TreasuryFacet.InsufficientBuybackBudget.selector,
+                uint256(1e6),
+                uint256(0)
+            )
+        );
+        _t().creditBuybackBudget(address(usdcMirror), 1e6);
+    }
+
     // ─── absorbRemittance invariants ──────────────────────────────────
 
     function test_AbsorbRemittance_RevertWhen_NotReceiver() public {

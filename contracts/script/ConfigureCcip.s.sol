@@ -102,6 +102,14 @@ contract ConfigureCcip is Script {
         keccak256("vaipakam.ccip.channel.vpfi-buy");
     bytes32 internal constant VPFI_REWARD_CHANNEL =
         keccak256("vaipakam.ccip.channel.vpfi-reward");
+    /// @dev T-087 Sub 3.A — buyback remittance channel. On every
+    ///      mirror, the Diamond is the source-sender (registered as
+    ///      the handler so `CcipMessenger.sendMessage`'s
+    ///      `channelOf[msg.sender]` lookup picks the right channel);
+    ///      on Base, the `BuybackRemittanceReceiver` is the inbound
+    ///      handler.
+    bytes32 internal constant VPFI_BUYBACK_CHANNEL =
+        keccak256("vaipakam.ccip.channel.vpfi-buyback");
 
     /// @dev Everything `run()` resolves once, threaded through the wiring
     ///      steps — keeps each step a small, readable unit.
@@ -115,6 +123,10 @@ contract ConfigureCcip is Script {
         address rewardMessenger;
         address localToken;
         address localBuyContract;
+        // T-087 Sub 3.A — on Base this is the BuybackRemittanceReceiver
+        // (the inbound CCIP handler); on mirrors this is the Diamond
+        // itself (the source-sender for outbound `remitBuyback`).
+        address localBuybackHandler;
         address registry;
         address moduleOwner;
         address guardian;
@@ -157,10 +169,22 @@ contract ConfigureCcip is Script {
         if (c.canonical) {
             c.localToken = Deployments.readVpfiToken();
             c.localBuyContract = Deployments.readVpfiBuyReceiver();
+            // T-087 Sub 3.A — on Base, the inbound buyback channel
+            // handler is the BuybackRemittanceReceiver.
+            c.localBuybackHandler = Deployments.readAddress(
+                ".buybackRemittanceReceiver",
+                "BUYBACK_REMITTANCE_RECEIVER"
+            );
         } else {
             c.localToken =
                 Deployments.readAddress(".vpfiMirror", "VPFI_MIRROR_ADDRESS");
             c.localBuyContract = Deployments.readVpfiBuyAdapter();
+            // T-087 Sub 3.A — on mirrors, the Diamond is the
+            // source-sender for `remitBuyback`; register it as the
+            // buyback channel handler so `CcipMessenger`'s
+            // `channelOf[msg.sender]` lookup routes correctly.
+            c.localBuybackHandler =
+                Deployments.readAddress(".diamond", "DIAMOND_ADDRESS");
         }
 
         require(c.laneChainIds.length > 0, "ConfigureCcip: no lanes given");
@@ -255,7 +279,8 @@ contract ConfigureCcip is Script {
         CcipMessenger m = CcipMessenger(c.messenger);
         m.registerChannel(VPFI_BUY_CHANNEL, c.localBuyContract);
         m.registerChannel(VPFI_REWARD_CHANNEL, c.rewardMessenger);
-        console.log("Channels registered: vpfi-buy, vpfi-reward.");
+        m.registerChannel(VPFI_BUYBACK_CHANNEL, c.localBuybackHandler);
+        console.log("Channels registered: vpfi-buy, vpfi-reward, vpfi-buyback.");
     }
 
     /// @dev Set the remote business peer for each channel. Hub-and-spoke:
@@ -278,6 +303,13 @@ contract ConfigureCcip is Script {
                     // Typed reader: legacy `.rewardOApp` fallback per PR #272.
                     Deployments.readRewardMessengerForChain(cid)
                 );
+                // T-087 Sub 3.A — Base peers with each mirror's
+                // Diamond (the source-sender for buyback remittance).
+                m.setChannelPeer(
+                    VPFI_BUYBACK_CHANNEL,
+                    cid,
+                    Deployments.readAddressForChain(cid, ".diamond")
+                );
                 console.log("  channel peers wired -> mirror", cid);
             }
         } else {
@@ -293,6 +325,14 @@ contract ConfigureCcip is Script {
                 c.baseChainId,
                 // Typed reader: legacy `.rewardOApp` fallback per PR #272.
                 Deployments.readRewardMessengerForChain(c.baseChainId)
+            );
+            // T-087 Sub 3.A — mirrors peer with the Base receiver.
+            m.setChannelPeer(
+                VPFI_BUYBACK_CHANNEL,
+                c.baseChainId,
+                Deployments.readAddressForChain(
+                    c.baseChainId, ".buybackRemittanceReceiver"
+                )
             );
             console.log("  channel peers wired -> Base", c.baseChainId);
         }
