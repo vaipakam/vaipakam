@@ -108,6 +108,7 @@ import {LegalFacet} from "../src/facets/LegalFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {MirrorTierReceiverFacet} from "../src/facets/MirrorTierReceiverFacet.sol";
+import {ProtocolBroadcastFacet} from "../src/facets/ProtocolBroadcastFacet.sol";
 import {StakingRewardsFacet} from "../src/facets/StakingRewardsFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
@@ -245,6 +246,7 @@ contract SetupTest is Test {
     VPFIDiscountFacet vpfiDiscountFacet;
     VPFIDiscountAccumulatorFacet vpfiDiscountAccumulatorFacet;
     MirrorTierReceiverFacet mirrorTierReceiverFacet;
+    ProtocolBroadcastFacet protocolBroadcastFacet;
     StakingRewardsFacet stakingRewardsFacet;
     InteractionRewardsFacet interactionRewardsFacet;
     RewardAggregatorFacet rewardAggregatorFacet;
@@ -335,6 +337,7 @@ contract SetupTest is Test {
         vpfiDiscountFacet = new VPFIDiscountFacet();
         vpfiDiscountAccumulatorFacet = new VPFIDiscountAccumulatorFacet();
         mirrorTierReceiverFacet = new MirrorTierReceiverFacet();
+        protocolBroadcastFacet = new ProtocolBroadcastFacet();
         stakingRewardsFacet = new StakingRewardsFacet();
         interactionRewardsFacet = new InteractionRewardsFacet();
         rewardAggregatorFacet = new RewardAggregatorFacet();
@@ -367,7 +370,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](49);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](50);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -655,6 +658,12 @@ contract SetupTest is Test {
             facetAddress: address(mirrorTierReceiverFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getMirrorTierReceiverFacetSelectors()
+        });
+        // T-087 Sub 2.D — protocol broadcast orchestrator.
+        cuts[49] = IDiamondCut.FacetCut({
+            facetAddress: address(protocolBroadcastFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getProtocolBroadcastFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

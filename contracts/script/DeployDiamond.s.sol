@@ -51,6 +51,8 @@ import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulato
 // T-087 Sub 2.C — mirror-side Diamond ingress for the cross-chain
 // tier push; the `userTierCache` writer.
 import {MirrorTierReceiverFacet} from "../src/facets/MirrorTierReceiverFacet.sol";
+// T-087 Sub 2.D — protocol-funded mirror broadcast orchestrator.
+import {ProtocolBroadcastFacet} from "../src/facets/ProtocolBroadcastFacet.sol";
 import {StakingRewardsFacet} from "../src/facets/StakingRewardsFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
@@ -172,6 +174,9 @@ contract DeployDiamond is Script {
         // T-087 Sub 2.C — mirror-side tier-push receiver facet.
         MirrorTierReceiverFacet mirrorTierReceiverFacet =
             new MirrorTierReceiverFacet();
+        // T-087 Sub 2.D — protocol-funded mirror broadcast orchestrator.
+        ProtocolBroadcastFacet protocolBroadcastFacet =
+            new ProtocolBroadcastFacet();
         StakingRewardsFacet stakingRewardsFacet = new StakingRewardsFacet();
         InteractionRewardsFacet interactionRewardsFacet = new InteractionRewardsFacet();
         RewardReporterFacet rewardReporterFacet = new RewardReporterFacet();
@@ -202,7 +207,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](48);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](49);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -337,6 +342,11 @@ contract DeployDiamond is Script {
         cuts[47] = _buildCut(
             address(mirrorTierReceiverFacet),
             _getMirrorTierReceiverSelectors()
+        );
+        // T-087 Sub 2.D — protocol-funded mirror broadcast orchestrator.
+        cuts[48] = _buildCut(
+            address(protocolBroadcastFacet),
+            _getProtocolBroadcastSelectors()
         );
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
@@ -650,6 +660,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("vpfiDiscountFacet",       address(vpfiDiscountFacet));
         Deployments.writeFacet("vpfiDiscountAccumulatorFacet", address(vpfiDiscountAccumulatorFacet));
         Deployments.writeFacet("mirrorTierReceiverFacet", address(mirrorTierReceiverFacet));
+        Deployments.writeFacet("protocolBroadcastFacet", address(protocolBroadcastFacet));
         Deployments.writeFacet("stakingRewardsFacet",     address(stakingRewardsFacet));
         Deployments.writeFacet("interactionRewardsFacet", address(interactionRewardsFacet));
         Deployments.writeFacet("rewardReporterFacet",     address(rewardReporterFacet));
@@ -707,6 +718,7 @@ contract DeployDiamond is Script {
         console.log("VPFIDiscountFacet:    ", address(vpfiDiscountFacet));
         console.log("VPFIDiscountAccumulatorFacet:", address(vpfiDiscountAccumulatorFacet));
         console.log("MirrorTierReceiverFacet:", address(mirrorTierReceiverFacet));
+        console.log("ProtocolBroadcastFacet:", address(protocolBroadcastFacet));
         console.log("StakingRewardsFacet:  ", address(stakingRewardsFacet));
         console.log("InteractionRewardsFacet:", address(interactionRewardsFacet));
         console.log("RewardReporterFacet:  ", address(rewardReporterFacet));
@@ -1524,6 +1536,25 @@ contract DeployDiamond is Script {
         // Public read surface — off-chain monitoring + tests.
         s[2] = MirrorTierReceiverFacet.getUserTierCache.selector;
         s[3] = MirrorTierReceiverFacet.getCurrentTierTableVersion.selector;
+    }
+
+    /// T-087 Sub 2.D — protocol-funded mirror broadcast orchestrator.
+    /// `protocolBroadcastTierUpdate` is gated to `msg.sender ==
+    /// address(this)`; the accumulator's rollup path reaches it via
+    /// the diamond's fallback.
+    function _getProtocolBroadcastSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](7);
+        s[0] = ProtocolBroadcastFacet.protocolBroadcastTierUpdate.selector;
+        s[1] = ProtocolBroadcastFacet.topUpBroadcastBudget.selector;
+        s[2] = ProtocolBroadcastFacet.withdrawBudget.selector;
+        s[3] = ProtocolBroadcastFacet.setBroadcastDestinationCount.selector;
+        s[4] = ProtocolBroadcastFacet.getProtocolBroadcastBudget.selector;
+        s[5] = ProtocolBroadcastFacet.getBroadcastDestinationCount.selector;
+        s[6] = ProtocolBroadcastFacet.getUserTierPushNonce.selector;
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {

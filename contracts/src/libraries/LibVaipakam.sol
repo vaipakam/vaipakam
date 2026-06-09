@@ -3604,6 +3604,19 @@ library LibVaipakam {
         // append-only per Codex Sub 1.B P1 #1.
         mapping(address => uint8) lastEffectiveTier;
         mapping(address => uint16) lastEffectiveBps;
+
+        // T-087 Sub 2.D — Diamond-side mirror of the messenger's
+        // broadcast-destination set cardinality. The Diamond does NOT
+        // duplicate the full list (the messenger is the source of
+        // truth for the actual chain ids; a duplicate slot would
+        // drift); it only needs to know whether the rollup-time
+        // auto-broadcast SHOULD fire (count > 0) so a freshly-deployed
+        // diamond can land before the messenger destination list is
+        // wired without breaking every stake / withdraw. Operators
+        // sync this via `ProtocolBroadcastFacet.setBroadcastDestinationCount`
+        // alongside `VaipakamRewardMessenger.setBroadcastDestinations`.
+        // Appended at the END per the append-only discipline.
+        uint8 broadcastDestinationCount;
     }
 
     /// @dev One entry of the treasury-conversion target allocation

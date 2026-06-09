@@ -128,6 +128,9 @@ FACETS=(
   # diamond (canonical Base writes nothing into it; mirrors receive
   # the CCIP-forwarded tier push here).
   "MirrorTierReceiverFacet"
+  # T-087 Sub 2.D — protocol-funded mirror broadcast orchestrator.
+  # Admin / budget surface + the rollup-driven trigger.
+  "ProtocolBroadcastFacet"
   # FlashLoanLiquidationPath.md Phase 3 — standalone reference
   # receiver contract for `RiskFacet.triggerLiquidationDiscounted`.
   # NOT a diamond facet, so deliberately NOT spread into

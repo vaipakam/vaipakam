@@ -82,6 +82,54 @@ contract VPFIDiscountAccumulatorFacet {
             today,
             uint120(balPostMutation)
         );
+
+        // T-087 Sub 2.D — protocol-funded mirror broadcast via cross-
+        // facet call to `ProtocolBroadcastFacet`. The facet itself
+        // silently skips on mirrors (`!isCanonicalVpfiChain`) and on
+        // canonical chains where CCIP isn't wired yet
+        // (`rewardMessenger == 0` or `broadcastDestinationCount == 0`)
+        // — that path returns success and the rollup continues
+        // normally. The ONLY hard-revert path is canonical + wired +
+        // budget < quoted fee, which fails CLOSED so operators can't
+        // ship downgrade-bearing mutations without honouring the
+        // cross-chain push (round-5 P1 #3 + round-6 P1 #2).
+        //
+        // Failure-mode discrimination — a minimal-fixture test that
+        // does NOT cut `ProtocolBroadcastFacet` would otherwise see a
+        // `FunctionDoesNotExist` revert here and break wholly-
+        // unrelated tests. Distinguishing that case from a real
+        // budget-exhausted revert lets the silent-fallback degrade
+        // gracefully without sacrificing fail-CLOSED for production.
+        // slither-disable-next-line low-level-calls
+        (bool ok, bytes memory returnData) = address(this).call(
+            abi.encodeWithSignature(
+                "protocolBroadcastTierUpdate(address)", user
+            )
+        );
+        if (!ok) {
+            // `bytes4(keccak256("FunctionDoesNotExist()"))` — the
+            // diamond's selector-not-found revert. If the broadcast
+            // facet is not cut, swallow + skip. Any OTHER revert
+            // (e.g., `ProtocolBudgetExhausted(uint256,uint256)`)
+            // bubbles to the caller.
+            // Computed from `error FunctionDoesNotExist()` in
+            // `VaipakamDiamond.sol`. Hand-coded as a constant rather
+            // than imported to keep this facet's import surface
+            // minimal — the diamond's error contract has no other
+            // dependency this file needs.
+            bytes4 functionDoesNotExistSelector = bytes4(
+                keccak256(bytes("FunctionDoesNotExist()"))
+            );
+            if (
+                returnData.length >= 4
+                    && bytes4(returnData) == functionDoesNotExistSelector
+            ) {
+                return;
+            }
+            assembly {
+                revert(add(32, returnData), mload(returnData))
+            }
+        }
     }
 
     /// @notice T-087 Sub 2.A — read the user's projected tier-expiry
