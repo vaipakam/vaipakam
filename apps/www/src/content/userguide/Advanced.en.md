@@ -809,12 +809,18 @@ Two things to know:
   on CCIP. Until it does, the mirror still honours your prior
   cached tier — there is no flicker to tier 0.
 - **Cache expiry.** A cached tier remains honoured until either
-  a fresh push arrives OR the cache passes its max-age
-  backstop (60 days by default). If you don't act for a long
-  time on a given chain, your cache there will eventually
-  expire and the chain will treat you as tier 0 until the next
-  push. A single rollup-bearing action on Base re-sends the
-  push immediately.
+  (a) a fresh push arrives, (b) governance moves the tier-
+  threshold table to a new version, or (c) the cache passes
+  its max-age backstop (60 days by default). If you don't act
+  for a long time on a given chain, your cache there will
+  eventually expire and the chain will treat you as tier 0
+  until the next push. To refresh the cache from Base, you
+  need a rollup-bearing action that produces a NEW push tuple
+  — a stake that changes your tier, a partial withdrawal that
+  changes your projected expiry, or any tier-table-version
+  change. A same-tier same-balance "no-op" rollup will not
+  re-send a push; this is by design so the protocol budget
+  isn't burned on caches that are already correct.
 
 If you're curious about the exact gates the cache applies to
 detect staleness, see the

@@ -45,15 +45,27 @@ Pushing a tier update to N mirrors costs N times the per-chain CCIP fee. The pro
 
 If the budget cannot cover the quoted fee, the rollup *reverts*. This is intentional. The alternative — silently skipping the broadcast when budget is short — would let the protocol accept fee-bearing operations from a user while quietly letting their cross-chain tier go stale. Operators are expected to monitor the budget and top up before exhaustion; the fail-CLOSED gate ensures a half-funded protocol cannot accidentally degrade users' cross-chain experience.
 
-### 5. Version bumps are atomic across the broadcast set
+### 5. Version bumps invalidate stale-version caches
 
-When governance changes the tier-threshold table or the per-tier BPS table, every cached tier on every mirror would become stale by reference to an old version. To prevent stale-tier discounts from being silently applied, the canonical chain emits a single `VersionBumped` push to every configured mirror at the moment of the change. Mirrors raise their tracked version on receipt; the freshness gate then automatically rejects any cache entry whose `tierTableVersion` is below the new one until a fresh per-user push lands.
+When governance changes the tier-threshold table or the per-tier BPS table, every cached tier on every mirror would become stale by reference to an old version. The canonical chain's `ConfigFacet` setters increment the table version + emit a local `TierTableVersionBumped` event at the moment of the change. Mirrors learn about the new version one of two ways:
 
-### 6. Decay is enforced by the cache freshness gate, not by mirror computation
+- **Implicit** (current implementation): the next per-user `TierUpdated` push carrying the new version raises the mirror's tracked version via the round-2 P1 #1 monotonic max — so a single fresh push retroactively unlocks the cache that landed before it. Cache reads against the OLD version land as tier 0 in the interim.
+- **Eager** (follow-up): a dedicated `VersionBumped` CCIP broadcast at the moment of the threshold / BPS change so mirrors learn immediately rather than waiting on the next per-user push. The messenger surface (`sendVersionBumped`) ships in Sub 2.B; the producer call from the governance setter is a deferred follow-up tracked on the Sub 2 umbrella.
 
-Mirrors do *not* re-derive a user's tier from local history (they have no history). They consult only the cached values and the four freshness gates. So when a user partially unstakes and their effective tier drops, the cache is *not* automatically invalidated — the rollup-time broadcast on Base sends a fresh push, and the mirror writes the new (lower) cached tier. If the broadcast is missed (e.g., the protocol budget was exhausted), the mirror keeps honouring the OLD cache until either a fresh push arrives OR the cache max-age backstop expires.
+Either way the freshness gate rejects cache entries whose `tierTableVersion` is below the mirror's tracked version, so stale-version discounts are never applied.
 
-The max-age backstop (default 60 days) is the absolute upper bound on how long a stale cache can keep applying. It exists so a user whose mirror cache went stale by missing pushes eventually drops to tier 0 even without further pushes — a passive degradation gate.
+### 6. Decay is enforced by the cache freshness gates, not by mirror computation
+
+Mirrors do *not* re-derive a user's tier from local history (they have no history). They consult only the cached values and the freshness gates. So when a user partially unstakes and their effective tier drops, the cache is *not* automatically invalidated — the rollup-time broadcast on Base sends a fresh push, and the mirror writes the new (lower) cached tier. If the broadcast is missed (e.g., the protocol budget was exhausted), the mirror keeps honouring the OLD cache until one of the freshness gates fires.
+
+The freshness gates the mirror evaluates on every read, in order:
+
+1. `cache.effectiveTier == 0` → tier 0 (default / never pushed).
+2. `cache.tierTableVersion != s.currentTierTableVersion` → tier 0 (governance moved the table).
+3. `block.timestamp >= cache.tierExpirySec` → tier 0 (projected-expiry hit).
+4. `block.timestamp - cache.lastUpdateSec >= cfgMirrorTierMaxAgeSec` → tier 0 (max-age backstop; default 60 days).
+
+Gate 3's `tierExpirySec` is currently the `type(uint40).max` sentinel in every push (Sub 2.A simplified the projection to inert), so in practice the cache is honoured until either a fresh push arrives OR gate 4's max-age fires. The 60-day backstop is the absolute upper bound; a user whose cache went stale by missing pushes eventually drops to tier 0 even without further mutations — the passive degradation gate.
 
 ## What this spec does NOT cover
 
@@ -71,4 +83,4 @@ The max-age backstop (default 60 days) is the absolute upper bound on how long a
 
 ## Trust model summary
 
-The broadcast trust chain is short: canonical Diamond → canonical messenger (admin-set) → CCIP (Chainlink-secured) → mirror messenger (admin-set) → mirror Diamond. Every per-chain admin-set contract is owned by the protocol's governance multisig; the CCIP layer is operated by Chainlink with no Vaipakam-side configuration of routes or signers. There is no DVN fleet to size or risk-tune — see CLAUDE.md "Cross-Chain Security Policy" for the policy rationale.
+The broadcast trust chain is short: canonical Diamond → canonical messenger (admin-set) → CCIP (Chainlink-secured) → mirror messenger (admin-set) → mirror Diamond. Per the CCIP cutover runbook's mainnet gates, every per-chain admin-set contract's ownership starts at the admin multisig at deploy time AND is handed to the governance timelock before mainnet routing of real value — the multisig is the deploy-time bootstrap, not the steady-state owner. The CCIP layer is operated by Chainlink with no Vaipakam-side configuration of routes or signers. There is no DVN fleet to size or risk-tune — see CLAUDE.md "Cross-Chain Security Policy" for the policy rationale.

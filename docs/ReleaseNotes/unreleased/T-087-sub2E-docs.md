@@ -42,7 +42,7 @@ Includes a link to the FunctionalSpec for users who want the full mechanics. Tra
 
 ### Scope deferrals
 
-- **Live CCIP fork tests** — require operator-run RPC + funded testnet CCIP lanes. Tracked in the cutover runbook (`docs/DesignsAndPlans/LayerZeroToChainlinkCcipMessageMigration.md` § operator gates).
+- **Live CCIP fork tests** — require operator-run RPC + funded testnet CCIP lanes. Tracked in the cutover runbook (`docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md` § operator gates).
 - **Other-locale translations** — translator-driven; Advanced.{de,es,fr,ar,hi,ja,ko,ta,zh}.md keep the previous text until translation sync.
 
 ### Verification
