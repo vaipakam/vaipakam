@@ -64,7 +64,7 @@ contract VPFIDiscountAccumulatorFacet {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint16 today = _todayId();
         uint16 prevUpdateDay = s.lastUpdateDayId[user];
-        uint128 prevBal = _readLastKnownBalance(s, user, prevUpdateDay);
+        uint120 prevBal = _readLastKnownBalance(s, user, prevUpdateDay);
         _maintainStakerLifecycle(s, user, prevBal, balPostMutation, today);
         _advanceRingBuffer(s, user, balPostMutation, today, prevBal, prevUpdateDay);
     }
@@ -114,11 +114,16 @@ contract VPFIDiscountAccumulatorFacet {
         LibVaipakam.Storage storage s,
         address user,
         uint16 prevUpdateDay
-    ) private view returns (uint128) {
+    ) private view returns (uint120) {
+        // Returns the close-of-day balance from the last written
+        // slot — this is the "balance the user actually held at the
+        // end of that day", which gap-fill should extend forward,
+        // NOT the dayMin (which is the conservative tier-clamp
+        // value for that specific day).
         if (s.currentStakeStartSec[user] == 0) return 0;
         LibVaipakam.DaySnapshot storage snap =
             s.dayBalances[user][prevUpdateDay % 30];
-        return snap.dayId == prevUpdateDay ? snap.balance : 0;
+        return snap.dayId == prevUpdateDay ? snap.dayClose : 0;
     }
 
     function _advanceRingBuffer(
@@ -126,7 +131,7 @@ contract VPFIDiscountAccumulatorFacet {
         address user,
         uint256 balPostMutation,
         uint16 today,
-        uint128 prevBal,
+        uint120 prevBal,
         uint16 prevUpdateDay
     ) private {
         // Gap-fill condition uses `prevUpdateDay < today` only — NOT
@@ -152,48 +157,49 @@ contract VPFIDiscountAccumulatorFacet {
             uint16 lowerBound = today > 29 ? today - 29 : 0;
             if (gapStart < lowerBound) gapStart = lowerBound;
             for (uint16 d = gapStart; d < today; d++) {
+                // Balance was unchanged during the gap, so the day's
+                // min and close are identical (= the prior day's
+                // close).
                 s.dayBalances[user][d % 30] = LibVaipakam.DaySnapshot({
                     dayId: d,
-                    balance: prevBal
+                    dayMin: prevBal,
+                    dayClose: prevBal
                 });
             }
         }
-        // Same-day rollup: keep the DAY'S MINIMUM, not the last
-        // write. Codex Sub 1.B round-2 P1 caught that a user could
-        // stake tier-0 dust early in day 0, top up to tier-N late
-        // in the same day, and have the slot overwritten with the
-        // post-top-up balance — erasing the dust history. With the
-        // min-history window starting at `today - cfgTwaMinStakedDays
-        // + 1`, the dust day would never enter the min-tier scan
-        // and the clamp would let the user collect a tier-N
-        // discount with no real tenure at that tier.
+        // Sub 1.C — split the slot into (dayMin, dayClose):
+        //   - `dayMin` is what the min-tier-over-history clamp
+        //     scans. Same-day rollups KEEP THE MINIMUM so a
+        //     dust-then-bulk attacker (round-10 P1 #5 + Sub 1.B
+        //     round-2 P1) can't erase their dust morning by topping
+        //     up before midnight.
+        //   - `dayClose` is what TWA + future gap-fill read. Same-
+        //     day rollups OVERWRITE dayClose with the latest
+        //     balance, so the next day's gap-fill extends the
+        //     user's actual current balance forward, not the
+        //     historical min. Without this split a legitimate user
+        //     who staked 1 wei dust then immediately topped up to
+        //     a real tier stayed stuck at 1 wei in every future
+        //     read until any later-day mutation (Sub 1.B round-3
+        //     P2 #3).
         //
-        // Storing the daily minimum costs legitimate same-day top-
-        // ups a small amount of credit (the day reads at the
-        // morning balance rather than the evening balance) but
-        // closes the gaming vector entirely. Users who want full
-        // credit for a higher balance simply wait until the next
-        // day to top up; tomorrow's slot then starts fresh at the
-        // higher value.
-        uint128 newBal = uint128(balPostMutation);
+        // The "first write of the day vs. same-day overwrite"
+        // disambiguation still gates on `prevUpdateDay == today &&
+        // prevBal > 0` (the default-zero slot on epoch day 0 with a
+        // fresh user has `prevBal == 0`, which routes to the
+        // overwrite branch — preserves the Sub 1.B round-2 P2 fix).
+        uint120 newBal = uint120(balPostMutation);
         LibVaipakam.DaySnapshot storage todaySlot =
             s.dayBalances[user][today % 30];
-        // Distinguish "we already wrote today's slot earlier today"
-        // (`prevUpdateDay == today && prevBal > 0`) from "this is
-        // the first write at today's slot" (prevBal == 0, including
-        // the legitimate first-ever stake on `today == 0` where
-        // every initial value is 0). The previous logic checked
-        // only `todaySlot.dayId == today`, which is also true for
-        // the default-zero slot on epoch day 0 — a fresh user's
-        // 500 VPFI deposit then read as "newBal > existing" and got
-        // silently skipped.
         if (prevUpdateDay == today && prevBal > 0) {
-            if (newBal < todaySlot.balance) {
-                todaySlot.balance = newBal;
+            if (newBal < todaySlot.dayMin) {
+                todaySlot.dayMin = newBal;
             }
+            todaySlot.dayClose = newBal;
         } else {
             todaySlot.dayId = today;
-            todaySlot.balance = newBal;
+            todaySlot.dayMin = newBal;
+            todaySlot.dayClose = newBal;
         }
         s.lastUpdateDayId[user] = today;
     }
@@ -201,7 +207,7 @@ contract VPFIDiscountAccumulatorFacet {
     function _maintainStakerLifecycle(
         LibVaipakam.Storage storage s,
         address user,
-        uint128 prevBal,
+        uint120 prevBal,
         uint256 newBal,
         uint16 today
     ) private {
@@ -237,8 +243,11 @@ contract VPFIDiscountAccumulatorFacet {
             : 0;
         uint256 weightedSum;
         uint256 weightSum;
+        // Sub 1.C: TWA scan reads `dayClose` — the day's end-of-day
+        // balance is the best single-value approximation we have
+        // for the day's average contribution to the user's history.
         for (uint16 d = windowFloor; d <= today; d++) {
-            uint128 bal = _effectiveBalanceForDay(s, user, d);
+            uint120 bal = _effectiveDayClose(s, user, d);
             uint256 w = d >= recentFloor ? recentWeight : 1;
             weightedSum += w * uint256(bal);
             weightSum += w;
@@ -247,19 +256,48 @@ contract VPFIDiscountAccumulatorFacet {
         return weightedSum / weightSum;
     }
 
-    function _effectiveBalanceForDay(
+    /// @dev Day-`d` close-of-day balance — read by the TWA + by
+    ///      gap-fill extension to days past `lastUpdateDayId`. Falls
+    ///      back to the slot at `lastUpdateDayId` when day `d` was
+    ///      not directly written; returns 0 when the user has no
+    ///      current stake.
+    function _effectiveDayClose(
         LibVaipakam.Storage storage s,
         address user,
         uint16 d
-    ) private view returns (uint128) {
+    ) private view returns (uint120) {
         LibVaipakam.DaySnapshot storage snap = s.dayBalances[user][d % 30];
-        if (snap.dayId == d) return snap.balance;
+        if (snap.dayId == d) return snap.dayClose;
         if (s.currentStakeStartSec[user] == 0) return 0;
         uint16 lastUpdate = s.lastUpdateDayId[user];
         if (lastUpdate >= d) return 0;
         LibVaipakam.DaySnapshot storage lastSnap =
             s.dayBalances[user][lastUpdate % 30];
-        return lastSnap.dayId == lastUpdate ? lastSnap.balance : 0;
+        return lastSnap.dayId == lastUpdate ? lastSnap.dayClose : 0;
+    }
+
+    /// @dev Day-`d` minimum balance — read by the
+    ///      min-tier-over-history clamp. For directly-written days,
+    ///      returns `dayMin` (the lowest balance observed on that
+    ///      day, the field that holds dust-history through a
+    ///      same-day overwrite). For gap-filled days (no mutation
+    ///      since `lastUpdateDayId`), the user held the
+    ///      close-of-day balance throughout — so `dayMin = dayClose`
+    ///      for those days and the helper extends the last slot's
+    ///      `dayClose` forward.
+    function _effectiveDayMin(
+        LibVaipakam.Storage storage s,
+        address user,
+        uint16 d
+    ) private view returns (uint120) {
+        LibVaipakam.DaySnapshot storage snap = s.dayBalances[user][d % 30];
+        if (snap.dayId == d) return snap.dayMin;
+        if (s.currentStakeStartSec[user] == 0) return 0;
+        uint16 lastUpdate = s.lastUpdateDayId[user];
+        if (lastUpdate >= d) return 0;
+        LibVaipakam.DaySnapshot storage lastSnap =
+            s.dayBalances[user][lastUpdate % 30];
+        return lastSnap.dayId == lastUpdate ? lastSnap.dayClose : 0;
     }
 
     function _computeRingBufferMinTier(
@@ -270,14 +308,28 @@ contract VPFIDiscountAccumulatorFacet {
     ) private view returns (uint8) {
         if (s.currentStakeStartSec[user] == 0) return 0;
         uint16 startDay = s.currentStakeStartDayId[user];
+        // Sub 1.C round-1 P2 #4: the scan must extend BACK to
+        // `currentStakeStartDayId` (capped at the 30-day ring buffer
+        // window) so a dust-then-bulk attacker whose dust day has
+        // fallen out of the `today - minDays + 1` window is still
+        // caught. With the previous `if (startDay > windowFloor)
+        // windowFloor = startDay` narrowing, a user who staked
+        // dust on day 0, topped up the same day, and read tier on
+        // day 3 saw the scan start at day 1 — missing the dust
+        // dayMin entirely. The new logic widens the floor down to
+        // the earlier of `today - minDays + 1` or `startDay`,
+        // bounded below by `today - 29` to stay within the ring
+        // buffer's active range.
+        uint16 lowerCap = today > 29 ? today - 29 : 0;
         uint16 windowFloor = today >= windowDays
             ? today - windowDays + 1
             : 0;
-        if (startDay > windowFloor) windowFloor = startDay;
+        if (startDay < windowFloor) windowFloor = startDay;
+        if (windowFloor < lowerCap) windowFloor = lowerCap;
         uint8 minTier = type(uint8).max;
         bool anyHit;
         for (uint16 d = windowFloor; d <= today; d++) {
-            uint128 bal = _effectiveBalanceForDay(s, user, d);
+            uint120 bal = _effectiveDayMin(s, user, d);
             uint8 t = LibVPFIDiscount.tierOf(uint256(bal));
             if (t < minTier) minTier = t;
             if (minTier == 0) return 0;

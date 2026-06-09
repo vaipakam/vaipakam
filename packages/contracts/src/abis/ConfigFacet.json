@@ -2520,6 +2520,19 @@
   },
   {
     "type": "event",
+    "name": "TierTableVersionBumped",
+    "inputs": [
+      {
+        "name": "newVersion",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "TreasuryConvertTargetsSet",
     "inputs": [
       {

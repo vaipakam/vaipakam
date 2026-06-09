@@ -954,11 +954,13 @@ contract ConfigFacet is DiamondAccessControl {
         if (!(e1 < e2 && e2 < e3 && e3 <= e4)) {
             revert NonMonotoneTierThresholds(e1, e2, e3, e4);
         }
-        LibVaipakam.ProtocolConfig storage c = LibVaipakam.storageSlot().protocolCfg;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.ProtocolConfig storage c = s.protocolCfg;
         c.vpfiTier1Min = t1;
         c.vpfiTier2Min = t2;
         c.vpfiTier3Min = t3;
         c.vpfiTier4Threshold = t4;
+        _bumpTierTableVersion(s);
         emit VpfiTierThresholdsSet(t1, t2, t3, t4);
     }
 
@@ -989,12 +991,29 @@ contract ConfigFacet is DiamondAccessControl {
         if (!(e1 <= e2 && e2 <= e3 && e3 <= e4)) {
             revert NonMonotoneTierDiscounts(e1, e2, e3, e4);
         }
-        LibVaipakam.ProtocolConfig storage c = LibVaipakam.storageSlot().protocolCfg;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.ProtocolConfig storage c = s.protocolCfg;
         c.vpfiTier1DiscountBps = t1;
         c.vpfiTier2DiscountBps = t2;
         c.vpfiTier3DiscountBps = t3;
         c.vpfiTier4DiscountBps = t4;
+        _bumpTierTableVersion(s);
         emit VpfiTierDiscountsSet(t1, t2, t3, t4);
+    }
+
+    /// @dev T-087 Sub 1.C round-2 P1 — single shared helper for the
+    ///      tier-table-version bump + emit. Carving the
+    ///      bump-emit pair into a private function rather than
+    ///      duplicating the two statements in both setters keeps
+    ///      `ConfigFacet` under the EIP-170 24,576-byte ceiling
+    ///      (every additional emit inlines ~30 bytes per call
+    ///      site). Both `setVpfiTierThresholds` and
+    ///      `setVpfiTierDiscountBps` call this AFTER updating their
+    ///      respective fields so the new version is associated
+    ///      with the post-mutation table state.
+    function _bumpTierTableVersion(LibVaipakam.Storage storage s) private {
+        unchecked { s.tierTableVersion += 1; }
+        emit TierTableVersionBumped(s.tierTableVersion);
     }
 
     /**
@@ -2651,6 +2670,21 @@ contract ConfigFacet is DiamondAccessControl {
     // Bounds match docs/DesignsAndPlans/CrossChainRewardSystem.md §5.
     // Sub 1.A ships the setters + bounds + events; consumption lands in
     // Sub 1.B onward.
+
+    /// @notice T-087 Sub 1.C round-2 P1 — emitted every time
+    ///         `s.tierTableVersion` is incremented on Base
+    ///         (governance threshold or BPS change). Sub 2 (CCIP
+    ///         wiring) listens for this event and fires the
+    ///         eager `VersionBumped` CCIP broadcast that raises
+    ///         every mirror's `s.currentTierTableVersion`,
+    ///         immediately invalidating every cached entry until
+    ///         the per-user sweep catches up (design round-9 P1
+    ///         #7 + round-10 P1 #1). Until Sub 2 lands, mirrors
+    ///         have no cached entries (the inbound handler isn't
+    ///         wired yet) so the gap is benign in practice — but
+    ///         the event lands now so Sub 2 has its concrete
+    ///         trigger point.
+    event TierTableVersionBumped(uint16 newVersion);
 
     event TwaRecentDaysSet(uint8 newValue);
     event TwaWindowDaysSet(uint8 newValue);

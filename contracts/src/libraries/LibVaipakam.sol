@@ -1758,15 +1758,28 @@ library LibVaipakam {
      *      the raw vault VPFI balance — unsolicited transfers can't
      *      inflate the tier (Codex round-7 P1 #7).
      *
-     *      `uint128` covers the full 230M VPFI token cap with room
-     *      to spare; the struct lands in its own storage slot per
-     *      Solidity array semantics (Codex round-6 P2 #12 / round-8
-     *      P2 #3 — adjacent struct array elements don't share slots
-     *      even when the struct itself fits in less than one slot).
+     *      `uint120` per balance field covers the full 230M VPFI
+     *      token cap (1.3e36) with room to spare; the three fields
+     *      together (16 + 120 + 120 = 256 bits) fit exactly in one
+     *      storage slot per Solidity struct-array semantics.
+     *
+     *      Sub 1.C split (round-3 P2 #3): the original `balance`
+     *      single-field shape couldn't simultaneously serve as
+     *      "the day's minimum (for the min-tier-over-history clamp
+     *      that closes the dust-then-bulk gaming vector — round-10
+     *      P1 #5)" AND "the close-of-day balance (so the next-day
+     *      gap-fill extends the user's live balance forward, not
+     *      the historical minimum)". A user who staked 1 wei dust
+     *      then topped up to a real tier later the same day stayed
+     *      treated as 1 wei in every future read until they did
+     *      another mutation on a later day (Sub 1.B P2 #3). The
+     *      split lets the min-tier scan read `dayMin` and the
+     *      TWA + future gap-fill read `dayClose`.
      */
     struct DaySnapshot {
         uint16 dayId;
-        uint128 balance;
+        uint120 dayMin;
+        uint120 dayClose;
     }
 
     /**
