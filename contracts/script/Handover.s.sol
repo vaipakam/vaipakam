@@ -303,6 +303,7 @@ contract Handover is Script {
         if (mirror != address(0)) console.log("    target: vpfiMirror           @", mirror);
         if (buyAdapter != address(0)) console.log("    target: vpfiBuyAdapter       @", buyAdapter);
         if (buyReceiver != address(0)) console.log("    target: vpfiBuyReceiver      @", buyReceiver);
+        if (buybackReceiver != address(0)) console.log("    target: buybackRemittanceReceiver @", buybackReceiver);
         if (cctRotated) {
             console.log("  acceptAdminRole(address) on the CCIP TokenAdminRegistry:");
             console.log("    registry:      ", cctRegistry);

@@ -599,6 +599,22 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.buybackNoConvert[token]) revert BuybackTokenNoConvert(token);
 
+        // Codex Sub 3.A round-5 P2 #2 — mirror-side credit must pass
+        // the buyback allow-list check before any accounting moves;
+        // otherwise an admin could credit a token that isn't
+        // bridgeable, draining treasury and stranding the funds in
+        // `buybackBudget` because the follow-up `remitBuyback` would
+        // always revert `BuybackTokenNotAllowed`. On Base
+        // (`isCanonicalRewardChain`), no allow-list gate applies —
+        // the credit goes straight to `baseBuybackBudget` which
+        // never crosses a bridge.
+        if (
+            !s.isCanonicalRewardChain
+                && !s.buybackAllowedToken[block.chainid][token]
+        ) {
+            revert BuybackTokenNotAllowed(block.chainid, token);
+        }
+
         uint256 treasuryBal = s.treasuryBalances[token];
         if (amount > treasuryBal) {
             revert InsufficientBuybackBudget(amount, treasuryBal);
@@ -609,11 +625,7 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         // bridge; credit `baseBuybackBudget` directly so the future
         // Sub 3.B `commitBuybackIntent` can spend it. On mirrors,
         // credit the per-chain accumulator that `remitBuyback` will
-        // later ship to Base. `s.isCanonicalRewardChain` is the
-        // operator-set flag that distinguishes the two; without this
-        // routing, Base fee allocations would sit in `buybackBudget`
-        // and `remitBuyback` would try to send Base → Base (with
-        // `s.baseChainId == 0` on canonical, the send would fail).
+        // later ship to Base.
         if (s.isCanonicalRewardChain) {
             s.baseBuybackBudget[token] += amount;
         } else {

@@ -182,6 +182,9 @@ contract TreasuryBuybackRemittanceTest is SetupTest {
     }
 
     function test_CreditBuybackBudget_RevertWhen_InsufficientTreasury() public {
+        // Allow-list the token so the round-5 P2 #2 allow-list gate
+        // passes; then the treasury-balance gate fires.
+        _t().setBuybackAllowedToken(block.chainid, address(usdcMirror), true);
         // Treasury has zero balance for the token.
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -190,6 +193,35 @@ contract TreasuryBuybackRemittanceTest is SetupTest {
                 uint256(0)
             )
         );
+        _t().creditBuybackBudget(address(usdcMirror), 1e6);
+    }
+
+    function test_CreditBuybackBudget_RevertWhen_NotAllowedOnMirror() public {
+        // Codex round-5 P2 #2 — mirror creditBuybackBudget must gate
+        // on the allow-list to prevent funds stranding in
+        // buybackBudget for non-bridgeable tokens. The default
+        // SetupTest fixture is mirror-side (isCanonicalRewardChain
+        // == false). The allow-list isn't set for usdcMirror, so the
+        // credit reverts BEFORE InsufficientBuybackBudget. To test
+        // this specific revert path we'd need to seed the treasury
+        // balance via vm.store; for now the path is covered by the
+        // composition (allow-list check fires first; insufficient-
+        // treasury check fires when allow-list passes — both
+        // separately tested).
+        // Verifies the revert selector is the new allow-list gate,
+        // not the prior insufficient-treasury gate.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                TreasuryFacet.BuybackTokenNotAllowed.selector,
+                block.chainid,
+                address(usdcMirror)
+            )
+        );
+        // Use vm.store to seed treasuryBalances directly. The slot
+        // path is messy to compute; simpler is to rely on the
+        // ordering: with default zero balance, the allow-list check
+        // STILL fires first because it's upstream of the treasury-
+        // balance check after this round's fix.
         _t().creditBuybackBudget(address(usdcMirror), 1e6);
     }
 
