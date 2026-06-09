@@ -288,5 +288,10 @@
     "type": "error",
     "name": "ZeroBroadcastDestinationCount",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroRecipient",
+    "inputs": []
   }
 ]

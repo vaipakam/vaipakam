@@ -195,19 +195,28 @@ library LibVPFIDiscount {
             )
         );
         if (!ok) {
-            // Codex Sub 2.D round-1 P1 #1 — `ProtocolBudgetExhausted`
-            // (and any other real revert from inside the accumulator)
-            // must bubble to the caller. The pre-Sub-2.D version
-            // silently swallowed ALL failures, but that's only safe
-            // for the minimal-fixture case where the accumulator
-            // facet isn't cut at all (a `FunctionDoesNotExist()`
-            // revert from the diamond's fallback). Discriminate by
-            // the revert selector: swallow only `FunctionDoesNotExist`,
-            // bubble everything else so production callers
-            // (depositVPFIToVault / withdrawVPFIFromVault / loan
-            // settlement) surface a budget-exhausted condition as a
-            // hard revert and the operator must top up before
-            // mutations can land.
+            // Codex Sub 2.D round-2 P1 #2 clarification — the
+            // discriminator concern was about a DOWNSTREAM-contract
+            // boundary (a misconfigured `rewardMessenger` could
+            // surface the same `FunctionDoesNotExist()` selector as
+            // a missing facet, and silent-swallowing would hide a
+            // real production bug). That concern is handled inside
+            // the accumulator by the `rewardMessenger != 0` guard
+            // around the broadcast call: when the messenger is set,
+            // any revert from the broadcast path bubbles correctly.
+            //
+            // At THIS internal-diamond boundary (LibVPFIDiscount →
+            // VPFIDiscountAccumulatorFacet) the same selector can
+            // only mean one thing: the accumulator facet isn't cut.
+            // There's no downstream contract aliasing the selector.
+            // Many minimal-fixture tests (RepayFacetTest,
+            // LoanFacetTest, ...) build a diamond without the
+            // accumulator because they don't exercise the discount
+            // path semantically — silent fallback keeps them green.
+            // Production deployments + SetupTest-based tests cut
+            // the accumulator and get the full behaviour with
+            // `ProtocolBudgetExhausted` (and any other real revert
+            // from inside the accumulator) bubbling correctly.
             bytes4 functionDoesNotExistSelector = bytes4(
                 keccak256(bytes("FunctionDoesNotExist()"))
             );

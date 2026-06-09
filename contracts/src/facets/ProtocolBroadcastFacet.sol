@@ -145,20 +145,53 @@ contract ProtocolBroadcastFacet {
             IVPFIDiscountAccumulatorInternal(address(this))
                 .effectiveTierAndBps(user);
 
-        // Codex Sub 2.D round-1 P2 #1 — skip the broadcast when the
-        // resolved (effTier, effBps) is identical to the last pushed
-        // pair. Without this every same-tier balance mutation burns
-        // CCIP gas on a no-op cache write. The `lastEffectiveTier` +
-        // `lastEffectiveBps` storage slots exist for exactly this
-        // de-dup (see their docstring in LibVaipakam.sol). Read-then-
-        // compare-then-skip; only update the "last pushed" stamp
-        // AFTER a successful send below.
+        // Resolve the payload values BEFORE the de-dup gate so the
+        // gate has the full (tier, bps, expiry, version) tuple to
+        // compare against the last-pushed cache.
+        uint40 expiry = s.tierExpirySec[user];
+        // Sub 2.A getter semantics — sentinel for never-rolled-up reads.
+        if (expiry == 0) expiry = type(uint40).max;
+        // Codex Sub 2.D round-1 P1 #2 — read the CANONICAL Base
+        // version (`s.tierTableVersion`, which `ConfigFacet` bumps on
+        // threshold / BPS change), NOT the mirror-side
+        // `currentTierTableVersion`.
+        uint16 version = s.tierTableVersion;
+
+        // Codex Sub 2.D round-2 P1 #3 — a brand-new user whose first
+        // rollup resolves to (0, 0) would otherwise burn protocol
+        // budget pushing what mirrors already treat as the empty-
+        // cache default. Silent-skip when both current AND last
+        // pushed are zero — a tier-changing mutation (zero→positive
+        // or positive→zero) still fires the broadcast because the
+        // last-pushed snapshot disagrees with the current resolution.
+        if (
+            effTier == 0
+                && effBps == 0
+                && s.lastEffectiveTier[user] == 0
+                && s.lastEffectiveBps[user] == 0
+        ) {
+            emit ProtocolTierBroadcastSkipped(user, "zero-tier-no-change");
+            return;
+        }
+
+        // Codex Sub 2.D round-1 P2 #1 + round-2 P1 #1 — skip the
+        // broadcast when the FULL push tuple is identical to the
+        // last pushed. The tuple is (effTier, effBps, expiry,
+        // version) — not just (tier, bps), because same-tier
+        // mutations that change projected expiry or a governance
+        // table bump that keeps tier still need to propagate. The
+        // `lastEffectiveTier` / `lastEffectiveBps` /
+        // `lastTierExpirySec` / `lastTierTableVersion` slots exist
+        // for exactly this de-dup. Read-compare-skip; stamp AFTER
+        // the successful send below.
         if (
             effTier == s.lastEffectiveTier[user]
                 && effBps == s.lastEffectiveBps[user]
+                && expiry == s.lastTierExpirySec[user]
+                && version == s.lastTierTableVersion[user]
                 && s.userTierPushNonce[user] != 0
         ) {
-            emit ProtocolTierBroadcastSkipped(user, "tier-unchanged");
+            emit ProtocolTierBroadcastSkipped(user, "tuple-unchanged");
             return;
         }
 
@@ -166,20 +199,6 @@ contract ProtocolBroadcastFacet {
         // enforce strictly-greater via the Sub 2.C check).
         uint64 nonce = ++s.userTierPushNonce[user];
         uint40 computedAt = uint40(block.timestamp);
-        uint40 expiry = s.tierExpirySec[user];
-        // Sub 2.A getter semantics — sentinel for never-rolled-up reads.
-        if (expiry == 0) expiry = type(uint40).max;
-        // Codex Sub 2.D round-1 P1 #2 — read the CANONICAL Base
-        // version (`s.tierTableVersion`, which `ConfigFacet` bumps on
-        // threshold / BPS change), NOT the mirror-side
-        // `currentTierTableVersion` (which is only raised by inbound
-        // mirror messages and stays 0 on Base). Without this fix the
-        // broadcast stamps the cache with version 0 forever — mirrors
-        // that have already observed a newer version (via the eager
-        // VersionBumped broadcast) would reject the freshly-written
-        // cache as version-stale and the user would lose their tier
-        // discount entirely.
-        uint16 version = s.tierTableVersion;
 
         IVaipakamRewardMessengerOutbound m =
             IVaipakamRewardMessengerOutbound(msgr);
@@ -207,12 +226,14 @@ contract ProtocolBroadcastFacet {
             payable(address(this))
         );
 
-        // Stamp the "last pushed" pair so the next rollup can de-dup
-        // (P2 #1 fold above). Done AFTER the send so a revert from
-        // inside the messenger leaves the stamp at the prior value
-        // and the next rollup retries.
+        // Stamp the "last pushed" tuple so the next rollup can de-dup
+        // (round-1 P2 #1 + round-2 P1 #1 folds). Done AFTER the send
+        // so a revert from inside the messenger leaves the stamps at
+        // the prior values and the next rollup retries.
         s.lastEffectiveTier[user] = effTier;
         s.lastEffectiveBps[user] = effBps;
+        s.lastTierExpirySec[user] = expiry;
+        s.lastTierTableVersion[user] = version;
 
         emit ProtocolTierBroadcastSent(user, effTier, effBps, nonce, fee);
     }

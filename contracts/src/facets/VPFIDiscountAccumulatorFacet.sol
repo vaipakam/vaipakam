@@ -84,50 +84,36 @@ contract VPFIDiscountAccumulatorFacet {
         );
 
         // T-087 Sub 2.D — protocol-funded mirror broadcast via cross-
-        // facet call to `ProtocolBroadcastFacet`. The facet itself
-        // silently skips on mirrors (`!isCanonicalVpfiChain`) and on
-        // canonical chains where CCIP isn't wired yet
-        // (`rewardMessenger == 0` or `broadcastDestinationCount == 0`)
-        // — that path returns success and the rollup continues
-        // normally. The ONLY hard-revert path is canonical + wired +
-        // budget < quoted fee, which fails CLOSED so operators can't
-        // ship downgrade-bearing mutations without honouring the
-        // cross-chain push (round-5 P1 #3 + round-6 P1 #2).
+        // facet call to `ProtocolBroadcastFacet`.
         //
-        // Failure-mode discrimination — a minimal-fixture test that
-        // does NOT cut `ProtocolBroadcastFacet` would otherwise see a
-        // `FunctionDoesNotExist` revert here and break wholly-
-        // unrelated tests. Distinguishing that case from a real
-        // budget-exhausted revert lets the silent-fallback degrade
-        // gracefully without sacrificing fail-CLOSED for production.
-        // slither-disable-next-line low-level-calls
-        (bool ok, bytes memory returnData) = address(this).call(
-            abi.encodeWithSignature(
-                "protocolBroadcastTierUpdate(address)", user
-            )
-        );
-        if (!ok) {
-            // `bytes4(keccak256("FunctionDoesNotExist()"))` — the
-            // diamond's selector-not-found revert. If the broadcast
-            // facet is not cut, swallow + skip. Any OTHER revert
-            // (e.g., `ProtocolBudgetExhausted(uint256,uint256)`)
-            // bubbles to the caller.
-            // Computed from `error FunctionDoesNotExist()` in
-            // `VaipakamDiamond.sol`. Hand-coded as a constant rather
-            // than imported to keep this facet's import surface
-            // minimal — the diamond's error contract has no other
-            // dependency this file needs.
-            bytes4 functionDoesNotExistSelector = bytes4(
-                keccak256(bytes("FunctionDoesNotExist()"))
+        // Codex Sub 2.D round-2 P1 #2 — the previous failure-mode
+        // discriminator (swallow `FunctionDoesNotExist()`, bubble
+        // everything else) was unsafe: the same selector is returned
+        // when a misconfigured `rewardMessenger` is pointed at a
+        // contract that doesn't implement `sendTierUpdate` — exactly
+        // the case where we MUST bubble to surface the misconfig.
+        //
+        // Replaced by a direct on-chain configuration check: if
+        // `rewardMessenger == address(0)` the broadcast surface
+        // isn't wired (the deploy-time default + every minimal-
+        // fixture test), so we skip the call entirely. Once a
+        // messenger IS set, the call goes through and ANY revert
+        // from inside the broadcast facet (including
+        // `ProtocolBudgetExhausted`) bubbles correctly. This makes
+        // a missing `ProtocolBroadcastFacet` cut a deploy-time
+        // mistake the predeploy sanity catches rather than a
+        // silent runtime degrade.
+        if (s.rewardMessenger != address(0)) {
+            // slither-disable-next-line low-level-calls
+            (bool ok, bytes memory returnData) = address(this).call(
+                abi.encodeWithSignature(
+                    "protocolBroadcastTierUpdate(address)", user
+                )
             );
-            if (
-                returnData.length >= 4
-                    && bytes4(returnData) == functionDoesNotExistSelector
-            ) {
-                return;
-            }
-            assembly {
-                revert(add(32, returnData), mload(returnData))
+            if (!ok) {
+                assembly {
+                    revert(add(32, returnData), mload(returnData))
+                }
             }
         }
     }

@@ -3617,6 +3617,17 @@ library LibVaipakam {
         // alongside `VaipakamRewardMessenger.setBroadcastDestinations`.
         // Appended at the END per the append-only discipline.
         uint8 broadcastDestinationCount;
+
+        // T-087 Sub 2.D round-2 P1 #1 — the de-dup gate must include
+        // `tierExpirySec` and `tierTableVersion` alongside the
+        // (tier, bps) pair. Mutations that keep tier the same but
+        // change expiry (e.g., a partial withdrawal that accelerates
+        // decay) OR change version (governance table bump) still
+        // need to propagate to mirrors. Each of these slots tracks
+        // the LAST PUSHED value next to its `lastEffectiveTier` /
+        // `lastEffectiveBps` siblings.
+        mapping(address => uint40) lastTierExpirySec;
+        mapping(address => uint16) lastTierTableVersion;
     }
 
     /// @dev One entry of the treasury-conversion target allocation
