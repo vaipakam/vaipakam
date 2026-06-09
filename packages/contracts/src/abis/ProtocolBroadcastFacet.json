@@ -241,6 +241,11 @@
   },
   {
     "type": "error",
+    "name": "WithdrawToSelf",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ZeroRecipient",
     "inputs": []
   }
