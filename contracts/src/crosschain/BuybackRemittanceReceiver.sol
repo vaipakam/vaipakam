@@ -182,17 +182,26 @@ contract BuybackRemittanceReceiver is
         }
         if (deliveredAmount == 0) revert ZeroAmount();
 
-        // Codex Sub 3.A round-3 P2 #3 — fee-on-transfer / deflationary
-        // tokens may deliver less to the Diamond than `deliveredAmount`
-        // when the receiver's `safeTransfer` triggers a token-level
-        // fee. Credit the Diamond's budget with the ACTUAL amount that
-        // landed, NOT the pre-fee `deliveredAmount` — otherwise
-        // `baseBuybackBudget` overstates spendable custody and later
-        // commits could try to draw more than the Diamond actually
-        // holds. Token contracts that don't take fees see
-        // `actualReceived == deliveredAmount` so the path is benign.
+        // Codex Sub 3.A round-3 P2 #3 + round-4 P2 #1 — fee-on-transfer
+        // / deflationary tokens are double-trouble: CCIP → receiver
+        // might already have charged a fee BEFORE this callback, so
+        // `tokens[0].amount` overstates what THIS contract holds; AND
+        // the receiver → Diamond `safeTransfer` might charge another
+        // fee. Compute the spendable amount FROM this contract's
+        // actual balance (`balanceOf(this)`), transfer that, and
+        // credit only the amount that actually lands in the Diamond.
+        // For tokens without fees, `spendable == deliveredAmount` and
+        // `actualReceived == spendable` so the path is benign.
+        uint256 spendable = IERC20(deliveredToken).balanceOf(address(this));
+        if (spendable == 0) revert ZeroAmount();
+        // If the receiver-side fee took more than expected, fall back
+        // to spending what we actually hold instead of reverting.
+        uint256 toTransfer = spendable < deliveredAmount
+            ? spendable
+            : deliveredAmount;
+
         uint256 diamondBalBefore = IERC20(deliveredToken).balanceOf(diamond);
-        IERC20(deliveredToken).safeTransfer(diamond, deliveredAmount);
+        IERC20(deliveredToken).safeTransfer(diamond, toTransfer);
         uint256 actualReceived =
             IERC20(deliveredToken).balanceOf(diamond) - diamondBalBefore;
 

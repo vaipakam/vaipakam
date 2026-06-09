@@ -104,7 +104,8 @@ import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
  *      Reads from addresses.json:
  *        diamond, timelock, ccipMessenger, vpfiTokenPool,
  *        vpfiPoolRateGovernor, rewardMessenger,
- *        vpfiToken | vpfiMirror, vpfiBuyReceiver | vpfiBuyAdapter
+ *        vpfiToken | vpfiMirror, vpfiBuyReceiver | vpfiBuyAdapter,
+ *        buybackRemittanceReceiver (canonical only — T-087 Sub 3.A)
  *
  *      Per CLAUDE.md "Deployments sync — Omit-keys policy", canonical
  *      and mirror keys are mutually exclusive on any single chain;
@@ -174,6 +175,9 @@ contract Handover is Script {
         address mirror = _readAddrOptional(addrJson, "vpfiMirror");
         address buyAdapter = _readAddrOptional(addrJson, "vpfiBuyAdapter");
         address buyReceiver = _readAddrOptional(addrJson, "vpfiBuyReceiver");
+        // T-087 Sub 3.A — Base-only handler for the buyback channel.
+        address buybackReceiver =
+            _readAddrOptional(addrJson, "buybackRemittanceReceiver");
 
         // The VPFI token whose CCT admin is rotated below — the
         // pre-existing `vpfiToken` on canonical Base, the `vpfiMirror`
@@ -264,6 +268,7 @@ contract Handover is Script {
         _transferCrossChainOwnership(adminKey, mirror,          "vpfiMirror",           timelock);
         _transferCrossChainOwnership(adminKey, buyAdapter,      "vpfiBuyAdapter",       timelock);
         _transferCrossChainOwnership(adminKey, buyReceiver,     "vpfiBuyReceiver",      timelock);
+        _transferCrossChainOwnership(adminKey, buybackReceiver, "buybackRemittanceReceiver", timelock);
 
         // ── 3g. CCT admin → Timelock ────────────────────────────────────
         // The CCIP `TokenAdminRegistry` administrator for VPFI rotates to

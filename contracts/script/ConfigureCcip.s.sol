@@ -385,7 +385,15 @@ contract ConfigureCcip is Script {
             GuardianPausable(c.localToken).setGuardian(c.guardian);
             console.log("Guardian set on messenger / reward / buy / mirrorToken:", c.guardian);
         } else {
-            console.log("Guardian set on messenger / reward / buyReceiver:", c.guardian);
+            // Codex Sub 3.A round-4 P2 #2 — the Base-side
+            // BuybackRemittanceReceiver also extends GuardianPausable;
+            // wire the same guardian so the buyback inbound surface
+            // gets the same incident-response fast-pause.
+            GuardianPausable(c.localBuybackHandler).setGuardian(c.guardian);
+            console.log(
+                "Guardian set on messenger / reward / buyReceiver / buybackReceiver:",
+                c.guardian
+            );
         }
     }
 
