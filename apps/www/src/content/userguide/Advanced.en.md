@@ -822,16 +822,21 @@ Two things to know:
   there is no flicker to tier 0.
 - **Cache expiry.** A cached tier remains honoured until
   either (a) a fresh push arrives, (b) governance moves the
-  tier-threshold table to a new version AND your tier changes
-  enough to trigger a push, or (c) the cache passes its max-
-  age backstop (60 days by default). If you don't act for a
-  long time on a given chain, your cache there will eventually
-  expire and the chain will treat you as tier 0 until the next
-  push. To refresh, do any Base-side action that changes your
-  effective tier or BPS. A same-tier same-balance "no-op"
-  rollup will NOT re-send a push — this is by design so the
-  protocol's broadcast budget isn't burned on caches that are
-  already correct.
+  tier-threshold table to a new version and the mirror's
+  tracked version rises (which happens the first time ANY
+  user's post-bump push lands on that mirror — dormant users
+  with no recent activity on Base also lose their old-version
+  cached discount at that moment until their own next push
+  catches up), or (c) the cache passes its max-age backstop
+  (60 days by default). If you don't act for a long time on a
+  given chain, your cache there will eventually expire and the
+  chain will treat you as tier 0 until the next push. To
+  refresh, do any rollup-bearing Base action that produces a
+  new push tuple — a tier-changing balance mutation, OR ANY
+  Base action after a governance table-version bump. A same-
+  tuple "no-op" rollup will NOT re-send a push — this is by
+  design so the protocol's broadcast budget isn't burned on
+  caches that are already correct.
 
 If you're curious about the exact gates the cache applies to
 detect staleness, see the
