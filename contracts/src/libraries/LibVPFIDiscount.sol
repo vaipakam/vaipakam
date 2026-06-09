@@ -210,12 +210,32 @@ library LibVPFIDiscount {
         view
         returns (uint8 effTier, uint16 effBps)
     {
-        // T-087 Sub 1.B — cross-facet staticcall keeps the heavy TWA +
-        // min-tier scan out of the calling facet's inlined bytecode.
-        // Low-level staticcall + silent (0, 0) fallback keeps minimal-
-        // fixture test diamonds that don't cut the accumulator facet
-        // working — see {rollupUserDiscount} above for the full
-        // rationale.
+        // T-087 Sub 1.C — dispatch by chain identity. On Base
+        // (canonical VPFI chain) the call routes through the
+        // accumulator facet's cross-facet staticcall (the heavy
+        // ring-buffer + min-tier scan stays out of every consumer
+        // facet's inlined bytecode per Sub 1.B's EIP-170 carve).
+        // On mirror chains the read goes against the cached
+        // per-user `CachedTier` slot — written by the CCIP
+        // `TierUpdated` inbound handler (Sub 2) — and applies
+        // the per-design freshness gates locally without a Base
+        // round-trip.
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.isCanonicalVpfiChain) {
+            return _baseEffectiveTierAndBps(user);
+        }
+        return _mirrorEffectiveTierAndBps(s, user);
+    }
+
+    /// @dev Base-side: cross-facet staticcall to the accumulator
+    ///      facet. Silent (0, 0) fallback keeps minimal-fixture
+    ///      tests that don't cut the accumulator facet working
+    ///      (rollup becomes a no-op on those fixtures).
+    function _baseEffectiveTierAndBps(address user)
+        private
+        view
+        returns (uint8 effTier, uint16 effBps)
+    {
         (bool ok, bytes memory ret) = address(this).staticcall(
             abi.encodeWithSelector(
                 VPFIDiscountAccumulatorFacet.effectiveTierAndBps.selector,
@@ -224,6 +244,50 @@ library LibVPFIDiscount {
         );
         if (!ok || ret.length < 64) return (0, 0);
         (effTier, effBps) = abi.decode(ret, (uint8, uint16));
+    }
+
+    /// @dev Mirror-side: read from `s.userTierCache[user]` and
+    ///      apply all three freshness gates locally:
+    ///       1. The cached effective tier must be non-zero
+    ///          (a fresh / never-pushed cache entry means
+    ///          "no propagated tier yet" → no discount).
+    ///       2. The cached `tierTableVersion` must match
+    ///          `s.currentTierTableVersion` so a governance
+    ///          tier-threshold change on Base invalidates every
+    ///          cached entry until a fresh push catches it up
+    ///          (Codex design round-6 P1 #10 + round-10 P1 #1).
+    ///       3. `now < tierExpirySec` — the projected decay
+    ///          expiry baked into the cached tier at push time
+    ///          (round-3 P1 #1 + sentinel `type(uint40).max`
+    ///          round-6 P1 #9). Sub 1.B / 1.C ship with the
+    ///          sentinel set on every write so the gate is
+    ///          effectively "never expires from decay alone"
+    ///          until Sub 2 wires the projected-trajectory scan.
+    ///       4. `now - lastUpdateSec <= cfgMirrorTierMaxAgeSec`
+    ///          is the secondary backstop for the "stake then
+    ///          never return + no broadcast" worst case
+    ///          (round-2 P1 #3); default 60 days.
+    ///
+    ///      The cached `effectiveBps` is applied directly so a
+    ///      governance change to the per-tier BPS table on Base
+    ///      reaches mirrors atomically with the version bump
+    ///      (round-11 P1 #6); mirrors deliberately do NOT call
+    ///      `discountBpsForTier(tier)` against their local
+    ///      constants.
+    function _mirrorEffectiveTierAndBps(
+        LibVaipakam.Storage storage s,
+        address user
+    ) private view returns (uint8 effTier, uint16 effBps) {
+        LibVaipakam.CachedTier storage cache = s.userTierCache[user];
+        if (cache.effectiveTier == 0) return (0, 0);
+        if (cache.tierTableVersion != s.currentTierTableVersion) return (0, 0);
+        if (block.timestamp >= uint256(cache.tierExpirySec)) return (0, 0);
+        uint256 ageBudget =
+            uint256(LibVaipakam.cfgMirrorTierMaxAgeSecEffective());
+        if (block.timestamp > uint256(cache.lastUpdateSec) + ageBudget) {
+            return (0, 0);
+        }
+        return (cache.effectiveTier, cache.effectiveBps);
     }
 
     // Heavy ring-buffer + lifecycle helpers live in
