@@ -73,6 +73,46 @@ contract MirrorTierReceiverFacetTest is SetupTest {
 
     // ─── Trust gates ──────────────────────────────────────────────────
 
+    function test_OnTierUpdateReceived_RaisesVersionOnNewerStamp() public {
+        // Codex Sub 2.C round-1 P2 — if the TierUpdated arrives BEFORE
+        // its companion VersionBumped (or the VersionBumped is missed),
+        // the per-user push itself must raise the mirror's
+        // `currentTierTableVersion` so the Sub 1.C freshness gate
+        // accepts the cache entry. Otherwise the cache write is dead
+        // letter until a separate bump lands.
+        assertEq(_call().getCurrentTierTableVersion(), 0, "seeded clean");
+
+        vm.prank(messengerAddr);
+        _call().onTierUpdateReceived(
+            BASE_CHAIN_ID, user, 2, 1500, 0, 1, type(uint40).max, 5
+        );
+
+        assertEq(
+            _call().getCurrentTierTableVersion(),
+            5,
+            "mirror version raised by the push's stamp"
+        );
+
+        LibVaipakam.CachedTier memory cache = _call().getUserTierCache(user);
+        assertEq(cache.tierTableVersion, 5, "cache version matches");
+    }
+
+    function test_OnTierUpdateReceived_DoesNotLowerVersion() public {
+        // Seed the mirror at version 7 via a standalone bump.
+        vm.prank(messengerAddr);
+        _call().onVersionBumpedReceived(BASE_CHAIN_ID, 7);
+        assertEq(_call().getCurrentTierTableVersion(), 7, "seeded to 7");
+
+        // An older TierUpdated push (version 3) must not lower the
+        // current version (only raise — monotonic semantics).
+        vm.prank(messengerAddr);
+        _call().onTierUpdateReceived(
+            BASE_CHAIN_ID, user, 1, 1000, 0, 1, type(uint40).max, 3
+        );
+
+        assertEq(_call().getCurrentTierTableVersion(), 7, "stayed at 7");
+    }
+
     function test_OnTierUpdateReceived_RevertWhen_NotMessenger() public {
         vm.expectRevert(
             abi.encodeWithSelector(

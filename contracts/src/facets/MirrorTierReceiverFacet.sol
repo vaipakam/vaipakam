@@ -120,6 +120,26 @@ contract MirrorTierReceiverFacet {
             nonce64,
             tierTableVersion
         );
+
+        // Codex Sub 2.C round-1 P2 — also raise this mirror's
+        // `currentTierTableVersion` when the incoming push carries a
+        // newer version than we have observed. The Sub 1.C read path
+        // returns tier 0 unless `cache.tierTableVersion ==
+        // s.currentTierTableVersion`, so without this raise an
+        // out-of-order delivery (TierUpdated arriving BEFORE its
+        // companion VersionBumped, or the VersionBumped being missed
+        // / re-executed later) would write a cache entry that the
+        // freshness gate immediately rejects. The TierUpdated payload
+        // ITSELF carries the authoritative version stamp on Base, so
+        // honouring it here closes the gap without needing the
+        // separate VersionBumped message to arrive first.
+        uint16 currentVersion = s.currentTierTableVersion;
+        if (tierTableVersion > currentVersion) {
+            s.currentTierTableVersion = tierTableVersion;
+            emit MirrorTierTableVersionBumped(
+                sourceChainId, currentVersion, tierTableVersion
+            );
+        }
     }
 
     /// @notice Called by `VaipakamRewardMessenger.onCrossChainMessage`
