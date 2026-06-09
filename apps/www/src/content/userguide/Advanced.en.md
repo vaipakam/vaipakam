@@ -790,6 +790,58 @@ rate re-stamp at the new (lower) balance, applied to every
 open loan you're on. There is no grace window where the old
 tier still applies.
 
+<a id="buy-vpfi.cross-chain-tier"></a>
+
+### How your VPFI tier travels across chains
+
+You stake VPFI on Base — Base is the canonical chain that
+owns your accumulator state. When you act on a different chain
+(borrow on Sepolia, lend on Arbitrum, etc.), that chain reads
+a *cached* copy of your tier. The cache is kept fresh by a
+cross-chain push: when your effective tier on Base changes,
+your NEXT Base-side action broadcasts a CCIP message to every
+mirror chain you might act on. There is no manual "sync my
+tier" button to press — the push rides on every regular Base
+action — but you do need to take that next action for the
+push to fire (see "tier maturation" below).
+
+Two things to know:
+
+- **Tier maturation takes a follow-up action.** Your first
+  stake does NOT immediately broadcast — your effective tier
+  is gated by a minimum-history period (3 days by default) so
+  a fresh stake initially resolves to tier 0 and the broadcast
+  silent-skips. Once the period elapses, the gate releases on
+  Base immediately, but mirrors don't learn until your NEXT
+  rollup-bearing Base action (any deposit, withdrawal, loan
+  action — anything that mutates your vault on Base) triggers
+  a push. A 1-wei top-up is enough.
+- **Propagation time.** Once a push is dispatched, it
+  typically lands on the mirror within minutes via CCIP. Until
+  it does, the mirror still honours your prior cached tier —
+  there is no flicker to tier 0.
+- **Cache expiry.** A cached tier remains honoured until
+  either (a) a fresh push arrives, (b) governance moves the
+  tier-threshold table to a new version and the mirror's
+  tracked version rises (which happens the first time ANY
+  user's post-bump push lands on that mirror — dormant users
+  with no recent activity on Base also lose their old-version
+  cached discount at that moment until their own next push
+  catches up), or (c) the cache passes its max-age backstop
+  (60 days by default). If you don't act for a long time on a
+  given chain, your cache there will eventually expire and the
+  chain will treat you as tier 0 until the next push. To
+  refresh, do any rollup-bearing Base action that produces a
+  new push tuple — a tier-changing balance mutation, OR ANY
+  Base action after a governance table-version bump. A same-
+  tuple "no-op" rollup will NOT re-send a push — this is by
+  design so the protocol's broadcast budget isn't burned on
+  caches that are already correct.
+
+If you're curious about the exact gates the cache applies to
+detect staleness, see the
+[Cross-Chain Tier Propagation functional spec](https://github.com/vaipakam/vaipakam/blob/main/docs/FunctionalSpecs/CrossChainTierPropagation.md).
+
 ---
 
 ## Rewards
