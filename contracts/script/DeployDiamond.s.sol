@@ -1383,7 +1383,7 @@ contract DeployDiamond is Script {
     }
 
     function _getVpfiDiscountSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](23);
+        s = new bytes4[](24);
         s[0] = VPFIDiscountFacet.buyVPFIWithETH.selector;
         s[1] = VPFIDiscountFacet.depositVPFIToVault.selector;
         s[2] = VPFIDiscountFacet.quoteVPFIDiscount.selector;
@@ -1412,6 +1412,12 @@ contract DeployDiamond is Script {
         // chain; the frontend reads via this getter so direct buys
         // and bridged buys see consistent remaining-allowance values.
         s[22] = VPFIDiscountFacet.getVPFISoldToByChainId.selector;
+        // T-087 Sub 1.D — post-gate EFFECTIVE_TIER + EFFECTIVE_BPS
+        // getter consumed by the dapp's lender-discount preview
+        // hook + the tier-display surface. See
+        // {VPFIDiscountFacet.getEffectiveDiscount} natspec for
+        // the rationale (Codex Sub 1.B round-3 P2 #1 + #2).
+        s[23] = VPFIDiscountFacet.getEffectiveDiscount.selector;
     }
 
     function _getStakingRewardsSelectors() internal pure returns (bytes4[] memory s) {

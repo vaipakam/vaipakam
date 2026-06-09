@@ -3,30 +3,32 @@ import { useReadChain } from '../contracts/useDiamond';
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '@vaipakam/contracts/abis';
 
 /**
- * Live time-weighted lender yield-fee discount for a specific loan.
+ * Live lender yield-fee discount for a specific loan.
  *
- * The value is what the discount WOULD be if the yield fee settled right
- * now. Matches the on-chain math in {LibVPFIDiscount.lenderTimeWeighted
- * DiscountBps} except that the client extrapolates the currently-open
- * period client-side (no rollup has persisted it yet). When the next
- * rollup fires on-chain the value stabilises exactly at this number.
+ * T-087 Sub 1.D rewrite: the underlying contracts replaced the Phase-5
+ * loan-window-averaged discount accumulator with an INSTANT effective
+ * tier + BPS lookup (`getVPFIDiscountTier(lender)`). The lender's
+ * displayed discount is just their current effective BPS at the moment
+ * the read fires — no client-side window extrapolation, no per-loan
+ * anchor delta.
  *
- *   effectiveAvgBps =
- *     (cumulativeDiscountBpsSeconds
- *       + stamped × (now − lastRollupAt)
- *       − loan.lenderDiscountAccAtInit)
- *     / (now − loan.startTime)
- *
- * Design reference: docs/GovernanceConfigDesign.md §5.4 ("Per-loan rollup
- * state in the UI"). Gaming-resistance rationale: §5.2a.
+ * The interface keeps `effectiveAvgBps` + `stampedBpsAtPreviousRollup`
+ * for backward compatibility with the existing {LenderDiscountCard}
+ * consumer; under the new contract semantics they are always equal
+ * (the "drift between window-avg and live stamp" indicator the card
+ * surfaces naturally never fires post-T-087). The `windowSeconds`
+ * field still reports loan tenure for any consumer that wants to
+ * display it.
  *
  * Returns `null` while the reads are in flight or any input is missing.
  */
 export interface LoanLenderDiscount {
-  /** Time-weighted average discount BPS the lender has earned so far. */
+  /** Effective discount BPS the lender currently sees. Equal to
+   *  `stampedBpsAtPreviousRollup` under T-087's instant-lookup
+   *  semantics. */
   effectiveAvgBps: number;
-  /** Currently-stamped BPS — what the next period accrues at until the
-   *  lender's next vault-VPFI mutation triggers a rollup. */
+  /** Same value as `effectiveAvgBps`; retained for backward compat
+   *  with {LenderDiscountCard}'s drift-indicator. */
   stampedBpsAtPreviousRollup: number;
   /** Seconds elapsed since loan start. */
   windowSeconds: number;
@@ -57,7 +59,7 @@ export function useLoanLenderDiscount(
           {
             abi: DIAMOND_ABI,
             address: diamondAddress!,
-            functionName: 'getUserVpfiDiscountState',
+            functionName: 'getEffectiveDiscount',
             args: [lender!],
             chainId: chain.chainId,
           },
@@ -74,13 +76,13 @@ export function useLoanLenderDiscount(
   }
 
   const loanResult = data[0];
-  const stateResult = data[1];
-  if (!loanResult || !stateResult) {
+  const tierResult = data[1];
+  if (!loanResult || !tierResult) {
     return { data: null, isLoading, error: error ?? null };
   }
-  if (loanResult.status !== 'success' || stateResult.status !== 'success') {
+  if (loanResult.status !== 'success' || tierResult.status !== 'success') {
     const firstError = (loanResult.status === 'failure' ? loanResult.error : null) ??
-      (stateResult.status === 'failure' ? stateResult.error : null);
+      (tierResult.status === 'failure' ? tierResult.error : null);
     return {
       data: null,
       isLoading,
@@ -88,41 +90,22 @@ export function useLoanLenderDiscount(
     };
   }
 
-  // `getLoanDetails` returns a tuple-encoded Loan struct. viem with a full
-  // ABI surfaces it as an object keyed by field names; we defensively index
-  // by key with a bigint fall-through so a future Loan-struct reordering
-  // doesn't silently produce wrong numbers.
-  const loan = loanResult.result as unknown as {
-    startTime: bigint;
-    lenderDiscountAccAtInit: bigint;
-  };
-  const state = stateResult.result as unknown as readonly [number, bigint, bigint];
-  const stampedBps = Number(state[0]);
-  const lastRollupAt = Number(state[1]);
-  const cumulative = state[2];
+  const loan = loanResult.result as unknown as { startTime: bigint };
+  // `getEffectiveDiscount` returns `(effTier, effBps)` — the post-gate
+  // EFFECTIVE_TIER and EFFECTIVE_BPS the fee path actually applies.
+  const tier = tierResult.result as unknown as readonly [number, number];
+  const effectiveBps = Number(tier[1]);
 
   const startTime = Number(loan.startTime);
-  const accAtInit = loan.lenderDiscountAccAtInit;
-
   const now = Math.floor(Date.now() / 1000);
   const windowSeconds = Math.max(0, now - startTime);
-  if (windowSeconds === 0 || startTime === 0) {
-    return {
-      data: { effectiveAvgBps: 0, stampedBpsAtPreviousRollup: stampedBps, windowSeconds },
-      isLoading,
-      error: null,
-    };
-  }
-
-  // Client-side extrapolation of the currently-open period. Uses BigInt
-  // throughout to avoid precision loss on large `cumulative` values; casts
-  // down to `number` only for the final BPS result, which is always ≤ 10000.
-  const openPeriodContribution = BigInt(stampedBps) * BigInt(Math.max(0, now - lastRollupAt));
-  const delta = cumulative + openPeriodContribution - accAtInit;
-  const effectiveAvgBps = delta > 0n ? Number(delta / BigInt(windowSeconds)) : 0;
 
   return {
-    data: { effectiveAvgBps, stampedBpsAtPreviousRollup: stampedBps, windowSeconds },
+    data: {
+      effectiveAvgBps: effectiveBps,
+      stampedBpsAtPreviousRollup: effectiveBps,
+      windowSeconds,
+    },
     isLoading: false,
     error: null,
   };
