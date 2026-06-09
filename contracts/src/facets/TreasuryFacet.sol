@@ -149,6 +149,11 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     ///         it cross-chain to Base.
     event BuybackBudgetCredited(address indexed token, uint256 amount);
     /// @custom:event-category informational/config
+    /// @notice T-087 Sub 3.B round-3 P2 — per-token raw-amount
+    ///         tranche cap for `commitBuybackIntent`. `cap == 0`
+    ///         disables the gate.
+    event BuybackMaxTrancheSet(address indexed token, uint256 cap);
+    /// @custom:event-category informational/config
     event BuybackAllowedTokenSet(
         uint256 indexed chainId,
         address indexed token,
@@ -795,6 +800,7 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         bytes32 orderHash,
         address token,
         uint256 amountIn,
+        uint256 minVpfiOut,
         uint256 expiresAt
     )
         external
@@ -802,7 +808,30 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         whenNotPaused
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
-        LibTreasuryBuyback.commitBuyback(orderHash, token, amountIn, expiresAt);
+        LibTreasuryBuyback.commitBuyback(
+            orderHash, token, amountIn, minVpfiOut, expiresAt
+        );
+    }
+
+    /// @notice T-087 Sub 3.B round-3 P2 — set / clear the per-token
+    ///         raw-amount tranche cap. `commitBuyback` rejects an
+    ///         `amountIn` larger than the cap. Pass `0` to disable
+    ///         the cap for the token.
+    function setBuybackMaxTranche(address token, uint256 cap)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (token == address(0)) revert InvalidAddress();
+        LibVaipakam.storageSlot().cfgBuybackMaxTranche[token] = cap;
+        emit BuybackMaxTrancheSet(token, cap);
+    }
+
+    function getBuybackMaxTranche(address token)
+        external
+        view
+        returns (uint256)
+    {
+        return LibVaipakam.storageSlot().cfgBuybackMaxTranche[token];
     }
 
     /// @notice Permissionless rollback for an expired buyback intent.

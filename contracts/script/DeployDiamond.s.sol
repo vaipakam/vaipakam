@@ -1272,7 +1272,7 @@ contract DeployDiamond is Script {
     }
 
     function _getTreasurySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](24);
+        s = new bytes4[](26);
         s[0] = TreasuryFacet.claimTreasuryFees.selector;
         s[1] = TreasuryFacet.getTreasuryBalance.selector;
         s[2] = TreasuryFacet.mintVPFI.selector;
@@ -1299,6 +1299,8 @@ contract DeployDiamond is Script {
         s[21] = TreasuryFacet.getBuybackOrder.selector;
         s[22] = TreasuryFacet.getOrderHashKind.selector;
         s[23] = TreasuryFacet.getStakingPoolBuybackBudget.selector;
+        s[24] = TreasuryFacet.setBuybackMaxTranche.selector;
+        s[25] = TreasuryFacet.getBuybackMaxTranche.selector;
     }
 
     function _getPayrollSelectors() internal pure returns (bytes4[] memory s) {

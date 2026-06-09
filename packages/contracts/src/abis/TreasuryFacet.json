@@ -60,6 +60,11 @@
         "internalType": "uint256"
       },
       {
+        "name": "minVpfiOut",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
         "name": "expiresAt",
         "type": "uint256",
         "internalType": "uint256"
@@ -193,6 +198,25 @@
   },
   {
     "type": "function",
+    "name": "getBuybackMaxTranche",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getBuybackOrder",
     "inputs": [
       {
@@ -216,6 +240,11 @@
             "name": "amountIn",
             "type": "uint96",
             "internalType": "uint96"
+          },
+          {
+            "name": "minVpfiOut",
+            "type": "uint128",
+            "internalType": "uint128"
           },
           {
             "name": "expiresAt",
@@ -447,6 +476,24 @@
   },
   {
     "type": "function",
+    "name": "setBuybackMaxTranche",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "cap",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setBuybackNoConvert",
     "inputs": [
       {
@@ -575,6 +622,12 @@
         "internalType": "uint96"
       },
       {
+        "name": "minVpfiOut",
+        "type": "uint128",
+        "indexed": false,
+        "internalType": "uint128"
+      },
+      {
         "name": "expiresAt",
         "type": "uint64",
         "indexed": false,
@@ -604,6 +657,25 @@
         "type": "uint96",
         "indexed": false,
         "internalType": "uint96"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "BuybackMaxTrancheSet",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "cap",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -1070,6 +1142,27 @@
         "name": "token",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "BuybackTrancheCapExceeded",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cap",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

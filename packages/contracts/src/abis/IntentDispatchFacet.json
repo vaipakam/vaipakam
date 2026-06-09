@@ -273,6 +273,22 @@
   },
   {
     "type": "error",
+    "name": "BuybackBelowMinVpfiOut",
+    "inputs": [
+      {
+        "name": "actualVpfi",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "minVpfiOut",
+        "type": "uint128",
+        "internalType": "uint128"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "BuybackOrderNotPending",
     "inputs": [
       {
@@ -327,6 +343,22 @@
         "name": "orderHash",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "BuybackSourceTokenNotSpent",
+    "inputs": [
+      {
+        "name": "expected",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "actual",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

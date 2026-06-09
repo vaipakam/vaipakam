@@ -113,6 +113,25 @@ library LibTreasuryBuyback {
     ///         false`); partial fills would otherwise release the
     ///         full reservation on the first partial settlement.
     error BuybackPartialFill(uint256 consumed, uint256 expected);
+    /// @notice Codex Sub 3.B round-3 P1 #1 — actual VPFI delivered
+    ///         was below the operator-pinned floor. Stops
+    ///         underpriced fills from draining the source-token
+    ///         reservation against a token-of-no-value VPFI tranche.
+    error BuybackBelowMinVpfiOut(uint256 actualVpfi, uint128 minVpfiOut);
+    /// @notice Codex Sub 3.B round-3 P1 #2 — the diamond's
+    ///         source-token balance did NOT drop by `amountIn`
+    ///         between preInteraction and postInteraction. Catches
+    ///         the case where the Fusion order's maker asset is
+    ///         different from the committed `info.token` (e.g.
+    ///         orderHash points at an order against another token).
+    error BuybackSourceTokenNotSpent(uint256 expected, uint256 actual);
+    /// @notice Codex Sub 3.B round-3 P2 — `amountIn` exceeded the
+    ///         per-token tranche cap; the operator must either
+    ///         commit a smaller amount or first raise the cap via
+    ///         governance.
+    error BuybackTrancheCapExceeded(
+        address token, uint256 requested, uint256 cap
+    );
 
     // ─── Events ──────────────────────────────────────────────────────
 
@@ -121,6 +140,7 @@ library LibTreasuryBuyback {
         bytes32 indexed orderHash,
         address indexed token,
         uint96 amountIn,
+        uint128 minVpfiOut,
         uint64 expiresAt
     );
     /// @custom:event-category state-change/buyback-intent
@@ -154,17 +174,30 @@ library LibTreasuryBuyback {
         bytes32 orderHash,
         address token,
         uint256 amountIn,
+        uint256 minVpfiOut,
         uint256 expiresAt
     ) internal {
         if (token == address(0)) revert BuybackZeroToken();
         if (amountIn == 0) revert BuybackZeroAmount();
         if (amountIn > type(uint96).max) revert BuybackAmountOverflow(amountIn);
+        if (minVpfiOut > type(uint128).max) {
+            // Codex round-3 P1 #1 — minVpfiOut is packed as uint128
+            // in the order struct; refuse to silently truncate.
+            revert BuybackAmountOverflow(minVpfiOut);
+        }
         if (expiresAt > type(uint64).max) revert BuybackExpiryOverflow(expiresAt);
         if (expiresAt <= block.timestamp) {
             revert BuybackExpiryInPast(uint64(expiresAt), block.timestamp);
         }
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+
+        // Codex round-3 P2 — per-token raw-amount tranche cap.
+        // 0 disables the cap; non-zero enforces it.
+        uint256 cap = s.cfgBuybackMaxTranche[token];
+        if (cap != 0 && amountIn > cap) {
+            revert BuybackTrancheCapExceeded(token, amountIn, cap);
+        }
 
         // Reject re-use of the same orderHash — covers both BUYBACK
         // and SWAP_TO_REPAY kinds. Stamping a non-zero discriminator
@@ -190,6 +223,7 @@ library LibTreasuryBuyback {
         s.buybackOrders[orderHash] = LibVaipakam.BuybackOrderInfo({
             token: token,
             amountIn: uint96(amountIn),
+            minVpfiOut: uint128(minVpfiOut),
             expiresAt: uint64(expiresAt),
             status: LibVaipakam.BUYBACK_ORDER_STATUS_PENDING
         });
@@ -212,7 +246,11 @@ library LibTreasuryBuyback {
         s.intentLiveCommitCount += 1;
 
         emit BuybackIntentCommitted(
-            orderHash, token, uint96(amountIn), uint64(expiresAt)
+            orderHash,
+            token,
+            uint96(amountIn),
+            uint128(minVpfiOut),
+            uint64(expiresAt)
         );
     }
 
@@ -226,20 +264,38 @@ library LibTreasuryBuyback {
      *      Fusion can't be trusted (it's the source-side maker
      *      amount, not the VPFI received).
      */
+    /// @dev T-087 Sub 3.B round-3 P1 #2 — domain-separator constant
+    ///      for the source-token baseline transient slot. Derived
+    ///      key prevents collision between the VPFI baseline (at
+    ///      `orderHash`) and the source baseline (at
+    ///      `orderHash ^ SRC_BASELINE_KEY`).
+    uint256 private constant SRC_BASELINE_KEY =
+        uint256(keccak256("vaipakam.buyback.src.baseline"));
+
     function preInteractionImpl(bytes32 orderHash) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (msg.sender != s.cfgFusionLimitOrderProtocol) {
             revert BuybackUnauthorizedCaller(msg.sender);
         }
+        LibVaipakam.BuybackOrderInfo memory info = s.buybackOrders[orderHash];
         // Codex Sub 3.B round-2 P1 #3 — store `baseline + 1` so a
         // tload reading zero in `postInteractionImpl` reliably
         // signals "pre-interaction never fired", regardless of
         // whether the actual VPFI balance happened to be zero. EIP-
         // 1153 transient storage; per-tx-scoped, free at tx-end.
-        uint256 baseline = IERC20(s.vpfiToken).balanceOf(address(this));
-        uint256 marker = baseline + 1;
+        uint256 vpfiBaseline = IERC20(s.vpfiToken).balanceOf(address(this));
+        uint256 vpfiMarker = vpfiBaseline + 1;
+        // Codex round-3 P1 #2 — also snapshot the source-token
+        // baseline so postInteractionImpl can verify the diamond's
+        // INFO.TOKEN balance dropped by exactly `amountIn` (i.e.
+        // the maker asset of the filled order was the committed
+        // one, not a colliding orderHash on another token).
+        uint256 srcBaseline = IERC20(info.token).balanceOf(address(this));
+        uint256 srcMarker = srcBaseline + 1;
+        uint256 srcKey = uint256(orderHash) ^ SRC_BASELINE_KEY;
         assembly ("memory-safe") {
-            tstore(orderHash, marker)
+            tstore(orderHash, vpfiMarker)
+            tstore(srcKey, srcMarker)
         }
     }
 
@@ -281,15 +337,39 @@ library LibTreasuryBuyback {
         // delivered via balance delta against the preInteraction
         // snapshot. The +1 marker (see `preInteractionImpl`) lets
         // us reject a missing pre-interaction call.
-        uint256 marker;
+        uint256 vpfiMarker;
+        uint256 srcMarker;
+        uint256 srcKey = uint256(orderHash) ^ SRC_BASELINE_KEY;
         assembly ("memory-safe") {
-            marker := tload(orderHash)
+            vpfiMarker := tload(orderHash)
+            srcMarker := tload(srcKey)
             tstore(orderHash, 0)
+            tstore(srcKey, 0)
         }
-        if (marker == 0) revert BuybackPreNotFired(orderHash);
-        uint256 baseline = marker - 1;
+        if (vpfiMarker == 0) revert BuybackPreNotFired(orderHash);
+        uint256 vpfiBaseline = vpfiMarker - 1;
+        uint256 srcBaseline = srcMarker - 1;
         uint256 actualVpfi =
-            IERC20(s.vpfiToken).balanceOf(address(this)) - baseline;
+            IERC20(s.vpfiToken).balanceOf(address(this)) - vpfiBaseline;
+
+        // Codex round-3 P1 #1 — actual VPFI must clear the
+        // operator-pinned floor. Catches misquoted Fusion orders
+        // that would otherwise settle with too little (or zero)
+        // VPFI for the source amount.
+        if (actualVpfi < info.minVpfiOut) {
+            revert BuybackBelowMinVpfiOut(actualVpfi, info.minVpfiOut);
+        }
+
+        // Codex round-3 P1 #2 — verify `info.token` actually left
+        // the diamond. A colliding orderHash on a different maker
+        // asset would have the diamond's `info.token` balance
+        // unchanged (LOP pulled the other token instead). Require
+        // `srcBaseline - balance >= info.amountIn`.
+        uint256 srcNow = IERC20(info.token).balanceOf(address(this));
+        uint256 srcSpent = srcBaseline > srcNow ? srcBaseline - srcNow : 0;
+        if (srcSpent < info.amountIn) {
+            revert BuybackSourceTokenNotSpent(info.amountIn, srcSpent);
+        }
 
         // Release the reservation.
         s.baseBuybackReserved[info.token] -= info.amountIn;

@@ -68,10 +68,10 @@ contract BuybackIntentLedgerTest is SetupTest {
 
         vm.expectEmit(true, true, false, true, address(diamond));
         emit LibTreasuryBuyback.BuybackIntentCommitted(
-            ORDER, address(token), AMOUNT, expiresAt
+            ORDER, address(token), AMOUNT, 0, expiresAt
         );
 
-        _t().commitBuybackIntent(ORDER, address(token), AMOUNT, expiresAt);
+        _t().commitBuybackIntent(ORDER, address(token), AMOUNT, 0, expiresAt);
 
         assertEq(_t().getBaseBuybackBudget(address(token)), 0, "budget drained");
         assertEq(
@@ -97,21 +97,21 @@ contract BuybackIntentLedgerTest is SetupTest {
         vm.prank(attacker);
         vm.expectRevert();
         _t().commitBuybackIntent(
-            ORDER, address(token), AMOUNT, uint64(block.timestamp + 1 hours)
+            ORDER, address(token), AMOUNT, 0, uint64(block.timestamp + 1 hours)
         );
     }
 
     function test_Commit_RevertWhen_ZeroToken() public {
         vm.expectRevert(LibTreasuryBuyback.BuybackZeroToken.selector);
         _t().commitBuybackIntent(
-            ORDER, address(0), AMOUNT, uint64(block.timestamp + 1 hours)
+            ORDER, address(0), AMOUNT, 0, uint64(block.timestamp + 1 hours)
         );
     }
 
     function test_Commit_RevertWhen_ZeroAmount() public {
         vm.expectRevert(LibTreasuryBuyback.BuybackZeroAmount.selector);
         _t().commitBuybackIntent(
-            ORDER, address(token), 0, uint64(block.timestamp + 1 hours)
+            ORDER, address(token), 0, 0, uint64(block.timestamp + 1 hours)
         );
     }
 
@@ -123,14 +123,14 @@ contract BuybackIntentLedgerTest is SetupTest {
             )
         );
         _t().commitBuybackIntent(
-            ORDER, address(token), huge, uint64(block.timestamp + 1 hours)
+            ORDER, address(token), huge, 0, uint64(block.timestamp + 1 hours)
         );
     }
 
     function test_Commit_RevertWhen_ExpiryInPast() public {
         vm.expectRevert();
         _t().commitBuybackIntent(
-            ORDER, address(token), AMOUNT, uint64(block.timestamp - 1)
+            ORDER, address(token), AMOUNT, 0, uint64(block.timestamp - 1)
         );
     }
 
@@ -145,20 +145,20 @@ contract BuybackIntentLedgerTest is SetupTest {
             )
         );
         _t().commitBuybackIntent(
-            ORDER, address(token), AMOUNT, uint64(block.timestamp + 1 hours)
+            ORDER, address(token), AMOUNT, 0, uint64(block.timestamp + 1 hours)
         );
     }
 
     function test_Commit_RevertWhen_DoubleCommitSameOrderHash() public {
         _seedBaseBudget(AMOUNT * 2);
         uint64 expiresAt = uint64(block.timestamp + 1 hours);
-        _t().commitBuybackIntent(ORDER, address(token), AMOUNT, expiresAt);
+        _t().commitBuybackIntent(ORDER, address(token), AMOUNT, 0, expiresAt);
         vm.expectRevert(
             abi.encodeWithSelector(
                 LibTreasuryBuyback.BuybackOrderHashInUse.selector, ORDER
             )
         );
-        _t().commitBuybackIntent(ORDER, address(token), AMOUNT, expiresAt);
+        _t().commitBuybackIntent(ORDER, address(token), AMOUNT, 0, expiresAt);
     }
 
     // ─── expire ──────────────────────────────────────────────────────
@@ -166,7 +166,7 @@ contract BuybackIntentLedgerTest is SetupTest {
     function test_Expire_HappyPath() public {
         _seedBaseBudget(AMOUNT);
         _t().commitBuybackIntent(
-            ORDER, address(token), AMOUNT, uint64(block.timestamp + 1 hours)
+            ORDER, address(token), AMOUNT, 0, uint64(block.timestamp + 1 hours)
         );
 
         vm.warp(block.timestamp + 2 hours);
@@ -191,7 +191,7 @@ contract BuybackIntentLedgerTest is SetupTest {
     function test_Expire_RevertWhen_NotYetExpired() public {
         _seedBaseBudget(AMOUNT);
         uint64 expiresAt = uint64(block.timestamp + 1 hours);
-        _t().commitBuybackIntent(ORDER, address(token), AMOUNT, expiresAt);
+        _t().commitBuybackIntent(ORDER, address(token), AMOUNT, 0, expiresAt);
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -206,7 +206,7 @@ contract BuybackIntentLedgerTest is SetupTest {
     function test_Expire_RevertWhen_NotPending() public {
         _seedBaseBudget(AMOUNT);
         _t().commitBuybackIntent(
-            ORDER, address(token), AMOUNT, uint64(block.timestamp + 1 hours)
+            ORDER, address(token), AMOUNT, 0, uint64(block.timestamp + 1 hours)
         );
         vm.warp(block.timestamp + 2 hours);
         _t().expireBuybackIntent(ORDER);
@@ -226,7 +226,7 @@ contract BuybackIntentLedgerTest is SetupTest {
     function test_IsValidSignature_BuybackPendingReturnsMagic() public {
         _seedBaseBudget(AMOUNT);
         _t().commitBuybackIntent(
-            ORDER, address(token), AMOUNT, uint64(block.timestamp + 1 hours)
+            ORDER, address(token), AMOUNT, 0, uint64(block.timestamp + 1 hours)
         );
 
         bytes4 magic = _d().isValidSignature(ORDER, "");
@@ -241,7 +241,7 @@ contract BuybackIntentLedgerTest is SetupTest {
     function test_IsValidSignature_AfterExpireReturnsInvalid() public {
         _seedBaseBudget(AMOUNT);
         _t().commitBuybackIntent(
-            ORDER, address(token), AMOUNT, uint64(block.timestamp + 1 hours)
+            ORDER, address(token), AMOUNT, 0, uint64(block.timestamp + 1 hours)
         );
         vm.warp(block.timestamp + 2 hours);
         _t().expireBuybackIntent(ORDER);
@@ -255,7 +255,7 @@ contract BuybackIntentLedgerTest is SetupTest {
     function test_PreInteraction_BuybackSnapshotsBaseline() public {
         _seedBaseBudget(AMOUNT);
         _t().commitBuybackIntent(
-            ORDER, address(token), AMOUNT, uint64(block.timestamp + 1 hours)
+            ORDER, address(token), AMOUNT, 0, uint64(block.timestamp + 1 hours)
         );
 
         IOrderMixin.Order memory order;
@@ -267,7 +267,7 @@ contract BuybackIntentLedgerTest is SetupTest {
     function test_PreInteraction_RevertWhen_UnauthorisedCaller() public {
         _seedBaseBudget(AMOUNT);
         _t().commitBuybackIntent(
-            ORDER, address(token), AMOUNT, uint64(block.timestamp + 1 hours)
+            ORDER, address(token), AMOUNT, 0, uint64(block.timestamp + 1 hours)
         );
 
         IOrderMixin.Order memory order;
@@ -297,7 +297,7 @@ contract BuybackIntentLedgerTest is SetupTest {
     function test_PostInteraction_BuybackFillCreditsStakingPoolViaDelta() public {
         _seedBaseBudget(AMOUNT);
         _t().commitBuybackIntent(
-            ORDER, address(token), AMOUNT, uint64(block.timestamp + 1 hours)
+            ORDER, address(token), AMOUNT, 0, uint64(block.timestamp + 1 hours)
         );
 
         uint256 stakingPre = _t().getStakingPoolBuybackBudget();
@@ -308,18 +308,21 @@ contract BuybackIntentLedgerTest is SetupTest {
         vm.prank(lop);
         _d().preInteraction(order, "", ORDER, address(0), 0, 0, 0, "");
 
-        // Simulate Fusion delivering VPFI into the diamond before
-        // calling postInteraction.
+        // Simulate Fusion delivering VPFI into the diamond AND
+        // pulling the committed source token out (round-3 P1 #2
+        // verifies the source-token delta).
         vpfi.mint(address(diamond), delivered);
+        vm.prank(address(diamond));
+        token.transfer(lop, AMOUNT);
 
         vm.expectEmit(true, true, false, true, address(diamond));
         emit LibTreasuryBuyback.BuybackIntentFilled(
             ORDER, address(token), AMOUNT, delivered
         );
 
-        // postInteraction reads the VPFI delta. `makingAmount` must
-        // equal the full reservation (round-2 P2 #2 — partial fills
-        // rejected).
+        // postInteraction reads the VPFI delta + verifies the
+        // source-token spent (round-3 P1 #2). `makingAmount` must
+        // equal the full reservation (round-2 P2 #2).
         vm.prank(lop);
         _d().postInteraction(order, "", ORDER, address(0), AMOUNT, 0, 0, "");
 
@@ -338,7 +341,7 @@ contract BuybackIntentLedgerTest is SetupTest {
     function test_PostInteraction_RevertWhen_UnauthorisedCaller() public {
         _seedBaseBudget(AMOUNT);
         _t().commitBuybackIntent(
-            ORDER, address(token), AMOUNT, uint64(block.timestamp + 1 hours)
+            ORDER, address(token), AMOUNT, 0, uint64(block.timestamp + 1 hours)
         );
 
         IOrderMixin.Order memory order;
@@ -354,7 +357,7 @@ contract BuybackIntentLedgerTest is SetupTest {
     function test_PostInteraction_RevertWhen_PastDeadline() public {
         _seedBaseBudget(AMOUNT);
         uint64 expiresAt = uint64(block.timestamp + 1 hours);
-        _t().commitBuybackIntent(ORDER, address(token), AMOUNT, expiresAt);
+        _t().commitBuybackIntent(ORDER, address(token), AMOUNT, 0, expiresAt);
 
         IOrderMixin.Order memory order;
         vm.prank(lop);
@@ -378,7 +381,7 @@ contract BuybackIntentLedgerTest is SetupTest {
     function test_PostInteraction_RevertWhen_PartialFill() public {
         _seedBaseBudget(AMOUNT);
         _t().commitBuybackIntent(
-            ORDER, address(token), AMOUNT, uint64(block.timestamp + 1 hours)
+            ORDER, address(token), AMOUNT, 0, uint64(block.timestamp + 1 hours)
         );
 
         IOrderMixin.Order memory order;
@@ -399,7 +402,7 @@ contract BuybackIntentLedgerTest is SetupTest {
     function test_PostInteraction_RevertWhen_PreNotFired() public {
         _seedBaseBudget(AMOUNT);
         _t().commitBuybackIntent(
-            ORDER, address(token), AMOUNT, uint64(block.timestamp + 1 hours)
+            ORDER, address(token), AMOUNT, 0, uint64(block.timestamp + 1 hours)
         );
 
         IOrderMixin.Order memory order;
@@ -411,6 +414,96 @@ contract BuybackIntentLedgerTest is SetupTest {
             )
         );
         _d().postInteraction(order, "", ORDER, address(0), AMOUNT, 0, 0, "");
+    }
+
+    function test_PostInteraction_RevertWhen_BelowMinVpfiOut() public {
+        // Codex round-3 P1 #1 — minVpfiOut floor enforced.
+        uint128 minVpfiOut = 100e18;
+        _seedBaseBudget(AMOUNT);
+        _t().commitBuybackIntent(
+            ORDER,
+            address(token),
+            AMOUNT,
+            uint256(minVpfiOut),
+            uint64(block.timestamp + 1 hours)
+        );
+
+        IOrderMixin.Order memory order;
+        vm.prank(lop);
+        _d().preInteraction(order, "", ORDER, address(0), 0, 0, 0, "");
+
+        // Deliver less than the floor.
+        uint256 delivered = 50e18;
+        vpfi.mint(address(diamond), delivered);
+        vm.prank(address(diamond));
+        token.transfer(lop, AMOUNT);
+
+        vm.prank(lop);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibTreasuryBuyback.BuybackBelowMinVpfiOut.selector,
+                delivered,
+                minVpfiOut
+            )
+        );
+        _d().postInteraction(order, "", ORDER, address(0), AMOUNT, 0, 0, "");
+    }
+
+    function test_PostInteraction_RevertWhen_SourceNotSpent() public {
+        // Codex round-3 P1 #2 — source-token spent verification.
+        _seedBaseBudget(AMOUNT);
+        _t().commitBuybackIntent(
+            ORDER, address(token), AMOUNT, 0, uint64(block.timestamp + 1 hours)
+        );
+
+        IOrderMixin.Order memory order;
+        vm.prank(lop);
+        _d().preInteraction(order, "", ORDER, address(0), 0, 0, 0, "");
+
+        // Deliver VPFI but DON'T burn/transfer the source token —
+        // simulates a collision where the orderHash actually
+        // settled an order on another maker asset.
+        vpfi.mint(address(diamond), 1e18);
+
+        vm.prank(lop);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibTreasuryBuyback.BuybackSourceTokenNotSpent.selector,
+                uint256(AMOUNT),
+                uint256(0)
+            )
+        );
+        _d().postInteraction(order, "", ORDER, address(0), AMOUNT, 0, 0, "");
+    }
+
+    // ─── Round-3 P2 — tranche cap ────────────────────────────────────
+
+    function test_Commit_RevertWhen_TrancheCapExceeded() public {
+        _seedBaseBudget(AMOUNT);
+        // Cap below AMOUNT.
+        uint256 cap = AMOUNT - 1;
+        _t().setBuybackMaxTranche(address(token), cap);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibTreasuryBuyback.BuybackTrancheCapExceeded.selector,
+                address(token),
+                uint256(AMOUNT),
+                cap
+            )
+        );
+        _t().commitBuybackIntent(
+            ORDER, address(token), AMOUNT, 0, uint64(block.timestamp + 1 hours)
+        );
+    }
+
+    function test_Commit_TrancheCapZero_Disables() public {
+        _seedBaseBudget(AMOUNT);
+        // Default cap is 0 — no restriction.
+        _t().commitBuybackIntent(
+            ORDER, address(token), AMOUNT, 0, uint64(block.timestamp + 1 hours)
+        );
+        assertEq(_t().getBuybackMaxTranche(address(token)), 0);
     }
 
     function test_PostInteraction_RevertWhen_UnknownKind() public {
