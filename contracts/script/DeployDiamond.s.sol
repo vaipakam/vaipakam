@@ -1250,7 +1250,7 @@ contract DeployDiamond is Script {
     }
 
     function _getTreasurySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](17);
+        s = new bytes4[](19);
         s[0] = TreasuryFacet.claimTreasuryFees.selector;
         s[1] = TreasuryFacet.getTreasuryBalance.selector;
         s[2] = TreasuryFacet.mintVPFI.selector;
@@ -1261,14 +1261,16 @@ contract DeployDiamond is Script {
         s[6] = TreasuryFacet.creditBuybackBudget.selector;
         s[7] = TreasuryFacet.setBuybackAllowedToken.selector;
         s[8] = TreasuryFacet.setBuybackNoConvert.selector;
-        s[9] = TreasuryFacet.setBuybackRemittanceReceiver.selector;
-        s[10] = TreasuryFacet.setCrossChainMessenger.selector;
-        s[11] = TreasuryFacet.getBuybackBudget.selector;
-        s[12] = TreasuryFacet.getBaseBuybackBudget.selector;
-        s[13] = TreasuryFacet.isBuybackAllowedToken.selector;
-        s[14] = TreasuryFacet.isBuybackNoConvert.selector;
-        s[15] = TreasuryFacet.getCrossChainMessenger.selector;
-        s[16] = TreasuryFacet.getBuybackRemittanceReceiver.selector;
+        s[9] = TreasuryFacet.setBuybackDestToken.selector;
+        s[10] = TreasuryFacet.setBuybackRemittanceReceiver.selector;
+        s[11] = TreasuryFacet.setCrossChainMessenger.selector;
+        s[12] = TreasuryFacet.getBuybackBudget.selector;
+        s[13] = TreasuryFacet.getBaseBuybackBudget.selector;
+        s[14] = TreasuryFacet.getBuybackDestToken.selector;
+        s[15] = TreasuryFacet.isBuybackAllowedToken.selector;
+        s[16] = TreasuryFacet.isBuybackNoConvert.selector;
+        s[17] = TreasuryFacet.getCrossChainMessenger.selector;
+        s[18] = TreasuryFacet.getBuybackRemittanceReceiver.selector;
     }
 
     function _getPayrollSelectors() internal pure returns (bytes4[] memory s) {

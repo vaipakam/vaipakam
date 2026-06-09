@@ -205,6 +205,16 @@ contract BuybackRemittanceReceiver is
         uint256 actualReceived =
             IERC20(deliveredToken).balanceOf(diamond) - diamondBalBefore;
 
+        // Codex Sub 3.A round-6 P2 #2 — a 100%-fee token (or one
+        // that silently no-ops `transfer`) would leave
+        // `actualReceived == 0`. Crediting zero would mark the CCIP
+        // delivery successful while Base's `baseBuybackBudget`
+        // saw no funds — the source-chain debit would be lost
+        // silently. Revert so CCIP marks the message failed (and
+        // manually re-executable once the operator fixes the
+        // token or pulls it out of the allow-list).
+        if (actualReceived == 0) revert ZeroAmount();
+
         ITreasuryBuybackIngress(diamond).absorbRemittance(
             deliveredToken, actualReceived, sourceChainId
         );

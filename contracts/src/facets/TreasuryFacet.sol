@@ -109,6 +109,17 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     /// @notice `setCrossChainMessenger` or
     ///         `setBuybackRemittanceReceiver` called with zero.
     error TreasuryZeroAddress();
+    /// @notice Codex Sub 3.A round-6 P2 #1 — operator passed a
+    ///         `destToken` that disagrees with the pre-pinned
+    ///         `s.buybackDestToken[srcToken]`. Either the operator
+    ///         typo'd OR the mapping was never set; either way the
+    ///         remit must abort BEFORE debiting the budget so the
+    ///         funds aren't stranded mid-bridge.
+    error BuybackDestTokenMismatch(
+        address srcToken,
+        address expected,
+        address provided
+    );
 
     /// @notice Default CCIP destination gas limit for the buyback
     ///         remittance callback. `BuybackRemittanceReceiver`'s
@@ -144,6 +155,11 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     );
     /// @custom:event-category informational/config
     event BuybackNoConvertSet(address indexed token, bool on);
+    /// @custom:event-category informational/config
+    event BuybackDestTokenSet(
+        address indexed srcToken,
+        address indexed destToken
+    );
     /// @custom:event-category informational/config
     event BuybackRemittanceReceiverSet(
         address indexed previous,
@@ -473,6 +489,14 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         if (!s.buybackAllowedToken[chainId][srcToken]) {
             revert BuybackTokenNotAllowed(chainId, srcToken);
         }
+        // Codex round-6 P2 #1 — destToken must match the admin-
+        // pinned mapping. A typo would otherwise let the source
+        // CCIP send debit + succeed, then the Base receiver revert
+        // `TokenMismatch` → funds stuck mid-bridge.
+        address expectedDest = s.buybackDestToken[srcToken];
+        if (expectedDest == address(0) || expectedDest != destToken) {
+            revert BuybackDestTokenMismatch(srcToken, expectedDest, destToken);
+        }
 
         // Config gates fire BEFORE accounting gates so a
         // misconfiguration surfaces with a clear error rather than
@@ -655,6 +679,23 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         emit BuybackNoConvertSet(token, on);
     }
 
+    /// @notice Codex Sub 3.A round-6 P2 #1 — pin the destination-
+    ///         chain token address that this chain's `srcToken`
+    ///         remits to. `remitBuyback` enforces this mapping at
+    ///         call time so an admin typo on the operator-supplied
+    ///         `destToken` cannot strand funds mid-bridge. Pass
+    ///         `address(0)` to clear the pinning (which then makes
+    ///         every future `remitBuyback(srcToken, ...)` revert
+    ///         `BuybackDestTokenMismatch`).
+    function setBuybackDestToken(address srcToken, address destToken)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (srcToken == address(0)) revert InvalidAddress();
+        LibVaipakam.storageSlot().buybackDestToken[srcToken] = destToken;
+        emit BuybackDestTokenSet(srcToken, destToken);
+    }
+
     function setBuybackRemittanceReceiver(address newReceiver)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
@@ -715,6 +756,14 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
 
     function isBuybackNoConvert(address token) external view returns (bool) {
         return LibVaipakam.storageSlot().buybackNoConvert[token];
+    }
+
+    function getBuybackDestToken(address srcToken)
+        external
+        view
+        returns (address)
+    {
+        return LibVaipakam.storageSlot().buybackDestToken[srcToken];
     }
 
     function getCrossChainMessenger() external view returns (address) {

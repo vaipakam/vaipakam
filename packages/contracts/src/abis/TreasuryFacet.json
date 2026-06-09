@@ -133,6 +133,25 @@
   },
   {
     "type": "function",
+    "name": "getBuybackDestToken",
+    "inputs": [
+      {
+        "name": "srcToken",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getBuybackRemittanceReceiver",
     "inputs": [],
     "outputs": [
@@ -296,6 +315,24 @@
   },
   {
     "type": "function",
+    "name": "setBuybackDestToken",
+    "inputs": [
+      {
+        "name": "srcToken",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "destToken",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setBuybackNoConvert",
     "inputs": [
       {
@@ -378,6 +415,25 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "BuybackDestTokenSet",
+    "inputs": [
+      {
+        "name": "srcToken",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "destToken",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -691,6 +747,27 @@
     "type": "error",
     "name": "BridgedBuyReceiverNotSet",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BuybackDestTokenMismatch",
+    "inputs": [
+      {
+        "name": "srcToken",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "expected",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "provided",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",

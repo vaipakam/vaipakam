@@ -140,6 +140,7 @@ contract TreasuryBuybackRemittanceTest is SetupTest {
 
     function test_RemitBuyback_RevertWhen_MessengerNotSet() public {
         _t().setBuybackAllowedToken(block.chainid, address(usdcMirror), true);
+        _t().setBuybackDestToken(address(usdcMirror), usdcBase);
         // Don't set messenger. Config gates fire before accounting,
         // so this surfaces `CrossChainMessengerNotSet` even with a
         // zero-budget token.
@@ -156,9 +157,63 @@ contract TreasuryBuybackRemittanceTest is SetupTest {
         // Codex round-2 P2 #1 — refund target zero would burn surplus
         // value. Must reject upfront.
         _t().setBuybackAllowedToken(block.chainid, address(usdcMirror), true);
+        _t().setBuybackDestToken(address(usdcMirror), usdcBase);
         _t().setCrossChainMessenger(messenger);
         vm.expectRevert(TreasuryFacet.TreasuryZeroAddress.selector);
         _t().remitBuyback(address(usdcMirror), usdcBase, 1e6, payable(address(0)));
+    }
+
+    // ─── Round-6 P2 #1 — destToken pinning ────────────────────────
+
+    function test_RemitBuyback_RevertWhen_DestTokenNotPinned() public {
+        _t().setBuybackAllowedToken(block.chainid, address(usdcMirror), true);
+        // Don't call setBuybackDestToken. The mapping returns
+        // address(0); the gate must revert.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                TreasuryFacet.BuybackDestTokenMismatch.selector,
+                address(usdcMirror),
+                address(0),
+                usdcBase
+            )
+        );
+        _t().remitBuyback(address(usdcMirror), usdcBase, 1e6, payable(address(this)));
+    }
+
+    function test_RemitBuyback_RevertWhen_DestTokenMismatched() public {
+        _t().setBuybackAllowedToken(block.chainid, address(usdcMirror), true);
+        _t().setBuybackDestToken(address(usdcMirror), usdcBase);
+        address typo = makeAddr("typoDest");
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                TreasuryFacet.BuybackDestTokenMismatch.selector,
+                address(usdcMirror),
+                usdcBase,
+                typo
+            )
+        );
+        _t().remitBuyback(address(usdcMirror), typo, 1e6, payable(address(this)));
+    }
+
+    function test_SetBuybackDestToken_HappyPath() public {
+        _t().setBuybackDestToken(address(usdcMirror), usdcBase);
+        assertEq(_t().getBuybackDestToken(address(usdcMirror)), usdcBase);
+
+        // Clear the pinning by setting to zero.
+        _t().setBuybackDestToken(address(usdcMirror), address(0));
+        assertEq(_t().getBuybackDestToken(address(usdcMirror)), address(0));
+    }
+
+    function test_SetBuybackDestToken_RevertWhen_ZeroSrc() public {
+        vm.expectRevert();
+        _t().setBuybackDestToken(address(0), usdcBase);
+    }
+
+    function test_SetBuybackDestToken_RevertWhen_NotAdmin() public {
+        address attacker = makeAddr("attacker");
+        vm.prank(attacker);
+        vm.expectRevert();
+        _t().setBuybackDestToken(address(usdcMirror), usdcBase);
     }
 
     // ─── Round-2 P1 #2 — creditBuybackBudget admin allocator ──────

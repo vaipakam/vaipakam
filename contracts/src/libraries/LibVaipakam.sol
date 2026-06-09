@@ -3649,6 +3649,18 @@ library LibVaipakam {
         // converted to other tokens). `remitBuyback` reverts if the
         // token is on this list. Per design discussion 2026-06-09.
         mapping(address => bool) buybackNoConvert;
+
+        // T-087 Sub 3.A round-6 P2 #1 — per-srcToken admin-pinned
+        // destination-side token address. `remitBuyback` requires
+        // the operator-passed `destToken` to match this slot
+        // exactly. Without this gate, an admin typo on `destToken`
+        // would cause the CCIP send to succeed (source budget
+        // debited) but the Base receiver to revert
+        // `TokenMismatch` — funds stuck mid-bridge until manual
+        // operator recovery. Set via `setBuybackDestToken(src,
+        // dest)`; reading 0 means "no pinning configured" and the
+        // remit refuses to proceed.
+        mapping(address => address) buybackDestToken;
     }
 
     /// @dev One entry of the treasury-conversion target allocation
