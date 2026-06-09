@@ -285,6 +285,9 @@ library Deployments {
     function writeVpfiTokenPool(address a)        internal { _writeAddr(".vpfiTokenPool",        a); }
     function writeVpfiPoolRateGovernor(address a) internal { _writeAddr(".vpfiPoolRateGovernor", a); }
     function writeRewardMessenger(address a)      internal { _writeAddr(".rewardMessenger",      a); }
+    // T-087 Sub 3.A — Base-side inbound handler for the buyback channel.
+    function writeBuybackRemittanceReceiver(address a)     internal { _writeAddr(".buybackRemittanceReceiver",     a); }
+    function writeBuybackRemittanceReceiverImpl(address a) internal { _writeAddr(".buybackRemittanceReceiverImpl", a); }
     function writeFlashLoanLiquidator(address a) internal { _writeAddr(".flashLoanLiquidator", a); }
     function writeWeth(address a)            internal { _writeAddr(".weth",            a); }
     function writeTreasury(address a)        internal { _writeAddr(".treasury",        a); }

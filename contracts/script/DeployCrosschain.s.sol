@@ -19,6 +19,8 @@ import {VPFIMirrorToken} from "../src/crosschain/VPFIMirrorToken.sol";
 import {VpfiPoolRateGovernor} from "../src/crosschain/VpfiPoolRateGovernor.sol";
 import {VpfiBuyAdapter} from "../src/crosschain/VpfiBuyAdapter.sol";
 import {VpfiBuyReceiver} from "../src/crosschain/VpfiBuyReceiver.sol";
+// T-087 Sub 3.A — Base-side inbound handler for the buyback channel.
+import {BuybackRemittanceReceiver} from "../src/crosschain/BuybackRemittanceReceiver.sol";
 import {VaipakamRewardMessenger} from "../src/crosschain/VaipakamRewardMessenger.sol";
 import {Deployments} from "./lib/Deployments.sol";
 
@@ -180,6 +182,11 @@ contract DeployCrosschain is Script {
             );
             console.log("VpfiBuyReceiver:        ", buyContract);
         } else {
+            // Mirror chains don't get a BuybackRemittanceReceiver
+            // (only Base receives buyback remittances). The Diamond
+            // is the source-sender; the source-side channel handler
+            // registration on the CcipMessenger is the Diamond
+            // itself, wired by `ConfigureCcip`.
             address treasury = vm.envAddress("TREASURY_ADDRESS");
             address paymentToken = vm.envOr("VPFI_BUY_PAYMENT_TOKEN", address(0));
             // ── Pre-flight: payment-token mode by chain ─────────────────
@@ -244,6 +251,26 @@ contract DeployCrosschain is Script {
 
         vm.stopBroadcast();
 
+        // ── T-087 Sub 3.A — Base-side buyback remittance receiver ──────
+        address buybackReceiverImpl;
+        address buybackReceiver;
+        if (canonical) {
+            vm.startBroadcast(deployerKey);
+            BuybackRemittanceReceiver brImpl = new BuybackRemittanceReceiver();
+            buybackReceiverImpl = address(brImpl);
+            buybackReceiver = address(
+                new ERC1967Proxy(
+                    buybackReceiverImpl,
+                    abi.encodeCall(
+                        BuybackRemittanceReceiver.initialize,
+                        (admin, messenger, diamond)
+                    )
+                )
+            );
+            vm.stopBroadcast();
+            console.log("BuybackRemittanceReceiver:", buybackReceiver);
+        }
+
         // ── Record to deployments/<chain>/addresses.json ─────────────────
         Deployments.writeCcipMessenger(messenger);
         Deployments.writeVpfiTokenPool(pool);
@@ -251,6 +278,8 @@ contract DeployCrosschain is Script {
         Deployments.writeRewardMessenger(rewardMessenger);
         if (canonical) {
             Deployments.writeVpfiBuyReceiver(buyContract);
+            Deployments.writeBuybackRemittanceReceiver(buybackReceiver);
+            Deployments.writeBuybackRemittanceReceiverImpl(buybackReceiverImpl);
         } else {
             Deployments.writeVpfiMirror(vpfiToken);
             Deployments.writeVpfiBuyAdapter(buyContract);
