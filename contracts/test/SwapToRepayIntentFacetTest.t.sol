@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
+import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -233,7 +234,10 @@ contract SwapToRepayIntentFacetTest is SetupTest {
     // ══════════════════════════════════════════════════════════════
 
     function test_IsValidSignature_ReturnsInvalidForUnregisteredHash() public view {
-        bytes4 ret = SwapToRepayIntentFacet(address(diamond))
+        // T-087 Sub 3.B — the 1inch hooks moved to IntentDispatchFacet;
+        // an unregistered orderHash has no stamped kind so the
+        // dispatcher returns 0xffffffff.
+        bytes4 ret = IntentDispatchFacet(address(diamond))
             .isValidSignature(bytes32(uint256(0xDEAD)), bytes(""));
         assertEq(ret, bytes4(0xffffffff), "unregistered orderHash should be invalid");
     }

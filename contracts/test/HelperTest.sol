@@ -26,6 +26,7 @@ import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
+import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -575,25 +576,36 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](11);
+        // T-087 Sub 3.B — preInteraction / postInteraction /
+        // isValidSignature moved to IntentDispatchFacet.
+        selectors = new bytes4[](8);
         selectors[0] = SwapToRepayIntentFacet.commitSwapToRepayIntent.selector;
         selectors[1] = SwapToRepayIntentFacet.cancelSwapToRepayIntent.selector;
         selectors[2] = SwapToRepayIntentFacet.cancelExpiredIntent.selector;
-        selectors[3] = SwapToRepayIntentFacet.preInteraction.selector;
-        selectors[4] = SwapToRepayIntentFacet.postInteraction.selector;
-        selectors[5] = SwapToRepayIntentFacet.isValidSignature.selector;
-        selectors[6] = SwapToRepayIntentFacet.getIntentCommit.selector;
+        selectors[3] = SwapToRepayIntentFacet.getIntentCommit.selector;
         // §5.8 layer 2 force-cancel surface (onlyDiamondInternal) —
         // wired via crossFacetCall from the HF-liquidation +
         // time-default entry points.
-        selectors[7] = SwapToRepayIntentFacet.internalForceCancelIntent.selector;
-        selectors[8] = SwapToRepayIntentFacet.forceCancelIntentIfHFBelowOrRevert.selector;
-        selectors[9] = SwapToRepayIntentFacet.forceCancelIntentIfPastDefaultOrRevert.selector;
+        selectors[4] = SwapToRepayIntentFacet.internalForceCancelIntent.selector;
+        selectors[5] = SwapToRepayIntentFacet.forceCancelIntentIfHFBelowOrRevert.selector;
+        selectors[6] = SwapToRepayIntentFacet.forceCancelIntentIfPastDefaultOrRevert.selector;
         // Codex round-2 PR #420 P2 — dapp read surface; without
         // routing this through the diamond cut the borrower can't
         // mirror the canonical extension bytes the commit gate
         // requires.
-        selectors[10] = SwapToRepayIntentFacet.canonicalExtension.selector;
+        selectors[7] = SwapToRepayIntentFacet.canonicalExtension.selector;
+    }
+
+    /// @notice T-087 Sub 3.B — IntentDispatchFacet selectors.
+    function getIntentDispatchFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](3);
+        selectors[0] = IntentDispatchFacet.preInteraction.selector;
+        selectors[1] = IntentDispatchFacet.postInteraction.selector;
+        selectors[2] = IntentDispatchFacet.isValidSignature.selector;
     }
 
     function getDefaultedFacetSelectors()
@@ -713,7 +725,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](19);
+        selectors = new bytes4[](26);
         selectors[0] = TreasuryFacet.claimTreasuryFees.selector;
         selectors[1] = TreasuryFacet.getTreasuryBalance.selector;
         selectors[2] = TreasuryFacet.mintVPFI.selector;
@@ -734,6 +746,14 @@ contract HelperTest {
         selectors[16] = TreasuryFacet.isBuybackNoConvert.selector;
         selectors[17] = TreasuryFacet.getCrossChainMessenger.selector;
         selectors[18] = TreasuryFacet.getBuybackRemittanceReceiver.selector;
+        // T-087 Sub 3.B — buyback intent ledger.
+        selectors[19] = TreasuryFacet.commitBuybackIntent.selector;
+        selectors[20] = TreasuryFacet.expireBuybackIntent.selector;
+        selectors[21] = TreasuryFacet.getBuybackOrder.selector;
+        selectors[22] = TreasuryFacet.getOrderHashKind.selector;
+        selectors[23] = TreasuryFacet.getStakingPoolBuybackBudget.selector;
+        selectors[24] = TreasuryFacet.setBuybackMaxTranche.selector;
+        selectors[25] = TreasuryFacet.getBuybackMaxTranche.selector;
         return selectors;
     }
 

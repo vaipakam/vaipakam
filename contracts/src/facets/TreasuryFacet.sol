@@ -14,6 +14,7 @@ import {IVPFIToken} from "../interfaces/IVPFIToken.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {ICrossChainMessenger} from "../crosschain/ICrossChainMessenger.sol";
+import {LibTreasuryBuyback} from "../libraries/LibTreasuryBuyback.sol";
 
 /**
  * @title TreasuryFacet
@@ -147,6 +148,11 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     ///         `buybackBudget` so a future `remitBuyback` can ship
     ///         it cross-chain to Base.
     event BuybackBudgetCredited(address indexed token, uint256 amount);
+    /// @custom:event-category informational/config
+    /// @notice T-087 Sub 3.B round-3 P2 — per-token raw-amount
+    ///         tranche cap for `commitBuybackIntent`. `cap == 0`
+    ///         disables the gate.
+    event BuybackMaxTrancheSet(address indexed token, uint256 cap);
     /// @custom:event-category informational/config
     event BuybackAllowedTokenSet(
         uint256 indexed chainId,
@@ -772,5 +778,98 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
 
     function getBuybackRemittanceReceiver() external view returns (address) {
         return LibVaipakam.storageSlot().buybackRemittanceReceiver;
+    }
+
+    // ─── T-087 Sub 3.B — buyback intent ledger ───────────────────────
+
+    /**
+     * @notice Commit a new BUYBACK intent against a Fusion order
+     *         hash. Reserves `amountIn` of `token` out of
+     *         `baseBuybackBudget` into `baseBuybackReserved`,
+     *         records the ledger entry, and stamps the order kind
+     *         so `IntentDispatchFacet.postInteraction` routes the
+     *         fill into `LibTreasuryBuyback.onFill`.
+     * @dev    ADMIN-gated. `orderHash` is computed off-chain by the
+     *         operator from the Fusion order template + LOP domain
+     *         separator; the contract trusts the caller to provide
+     *         the exact value the Fusion solver will fill against.
+     *         Sub 3.C will wire the off-chain computation; for Sub
+     *         3.B the operator passes it manually.
+     */
+    function commitBuybackIntent(
+        bytes32 orderHash,
+        address token,
+        uint256 amountIn,
+        uint256 minVpfiOut,
+        uint256 expiresAt
+    )
+        external
+        nonReentrant
+        whenNotPaused
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibTreasuryBuyback.commitBuyback(
+            orderHash, token, amountIn, minVpfiOut, expiresAt
+        );
+    }
+
+    /// @notice T-087 Sub 3.B round-3 P2 — set / clear the per-token
+    ///         raw-amount tranche cap. `commitBuyback` rejects an
+    ///         `amountIn` larger than the cap. Pass `0` to disable
+    ///         the cap for the token.
+    function setBuybackMaxTranche(address token, uint256 cap)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (token == address(0)) revert InvalidAddress();
+        LibVaipakam.storageSlot().cfgBuybackMaxTranche[token] = cap;
+        emit BuybackMaxTrancheSet(token, cap);
+    }
+
+    function getBuybackMaxTranche(address token)
+        external
+        view
+        returns (uint256)
+    {
+        return LibVaipakam.storageSlot().cfgBuybackMaxTranche[token];
+    }
+
+    /// @notice Permissionless rollback for an expired buyback intent.
+    /// @dev    Releases the reservation back to `baseBuybackBudget`,
+    ///         marks the order `Expired`, and clears the kind
+    ///         discriminator. Reverts if the order is still active
+    ///         (use `expiresAt` < `block.timestamp` to gate).
+    function expireBuybackIntent(bytes32 orderHash)
+        external
+        nonReentrant
+        whenNotPaused
+    {
+        LibTreasuryBuyback.expireBuyback(orderHash);
+    }
+
+    function getBuybackOrder(bytes32 orderHash)
+        external
+        view
+        returns (LibVaipakam.BuybackOrderInfo memory)
+    {
+        return LibVaipakam.storageSlot().buybackOrders[orderHash];
+    }
+
+    function getOrderHashKind(bytes32 orderHash)
+        external
+        view
+        returns (bytes32)
+    {
+        return LibVaipakam.storageSlot().orderHashKind[orderHash];
+    }
+
+    /// @notice T-087 Sub 3.B — current staking-pool buyback budget.
+    ///         `LibTreasuryBuyback.onFill` credits this slot with the
+    ///         delivered VPFI on every BUYBACK postInteraction; the
+    ///         staking distributor (Sub 3 add-on #472 will widen the
+    ///         claim cap from this slot) reads it as the spendable
+    ///         budget.
+    function getStakingPoolBuybackBudget() external view returns (uint256) {
+        return LibVaipakam.storageSlot().stakingPoolBuybackBudget;
     }
 }

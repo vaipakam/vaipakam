@@ -80,11 +80,15 @@ import {RiskFacet} from "./RiskFacet.sol";
 contract SwapToRepayIntentFacet is
     DiamondReentrancyGuard,
     DiamondPausable,
-    IVaipakamErrors,
-    IPreInteraction,
-    IPostInteraction,
-    IERC1271
+    IVaipakamErrors
 {
+    // T-087 Sub 3.B — the IPreInteraction / IPostInteraction /
+    // IERC1271 interface implementations moved to
+    // `IntentDispatchFacet`; this facet now owns only the borrower-
+    // facing commit + cancel + force-cancel surface. The dispatch
+    // facet reads `s.orderHashKind[orderHash]` (stamped here at
+    // commit time, cleared in the teardown helper) to know which
+    // settlement library to call.
     using SafeERC20 for IERC20;
 
     // ──────────────────────────────────────────────────────────────
@@ -567,6 +571,13 @@ contract SwapToRepayIntentFacet is
         // ── §5.1 step 6 (deferred): orderHash uniqueness ────────────
         if (s.orderHashToLoanId[orderHash] != 0)
             revert IntentOrderHashAlreadyInUse(orderHash);
+        // T-087 Sub 3.B round-2 P1 #2 — also check the shared
+        // discriminator slot. A swap orderHash that happens to
+        // collide with a live BUYBACK orderHash would otherwise
+        // overwrite the BUYBACK kind here, mis-routing future
+        // callbacks for that hash into the swap-to-repay arm.
+        if (s.orderHashKind[orderHash] != bytes32(0))
+            revert IntentOrderHashAlreadyInUse(orderHash);
 
         // ── §5.1 step 10: aggregate allowance management
         //    (zero-then-set for USDT-style tokens) ─────────────────────
@@ -592,6 +603,13 @@ contract SwapToRepayIntentFacet is
             lopAtCommit: s.cfgFusionLimitOrderProtocol
         });
         s.orderHashToLoanId[orderHash] = loanId;
+        // T-087 Sub 3.B — stamp the kind discriminator so
+        // `IntentDispatchFacet` routes Fusion's preInteraction /
+        // postInteraction / isValidSignature callbacks for this
+        // orderHash into `LibSwapToRepayIntentSettlement`. Cleared
+        // at every teardown path (cancel / expired-cancel / force-
+        // cancel / library's postInteraction settlement).
+        s.orderHashKind[orderHash] = LibVaipakam.ORDER_KIND_SWAP_TO_REPAY;
         // Refcount per extension hash (Codex round-1 PR #420 P2 #3).
         // First commit at this hash stores the bytes; subsequent
         // commits sharing the same hash just bump the counter.
@@ -897,6 +915,10 @@ contract SwapToRepayIntentFacet is
         orderHash = commit.orderHash;
         bytes32 extensionHash = commit.extensionHash;
         delete s.orderHashToLoanId[orderHash];
+        // T-087 Sub 3.B — clear the kind discriminator so the
+        // dispatcher can't route a Fusion callback for this
+        // orderHash post-teardown.
+        delete s.orderHashKind[orderHash];
         // Refcount-aware delete (Codex round-1 PR #420 P2 #3) — only
         // the LAST teardown for this extensionHash deletes the bytes.
         s.intentExtensionBytesRefCount[extensionHash] -= 1;
@@ -906,317 +928,6 @@ contract SwapToRepayIntentFacet is
         delete s.intentCommits[loanId];
     }
 
-    // ══════════════════════════════════════════════════════════════
-    //  Fusion `LimitOrderProtocol` callback hooks
-    //  NOT externally callable by users — Fusion's protocol invokes
-    //  these atomically inside the fill transaction.
-    // ══════════════════════════════════════════════════════════════
-
-    /// @inheritdoc IPreInteraction
-    /// @dev §5.1 preInteraction — snapshot the diamond's principal-
-    ///      balance baseline into transient storage keyed by
-    ///      orderHash so {postInteraction} can compute the actual
-    ///      delivered amount via balance-delta (Codex round-7 P1 #6 +
-    ///      round-11 P2 #6 — runs on Fusion's normal CALL,
-    ///      authorised against `commit.lopAtCommit`, NOT the global
-    ///      cfg).
-    function preInteraction(
-        IOrderMixin.Order calldata /* order */,
-        bytes calldata /* extension */,
-        bytes32 orderHash,
-        address /* taker */,
-        uint256 /* makingAmount */,
-        uint256 /* takingAmount */,
-        uint256 /* remainingMakingAmount */,
-        bytes calldata /* extraData */
-    )
-        external
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-
-        // ── Reverse-index lookup ────────────────────────────────────
-        uint256 loanId = s.orderHashToLoanId[orderHash];
-        if (loanId == 0 || s.intentCommits[loanId].orderHash != orderHash) {
-            revert IntentPreInteractionUnknownOrder(orderHash);
-        }
-
-        // ── Authorized-caller check against pinned LOP (Codex
-        //    round-11 P2 #6) ───────────────────────────────────────────
-        if (msg.sender != s.intentCommits[loanId].lopAtCommit) {
-            revert IntentPreInteractionUnauthorized(msg.sender);
-        }
-
-        // ── Snapshot the diamond's principal balance pre-fill into
-        //    transient storage keyed by orderHash. `postInteraction`
-        //    reads this back to compute `actualDelivered` via
-        //    balance-delta (Codex round-5 P1 #2 — Fusion's `delivered`
-        //    arg can drift from the diamond's actual balance for
-        //    fee-on-transfer / rebasing principals). EIP-1153
-        //    transient storage is the right primitive: per-tx-scoped,
-        //    free at tx-end, safe against same-tx reentry.
-        address principal = s.loans[loanId].principalAsset;
-        uint256 baseline = IERC20(principal).balanceOf(address(this));
-        assembly ("memory-safe") {
-            tstore(orderHash, baseline)
-        }
-    }
-
-    /// @inheritdoc IPostInteraction
-    /// @dev §5.1 postInteraction — atomic settlement waterfall +
-    ///      residual `safeTransfer` to vault + claim record + commit
-    ///      teardown + aggregate-allowance decrement. `nonReentrant`
-    ///      per Codex round-2 P1 #9; auth-checked against
-    ///      `commit.lopAtCommit` per round-10 P1 #6; live-floor
-    ///      re-check with `+ lateFee` per round-10 P1 #5.
-    function postInteraction(
-        IOrderMixin.Order calldata /* order */,
-        bytes calldata /* extension */,
-        bytes32 orderHash,
-        address /* taker */,
-        uint256 makingAmount,
-        uint256 /* takingAmount */,
-        uint256 /* remainingMakingAmount */,
-        bytes calldata /* extraData */
-    )
-        external
-        nonReentrant
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-
-        // ── Step 1: reverse-index lookup (Codex round-11 P1 #7 —
-        //    derive loanId BEFORE the auth check; round-7's pre-step
-        //    ordering had this swapped) ────────────────────────────────
-        uint256 loanId = s.orderHashToLoanId[orderHash];
-        if (loanId == 0) revert IntentNotRegistered(orderHash);
-
-        // ── Step 2: authorized-caller against pinned LOP (Codex
-        //    round-10 P1 #6) ─────────────────────────────────────────
-        LibVaipakam.SwapToRepayIntentCommit storage commit = s.intentCommits[loanId];
-        if (msg.sender != commit.lopAtCommit) {
-            revert IntentPostInteractionUnauthorized(msg.sender);
-        }
-
-        LibVaipakam.Loan storage loan = s.loans[loanId];
-
-        // ── Step 3: actual principal received via transient-storage
-        //    baseline (Codex round-5 P1 #2 + round-7 P1 #6) ─────────
-        uint256 baseline;
-        assembly ("memory-safe") {
-            baseline := tload(orderHash)
-            tstore(orderHash, 0)
-        }
-        uint256 actualDelivered = IERC20(loan.principalAsset).balanceOf(address(this))
-            - baseline;
-
-        // ── Step 4: live floor re-check (Codex round-2 P1 #8 +
-        //    round-10 P1 #5 + round-11 P1 #3 — add `lateFee`) ───────
-        uint256 endTime = uint256(loan.startTime)
-            + uint256(loan.durationDays) * LibVaipakam.ONE_DAY;
-        uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
-        uint256 liveLenderLeg = LibCollateralSettlement.principalPlusAccruedInterest(
-            loanId, block.timestamp
-        );
-        uint256 liveTreasuryLeg = LibCollateralSettlement.treasuryAndPrecloseFee(
-            loanId, block.timestamp
-        );
-        uint256 liveFloor = liveLenderLeg + liveTreasuryLeg + lateFee;
-        if (actualDelivered < liveFloor) {
-            revert IntentDeliveredBelowLiveFloor(actualDelivered, liveFloor);
-        }
-
-        // ── Step 5: residual handling — `safeTransfer` to vault THEN
-        //    `recordVaultDeposit` (Codex round-10 P1 #2 + round-11
-        //    P1 #1 — direct recordVaultDeposit doesn't move tokens) ─
-        uint256 consumed = makingAmount;
-        uint256 residual = commit.custodialCollateral - consumed;
-        if (residual > 0) {
-            address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
-            IERC20(loan.collateralAsset).safeTransfer(borrowerVault, residual);
-            LibVaipakam.recordVaultDeposit(
-                loan.borrower, loan.collateralAsset, residual
-            );
-        }
-
-        // ── Step 6: settlement waterfall (mirrors v1
-        //    `SwapToRepayFacet.swapToRepayFull` post-swap; `consumed`
-        //    feeds the claim-record branch so `claim =
-        //    loan.collateralAmount - consumed`) ──────────────────────
-        _runSettlement(s, loan, loanId, actualDelivered, consumed, lateFee);
-
-        // ── Step 7: aggregate allowance + live count decrement ──────
-        s.intentAggregateAllowance[loan.collateralAsset] -= commit.custodialCollateral;
-        s.intentLiveCommitCount -= 1;
-        IERC20(loan.collateralAsset).forceApprove(commit.lopAtCommit, 0);
-        if (s.intentAggregateAllowance[loan.collateralAsset] != 0) {
-            IERC20(loan.collateralAsset).forceApprove(
-                commit.lopAtCommit,
-                s.intentAggregateAllowance[loan.collateralAsset]
-            );
-        }
-
-        // ── Step 8: storage cleanup ─────────────────────────────────
-        // Refcount-aware delete on the extension bytes (Codex
-        // round-1 PR #420 P2 #3) so a concurrent commit sharing
-        // the same canonical extension bytes still resolves
-        // through `getIntentCommit` after this teardown.
-        bytes32 extensionHash = commit.extensionHash;
-        delete s.orderHashToLoanId[orderHash];
-        s.intentExtensionBytesRefCount[extensionHash] -= 1;
-        if (s.intentExtensionBytesRefCount[extensionHash] == 0) {
-            delete s.intentExtensionBytes[extensionHash];
-        }
-        delete s.intentCommits[loanId];
-
-        // ── Step 9: emit ────────────────────────────────────────────
-        emit SwapToRepayIntentFilled(loanId, orderHash, consumed, actualDelivered, residual);
-    }
-
-    /// @dev Settlement waterfall — mirrors
-    ///      `SwapToRepayFacet.swapToRepayFull` post-swap step-for-step
-    ///      so the principal-side flows are identical to v1 atomic.
-    ///      `consumed` is passed verbatim to the claim-record branch
-    ///      so `claim = loan.collateralAmount - consumed` (Codex
-    ///      round-8 P1 #3 — undoes the round-4 P1 #4 override now
-    ///      that residual is vault-deposited above so
-    ///      `ClaimFacet.claimAsBorrower` can withdraw it). Factored
-    ///      private to keep `postInteraction` readable.
-    function _runSettlement(
-        LibVaipakam.Storage storage s,
-        LibVaipakam.Loan storage loan,
-        uint256 loanId,
-        uint256 actualDelivered,
-        uint256 consumed,
-        uint256 lateFee
-    ) private {
-        LibSettlement.ERC20Settlement memory plan = LibSettlement.computeRepayment(
-            loan, lateFee, block.timestamp
-        );
-        uint256 requiredPrincipal = plan.lenderDue + plan.treasuryShare;
-        // The §5.4 floor check + §5.1 step 4 postInteraction live
-        // floor check already established `actualDelivered >=
-        // liveFloor`; this assertion is a defense-in-depth.
-        if (actualDelivered < requiredPrincipal) {
-            revert IntentDeliveredBelowLiveFloor(actualDelivered, requiredPrincipal);
-        }
-
-        // Treasury share.
-        if (plan.treasuryShare > 0) {
-            address treasury = LibFacet.getTreasury();
-            IERC20(loan.principalAsset).safeTransfer(treasury, plan.treasuryShare);
-            LibFacet.recordTreasuryAccrual(loan.principalAsset, plan.treasuryShare);
-        }
-
-        // Lender vault credit.
-        address lenderVault = LibFacet.getOrCreateVault(loan.lender);
-        IERC20(loan.principalAsset).safeTransfer(lenderVault, plan.lenderDue);
-        LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, plan.lenderDue);
-
-        // Surplus principal → current borrower-NFT-owner EOA
-        // (Codex round-4 P1 #2 from v1 — `claimAsBorrower` only
-        // releases collateral, not principal; vault path would
-        // strand the surplus).
-        uint256 surplusPrincipal = actualDelivered - requiredPrincipal;
-        if (surplusPrincipal > 0) {
-            address currentBorrowerHolder =
-                IERC721(address(this)).ownerOf(loan.borrowerTokenId);
-            IERC20(loan.principalAsset).safeTransfer(
-                currentBorrowerHolder, surplusPrincipal
-            );
-        }
-
-        // Claim slots.
-        s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
-            asset: loan.principalAsset,
-            amount: plan.lenderDue,
-            assetType: LibVaipakam.AssetType.ERC20,
-            tokenId: 0,
-            quantity: 0,
-            claimed: false
-        });
-        s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
-            asset: loan.collateralAsset,
-            amount: loan.collateralAmount - consumed,
-            assetType: LibVaipakam.AssetType.ERC20,
-            tokenId: 0,
-            quantity: 0,
-            claimed: false
-        });
-
-        // Position-NFT status flips (mirror v1).
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaipakamNFTFacet.updateNFTStatus.selector,
-                loan.borrowerTokenId,
-                loanId,
-                LibVaipakam.LoanPositionStatus.LoanRepaid
-            ),
-            bytes4(keccak256("NFTStatusUpdateFailed()"))
-        );
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaipakamNFTFacet.updateNFTStatus.selector,
-                loan.lenderTokenId,
-                loanId,
-                LibVaipakam.LoanPositionStatus.LoanRepaid
-            ),
-            bytes4(keccak256("NFTStatusUpdateFailed()"))
-        );
-
-        // Active prepay listing cleanup (idempotent on loans
-        // without a listing).
-        LibPrepayCleanup.clearActiveListing(loan, loanId);
-
-        // Transition Active → Repaid.
-        LibLifecycle.transition(
-            loan,
-            LibVaipakam.LoanStatus.Active,
-            LibVaipakam.LoanStatus.Repaid
-        );
-
-        // LIF VPFI settlement (proper close — splits diamond-held
-        // VPFI between borrower rebate + treasury per
-        // `LibVPFIDiscount`).
-        LibVPFIDiscount.settleBorrowerLifProper(loan);
-
-        // Phase-2 reward accrual close.
-        LibInteractionRewards.closeLoan(
-            loanId,
-            /* borrowerClean */ true,
-            /* lenderForfeit */ false
-        );
-    }
-
-    // ══════════════════════════════════════════════════════════════
-    //  ERC-1271 contract-order signature validation
-    //  Fusion's LOP v4 calls via STATICCALL — must stay pure
-    //  read-only (Codex round-7 P1 #6).
-    // ══════════════════════════════════════════════════════════════
-
-    /// @inheritdoc IERC1271
-    /// @dev §5.7 #5 — the only "signature" Fusion needs from the
-    ///      diamond is a yes/no on whether this orderHash is a
-    ///      registered live commit. Returns the ERC-1271 magic
-    ///      value IFF `orderHashToLoanId[hash] != 0 AND
-    ///      intentCommits[loanId].orderHash == hash`. Pure
-    ///      read-only — no `tstore`, no state mutation
-    ///      (Codex round-7 P1 #6: 1inch LOP v4 calls this via
-    ///      staticcall, so state writes would revert and brick
-    ///      every Fusion fill for the diamond-as-maker pattern).
-    ///      Signature payload is unused (the binding check is purely
-    ///      against on-chain registered state).
-    function isValidSignature(bytes32 orderHash, bytes calldata /* signature */)
-        external
-        view
-        returns (bytes4)
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 loanId = s.orderHashToLoanId[orderHash];
-        if (loanId == 0) return bytes4(0xffffffff);
-        if (s.intentCommits[loanId].orderHash != orderHash) {
-            return bytes4(0xffffffff);
-        }
-        return IERC1271.isValidSignature.selector;
-    }
 
     // ══════════════════════════════════════════════════════════════
     //  Read surface for the dapp's read-back-then-post pattern

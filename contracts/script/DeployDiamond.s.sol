@@ -26,6 +26,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
+import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
@@ -144,6 +145,10 @@ contract DeployDiamond is Script {
         SwapToRepayFacet swapToRepayFacet = new SwapToRepayFacet();
         // T-090 v1.1 (#389) — intent-based swap-to-repay sibling facet.
         SwapToRepayIntentFacet swapToRepayIntentFacet = new SwapToRepayIntentFacet();
+        // T-087 Sub 3.B — the 1inch LOP v4 callback dispatcher;
+        // owns preInteraction / postInteraction / isValidSignature
+        // for BOTH the repay path and the buyback path.
+        IntentDispatchFacet intentDispatchFacet = new IntentDispatchFacet();
         // T-090 v1.1 (#389) — intent-based swap-to-repay config knobs.
         // Carved off `ConfigFacet` after the round-2 PR #420 CI block
         // pushed it past EIP-170.
@@ -207,7 +212,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](49);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](50);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -347,6 +352,11 @@ contract DeployDiamond is Script {
         cuts[48] = _buildCut(
             address(protocolBroadcastFacet),
             _getProtocolBroadcastSelectors()
+        );
+        // T-087 Sub 3.B — 1inch LOP v4 callback dispatcher.
+        cuts[49] = _buildCut(
+            address(intentDispatchFacet),
+            _getIntentDispatchFacetSelectors()
         );
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
@@ -1164,20 +1174,32 @@ contract DeployDiamond is Script {
     ///   • 1 ERC-1271 binding check (`isValidSignature`)
     ///   • 1 read-back view for the dapp's commit-then-post pattern.
     function _getSwapToRepayIntentFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](11);
+        // T-087 Sub 3.B — preInteraction / postInteraction /
+        // isValidSignature moved to the new IntentDispatchFacet; this
+        // facet now owns 8 selectors instead of 11.
+        s = new bytes4[](8);
         s[0] = SwapToRepayIntentFacet.commitSwapToRepayIntent.selector;
         s[1] = SwapToRepayIntentFacet.cancelSwapToRepayIntent.selector;
         s[2] = SwapToRepayIntentFacet.cancelExpiredIntent.selector;
-        s[3] = SwapToRepayIntentFacet.preInteraction.selector;
-        s[4] = SwapToRepayIntentFacet.postInteraction.selector;
-        s[5] = SwapToRepayIntentFacet.isValidSignature.selector;
-        s[6] = SwapToRepayIntentFacet.getIntentCommit.selector;
+        s[3] = SwapToRepayIntentFacet.getIntentCommit.selector;
         // §5.8 layer 2 — force-cancel surface (onlyDiamondInternal).
-        s[7] = SwapToRepayIntentFacet.internalForceCancelIntent.selector;
-        s[8] = SwapToRepayIntentFacet.forceCancelIntentIfHFBelowOrRevert.selector;
-        s[9] = SwapToRepayIntentFacet.forceCancelIntentIfPastDefaultOrRevert.selector;
+        s[4] = SwapToRepayIntentFacet.internalForceCancelIntent.selector;
+        s[5] = SwapToRepayIntentFacet.forceCancelIntentIfHFBelowOrRevert.selector;
+        s[6] = SwapToRepayIntentFacet.forceCancelIntentIfPastDefaultOrRevert.selector;
         // Dapp read surface for the canonical extension bytes.
-        s[10] = SwapToRepayIntentFacet.canonicalExtension.selector;
+        s[7] = SwapToRepayIntentFacet.canonicalExtension.selector;
+    }
+
+    /// @notice T-087 Sub 3.B — the three 1inch LOP v4 callbacks
+    ///         (preInteraction / postInteraction / isValidSignature)
+    ///         dispatched by `s.orderHashKind[orderHash]` into either
+    ///         `LibSwapToRepayIntentSettlement` (the T-090 v1.1 path)
+    ///         or `LibTreasuryBuyback` (the Sub 3 buyback path).
+    function _getIntentDispatchFacetSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = IntentDispatchFacet.preInteraction.selector;
+        s[1] = IntentDispatchFacet.postInteraction.selector;
+        s[2] = IntentDispatchFacet.isValidSignature.selector;
     }
 
     function _getDefaultedSelectors() internal pure returns (bytes4[] memory s) {
@@ -1250,7 +1272,7 @@ contract DeployDiamond is Script {
     }
 
     function _getTreasurySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](19);
+        s = new bytes4[](26);
         s[0] = TreasuryFacet.claimTreasuryFees.selector;
         s[1] = TreasuryFacet.getTreasuryBalance.selector;
         s[2] = TreasuryFacet.mintVPFI.selector;
@@ -1271,6 +1293,14 @@ contract DeployDiamond is Script {
         s[16] = TreasuryFacet.isBuybackNoConvert.selector;
         s[17] = TreasuryFacet.getCrossChainMessenger.selector;
         s[18] = TreasuryFacet.getBuybackRemittanceReceiver.selector;
+        // T-087 Sub 3.B — buyback intent ledger.
+        s[19] = TreasuryFacet.commitBuybackIntent.selector;
+        s[20] = TreasuryFacet.expireBuybackIntent.selector;
+        s[21] = TreasuryFacet.getBuybackOrder.selector;
+        s[22] = TreasuryFacet.getOrderHashKind.selector;
+        s[23] = TreasuryFacet.getStakingPoolBuybackBudget.selector;
+        s[24] = TreasuryFacet.setBuybackMaxTranche.selector;
+        s[25] = TreasuryFacet.getBuybackMaxTranche.selector;
     }
 
     function _getPayrollSelectors() internal pure returns (bytes4[] memory s) {

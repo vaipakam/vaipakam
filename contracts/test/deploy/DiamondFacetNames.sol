@@ -32,8 +32,9 @@ abstract contract DiamondFacetNames {
     ///      40 → 41 in T-086 Round-6 / Block D (#345) with
     ///      `NFTPrepayListingAtomicFacet`;
     ///      41 → 42 in T-086 Round-7 (#355) with
-    ///      `NFTPrepayAutoListFacet`.)
-    function cutFacetNames() internal pure returns (string[49] memory) {
+    ///      `NFTPrepayAutoListFacet`;
+    ///      49 → 50 in T-087 Sub 3.B with `IntentDispatchFacet`.)
+    function cutFacetNames() internal pure returns (string[50] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -127,7 +128,12 @@ abstract contract DiamondFacetNames {
             // post-rollup cross-facet call (gated to
             // `msg.sender == address(this)`); the budget +
             // destination-count admin surface is also here.
-            "ProtocolBroadcastFacet"
+            "ProtocolBroadcastFacet",
+            // T-087 Sub 3.B — owns the three 1inch LOP v4 callbacks
+            // (preInteraction / postInteraction / isValidSignature)
+            // and dispatches by `s.orderHashKind[orderHash]` into
+            // LibSwapToRepayIntentSettlement OR LibTreasuryBuyback.
+            "IntentDispatchFacet"
         ];
     }
 }
