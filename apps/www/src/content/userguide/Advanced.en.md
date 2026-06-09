@@ -799,9 +799,11 @@ owns your accumulator state. When you act on a different chain
 (borrow on Sepolia, lend on Arbitrum, etc.), that chain reads
 a *cached* copy of your tier. The cache is kept fresh by a
 cross-chain push: when your effective tier on Base changes,
-the next Base-side action you take broadcasts a CCIP message
-to every mirror chain you might act on. There is no manual
-"sync my tier" action required.
+your NEXT Base-side action broadcasts a CCIP message to every
+mirror chain you might act on. There is no manual "sync my
+tier" button to press — the push rides on every regular Base
+action — but you do need to take that next action for the
+push to fire (see "tier maturation" below).
 
 Two things to know:
 
@@ -811,8 +813,9 @@ Two things to know:
   a fresh stake initially resolves to tier 0 and the broadcast
   silent-skips. Once the period elapses, the gate releases on
   Base immediately, but mirrors don't learn until your NEXT
-  rollup-bearing Base action (any deposit, partial withdrawal,
-  loan action) triggers a push. A 1-wei top-up is enough.
+  rollup-bearing Base action (any deposit, withdrawal, loan
+  action — anything that mutates your vault on Base) triggers
+  a push. A 1-wei top-up is enough.
 - **Propagation time.** Once a push is dispatched, it
   typically lands on the mirror within minutes via CCIP. Until
   it does, the mirror still honours your prior cached tier —

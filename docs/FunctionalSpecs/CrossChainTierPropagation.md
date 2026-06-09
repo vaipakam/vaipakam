@@ -19,11 +19,12 @@ Every fee-relevant operation that consults a user's tier looks at a single sourc
 
 ### 2. The canonical chain broadcasts on every nonce-bumping mutation
 
-A "nonce-bumping mutation" is any rollup pass on Base that produces a *new* push tuple for the user — meaning the resolved `(effectiveTier, effectiveBps, tierExpirySec, tierTableVersion)` differs from the last pushed values. Examples:
+A "nonce-bumping mutation" is any rollup pass on Base that produces a *new* push tuple for the user — meaning the resolved `(effectiveTier, effectiveBps, tierExpirySec, tierTableVersion)` differs from the last pushed values. Under the current implementation (Sub 2.A made projection inert; expiry is always the sentinel), the effective triggers are:
 
-- A stake or unstake that crosses a tier threshold.
-- A stake or unstake within the same tier whose projected expiry moves.
-- A governance-induced tier-table version bump.
+- A stake or unstake that crosses a tier threshold (tier changes).
+- The user's first rollup after a governance-induced tier-table version bump (version changes).
+
+A same-tier balance mutation with no version change produces an identical tuple and silent-skips. The projected-expiry field of the tuple is reserved for a future design that re-introduces a meaningful decay forecast; until then it's the `type(uint40).max` sentinel and never triggers a push on its own.
 
 When the tuple is *identical* to the last push, the broadcast is skipped — burning protocol-funded CCIP gas to push what's already there would be wasteful and would offer an attacker a way to drain the broadcast budget by repeatedly hitting the rollup with no-op mutations.
 
@@ -45,24 +46,22 @@ Pushing a tier update to N mirrors costs N times the per-chain CCIP fee. The pro
 
 If the budget cannot cover the quoted fee, the rollup *reverts*. This is intentional. The alternative — silently skipping the broadcast when budget is short — would let the protocol accept fee-bearing operations from a user while quietly letting their cross-chain tier go stale. Operators are expected to monitor the budget and top up before exhaustion; the fail-CLOSED gate ensures a half-funded protocol cannot accidentally degrade users' cross-chain experience.
 
-### 5. Version bumps invalidate stale-version caches (eager broadcast required)
+### 5. Version bumps invalidate stale-version caches
 
 When governance changes the tier-threshold table or the per-tier BPS table, every cached tier on every mirror would become stale by reference to an old version. The canonical chain's `ConfigFacet` setters increment the local table version + emit a local `TierTableVersionBumped` event at the moment of the change.
 
-**Current implementation limitation.** Mirrors don't automatically learn about the new version. Existing mirror caches were written with the OLD version stamp; the mirror's tracked `currentTierTableVersion` is also still the OLD value. The freshness gate compares cache version against tracked version — both at the OLD value — so the gate PASSES and stale-version cached discounts are still honoured until SOMETHING raises the mirror's tracked version.
+Mirrors learn about the new version through two cooperating paths:
 
-Two paths exist for raising the mirror's tracked version:
+- **Per-user path (automatic for active users)** — the broadcast de-dup gate compares the full `(effTier, effBps, expiry, version)` tuple against the last-pushed values. A governance version bump changes the version field of every active user's tuple, so the user's NEXT rollup-bearing Base action (deposit, withdrawal, loan action — any mutation that calls into the accumulator) sees the new version, fails the de-dup, and fires a fresh push. The mirror writes the new cache AND raises its tracked `currentTierTableVersion` via the Sub 2.C monotonic max. Users who take any Base action between governance bumps stay in sync automatically.
+- **Eager `VersionBumped` broadcast (deferred follow-up)** — a dedicated CCIP push from `ConfigFacet`'s setters at the moment of the bump so mirrors learn IMMEDIATELY without waiting on a per-user mutation. The messenger surface (`sendVersionBumped`) ships in Sub 2.B; the producer call from the governance setter is a deferred Sub 2.D follow-up tracked on the Sub 2 umbrella. Once it lands, dormant users (who don't take any Base action between bumps) also stay in sync without operator intervention.
 
-- **Per-user TierUpdated carrying the new version stamp** — the round-2 P1 #1 monotonic-max raise inside `MirrorTierReceiverFacet.onTierUpdateReceived`. But on the canonical side the rollup-time de-dup gate skips when the user's `(effTier, effBps, expiry, version)` tuple is unchanged from last pushed. A governance version bump alone doesn't create a new tuple if the user's tier + BPS stayed the same, so this path doesn't fire automatically.
-- **Eager `VersionBumped` CCIP broadcast** — a dedicated push at the moment of the governance change. The messenger surface (`sendVersionBumped`) ships in Sub 2.B; the producer call from the governance setter is a **deferred Sub 2.D follow-up** tracked on the Sub 2 umbrella.
-
-Until the eager broadcast lands, governance table changes don't propagate to mirrors until an operator-driven catchup (the `sweepTierTableUpdate` follow-up) or per-user mutations naturally clear the de-dup gate. The eager broadcast is the load-bearing piece for automatic propagation.
-
-Once the eager broadcast or the per-user path raises the mirror's tracked version, the freshness gate rejects stale-version cache entries, returning tier 0 until a fresh per-user push carrying the new version lands.
+Until the eager broadcast lands, dormant users' mirror caches keep honouring the old version's discount until either the per-user path fires from their next Base action OR an operator runs the `sweepTierTableUpdate` follow-up (also deferred Sub 2.D follow-up). The freshness gate's version-mismatch rejection guarantees stale-version discounts are never applied — once a mirror raises its tracked version, ANY cache entry with the old stamp is treated as tier 0 until a fresh per-user push carrying the new version lands.
 
 ### 6. Decay is enforced by the cache freshness gates, not by mirror computation
 
-Mirrors do *not* re-derive a user's tier from local history (they have no history). They consult only the cached values and the freshness gates. So when a user partially unstakes and their effective tier drops, the cache is *not* automatically invalidated — the rollup-time broadcast on Base sends a fresh push, and the mirror writes the new (lower) cached tier. If the broadcast is missed (e.g., the protocol budget was exhausted), the mirror keeps honouring the OLD cache until one of the freshness gates fires.
+Mirrors do *not* re-derive a user's tier from local history (they have no history). They consult only the cached values and the freshness gates. So when a user partially unstakes and their effective tier drops, the cache is *not* automatically invalidated — the rollup-time broadcast on Base sends a fresh push, and the mirror writes the new (lower) cached tier. The fail-CLOSED budget gate (section 4) guarantees that if the canonical-chain mutation commits at all, the broadcast was dispatched — protocol-budget exhaustion REVERTS the mutation rather than letting it land without the push.
+
+A push CAN still be missed downstream of the dispatch, though: a CCIP delivery failure (DON outage, gas-cap mishap on the destination, rejected channel peer), or a successful dispatch where the protocol-budget refill happened mid-flight and a later push reverted on a different user. In those cases the mirror keeps honouring the OLD cache until one of the freshness gates fires.
 
 The freshness gates the mirror evaluates on every read, in order:
 
