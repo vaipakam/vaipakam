@@ -1488,9 +1488,12 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](2);
+        s = new bytes4[](3);
         s[0] = VPFIDiscountAccumulatorFacet.rollupUserDiscount.selector;
         s[1] = VPFIDiscountAccumulatorFacet.effectiveTierAndBps.selector;
+        // T-087 Sub 2.A — projected tier-expiry view (off-chain
+        // monitoring + Sub 2.B CCIP payload source + test inspection).
+        s[2] = VPFIDiscountAccumulatorFacet.getTierExpirySec.selector;
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {

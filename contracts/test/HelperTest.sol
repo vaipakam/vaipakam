@@ -971,9 +971,11 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](3);
         selectors[0] = VPFIDiscountAccumulatorFacet.rollupUserDiscount.selector;
         selectors[1] = VPFIDiscountAccumulatorFacet.effectiveTierAndBps.selector;
+        // T-087 Sub 2.A — projected tier-expiry view.
+        selectors[2] = VPFIDiscountAccumulatorFacet.getTierExpirySec.selector;
         return selectors;
     }
 

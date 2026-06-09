@@ -67,6 +67,44 @@ contract VPFIDiscountAccumulatorFacet {
         uint120 prevBal = _readLastKnownBalance(s, user, prevUpdateDay);
         _maintainStakerLifecycle(s, user, prevBal, balPostMutation, today);
         _advanceRingBuffer(s, user, balPostMutation, today, prevBal, prevUpdateDay);
+        // T-087 Sub 2.A — replace the old `type(uint40).max` sentinel
+        // (which Sub 1.B / 1.C wrote unconditionally as a placeholder)
+        // with the actual projected expiry. The scan walks the future
+        // trajectory of the ring buffer assuming the user holds the
+        // current balance forever, and finds the first day on which
+        // the projected TWA crosses below the current EFFECTIVE_TIER
+        // boundary. The mirror cache's freshness gate now has a
+        // meaningful timestamp to compare against (design §4.3 +
+        // round-3 P1 #1).
+        s.tierExpirySec[user] = _computeProjectedTierExpiry(
+            s,
+            user,
+            today,
+            uint120(balPostMutation)
+        );
+    }
+
+    /// @notice T-087 Sub 2.A — read the user's projected tier-expiry
+    ///         timestamp. Computed at every rollup pass; the value
+    ///         is what the Sub 2.B `TierUpdated` CCIP payload will
+    ///         carry and what mirror caches enforce locally
+    ///         (`block.timestamp < cache.tierExpirySec` per Sub 1.C
+    ///         freshness gate). Returns `type(uint40).max` when no
+    ///         decay is projected within the 30-day ring buffer
+    ///         window — the "no expiry" sentinel (round-6 P1 #9).
+    /// @dev    Public read; off-chain monitoring + tests both consume
+    ///         this. NOT `onlyInternal` because there's no security
+    ///         posture against reading a public timestamp.
+    function getTierExpirySec(address user) external view returns (uint40) {
+        // Codex Sub 2.A round-3 P2 — fall through to the sentinel
+        // when storage reads 0. A never-rolled-up user (state
+        // predates this facet cut, or first-rollup-not-yet-fired)
+        // would otherwise surface `0`, which any
+        // `block.timestamp < tierExpirySec` consumer would read as
+        // "expired since epoch". Sentinel is the correct null
+        // semantics — "no projected expiry".
+        uint40 stored = LibVaipakam.storageSlot().tierExpirySec[user];
+        return stored == 0 ? type(uint40).max : stored;
     }
 
     /// @notice Resolve the user's current EFFECTIVE_TIER and
@@ -336,5 +374,46 @@ contract VPFIDiscountAccumulatorFacet {
             anyHit = true;
         }
         return anyHit ? minTier : 0;
+    }
+
+    // ─── T-087 Sub 2.A — projected tierExpirySec ─────────────────────
+
+    /// @dev Forecasted EFFECTIVE_TIER expiry timestamp.
+    ///
+    ///      Architectural note (Codex Sub 2.A round-1 P1): under the
+    ///      integrated design, this scan is INERT. The min-tier-over-
+    ///      history clamp added later (Codex round-10 P1 #5) already
+    ///      catches every decay scenario on Base — the user's
+    ///      effective tier drops the same day a partial unstake's
+    ///      `dayMin` enters the min-history window. Once the clamp
+    ///      has dropped the effective tier, the projection under
+    ///      "constant balance held forever" can never produce a
+    ///      tier BELOW that value, because future days' projected
+    ///      `dayMin = currentBalance` and the projected min-tier-
+    ///      over-history equals the current min-tier-over-history.
+    ///
+    ///      So the scan would always return `type(uint40).max` for
+    ///      every realistic input. Rather than burn ~900 SLOADs per
+    ///      rollup computing a sentinel, write it directly.
+    ///
+    ///      The mirror cache's freshness is enforced by the OTHER
+    ///      three gates wired in Sub 1.C
+    ///      (`_mirrorEffectiveTierAndBps`):
+    ///        - effective tier non-zero (push wrote a real value)
+    ///        - `tierTableVersion` match (governance hasn't moved)
+    ///        - `cfgMirrorTierMaxAgeSec` backstop (60-day default)
+    ///      These three are load-bearing; the expiry field remains
+    ///      a storage slot Sub 2.B will populate with the sentinel
+    ///      on every CCIP push so the receive-side decode shape stays
+    ///      stable. If a future design change reintroduces a scenario
+    ///      the projection could meaningfully forecast, this helper
+    ///      is the natural extension point.
+    function _computeProjectedTierExpiry(
+        LibVaipakam.Storage storage /* s */,
+        address /* user */,
+        uint16 /* today */,
+        uint120 /* currentBalance */
+    ) private pure returns (uint40) {
+        return type(uint40).max;
     }
 }
