@@ -1328,9 +1328,17 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
+        // Codex round-4 P3 — allow `secs == 0` to reset the slot to
+        // the documented default-fallback path the getter uses (1800
+        // seconds). Without this, once governance sets any nonzero
+        // value, there's no way to clear it back to the default
+        // sentinel.
         if (
-            secs < LibKeeperReward.MIN_TWAP_MAX_AGE_SEC
-                || secs > LibKeeperReward.MAX_TWAP_MAX_AGE_SEC
+            secs != 0
+                && (
+                    secs < LibKeeperReward.MIN_TWAP_MAX_AGE_SEC
+                        || secs > LibKeeperReward.MAX_TWAP_MAX_AGE_SEC
+                )
         ) {
             revert KeeperRewardTwapMaxAgeSecOutOfBounds(
                 secs,

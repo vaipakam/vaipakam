@@ -144,41 +144,28 @@ library LibKeeperReward {
 
         s.keeperRewardBudget = budget - vpfiAmount;
 
-        // Codex round-1 P2 — defensive transfer. The library is
-        // documented as never reverting, but `safeTransfer` can
-        // bubble a revert if VPFI is paused, the diamond's actual
-        // balance is below the accounted budget, or the token
-        // rejects the destination. In those states a housekeeping
-        // facet that calls us at the end would revert the whole
-        // tx, breaking the no-revert contract. Use a low-level call
-        // and on failure: restore the budget, emit Skipped, return 0.
-        //
-        // Codex round-3 P2 — snapshot keeper's VPFI balance BEFORE
-        // the call; verify it grew by `vpfiAmount` AFTER. This
-        // guards against a misconfigured `vpfiToken` whose fallback
-        // returns `(true, "")` without actually moving balance —
-        // the keeper would otherwise see `KeeperRewardPaid` while
-        // receiving nothing.
-        uint256 keeperBalanceBefore = IERC20(s.vpfiToken).balanceOf(keeper);
-        (bool ok, bytes memory ret) = s.vpfiToken.call(
+        // Codex round-1..4 P2 — defensive transfer with balance-
+        // delta as the authoritative success signal. The library is
+        // documented as never reverting; safeTransfer could bubble a
+        // revert; high-level balanceOf could revert on malformed
+        // tokens; abi.decode of return data could revert on quirky
+        // proxies; short truthy returns could falsely register as
+        // failure. The simplest robust approach: snapshot keeper's
+        // balance via LOW-LEVEL staticcall, attempt the transfer via
+        // LOW-LEVEL call, snapshot again, success ⇔ balance moved by
+        // ≥ vpfiAmount. We don't decode the boolean return at all —
+        // the balance-delta is the only signal that survives all the
+        // failure modes Codex enumerated.
+        uint256 keeperBalanceBefore = _safeBalanceOf(s.vpfiToken, keeper);
+        // Fire-and-check transfer; ignore the return data. A token
+        // whose `transfer` reverts will leave `ok = false`, and our
+        // balance-delta check below will see no movement.
+        (bool ok, ) = s.vpfiToken.call(
             abi.encodeWithSelector(IERC20.transfer.selector, keeper, vpfiAmount)
         );
-        // Codex round-2/3 P2 — parse the return word manually
-        // (any nonzero counts as "truthy"). `abi.decode(ret, (bool))`
-        // reverts when the 32-byte word isn't strict 0/1, defeating
-        // the no-revert contract on quirky proxies.
-        bool returnedTrue;
-        if (ret.length == 0) {
-            returnedTrue = true;
-        } else if (ret.length >= 32) {
-            bytes32 word;
-            assembly { word := mload(add(ret, 32)) }
-            returnedTrue = uint256(word) != 0;
-        }
-        // Verify the keeper's balance actually grew.
-        uint256 keeperBalanceAfter = IERC20(s.vpfiToken).balanceOf(keeper);
+        uint256 keeperBalanceAfter = _safeBalanceOf(s.vpfiToken, keeper);
         bool balanceMoved = keeperBalanceAfter >= keeperBalanceBefore + vpfiAmount;
-        if (!ok || !returnedTrue || !balanceMoved) {
+        if (!ok || !balanceMoved) {
             s.keeperRewardBudget = budget; // restore the debit
             emit KeeperRewardSkipped(keeper, actionKind, "transfer-failed");
             return 0;
@@ -186,5 +173,23 @@ library LibKeeperReward {
 
         emit KeeperRewardPaid(keeper, actionKind, gasUsed, ethEquivalent, vpfiAmount);
         return vpfiAmount;
+    }
+
+    /// @dev Codex round-4 P2 #1 — low-level balanceOf that never
+    ///      reverts. A malformed VPFI token (fallback only / reverting
+    ///      balanceOf) would otherwise bubble a revert before the
+    ///      transfer path can emit KeeperRewardSkipped.
+    function _safeBalanceOf(address token, address who)
+        private
+        view
+        returns (uint256)
+    {
+        (bool ok, bytes memory ret) = token.staticcall(
+            abi.encodeWithSelector(IERC20.balanceOf.selector, who)
+        );
+        if (!ok || ret.length < 32) return 0;
+        bytes32 word;
+        assembly { word := mload(add(ret, 32)) }
+        return uint256(word);
     }
 }
