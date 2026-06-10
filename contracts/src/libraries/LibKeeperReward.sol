@@ -156,39 +156,67 @@ library LibKeeperReward {
         // ≥ vpfiAmount. We don't decode the boolean return at all —
         // the balance-delta is the only signal that survives all the
         // failure modes Codex enumerated.
+        // Codex round-7 P2 — snapshot BOTH the keeper's balance
+        // (so we can emit `Paid` with what the keeper actually
+        // received) AND the diamond's balance (so we can debit
+        // the budget by what the diamond actually LOST, which is
+        // what matters for accounting integrity). A fee-on-transfer
+        // token can take the entire transfer as a fee, leaving the
+        // keeper at zero while still draining the diamond — that
+        // case is handled correctly because we now key the debit
+        // off the diamond's loss, not the keeper's gain.
         uint256 keeperBalanceBefore = _safeBalanceOf(s.vpfiToken, keeper);
+        uint256 diamondBalanceBefore = _safeBalanceOf(s.vpfiToken, address(this));
         // Codex round-6 P2 #3 — fire-and-check transfer with bounded
         // return data (retSize=0; we ignore the return). A hostile
-        // token returning oversized data can't OOG us — assembly's
-        // call() never materialises returndata that we didn't ask
-        // for into memory.
+        // token returning oversized data can't OOG us.
         bool ok = _safeTransfer(s.vpfiToken, keeper, vpfiAmount);
         uint256 keeperBalanceAfter = _safeBalanceOf(s.vpfiToken, keeper);
-        // Codex round-5 P2 #1 — overflow-safe delta. A hostile token
-        // returning near-max-uint256 from balanceOf could otherwise
-        // overflow `keeperBalanceBefore + vpfiAmount`.
-        uint256 actuallyMoved = 0;
+        uint256 diamondBalanceAfter = _safeBalanceOf(s.vpfiToken, address(this));
+        // Codex round-5 P2 #1 — overflow-safe deltas via comparison-
+        // only arithmetic. A hostile token returning near-max-
+        // uint256 from balanceOf could otherwise overflow an add.
+        uint256 keeperGot = 0;
         if (keeperBalanceAfter > keeperBalanceBefore) {
-            unchecked { actuallyMoved = keeperBalanceAfter - keeperBalanceBefore; }
+            unchecked { keeperGot = keeperBalanceAfter - keeperBalanceBefore; }
         }
-        // Codex round-6 P2 #2 — fee-on-transfer correctness. The
-        // diamond's balance dropped by the FULL `vpfiAmount`
-        // regardless of what the keeper received (the token took
-        // any fee from the diamond's side). Debit the full
-        // requested amount from the budget so future rewards
-        // don't double-spend the missing fee. Emit Paid for what
-        // the keeper actually received, so the indexer sees the
-        // truth.
-        if (!ok || actuallyMoved == 0) {
-            s.keeperRewardBudget = budget; // nothing moved; restore
+        uint256 diamondLost = 0;
+        if (diamondBalanceBefore > diamondBalanceAfter) {
+            unchecked { diamondLost = diamondBalanceBefore - diamondBalanceAfter; }
+        }
+        // If diamond LOST nothing, nothing really happened — restore.
+        // (Covers transfer reverted, malformed token returning silently,
+        // or zero-amount transfer.)
+        if (!ok || diamondLost == 0) {
+            s.keeperRewardBudget = budget; // nothing left; restore
             emit KeeperRewardSkipped(keeper, actionKind, "transfer-failed");
             return 0;
         }
+        // Codex round-7 P2 — Debit by diamondLost (the actual
+        // accounting truth), not by `vpfiAmount` or `keeperGot`.
+        // Handles: standard tokens (lost == amount), fee-on-transfer
+        // (lost == amount, keeperGot < amount), 100%-fee burn
+        // (lost == amount, keeperGot == 0). In every case the
+        // budget tracks the diamond's actual VPFI outflow.
+        unchecked {
+            s.keeperRewardBudget = budget - (
+                diamondLost > vpfiAmount ? vpfiAmount : diamondLost
+            );
+        }
+        // Treat keeperGot == 0 as a paid (the diamond paid) but
+        // emit Skipped to surface the pathological 100%-fee case
+        // for the operator's dashboards. The budget IS debited above.
+        if (keeperGot == 0) {
+            emit KeeperRewardSkipped(keeper, actionKind, "keeper-received-zero");
+            return 0;
+        }
 
-        // Emit Paid with `actuallyMoved` (what the keeper got) — the
-        // budget was already debited by the full `vpfiAmount` above.
-        emit KeeperRewardPaid(keeper, actionKind, gasUsed, ethEquivalent, actuallyMoved);
-        return actuallyMoved;
+        // Emit Paid with `keeperGot` (what the keeper actually
+        // received). Budget was already debited by `diamondLost`
+        // above, so the diamond-side accounting is in sync with
+        // on-chain reality regardless of token quirks.
+        emit KeeperRewardPaid(keeper, actionKind, gasUsed, ethEquivalent, keeperGot);
+        return keeperGot;
     }
 
     /// @dev Codex round-4..6 — low-level balanceOf that never
