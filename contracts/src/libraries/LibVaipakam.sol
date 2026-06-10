@@ -3767,6 +3767,21 @@ library LibVaipakam {
         // decremented when it transitions >0 → 0 via
         // `withdrawTreasuryYield`.
         uint256 aaveDeployedTokenCount;
+
+        // T-087 Sub 3 add-on #474 — Keeper VPFI rewards.
+        // Permissionless housekeeping calls (Sub 2.D sweep/force-
+        // resend, periodic interest accrual, mirror cache catchup,
+        // etc.) get paid in VPFI at `gasUsed * tx.gasprice * mult /
+        // BASIS_POINTS` ETH-equivalent value, debited from
+        // `s.keeperRewardBudget` (slot already exists from #472).
+        //
+        // Phase 0 (this card): config + setters + fixed-rate
+        // pricing path. Hook wiring into individual housekeeping
+        // facets is a separate per-facet task once this card lands.
+        uint32 cfgKeeperRewardMultBps;
+        uint16 cfgKeeperRewardCashOutSpreadBps;
+        bool cfgKeeperRewardEnabled;
+        uint32 cfgKeeperRewardTwapMaxAgeSec;
     }
 
     /// @dev T-087 Sub 3 add-on #473 — yield venue discriminator.

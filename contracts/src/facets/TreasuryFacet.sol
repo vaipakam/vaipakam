@@ -17,6 +17,7 @@ import {ICrossChainMessenger} from "../crosschain/ICrossChainMessenger.sol";
 import {LibTreasuryBuyback} from "../libraries/LibTreasuryBuyback.sol";
 import {LibBuybackOrderValidation} from "../libraries/LibBuybackOrderValidation.sol";
 import {LibTreasuryYield} from "../libraries/LibTreasuryYield.sol";
+import {LibKeeperReward} from "../libraries/LibKeeperReward.sol";
 
 /**
  * @title TreasuryFacet
@@ -1214,5 +1215,143 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
 
     function getLidoStaking() external view returns (address) {
         return LibVaipakam.storageSlot().cfgLidoStaking;
+    }
+
+    // ─── T-087 Sub 3 add-on #474 — keeper VPFI rewards config ───────
+
+    error KeeperRewardMultBpsOutOfBounds(uint32 bps, uint32 minBps, uint32 maxBps);
+    error KeeperRewardCashOutSpreadBpsOutOfBounds(uint16 bps, uint16 minBps, uint16 maxBps);
+    /// @notice Codex round-2 P2 #3 — TWAP max-age out of the
+    ///         [600s, 86400s] safety range. Anti-fat-finger guard
+    ///         against a typo persisting a years-stale threshold
+    ///         that future Phase-1 pricing would honour.
+    error KeeperRewardTwapMaxAgeSecOutOfBounds(uint32 secs, uint32 minSecs, uint32 maxSecs);
+
+    /// @custom:event-category informational/config
+    event KeeperRewardMultBpsSet(uint32 bps);
+    /// @custom:event-category informational/config
+    event KeeperRewardCashOutSpreadBpsSet(uint16 bps);
+    /// @custom:event-category informational/config
+    event KeeperRewardEnabledSet(bool enabled);
+    /// @custom:event-category informational/config
+    event KeeperRewardTwapMaxAgeSecSet(uint32 secs);
+
+    // Codex round-1 P3 — re-declare the LibKeeperReward events on
+    // TreasuryFacet so they appear in the published per-facet ABI.
+    // The events are emitted from the Diamond address (libraries
+    // emit through the calling facet's address); without these
+    // declarations the indexer can't decode KeeperRewardPaid /
+    // KeeperRewardSkipped via the standard `@vaipakam/contracts/abis`
+    // bundle. Same event signatures as LibKeeperReward.
+    /// @custom:event-category state-change/keeper-reward
+    event KeeperRewardPaid(
+        address indexed keeper,
+        bytes32 indexed actionKind,
+        uint256 gasUsed,
+        uint256 ethEquivalent,
+        uint256 vpfiPaid
+    );
+    /// @custom:event-category informational/keeper-reward
+    event KeeperRewardSkipped(
+        address indexed keeper,
+        bytes32 indexed actionKind,
+        string reason
+    );
+
+    /// @notice Admin: multiplier on `gasUsed * tx.gasprice`. 20000 bps
+    ///         = 2x. Bounded [10000, 100000] (1x..10x) anti-fat-finger.
+    function setKeeperRewardMultBps(uint32 bps)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (
+            bps < LibKeeperReward.MIN_KEEPER_REWARD_MULT_BPS
+                || bps > LibKeeperReward.MAX_KEEPER_REWARD_MULT_BPS
+        ) {
+            revert KeeperRewardMultBpsOutOfBounds(
+                bps,
+                LibKeeperReward.MIN_KEEPER_REWARD_MULT_BPS,
+                LibKeeperReward.MAX_KEEPER_REWARD_MULT_BPS
+            );
+        }
+        LibVaipakam.storageSlot().cfgKeeperRewardMultBps = bps;
+        emit KeeperRewardMultBpsSet(bps);
+    }
+
+    function getKeeperRewardMultBps() external view returns (uint32) {
+        uint32 v = LibVaipakam.storageSlot().cfgKeeperRewardMultBps;
+        return v == 0 ? LibKeeperReward.DEFAULT_KEEPER_REWARD_MULT_BPS : v;
+    }
+
+    /// @notice Admin: cash-out spread for keepers who take ETH instead
+    ///         of VPFI. 500 bps = 5%. Bounded [100, 2000] (1%..20%).
+    function setKeeperRewardCashOutSpreadBps(uint16 bps)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (
+            bps < LibKeeperReward.MIN_CASH_OUT_SPREAD_BPS
+                || bps > LibKeeperReward.MAX_CASH_OUT_SPREAD_BPS
+        ) {
+            revert KeeperRewardCashOutSpreadBpsOutOfBounds(
+                bps,
+                LibKeeperReward.MIN_CASH_OUT_SPREAD_BPS,
+                LibKeeperReward.MAX_CASH_OUT_SPREAD_BPS
+            );
+        }
+        LibVaipakam.storageSlot().cfgKeeperRewardCashOutSpreadBps = bps;
+        emit KeeperRewardCashOutSpreadBpsSet(bps);
+    }
+
+    function getKeeperRewardCashOutSpreadBps() external view returns (uint16) {
+        uint16 v = LibVaipakam.storageSlot().cfgKeeperRewardCashOutSpreadBps;
+        return v == 0 ? LibKeeperReward.DEFAULT_CASH_OUT_SPREAD_BPS : v;
+    }
+
+    /// @notice Admin: kill-switch. Disabling halts all keeper reward
+    ///         payouts without affecting other paths.
+    function setKeeperRewardEnabled(bool enabled)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.storageSlot().cfgKeeperRewardEnabled = enabled;
+        emit KeeperRewardEnabledSet(enabled);
+    }
+
+    function getKeeperRewardEnabled() external view returns (bool) {
+        return LibVaipakam.storageSlot().cfgKeeperRewardEnabled;
+    }
+
+    /// @notice Admin: TWAP staleness threshold (Phase 1 use). 0 falls
+    ///         back to the default 1800 seconds (30 min).
+    function setKeeperRewardTwapMaxAgeSec(uint32 secs)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        // Codex round-4 P3 — allow `secs == 0` to reset the slot to
+        // the documented default-fallback path the getter uses (1800
+        // seconds). Without this, once governance sets any nonzero
+        // value, there's no way to clear it back to the default
+        // sentinel.
+        if (
+            secs != 0
+                && (
+                    secs < LibKeeperReward.MIN_TWAP_MAX_AGE_SEC
+                        || secs > LibKeeperReward.MAX_TWAP_MAX_AGE_SEC
+                )
+        ) {
+            revert KeeperRewardTwapMaxAgeSecOutOfBounds(
+                secs,
+                LibKeeperReward.MIN_TWAP_MAX_AGE_SEC,
+                LibKeeperReward.MAX_TWAP_MAX_AGE_SEC
+            );
+        }
+        LibVaipakam.storageSlot().cfgKeeperRewardTwapMaxAgeSec = secs;
+        emit KeeperRewardTwapMaxAgeSecSet(secs);
+    }
+
+    function getKeeperRewardTwapMaxAgeSec() external view returns (uint32) {
+        uint32 v = LibVaipakam.storageSlot().cfgKeeperRewardTwapMaxAgeSec;
+        return v == 0 ? 1800 : v;
     }
 }

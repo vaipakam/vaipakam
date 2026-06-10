@@ -725,7 +725,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](49);
+        selectors = new bytes4[](57);
         selectors[0] = TreasuryFacet.claimTreasuryFees.selector;
         selectors[1] = TreasuryFacet.getTreasuryBalance.selector;
         selectors[2] = TreasuryFacet.mintVPFI.selector;
@@ -780,6 +780,15 @@ contract HelperTest {
         selectors[46] = TreasuryFacet.getTreasuryExternalYieldMaxBps.selector;
         selectors[47] = TreasuryFacet.getAaveV3Pool.selector;
         selectors[48] = TreasuryFacet.getLidoStaking.selector;
+        // T-087 Sub 3 add-on #474 — keeper VPFI rewards config.
+        selectors[49] = TreasuryFacet.setKeeperRewardMultBps.selector;
+        selectors[50] = TreasuryFacet.getKeeperRewardMultBps.selector;
+        selectors[51] = TreasuryFacet.setKeeperRewardCashOutSpreadBps.selector;
+        selectors[52] = TreasuryFacet.getKeeperRewardCashOutSpreadBps.selector;
+        selectors[53] = TreasuryFacet.setKeeperRewardEnabled.selector;
+        selectors[54] = TreasuryFacet.getKeeperRewardEnabled.selector;
+        selectors[55] = TreasuryFacet.setKeeperRewardTwapMaxAgeSec.selector;
+        selectors[56] = TreasuryFacet.getKeeperRewardTwapMaxAgeSec.selector;
         return selectors;
     }
 
