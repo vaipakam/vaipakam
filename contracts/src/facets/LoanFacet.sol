@@ -316,6 +316,20 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         }
 
         emit LoanInitiatedDetails(loanId, loan.lender, loan.borrower, d);
+
+        // T-092 — auto-opt-in convenience: if the borrower has the
+        // per-user flag set, populate this loan's refinance caps from
+        // their stored defaults so they don't need to set per-loan
+        // caps explicitly on every new loan. See AutoLifecycleFacet
+        // for the consent surface + Phase 2 keeper-driven refinance
+        // wiring.
+        if (s.autoOptInOnNewLoan[loan.borrower]) {
+            LibVaipakam.AutoRefinanceCaps memory defs =
+                s.defaultAutoRefinanceCaps[loan.borrower];
+            if (defs.enabled) {
+                s.autoRefinanceCaps[loanId] = defs;
+            }
+        }
     }
 
     struct InitCtx {

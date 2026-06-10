@@ -3782,6 +3782,73 @@ library LibVaipakam {
         uint16 cfgKeeperRewardCashOutSpreadBps;
         bool cfgKeeperRewardEnabled;
         uint32 cfgKeeperRewardTwapMaxAgeSec;
+
+        // ─── T-092 — Auto-lifecycle (auto-lend / auto-refinance / auto-extend) ────────
+        // Phase 1 scope: consent flags + per-loan caps that bound
+        // the keeper-driven refinance + extend paths to the user's
+        // pre-approved terms. Auto-lend is dapp-side only (this
+        // flag is an opt-in marker; no contract enforcement).
+        //
+        // Auto-refinance is already keeper-callable today via
+        // KEEPER_ACTION_REFINANCE; the gap this card closes is the
+        // SAFETY BOUNDS — without per-loan caps, a keeper with the
+        // refinance bit could route the borrower into a worse rate
+        // or longer obligation than they agreed to.
+
+        /// @notice Per-user auto-lend opt-in marker. No contract
+        ///         enforcement — the dapp reads it to decide whether
+        ///         to auto-post standing offers when vault deposits
+        ///         land. Default false.
+        mapping(address => bool) autoLendConsent;
+
+        /// @notice Per-user convenience: when true, every new loan
+        ///         the user originates as borrower has its
+        ///         `autoRefinanceCaps[loanId]` auto-populated from
+        ///         `defaultAutoRefinanceCaps[user]` at init time, so
+        ///         the borrower doesn't need to re-set per-loan caps
+        ///         on every loan. Default false.
+        mapping(address => bool) autoOptInOnNewLoan;
+
+        /// @notice Per-user borrower default caps copied into a
+        ///         loan's `autoRefinanceCaps` at init when
+        ///         `autoOptInOnNewLoan[borrower]` is true.
+        mapping(address => AutoRefinanceCaps) defaultAutoRefinanceCaps;
+
+        /// @notice Per-loan refinance caps (borrower-side consent).
+        ///         When `enabled = true`, the keeper-driven
+        ///         `refinanceLoan` path enforces the new offer's
+        ///         rate ≤ maxRateBps and expiry ≤ maxNewExpiry.
+        ///         When the call is by the borrower-NFT-owner
+        ///         directly (not via a keeper), caps DO NOT apply —
+        ///         the user is acting in their own interest.
+        mapping(uint256 => AutoRefinanceCaps) autoRefinanceCaps;
+
+        /// @notice Per-loan extend caps (lender + borrower
+        ///         consent). Both sides must have `enabled = true`
+        ///         for `extendLoanInPlace` to succeed. The keeper
+        ///         picks new terms within the intersection of both
+        ///         caps.
+        mapping(uint256 => AutoExtendCaps) autoExtendBorrowerCaps;
+        mapping(uint256 => AutoExtendCaps) autoExtendLenderCaps;
+    }
+
+    /// @notice T-092 — per-loan borrower-side refinance caps.
+    /// @dev Storage occupant for `autoRefinanceCaps[loanId]` and
+    ///      `defaultAutoRefinanceCaps[user]`.
+    struct AutoRefinanceCaps {
+        bool enabled;        // borrower opted this loan into auto-refinance
+        uint16 maxRateBps;   // ceiling on the new offer's interest rate
+        uint64 maxNewExpiry; // ceiling on the new loan's end time (unix)
+    }
+
+    /// @notice T-092 — per-loan per-side extend caps. Lender's and
+    ///         borrower's caps are stored separately; the executor
+    ///         requires the keeper to pick terms inside BOTH.
+    struct AutoExtendCaps {
+        bool enabled;
+        uint16 minRateBps;   // borrower stores a max; lender stores a min — the executor enforces minLender ≤ newRate ≤ maxBorrower
+        uint16 maxRateBps;   //
+        uint64 maxNewExpiry; // both sides store an outer bound; executor picks min(both)
     }
 
     /// @dev T-087 Sub 3 add-on #473 — yield venue discriminator.
@@ -4078,8 +4145,12 @@ library LibVaipakam {
     uint8 internal constant KEEPER_ACTION_INIT_EARLY_WITHDRAW = 1 << 2; // 0x04
     uint8 internal constant KEEPER_ACTION_INIT_PRECLOSE = 1 << 3; // 0x08
     uint8 internal constant KEEPER_ACTION_REFINANCE = 1 << 4; // 0x10
+    /// @dev T-092 — auto in-place loan extension (no NFT churn).
+    ///      Gated by BOTH the borrower's and lender's per-loan
+    ///      `autoExtendConsent` caps in `AutoLifecycleFacet`.
+    uint8 internal constant KEEPER_ACTION_EXTEND = 1 << 5; // 0x20
     /// @dev All actions — convenience for "grant everything" UX flows.
-    uint8 internal constant KEEPER_ACTION_ALL = 0x1F;
+    uint8 internal constant KEEPER_ACTION_ALL = 0x3F;
 
     /**
      * @notice Retrieves the Vaipakam storage slot.
