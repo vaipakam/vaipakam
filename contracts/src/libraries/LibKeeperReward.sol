@@ -164,32 +164,78 @@ library LibKeeperReward {
             abi.encodeWithSelector(IERC20.transfer.selector, keeper, vpfiAmount)
         );
         uint256 keeperBalanceAfter = _safeBalanceOf(s.vpfiToken, keeper);
-        bool balanceMoved = keeperBalanceAfter >= keeperBalanceBefore + vpfiAmount;
-        if (!ok || !balanceMoved) {
-            s.keeperRewardBudget = budget; // restore the debit
+        // Codex round-5 P2 #1 — compute delta without overflow.
+        // `keeperBalanceBefore + vpfiAmount` would revert if a
+        // hostile token returns near-max-uint256 from balanceOf.
+        // Use comparison-only arithmetic.
+        uint256 actuallyMoved = 0;
+        if (keeperBalanceAfter > keeperBalanceBefore) {
+            unchecked { actuallyMoved = keeperBalanceAfter - keeperBalanceBefore; }
+        }
+        // Codex round-5 P2 #2 — credit what actually moved, not all
+        // or nothing. A deflationary / fee-on-transfer token may
+        // credit the keeper less than `vpfiAmount`; in that case the
+        // diamond's VPFI HAS left even if not in full. Re-credit the
+        // unmoved portion to the budget, debit the moved portion,
+        // and emit Paid for the actual amount. Keeps accounting in
+        // sync with on-chain reality regardless of token quirks.
+        if (!ok || actuallyMoved == 0) {
+            s.keeperRewardBudget = budget; // nothing left; restore
             emit KeeperRewardSkipped(keeper, actionKind, "transfer-failed");
             return 0;
+        }
+        if (actuallyMoved < vpfiAmount) {
+            // Refund the budget for the unmoved portion.
+            unchecked {
+                s.keeperRewardBudget = budget - actuallyMoved;
+            }
+            emit KeeperRewardPaid(keeper, actionKind, gasUsed, ethEquivalent, actuallyMoved);
+            return actuallyMoved;
         }
 
         emit KeeperRewardPaid(keeper, actionKind, gasUsed, ethEquivalent, vpfiAmount);
         return vpfiAmount;
     }
 
-    /// @dev Codex round-4 P2 #1 — low-level balanceOf that never
-    ///      reverts. A malformed VPFI token (fallback only / reverting
-    ///      balanceOf) would otherwise bubble a revert before the
-    ///      transfer path can emit KeeperRewardSkipped.
+    /// @dev Codex round-4/5 P2 — low-level balanceOf that never
+    ///      reverts AND bounds returndata to 32 bytes. A malformed
+    ///      or hostile VPFI token (fallback only / reverting
+    ///      balanceOf / oversized-returndata griefing) would
+    ///      otherwise bubble a revert / OOG before the transfer
+    ///      path can emit KeeperRewardSkipped.
+    ///
+    ///      Inline assembly bounds the return data: `staticcall`
+    ///      with `retSize == 32` only copies at most 32 bytes back
+    ///      into memory. A hostile `balanceOf` returning a 100 KB
+    ///      byte array materializes only those 32 bytes, no OOG.
     function _safeBalanceOf(address token, address who)
         private
         view
-        returns (uint256)
+        returns (uint256 bal)
     {
-        (bool ok, bytes memory ret) = token.staticcall(
-            abi.encodeWithSelector(IERC20.balanceOf.selector, who)
-        );
-        if (!ok || ret.length < 32) return 0;
-        bytes32 word;
-        assembly { word := mload(add(ret, 32)) }
-        return uint256(word);
+        bytes4 selector = IERC20.balanceOf.selector;
+        assembly {
+            let scratch := mload(0x40)
+            // calldata: selector (4) + who (32) = 36 bytes
+            mstore(scratch, selector)
+            mstore(add(scratch, 0x04), who)
+            // staticcall with returnSize=32 — caps the copy regardless
+            // of the callee's returndatasize().
+            let ok := staticcall(
+                gas(),
+                token,
+                scratch,
+                36,
+                scratch,  // write return into the same scratch slot
+                32
+            )
+            // Accept any return ≥ 32 bytes; the staticcall's retSize=32
+            // capped the copy regardless of the callee's actual
+            // returndatasize(), so oversized griefing returns don't
+            // cost us memory.
+            if and(ok, gt(returndatasize(), 31)) {
+                bal := mload(scratch)
+            }
+        }
     }
 }
