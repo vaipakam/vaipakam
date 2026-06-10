@@ -366,7 +366,7 @@ enforced at [`VPFIDiscountFacet.depositVPFIToVault` line 368](../contracts/src/f
 [`VPFIDiscountFacet.withdrawVPFIFromVault` line 414](../contracts/src/facets/VPFIDiscountFacet.sol#L414),
 [`LibVPFIDiscount.tryApply` line 220](../contracts/src/libraries/LibVPFIDiscount.sol#L220),
 and [`LibVPFIDiscount.tryApplyYieldFee` line 273](../contracts/src/libraries/LibVPFIDiscount.sol#L273).
-Spec reference: [TokenomicsTechSpec.md §7](TokenomicsTechSpec.md) — flat
+Spec reference: [TokenomicsTechSpec.md §7](../FunctionalSpecs/TokenomicsTechSpec.md) — flat
 5% APR, single `rewardPerToken` counter. No per-year schedule.
 
 **The gap.** `ConfigFacet.setStakingApr` writes the new APR without
@@ -569,7 +569,7 @@ for an impossible loan pattern anyway).
 ### 5.2b VPFI borrower initiation-fee discount — time-weighted rebate
 
 The canonical borrower path is defined in
-[`docs/TokenomicsTechSpec.md`](TokenomicsTechSpec.md) §6 / §6b. The
+[`docs/TokenomicsTechSpec.md`](../FunctionalSpecs/TokenomicsTechSpec.md) §6 / §6b. The
 borrower no longer receives a reduced up-front LIF from a live
 acceptance-time tier alone. Instead, when the VPFI path is eligible,
 the borrower pays the full `0.1%` LIF equivalent in VPFI from vault at
@@ -973,8 +973,8 @@ step 12 (frontend); the others are mechanical.
 - [`contracts/test/StakingAprCheckpointTest.t.sol`](../contracts/test/) (new) — 3-era APR trace, active + dormant user both correct, regression guard against the missing-checkpoint bug.
 - [`contracts/RUNBOOK.md`](../contracts/RUNBOOK.md) — add §12 parameter-change procedure; add "mainnet must ship staking-APR checkpoint fix before any gov APR change" to the go/no-go gate; update §1's timelock-delay row to 72h.
 - [`CLAUDE.md`](../CLAUDE.md) — add Parameter Governance subsection + the rollup ordering invariant (every vault-VPFI mutation must call both `LibStakingRewards.updateUser` and `LibVPFIDiscount.rollupUserDiscount` before mutating).
-- [`docs/TokenomicsTechSpec.md`](TokenomicsTechSpec.md) — §7 gets the "era-wise non-retroactive APR" clarification; a new §7a (or equivalent) captures the time-weighted lender yield-fee discount (functional spec already drafted separately).
-- [`docs/TokenomicsTechSpec.md`](TokenomicsTechSpec.md) — keep the borrower init-fee VPFI path, fee-custody behavior, and time-weighted rebate rules in the canonical tokenomics spec (§6 / §6b).
+- [`docs/TokenomicsTechSpec.md`](../FunctionalSpecs/TokenomicsTechSpec.md) — §7 gets the "era-wise non-retroactive APR" clarification; a new §7a (or equivalent) captures the time-weighted lender yield-fee discount (functional spec already drafted separately).
+- [`docs/TokenomicsTechSpec.md`](../FunctionalSpecs/TokenomicsTechSpec.md) — keep the borrower init-fee VPFI path, fee-custody behavior, and time-weighted rebate rules in the canonical tokenomics spec (§6 / §6b).
 
 ---
 

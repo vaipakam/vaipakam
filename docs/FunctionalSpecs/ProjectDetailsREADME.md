@@ -1460,7 +1460,7 @@ VPFI token deployment begins in Phase 1 through the token contract and minting p
   - This consent should be a common user preference rather than an offer-level or loan-level toggle.
   - Only when that platform-level consent is active and sufficient VPFI is available in vault should the system automatically deduct the discounted fee amount in VPFI from vault and transfer it to treasury.
 
-- **Borrower Loan Initiation Fee Discount:** Borrowers who maintain sufficient canonical VPFI stake are eligible for the tiered borrower-side `Loan Initiation Fee` discount schedule defined by the tokenomics spec.
+- **Borrower Loan Initiation Fee Discount:** Borrowers who maintain sufficient canonical VPFI stake for tier eligibility and sufficient protocol-tracked VPFI on the settlement chain to pay the full up-front fee are eligible for the tiered borrower-side `Loan Initiation Fee` discount schedule defined by the tokenomics spec.
   - Vault-held VPFI also counts as staked under the unified vault-based staking model.
   - The active tier schedule is:
     | Tier | Vaulted VPFI Balance | Discount | Borrower Effective Initiation Fee |
@@ -1472,7 +1472,7 @@ VPFI token deployment begins in Phase 1 through the token contract and minting p
 
   - The borrower must explicitly opt in through that same single platform-level user setting consenting to the use of vaulted VPFI for protocol fee discounts.
   - Offer-level or loan-level consent is not required for the borrower discount once the platform-level setting has been enabled.
-  - Only when that platform-level consent is active, the lending asset is liquid, and sufficient VPFI is available should the system deduct the full `0.1%` fee equivalent in VPFI from the borrower's vault.
+  - Only when that platform-level consent is active, the lending asset is liquid, the effective tier is available from Base or the active mirror cache, and sufficient spendable protocol-tracked VPFI is available on the settlement chain should the system deduct the full `0.1%` fee equivalent in VPFI from the borrower's local vault.
   - The deducted VPFI is held in protocol custody for the life of the loan rather than sent immediately to Treasury.
   - On proper close through normal repayment, borrower preclose, or refinance, the borrower earns an effective-tier rebate based on the current Base tier or active mirror cache at settlement. The rebate is paid in VPFI alongside the ordinary borrower claim.
   - On default or HF-based liquidation, the rebate is forfeited and the full held VPFI becomes Treasury's share.

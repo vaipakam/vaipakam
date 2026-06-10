@@ -41,12 +41,12 @@ The accumulator maintains a 30-day ring buffer of daily-closing balances per use
 1. **TWA tier** — weighted average of the daily balances:
    - Last 7 days × 3.
    - Previous 23 days × 1.
-2. **Min-tier observed** — the LOWEST tier the buffer reached in the window.
+2. **Min-tier observed** — the LOWEST tier reached during the configured minimum-history window.
 
 The effective tier is the MINIMUM of those two. This means:
 - A "top-up right before a loan settles" doesn't immediately bump the tier — the topped-up amount accumulates through the TWA.
 - A partial unstake that DROPS below the current tier's floor downgrades the effective tier IMMEDIATELY on the next read — the min-tier-observed clamp captures the new lower floor.
-- A partial unstake that STAYS within the current tier's range smooths in over the rolling window.
+- A partial unstake that STAYS within the current tier's range smooths into the TWA over the rolling window while the min-history clamp continues to look only at the configured minimum-history window.
 
 ### 3.3 Min-history gate
 
@@ -63,10 +63,11 @@ During the aging window:
 Once the min-history threshold is crossed, the effective tier activates on the canonical chain automatically — no transaction needed. The next on-chain READ of the user's effective tier returns the new value, and the next fee path that touches the user applies the discount.
 
 **But time alone doesn't broadcast the new tier to mirrors.** The broadcast happens only on a state-mutating call to the accumulator. No transaction is invoked just because the calendar advances. Mirror caches get refreshed when the canonical chain's broadcast path runs, which requires:
-- Any canonical-chain vault mutation by the user (deposit / withdrawal).
-- An explicit a permissionless tier-push call — a permissionless, balance-mutation-free call the user makes on the canonical chain.
+- Any canonical-chain vault mutation by the user (deposit / withdrawal) that produces a changed, non-zero push tuple.
+- An explicit permissionless tier-push call the user makes on the canonical chain, when the current effective tier tuple differs from the last pushed tuple.
+- A force-resend / operator catch-up path where available for stale-cache repair.
 
-Until one of those fires, the cached tier on every mirror stays at whatever was last broadcast (typically the (0, 0) the user's first deposit pushed during the aging window).
+The broadcast path de-duplicates identical tuples and skips brand-new `(0, 0)` tier pushes so dust or pre-min-history deposits cannot drain the protocol broadcast budget. Until a changed tuple or force-resend path fires, the cached tier on every mirror stays at whatever was last broadcast.
 
 ### 3.5 Consent gate
 
@@ -148,6 +149,6 @@ The dapp's surfaces (driven by phase 1 + 2 of T-087 Sub 4):
 ## 9. Cross-references
 
 - Transport-layer mechanics of cross-chain push: [`CrossChainTierPropagation.md`](CrossChainTierPropagation.md).
-- Tokenomics + tier math: [`TokenomicsTechSpec.md`](TokenomicsTechSpec.md) §5–§8.
+- Tokenomics + tier math: [`TokenomicsTechSpec.md`](../FunctionalSpecs/TokenomicsTechSpec.md) §5–§8.
 - Treasury-side buyback that ultimately rewards stakers: [`TreasuryBuyback.md`](TreasuryBuyback.md).
-- Code-vs-spec divergence log: [`_CodeVsDocsAudit.md`](_CodeVsDocsAudit.md).
+- Code-vs-spec divergence log: [`_CodeVsDocsAudit.md`](../FunctionalSpecs/_CodeVsDocsAudit.md).

@@ -405,7 +405,7 @@ surface stays inert.
 Full user-facing explanation + operator details in the Advanced
 User Guide's "How VPFI Discounts Work" + "Operator runbook —
 discount system maintenance" sub-section. Functional spec at
-[`docs/FunctionalSpecs/VPFIDiscountSystem.md`](../FunctionalSpecs/VPFIDiscountSystem.md).
+[`docs/DesignsAndPlans/VPFIDiscountSystem.md`](../DesignsAndPlans/VPFIDiscountSystem.md).
 
 ### T-090 v1.1 GA — intent-based swap-to-repay bridge activation
 

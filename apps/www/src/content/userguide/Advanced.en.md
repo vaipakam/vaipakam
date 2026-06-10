@@ -844,7 +844,7 @@ Two things to know:
 
 If you're curious about the exact gates the cache applies to
 detect staleness, see the
-[Cross-Chain Tier Propagation functional spec](https://github.com/vaipakam/vaipakam/blob/main/docs/FunctionalSpecs/CrossChainTierPropagation.md).
+[Cross-Chain Tier Propagation functional spec](https://github.com/vaipakam/vaipakam/blob/main/docs/DesignsAndPlans/CrossChainTierPropagation.md).
 
 ---
 
