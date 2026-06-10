@@ -725,7 +725,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](26);
+        selectors = new bytes4[](32);
         selectors[0] = TreasuryFacet.claimTreasuryFees.selector;
         selectors[1] = TreasuryFacet.getTreasuryBalance.selector;
         selectors[2] = TreasuryFacet.mintVPFI.selector;
@@ -754,6 +754,13 @@ contract HelperTest {
         selectors[23] = TreasuryFacet.getStakingPoolBuybackBudget.selector;
         selectors[24] = TreasuryFacet.setBuybackMaxTranche.selector;
         selectors[25] = TreasuryFacet.getBuybackMaxTranche.selector;
+        // T-087 Sub 3.C — validated buyback commit + TWAP config.
+        selectors[26] = TreasuryFacet.commitBuybackIntentValidated.selector;
+        selectors[27] = TreasuryFacet.canonicalBuybackExtension.selector;
+        selectors[28] = TreasuryFacet.setBuybackTwapMaxWindowSec.selector;
+        selectors[29] = TreasuryFacet.getBuybackTwapMaxWindowSec.selector;
+        selectors[30] = TreasuryFacet.isBuybackValidated.selector;
+        selectors[31] = TreasuryFacet.getBuybackConsumedSoFar.selector;
         return selectors;
     }
 

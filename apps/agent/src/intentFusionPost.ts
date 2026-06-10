@@ -55,6 +55,15 @@ const SWAP_TO_REPAY_INTENT_COMMITTED_TOPIC0 = keccak256(
   ),
 );
 
+// T-087 Sub 3.C — keccak256 of the buyback validation event signature.
+// `commitBuybackIntentValidated` emits `BuybackIntentValidated(bytes32)`
+// after the on-chain Fusion-order-template validation passes. The
+// agent preflights against this topic instead of the swap-to-repay
+// topic when `kind === 'buyback'`.
+const BUYBACK_INTENT_VALIDATED_TOPIC0 = keccak256(
+  toBytes('BuybackIntentValidated(bytes32)'),
+);
+
 // T-090 v1.2 #428 — per-chain RPC binding lookup. Mirror of the
 // pattern used in `buyWatchdog.ts`; reuses the same secrets the
 // other agent handlers read from.
@@ -117,8 +126,14 @@ const FUSION_SUPPORTED_CHAIN_IDS = new Set<number>([
 
 /// Request body shape — matches the structured order projection
 /// the indexer's `GET /loans/:id` returns as `payload.swapToRepayIntent`.
+///
+/// T-087 Sub 3.C — the `kind` discriminator selects the on-chain
+/// preflight: 'swap_to_repay' (default; legacy) matches
+/// `SwapToRepayIntentCommitted` event topic; 'buyback' matches
+/// `BuybackIntentValidated`.
 interface IntentFusionPostRequest {
   chainId: number;
+  kind?: 'swap_to_repay' | 'buyback';
   orderHash: `0x${string}`;
   order: {
     maker: `0x${string}`;
@@ -433,10 +448,40 @@ async function preflightCommitOnChain(
     return { kind: 'reject', reason: 'commit-tx-not-successful' };
   }
 
-  // 2. Find a matching `SwapToRepayIntentCommitted` log emitted
-  //    by the canonical diamond, with `topic[2]` (indexed
-  //    orderHash) matching the body.
+  // 2. Find the expected event topic for the commit's kind.
+  //    T-087 Sub 3.C — `'buyback'` matches `BuybackIntentValidated(bytes32)`
+  //    emitted by `commitBuybackIntentValidated` after the on-chain
+  //    Fusion-order-template validation passes; the default
+  //    `'swap_to_repay'` matches the existing T-090 event.
   const expectedOrderHashTopic = parsed.orderHash.toLowerCase();
+  const kind = parsed.kind ?? 'swap_to_repay';
+  if (kind === 'buyback') {
+    // For buyback, the event is single-topic (topic[1] = orderHash).
+    // Just verify it landed under our diamond + the orderHash matches.
+    let foundBuyback = false;
+    for (const log of receipt.logs) {
+      if (
+        log.address.toLowerCase() !== expectedDiamond ||
+        log.topics[0]?.toLowerCase() !==
+          BUYBACK_INTENT_VALIDATED_TOPIC0.toLowerCase()
+      ) {
+        continue;
+      }
+      if (log.topics[1]?.toLowerCase() === expectedOrderHashTopic) {
+        foundBuyback = true;
+        break;
+      }
+    }
+    if (!foundBuyback) {
+      return { kind: 'reject', reason: 'orderhash-not-validated-on-chain' };
+    }
+    // Buyback orders are admin-committed; the order template was
+    // recomputed on-chain by `commitBuybackIntentValidated`, so we
+    // skip the per-field on-chain recheck the swap-to-repay path
+    // does. Pass.
+    return { kind: 'ok' };
+  }
+  // ─── swap-to-repay path (default / legacy) ────────────────────
   let loanIdTopic: string | undefined;
   for (const log of receipt.logs) {
     if (

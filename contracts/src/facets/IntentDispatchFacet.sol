@@ -118,26 +118,27 @@ contract IntentDispatchFacet is
         override
         returns (bytes4)
     {
-        bytes32 kind = LibVaipakam.storageSlot().orderHashKind[orderHash];
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        bytes32 kind = s.orderHashKind[orderHash];
         if (kind == LibVaipakam.ORDER_KIND_SWAP_TO_REPAY) {
             return LibSwapToRepayIntentSettlement.isValidSignatureImpl(orderHash);
         }
-        // Codex Sub 3.B round-4 P1 — BUYBACK signature validation
-        // is intentionally OFF in Sub 3.B. Returning the ERC-1271
-        // magic value purely on a stamped `orderHashKind` would let
-        // an operator-typo'd orderHash (one whose underlying Fusion
-        // order routes proceeds to a non-diamond receiver, or omits
-        // the pre/postInteraction hooks) settle successfully. The
-        // full Fusion-order-template validation ships in Sub 3.C
-        // alongside the agent-side submission; until then the on-
-        // chain ledger surface (commit / expire / ABI) exists but
-        // no Fusion fill against a BUYBACK orderHash is signable
-        // through the diamond. Consequence in Sub 3.B: BUYBACK
-        // postInteractionImpl can still be exercised via direct
-        // tests but the Fusion solver rejects the order at signature
-        // check, so the production path is a no-op until 3.C.
-        // (UnknownOrderKind branch / 0xffffffff fall-through covers
-        // both stamped-but-not-validated AND unstamped.)
+        // T-087 Sub 3.C — BUYBACK signature validation is ON only
+        // for orderHashes whose Fusion order template was validated
+        // through `commitBuybackIntentValidated` (Sub 3.B round-4 P1
+        // fold). The discriminator alone is not sufficient; the
+        // operator must have submitted the full order template and
+        // had it recomputed + matched on-chain. Validated + still-
+        // Pending + within deadline → magic value; otherwise
+        // 0xffffffff so the Fusion solver rejects the order.
+        if (kind == LibVaipakam.ORDER_KIND_BUYBACK
+                && s.buybackValidated[orderHash]) {
+            LibVaipakam.BuybackOrderInfo memory info = s.buybackOrders[orderHash];
+            if (info.status == LibVaipakam.BUYBACK_ORDER_STATUS_PENDING
+                    && block.timestamp < info.expiresAt) {
+                return IERC1271.isValidSignature.selector;
+            }
+        }
         return bytes4(0xffffffff);
     }
 }

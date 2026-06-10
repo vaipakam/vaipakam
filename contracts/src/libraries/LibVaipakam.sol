@@ -3688,6 +3688,33 @@ library LibVaipakam {
         // Sub 3.C add-on (needs oracle wiring), this raw-amount cap
         // is the conservative immediate fix.
         mapping(address => uint256) cfgBuybackMaxTranche;
+
+        // T-087 Sub 3.C — per-orderHash "Fusion order template has
+        // been validated against the canonical buyback shape" flag.
+        // Set by `commitBuybackIntentValidated`; required by
+        // `IntentDispatchFacet.isValidSignature` to return the
+        // ERC-1271 magic value. Without this flag, a stamped BUYBACK
+        // orderHash is still rejected at signature check (Sub 3.B
+        // round-4 P1 mitigation).
+        mapping(bytes32 => bool) buybackValidated;
+
+        // T-087 Sub 3.C — running tally of the source token consumed
+        // across partial fills for a given orderHash. TWAP orders
+        // (`allowPartialFills = true` + `allowMultipleFills = true`)
+        // can fire `postInteraction` multiple times per orderHash;
+        // each fill increments this counter, releases the
+        // proportional reservation + LOP allowance, and credits the
+        // proportional VPFI delta. The order flips Filled only when
+        // `consumedSoFar == amountIn`.
+        mapping(bytes32 => uint128) buybackConsumedSoFar;
+
+        // T-087 Sub 3.C — Fusion TWAP window upper-bound (seconds).
+        // The commit's `expiresAt - block.timestamp` must NOT exceed
+        // this; bounds the time window during which the partial
+        // fills can land. Default (when slot reads 0) is 1800
+        // seconds (30 min); admin-bounded per the design card to
+        // 600..3600.
+        uint32 cfgBuybackTwapMaxWindowSec;
     }
 
     /// @notice T-087 Sub 3.B — per-buyback-order state.

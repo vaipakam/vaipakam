@@ -1272,7 +1272,7 @@ contract DeployDiamond is Script {
     }
 
     function _getTreasurySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](26);
+        s = new bytes4[](32);
         s[0] = TreasuryFacet.claimTreasuryFees.selector;
         s[1] = TreasuryFacet.getTreasuryBalance.selector;
         s[2] = TreasuryFacet.mintVPFI.selector;
@@ -1301,6 +1301,13 @@ contract DeployDiamond is Script {
         s[23] = TreasuryFacet.getStakingPoolBuybackBudget.selector;
         s[24] = TreasuryFacet.setBuybackMaxTranche.selector;
         s[25] = TreasuryFacet.getBuybackMaxTranche.selector;
+        // T-087 Sub 3.C — validated buyback commit + TWAP config.
+        s[26] = TreasuryFacet.commitBuybackIntentValidated.selector;
+        s[27] = TreasuryFacet.canonicalBuybackExtension.selector;
+        s[28] = TreasuryFacet.setBuybackTwapMaxWindowSec.selector;
+        s[29] = TreasuryFacet.getBuybackTwapMaxWindowSec.selector;
+        s[30] = TreasuryFacet.isBuybackValidated.selector;
+        s[31] = TreasuryFacet.getBuybackConsumedSoFar.selector;
     }
 
     function _getPayrollSelectors() internal pure returns (bytes4[] memory s) {

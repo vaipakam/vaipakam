@@ -24,6 +24,19 @@
   },
   {
     "type": "function",
+    "name": "canonicalBuybackExtension",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "claimTreasuryFees",
     "inputs": [
       {
@@ -68,6 +81,86 @@
         "name": "expiresAt",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "commitBuybackIntentValidated",
+    "inputs": [
+      {
+        "name": "orderHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "tpl",
+        "type": "tuple",
+        "internalType": "struct LibBuybackOrderValidation.BuybackOrderTemplate",
+        "components": [
+          {
+            "name": "salt",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "maker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "receiver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "makerAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "takerAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "makingAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "takingAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "makerTraits",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "extension",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      },
+      {
+        "name": "amountIn",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "minVpfiOut",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expiresAt",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "outputs": [],
@@ -179,6 +272,25 @@
   },
   {
     "type": "function",
+    "name": "getBuybackConsumedSoFar",
+    "inputs": [
+      {
+        "name": "orderHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint128",
+        "internalType": "uint128"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getBuybackDestToken",
     "inputs": [
       {
@@ -270,6 +382,19 @@
         "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getBuybackTwapMaxWindowSec",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "stateMutability": "view"
@@ -370,6 +495,25 @@
         "name": "token",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isBuybackValidated",
+    "inputs": [
+      {
+        "name": "orderHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [
@@ -525,6 +669,19 @@
   },
   {
     "type": "function",
+    "name": "setBuybackTwapMaxWindowSec",
+    "inputs": [
+      {
+        "name": "windowSec",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setCrossChainMessenger",
     "inputs": [
       {
@@ -663,6 +820,19 @@
   },
   {
     "type": "event",
+    "name": "BuybackIntentValidated",
+    "inputs": [
+      {
+        "name": "orderHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "BuybackMaxTrancheSet",
     "inputs": [
       {
@@ -770,6 +940,19 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "BuybackTwapMaxWindowSecSet",
+    "inputs": [
+      {
+        "name": "windowSec",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
       }
     ],
     "anonymous": false
@@ -1093,10 +1276,32 @@
   },
   {
     "type": "error",
+    "name": "BuybackOrderFieldsMismatch",
+    "inputs": [
+      {
+        "name": "fieldHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "BuybackOrderHashInUse",
     "inputs": [
       {
         "name": "orderHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "BuybackOrderMakerTraitsMismatch",
+    "inputs": [
+      {
+        "name": "reasonHash",
         "type": "bytes32",
         "internalType": "bytes32"
       }
@@ -1161,6 +1366,22 @@
       },
       {
         "name": "cap",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "BuybackTwapWindowOutOfBounds",
+    "inputs": [
+      {
+        "name": "windowSec",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxAllowed",
         "type": "uint256",
         "internalType": "uint256"
       }

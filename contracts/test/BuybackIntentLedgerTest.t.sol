@@ -411,7 +411,9 @@ contract BuybackIntentLedgerTest is SetupTest {
         _d().postInteraction(order, "", ORDER, address(0), AMOUNT, 0, 0, "");
     }
 
-    function test_PostInteraction_RevertWhen_PartialFill() public {
+    function test_PostInteraction_RevertWhen_PartialOverflow() public {
+        // T-087 Sub 3.C — partials are now ALLOWED for TWAP orders;
+        // the new rejection is per-fill > remaining.
         _seedBaseBudget(AMOUNT);
         _t().commitBuybackIntent(
             ORDER, address(token), AMOUNT, 0, uint64(block.timestamp + 1 hours)
@@ -421,15 +423,15 @@ contract BuybackIntentLedgerTest is SetupTest {
         vm.prank(lop);
         _d().preInteraction(order, "", ORDER, address(0), 0, 0, 0, "");
 
-        // Half the reservation — partial fill.
-        uint256 halfFill = AMOUNT / 2;
+        // More than the full reservation — overflow.
+        uint256 tooMuch = uint256(AMOUNT) + 1;
         vm.prank(lop);
         vm.expectRevert(
             abi.encodeWithSelector(
-                LibTreasuryBuyback.BuybackPartialFill.selector, halfFill, AMOUNT
+                LibTreasuryBuyback.BuybackPartialFill.selector, tooMuch, uint256(AMOUNT)
             )
         );
-        _d().postInteraction(order, "", ORDER, address(0), halfFill, 0, 0, "");
+        _d().postInteraction(order, "", ORDER, address(0), tooMuch, 0, 0, "");
     }
 
     function test_PostInteraction_RevertWhen_PreNotFired() public {
