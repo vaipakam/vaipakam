@@ -2,7 +2,7 @@ import { Gift, Info, Clock, AlertTriangle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { useLoanLenderDiscount } from '../../hooks/useLoanLenderDiscount';
-import { useVPFIDiscountConsent, useVPFIDiscountTier } from '../../hooks/useVPFIDiscount';
+import { useVPFIDiscountConsentFor, useVPFIDiscountTier } from '../../hooks/useVPFIDiscount';
 import { useProtocolConfig } from '../../hooks/useProtocolConfig';
 import { useReadChain } from '../../contracts/useDiamond';
 import { L as Link } from '../L';
@@ -42,7 +42,12 @@ export function LenderDiscountCard({ loanId, lender }: Props) {
   // consent is off, every loan keeps charging the full treasury cut on
   // yield with no VPFI rebate — surface that explicitly so the user
   // doesn't wonder why the effective tier stays at 0%.
-  const { enabled: consentEnabled } = useVPFIDiscountConsent();
+  // T-087 Sub 4 round-3 P2 #3 — read consent for the LENDER, not the
+  // connected wallet. After a position NFT transfer, the holder and
+  // the loan's lender may differ; keying the banner on the holder's
+  // consent surfaces the wrong promise. The lender is the principal
+  // for the discount accumulator.
+  const { enabled: consentEnabled } = useVPFIDiscountConsentFor(lenderAddr);
   const { config: protocolConfig } = useProtocolConfig();
   // T-087 Sub 4 — read the lender's vault balance + effective tier
   // so we can distinguish the two reasons the discount might be 0:
@@ -84,16 +89,16 @@ export function LenderDiscountCard({ loanId, lender }: Props) {
   // generic "no eligible VPFI" copy so we don't promise an
   // automatic activation that may never come.
   const isCanonical = chain.isCanonicalVPFI === true;
-  // T-087 Sub 4 round-2 P2 — require BOTH `rawTier > 0` AND
-  // `trackedBal > 0`. Without the tracked-balance check, direct-
-  // transfer dust (VPFI sent to the vault address bypassing
-  // `depositVPFIToVault`) would surface a non-zero rawTier but
-  // would NOT activate via `pokeMyTier()` — the accumulator
-  // ignores untracked balance. We'd promise an automatic
-  // activation that never lands.
+  // T-087 Sub 4 round-3 P2 #1 — the load-bearing signal is the TRACKED
+  // tier (`tierOf(trackedBal)`). A user with a tiny legitimate
+  // tracked stake + a large direct-transfer dust would have
+  // `rawTier > 0 && trackedBal > 0` but `trackedTier == 0`; the
+  // accumulator only ever sees the tracked balance, so pokeMyTier
+  // would not activate the tier. Use `trackedTier > 0` so only
+  // genuinely-qualifying tracked stake gets the auto-activation
+  // promise.
   const lenderQualifiesByBalance =
-    (discountTierData?.rawTier ?? 0) > 0 &&
-    (discountTierData?.trackedBal ?? 0n) > 0n;
+    (discountTierData?.trackedTier ?? 0) > 0;
   const showConsentEnabledNoVpfi =
     consentEnabled === true &&
     data.effectiveAvgBps === 0 &&

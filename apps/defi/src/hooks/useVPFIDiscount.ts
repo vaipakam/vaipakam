@@ -290,26 +290,17 @@ export function useVPFIDiscountQuote(
 export interface VPFIDiscountTier {
   /** Effective tier (post-min-history-gate). 0..4. 0 = no discount. */
   tier: number;
-  /** T-087 Sub 4 round-1 P2 #1 — RAW tier computed purely from
-   *  vault balance (`tierOf(vaultBal)`), pre-min-history gate.
-   *  Used by LenderDiscountCard to distinguish "balance too low
-   *  for any tier" from "balance qualifies but still in the min-
-   *  history window" — the latter is the only case where the tier
-   *  will activate automatically over time.
-   *
-   *  T-087 Sub 4 round-2 P2 — this is derived from the RAW vault
-   *  balance, which can include direct-transfer dust the accumulator
-   *  doesn't count. The card's min-history-pending check should
-   *  use `trackedTier` (derived from the protocol-tracked balance)
-   *  to avoid falsely promising auto-activation for dust. */
+  /** T-087 Sub 4 round-1 P2 #1 — RAW tier from VAULT balance
+   *  (`tierOf(vaultBal)`), pre-min-history gate. */
   rawTier: number;
+  /** T-087 Sub 4 round-3 P2 #1 — RAW tier from TRACKED balance
+   *  (`tierOf(trackedBal)`), pre-min-history gate. This is the
+   *  load-bearing signal for the min-history-pending check —
+   *  excludes direct-transfer dust the accumulator ignores. */
+  trackedTier: number;
   /** User's current VPFI vault balance (18-dec). */
   vaultBal: bigint;
-  /** T-087 Sub 4 round-2 P2 — protocol-tracked VPFI balance. The
-   *  accumulator clamps to this; direct-transfer dust is EXCLUDED.
-   *  When `trackedBal == 0n` even with `vaultBal > 0n`, the user
-   *  hasn't actually staked through the proper path and `pokeMyTier`
-   *  would be a no-op. */
+  /** T-087 Sub 4 round-2 P2 — protocol-tracked VPFI balance. */
   trackedBal: bigint;
   /** Discount basis points (e.g. 1000 = 10% off the normal fee). */
   discountBps: number;
@@ -336,12 +327,19 @@ export function useVPFIDiscountTier(user: string | null) {
 
   const load = useCallback(async () => {
     if (!user) {
-      setData({ tier: 0, rawTier: 0, vaultBal: 0n, trackedBal: 0n, discountBps: 0 });
+      setData({
+        tier: 0,
+        rawTier: 0,
+        trackedTier: 0,
+        vaultBal: 0n,
+        trackedBal: 0n,
+        discountBps: 0,
+      });
       return;
     }
     setLoading(true);
     try {
-      const [effective, raw, trackedBal] = await Promise.all([
+      const [effective, raw, tracked] = await Promise.all([
         publicClient.readContract({
           address: diamondAddress,
           abi: DIAMOND_ABI,
@@ -357,21 +355,30 @@ export function useVPFIDiscountTier(user: string | null) {
         publicClient.readContract({
           address: diamondAddress,
           abi: DIAMOND_ABI,
-          functionName: 'getTrackedVPFIBalance',
+          functionName: 'getTrackedVPFIDiscountTier',
           args: [user as Address],
-        }) as Promise<bigint>,
+        }) as Promise<readonly [bigint, bigint, bigint]>,
       ]);
       const [effTier, effBps] = effective;
       const [rawTier, vaultBal] = raw;
+      const [trackedTier, trackedBal] = tracked;
       setData({
         tier: Number(effTier),
         rawTier: Number(rawTier),
+        trackedTier: Number(trackedTier),
         vaultBal,
         trackedBal,
         discountBps: Number(effBps),
       });
     } catch {
-      setData({ tier: 0, rawTier: 0, vaultBal: 0n, trackedBal: 0n, discountBps: 0 });
+      setData({
+        tier: 0,
+        rawTier: 0,
+        trackedTier: 0,
+        vaultBal: 0n,
+        trackedBal: 0n,
+        discountBps: 0,
+      });
     } finally {
       setLoading(false);
     }
@@ -456,6 +463,50 @@ export function useVpfiTierTable(): ReadonlyArray<VpfiTierRow> {
       },
     ];
   }, [config]);
+}
+
+/**
+ * T-087 Sub 4 round-3 P2 #3 — consent reader for an ARBITRARY user
+ * address. The connected-wallet variant `useVPFIDiscountConsent`
+ * isn't safe to mix with another user's tier data: after a position
+ * NFT transfer, the holder's wallet differs from the loan's lender,
+ * and gating the lender-discount banner on the holder's consent
+ * surfaces the wrong promise. Use this hook whenever you need the
+ * consent for a specific user (not "me").
+ */
+export function useVPFIDiscountConsentFor(user: string | null) {
+  const publicClient = useDiamondPublicClient();
+  const chain = useReadChain();
+  const diamondAddress = (chain.diamondAddress ?? ZERO_ADDRESS) as Address;
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!user) {
+      setEnabled(null);
+      return;
+    }
+    setLoading(true);
+    try {
+      const v = (await publicClient.readContract({
+        address: diamondAddress,
+        abi: DIAMOND_ABI,
+        functionName: 'getVPFIDiscountConsent',
+        args: [user as Address],
+      })) as boolean;
+      setEnabled(v);
+    } catch {
+      setEnabled(false);
+    } finally {
+      setLoading(false);
+    }
+  }, [publicClient, diamondAddress, user]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return { enabled, loading, reload: load };
 }
 
 /**

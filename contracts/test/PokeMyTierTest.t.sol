@@ -69,16 +69,17 @@ contract PokeMyTierTest is SetupTest {
         assertEq(tierAfter, tierBefore, "tier preserved after idempotent poke");
     }
 
-    function test_PokeMyTier_SkipsWhenNoConsent() public {
-        // Codex Sub 4 round-1 P2 #2 — when consent is OFF, pokeMyTier
-        // emits TierPokeSkippedNoConsent and returns without
-        // triggering the rollup / broadcast. Prevents the user's RAW
-        // tier from being pushed to mirrors while the canonical fee
-        // path would zero it out at the consent gate.
+    function test_PokeMyTier_WithoutConsent_StillRollsUp() public {
+        // Codex Sub 4 round-3 P2 #2 — the round-1 early-return was
+        // wrong. We now always rollup; the broadcast facet zeroes the
+        // tier under !vpfiDiscountConsent, so mirror caches get
+        // cleared correctly. The accumulator state advances either
+        // way, so the user's stake history is preserved.
         _deposit(alice, 1_500 ether);
-        // Consent stays OFF (default).
+        // Consent stays OFF (default). Poke should still emit
+        // TierPoked + rollup at the tracked balance.
         vm.expectEmit(true, false, false, false);
-        emit VPFIDiscountFacet.TierPokeSkippedNoConsent(alice);
+        emit VPFIDiscountFacet.TierPoked(alice, 0); // bal loose-matched
         vm.prank(alice);
         _f().pokeMyTier();
     }

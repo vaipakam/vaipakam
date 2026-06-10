@@ -185,6 +185,35 @@
   },
   {
     "type": "function",
+    "name": "getTrackedVPFIDiscountTier",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "tier",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "trackedBal",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "discountBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getUserVpfiDiscountState",
     "inputs": [
       {
@@ -582,19 +611,6 @@
       },
       {
         "name": "newReceiver",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "TierPokeSkippedNoConsent",
-    "inputs": [
-      {
-        "name": "user",
         "type": "address",
         "indexed": true,
         "internalType": "address"

@@ -654,8 +654,23 @@ contract VPFIDiscountFacet is
         nonReentrant
         whenNotPaused
     {
-        LibVaipakam.storageSlot().vpfiDiscountConsent[msg.sender] = enabled;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        bool prev = s.vpfiDiscountConsent[msg.sender];
+        s.vpfiDiscountConsent[msg.sender] = enabled;
         emit VPFIDiscountConsentChanged(msg.sender, enabled);
+        // T-087 Sub 4 round-3 P2 #2 — broadcast the new (consent-
+        // gated) tier to mirrors whenever consent flips. The
+        // accumulator rollup is the cheapest path: it re-stamps at
+        // the current tracked balance (no-op for the canonical
+        // state) and cascades into `protocolBroadcastTierUpdate`,
+        // which the broadcast facet now zeroes out under
+        // !vpfiDiscountConsent. So disabling triggers a (0, 0)
+        // push to mirrors; enabling triggers a push of the actual
+        // current tier. Skipped when value didn't actually change.
+        if (prev != enabled) {
+            uint256 trackedBal = LibVPFIDiscount.trackedVpfiBalance(msg.sender);
+            LibVPFIDiscount.rollupUserDiscount(msg.sender, trackedBal);
+        }
     }
 
     // ─── Public views ────────────────────────────────────────────────────────
@@ -924,32 +939,21 @@ contract VPFIDiscountFacet is
      *      return without rolling up.
      */
     function pokeMyTier() external nonReentrant whenNotPaused {
-        // Codex Sub 4 round-1 P2 #2 — respect consent. Without this
-        // gate the rollup would cascade into
-        // `ProtocolBroadcastFacet.protocolBroadcastTierUpdate`, which
-        // reads `effectiveTierAndBps` (the un-gated internal helper)
-        // rather than `getEffectiveDiscount` (the consent-gated public
-        // surface). A consent-off user would broadcast their RAW
-        // tier to mirrors — putting the mirror cache out of sync with
-        // what the user can actually claim on-chain. Gate at entry.
-        if (!LibVaipakam.storageSlot().vpfiDiscountConsent[msg.sender]) {
-            emit TierPokeSkippedNoConsent(msg.sender);
-            return;
-        }
         // The trackedVpfiBalance read is the same one every settlement
         // path uses; for a user with no stake history it returns 0 and
         // the rollup is essentially a no-op at the accumulator level.
+        //
+        // T-087 Sub 4 round-3 P2 #2 — the round-1 consent-off early
+        // return was wrong: it left mirror caches with whatever stale
+        // non-zero tier the user previously pushed. The fix moved to
+        // `ProtocolBroadcastFacet.protocolBroadcastTierUpdate`, which
+        // now zeros out the broadcast tier when consent is off. So
+        // consent-off pokes correctly push (0, 0) and clear the
+        // cache.
         uint256 trackedBal = LibVPFIDiscount.trackedVpfiBalance(msg.sender);
         LibVPFIDiscount.rollupUserDiscount(msg.sender, trackedBal);
         emit TierPoked(msg.sender, trackedBal);
     }
-
-    /// @custom:event-category informational/vpfi-discount
-    /// @notice T-087 Sub 4 round-1 P2 #2 — emitted when `pokeMyTier`
-    ///         was called by a user whose `vpfiDiscountConsent` is
-    ///         off. The rollup is skipped to avoid broadcasting a
-    ///         tier the user can't claim.
-    event TierPokeSkippedNoConsent(address indexed user);
 
     /**
      * @notice T-087 Sub 4 round-2 P2 — protocol-tracked VPFI balance
@@ -967,6 +971,26 @@ contract VPFIDiscountFacet is
      */
     function getTrackedVPFIBalance(address user) external view returns (uint256) {
         return LibVPFIDiscount.trackedVpfiBalance(user);
+    }
+
+    /**
+     * @notice T-087 Sub 4 round-3 P2 #1 — RAW tier derived from the
+     *         protocol-TRACKED balance, mirroring `getVPFIDiscountTier`
+     *         but using only the balance the accumulator actually
+     *         counts. Direct-transfer vault dust is EXCLUDED — so the
+     *         dapp's min-history-pending check can correctly
+     *         distinguish "user staked through depositVPFIToVault and
+     *         qualifies" from "user has dust + small legitimate stake,
+     *         but the tracked tier is still 0".
+     */
+    function getTrackedVPFIDiscountTier(address user)
+        external
+        view
+        returns (uint8 tier, uint256 trackedBal, uint256 discountBps)
+    {
+        trackedBal = LibVPFIDiscount.trackedVpfiBalance(user);
+        tier = LibVPFIDiscount.tierOf(trackedBal);
+        discountBps = LibVPFIDiscount.discountBpsForTier(tier);
     }
 
     /**

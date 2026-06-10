@@ -991,7 +991,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](26);
+        selectors = new bytes4[](27);
         selectors[0] = VPFIDiscountFacet.buyVPFIWithETH.selector;
         selectors[1] = VPFIDiscountFacet.depositVPFIToVault.selector;
         selectors[2] = VPFIDiscountFacet.quoteVPFIDiscount.selector;
@@ -1036,6 +1036,8 @@ contract HelperTest {
         selectors[24] = VPFIDiscountFacet.pokeMyTier.selector;
         // T-087 Sub 4 round-2 P2 — public tracked-balance getter.
         selectors[25] = VPFIDiscountFacet.getTrackedVPFIBalance.selector;
+        // T-087 Sub 4 round-3 P2 #1 — tracked-tier getter.
+        selectors[26] = VPFIDiscountFacet.getTrackedVPFIDiscountTier.selector;
         return selectors;
     }
 
