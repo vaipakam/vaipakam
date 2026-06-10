@@ -1936,3 +1936,64 @@ The disown function is exposed only via direct contract call
 for now; the Vaipakam frontend does not surface it as a
 button. Use a block-explorer "Write Contract" UI or a
 contract-interaction tool to call it.
+
+## Treasury Buyback Flywheel
+
+The protocol collects fees on every loan, swap-to-repay
+settlement, and aggregator-routed liquidation. A portion of
+that fee revenue is routed back to VPFI stakers via the
+**buyback flywheel** — a continuous, governance-bounded buy
+pressure on VPFI whose proceeds flow into the staking pool.
+
+The flywheel runs in three stages:
+
+1. **Accumulate.** Fee revenue in bridgeable source assets
+   (USDC, WETH, WBTC, etc.) accumulates per-chain in the
+   protocol's buyback budget. The operator decides when a
+   tranche is large enough to bridge.
+
+2. **Bridge + commit.** On a cadence, the operator bridges the
+   accumulated value to Base (via Chainlink CCIP) and opens a
+   1inch Fusion TWAP order against VPFI. The order is signed
+   by the diamond itself (ERC-1271); 1inch solvers compete
+   over a 30-minute window to fill it. Partial fills are
+   allowed by design — solvers can split the order across
+   multiple smaller swaps to minimise price impact.
+
+3. **Deliver.** Each partial fill delivers VPFI to the diamond
+   and credits the **staking pool buyback budget**. The next
+   time you `claimAsStaker`, your claimable VPFI reflects
+   your share of all proceeds delivered since your last claim.
+
+What this means for you as a staker:
+
+- The staking pool's claimable VPFI grows from TWO sources
+  now: the original reward bucket (governance-set drip) AND
+  the buyback proceeds (fee-velocity-driven). Buyback APR is
+  variable — it scales with platform usage.
+- You don't need to do anything special to participate. As
+  long as you're staked, your share of buyback proceeds
+  accrues automatically.
+- There's no slashing or lockup tied to the buyback flow. You
+  can `unstake` at any time, subject to the existing
+  cooldown.
+- The TWAP design means buybacks don't create discrete large
+  market orders that could destabilise the VPFI floor. The
+  buying is dispersed across solver auctions throughout the
+  day.
+
+Operator-visible failure modes (you'll see these as failed
+operator transactions in the public dashboard, not as
+user-side errors):
+
+- **No tranche available** — the budget hasn't reached the
+  per-token tranche cap. Operator waits.
+- **TWAP underdelivered** — solvers didn't clear the floor
+  within the 30-minute window. Operator expires the order
+  (releasing any unconsumed reservation back to the budget)
+  and commits a fresh one at a lower floor.
+
+The buyback flow is one of the few protocol-level mechanisms
+that ties VPFI's market dynamics directly to platform
+activity. Higher loan volume → more fees → more buyback
+velocity → larger staker proceeds.
