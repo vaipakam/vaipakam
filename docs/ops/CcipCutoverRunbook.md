@@ -1,5 +1,10 @@
 # CCIP Cross-Chain Cutover Runbook
 
+> Tracked under the post-T-087 operator-activation umbrella card
+> [#492](https://github.com/vaipakam/vaipakam/issues/492) as item
+> A.2 (T-068 Stage 2). The umbrella is the single-stop index for
+> every operator-gated activation step.
+
 The step-by-step procedure for standing up Vaipakam's Chainlink CCIP
 cross-chain layer — first as a **testnet rehearsal**, then as the
 **mainnet cutover**.
