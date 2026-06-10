@@ -3740,7 +3740,31 @@ library LibVaipakam {
         uint256 keeperRewardBudget;
         uint256 cfgRewardEmissionsTopUpTarget;
         uint256 cfgKeeperRewardTopUpTarget;
+
+        // T-087 Sub 3 add-on #473 — Productive treasury reserve.
+        // Idle treasury balances earn 0% by default; this surface
+        // routes a portion to external yield venues (Aave V3 for
+        // ERC20 supply, Lido for ETH staking). The
+        // `cfgTreasuryExternalYieldMaxBps` ceiling bounds how much
+        // of a token's treasury balance can be deployed externally
+        // — defence-in-depth against external-protocol counterparty
+        // risk.
+        //
+        // Phase 0 (this card): external venues only.
+        // Phase 1 (future card): adds VAIPAKAM_INTERNAL venue once
+        // TVL crosses the operator-decided threshold.
+        mapping(address => uint8) cfgTreasuryYieldVenue;
+        mapping(address => uint256) treasuryDeployedExternal;
+        uint16 cfgTreasuryExternalYieldMaxBps;
+        address cfgAaveV3Pool;
+        address cfgLidoStaking;
     }
+
+    /// @dev T-087 Sub 3 add-on #473 — yield venue discriminator.
+    ///      Stored as uint8 in `cfgTreasuryYieldVenue[token]`.
+    uint8 internal constant TREASURY_YIELD_VENUE_NONE       = 0;
+    uint8 internal constant TREASURY_YIELD_VENUE_AAVE_V3    = 1;
+    uint8 internal constant TREASURY_YIELD_VENUE_LIDO_STETH = 2;
 
     /// @notice T-087 Sub 3.B — per-buyback-order state.
     /// @param token       Source asset being swapped into VPFI.

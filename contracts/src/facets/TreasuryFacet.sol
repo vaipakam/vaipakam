@@ -16,6 +16,7 @@ import {OracleFacet} from "./OracleFacet.sol";
 import {ICrossChainMessenger} from "../crosschain/ICrossChainMessenger.sol";
 import {LibTreasuryBuyback} from "../libraries/LibTreasuryBuyback.sol";
 import {LibBuybackOrderValidation} from "../libraries/LibBuybackOrderValidation.sol";
+import {LibTreasuryYield} from "../libraries/LibTreasuryYield.sol";
 
 /**
  * @title TreasuryFacet
@@ -1061,5 +1062,119 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
 
     function getKeeperRewardBudget() external view returns (uint256) {
         return LibVaipakam.storageSlot().keeperRewardBudget;
+    }
+
+    // ─── T-087 Sub 3 add-on #473 — productive treasury reserve ──────
+
+    error TreasuryYieldBpsOutOfBounds(uint16 bps, uint16 maxAllowed);
+    error TreasuryYieldVenueInvalid(uint8 venue);
+    error TreasuryYieldVenueAddressNotContract(address candidate);
+
+    /// @custom:event-category informational/config
+    event TreasuryYieldVenueSet(address indexed token, uint8 venue);
+    /// @custom:event-category informational/config
+    event TreasuryExternalYieldMaxBpsSet(uint16 bps);
+    /// @custom:event-category informational/config
+    event AaveV3PoolSet(address indexed pool);
+    /// @custom:event-category informational/config
+    event LidoStakingSet(address indexed staking);
+
+    /// @notice Admin: per-token venue config. Pass venue:
+    ///   0 (NONE) — disable external yield for this token,
+    ///   1 (AAVE_V3) — supply via Aave V3,
+    ///   2 (LIDO_STETH) — stake via Lido.
+    function setTreasuryYieldVenue(address token, uint8 venue)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (token == address(0)) revert InvalidAddress();
+        if (venue > LibVaipakam.TREASURY_YIELD_VENUE_LIDO_STETH) {
+            revert TreasuryYieldVenueInvalid(venue);
+        }
+        LibVaipakam.storageSlot().cfgTreasuryYieldVenue[token] = venue;
+        emit TreasuryYieldVenueSet(token, venue);
+    }
+
+    /// @notice Admin: ceiling on externally-deployed share per
+    ///         token. 0 means "use the default 7000 bps". Hard upper
+    ///         bound 8000 bps.
+    function setTreasuryExternalYieldMaxBps(uint16 bps)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (bps > LibTreasuryYield.MAX_EXTERNAL_YIELD_BPS) {
+            revert TreasuryYieldBpsOutOfBounds(
+                bps, LibTreasuryYield.MAX_EXTERNAL_YIELD_BPS
+            );
+        }
+        LibVaipakam.storageSlot().cfgTreasuryExternalYieldMaxBps = bps;
+        emit TreasuryExternalYieldMaxBpsSet(bps);
+    }
+
+    function setAaveV3Pool(address pool)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (pool == address(0)) revert InvalidAddress();
+        if (pool.code.length == 0) revert TreasuryYieldVenueAddressNotContract(pool);
+        LibVaipakam.storageSlot().cfgAaveV3Pool = pool;
+        emit AaveV3PoolSet(pool);
+    }
+
+    function setLidoStaking(address staking)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (staking == address(0)) revert InvalidAddress();
+        if (staking.code.length == 0) revert TreasuryYieldVenueAddressNotContract(staking);
+        LibVaipakam.storageSlot().cfgLidoStaking = staking;
+        emit LidoStakingSet(staking);
+    }
+
+    /// @notice Admin: deploy `amount` of `token` from the diamond's
+    ///         treasury balance to the configured venue.
+    function deployTreasuryYield(address token, uint256 amount)
+        external
+        nonReentrant
+        whenNotPaused
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (token == address(0)) revert InvalidAddress();
+        if (amount == 0) revert ZeroAmount();
+        LibTreasuryYield.deployTreasuryYield(token, amount);
+    }
+
+    /// @notice Admin: pull `amount` of `token` back from the
+    ///         external venue to the diamond.
+    function withdrawTreasuryYield(address token, uint256 amount)
+        external
+        nonReentrant
+        whenNotPaused
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (token == address(0)) revert InvalidAddress();
+        if (amount == 0) revert ZeroAmount();
+        LibTreasuryYield.withdrawTreasuryYield(token, amount);
+    }
+
+    function getTreasuryYieldVenue(address token) external view returns (uint8) {
+        return LibVaipakam.storageSlot().cfgTreasuryYieldVenue[token];
+    }
+
+    function getTreasuryDeployedExternal(address token) external view returns (uint256) {
+        return LibVaipakam.storageSlot().treasuryDeployedExternal[token];
+    }
+
+    function getTreasuryExternalYieldMaxBps() external view returns (uint16) {
+        uint16 v = LibVaipakam.storageSlot().cfgTreasuryExternalYieldMaxBps;
+        return v == 0 ? LibTreasuryYield.DEFAULT_EXTERNAL_YIELD_MAX_BPS : v;
+    }
+
+    function getAaveV3Pool() external view returns (address) {
+        return LibVaipakam.storageSlot().cfgAaveV3Pool;
+    }
+
+    function getLidoStaking() external view returns (address) {
+        return LibVaipakam.storageSlot().cfgLidoStaking;
     }
 }
