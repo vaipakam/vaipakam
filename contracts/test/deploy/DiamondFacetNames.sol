@@ -34,7 +34,7 @@ abstract contract DiamondFacetNames {
     ///      41 → 42 in T-086 Round-7 (#355) with
     ///      `NFTPrepayAutoListFacet`;
     ///      49 → 50 in T-087 Sub 3.B with `IntentDispatchFacet`.)
-    function cutFacetNames() internal pure returns (string[50] memory) {
+    function cutFacetNames() internal pure returns (string[51] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -133,7 +133,16 @@ abstract contract DiamondFacetNames {
             // (preInteraction / postInteraction / isValidSignature)
             // and dispatches by `s.orderHashKind[orderHash]` into
             // LibSwapToRepayIntentSettlement OR LibTreasuryBuyback.
-            "IntentDispatchFacet"
+            "IntentDispatchFacet",
+            // T-092 Phase 1 (#499) — consent surface for auto-lend /
+            // auto-refinance / auto-extend. Phase 1 ships just the
+            // setters + readers + the LoanFacet.initiateLoan hook
+            // that auto-populates per-loan refinance caps when the
+            // borrower has `autoOptInOnNewLoan` enabled. Phase 2/3
+            // follow-ups (#500/#501) wire the caps into
+            // `RefinanceFacet.refinanceLoan` and add the
+            // `extendLoanInPlace` executor.
+            "AutoLifecycleFacet"
         ];
     }
 }

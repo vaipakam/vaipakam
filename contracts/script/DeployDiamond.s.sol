@@ -27,6 +27,7 @@ import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
+import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
@@ -149,6 +150,11 @@ contract DeployDiamond is Script {
         // owns preInteraction / postInteraction / isValidSignature
         // for BOTH the repay path and the buyback path.
         IntentDispatchFacet intentDispatchFacet = new IntentDispatchFacet();
+        // T-092 Phase 1 (#499) — consent surface for auto-lend /
+        // auto-refinance / auto-extend. Setters + readers only;
+        // Phase 2/3 wire the caps into RefinanceFacet + add the
+        // extendLoanInPlace executor.
+        AutoLifecycleFacet autoLifecycleFacet = new AutoLifecycleFacet();
         // T-090 v1.1 (#389) — intent-based swap-to-repay config knobs.
         // Carved off `ConfigFacet` after the round-2 PR #420 CI block
         // pushed it past EIP-170.
@@ -212,7 +218,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](50);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](51);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -357,6 +363,11 @@ contract DeployDiamond is Script {
         cuts[49] = _buildCut(
             address(intentDispatchFacet),
             _getIntentDispatchFacetSelectors()
+        );
+        // T-092 Phase 1 (#499) — auto-lifecycle consent surface.
+        cuts[50] = _buildCut(
+            address(autoLifecycleFacet),
+            _getAutoLifecycleFacetSelectors()
         );
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
@@ -677,6 +688,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("rewardAggregatorFacet",   address(rewardAggregatorFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
         Deployments.writeFacet("legalFacet",              address(legalFacet));
+        Deployments.writeFacet("autoLifecycleFacet",      address(autoLifecycleFacet));
 
         console.log(
             "Wrote addresses to deployments/",
@@ -1200,6 +1212,25 @@ contract DeployDiamond is Script {
         s[0] = IntentDispatchFacet.preInteraction.selector;
         s[1] = IntentDispatchFacet.postInteraction.selector;
         s[2] = IntentDispatchFacet.isValidSignature.selector;
+    }
+
+    /// @notice T-092 Phase 1 (#499) — auto-lifecycle consent surface.
+    ///         Setters + readers for auto-lend / auto-opt-in / per-loan
+    ///         refinance caps + per-loan + per-side extend caps.
+    function _getAutoLifecycleFacetSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](12);
+        s[0] = AutoLifecycleFacet.setAutoLendConsent.selector;
+        s[1] = AutoLifecycleFacet.getAutoLendConsent.selector;
+        s[2] = AutoLifecycleFacet.setAutoOptInOnNewLoan.selector;
+        s[3] = AutoLifecycleFacet.getAutoOptInOnNewLoan.selector;
+        s[4] = AutoLifecycleFacet.setDefaultAutoRefinanceCaps.selector;
+        s[5] = AutoLifecycleFacet.getDefaultAutoRefinanceCaps.selector;
+        s[6] = AutoLifecycleFacet.setAutoRefinanceCaps.selector;
+        s[7] = AutoLifecycleFacet.getAutoRefinanceCaps.selector;
+        s[8] = AutoLifecycleFacet.setAutoExtendBorrowerCaps.selector;
+        s[9] = AutoLifecycleFacet.getAutoExtendBorrowerCaps.selector;
+        s[10] = AutoLifecycleFacet.setAutoExtendLenderCaps.selector;
+        s[11] = AutoLifecycleFacet.getAutoExtendLenderCaps.selector;
     }
 
     function _getDefaultedSelectors() internal pure returns (bytes4[] memory s) {

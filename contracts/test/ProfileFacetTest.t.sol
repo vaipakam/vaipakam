@@ -402,6 +402,10 @@ contract ProfileFacetTest is Test {
 
     function testApproveKeeperRevertsOnOutOfRangeActions() public {
         // Bit 5 (0x20) is outside the defined KEEPER_ACTION_ALL = 0x1F.
+        // T-092 Phase 1 (#499) defines KEEPER_ACTION_EXTEND at 0x20
+        // but intentionally LEAVES it out of KEEPER_ACTION_ALL until
+        // Phase 3 ships the executor, so 0x20 stays an invalid mask
+        // for now.
         address k = makeAddr("keeperA");
         vm.prank(user1);
         vm.expectRevert(IVaipakamErrors.InvalidKeeperActions.selector);

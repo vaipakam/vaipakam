@@ -264,6 +264,16 @@ library LibERC721 {
         return owner;
     }
 
+    /// @notice Non-reverting variant of {ownerOf}. Returns
+    ///         `address(0)` for a nonexistent or burned token instead
+    ///         of reverting. Used by callers (e.g. `AutoLifecycleFacet`'s
+    ///         per-loan cap staleness fence) that need a graceful
+    ///         "owner unknown" branch alongside the normal "owner is X"
+    ///         check.
+    function _ownerOfRaw(uint256 tokenId) internal view returns (address) {
+        return _storage().owners[tokenId];
+    }
+
     function balanceOf(address owner) internal view returns (uint256) {
         if (owner == address(0)) revert ERC721InvalidOwner(address(0));
         return _storage().balances[owner];
