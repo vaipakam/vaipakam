@@ -401,11 +401,13 @@ contract ProfileFacetTest is Test {
     }
 
     function testApproveKeeperRevertsOnOutOfRangeActions() public {
-        // Bit 5 (0x20) is outside the defined KEEPER_ACTION_ALL = 0x1F.
+        // T-092 (#499) widened KEEPER_ACTION_ALL from 0x1F to 0x3F by
+        // adding KEEPER_ACTION_EXTEND = 0x20. Bit 6 (0x40) is the new
+        // first invalid bit.
         address k = makeAddr("keeperA");
         vm.prank(user1);
         vm.expectRevert(IVaipakamErrors.InvalidKeeperActions.selector);
-        ProfileFacet(address(diamond)).approveKeeper(k, 0x20);
+        ProfileFacet(address(diamond)).approveKeeper(k, 0x40);
     }
 
     function testApproveKeeperRecordsBitmask() public {

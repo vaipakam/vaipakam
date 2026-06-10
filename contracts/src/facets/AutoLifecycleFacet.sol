@@ -365,7 +365,12 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         address setter
     ) internal view returns (bool) {
         if (setter == address(0)) return true; // default-template carry-over; no fence
-        return LibERC721.ownerOf(loan.borrowerTokenId) == setter;
+        // Codex round-2 P3 — `ownerOf` reverts `ERC721NonexistentToken`
+        // for a burned NFT (terminal claim path burns the position
+        // NFT). Read the storage slot directly so the reader returns
+        // disabled-caps cleanly instead of bubbling a revert.
+        address current = LibERC721._ownerOfRaw(loan.borrowerTokenId);
+        return current != address(0) && current == setter;
     }
 
     function _isCurrentLenderNft(
@@ -373,6 +378,7 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         address setter
     ) internal view returns (bool) {
         if (setter == address(0)) return true;
-        return LibERC721.ownerOf(loan.lenderTokenId) == setter;
+        address current = LibERC721._ownerOfRaw(loan.lenderTokenId);
+        return current != address(0) && current == setter;
     }
 }

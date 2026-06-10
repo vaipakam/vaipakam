@@ -3840,7 +3840,7 @@ library LibVaipakam {
     ///      only — `defaultAutoRefinanceCaps[user]` ignores it).
     struct AutoRefinanceCaps {
         bool enabled;        // borrower opted this loan into auto-refinance
-        uint16 maxRateBps;   // ceiling on the new offer's interest rate (0 = allow any rate, including 0%)
+        uint16 maxRateBps;   // ceiling on the new offer's interest rate; 0 is a literal cap meaning "only 0% refinance is permitted" (NOT "any rate")
         uint64 maxNewExpiry; // ceiling on the new loan's end time (unix)
         address setter;      // who set this; reader fences caps when NFT has transferred
     }

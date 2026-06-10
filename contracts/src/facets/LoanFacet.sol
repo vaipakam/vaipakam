@@ -275,7 +275,13 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         if (s.autoOptInOnNewLoan[initiatedLoan.borrower]) {
             LibVaipakam.AutoRefinanceCaps memory defs =
                 s.defaultAutoRefinanceCaps[initiatedLoan.borrower];
-            if (defs.enabled) {
+            // Codex round-2 P3 — skip copying when the default-template
+            // expiry is already in the past. Otherwise an old enabled
+            // default with a stale expiry would land on every new loan
+            // as enabled, and the Phase 2 keeper enforcement could
+            // ignore it only after a separate freshness check. Filter
+            // at copy time so the per-loan slot stays meaningful.
+            if (defs.enabled && defs.maxNewExpiry > block.timestamp) {
                 // Stamp setter to the borrower so the per-loan
                 // staleness fence works even when these caps land via
                 // the convenience-flag copy (rather than a direct
