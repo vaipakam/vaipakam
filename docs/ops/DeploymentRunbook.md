@@ -336,6 +336,72 @@ chain. Tail the live Worker logs to inspect:
 cd ops/hf-watcher && npx wrangler tail --format=pretty
 ```
 
+### T-087 — Cross-chain VPFI discount post-deploy activation
+
+The VPFI tier + discount system (T-087, shipped across 5 sub-cards
+by 2026-06-10) needs explicit post-deploy configuration. Without
+these calls the accumulator runs but the cross-chain discount
+surface stays inert.
+
+**On canonical (Base):**
+
+1. `VPFITokenFacet.setCanonicalVPFIChain(true)` — flips
+   `s.isCanonicalVpfiChain`. Without this, `ProtocolBroadcastFacet`
+   silently skips every tier broadcast because the canonical-only
+   gate fails closed. Sub 1.C round-3 P2 #2 deferral.
+
+2. `RewardReporterFacet.setRewardMessenger(<VaipakamRewardMessenger>)`
+   — points the diamond at the CCIP messenger contract. Without
+   this, the broadcast facet reverts at fire time.
+
+3. Configure the messenger's broadcast destination chain IDs to
+   list every mirror chain (via the messenger's admin surface —
+   `addBroadcastDestination` or equivalent). Without an entry for
+   a mirror, that mirror's `userTierCache` never receives pushes.
+
+4. `ProtocolBroadcastFacet.topUpBroadcastBudget()` (payable) — seed
+   the protocol-funded broadcast budget with enough ETH to cover
+   a realistic burn rate. Monitor `ProtocolTierBroadcastSent` /
+   `BroadcastBudgetToppedUp` events; top up before the budget can't
+   cover the next non-deduped push. **The fail mode is hard-fail:
+   budget exhaustion reverts the underlying deposit / withdrawal /
+   pokeMyTier that triggered the rollup.**
+
+**On each mirror chain:**
+
+5. `RewardReporterFacet.setRewardMessenger(<mirror messenger>)` —
+   the messenger contract authorised to write tier cache entries.
+
+6. `RewardReporterFacet.setBaseChainId(<EVM chain.id of canonical>)`
+   — the source-chain gate. Use the canonical EVM chain ID
+   (Base mainnet 8453; Base Sepolia 84532), NOT Base's Chainlink
+   CCIP chain selector — the adapter normalises selectors
+   internally.
+
+7. `ConfigFacet.setMirrorTierMaxAgeSec(<seconds>)` — cache
+   staleness threshold (default 60 days; setter floor 30 days).
+   Higher = mirror applies stale tiers longer; lower = mirrors
+   need fresher per-user pushes.
+
+**Governance changes after launch:**
+
+- `setVpfiTierThresholds` and `setVpfiTierDiscountBps` bump the
+  canonical `tierTableVersion`. On each mirror, the FIRST per-user
+  new-version push raises the mirror's `currentTierTableVersion` —
+  at which point EVERY other user's old-version cached tier on
+  that mirror falls back to (0, 0) until each user's own next push
+  lands. So a tier-table bump creates a per-mirror cliff. Pre-empt
+  by topping up the broadcast budget before announcing changes.
+- `setTwaMinStakedDays`, `setTwaWindowDays`, `setTwaRecentDays`,
+  `setTwaRecentWeight`, and `setMirrorTierMaxAgeSec` change their
+  config slots WITHOUT bumping `tierTableVersion`. The new behaviour
+  takes effect on the next on-chain read; no broadcast wave fires.
+
+Full user-facing explanation + operator details in the Advanced
+User Guide's "How VPFI Discounts Work" + "Operator runbook —
+discount system maintenance" sub-section. Functional spec at
+[`docs/FunctionalSpecs/VPFIDiscountSystem.md`](../FunctionalSpecs/VPFIDiscountSystem.md).
+
 ### T-090 v1.1 GA — intent-based swap-to-repay bridge activation
 
 The intent-based swap-to-repay surface (`SwapToRepayIntentPanel` on
