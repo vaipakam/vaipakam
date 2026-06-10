@@ -4152,10 +4152,19 @@ library LibVaipakam {
     uint8 internal constant KEEPER_ACTION_REFINANCE = 1 << 4; // 0x10
     /// @dev T-092 — auto in-place loan extension (no NFT churn).
     ///      Gated by BOTH the borrower's and lender's per-loan
-    ///      `autoExtendConsent` caps in `AutoLifecycleFacet`.
+    ///      `autoExtendConsent` caps in `AutoLifecycleFacet`. The
+    ///      executor (`extendLoanInPlace`) lands in T-092 Phase 3;
+    ///      the bit is reserved here so the consent-cap setters
+    ///      shipped in Phase 1 stay forward-compatible.
     uint8 internal constant KEEPER_ACTION_EXTEND = 1 << 5; // 0x20
-    /// @dev All actions — convenience for "grant everything" UX flows.
-    uint8 internal constant KEEPER_ACTION_ALL = 0x3F;
+    /// @dev All actions — convenience for "grant everything" UX
+    ///      flows. T-092 Phase 1 intentionally keeps EXTEND OUT of
+    ///      this mask: users who approve a keeper with
+    ///      KEEPER_ACTION_ALL today must NOT implicitly auto-grant
+    ///      the EXTEND authority when Phase 3 lands. The mask widens
+    ///      to 0x3F together with the executor in the Phase 3 PR, so
+    ///      users see a fresh "approve EXTEND" prompt at that point.
+    uint8 internal constant KEEPER_ACTION_ALL = 0x1F;
 
     /**
      * @notice Retrieves the Vaipakam storage slot.

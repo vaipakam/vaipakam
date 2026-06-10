@@ -46,7 +46,7 @@ The full T-092 ask (auto-lend / auto-refinance / auto-extend) is split into thre
 ### Verification
 
 - `forge build` clean.
-- New `AutoLifecycleFacetTest`: 7/7 tests green (consent toggle happy-paths, sanctions revert, caps validation: enabled-with-zero-rate reverts, enabled-with-past-expiry reverts, disabled-with-zero-values allowed for slot-clear).
+- New `AutoLifecycleFacetTest`: 8/8 tests green (consent toggle happy-paths, sanctions revert, zero-rate IS valid for enabled caps (a borrower may legitimately consent only to a 0% refinance), enabled-with-past-expiry reverts, disabled-with-zero-values allowed for slot-clear, caps above `MAX_INTEREST_BPS` rejected).
 - Deploy-sanity 12/12 (FacetSizeLimit + SelectorCoverage + DeployDiamondIntegration).
 - Frontend ABI export + `pnpm --filter @vaipakam/defi exec tsc -b --noEmit` clean.
 
