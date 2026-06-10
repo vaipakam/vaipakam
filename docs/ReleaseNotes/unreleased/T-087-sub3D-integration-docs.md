@@ -30,8 +30,8 @@ Code-free spec covering:
 User-facing primer at the end of `apps/www/src/content/userguide/Advanced.en.md`:
 
 - The three-stage flywheel explanation (accumulate, bridge + commit, deliver).
-- What stakers experience: two-source claimable VPFI (original drip + buyback proceeds), no slashing, no special action needed.
-- Operator-visible failures the public dashboard will surface.
+- What stakers experience TODAY vs. when Sub 3 add-on #472 (priority router) lands: Sub 3 ships the on-chain staging slot only; `claimStakingRewards` still debits the original reward bucket; the staker-facing distribution leg is a separate scoped follow-up.
+- Operator-visible failures the public dashboard will surface (budget insufficient vs. tranche cap exceeded).
 - The "TWAP design doesn't destabilise the floor" reassurance.
 
 ### Producer artifacts
