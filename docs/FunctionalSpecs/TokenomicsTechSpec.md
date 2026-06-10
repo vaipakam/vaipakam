@@ -290,7 +290,7 @@ Phase note:
 
 - this section is `Phase 1` scope
 
-Both lender and borrower discounts are based purely on the VPFI balance held in the user's Vaipakam Vault on the respective lending chain. Moving VPFI into the Vault automatically counts as staking. Code-level contracts, storage fields, function names, and diagnostics may continue to use `vault`.
+Both lender and borrower discounts are resolved from the user's protocol-tracked VPFI stake on the canonical `Base` deployment. Base computes the user's effective tier, and supported mirror chains apply a cached copy of that Base-resolved tier. Moving VPFI into the Vaipakam Vault on the canonical chain automatically counts as staking for discount-tier purposes. Code-level contracts, storage fields, function names, and diagnostics may continue to use `vault`.
 
 **Tiered Discount Table**  
 applies to both lenders and borrowers
@@ -304,23 +304,23 @@ applies to both lenders and borrowers
 
 Shared rules:
 
-- discount tiers are derived from the user's Vaipakam Vault VPFI balance on the relevant lending chain, with both lender and borrower discount value measured through the time-weighted rules below once Phase 5 is active
+- discount tiers are derived from the user's protocol-tracked Vaipakam Vault VPFI balance on the canonical chain, then propagated to mirrors through the approved cross-chain reward messenger
+- Base computes an `effective tier` and `effective discount bps`; mirrors must apply the cached effective values rather than recomputing tier math locally
 - effective VPFI utility balance must be clamped to `min(actualVaultBalance, protocolTrackedVaultBalance[user][VPFI])` so unsolicited direct transfers cannot earn staking rewards or inflate fee-discount tiers
 - moving VPFI into the Vault automatically counts as staking
 - the user must explicitly consent through a single platform-level on-chain flag to allow vaulted VPFI to be used for fee discounts
 - in the frontend, this shared consent should be managed from `Dashboard`, not as an offer-level, loan-level, or `Buy VPFI`-page-only toggle
 - once this common consent is enabled, no separate offer-level or loan-level consent is required
+- toggling consent must not by itself trigger a cross-chain tier broadcast; only tier-affecting rollups or an explicit user poke should attempt propagation
 
 Lender rules:
 
 - the lender-side discount applies to the `Yield Fee`
-- the lender-side discount must be time-weighted across the life of each loan rather than resolved from the lender's vault balance at one final settlement moment
-- at every moment during a loan, the lender's current vaulted VPFI balance maps to a tier and that tier maps to the corresponding lender discount percentage
-- the protocol must continuously track the time-weighted average of that discount percentage over the actual life of the loan
-- at repayment, preclose, refinance, or other lender-yield settlement, the discount applied to the lender's `Yield Fee` must equal that time-weighted average discount, not the lender's tier at the settlement moment
-- the lender discount tracker should refresh whenever the lender's vaulted VPFI balance changes through deposit, withdrawal, claim-to-vault, or fee deduction that consumes vaulted VPFI
-- each loan should snapshot the user's discount-accrual state at loan open and compute the loan-specific average discount from the delta between settlement and that opening snapshot, divided by the actual elapsed loan duration
-- this time-weighted design is required so a lender cannot obtain the full higher-tier discount by topping up VPFI just before repayment
+- the lender-side discount applied at repayment, preclose, refinance, or other lender-yield settlement must equal the user's current effective discount at that fee-application moment
+- on Base, the current effective discount comes from the canonical time-weighted tier accumulator
+- on mirrors, the current effective discount comes from the authenticated mirror tier cache
+- loan-opening snapshots may remain for compatibility and analytics, but they must not drive the discount bps once the canonical effective-tier system is active
+- a lender cannot obtain a higher discount by briefly topping up just before settlement because the effective tier is gated by the canonical TWA, minimum-history, and minimum-tier-over-history rules below
 - when consent is active and sufficient VPFI is available, the system should automatically deduct the required discounted VPFI amount from lender vault to Treasury
 
 Borrower rules (Phase 5 and later):
@@ -330,8 +330,8 @@ Borrower rules (Phase 5 and later):
 - the borrower must have the shared platform-level fee-discount consent enabled; no separate offer-level or loan-level VPFI consent is required once that setting is active
 - when consent is active and sufficient VPFI is available, the system deducts the FULL (non-discounted) `Loan Initiation Fee` equivalent in VPFI from the borrower's vault at loan acceptance; this VPFI is held in protocol custody (the Diamond) for the life of the loan rather than flowing immediately to Treasury
 - when the VPFI path succeeds, `100%` of the requested lending asset is delivered to the borrower because the initiation fee has been satisfied entirely from vaulted VPFI
-- the borrower-side discount is TIME-WEIGHTED across the loan's lifetime, mirroring the lender-side model: each loan snapshots the borrower's discount-accrual state at acceptance, and on proper settlement the protocol computes the loan-specific average discount from the delta between the settlement-moment accumulator and the opening snapshot, divided by the actual elapsed loan duration
-- on proper close (normal repay, borrower preclose, refinance), the Diamond splits the held VPFI into a borrower rebate (held × time-weighted-avg-discount-bps / 10000) and a treasury share (the remainder); the rebate becomes claimable on the borrower's position NFT and is paid out atomically with the normal borrower claim; the treasury share is accrued to Treasury at settlement
+- the borrower-side rebate bps at proper settlement must equal the user's current effective discount at that fee-application moment: Base reads the canonical accumulator, and mirrors read the authenticated cached tier
+- on proper close (normal repay, borrower preclose, refinance), the Diamond splits the held VPFI into a borrower rebate (held × effective-discount-bps / 10000) and a treasury share (the remainder); the rebate becomes claimable on the borrower's position NFT and is paid out atomically with the normal borrower claim; the treasury share is accrued to Treasury at settlement
 - on default or HF-based liquidation, the entire held VPFI is forfeited to Treasury with no rebate
 - on refinance, the OLD loan's borrower rebate is credited at settlement (the borrower earned that window fairly); the NEW loan gets a fresh opening snapshot and tracks a new independent window
 - pre-upgrade loans that predate Phase 5 carry zero-valued custody and no opening snapshot, so they silently settle with no rebate — they never paid VPFI up front
@@ -340,34 +340,40 @@ Received VPFI from protocol-fee flows should be handled under the Treasury Recyc
 
 ### 6a. Functional Discount Mechanics
 
-Lender yield-fee discount mechanics:
+Canonical effective-tier mechanics:
 
-- the promise is that the lender's yield-fee discount on a specific loan reflects the lender's time-weighted average vaulted-VPFI tier across the life of that loan
-- the lender cannot capture a full higher-tier discount by depositing VPFI only shortly before the loan closes
-- between balance-changing events, the lender's stamped discount tier remains pinned at the tier that applied when the last balance change happened
-- there is no per-block or per-day lender discount rollup; the accounting is driven by balance-change events plus the settlement moment itself
-- if a lender spends most of the loan in a lower tier and enters a higher tier only near the end, the resulting discount must be a duration-weighted blend of those tiers
+- Base is the canonical tier-resolution chain. A user's effective tier is decided on Base and then propagated to supported mirror chains.
+- The canonical tier calculator must use a bounded 30-day ring buffer of protocol-tracked VPFI stake snapshots.
+- The default launch weighting is the recent 7 days at weight `3` and the previous 23 days at weight `1`, with governance-bounded knobs for recent-day count, total window, recent weight, minimum staked days, and mirror cache max age.
+- The effective tier must remain `0` until the user's current positive-stake tenure has satisfied the minimum-history gate. The launch default is 3 elapsed days; the gate is based on elapsed seconds, not only UTC day buckets.
+- A user's history must reset when their protocol-tracked VPFI stake transitions from positive to zero. A later restake must satisfy the minimum-history gate again.
+- The effective tier must be clamped by the minimum tier observed over the configured minimum-history window, preventing dust-then-bulk deposits from earning a high tier immediately.
+- Same-day balance history must preserve both the day's minimum balance and the day's closing balance. The minimum is used for the anti-gaming clamp; the close is used for TWA and gap-fill continuity.
+- Protocol-tracked VPFI, not raw token balance alone, is the source of truth for tier math. Direct unsolicited token transfers into a vault must not inflate the effective tier.
+- A user whose stake ages into eligibility without a balance mutation may call the explicit tier-poke action to roll up and broadcast their now-effective tier.
 
-Governance effects on lender discounts:
+Mirror-cache mechanics:
 
-- governance may change the discount-tier thresholds and the per-tier discount percentages over time
-- those governance changes must apply prospectively only
-- periods already accrued under the lender's previously stamped tier remain locked at those older values
-- a lender is re-evaluated against the current governance schedule the next time their vault balance changes or when the loan-specific discount is otherwise refreshed through settlement logic
-- a lender whose balance stays flat across a governance change should continue accruing under the previously stamped tier until the next refresh event, after which future accrual follows the new schedule
+- Mirror chains do not recompute the ring-buffer tier locally. They apply an authenticated cached tuple containing the effective tier, effective discount bps, computation time, nonce, expiry, and tier-table version.
+- A mirror cache entry is usable only if it is non-zero, matches the current mirror tier-table version, has not passed its tier-expiry timestamp, and is no older than the configured mirror max age.
+- The default mirror max-age backstop is 60 days. Expired or stale mirror entries must resolve to tier `0` until refreshed.
+- Tier pushes are protocol-funded and may fail closed when the protocol broadcast budget is exhausted or no broadcast destinations are configured. Dust tier-0 rollups should silent-skip rather than drain the broadcast budget.
+- Per-user tier pushes must be nonce-ordered. A stale nonce must not overwrite a fresher mirror cache entry.
+- Governance tier-table threshold or bps changes must bump a version number. The version bump invalidates stale mirror cache entries until fresh tier data reaches the mirror.
+- Version bumps must propagate atomically across the broadcast set: mirrors should apply the new version as a cache invalidation boundary rather than recomputing local bps values.
 
-Same-block safety:
+Discount application:
 
-- if a lender's vault balance changes multiple times in the same block, the elapsed time is zero, so no duplicate time accrual should be created
-- the tracker should simply stamp the latest balance-driven tier for future elapsed time
+- Lender yield-fee discounts and borrower LIF rebates both read the current effective discount bps at the settlement moment.
+- On Base, settlement reads the canonical effective tier. On mirrors, settlement reads the mirror cache.
+- If the user's shared fee-discount consent is disabled, the effective discount is `0` even if the user has sufficient VPFI stake.
+- The dapp should distinguish "balance qualifies for a raw tier" from "effective tier is active now." During the min-history window, a user may see that their stake qualifies for a tier while the fee path still applies tier `0`.
 
-Borrower initiation-fee discount mechanics (Phase 5):
+Governance effects:
 
-- the borrower pays the FULL Loan Initiation Fee up front in VPFI when the VPFI-fee path is selected; the Diamond holds that VPFI in custody for the life of the loan
-- the borrower-side discount is time-weighted across the loan window; there is no more point-in-time discount at acceptance
-- the stamped tier between balance-changing events pins the discount-accrual rate for the next elapsed-time bucket, identical to the lender-side mechanic; a borrower cannot capture a full higher-tier rebate by depositing VPFI only shortly before settlement
-- on proper settlement the held VPFI is split into rebate (to the borrower NFT holder via ClaimFacet) and treasury share; on default / HF liquidation the full held VPFI flushes to Treasury and no rebate is credited
-- governance changes to borrower discount thresholds or percentages apply prospectively only; periods already accrued under the previously stamped tier remain locked at those older values, mirroring the lender-side governance semantics
+- Governance may change discount-tier thresholds and per-tier discount percentages.
+- Changes must be versioned so mirrors cannot continue applying old bps values under a new table.
+- Previously closed settlements are never reopened by a later tier-table change.
 
 ---
 
@@ -375,17 +381,17 @@ Borrower initiation-fee discount mechanics (Phase 5):
 
 Objective:
 
-- borrowers can acquire VPFI through the fixed-rate purchase flow, explicitly deposit it into their personal Vaipakam Vault on the lending chain, and use that Vault-held VPFI to satisfy the full `0.1%` `Loan Initiation Fee` up front
-- the borrower then earns the documented discount as a time-weighted VPFI rebate only if the loan closes properly
-- this removes the old point-in-time gaming vector where a borrower could briefly top up VPFI only at acceptance time to capture a full discount
+- borrowers can acquire VPFI through the fixed-rate purchase flow, explicitly stake it into their canonical Vaipakam Vault on Base, and use the resulting effective tier to satisfy the full `0.1%` `Loan Initiation Fee` up front on Base or any mirror chain with a fresh cache
+- the borrower then earns the documented discount as an effective-tier VPFI rebate only if the loan closes properly
+- this removes the old point-in-time gaming vector where a borrower could briefly top up VPFI only at acceptance or settlement time to capture a full discount
 
 Eligibility and fallback:
 
 - the lending asset must be liquid on the active lending chain according to the existing `RiskFacet` / `OracleFacet` path
 - the borrower must have enabled the shared platform-level VPFI fee-discount consent
-- the borrower's Vaipakam Vault on that same lending chain must contain enough protocol-tracked VPFI to cover the full, non-discounted `0.1%` `Loan Initiation Fee` equivalent
+- the borrower must have enough protocol-tracked VPFI in their canonical staking vault, and enough usable fee-payment balance on the settlement chain where the up-front VPFI LIF is deducted, to cover the full, non-discounted `0.1%` `Loan Initiation Fee` equivalent
 - Vault-held VPFI is a special non-collateral asset: it does not count toward collateral value, Health Factor, liquidation value, or LTV support
-- Vault-held VPFI continues to count as staked under the unified Vault-staking model while also serving as the fee-utility balance for borrower discounts
+- Vault-held VPFI on Base continues to count as staked under the unified Vault-staking model while also serving as the canonical fee-utility balance for borrower discounts
 - if the asset is illiquid, the borrower has insufficient VPFI, or consent is disabled, the system falls back to the normal lending-asset fee path: the borrower pays `0.1%` in the loan asset and receives the net amount after that treasury deduction
 
 Acceptance-time flow:
@@ -393,7 +399,7 @@ Acceptance-time flow:
 1. the borrower creates or accepts a loan offer
 2. the protocol checks active-chain liquidity through the existing risk / oracle logic
 3. the protocol verifies the platform-level VPFI-discount consent flag
-4. the protocol snapshots the borrower's discount-accrual state for that loan
+4. the protocol resolves the borrower's current effective discount from Base or the active mirror cache
 5. for a liquid lending asset, the protocol converts the loan amount into ETH equivalent using the Chainlink-led active-chain pricing path
 6. the protocol calculates the full `0.1%` `Loan Initiation Fee`
 7. the protocol converts that full ETH-equivalent fee into exact VPFI required at the fixed rate `1 VPFI = 0.001 ETH`
@@ -401,16 +407,16 @@ Acceptance-time flow:
 
 Settlement:
 
-- on normal repayment, borrower preclose, or refinance, the protocol computes the borrower's time-weighted average discount across the actual loan window
-- borrower rebate formula: `rebate = heldVPFI * timeWeightedAverageDiscountBps / 10000`
+- on normal repayment, borrower preclose, or refinance, the protocol resolves the borrower's current effective discount from Base or the active mirror cache
+- borrower rebate formula: `rebate = heldVPFI * effectiveDiscountBps / 10000`
 - the borrower rebate is claimable by the borrower-side Vaipakam NFT holder and is paid with the ordinary borrower claim
 - the unrewarded remainder of the held VPFI becomes Treasury's share
 - on default or HF-based liquidation, the borrower rebate is `0` and all VPFI held for that loan is forfeited to Treasury
 
 Storage requirements:
 
-- store or derive borrower discount tiers from vaulted VPFI balance on the relevant lending chain
-- for each loan that uses the VPFI LIF path, store the full VPFI amount held in protocol custody, the borrower's opening discount-accrual snapshot, and any rebate claimable after proper settlement
+- store or derive borrower discount tiers from canonical protocol-tracked VPFI stake and authenticated mirror cache entries
+- for each loan that uses the VPFI LIF path, store the full VPFI amount held in protocol custody and any rebate claimable after proper settlement
 - track borrower LIF custody and rebate state by loan ID
 - keep all storage additions append-only in the existing Diamond storage libraries
 
@@ -508,10 +514,10 @@ Governance audit trail:
 
 ### 7b. Cross-Mechanism Invariants
 
-- every vault-balance change, including deposit, withdrawal, claim-to-vault, and fee-driven VPFI deduction, must refresh the user's staking position and the lender-side time-weighted discount tracker where applicable
-- governance changes to staking APR, discount thresholds, or discount percentages must always apply prospectively; previously accrued value must remain priced under the schedule that was active during the relevant elapsed period
-- dormant holders must not lose historical accrual simply because they did not interact during a governance-change window
-- no user action at a single late moment should be able to inflate rewards or discounts for prior elapsed time that was spent at a lower balance or lower tier
+- every canonical vault-balance change, including deposit, withdrawal, claim-to-vault, and fee-driven VPFI deduction, must refresh the user's staking position and canonical effective-tier state where applicable
+- governance changes to staking APR, discount thresholds, or discount percentages must always apply prospectively; previously accrued staking rewards remain priced under the APR that was active during the relevant elapsed period, and discount-table changes must invalidate stale mirror cache entries through the tier-table version
+- dormant holders must not lose historical staking accrual simply because they did not interact during a governance-change window
+- no user action at a single late moment should be able to inflate rewards or discounts for prior elapsed time or minimum-history windows that were spent at a lower balance or lower tier
 
 ---
 
@@ -535,18 +541,18 @@ The public `/buy-vpfi` route is a no-wallet marketing / education surface. The w
 Two explicit user steps, in this order:
 
 1. **Buy** — the user, connected to their preferred supported chain (`Base`, `Arbitrum`, `Polygon`, `Optimism`, or `Ethereum mainnet`), pays ETH at the fixed rate directly from the page. Purchased VPFI is delivered to the user's wallet **on that same preferred chain** — never auto-routed into vault, and never requiring a manual chain switch. If the flow settles on the canonical Base receiver, receipt of ETH on Base is the mint/release trigger.
-2. **Deposit / Stake to vault** — a separate, explicit user action on the same app page moves VPFI from the user's wallet into the user's personal vault on the same chain. This step is always explicit: the protocol never auto-funds vault after a buy or a bridge. Once deposited, the balance immediately counts as staked for the `5% APR` model and toward local discount tiers. Where supported, this deposit may use Uniswap Permit2 at `0x000000000022D473030F116dDEE9F6B43aC78BA3` so the user signs one EIP-712 authorization and executes the vault deposit in a single transaction; the classic approve-plus-deposit path remains the fallback.
+2. **Deposit / Stake to vault** — a separate, explicit user action on the same app page moves VPFI from the user's wallet into the user's canonical Vaipakam Vault on Base. This step is always explicit: the protocol never auto-funds vault after a buy or a bridge. Once deposited, the balance begins the canonical staking and effective-tier lifecycle; mirror-chain discounts become available only after the Base tier is effective and propagated. Where supported, this deposit may use Uniswap Permit2 at `0x000000000022D473030F116dDEE9F6B43aC78BA3` so the user signs one EIP-712 authorization and executes the vault deposit in a single transaction; the classic approve-plus-deposit path remains the fallback.
 
 Per-wallet cap display:
 
 - when the admin has not yet configured a per-wallet cap on-chain, `/app/buy-vpfi` MUST display the Phase 1 recommendation (`30,000 VPFI`) as the effective per-chain cap — `Uncapped` is not a valid user-facing state
 - the displayed "your remaining allowance" always equals `effectiveCap - soldToWallet`, where `effectiveCap` falls back to `30,000 VPFI` when `perWalletCap == 0` on-chain
 - this allowance is keyed by the buyer and the origin EVM chain id where the buy originated; buying up to the cap on one origin chain does not by itself consume the user's allowance on another chain unless admin later introduces an explicit cross-chain cap model
-- likewise, VPFI deposited into vault on a given chain counts toward lender / borrower fee-discount tiers only for loans initiated on that same chain
+- fixed-rate buy allowance remains keyed by origin chain, while discount-tier rights are keyed by the canonical Base staking state and its mirror-cache propagation
 
-VPFI held in vault simultaneously satisfies the staking model and the fee-discount tier table in §6 on that same chain — a single deposit serves both purposes locally, but does not qualify loans initiated on other chains.
+VPFI held in the canonical vault simultaneously satisfies the staking model and the fee-discount tier table in §6. A single canonical stake can qualify loans on supported mirror chains once the effective tier has propagated, but stale or missing mirror cache entries resolve to tier `0` until refreshed.
 
-The app purchase page should expose `Buy`, `Stake`, and `Unstake` entry points as route anchors. `Stake` is a user-facing name for the wallet-to-vault deposit step; `Unstake` is the vault-to-wallet withdrawal path on the same chain. The public marketing route may link into those anchors, but should not itself mount wallet controls.
+The app purchase page should expose `Buy`, `Stake`, and `Unstake` entry points as route anchors. `Stake` is a user-facing name for the wallet-to-canonical-vault deposit step; `Unstake` is the canonical-vault-to-wallet withdrawal path. The public marketing route may link into those anchors, but should not itself mount wallet controls.
 
 The `Deposit / Stake` step should carry the single canonical user-facing open-staking message: staking is open to everyone, no existing loan is required, vault-held VPFI earns the staking APR while it remains deposited, and the user's vault can be created automatically on first deposit. Duplicated page-level staking prose should be avoided so this card remains the source of truth.
 
@@ -591,6 +597,28 @@ All VPFI received as fees is recycled as follows, and ETH received from the fixe
 - **`24%` → Held as VPFI**
 
 If the insurance / bug bounty pool exceeds `2%` of total supply, any surplus VPFI is also recycled using the same `38 / 38 / 24` split.
+
+Fee-converted VPFI priority routing:
+
+- every partial buyback fill's delivered VPFI should cascade through three destination budgets in priority order: reward-emissions top-up, keeper-reward top-up, then staking-pool buyback overflow
+- governance-configured top-up targets decide how much each priority budget can claim; a zero target disables that step and passes the delivered VPFI to the next destination
+- the priority split must be sum-preserving: every delivered VPFI unit is assigned to exactly one of rewards, keepers, or staking overflow
+- with both top-up targets at their default `0`, the entire fill continues to land in the staking-pool buyback budget
+- reward-emissions budget credit is intended to offset fresh VPFI minting once the rewards distributor reads it; until that distributor path is active, the budget may accumulate without affecting mint flow
+
+Keeper reward budget:
+
+- permissionless housekeeping calls may receive VPFI rewards from the keeper-reward budget when the reward switch is enabled
+- the reward amount is based on gas used, transaction gas price, a governance-bounded multiplier, and the active VPFI/ETH pricing policy
+- Phase 0 uses the fixed VPFI buy rate; the LP TWAP path and cash-out spread are reserved for a later phase
+- keeper reward payment must never block the housekeeping action itself. Disabled rewards, empty budget, missing VPFI configuration, zero gas, or other reward failure states should emit or record a skipped reward outcome and let the housekeeping work complete
+
+Productive treasury reserve:
+
+- governance may deploy idle treasury assets into approved external yield venues, subject to a per-token deploy-time exposure cap
+- Aave V3 is the Phase 0 operational venue; Lido venue configuration is reserved but not usable until the WETH unwrap and withdrawal-queue flow is active
+- the external-yield cap is checked when funds are deployed. It is not a continuously enforced liquidity floor after later treasury debits or conversions
+- external principal and in-diamond treasury balance must remain separately visible so operators can monitor liquid reserve levels and venue exposure
 
 Treasury management:
 
@@ -637,12 +665,15 @@ Deployment flow:
 4. wire CCIP lanes, remote messengers, token pools, and channel peers so cross-chain transfers preserve one global supply model
 5. keep token symbol and metadata consistent as `VPFI` on every supported chain
 6. configure mirror-chain buy-adapter rate limits to finite caps before verification; adapters that remain at unlimited deployment defaults must be treated as not production-ready
-7. hand cross-chain messenger, token-pool, rate-governor, reward-messenger, adapter, and Cross-Chain Token administrator authority to the configured Timelock / Governance Safe path only from the current on-chain owner key, with scripts reading current authority first and skipping with operator guidance when the signer does not match
-8. verify every cross-chain lane from the perspective of both the local chain and the remote chain before it is considered production-ready
+7. mark Base as the canonical VPFI tier chain before opening fee-discount flows
+8. configure mirror chains with the approved reward messenger, Base chain id, mirror-tier max age, and any required broadcast destinations
+9. top up the protocol broadcast budget before expecting automatic tier pushes or version-bump broadcasts to reach mirrors
+10. hand cross-chain messenger, token-pool, rate-governor, reward-messenger, adapter, and Cross-Chain Token administrator authority to the configured Timelock / Governance Safe path only from the current on-chain owner key, with scripts reading current authority first and skipping with operator guidance when the signer does not match
+11. verify every cross-chain lane from the perspective of both the local chain and the remote chain before it is considered production-ready
 
 Architecture clarification:
 
-- only `VPFI` and reward-accounting messages are cross-chain through CCIP
+- only `VPFI`, reward-accounting messages, tier-cache messages, and approved treasury-buyback remittances are cross-chain through CCIP
 - the Vaipakam lending / borrowing / rental core protocol remains single-chain per deployment
 - in Phase 1, the core protocol should be deployed as separate Diamond instances on `Base`, `Polygon`, `Arbitrum`, `Optimism`, and `Ethereum mainnet`
 - loans, offers, collateral, repayment, claims, liquidation, preclose, refinance, and keeper actions must stay local to the deployment chain of that specific protocol instance
@@ -755,7 +786,7 @@ Testing requirements:
 - include preferred-chain fixed-rate purchase tests where purchased VPFI is delivered to the user's wallet on that same chain
 - include explicit wallet-to-vault deposit tests for both Permit2 and classic approve-plus-deposit paths
 - include liquid-asset borrower LIF VPFI tests across every discount tier
-- include time-weighted borrower rebate tests for long-hold, partial-hold, last-minute top-up, unstake-down, and governance-tier-change cases
+- include effective-tier borrower rebate tests for min-history pending, last-minute top-up, unstake-down, mirror-cache stale, and governance-tier-version-change cases
 - include illiquid-asset fallback tests where the borrower pays the normal lending-asset LIF
 - include default and HF-liquidation tests proving held VPFI is forfeited to Treasury with no rebate
 - include normal repayment, borrower preclose, and refinance tests proving proper rebate crediting
@@ -774,7 +805,7 @@ Frontend integration requirements:
 - `/app/buy-vpfi` should let users buy from their preferred supported chain without manually switching to canonical `Base`
 - `/app/buy-vpfi` is the single user-facing purchase / stake / unstake flow; public `/buy-vpfi` is the education surface. Any bridge, canonical-chain settlement, cross-chain token routing, or Base-receiver complexity must be abstracted behind the app flow.
 - the purchase page must show the exact ETH required, resulting VPFI amount, fixed rate, remaining global supply, and chain-local wallet allowance
-- after purchase, the page should guide a separate explicit wallet-to-vault deposit action on the same chain; it must not auto-deposit purchased VPFI into vault
+- after purchase, the page should guide a separate explicit wallet-to-canonical-vault deposit action on Base; it must not auto-deposit purchased VPFI into vault
 - the deposit step should prefer Permit2 where supported, fall back cleanly to classic approval, and explain that Permit2 is optional convenience rather than a replacement for token-level allowance control
 - transaction review for buying VPFI, depositing VPFI to vault, and accepting a loan through the VPFI path should include the standard transaction-preview surface where available and fail soft if preview is unavailable
 - borrower-facing pages should show current vaulted VPFI balance, current tier, discount eligibility for liquid assets, and the fact that vault-held VPFI also counts as staked
@@ -788,9 +819,9 @@ Frontend integration requirements:
 Acceptance criteria:
 
 - borrowers can purchase VPFI with ETH from the dedicated preferred-chain app page and receive VPFI in their wallet on that same chain
-- borrowers can explicitly move that VPFI from wallet to personal vault on that same chain
-- eligible liquid-asset loan acceptance checks liquidity, fee-discount consent, borrower vault balance, discount snapshot, Chainlink-led ETH conversion, full `0.1%` LIF computation, and exact VPFI deduction before sending `100%` of requested lending asset to the borrower
-- properly closed loans credit a time-weighted VPFI rebate; defaulted or HF-liquidated loans forfeit the held VPFI to Treasury
+- borrowers can explicitly move that VPFI from wallet to their canonical Vaipakam Vault before expecting discount-tier rights to propagate
+- eligible liquid-asset loan acceptance checks liquidity, fee-discount consent, borrower fee-payment balance, effective-tier availability, Chainlink-led ETH conversion, full `0.1%` LIF computation, and exact VPFI deduction before sending `100%` of requested lending asset to the borrower
+- properly closed loans credit an effective-tier VPFI rebate; defaulted or HF-liquidated loans forfeit the held VPFI to Treasury
 - global caps, per-chain wallet caps, pausing, event transparency, NatSpec coverage, and Diamond storage compatibility are satisfied
 
 ---
