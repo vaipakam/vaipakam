@@ -26,7 +26,7 @@ The discount table is governance-configurable at runtime via `setVpfiTierThresho
 | 3 | tier-3 floor … tier-3 ceiling | step-3 BPS |
 | 4 | > tier-3 ceiling | step-4 BPS |
 
-Floors and ceilings are configured per-chain by governance; the dapp's [Buy VPFI page](https://vaipakam.com/buy-vpfi) renders the live table.
+Floors and ceilings are configured on the CANONICAL chain (Base) by governance — the canonical accumulator uses them to compute each user's `effectiveTier` + `effectiveBps` at rollup time, and the BPS travels with each CCIP push. Mirror chains read the cached `effectiveTier` + `effectiveBps` from `userTierCache[user]` directly; mirror-side `setVpfiTierThresholds` and `setVpfiTierDiscountBps` calls are not consulted by `_mirrorEffectiveTierAndBps` and would be operator-misconfiguration. The dapp's [Buy VPFI page](https://vaipakam.com/buy-vpfi) renders the live canonical table.
 
 ## 3. Lifecycle on the canonical chain
 
@@ -111,7 +111,7 @@ Only the first two (threshold / BPS) invalidate mirror caches via the version bu
 - **TWA window** — top-up-then-unstake doesn't work. The 30d weighted average smooths the user's effective stake.
 - **Min-history gate** — 3-day delay before effective tier activates.
 - **Consent-toggle doesn't broadcast** — `setVPFIDiscountConsent` is a flag-flip with no CCIP cost. Otherwise a user could toggle on/off to drain the protocol's CCIP broadcast budget.
-- **Protocol-funded broadcasts are budget-gated** — `protocolBroadcastBudget` is a finite ETH pool the operator tops up. Broadcasts fail-closed when budget is exhausted (rather than blocking the underlying rollup), so a single user can't burn through it forever.
+- **Protocol-funded broadcasts are budget-gated** — `protocolBroadcastBudget` is a finite ETH pool the operator tops up. When the budget can't cover the next CCIP fee, `protocolBroadcastTierUpdate` reverts `ProtocolBudgetExhausted`, and `rollupUserDiscount` bubbles that revert — so a non-deduped tier change BLOCKS the underlying deposit / withdrawal / settlement that triggered it. Operators must monitor budget burn-rate and top up before exhaustion to avoid user-facing reverts. The combination of de-dup gating (no-op pushes don't burn budget) + per-user mutation frequency (humans don't transact thousands of times a day) means the budget isn't easily drained by a single user; but it IS finite and the failure mode is hard-fail.
 - **De-dup gate** — `ProtocolBroadcastFacet.protocolBroadcastTierUpdate` skips emitting CCIP when the (tier, bps, expiry, version) tuple matches the last-pushed snapshot. Repeated no-op pokes don't cost protocol budget.
 
 ## 7. What stakers see
@@ -123,7 +123,17 @@ The dapp's surfaces (driven by phase 1 + 2 of T-087 Sub 4):
 - **VPFIDiscountConsentCard** (Dashboard): consent toggle.
 - **DiscountStatusCard** (Buy VPFI page): live tier table + the user's current effective tier + the next-tier delta.
 
-## 8. Cross-references
+## 8. Two flavours of "discount"
+
+The VPFI discount surface gates TWO distinct fee paths:
+
+1. **Lender yield-fee discount** — applied at loan settlement on the protocol's treasury cut of the lender's accrued interest. The lender's effective tier (read at settlement time) determines the BPS off the standard yield-fee. Path: `LibVPFIDiscount.tryApplyYieldFee` → `lenderTimeWeightedDiscountBps`.
+
+2. **Borrower Loan Initiation Fee (LIF) rebate** — at loan accept time, the borrower pays the FULL 0.1% LIF equivalent in VPFI from their vault into Diamond custody (not treasury). At proper-close settlement, `LibVPFIDiscount.settleBorrowerLifProper(loan)` splits the held VPFI into a borrower rebate (`vpfiHeld × avgBps / BPS`) and a treasury share; the rebate is claimable by the borrower via `ClaimFacet.claimAsBorrower`. At default / HF-liquidation, `forfeitBorrowerLif(loan)` forwards the full held VPFI to treasury — no rebate. Path: `LibVPFIDiscount.tryApplyBorrowerLif` → custody + later settlement.
+
+Both flavours use the SAME effective tier resolution path (the time-weighted accumulator). The user's stake on Base + opted-in consent + on-chain VPFI on the settling chain gate both.
+
+## 9. Cross-references
 
 - Mechanics of cross-chain push: [`CrossChainTierPropagation.md`](CrossChainTierPropagation.md).
 - Tokenomics + tier math: [`TokenomicsTechSpec.md`](TokenomicsTechSpec.md) §5–§8.

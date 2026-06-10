@@ -1945,20 +1945,35 @@ you to a tiered discount on the protocol's yield-fee charged
 at loan settlement. The bigger your tier, the larger the
 discount.
 
-### Stake once, discount everywhere
+### Tier on Base, application on each chain
 
 VPFI is staked on Base. The protocol's accumulator lives on
-Base too. But your tier propagates automatically to every
-chain you take loans on — Sepolia, Arbitrum, Optimism, BNB,
-etc. — via Chainlink CCIP.
+Base too. Your TIER (the value 0..4) propagates
+automatically to every chain you take loans on — Sepolia,
+Arbitrum, Optimism, BNB, etc. — via Chainlink CCIP.
 
-That means:
+But the FEE PATH on each mirror chain still reads the local
+chain's VPFI balance + the local consent flag at settlement
+time. So to actually receive the discount on a mirror loan,
+you need:
 
-- You don't need to stake separately on each chain.
-- You don't need to bridge VPFI to mirror chains.
-- When you take a loan on Sepolia, the discount applies
-  using your Base-staked tier — looked up in the mirror's
-  cached `userTierCache`.
+- **Cached Base tier** — propagates automatically via CCIP
+  to the mirror's `userTierCache`. You don't trigger this;
+  it happens when you stake / mutate on Base.
+- **VPFI in the mirror vault** — `tryApplyYieldFee` checks
+  the local chain's user vault for VPFI; without it the
+  discount falls through to the full fee.
+- **Local consent toggle** — `setVPFIDiscountConsent(true)`
+  must be called on EACH chain you want the discount on;
+  the fee path reads the LOCAL consent flag, not Base's.
+
+So in practice: stake on Base once for the accumulator, and
+keep some VPFI + toggle consent on each chain you actually
+take loans on. The protocol doesn't force you to mirror-stake
+the same amount everywhere — the cached BASE tier is what
+determines the discount BPS, and a smaller mirror-chain
+holding is enough to satisfy the local fee path's "has VPFI"
+check.
 
 ### Min-history gate
 
@@ -2028,10 +2043,15 @@ broadcast at the protocol's cost.
 ### Consent toggle
 
 The discount is OPT-IN. You must call
-`setVPFIDiscountConsent(true)` once to enable it (one-time
-action; the dapp surfaces the toggle on the Dashboard).
-Otherwise, even with VPFI staked, your tier shows 0 and the
-fee path charges the full yield-fee.
+`setVPFIDiscountConsent(true)` on EACH chain you want the
+discount on — the fee path reads the LOCAL chain's consent
+flag, not Base's. The dapp surfaces the toggle on the
+Dashboard for whichever chain you're currently connected
+to.
+
+Without local consent, even with VPFI staked on Base + a
+fresh cached tier on the mirror, the mirror fee path
+charges the full yield-fee.
 
 When you disable consent later, mirror caches DON'T
 automatically clear (anti-drain measure — see below). The
@@ -2050,12 +2070,17 @@ forces the broadcast.)
 When you stake more VPFI:
 
 - The accumulator re-stamps at the post-deposit balance
-  immediately.
+  immediately AND broadcasts the current (still-pre-bump)
+  tier to mirrors on this rollup.
 - The TWA shifts toward the new balance over the rolling
   window.
 - Once the TWA crosses the next tier's threshold (and
-  min-history has elapsed), the higher tier activates and
-  broadcasts to mirrors.
+  min-history has elapsed), the higher tier activates on
+  Base — but the cross-tier transition is read at the NEXT
+  rollup, not by time alone. To push the new tier to
+  mirrors you either click "Push my tier to mirrors now"
+  on the dashboard (calls `pokeMyTier()`) or do any vault
+  mutation that triggers a fresh rollup.
 
 When you unstake:
 
