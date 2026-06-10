@@ -1937,6 +1937,159 @@ for now; the Vaipakam frontend does not surface it as a
 button. Use a block-explorer "Write Contract" UI or a
 contract-interaction tool to call it.
 
+## How VPFI Discounts Work
+
+VPFI is the platform's discount-rights token. Holding VPFI in
+your per-user vault on the canonical chain (Base) entitles
+you to a tiered discount on the protocol's yield-fee charged
+at loan settlement. The bigger your tier, the larger the
+discount.
+
+### Stake once, discount everywhere
+
+VPFI is staked on Base. The protocol's accumulator lives on
+Base too. But your tier propagates automatically to every
+chain you take loans on — Sepolia, Arbitrum, Optimism, BNB,
+etc. — via Chainlink CCIP.
+
+That means:
+
+- You don't need to stake separately on each chain.
+- You don't need to bridge VPFI to mirror chains.
+- When you take a loan on Sepolia, the discount applies
+  using your Base-staked tier — looked up in the mirror's
+  cached `userTierCache`.
+
+### Min-history gate
+
+A brand-new stake doesn't immediately qualify for the
+discount. The protocol requires you to hold qualifying VPFI
+for at least 3 days (the default
+`cfgTwaMinStakedDaysEffective`) before the discount
+activates. Reasoning: prevents a one-block
+"deposit-claim-withdraw" gaming pattern.
+
+During this aging window:
+
+- Your dashboard shows "Your tier is aging — almost there".
+- Loans you take during this window settle at the FULL
+  yield-fee (no discount applies).
+- Once the window passes, the discount activates
+  automatically — no transaction needed.
+
+### Time-weighted, not snapshot
+
+Your effective tier is averaged across a rolling 30-day
+window, with the LAST 7 days weighted 3× and the previous
+23 days weighted 1×. This means:
+
+- The most recent week dominates — recent behaviour matters.
+- A "top-up right before a loan settles" doesn't immediately
+  bump your tier — the topped-up amount only fully counts
+  after time accumulates.
+- A partial unstake doesn't immediately drop your tier
+  either — the historical staked-amount is averaged in.
+
+### Cross-chain tier propagation
+
+When your tier activates (or changes), the protocol
+broadcasts it to every configured mirror chain via Chainlink
+CCIP. Broadcasts are PROTOCOL-FUNDED — you don't pay the
+CCIP fee.
+
+For most users, this propagation is invisible. Take a loan
+on a mirror chain → the cached tier applies. Done.
+
+For edge cases (mirror cache stale, governance bumped the
+tier table, you just disabled consent and want to
+immediately clear), the dapp's Dashboard surfaces a "Push my
+tier to mirrors now" button. Clicking it triggers
+`pokeMyTier()` — permissionless, fires a fresh CCIP
+broadcast at the protocol's cost.
+
+### Consent toggle
+
+The discount is OPT-IN. You must call
+`setVPFIDiscountConsent(true)` once to enable it (one-time
+action; the dapp surfaces the toggle on the Dashboard).
+Otherwise, even with VPFI staked, your tier shows 0 and the
+fee path charges the full yield-fee.
+
+When you disable consent later, mirror caches DON'T
+automatically clear (anti-drain measure — see below). The
+dapp prompts you to follow the consent toggle with a manual
+`pokeMyTier()` to push the (tier, bps) = (0, 0) update to
+mirrors immediately. Alternatively, the next time you do a
+deposit / withdrawal / settle a loan, the
+rollup-and-broadcast fires automatically.
+
+### Tier upgrades and unstakes
+
+When you stake more VPFI:
+
+- The accumulator re-stamps at the post-deposit balance
+  immediately.
+- The TWA shifts toward the new balance over the rolling
+  window.
+- Once the TWA crosses the next tier's threshold (and
+  min-history has elapsed), the higher tier activates and
+  broadcasts to mirrors.
+
+When you unstake:
+
+- The accumulator re-stamps at the post-withdrawal balance
+  immediately.
+- The TWA shifts down over the rolling window.
+- Once the TWA drops below the current tier's floor, the
+  tier downgrades and broadcasts to mirrors.
+
+The mirror's cache has a staleness threshold
+(`cfgMirrorTierMaxAgeSec`, default 7 days). If your tier
+hasn't been pushed in that long, the mirror falls back to
+"no discount" until a fresh push lands.
+
+### Operator runbook — discount system maintenance
+
+These operator actions are required for the cross-chain
+discount surface to work in production. Documented here so
+an external operator forking Vaipakam can stand up the
+system without surprises.
+
+**Canonical chain (Base):**
+
+- `ConfigFacet.setCanonicalVPFIChain(true)` — REQUIRED
+  post-deploy on Base. Without this, the accumulator runs
+  but the broadcast facet sees `s.isCanonicalVpfiChain ==
+  false` and silently skips every push. Sub 1.C round-3 P2
+  #2 deferral.
+- Protocol broadcast budget — top up
+  `protocolBroadcastBudget` with ETH via
+  `ProtocolBroadcastFacet.topUpProtocolBroadcastBudget`.
+  Monitor `BroadcastBudgetToppedUp` /
+  `ProtocolTierBroadcastSent` events. When the budget drops
+  below the expected per-month burn rate, top up again.
+
+**Mirror chains:**
+
+- `MirrorTierReceiverFacet.setBaseAuthorizedMessenger(addr)`
+  — only this address can write to `userTierCache`.
+  Required to prevent forged tier pushes.
+- `MirrorTierReceiverFacet.setBaseChainId(chainId)` — CCIP
+  source-chain ID gate. Pushes from any other chain are
+  rejected.
+- `ConfigFacet.setCfgMirrorTierMaxAgeSec(seconds)` — cache
+  staleness threshold (default 7 days). Higher = mirror
+  applies stale tiers; lower = users need more frequent
+  broadcasts.
+
+**Governance changes:**
+
+- Any `setVpfiTierThresholds` or `setVpfiTierDiscountBps` on
+  the canonical chain bumps `tierTableVersion`. Operators
+  should expect a burst of broadcasts as users' next
+  mutations re-sync mirrors. Pre-empt by topping up the
+  broadcast budget before announcing tier-table changes.
+
 ## Treasury Buyback Flywheel
 
 The protocol collects fees on every loan, swap-to-repay
