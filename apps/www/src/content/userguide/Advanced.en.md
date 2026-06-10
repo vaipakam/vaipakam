@@ -1969,10 +1969,11 @@ you need:
   deposited through `depositVPFIToVault` (the proper
   protocol-tracked path). Direct transfers of VPFI into the
   vault address bypass the protocol's tracked-balance
-  counter and don't count for the fee path. The settlement
-  path subtracts from the protocol-tracked balance — direct
-  transfers are operationally invisible and the discount
-  falls through to the full fee.
+  counter and don't count for the fee path. A user whose
+  RAW vault balance is above the quoted requirement but
+  whose PROTOCOL-TRACKED balance is below it does NOT get
+  the discount — the fall-back is to the full fee, despite
+  the raw balance looking sufficient.
 - **Local consent toggle** — `setVPFIDiscountConsent(true)`
   must be called on EACH chain you want the discount on;
   the fee path reads the LOCAL consent flag, not Base's.
