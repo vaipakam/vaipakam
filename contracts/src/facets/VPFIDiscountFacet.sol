@@ -654,6 +654,30 @@ contract VPFIDiscountFacet is
         nonReentrant
         whenNotPaused
     {
+        // T-087 Sub 4 round-4 P1s — the round-3 attempt to also
+        // trigger a rollup-broadcast here was reverted:
+        //
+        //  1. Budget-exhausted revert: with `rewardMessenger` set,
+        //     the rollup cascades into `protocolBroadcastTierUpdate`,
+        //     which fail-closes when the protocol broadcast budget
+        //     can't quote the CCIP fee. That would block a
+        //     security-motivated `setVPFIDiscountConsent(false)`
+        //     simply because protocol funds were temporarily low.
+        //  2. Budget-drain via toggling: the de-dup gate only
+        //     suppresses identical re-pushes, so toggling ON/OFF
+        //     repeatedly DOES fire fresh broadcasts because the
+        //     tier value flips each time. A user could intentionally
+        //     drain the protocol broadcast budget by toggling at
+        //     no on-chain cost beyond their own gas.
+        //
+        // The broadcast-facet consent gate (added in round-3)
+        // still applies: the NEXT legitimate rollup (deposit /
+        // withdraw / `pokeMyTier`) will push the consent-gated
+        // (0, 0) and clear mirror caches. The dapp's consent UI
+        // should chain a `pokeMyTier()` after `setVPFIDiscountConsent(false)`
+        // to give the user an immediate cache clear (user pays
+        // their own tx gas; protocol pays one broadcast, exactly
+        // the same cost surface as any other balance mutation).
         LibVaipakam.storageSlot().vpfiDiscountConsent[msg.sender] = enabled;
         emit VPFIDiscountConsentChanged(msg.sender, enabled);
     }
@@ -885,6 +909,97 @@ contract VPFIDiscountFacet is
             return (0, 0);
         }
         return LibVPFIDiscount.effectiveTierAndBps(user);
+    }
+
+    /// @custom:event-category state-change/vpfi-discount
+    /// @notice T-087 Sub 4 — emitted when a user (or the protocol on
+    ///         their behalf) triggers a balance-mutation-free rollup.
+    event TierPoked(address indexed user, uint256 trackedBalance);
+
+    /**
+     * @notice T-087 Sub 4 — trigger a balance-mutation-free rollup of
+     *         the caller's VPFI-discount accumulator.
+     *
+     * @dev Use case: time-only EFFECTIVE_TIER activation. Once a
+     *      user's stake has aged past `cfgTwaMinStakedDaysEffective`,
+     *      their on-chain tier becomes claimable without any balance
+     *      mutation needed. `pokeMyTier()` lets them surface that
+     *      tier to mirror chains via the protocol-funded broadcast
+     *      path (T-087 Sub 2.D) without having to make a tiny
+     *      deposit / withdraw round-trip.
+     *
+     *      The function is fully permissionless and idempotent: it
+     *      re-reads the caller's tracked balance and re-stamps the
+     *      accumulator at that same balance. If the tier hasn't
+     *      changed, no broadcast fires (the broadcast path
+     *      short-circuits on equal tier). If the tier HAS changed —
+     *      e.g., the user just crossed the min-history boundary —
+     *      the broadcast pushes the new tier to every configured
+     *      mirror chain.
+     *
+     *      Gated by `whenNotPaused` so emergency pause halts pokes
+     *      (consistent with the deposit/withdraw paths). ALSO
+     *      gated by `vpfiDiscountConsent` (Codex round-1 P2 #2):
+     *      a consent-off user's RAW tier would otherwise leak to
+     *      mirrors via the un-gated `effectiveTierAndBps` path in
+     *      `ProtocolBroadcastFacet`, putting the mirror cache out
+     *      of sync with the consent-gated canonical fee path.
+     *      Consent-off pokes emit `TierPokeSkippedNoConsent` and
+     *      return without rolling up.
+     */
+    function pokeMyTier() external nonReentrant whenNotPaused {
+        // The trackedVpfiBalance read is the same one every settlement
+        // path uses; for a user with no stake history it returns 0 and
+        // the rollup is essentially a no-op at the accumulator level.
+        //
+        // T-087 Sub 4 round-3 P2 #2 — the round-1 consent-off early
+        // return was wrong: it left mirror caches with whatever stale
+        // non-zero tier the user previously pushed. The fix moved to
+        // `ProtocolBroadcastFacet.protocolBroadcastTierUpdate`, which
+        // now zeros out the broadcast tier when consent is off. So
+        // consent-off pokes correctly push (0, 0) and clear the
+        // cache.
+        uint256 trackedBal = LibVPFIDiscount.trackedVpfiBalance(msg.sender);
+        LibVPFIDiscount.rollupUserDiscount(msg.sender, trackedBal);
+        emit TierPoked(msg.sender, trackedBal);
+    }
+
+    /**
+     * @notice T-087 Sub 4 round-2 P2 — protocol-tracked VPFI balance
+     *         for `user`. This is the balance the discount
+     *         accumulator uses, which CAN be less than the raw
+     *         `vaultVpfiBalance(user)` if the user transferred VPFI
+     *         directly into their vault instead of going through
+     *         `depositVPFIToVault`. The dapp's tier-display surface
+     *         reads this getter when deciding whether to surface
+     *         the "min-history pending" promise — using
+     *         `getVPFIDiscountTier` instead would mislabel direct-
+     *         transfer dust as "will activate automatically", when
+     *         in fact `pokeMyTier()` would not activate it because
+     *         the accumulator sees zero tracked balance.
+     */
+    function getTrackedVPFIBalance(address user) external view returns (uint256) {
+        return LibVPFIDiscount.trackedVpfiBalance(user);
+    }
+
+    /**
+     * @notice T-087 Sub 4 round-3 P2 #1 — RAW tier derived from the
+     *         protocol-TRACKED balance, mirroring `getVPFIDiscountTier`
+     *         but using only the balance the accumulator actually
+     *         counts. Direct-transfer vault dust is EXCLUDED — so the
+     *         dapp's min-history-pending check can correctly
+     *         distinguish "user staked through depositVPFIToVault and
+     *         qualifies" from "user has dust + small legitimate stake,
+     *         but the tracked tier is still 0".
+     */
+    function getTrackedVPFIDiscountTier(address user)
+        external
+        view
+        returns (uint8 tier, uint256 trackedBal, uint256 discountBps)
+    {
+        trackedBal = LibVPFIDiscount.trackedVpfiBalance(user);
+        tier = LibVPFIDiscount.tierOf(trackedBal);
+        discountBps = LibVPFIDiscount.discountBpsForTier(tier);
     }
 
     /**

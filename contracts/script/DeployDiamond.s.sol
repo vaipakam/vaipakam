@@ -1489,7 +1489,7 @@ contract DeployDiamond is Script {
     }
 
     function _getVpfiDiscountSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](24);
+        s = new bytes4[](27);
         s[0] = VPFIDiscountFacet.buyVPFIWithETH.selector;
         s[1] = VPFIDiscountFacet.depositVPFIToVault.selector;
         s[2] = VPFIDiscountFacet.quoteVPFIDiscount.selector;
@@ -1524,6 +1524,18 @@ contract DeployDiamond is Script {
         // {VPFIDiscountFacet.getEffectiveDiscount} natspec for
         // the rationale (Codex Sub 1.B round-3 P2 #1 + #2).
         s[23] = VPFIDiscountFacet.getEffectiveDiscount.selector;
+        // T-087 Sub 4 — balance-mutation-free tier rollup. Lets the
+        // dapp's "your tier is ready" CTA surface time-only
+        // EFFECTIVE_TIER activations to mirror chains without
+        // requiring a tiny deposit/withdraw round-trip.
+        s[24] = VPFIDiscountFacet.pokeMyTier.selector;
+        // T-087 Sub 4 round-2 P2 — public tracked-balance getter so
+        // the dapp can distinguish direct-transfer vault dust from
+        // staking-path balance.
+        s[25] = VPFIDiscountFacet.getTrackedVPFIBalance.selector;
+        // T-087 Sub 4 round-3 P2 #1 — tracked-tier getter for the
+        // min-history-pending check.
+        s[26] = VPFIDiscountFacet.getTrackedVPFIDiscountTier.selector;
     }
 
     function _getStakingRewardsSelectors() internal pure returns (bytes4[] memory s) {

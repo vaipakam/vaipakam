@@ -258,7 +258,9 @@
     "consentMissingBody": "You haven't given consent to use staked / deposited VPFI for fee discounts on this loan. The discount tier is opt-in — until you enable it on the Dashboard, the yield-fee on settlement will be charged at the full {{treasuryFee}}% with no VPFI rebate.",
     "consentMissingCta": "Enable on Dashboard",
     "consentEnabledNoVpfiTitle": "Consent enabled, no eligible VPFI",
-    "consentEnabledNoVpfiBody": "You've given consent, but no eligible VPFI is currently staked / deposited in your vault on this chain. Top up VPFI to start earning a time-weighted discount on the yield fee."
+    "consentEnabledNoVpfiBody": "You've given consent, but no eligible VPFI is currently staked / deposited in your vault on this chain. Top up VPFI to start earning a time-weighted discount on the yield fee.",
+    "minHistoryPendingTitle": "Your tier is aging — almost there",
+    "minHistoryPendingBody": "You have VPFI staked, but the protocol needs a minimum staking history before it activates your tier. Once the window completes, your effective tier will switch on automatically. No action needed; you can keep using the protocol normally."
   },
   "vpfiTokenCard": {
     "title": "VPFI Token (this chain)",

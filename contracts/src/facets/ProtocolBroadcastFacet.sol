@@ -162,6 +162,24 @@ contract ProtocolBroadcastFacet {
             IVPFIDiscountAccumulatorInternal(address(this))
                 .effectiveTierAndBps(user);
 
+        // T-087 Sub 4 round-3 P2 #2 — respect the consent gate at
+        // broadcast time too. Without this, a user who DISABLES
+        // consent on canonical keeps a stale non-zero cached tier
+        // on mirrors and can keep claiming discounts there (mirror
+        // settlement checks only its own local consent flag + the
+        // cached tier — neither flips when canonical consent does).
+        // Forcing (0, 0) when consent is off:
+        //  - Mirrors see tier 0, can no longer apply discount.
+        //  - The de-dup gate downstream still suppresses repeat
+        //    pushes of an already-(0, 0) cache, so this stays cheap.
+        //  - Toggling consent back on triggers a fresh broadcast
+        //    via the existing rollup/poke path that pushes the
+        //    user's actual tier again.
+        if (!s.vpfiDiscountConsent[user]) {
+            effTier = 0;
+            effBps = 0;
+        }
+
         // Resolve the payload values BEFORE the de-dup gate so the
         // gate has the full (tier, bps, expiry, version) tuple to
         // compare against the last-pushed cache.

@@ -2,8 +2,9 @@ import { Gift, Info, Clock, AlertTriangle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { useLoanLenderDiscount } from '../../hooks/useLoanLenderDiscount';
-import { useVPFIDiscountConsent } from '../../hooks/useVPFIDiscount';
+import { useVPFIDiscountConsentFor, useVPFIDiscountTier } from '../../hooks/useVPFIDiscount';
 import { useProtocolConfig } from '../../hooks/useProtocolConfig';
+import { useReadChain } from '../../contracts/useDiamond';
 import { L as Link } from '../L';
 
 interface Props {
@@ -41,8 +42,20 @@ export function LenderDiscountCard({ loanId, lender }: Props) {
   // consent is off, every loan keeps charging the full treasury cut on
   // yield with no VPFI rebate — surface that explicitly so the user
   // doesn't wonder why the effective tier stays at 0%.
-  const { enabled: consentEnabled } = useVPFIDiscountConsent();
+  // T-087 Sub 4 round-3 P2 #3 — read consent for the LENDER, not the
+  // connected wallet. After a position NFT transfer, the holder and
+  // the loan's lender may differ; keying the banner on the holder's
+  // consent surfaces the wrong promise. The lender is the principal
+  // for the discount accumulator.
+  const { enabled: consentEnabled } = useVPFIDiscountConsentFor(lenderAddr);
   const { config: protocolConfig } = useProtocolConfig();
+  // T-087 Sub 4 — read the lender's vault balance + effective tier
+  // so we can distinguish the two reasons the discount might be 0:
+  //   (a) the lender has NO VPFI staked at all → "stake some VPFI" CTA.
+  //   (b) the lender HAS VPFI but is still in the min-history window
+  //       → "your tier will activate soon" CTA + the poke button.
+  const { data: discountTierData } = useVPFIDiscountTier(lenderAddr);
+  const chain = useReadChain();
 
   if (!loanIdBig || !lenderAddr) return null;
   if (isLoading && !data) return null;
@@ -60,10 +73,46 @@ export function LenderDiscountCard({ loanId, lender }: Props) {
   // gate but is handled defensively). Showing "missing" while loading
   // would flash the wrong banner on first paint, so we wait.
   const showConsentMissing = consentEnabled === false;
+  // T-087 Sub 4 round-1 P2 #1 — use the RAW tier (balance-based,
+  // pre-min-history gate) as the qualifying signal for "min-history
+  // pending". `rawTier > 0` means the balance is at-or-above a tier
+  // threshold; the effective tier being 0 then says "the time gate
+  // hasn't released yet, but it will." For sub-tier balances
+  // (e.g. dust below the Tier-1 floor), rawTier is 0 too, so we
+  // correctly fall back to the "no eligible VPFI" copy.
+  //
+  // T-087 Sub 4 round-1 P2 #3 — gate by isCanonicalVPFI. On a
+  // mirror chain `getEffectiveDiscount` returns 0 not only during
+  // the min-history window but also when the cached tier slot is
+  // missing/expired/at-the-wrong-version. The signal is unambiguous
+  // only on the canonical chain; on mirrors we fall back to the
+  // generic "no eligible VPFI" copy so we don't promise an
+  // automatic activation that may never come.
+  const isCanonical = chain.isCanonicalVPFI === true;
+  // T-087 Sub 4 round-3 P2 #1 — the load-bearing signal is the TRACKED
+  // tier (`tierOf(trackedBal)`). A user with a tiny legitimate
+  // tracked stake + a large direct-transfer dust would have
+  // `rawTier > 0 && trackedBal > 0` but `trackedTier == 0`; the
+  // accumulator only ever sees the tracked balance, so pokeMyTier
+  // would not activate the tier. Use `trackedTier > 0` so only
+  // genuinely-qualifying tracked stake gets the auto-activation
+  // promise.
+  const lenderQualifiesByBalance =
+    (discountTierData?.trackedTier ?? 0) > 0;
   const showConsentEnabledNoVpfi =
     consentEnabled === true &&
     data.effectiveAvgBps === 0 &&
-    data.stampedBpsAtPreviousRollup === 0;
+    data.stampedBpsAtPreviousRollup === 0 &&
+    !(isCanonical && lenderQualifiesByBalance);
+  // Min-history pending = canonical chain + consent on + zero
+  // effective discount + raw tier > 0. Only the time gate is
+  // preventing activation; it will switch on automatically.
+  const showMinHistoryPending =
+    isCanonical &&
+    consentEnabled === true &&
+    data.effectiveAvgBps === 0 &&
+    data.stampedBpsAtPreviousRollup === 0 &&
+    lenderQualifiesByBalance;
   const treasuryFeePct = protocolConfig
     ? (protocolConfig.treasuryFeeBps / 100).toFixed(
         protocolConfig.treasuryFeeBps % 100 === 0 ? 0 : 2,
@@ -144,6 +193,21 @@ export function LenderDiscountCard({ loanId, lender }: Props) {
             <strong>{t('lenderDiscountCard.consentEnabledNoVpfiTitle')}</strong>
             <br />
             {t('lenderDiscountCard.consentEnabledNoVpfiBody')}
+          </div>
+        </div>
+      )}
+
+      {showMinHistoryPending && (
+        <div
+          className="alert alert-info"
+          style={{ marginTop: 12 }}
+          role="status"
+        >
+          <Clock size={14} />
+          <div>
+            <strong>{t('lenderDiscountCard.minHistoryPendingTitle')}</strong>
+            <br />
+            {t('lenderDiscountCard.minHistoryPendingBody')}
           </div>
         </div>
       )}
