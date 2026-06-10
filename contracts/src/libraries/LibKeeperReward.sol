@@ -52,6 +52,13 @@ library LibKeeperReward {
     uint16 internal constant MAX_CASH_OUT_SPREAD_BPS = 2_000;
     /// @dev Basis points denominator.
     uint16 internal constant BPS_DENOM = 10_000;
+    /// @dev Codex round-2 P2 #3 — TWAP max-age range. Lower bound
+    ///      ensures observations aren't stale-fresh; upper bound
+    ///      prevents an admin typo (`type(uint32).max`) from
+    ///      silently making Phase-1 TWAP pricing accept years-old
+    ///      observations.
+    uint32 internal constant MIN_TWAP_MAX_AGE_SEC = 600;     // 10 min
+    uint32 internal constant MAX_TWAP_MAX_AGE_SEC = 86_400;  // 24 h
 
     /// @custom:event-category state-change/keeper-reward
     event KeeperRewardPaid(
@@ -96,6 +103,16 @@ library LibKeeperReward {
             emit KeeperRewardSkipped(keeper, actionKind, "no-vpfi-token");
             return 0;
         }
+        // Codex round-2 P2 #2 — reject non-contract VPFI address.
+        // setVPFIToken does NOT enforce `code.length > 0`, so an
+        // admin typo can set vpfiToken to an EOA. The low-level
+        // transfer call below would succeed with empty return data
+        // and our code would think the transfer worked — burning
+        // the budget without paying anything.
+        if (s.vpfiToken.code.length == 0) {
+            emit KeeperRewardSkipped(keeper, actionKind, "vpfi-not-contract");
+            return 0;
+        }
 
         uint32 multBps = s.cfgKeeperRewardMultBps == 0
             ? DEFAULT_KEEPER_REWARD_MULT_BPS
@@ -138,7 +155,12 @@ library LibKeeperReward {
         (bool ok, bytes memory ret) = s.vpfiToken.call(
             abi.encodeWithSelector(IERC20.transfer.selector, keeper, vpfiAmount)
         );
-        bool returnedTrue = ret.length == 0 || abi.decode(ret, (bool));
+        // Codex round-2 P2 #1 — guard against malformed return data
+        // (non-standard tokens / proxies returning < 32 bytes).
+        // `abi.decode(ret, (bool))` would itself revert on a
+        // short response, defeating the no-revert contract.
+        bool returnedTrue = ret.length == 0
+            || (ret.length >= 32 && abi.decode(ret, (bool)));
         if (!ok || !returnedTrue) {
             s.keeperRewardBudget = budget; // restore the debit
             emit KeeperRewardSkipped(keeper, actionKind, "transfer-failed");

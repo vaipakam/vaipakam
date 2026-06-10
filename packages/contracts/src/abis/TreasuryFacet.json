@@ -2291,6 +2291,27 @@
   },
   {
     "type": "error",
+    "name": "KeeperRewardTwapMaxAgeSecOutOfBounds",
+    "inputs": [
+      {
+        "name": "secs",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "minSecs",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "maxSecs",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "KeeperWhitelistFull",
     "inputs": []
   },

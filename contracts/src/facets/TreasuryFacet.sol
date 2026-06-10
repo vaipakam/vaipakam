@@ -1221,6 +1221,11 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
 
     error KeeperRewardMultBpsOutOfBounds(uint32 bps, uint32 minBps, uint32 maxBps);
     error KeeperRewardCashOutSpreadBpsOutOfBounds(uint16 bps, uint16 minBps, uint16 maxBps);
+    /// @notice Codex round-2 P2 #3 — TWAP max-age out of the
+    ///         [600s, 86400s] safety range. Anti-fat-finger guard
+    ///         against a typo persisting a years-stale threshold
+    ///         that future Phase-1 pricing would honour.
+    error KeeperRewardTwapMaxAgeSecOutOfBounds(uint32 secs, uint32 minSecs, uint32 maxSecs);
 
     /// @custom:event-category informational/config
     event KeeperRewardMultBpsSet(uint32 bps);
@@ -1323,6 +1328,16 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
+        if (
+            secs < LibKeeperReward.MIN_TWAP_MAX_AGE_SEC
+                || secs > LibKeeperReward.MAX_TWAP_MAX_AGE_SEC
+        ) {
+            revert KeeperRewardTwapMaxAgeSecOutOfBounds(
+                secs,
+                LibKeeperReward.MIN_TWAP_MAX_AGE_SEC,
+                LibKeeperReward.MAX_TWAP_MAX_AGE_SEC
+            );
+        }
         LibVaipakam.storageSlot().cfgKeeperRewardTwapMaxAgeSec = secs;
         emit KeeperRewardTwapMaxAgeSecSet(secs);
     }
