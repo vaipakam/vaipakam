@@ -95,7 +95,7 @@ User-facing flow for a discounted mirror-chain loan:
    - The mirror's cached tier is fresh (not staleness-expired).
    - The cached tier table version matches the mirror's current version.
    - The user's local consent flag on the mirror is ON.
-   - The user holds AT LEAST the QUOTED REQUIRED amount of VPFI in the mirror's local user vault (the fee path computes the required VPFI for the discount tier and falls back to the full fee when the local balance is below it — a small mirror-vault balance below the quoted requirement is NOT enough).
+   - The user holds AT LEAST the QUOTED REQUIRED amount of PROTOCOL-TRACKED VPFI in the mirror's local user vault. Only deposits through the proper protocol-tracked path count — direct transfers of VPFI into the vault address are operationally invisible to the fee path and don't qualify. The fee path computes the required VPFI for the discount tier and falls back to the full fee when the protocol-tracked balance is below it.
 
 In practice: the cached BASE tier is what determines the DISCOUNT BPS — the mirror doesn't re-compute against a mirror-local table. But the user still needs ENOUGH VPFI in the mirror vault to cover the quoted requirement + a local consent toggle for the discount to actually apply.
 
@@ -111,7 +111,7 @@ Tier-system parameters are governance-controlled on the canonical chain:
 - **TWA recent-day weight** — the multiplier applied to recent days vs. older days in the weighted average (default 3, vs. older-day weight 1).
 - **Mirror cache staleness threshold** — how long a cached tier is honoured before falling back to (0, 0).
 
-Only the first two (thresholds + BPS) bump the canonical tier-table version + emit a version-bump event. Mirrors learn the new version when they receive an inbound tier-update or version-bump message from the canonical chain — until that arrives, old-version caches at mirrors keep applying at the OLD BPS. Operators should expect a sync delay after a governance change; ideally pair it with a manual broadcast wave to force-refresh mirrors.
+Only the first two (thresholds + BPS) bump the canonical tier-table version + emit a local version-bump event. Mirrors learn the new version only when they receive an inbound TIER-UPDATE message carrying the new (tier, bps, version) tuple from the canonical chain (no separate VersionBumped CCIP message exists today). Until that update arrives — which requires the user themselves to trigger a non-deduped tier broadcast on canonical — old-version caches at mirrors keep applying at the OLD BPS. After a governance change operators should expect a sync delay; the only way to force a refresh for a specific user is for that user to do a Base-side action that triggers a non-deduped broadcast.
 
 Min-history and mirror staleness changes don't bump the version. The min-history change takes effect at the canonical chain's next user read; the mirror staleness change takes effect at the mirror's next discount read (no rollup or push needed).
 
@@ -130,9 +130,11 @@ The VPFI discount surface gates TWO distinct fee paths:
 
 1. **Lender yield-fee discount** — applied at loan settlement on the protocol's treasury cut of the lender's accrued interest. The lender's effective tier (read at settlement time) determines the BPS off the standard yield-fee. NOT every settlement triggers a rollup: when the lender has consent off OR no applicable VPFI on the settlement chain, the fee path bails before invoking the accumulator. So a settlement on the canonical chain doesn't ALWAYS re-broadcast the user's tier to mirrors — it does only when the discount path actually engages.
 
-2. **Borrower Loan Initiation Fee (LIF) rebate** — at loan accept time, the borrower pays the full 0.1% LIF equivalent in VPFI from their vault into protocol custody. At proper-close settlement, the custodied VPFI is split into a borrower rebate (sized by the borrower's effective tier read AT SETTLEMENT TIME — T-087 Sub 1B replaced the previous loan-window averaging with an instant read) and a treasury share; the rebate is claimable by the borrower. At default / HF-liquidation, the full custodied VPFI forwards to treasury — no rebate.
+2. **Borrower Loan Initiation Fee (LIF) rebate** — at loan accept time, the borrower's consent + local VPFI gate whether the LIF path engages; if it does, the borrower pays the full 0.1% LIF equivalent in VPFI from their vault into protocol custody. At proper-close settlement, the custodied VPFI is split into a borrower rebate (sized by the borrower's effective tier read AT SETTLEMENT TIME — T-087 Sub 1B replaced the previous loan-window averaging with an instant read) and a treasury share; the rebate is claimable by the borrower. At default / HF-liquidation, the custodied VPFI is forfeited: for matched loans the matcher's configured share is paid to the matcher first; the net goes to treasury — no borrower rebate.
 
-Both flavours use the SAME effective tier resolution path. The user's tier + opted-in consent + on-chain VPFI on the settling chain gate both.
+The LIF flow's consent + local-VPFI gates are evaluated at ACCEPT TIME (not at settlement). Once the LIF is custodied, the proper-close split and the default-forfeit path don't re-check those gates.
+
+Both flavours use the SAME effective tier resolution path. The lender yield-fee flow evaluates consent + local VPFI at every settlement; the LIF flow evaluates them only at accept time.
 
 ## 8. What stakers see
 

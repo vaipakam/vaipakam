@@ -1964,12 +1964,15 @@ you need:
 - **Cached Base tier** — propagates automatically via CCIP
   to the mirror's `userTierCache`. You don't trigger this;
   it happens when you stake / mutate on Base.
-- **VPFI in the mirror vault** — at least the QUOTED
-  REQUIRED amount. The settlement path computes the
-  required VPFI for your discount tier and falls back to
-  the full fee when your local mirror balance is below
-  that amount. A token of VPFI in the mirror vault is
-  NOT sufficient.
+- **Protocol-TRACKED VPFI in the mirror vault** — at least
+  the QUOTED REQUIRED amount, AND it must have been
+  deposited through `depositVPFIToVault` (the proper
+  protocol-tracked path). Direct transfers of VPFI into the
+  vault address bypass the protocol's tracked-balance
+  counter and don't count for the fee path. The settlement
+  path subtracts from the protocol-tracked balance — direct
+  transfers are operationally invisible and the discount
+  falls through to the full fee.
 - **Local consent toggle** — `setVPFIDiscountConsent(true)`
   must be called on EACH chain you want the discount on;
   the fee path reads the LOCAL consent flag, not Base's.
@@ -2079,8 +2082,11 @@ ignores it because local consent is off.
 When you stake more VPFI:
 
 - The accumulator re-stamps at the post-deposit balance
-  immediately AND broadcasts the current (still-pre-bump)
-  tier to mirrors on this rollup.
+  immediately. A broadcast fires only if the resulting
+  `(tier, bps, expiry, version)` tuple differs from the
+  last-pushed snapshot — same-tier top-ups within the same
+  tier and version typically de-dup, so they don't
+  re-broadcast.
 - The TWA shifts toward the new balance over the rolling
   window.
 - Once the TWA crosses the next tier's threshold (and
@@ -2124,6 +2130,14 @@ system without surprises.
   but the broadcast facet sees `s.isCanonicalVpfiChain ==
   false` and silently skips every push. Sub 1.C round-3 P2
   #2 deferral.
+- Wire the canonical-side messenger and broadcast
+  destination list — `RewardReporterFacet.setRewardMessenger`
+  on Base points the diamond at the
+  `VaipakamRewardMessenger`; the messenger's broadcast
+  destination chain IDs (via its `addBroadcastDestination` /
+  equivalent admin surface) must list every mirror chain.
+  Without these, the canonical-side broadcast call has no
+  message addressee + reverts.
 - Protocol broadcast budget — top up
   `protocolBroadcastBudget` with ETH via
   `ProtocolBroadcastFacet.topUpBroadcastBudget()` (payable).
@@ -2158,13 +2172,16 @@ system without surprises.
 
 - Only `setVpfiTierThresholds` and `setVpfiTierDiscountBps`
   on the canonical chain bump Base's local `tierTableVersion`
-  + emit `TierTableVersionBumped`. Mirrors don't see this
-  bump until they receive a `TierUpdated` or `VersionBumped`
-  inbound message from Base — until that arrives, old-version
-  caches on mirrors continue to apply. Operators changing
-  tier thresholds / BPS should pre-empt by topping up the
-  broadcast budget first AND consider triggering a manual
-  protocol broadcast wave to force-refresh mirrors.
+  + emit `TierTableVersionBumped` LOCALLY. There's no
+  separate cross-chain "VersionBumped" message today;
+  mirrors learn the new version only when a per-user
+  TierUpdated message arrives carrying the new tuple. Until
+  that user-triggered push lands, old-version caches on
+  mirrors continue to apply at the OLD BPS. Operators
+  changing tier thresholds / BPS should top up the
+  broadcast budget in advance to absorb the wave of
+  per-user updates that lands on the next mutation by each
+  user.
 - `setTwaMinStakedDays` changes the aging gate WITHOUT
   bumping `tierTableVersion`; the new value takes effect on
   the next read.
