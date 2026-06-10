@@ -350,4 +350,53 @@ contract BuybackValidatedCommitTest is SetupTest {
     function test_GetBuybackTwapMaxWindowSec_DefaultsTo1800() public view {
         assertEq(_t().getBuybackTwapMaxWindowSec(), 1800);
     }
+
+    // ─── Round-1 P2 — cumulative VPFI floor ──────────────────────
+
+    function test_PartialFill_CumulativeFloorEnforced() public {
+        // Codex round-1 P2 — many small partials with per-partial
+        // floor-division would round each requirement to 0 and let
+        // total delivered VPFI fall below minVpfiOut. Cumulative
+        // check rejects.
+        _seedBaseBudget(AMOUNT);
+        uint64 expiresAt = uint64(block.timestamp + 30 minutes);
+        uint128 minVpfiOut = 100e18;
+        (LibBuybackOrderValidation.BuybackOrderTemplate memory tpl, bytes32 orderHash) =
+            _buildTemplate(expiresAt, minVpfiOut);
+
+        _t().commitBuybackIntentValidated(
+            orderHash, tpl, AMOUNT, uint256(minVpfiOut), expiresAt
+        );
+
+        IOrderMixin.Order memory order;
+
+        // First half — deliver 60 VPFI. Cumulative required for half:
+        // floor(100e18 * 500e6 / 1000e6) = 50e18. 60e18 >= 50e18. OK.
+        vm.prank(lop);
+        _d().preInteraction(order, "", orderHash, address(0), 0, 0, 0, "");
+        vpfi.mint(address(diamond), 60e18);
+        vm.prank(address(diamond));
+        token.transfer(lop, AMOUNT / 2);
+        vm.prank(lop);
+        _d().postInteraction(order, "", orderHash, address(0), AMOUNT / 2, 0, 0, "");
+
+        // Second half — deliver only 30 VPFI. Cumulative required at
+        // full consumed: floor(100e18 * 1000e6 / 1000e6) = 100e18.
+        // Total delivered: 60 + 30 = 90e18. 90e18 < 100e18 → reject.
+        vm.prank(lop);
+        _d().preInteraction(order, "", orderHash, address(0), 0, 0, 0, "");
+        vpfi.mint(address(diamond), 30e18);
+        vm.prank(address(diamond));
+        token.transfer(lop, AMOUNT / 2);
+
+        vm.prank(lop);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibTreasuryBuyback.BuybackBelowMinVpfiOut.selector,
+                uint256(90e18),
+                uint128(100e18)
+            )
+        );
+        _d().postInteraction(order, "", orderHash, address(0), AMOUNT / 2, 0, 0, "");
+    }
 }

@@ -671,8 +671,24 @@ function validateBody(raw: unknown): IntentFusionPostRequest | null {
       order.deadline <= 0)
     return null;
 
+  // T-087 Sub 3.C round-1 P1 — preserve the kind discriminator
+  // (defaults to 'swap_to_repay' for backwards compat). Without
+  // this the preflight always falls into the swap-to-repay branch
+  // and buyback commits get rejected with
+  // `orderhash-not-in-commit-tx` even though they validated on
+  // chain.
+  let kind: 'swap_to_repay' | 'buyback' | undefined;
+  if (o.kind === 'swap_to_repay' || o.kind === 'buyback') {
+    kind = o.kind;
+  } else if (o.kind !== undefined) {
+    // Unknown kind string — reject the request rather than silently
+    // routing it to the default branch.
+    return null;
+  }
+
   return {
     chainId: o.chainId,
+    kind,
     orderHash: o.orderHash as `0x${string}`,
     commitTxHash: o.commitTxHash as `0x${string}`,
     order: order as IntentFusionPostRequest['order'],

@@ -3708,6 +3708,15 @@ library LibVaipakam {
         // `consumedSoFar == amountIn`.
         mapping(bytes32 => uint128) buybackConsumedSoFar;
 
+        // T-087 Sub 3.C round-1 P2 — running tally of VPFI delivered
+        // across partial fills for a given orderHash. The pro-rata
+        // minVpfiOut floor is enforced CUMULATIVELY (against
+        // `floor(minVpfiOut * consumedSoFar / amountIn)`) rather
+        // than per-partial; a per-partial floor with floor-division
+        // lets rounding loss compound and the order can settle below
+        // the committed minVpfiOut.
+        mapping(bytes32 => uint128) buybackVpfiDeliveredSoFar;
+
         // T-087 Sub 3.C — Fusion TWAP window upper-bound (seconds).
         // The commit's `expiresAt - block.timestamp` must NOT exceed
         // this; bounds the time window during which the partial

@@ -394,15 +394,34 @@ library LibTreasuryBuyback {
         uint256 actualVpfi =
             IERC20(s.vpfiToken).balanceOf(address(this)) - vpfiBaseline;
 
-        // T-087 Sub 3.C — pro-rata minVpfiOut floor: each partial
-        // fill must clear `consumed/amountIn * minVpfiOut`. Total
-        // sum across all partials >= info.minVpfiOut by induction.
-        // Rounded down so the final partial still clears the floor.
-        uint256 requiredVpfi =
-            (uint256(info.minVpfiOut) * consumed) / uint256(info.amountIn);
-        if (actualVpfi < requiredVpfi) {
-            revert BuybackBelowMinVpfiOut(actualVpfi, uint128(requiredVpfi));
+        // T-087 Sub 3.C round-1 P2 — cumulative pro-rata floor. A
+        // pure per-partial floor with floor-division (`floor(minVpfiOut
+        // * consumed / amountIn)`) lets rounding loss compound: many
+        // tiny fills each round their share down to 0 and the order
+        // can settle with total delivered VPFI below minVpfiOut.
+        // Compare cumulative actual VPFI (tracked in
+        // `stakingPoolBuybackBudget` delta against the start-of-order
+        // snapshot taken at commit-time) against cumulative required.
+        //
+        // Trick: we only need to track *cumulative delivered VPFI per
+        // order* across partials. We could persist it as another
+        // mapping, but we can derive it inline using the order's
+        // stakingPoolBuybackBudget contribution. The simplest correct
+        // approach is to require, on every partial: cumulative
+        // required <= cumulative delivered. Cumulative delivered =
+        // prior delivered + actualVpfi (where prior delivered is
+        // tracked in `s.buybackVpfiDeliveredSoFar[orderHash]`).
+        uint256 priorVpfiDelivered =
+            uint256(s.buybackVpfiDeliveredSoFar[orderHash]);
+        uint256 cumulativeVpfi = priorVpfiDelivered + actualVpfi;
+        uint256 cumulativeRequiredVpfi =
+            (uint256(info.minVpfiOut) * consumedSoFarAfter) / uint256(info.amountIn);
+        if (cumulativeVpfi < cumulativeRequiredVpfi) {
+            revert BuybackBelowMinVpfiOut(
+                cumulativeVpfi, uint128(cumulativeRequiredVpfi)
+            );
         }
+        s.buybackVpfiDeliveredSoFar[orderHash] = uint128(cumulativeVpfi);
 
         // Codex round-3 P1 #2 — verify `info.token` actually left
         // the diamond. Per-partial check: source delta must >=
@@ -453,6 +472,11 @@ library LibTreasuryBuyback {
             // Validation flag clears at terminal so re-stamping a
             // historic orderHash cannot re-enable its old magic.
             delete s.buybackValidated[orderHash];
+            // Clear the partial-fill accumulators so they don't
+            // strand storage; preserves the gas-refund pattern for
+            // settled orders.
+            delete s.buybackConsumedSoFar[orderHash];
+            delete s.buybackVpfiDeliveredSoFar[orderHash];
             // Final partial event uses the cumulative actualVpfi
             // total — but we only have this partial's delta. Emit
             // `BuybackIntentFilled` with the per-partial figure and
@@ -522,6 +546,9 @@ library LibTreasuryBuyback {
         delete s.orderHashKind[orderHash];
         // Validation flag clears on terminal to prevent ghost-magic.
         delete s.buybackValidated[orderHash];
+        // Clear partial-fill accumulators.
+        delete s.buybackConsumedSoFar[orderHash];
+        delete s.buybackVpfiDeliveredSoFar[orderHash];
 
         emit BuybackIntentExpired(orderHash, info.token, uint96(unconsumed));
     }
