@@ -1961,22 +1961,26 @@ The flywheel runs in three stages:
    multiple smaller swaps to minimise price impact.
 
 3. **Deliver.** Each partial fill delivers VPFI to the diamond
-   and credits the **staking pool buyback budget**. The next
-   time you `claimAsStaker`, your claimable VPFI reflects
-   your share of all proceeds delivered since your last claim.
+   and credits a dedicated **staking pool buyback budget**
+   slot on chain. The slot accumulates as fills land.
 
-What this means for you as a staker:
+What this means for you as a staker today vs. when the
+priority router ships:
 
-- The staking pool's claimable VPFI grows from TWO sources
-  now: the original reward bucket (governance-set drip) AND
-  the buyback proceeds (fee-velocity-driven). Buyback APR is
-  variable — it scales with platform usage.
-- You don't need to do anything special to participate. As
-  long as you're staked, your share of buyback proceeds
-  accrues automatically.
-- There's no slashing or lockup tied to the buyback flow. You
-  can `unstake` at any time, subject to the existing
-  cooldown.
+- **Today**: buyback proceeds accumulate in the dedicated
+  on-chain slot but are NOT yet routed into your claimable
+  staking rewards. The existing `claimStakingRewards` path
+  still pays out from the original reward bucket only. The
+  buyback slot is the staging area; the distribution leg ships
+  in a follow-up.
+- **Once the priority router (Sub 3 add-on #472) lands**: the
+  same slot will widen the staker claim cap. At that point
+  your claimable VPFI grows automatically as buyback velocity
+  accumulates, on top of the original reward bucket. Buyback
+  APR will be variable — it scales with platform usage.
+- There's no slashing tied to the buyback flow. You can
+  withdraw your VPFI from your vault at any time using the
+  existing VPFI Discount surface.
 - The TWAP design means buybacks don't create discrete large
   market orders that could destabilise the VPFI floor. The
   buying is dispersed across solver auctions throughout the
@@ -1986,8 +1990,13 @@ Operator-visible failure modes (you'll see these as failed
 operator transactions in the public dashboard, not as
 user-side errors):
 
-- **No tranche available** — the budget hasn't reached the
-  per-token tranche cap. Operator waits.
+- **Budget insufficient** — the per-token Base-side budget
+  cannot fund the proposed tranche. Operator waits for more
+  remittances or commits a smaller tranche.
+- **Tranche cap exceeded** — the proposed tranche is larger
+  than the per-token cap (a defensive ceiling, not a
+  threshold). Operator either raises the cap via governance
+  or commits a smaller tranche.
 - **TWAP underdelivered** — solvers didn't clear the floor
   within the 30-minute window. Operator expires the order
   (releasing any unconsumed reservation back to the budget)

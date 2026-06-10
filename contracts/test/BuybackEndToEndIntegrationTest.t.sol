@@ -149,10 +149,14 @@ contract BuybackEndToEndIntegrationTest is SetupTest {
         // preInteraction snapshots baselines.
         vm.prank(lop);
         _d().preInteraction(order, "", orderHash, address(0), 0, 0, 0, "");
-        // Solver pulls the source token (LOP uses the diamond's
-        // aggregate allowance granted at commit time).
-        vm.prank(address(diamond));
-        usdc.transfer(lop, consumed);
+        // Codex Sub 3.D round-1 P2 — LOP pulls the source token
+        // via the aggregate allowance granted at commit time. Use
+        // `transferFrom` from LOP's context so the test would
+        // regress if the commit ever stopped granting / maintaining
+        // the approval. A direct `vm.prank(diamond); transfer(...)`
+        // would have bypassed the allowance entirely.
+        vm.prank(lop);
+        usdc.transferFrom(address(diamond), lop, consumed);
         // Solver delivers VPFI to the diamond (Fusion's makerAsset
         // → takerAsset swap).
         vpfi.mint(address(diamond), vpfiDelivered);

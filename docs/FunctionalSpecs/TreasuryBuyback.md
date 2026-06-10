@@ -18,10 +18,10 @@ A buyback intent moves through five named states. Every state transition is obse
 
 ### 2.1 Per-chain budget accumulation
 
-On every chain the platform deploys to (Base + mirrors), fee revenue in bridgeable source assets accumulates in a per-chain budget slot:
+On every chain the platform deploys to (Base + mirrors), fee revenue in bridgeable source assets accumulates in the treasury (`treasuryBalances`). The buyback budget slot is then populated by **explicit admin allocation**, not automatic fee accrual:
 
-- The protocol's settlement paths credit the per-token budget at fee-collection time.
-- The admin allocator (`creditBuybackBudget`) lets the operator move a portion of treasury balance into the budget on demand; this is the on-chain mechanism for "decide this much of our fee accrual goes to buybacks".
+- The platform's settlement paths credit fees into `s.treasuryBalances[token]` at fee-collection time. This is the same path the existing treasury-claim flow uses.
+- The admin allocator (`creditBuybackBudget`) moves a chosen amount of `treasuryBalances[token]` into the buyback budget. This is the on-chain mechanism for "decide this much of our fee accrual goes to buybacks". Sub 3.B / 3.C do NOT auto-route a fixed percentage at accrual time — the split is operator-decided each tranche. A fully-automated split-at-accrual hook is tracked as a Sub 3 add-on follow-up.
 - The accumulator is per-token. ETH from `buyVPFIWithETH` callers is on the **no-convert list** — it's reserved for operational ETH + VPFI/ETH LP seeding, never for cross-chain remittance or treasury conversion.
 - Tokens are admin-allowlisted per chain (`buybackAllowedToken`). Non-allowlisted tokens cannot enter the budget.
 - A per-token tranche cap (`cfgBuybackMaxTranche`) bounds the blast radius of any single commit (defence against operator typo / misconfiguration).
@@ -115,12 +115,11 @@ The operator can then commit a fresh TWAP at a different price target.
 
 ## 4. What stakers see
 
-The staking reward pool's spendable budget is the sum of:
+**Today (Sub 3 core):** buyback fills credit `stakingPoolBuybackBudget` on every partial. This slot is the on-chain staging area for buyback-delivered VPFI. The existing `StakingRewardsFacet.claimStakingRewards` distribution path does NOT yet widen its cap from this slot — claimable staking rewards still come exclusively from the original reward bucket (the governance-set drip).
 
-- Pre-existing staking rewards (from the initial reward bucket).
-- Plus `stakingPoolBuybackBudget` (Sub 3 buyback proceeds, accumulating per partial fill).
+**Sub 3 add-on (#472):** the priority router widens the staker claim cap from `stakingPoolBuybackBudget`. When that PR merges, stakers' claimable VPFI will grow automatically as buyback velocity accumulates — on top of the original reward bucket. The same router will also route a portion of delivered VPFI into the rewards budget / keeper budget when those add-ons are wired.
 
-As buyback velocity ramps up across the TWAP window, stakers see their claimable VPFI grow. The Sub 3 add-on (#472) will later split delivered VPFI between rewards budget / keeper budget / staking pool with priority routing — for now, ALL delivered VPFI flows to the staking pool.
+Until the router lands, buyback fills land safely in the staging slot but are invisible to staker `claim`s. This is by design — Sub 3 ships the buyback infrastructure; the staker-facing distribution is a separate scoped follow-up.
 
 The constant-buy-pressure mechanic emerges from:
 
